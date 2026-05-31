@@ -13,7 +13,7 @@ database, and bulk rendering of 300+ videos — all on a single droplet.
 │   • POST /api/batches          300+ renders in one batch             │
 │   • POST /v1/run-ffmpeg-command  Rendi-compatible drop-in           │
 │   • SQLite job queue → worker pool runs N FFmpeg jobs in parallel    │
-│   • serves the bulk dashboard UI at /                                 │
+│   • serves the bulk editor UI at /                                    │
 │  volume: /data  (uploads, outputs, db)                               │
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -67,9 +67,21 @@ docker compose logs -f          # watch it boot
 curl http://localhost:8080/health
 ```
 
-Open `http://<droplet-ip>:8080` — the **bulk dashboard** is ready:
-drop in your videos → set the template → **Render all** → watch progress →
-**Download all (zip)**.
+Open `http://<droplet-ip>:8080` — the **bulk editor** is ready. It's a
+four-step workflow:
+
+1. **Upload** — drag in 300+ videos (any size); they stream to disk with a
+   live progress bar. Optionally add one shared background-music track.
+2. **Template** — set the defaults applied to every video: resolution / aspect
+   preset, fps, output format, output-name pattern (`{{name}}`, `{{index}}`),
+   an optional burned-in caption, and music volume.
+3. **Edit** — a per-video table to override the output name, caption, and trim
+   in/out points. Use **Apply a value to all** for quick mass edits, or
+   **Import/Export CSV** to edit hundreds of rows in a spreadsheet (rows match
+   by order, or by a `name` column equal to the source filename).
+4. **Render** — submits the whole set as one batch and shows a live per-item
+   dashboard (status, progress, errors). **Retry failed** re-runs only the
+   failures; **Download all (zip)** grabs every finished video.
 
 ## 5. (Recommended) HTTPS + domain
 
@@ -78,7 +90,9 @@ Put Caddy or Nginx in front for TLS. Caddy example (`/etc/caddy/Caddyfile`):
 ```
 clips.example.com {
     reverse_proxy localhost:8080
-    request_body { max_size 0 }   # don't let the proxy cap uploads
+    request_body {
+        max_size 0    # don't let the proxy cap uploads
+    }
 }
 ```
 
@@ -138,19 +152,37 @@ For uploads, swap the old Zite upload SDK for `src/lib/clipmagicClient.ts`
 
 ## API quick reference
 
-| Method & path                  | Purpose                                  |
-|--------------------------------|------------------------------------------|
-| `GET  /health`                 | Liveness + queue depth                   |
-| `POST /api/uploads`            | Multipart upload (field `files`), no cap |
-| `GET  /api/uploads/:id`        | Fetch an uploaded file                   |
-| `POST /api/render/manifest`    | Queue one manifest render → `{jobId}`    |
-| `GET  /api/render/:id`         | Job status + progress + output URL       |
-| `POST /api/batches`            | Queue a bulk batch (300+ items)          |
-| `GET  /api/batches/:id`        | Per-item batch status                    |
-| `GET  /api/batches/:id/download` | Zip of all completed outputs           |
-| `POST /v1/run-ffmpeg-command`  | Rendi-compatible render                  |
-| `GET  /v1/commands/:id`        | Rendi-compatible status                  |
+| Method & path                      | Purpose                                  |
+|------------------------------------|------------------------------------------|
+| `GET  /health`                     | Liveness + queue depth                   |
+| `POST /api/uploads`                | Multipart upload (field `files`), no cap |
+| `GET  /api/uploads/:id`            | Fetch an uploaded file                   |
+| `POST /api/render/manifest`        | Queue one manifest render → `{jobId}`    |
+| `GET  /api/render/:id`             | Job status + progress + output URL       |
+| `POST /api/render/:id/retry`       | Re-queue one failed job                  |
+| `POST /api/batches`                | Queue a bulk batch (300+ items)          |
+| `GET  /api/batches/:id`            | Per-item batch status                    |
+| `POST /api/batches/:id/retry-failed` | Re-queue all failed items in a batch   |
+| `GET  /api/batches/:id/download`   | Zip of all completed outputs             |
+| `POST /v1/run-ffmpeg-command`      | Rendi-compatible render                  |
+| `GET  /v1/commands/:id`            | Rendi-compatible status                  |
 | `/api/projects`, `/api/projects/:id/shots`, `/api/projects/music` | Project/Shot/Music store (Zite DB replacement) |
+
+### Per-video editing in a manifest
+
+The bulk editor sends one manifest per video. Per-video trims are expressed on
+the narration track:
+
+```jsonc
+"narration": {
+  "videoUrl": "/api/uploads/<id>",
+  "trimStart": 1.5,   // seconds to cut from the start
+  "trimEnd": 8.0      // absolute end second (0 / omitted = to the end)
+}
+```
+
+Overlay and subtitle timings are automatically shifted to stay in sync with the
+trimmed base, and the output duration is capped to the trimmed window.
 
 ## Verify your install
 
@@ -170,3 +202,5 @@ the Rendi-compatible path, and a bulk batch — printing
   to prune old renders, or store them off-box if you need long retention.
 - **Crash safety:** jobs live in SQLite; a restart re-queues anything that was
   mid-render, so a reboot during a 300-video batch resumes cleanly.
+EOF
+echo "rewrote DEPLOY.md"
