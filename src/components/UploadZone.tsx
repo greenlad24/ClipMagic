@@ -4,7 +4,7 @@ import { createProject } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { extractAudio, uploadVideoChunks, uploadBlobToR2 } from '@/utils/videoUtils';
+import { extractAudio, uploadBlobToR2, uploadBlobToZite } from '@/utils/videoUtils';
 
 interface Props {
   contextHint: string;
@@ -64,37 +64,39 @@ export default function UploadZone({ contextHint, accentColor, musicTrackId, onP
       console.warn('Audio extraction/upload skipped:', err);
     }
 
-    // Step 2: Upload video in 20 MB chunks
+    // Step 2: Upload the whole video as a single file (no chunking — the
+    // self-hosted server has no 25 MB cap, so one file is simpler and keeps the
+    // narration intact for rendering).
     setStep('uploading');
-    let chunkUrls: string[] = [];
+    setChunkInfo({ done: 0, total: 1 });
+    let videoUrl: string;
     try {
-      chunkUrls = await uploadVideoChunks(file, (done, total) => {
-        setChunkInfo({ done, total });
-        setProgress(18 + Math.round((done / total) * 72));
-      });
+      videoUrl = await uploadBlobToZite(file, file.name);
+      setChunkInfo({ done: 1, total: 1 });
+      setProgress(90);
     } catch (err: any) {
       toast.error('Video upload failed — ' + (err.message?.slice(0, 80) ?? 'please try again'));
       setStep('idle'); setProgress(0);
       return;
     }
 
-    // Guard — if we somehow end up with no chunk URLs, bail out clearly
-    if (!chunkUrls.length || !chunkUrls[0]) {
-      toast.error('Upload produced no valid URLs — please try again');
+    // Guard — if we somehow end up with no URL, bail out clearly
+    if (!videoUrl) {
+      toast.error('Upload produced no valid URL — please try again');
       setStep('idle'); setProgress(0);
       return;
     }
 
-    // Step 3: Create project record
+    // Step 3: Create project record (single narration file + extracted audio)
     setStep('creating'); setProgress(95);
     try {
       const { projectId } = await createProject({
-        narrationUrl: chunkUrls[0],
+        narrationUrl: videoUrl,
         contextHint: contextHint || undefined,
         accentColor,
         musicTrackId: musicTrackId || undefined,
         audioUrl,
-        videoChunksJson: JSON.stringify(chunkUrls),
+        videoChunksJson: JSON.stringify([videoUrl]),
       });
       setProgress(100);
       onProjectCreated(projectId);
@@ -114,7 +116,7 @@ export default function UploadZone({ contextHint, accentColor, musicTrackId, onP
 
   const stepLabel =
     step === 'extracting' ? 'Extracting audio track…' :
-    step === 'uploading'  ? `Uploading video — chunk ${chunkInfo.done} of ${chunkInfo.total}` :
+    step === 'uploading'  ? 'Uploading video…' :
     step === 'creating'   ? 'Creating project…' : '';
 
   const StepIcon =
