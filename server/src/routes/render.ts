@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { createJob, getJob, type RenderJob } from "../db/jobs.js";
+import { createJob, getJob, retryJob, type RenderJob } from "../db/jobs.js";
 import { db } from "../db/index.js";
 import { asyncHandler } from "../middleware.js";
 import { pump } from "../render/worker.js";
@@ -152,6 +152,17 @@ renderRouter.get("/:id", (req, res) => {
     outputUrl: outputUrl(req, job),
     durationSec: job.duration_sec,
   });
+});
+
+/** Re-queue a single failed/canceled job (used by the bulk editor's retry). */
+renderRouter.post("/:id/retry", (req, res) => {
+  const ok = retryJob(req.params.id);
+  if (!ok) {
+    res.status(409).json({ error: "Job not found or currently active" });
+    return;
+  }
+  pump();
+  res.json({ ok: true });
 });
 
 export default renderRouter;

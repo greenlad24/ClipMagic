@@ -13,6 +13,10 @@ const AUDIO_SR = 44100;
  * timed overlays, music mix, word-by-word burned-in subtitles), but it spawns
  * the local binary instead of POSTing to Rendi.
  *
+ * Supports per-video editing used by the bulk editor: the narration can be
+ * trimmed (`narration.trimStart` / `narration.trimEnd`), and overlay/subtitle
+ * timings are shifted to stay in sync with the trimmed base.
+ *
  * Returns argv (for child_process.spawn — no shell, so no quoting landmines)
  * plus the expected total duration used to compute progress.
  */
@@ -36,6 +40,12 @@ function isImage(url: string): boolean {
   return /\.(png|jpg|jpeg|webp|gif|avif|bmp|svg)$/.test(clean);
 }
 
+interface InputSpec {
+  /** Options that must precede this `-i` (e.g. input seek `-ss`). */
+  opts: string[];
+  path: string;
+}
+
 export interface BuiltCommand {
   args: string[];
   totalDuration: number;
@@ -50,10 +60,29 @@ export async function buildArgsFromManifest(
   const fps = m.fps;
   const fontFile = escapeFontPath(config.fontFile);
 
+  // ── Narration trim (per-video editing) ─────────────────────────────────────
+  const narration = m.narration as RenderManifest["narration"] & {
+    trimStart?: number;
+    trimEnd?: number;
+  };
+  const trimStart = Math.max(0, narration.trimStart ?? 0);
+  const trimEnd = narration.trimEnd && narration.trimEnd > trimStart ? narration.trimEnd : 0;
+  // Effective output duration: an explicit trim window wins, otherwise the
+  // manifest duration minus any head trim.
+  const effectiveDuration =
+    trimEnd > 0
+      ? trimEnd - trimStart
+      : Math.max(0.1, (m.durationSeconds || 0) - trimStart);
+
   // ── Resolve inputs to local paths (download remote URLs once, cached) ──────
-  const inputPaths: string[] = [];
-  const narrationPath = await resolveInput(m.narration.videoUrl);
-  inputPaths.push(narrationPath);
+  const inputs: InputSpec[] = [];
+
+  const narrationPath = await resolveInput(narration.videoUrl);
+  const narrationOpts: string[] = [];
+  if (trimStart > 0) narrationOpts.push("-ss", trimStart.toFixed(3));
+  if (trimEnd > 0) narrationOpts.push("-t", (trimEnd - trimStart).toFixed(3));
+  inputs.push({ opts: narrationOpts, path: narrationPath });
+
   // Narration may or may not carry an audio stream; probe so we can either use
   // it or synthesize silence (a missing 0:a would otherwise break the mapping).
   const narrationInfo = await probe(narrationPath);
@@ -63,7 +92,7 @@ export async function buildArgsFromManifest(
   for (const scene of m.scenes) {
     if (scene.overlay && scene.overlay.clipUrl) {
       const p = await resolveInput(scene.overlay.clipUrl);
-      const idx = inputPaths.push(p) - 1;
+      const idx = inputs.push({ opts: [], path: p }) - 1;
       overlays.push({ idx, scene, isImg: isImage(scene.overlay.clipUrl) });
     }
   }
@@ -71,8 +100,13 @@ export async function buildArgsFromManifest(
   let musicIdx = -1;
   if (m.music && m.music.audioUrl) {
     const p = await resolveInput(m.music.audioUrl);
-    musicIdx = inputPaths.push(p) - 1;
+    musicIdx = inputs.push({ opts: [], path: p }) - 1;
   }
+
+  // Shift a timeline value so it's relative to the trimmed narration, clamped
+  // to the visible window.
+  const shift = (t: number): number =>
+    Math.max(0, Math.min(effectiveDuration, t - trimStart));
 
   // ── filter_complex ─────────────────────────────────────────────────────────
   const filters: string[] = [];
@@ -86,8 +120,8 @@ export async function buildArgsFromManifest(
   let lastVideo = "base";
   overlays.forEach((ov, i) => {
     const s = ov.scene;
-    const start = s.startTime + (s.overlay?.overlayDelaySeconds ?? 0);
-    const end = s.endTime;
+    const start = shift(s.startTime + (s.overlay?.overlayDelaySeconds ?? 0));
+    const end = shift(s.endTime);
     const vlabel = `ov${i}`;
     const outLabel = `v${i}`;
 
@@ -103,13 +137,13 @@ export async function buildArgsFromManifest(
       );
     }
     filters.push(
-      `[${lastVideo}][${vlabel}]overlay=enable='between(t,${start},${end})'[${outLabel}]`
+      `[${lastVideo}][${vlabel}]overlay=enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'[${outLabel}]`
     );
     lastVideo = outLabel;
   });
 
-  // Burned-in word-by-word subtitles.
-  const sub = buildSubtitleDrawtext(m.subtitles, m, lastVideo, fontFile);
+  // Burned-in word-by-word subtitles (timings shifted for any narration trim).
+  const sub = buildSubtitleDrawtext(m.subtitles, m, lastVideo, fontFile, shift);
   filters.push(...sub.filters);
   lastVideo = sub.finalLabel;
 
@@ -126,7 +160,7 @@ export async function buildArgsFromManifest(
     // Synthesize silence for the full duration so the output always has audio.
     filters.push(
       `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_SR},` +
-        `atrim=0:${m.durationSeconds.toFixed(3)},asetpts=N/SR/TB[narr_a]`
+        `atrim=0:${effectiveDuration.toFixed(3)},asetpts=N/SR/TB[narr_a]`
     );
   }
 
@@ -146,7 +180,9 @@ export async function buildArgsFromManifest(
 
   // ── argv ───────────────────────────────────────────────────────────────────
   const args: string[] = ["-y", "-hide_banner"];
-  for (const p of inputPaths) args.push("-i", p);
+  for (const spec of inputs) {
+    args.push(...spec.opts, "-i", spec.path);
+  }
   args.push("-filter_complex", filters.join(";"));
   args.push("-map", `[${lastVideo}]`);
   args.push("-map", `[${audioLabel}]`);
@@ -160,18 +196,20 @@ export async function buildArgsFromManifest(
     "-r", String(fps),
     "-movflags", "+faststart"
   );
-  // Cap output to the manifest duration so a long music bed can't extend it.
-  if (m.durationSeconds > 0) args.push("-t", m.durationSeconds.toFixed(3));
+  // Cap output to the (possibly trimmed) duration so a long music bed or
+  // looping overlay can't extend it.
+  if (effectiveDuration > 0) args.push("-t", effectiveDuration.toFixed(3));
   args.push("-progress", "pipe:1", "-nostats", outputPath);
 
-  return { args, totalDuration: m.durationSeconds };
+  return { args, totalDuration: effectiveDuration };
 }
 
 function buildSubtitleDrawtext(
   subtitles: SubtitleEvent[],
   m: RenderManifest,
   inputLabel: string,
-  fontFile: string
+  fontFile: string,
+  shift: (t: number) => number
 ): { filters: string[]; finalLabel: string } {
   const style = m.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
   const filters: string[] = [];
@@ -194,17 +232,24 @@ function buildSubtitleDrawtext(
     for (const word of event.words) {
       const txt = escapeDrawText(style.allCaps ? word.text.toUpperCase() : word.text);
       const color = word.emphasis && style.wordColor ? style.wordColor : style.lineColor;
+      const start = shift(word.start);
+      const end = shift(word.end);
+      if (end <= start) continue; // fully outside the trimmed window
       const outLabel = `sub${drawIndex}`;
       filters.push(
         `[${currentLabel}]drawtext=fontfile='${fontFile}':text='${txt}':` +
           `fontcolor=${color}:fontsize=${fontSize}:` +
           `x=(w-text_w)/2:y=${yExpr}:` +
           `box=1:boxcolor=black@0.5:boxborderw=8:` +
-          `enable='between(t,${word.start},${word.end})'[${outLabel}]`
+          `enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'[${outLabel}]`
       );
       currentLabel = outLabel;
       drawIndex++;
     }
+  }
+  // If every word fell outside the window, pass through unchanged.
+  if (drawIndex === 0) {
+    return { filters: [`[${inputLabel}]null[subbed]`], finalLabel: "subbed" };
   }
   return { filters, finalLabel: currentLabel };
 }

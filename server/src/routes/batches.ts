@@ -6,7 +6,7 @@ import archiver from "archiver";
 import { nanoid } from "nanoid";
 import { db } from "../db/index.js";
 import { config } from "../config.js";
-import { createJob, getJob } from "../db/jobs.js";
+import { createJob, getJob, retryFailedInBatch } from "../db/jobs.js";
 import { asyncHandler } from "../middleware.js";
 import { pump } from "../render/worker.js";
 import { publicUrlFor } from "../lib/urls.js";
@@ -113,6 +113,18 @@ router.get("/:id", (req, res) => {
     };
   });
   res.json({ batch, ...statusCounts(req.params.id), items: detailed });
+});
+
+/** Re-queue all failed items in a batch (bulk "retry failed" button). */
+router.post("/:id/retry-failed", (req, res) => {
+  const batch = db.prepare("SELECT id FROM batches WHERE id = ?").get(req.params.id);
+  if (!batch) {
+    res.status(404).json({ error: "Batch not found" });
+    return;
+  }
+  const requeued = retryFailedInBatch(req.params.id);
+  pump();
+  res.json({ requeued });
 });
 
 router.get(

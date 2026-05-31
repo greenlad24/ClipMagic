@@ -119,6 +119,39 @@ export function failJob(id: string, error: string): JobStatus {
   return "failed";
 }
 
+/**
+ * Manually re-queue a single job (e.g. a failed bulk item the user retries).
+ * Resets attempts and progress so it gets a fresh run. Returns true if the job
+ * existed and was re-queued.
+ */
+export function retryJob(id: string): boolean {
+  const job = getJob(id);
+  if (!job) return false;
+  if (job.status === "active") return false; // don't disturb a running job
+  const t = now();
+  db.prepare(
+    `UPDATE render_jobs
+       SET status='queued', progress=0, attempts=0, error=NULL,
+           output_file=NULL, started_at=NULL, finished_at=NULL, updated_at=?
+     WHERE id=?`
+  ).run(t, id);
+  return true;
+}
+
+/** Re-queue every failed job belonging to a batch. Returns the count requeued. */
+export function retryFailedInBatch(batchId: string): number {
+  const rows = db
+    .prepare(
+      `SELECT j.id AS id
+         FROM batch_items i JOIN render_jobs j ON j.id = i.job_id
+        WHERE i.batch_id = ? AND j.status = 'failed'`
+    )
+    .all(batchId) as Array<{ id: string }>;
+  let n = 0;
+  for (const r of rows) if (retryJob(r.id)) n++;
+  return n;
+}
+
 /** On boot, any job left 'active' by a crash/restart is requeued. */
 export function requeueStuckJobs(): number {
   const res = db
