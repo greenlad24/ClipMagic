@@ -333,34 +333,131 @@ const pollRendiStatus: Handler = async (input) => {
   };
 };
 
-const renderVideo: Handler = async (input) => submitRendiJob(input, LOCAL_USER);
+const renderVideo: Handler = async (input) => submitRendiJob(input, "local");
 
-// ── AI / capture / render-pipeline — Stage 2 stubs ───────────────────────────
-function stageTwo(name: string): Handler {
-  return async () => {
-    throw new ZiteError({
-      code: "NOT_IMPLEMENTED",
-      message:
-        `"${name}" is part of the AI pipeline, which is being wired up in the next ` +
-        `stage (OpenAI transcription/director + Kinovi capture). The app shell, ` +
-        `uploads, projects, shots, music and local rendering all work now.`,
-    });
-  };
+// ── AI pipeline (Stage 2): transcription (Groq) + director (Claude) ──────────
+// The heavy lifting lives in the esbuild bundle dist/ai/pipeline-bundle.js,
+// which runs the ORIGINAL src/api/runPipeline.ts unchanged with the OpenAI SDK
+// aliased to our Groq+Claude shim. Imported lazily so a missing bundle or
+// missing API keys produces a clear error instead of crashing startup.
+let pipelineMod: {
+  runPipeline: (input: unknown, ctx: { user: { id: string; email: string } }) => Promise<unknown>;
+} | null = null;
+async function loadPipeline() {
+  if (pipelineMod) return pipelineMod;
+  // @ts-ignore - bundle produced by the build:pipeline step (absent at tsc time)
+  pipelineMod = (await import("../ai/pipeline-bundle.js")) as any;
+  return pipelineMod!;
 }
 
-// Pipeline status pollers return a benign "not running" so the UI can poll
-// without erroring out.
-const pollBrollStatus: Handler = async () => ({ status: "idle", ready: false, shots: [] });
+const runPipeline: Handler = async (input, userId) => {
+  if (!process.env.GROQ_API_KEY) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Transcription is not configured. Set GROQ_API_KEY on the server to enable it.",
+    });
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "The AI director is not configured. Set ANTHROPIC_API_KEY on the server to enable it.",
+    });
+  }
+  let mod;
+  try {
+    mod = await loadPipeline();
+  } catch {
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: "AI pipeline bundle not found. Run the server build (npm run build) to generate it.",
+    });
+  }
+  return mod.runPipeline(input, { user: { id: userId, email: "you@clipmagic.local" } });
+};
+
+// ── Kinovi B-roll generation (native port of src/api/generateShot.ts) ────────
+const kinoviBase = () => process.env.ZITE_KINOVI_BASE_URL || "https://api.kinovi.ai";
+
+const generateShot: Handler = async (input) => {
+  const key = process.env.ZITE_KINOVI_API_KEY;
+  if (!key) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Set ZITE_KINOVI_API_KEY to generate B-roll shots." });
+  }
+  const res = await fetch(`${kinoviBase()}/v1/generate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: input.prompt,
+      model: input.kinoviModel || "kinovi-1",
+      duration: input.durationSeconds || 5,
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) {
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: `Kinovi error (${res.status}): ${data?.error?.message || JSON.stringify(data)}`,
+    });
+  }
+  const taskId = data.taskId ?? data.id;
+  if (input.shotId && taskId) {
+    await Shots.update({ id: input.shotId, record: { kinoviTaskId: taskId, captureStatus: "Capturing" } });
+  }
+  return { success: true, taskId, status: data.status ?? "pending" };
+};
+
+// Poll Kinovi task status for any shots still generating in a project.
+const pollBrollStatus: Handler = async (input) => {
+  const key = process.env.ZITE_KINOVI_API_KEY;
+  if (!key || !input.projectId) return { status: "idle", ready: false, shots: [] };
+  const { records } = await Shots.findAll({ filters: { project: input.projectId } });
+  const pending = records.filter((s) => s.kinoviTaskId && s.captureStatus !== "Done");
+  const shots: Array<{ shotId: string; status: string; clipUrl?: string }> = [];
+  for (const shot of pending) {
+    try {
+      const res = await fetch(`${kinoviBase()}/v1/tasks/${shot.kinoviTaskId}`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      const data = (await res.json().catch(() => ({}))) as any;
+      const status = data.status ?? "pending";
+      if ((status === "completed" || status === "succeeded") && (data.videoUrl || data.url)) {
+        const clipUrl = data.videoUrl || data.url;
+        await Shots.update({ id: shot.id, record: { clipUrl, captureStatus: "Done" } });
+        shots.push({ shotId: shot.id, status: "Done", clipUrl });
+      } else if (status === "failed" || status === "error") {
+        await Shots.update({ id: shot.id, record: { captureStatus: "Error" } });
+        shots.push({ shotId: shot.id, status: "Error" });
+      } else {
+        shots.push({ shotId: shot.id, status: "Capturing" });
+      }
+    } catch {
+      shots.push({ shotId: shot.id, status: "Capturing" });
+    }
+  }
+  const stillPending = shots.some((u) => u.status === "Capturing");
+  return { status: stillPending ? "capturing" : "idle", ready: !stillPending, shots };
+};
 
 const testKinoviApi: Handler = async () => {
-  const configured = !!process.env.ZITE_KINOVI_API_KEY;
-  return {
-    success: configured,
-    message: configured
-      ? "Kinovi API key is configured (live calls land in the next stage)."
-      : "Kinovi API key not set. Add ZITE_KINOVI_API_KEY to enable shot generation.",
-  };
+  const key = process.env.ZITE_KINOVI_API_KEY;
+  if (!key) {
+    return { success: false, message: "Kinovi API key not set. Add ZITE_KINOVI_API_KEY to enable shot generation." };
+  }
+  try {
+    const res = await fetch(`${kinoviBase()}/v1/models`, { headers: { Authorization: `Bearer ${key}` } });
+    return { success: res.ok, message: res.ok ? "Kinovi API reachable." : `Kinovi returned HTTP ${res.status}.` };
+  } catch (e) {
+    return { success: false, message: "Could not reach Kinovi: " + (e instanceof Error ? e.message : String(e)) };
+  }
 };
+
+// Optional screencast capture (Playwright microservice) — Stage 3, not configured.
+function stageTwo(name: string): Handler {
+  return async () => ({
+    success: true,
+    message: `"${name}" (screencast capture) is optional and not configured on this server.`,
+  });
+}
 
 export const HANDLERS: Record<string, Handler> = {
   // data
@@ -390,9 +487,10 @@ export const HANDLERS: Record<string, Handler> = {
   pollBrollStatus,
   testKinoviApi,
   // stage-2 AI
-  runPipeline: stageTwo("runPipeline"),
+  runPipeline,
+  generateShot,
+  // optional screencast capture (Playwright microservice — Stage 3)
   captureShots: stageTwo("captureShots"),
-  generateShot: stageTwo("generateShot"),
   recaptureShot: stageTwo("recaptureShot"),
   indexPromoVideo: stageTwo("indexPromoVideo"),
   validateAssets: async () => ({ ok: true, errors: [] }),
