@@ -6,10 +6,11 @@
   "description": "Self-hosted ClipMagic backend: unlimited uploads + local FFmpeg rendering + bulk render queue. Replaces Rendi, R2 and the Zite database on a single DigitalOcean droplet.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && npm run build:pipeline",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "smoke": "tsx src/scripts/smoke.ts"
+    "smoke": "tsx src/scripts/smoke.ts",
+    "build:pipeline": "node scripts/build-pipeline.mjs"
   },
   "dependencies": {
     "archiver": "^7.0.1",
@@ -27,6 +28,7 @@
     "@types/express": "^4.17.21",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.5",
+    "esbuild": "^0.24.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

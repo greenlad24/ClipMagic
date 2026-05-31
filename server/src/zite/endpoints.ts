@@ -17,8 +17,6 @@ import { createJob, getJob } from "../db/jobs.js";
 import { db } from "../db/index.js";
 import { pump } from "../render/worker.js";
 
-const LOCAL_USER = "local";
-
 type Handler = (input: any, userId: string) => Promise<any>;
 
 const sortByCreatedDesc = (a: Record_, b: Record_) =>

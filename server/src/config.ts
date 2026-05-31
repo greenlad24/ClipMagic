@@ -7,9 +7,21 @@ import { fileURLToPath } from "node:url";
  * Central configuration. Everything is overridable via environment variables so
  * the same build runs on a laptop or a DigitalOcean droplet with no code edits.
  */
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// server/ root (one level up from src/, or from dist/ after build)
-const SERVER_ROOT = path.resolve(__dirname, "..");
+// Resolve the server root from import.meta.url when available. The AI pipeline
+// is bundled by esbuild (CJS), where import.meta is stripped; fall back to an
+// env override or cwd so the bundle never crashes at load. SERVER_ROOT only
+// affects font/frontend defaults, which the bundle never uses (its data paths
+// come from DATA_DIR), so the fallback is harmless there.
+function resolveServerRoot(): string {
+  try {
+    const u = (import.meta as { url?: string }).url;
+    if (u) return path.resolve(path.dirname(fileURLToPath(u)), "..");
+  } catch {
+    /* bundled as CJS — import.meta unavailable */
+  }
+  return process.env.SERVER_ROOT || process.cwd();
+}
+const SERVER_ROOT = resolveServerRoot();
 
 function envInt(name: string, fallback: number): number {
   const raw = process.env[name];
