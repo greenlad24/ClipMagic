@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ClipMagic — Bulk Render</title>
+<style>
+  :root { --bg:#0b0b12; --panel:#15151f; --panel2:#1d1d2b; --line:#2a2a3c;
+          --txt:#e7e7f0; --mut:#9a9ab0; --accent:#c084fc; --accent2:#7c3aed;
+          --ok:#34d399; --err:#f87171; --warn:#fbbf24; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:18px 24px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:12px; position:sticky; top:0;
+           background:rgba(11,11,18,.9); backdrop-filter:blur(8px); z-index:5; }
+  header h1 { font-size:18px; margin:0; font-weight:700;
+              background:linear-gradient(90deg,var(--accent),#60a5fa);
+              -webkit-background-clip:text; background-clip:text; color:transparent; }
+  header .pill { margin-left:auto; font-size:12px; color:var(--mut);
+                 border:1px solid var(--line); padding:4px 10px; border-radius:999px; }
+  main { max-width:1100px; margin:0 auto; padding:24px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em;
+             color:var(--mut); margin:0 0 14px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:10px 0 4px; }
+  input,select { width:100%; background:var(--panel2); border:1px solid var(--line);
+                 color:var(--txt); border-radius:8px; padding:9px 11px; font:inherit; }
+  .row { display:flex; gap:10px; } .row > div { flex:1; }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:30px; text-align:center;
+          color:var(--mut); cursor:pointer; transition:.15s; }
+  .drop.hot { border-color:var(--accent); color:var(--txt); background:var(--panel2); }
+  button { background:linear-gradient(90deg,var(--accent2),var(--accent)); color:#fff;
+           border:0; border-radius:9px; padding:11px 18px; font:inherit; font-weight:600;
+           cursor:pointer; } button:disabled { opacity:.5; cursor:not-allowed; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); }
+  .files { margin-top:14px; max-height:230px; overflow:auto; }
+  .file { display:flex; align-items:center; gap:10px; padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; }
+  .file .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .file .sz { color:var(--mut); font-variant-numeric:tabular-nums; }
+  .bar { height:6px; background:var(--panel2); border-radius:4px; overflow:hidden; }
+  .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--accent2),var(--accent)); transition:width .3s; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:600; font-size:11px; text-transform:uppercase; }
+  .status { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); }
+  .s-completed{ color:var(--ok); border-color:var(--ok); }
+  .s-active{ color:var(--warn); border-color:var(--warn); }
+  .s-failed{ color:var(--err); border-color:var(--err); }
+  .s-queued{ color:var(--mut); }
+  .muted{ color:var(--mut); } .mt{ margin-top:16px; }
+  .toolbar{ display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
+  a.dl{ color:var(--accent); text-decoration:none; }
+  .summary{ display:flex; gap:18px; font-variant-numeric:tabular-nums; }
+  .summary b{ font-size:18px; }
+  code{ background:var(--panel2); padding:1px 5px; border-radius:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ClipMagic</h1>
+  <span class="muted">self-hosted bulk render</span>
+  <span class="pill" id="health">connecting…</span>
+</header>
+
+<main>
+  <div class="grid">
+    <!-- Upload -->
+    <section class="card">
+      <h2>1 · Upload sources (no size limit)</h2>
+      <div class="drop" id="drop">
+        <strong>Drop videos here</strong><br />
+        <span>or click to browse — 300+ files supported, any size</span>
+        <input type="file" id="picker" multiple accept="video/*" hidden />
+      </div>
+      <div class="files" id="fileList"></div>
+      <div class="mt"><button id="uploadBtn" disabled>Upload selected</button>
+        <span id="uploadMsg" class="muted"></span></div>
+    </section>
+
+    <!-- Template -->
+    <section class="card">
+      <h2>2 · Render template (applied to every video)</h2>
+      <div class="row">
+        <div><label>Width</label><input id="w" type="number" value="1080" /></div>
+        <div><label>Height</label><input id="h" type="number" value="1920" /></div>
+        <div><label>FPS</label><input id="fps" type="number" value="30" /></div>
+      </div>
+      <label>Output name pattern <span class="muted">— use {{name}} and {{index}}</span></label>
+      <input id="namePat" value="{{name}}" />
+      <div class="row">
+        <div><label>Burn caption text (optional, blank = none)</label><input id="cap" placeholder="e.g. {{name}}" /></div>
+        <div><label>Music volume (0–1)</label><input id="mvol" type="number" step="0.01" value="0.15" /></div>
+      </div>
+      <label>Background music (optional, one file for all)</label>
+      <input type="file" id="musicPick" accept="audio/*" />
+      <p class="muted mt">Each uploaded video becomes one render job (narration base
+        + optional caption + optional music). Concatenating multiple shots per
+        output is supported via the API by posting a full manifest per item.</p>
+    </section>
+  </div>
+
+  <section class="card mt">
+    <h2>3 · Render batch</h2>
+    <div class="toolbar">
+      <label style="margin:0">Batch name</label>
+      <input id="batchName" value="batch-1" style="max-width:220px" />
+      <button id="renderBtn" disabled>Render all</button>
+      <span id="renderMsg" class="muted"></span>
+      <span style="margin-left:auto" class="summary" id="summary"></span>
+    </div>
+    <div id="dashWrap" style="display:none">
+      <div class="toolbar">
+        <a class="dl" id="downloadAll" href="#" style="display:none">⬇ Download all (zip)</a>
+      </div>
+      <table><thead><tr><th>#</th><th>Name</th><th>Status</th><th style="width:30%">Progress</th><th>Output</th></tr></thead>
+        <tbody id="dash"></tbody></table>
+    </div>
+  </section>
+</main>
+
+<script>
+const API = location.origin;
+const state = { picked: [], uploaded: [], music: null, batchId: null, poll: null };
+
+const $ = (s) => document.querySelector(s);
+const fmtSize = (b) => b > 1e9 ? (b/1e9).toFixed(2)+" GB" : b > 1e6 ? (b/1e6).toFixed(1)+" MB" : (b/1e3).toFixed(0)+" KB";
+
+async function health() {
+  try {
+    const h = await (await fetch(`${API}/health`)).json();
+    $("#health").textContent = `● online · ${h.concurrency} workers · ${h.queue.queued} queued`;
+  } catch { $("#health").textContent = "● offline"; }
+}
+health(); setInterval(health, 5000);
+
+// ── File picking ──────────────────────────────────────────────────────────
+const drop = $("#drop"), picker = $("#picker");
+drop.onclick = () => picker.click();
+["dragover","dragenter"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add("hot"); }));
+["dragleave","drop"].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.remove("hot"); }));
+drop.addEventListener("drop", ev => addFiles(ev.dataTransfer.files));
+picker.addEventListener("change", () => addFiles(picker.files));
+
+function addFiles(list) {
+  for (const f of list) state.picked.push(f);
+  renderFileList();
+}
+function renderFileList() {
+  const el = $("#fileList"); el.innerHTML = "";
+  state.picked.forEach((f, i) => {
+    const row = document.createElement("div"); row.className = "file";
+    row.innerHTML = `<span class="name">${f.name}</span><span class="sz">${fmtSize(f.size)}</span>`;
+    const x = document.createElement("button"); x.className = "ghost"; x.textContent = "✕";
+    x.style.padding = "2px 8px"; x.onclick = () => { state.picked.splice(i,1); renderFileList(); };
+    row.appendChild(x); el.appendChild(row);
+  });
+  $("#uploadBtn").disabled = state.picked.length === 0;
+  $("#uploadMsg").textContent = state.picked.length ? `${state.picked.length} file(s) ready` : "";
+}
+
+// ── Upload (streaming, 25 files per request to stay snappy) ─────────────────
+$("#uploadBtn").onclick = async () => {
+  $("#uploadBtn").disabled = true;
+  const all = state.picked.slice();
+  const BATCH = 25; let done = 0;
+  state.uploaded = [];
+  for (let i = 0; i < all.length; i += BATCH) {
+    const slice = all.slice(i, i + BATCH);
+    const form = new FormData();
+    slice.forEach(f => form.append("files", f, f.name));
+    $("#uploadMsg").textContent = `uploading ${done+1}–${Math.min(done+slice.length, all.length)} of ${all.length}…`;
+    const res = await fetch(`${API}/api/uploads`, { method: "POST", body: form });
+    if (!res.ok) { $("#uploadMsg").textContent = "upload failed: " + await res.text(); return; }
+    const j = await res.json();
+    state.uploaded.push(...j.files);
+    done += slice.length;
+  }
+  // optional music
+  if ($("#musicPick").files[0]) {
+    const mf = new FormData(); mf.append("files", $("#musicPick").files[0]);
+    const mj = await (await fetch(`${API}/api/uploads`, { method:"POST", body: mf })).json();
+    state.music = mj.files[0];
+  }
+  $("#uploadMsg").textContent = `✓ uploaded ${state.uploaded.length} file(s)` + (state.music ? " + music" : "");
+  $("#renderBtn").disabled = state.uploaded.length === 0;
+};
+
+// ── Build manifests + submit batch ─────────────────────────────────────────
+function buildItems() {
+  const W = +$("#w").value, H = +$("#h").value, FPS = +$("#fps").value;
+  const capTpl = $("#cap").value.trim();
+  const mvol = +$("#mvol").value;
+  return state.uploaded.map((f, i) => {
+    const baseName = f.original.replace(/\.[^.]+$/, "");
+    const vars = { name: baseName, index: String(i+1) };
+    const fill = (s) => s.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k) => vars[k] ?? "");
+    const dur = f.duration && f.duration > 0 ? f.duration : 10;
+    const subtitles = capTpl ? [{ start: 0, end: Math.min(dur, 4),
+        words: [{ text: fill(capTpl), start: 0, end: Math.min(dur,4), emphasis: true }] }] : [];
+    return {
+      name: fill($("#namePat").value) || baseName,
+      manifest: {
+        version: 1, projectId: "bulk_"+i, width: W, height: H, fps: FPS,
+        durationSeconds: dur,
+        narration: { videoUrl: f.url, chunkUrls: [] },
+        music: state.music ? { audioUrl: state.music.url, volume: mvol } : null,
+        scenes: [],
+        subtitles,
+        subtitleStyle: { fontFamily:"DejaVu Sans Bold", fontSize: Math.round(W*0.05),
+          position:"bottom-center", outlineColor:"#000000", outlineWidth:6,
+          lineColor:"#FFFFFF", wordColor:"#c084fc", allCaps:true, maxWordsPerLine:4 },
+      },
+    };
+  });
+}
+
+$("#renderBtn").onclick = async () => {
+  $("#renderBtn").disabled = true;
+  const items = buildItems();
+  const res = await fetch(`${API}/api/batches`, {
+    method:"POST", headers:{"content-type":"application/json"},
+    body: JSON.stringify({ name: $("#batchName").value || "batch", items }),
+  });
+  if (!res.ok) { $("#renderMsg").textContent = "failed: " + await res.text(); return; }
+  const j = await res.json();
+  state.batchId = j.batchId;
+  $("#renderMsg").textContent = `queued ${j.count} job(s)`;
+  $("#dashWrap").style.display = "block";
+  $("#downloadAll").href = `${API}/api/batches/${j.batchId}/download`;
+  startPolling();
+};
+
+// ── Live dashboard ─────────────────────────────────────────────────────────
+function startPolling() {
+  if (state.poll) clearInterval(state.poll);
+  state.poll = setInterval(refresh, 1000); refresh();
+}
+async function refresh() {
+  if (!state.batchId) return;
+  const b = await (await fetch(`${API}/api/batches/${state.batchId}`)).json();
+  const tb = $("#dash"); tb.innerHTML = "";
+  for (const it of b.items) {
+    const tr = document.createElement("tr");
+    const pct = Math.round((it.progress||0)*100);
+    tr.innerHTML = `<td>${it.index+1}</td><td>${it.name}</td>
+      <td><span class="status s-${it.status}">${it.status}</span></td>
+      <td><div class="bar"><i style="width:${pct}%"></i></div></td>
+      <td>${it.outputUrl ? `<a class="dl" href="${it.outputUrl}" target="_blank">view ⬇</a>` : '<span class="muted">—</span>'}</td>`;
+    tb.appendChild(tr);
+  }
+  $("#summary").innerHTML =
+    `<span class="muted">done</span> <b style="color:var(--ok)">${b.completed}</b>
+     <span class="muted">active</span> <b style="color:var(--warn)">${b.active}</b>
+     <span class="muted">queued</span> <b>${b.queued}</b>
+     <span class="muted">failed</span> <b style="color:var(--err)">${b.failed}</b>`;
+  const total = b.items.length;
+  if (b.completed > 0) $("#downloadAll").style.display = "inline";
+  if (b.completed + b.failed >= total) { clearInterval(state.poll); state.poll = null; }
+}
+</script>
+</body>
+</html>

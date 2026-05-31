@@ -1,0 +1,34 @@
+# ClipMagic — single-droplet deployment.
+#
+# One service does everything (upload → store → render → bulk → serve UI),
+# which is the whole point: no Rendi, no R2, no external DB. Just:
+#
+#   docker compose up -d --build
+#
+# then open http://<droplet-ip>:8080
+services:
+  clipmagic:
+    build: ./server
+    image: clipmagic:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+      # Parallel FFmpeg renders. Default = vCPU count. For a 4 vCPU droplet, 4
+      # is a good start; raise cautiously (FFmpeg is already multi-threaded).
+      RENDER_CONCURRENCY: ${RENDER_CONCURRENCY:-4}
+      # 0 = unlimited upload size (removes the old 25MB cap). Or set a ceiling
+      # in bytes, e.g. 10737418240 for 10GB.
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-0}
+      # Set a secret to require Authorization: Bearer <token> on the API.
+      API_TOKEN: ${API_TOKEN:-}
+      # Public origin used to build absolute output URLs (set in production).
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+    volumes:
+      # Persist all media + the database on the host (or a mounted DO volume).
+      - clipmagic-data:/data
+
+volumes:
+  clipmagic-data:

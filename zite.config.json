@@ -1,0 +1,88 @@
+{
+  "userSync": {
+    "enabled": true,
+    "integrationId": "short-stack",
+    "usersTableId": "tikJBQ88bN9",
+    "usersEmailFieldId": "f9nDxmzxi8i",
+    "usersFirstNameFieldId": "fgaccBnMh48",
+    "usersLastNameFieldId": "f5mZ5SBXWun"
+  },
+  "integrations": {
+    "short-stack": {
+      "type": "databases",
+      "connectionId": null,
+      "base": "ShortStack"
+    },
+    "openai": {
+      "type": "openai",
+      "connectionId": "svc_354852"
+    }
+  },
+  "authentication": {
+    "signup": "open",
+    "authenticationMethods": {
+      "magicLink": true,
+      "googleSignIn": true,
+      "sso": false
+    }
+  },
+  "envVars": {
+    "ZITE_CAPTURE_SERVICE_URL": {
+      "description": "Base URL for the Playwright capture microservice (proxy path prefix)"
+    },
+    "ZITE_RENDER_SERVICE_URL": {
+      "description": "Base URL for the FFmpeg render service — the proxy prefix only, no route path. The code appends /render and /status/:id."
+    },
+    "ZITE_R2_ACCOUNT_ID": {
+      "description": "Cloudflare account ID for R2 storage (found in Cloudflare dashboard → right sidebar)"
+    },
+    "ZITE_R2_ACCESS_KEY_ID": {
+      "description": "R2 API token Access Key ID (from Cloudflare → R2 → Manage R2 API Tokens)"
+    },
+    "ZITE_R2_SECRET_ACCESS_KEY": {
+      "description": "R2 API token Secret Access Key (from Cloudflare → R2 → Manage R2 API Tokens)"
+    },
+    "ZITE_R2_BUCKET_NAME": {
+      "description": "R2 bucket name where narration videos, audio, and output files are stored"
+    },
+    "ZITE_R2_PUBLIC_URL": {
+      "description": "Optional public base URL for your R2 bucket (e.g. https://cdn.yourdomain.com or https://pub-xxx.r2.dev). Leave blank to use presigned URLs."
+    },
+    "ZITE_VEO3_SERVICE_URL": {
+      "description": "Base URL for the custom VEO3 microservice (proxy path prefix, e.g. https://host/api/veo3)"
+    },
+    "ZITE_REMOTION_SERVICE_URL": {
+      "description": "Base URL for the Remotion camera-animation microservice (proxy path prefix, e.g. https://host/api/remotion)"
+    },
+    "ZITE_MAGIC_HOUR_API_KEY": {
+      "description": "Magic Hour API key for Seedance video generation (get from https://magichour.ai/developer)"
+    },
+    "ZITE_KINOVI_API_KEY": {
+      "description": "Kinovi API key for HappyHorse 1.0 image-to-video generation"
+    },
+    "ZITE_BRAVE_SEARCH_API_KEY": {
+      "description": "Brave Search API subscription token for video and web search queries"
+    },
+    "ZITE_JSON2VIDEO_API_KEY": {
+      "description": "JSON2Video API key for server-side video rendering"
+    },
+    "ZITE_JSON2VIDEO_BASE_URL": {
+      "description": "JSON2Video API base URL (default: https://api.json2video.com/v2)"
+    },
+    "ZITE_RENDI_API_KEY": {
+      "description": "Rendi FFmpeg API key for server-side video rendering (replaces JSON2Video)"
+    },
+    "ZITE_DROPBOX_ACCESS_TOKEN": {
+      "description": "Dropbox API access token for reading files from the /Narration input folder"
+    },
+    "ZITE_DROPBOX_APP_KEY": {
+      "description": "Dropbox App Key for OAuth token refresh"
+    },
+    "ZITE_DROPBOX_APP_SECRET": {
+      "description": "Dropbox App Secret for OAuth token refresh"
+    },
+    "ZITE_DROPBOX_REFRESH_TOKEN": {
+      "description": "Dropbox long-lived refresh token for auto-refreshing access tokens"
+    }
+  }
+}

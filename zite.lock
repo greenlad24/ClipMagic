@@ -1,0 +1,109 @@
+{
+  "version": "1.0",
+  "generatedAt": "2026-05-27T21:06:34.401Z",
+  "integrations": {
+    "short-stack": {
+      "idMappings": {
+        "base": "c6e9cd63164a33d6",
+        "tables": {
+          "Users": "tikJBQ88bN9",
+          "Projects": "tg9xcBhHkUX",
+          "MusicTracks": "tfmQ4nWuqPy",
+          "Shots": "tc2vpZJBMyc",
+          "PromoVideos": "twDkof9i6sL",
+          "RenderJobs": "thqnFro84xz"
+        },
+        "fields": {
+          "Users": {
+            "email": "f9nDxmzxi8i",
+            "firstName": "fgaccBnMh48",
+            "lastName": "f5mZ5SBXWun",
+            "projects": "f9V3zJ7Vjeu",
+            "musicTracks": "fqEKg1bAX7H"
+          },
+          "Projects": {
+            "title": "fm3rhVGexhy",
+            "status": "fkv6mHg9KUM",
+            "contextHint": "ftw1Phqfv9z",
+            "narrationUrl": "fnmB751SgtJ",
+            "outputUrl": "fvhpNa7wNfR",
+            "accentColor": "ftavmkq5enj",
+            "durationSeconds": "fpEC4gFtvAS",
+            "transcript": "f3rrwc5rFgr",
+            "musicTrack": "fiAm4rnDUWy",
+            "beatStructureJson": "f8m2XyWekwj",
+            "directorJson": "fkHQbwzEsTC",
+            "validationErrors": "f1o4N38vzBx",
+            "user": "fdX36oks5Th",
+            "createdAt": "f8dvPJ9JGgZ",
+            "shots": "fxzV28VLsxU",
+            "audioUrl": "f96CVgdu4aj",
+            "videoChunksJson": "f8UauLzCnJJ",
+            "subtitlesJson": "fsYkh7mBbY7",
+            "animationMapJson": "fjN4sUz2xpd",
+            "musicVolume": "f4QsLs9zgRX",
+            "renderJobs": "f95dDfeA9yS",
+            "narrationOriginalUploadStatus": "fu2QQ6AsehF",
+            "narrationDropboxUrl": "fibTvV8C5ho"
+          },
+          "MusicTracks": {
+            "trackName": "ffGh4MurufH",
+            "audioUrl": "f1NXgJqwXYp",
+            "bpm": "fdoauP3FYc6",
+            "key": "f41WEr2TkfX",
+            "durationSeconds": "f2rjoN79FRM",
+            "beatGridJson": "fu6kx75SD7X",
+            "downbeatsJson": "fwbuwjWykTF",
+            "sectionMarkersJson": "fiSa6Et3Tv8",
+            "energyCurveJson": "fvkeo4HgBJi",
+            "mood": "ftBzBjSJ7Pi",
+            "analysisStatus": "f83vXLhKMRc",
+            "user": "f4mShanE2yq",
+            "projects": "fw9YdDhZES7"
+          },
+          "Shots": {
+            "caption": "f8GaDXkjysn",
+            "project": "f967GSFGWHF",
+            "shotType": "f6NmtMPujCu",
+            "beat": "fpbMC2oVJNT",
+            "beatCount": "f2ECugkQmeH",
+            "startTime": "f29LE2nf7Md",
+            "endTime": "fpqkApG1EXK",
+            "targetUrl": "f65Xy8dGsU6",
+            "targetSelector": "f4AvZyWjaLV",
+            "actionsJson": "f7bGyLFRYZk",
+            "uiLabelsJson": "faTb5YojJ6j",
+            "transitionIn": "f7fmeRrHMon",
+            "sfxIn": "fpDBopoyJqj",
+            "clipUrl": "fdadcNppoFM",
+            "captureStatus": "f4iWthwVUet"
+          },
+          "PromoVideos": {
+            "productName": "fvToAk62tJJ",
+            "keywords": "f2gWhrgrk4k",
+            "videoUrl": "fsH6uSmssv9",
+            "addedAt": "fvomd2eeRAJ",
+            "description": "fw6gRZMFFmm",
+            "contentIndexJson": "f8w4ArG4khC",
+            "indexStatus": "f6Dk2awX1Ct"
+          },
+          "RenderJobs": {
+            "jobId": "fuLi4YUmgSr",
+            "j2VProjectId": "fh6kGzQ16yB",
+            "project": "fuxKnCzhrWJ",
+            "payloadHash": "f8SDzg2SF7n",
+            "submittedAt": "f88Z26E9ivh",
+            "status": "fcfwrMF6LbG",
+            "errorMessage": "f5Syt6hUWCd",
+            "outputUrl": "ftH9NsVVeqD",
+            "subtitleAssUrl": "fanUgnk4j7P",
+            "renderingTime": "f7ikzXFwKRo",
+            "outputWidth": "f7io844NC6g",
+            "outputHeight": "fbM8wEuSwH6",
+            "outputDuration": "f2NAo6ZiYEc"
+          }
+        }
+      }
+    }
+  }
+}
