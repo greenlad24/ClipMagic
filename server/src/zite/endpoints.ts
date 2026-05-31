@@ -340,8 +340,13 @@ const renderVideo: Handler = async (input) => submitRendiJob(input, "local");
 // which runs the ORIGINAL src/api/runPipeline.ts unchanged with the OpenAI SDK
 // aliased to our Groq+Claude shim. Imported lazily so a missing bundle or
 // missing API keys produces a clear error instead of crashing startup.
+type PipelineCtx = { user: { id: string; email: string } };
+type PipelineFn = (input: unknown, ctx: PipelineCtx) => Promise<unknown>;
 let pipelineMod: {
-  runPipeline: (input: unknown, ctx: { user: { id: string; email: string } }) => Promise<unknown>;
+  runPipeline: PipelineFn;
+  captureShots: PipelineFn;
+  recaptureShot: PipelineFn;
+  indexPromoVideo: PipelineFn;
 } | null = null;
 async function loadPipeline() {
   if (pipelineMod) return pipelineMod;
@@ -350,7 +355,13 @@ async function loadPipeline() {
   return pipelineMod!;
 }
 
-const runPipeline: Handler = async (input, userId) => {
+/**
+ * Run a bundled AI endpoint (runPipeline / captureShots / recaptureShot /
+ * indexPromoVideo). All require the AI providers; capture additionally uses
+ * Kinovi for B-roll, but that key is checked inside the bundled logic so a
+ * project with only screencast/talking-head shots still works without it.
+ */
+async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot" | "indexPromoVideo", input: unknown, userId: string) {
   if (!process.env.GROQ_API_KEY) {
     throw new ZiteError({
       code: "BAD_REQUEST",
@@ -372,8 +383,13 @@ const runPipeline: Handler = async (input, userId) => {
       message: "AI pipeline bundle not found. Run the server build (npm run build) to generate it.",
     });
   }
-  return mod.runPipeline(input, { user: { id: userId, email: "you@clipmagic.local" } });
-};
+  return mod[name](input, { user: { id: userId, email: "you@clipmagic.local" } });
+}
+
+const runPipeline: Handler = (input, userId) => runBundled("runPipeline", input, userId);
+const captureShots: Handler = (input, userId) => runBundled("captureShots", input, userId);
+const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
+const indexPromoVideo: Handler = (input, userId) => runBundled("indexPromoVideo", input, userId);
 
 // ── Kinovi B-roll generation (native port of src/api/generateShot.ts) ────────
 const kinoviBase = () => process.env.ZITE_KINOVI_BASE_URL || "https://api.kinovi.ai";
@@ -451,14 +467,6 @@ const testKinoviApi: Handler = async () => {
   }
 };
 
-// Optional screencast capture (Playwright microservice) — Stage 3, not configured.
-function stageTwo(name: string): Handler {
-  return async () => ({
-    success: true,
-    message: `"${name}" (screencast capture) is optional and not configured on this server.`,
-  });
-}
-
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -489,10 +497,9 @@ export const HANDLERS: Record<string, Handler> = {
   // stage-2 AI
   runPipeline,
   generateShot,
-  // optional screencast capture (Playwright microservice — Stage 3)
-  captureShots: stageTwo("captureShots"),
-  recaptureShot: stageTwo("recaptureShot"),
-  indexPromoVideo: stageTwo("indexPromoVideo"),
+  captureShots,
+  recaptureShot,
+  indexPromoVideo,
   validateAssets: async () => ({ ok: true, errors: [] }),
   getWaveform: async () => ({ peaks: [], duration: 0 }),
 };
