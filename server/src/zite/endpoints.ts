@@ -163,6 +163,7 @@ const getServiceStatus: Handler = async () => {
     transcriptionConfigured: !!process.env.GROQ_API_KEY,
     directorConfigured: !!process.env.ANTHROPIC_API_KEY,
     kinoviConfigured: !!process.env.ZITE_KINOVI_API_KEY,
+    stockConfigured: !!process.env.PEXELS_API_KEY,
   };
 };
 

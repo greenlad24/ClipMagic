@@ -53,6 +53,8 @@ MAX_UPLOAD_BYTES=0
 # API_TOKEN=__TOKEN__
 # Set to your public origin (used for absolute output URLs):
 # PUBLIC_BASE_URL=https://your-domain.example.com
+# Free Pexels stock footage for situational b-roll (https://www.pexels.com/api/):
+# PEXELS_API_KEY=
 EOF
   sed -i "s|__PORT__|$PORT|; s|__CORES__|$CORES|; s|__TOKEN__|$TOKEN_HINT|" .env
   echo "  -> edit $APP_DIR/.env to set API_TOKEN / PUBLIC_BASE_URL if desired"

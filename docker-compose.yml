@@ -32,6 +32,10 @@ services:
       # these in .env to enable the AI pipeline; the app runs without them.
       ZITE_OPENAI_ACCESS_TOKEN: ${ZITE_OPENAI_ACCESS_TOKEN:-}
       ZITE_KINOVI_API_KEY: ${ZITE_KINOVI_API_KEY:-}
+      # Pexels stock-footage source for situational b-roll (free; get a key at
+      # https://www.pexels.com/api/). Without it, situational beats fall back to
+      # AI generation. Set PEXELS_API_KEY in .env (same as the keys above).
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
     volumes:
       # Persist all media + the database on the host (or a mounted DO volume).
       - clipmagic-data:/data

@@ -96,7 +96,12 @@ export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Prop
   const tacticalPlacementReason: string = labels.tacticalPlacementReason ?? '';
   const returnToNarratorBeforeEnd: boolean = labels.returnToNarratorBeforeEnd === true;
   const narratorReturnLeadSeconds: number | undefined = typeof labels.narratorReturnLeadSeconds === 'number' ? labels.narratorReturnLeadSeconds : undefined;
-  const brollSource: 'generated' | 'pool' | undefined = labels.brollTrack === 'generated' ? 'generated' : labels.brollTrack === 'pool' ? 'pool' : undefined;
+  const brollSource: 'generated' | 'pool' | 'stock' | undefined =
+    labels.brollTrack === 'generated' ? 'generated'
+    : labels.brollTrack === 'stock' ? 'stock'
+    : labels.brollTrack === 'pool' ? 'pool'
+    : undefined;
+  const stockQuery: string = labels.stockQuery ?? '';
 
   const setLabels = (next: Record<string, any>) => onShotChange({ uiLabelsJson: JSON.stringify(next) });
   const setKeyframes = (kfs: CameraKeyframe[]) => setLabels({ ...labels, cameraKeyframes: kfs });
@@ -276,22 +281,27 @@ export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Prop
           </div>
         )}
 
-        {/* ── B-Roll / Tactical B-Roll context ── */}
-        {isBR && (seedanceAiPrompt || brollSource || isTacticalBroll) && (
-          <div className={`space-y-2 p-2.5 rounded-lg ${isTacticalBroll ? 'bg-orange-500/8 border border-orange-500/20' : 'bg-violet-500/8 border border-violet-500/20'}`}>
+        {/* ── B-Roll / Tactical B-Roll / Stock context ── */}
+        {isBR && (seedanceAiPrompt || brollSource || isTacticalBroll || stockQuery) && (
+          <div className={`space-y-2 p-2.5 rounded-lg ${brollSource === 'stock' ? 'bg-emerald-500/8 border border-emerald-500/20' : isTacticalBroll ? 'bg-orange-500/8 border border-orange-500/20' : 'bg-violet-500/8 border border-violet-500/20'}`}>
             <div className="flex items-center justify-between">
-              <p className={`text-[9px] font-semibold uppercase tracking-wider ${isTacticalBroll ? 'text-orange-400' : 'text-violet-400'}`}>
-                {isTacticalBroll ? '⚡ Tactical B-Roll' : 'AI B-Roll'}
+              <p className={`text-[9px] font-semibold uppercase tracking-wider ${brollSource === 'stock' ? 'text-emerald-400' : isTacticalBroll ? 'text-orange-400' : 'text-violet-400'}`}>
+                {brollSource === 'stock' ? '🎞 Stock footage' : isTacticalBroll ? '⚡ Tactical B-Roll' : 'AI B-Roll'}
               </p>
               {brollSource && (
                 <div className="flex items-center gap-1">
                   {brollSource === 'generated'
                     ? <><Cpu className="w-2.5 h-2.5 text-violet-400" /><span className="text-[9px] text-violet-400 font-medium">AI Generated</span></>
+                    : brollSource === 'stock'
+                    ? <><Library className="w-2.5 h-2.5 text-emerald-400" /><span className="text-[9px] text-emerald-400 font-medium">Pexels stock</span></>
                     : <><Library className="w-2.5 h-2.5 text-emerald-400" /><span className="text-[9px] text-emerald-400 font-medium">From Pool</span></>
                   }
                 </div>
               )}
             </div>
+            {brollSource === 'stock' && stockQuery && (
+              <p className="text-[9px] text-foreground/60 leading-relaxed">Stock search: "{stockQuery}"</p>
+            )}
             {seedanceAiPrompt && (
               <p className="text-[10px] text-foreground/80 leading-relaxed">{seedanceAiPrompt}</p>
             )}

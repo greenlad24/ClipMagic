@@ -306,7 +306,7 @@ For each beat, decide:
   ADAPTIVE PACING (not a metronome): cut MORE often during list/proof/demo/high-energy sections (every ~2–3s), and HOLD LONGER on the narrator during emotional, personal, or authority lines where the face carries the message. Match the cutting rhythm to the energy of the words.
   THE ONE UNBREAKABLE RULE: every cutaway must be ACCURATE to what the narrator is saying AND informed by understanding the WHOLE video. Only cut to an overlay (real screencast/promo footage or a generated situational clip) when you can name exactly what it shows and tie it to the words at that moment (or, for the hook, to the whole-video idea).
   ACCURACY BEATS MOVEMENT: if no accurate visual exists for a 3–4s window — and it isn't worth generating a situational clip for — then HOLD on the narrator rather than cutting to something loosely-related or random. A disconnected overlay is WORSE than staying on the narrator. (A mostly-narrator video is fine when the script is personal/opinion/story-driven; even then, find accurate cutaways where you can.)
-  ORDER OF PREFERENCE for each cutaway: (1) real screencast/promo footage that matches → (2) hold on the narrator (with a subtle camera push). Generated situational clips are a SCARCE resource — at most 1–2 in the ENTIRE video (see tactical_broll) — so do NOT reach for them to fill movement; the movement should come from real footage and returning to the narrator.
+  ORDER OF PREFERENCE for each cutaway: (1) real screencast/promo footage that matches the words → (2) a situational "tactical_broll" cutaway (filled from FREE real stock footage; only 1–2 end up AI-generated) → (3) hold on the narrator with a subtle camera push. Use real footage and stock-backed situational cutaways for movement; AI generation stays rare (≤2/video).
   TONE: confident and premium — purposeful, well-motivated cuts, not frantic. Every cut should feel intentional.
 
 ★ THE HOOK IS THE EXCEPTION — EARN THE FIRST ~3 SECONDS:
@@ -321,7 +321,10 @@ For each beat, decide:
 VISUAL INTENT OPTIONS:
   • "talking_head" — the narrator on camera. This is the DEFAULT and may legitimately be the majority of the video. Use it whenever no overlay clearly matches the words. Set showNarrator=true, overlayDelaySeconds=0.
   • "screencast" — cut to real product/promo footage. The PREFERRED overlay type (real footage beats generated). Use ONLY when the narrator names or describes a specific product, tool, feature, screen, or workflow AND footage for it plausibly exists. Set productEntity to the product name and matchKeywords to search terms. Set showNarrator=true, overlayDelaySeconds=1.0.
-  • "tactical_broll" — a GENERATED AI clip. Use it for a CONCEPTUAL/SITUATIONAL moment that has no real footage (e.g. "how AI is changing the job market" → a real person at a laptop scrolling job listings in a modern apartment). STRICT BUDGET: aim for exactly 1 generated clip per video (the hook one is usually it), and NEVER more than 2 total — the hook clip counts toward this. Generated clips are scarce: reserve them for the single most important conceptual beat. Everything else must be real screencast/promo footage or the narrator. Mark the hook one with "isRequiredTacticalSlot": true.
+  • "tactical_broll" — a SITUATIONAL cutaway for a CONCEPT/EMOTION/SCENARIO that has no matching promo footage (e.g. "how AI is changing the job market" → a real person at a laptop scrolling job listings in a modern apartment). These are filled FIRST from a free library of REAL STOCK footage, and only the 1–2 most important are AI-generated. So USE tactical_broll FREELY for situational movement — you do NOT need to ration them. For EACH tactical_broll beat provide BOTH:
+      - matchKeywords: a concise, concrete, FILMABLE stock-search query (2–5 words, e.g. ["person","laptop","job search","office"]) — this is what we search stock footage with, so make it visual and literal, not abstract.
+      - brollPrompt: the extensive generation prompt (used only if this becomes one of the ≤2 AI-generated clips).
+    Mark the hook one with "isRequiredTacticalSlot": true. Do NOT use tactical_broll when a screencast (real product footage) genuinely fits — promo footage is still preferred for anything about a specific product/feature.
     For EVERY tactical_broll beat you MUST write an EXTENSIVE "brollPrompt" (a detailed video-generation prompt, ~60–120 words) that:
       - Depicts the LITERAL SITUATION the narrator is describing (show the scenario, not a metaphor), informed by the WHOLE video's topic.
       - DOCUMENTARY-REALISM, PHOTOREAL look — like real candid filmed footage, natural true-to-life lighting and color (NOT stylized, NOT cartoon, NOT abstract).
@@ -524,9 +527,12 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const hasScreencastUrls = researchedUrls.some(r => r.use === 'screencast');
     let tacticalCount = semanticBeats.filter(b => b.visualIntent === 'tactical_broll').length;
 
-    // RULE 1: Cap tactical_broll (generated AI clips) at 2 (1 is the goal).
-    // Excess is demoted to screencast (if real footage exists) or talking_head.
-    const MAX_GENERATED = 2;
+    // RULE 1: Sanity-cap the number of situational (tactical_broll) cutaways the
+    // director plans. These are filled by FREE STOCK footage (Pexels) first and
+    // only AI-generated as a last resort — the hard "max 2 AI-generated" budget
+    // is enforced downstream in captureShots — so we allow several here for
+    // movement and just guard against pathological plans.
+    const MAX_GENERATED = 8;
     if (tacticalCount > MAX_GENERATED) {
       const sorted = semanticBeats
         .map((b, i) => ({ b, i }))

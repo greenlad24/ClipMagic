@@ -7,8 +7,12 @@ import {
   buildTacticalPrompt, createSeedanceTask, computeOverlayDelay,
   WEAK_SCREENCAST_THRESHOLD,
 } from '../utils/tacticalBroll';
+import { searchPexelsVideo, pexelsQueryFromBeat } from '../utils/pexels';
 
 const BATCH = 3;
+// Max AI-GENERATED (Kinovi) clips per video. Real stock footage (Pexels) and
+// promo footage are unlimited — only paid generation is capped.
+const MAX_GENERATED_KINOVI = 2;
 
 // ── Endpoint ──────────────────────────────────────────────────────────────────
 
@@ -202,6 +206,57 @@ export default createEndpoint({
               console.log(`${tag} ✅ Tactical guard ALLOWED: ${guard.reason}`);
             }
 
+            // ── Stock footage (Pexels): free REAL footage for situational
+            //    beats — tried BEFORE paid AI generation. ────────────────────
+            const stockQuery = pexelsQueryFromBeat(existingLabels, shot.caption ?? '');
+            const beatDur = Math.max((shot.endTime ?? 4) - (shot.startTime ?? 0), 1);
+            const stock = await searchPexelsVideo(stockQuery, beatDur, tag);
+            if (stock) {
+              await Shots.update({
+                id: shot.id,
+                record: {
+                  clipUrl: stock.url,
+                  captureStatus: 'Done',
+                  uiLabelsJson: JSON.stringify({
+                    ...existingLabels,
+                    brollTrack: 'stock',
+                    brollSource: 'pexels',
+                    stockQuery,
+                    clipStartOffset: 0,
+                    clipEndOffset: 0,
+                    showNarratorFirst: existingLabels.showNarratorFirst ?? true,
+                    overlayDelaySeconds: existingLabels.overlayDelaySeconds ?? 1.0,
+                  }),
+                },
+              });
+              console.log(`${tag} ✅ Stock footage (Pexels) for "${stockQuery}" → ${stock.url}`);
+              captured++;
+              mediaGenerated++;
+              return;
+            }
+
+            // ── AI generation (Kinovi) — capped at MAX_GENERATED_KINOVI/video ──
+            // Race-safe: the check + reservation below run synchronously (no
+            // await between them), so concurrent batch tasks can't overshoot.
+            if (tacticalBrollCount >= MAX_GENERATED_KINOVI) {
+              await Shots.update({
+                id: shot.id,
+                record: {
+                  shotType: 'Talking Head',
+                  captureStatus: 'Done',
+                  uiLabelsJson: JSON.stringify({
+                    ...existingLabels,
+                    convertedFrom: 'B-Roll',
+                    conversionReason: `AI-generation budget reached (max ${MAX_GENERATED_KINOVI}) and no stock match — holding on narrator`,
+                  }),
+                },
+              });
+              console.log(`${tag} ⤵ Generation budget reached & no stock — holding on narrator`);
+              captured++;
+              return;
+            }
+            tacticalBrollCount++; // reserve a generation slot synchronously
+
             // ── Generation path (guard allowed, OR rejected-but-no-screencast) ──
             const brollCtx = {
               beatType: existingLabels.beatType ?? 'demo',
@@ -219,7 +274,6 @@ export default createEndpoint({
             const result = await createSeedanceTask(tacticalPrompt, clipDur, tag);
 
             if (result) {
-              tacticalBrollCount++;
               const meta: TacticalBrollMetadata = {
                 brollMode: 'tactical_broll',
                 brollReason: guard.reason,
@@ -241,6 +295,7 @@ export default createEndpoint({
               mediaGenerated++;
               pendingBroll++;
             } else {
+              tacticalBrollCount--; // release the reserved slot on failure
               console.warn(`${tag} Seedance task creation failed — marking as Error`);
               await Shots.update({ id: shot.id, record: { captureStatus: 'Error' } });
               failed++;
