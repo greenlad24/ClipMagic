@@ -197,6 +197,97 @@ const deletePromoVideo: Handler = async (input) => {
   return { success: true };
 };
 
+/**
+ * Bulk-import a promo-video metadata index (e.g. an exported pool from the old
+ * Zite app). Each entry may carry path_lower / downloadUrl, but we DO NOT store
+ * those — they're only used to match an entry to a promo video that's already in
+ * the library (by base filename). Matched entries are enriched in place; the
+ * rest are created as metadata-only records (videoUrl is set from downloadUrl so
+ * retrieval still works, but the path_lower/downloadUrl fields themselves are
+ * dropped from storage).
+ *
+ * Stored fields per video: productName, keywords, description, videoUrl,
+ * contentIndexJson (stringified), indexStatus.
+ */
+const baseFileName = (p: string): string => {
+  const last = String(p || "").split("/").pop() || "";
+  return last.replace(/\.[^.]+$/, "").trim().toLowerCase();
+};
+
+const importPromoIndex: Handler = async (input) => {
+  // Accept either a raw array or { entries: [...] } / { index: [...] }.
+  const entries: any[] = Array.isArray(input)
+    ? input
+    : Array.isArray(input?.entries)
+    ? input.entries
+    : Array.isArray(input?.index)
+    ? input.index
+    : Array.isArray(input?.videos)
+    ? input.videos
+    : [];
+  if (entries.length === 0) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "No index entries provided (expected a JSON array)." });
+  }
+
+  // Existing promo videos, keyed by the base filename we can recover from their
+  // stored videoUrl or productName, so re-imports update rather than duplicate.
+  const { records: existing } = await PromoVideos.findAll({ limit: 1000 });
+  const byKey = new Map<string, Record_>();
+  for (const v of existing) {
+    const keys = [
+      baseFileName((v.videoUrl as string) || ""),
+      String(v.productName || "").trim().toLowerCase(),
+    ].filter(Boolean);
+    for (const k of keys) if (!byKey.has(k)) byKey.set(k, v);
+  }
+
+  let updated = 0;
+  let created = 0;
+  for (const e of entries) {
+    // Strip path_lower / downloadUrl from what we persist; use them only to
+    // derive a match key and a usable videoUrl.
+    const { path_lower, downloadUrl, name, productName, keywords, description, contentIndexJson, videoUrl } = e;
+    const matchKey = baseFileName(path_lower || "");
+    const nameKey = String(name || productName || "").trim().toLowerCase();
+
+    // contentIndexJson may be an object (as in the export) or already a string.
+    const indexStr =
+      contentIndexJson == null
+        ? undefined
+        : typeof contentIndexJson === "string"
+        ? contentIndexJson
+        : JSON.stringify(contentIndexJson);
+
+    const record: Record<string, unknown> = {
+      productName: name ?? productName,
+      keywords,
+      description,
+      // Prefer an already-stored videoUrl; else fall back to the export's
+      // downloadUrl so retrieval still resolves a clip. (downloadUrl itself is
+      // not stored as a separate field — only as videoUrl.)
+      videoUrl: videoUrl ?? downloadUrl,
+      contentIndexJson: indexStr,
+      indexStatus: indexStr ? "Indexed" : "Not Indexed",
+    };
+
+    const match =
+      (matchKey && byKey.get(matchKey)) || (nameKey && byKey.get(nameKey)) || undefined;
+
+    if (match) {
+      // Don't clobber an existing local videoUrl with the export's downloadUrl.
+      if (match.videoUrl) record.videoUrl = match.videoUrl;
+      await PromoVideos.update({ id: match.id, record });
+      updated++;
+    } else {
+      record.addedAt = new Date().toISOString();
+      await PromoVideos.create({ record });
+      created++;
+    }
+  }
+
+  return { success: true, updated, created, total: entries.length };
+};
+
 // ── Misc data helpers ────────────────────────────────────────────────────────
 const getDownloadUrl: Handler = async (input) => {
   // Our uploads are already directly served URLs.
@@ -576,6 +667,7 @@ export const HANDLERS: Record<string, Handler> = {
   savePromoVideo,
   updatePromoVideo,
   deletePromoVideo,
+  importPromoIndex,
   getDownloadUrl,
   // render
   submitRendiJob,

@@ -7,6 +7,7 @@ import {
   deletePromoVideo,
   updatePromoVideo,
   indexPromoVideo,
+  importPromoIndex,
 } from 'zite-endpoints-sdk';
 import { GetPromoVideosOutputType } from 'zite-endpoints-sdk';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -282,7 +283,9 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   const [queue, setQueue] = useState<UploadItem[]>([]);
   const [pendingKeywords, setPendingKeywords] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
+  const [importing, setImporting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
 
   const reload = async () => {
@@ -294,6 +297,29 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
       toast.error('Failed to load promo videos');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Bulk-import a metadata index JSON. path_lower / downloadUrl are used only to
+  // match entries to videos already in the library and are NOT stored.
+  const handleImportFile = async (file: File) => {
+    setImporting(true);
+    try {
+      const text = await file.text();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        toast.error('That file is not valid JSON');
+        return;
+      }
+      const res = await importPromoIndex(parsed as any);
+      toast.success(`Imported index — ${res.updated} updated, ${res.created} added (${res.total} entries)`);
+      await reload();
+    } catch (e: any) {
+      toast.error('Import failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -431,6 +457,30 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
           <DialogTitle className="flex items-center gap-2">
             <Film className="w-4 h-4 text-primary" />
             Promo Video Library
+            <div className="ml-auto flex items-center gap-2">
+              <input
+                ref={importRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleImportFile(f);
+                  e.target.value = '';
+                }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                disabled={importing}
+                onClick={() => importRef.current?.click()}
+                title="Import a metadata index JSON (path_lower / downloadUrl are used only to match and are not stored)"
+              >
+                {importing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                {importing ? 'Importing…' : 'Import index'}
+              </Button>
+            </div>
           </DialogTitle>
           <p className="text-xs text-muted-foreground">
             Upload real product/brand videos. The AI Director selects them automatically when the product is mentioned in the script.
