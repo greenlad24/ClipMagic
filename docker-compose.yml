@@ -15,6 +15,13 @@ services:
     restart: unless-stopped
     ports:
       - "8080:8080"
+    # Load EVERY key/value from .env straight into the container. This means new
+    # keys (GROQ_API_KEY, ANTHROPIC_API_KEY, PEXELS_API_KEY, …) only need to be
+    # added to .env — never hand-edited into this file — so `git pull` never
+    # conflicts. The explicit `environment:` entries below still win for the few
+    # that have computed defaults.
+    env_file:
+      - .env
     environment:
       PORT: "8080"
       DATA_DIR: /data
