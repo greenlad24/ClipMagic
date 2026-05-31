@@ -378,8 +378,20 @@ let pipelineMod: {
 } | null = null;
 async function loadPipeline() {
   if (pipelineMod) return pipelineMod;
-  // @ts-ignore - bundle produced by the build:pipeline step (absent at tsc time)
-  pipelineMod = (await import("../ai/pipeline-bundle.js")) as any;
+  try {
+    // @ts-ignore - bundle produced by the build:pipeline step (absent at tsc time)
+    pipelineMod = (await import("../ai/pipeline-bundle.js")) as any;
+  } catch (e) {
+    // Surface the REAL reason (missing file vs. a load/runtime error inside the
+    // bundle) instead of a generic "not found" — this is what we debug from.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[loadPipeline] failed to import dist/ai/pipeline-bundle.js:", msg);
+    if (e instanceof Error && e.stack) console.error(e.stack);
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: `AI pipeline bundle failed to load: ${msg}`,
+    });
+  }
   return pipelineMod!;
 }
 
@@ -420,22 +432,53 @@ const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", in
 const indexPromoVideo: Handler = (input, userId) => runBundled("indexPromoVideo", input, userId);
 
 /**
- * savePromoVideo runs the original endpoint, which derives product metadata via
- * an LLM but falls back to the filename if the call fails — so it must work even
- * with no ANTHROPIC_API_KEY set. We therefore load the bundle directly here
- * (no hard key gate) and let the original logic degrade gracefully.
+ * Save a promo video to the library.
+ *
+ * Library management must ALWAYS work (it's basic CRUD); the AI enrichment
+ * (LLM keyword/description seeding + deep segment indexing) is a bonus. So we:
+ *   1. create the record immediately from the filename (fast, never fails),
+ *   2. then best-effort run the original endpoint via the bundle to enrich it.
+ * If the bundle is unavailable or the AI keys are unset, the upload still
+ * succeeds with filename-derived metadata.
  */
 const savePromoVideo: Handler = async (input, userId) => {
-  let mod;
-  try {
-    mod = await loadPipeline();
-  } catch {
-    throw new ZiteError({
-      code: "INTERNAL_ERROR",
-      message: "AI pipeline bundle not found. Run the server build (npm run build) to generate it.",
-    });
+  const fileName: string = input.fileName ?? input.filename ?? "promo.mp4";
+  const rawName = fileName.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim() || "Untitled";
+
+  // 1. Always create the record so the library updates right away.
+  const rec = await PromoVideos.create({
+    record: {
+      productName: rawName,
+      videoUrl: input.videoUrl ?? input.url,
+      addedAt: new Date().toISOString(),
+      indexStatus: "Not Indexed",
+    },
+  });
+
+  // 2. Best-effort AI enrichment (keywords, description, deep index). Never
+  //    fails the upload — logs and moves on if the bundle/keys are missing.
+  if (process.env.ANTHROPIC_API_KEY) {
+    try {
+      const mod = await loadPipeline();
+      // The original endpoint creates its own record, so run it and adopt the
+      // richer result; then remove our placeholder to avoid a duplicate.
+      const enriched = (await mod.savePromoVideo(
+        { ...input, fileName },
+        { user: { id: userId, email: "you@clipmagic.local" } }
+      )) as { videoId?: string } & Record<string, unknown>;
+      if (enriched?.videoId && enriched.videoId !== rec.id) {
+        await PromoVideos.delete({ id: rec.id });
+        return enriched;
+      }
+      return enriched ?? { videoId: rec.id, productName: rawName, indexStatus: "Not Indexed" };
+    } catch (e) {
+      console.warn(
+        `[savePromoVideo] AI enrichment skipped (kept basic record): ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
   }
-  return mod.savePromoVideo(input, { user: { id: userId, email: "you@clipmagic.local" } });
+
+  return { videoId: rec.id, productName: rawName, indexStatus: "Not Indexed" };
 };
 
 // ── Kinovi B-roll generation (native port of src/api/generateShot.ts) ────────
