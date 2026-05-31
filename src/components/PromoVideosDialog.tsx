@@ -9,6 +9,7 @@ import {
   indexPromoVideo,
   importPromoIndex,
   reindexAllPromos,
+  getPromoIndex,
 } from 'zite-endpoints-sdk';
 import { GetPromoVideosOutputType } from 'zite-endpoints-sdk';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -17,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Trash2, Film, Upload, Loader2, Play, Pause, Video,
-  Sparkles, Pencil, X, Check, Clock, RefreshCw, Database,
+  Sparkles, Pencil, X, Check, Clock, RefreshCw, Database, Eye,
 } from 'lucide-react';
 
 type PromoVideo = GetPromoVideosOutputType['videos'][0];
@@ -112,12 +113,14 @@ function VideoCard({
   onDelete,
   onSave,
   onReindex,
+  onView,
 }: {
   video: PromoVideo;
   isGenerating: boolean;
   onDelete: (v: PromoVideo) => void;
   onSave: (id: string, patch: { productName: string; keywords: string; description: string }) => Promise<void>;
   onReindex: (v: PromoVideo) => void;
+  onView: (v: PromoVideo) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -230,6 +233,14 @@ function VideoCard({
         <Button
           variant="ghost" size="icon"
           className="h-7 w-7 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={() => onView(video)}
+          title="View what the AI sees each second"
+        >
+          <Eye className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost" size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => onReindex(video)}
           title="Reindex segments"
         >
@@ -277,6 +288,102 @@ function QueueItem({ item }: { item: UploadItem }) {
   );
 }
 
+// ─── Index viewer (what the AI sees each second) ───────────────────────────────
+function IndexViewer({ videoId, onClose }: { videoId: string; onClose: () => void }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const d = await getPromoIndex({ videoId });
+        if (alive) setData(d);
+      } catch {
+        if (alive) setData({ error: true });
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [videoId]);
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-2xl bg-card border-border max-h-[85vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Eye className="w-4 h-4 text-primary" />
+            {data?.productName ?? 'Vision index'}
+            {data?.mediaKind && (
+              <span className="text-[10px] uppercase tracking-wide bg-primary/10 text-primary rounded px-1.5 py-0.5">
+                {data.mediaKind.replace('_', ' ')}
+              </span>
+            )}
+          </DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            What the AI director sees — {data?.mode === 'vision' ? 'real frame analysis' : data?.mode ?? '…'}.
+          </p>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+          {loading && <p className="text-sm text-muted-foreground py-4">Loading index…</p>}
+          {!loading && data?.error && <p className="text-sm text-destructive py-4">Could not load index.</p>}
+
+          {!loading && !data?.error && (
+            <>
+              {/* Segments */}
+              <div>
+                <h4 className="text-xs font-semibold text-foreground mb-1.5">Segments ({data.segments?.length ?? 0})</h4>
+                <div className="space-y-1">
+                  {(data.segments ?? []).map((s: any, i: number) => (
+                    <div key={i} className="text-xs bg-muted/50 rounded px-2 py-1.5">
+                      <span className="font-mono text-muted-foreground">
+                        {Number(s.start).toFixed(1)}–{Number(s.end).toFixed(1)}s
+                      </span>{' '}
+                      <span className="text-foreground">{s.summary}</span>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
+                        {s.featureLabel ? `feature: ${s.featureLabel} · ` : ''}
+                        {s.visualType ? `${s.visualType} · ` : ''}
+                        hero {s.heroScore ?? 0} · proof {s.proofScore ?? 0}
+                        {Array.isArray(s.keywords) && s.keywords.length ? ` · ${s.keywords.slice(0, 6).join(', ')}` : ''}
+                      </div>
+                    </div>
+                  ))}
+                  {(!data.segments || data.segments.length === 0) && (
+                    <p className="text-xs text-muted-foreground">No segments.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* Per-second */}
+              <div>
+                <h4 className="text-xs font-semibold text-foreground mb-1.5">
+                  Per-second ({data.perSecond?.length ?? 0})
+                </h4>
+                {data.perSecond?.length ? (
+                  <div className="grid grid-cols-1 gap-0.5">
+                    {data.perSecond.map((p: any, i: number) => (
+                      <div key={i} className="text-xs flex gap-2 px-2 py-1 odd:bg-muted/30 rounded">
+                        <span className="font-mono text-muted-foreground w-10 shrink-0">{p.t}s</span>
+                        <span className="text-foreground">{p.caption}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No per-second data (this video used the fallback index — reindex it for vision detail).
+                  </p>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Main dialog ──────────────────────────────────────────────────────────────
 export default function PromoVideosDialog({ open, onClose }: Props) {
   const [videos, setVideos] = useState<PromoVideo[]>([]);
@@ -286,6 +393,7 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [visionIndexing, setVisionIndexing] = useState(false);
+  const [viewIndexId, setViewIndexId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
@@ -548,6 +656,7 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
               onDelete={handleDelete}
               onSave={handleSave}
               onReindex={handleReindex}
+              onView={(vid) => setViewIndexId(vid.id)}
             />
           ))}
         </div>
@@ -595,6 +704,7 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
           )}
         </div>
       </DialogContent>
+      {viewIndexId && <IndexViewer videoId={viewIndexId} onClose={() => setViewIndexId(null)} />}
     </Dialog>
   );
 }

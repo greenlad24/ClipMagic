@@ -84,6 +84,7 @@ export const getWaveform = endpoint("getWaveform");
 export const indexPromoVideo = endpoint("indexPromoVideo");
 export const importPromoIndex = endpoint("importPromoIndex");
 export const reindexAllPromos = endpoint("reindexAllPromos");
+export const getPromoIndex = endpoint("getPromoIndex");
 export const pollBrollStatus = endpoint("pollBrollStatus");
 export const recaptureShot = endpoint("recaptureShot");
 export const runPipeline = endpoint("runPipeline");

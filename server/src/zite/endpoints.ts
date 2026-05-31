@@ -195,6 +195,31 @@ const getPromoVideos: Handler = async () => {
     });
   return { videos };
 };
+
+/** Return the full cached content index (segments + per-second captions) for
+ *  one promo video, so the UI can show exactly what the AI sees each second. */
+const getPromoIndex: Handler = async (input) => {
+  const v = await PromoVideos.findOne({ id: input.videoId ?? input.id });
+  if (!v) throw new ZiteError({ code: "NOT_FOUND", message: "Promo video not found" });
+  let index: any = null;
+  if (v.contentIndexJson) {
+    try {
+      index = JSON.parse(v.contentIndexJson as string);
+    } catch {
+      /* corrupt */
+    }
+  }
+  return {
+    id: v.id,
+    productName: v.productName,
+    videoUrl: v.videoUrl,
+    indexStatus: v.indexStatus,
+    mode: index?.mode ?? null,
+    mediaKind: index?.mediaKind ?? v.mediaKind ?? null,
+    perSecond: Array.isArray(index?.perSecond) ? index.perSecond : [],
+    segments: Array.isArray(index?.segments) ? index.segments : [],
+  };
+};
 // savePromoVideo runs the original endpoint (it derives product metadata via an
 // LLM, with a filename fallback) — wired through the bundle further below.
 const updatePromoVideo: Handler = async (input) => {
@@ -873,6 +898,7 @@ export const HANDLERS: Record<string, Handler> = {
   deleteMusicTrack,
   getServiceStatus,
   getPromoVideos,
+  getPromoIndex,
   savePromoVideo,
   updatePromoVideo,
   deletePromoVideo,
