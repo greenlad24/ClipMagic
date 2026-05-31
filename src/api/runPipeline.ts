@@ -50,6 +50,7 @@ type SemanticBeat = {
   isRequiredTacticalSlot?: boolean;
   tacticalPlacementReason?: string;
   rationale?: string;
+  brollPrompt?: string;
 };
 
 type ShotRec = {
@@ -296,13 +297,17 @@ For each beat, decide:
   beatType: one of "hook" | "pain" | "problem" | "proof" | "demo" | "objection" | "payoff" | "cta" | "transition"
   visualIntent: one of "talking_head" | "screencast" | "tactical_broll"
   showNarrator: boolean — should the narrator's face be visible during this beat?
-  overlayDelaySeconds: number — if an overlay is used, how many seconds to keep showing the narrator before cutting to the overlay. Default 1.0.
+  overlayDelaySeconds: number — ADAPTIVE: on important/personal/authority lines, keep the narrator visible ~1.0s before the overlay enters (grounded); during fast list/proof/demo runs, cut to the overlay almost immediately (0–0.3s) for pace.
   rationale: 1–2 first-person sentences explaining WHY you chose this visual for THESE EXACT WORDS and HOW it emphasizes the narrator's point.
+  brollPrompt: ONLY for visualIntent="tactical_broll" — an EXTENSIVE, detailed video-generation prompt (see the tactical_broll rules below).
 
-★ CORE PRINCIPLE — NARRATOR-FIRST, OVERLAYS ONLY WHEN THEY MATCH THE WORDS:
-  The narrator (talking_head) is the BACKBONE of this video. Keep the viewer on the narrator's face BY DEFAULT.
-  Only cut to an overlay (screencast/promo footage or a generated clip) when that visual DIRECTLY reinforces the exact thing the narrator is saying at that moment. If you cannot name what the overlay shows AND tie it to the words being spoken, STAY ON THE NARRATOR.
-  It is completely fine — often BETTER — for a video to be mostly narrator when the script is personal, opinion-driven, story-driven, or its topics aren't covered by the available footage. Do NOT pad the edit with loosely-related screencasts just to add motion: loosely-connected B-roll feels random and HURTS retention. Long narrator stretches are allowed when the narrator is making a personal/authority/emotional point.
+★ CORE PRINCIPLE — CONSTANT MOVEMENT (ADAPTIVE), BUT EVERY VISUAL MUST BE ACCURATE:
+  Keep the edit ALIVE: change the visual roughly EVERY 3–4 SECONDS so the viewer is re-hooked and never stares at a static talking head for long. The narrator is still the backbone you keep returning to — but plan frequent cutaways.
+  ADAPTIVE PACING (not a metronome): cut MORE often during list/proof/demo/high-energy sections (every ~2–3s), and HOLD LONGER on the narrator during emotional, personal, or authority lines where the face carries the message. Match the cutting rhythm to the energy of the words.
+  THE ONE UNBREAKABLE RULE: every cutaway must be ACCURATE to what the narrator is saying AND informed by understanding the WHOLE video. Only cut to an overlay (real screencast/promo footage or a generated situational clip) when you can name exactly what it shows and tie it to the words at that moment (or, for the hook, to the whole-video idea).
+  ACCURACY BEATS MOVEMENT: if no accurate visual exists for a 3–4s window — and it isn't worth generating a situational clip for — then HOLD on the narrator rather than cutting to something loosely-related or random. A disconnected overlay is WORSE than staying on the narrator. (A mostly-narrator video is fine when the script is personal/opinion/story-driven; even then, find accurate cutaways where you can.)
+  ORDER OF PREFERENCE for each cutaway: (1) real screencast/promo footage that matches → (2) a generated SITUATIONAL clip that depicts the concept being discussed → (3) hold on the narrator.
+  TONE: confident and premium — purposeful, well-motivated cuts, not frantic. Every cut should feel intentional.
 
 ★ THE HOOK IS THE EXCEPTION — EARN THE FIRST ~3 SECONDS:
   Retention is won or lost in the first 3 seconds, so the hook ALWAYS gets a deliberate visual pattern-interrupt:
@@ -316,7 +321,13 @@ For each beat, decide:
 VISUAL INTENT OPTIONS:
   • "talking_head" — the narrator on camera. This is the DEFAULT and may legitimately be the majority of the video. Use it whenever no overlay clearly matches the words. Set showNarrator=true, overlayDelaySeconds=0.
   • "screencast" — cut to real product/promo footage. The PREFERRED overlay type (real footage beats generated). Use ONLY when the narrator names or describes a specific product, tool, feature, screen, or workflow AND footage for it plausibly exists. Set productEntity to the product name and matchKeywords to search terms. Set showNarrator=true, overlayDelaySeconds=1.0.
-  • "tactical_broll" — a GENERATED AI clip. Use SPARINGLY, only for an idea that genuinely benefits from a visual that no real footage covers (an abstract concept, an emotion, a metaphor). The hook overlay may be one of these if no screencast fits. TARGET 0–1 in the body; NEVER more than 3 total in the whole video. Each one must still connect to the narration. Set showNarrator=true, overlayDelaySeconds=1.0, and mark the hook one with "isRequiredTacticalSlot": true.
+  • "tactical_broll" — a GENERATED AI clip. This is your main way to create accurate movement when the narration is CONCEPTUAL/SITUATIONAL and no real footage exists (e.g. "how AI is changing the job market" → a real person at a laptop scrolling job listings in a modern apartment). Use one whenever a concept genuinely benefits from a literal situational visual. BUDGET: aim for about 4–6 generated clips in a concept-heavy video (fewer if real footage covers most of the script; the hook one counts). Mark the hook one with "isRequiredTacticalSlot": true.
+    For EVERY tactical_broll beat you MUST write an EXTENSIVE "brollPrompt" (a detailed video-generation prompt, ~60–120 words) that:
+      - Depicts the LITERAL SITUATION the narrator is describing (show the scenario, not a metaphor), informed by the WHOLE video's topic.
+      - DOCUMENTARY-REALISM, PHOTOREAL look — like real candid filmed footage, natural true-to-life lighting and color (NOT stylized, NOT cartoon, NOT abstract).
+      - Features REAL PEOPLE authentically in the scenario (a person/people doing the thing being discussed), unless the line is purely about an object/place.
+      - Describes: subject & who they are, setting/location, the action happening, mood/emotion, time of day/lighting, camera framing & gentle motion, and that it is vertical 9:16.
+      - Contains NO on-screen text, NO captions, NO logos, NO brand names, and NO fake UI/app screens (these generate as garbled artifacts).
 
 ★ ALSO DECIDE THE OVERALL APPROACH (return as "editApproach"):
   mode: "narration_led" (mostly the narrator — the default for personal/opinion/story scripts) | "promo_led" (the script walks through products you have matching footage for) | "ai_led" (concept-heavy, leans on a few generated clips)
@@ -324,40 +335,43 @@ VISUAL INTENT OPTIONS:
 
 STRUCTURE RULES:
   • Beat 1 = talking_head, ~0.5–1.5s (narrator appears).
-  • Beat 2 = the hook overlay (screencast preferred, else tactical_broll), starting ~0.8–2.0s, tightly connected to the hook's words.
-  • After the hook, talking_head is the default — cut to overlays ONLY on genuine word-level matches.
+  • Beat 2 = the hook overlay (screencast preferred, else tactical_broll), starting ~0.8–2.0s, visualizing the WHOLE-VIDEO idea.
+  • Through the body, alternate accurate overlays with the narrator on an adaptive ~3–4s rhythm (faster on lists/proof, slower on personal lines).
+  • END ON THE NARRATOR: the final beat (the CTA / closing line) should be talking_head so the video lands on a human call-to-action.
+  • NARRATOR-RETURN on key beats: for longer overlays on hook / authority / payoff / CTA moments, plan to cut back to the narrator's face before the beat ends to re-anchor trust.
+  • NUMBERS, STATS & LISTS: do NOT force a cutaway just because a number or list item is spoken — those are emphasized in the subtitles. Only cut if there is genuinely accurate footage for the stat/item.
   • Cover the ENTIRE duration with no gaps; start/end align to transcript word timestamps.
   • Use as MANY or as FEW beats as the content honestly needs — do not manufacture cuts to look busy.
   • priority: 1 = most important cut, higher = less critical.
 
 Return ONLY valid JSON (no markdown fences):
 {
-  "editApproach": { "mode": "narration_led", "reasoning": "Personal story with little matching product footage, so we mostly stay on the narrator and only interrupt for the hook." },
+  "editApproach": { "mode": "ai_led", "reasoning": "Concept-heavy script about the job market with little matching product footage, so we use several situational generated clips plus narrator returns." },
   "beats": [
     {
-      "start": 0.0,
-      "end": 1.2,
-      "beatType": "hook",
-      "summary": "Direct-to-camera hook",
-      "productEntity": null,
-      "featureEntity": null,
-      "emotionalIntent": "curiosity",
-      "visualIntent": "talking_head",
-      "showNarrator": true,
-      "overlayDelaySeconds": 0,
-      "priority": 1,
-      "transcriptSnippet": "You won't believe what this tool can do",
-      "matchKeywords": [],
-      "isRequiredTacticalSlot": false,
-      "rationale": "Opening on her face for one beat establishes a real person before the pattern-interrupt — sincerity first."
+      "start": 0.0, "end": 1.2, "beatType": "hook", "summary": "Direct-to-camera hook",
+      "emotionalIntent": "curiosity", "visualIntent": "talking_head",
+      "showNarrator": true, "overlayDelaySeconds": 0, "priority": 1,
+      "transcriptSnippet": "AI is about to change everything about work",
+      "matchKeywords": [], "isRequiredTacticalSlot": false,
+      "rationale": "Open on his face for a beat to establish a real person before the thematic pattern-interrupt."
+    },
+    {
+      "start": 1.2, "end": 5.0, "beatType": "problem", "summary": "AI reshaping the job market",
+      "emotionalIntent": "tension", "visualIntent": "tactical_broll",
+      "showNarrator": true, "overlayDelaySeconds": 0.3, "priority": 1,
+      "transcriptSnippet": "millions of jobs are shifting", "matchKeywords": ["job market","AI","office"],
+      "isRequiredTacticalSlot": true,
+      "rationale": "Hook establishing shot for the whole video's idea — the changing job market — so the viewer instantly knows what this is about.",
+      "brollPrompt": "Documentary-realism, photoreal vertical 9:16 footage of a real person in their late 20s sitting at a small wooden desk in a sunlit modern apartment, scrolling job listings on a laptop with a slightly worried expression. Natural soft daylight from a window, true-to-life muted colors, shallow depth of field, gentle handheld push-in. Candid, authentic mood. No on-screen text, no logos, no app UI, no captions."
     }
   ],
-  "intensity_map": [{"second":0,"intensity":95},{"second":1,"intensity":70}]
+  "intensity_map": [{"second":0,"intensity":60},{"second":1,"intensity":45}]
 }
 
-Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(duration)}, assign a numeric value 0–100:
+Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(duration)}, assign a numeric value 0–100 (this drives a SUBTLE camera push on the narrator — keep it premium and restrained):
   0–14 = static/baseline | 15–39 = subtle zoom | 40–69 = moderate zoom | 70–89 = strong push zoom | 90–100 = snap zoom peak
-  Use 90–100 sparingly for true high-energy moments (opening hook, major reveals, CTA).`;
+  For this CONFIDENT/PREMIUM tone, keep most seconds in the 15–55 range (subtle/moderate). Reserve 70+ for the opening hook, a major reveal, or the CTA only. Avoid frequent snap zooms.`;
 
     let semanticBeats: SemanticBeat[] = [];
     let intensityMapRaw: Array<{ second: number; intensity: number }> = [];
@@ -394,6 +408,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
           isRequiredTacticalSlot: b.isRequiredTacticalSlot === true,
           tacticalPlacementReason: typeof b.tacticalPlacementReason === 'string' ? b.tacticalPlacementReason : undefined,
           rationale: typeof b.rationale === 'string' ? b.rationale : (typeof b.reason === 'string' ? b.reason : undefined),
+          brollPrompt: typeof b.brollPrompt === 'string' ? b.brollPrompt : (typeof b.broll_prompt === 'string' ? b.broll_prompt : undefined),
         }));
         intensityMapRaw = Array.isArray(parsed.intensity_map) ? parsed.intensity_map : [];
         console.log(`[runPipeline] ✅ Semantic beat planner returned ${semanticBeats.length} beats`);
@@ -509,8 +524,9 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const hasScreencastUrls = researchedUrls.some(r => r.use === 'screencast');
     let tacticalCount = semanticBeats.filter(b => b.visualIntent === 'tactical_broll').length;
 
-    // RULE 1: Cap tactical_broll (generated AI clips) at 3 (demote excess)
-    const MAX_GENERATED = 3;
+    // RULE 1: Cap tactical_broll (generated AI clips) at the moderate budget
+    // (~4–6 situational clips per video). Excess beyond this is demoted.
+    const MAX_GENERATED = 6;
     if (tacticalCount > MAX_GENERATED) {
       const sorted = semanticBeats
         .map((b, i) => ({ b, i }))
@@ -844,7 +860,8 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
             beatType: beat.beatType,
             emotionalIntent: beat.emotionalIntent ?? '',
             visualIntent: 'tactical_broll',
-            veo3Prompt: beat.summary,
+            veo3Prompt: beat.brollPrompt || beat.summary,
+            brollPrompt: beat.brollPrompt || '',
             matchKeywords: beat.matchKeywords,
             transcriptSnippet: beat.transcriptSnippet,
             priority: beat.priority,

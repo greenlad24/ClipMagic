@@ -62,59 +62,85 @@ const NARRATOR_BEATS = new Set(['hook', 'cta', 'objection', 'transition']);
 
 // ── Tactical B-Roll Prompt Builder ────────────────────────────────────────────
 
-const TACTICAL_PROMPT_SYSTEM = `You are a video director creating a TACTICAL B-roll clip for a short-form vertical ad.
-This B-roll is expensive and rare — it must earn its place in the edit.
+// Style constraints appended to every generated-clip prompt. Documentary
+// realism, photoreal, real people in the situation, no text/logos/UI.
+const BROLL_STYLE_SUFFIX =
+  'Documentary-realism, photoreal live-action look — like real candid filmed footage, NOT stylized, cartoon, or abstract. ' +
+  'Natural true-to-life lighting and color. Real people authentically in the scene where appropriate. ' +
+  'Vertical 9:16 framing, shallow depth of field, smooth subtle handheld camera motion. ' +
+  'NO on-screen text, NO captions, NO logos, NO brand names, NO app/UI screens.';
 
-STYLE REQUIREMENTS:
-- Literal and situational: show what the narrator is actually describing
-- If the line describes a person doing something, show a real human in that scenario
-- If the line describes a feeling/problem, show the realistic environment or action
-- Vertical 9:16 format, polished short-form ad look
-- Cohesive warm palette: walnut brown (#32251C), caramel (#9E9C9D), cream (#DEDEDE) tones
-- Smooth organic motion, professional cinematography
-- NO faces in extreme close-up, NO text overlays, NO logos, NO brand names
-- Use abstract/atmospheric visuals ONLY if the narration is genuinely abstract
-- Default to LITERAL interpretation — show the scenario, not a metaphor
+const TACTICAL_PROMPT_SYSTEM = `You are a video director writing an EXTENSIVE, detailed video-generation prompt for ONE situational B-roll clip in a short-form vertical video.
 
-OUTPUT: Return ONLY the Seedance prompt text (max 100 words). No explanation, no quotes.`.trim();
+The clip must LITERALLY depict the situation the narrator is describing (show the scenario, not a metaphor), informed by the overall video topic.
+
+WRITE A RICH PROMPT (~80–130 words) that specifies:
+- WHO: the subject(s) — real people authentically in the scenario (their look/age/role), unless the line is purely about an object/place.
+- WHERE: the setting/location, with concrete detail.
+- WHAT: the action happening, moment to moment.
+- MOOD: the emotion/tone the shot should convey.
+- LIGHT: time of day and lighting quality.
+- CAMERA: framing and gentle motion, vertical 9:16.
+
+STYLE (always): documentary realism, PHOTOREAL like real filmed footage — natural true-to-life lighting and color. NOT stylized, cartoon, or abstract.
+FORBIDDEN: on-screen text, captions, logos, brand names, and fake app/UI screens (they render as garbled artifacts).
+
+OUTPUT: Return ONLY the prompt text (one detailed paragraph). No explanation, no quotes.`.trim();
 
 /**
- * Build a rich, contextual tactical B-roll prompt from beat metadata.
+ * Build an extensive, situational tactical B-roll prompt.
+ *
+ * If the director already wrote a detailed `brollPrompt` (passed in as
+ * ctx.summary), use it directly — it was authored by the top-tier director
+ * model with full whole-video understanding — and only append the style/format
+ * constraints. Otherwise, expand the beat metadata into an extensive prompt.
  */
 export async function buildTacticalPrompt(
   client: OpenAI,
   ctx: TacticalBrollContext,
   tag: string,
 ): Promise<string> {
+  const seed = (ctx.summary ?? '').trim();
+
+  // Director already provided an extensive situational prompt — trust it.
+  if (seed.split(/\s+/).filter(Boolean).length >= 25) {
+    const alreadyStyled = /photoreal|documentary/i.test(seed);
+    const prompt = alreadyStyled ? seed : `${seed} ${BROLL_STYLE_SUFFIX}`;
+    console.log(`${tag} Tactical prompt (director-authored): "${prompt.slice(0, 120)}"`);
+    return prompt;
+  }
+
+  // Otherwise expand the beat metadata into an extensive situational prompt.
   const inputLines: string[] = [];
   inputLines.push(`Beat type: ${ctx.beatType}`);
-  inputLines.push(`Summary: "${ctx.summary}"`);
+  inputLines.push(`Concept to depict: "${ctx.summary}"`);
   if (ctx.transcriptSnippet) inputLines.push(`Narrator is saying: "${ctx.transcriptSnippet}"`);
   if (ctx.neighborContext) inputLines.push(`Surrounding transcript: "${ctx.neighborContext}"`);
   if (ctx.emotionalIntent) inputLines.push(`Emotional intent: ${ctx.emotionalIntent}`);
   if (ctx.matchKeywords?.length) inputLines.push(`Visual keywords: ${ctx.matchKeywords.join(', ')}`);
-  if (ctx.contextHint) inputLines.push(`Project context: ${ctx.contextHint}`);
-  inputLines.push(`\nCreate a LITERAL, SITUATIONAL B-roll prompt that shows exactly what the narrator describes.`);
+  if (ctx.contextHint) inputLines.push(`Overall video topic: ${ctx.contextHint}`);
+  inputLines.push(`\nWrite the extensive, literal, situational prompt now.`);
 
   try {
     const res = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4o', // research tier (Sonnet) — better situational writing than the fast tier
       messages: [
         { role: 'system', content: TACTICAL_PROMPT_SYSTEM },
         { role: 'user', content: inputLines.join('\n') },
       ],
-      max_tokens: 150,
+      max_tokens: 400,
     });
     const prompt = res.choices[0]?.message?.content?.trim();
     if (prompt) {
-      console.log(`${tag} Tactical prompt: "${prompt.slice(0, 120)}"`);
-      return prompt;
+      const styled = /photoreal|documentary/i.test(prompt) ? prompt : `${prompt} ${BROLL_STYLE_SUFFIX}`;
+      console.log(`${tag} Tactical prompt (expanded): "${styled.slice(0, 120)}"`);
+      return styled;
     }
   } catch (e: any) {
     console.warn(`${tag} Tactical prompt build failed: ${e?.message}`);
   }
   // Fallback: use summary directly with style cue
-  return `${ctx.summary}. Warm cinematic tones, realistic action, vertical 9:16 format.`;
+  return `${ctx.summary}. ${BROLL_STYLE_SUFFIX}`;
 }
 
 // ── Tactical B-Roll Guard ─────────────────────────────────────────────────────
@@ -133,6 +159,18 @@ export function evaluateTacticalBrollGuard(
   const featureEntity = labels.featureEntity ?? '';
   const matchKeywords: string[] = Array.isArray(labels.matchKeywords) ? labels.matchKeywords : [];
   const transcriptSnippet: string = labels.transcriptSnippet ?? '';
+
+  // Rule 0: The director's REQUIRED hook slot (or any beat it explicitly marked
+  // as a deliberate situational generated clip) bypasses the guard — the
+  // top-tier director already decided a generated visual belongs here.
+  if (labels.isRequiredTacticalSlot === true || labels.isRequiredTacticalBroll === true) {
+    console.log(`${tag} GUARD: required tactical slot — bypassing guard, generating as director planned`);
+    return {
+      allowed: true,
+      reason: 'Director-required hook/situational slot — generated clip kept as planned',
+      avoidedScreencastBecause: 'Director deliberately chose a generated situational visual here',
+    };
+  }
 
   // Rule 1: Narrator-priority beats should not be B-Roll
   if (NARRATOR_BEATS.has(beatType)) {

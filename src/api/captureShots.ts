@@ -192,22 +192,17 @@ export default createEndpoint({
                   return;
                 }
               }
-              // Fallback: Talking Head
-              await Shots.update({
-                id: shot.id,
-                record: {
-                  shotType: 'Talking Head',
-                  captureStatus: 'Done',
-                  uiLabelsJson: JSON.stringify({ ...existingLabels, convertedFrom: 'B-Roll', conversionReason: guard.reason }),
-                },
-              });
-              console.log(`${tag} ✅ Converted B-Roll → Talking Head`);
-              captured++;
-              return;
+              // No confident real-footage match. The director deliberately
+              // planned a visual here for the "constant movement" rhythm, so
+              // GENERATE a situational clip rather than downgrading to a static
+              // talking head (which would remove the planned movement).
+              console.log(`${tag} No confident screencast match — generating director-planned situational clip instead of holding on narrator`);
+              // (fall through to the generation path below)
+            } else {
+              console.log(`${tag} ✅ Tactical guard ALLOWED: ${guard.reason}`);
             }
 
-            // Guard passed — build tactical prompt
-            console.log(`${tag} ✅ Tactical guard ALLOWED: ${guard.reason}`);
+            // ── Generation path (guard allowed, OR rejected-but-no-screencast) ──
             const brollCtx = {
               beatType: existingLabels.beatType ?? 'demo',
               summary: existingLabels.veo3Prompt ?? shot.caption ?? 'Cinematic environment',
