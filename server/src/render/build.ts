@@ -21,13 +21,26 @@ const AUDIO_SR = 44100;
  * plus the expected total duration used to compute progress.
  */
 
-/** Escape a string for use inside an FFmpeg drawtext text='...' value. */
+/**
+ * Escape a string for use as an UNQUOTED drawtext text= value.
+ *
+ * We deliberately do NOT wrap the value in single quotes: when the text itself
+ * contains an escaped quote (e.g. "HERE'S"), a surrounding single-quoted value
+ * confuses FFmpeg's filter parser and bleeds into the next option (the
+ * notorious `enable='between(t' → "Missing ')'" error). Instead we backslash-
+ * escape every character that is special to either the filtergraph splitter
+ * (`:`, `\`, and the filter separators) or to drawtext's own expansion
+ * (`%`, `'`, `{`, `}`), so the value stands alone as a single bare token.
+ */
 function escapeDrawText(s: string): string {
   return s
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "\\'")
-    .replace(/:/g, "\\:")
-    .replace(/%/g, "\\%");
+    .replace(/\\/g, "") // drop stray backslashes (not meaningful in caption text)
+    .replace(/[{}]/g, "") // drawtext treats {} as expansion delimiters
+    .replace(/'/g, "’") // curly apostrophe: looks identical, avoids quote parsing
+    .replace(/%/g, "\\%") // drawtext strftime escape
+    .replace(/:/g, "\\:") // filtergraph option separator
+    .replace(/,/g, "\\,") // filtergraph filter separator (unquoted value)
+    .replace(/\r?\n/g, " ");
 }
 
 /** Escape a font path for use inside a filtergraph option value. */
@@ -236,12 +249,14 @@ function buildSubtitleDrawtext(
       const end = shift(word.end);
       if (end <= start) continue; // fully outside the trimmed window
       const outLabel = `sub${drawIndex}`;
+      // text and enable are left UNQUOTED (values are escaped / contain no
+      // spaces) so a quote inside the text can't break the enable expression.
       filters.push(
-        `[${currentLabel}]drawtext=fontfile='${fontFile}':text='${txt}':` +
+        `[${currentLabel}]drawtext=fontfile=${fontFile}:text=${txt}:` +
           `fontcolor=${color}:fontsize=${fontSize}:` +
           `x=(w-text_w)/2:y=${yExpr}:` +
           `box=1:boxcolor=black@0.5:boxborderw=8:` +
-          `enable='between(t,${start.toFixed(3)},${end.toFixed(3)})'[${outLabel}]`
+          `enable=between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})[${outLabel}]`
       );
       currentLabel = outLabel;
       drawIndex++;
