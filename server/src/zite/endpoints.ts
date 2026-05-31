@@ -149,6 +149,10 @@ const getServiceStatus: Handler = async () => {
     renderUrl: "local (built-in FFmpeg)",
     veo3Url: process.env.ZITE_KINOVI_API_KEY ? "configured" : undefined,
     remotionUrl: undefined,
+    // AI pipeline configuration (so the UI / curl can confirm keys are live).
+    transcriptionConfigured: !!process.env.GROQ_API_KEY,
+    directorConfigured: !!process.env.ANTHROPIC_API_KEY,
+    kinoviConfigured: !!process.env.ZITE_KINOVI_API_KEY,
   };
 };
 

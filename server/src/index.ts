@@ -92,5 +92,13 @@ app.use(
 app.listen(config.port, config.host, () => {
   console.log(`[server] listening on http://${config.host}:${config.port}`);
   console.log(`[server] data dir: ${config.dataDir}`);
+  // Surface which AI providers are configured so a missing/unpropagated key is
+  // obvious in the logs at boot (values are never printed — only presence).
+  const yn = (v: unknown) => (v ? "yes" : "NO");
+  console.log(
+    `[server] AI config — transcription(GROQ_API_KEY)=${yn(process.env.GROQ_API_KEY)} ` +
+      `director(ANTHROPIC_API_KEY)=${yn(process.env.ANTHROPIC_API_KEY)} ` +
+      `kinovi(ZITE_KINOVI_API_KEY)=${yn(process.env.ZITE_KINOVI_API_KEY)}`
+  );
   startWorker();
 });
