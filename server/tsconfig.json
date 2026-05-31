@@ -15,5 +15,6 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "src/ai", "scripts"]
+  "comment": "pipeline-entry.ts imports the original app at ../../../src and is built only by esbuild (build:pipeline); the other src/ai/*.ts are tsc-safe and compile to dist/ai for the native vision indexer.",
+  "exclude": ["node_modules", "dist", "src/ai/pipeline-entry.ts", "scripts"]
 }

@@ -327,16 +327,26 @@ VISUAL INTENT RULES — SCREENCAST-DOMINANT WITH REQUIRED EARLY TACTICAL B-ROLL:
     Set productEntity to the product name and matchKeywords to search terms.
     Set showNarrator=true and overlayDelaySeconds=1.0 to keep the narrator visible briefly before the screencast appears.
 
-  • "tactical_broll" — EXACTLY 1 required per video (2 max only if strongly justified).
-    PLACEMENT: MUST be the 2nd beat, starting around 0.8–2.0 seconds. This is NON-NEGOTIABLE.
-    PURPOSE: early pattern interrupt, emotional hook, visual punch.
+  • "tactical_broll" — GENERATED AI video clips. TARGET 1 per video; you MAY use up to 3,
+    but only when the script needs visuals your real promo footage cannot cover.
+    PREFER real promo footage (screencast) whenever a relevant promo video exists for what the
+    narrator is describing — generated clips are the fallback for moments with no good promo match
+    (abstract/emotional beats, concepts, or products not in the promo library).
+    DECISION (promo-led vs AI-generation-led): if most of the script's products/features are
+    covered by the available promo footage, this is a PROMO-LED video — use mostly screencast and
+    just 1 generated clip for the opening pattern-interrupt. If the script is abstract or its
+    subjects are largely absent from the promo library, it is AI-GENERATION-LED — you may use 2–3
+    generated clips. Never exceed 3.
+    PLACEMENT: at least 1 should be the 2nd beat, starting around 0.8–2.0 seconds (early pattern
+    interrupt, emotional hook, visual punch).
     GOOD CANDIDATES:
       - Pain point / frustration ("you're wasting hours on…")
       - Emotional contrast ("imagine if you could just…")
       - Hook / attention grab after narrator
       - Setup moment ("the problem is…")
+      - Any beat with no matching promo footage
     Set showNarrator=true and overlayDelaySeconds=1.0.
-    Mark with "isRequiredTacticalSlot": true.
+    Mark the opening one with "isRequiredTacticalSlot": true.
 
   PACING GUARD — ENFORCED STRICTLY:
     After the first 6–8 seconds of the video, check EVERY talking_head beat:
@@ -349,8 +359,9 @@ STRICT RULES:
   • The SECOND beat MUST be tactical_broll starting around 0.8–2.0s.
   • After that, SCREENCAST should be the dominant visual (50–70% of remaining duration).
   • talking_head after 6–8s must be ≤ 3–4 seconds each. Break up longer sections.
-  • Every video MUST have at least 1 tactical_broll beat.
-  • Do NOT have more than 2 tactical_broll beats.
+  • Every video MUST have at least 1 tactical_broll (generated) beat.
+  • TARGET 1 tactical_broll beat; up to 3 allowed only when promo footage can't cover the script.
+  • Do NOT have more than 3 tactical_broll beats.
   • SCREENCAST is the default. If a product or feature is mentioned, use screencast.
   • Do NOT use tactical_broll when a screencast would work.
   • For non-talking-head beats, prefer overlayDelaySeconds=1.0.
@@ -535,8 +546,9 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const hasScreencastUrls = researchedUrls.some(r => r.use === 'screencast');
     let tacticalCount = semanticBeats.filter(b => b.visualIntent === 'tactical_broll').length;
 
-    // RULE 1: Cap tactical_broll at 2 (demote excess)
-    if (tacticalCount > 2) {
+    // RULE 1: Cap tactical_broll (generated AI clips) at 3 (demote excess)
+    const MAX_GENERATED = 3;
+    if (tacticalCount > MAX_GENERATED) {
       const sorted = semanticBeats
         .map((b, i) => ({ b, i }))
         .filter(x => x.b.visualIntent === 'tactical_broll')
@@ -548,7 +560,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
         });
 
       for (const { b } of sorted) {
-        if (tacticalCount <= 2) break;
+        if (tacticalCount <= MAX_GENERATED) break;
         if (hasScreencastUrls) {
           b.visualIntent = 'screencast';
           b.overlayDelaySeconds = 1.0;

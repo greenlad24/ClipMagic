@@ -118,6 +118,72 @@ export async function claudeChatJSON(opts: {
   return extractJson(raw);
 }
 
+/**
+ * Vision JSON completion: send a set of base64 JPEG frames + a prompt to Claude
+ * and get JSON back. Used by indexPromoVideo to actually "watch" a promo video
+ * (1 frame/sec) and describe what's on screen each second. Runs once per video
+ * at index time; the result is cached in the DB.
+ *
+ * Uses the research tier (Sonnet) by default — strong vision at lower cost than
+ * Opus for this descriptive task; override with CLAUDE_VISION_MODEL.
+ */
+export async function claudeVisionJSON(opts: {
+  system: string;
+  userText: string;
+  /** Base64-encoded JPEG frames, in chronological order. */
+  frames: string[];
+  model?: string;
+}): Promise<string> {
+  if (!aiConfig.anthropicApiKey) {
+    throw new Error("ANTHROPIC_API_KEY is not set. Add it to enable promo-video vision indexing.");
+  }
+  const model = opts.model || process.env.CLAUDE_VISION_MODEL || aiConfig.models.research;
+
+  // Build a single user turn: all frames (each labeled), then the instruction.
+  const content: any[] = [];
+  opts.frames.forEach((b64, i) => {
+    content.push({ type: "text", text: `Frame at ${i}s:` });
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: b64 },
+    });
+  });
+  content.push({
+    type: "text",
+    text:
+      opts.userText +
+      "\n\nRespond with ONLY the raw JSON object. No markdown, no code fences, no commentary.",
+  });
+
+  const body = {
+    model,
+    max_tokens: aiConfig.maxTokens,
+    system: opts.system
+      ? [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }]
+      : undefined,
+    messages: [{ role: "user", content }],
+  };
+
+  const res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": aiConfig.anthropicApiKey,
+      "anthropic-version": aiConfig.anthropicVersion,
+    },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json()) as AnthropicResponse;
+  if (!res.ok) {
+    throw new Error(`Claude vision error (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
+  }
+  const text = (json.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("");
+  return extractJson(text);
+}
+
 /** Pull the JSON payload out of a model response, tolerating fences/prose. */
 export function extractJson(text: string): string {
   let t = text.trim();

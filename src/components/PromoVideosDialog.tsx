@@ -8,6 +8,7 @@ import {
   updatePromoVideo,
   indexPromoVideo,
   importPromoIndex,
+  reindexAllPromos,
 } from 'zite-endpoints-sdk';
 import { GetPromoVideosOutputType } from 'zite-endpoints-sdk';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -284,9 +285,30 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   const [pendingKeywords, setPendingKeywords] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [visionIndexing, setVisionIndexing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
+
+  // Vision-(re)index the whole library: extract 1 frame/sec from each promo and
+  // have the AI describe what's on screen each second (cached per video, reused
+  // on every render). Use after importing/uploading to upgrade old indexes.
+  const handleVisionIndexAll = async () => {
+    if (visionIndexing) return;
+    setVisionIndexing(true);
+    try {
+      const res = await reindexAllPromos({ force: true });
+      toast.success(
+        `Vision-indexed ${res.indexed}/${res.total} promo videos` +
+          (res.failed ? ` (${res.failed} fell back)` : '')
+      );
+      await reload();
+    } catch (e: any) {
+      toast.error('Vision indexing failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
+    } finally {
+      setVisionIndexing(false);
+    }
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -479,6 +501,17 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
               >
                 {importing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
                 {importing ? 'Importing…' : 'Import index'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                disabled={visionIndexing}
+                onClick={handleVisionIndexAll}
+                title="Watch every promo video (1 frame/sec) and index what's on screen each second. Runs once; cached and reused by the AI director on every render."
+              >
+                {visionIndexing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
+                {visionIndexing ? 'Indexing…' : 'Vision-index all'}
               </Button>
             </div>
           </DialogTitle>

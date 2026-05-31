@@ -507,7 +507,7 @@ async function loadPipeline() {
  * Kinovi for B-roll, but that key is checked inside the bundled logic so a
  * project with only screencast/talking-head shots still works without it.
  */
-async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot" | "indexPromoVideo", input: unknown, userId: string) {
+async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot", input: unknown, userId: string) {
   if (!process.env.GROQ_API_KEY) {
     throw new ZiteError({
       code: "BAD_REQUEST",
@@ -535,7 +535,157 @@ async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot"
 const runPipeline: Handler = (input, userId) => runBundled("runPipeline", input, userId);
 const captureShots: Handler = (input, userId) => runBundled("captureShots", input, userId);
 const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
-const indexPromoVideo: Handler = (input, userId) => runBundled("indexPromoVideo", input, userId);
+
+/**
+ * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
+ * and ask Claude vision what's actually on screen each second, then cache the
+ * result on the video's contentIndexJson. Runs once per video (index/reindex),
+ * never during a render — the director/retrieval reads the cached index.
+ *
+ * Falls back to coarse time-bucket segments if frame extraction or vision fails
+ * (e.g. no ANTHROPIC key, unreachable video), so indexing never hard-blocks.
+ */
+const indexPromoVideo: Handler = async (input) => {
+  const videoId: string = input.videoId ?? input.id;
+  const video = await PromoVideos.findOne({ id: videoId });
+  if (!video) throw new ZiteError({ code: "NOT_FOUND", message: "Promo video not found" });
+
+  const productName = (video.productName as string) || "Unknown Product";
+  const videoRef = (video.videoUrl as string) || "";
+  if (!videoRef) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Promo video has no videoUrl to analyze." });
+  }
+
+  await PromoVideos.update({ id: videoId, record: { indexStatus: "Indexing" } });
+
+  // Lazy import so tsc/runtime only load the vision modules when indexing runs.
+  try {
+    const { buildVisionIndex } = await import("../ai/visionIndex.js");
+    const index = await buildVisionIndex({
+      videoRef,
+      productName,
+      keywords: video.keywords as string | undefined,
+      description: video.description as string | undefined,
+    });
+    const enrichedKw =
+      index.totalKeywords.length > 0 ? index.totalKeywords.join(", ") : (video.keywords as string);
+    await PromoVideos.update({
+      id: videoId,
+      record: {
+        contentIndexJson: JSON.stringify(index),
+        indexStatus: "Indexed",
+        mediaKind: index.mediaKind,
+        keywords: enrichedKw,
+      },
+    });
+    console.log(
+      `[indexPromoVideo:${videoId}] ✅ vision-indexed "${productName}" — ` +
+        `${index.perSecond.length}s, ${index.segments.length} segments, mediaKind=${index.mediaKind}`
+    );
+    return {
+      success: true,
+      mode: "vision",
+      segmentCount: index.segments.length,
+      seconds: index.perSecond.length,
+      mediaKind: index.mediaKind,
+      bestFeatureMoments: index.bestFeatureMoments.length,
+      bestProofMoments: index.bestProofMoments.length,
+      bestHeroMoments: index.bestHeroMoments.length,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[indexPromoVideo:${videoId}] vision indexing failed, using fallback: ${msg}`);
+    // Coarse fallback: still give the retrieval usable segments.
+    const dur = (video.durationSeconds as number) || input.durationEstimate || 30;
+    const buckets = Math.max(3, Math.min(8, Math.round(dur / 5)));
+    const bucketDur = dur / buckets;
+    const kw = (video.keywords as string | undefined)?.split(",").map((k) => k.trim()).filter(Boolean) || [productName];
+    const segments = Array.from({ length: buckets }, (_, i) => ({
+      start: parseFloat((i * bucketDur).toFixed(2)),
+      end: parseFloat(((i + 1) * bucketDur).toFixed(2)),
+      summary: i === 0 ? `Opening — ${productName}` : `${productName} segment ${i + 1}`,
+      featureLabel: productName,
+      keywords: kw,
+      visualType: i === 0 ? "landing_page" : "feature_demo",
+      heroScore: i === 0 ? 70 : 40,
+      proofScore: 40,
+      embeddingText: `${productName} ${(video.description as string) || ""} ${kw.join(" ")}`.trim(),
+      confidence: 0.3,
+    }));
+    await PromoVideos.update({
+      id: videoId,
+      record: {
+        contentIndexJson: JSON.stringify({
+          version: 3,
+          indexedAt: new Date().toISOString(),
+          mode: "fallback",
+          productName,
+          mediaKind: "mixed",
+          perSecond: [],
+          segments,
+          bestFeatureMoments: [],
+          bestProofMoments: [],
+          bestHeroMoments: [],
+          totalKeywords: kw,
+        }),
+        indexStatus: "Indexed",
+      },
+    });
+    return { success: true, mode: "fallback", segmentCount: segments.length, seconds: 0, mediaKind: "mixed" };
+  }
+};
+
+/**
+ * Bulk vision-(re)index the whole promo library. Use this to upgrade videos that
+ * were imported/indexed with the old guessed index to the new frame-grounded
+ * vision index. Processes sequentially (one ffmpeg + one vision call at a time)
+ * to keep memory/cost bounded. By default only indexes videos that aren't
+ * already vision-indexed; pass { force: true } to redo all.
+ */
+const reindexAllPromos: Handler = async (input, userId) => {
+  const { records } = await PromoVideos.findAll({ limit: 1000 });
+  const force = input?.force === true;
+  let indexed = 0;
+  let skipped = 0;
+  let failed = 0;
+  const results: Array<{ id: string; productName: string; status: string; mediaKind?: string }> = [];
+
+  for (const v of records) {
+    let alreadyVision = false;
+    if (!force && v.contentIndexJson) {
+      try {
+        alreadyVision = JSON.parse(v.contentIndexJson as string)?.mode === "vision";
+      } catch {
+        /* treat as not-vision */
+      }
+    }
+    if (alreadyVision) {
+      skipped++;
+      results.push({ id: v.id, productName: v.productName as string, status: "skipped (already vision)" });
+      continue;
+    }
+    try {
+      const r = (await indexPromoVideo({ videoId: v.id }, userId)) as { mode?: string; mediaKind?: string };
+      if (r?.mode === "vision") indexed++;
+      else failed++; // fell back
+      results.push({
+        id: v.id,
+        productName: v.productName as string,
+        status: r?.mode === "vision" ? "vision-indexed" : "fallback",
+        mediaKind: r?.mediaKind,
+      });
+    } catch (e) {
+      failed++;
+      results.push({
+        id: v.id,
+        productName: v.productName as string,
+        status: "error: " + (e instanceof Error ? e.message.slice(0, 80) : String(e)),
+      });
+    }
+  }
+
+  return { success: true, total: records.length, indexed, skipped, failed, results };
+};
 
 /**
  * Save a promo video to the library.
@@ -715,6 +865,7 @@ export const HANDLERS: Record<string, Handler> = {
   updatePromoVideo,
   deletePromoVideo,
   importPromoIndex,
+  reindexAllPromos,
   getDownloadUrl,
   // render
   submitRendiJob,
