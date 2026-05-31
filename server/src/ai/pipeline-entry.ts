@@ -22,6 +22,8 @@ import captureShotsEndpoint from "../../../src/api/captureShots";
 import recaptureShotEndpoint from "../../../src/api/recaptureShot";
 // @ts-ignore
 import indexPromoVideoEndpoint from "../../../src/api/indexPromoVideo";
+// @ts-ignore
+import savePromoVideoEndpoint from "../../../src/api/savePromoVideo";
 
 export interface PipelineContext {
   user: { id: string; email: string };
@@ -34,3 +36,4 @@ export const runPipeline = (input: unknown, ctx: PipelineContext) => run(runPipe
 export const captureShots = (input: unknown, ctx: PipelineContext) => run(captureShotsEndpoint, input, ctx);
 export const recaptureShot = (input: unknown, ctx: PipelineContext) => run(recaptureShotEndpoint, input, ctx);
 export const indexPromoVideo = (input: unknown, ctx: PipelineContext) => run(indexPromoVideoEndpoint, input, ctx);
+export const savePromoVideo = (input: unknown, ctx: PipelineContext) => run(savePromoVideoEndpoint, input, ctx);

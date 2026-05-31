@@ -152,21 +152,44 @@ const getServiceStatus: Handler = async () => {
   };
 };
 
-// ── Promo videos ─────────────────────────────────────────────────────────────
-const getPromoVideos: Handler = async (_input, userId) => {
-  const { records } = await PromoVideos.findAll({ filters: { user: userId }, limit: 200 });
-  return { promoVideos: records.sort(sortByCreatedDesc) };
+// ── Promo videos (library is global, not per-user — matches the original) ────
+const getPromoVideos: Handler = async () => {
+  const { records } = await PromoVideos.findAll({ limit: 200 });
+  const videos = records
+    .slice()
+    .sort(sortByCreatedDesc)
+    .map((r) => {
+      let segmentCount: number | undefined;
+      if (r.contentIndexJson) {
+        try {
+          const idx = JSON.parse(r.contentIndexJson as string);
+          segmentCount = Array.isArray(idx.segments) ? idx.segments.length : undefined;
+        } catch {
+          /* ignore */
+        }
+      }
+      return {
+        id: r.id,
+        productName: r.productName,
+        keywords: r.keywords,
+        description: r.description,
+        videoUrl: r.videoUrl,
+        addedAt: r.addedAt ?? r.createdAt,
+        indexStatus: r.indexStatus,
+        segmentCount,
+      };
+    });
+  return { videos };
 };
-const savePromoVideo: Handler = async (input, userId) => {
-  const rec = await PromoVideos.create({ record: { ...input, user: userId } });
-  return { id: rec.id };
-};
+// savePromoVideo runs the original endpoint (it derives product metadata via an
+// LLM, with a filename fallback) — wired through the bundle further below.
 const updatePromoVideo: Handler = async (input) => {
-  await PromoVideos.update({ id: input.id, record: input.record ?? input });
+  const { id, ...rest } = input;
+  await PromoVideos.update({ id, record: input.record ?? rest });
   return { success: true };
 };
 const deletePromoVideo: Handler = async (input) => {
-  await PromoVideos.delete({ id: input.id });
+  await PromoVideos.delete({ id: input.id ?? input.videoId });
   return { success: true };
 };
 
@@ -347,6 +370,7 @@ let pipelineMod: {
   captureShots: PipelineFn;
   recaptureShot: PipelineFn;
   indexPromoVideo: PipelineFn;
+  savePromoVideo: PipelineFn;
 } | null = null;
 async function loadPipeline() {
   if (pipelineMod) return pipelineMod;
@@ -390,6 +414,25 @@ const runPipeline: Handler = (input, userId) => runBundled("runPipeline", input,
 const captureShots: Handler = (input, userId) => runBundled("captureShots", input, userId);
 const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
 const indexPromoVideo: Handler = (input, userId) => runBundled("indexPromoVideo", input, userId);
+
+/**
+ * savePromoVideo runs the original endpoint, which derives product metadata via
+ * an LLM but falls back to the filename if the call fails — so it must work even
+ * with no ANTHROPIC_API_KEY set. We therefore load the bundle directly here
+ * (no hard key gate) and let the original logic degrade gracefully.
+ */
+const savePromoVideo: Handler = async (input, userId) => {
+  let mod;
+  try {
+    mod = await loadPipeline();
+  } catch {
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: "AI pipeline bundle not found. Run the server build (npm run build) to generate it.",
+    });
+  }
+  return mod.savePromoVideo(input, { user: { id: userId, email: "you@clipmagic.local" } });
+};
 
 // ── Kinovi B-roll generation (native port of src/api/generateShot.ts) ────────
 const kinoviBase = () => process.env.ZITE_KINOVI_BASE_URL || "https://api.kinovi.ai";

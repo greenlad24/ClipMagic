@@ -10,22 +10,52 @@
 
 const BASE = ""; // same origin as the served app
 
+// Verbose API logging — every endpoint call, its timing, result and errors are
+// printed to the browser console with a [ClipMagic] tag so they're easy to copy
+// out for debugging. Toggle off by setting localStorage.clipmagicDebug = "0".
+function debugOn(): boolean {
+  try {
+    return localStorage.getItem("clipmagicDebug") !== "0";
+  } catch {
+    return true;
+  }
+}
+
+let callSeq = 0;
+
 async function callFn<T = any>(name: string, input: unknown): Promise<T> {
-  const res = await fetch(`${BASE}/api/fn/${name}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input ?? {}),
-  });
+  const id = ++callSeq;
+  const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+  if (debugOn()) {
+    console.log(`%c[ClipMagic] → #${id} ${name}`, "color:#60a5fa;font-weight:bold", input ?? {});
+  }
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/fn/${name}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input ?? {}),
+    });
+  } catch (networkErr) {
+    console.error(`[ClipMagic] ✗ #${id} ${name} — network error`, networkErr);
+    throw new Error(`${name}: network error (is the server reachable?)`);
+  }
+  const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - t0);
   const text = await res.text();
   let json: any;
   try {
     json = text ? JSON.parse(text) : {};
   } catch {
+    console.error(`[ClipMagic] ✗ #${id} ${name} (${ms}ms) — non-JSON response:`, text.slice(0, 500));
     throw new Error(`${name}: invalid response: ${text.slice(0, 200)}`);
   }
   if (!res.ok) {
     const msg = json?.error?.message || json?.error || json?.message || `${name} failed (${res.status})`;
+    console.error(`[ClipMagic] ✗ #${id} ${name} (${ms}ms) HTTP ${res.status}:`, msg, json);
     throw new Error(msg);
+  }
+  if (debugOn()) {
+    console.log(`%c[ClipMagic] ✓ #${id} ${name} (${ms}ms)`, "color:#34d399;font-weight:bold", json);
   }
   return json as T;
 }
