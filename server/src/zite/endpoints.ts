@@ -68,7 +68,9 @@ const updateProjectSettings: Handler = async (input) => {
 };
 
 const completeProject: Handler = async (input) => {
-  await Projects.update({ id: input.projectId, record: { status: "Complete" } });
+  const record: Record<string, unknown> = { status: "Complete" };
+  if (input.outputUrl) record.outputUrl = input.outputUrl;
+  await Projects.update({ id: input.projectId, record });
   return { success: true };
 };
 
@@ -112,9 +114,12 @@ const getMusicTracks: Handler = async (_input, userId) => {
   const tracks = records.sort(sortByCreatedDesc).map((t) => ({
     id: t.id,
     trackName: t.trackName,
-    audioUrl: t.audioUrl,
     bpm: t.bpm,
+    key: t.key,
     durationSeconds: t.durationSeconds,
+    mood: t.mood ?? [],
+    analysisStatus: t.analysisStatus ?? "Ready",
+    audioUrl: t.audioUrl,
   }));
   return { tracks };
 };
@@ -125,7 +130,12 @@ const saveMusicTrack: Handler = async (input, userId) => {
       trackName: input.trackName ?? input.name ?? "Untitled",
       audioUrl: input.audioUrl,
       bpm: input.bpm,
+      key: input.key,
+      mood: input.mood,
       durationSeconds: input.durationSeconds,
+      // The library/home dropdown only shows tracks with analysisStatus 'Ready'.
+      // We have no separate analysis step, so a saved track is ready immediately.
+      analysisStatus: "Ready",
       user: userId,
     },
   });
@@ -188,8 +198,12 @@ const getPromoVideos: Handler = async () => {
 // savePromoVideo runs the original endpoint (it derives product metadata via an
 // LLM, with a filename fallback) — wired through the bundle further below.
 const updatePromoVideo: Handler = async (input) => {
-  const { id, ...rest } = input;
-  await PromoVideos.update({ id, record: input.record ?? rest });
+  const { id, videoId, record, ...rest } = input;
+  const targetId = id ?? videoId;
+  if (!targetId) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "updatePromoVideo requires an id/videoId." });
+  }
+  await PromoVideos.update({ id: targetId, record: record ?? rest });
   return { success: true };
 };
 const deletePromoVideo: Handler = async (input) => {
@@ -466,6 +480,7 @@ let pipelineMod: {
   recaptureShot: PipelineFn;
   indexPromoVideo: PipelineFn;
   savePromoVideo: PipelineFn;
+  getWaveform: PipelineFn;
 } | null = null;
 async function loadPipeline() {
   if (pipelineMod) return pipelineMod;
@@ -570,6 +585,38 @@ const savePromoVideo: Handler = async (input, userId) => {
   }
 
   return { videoId: rec.id, productName: rawName, indexStatus: "Not Indexed" };
+};
+
+/**
+ * Timeline waveform/beat-grid for a music track. The original endpoint
+ * synthesizes peaks from the track's bpm/duration (no AI, no audio decode), so
+ * we run it via the bundle with no key gate. If the bundle is unavailable, fall
+ * back to a simple synthesized waveform so the timeline still renders.
+ */
+const getWaveform: Handler = async (input, userId) => {
+  try {
+    const mod = await loadPipeline();
+    return await mod.getWaveform(input, { user: { id: userId, email: "you@clipmagic.local" } });
+  } catch {
+    const track = await MusicTracks.findOne({ id: input.trackId });
+    const bpm = (track?.bpm as number) || 124;
+    const duration = (track?.durationSeconds as number) || 60;
+    const n = Math.max(60, Math.round(duration * 8));
+    const peaks = Array.from({ length: n }, (_, i) =>
+      Math.max(0.05, Math.min(1, 0.5 + 0.4 * Math.sin(i / 6) * Math.sin(i / 23)))
+    );
+    const beatDur = 60 / bpm;
+    const beatGrid: number[] = [];
+    for (let t = 0; t <= duration + beatDur; t += beatDur) beatGrid.push(parseFloat(t.toFixed(3)));
+    return {
+      peaks,
+      bpm,
+      duration,
+      beatGrid,
+      downbeats: beatGrid.filter((_, i) => i % 4 === 0),
+      sectionMarkers: {},
+    };
+  }
 };
 
 // ── Kinovi B-roll generation (native port of src/api/generateShot.ts) ────────
@@ -683,7 +730,7 @@ export const HANDLERS: Record<string, Handler> = {
   recaptureShot,
   indexPromoVideo,
   validateAssets: async () => ({ ok: true, errors: [] }),
-  getWaveform: async () => ({ peaks: [], duration: 0 }),
+  getWaveform,
 };
 
 void config;
