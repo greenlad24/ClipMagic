@@ -5,6 +5,7 @@ import ProcessingPage from './pages/ProcessingPage';
 import PreviewPage from './pages/PreviewPage';
 import SetupPage from './pages/SetupPage';
 import TimelineEditorPage from './pages/TimelineEditorPage';
+import StoragePage from './pages/StoragePage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="/project/:id/preview" element={<PreviewRedirect />} />
         <Route path="/project/:id/timeline" element={<TimelineEditorPage />} />
         <Route path="/setup" element={<SetupPage />} />
+        <Route path="/storage" element={<StoragePage />} />
       </Routes>
       <Toaster theme="dark" />
     </BrowserRouter>

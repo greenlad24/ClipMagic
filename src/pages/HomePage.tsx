@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Library, Settings, Trash2, CheckSquare, Square, X, Video } from 'lucide-react';
+import { Library, Settings, Trash2, CheckSquare, Square, X, Video, HardDrive } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
@@ -112,13 +112,22 @@ export default function HomePage() {
         <div className="text-center mb-10 relative">
           <h1 className="text-3xl font-bold text-foreground mb-2">Turn your narration into a Short</h1>
           <p className="text-muted-foreground">Drop a vertical video (9:16 · 15–90s). The AI locks it to the formula — beat-synced cuts, screencasts, captions.</p>
-          <Link
-            to="/setup"
-            className="absolute top-0 right-0 inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            Setup
-          </Link>
+          <div className="absolute top-0 right-0 flex items-center gap-4">
+            <Link
+              to="/storage"
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <HardDrive className="w-3.5 h-3.5" />
+              Files
+            </Link>
+            <Link
+              to="/setup"
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Settings className="w-3.5 h-3.5" />
+              Setup
+            </Link>
+          </div>
         </div>
 
         <UploadZone
