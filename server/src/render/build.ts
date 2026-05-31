@@ -2,6 +2,9 @@ import { config } from "../config.js";
 import type { RenderManifest, Scene, SubtitleEvent } from "./manifest.js";
 import { DEFAULT_SUBTITLE_STYLE } from "./manifest.js";
 import { resolveInput } from "./resolve.js";
+import { probe } from "./ffmpeg.js";
+
+const AUDIO_SR = 44100;
 
 /**
  * Build a concrete `ffmpeg` argv from a RenderManifest, resolving every input
@@ -51,6 +54,10 @@ export async function buildArgsFromManifest(
   const inputPaths: string[] = [];
   const narrationPath = await resolveInput(m.narration.videoUrl);
   inputPaths.push(narrationPath);
+  // Narration may or may not carry an audio stream; probe so we can either use
+  // it or synthesize silence (a missing 0:a would otherwise break the mapping).
+  const narrationInfo = await probe(narrationPath);
+  const narrationHasAudio = narrationInfo.hasAudio;
 
   const overlays: { idx: number; scene: Scene; isImg: boolean }[] = [];
   for (const scene of m.scenes) {
@@ -106,16 +113,36 @@ export async function buildArgsFromManifest(
   filters.push(...sub.filters);
   lastVideo = sub.finalLabel;
 
-  // ── Audio: narration + optional music ─────────────────────────────────────
-  let audioLabel = "0:a";
+  // ── Audio: narration (or generated silence) + optional music ───────────────
+  // Always normalize to a single labeled output [aout] so the -map is uniform
+  // regardless of whether narration has audio or music is present. Mapping a
+  // bare stream specifier as a filter label (e.g. "[0:a]") is what previously
+  // broke renders that had no music.
+  if (narrationHasAudio) {
+    filters.push(
+      `[0:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo[narr_a]`
+    );
+  } else {
+    // Synthesize silence for the full duration so the output always has audio.
+    filters.push(
+      `anullsrc=channel_layout=stereo:sample_rate=${AUDIO_SR},` +
+        `atrim=0:${m.durationSeconds.toFixed(3)},asetpts=N/SR/TB[narr_a]`
+    );
+  }
+
   if (musicIdx >= 0) {
     const volume = typeof m.music!.volume === "number" ? m.music!.volume : 0.18;
-    filters.push(`[${musicIdx}:a]volume=${volume}[music]`);
     filters.push(
-      `[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`
+      `[${musicIdx}:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo,` +
+        `volume=${volume}[music]`
     );
-    audioLabel = "aout";
+    filters.push(
+      `[narr_a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`
+    );
+  } else {
+    filters.push(`[narr_a]anull[aout]`);
   }
+  const audioLabel = "aout";
 
   // ── argv ───────────────────────────────────────────────────────────────────
   const args: string[] = ["-y", "-hide_banner"];
