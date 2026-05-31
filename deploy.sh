@@ -42,15 +42,19 @@ cd "$APP_DIR"
 if [ ! -f .env ]; then
   say "Writing default .env"
   CORES="$(nproc 2>/dev/null || echo 2)"
-  cat > .env <<EOF
-PORT=$PORT
-RENDER_CONCURRENCY=$CORES
+  TOKEN_HINT="$(head -c 24 /dev/urandom 2>/dev/null | base64 | tr -dc 'a-zA-Z0-9' | head -c 32 || echo change-me)"
+  # Quoted heredoc delimiter so nothing inside is expanded; we substitute the
+  # few values we need with sed afterwards.
+  cat > .env <<'EOF'
+PORT=__PORT__
+RENDER_CONCURRENCY=__CORES__
 MAX_UPLOAD_BYTES=0
-# Uncomment to require an API token on /api and /v1:
-# API_TOKEN=$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)
+# Uncomment to require an API token on /api and /v1 (suggested value below):
+# API_TOKEN=__TOKEN__
 # Set to your public origin (used for absolute output URLs):
 # PUBLIC_BASE_URL=https://your-domain.example.com
 EOF
+  sed -i "s|__PORT__|$PORT|; s|__CORES__|$CORES|; s|__TOKEN__|$TOKEN_HINT|" .env
   echo "  -> edit $APP_DIR/.env to set API_TOKEN / PUBLIC_BASE_URL if desired"
 fi
 
