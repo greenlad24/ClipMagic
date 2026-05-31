@@ -636,55 +636,67 @@ const indexPromoVideo: Handler = async (input) => {
 };
 
 /**
- * Bulk vision-(re)index the whole promo library. Use this to upgrade videos that
- * were imported/indexed with the old guessed index to the new frame-grounded
- * vision index. Processes sequentially (one ffmpeg + one vision call at a time)
- * to keep memory/cost bounded. By default only indexes videos that aren't
- * already vision-indexed; pass { force: true } to redo all.
+ * Bulk vision-(re)index the whole promo library. Returns IMMEDIATELY and runs
+ * the indexing in the background, flipping each video's indexStatus to
+ * "Indexing" then "Indexed" as it goes — so the UI shows live per-video progress
+ * (poll getPromoVideos) instead of one long blocking request. Sequential to keep
+ * memory/cost bounded. By default skips already-vision-indexed videos; pass
+ * { force: true } to redo all.
  */
-const reindexAllPromos: Handler = async (input, userId) => {
-  const { records } = await PromoVideos.findAll({ limit: 1000 });
-  const force = input?.force === true;
-  let indexed = 0;
-  let skipped = 0;
-  let failed = 0;
-  const results: Array<{ id: string; productName: string; status: string; mediaKind?: string }> = [];
+let bulkIndexRunning = false;
 
+const reindexAllPromos: Handler = async (input, userId) => {
+  if (bulkIndexRunning) {
+    return { success: true, started: false, message: "Indexing is already running." };
+  }
+  const force = input?.force === true;
+  const { records } = await PromoVideos.findAll({ limit: 1000 });
+
+  // Decide the work set now, and mark them queued so the UI reflects it at once.
+  const todo: string[] = [];
   for (const v of records) {
     let alreadyVision = false;
     if (!force && v.contentIndexJson) {
       try {
         alreadyVision = JSON.parse(v.contentIndexJson as string)?.mode === "vision";
       } catch {
-        /* treat as not-vision */
+        /* not vision */
       }
     }
-    if (alreadyVision) {
-      skipped++;
-      results.push({ id: v.id, productName: v.productName as string, status: "skipped (already vision)" });
-      continue;
-    }
-    try {
-      const r = (await indexPromoVideo({ videoId: v.id }, userId)) as { mode?: string; mediaKind?: string };
-      if (r?.mode === "vision") indexed++;
-      else failed++; // fell back
-      results.push({
-        id: v.id,
-        productName: v.productName as string,
-        status: r?.mode === "vision" ? "vision-indexed" : "fallback",
-        mediaKind: r?.mediaKind,
-      });
-    } catch (e) {
-      failed++;
-      results.push({
-        id: v.id,
-        productName: v.productName as string,
-        status: "error: " + (e instanceof Error ? e.message.slice(0, 80) : String(e)),
-      });
+    if (!alreadyVision) {
+      todo.push(v.id);
+      await PromoVideos.update({ id: v.id, record: { indexStatus: "Indexing" } });
     }
   }
 
-  return { success: true, total: records.length, indexed, skipped, failed, results };
+  bulkIndexRunning = true;
+  // Fire-and-forget: do NOT await — the HTTP response returns right away.
+  (async () => {
+    let indexed = 0;
+    let failed = 0;
+    for (const id of todo) {
+      try {
+        const r = (await indexPromoVideo({ videoId: id }, userId)) as { mode?: string };
+        if (r?.mode === "vision") indexed++;
+        else failed++;
+      } catch (e) {
+        failed++;
+        try {
+          await PromoVideos.update({ id, record: { indexStatus: "Error" } });
+        } catch {
+          /* */
+        }
+        console.warn(`[reindexAllPromos] ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    bulkIndexRunning = false;
+    console.log(`[reindexAllPromos] done — indexed=${indexed} failed=${failed} of ${todo.length}`);
+  })().catch((e) => {
+    bulkIndexRunning = false;
+    console.error("[reindexAllPromos] background run crashed:", e);
+  });
+
+  return { success: true, started: true, queued: todo.length, total: records.length };
 };
 
 /**

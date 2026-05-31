@@ -292,16 +292,22 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
 
   // Vision-(re)index the whole library: extract 1 frame/sec from each promo and
   // have the AI describe what's on screen each second (cached per video, reused
-  // on every render). Use after importing/uploading to upgrade old indexes.
+  // on every render). Runs in the BACKGROUND on the server — this returns fast;
+  // each video flips to "Indexing" then "Indexed". Re-open the dialog (or it
+  // reloads) to see updated statuses.
   const handleVisionIndexAll = async () => {
     if (visionIndexing) return;
     setVisionIndexing(true);
     try {
       const res = await reindexAllPromos({ force: true });
-      toast.success(
-        `Vision-indexed ${res.indexed}/${res.total} promo videos` +
-          (res.failed ? ` (${res.failed} fell back)` : '')
-      );
+      if (res.started === false) {
+        toast.info('Vision indexing is already running — check back shortly.');
+      } else {
+        toast.success(
+          `Vision indexing started for ${res.queued ?? res.total} videos. ` +
+            `It runs in the background — statuses update to "Indexed" as each finishes.`
+        );
+      }
       await reload();
     } catch (e: any) {
       toast.error('Vision indexing failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));

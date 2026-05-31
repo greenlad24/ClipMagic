@@ -43,14 +43,29 @@ async function downloadToCache(url: string): Promise<string> {
   const dest = path.join(config.tmpDir, cacheName);
   if (fs.existsSync(dest) && fs.statSync(dest).size > 0) return dest;
 
-  const res = await fetch(url);
-  if (!res.ok || !res.body) {
-    throw new Error(`Failed to download input ${url}: ${res.status}`);
+  // Abort a stalled download instead of hanging forever (a bad/slow remote URL
+  // would otherwise freeze indexing/rendering with no recovery).
+  const timeoutMs = Number.parseInt(process.env.DOWNLOAD_TIMEOUT_MS || "120000", 10);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, redirect: "follow" });
+    if (!res.ok || !res.body) {
+      throw new Error(`Failed to download input ${url}: ${res.status}`);
+    }
+    const tmp = `${dest}.part`;
+    await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(tmp));
+    fs.renameSync(tmp, dest);
+    return dest;
+  } catch (e) {
+    try { fs.rmSync(`${dest}.part`, { force: true }); } catch { /* */ }
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new Error(`Download timed out after ${Math.round(timeoutMs / 1000)}s: ${url}`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
   }
-  const tmp = `${dest}.part`;
-  await pipeline(Readable.fromWeb(res.body as any), fs.createWriteStream(tmp));
-  fs.renameSync(tmp, dest);
-  return dest;
 }
 
 export async function resolveInput(ref: string): Promise<string> {
