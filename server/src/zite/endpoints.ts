@@ -840,36 +840,102 @@ const generateShot: Handler = async (input) => {
   return { success: true, taskId, status: data.status ?? "pending" };
 };
 
-// Poll Kinovi task status for any shots still generating in a project.
+// Poll Kinovi task status for any B-Roll shots still generating in a project.
+//
+// IMPORTANT: B-roll tasks are created by the bundled captureShots via
+// `createSeedanceTask` (POST https://kinovi.ai/api/v1/jobs/createTask) which
+// returns a task_id stored INSIDE the shot's uiLabelsJson as `kinoviTaskId`.
+// Status is read from `…/v1/jobs/recordInfo?taskId=…`. The previous version
+// polled a different endpoint, read kinoviTaskId as a top-level column, and
+// returned {status, ready, shots} — none of which matched, so the UI's
+// `result.pending === 0` check never fired and it span on "checking every 5s…"
+// forever even after Kinovi finished. The shape below matches the frontend
+// (ProcessingPage reads result.pending/done/failed).
+const kinoviJobsBase = () => process.env.ZITE_KINOVI_JOBS_URL || "https://kinovi.ai/api";
+
 const pollBrollStatus: Handler = async (input) => {
-  const key = process.env.ZITE_KINOVI_API_KEY;
-  if (!key || !input.projectId) return { status: "idle", ready: false, shots: [] };
-  const { records } = await Shots.findAll({ filters: { project: input.projectId } });
-  const pending = records.filter((s) => s.kinoviTaskId && s.captureStatus !== "Done");
-  const shots: Array<{ shotId: string; status: string; clipUrl?: string }> = [];
-  for (const shot of pending) {
-    try {
-      const res = await fetch(`${kinoviBase()}/v1/tasks/${shot.kinoviTaskId}`, {
-        headers: { Authorization: `Bearer ${key}` },
-      });
-      const data = (await res.json().catch(() => ({}))) as any;
-      const status = data.status ?? "pending";
-      if ((status === "completed" || status === "succeeded") && (data.videoUrl || data.url)) {
-        const clipUrl = data.videoUrl || data.url;
-        await Shots.update({ id: shot.id, record: { clipUrl, captureStatus: "Done" } });
-        shots.push({ shotId: shot.id, status: "Done", clipUrl });
-      } else if (status === "failed" || status === "error") {
-        await Shots.update({ id: shot.id, record: { captureStatus: "Error" } });
-        shots.push({ shotId: shot.id, status: "Error" });
-      } else {
-        shots.push({ shotId: shot.id, status: "Capturing" });
-      }
-    } catch {
-      shots.push({ shotId: shot.id, status: "Capturing" });
-    }
+  const key = (process.env.ZITE_KINOVI_API_KEY ?? "").trim();
+  if (!input.projectId) return { pending: 0, done: 0, failed: 0 };
+
+  const { records } = await Shots.findAll({ filters: { project: input.projectId }, limit: 200 });
+  const capturing = records.filter(
+    (s) => s.shotType === "B-Roll" && s.captureStatus === "Capturing"
+  );
+
+  if (capturing.length === 0) {
+    // Nothing pending — make sure the project status reflects completion.
+    await Projects.update({ id: input.projectId, record: { status: "Complete" } }).catch(() => {});
+    return { pending: 0, done: 0, failed: 0 };
   }
-  const stillPending = shots.some((u) => u.status === "Capturing");
-  return { status: stillPending ? "capturing" : "idle", ready: !stillPending, shots };
+
+  let pending = 0;
+  let done = 0;
+  let failed = 0;
+
+  await Promise.all(
+    capturing.map(async (shot) => {
+      let labels: Record<string, any> = {};
+      try {
+        if (shot.uiLabelsJson) labels = JSON.parse(shot.uiLabelsJson as string);
+      } catch {
+        /* */
+      }
+      // captureShots stores the id in uiLabelsJson; tolerate a legacy top-level field too.
+      const taskId = labels.kinoviTaskId ?? (shot as any).kinoviTaskId;
+
+      if (!taskId || !key) {
+        await Shots.update({ id: shot.id, record: { captureStatus: "Error" } });
+        failed++;
+        return;
+      }
+
+      try {
+        const pr = await fetch(
+          `${kinoviJobsBase()}/v1/jobs/recordInfo?taskId=${encodeURIComponent(String(taskId))}`,
+          { headers: { Authorization: `Bearer ${key}` } }
+        );
+        const rawText = await pr.text().catch(() => "");
+        if (!pr.ok) {
+          pending++; // transient — keep polling
+          return;
+        }
+        let pd: any = {};
+        try {
+          pd = JSON.parse(rawText);
+        } catch {
+          pending++;
+          return;
+        }
+        const st = String(pd.status ?? pd.state ?? "").toLowerCase();
+        const outputUrl = Array.isArray(pd.output) ? pd.output[0]?.url : pd.output?.url;
+        const videoUrl = pd.video_url ?? pd.videoUrl ?? pd.output_url ?? outputUrl;
+
+        if ((st === "success" || st === "succeeded" || st === "completed") && videoUrl) {
+          await Shots.update({
+            id: shot.id,
+            record: {
+              clipUrl: videoUrl,
+              captureStatus: "Done",
+              uiLabelsJson: JSON.stringify({ ...labels, brollTrack: "generated" }),
+            },
+          });
+          done++;
+        } else if (st === "fail" || st === "failed" || st === "error") {
+          await Shots.update({ id: shot.id, record: { captureStatus: "Error" } });
+          failed++;
+        } else {
+          pending++; // queued / processing
+        }
+      } catch {
+        pending++; // transient network error — keep polling
+      }
+    })
+  );
+
+  if (pending === 0) {
+    await Projects.update({ id: input.projectId, record: { status: "Complete" } }).catch(() => {});
+  }
+  return { pending, done, failed };
 };
 
 const testKinoviApi: Handler = async () => {
