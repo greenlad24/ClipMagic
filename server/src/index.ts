@@ -10,6 +10,7 @@ import uploadsRouter from "./routes/uploads.js";
 import renderRouter, { rendiRouter } from "./routes/render.js";
 import projectsRouter from "./routes/projects.js";
 import batchesRouter from "./routes/batches.js";
+import fnRouter from "./routes/fn.js";
 
 /**
  * ClipMagic self-hosted server. One process does everything the old multi-
@@ -41,6 +42,9 @@ app.use("/api/uploads", auth, uploadsRouter);
 app.use("/api/render", auth, renderRouter);
 app.use("/api/projects", auth, projectsRouter);
 app.use("/api/batches", auth, batchesRouter);
+// Original frontend's backend calls (projects/shots/music/pipeline) — the
+// ported ClipMagic app talks to these via /api/fn/<name>.
+app.use("/api/fn", auth, fnRouter);
 
 // Rendi-compatible shim (drop-in replacement for api.rendi.dev/v1).
 app.use("/v1", auth, rendiRouter);
@@ -57,10 +61,19 @@ const uiDir = fs.existsSync(path.join(config.frontendDir, "index.html"))
   ? publicDir
   : null;
 
+// The standalone bulk editor (no build step) stays available at /bulk even when
+// the full React app is the primary UI.
+const bulkDir = path.join(config.serverRoot, "public");
+if (fs.existsSync(path.join(bulkDir, "index.html"))) {
+  app.use("/bulk", express.static(bulkDir));
+}
+
 if (uiDir) {
   app.use(express.static(uiDir));
   app.get("*", (req, res, next) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/v1")) return next();
+    if (req.path.startsWith("/api") || req.path.startsWith("/v1") || req.path.startsWith("/bulk")) {
+      return next();
+    }
     res.sendFile(path.join(uiDir, "index.html"));
   });
   console.log(`[server] serving UI from ${uiDir}`);

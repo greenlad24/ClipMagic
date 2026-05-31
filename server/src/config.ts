@@ -34,8 +34,11 @@ export const config = {
   tmpDir: process.env.TMP_DIR || path.join(DATA_DIR, "tmp"),
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, "db", "clipmagic.db"),
 
-  /** Built Vite frontend, served by this server so one process answers UI + API. */
-  frontendDir: process.env.FRONTEND_DIR || path.resolve(SERVER_ROOT, "..", "dist"),
+  /**
+   * Built Vite frontend (the full ClipMagic React app), served by this server
+   * so one process answers UI + API. Built from /web into /web/dist.
+   */
+  frontendDir: process.env.FRONTEND_DIR || path.resolve(SERVER_ROOT, "..", "web", "dist"),
 
   /**
    * How many FFmpeg renders run in parallel. Defaults to the CPU count: FFmpeg

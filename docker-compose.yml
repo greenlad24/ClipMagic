@@ -8,7 +8,9 @@
 # then open http://<droplet-ip>:8080
 services:
   clipmagic:
-    build: ./server
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: clipmagic:latest
     restart: unless-stopped
     ports:
@@ -26,6 +28,10 @@ services:
       API_TOKEN: ${API_TOKEN:-}
       # Public origin used to build absolute output URLs (set in production).
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # OpenAI (transcription + AI director) and Kinovi (shot capture). Set
+      # these in .env to enable the AI pipeline; the app runs without them.
+      ZITE_OPENAI_ACCESS_TOKEN: ${ZITE_OPENAI_ACCESS_TOKEN:-}
+      ZITE_KINOVI_API_KEY: ${ZITE_KINOVI_API_KEY:-}
     volumes:
       # Persist all media + the database on the host (or a mounted DO volume).
       - clipmagic-data:/data
