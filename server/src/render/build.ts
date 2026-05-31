@@ -101,12 +101,18 @@ export async function buildArgsFromManifest(
   const narrationInfo = await probe(narrationPath);
   const narrationHasAudio = narrationInfo.hasAudio;
 
-  const overlays: { idx: number; scene: Scene; isImg: boolean }[] = [];
+  const overlays: { idx: number; scene: Scene; isImg: boolean; clipStart: number }[] = [];
   for (const scene of m.scenes) {
     if (scene.overlay && scene.overlay.clipUrl) {
       const p = await resolveInput(scene.overlay.clipUrl);
-      const idx = inputs.push({ opts: [], path: p }) - 1;
-      overlays.push({ idx, scene, isImg: isImage(scene.overlay.clipUrl) });
+      const isImg = isImage(scene.overlay.clipUrl);
+      // Seek into the matched segment for video overlays so we start at the
+      // right moment of the promo clip (and so a short clip isn't already past
+      // EOF — which is what made the overlay freeze on a single frame).
+      const clipStart = Math.max(0, scene.overlay.clipStartOffset || 0);
+      const opts: string[] = !isImg && clipStart > 0 ? ["-ss", clipStart.toFixed(3)] : [];
+      const idx = inputs.push({ opts, path: p }) - 1;
+      overlays.push({ idx, scene, isImg, clipStart });
     }
   }
 
@@ -139,14 +145,22 @@ export async function buildArgsFromManifest(
     const outLabel = `v${i}`;
 
     if (ov.isImg) {
+      // A still image is one frame; the overlay filter repeats it for the
+      // whole enabled window, so no PTS handling is needed.
       filters.push(
         `[${ov.idx}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,` +
           `crop=${W}:${H},setsar=1[${vlabel}]`
       );
     } else {
+      // Reset the clip's timestamps to 0 (we may have seeked with -ss), then
+      // shift them so the clip's first frame lands at `start` on the output
+      // timeline. Without this the clip plays from filtergraph t=0 and is
+      // already at/past EOF by the time its window arrives — which froze the
+      // overlay on a single (last) frame for the entire window.
       filters.push(
         `[${ov.idx}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,` +
-          `crop=${W}:${H},setsar=1,fps=${fps}[${vlabel}]`
+          `crop=${W}:${H},setsar=1,fps=${fps},` +
+          `setpts=PTS-STARTPTS+${start.toFixed(3)}/TB[${vlabel}]`
       );
     }
     filters.push(

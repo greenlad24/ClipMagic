@@ -377,6 +377,11 @@ const submitRendiJob: Handler = async (input) => {
       const sceneType = type === "talkinghead" ? "talking-head" : type === "screencast" ? "screencast" : "broll";
       const clipUrl = (s.clipUrl as string) || "";
       const isImage = /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(clipUrl.split("?")[0]);
+      // Pull the overlay timing the director/retrieval computed (segment within
+      // the promo clip, narrator-first delay, narrator-return) out of uiLabelsJson.
+      let lbl: Record<string, any> = {};
+      try { if (s.uiLabelsJson) lbl = JSON.parse(s.uiLabelsJson as string); } catch { /* */ }
+      const num = (v: any, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
       return {
         shotId: s.id,
         type: sceneType,
@@ -387,14 +392,14 @@ const submitRendiJob: Handler = async (input) => {
             ? {
                 mediaType: isImage ? "image" : "video",
                 clipUrl,
-                clipStartOffset: 0,
-                clipEndOffset: 0,
-                overlayDelaySeconds: 0,
-                showNarratorFirst: false,
-                returnToNarrator: false,
-                narratorReturnLeadSeconds: 0,
+                clipStartOffset: num(lbl.clipStartOffset, 0),
+                clipEndOffset: num(lbl.clipEndOffset, 0),
+                overlayDelaySeconds: num(lbl.overlayDelaySeconds, 0),
+                showNarratorFirst: lbl.showNarratorFirst === true,
+                returnToNarrator: lbl.returnToNarratorBeforeEnd === true,
+                narratorReturnLeadSeconds: num(lbl.narratorReturnLeadSeconds, 0),
                 fadeInSeconds: 0.15,
-                isTacticalBroll: false,
+                isTacticalBroll: lbl.brollMode === "tactical_broll" || lbl.isRequiredTacticalSlot === true,
               }
             : null,
         transitionIn: null,
