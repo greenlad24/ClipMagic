@@ -11,6 +11,7 @@
  * (OpenAI + Kinovi + capture service) will plug in.
  */
 import { Projects, Shots, MusicTracks, PromoVideos, ZiteError } from "./store.js";
+import { listStorage, deleteStorageFiles } from "./storage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
 import { createJob, getJob } from "../db/jobs.js";
@@ -995,6 +996,9 @@ export const HANDLERS: Record<string, Handler> = {
   indexPromoVideo,
   validateAssets: async () => ({ ok: true, errors: [] }),
   getWaveform,
+  // storage management
+  listStorage,
+  deleteStorageFiles,
 };
 
 void config;
