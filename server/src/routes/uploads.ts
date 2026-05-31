@@ -19,10 +19,22 @@ import { publicUrlFor } from "../lib/urls.js";
  */
 const router = Router();
 
-function kindFromMime(mime: string): string {
+const VIDEO_EXT = /\.(mp4|mov|webm|mkv|avi|m4v|mpg|mpeg|wmv|flv|3gp)$/i;
+const AUDIO_EXT = /\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif|avif|bmp|tiff?|svg)$/i;
+
+/**
+ * Classify an upload. Prefer the MIME type, but fall back to the file extension
+ * — some upload paths send `application/octet-stream`, and we still want videos
+ * and audio probed for duration so the bulk editor can show/trim them.
+ */
+function kindFor(mime: string, name: string): string {
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("audio/")) return "audio";
+  if (VIDEO_EXT.test(name)) return "video";
+  if (AUDIO_EXT.test(name)) return "audio";
+  if (IMAGE_EXT.test(name)) return "image";
   return "other";
 }
 
@@ -57,7 +69,7 @@ router.post(
     const results = [];
     for (const f of files) {
       const id = path.parse(f.filename).name;
-      const kind = kindFromMime(f.mimetype);
+      const kind = kindFor(f.mimetype, f.originalname);
       let duration: number | null = null;
       let width: number | null = null;
       let height: number | null = null;
