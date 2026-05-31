@@ -79,6 +79,7 @@ export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Prop
   try { if (shot.uiLabelsJson) labels = JSON.parse(shot.uiLabelsJson); } catch { /* */ }
   const keyframes: CameraKeyframe[] = labels.cameraKeyframes ?? [];
   const seedanceAiPrompt: string = labels.seedanceAiPrompt ?? labels.veo3Prompt ?? '';
+  const rationale: string = labels.rationale ?? '';
   const matchKeywords: string[] = Array.isArray(labels.matchKeywords) ? labels.matchKeywords : [];
   const transcriptSnippet: string = labels.transcriptSnippet ?? '';
   const clipStartOffset: number | undefined = typeof labels.clipStartOffset === 'number' ? labels.clipStartOffset : undefined;
@@ -172,6 +173,17 @@ export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Prop
             </div>
           )}
         </div>
+
+        {/* ── Director's note: why this visual was chosen ── */}
+        {rationale && (
+          <div className="space-y-1 p-2.5 bg-primary/8 border border-primary/20 rounded-lg">
+            <div className="flex items-center gap-1">
+              <Quote className="w-2.5 h-2.5 text-primary shrink-0" />
+              <span className="text-[9px] font-semibold text-primary uppercase tracking-wider">Director's note</span>
+            </div>
+            <p className="text-[10px] text-foreground/80 leading-relaxed">{rationale}</p>
+          </div>
+        )}
 
         {/* ── Three-phase overlay timing (all non-TH shots) ── */}
         {!isTH && (showNarratorFirst || overlayDelay !== undefined || returnToNarratorBeforeEnd) && (

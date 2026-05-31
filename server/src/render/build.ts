@@ -242,25 +242,33 @@ function buildSubtitleDrawtext(
   let currentLabel = inputLabel;
   let drawIndex = 0;
   for (const event of subtitles) {
-    for (const word of event.words) {
-      const txt = escapeDrawText(style.allCaps ? word.text.toUpperCase() : word.text);
-      const color = word.emphasis && style.wordColor ? style.wordColor : style.lineColor;
-      const start = shift(word.start);
-      const end = shift(word.end);
-      if (end <= start) continue; // fully outside the trimmed window
-      const outLabel = `sub${drawIndex}`;
-      // text and enable are left UNQUOTED (values are escaped / contain no
-      // spaces) so a quote inside the text can't break the enable expression.
-      filters.push(
-        `[${currentLabel}]drawtext=fontfile=${fontFile}:text=${txt}:` +
-          `fontcolor=${color}:fontsize=${fontSize}:` +
-          `x=(w-text_w)/2:y=${yExpr}:` +
-          `box=1:boxcolor=black@0.5:boxborderw=8:` +
-          `enable=between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})[${outLabel}]`
-      );
-      currentLabel = outLabel;
-      drawIndex++;
-    }
+    // Render the WHOLE phrase for the event's window (not one word at a time):
+    // a single readable caption line that appears and is replaced by the next
+    // phrase, instead of single words flashing. This matches the in-app preview.
+    const phraseWords = event.words.filter((w) => (w.text ?? "").trim().length > 0);
+    if (phraseWords.length === 0) continue;
+    const phrase = phraseWords.map((w) => w.text).join(" ");
+    const txt = escapeDrawText(style.allCaps ? phrase.toUpperCase() : phrase);
+    // Color the line as emphasized when the phrase contains an emphasized word.
+    const color = phraseWords.some((w) => w.emphasis) && style.wordColor ? style.wordColor : style.lineColor;
+    // The phrase is visible for the full span of its words.
+    const start = shift(event.start ?? phraseWords[0].start);
+    const end = shift(event.end ?? phraseWords[phraseWords.length - 1].end);
+    if (end <= start) continue; // fully outside the trimmed window
+    const outLabel = `sub${drawIndex}`;
+    // text and enable are left UNQUOTED: every filtergraph/drawtext metacharacter
+    // is backslash-escaped by escapeDrawText, so a quote inside the text can't
+    // break the enable expression. Spaces are literal in an unquoted value, so
+    // the multi-word phrase renders as-is.
+    filters.push(
+      `[${currentLabel}]drawtext=fontfile=${fontFile}:text=${txt}:` +
+        `fontcolor=${color}:fontsize=${fontSize}:` +
+        `x=(w-text_w)/2:y=${yExpr}:` +
+        `box=1:boxcolor=black@0.5:boxborderw=8:` +
+        `enable=between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})[${outLabel}]`
+    );
+    currentLabel = outLabel;
+    drawIndex++;
   }
   // If every word fell outside the window, pass through unchanged.
   if (drawIndex === 0) {

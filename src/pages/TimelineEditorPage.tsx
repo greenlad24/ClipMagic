@@ -62,7 +62,8 @@ export default function TimelineEditorPage() {
   const [preflightErrors, setPreflightErrors] = useState<ClipDiagnostic[] | null>(null);
   const [waveformPeaks, setWaveformPeaks] = useState<number[] | null>(null);
   const [musicInfo, setMusicInfo] = useState<{ bpm?: number; trackName?: string } | null>(null);
-  const [musicVolume, setMusicVolume] = useState(0.03);
+  const [musicUrl, setMusicUrl] = useState<string | undefined>(undefined);
+  const [musicVolume, setMusicVolume] = useState(0.15);
   const [musicMuted, setMusicMuted] = useState(false);
   const [beatGrid, setBeatGrid] = useState<number[]>([]);
   const [downbeats, setDownbeats] = useState<number[]>([]);
@@ -92,6 +93,12 @@ export default function TimelineEditorPage() {
           setBeatGrid(wf.beatGrid ?? []);
           setDownbeats(wf.downbeats ?? []);
           setSectionMarkers(wf.sectionMarkers ?? {});
+        }).catch(() => {});
+        // Resolve the track's audio URL so the preview can play the music bed.
+        getMusicTracks({}).then(({ tracks }) => {
+          const track = tracks.find((t) => t.id === trackId);
+          if (track?.audioUrl) setMusicUrl(track.audioUrl);
+          if (track?.trackName) setMusicInfo((mi) => ({ ...(mi ?? {}), trackName: track.trackName }));
         }).catch(() => {});
       }
     }).catch(() => setLoading(false));
@@ -527,6 +534,7 @@ export default function TimelineEditorPage() {
             onPlayPause={() => setIsPlaying(p => !p)}
             onSeek={t => { setPlayhead(t); setIsPlaying(false); }}
             onTimeUpdate={setPlayhead}
+            musicUrl={musicUrl} musicVolume={musicVolume} musicMuted={musicMuted}
           />
         </div>
 

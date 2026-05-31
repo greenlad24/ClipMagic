@@ -47,13 +47,20 @@ interface Props {
   onPlayPause: () => void;
   onSeek: (t: number) => void;
   onTimeUpdate: (t: number) => void;
+  /** Background music track URL (played under the narration in the preview). */
+  musicUrl?: string;
+  /** 0–1 music gain. */
+  musicVolume?: number;
+  /** When true, the music bed is silenced in the preview. */
+  musicMuted?: boolean;
 }
 
 type LoadState = 'idle' | 'downloading' | 'loading' | 'ready' | 'error';
 
-export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate }: Props) {
+export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const overlayVidRef = useRef<HTMLVideoElement>(null);
+  const musicRef = useRef<HTMLAudioElement>(null);
   const rafRef = useRef<number>(0);
 
   const [muted, setMuted] = useState(false);
@@ -197,6 +204,30 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
     }
   }, [playhead, isPlaying, loadState]);
 
+  // Music bed: volume follows the slider; muted by the timeline toggle or the
+  // canvas mute button. The narration audio lives on the narration <video>, so
+  // music is an independent <audio> element mixed by the browser.
+  useEffect(() => {
+    const a = musicRef.current;
+    if (!a) return;
+    a.volume = Math.max(0, Math.min(1, musicVolume));
+    a.muted = musicMuted || muted;
+  }, [musicVolume, musicMuted, muted]);
+
+  // Music play/pause + keep it roughly in sync with the playhead.
+  useEffect(() => {
+    const a = musicRef.current;
+    if (!a || !musicUrl) return;
+    if (isPlaying && loadState === 'ready') {
+      if (Math.abs(a.currentTime - playhead) > 0.3) a.currentTime = playhead;
+      a.play().catch(() => {});
+    } else {
+      a.pause();
+      if (!isPlaying && Math.abs(a.currentTime - playhead) > 0.1) a.currentTime = playhead;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, playhead, musicUrl, loadState]);
+
   // Overlay crossfade
   useEffect(() => {
     if (overlayClipUrl !== prevOverlayUrl.current) {
@@ -292,6 +323,11 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
             className="absolute inset-0 w-full h-full object-cover transition-transform duration-75 will-change-transform"
             style={{ transform: camTransform, opacity: loadState === 'ready' ? 1 : 0 }}
           />
+        )}
+
+        {/* Background music bed (hidden) — mixed under the narration in preview */}
+        {musicUrl && (
+          <audio ref={musicRef} src={musicUrl} preload="auto" loop className="hidden" />
         )}
 
         {/* Overlay — IMAGE clip (including YouTube thumbnails) */}

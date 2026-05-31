@@ -49,6 +49,7 @@ type SemanticBeat = {
   matchKeywords: string[];
   isRequiredTacticalSlot?: boolean;
   tacticalPlacementReason?: string;
+  rationale?: string;
 };
 
 type ShotRec = {
@@ -159,7 +160,12 @@ export default createEndpoint({
         currentGroup.push(words[i]);
         const nextW = words[i + 1];
         const gap = nextW ? nextW.start - words[i].end : Infinity;
-        if (gap > 0.35 || currentGroup.length >= 4) {
+        // Break a phrase line on: a real pause, sentence-ending punctuation, or
+        // a comfortable max length. Breaking on punctuation keeps captions
+        // reading as natural clauses rather than arbitrary 4-word chunks.
+        const endsSentence = /[.!?…]$/.test(words[i].word.trim());
+        const endsClause = /[,;:]$/.test(words[i].word.trim());
+        if (gap > 0.4 || endsSentence || (endsClause && currentGroup.length >= 3) || currentGroup.length >= 5) {
           phraseGroups.push([...currentGroup]);
           currentGroup = [];
         }
@@ -273,9 +279,9 @@ export default createEndpoint({
     // ── Phase 3: Semantic Beat Planner ────────────────────────────────────────
     console.log('[runPipeline] ▶ Starting semantic beat planner');
 
-    const semanticBeatPrompt = `You are a senior short-form video editor analyzing a narration script to plan cuts.
+    const semanticBeatPrompt = `You are a senior short-form video editor planning the cuts for a vertical (9:16) talking-head video. You think OUT LOUD about why each choice keeps the viewer watching and how it emphasizes what the narrator is saying.
 
-Your job: split this transcript into SEMANTIC BEATS — meaningful rhetorical segments where the speaker's intent, topic, or energy shifts. Think like an editor watching the script performed: where would you cut away from a talking head to show something more compelling?
+Your job: split this transcript into SEMANTIC BEATS — meaningful rhetorical segments where the speaker's intent, topic, or energy shifts — and decide, for each beat, whether to stay on the narrator or cut to an overlay.
 
 TRANSCRIPT (word-level timestamps):
 ${transcriptForPrompt}
@@ -283,111 +289,67 @@ ${transcriptForPrompt}
 DURATION: ${duration.toFixed(1)}s
 CONTEXT: ${project.contextHint ?? 'none'}
 
-AVAILABLE PRODUCT URLs for screencast shots:
+AVAILABLE PRODUCT / PROMO FOOTAGE you can cut to (screencast shots):
 ${urlReferenceBlock}
 
 For each beat, decide:
   beatType: one of "hook" | "pain" | "problem" | "proof" | "demo" | "objection" | "payoff" | "cta" | "transition"
   visualIntent: one of "talking_head" | "screencast" | "tactical_broll"
   showNarrator: boolean — should the narrator's face be visible during this beat?
-  overlayDelaySeconds: number — if an overlay (screencast/broll) is used, how many seconds to keep showing the narrator before cutting to the overlay. Default 1.0.
+  overlayDelaySeconds: number — if an overlay is used, how many seconds to keep showing the narrator before cutting to the overlay. Default 1.0.
+  rationale: 1–2 first-person sentences explaining WHY you chose this visual for THESE EXACT WORDS and HOW it emphasizes the narrator's point.
 
-CORE EDITING PHILOSOPHY:
-  When deciding between showing the narrator and showing an overlay, optimize for TRUST first, PROOF second, STYLE third.
-  THE VIEWER SHOULD ALMOST NEVER SEE A LONG STATIC TALKING HEAD SHOT IN THE MIDDLE OF THE VIDEO.
-  After the brief opening, the edit should be DENSE with screencasts and at least one early tactical B-roll.
+★ CORE PRINCIPLE — NARRATOR-FIRST, OVERLAYS ONLY WHEN THEY MATCH THE WORDS:
+  The narrator (talking_head) is the BACKBONE of this video. Keep the viewer on the narrator's face BY DEFAULT.
+  Only cut to an overlay (screencast/promo footage or a generated clip) when that visual DIRECTLY reinforces the exact thing the narrator is saying at that moment. If you cannot name what the overlay shows AND tie it to the words being spoken, STAY ON THE NARRATOR.
+  It is completely fine — often BETTER — for a video to be mostly narrator when the script is personal, opinion-driven, story-driven, or its topics aren't covered by the available footage. Do NOT pad the edit with loosely-related screencasts just to add motion: loosely-connected B-roll feels random and HURTS retention. Long narrator stretches are allowed when the narrator is making a personal/authority/emotional point.
 
-VISUAL INTENT RULES — SCREENCAST-DOMINANT WITH REQUIRED EARLY TACTICAL B-ROLL:
+★ THE HOOK IS THE EXCEPTION — EARN THE FIRST ~3 SECONDS:
+  Retention is won or lost in the first 3 seconds, so the hook ALWAYS gets a deliberate visual pattern-interrupt:
+    1. Open on the narrator (talking_head), SHORT: ~0.5–1.5s — just enough to establish a real human.
+    2. At ~1 SECOND, cut to ONE high-retention overlay that VISUALIZES THE BIG IDEA OF THE WHOLE VIDEO — the core topic, promise, or payoff the viewer will get by watching to the end. This is a THEMATIC ESTABLISHING SHOT: read the ENTIRE transcript and choose a visual that captures what the video is ultimately about, NOT a literal illustration of the specific words being spoken at second 1.
+       - Example: if the video is "5 AI tools that replace your whole team", the hook visual should evoke that overall idea (e.g. the hero product/dashboard, or a montage-feeling concept of automation) — even if the narrator's opening line is just "Okay so last week…".
+    3. PREFER a "screencast" (real product/promo footage) of the video's MAIN product/subject for this establishing shot. Use a "tactical_broll" (generated clip) only if the overall idea is abstract and no real footage captures it.
+    4. It must still be RELEVANT to the video's theme — a random/unrelated clip is worse than staying on the narrator. Set its productEntity/matchKeywords/summary to describe the WHOLE-VIDEO concept (so the right hero footage is retrieved), and explain this in its rationale.
+  This early overlay (screencast or generated) at ~1s is REQUIRED. After the hook, return to the narrator-first principle above.
 
-  MANDATORY EDITORIAL FLOW (the required video structure):
-    1. Narrator visible first (talking_head) — KEEP THIS SHORT: 0.5–1.5 seconds MAX for the opening beat
-    2. ONE tactical_broll moment IMMEDIATELY after — must be the 2nd beat, starting around 0.8–2.0 seconds
-    3. Then transition into screencast-dominant proof/demo flow for the MAJORITY of the remaining video
-    4. Talking_head returns ONLY for brief authority/opinion moments, CTA, or short transition resets (max 3–4s each)
+VISUAL INTENT OPTIONS:
+  • "talking_head" — the narrator on camera. This is the DEFAULT and may legitimately be the majority of the video. Use it whenever no overlay clearly matches the words. Set showNarrator=true, overlayDelaySeconds=0.
+  • "screencast" — cut to real product/promo footage. The PREFERRED overlay type (real footage beats generated). Use ONLY when the narrator names or describes a specific product, tool, feature, screen, or workflow AND footage for it plausibly exists. Set productEntity to the product name and matchKeywords to search terms. Set showNarrator=true, overlayDelaySeconds=1.0.
+  • "tactical_broll" — a GENERATED AI clip. Use SPARINGLY, only for an idea that genuinely benefits from a visual that no real footage covers (an abstract concept, an emotion, a metaphor). The hook overlay may be one of these if no screencast fits. TARGET 0–1 in the body; NEVER more than 3 total in the whole video. Each one must still connect to the narration. Set showNarrator=true, overlayDelaySeconds=1.0, and mark the hook one with "isRequiredTacticalSlot": true.
 
-  CRITICAL OPENING RULE:
-    - The FIRST beat must be talking_head, but SHORT (0.5–1.5s, just enough for the narrator to appear)
-    - The SECOND beat MUST be tactical_broll, starting between 0.8s and 2.0s. NOT at 6s. NOT at 4s. AROUND 1 SECOND.
-    - After the tactical B-roll, the next beats should be screencast.
-    - NEVER wait until 4+ seconds to show the first B-roll. The first visual change MUST happen around 1 second.
+★ ALSO DECIDE THE OVERALL APPROACH (return as "editApproach"):
+  mode: "narration_led" (mostly the narrator — the default for personal/opinion/story scripts) | "promo_led" (the script walks through products you have matching footage for) | "ai_led" (concept-heavy, leans on a few generated clips)
+  reasoning: 1–2 sentences on why this script is that kind of video.
 
-  • "talking_head" — USE SPARINGLY. Only for:
-      - Opening hook (KEEP SHORT: 0.5–1.5s max for the first beat)
-      - Brief authority/trust moments ("I've been doing this for 10 years…") — max 3–4s
-      - Personal opinion or emotion — max 3–4s
-      - CTA at the end
-      - Short transition resets between screencasts — max 2–3s
-    AFTER THE FIRST 6–8 SECONDS, DO NOT ALLOW ANY UNINTERRUPTED TALKING_HEAD BEAT LONGER THAN 3–4 SECONDS.
-    If the script discusses any product, tool, feature, or proof point, USE SCREENCAST INSTEAD.
-    Set showNarrator=true, overlayDelaySeconds=0 for these.
-
-  • "screencast" — THE DOMINANT VISUAL TYPE. This should cover 50–70% of the total video duration.
-    USE SCREENCAST FOR ANY BEAT ABOUT: products, tools, features, workflows, software, comparisons, proof points, use cases, demonstrations, "how it works", categories, free alternatives, pricing, or anything that COULD be shown with product footage.
-    WHEN IN DOUBT, USE SCREENCAST. It is always better than talking_head for informational content.
-    Set productEntity to the product name and matchKeywords to search terms.
-    Set showNarrator=true and overlayDelaySeconds=1.0 to keep the narrator visible briefly before the screencast appears.
-
-  • "tactical_broll" — GENERATED AI video clips. TARGET 1 per video; you MAY use up to 3,
-    but only when the script needs visuals your real promo footage cannot cover.
-    PREFER real promo footage (screencast) whenever a relevant promo video exists for what the
-    narrator is describing — generated clips are the fallback for moments with no good promo match
-    (abstract/emotional beats, concepts, or products not in the promo library).
-    DECISION (promo-led vs AI-generation-led): if most of the script's products/features are
-    covered by the available promo footage, this is a PROMO-LED video — use mostly screencast and
-    just 1 generated clip for the opening pattern-interrupt. If the script is abstract or its
-    subjects are largely absent from the promo library, it is AI-GENERATION-LED — you may use 2–3
-    generated clips. Never exceed 3.
-    PLACEMENT: at least 1 should be the 2nd beat, starting around 0.8–2.0 seconds (early pattern
-    interrupt, emotional hook, visual punch).
-    GOOD CANDIDATES:
-      - Pain point / frustration ("you're wasting hours on…")
-      - Emotional contrast ("imagine if you could just…")
-      - Hook / attention grab after narrator
-      - Setup moment ("the problem is…")
-      - Any beat with no matching promo footage
-    Set showNarrator=true and overlayDelaySeconds=1.0.
-    Mark the opening one with "isRequiredTacticalSlot": true.
-
-  PACING GUARD — ENFORCED STRICTLY:
-    After the first 6–8 seconds of the video, check EVERY talking_head beat:
-      - If it is longer than 3.5 seconds AND the script content discusses ANY product/tool/feature/workflow → CHANGE IT TO SCREENCAST
-      - If it is longer than 4.0 seconds for ANY reason → split it or shorten it
-    The goal: NO long static talking head stretches in the middle. The viewer's eye should always be engaged with visual changes.
-
-STRICT RULES:
-  • The FIRST beat is talking_head lasting 0.5–1.5s.
-  • The SECOND beat MUST be tactical_broll starting around 0.8–2.0s.
-  • After that, SCREENCAST should be the dominant visual (50–70% of remaining duration).
-  • talking_head after 6–8s must be ≤ 3–4 seconds each. Break up longer sections.
-  • Every video MUST have at least 1 tactical_broll (generated) beat.
-  • TARGET 1 tactical_broll beat; up to 3 allowed only when promo footage can't cover the script.
-  • Do NOT have more than 3 tactical_broll beats.
-  • SCREENCAST is the default. If a product or feature is mentioned, use screencast.
-  • Do NOT use tactical_broll when a screencast would work.
-  • For non-talking-head beats, prefer overlayDelaySeconds=1.0.
-  • Beats should cover the ENTIRE duration with no gaps.
-  • Aim for 8–18 beats (more beats = tighter pacing = better). Short scripts (< 30s) should have 6–10 beats.
-  • Each beat must have start/end times matching transcript word timestamps.
+STRUCTURE RULES:
+  • Beat 1 = talking_head, ~0.5–1.5s (narrator appears).
+  • Beat 2 = the hook overlay (screencast preferred, else tactical_broll), starting ~0.8–2.0s, tightly connected to the hook's words.
+  • After the hook, talking_head is the default — cut to overlays ONLY on genuine word-level matches.
+  • Cover the ENTIRE duration with no gaps; start/end align to transcript word timestamps.
+  • Use as MANY or as FEW beats as the content honestly needs — do not manufacture cuts to look busy.
   • priority: 1 = most important cut, higher = less critical.
 
 Return ONLY valid JSON (no markdown fences):
 {
+  "editApproach": { "mode": "narration_led", "reasoning": "Personal story with little matching product footage, so we mostly stay on the narrator and only interrupt for the hook." },
   "beats": [
     {
       "start": 0.0,
-      "end": 3.5,
+      "end": 1.2,
       "beatType": "hook",
-      "summary": "Direct-to-camera hook grabbing attention",
+      "summary": "Direct-to-camera hook",
       "productEntity": null,
       "featureEntity": null,
       "emotionalIntent": "curiosity",
       "visualIntent": "talking_head",
       "showNarrator": true,
       "overlayDelaySeconds": 0,
-      "priority": 2,
+      "priority": 1,
       "transcriptSnippet": "You won't believe what this tool can do",
       "matchKeywords": [],
-      "isRequiredTacticalSlot": false
+      "isRequiredTacticalSlot": false,
+      "rationale": "Opening on her face for one beat establishes a real person before the pattern-interrupt — sincerity first."
     }
   ],
   "intensity_map": [{"second":0,"intensity":95},{"second":1,"intensity":70}]
@@ -431,6 +393,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
           matchKeywords: Array.isArray(b.match_keywords) ? b.match_keywords.filter((k: any) => typeof k === 'string') : (Array.isArray(b.matchKeywords) ? b.matchKeywords.filter((k: any) => typeof k === 'string') : []),
           isRequiredTacticalSlot: b.isRequiredTacticalSlot === true,
           tacticalPlacementReason: typeof b.tacticalPlacementReason === 'string' ? b.tacticalPlacementReason : undefined,
+          rationale: typeof b.rationale === 'string' ? b.rationale : (typeof b.reason === 'string' ? b.reason : undefined),
         }));
         intensityMapRaw = Array.isArray(parsed.intensity_map) ? parsed.intensity_map : [];
         console.log(`[runPipeline] ✅ Semantic beat planner returned ${semanticBeats.length} beats`);
@@ -576,16 +539,19 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       }
     }
 
-    // RULE 2: Enforce MINIMUM 1 tactical_broll per video (promote best early candidate if missing)
-    if (tacticalCount === 0 && semanticBeats.length > 1 && duration > 3) {
-      console.log('[runPipeline] ⚡ No tactical_broll found — promoting best early candidate');
-      const emotionalBeatTypes = new Set(['hook', 'pain', 'problem', 'objection']);
+    // RULE 2: Guarantee the HOOK pattern-interrupt — an OVERLAY (screencast OR
+    // generated) must start by ~2.5s to stop the scroll. We do NOT force a
+    // generated clip: a real screencast is preferred whenever the hook can be
+    // shown with product footage; a generated clip is the fallback.
+    const isOverlay = (b: SemanticBeat) => b.visualIntent === 'screencast' || b.visualIntent === 'tactical_broll';
+    const hasEarlyOverlay = semanticBeats.some(b => isOverlay(b) && b.start <= 2.5);
+    if (!hasEarlyOverlay && semanticBeats.length > 1 && duration > 3) {
+      console.log('[runPipeline] ⚡ No early hook overlay found — promoting best early candidate');
       const candidates = semanticBeats
         .map((b, i) => ({ b, i }))
         .filter(({ b, i }) => {
           if (i === 0 && semanticBeats.length > 2) return false; // keep narrator visible first
           if (b.beatType === 'cta') return false;
-          if (b.visualIntent === 'talking_head' && b.start > duration * 0.7) return false;
           return true;
         })
         .map(({ b, i }) => {
@@ -596,12 +562,8 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
           else if (b.start < 0.8) score += 20;
           else if (b.start <= 5.0) score += 25;
           else score += 5;
-          // Prefer emotional beat types
-          if (emotionalBeatTypes.has(b.beatType)) score += 40;
-          // Prefer non-screencast (less disruption)
-          if (b.visualIntent === 'talking_head') score += 10;
-          // Prefer 2nd or 3rd beat position
-          if (i === 1) score += 25;
+          // Prefer the 2nd/3rd beat position (right after the narrator appears)
+          if (i === 1) score += 30;
           if (i === 2) score += 15;
           return { b, i, score };
         })
@@ -610,27 +572,37 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       if (candidates.length > 0) {
         const winner = candidates[0].b;
         const prevIntent = winner.visualIntent;
-        winner.visualIntent = 'tactical_broll';
+        // Prefer a real screencast for the hook when product footage exists and
+        // the beat references a product; otherwise fall back to a generated clip.
+        const preferScreencast = hasScreencastUrls && (!!winner.productEntity || (winner.matchKeywords?.length ?? 0) > 0 || prevIntent === 'screencast');
+        winner.visualIntent = preferScreencast ? 'screencast' : 'tactical_broll';
         winner.showNarrator = true;
         winner.overlayDelaySeconds = winner.overlayDelaySeconds || 1.0;
-        winner.isRequiredTacticalSlot = true;
-        winner.tacticalPlacementReason = `Promoted from ${prevIntent} — required early tactical B-roll (beat "${winner.beatType}" at ${winner.start.toFixed(1)}s, score=${candidates[0].score})`;
-        tacticalCount = 1;
-        console.log(`[runPipeline] ⬆ Promoted ${prevIntent} → tactical_broll at ${winner.start.toFixed(2)}s | beat="${winner.beatType}" | "${winner.summary.slice(0, 50)}" | reason: ${winner.tacticalPlacementReason}`);
+        if (winner.visualIntent === 'tactical_broll') {
+          winner.isRequiredTacticalSlot = true;
+          winner.tacticalPlacementReason = `Promoted from ${prevIntent} — required hook overlay (no matching screencast footage), beat "${winner.beatType}" at ${winner.start.toFixed(1)}s`;
+          tacticalCount++;
+        }
+        if (!winner.rationale) {
+          winner.rationale = `Hook pattern-interrupt: cutting to ${winner.visualIntent === 'screencast' ? 'real footage' : 'a generated visual'} ~1s in to stop the scroll while staying tied to the hook.`;
+        }
+        console.log(`[runPipeline] ⬆ Promoted ${prevIntent} → ${winner.visualIntent} (hook overlay) at ${winner.start.toFixed(2)}s | beat="${winner.beatType}" | "${winner.summary.slice(0, 50)}"`);
       } else {
-        console.warn('[runPipeline] ⚠ Could not find any suitable candidate for required tactical B-roll');
+        console.warn('[runPipeline] ⚠ Could not find any suitable candidate for the hook overlay');
       }
     }
 
-    // Ensure the required tactical slot is flagged on at least one beat
+    // If the hook overlay ended up being a generated clip, flag the required slot.
     const tacticalBeats = semanticBeats.filter(b => b.visualIntent === 'tactical_broll');
     if (tacticalBeats.length > 0 && !tacticalBeats.some(b => b.isRequiredTacticalSlot)) {
       const earliest = tacticalBeats.sort((a, b) => a.start - b.start)[0];
-      earliest.isRequiredTacticalSlot = true;
-      if (!earliest.tacticalPlacementReason) {
-        earliest.tacticalPlacementReason = `Earliest tactical B-roll at ${earliest.start.toFixed(1)}s — marked as required minimum slot`;
+      if (earliest.start <= 2.5) {
+        earliest.isRequiredTacticalSlot = true;
+        if (!earliest.tacticalPlacementReason) {
+          earliest.tacticalPlacementReason = `Earliest generated clip at ${earliest.start.toFixed(1)}s — serving as the hook overlay`;
+        }
+        console.log(`[runPipeline] 📌 Marked tactical_broll at ${earliest.start.toFixed(2)}s as hook slot`);
       }
-      console.log(`[runPipeline] 📌 Marked tactical_broll at ${earliest.start.toFixed(2)}s as required slot`);
     }
 
     // ── Phase 3.7: PACING GUARD — enforce strict editorial rules ──────────────
@@ -639,16 +611,16 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
 
     const pacingLog: string[] = [];
 
-    // RULE A: First tactical B-roll must start before 2.5s
-    const firstTactical = semanticBeats.find(b => b.visualIntent === 'tactical_broll');
+    // RULE A: The hook overlay (first screencast OR generated clip) must start before 2.5s
+    const firstTactical = semanticBeats.find(b => b.visualIntent === 'screencast' || b.visualIntent === 'tactical_broll');
     const firstTacticalStart = firstTactical?.start ?? null;
     if (firstTacticalStart !== null && firstTacticalStart > 2.5) {
-      pacingLog.push(`⚠ First tactical B-roll at ${firstTacticalStart.toFixed(2)}s is too late (target: 0.8–2.0s)`);
-      // Try to split the first beat to create an earlier tactical slot
+      pacingLog.push(`⚠ Hook overlay at ${firstTacticalStart.toFixed(2)}s is too late (target: 0.8–2.0s)`);
+      // Try to split the first beat to create an earlier overlay slot
       const firstBeat = semanticBeats[0];
       if (firstBeat && firstBeat.visualIntent === 'talking_head' && firstBeat.end > 1.5) {
         const splitPoint = Math.min(1.2, firstBeat.end * 0.4);
-        // Move the tactical_broll to start at splitPoint
+        // Move the overlay to start at splitPoint
         if (firstTactical && firstTactical.start > splitPoint + 0.5) {
           // Insert a new short TH beat to cover [original firstBeat.start, splitPoint]
           // and shift the tactical_broll to [splitPoint, tactical_broll's original end or next beat]
@@ -670,13 +642,13 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
           if (prevBeat && prevBeat !== firstBeat) {
             prevBeat.end = firstTactical.start;
           }
-          pacingLog.push(`✅ Moved tactical B-roll from ${oldTacStart.toFixed(2)}s → ${firstTactical.start.toFixed(2)}s (split opening TH at ${splitPoint.toFixed(2)}s)`);
+          pacingLog.push(`✅ Moved hook overlay from ${oldTacStart.toFixed(2)}s → ${firstTactical.start.toFixed(2)}s (split opening TH at ${splitPoint.toFixed(2)}s)`);
           // Re-sort
           semanticBeats.sort((a, b) => a.start - b.start);
         }
       }
     } else if (firstTacticalStart !== null) {
-      pacingLog.push(`✅ First tactical B-roll at ${firstTacticalStart.toFixed(2)}s — within target range`);
+      pacingLog.push(`✅ Hook overlay at ${firstTacticalStart.toFixed(2)}s — within target range`);
     }
 
     // RULE B: Opening TH beat must be ≤ 1.5s
@@ -693,92 +665,16 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       semanticBeats.sort((a, b) => a.start - b.start);
     }
 
-    // RULE C: Break up long uninterrupted TH stretches after 6s
-    // Compute consecutive TH duration by merging adjacent TH beats
-    const TH_MAX_AFTER_OPENING = 3.5; // seconds
-    const OPENING_BOUNDARY = 6.0; // seconds — rule kicks in after this point
-    let pacingRevisions = 0;
-    const maxPacingPasses = 3; // prevent infinite loops
-
-    for (let pass = 0; pass < maxPacingPasses; pass++) {
-      let madeChange = false;
-      semanticBeats.sort((a, b) => a.start - b.start);
-
-      for (let i = 0; i < semanticBeats.length; i++) {
-        const beat = semanticBeats[i];
-        if (beat.visualIntent !== 'talking_head') continue;
-        if (beat.start < OPENING_BOUNDARY) continue;
-
-        const beatDur = beat.end - beat.start;
-        if (beatDur <= TH_MAX_AFTER_OPENING) continue;
-
-        // This TH beat is too long after the opening section
-        // Try to promote it to screencast if there are product URLs available
-        if (hasScreencastUrls) {
-          // Check if the transcript content could support a screencast
-          const prevIntent = beat.visualIntent;
-          beat.visualIntent = 'screencast';
-          beat.showNarrator = true;
-          beat.overlayDelaySeconds = 1.0;
-          pacingLog.push(`✅ Promoted long TH (${beatDur.toFixed(1)}s at ${beat.start.toFixed(1)}s) → screencast (was ${prevIntent}, exceeded ${TH_MAX_AFTER_OPENING}s limit)`);
-          madeChange = true;
-          pacingRevisions++;
-        } else {
-          // No screencast URLs — split into shorter TH beats
-          const splitPoint = parseFloat((beat.start + TH_MAX_AFTER_OPENING).toFixed(3));
-          const newBeat: SemanticBeat = {
-            ...beat,
-            start: splitPoint,
-            end: beat.end,
-            summary: beat.summary + ' (cont.)',
-          };
-          beat.end = splitPoint;
-          semanticBeats.splice(i + 1, 0, newBeat);
-          pacingLog.push(`✅ Split long TH at ${beat.start.toFixed(1)}s into two beats at ${splitPoint.toFixed(1)}s (no screencast URLs available)`);
-          madeChange = true;
-          pacingRevisions++;
-        }
-        break; // restart pass after modification
-      }
-      if (!madeChange) break;
-    }
-
-    // RULE D: Check consecutive TH blocks (adjacent TH beats that form one long stretch)
-    for (let pass = 0; pass < maxPacingPasses; pass++) {
-      let madeChange = false;
-      semanticBeats.sort((a, b) => a.start - b.start);
-
-      for (let i = 0; i < semanticBeats.length; i++) {
-        if (semanticBeats[i].visualIntent !== 'talking_head') continue;
-        if (semanticBeats[i].start < OPENING_BOUNDARY) continue;
-
-        // Find consecutive TH stretch
-        let stretchEnd = i;
-        while (stretchEnd + 1 < semanticBeats.length &&
-               semanticBeats[stretchEnd + 1].visualIntent === 'talking_head' &&
-               Math.abs(semanticBeats[stretchEnd].end - semanticBeats[stretchEnd + 1].start) < 0.1) {
-          stretchEnd++;
-        }
-        const stretchDur = semanticBeats[stretchEnd].end - semanticBeats[i].start;
-        if (stretchDur > TH_MAX_AFTER_OPENING && stretchEnd > i && hasScreencastUrls) {
-          // Promote the longest beat in this stretch to screencast
-          let longestIdx = i;
-          let longestDur = 0;
-          for (let j = i; j <= stretchEnd; j++) {
-            const d = semanticBeats[j].end - semanticBeats[j].start;
-            if (d > longestDur) { longestDur = d; longestIdx = j; }
-          }
-          semanticBeats[longestIdx].visualIntent = 'screencast';
-          semanticBeats[longestIdx].showNarrator = true;
-          semanticBeats[longestIdx].overlayDelaySeconds = 1.0;
-          pacingLog.push(`✅ Broke up consecutive TH stretch (${stretchDur.toFixed(1)}s at ${semanticBeats[i].start.toFixed(1)}s) — promoted beat at ${semanticBeats[longestIdx].start.toFixed(1)}s to screencast`);
-          madeChange = true;
-          pacingRevisions++;
-          break;
-        }
-      }
-      if (!madeChange) break;
-    }
+    // NOTE (editorial-rules v3 — narrator-first):
+    // Earlier versions force-converted any talking-head beat longer than a few
+    // seconds into a screencast after the 6s mark. That is what produced the
+    // "way too many screencasts, disconnected from the narration" feel. We now
+    // TRUST the director's narrator-first plan: long narrator stretches are
+    // allowed, and overlays only appear where the model decided they reinforce
+    // the words. The only structural guarantee we still enforce is the HOOK
+    // overlay (RULE A above). No TH→screencast promotion happens here.
+    const OPENING_BOUNDARY = 6.0; // retained for logging/metrics below
+    const pacingRevisions = 0;
 
     // ── Compute pacing validation metrics ────────────────────────────────────
     semanticBeats.sort((a, b) => a.start - b.start);
@@ -809,11 +705,13 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       }
     }
 
-    const updatedFirstTactical = semanticBeats.find(b => b.visualIntent === 'tactical_broll');
-    const finalFirstTacticalStart = updatedFirstTactical?.start ?? -1;
+    const updatedFirstOverlay = semanticBeats.find(b => b.visualIntent === 'screencast' || b.visualIntent === 'tactical_broll');
+    const finalFirstOverlayStart = updatedFirstOverlay?.start ?? -1;
 
     const pacingValidation = {
-      firstTacticalBrollStart: finalFirstTacticalStart,
+      // Hook overlay (screencast OR generated) start — the one structural rule.
+      firstOverlayStart: finalFirstOverlayStart,
+      hookOverlayType: updatedFirstOverlay?.visualIntent ?? 'none',
       totalTalkingHeadDuration: parseFloat(totalTHDuration.toFixed(2)),
       totalScreencastDuration: parseFloat(totalSCDuration.toFixed(2)),
       totalTacticalBrollDuration: parseFloat(totalTBDuration.toFixed(2)),
@@ -822,9 +720,9 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       screencastCoveragePercent: parseFloat(((totalSCDuration / duration) * 100).toFixed(1)),
       talkingHeadCoveragePercent: parseFloat(((totalTHDuration / duration) * 100).toFixed(1)),
       pacingRevisions,
-      passed: finalFirstTacticalStart >= 0 && finalFirstTacticalStart <= 2.5 &&
-              longestTHStretch <= 5.0 &&
-              (totalSCDuration >= totalTHDuration * 0.5 || !hasScreencastUrls),
+      // Narrator-first: the only thing we require is an early hook overlay.
+      // Long narrator stretches are intentional and do NOT fail validation.
+      passed: finalFirstOverlayStart >= 0 && finalFirstOverlayStart <= 2.5,
       log: pacingLog,
     };
 
@@ -895,6 +793,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
             showNarrator: true,
             showNarratorFirst: true,
             overlayDelaySeconds: 0,
+            rationale: beat.rationale ?? '',
           }),
           captureStatus: 'Pending',
         });
@@ -925,6 +824,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
             overlayDelaySeconds: beat.overlayDelaySeconds,
             returnToNarratorBeforeEnd: returnToNarr,
             narratorReturnLeadSeconds: narrReturnLead,
+            rationale: beat.rationale ?? '',
           }),
           captureStatus: 'Pending',
         });
@@ -959,6 +859,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
             isRequiredTacticalSlot: beat.isRequiredTacticalSlot ?? false,
             tacticalPlacementReason: beat.tacticalPlacementReason ?? 'AI-planned early pattern interrupt',
             plannedEntryTime: beatStart,
+            rationale: beat.rationale ?? '',
           }),
           captureStatus: 'Pending',
         });
@@ -1037,7 +938,10 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     let directorData: any = {};
     try { directorData = JSON.parse(directorRaw); } catch { /* */ }
     directorData.pacingValidation = pacingValidation;
-    directorData.editorialRulesVersion = 2;
+    directorData.editorialRulesVersion = 3;
+    if (directorData.editApproach) {
+      console.log(`[runPipeline] 🎬 Edit approach: ${directorData.editApproach.mode ?? '?'} — ${directorData.editApproach.reasoning ?? ''}`);
+    }
 
     await Projects.update({
       id: projectId,
