@@ -174,7 +174,7 @@ export default createEndpoint({
         if (addType === 'stock' || addType === 'screencast') {
           const stock = await searchPexelsVideo(r.query ?? s.caption ?? '', beatDur, `[reviewEdit:${s.id}]`);
           if (stock) {
-            await Shots.update({ id: s.id, record: { shotType: 'B-Roll', clipUrl: stock.url, captureStatus: 'Done', uiLabelsJson: JSON.stringify({ ...baseLabels, visualIntent: 'tactical_broll', brollTrack: 'stock', brollSource: 'pexels', stockQuery: r.query ?? '' }) } });
+            await Shots.update({ id: s.id, record: { shotType: 'B-Roll', clipUrl: stock.url, captureStatus: 'Done', uiLabelsJson: JSON.stringify({ ...baseLabels, visualIntent: 'tactical_broll', brollTrack: 'stock', brollSource: 'pexels', mediaType: 'video', stockQuery: r.query ?? '' }) } });
             console.log(`[reviewEdit] ⤴ Added stock at ${(s.startTime ?? 0).toFixed(1)}s: "${r.query}"`);
             added++; continue;
           }

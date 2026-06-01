@@ -11,7 +11,8 @@
  */
 
 export interface StockClip {
-  url: string;        // direct .mp4 link
+  url: string;        // direct video link (.mp4/.webm/.mov/.m4v)
+  mediaType: "video"; // always video — used so consumers never sniff the URL
   width: number;
   height: number;
   durationSec: number;
@@ -72,29 +73,32 @@ export async function searchPexelsVideo(
     // Rank: prefer vertical clips long enough for the beat, then by how close
     // the height is to ~1280 (good quality without being huge).
     //
-    // VIDEO ONLY: we use the /videos/search endpoint, but each result's
-    // video_files can include non-playable entries. Accept a file ONLY when its
-    // MIME is video/* AND its link is a real video container — never an image
-    // (.jpg/.png preview) and never a streaming manifest (.m3u8).
-    const VIDEO_MIME = /^video\//i;
+    // VIDEO ONLY — the definitive guard against "it returned an image":
+    // a candidate file is accepted ONLY when its link is a real downloadable
+    // VIDEO CONTAINER (.mp4/.webm/.mov/.m4v). We do NOT trust file_type alone
+    // (Pexels sometimes mislabels it), and we explicitly reject image
+    // extensions, HLS manifests, and Pexels' `video_pictures` (those are the
+    // poster JPEGs — never put one in clipUrl).
     const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?|$)/i;
-    const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|bmp)(\?|$)/i;
+    const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|bmp|svg)(\?|$)/i;
     let best: StockClip | null = null;
     let bestScore = -Infinity;
+    let inspected = 0;
+    let rejected = 0;
     for (const v of videos) {
       const dur = typeof v.duration === "number" ? v.duration : 0;
       const files: any[] = Array.isArray(v.video_files) ? v.video_files : [];
       for (const f of files) {
+        inspected++;
         const w = f.width ?? 0;
         const h = f.height ?? 0;
         const link = (f.link as string | undefined) ?? "";
-        const mime = (f.file_type as string | undefined) ?? "";
-        // Must be a real downloadable video file.
-        if (!link) continue;
-        if (IMAGE_EXT.test(link)) continue;              // never an image
-        if (/\.m3u8(\?|$)/i.test(link)) continue;        // skip HLS manifests
-        const looksVideo = VIDEO_MIME.test(mime) || VIDEO_EXT.test(link);
-        if (!looksVideo) continue;
+        if (!link) { rejected++; continue; }
+        if (IMAGE_EXT.test(link)) { rejected++; continue; }       // never an image
+        if (/\.m3u8(\?|$)/i.test(link)) { rejected++; continue; } // skip HLS manifests
+        // The link itself MUST be a video container — this is what guarantees
+        // we never hand back an image, regardless of how file_type is labelled.
+        if (!VIDEO_EXT.test(link)) { rejected++; continue; }
         const isPortrait = h >= w && h > 0;
         let score = 0;
         if (isPortrait) score += 1000;
@@ -103,12 +107,14 @@ export async function searchPexelsVideo(
         score -= Math.abs(h - 1280) / 10;
         if (score > bestScore) {
           bestScore = score;
-          best = { url: link, width: w, height: h, durationSec: dur, query: q, pexelsId: v.id };
+          best = { url: link, mediaType: "video", width: w, height: h, durationSec: dur, query: q, pexelsId: v.id };
         }
       }
     }
     if (best) {
-      console.log(`${tag} Pexels match for "${q}": ${best.width}x${best.height} ${best.durationSec}s id=${best.pexelsId}`);
+      console.log(`${tag} Pexels VIDEO match for "${q}": ${best.url} (${best.width}x${best.height}, ${best.durationSec}s, id=${best.pexelsId})`);
+    } else {
+      console.warn(`${tag} Pexels: ${videos.length} results but no usable VIDEO file (inspected ${inspected}, rejected ${rejected}) for "${q}"`);
     }
     return best;
   } catch (e: any) {

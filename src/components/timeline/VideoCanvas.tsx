@@ -111,7 +111,18 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
   const overlayDisplayUrl = overlayIsYouTube && overlayClipUrl
     ? getYouTubeThumbnailUrl(overlayClipUrl)
     : overlayClipUrl;
-  const overlayIsImage = overlayDisplayUrl ? (overlayIsYouTube || isImageUrl(overlayDisplayUrl)) : false;
+  // Prefer the stored mediaType when the pipeline set one (stock/promo/generated
+  // clips are always video) — URL-extension sniffing is only a fallback. This is
+  // what stops a Pexels .mp4 with an odd URL from being mis-rendered as an image.
+  const overlayMediaType: string | undefined = (() => {
+    try { return activeOverlay?.uiLabelsJson ? JSON.parse(activeOverlay.uiLabelsJson).mediaType : undefined; }
+    catch { return undefined; }
+  })();
+  const overlayIsImage = overlayMediaType === 'video'
+    ? false
+    : overlayMediaType === 'image'
+    ? true
+    : overlayDisplayUrl ? (overlayIsYouTube || isImageUrl(overlayDisplayUrl)) : false;
 
   // Camera keyframe transform
   let camTransform = 'scale(1)';

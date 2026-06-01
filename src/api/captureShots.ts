@@ -221,11 +221,14 @@ export default createEndpoint({
                     ...existingLabels,
                     brollTrack: 'stock',
                     brollSource: 'pexels',
+                    mediaType: 'video', // stock is always a video — preview must not sniff the URL
                     stockQuery,
                     clipStartOffset: 0,
                     clipEndOffset: 0,
-                    showNarratorFirst: existingLabels.showNarratorFirst ?? true,
-                    overlayDelaySeconds: existingLabels.overlayDelaySeconds ?? 1.0,
+                    showNarratorFirst: true,
+                    // Rule: every overlay (stock/promo/generated) appears AFTER 1s
+                    // of narrator, never at 0s.
+                    overlayDelaySeconds: Math.max(1.0, existingLabels.overlayDelaySeconds ?? 1.0),
                   }),
                 },
               });

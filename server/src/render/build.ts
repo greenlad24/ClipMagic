@@ -105,7 +105,14 @@ export async function buildArgsFromManifest(
   for (const scene of m.scenes) {
     if (scene.overlay && scene.overlay.clipUrl) {
       const p = await resolveInput(scene.overlay.clipUrl);
-      const isImg = isImage(scene.overlay.clipUrl);
+      // Trust the manifest's mediaType (stock/promo/generated clips are video);
+      // only sniff the URL when it's somehow unset.
+      const isImg =
+        scene.overlay.mediaType === "image"
+          ? true
+          : scene.overlay.mediaType === "video"
+          ? false
+          : isImage(scene.overlay.clipUrl);
       // Seek into the matched segment for video overlays so we start at the
       // right moment of the promo clip (and so a short clip isn't already past
       // EOF — which is what made the overlay freeze on a single frame).

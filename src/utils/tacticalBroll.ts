@@ -306,12 +306,18 @@ const DEFAULT_OVERLAY_DELAY = 1.0;
 const MIN_OVERLAY_VISIBLE   = 1.0; // at least 1s of screencast must be visible
 
 /**
- * Compute narrator-first overlay delay, intelligently clamped for short beats.
+ * Compute narrator-first overlay delay. RULE: every overlay (promo / stock /
+ * generated) appears only AFTER ~1s of narrator — never at 0s. We therefore
+ * hold the 1s delay as a firm floor. The only time it drops below 1s is when
+ * the beat is so short that 1s of narrator would leave < MIN_OVERLAY_VISIBLE of
+ * the clip showing; in that rare case we still keep as much narrator-first lead
+ * as the beat allows (the editor would normally not place an overlay on so
+ * short a beat at all).
  */
 export function computeOverlayDelay(beatDurationSec: number, preferredDelay = DEFAULT_OVERLAY_DELAY): number {
-  // If beat is too short, clamp so at least MIN_OVERLAY_VISIBLE of screencast shows
   const maxDelay = Math.max(0, beatDurationSec - MIN_OVERLAY_VISIBLE);
-  return parseFloat(Math.min(preferredDelay, maxDelay).toFixed(2));
+  // Honor the 1s rule as a floor whenever the beat is long enough for it.
+  return parseFloat(Math.min(Math.max(preferredDelay, DEFAULT_OVERLAY_DELAY), maxDelay).toFixed(2));
 }
 
 // ── Segment-level Retrieval Matching ──────────────────────────────────────────

@@ -378,12 +378,23 @@ const submitRendiJob: Handler = async (input) => {
       const type = String(s.shotType || "broll").toLowerCase().replace(/[\s_-]/g, "");
       const sceneType = type === "talkinghead" ? "talking-head" : type === "screencast" ? "screencast" : "broll";
       const clipUrl = (s.clipUrl as string) || "";
-      const isImage = /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(clipUrl.split("?")[0]);
       // Pull the overlay timing the director/retrieval computed (segment within
       // the promo clip, narrator-first delay, narrator-return) out of uiLabelsJson.
       let lbl: Record<string, any> = {};
       try { if (s.uiLabelsJson) lbl = JSON.parse(s.uiLabelsJson as string); } catch { /* */ }
       const num = (v: any, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+      // Trust the stored mediaType (stock/promo/generated clips are video); only
+      // fall back to URL sniffing when the pipeline didn't record one.
+      const isImage = lbl.mediaType === "image"
+        ? true
+        : lbl.mediaType === "video"
+        ? false
+        : /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(clipUrl.split("?")[0]);
+      // Rule: overlays appear AFTER ~1s of narrator. Honor 1s as a floor (only a
+      // very short beat may reduce it, handled upstream by computeOverlayDelay).
+      const storedDelay = num(lbl.overlayDelaySeconds, 1.0);
+      const beatLen = (s.endTime as number) - (s.startTime as number);
+      const overlayDelay = beatLen > 2 ? Math.max(1.0, storedDelay) : storedDelay;
       return {
         shotId: s.id,
         type: sceneType,
@@ -396,7 +407,7 @@ const submitRendiJob: Handler = async (input) => {
                 clipUrl,
                 clipStartOffset: num(lbl.clipStartOffset, 0),
                 clipEndOffset: num(lbl.clipEndOffset, 0),
-                overlayDelaySeconds: num(lbl.overlayDelaySeconds, 0),
+                overlayDelaySeconds: overlayDelay,
                 showNarratorFirst: lbl.showNarratorFirst === true,
                 returnToNarrator: lbl.returnToNarratorBeforeEnd === true,
                 narratorReturnLeadSeconds: num(lbl.narratorReturnLeadSeconds, 0),
