@@ -233,8 +233,10 @@ export async function buildArgsFromManifest(
   // bare stream specifier as a filter label (e.g. "[0:a]") is what previously
   // broke renders that had no music.
   if (narrationHasAudio) {
+    // Narration at full level + a small +1 dB lift so the voice sits clearly
+    // above the music bed.
     filters.push(
-      `[0:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo[narr_a]`
+      `[0:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1dB[narr_a]`
     );
   } else {
     // Synthesize silence for the full duration so the output always has audio.
@@ -245,13 +247,16 @@ export async function buildArgsFromManifest(
   }
 
   if (musicIdx >= 0) {
-    const volume = typeof m.music!.volume === "number" ? m.music!.volume : 0.18;
+    // Quiet background bed — default 8%. (project.musicVolume is a 0–1 gain.)
+    const volume = typeof m.music!.volume === "number" ? m.music!.volume : 0.08;
     filters.push(
       `[${musicIdx}:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo,` +
         `volume=${volume}[music]`
     );
+    // normalize=0 so amix does NOT halve each input — narration keeps its level
+    // and the music stays at the gain we set above (default 5%).
     filters.push(
-      `[narr_a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`
+      `[narr_a][music]amix=inputs=2:duration=first:normalize=0:dropout_transition=2[aout]`
     );
   } else {
     filters.push(`[narr_a]anull[aout]`);

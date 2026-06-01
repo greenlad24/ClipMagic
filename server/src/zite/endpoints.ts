@@ -376,9 +376,8 @@ const submitRendiJob: Handler = async (input) => {
   if (musicTrackId) {
     const track = await MusicTracks.findOne({ id: musicTrackId });
     if (track?.audioUrl) {
-      // musicVolume is stored as a 0–1 gain (the editor slider saves e.g. 0.15),
-      // so use it directly — do NOT divide by 100 (that made music inaudible).
-      const raw = typeof project.musicVolume === "number" ? (project.musicVolume as number) : 0.15;
+      // musicVolume is stored as a 0–1 gain; default to 8% (quiet bed).
+      const raw = typeof project.musicVolume === "number" ? (project.musicVolume as number) : 0.08;
       const vol = Math.max(0, Math.min(1, raw));
       music = { audioUrl: track.audioUrl as string, volume: vol };
       console.log(`[submitRendiJob] Music: track=${musicTrackId} vol=${vol} url=${track.audioUrl}`);

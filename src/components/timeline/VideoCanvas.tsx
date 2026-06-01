@@ -79,7 +79,7 @@ const SUBTITLE_PREVIEW_STYLES: Record<string, {
   'black-on-yellow': { line: '#050000', emph: '#FFFFFF', fontPx: 88, italic: false, allCaps: true, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 900, emphWeight: 900, box: true, boxColor: '#F7BD05' },
 };
 
-export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'yellow-mont' }: Props) {
+export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.08, musicMuted = false, subtitleTemplate = 'yellow-mont' }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const overlayVidRef = useRef<HTMLVideoElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);

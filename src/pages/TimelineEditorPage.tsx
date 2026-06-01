@@ -63,7 +63,7 @@ export default function TimelineEditorPage() {
   const [waveformPeaks, setWaveformPeaks] = useState<number[] | null>(null);
   const [musicInfo, setMusicInfo] = useState<{ bpm?: number; trackName?: string } | null>(null);
   const [musicUrl, setMusicUrl] = useState<string | undefined>(undefined);
-  const [musicVolume, setMusicVolume] = useState(0.15);
+  const [musicVolume, setMusicVolume] = useState(0.08);
   const [musicMuted, setMusicMuted] = useState(false);
   const [subtitleTemplate, setSubtitleTemplate] = useState('auto');
   const [beatGrid, setBeatGrid] = useState<number[]>([]);

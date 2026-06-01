@@ -62,6 +62,9 @@ export async function buildContextualStockQuery(
 ): Promise<string> {
   const naive = pexelsQueryFromBeat({ matchKeywords: ctx.keywords }, ctx.beatText);
   try {
+    // NOTE: this runs on the self-hosted server through the OpenAI->Claude shim,
+    // where the model id "gpt-4o-mini" is mapped to the CHEAP+ACCURATE Claude
+    // fast tier (Claude Haiku). So this is a Claude call, not OpenAI.
     const res = await client.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
