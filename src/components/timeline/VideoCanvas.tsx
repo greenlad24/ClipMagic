@@ -206,27 +206,35 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
 
   // Music bed: volume follows the slider; muted by the timeline toggle or the
   // canvas mute button. The narration audio lives on the narration <video>, so
-  // music is an independent <audio> element mixed by the browser.
-  useEffect(() => {
+  // music is an independent <audio> element mixed by the browser. We apply
+  // volume/mute imperatively (also on mount + loadedmetadata) because the
+  // <audio> element only appears once musicUrl resolves — an effect keyed on
+  // volume alone would miss that first mount and leave it at full volume.
+  const applyMusicGain = useCallback(() => {
     const a = musicRef.current;
     if (!a) return;
     a.volume = Math.max(0, Math.min(1, musicVolume));
     a.muted = musicMuted || muted;
   }, [musicVolume, musicMuted, muted]);
 
-  // Music play/pause + keep it roughly in sync with the playhead.
+  useEffect(() => { applyMusicGain(); }, [applyMusicGain, musicUrl]);
+
+  // Music play/pause + keep it roughly in sync with the playhead. Driven by the
+  // narration video so they stay locked; does NOT gate on the narration's load
+  // state so the bed still plays even if the narration is a blob/chunked load.
   useEffect(() => {
     const a = musicRef.current;
     if (!a || !musicUrl) return;
-    if (isPlaying && loadState === 'ready') {
+    applyMusicGain();
+    if (isPlaying) {
       if (Math.abs(a.currentTime - playhead) > 0.3) a.currentTime = playhead;
-      a.play().catch(() => {});
+      a.play().catch((e) => console.warn('[music] play blocked:', e?.message));
     } else {
       a.pause();
-      if (!isPlaying && Math.abs(a.currentTime - playhead) > 0.1) a.currentTime = playhead;
+      if (Math.abs(a.currentTime - playhead) > 0.1) a.currentTime = playhead;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPlaying, playhead, musicUrl, loadState]);
+  }, [isPlaying, playhead, musicUrl]);
 
   // Overlay crossfade
   useEffect(() => {
@@ -327,7 +335,17 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
 
         {/* Background music bed (hidden) — mixed under the narration in preview */}
         {musicUrl && (
-          <audio ref={musicRef} src={musicUrl} preload="auto" loop className="hidden" />
+          <audio
+            ref={musicRef}
+            src={musicUrl}
+            preload="auto"
+            loop
+            crossOrigin="anonymous"
+            className="hidden"
+            onLoadedMetadata={applyMusicGain}
+            onCanPlay={applyMusicGain}
+            onError={() => console.warn('[music] failed to load', musicUrl)}
+          />
         )}
 
         {/* Overlay — IMAGE clip (including YouTube thumbnails) */}

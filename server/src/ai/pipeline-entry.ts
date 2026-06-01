@@ -21,6 +21,8 @@ import captureShotsEndpoint from "../../../src/api/captureShots";
 // @ts-ignore
 import recaptureShotEndpoint from "../../../src/api/recaptureShot";
 // @ts-ignore
+import reviewEditEndpoint from "../../../src/api/reviewEdit";
+// @ts-ignore
 import indexPromoVideoEndpoint from "../../../src/api/indexPromoVideo";
 // @ts-ignore
 import savePromoVideoEndpoint from "../../../src/api/savePromoVideo";
@@ -38,5 +40,6 @@ export const runPipeline = (input: unknown, ctx: PipelineContext) => run(runPipe
 export const getWaveform = (input: unknown, ctx: PipelineContext) => run(getWaveformEndpoint, input, ctx);
 export const captureShots = (input: unknown, ctx: PipelineContext) => run(captureShotsEndpoint, input, ctx);
 export const recaptureShot = (input: unknown, ctx: PipelineContext) => run(recaptureShotEndpoint, input, ctx);
+export const reviewEdit = (input: unknown, ctx: PipelineContext) => run(reviewEditEndpoint, input, ctx);
 export const indexPromoVideo = (input: unknown, ctx: PipelineContext) => run(indexPromoVideoEndpoint, input, ctx);
 export const savePromoVideo = (input: unknown, ctx: PipelineContext) => run(savePromoVideoEndpoint, input, ctx);

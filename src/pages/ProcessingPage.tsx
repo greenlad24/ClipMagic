@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from 'zite-auth-sdk';
-import { getProject, getShots, runPipeline, captureShots, pollBrollStatus } from 'zite-endpoints-sdk';
+import { getProject, getShots, runPipeline, captureShots, pollBrollStatus, reviewEdit } from 'zite-endpoints-sdk';
 import { GetProjectOutputType, GetShotsOutputType } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 import KinoviDebugPanel from '@/components/KinoviDebugPanel';
@@ -61,9 +61,43 @@ export default function ProcessingPage() {
   const [brollPolling, setBrollPolling] = useState(false);
   const [brollCounts,  setBrollCounts]  = useState({ pending: 0, done: 0, failed: 0 });
 
+  const [reviewing, setReviewing] = useState(false);
   const pipelineStarted = useRef(false);
   const navigated       = useRef(false);
+  const reviewRan       = useRef(false);
   const resumeStep      = useRef<'pipeline' | 'capture' | 'render' | null>(null);
+
+  // Run the AI self-review (accuracy pass) once, then go to the editor. Review
+  // failures are non-fatal — we still open the timeline.
+  const finishToTimeline = useRef<() => Promise<void>>(async () => {});
+  finishToTimeline.current = async () => {
+    if (navigated.current) return;
+    if (!reviewRan.current) {
+      reviewRan.current = true;
+      setReviewing(true);
+      try {
+        const r = await reviewEdit({ projectId: projectId! });
+        console.log('[ProcessingPage] reviewEdit:', r);
+        // The review may have queued new AI-generated clips — wait for them.
+        // (reviewRan stays true, so the next finishToTimeline after this
+        // polling round skips straight to the editor.)
+        if (r && r.pendingBroll > 0) {
+          setReviewing(false);
+          setBrollCounts({ pending: r.pendingBroll, done: 0, failed: 0 });
+          setBrollPolling(true);
+          return;
+        }
+      } catch (e: any) {
+        console.warn('[ProcessingPage] reviewEdit failed (non-fatal):', e?.message);
+      } finally {
+        setReviewing(false);
+      }
+    }
+    if (!navigated.current) {
+      navigated.current = true;
+      navigate(`/project/${projectId}/timeline`);
+    }
+  };
 
   // ── Initial load — determines resume point before pipeline fires ────────────
   useEffect(() => {
@@ -113,10 +147,7 @@ export default function ProcessingPage() {
           setBrollCounts({ pending: result.pendingBroll, done: 0, failed: 0 });
           setBrollPolling(true);
         } else {
-          if (!navigated.current) {
-            navigated.current = true;
-            navigate(`/project/${projectId}/timeline`);
-          }
+          finishToTimeline.current();
         }
       })
       .catch((err: any) => {
@@ -135,10 +166,7 @@ export default function ProcessingPage() {
 
         if (result.pending === 0) {
           clearInterval(poll);
-          if (!navigated.current) {
-            navigated.current = true;
-            navigate(`/project/${projectId}/timeline`);
-          }
+          finishToTimeline.current();
         }
       } catch (e: any) {
         // Transient errors — keep polling
@@ -159,7 +187,9 @@ export default function ProcessingPage() {
   };
 
   let headingText: string;
-  if (brollPolling) {
+  if (reviewing) {
+    headingText = 'AI reviewing the edit for accuracy…';
+  } else if (brollPolling) {
     headingText = `Generating B-Roll video… (${brollCounts.pending} remaining)`;
   } else if (status === 'Error') {
     headingText = resumeStep.current ? resumeLabel[resumeStep.current] : 'Retrying…';

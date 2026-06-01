@@ -71,6 +71,14 @@ export async function searchPexelsVideo(
 
     // Rank: prefer vertical clips long enough for the beat, then by how close
     // the height is to ~1280 (good quality without being huge).
+    //
+    // VIDEO ONLY: we use the /videos/search endpoint, but each result's
+    // video_files can include non-playable entries. Accept a file ONLY when its
+    // MIME is video/* AND its link is a real video container — never an image
+    // (.jpg/.png preview) and never a streaming manifest (.m3u8).
+    const VIDEO_MIME = /^video\//i;
+    const VIDEO_EXT = /\.(mp4|webm|mov|m4v)(\?|$)/i;
+    const IMAGE_EXT = /\.(jpe?g|png|webp|gif|avif|bmp)(\?|$)/i;
     let best: StockClip | null = null;
     let bestScore = -Infinity;
     for (const v of videos) {
@@ -79,8 +87,14 @@ export async function searchPexelsVideo(
       for (const f of files) {
         const w = f.width ?? 0;
         const h = f.height ?? 0;
-        const link = f.link as string | undefined;
-        if (!link || !/\.mp4|mp4/i.test(f.file_type ?? "mp4")) continue;
+        const link = (f.link as string | undefined) ?? "";
+        const mime = (f.file_type as string | undefined) ?? "";
+        // Must be a real downloadable video file.
+        if (!link) continue;
+        if (IMAGE_EXT.test(link)) continue;              // never an image
+        if (/\.m3u8(\?|$)/i.test(link)) continue;        // skip HLS manifests
+        const looksVideo = VIDEO_MIME.test(mime) || VIDEO_EXT.test(link);
+        if (!looksVideo) continue;
         const isPortrait = h >= w && h > 0;
         let score = 0;
         if (isPortrait) score += 1000;

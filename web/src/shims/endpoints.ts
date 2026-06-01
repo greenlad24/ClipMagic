@@ -101,6 +101,7 @@ export const pollRendiStatus = endpoint("pollRendiStatus");
 export const renderVideo = endpoint("renderVideo");
 export const listStorage = endpoint("listStorage");
 export const deleteStorageFiles = endpoint("deleteStorageFiles");
+export const reviewEdit = endpoint("reviewEdit");
 
 // ── Output/Input types used by the frontend. The originals were generated from
 // each endpoint's zod schema; the app only uses them as TS shapes, so permissive

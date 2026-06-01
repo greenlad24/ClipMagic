@@ -513,6 +513,7 @@ let pipelineMod: {
   runPipeline: PipelineFn;
   captureShots: PipelineFn;
   recaptureShot: PipelineFn;
+  reviewEdit: PipelineFn;
   indexPromoVideo: PipelineFn;
   savePromoVideo: PipelineFn;
   getWaveform: PipelineFn;
@@ -542,7 +543,7 @@ async function loadPipeline() {
  * Kinovi for B-roll, but that key is checked inside the bundled logic so a
  * project with only screencast/talking-head shots still works without it.
  */
-async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot", input: unknown, userId: string) {
+async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot" | "reviewEdit", input: unknown, userId: string) {
   if (!process.env.GROQ_API_KEY) {
     throw new ZiteError({
       code: "BAD_REQUEST",
@@ -570,6 +571,7 @@ async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot"
 const runPipeline: Handler = (input, userId) => runBundled("runPipeline", input, userId);
 const captureShots: Handler = (input, userId) => runBundled("captureShots", input, userId);
 const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
+const reviewEdit: Handler = (input, userId) => runBundled("reviewEdit", input, userId);
 
 /**
  * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
@@ -993,6 +995,7 @@ export const HANDLERS: Record<string, Handler> = {
   generateShot,
   captureShots,
   recaptureShot,
+  reviewEdit,
   indexPromoVideo,
   validateAssets: async () => ({ ok: true, errors: [] }),
   getWaveform,
