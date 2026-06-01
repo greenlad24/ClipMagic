@@ -307,9 +307,10 @@ For each beat, decide:
   rationale: 1–2 first-person sentences explaining WHY you chose this visual for THESE EXACT WORDS and HOW it emphasizes the narrator's point.
   brollPrompt: ONLY for visualIntent="tactical_broll" — an EXTENSIVE, detailed video-generation prompt (see the tactical_broll rules below).
 
-★ CORE PRINCIPLE — CONSTANT MOVEMENT (ADAPTIVE), BUT EVERY VISUAL MUST BE ACCURATE:
-  Keep the edit ALIVE: change the visual roughly EVERY 3–4 SECONDS so the viewer is re-hooked and never stares at a static talking head for long. The narrator is still the backbone you keep returning to — but plan frequent cutaways.
-  ADAPTIVE PACING (not a metronome): cut MORE often during list/proof/demo/high-energy sections (every ~2–3s), and HOLD LONGER on the narrator during emotional, personal, or authority lines where the face carries the message. Match the cutting rhythm to the energy of the words.
+★ CORE PRINCIPLE — FAST-PACED, VIRAL EDIT, BUT EVERY VISUAL MUST BE ACCURATE:
+  This must feel like a high-retention, FAST-PACED viral short — never a slow talking-head video. Change the visual roughly EVERY 2–3 SECONDS. The viewer's eye should never rest on one static shot; keep cutting between the narrator and accurate overlays so there is constant motion and momentum.
+  AIM FOR MANY BEATS: a 30–60s script should have ~12–20 beats. Almost every sentence/clause should get its own visual moment. Long uninterrupted talking-head stretches (>3s) are NOT allowed except for a deliberate emotional/authority punch.
+  PACING (energy-driven but always fast): cut FASTEST during lists, proof, demos, and hype (every ~1.5–2.5s); you may hold a beat or two longer (still ≤3–4s) only on a genuinely emotional/personal line. Match the cutting rhythm to the energy of the words, but bias toward MORE cuts.
   THE ONE UNBREAKABLE RULE: every cutaway must be ACCURATE to what the narrator is saying AND informed by understanding the WHOLE video. Only cut to an overlay (real screencast/promo footage or a generated situational clip) when you can name exactly what it shows and tie it to the words at that moment (or, for the hook, to the whole-video idea).
   ACCURACY BEATS MOVEMENT: if no accurate visual exists for a 3–4s window — and it isn't worth generating a situational clip for — then HOLD on the narrator rather than cutting to something loosely-related or random. A disconnected overlay is WORSE than staying on the narrator. (A mostly-narrator video is fine when the script is personal/opinion/story-driven; even then, find accurate cutaways where you can.)
   ORDER OF PREFERENCE for each cutaway: (1) real screencast/promo footage that matches the words → (2) a situational "tactical_broll" cutaway (filled from FREE real stock footage; only 1–2 end up AI-generated) → (3) hold on the narrator with a subtle camera push. Use real footage and stock-backed situational cutaways for movement; AI generation stays rare (≤2/video).
@@ -345,7 +346,7 @@ VISUAL INTENT OPTIONS:
 STRUCTURE RULES:
   • Beat 1 = talking_head, ~0.5–1.5s (narrator appears).
   • Beat 2 = the hook overlay (screencast preferred, else tactical_broll), starting ~0.8–2.0s, visualizing the WHOLE-VIDEO idea.
-  • Through the body, alternate accurate overlays with the narrator on an adaptive ~3–4s rhythm (faster on lists/proof, slower on personal lines).
+  • Through the body, alternate accurate overlays with the narrator on a FAST ~2–3s rhythm (every ~1.5–2.5s on lists/proof). Bias toward more, shorter beats — this is a fast-paced viral edit.
   • END ON THE NARRATOR: the final beat (the CTA / closing line) should be talking_head so the video lands on a human call-to-action.
   • NARRATOR-RETURN on key beats: for longer overlays on hook / authority / payoff / CTA moments, plan to cut back to the narrator's face before the beat ends to re-anchor trust.
   • NUMBERS, STATS & LISTS: do NOT force a cutaway just because a number or list item is spoken — those are emphasized in the subtitles. Only cut if there is genuinely accurate footage for the stat/item.

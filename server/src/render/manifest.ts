@@ -62,9 +62,10 @@ export interface SubtitleEvent {
 
 /** Built-in viral subtitle looks. All render center-screen. */
 export type SubtitleTemplate =
+  | "hormozi"       // all-caps, active word pops bright yellow, thick outline
+  | "yellow-italic" // bold yellow italic, active word white — the 2nd ref style
   | "bold-center"   // big white, heavy black box — classic punchy captions
-  | "hormozi"       // all-caps, key words in bright yellow, thick outline
-  | "karaoke-pop"   // emphasized words pop in accent color, no box
+  | "karaoke-pop"   // active word pops in cyan, no box
   | "tiktok-clean"  // clean white, soft shadow, rounded feel
   | "neon"          // bright accent text with strong glow/outline
   | "minimal";      // understated lower-third-style, smaller
@@ -81,6 +82,8 @@ export interface SubtitleStyle {
   maxWordsPerLine: number;
   /** Named template (drives look). Center is enforced regardless of position. */
   template?: SubtitleTemplate;
+  /** Italic text (e.g. the yellow-italic style). */
+  italic?: boolean;
   /** Draw the dark box behind text. */
   box?: boolean;
   boxColor?: string;
@@ -120,6 +123,14 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
     fontFamily: "DejaVu Sans Bold", fontSize: 92, position: "center",
     outlineColor: "#000000", outlineWidth: 16, lineColor: "#FFFFFF", wordColor: "#FFD400",
     allCaps: true, maxWordsPerLine: 3, template: "hormozi",
+    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  },
+  "yellow-italic": {
+    // Bold YELLOW ITALIC with a soft shadow and only a thin edge — NO thick
+    // black border (matches the reference clip). The active word turns white.
+    fontFamily: "DejaVu Sans Bold", fontSize: 88, position: "center",
+    outlineColor: "#000000", outlineWidth: 3, lineColor: "#FFE100", wordColor: "#FFFFFF",
+    allCaps: false, maxWordsPerLine: 3, template: "yellow-italic", italic: true,
     box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
   },
   "karaoke-pop": {

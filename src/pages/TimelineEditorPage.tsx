@@ -87,22 +87,33 @@ export default function TimelineEditorPage() {
       if (p.musicVolume !== undefined && p.musicVolume !== null) setMusicVolume(p.musicVolume);
       if (p.subtitleTemplate) setSubtitleTemplate(p.subtitleTemplate);
       setLoading(false);
-      const trackId = Array.isArray(p.musicTrack) ? p.musicTrack[0] : p.musicTrack;
-      if (trackId) {
-        getWaveform({ trackId }).then((wf) => {
-          setWaveformPeaks(wf.peaks);
-          setMusicInfo({ bpm: wf.bpm });
-          setBeatGrid(wf.beatGrid ?? []);
-          setDownbeats(wf.downbeats ?? []);
-          setSectionMarkers(wf.sectionMarkers ?? {});
-        }).catch(() => {});
-        // Resolve the track's audio URL so the preview can play the music bed.
-        getMusicTracks({}).then(({ tracks }) => {
-          const track = tracks.find((t) => t.id === trackId);
-          if (track?.audioUrl) setMusicUrl(track.audioUrl);
-          if (track?.trackName) setMusicInfo((mi) => ({ ...(mi ?? {}), trackName: track.trackName }));
-        }).catch(() => {});
-      }
+      const projTrackId = Array.isArray(p.musicTrack) ? p.musicTrack[0] : p.musicTrack;
+      // "Auto": if the project has no music track, pick the first available one
+      // so the preview AND render always have a background bed. Persist the
+      // pick so the final render uses the same track.
+      getMusicTracks({}).then(({ tracks }) => {
+        const ready = tracks.filter((t) => t.audioUrl);
+        let track = projTrackId ? ready.find((t) => t.id === projTrackId) : undefined;
+        if (!track && ready.length) {
+          track = ready[Math.floor(Math.random() * ready.length)]; // auto-pick
+          if (track && projectId) {
+            updateProjectSettings({ projectId, musicTrackId: track.id }).catch(() => {});
+            setProject((pr) => pr ? { ...pr, musicTrack: track!.id } : pr);
+          }
+        }
+        if (track?.audioUrl) setMusicUrl(track.audioUrl);
+        if (track?.trackName || track?.bpm) setMusicInfo((mi) => ({ ...(mi ?? {}), trackName: track!.trackName, bpm: track!.bpm }));
+        const useId = track?.id;
+        if (useId) {
+          getWaveform({ trackId: useId }).then((wf) => {
+            setWaveformPeaks(wf.peaks);
+            setMusicInfo((mi) => ({ ...(mi ?? {}), bpm: wf.bpm }));
+            setBeatGrid(wf.beatGrid ?? []);
+            setDownbeats(wf.downbeats ?? []);
+            setSectionMarkers(wf.sectionMarkers ?? {});
+          }).catch(() => {});
+        }
+      }).catch(() => {});
     }).catch(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, projectId]);
@@ -453,6 +464,7 @@ export default function TimelineEditorPage() {
             className="h-7 text-xs rounded-md border border-border bg-background px-2 text-foreground hover:bg-muted cursor-pointer"
           >
             <option value="hormozi">Subtitles: Hormozi</option>
+            <option value="yellow-italic">Subtitles: Yellow Italic</option>
             <option value="bold-center">Subtitles: Bold</option>
             <option value="karaoke-pop">Subtitles: Karaoke Pop</option>
             <option value="tiktok-clean">Subtitles: TikTok Clean</option>

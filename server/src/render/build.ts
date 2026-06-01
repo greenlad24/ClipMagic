@@ -3,6 +3,10 @@ import type { RenderManifest, Scene, SubtitleEvent } from "./manifest.js";
 import { DEFAULT_SUBTITLE_STYLE } from "./manifest.js";
 import { resolveInput } from "./resolve.js";
 import { probe } from "./ffmpeg.js";
+import { buildAss } from "./ass.js";
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 const AUDIO_SR = 44100;
 
@@ -183,10 +187,34 @@ export async function buildArgsFromManifest(
     lastVideo = outLabel;
   });
 
-  // Burned-in word-by-word subtitles (timings shifted for any narration trim).
-  const sub = buildSubtitleDrawtext(m.subtitles, m, lastVideo, fontFile, shift);
-  filters.push(...sub.filters);
-  lastVideo = sub.finalLabel;
+  // Burned-in viral captions via ASS/libass (popping, word-highlighted, never
+  // overlapping). Falls back to the legacy drawtext path only if ASS can't be
+  // written for some reason.
+  const style = m.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
+  const assDoc = buildAss(m.subtitles, {
+    width: W,
+    height: H,
+    style,
+    shift,
+    duration: effectiveDuration,
+  });
+  if (assDoc) {
+    const assPath = path.join(config.tmpDir, `subs_${randomUUID()}.ass`);
+    fs.writeFileSync(assPath, assDoc, "utf8");
+    // libass reads its own fonts via fontconfig; point it at our bundled font
+    // dir so the bold face is always available regardless of the host.
+    const fontsDir = path.dirname(config.fontFile);
+    const assFilterPath = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+    const fontsDirEsc = fontsDir.replace(/\\/g, "/").replace(/:/g, "\\:");
+    filters.push(
+      `[${lastVideo}]ass=filename=${assFilterPath}:fontsdir=${fontsDirEsc}[subbed]`
+    );
+    lastVideo = "subbed";
+  } else {
+    const sub = buildSubtitleDrawtext(m.subtitles, m, lastVideo, fontFile, shift);
+    filters.push(...sub.filters);
+    lastVideo = sub.finalLabel;
+  }
 
   // ── Audio: narration (or generated silence) + optional music ───────────────
   // Always normalize to a single labeled output [aout] so the -map is uniform

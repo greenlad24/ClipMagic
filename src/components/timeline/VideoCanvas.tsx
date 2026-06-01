@@ -64,13 +64,14 @@ type LoadState = 'idle' | 'downloading' | 'loading' | 'ready' | 'error';
 // size on the 1080-wide canvas; the preview scales it by the canvas ratio so
 // what you see matches the final render.
 const RENDER_WIDTH = 1080;
-const SUBTITLE_PREVIEW_STYLES: Record<string, { line: string; emph: string; outline: string; glow: boolean; fontPx: number; box: boolean }> = {
-  hormozi:        { line: '#FFFFFF', emph: '#FFD400', outline: '#000000', glow: false, fontPx: 92, box: false },
-  'bold-center':  { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 78, box: true },
-  'karaoke-pop':  { line: '#FFFFFF', emph: '#22D3EE', outline: '#000000', glow: false, fontPx: 84, box: false },
-  'tiktok-clean': { line: '#FFFFFF', emph: '#FFFFFF', outline: '#000000', glow: false, fontPx: 46, box: false },
-  neon:           { line: '#39FF14', emph: '#FF00E5', outline: '#0A0A2A', glow: true,  fontPx: 84, box: false },
-  minimal:        { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 38, box: true },
+const SUBTITLE_PREVIEW_STYLES: Record<string, { line: string; emph: string; outline: string; glow: boolean; fontPx: number; box: boolean; italic?: boolean }> = {
+  hormozi:         { line: '#FFFFFF', emph: '#FFD400', outline: '#000000', glow: false, fontPx: 92, box: false },
+  'yellow-italic': { line: '#FFE100', emph: '#FFFFFF', outline: '#000000', glow: false, fontPx: 88, box: false, italic: true },
+  'bold-center':   { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 78, box: true },
+  'karaoke-pop':   { line: '#FFFFFF', emph: '#22D3EE', outline: '#000000', glow: false, fontPx: 84, box: false },
+  'tiktok-clean':  { line: '#FFFFFF', emph: '#FFFFFF', outline: '#000000', glow: false, fontPx: 46, box: false },
+  neon:            { line: '#39FF14', emph: '#FF00E5', outline: '#0A0A2A', glow: true,  fontPx: 84, box: false },
+  minimal:         { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 38, box: true },
 };
 
 export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'hormozi' }: Props) {
@@ -455,29 +456,36 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
           );
         })()}
 
-        {/* Subtitles ALWAYS center-screen (product rule), styled by template. */}
+        {/* Subtitles ALWAYS center-screen, karaoke-highlighted to mirror the
+            ASS render: the CURRENTLY-SPOKEN word pops in the accent color. */}
         {activeSub && (() => {
           const tpl = SUBTITLE_PREVIEW_STYLES[subtitleTemplate] ?? SUBTITLE_PREVIEW_STYLES['hormozi'];
-          // Scale the render's font size by the preview canvas width (172px) /
-          // render width (1080px) so the preview matches the final render. The
-          // canvas is 9:16; its rendered width ≈ the container's 172px.
+          const allCaps = subtitleTemplate !== 'yellow-italic' && subtitleTemplate !== 'tiktok-clean';
           const scale = 172 / RENDER_WIDTH;
-          // Mirror the render's auto-fit so a long 3-word caption shrinks to fit
-          // (otherwise it would clip at the canvas edges, unlike the export).
-          const phraseText = activeSub.words.map(w => w.text).join(' ').toUpperCase();
-          const maxW = 172 * 0.88;
-          const estW = phraseText.length * tpl.fontPx * 0.64 * scale;
+          const words = activeSub.words;
+          const phraseText = words.map(w => w.text).join(' ');
+          const maxW = 172 * 0.9;
+          const estW = phraseText.length * tpl.fontPx * 0.62 * scale * 1.15;
           const fitPx = estW > maxW ? tpl.fontPx * (maxW / estW) : tpl.fontPx;
-          const baseFont = Math.max(9, Math.round(fitPx * scale)); // px
-          const strokePx = Math.max(0.5, baseFont * 0.09);
+          const baseFont = Math.max(9, Math.round(fitPx * scale));
+          const strokePx = Math.max(0.5, baseFont * 0.085);
+          // Active word = the one whose [start,nextStart) window contains the playhead.
+          let activeIdx = words.findIndex((w, i) => {
+            const ws = w.start;
+            const we = i + 1 < words.length ? words[i + 1].start : (activeSub.end ?? w.end);
+            return playhead >= ws && playhead < we;
+          });
+          if (activeIdx < 0) activeIdx = 0;
           return (
             <div
               className="absolute left-1 right-1 text-center pointer-events-none"
               style={{ top: '50%', transform: 'translateY(-50%)' }}
             >
               <p
-                className="font-black uppercase"
                 style={{
+                  fontWeight: 900,
+                  fontStyle: tpl.italic ? 'italic' : 'normal',
+                  textTransform: allCaps ? 'uppercase' : 'none',
                   lineHeight: 1.15,
                   margin: 0,
                   padding: tpl.box ? '2px 4px' : 0,
@@ -485,16 +493,28 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
                   background: tpl.box ? 'rgba(0,0,0,0.55)' : 'transparent',
                   borderRadius: tpl.box ? 4 : 0,
                   textShadow: tpl.glow
-                    ? `0 0 ${baseFont * 0.4}px ${tpl.emph}, 0 2px 3px rgba(0,0,0,0.95)`
-                    : '0 2px 4px rgba(0,0,0,0.98)',
+                    ? `0 0 ${baseFont * 0.4}px ${tpl.emph}, 0 1px 3px rgba(0,0,0,0.95)`
+                    : '0 1px 3px rgba(0,0,0,0.9)',
                   WebkitTextStroke: `${strokePx.toFixed(1)}px ${tpl.outline}`,
                 }}
               >
-                {activeSub.words.map((w, i) => (
-                  <span key={i} style={{ color: w.emphasis ? tpl.emph : tpl.line, fontSize: `${baseFont}px` }}>
-                    {w.text}{' '}
-                  </span>
-                ))}
+                {words.map((w, i) => {
+                  const isActive = i === activeIdx;
+                  return (
+                    <span
+                      key={i}
+                      style={{
+                        color: isActive ? tpl.emph : tpl.line,
+                        fontSize: `${baseFont}px`,
+                        display: 'inline-block',
+                        transform: isActive ? 'scale(1.12)' : 'scale(1)',
+                        transition: 'transform 90ms ease-out',
+                      }}
+                    >
+                      {w.text}{' '}
+                    </span>
+                  );
+                })}
               </p>
             </div>
           );

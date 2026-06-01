@@ -64,7 +64,10 @@ const getProject: Handler = async (input) => {
 };
 
 const updateProjectSettings: Handler = async (input) => {
-  const { projectId, ...rest } = input;
+  const { projectId, musicTrackId, ...rest } = input;
+  // Map musicTrackId → the project's musicTrack field (the "auto" picker and
+  // the home dropdown both send musicTrackId).
+  if (musicTrackId !== undefined) (rest as Record<string, unknown>).musicTrack = musicTrackId;
   await Projects.update({ id: projectId, record: rest });
   return { success: true };
 };
