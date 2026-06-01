@@ -316,14 +316,28 @@ For each beat, decide:
   rationale: 1–2 first-person sentences explaining WHY you chose this visual for THESE EXACT WORDS and HOW it emphasizes the narrator's point.
   brollPrompt: ONLY for visualIntent="tactical_broll" — an EXTENSIVE, detailed video-generation prompt (see the tactical_broll rules below).
 
-★ CORE PRINCIPLE — FAST-PACED, VIRAL EDIT, BUT EVERY VISUAL MUST BE ACCURATE:
-  This must feel like a high-retention, FAST-PACED viral short — never a slow talking-head video. Change the visual roughly EVERY 2–3 SECONDS. The viewer's eye should never rest on one static shot; keep cutting between the narrator and accurate overlays so there is constant motion and momentum.
-  AIM FOR MANY BEATS: a 30–60s script should have ~12–20 beats. Almost every sentence/clause should get its own visual moment. Long uninterrupted talking-head stretches (>3s) are NOT allowed except for a deliberate emotional/authority punch.
-  PACING (energy-driven but always fast): cut FASTEST during lists, proof, demos, and hype (every ~1.5–2.5s); you may hold a beat or two longer (still ≤3–4s) only on a genuinely emotional/personal line. Match the cutting rhythm to the energy of the words, but bias toward MORE cuts.
-  THE ONE UNBREAKABLE RULE: every cutaway must be ACCURATE to what the narrator is saying AND informed by understanding the WHOLE video. Only cut to an overlay (real screencast/promo footage or a generated situational clip) when you can name exactly what it shows and tie it to the words at that moment (or, for the hook, to the whole-video idea).
-  ACCURACY BEATS MOVEMENT: if no accurate visual exists for a 3–4s window — and it isn't worth generating a situational clip for — then HOLD on the narrator rather than cutting to something loosely-related or random. A disconnected overlay is WORSE than staying on the narrator. (A mostly-narrator video is fine when the script is personal/opinion/story-driven; even then, find accurate cutaways where you can.)
-  ORDER OF PREFERENCE for each cutaway: (1) real screencast/promo footage that matches the words → (2) a situational "tactical_broll" cutaway (filled from FREE real stock footage; only 1–2 end up AI-generated) → (3) hold on the narrator with a subtle camera push. Use real footage and stock-backed situational cutaways for movement; AI generation stays rare (≤2/video).
-  TONE: confident and premium — purposeful, well-motivated cuts, not frantic. Every cut should feel intentional.
+★ STEP 0 — CLASSIFY THE VIDEO, THEN EDIT TO ITS STRATEGY:
+  First read the WHOLE transcript and the AVAILABLE PROMO FOOTAGE list, then pick the ONE category that best fits. Each category has a target footage mix — follow it. The categories (auto-detect the best one):
+
+  1. "product_showcase" — one product/tool is the subject. FOOTAGE-LED: show its promo footage for most demo/feature beats; narrator connects. Target ~55–70% overlay.
+  2. "listicle" — "N tools/ways for X". For EACH item, show that product's promo footage (or brand-fitting stock if none). Fast, footage-heavy. Target ~60–70% overlay.
+  3. "comparison" — A vs B. Cut between the two products' footage as they're discussed. Target ~55–65% overlay.
+  4. "tutorial" — step-by-step using a product. Screencast/promo follows the workflow steps. Target ~60–75% overlay.
+  5. "news" — "X just launched Y". Show the new product/feature footage prominently. Target ~50–65% overlay.
+  6. "problem_solution" — pain point → the product that fixes it. STOCK for the pain/problem beats, PROMO for the solution/product. Target ~50–60% overlay.
+  7. "educational" — teaches a concept. Mostly stock/generated situational visuals; promo only for concrete product examples. Target ~45–60% overlay.
+  8. "story_opinion" — personal take / narrative / hot-take. NARRATOR-LEANING, but still CUT ON EVERY CONCRETE NOUN — any nameable product, place, object, or scene gets a quick stock/promo cut. Target ~35–50% overlay.
+  9. "hype_promo" — high-energy promo for one product/launch. Maximize its promo footage + punchy stock. Target ~60–75% overlay.
+  10. "reaction" — reacting to a thing/trend. Show the thing being reacted to (promo/stock), cut back to narrator for the takes. Target ~45–60% overlay.
+
+  Return your pick as editApproach.category and HIT ITS OVERLAY TARGET. "Balanced" is the floor — across the whole video aim for roughly a 50/50 narrator-vs-visual split AT MINIMUM, more for footage-led categories above.
+
+★ CORE PRINCIPLE — USE YOUR FOOTAGE. FAST CUTS. NARRATOR IS THE GLUE, NOT THE DEFAULT:
+  This must feel like a high-retention, FAST-PACED viral short with CONSTANT MOTION — change the visual roughly every 2–3 seconds. The narrator is the connective tissue BETWEEN visuals, not the fallback you sit on. A talking-head-heavy edit is only correct for story_opinion.
+  ★ NAME-DROP RULE (critical — this is what was being missed): whenever the narrator NAMES or clearly references a product, tool, app, brand, website, or feature, PLAN A "screencast" BEAT for it (set productEntity + matchKeywords to the name). Show it MOST OF THE TIME a name is dropped and you might have footage. If no promo footage exists for that name, fall back to brand-fitting STOCK (a generic scene matching that product's category/vibe) via tactical_broll — do NOT just stay on the narrator for a name-drop.
+  MAX ENERGY, LOOSE FITS ALLOWED: prioritize constant motion. A reasonably on-theme clip that keeps the pace is acceptable — you do NOT need a perfect match to cut. (Only the HOOK and clearly-wrong/contradictory footage are off-limits.)
+  ORDER OF PREFERENCE for each cutaway: (1) matching promo/screencast footage → (2) brand/topic-fitting stock (tactical_broll, filled from free stock) → (3) a generated situational clip (≤2/video) → (4) only then hold on the narrator. Reach for a visual FIRST; hold on the narrator only when nothing on-theme exists.
+  TONE: confident and premium — purposeful, well-motivated cuts, fast but intentional.
 
 ★ THE HOOK IS THE EXCEPTION — EARN THE FIRST ~3 SECONDS:
   Retention is won or lost in the first 3 seconds, so the hook ALWAYS gets a deliberate visual pattern-interrupt:
@@ -335,8 +349,8 @@ For each beat, decide:
   This early overlay (screencast or generated) at ~1s is REQUIRED. After the hook, return to the narrator-first principle above.
 
 VISUAL INTENT OPTIONS:
-  • "talking_head" — the narrator on camera. This is the DEFAULT and may legitimately be the majority of the video. Use it whenever no overlay clearly matches the words. Set showNarrator=true, overlayDelaySeconds=0.
-  • "screencast" — cut to real product/promo footage. The PREFERRED overlay type (real footage beats generated). Use ONLY when the narrator names or describes a specific product, tool, feature, screen, or workflow AND footage for it plausibly exists. Set productEntity to the product name and matchKeywords to search terms. Set showNarrator=true, overlayDelaySeconds=1.0.
+  • "talking_head" — the narrator on camera. The CONNECTIVE TISSUE between visuals, not a default. Use it for the hook open, personal/authority/emotional punches, the CTA, and brief resets — plus longer stretches ONLY in the story_opinion category. Set showNarrator=true, overlayDelaySeconds=0.
+  • "screencast" — cut to real product/promo footage. The PREFERRED overlay. Use it WHENEVER the narrator names or describes ANY product, tool, app, brand, feature, screen, workflow, or result — promo footage may exist for it, and retrieval will find the best clip. Don't gate yourself: when in doubt and a product is mentioned, PLAN A SCREENCAST. Set productEntity to the product/brand name and matchKeywords to search terms. Set showNarrator=true, overlayDelaySeconds=1.0.
   • "tactical_broll" — a SITUATIONAL cutaway for a CONCEPT/EMOTION/SCENARIO that has no matching promo footage (e.g. "how AI is changing the job market" → a real person at a laptop scrolling job listings in a modern apartment). These are filled FIRST from a free library of REAL STOCK footage, and only the 1–2 most important are AI-generated. So USE tactical_broll FREELY for situational movement — you do NOT need to ration them. For EACH tactical_broll beat provide BOTH:
       - matchKeywords: a concise, concrete, FILMABLE stock-search query (2–5 words, e.g. ["person","laptop","job search","office"]) — this is what we search stock footage with, so make it visual and literal, not abstract.
       - brollPrompt: the extensive generation prompt (used only if this becomes one of the ≤2 AI-generated clips).
@@ -349,8 +363,10 @@ VISUAL INTENT OPTIONS:
       - Contains NO on-screen text, NO captions, NO logos, NO brand names, and NO fake UI/app screens (these generate as garbled artifacts).
 
 ★ ALSO DECIDE THE OVERALL APPROACH (return as "editApproach"):
-  mode: "narration_led" (mostly the narrator — the default for personal/opinion/story scripts) | "promo_led" (the script walks through products you have matching footage for) | "ai_led" (concept-heavy, leans on a few generated clips)
-  reasoning: 1–2 sentences on why this script is that kind of video.
+  category: one of the 10 in STEP 0 (product_showcase | listicle | comparison | tutorial | news | problem_solution | educational | story_opinion | hype_promo | reaction).
+  mode: "promo_led" (footage-heavy categories) | "narration_led" (story_opinion) | "ai_led" (concept-heavy / educational with little footage).
+  overlayTargetPercent: your intended % of the video covered by overlays (per the category target).
+  reasoning: 1–2 sentences naming the category and why, and how you'll hit the overlay target.
 
 STRUCTURE RULES:
   • Beat 1 = talking_head, ~0.5–1.5s (narrator appears).
@@ -365,7 +381,7 @@ STRUCTURE RULES:
 
 Return ONLY valid JSON (no markdown fences):
 {
-  "editApproach": { "mode": "ai_led", "reasoning": "Concept-heavy script about the job market with little matching product footage, so we use several situational generated clips plus narrator returns." },
+  "editApproach": { "category": "listicle", "mode": "promo_led", "overlayTargetPercent": 65, "reasoning": "A roundup of named AI tools — each item shows that product's promo footage (or brand-fitting stock), narrator connects, ~65% overlay." },
   "beats": [
     {
       "start": 0.0, "end": 1.2, "beatType": "hook", "summary": "Direct-to-camera hook",
@@ -712,7 +728,63 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     // the words. The only structural guarantee we still enforce is the HOOK
     // overlay (RULE A above). No TH→screencast promotion happens here.
     const OPENING_BOUNDARY = 6.0; // retained for logging/metrics below
-    const pacingRevisions = 0;
+    let pacingRevisions = 0;
+
+    // ── Overlay-coverage guardrail (category-aware) ──────────────────────────
+    // The director picks a category with a target overlay %. If its plan falls
+    // short (the old narrator-first bias), promote the longest narrator beats
+    // that reference a product/concept into overlays until we approach target —
+    // screencast when a product/keywords exist (retrieval will match it),
+    // otherwise tactical_broll (filled by brand/topic-fitting stock). This is
+    // what makes promo footage actually get used.
+    {
+      let approach: any = {};
+      try { approach = JSON.parse(directorRaw)?.editApproach ?? {}; } catch { /* */ }
+      const category = typeof approach.category === 'string' ? approach.category : '';
+      // Default target by category (fraction of duration), floor 0.5 unless story.
+      const CATEGORY_TARGET: Record<string, number> = {
+        product_showcase: 0.6, listicle: 0.65, comparison: 0.6, tutorial: 0.65,
+        news: 0.55, problem_solution: 0.55, educational: 0.5, story_opinion: 0.4,
+        hype_promo: 0.65, reaction: 0.5,
+      };
+      const targetPct = typeof approach.overlayTargetPercent === 'number'
+        ? Math.max(0.35, Math.min(0.8, approach.overlayTargetPercent / 100))
+        : (CATEGORY_TARGET[category] ?? 0.5);
+
+      const overlayDur = () => semanticBeats
+        .filter(b => b.visualIntent !== 'talking_head')
+        .reduce((s, b) => s + (b.end - b.start), 0);
+      let coverage = overlayDur() / duration;
+
+      if (coverage < targetPct - 0.05) {
+        // Candidate narrator beats (skip the opening hook + the CTA), longest &
+        // most product-y first.
+        const looksProducty = (b: SemanticBeat) =>
+          !!b.productEntity || (b.matchKeywords?.length ?? 0) > 0 || /[A-Z][a-zA-Z]+/.test(b.summary || '');
+        const candidates = semanticBeats
+          .map((b, i) => ({ b, i }))
+          .filter(({ b, i }) => b.visualIntent === 'talking_head' && i > 0 && b.beatType !== 'cta')
+          .sort((a, c) => {
+            // product-referencing beats first, then longest
+            const pa = looksProducty(a.b) ? 1 : 0, pc = looksProducty(c.b) ? 1 : 0;
+            if (pa !== pc) return pc - pa;
+            return (c.b.end - c.b.start) - (a.b.end - a.b.start);
+          });
+        for (const { b } of candidates) {
+          if (coverage >= targetPct - 0.05) break;
+          const hasProduct = !!b.productEntity || (b.matchKeywords?.length ?? 0) > 0;
+          b.visualIntent = (hasScreencastUrls && hasProduct) ? 'screencast' : 'tactical_broll';
+          b.showNarrator = true;
+          b.overlayDelaySeconds = b.overlayDelaySeconds || 1.0;
+          if (!b.rationale) b.rationale = `Promoted to overlay to hit the ${category || 'category'} footage target (≈${Math.round(targetPct * 100)}%).`;
+          pacingRevisions++;
+          coverage = overlayDur() / duration;
+        }
+        console.log(`[runPipeline] 🎯 Coverage guardrail: category=${category || '?'} target=${Math.round(targetPct * 100)}% → ${(coverage * 100).toFixed(0)}% after promoting ${pacingRevisions} beat(s)`);
+      } else {
+        console.log(`[runPipeline] 🎯 Coverage ${(coverage * 100).toFixed(0)}% meets category target ${Math.round(targetPct * 100)}% — no promotion needed`);
+      }
+    }
 
     // ── Compute pacing validation metrics ────────────────────────────────────
     semanticBeats.sort((a, b) => a.start - b.start);
@@ -977,9 +1049,10 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     let directorData: any = {};
     try { directorData = JSON.parse(directorRaw); } catch { /* */ }
     directorData.pacingValidation = pacingValidation;
-    directorData.editorialRulesVersion = 3;
+    directorData.editorialRulesVersion = 4;
     if (directorData.editApproach) {
-      console.log(`[runPipeline] 🎬 Edit approach: ${directorData.editApproach.mode ?? '?'} — ${directorData.editApproach.reasoning ?? ''}`);
+      const ea = directorData.editApproach;
+      console.log(`[runPipeline] 🎬 Edit approach: category=${ea.category ?? '?'} mode=${ea.mode ?? '?'} target=${ea.overlayTargetPercent ?? '?'}% — ${ea.reasoning ?? ''}`);
     }
 
     await Projects.update({
