@@ -7,7 +7,7 @@ import {
   buildTacticalPrompt, createSeedanceTask, computeOverlayDelay,
   WEAK_SCREENCAST_THRESHOLD,
 } from '../utils/tacticalBroll';
-import { searchPexelsVideo, pexelsQueryFromBeat } from '../utils/pexels';
+import { searchPexelsVideo, pexelsQueryFromBeat, buildContextualStockQuery } from '../utils/pexels';
 
 const BATCH = 3;
 // Max AI-GENERATED (Kinovi) clips per video. Real stock footage (Pexels) and
@@ -208,7 +208,16 @@ export default createEndpoint({
 
             // ── Stock footage (Pexels): free REAL footage for situational
             //    beats — tried BEFORE paid AI generation. ────────────────────
-            const stockQuery = pexelsQueryFromBeat(existingLabels, shot.caption ?? '');
+            const stockQuery = await buildContextualStockQuery(
+              client,
+              {
+                videoTopic: (project.contextHint as string) || (project.title as string) || undefined,
+                transcript: (project.transcript as string) || undefined,
+                beatText: existingLabels.transcriptSnippet || shot.caption || '',
+                keywords: Array.isArray(existingLabels.matchKeywords) ? existingLabels.matchKeywords : undefined,
+              },
+              tag,
+            );
             const beatDur = Math.max((shot.endTime ?? 4) - (shot.startTime ?? 0), 1);
             const stock = await searchPexelsVideo(stockQuery, beatDur, tag);
             if (stock) {

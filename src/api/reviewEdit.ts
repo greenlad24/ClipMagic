@@ -44,7 +44,7 @@ For EACH beat return one verdict:
     "addType": "screencast" (real product/promo footage — use when the line names a product/feature you likely have footage for),
                "stock" (real stock footage of a real-world situation/scene),
                or "generated" (an AI situational clip — use sparingly, only when no real footage could exist).
-    "query": 2–5 word concrete, filmable search query (for screencast/stock).
+    "query": 2–5 word concrete, filmable stock search query (for screencast/stock). It MUST inherit context from the overall video topic — encode place/demographic/setting so generic words aren't ambiguous (e.g. for a US-job-market video use "american office workers", never just "workers" which could return footage from the wrong country).
     "brollPrompt": an extensive situational generation prompt (only for "generated").
 
 RULES:

@@ -28,6 +28,10 @@ export function pexelsConfigured(): boolean {
  * Derive a concise, concrete stock-search query for a beat. Prefers the
  * director's matchKeywords (it's instructed to write a filmable query there);
  * otherwise falls back to the caption / transcript snippet.
+ *
+ * This is the cheap, no-LLM fallback. Prefer buildContextualStockQuery() which
+ * grounds the query in the WHOLE video so generic words don't pull off-topic
+ * footage (e.g. "workers" returning the wrong country for a US-jobs video).
  */
 export function pexelsQueryFromBeat(labels: Record<string, any>, caption: string): string {
   const kws = Array.isArray(labels?.matchKeywords)
@@ -36,6 +40,60 @@ export function pexelsQueryFromBeat(labels: Record<string, any>, caption: string
   if (kws.length) return kws.slice(0, 5).join(" ").slice(0, 100);
   const fallback = (caption || labels?.transcriptSnippet || labels?.veo3Prompt || "").toString();
   return fallback.split(/\s+/).slice(0, 6).join(" ").slice(0, 100);
+}
+
+/**
+ * Build a stock-search query that is GROUNDED IN THE WHOLE VIDEO so generic
+ * beat words inherit the right context (place, demographic, setting, subject).
+ * E.g. a beat saying "workers" in a video about the US job market becomes
+ * "american office workers" rather than an unrelated country's footage.
+ *
+ * Falls back to pexelsQueryFromBeat() if the LLM call fails.
+ */
+export async function buildContextualStockQuery(
+  client: any,
+  ctx: {
+    videoTopic?: string;
+    transcript?: string;
+    beatText: string;        // caption / transcript snippet for this beat
+    keywords?: string[];
+  },
+  tag: string,
+): Promise<string> {
+  const naive = pexelsQueryFromBeat({ matchKeywords: ctx.keywords }, ctx.beatText);
+  try {
+    const res = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You write SHORT stock-footage search queries for Pexels. Given the OVERALL video topic and the specific moment, output 2-5 concrete, filmable English words describing real footage to show. " +
+            "CRITICAL: inherit context from the overall topic — if the video is about the US job market, 'workers' must become 'american office workers', not a generic/foreign scene. Encode place, setting, and people when the topic implies them. " +
+            "No punctuation, no quotes, no abstract words. Output ONLY the query.",
+        },
+        {
+          role: "user",
+          content:
+            `OVERALL VIDEO TOPIC: ${ctx.videoTopic || "(unknown)"}\n` +
+            (ctx.transcript ? `TRANSCRIPT (context): ${ctx.transcript.slice(0, 1200)}\n` : "") +
+            `THIS MOMENT (narration): "${ctx.beatText}"\n` +
+            (ctx.keywords?.length ? `Beat keywords: ${ctx.keywords.join(", ")}\n` : "") +
+            `\nStock search query:`,
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 24,
+    });
+    const q = (res.choices?.[0]?.message?.content ?? "").trim().replace(/["'\n]/g, " ").replace(/\s+/g, " ").slice(0, 100);
+    if (q) {
+      console.log(`${tag} Contextual stock query: "${q}" (naive was "${naive}")`);
+      return q;
+    }
+  } catch (e: any) {
+    console.warn(`${tag} Contextual query failed, using naive: ${e?.message}`);
+  }
+  return naive;
 }
 
 /**

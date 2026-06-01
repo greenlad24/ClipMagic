@@ -137,7 +137,10 @@ export async function buildArgsFromManifest(
   let musicIdx = -1;
   if (m.music && m.music.audioUrl) {
     const p = await resolveInput(m.music.audioUrl);
-    musicIdx = inputs.push({ opts: [], path: p }) - 1;
+    // Loop the music so the bed plays for the whole video even when the track
+    // is shorter than the narration. The amix below uses duration=first
+    // (narration), so the looped music is cut at the end of the video.
+    musicIdx = inputs.push({ opts: ["-stream_loop", "-1"], path: p }) - 1;
   }
 
   // Shift a timeline value so it's relative to the trimmed narration, clamped
