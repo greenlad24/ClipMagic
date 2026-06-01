@@ -17,6 +17,7 @@ import { config } from "../config.js";
 import { createJob, getJob } from "../db/jobs.js";
 import { db } from "../db/index.js";
 import { pump } from "../render/worker.js";
+import { SUBTITLE_TEMPLATES, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -436,17 +437,10 @@ const submitRendiJob: Handler = async (input) => {
     music,
     scenes,
     subtitles,
-    subtitleStyle: {
-      fontFamily: "DejaVu Sans Bold",
-      fontSize: 60,
-      position: "bottom-center",
-      outlineColor: "#000000",
-      outlineWidth: 6,
-      lineColor: "#FFFFFF",
-      wordColor: "#c084fc",
-      allCaps: true,
-      maxWordsPerLine: 4,
-    },
+    // Subtitle template (viral looks, all center-screen). The project can pick
+    // one via subtitleTemplate; otherwise the default punchy "bold-center".
+    subtitleStyle:
+      SUBTITLE_TEMPLATES[(project.subtitleTemplate as SubtitleTemplate)] ?? DEFAULT_SUBTITLE_STYLE,
   };
 
   const jobId = createJob({

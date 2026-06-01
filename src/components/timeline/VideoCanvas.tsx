@@ -53,11 +53,24 @@ interface Props {
   musicVolume?: number;
   /** When true, the music bed is silenced in the preview. */
   musicMuted?: boolean;
+  /** Subtitle template name (drives the preview caption look). */
+  subtitleTemplate?: string;
 }
 
 type LoadState = 'idle' | 'downloading' | 'loading' | 'ready' | 'error';
 
-export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false }: Props) {
+// Preview colors per subtitle template (kept in sync with the server's
+// SUBTITLE_TEMPLATES so the editor preview matches the final render).
+const SUBTITLE_PREVIEW_STYLES: Record<string, { line: string; emph: string; outline: string; glow: boolean }> = {
+  'bold-center':  { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false },
+  hormozi:        { line: '#FFFFFF', emph: '#FFD400', outline: '#000000', glow: false },
+  'karaoke-pop':  { line: '#FFFFFF', emph: '#22D3EE', outline: '#000000', glow: false },
+  'tiktok-clean': { line: '#FFFFFF', emph: '#FFFFFF', outline: '#000000', glow: false },
+  neon:           { line: '#39FF14', emph: '#FF00E5', outline: '#0A0A2A', glow: true },
+  minimal:        { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false },
+};
+
+export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'bold-center' }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const overlayVidRef = useRef<HTMLVideoElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
@@ -450,42 +463,40 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
           );
         })()}
 
-        {activeSub && (
-          activeOverlay && currentPhase === 'overlay-visible' ? (
-            /* Bottom-left during Screencast / B-Roll — keeps product demo unobstructed */
-            <div className="absolute left-2 right-2 pointer-events-none" style={{ bottom: 14 }}>
-              <p className="leading-snug drop-shadow-[0_2px_6px_rgba(0,0,0,0.98)] text-left">
-                {activeSub.words.map((w, i) => (
-                  <span
-                    key={i}
-                    className={w.emphasis ? 'text-primary font-black' : 'text-white font-bold'}
-                    style={{ fontSize: w.emphasis ? '12px' : '9px', lineHeight: 1.3 }}
-                  >
-                    {w.text}{' '}
-                  </span>
-                ))}
-              </p>
-            </div>
-          ) : (
-            /* Centered during Talking Head */
+        {/* Subtitles ALWAYS center-screen (product rule), styled by template. */}
+        {activeSub && (() => {
+          const tpl = SUBTITLE_PREVIEW_STYLES[subtitleTemplate] ?? SUBTITLE_PREVIEW_STYLES['bold-center'];
+          const lineHasEmph = activeSub.words.some(w => w.emphasis);
+          return (
             <div
               className="absolute left-2 right-2 text-center pointer-events-none"
               style={{ top: '50%', transform: 'translateY(-50%)' }}
             >
-              <p className="leading-snug drop-shadow-[0_2px_6px_rgba(0,0,0,0.98)]">
+              <p
+                className="font-black uppercase"
+                style={{
+                  lineHeight: 1.2,
+                  textShadow: tpl.glow
+                    ? `0 0 6px ${tpl.emph}, 0 2px 3px rgba(0,0,0,0.95)`
+                    : '0 2px 4px rgba(0,0,0,0.98)',
+                  WebkitTextStroke: `0.6px ${tpl.outline}`,
+                }}
+              >
                 {activeSub.words.map((w, i) => (
                   <span
                     key={i}
-                    className={w.emphasis ? 'text-primary font-black' : 'text-white font-bold'}
-                    style={{ fontSize: w.emphasis ? '15px' : '11px', lineHeight: 1.25 }}
+                    style={{
+                      color: w.emphasis ? tpl.emph : tpl.line,
+                      fontSize: lineHasEmph && w.emphasis ? '15px' : '12px',
+                    }}
                   >
                     {w.text}{' '}
                   </span>
                 ))}
               </p>
             </div>
-          )
-        )}
+          );
+        })()}
 
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black/40 cursor-pointer"
           onClick={e => { const r = e.currentTarget.getBoundingClientRect(); onSeek((e.clientX - r.left) / r.width * duration); }}>

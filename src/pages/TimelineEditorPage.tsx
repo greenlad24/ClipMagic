@@ -65,6 +65,7 @@ export default function TimelineEditorPage() {
   const [musicUrl, setMusicUrl] = useState<string | undefined>(undefined);
   const [musicVolume, setMusicVolume] = useState(0.15);
   const [musicMuted, setMusicMuted] = useState(false);
+  const [subtitleTemplate, setSubtitleTemplate] = useState('bold-center');
   const [beatGrid, setBeatGrid] = useState<number[]>([]);
   const [downbeats, setDownbeats] = useState<number[]>([]);
   const [sectionMarkers, setSectionMarkers] = useState<Record<string, number>>({});
@@ -84,6 +85,7 @@ export default function TimelineEditorPage() {
       setProject(p);
       history.reset(s.map(toTimelineShot));
       if (p.musicVolume !== undefined && p.musicVolume !== null) setMusicVolume(p.musicVolume);
+      if (p.subtitleTemplate) setSubtitleTemplate(p.subtitleTemplate);
       setLoading(false);
       const trackId = Array.isArray(p.musicTrack) ? p.musicTrack[0] : p.musicTrack;
       if (trackId) {
@@ -119,6 +121,13 @@ export default function TimelineEditorPage() {
     if (!projectId) return;
     try { await updateProjectSettings({ projectId, musicVolume: vol }); } catch { /* silent */ }
   }, 500);
+
+  const handleSubtitleTemplateChange = async (tpl: string) => {
+    setSubtitleTemplate(tpl);
+    if (!projectId) return;
+    try { await updateProjectSettings({ projectId, subtitleTemplate: tpl }); toast.success('Subtitle style updated'); }
+    catch { toast.error('Could not save subtitle style'); }
+  };
 
   const handleMusicVolumeChange = (vol: number) => {
     setMusicVolume(vol);
@@ -437,6 +446,19 @@ export default function TimelineEditorPage() {
             <Redo2 className="w-3.5 h-3.5" />
           </button>
           <div className="w-px h-5 bg-border mx-1" />
+          <select
+            value={subtitleTemplate}
+            onChange={(e) => handleSubtitleTemplateChange(e.target.value)}
+            title="Subtitle style (center-screen)"
+            className="h-7 text-xs rounded-md border border-border bg-background px-2 text-foreground hover:bg-muted cursor-pointer"
+          >
+            <option value="bold-center">Subtitles: Bold</option>
+            <option value="hormozi">Subtitles: Hormozi</option>
+            <option value="karaoke-pop">Subtitles: Karaoke Pop</option>
+            <option value="tiktok-clean">Subtitles: TikTok Clean</option>
+            <option value="neon">Subtitles: Neon</option>
+            <option value="minimal">Subtitles: Minimal</option>
+          </select>
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setShowTemplate(true)}>
             <FileUp className="w-3.5 h-3.5" />Template
           </Button>
@@ -535,6 +557,7 @@ export default function TimelineEditorPage() {
             onSeek={t => { setPlayhead(t); setIsPlaying(false); }}
             onTimeUpdate={setPlayhead}
             musicUrl={musicUrl} musicVolume={musicVolume} musicMuted={musicMuted}
+            subtitleTemplate={subtitleTemplate}
           />
         </div>
 

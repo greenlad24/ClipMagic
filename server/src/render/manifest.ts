@@ -60,6 +60,15 @@ export interface SubtitleEvent {
   words: SubtitleWord[];
 }
 
+/** Built-in viral subtitle looks. All render center-screen. */
+export type SubtitleTemplate =
+  | "bold-center"   // big white, heavy black box — classic punchy captions
+  | "hormozi"       // all-caps, key words in bright yellow, thick outline
+  | "karaoke-pop"   // emphasized words pop in accent color, no box
+  | "tiktok-clean"  // clean white, soft shadow, rounded feel
+  | "neon"          // bright accent text with strong glow/outline
+  | "minimal";      // understated lower-third-style, smaller
+
 export interface SubtitleStyle {
   fontFamily: string;
   fontSize: number;
@@ -70,6 +79,13 @@ export interface SubtitleStyle {
   wordColor: string | null;
   allCaps: boolean;
   maxWordsPerLine: number;
+  /** Named template (drives look). Center is enforced regardless of position. */
+  template?: SubtitleTemplate;
+  /** Draw the dark box behind text. */
+  box?: boolean;
+  boxColor?: string;
+  boxOpacity?: number;
+  boxBorderWidth?: number;
 }
 
 export interface RenderManifest {
@@ -87,14 +103,47 @@ export interface RenderManifest {
   meta?: unknown;
 }
 
-export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = {
-  fontFamily: "DejaVu Sans Bold",
-  fontSize: 40,
-  position: "bottom-center",
-  outlineColor: "#000000",
-  outlineWidth: 6,
-  lineColor: "#FFFFFF",
-  wordColor: "#c084fc",
-  allCaps: true,
-  maxWordsPerLine: 4,
+/**
+ * Subtitle templates — all CENTER-screen, designed to look modern/viral.
+ * Colors are hex; the renderer maps them to FFmpeg drawtext options.
+ */
+export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
+  "bold-center": {
+    fontFamily: "DejaVu Sans Bold", fontSize: 52, position: "center",
+    outlineColor: "#000000", outlineWidth: 8, lineColor: "#FFFFFF", wordColor: "#FFE600",
+    allCaps: true, maxWordsPerLine: 4, template: "bold-center",
+    box: true, boxColor: "#000000", boxOpacity: 0.55, boxBorderWidth: 14,
+  },
+  hormozi: {
+    fontFamily: "DejaVu Sans Bold", fontSize: 58, position: "center",
+    outlineColor: "#000000", outlineWidth: 10, lineColor: "#FFFFFF", wordColor: "#FFD400",
+    allCaps: true, maxWordsPerLine: 3, template: "hormozi",
+    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  },
+  "karaoke-pop": {
+    fontFamily: "DejaVu Sans Bold", fontSize: 50, position: "center",
+    outlineColor: "#000000", outlineWidth: 7, lineColor: "#FFFFFF", wordColor: "#22D3EE",
+    allCaps: true, maxWordsPerLine: 4, template: "karaoke-pop",
+    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  },
+  "tiktok-clean": {
+    fontFamily: "DejaVu Sans Bold", fontSize: 46, position: "center",
+    outlineColor: "#000000", outlineWidth: 5, lineColor: "#FFFFFF", wordColor: "#FFFFFF",
+    allCaps: false, maxWordsPerLine: 5, template: "tiktok-clean",
+    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  },
+  neon: {
+    fontFamily: "DejaVu Sans Bold", fontSize: 52, position: "center",
+    outlineColor: "#0A0A2A", outlineWidth: 10, lineColor: "#39FF14", wordColor: "#FF00E5",
+    allCaps: true, maxWordsPerLine: 4, template: "neon",
+    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  },
+  minimal: {
+    fontFamily: "DejaVu Sans Bold", fontSize: 38, position: "center",
+    outlineColor: "#000000", outlineWidth: 4, lineColor: "#FFFFFF", wordColor: "#FFE600",
+    allCaps: false, maxWordsPerLine: 5, template: "minimal",
+    box: true, boxColor: "#000000", boxOpacity: 0.35, boxBorderWidth: 10,
+  },
 };
+
+export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = SUBTITLE_TEMPLATES["bold-center"];

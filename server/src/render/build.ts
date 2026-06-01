@@ -26,21 +26,28 @@ const AUDIO_SR = 44100;
  *
  * We deliberately do NOT wrap the value in single quotes: when the text itself
  * contains an escaped quote (e.g. "HERE'S"), a surrounding single-quoted value
- * confuses FFmpeg's filter parser and bleeds into the next option (the
- * notorious `enable='between(t' → "Missing ')'" error). Instead we backslash-
- * escape every character that is special to either the filtergraph splitter
- * (`:`, `\`, and the filter separators) or to drawtext's own expansion
- * (`%`, `'`, `{`, `}`), so the value stands alone as a single bare token.
+ * confuses FFmpeg's filter parser. Instead we backslash-escape every character
+ * special to the filtergraph splitter (`:`, `\`, `,`) so the value stands alone
+ * as a single bare token.
+ *
+ * The drawtext call uses `expansion=none`, which disables drawtext's own macro
+ * processing — so `%`, `{`, `}` are taken LITERALLY and do NOT need escaping.
+ * This is what fixes captions with numbers/percentages (e.g. "50% OFF") which
+ * previously triggered a "Stray %" error and rendered a blank line.
  */
 function escapeDrawText(s: string): string {
   return s
     .replace(/\\/g, "") // drop stray backslashes (not meaningful in caption text)
-    .replace(/[{}]/g, "") // drawtext treats {} as expansion delimiters
     .replace(/'/g, "’") // curly apostrophe: looks identical, avoids quote parsing
-    .replace(/%/g, "\\%") // drawtext strftime escape
     .replace(/:/g, "\\:") // filtergraph option separator
     .replace(/,/g, "\\,") // filtergraph filter separator (unquoted value)
     .replace(/\r?\n/g, " ");
+}
+
+/** FFmpeg drawtext wants 0xRRGGBB-style names; pass hex through as-is. */
+function ffColor(hex: string | null | undefined, fallback: string): string {
+  const v = (hex ?? "").trim();
+  return /^#?[0-9a-fA-F]{6}$/.test(v) ? (v.startsWith("#") ? "0x" + v.slice(1) : "0x" + v) : fallback;
 }
 
 /** Escape a font path for use inside a filtergraph option value. */
@@ -253,12 +260,20 @@ function buildSubtitleDrawtext(
   }
 
   const fontSize = style.fontSize;
-  const yExpr =
-    style.position === "bottom-center"
-      ? `h-${Math.round(m.height * 0.18)}`
-      : style.position === "top-center"
-      ? `${Math.round(m.height * 0.12)}`
-      : `(h-text_h)/2`;
+  // Subtitles always sit in the MIDDLE of the screen (templates may set
+  // position, but the product rule is center) — vertically and horizontally.
+  const yExpr = `(h-text_h)/2`;
+  const xExpr = `(w-text_w)/2`;
+
+  // Template-driven look.
+  const lineColor = ffColor(style.lineColor, "white");
+  const emphColor = ffColor(style.wordColor, lineColor);
+  const outlineColor = ffColor(style.outlineColor, "black");
+  const outlineW = typeof style.outlineWidth === "number" ? style.outlineWidth : 6;
+  const useBox = style.box === true;
+  const boxColor = ffColor(style.boxColor, "black");
+  const boxOpacity = typeof style.boxOpacity === "number" ? style.boxOpacity : 0.5;
+  const boxBorderW = typeof style.boxBorderWidth === "number" ? style.boxBorderWidth : 12;
 
   let currentLabel = inputLabel;
   let drawIndex = 0;
@@ -270,22 +285,27 @@ function buildSubtitleDrawtext(
     if (phraseWords.length === 0) continue;
     const phrase = phraseWords.map((w) => w.text).join(" ");
     const txt = escapeDrawText(style.allCaps ? phrase.toUpperCase() : phrase);
-    // Color the line as emphasized when the phrase contains an emphasized word.
-    const color = phraseWords.some((w) => w.emphasis) && style.wordColor ? style.wordColor : style.lineColor;
+    // Emphasize the whole phrase's color when it contains a key/emphasized word
+    // (viral look: stressed lines pop in the accent color).
+    const color = phraseWords.some((w) => w.emphasis) ? emphColor : lineColor;
     // The phrase is visible for the full span of its words.
     const start = shift(event.start ?? phraseWords[0].start);
     const end = shift(event.end ?? phraseWords[phraseWords.length - 1].end);
     if (end <= start) continue; // fully outside the trimmed window
     const outLabel = `sub${drawIndex}`;
-    // text and enable are left UNQUOTED: every filtergraph/drawtext metacharacter
-    // is backslash-escaped by escapeDrawText, so a quote inside the text can't
-    // break the enable expression. Spaces are literal in an unquoted value, so
-    // the multi-word phrase renders as-is.
+
+    // expansion=none → literal text (so %, {, } render fine and numbers like
+    // "50%" no longer blank the line). text/enable are UNQUOTED; escapeDrawText
+    // backslash-escapes the filtergraph separators.
+    const boxOpts = useBox
+      ? `:box=1:boxcolor=${boxColor}@${boxOpacity}:boxborderw=${boxBorderW}`
+      : "";
     filters.push(
-      `[${currentLabel}]drawtext=fontfile=${fontFile}:text=${txt}:` +
+      `[${currentLabel}]drawtext=fontfile=${fontFile}:expansion=none:text=${txt}:` +
         `fontcolor=${color}:fontsize=${fontSize}:` +
-        `x=(w-text_w)/2:y=${yExpr}:` +
-        `box=1:boxcolor=black@0.5:boxborderw=8:` +
+        `borderw=${outlineW}:bordercolor=${outlineColor}:` +
+        `shadowx=2:shadowy=2:shadowcolor=black@0.6:` +
+        `x=${xExpr}:y=${yExpr}${boxOpts}:` +
         `enable=between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})[${outLabel}]`
     );
     currentLabel = outLabel;
