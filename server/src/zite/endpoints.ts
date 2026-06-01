@@ -17,7 +17,7 @@ import { config } from "../config.js";
 import { createJob, getJob } from "../db/jobs.js";
 import { db } from "../db/index.js";
 import { pump } from "../render/worker.js";
-import { SUBTITLE_TEMPLATES, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
+import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -361,6 +361,15 @@ const submitRendiJob: Handler = async (input) => {
     try { subtitles = JSON.parse(project.subtitlesJson as string); } catch { /* */ }
   }
 
+  // Pick the subtitle style: a pinned project.subtitleTemplate wins; otherwise
+  // rotate randomly across the 4 approved styles and remember the pick.
+  let chosenTemplate: SubtitleTemplate =
+    (project.subtitleTemplate as SubtitleTemplate) ||
+    SUBTITLE_TEMPLATE_POOL[Math.floor(Math.random() * SUBTITLE_TEMPLATE_POOL.length)];
+  if (!project.subtitleTemplate) {
+    await Projects.update({ id: projectId, record: { subtitleTemplate: chosenTemplate } }).catch(() => {});
+  }
+
   // Music track (optional).
   let music: { audioUrl: string; volume: number } | null = null;
   const musicTrackId = (project.musicTrack as string) || undefined;
@@ -445,10 +454,11 @@ const submitRendiJob: Handler = async (input) => {
     music,
     scenes,
     subtitles,
-    // Subtitle template (viral looks, all center-screen). The project can pick
-    // one via subtitleTemplate; otherwise the default punchy "bold-center".
+    // Subtitle template: if the project pinned one, use it; otherwise ROTATE
+    // randomly across the 4 approved styles per video (persist the pick so the
+    // editor preview and any re-render stay consistent).
     subtitleStyle:
-      SUBTITLE_TEMPLATES[(project.subtitleTemplate as SubtitleTemplate)] ?? DEFAULT_SUBTITLE_STYLE,
+      SUBTITLE_TEMPLATES[(project.subtitleTemplate as SubtitleTemplate)] ?? SUBTITLE_TEMPLATES[chosenTemplate],
   };
 
   const jobId = createJob({

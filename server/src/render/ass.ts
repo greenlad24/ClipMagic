@@ -1,29 +1,27 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { randomUUID } from "node:crypto";
 import type { SubtitleEvent, SubtitleStyle } from "./manifest.js";
+import { config } from "../config.js";
 
 /**
- * Generate an ASS subtitle file for viral, "popping" captions (the
- * YouTube-Shorts / Hormozi look): 2–3 word chunks, center-screen, big bold
- * text with a thick outline, the CURRENTLY-SPOKEN word highlighted in the
- * accent color and scaled up with a quick pop-in.
+ * Generate an ASS subtitle file for the four approved viral caption styles.
+ * All render center-screen, 2–3 words at a time, with the currently-spoken
+ * word highlighted (karaoke). Two of the styles sit on an auto-sized rounded
+ * box; two use a soft blurred drop shadow.
  *
- * Why ASS (libass) instead of stacked drawtext filters:
- *  - Each caption is a timed event, so captions never overlap (the drawtext
- *    approach layered every line and they bled into each other).
- *  - Native per-word styling + transform animation (\t) for the pop.
- *  - One filter regardless of caption count (drawtext added one filter each).
+ * ASS/libass (not stacked drawtext) so captions never overlap, support per-word
+ * styling + animation, and use the bundled fonts via fontsdir.
  */
 
-/** #RRGGBB  ->  ASS &HBBGGRR (ASS is little-endian BGR, no alpha). */
+/** #RRGGBB -> ASS &H00BBGGRR */
 function assColor(hex: string | null | undefined, fallback = "FFFFFF"): string {
   const v = (hex ?? "").replace("#", "").trim();
   const h = /^[0-9a-fA-F]{6}$/.test(v) ? v : fallback;
-  const r = h.slice(0, 2);
-  const g = h.slice(2, 4);
-  const b = h.slice(4, 6);
-  return `&H00${b}${g}${r}`.toUpperCase();
+  return `&H00${h.slice(4, 6)}${h.slice(2, 4)}${h.slice(0, 2)}`.toUpperCase();
 }
 
-/** seconds -> ASS time  H:MM:SS.cc */
 function assTime(t: number): string {
   const cs = Math.max(0, Math.round(t * 100));
   const h = Math.floor(cs / 360000);
@@ -33,49 +31,122 @@ function assTime(t: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(c).padStart(2, "0")}`;
 }
 
-/** Escape text for an ASS dialogue field. */
 function assText(s: string): string {
   return s.replace(/\\/g, "").replace(/[{}]/g, "").replace(/\r?\n/g, " ");
+}
+
+/** Rounded-rect ASS drawing command centered at (cx,cy). */
+function roundedRect(cx: number, cy: number, w: number, h: number, r: number): string {
+  const hw = w / 2;
+  const hh = h / 2;
+  r = Math.max(0, Math.min(r, hh, hw));
+  const x0 = Math.round(cx - hw);
+  const y0 = Math.round(cy - hh);
+  const x1 = Math.round(cx + hw);
+  const y1 = Math.round(cy + hh);
+  return (
+    `m ${x0 + r} ${y0} l ${x1 - r} ${y0} b ${x1} ${y0} ${x1} ${y0} ${x1} ${y0 + r} ` +
+    `l ${x1} ${y1 - r} b ${x1} ${y1} ${x1} ${y1} ${x1 - r} ${y1} ` +
+    `l ${x0 + r} ${y1} b ${x0} ${y1} ${x0} ${y1} ${x0} ${y1 - r} ` +
+    `l ${x0} ${y0 + r} b ${x0} ${y0} ${x0} ${y0} ${x0 + r} ${y0}`
+  );
 }
 
 export interface AssOptions {
   width: number;
   height: number;
   style: SubtitleStyle;
-  /** Shift a timeline time into the (possibly trimmed) output time. */
   shift: (t: number) => number;
-  /** Output duration — events past this are dropped. */
   duration: number;
 }
 
 /**
- * Build the full .ass document. Returns null if there are no usable words.
- *
- * For each caption phrase we emit one Dialogue event PER WORD spanning that
- * word's spoken window; the phrase text stays put while the active word is
- * recolored + scaled. Consecutive word windows don't overlap, so captions are
- * always clean and in sync with the voice.
+ * Measure the rendered ink size (px) of a single line at a given font/size by
+ * rendering it to a transparent frame and cropping. Used to size the box and
+ * fit text to the frame width. Falls back to a heuristic if ffmpeg fails.
  */
-export function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): string | null {
+async function measureText(
+  text: string,
+  fontFamily: string,
+  fontSize: number,
+  italic: boolean,
+  letterSpacing: number,
+  fontsDir: string,
+): Promise<{ w: number; h: number }> {
+  const W = 4000;
+  const H = 1000;
+  const styleLine =
+    `Style: M,${fontFamily},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,` +
+    `0,${italic ? -1 : 0},0,0,100,100,${letterSpacing},0,1,0,0,5,0,0,0,1`;
+  const doc =
+    `[Script Info]\nScriptType: v4.00+\nPlayResX: ${W}\nPlayResY: ${H}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n` +
+    `[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n${styleLine}\n` +
+    `[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n` +
+    `Dialogue: 0,0:00:00.00,0:00:01.00,M,,0,0,0,,{\\pos(${W / 2},${H / 2})}${assText(text)}\n`;
+  const tmp = path.join(config.tmpDir, `meas_${randomUUID()}.ass`);
+  const png = path.join(config.tmpDir, `meas_${randomUUID()}.png`);
+  fs.writeFileSync(tmp, doc, "utf8");
+  const fdEsc = fontsDir.replace(/\\/g, "/").replace(/:/g, "\\:");
+  const assEsc = tmp.replace(/\\/g, "/").replace(/:/g, "\\:");
+  try {
+    // 1) Render the text to a black PNG.
+    await new Promise<void>((resolve) => {
+      const p = spawn(config.ffmpegPath, [
+        "-y", "-f", "lavfi", "-i", `color=c=black:s=${W}x${H}`,
+        "-vf", `ass=${assEsc}:fontsdir=${fdEsc}`,
+        "-frames:v", "1", png, "-loglevel", "error",
+      ]);
+      p.on("close", () => resolve());
+      p.on("error", () => resolve());
+    });
+    // 2) cropdetect (limit=0 = any non-black) over the static PNG, read metadata.
+    const meta = await new Promise<string>((resolve) => {
+      const p = spawn(config.ffmpegPath, [
+        "-loop", "1", "-i", png,
+        "-vf", "cropdetect=limit=0:round=2,metadata=print",
+        "-frames:v", "2", "-f", "null", "-",
+      ]);
+      let err = "";
+      p.stderr.on("data", (d) => (err += d.toString()));
+      p.on("close", () => resolve(err));
+      p.on("error", () => resolve(""));
+    });
+    const wm = meta.match(/cropdetect\.w=(\d+)/);
+    const hm = meta.match(/cropdetect\.h=(\d+)/);
+    if (wm && hm) {
+      const w = parseInt(wm[1], 10);
+      const h = parseInt(hm[1], 10);
+      if (w > 0 && h > 0) return { w, h };
+    }
+  } catch {
+    /* fall through */
+  } finally {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* */ }
+    try { fs.rmSync(png, { force: true }); } catch { /* */ }
+  }
+  // Heuristic fallback
+  return { w: Math.round(text.length * fontSize * 0.6), h: Math.round(fontSize * 0.75) };
+}
+
+/**
+ * Build the .ass document. Async because box styles measure the rendered text
+ * to size the box precisely. Returns null if there are no usable words.
+ */
+export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Promise<string | null> {
   const { width, height, style, shift, duration } = opts;
   if (!subtitles || subtitles.length === 0) return null;
 
-  const fontName = (style.fontFamily || "DejaVu Sans").replace(/\s+Bold$/i, "");
-  const fontSize = style.fontSize || 72;
-  const primary = assColor(style.lineColor, "FFFFFF");      // normal words
-  const accent = assColor(style.wordColor, "FFD400");       // active word
-  const outline = assColor(style.outlineColor, "000000");
-  const outlineW = typeof style.outlineWidth === "number" ? style.outlineWidth : 8;
-  const shadow = 2;
-  const bold = -1; // -1 = true in ASS
+  const fontsDir = path.dirname(config.fontFile);
+  const baseFont = style.fontFamily || "DejaVu Sans";
+  const emphFont = style.emphasisFontFamily || baseFont;
+  const fontSize = style.fontSize || 80;
+  const primary = assColor(style.lineColor, "FFFFFF");
+  const accent = assColor(style.wordColor, "FFFFFF");
   const italic = style.italic ? -1 : 0;
-  // Alignment 5 = middle-center (numpad layout). MarginV is ignored for
-  // vertical centering but we keep generous L/R margins so long lines wrap/fit.
-  const marginLR = Math.round(width * 0.06);
-  // Auto-fit: estimate rendered width per glyph so a big-font 3-word caption
-  // shrinks to fit instead of clipping at the edges (matches the render guard).
+  const ls = typeof style.letterSpacing === "number" ? style.letterSpacing : 0;
+  const cx = Math.round(width / 2);
+  const cy = Math.round(height / 2);
   const maxTextWidth = width * 0.9;
-  const estCharW = 0.62;
 
   const header = [
     "[Script Info]",
@@ -87,7 +158,12 @@ export function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): string |
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Pop,${fontName},${fontSize},${primary},${accent},${outline},&H64000000,${bold},${italic},0,0,100,100,0,0,1,${outlineW},${shadow},5,${marginLR},${marginLR},0,1`,
+    // Main text style (BorderStyle 1, no outline/shadow — we add shadow as a layer).
+    `Style: Txt,${baseFont},${fontSize},${primary},${primary},&H00000000,&H00000000,0,${italic},0,0,100,100,${ls},0,1,0,0,5,40,40,0,1`,
+    // Box drawing style.
+    `Style: Box,${baseFont},${fontSize},&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1`,
+    // Shadow style (blurred black copy).
+    `Style: Shad,${baseFont},${fontSize},&H40000000,&H40000000,&H40000000,&H40000000,0,${italic},0,0,100,100,${ls},0,1,0,0,5,40,40,0,1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -98,44 +174,72 @@ export function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): string |
   for (const event of subtitles) {
     const words = (event.words ?? []).filter((w) => (w.text ?? "").trim().length > 0);
     if (words.length === 0) continue;
-    const upper = style.allCaps;
-    const rendered = words.map((w) => assText(upper ? w.text.toUpperCase() : w.text));
+    const rendered = words.map((w) => assText(style.allCaps ? w.text.toUpperCase() : w.text));
+    const phrase = rendered.join(" ");
 
-    // Shrink this caption's font if the full phrase would overflow the width
-    // (the active word pops to 115%, so budget for that).
-    const phraseLen = rendered.join(" ").length;
-    const estWidth = phraseLen * fontSize * estCharW * 1.15 + outlineW * 2;
-    const fitFontSize =
-      estWidth > maxTextWidth
-        ? Math.max(36, Math.floor(fontSize * (maxTextWidth / estWidth)))
-        : fontSize;
-    const sizeTag = fitFontSize !== fontSize ? `{\\fs${fitFontSize}}` : "";
+    // Fit font to width (and measure for the box). Account for the emphasis
+    // word being a heavier face (slightly wider).
+    let fs = fontSize;
+    const measured = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir);
+    if (measured.w > maxTextWidth) {
+      fs = Math.max(40, Math.floor(fs * (maxTextWidth / measured.w)));
+    }
+    // Re-measure ink height at the fitted size for accurate box sizing.
+    const ink = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir);
 
+    const startAll = shift(event.start ?? words[0].start);
+    if (startAll >= duration) continue;
+
+    // ── Box layer (auto-sized) ──
+    if (style.box) {
+      const fill = style.boxFill ?? 0.82;
+      // Use a CONSISTENT line height (ascenders+descenders) so the box doesn't
+      // collapse for lowercase-only phrases. Measure a reference once per fit.
+      const lineRef = await measureText("Abdfghjpqy", emphFont, fs, !!style.italic, ls, fontsDir);
+      const lineH = Math.max(ink.h, lineRef.h);
+      const boxH = lineH / fill;
+      const pad = (boxH - lineH) / 2; // equal padding all sides
+      const boxW = ink.w + 2 * pad;
+      const radius = Math.min(style.boxRadius ?? 60, boxH / 2);
+      const boxColor = assColor(style.boxColor, "000000");
+      const endAll = Math.min(shift(event.end ?? words[words.length - 1].end), duration);
+      events.push(
+        `Dialogue: 0,${assTime(startAll)},${assTime(endAll)},Box,,0,0,0,,` +
+          `{\\pos(0,0)\\1c${boxColor}\\bord0\\shad0\\p1}${roundedRect(cx, cy, boxW, boxH, radius)}{\\p0}`
+      );
+    }
+
+    // ── Per-word karaoke events ──
     for (let j = 0; j < words.length; j++) {
       const wStart = shift(words[j].start);
-      // Active until the next word starts (no gaps within a caption), clamped
-      // to the caption end / next word.
       const wEnd =
-        j + 1 < words.length
-          ? shift(words[j + 1].start)
-          : shift(event.end ?? words[j].end);
-      if (wEnd <= wStart) continue;
-      if (wStart >= duration) continue;
+        j + 1 < words.length ? shift(words[j + 1].start) : shift(event.end ?? words[j].end);
+      if (wEnd <= wStart || wStart >= duration) continue;
       const endClamped = Math.min(wEnd, duration);
 
-      // Build the phrase: active word in accent + scaled with a quick pop;
-      // other words in the primary color at normal scale.
       const parts = rendered.map((txt, k) => {
-        if (k === j) {
-          // pop: scale 80% -> 115% over 120ms, accent color
-          return `{\\c${accent}\\fscx80\\fscy80\\t(0,120,\\fscx115\\fscy115)}${txt}{\\c${primary}\\fscx100\\fscy100}`;
+        const isActive = k === j;
+        const fnt = isActive ? emphFont : baseFont;
+        const col = isActive ? accent : primary;
+        // Active word: heavier font + accent color + a quick pop (scale 88->108).
+        if (isActive) {
+          return `{\\fn${fnt}\\fs${fs}\\c${col}\\fscx88\\fscy88\\t(0,110,\\fscx108\\fscy108)}${txt}{\\fn${baseFont}\\c${primary}\\fscx100\\fscy100}`;
         }
-        return txt;
+        return `{\\fn${fnt}\\fs${fs}\\c${col}}${txt}`;
       });
-      const line = sizeTag + parts.join(" ");
-      events.push(
-        `Dialogue: 0,${assTime(wStart)},${assTime(endClamped)},Pop,,0,0,0,,${line}`
-      );
+      const text = `{\\an5\\pos(${cx},${cy})}` + parts.join(" ");
+
+      // Soft shadow layer (no box styles) — a blurred black copy behind.
+      if (style.shadow && !style.box) {
+        const shadowText = rendered
+          .map((txt, k) => `{\\fn${k === j ? emphFont : baseFont}\\fs${fs}}${txt}`)
+          .join(" ");
+        events.push(
+          `Dialogue: 0,${assTime(wStart)},${assTime(endClamped)},Shad,,0,0,0,,` +
+            `{\\an5\\pos(${cx - 2},${cy + 5})\\1c&H000000&\\blur15}${shadowText}`
+        );
+      }
+      events.push(`Dialogue: 1,${assTime(wStart)},${assTime(endClamped)},Txt,,0,0,0,,${text}`);
     }
   }
 

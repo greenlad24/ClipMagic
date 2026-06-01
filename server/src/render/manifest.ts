@@ -60,35 +60,61 @@ export interface SubtitleEvent {
   words: SubtitleWord[];
 }
 
-/** Built-in viral subtitle looks. All render center-screen. */
+/**
+ * The four approved viral subtitle styles. All render center-screen, 2–3 words
+ * at a time, with the currently-spoken word highlighted (karaoke). Fonts are
+ * bundled in server/assets/fonts and resolved by their internal family names.
+ *
+ *  1. yellow-mont   — Montserrat italic, #FEDA03; spoken word ExtraBold(800),
+ *                     rest SemiBold(600); active word turns white; soft shadow.
+ *  2. white-mont    — Montserrat ExtraBold upright, #FFFFFF; spoken word yellow;
+ *                     soft shadow.
+ *  3. yellow-box    — Alexandria Bold, #F9FC26 on a black rounded box; text 82%
+ *                     of box height, equal padding; active word white.
+ *  4. black-on-yellow — Montserrat Black (Gotham stand-in), #050000 ALL-CAPS on
+ *                     a #F7BD05 rounded box; active word white.
+ */
 export type SubtitleTemplate =
-  | "hormozi"       // all-caps, active word pops bright yellow, thick outline
-  | "yellow-italic" // bold yellow italic, active word white — the 2nd ref style
-  | "bold-center"   // big white, heavy black box — classic punchy captions
-  | "karaoke-pop"   // active word pops in cyan, no box
-  | "tiktok-clean"  // clean white, soft shadow, rounded feel
-  | "neon"          // bright accent text with strong glow/outline
-  | "minimal";      // understated lower-third-style, smaller
+  | "yellow-mont"
+  | "white-mont"
+  | "yellow-box"
+  | "black-on-yellow";
+
+/** The 4-style rotation pool — a video randomly picks one of these. */
+export const SUBTITLE_TEMPLATE_POOL: SubtitleTemplate[] = [
+  "yellow-mont",
+  "white-mont",
+  "yellow-box",
+  "black-on-yellow",
+];
 
 export interface SubtitleStyle {
+  /** Internal font family name (must match a file in assets/fonts). */
   fontFamily: string;
+  /** Heavier family used for the active/emphasis word (optional). */
+  emphasisFontFamily?: string;
   fontSize: number;
   position: "bottom-center" | "top-center" | "center";
   outlineColor: string;
   outlineWidth: number;
   lineColor: string;
+  /** Color of the active (currently-spoken) word. */
   wordColor: string | null;
   allCaps: boolean;
   maxWordsPerLine: number;
-  /** Named template (drives look). Center is enforced regardless of position. */
   template?: SubtitleTemplate;
-  /** Italic text (e.g. the yellow-italic style). */
   italic?: boolean;
-  /** Draw the dark box behind text. */
+  /** Letter spacing in ASS units (negative = tighter). */
+  letterSpacing?: number;
+  /** Soft drop shadow (separate blurred layer). */
+  shadow?: boolean;
+  /** Rounded background box (auto-sized to the text). */
   box?: boolean;
   boxColor?: string;
-  boxOpacity?: number;
-  boxBorderWidth?: number;
+  /** Fraction of the box height the text should fill (e.g. 0.82). */
+  boxFill?: number;
+  /** Corner radius hint (scaled to the box). */
+  boxRadius?: number;
 }
 
 export interface RenderManifest {
@@ -106,58 +132,42 @@ export interface RenderManifest {
   meta?: unknown;
 }
 
-/**
- * Subtitle templates — all CENTER-screen, designed to look modern/viral.
- * Colors are hex; the renderer maps them to FFmpeg drawtext options.
- */
 export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
-  "bold-center": {
-    fontFamily: "DejaVu Sans Bold", fontSize: 78, position: "center",
-    outlineColor: "#000000", outlineWidth: 12, lineColor: "#FFFFFF", wordColor: "#FFE600",
-    allCaps: true, maxWordsPerLine: 3, template: "bold-center",
-    box: true, boxColor: "#000000", boxOpacity: 0.55, boxBorderWidth: 18,
+  "yellow-mont": {
+    fontFamily: "Montserrat SemiBold",
+    emphasisFontFamily: "Montserrat ExtraBold",
+    fontSize: 96, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#FEDA03", wordColor: "#FFFFFF",
+    allCaps: false, maxWordsPerLine: 3, template: "yellow-mont",
+    italic: true, letterSpacing: -2, shadow: true, box: false,
   },
-  hormozi: {
-    // Big, punchy, all-caps — the signature look. 2–3 word captions only, so
-    // we can afford a large font for maximum pop.
-    fontFamily: "DejaVu Sans Bold", fontSize: 92, position: "center",
-    outlineColor: "#000000", outlineWidth: 16, lineColor: "#FFFFFF", wordColor: "#FFD400",
-    allCaps: true, maxWordsPerLine: 3, template: "hormozi",
-    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  "white-mont": {
+    fontFamily: "Montserrat ExtraBold",
+    fontSize: 96, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#FFFFFF", wordColor: "#FEDA03",
+    allCaps: false, maxWordsPerLine: 3, template: "white-mont",
+    italic: false, letterSpacing: -2, shadow: true, box: false,
   },
-  "yellow-italic": {
-    // Bold YELLOW ITALIC with a soft shadow and only a thin edge — NO thick
-    // black border (matches the reference clip). The active word turns white.
-    fontFamily: "DejaVu Sans Bold", fontSize: 88, position: "center",
-    outlineColor: "#000000", outlineWidth: 3, lineColor: "#FFE100", wordColor: "#FFFFFF",
-    allCaps: false, maxWordsPerLine: 3, template: "yellow-italic", italic: true,
-    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
+  "yellow-box": {
+    fontFamily: "Alexandria",
+    fontSize: 92, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#F9FC26", wordColor: "#FFFFFF",
+    allCaps: false, maxWordsPerLine: 3, template: "yellow-box",
+    italic: false, letterSpacing: -4, shadow: false,
+    box: true, boxColor: "#000000", boxFill: 0.82, boxRadius: 70,
   },
-  "karaoke-pop": {
-    fontFamily: "DejaVu Sans Bold", fontSize: 84, position: "center",
-    outlineColor: "#000000", outlineWidth: 14, lineColor: "#FFFFFF", wordColor: "#22D3EE",
-    allCaps: true, maxWordsPerLine: 3, template: "karaoke-pop",
-    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
-  },
-  "tiktok-clean": {
-    fontFamily: "DejaVu Sans Bold", fontSize: 46, position: "center",
-    outlineColor: "#000000", outlineWidth: 5, lineColor: "#FFFFFF", wordColor: "#FFFFFF",
-    allCaps: false, maxWordsPerLine: 5, template: "tiktok-clean",
-    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
-  },
-  neon: {
-    fontFamily: "DejaVu Sans Bold", fontSize: 84, position: "center",
-    outlineColor: "#0A0A2A", outlineWidth: 14, lineColor: "#39FF14", wordColor: "#FF00E5",
-    allCaps: true, maxWordsPerLine: 3, template: "neon",
-    box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
-  },
-  minimal: {
-    fontFamily: "DejaVu Sans Bold", fontSize: 38, position: "center",
-    outlineColor: "#000000", outlineWidth: 4, lineColor: "#FFFFFF", wordColor: "#FFE600",
-    allCaps: false, maxWordsPerLine: 5, template: "minimal",
-    box: true, boxColor: "#000000", boxOpacity: 0.35, boxBorderWidth: 10,
+  "black-on-yellow": {
+    fontFamily: "Montserrat Black",
+    fontSize: 88, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#050000", wordColor: "#FFFFFF",
+    allCaps: true, maxWordsPerLine: 3, template: "black-on-yellow",
+    italic: false, letterSpacing: -4, shadow: false,
+    box: true, boxColor: "#F7BD05", boxFill: 0.62, boxRadius: 70,
   },
 };
 
-// Hormozi is the default look — big, popping, 2–3 word captions.
-export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = SUBTITLE_TEMPLATES["hormozi"];
+export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = SUBTITLE_TEMPLATES["yellow-mont"];

@@ -63,18 +63,23 @@ type LoadState = 'idle' | 'downloading' | 'loading' | 'ready' | 'error';
 // SUBTITLE_TEMPLATES (server/src/render/manifest.ts). fontPx is the render font
 // size on the 1080-wide canvas; the preview scales it by the canvas ratio so
 // what you see matches the final render.
+// Preview styles for the 4 approved subtitle templates — kept in EXACT sync
+// with the server's SUBTITLE_TEMPLATES. line=base color, emph=active-word color,
+// font/emphFont are CSS font stacks (the bundled fonts are loaded via @font-face
+// in index.css), box=rounded background, boxColor when boxed.
 const RENDER_WIDTH = 1080;
-const SUBTITLE_PREVIEW_STYLES: Record<string, { line: string; emph: string; outline: string; glow: boolean; fontPx: number; box: boolean; italic?: boolean }> = {
-  hormozi:         { line: '#FFFFFF', emph: '#FFD400', outline: '#000000', glow: false, fontPx: 92, box: false },
-  'yellow-italic': { line: '#FFE100', emph: '#FFFFFF', outline: '#000000', glow: false, fontPx: 88, box: false, italic: true },
-  'bold-center':   { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 78, box: true },
-  'karaoke-pop':   { line: '#FFFFFF', emph: '#22D3EE', outline: '#000000', glow: false, fontPx: 84, box: false },
-  'tiktok-clean':  { line: '#FFFFFF', emph: '#FFFFFF', outline: '#000000', glow: false, fontPx: 46, box: false },
-  neon:            { line: '#39FF14', emph: '#FF00E5', outline: '#0A0A2A', glow: true,  fontPx: 84, box: false },
-  minimal:         { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 38, box: true },
+const SUBTITLE_PREVIEW_STYLES: Record<string, {
+  line: string; emph: string; fontPx: number; italic?: boolean; allCaps?: boolean;
+  font: string; emphFont: string; weight: number; emphWeight: number;
+  shadow?: boolean; box?: boolean; boxColor?: string;
+}> = {
+  'yellow-mont':     { line: '#FEDA03', emph: '#FFFFFF', fontPx: 96, italic: true,  font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 600, emphWeight: 800, shadow: true },
+  'white-mont':      { line: '#FFFFFF', emph: '#FEDA03', fontPx: 96, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true },
+  'yellow-box':      { line: '#F9FC26', emph: '#FFFFFF', fontPx: 92, italic: false, font: 'Alexandria, sans-serif', emphFont: 'Alexandria, sans-serif', weight: 700, emphWeight: 700, box: true, boxColor: '#000000' },
+  'black-on-yellow': { line: '#050000', emph: '#FFFFFF', fontPx: 88, italic: false, allCaps: true, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 900, emphWeight: 900, box: true, boxColor: '#F7BD05' },
 };
 
-export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'hormozi' }: Props) {
+export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'yellow-mont' }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const overlayVidRef = useRef<HTMLVideoElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
@@ -459,16 +464,14 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
         {/* Subtitles ALWAYS center-screen, karaoke-highlighted to mirror the
             ASS render: the CURRENTLY-SPOKEN word pops in the accent color. */}
         {activeSub && (() => {
-          const tpl = SUBTITLE_PREVIEW_STYLES[subtitleTemplate] ?? SUBTITLE_PREVIEW_STYLES['hormozi'];
-          const allCaps = subtitleTemplate !== 'yellow-italic' && subtitleTemplate !== 'tiktok-clean';
+          const tpl = SUBTITLE_PREVIEW_STYLES[subtitleTemplate] ?? SUBTITLE_PREVIEW_STYLES['yellow-mont'];
           const scale = 172 / RENDER_WIDTH;
           const words = activeSub.words;
           const phraseText = words.map(w => w.text).join(' ');
-          const maxW = 172 * 0.9;
-          const estW = phraseText.length * tpl.fontPx * 0.62 * scale * 1.15;
+          const maxW = 172 * 0.86;
+          const estW = phraseText.length * tpl.fontPx * 0.6 * scale;
           const fitPx = estW > maxW ? tpl.fontPx * (maxW / estW) : tpl.fontPx;
           const baseFont = Math.max(9, Math.round(fitPx * scale));
-          const strokePx = Math.max(0.5, baseFont * 0.085);
           // Active word = the one whose [start,nextStart) window contains the playhead.
           let activeIdx = words.findIndex((w, i) => {
             const ws = w.start;
@@ -476,6 +479,26 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
             return playhead >= ws && playhead < we;
           });
           if (activeIdx < 0) activeIdx = 0;
+          const wordEls = words.map((w, i) => {
+            const isActive = i === activeIdx;
+            return (
+              <span
+                key={i}
+                style={{
+                  color: isActive ? tpl.emph : tpl.line,
+                  fontFamily: isActive ? tpl.emphFont : tpl.font,
+                  fontWeight: isActive ? tpl.emphWeight : tpl.weight,
+                  fontStyle: tpl.italic ? 'italic' : 'normal',
+                  fontSize: `${baseFont}px`,
+                  display: 'inline-block',
+                  transform: isActive ? 'scale(1.08)' : 'scale(1)',
+                  transition: 'transform 90ms ease-out',
+                }}
+              >
+                {w.text}{' '}
+              </span>
+            );
+          });
           return (
             <div
               className="absolute left-1 right-1 text-center pointer-events-none"
@@ -483,38 +506,17 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
             >
               <p
                 style={{
-                  fontWeight: 900,
-                  fontStyle: tpl.italic ? 'italic' : 'normal',
-                  textTransform: allCaps ? 'uppercase' : 'none',
-                  lineHeight: 1.15,
+                  textTransform: tpl.allCaps ? 'uppercase' : 'none',
+                  lineHeight: 1.1,
                   margin: 0,
-                  padding: tpl.box ? '2px 4px' : 0,
+                  padding: tpl.box ? `${baseFont * 0.16}px ${baseFont * 0.16}px` : 0,
                   display: 'inline-block',
-                  background: tpl.box ? 'rgba(0,0,0,0.55)' : 'transparent',
-                  borderRadius: tpl.box ? 4 : 0,
-                  textShadow: tpl.glow
-                    ? `0 0 ${baseFont * 0.4}px ${tpl.emph}, 0 1px 3px rgba(0,0,0,0.95)`
-                    : '0 1px 3px rgba(0,0,0,0.9)',
-                  WebkitTextStroke: `${strokePx.toFixed(1)}px ${tpl.outline}`,
+                  background: tpl.box ? tpl.boxColor : 'transparent',
+                  borderRadius: tpl.box ? baseFont * 0.4 : 0,
+                  textShadow: tpl.box ? 'none' : (tpl.shadow ? '-1px 2px 4px rgba(0,0,0,0.75)' : 'none'),
                 }}
               >
-                {words.map((w, i) => {
-                  const isActive = i === activeIdx;
-                  return (
-                    <span
-                      key={i}
-                      style={{
-                        color: isActive ? tpl.emph : tpl.line,
-                        fontSize: `${baseFont}px`,
-                        display: 'inline-block',
-                        transform: isActive ? 'scale(1.12)' : 'scale(1)',
-                        transition: 'transform 90ms ease-out',
-                      }}
-                    >
-                      {w.text}{' '}
-                    </span>
-                  );
-                })}
+                {wordEls}
               </p>
             </div>
           );

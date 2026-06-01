@@ -191,7 +191,7 @@ export async function buildArgsFromManifest(
   // overlapping). Falls back to the legacy drawtext path only if ASS can't be
   // written for some reason.
   const style = m.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
-  const assDoc = buildAss(m.subtitles, {
+  const assDoc = await buildAss(m.subtitles, {
     width: W,
     height: H,
     style,
@@ -300,8 +300,8 @@ function buildSubtitleDrawtext(
   const outlineW = typeof style.outlineWidth === "number" ? style.outlineWidth : 6;
   const useBox = style.box === true;
   const boxColor = ffColor(style.boxColor, "black");
-  const boxOpacity = typeof style.boxOpacity === "number" ? style.boxOpacity : 0.5;
-  const boxBorderW = typeof style.boxBorderWidth === "number" ? style.boxBorderWidth : 12;
+  const boxOpacity = 0.5;
+  const boxBorderW = 12;
 
   let currentLabel = inputLabel;
   let drawIndex = 0;

@@ -65,7 +65,7 @@ export default function TimelineEditorPage() {
   const [musicUrl, setMusicUrl] = useState<string | undefined>(undefined);
   const [musicVolume, setMusicVolume] = useState(0.15);
   const [musicMuted, setMusicMuted] = useState(false);
-  const [subtitleTemplate, setSubtitleTemplate] = useState('hormozi');
+  const [subtitleTemplate, setSubtitleTemplate] = useState('auto');
   const [beatGrid, setBeatGrid] = useState<number[]>([]);
   const [downbeats, setDownbeats] = useState<number[]>([]);
   const [sectionMarkers, setSectionMarkers] = useState<Record<string, number>>({});
@@ -136,7 +136,9 @@ export default function TimelineEditorPage() {
   const handleSubtitleTemplateChange = async (tpl: string) => {
     setSubtitleTemplate(tpl);
     if (!projectId) return;
-    try { await updateProjectSettings({ projectId, subtitleTemplate: tpl }); toast.success('Subtitle style updated'); }
+    // "auto" clears the pin so the server rotates a random style per render.
+    const value = tpl === 'auto' ? '' : tpl;
+    try { await updateProjectSettings({ projectId, subtitleTemplate: value }); toast.success('Subtitle style updated'); }
     catch { toast.error('Could not save subtitle style'); }
   };
 
@@ -463,13 +465,11 @@ export default function TimelineEditorPage() {
             title="Subtitle style (center-screen)"
             className="h-7 text-xs rounded-md border border-border bg-background px-2 text-foreground hover:bg-muted cursor-pointer"
           >
-            <option value="hormozi">Subtitles: Hormozi</option>
-            <option value="yellow-italic">Subtitles: Yellow Italic</option>
-            <option value="bold-center">Subtitles: Bold</option>
-            <option value="karaoke-pop">Subtitles: Karaoke Pop</option>
-            <option value="tiktok-clean">Subtitles: TikTok Clean</option>
-            <option value="neon">Subtitles: Neon</option>
-            <option value="minimal">Subtitles: Minimal</option>
+            <option value="auto">Subtitles: Auto (rotate)</option>
+            <option value="yellow-mont">Subtitles: Yellow Italic</option>
+            <option value="white-mont">Subtitles: White Bold</option>
+            <option value="yellow-box">Subtitles: Yellow Box</option>
+            <option value="black-on-yellow">Subtitles: Black on Yellow</option>
           </select>
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setShowTemplate(true)}>
             <FileUp className="w-3.5 h-3.5" />Template
@@ -569,7 +569,7 @@ export default function TimelineEditorPage() {
             onSeek={t => { setPlayhead(t); setIsPlaying(false); }}
             onTimeUpdate={setPlayhead}
             musicUrl={musicUrl} musicVolume={musicVolume} musicMuted={musicMuted}
-            subtitleTemplate={subtitleTemplate}
+            subtitleTemplate={subtitleTemplate === 'auto' ? 'yellow-mont' : subtitleTemplate}
           />
         </div>
 
