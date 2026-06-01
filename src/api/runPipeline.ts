@@ -157,18 +157,27 @@ export default createEndpoint({
       const phraseGroups: Array<Array<{ word: string; start: number; end: number }>> = [];
       let currentGroup: Array<{ word: string; start: number; end: number }> = [];
 
-      // Hormozi-style captions: SHORT punchy chunks of 2–3 words at a time,
-      // NEVER a full sentence. We hard-cap at 3 words and also break on a real
-      // pause or sentence/clause punctuation (whichever comes first).
-      const MAX_WORDS_PER_CAPTION = 3;
+      // Hormozi-style captions: SHORT punchy chunks — at most 3 words, and only
+      // 2 when the words are long (so a caption never runs off the frame).
+      // Also break on a real pause or sentence/clause punctuation.
+      const CHARS_2WORD_LIMIT = 13; // if total chars would exceed this, cap at 2 words
+      const wlen = (g: Array<{ word: string }>) =>
+        g.reduce((n, w) => n + w.word.replace(/[^\p{L}\p{N}]/gu, "").length, 0);
       for (let i = 0; i < words.length; i++) {
         currentGroup.push(words[i]);
         const nextW = words[i + 1];
         const gap = nextW ? nextW.start - words[i].end : Infinity;
         const endsSentence = /[.!?…]$/.test(words[i].word.trim());
         const endsClause = /[,;:]$/.test(words[i].word.trim());
+        // Long-word cap: once we have 2 words and they're already wide, break
+        // (don't add a 3rd). A "long" caption is one whose letters exceed the
+        // 2-word char budget, or where the next word would push it over ~16 chars.
+        const curChars = wlen(currentGroup);
+        const nextChars = nextW ? nextW.word.replace(/[^\p{L}\p{N}]/gu, "").length : 0;
+        const longTwo = currentGroup.length >= 2 && (curChars > CHARS_2WORD_LIMIT || curChars + nextChars > 16);
         if (
-          currentGroup.length >= MAX_WORDS_PER_CAPTION ||
+          currentGroup.length >= 3 ||
+          longTwo ||
           gap > 0.35 ||
           endsSentence ||
           (endsClause && currentGroup.length >= 2)

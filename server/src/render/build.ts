@@ -191,12 +191,20 @@ export async function buildArgsFromManifest(
   // overlapping). Falls back to the legacy drawtext path only if ASS can't be
   // written for some reason.
   const style = m.subtitleStyle ?? DEFAULT_SUBTITLE_STYLE;
+  // Windows (output time) where a promo/overlay video is actually visible, so
+  // captions can move to the bottom while one plays. Mirrors the overlay
+  // enable= timing above (startTime + overlayDelaySeconds → endTime).
+  const overlayWindows = overlays.map((ov) => ({
+    start: shift(ov.scene.startTime + (ov.scene.overlay?.overlayDelaySeconds ?? 0)),
+    end: shift(ov.scene.endTime),
+  }));
   const assDoc = await buildAss(m.subtitles, {
     width: W,
     height: H,
     style,
     shift,
     duration: effectiveDuration,
+    overlayWindows,
   });
   if (assDoc) {
     const assPath = path.join(config.tmpDir, `subs_${randomUUID()}.ass`);

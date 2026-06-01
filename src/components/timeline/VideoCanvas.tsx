@@ -490,19 +490,28 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
                   fontWeight: isActive ? tpl.emphWeight : tpl.weight,
                   fontStyle: tpl.italic ? 'italic' : 'normal',
                   fontSize: `${baseFont}px`,
+                  letterSpacing: '-0.02em',
+                  // inline-block collapses the trailing whitespace, so add an
+                  // explicit gap to keep a normal space between words.
+                  marginRight: i < words.length - 1 ? `${Math.max(2, baseFont * 0.28)}px` : 0,
                   display: 'inline-block',
                   transform: isActive ? 'scale(1.08)' : 'scale(1)',
                   transition: 'transform 90ms ease-out',
                 }}
               >
-                {w.text}{' '}
+                {w.text}
               </span>
             );
           });
+          // Mirror the render: while a promo overlay is on screen, captions
+          // move to the bottom band so they don't cover the footage.
+          const promoShowing = !!activeOverlay && currentPhase === 'overlay-visible';
           return (
             <div
               className="absolute left-1 right-1 text-center pointer-events-none"
-              style={{ top: '50%', transform: 'translateY(-50%)' }}
+              style={promoShowing
+                ? { top: '80%', transform: 'translateY(-50%)' }
+                : { top: '50%', transform: 'translateY(-50%)' }}
             >
               <p
                 style={{

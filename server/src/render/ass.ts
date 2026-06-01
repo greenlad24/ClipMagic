@@ -58,6 +58,12 @@ export interface AssOptions {
   style: SubtitleStyle;
   shift: (t: number) => number;
   duration: number;
+  /**
+   * Output-time windows (already shifted) where a promo/overlay video is on
+   * screen. While a caption overlaps one of these, it's anchored BOTTOM-center
+   * so it doesn't cover the promo footage; otherwise it stays centered.
+   */
+  overlayWindows?: Array<{ start: number; end: number }>;
 }
 
 /**
@@ -145,8 +151,12 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
   const italic = style.italic ? -1 : 0;
   const ls = typeof style.letterSpacing === "number" ? style.letterSpacing : 0;
   const cx = Math.round(width / 2);
-  const cy = Math.round(height / 2);
+  const cyCenter = Math.round(height / 2);
+  const cyBottom = Math.round(height * 0.80); // bottom-center band when a promo plays
   const maxTextWidth = width * 0.9;
+  const overlayWindows = opts.overlayWindows ?? [];
+  const overlapsPromo = (s: number, e: number) =>
+    overlayWindows.some((w) => s < w.end && e > w.start);
 
   const header = [
     "[Script Info]",
@@ -171,7 +181,14 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
 
   const events: string[] = [];
 
-  for (const event of subtitles) {
+  // A short gap + fade between consecutive captions so two captions NEVER share
+  // a moment on screen (the cause of the overlap bug). Each caption ends 0.1s
+  // before the next one starts, and fades out over that 0.1s.
+  const GAP = 0.1;
+  const FADE_MS = 100;
+
+  for (let ei = 0; ei < subtitles.length; ei++) {
+    const event = subtitles[ei];
     const words = (event.words ?? []).filter((w) => (w.text ?? "").trim().length > 0);
     if (words.length === 0) continue;
     const rendered = words.map((w) => assText(style.allCaps ? w.text.toUpperCase() : w.text));
@@ -190,6 +207,27 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
     const startAll = shift(event.start ?? words[0].start);
     if (startAll >= duration) continue;
 
+    // Hard cap this caption's end so it never reaches into the next caption.
+    const rawEnd = shift(event.end ?? words[words.length - 1].end);
+    const nextEv = subtitles[ei + 1];
+    const nextStart =
+      nextEv && nextEv.words && nextEv.words.length
+        ? shift(nextEv.start ?? nextEv.words[0].start)
+        : Infinity;
+    const captionEnd = Math.max(
+      startAll + 0.05,
+      Math.min(rawEnd, duration, nextStart === Infinity ? duration : nextStart - GAP),
+    );
+    const fadeTag = `\\fad(0,${FADE_MS})`;
+
+    // Position: bottom-center while a promo/overlay is on screen (so captions
+    // don't cover the footage); otherwise middle-center. \an5 = mid-center,
+    // \an2-style bottom we emulate with \an5 at a lower Y so the box math (which
+    // centers on cy) keeps working.
+    const promo = overlapsPromo(startAll, captionEnd);
+    const anchor = 5;
+    const cy = promo ? cyBottom : cyCenter;
+
     // ── Box layer (auto-sized) ──
     if (style.box) {
       const fill = style.boxFill ?? 0.82;
@@ -202,20 +240,22 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
       const boxW = ink.w + 2 * pad;
       const radius = Math.min(style.boxRadius ?? 60, boxH / 2);
       const boxColor = assColor(style.boxColor, "000000");
-      const endAll = Math.min(shift(event.end ?? words[words.length - 1].end), duration);
       events.push(
-        `Dialogue: 0,${assTime(startAll)},${assTime(endAll)},Box,,0,0,0,,` +
-          `{\\pos(0,0)\\1c${boxColor}\\bord0\\shad0\\p1}${roundedRect(cx, cy, boxW, boxH, radius)}{\\p0}`
+        `Dialogue: 0,${assTime(startAll)},${assTime(captionEnd)},Box,,0,0,0,,` +
+          `{\\pos(0,0)${fadeTag}\\1c${boxColor}\\bord0\\shad0\\p1}${roundedRect(cx, cy, boxW, boxH, radius)}{\\p0}`
       );
     }
 
-    // ── Per-word karaoke events ──
+    // ── Per-word karaoke events ── (all clamped to captionEnd so this caption
+    // never overlaps the next; the last word carries the fade-out).
     for (let j = 0; j < words.length; j++) {
       const wStart = shift(words[j].start);
-      const wEnd =
-        j + 1 < words.length ? shift(words[j + 1].start) : shift(event.end ?? words[j].end);
+      const wEndRaw =
+        j + 1 < words.length ? shift(words[j + 1].start) : rawEnd;
+      const wEnd = Math.min(wEndRaw, captionEnd);
       if (wEnd <= wStart || wStart >= duration) continue;
-      const endClamped = Math.min(wEnd, duration);
+      const isLastWord = j === words.length - 1;
+      const fade = isLastWord ? fadeTag : "";
 
       const parts = rendered.map((txt, k) => {
         const isActive = k === j;
@@ -227,7 +267,7 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
         }
         return `{\\fn${fnt}\\fs${fs}\\c${col}}${txt}`;
       });
-      const text = `{\\an5\\pos(${cx},${cy})}` + parts.join(" ");
+      const text = `{\\an${anchor}\\pos(${cx},${cy})${fade}}` + parts.join(" ");
 
       // Soft shadow layer (no box styles) — a blurred black copy behind.
       if (style.shadow && !style.box) {
@@ -235,11 +275,11 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
           .map((txt, k) => `{\\fn${k === j ? emphFont : baseFont}\\fs${fs}}${txt}`)
           .join(" ");
         events.push(
-          `Dialogue: 0,${assTime(wStart)},${assTime(endClamped)},Shad,,0,0,0,,` +
-            `{\\an5\\pos(${cx - 2},${cy + 5})\\1c&H000000&\\blur15}${shadowText}`
+          `Dialogue: 0,${assTime(wStart)},${assTime(wEnd)},Shad,,0,0,0,,` +
+            `{\\an${anchor}\\pos(${cx - 2},${cy + 5})${fade}\\1c&H000000&\\blur15}${shadowText}`
         );
       }
-      events.push(`Dialogue: 1,${assTime(wStart)},${assTime(endClamped)},Txt,,0,0,0,,${text}`);
+      events.push(`Dialogue: 1,${assTime(wStart)},${assTime(wEnd)},Txt,,0,0,0,,${text}`);
     }
   }
 
