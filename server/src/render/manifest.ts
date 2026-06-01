@@ -109,21 +109,23 @@ export interface RenderManifest {
  */
 export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
   "bold-center": {
-    fontFamily: "DejaVu Sans Bold", fontSize: 52, position: "center",
-    outlineColor: "#000000", outlineWidth: 8, lineColor: "#FFFFFF", wordColor: "#FFE600",
-    allCaps: true, maxWordsPerLine: 4, template: "bold-center",
-    box: true, boxColor: "#000000", boxOpacity: 0.55, boxBorderWidth: 14,
+    fontFamily: "DejaVu Sans Bold", fontSize: 78, position: "center",
+    outlineColor: "#000000", outlineWidth: 12, lineColor: "#FFFFFF", wordColor: "#FFE600",
+    allCaps: true, maxWordsPerLine: 3, template: "bold-center",
+    box: true, boxColor: "#000000", boxOpacity: 0.55, boxBorderWidth: 18,
   },
   hormozi: {
-    fontFamily: "DejaVu Sans Bold", fontSize: 58, position: "center",
-    outlineColor: "#000000", outlineWidth: 10, lineColor: "#FFFFFF", wordColor: "#FFD400",
+    // Big, punchy, all-caps — the signature look. 2–3 word captions only, so
+    // we can afford a large font for maximum pop.
+    fontFamily: "DejaVu Sans Bold", fontSize: 92, position: "center",
+    outlineColor: "#000000", outlineWidth: 16, lineColor: "#FFFFFF", wordColor: "#FFD400",
     allCaps: true, maxWordsPerLine: 3, template: "hormozi",
     box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
   },
   "karaoke-pop": {
-    fontFamily: "DejaVu Sans Bold", fontSize: 50, position: "center",
-    outlineColor: "#000000", outlineWidth: 7, lineColor: "#FFFFFF", wordColor: "#22D3EE",
-    allCaps: true, maxWordsPerLine: 4, template: "karaoke-pop",
+    fontFamily: "DejaVu Sans Bold", fontSize: 84, position: "center",
+    outlineColor: "#000000", outlineWidth: 14, lineColor: "#FFFFFF", wordColor: "#22D3EE",
+    allCaps: true, maxWordsPerLine: 3, template: "karaoke-pop",
     box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
   },
   "tiktok-clean": {
@@ -133,9 +135,9 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
     box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
   },
   neon: {
-    fontFamily: "DejaVu Sans Bold", fontSize: 52, position: "center",
-    outlineColor: "#0A0A2A", outlineWidth: 10, lineColor: "#39FF14", wordColor: "#FF00E5",
-    allCaps: true, maxWordsPerLine: 4, template: "neon",
+    fontFamily: "DejaVu Sans Bold", fontSize: 84, position: "center",
+    outlineColor: "#0A0A2A", outlineWidth: 14, lineColor: "#39FF14", wordColor: "#FF00E5",
+    allCaps: true, maxWordsPerLine: 3, template: "neon",
     box: false, boxColor: "#000000", boxOpacity: 0, boxBorderWidth: 0,
   },
   minimal: {
@@ -146,4 +148,5 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
   },
 };
 
-export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = SUBTITLE_TEMPLATES["bold-center"];
+// Hormozi is the default look — big, popping, 2–3 word captions.
+export const DEFAULT_SUBTITLE_STYLE: SubtitleStyle = SUBTITLE_TEMPLATES["hormozi"];

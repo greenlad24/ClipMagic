@@ -157,16 +157,22 @@ export default createEndpoint({
       const phraseGroups: Array<Array<{ word: string; start: number; end: number }>> = [];
       let currentGroup: Array<{ word: string; start: number; end: number }> = [];
 
+      // Hormozi-style captions: SHORT punchy chunks of 2–3 words at a time,
+      // NEVER a full sentence. We hard-cap at 3 words and also break on a real
+      // pause or sentence/clause punctuation (whichever comes first).
+      const MAX_WORDS_PER_CAPTION = 3;
       for (let i = 0; i < words.length; i++) {
         currentGroup.push(words[i]);
         const nextW = words[i + 1];
         const gap = nextW ? nextW.start - words[i].end : Infinity;
-        // Break a phrase line on: a real pause, sentence-ending punctuation, or
-        // a comfortable max length. Breaking on punctuation keeps captions
-        // reading as natural clauses rather than arbitrary 4-word chunks.
         const endsSentence = /[.!?…]$/.test(words[i].word.trim());
         const endsClause = /[,;:]$/.test(words[i].word.trim());
-        if (gap > 0.4 || endsSentence || (endsClause && currentGroup.length >= 3) || currentGroup.length >= 5) {
+        if (
+          currentGroup.length >= MAX_WORDS_PER_CAPTION ||
+          gap > 0.35 ||
+          endsSentence ||
+          (endsClause && currentGroup.length >= 2)
+        ) {
           phraseGroups.push([...currentGroup]);
           currentGroup = [];
         }

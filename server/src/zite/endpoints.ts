@@ -369,7 +369,12 @@ const submitRendiJob: Handler = async (input) => {
       const raw = typeof project.musicVolume === "number" ? (project.musicVolume as number) : 0.15;
       const vol = Math.max(0, Math.min(1, raw));
       music = { audioUrl: track.audioUrl as string, volume: vol };
+      console.log(`[submitRendiJob] Music: track=${musicTrackId} vol=${vol} url=${track.audioUrl}`);
+    } else {
+      console.warn(`[submitRendiJob] Music track ${musicTrackId} has no audioUrl — render will be silent music`);
     }
+  } else {
+    console.warn(`[submitRendiJob] Project ${projectId} has NO musicTrack set — no background music in render`);
   }
 
   // Map shots -> manifest scenes (overlay clips for screencast/broll).

@@ -59,18 +59,21 @@ interface Props {
 
 type LoadState = 'idle' | 'downloading' | 'loading' | 'ready' | 'error';
 
-// Preview colors per subtitle template (kept in sync with the server's
-// SUBTITLE_TEMPLATES so the editor preview matches the final render).
-const SUBTITLE_PREVIEW_STYLES: Record<string, { line: string; emph: string; outline: string; glow: boolean }> = {
-  'bold-center':  { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false },
-  hormozi:        { line: '#FFFFFF', emph: '#FFD400', outline: '#000000', glow: false },
-  'karaoke-pop':  { line: '#FFFFFF', emph: '#22D3EE', outline: '#000000', glow: false },
-  'tiktok-clean': { line: '#FFFFFF', emph: '#FFFFFF', outline: '#000000', glow: false },
-  neon:           { line: '#39FF14', emph: '#FF00E5', outline: '#0A0A2A', glow: true },
-  minimal:        { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false },
+// Preview styles per subtitle template — kept in EXACT sync with the server's
+// SUBTITLE_TEMPLATES (server/src/render/manifest.ts). fontPx is the render font
+// size on the 1080-wide canvas; the preview scales it by the canvas ratio so
+// what you see matches the final render.
+const RENDER_WIDTH = 1080;
+const SUBTITLE_PREVIEW_STYLES: Record<string, { line: string; emph: string; outline: string; glow: boolean; fontPx: number; box: boolean }> = {
+  hormozi:        { line: '#FFFFFF', emph: '#FFD400', outline: '#000000', glow: false, fontPx: 92, box: false },
+  'bold-center':  { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 78, box: true },
+  'karaoke-pop':  { line: '#FFFFFF', emph: '#22D3EE', outline: '#000000', glow: false, fontPx: 84, box: false },
+  'tiktok-clean': { line: '#FFFFFF', emph: '#FFFFFF', outline: '#000000', glow: false, fontPx: 46, box: false },
+  neon:           { line: '#39FF14', emph: '#FF00E5', outline: '#0A0A2A', glow: true,  fontPx: 84, box: false },
+  minimal:        { line: '#FFFFFF', emph: '#FFE600', outline: '#000000', glow: false, fontPx: 38, box: true },
 };
 
-export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'bold-center' }: Props) {
+export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.15, musicMuted = false, subtitleTemplate = 'hormozi' }: Props) {
   const vidRef = useRef<HTMLVideoElement>(null);
   const overlayVidRef = useRef<HTMLVideoElement>(null);
   const musicRef = useRef<HTMLAudioElement>(null);
@@ -86,32 +89,28 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
 
   const prevOverlayUrl = useRef<string | null>(null);
 
-  // Three-phase overlay logic: narrator-first → overlay-visible → narrator-return
+  // Overlay visibility — MUST mirror the server render exactly (build.ts):
+  // the overlay is shown from (startTime + overlayDelaySeconds) until endTime.
+  // The render does NOT implement a narrator-return phase, so the preview must
+  // not either — otherwise preview and final render would disagree.
   const overlayCandidate = shots.find(s => s.shotType !== 'Talking Head' && s.clipUrl && playhead >= (s.startTime ?? 0) && playhead < (s.endTime ?? 0));
 
-  type OverlayPhase = 'narrator-first' | 'overlay-visible' | 'narrator-return';
+  type OverlayPhase = 'narrator-first' | 'overlay-visible';
   let currentPhase: OverlayPhase | null = null;
 
   const activeOverlay = (() => {
     if (!overlayCandidate) return undefined;
     let overlayDelay = 0;
-    let returnToNarr = false;
-    let narrReturnLead = 0;
     try {
       if (overlayCandidate.uiLabelsJson) {
         const lbl = JSON.parse(overlayCandidate.uiLabelsJson);
-        if (lbl.showNarratorFirst && typeof lbl.overlayDelaySeconds === 'number') {
-          overlayDelay = lbl.overlayDelaySeconds;
-        }
-        returnToNarr = lbl.returnToNarratorBeforeEnd === true;
-        narrReturnLead = typeof lbl.narratorReturnLeadSeconds === 'number' ? lbl.narratorReturnLeadSeconds : 0;
+        // The render applies overlayDelaySeconds regardless of showNarratorFirst
+        // (it shifts the overlay start by exactly this amount), so mirror that.
+        if (typeof lbl.overlayDelaySeconds === 'number') overlayDelay = lbl.overlayDelaySeconds;
       }
     } catch { /* */ }
     const elapsed = playhead - (overlayCandidate.startTime ?? 0);
-    const beatDur = (overlayCandidate.endTime ?? 0) - (overlayCandidate.startTime ?? 0);
-
     if (elapsed < overlayDelay) { currentPhase = 'narrator-first'; return undefined; }
-    if (returnToNarr && narrReturnLead > 0 && elapsed >= beatDur - narrReturnLead) { currentPhase = 'narrator-return'; return undefined; }
     currentPhase = 'overlay-visible';
     return overlayCandidate;
   })();
@@ -282,9 +281,10 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
         const lbl = JSON.parse(activeOverlay.uiLabelsJson);
         clipStartOffset = lbl.clipStartOffset ?? 0;
         clipEndOffset = typeof lbl.clipEndOffset === 'number' ? lbl.clipEndOffset : undefined;
-        if (lbl.showNarratorFirst && typeof lbl.overlayDelaySeconds === 'number') {
-          overlayDelaySec = lbl.overlayDelaySeconds;
-        }
+        // Mirror the render: the overlay starts playing at (startTime + delay),
+        // beginning at clipStartOffset within the source clip. Delay always
+        // applies (not gated on showNarratorFirst) to match build.ts.
+        if (typeof lbl.overlayDelaySeconds === 'number') overlayDelaySec = lbl.overlayDelaySeconds;
       }
     } catch { /* */ }
     const offset = clipStartOffset + (playhead - (activeOverlay.startTime ?? 0) - overlayDelaySec);
@@ -405,8 +405,6 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
           let dbgConfidence: number | undefined;
           let dbgIntent = '';
           let dbgIsTactical = false;
-          let dbgReturnToNarr = false;
-          let dbgReturnLead = 0;
           let dbgIsRequired = false;
           try {
             if (currentShot?.uiLabelsJson) {
@@ -416,8 +414,6 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
               dbgConfidence = typeof lbl.retrievalConfidence === 'number' ? lbl.retrievalConfidence : undefined;
               dbgIntent = lbl.visualIntent ?? currentShot?.visualIntent ?? '';
               dbgIsTactical = lbl.brollMode === 'tactical_broll';
-              dbgReturnToNarr = lbl.returnToNarratorBeforeEnd === true;
-              dbgReturnLead = lbl.narratorReturnLeadSeconds ?? 0;
               dbgIsRequired = lbl.isRequiredTacticalBroll === true || lbl.isRequiredTacticalSlot === true;
             }
           } catch { /* */ }
@@ -440,13 +436,9 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
                   {dbgIsRequired && <span className="text-orange-300 font-bold">⚡REQ</span>}
                   {currentPhase ? (
                     <span className={
-                      currentPhase === 'narrator-first' ? 'text-blue-300' :
-                      currentPhase === 'overlay-visible' ? 'text-emerald-300' :
-                      'text-purple-300'
+                      currentPhase === 'narrator-first' ? 'text-blue-300' : 'text-emerald-300'
                     }>
-                      {currentPhase === 'narrator-first' ? `👤 narr ${dbgDelay.toFixed(1)}s` :
-                       currentPhase === 'overlay-visible' ? '🎬 overlay' :
-                       `👤 return ${dbgReturnLead.toFixed(1)}s`}
+                      {currentPhase === 'narrator-first' ? `👤 narr ${dbgDelay.toFixed(1)}s` : '🎬 overlay'}
                     </span>
                   ) : (
                     <span>{overlayActive ? '🎬 overlay' : '👤 narrator'}</span>
@@ -465,31 +457,41 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
 
         {/* Subtitles ALWAYS center-screen (product rule), styled by template. */}
         {activeSub && (() => {
-          const tpl = SUBTITLE_PREVIEW_STYLES[subtitleTemplate] ?? SUBTITLE_PREVIEW_STYLES['bold-center'];
-          const lineHasEmph = activeSub.words.some(w => w.emphasis);
+          const tpl = SUBTITLE_PREVIEW_STYLES[subtitleTemplate] ?? SUBTITLE_PREVIEW_STYLES['hormozi'];
+          // Scale the render's font size by the preview canvas width (172px) /
+          // render width (1080px) so the preview matches the final render. The
+          // canvas is 9:16; its rendered width ≈ the container's 172px.
+          const scale = 172 / RENDER_WIDTH;
+          // Mirror the render's auto-fit so a long 3-word caption shrinks to fit
+          // (otherwise it would clip at the canvas edges, unlike the export).
+          const phraseText = activeSub.words.map(w => w.text).join(' ').toUpperCase();
+          const maxW = 172 * 0.88;
+          const estW = phraseText.length * tpl.fontPx * 0.64 * scale;
+          const fitPx = estW > maxW ? tpl.fontPx * (maxW / estW) : tpl.fontPx;
+          const baseFont = Math.max(9, Math.round(fitPx * scale)); // px
+          const strokePx = Math.max(0.5, baseFont * 0.09);
           return (
             <div
-              className="absolute left-2 right-2 text-center pointer-events-none"
+              className="absolute left-1 right-1 text-center pointer-events-none"
               style={{ top: '50%', transform: 'translateY(-50%)' }}
             >
               <p
                 className="font-black uppercase"
                 style={{
-                  lineHeight: 1.2,
+                  lineHeight: 1.15,
+                  margin: 0,
+                  padding: tpl.box ? '2px 4px' : 0,
+                  display: 'inline-block',
+                  background: tpl.box ? 'rgba(0,0,0,0.55)' : 'transparent',
+                  borderRadius: tpl.box ? 4 : 0,
                   textShadow: tpl.glow
-                    ? `0 0 6px ${tpl.emph}, 0 2px 3px rgba(0,0,0,0.95)`
+                    ? `0 0 ${baseFont * 0.4}px ${tpl.emph}, 0 2px 3px rgba(0,0,0,0.95)`
                     : '0 2px 4px rgba(0,0,0,0.98)',
-                  WebkitTextStroke: `0.6px ${tpl.outline}`,
+                  WebkitTextStroke: `${strokePx.toFixed(1)}px ${tpl.outline}`,
                 }}
               >
                 {activeSub.words.map((w, i) => (
-                  <span
-                    key={i}
-                    style={{
-                      color: w.emphasis ? tpl.emph : tpl.line,
-                      fontSize: lineHasEmph && w.emphasis ? '15px' : '12px',
-                    }}
-                  >
+                  <span key={i} style={{ color: w.emphasis ? tpl.emph : tpl.line, fontSize: `${baseFont}px` }}>
                     {w.text}{' '}
                   </span>
                 ))}

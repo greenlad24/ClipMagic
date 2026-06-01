@@ -65,7 +65,7 @@ export default function TimelineEditorPage() {
   const [musicUrl, setMusicUrl] = useState<string | undefined>(undefined);
   const [musicVolume, setMusicVolume] = useState(0.15);
   const [musicMuted, setMusicMuted] = useState(false);
-  const [subtitleTemplate, setSubtitleTemplate] = useState('bold-center');
+  const [subtitleTemplate, setSubtitleTemplate] = useState('hormozi');
   const [beatGrid, setBeatGrid] = useState<number[]>([]);
   const [downbeats, setDownbeats] = useState<number[]>([]);
   const [sectionMarkers, setSectionMarkers] = useState<Record<string, number>>({});
@@ -452,8 +452,8 @@ export default function TimelineEditorPage() {
             title="Subtitle style (center-screen)"
             className="h-7 text-xs rounded-md border border-border bg-background px-2 text-foreground hover:bg-muted cursor-pointer"
           >
-            <option value="bold-center">Subtitles: Bold</option>
             <option value="hormozi">Subtitles: Hormozi</option>
+            <option value="bold-center">Subtitles: Bold</option>
             <option value="karaoke-pop">Subtitles: Karaoke Pop</option>
             <option value="tiktok-clean">Subtitles: TikTok Clean</option>
             <option value="neon">Subtitles: Neon</option>

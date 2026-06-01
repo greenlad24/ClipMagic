@@ -294,6 +294,18 @@ function buildSubtitleDrawtext(
     if (end <= start) continue; // fully outside the trimmed window
     const outLabel = `sub${drawIndex}`;
 
+    // Auto-fit: a big template font (e.g. Hormozi 92px) can overflow the frame
+    // on a 3-word caption and get clipped at the edges. Estimate rendered width
+    // (~0.60×fontSize per glyph for this bold sans, plus the outline) and shrink
+    // the font so the line fits within ~92% of the frame width.
+    const maxTextWidth = m.width * 0.88;
+    const renderText = style.allCaps ? phrase.toUpperCase() : phrase;
+    const estCharW = 0.64;
+    const estWidth = renderText.length * fontSize * estCharW + outlineW * 2;
+    const fitFontSize = estWidth > maxTextWidth
+      ? Math.max(28, Math.floor(fontSize * (maxTextWidth / estWidth)))
+      : fontSize;
+
     // expansion=none → literal text (so %, {, } render fine and numbers like
     // "50%" no longer blank the line). text/enable are UNQUOTED; escapeDrawText
     // backslash-escapes the filtergraph separators.
@@ -302,7 +314,7 @@ function buildSubtitleDrawtext(
       : "";
     filters.push(
       `[${currentLabel}]drawtext=fontfile=${fontFile}:expansion=none:text=${txt}:` +
-        `fontcolor=${color}:fontsize=${fontSize}:` +
+        `fontcolor=${color}:fontsize=${fitFontSize}:` +
         `borderw=${outlineW}:bordercolor=${outlineColor}:` +
         `shadowx=2:shadowy=2:shadowcolor=black@0.6:` +
         `x=${xExpr}:y=${yExpr}${boxOpts}:` +
