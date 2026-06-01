@@ -71,10 +71,10 @@ const RENDER_WIDTH = 1080;
 const SUBTITLE_PREVIEW_STYLES: Record<string, {
   line: string; emph: string; fontPx: number; italic?: boolean; allCaps?: boolean;
   font: string; emphFont: string; weight: number; emphWeight: number;
-  shadow?: boolean; box?: boolean; boxColor?: string;
+  shadow?: boolean; box?: boolean; boxColor?: string; highlightWord?: boolean;
 }> = {
-  'yellow-mont':     { line: '#FEDA03', emph: '#FFFFFF', fontPx: 96, italic: true,  font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 600, emphWeight: 800, shadow: true },
-  'white-mont':      { line: '#FFFFFF', emph: '#FEDA03', fontPx: 96, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true },
+  'yellow-mont':     { line: '#FEDA03', emph: '#FFFFFF', fontPx: 96, italic: true,  font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 600, emphWeight: 800, shadow: true, highlightWord: true },
+  'white-mont':      { line: '#FFFFFF', emph: '#FEDA03', fontPx: 96, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true, highlightWord: true },
   'yellow-box':      { line: '#F9FC26', emph: '#FFFFFF', fontPx: 92, italic: false, font: 'Alexandria, sans-serif', emphFont: 'Alexandria, sans-serif', weight: 700, emphWeight: 700, box: true, boxColor: '#000000' },
   'black-on-yellow': { line: '#050000', emph: '#FFFFFF', fontPx: 88, italic: false, allCaps: true, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 900, emphWeight: 900, box: true, boxColor: '#F7BD05' },
 };
@@ -480,7 +480,9 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
           });
           if (activeIdx < 0) activeIdx = 0;
           const wordEls = words.map((w, i) => {
-            const isActive = i === activeIdx;
+            // Highlight (color/weight change) the active word only for styles
+            // 1 & 2. No size animation for any style.
+            const isActive = !!tpl.highlightWord && i === activeIdx;
             return (
               <span
                 key={i}
@@ -495,8 +497,6 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
                   // explicit gap to keep a normal space between words.
                   marginRight: i < words.length - 1 ? `${Math.max(2, baseFont * 0.28)}px` : 0,
                   display: 'inline-block',
-                  transform: isActive ? 'scale(1.08)' : 'scale(1)',
-                  transition: 'transform 90ms ease-out',
                 }}
               >
                 {w.text}

@@ -155,8 +155,6 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
   const cyBottom = Math.round(height * 0.80); // bottom-center band when a promo plays
   const maxTextWidth = width * 0.9;
   const overlayWindows = opts.overlayWindows ?? [];
-  const overlapsPromo = (s: number, e: number) =>
-    overlayWindows.some((w) => s < w.end && e > w.start);
 
   const header = [
     "[Script Info]",
@@ -224,7 +222,9 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
     // don't cover the footage); otherwise middle-center. \an5 = mid-center,
     // \an2-style bottom we emulate with \an5 at a lower Y so the box math (which
     // centers on cy) keeps working.
-    const promo = overlapsPromo(startAll, captionEnd);
+    // Move a caption to the bottom only when the promo is ALREADY on screen as
+    // the caption appears — not for a caption that started before the promo.
+    const promo = overlayWindows.some((w) => startAll >= w.start && startAll < w.end);
     const anchor = 5;
     const cy = promo ? cyBottom : cyCenter;
 
@@ -246,40 +246,54 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
       );
     }
 
-    // ── Per-word karaoke events ── (all clamped to captionEnd so this caption
-    // never overlaps the next; the last word carries the fade-out).
-    for (let j = 0; j < words.length; j++) {
-      const wStart = shift(words[j].start);
-      const wEndRaw =
-        j + 1 < words.length ? shift(words[j + 1].start) : rawEnd;
-      const wEnd = Math.min(wEndRaw, captionEnd);
-      if (wEnd <= wStart || wStart >= duration) continue;
-      const isLastWord = j === words.length - 1;
-      const fade = isLastWord ? fadeTag : "";
+    // Static phrase (no per-word color, no size animation) for the base text.
+    const staticPhrase = rendered.map((txt) => `{\\fn${baseFont}\\fs${fs}\\c${primary}}${txt}`).join(" ");
 
-      const parts = rendered.map((txt, k) => {
-        const isActive = k === j;
-        const fnt = isActive ? emphFont : baseFont;
-        const col = isActive ? accent : primary;
-        // Active word: heavier font + accent color + a quick pop (scale 88->108).
-        if (isActive) {
-          return `{\\fn${fnt}\\fs${fs}\\c${col}\\fscx88\\fscy88\\t(0,110,\\fscx108\\fscy108)}${txt}{\\fn${baseFont}\\c${primary}\\fscx100\\fscy100}`;
+    if (style.highlightWord) {
+      // ── Styles 1 & 2: recolor the active word as it's spoken (NO size
+      // animation). One event per word, clamped so captions never overlap. ──
+      for (let j = 0; j < words.length; j++) {
+        const wStart = shift(words[j].start);
+        const wEndRaw = j + 1 < words.length ? shift(words[j + 1].start) : rawEnd;
+        const wEnd = Math.min(wEndRaw, captionEnd);
+        if (wEnd <= wStart || wStart >= duration) continue;
+        const fade = j === words.length - 1 ? fadeTag : "";
+
+        const parts = rendered.map((txt, k) => {
+          const isActive = k === j;
+          const fnt = isActive ? emphFont : baseFont;
+          const col = isActive ? accent : primary;
+          return `{\\fn${fnt}\\fs${fs}\\c${col}}${txt}`;
+        });
+        const text = `{\\an${anchor}\\pos(${cx},${cy})${fade}}` + parts.join(" ");
+
+        if (style.shadow && !style.box) {
+          const shadowText = rendered
+            .map((txt, k) => `{\\fn${k === j ? emphFont : baseFont}\\fs${fs}}${txt}`)
+            .join(" ");
+          events.push(
+            `Dialogue: 0,${assTime(wStart)},${assTime(wEnd)},Shad,,0,0,0,,` +
+              `{\\an${anchor}\\pos(${cx - 2},${cy + 5})${fade}\\1c&H000000&\\blur15}${shadowText}`
+          );
         }
-        return `{\\fn${fnt}\\fs${fs}\\c${col}}${txt}`;
-      });
-      const text = `{\\an${anchor}\\pos(${cx},${cy})${fade}}` + parts.join(" ");
-
-      // Soft shadow layer (no box styles) — a blurred black copy behind.
-      if (style.shadow && !style.box) {
-        const shadowText = rendered
-          .map((txt, k) => `{\\fn${k === j ? emphFont : baseFont}\\fs${fs}}${txt}`)
-          .join(" ");
+        events.push(`Dialogue: 1,${assTime(wStart)},${assTime(wEnd)},Txt,,0,0,0,,${text}`);
+      }
+    } else {
+      // ── Styles 3 & 4: fully static caption — no highlight, no animation. ──
+      const wStart = startAll;
+      const wEnd = captionEnd;
+      if (wEnd > wStart && wStart < duration) {
+        if (style.shadow && !style.box) {
+          events.push(
+            `Dialogue: 0,${assTime(wStart)},${assTime(wEnd)},Shad,,0,0,0,,` +
+              `{\\an${anchor}\\pos(${cx - 2},${cy + 5})${fadeTag}\\1c&H000000&\\blur15}${rendered.map((t) => `{\\fn${baseFont}\\fs${fs}}${t}`).join(" ")}`
+          );
+        }
         events.push(
-          `Dialogue: 0,${assTime(wStart)},${assTime(wEnd)},Shad,,0,0,0,,` +
-            `{\\an${anchor}\\pos(${cx - 2},${cy + 5})${fade}\\1c&H000000&\\blur15}${shadowText}`
+          `Dialogue: 1,${assTime(wStart)},${assTime(wEnd)},Txt,,0,0,0,,` +
+            `{\\an${anchor}\\pos(${cx},${cy})${fadeTag}}${staticPhrase}`
         );
       }
-      events.push(`Dialogue: 1,${assTime(wStart)},${assTime(wEnd)},Txt,,0,0,0,,${text}`);
     }
   }
 

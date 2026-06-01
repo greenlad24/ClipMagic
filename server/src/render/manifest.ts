@@ -100,6 +100,8 @@ export interface SubtitleStyle {
   lineColor: string;
   /** Color of the active (currently-spoken) word. */
   wordColor: string | null;
+  /** Recolor the active word (karaoke). Styles 1 & 2 only. */
+  highlightWord?: boolean;
   allCaps: boolean;
   maxWordsPerLine: number;
   template?: SubtitleTemplate;
@@ -138,7 +140,7 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
     emphasisFontFamily: "Montserrat ExtraBold",
     fontSize: 96, position: "center",
     outlineColor: "#000000", outlineWidth: 0,
-    lineColor: "#FEDA03", wordColor: "#FFFFFF",
+    lineColor: "#FEDA03", wordColor: "#FFFFFF", highlightWord: true,
     allCaps: false, maxWordsPerLine: 3, template: "yellow-mont",
     italic: true, letterSpacing: -2, shadow: true, box: false,
   },
@@ -146,7 +148,7 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
     fontFamily: "Montserrat ExtraBold",
     fontSize: 96, position: "center",
     outlineColor: "#000000", outlineWidth: 0,
-    lineColor: "#FFFFFF", wordColor: "#FEDA03",
+    lineColor: "#FFFFFF", wordColor: "#FEDA03", highlightWord: true,
     allCaps: false, maxWordsPerLine: 3, template: "white-mont",
     italic: false, letterSpacing: -2, shadow: true, box: false,
   },
