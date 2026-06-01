@@ -856,6 +856,51 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
 
     const shotRecords: ShotRec[] = [];
 
+    // ── Minimum visible-overlay guardrail ────────────────────────────────────
+    // A stock/promo overlay is only visible from (start + overlayDelaySeconds)
+    // to end. Make sure that visible window is at least MIN_OVERLAY_VISIBLE so
+    // no clip flashes for a fraction of a second. Fix order per beat:
+    //   1) trim the narrator-first delay,
+    //   2) borrow time from the FOLLOWING narrator beat (push its start later),
+    //   3) if still too short, demote this beat back to talking_head.
+    const MIN_OVERLAY_VISIBLE = 1.6; // seconds the overlay must actually show
+    semanticBeats.sort((a, b) => a.start - b.start);
+    for (let i = 0; i < semanticBeats.length; i++) {
+      const b = semanticBeats[i];
+      if (b.visualIntent === 'talking_head') continue;
+      let visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
+      if (visible >= MIN_OVERLAY_VISIBLE) continue;
+
+      // 1) cut the delay down (keep a touch of narrator-first if room allows)
+      if ((b.overlayDelaySeconds || 0) > 0) {
+        const need = MIN_OVERLAY_VISIBLE - visible;
+        b.overlayDelaySeconds = Math.max(0, (b.overlayDelaySeconds || 0) - need);
+        visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
+      }
+      // 2) borrow from the next beat if it's a narrator beat (and stays usable)
+      const next = semanticBeats[i + 1];
+      if (visible < MIN_OVERLAY_VISIBLE && next && next.visualIntent === 'talking_head') {
+        const want = MIN_OVERLAY_VISIBLE - visible;
+        const nextDur = next.end - next.start;
+        const give = Math.min(want, Math.max(0, nextDur - 0.6)); // leave next ≥0.6s
+        if (give > 0) {
+          b.end = parseFloat((b.end + give).toFixed(3));
+          next.start = b.end;
+          visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
+        }
+      }
+      // 3) still too short → revert to narrator (better than a flash)
+      if (visible < MIN_OVERLAY_VISIBLE - 0.15) {
+        console.log(`[runPipeline] ⤵ Overlay at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s visible — reverting to talking_head`);
+        b.visualIntent = 'talking_head';
+        b.overlayDelaySeconds = 0;
+        b.showNarrator = true;
+      } else {
+        console.log(`[runPipeline] ⏱ Overlay at ${b.start.toFixed(2)}s extended to ${visible.toFixed(2)}s visible`);
+      }
+    }
+    semanticBeats.sort((a, b) => a.start - b.start);
+
     // Beat types that benefit from narrator-return (cut back to face before beat ends)
     const NARRATOR_RETURN_BEATS = new Set(['hook', 'pain', 'objection', 'cta', 'transition']);
     const DEFAULT_NARRATOR_RETURN_LEAD = 0.8; // seconds before beat end to cut back
