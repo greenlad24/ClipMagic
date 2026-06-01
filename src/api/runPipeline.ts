@@ -858,16 +858,20 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
 
     // ── Minimum visible-overlay guardrail ────────────────────────────────────
     // A stock/promo overlay is only visible from (start + overlayDelaySeconds)
-    // to end. Make sure that visible window is at least MIN_OVERLAY_VISIBLE so
-    // no clip flashes for a fraction of a second. Fix order per beat:
-    //   1) trim the narrator-first delay,
-    //   2) borrow time from the FOLLOWING narrator beat (push its start later),
-    //   3) if still too short, demote this beat back to talking_head.
-    const MIN_OVERLAY_VISIBLE = 1.6; // seconds the overlay must actually show
+    // to end. Make sure that visible window is long enough so no clip flashes:
+    //   • PROMO (screencast): at least 3s — promo footage needs room to read.
+    //   • stock / generated (tactical_broll): at least 1.6s.
+    // Fix order per beat: trim the narrator-first delay, then borrow time from
+    // the FOLLOWING narrator beat, and if still too short demote to talking_head.
+    const MIN_PROMO_VISIBLE = 3.0;
+    const MIN_BROLL_VISIBLE = 1.6;
+    const minVisibleFor = (b: SemanticBeat) =>
+      b.visualIntent === 'screencast' ? MIN_PROMO_VISIBLE : MIN_BROLL_VISIBLE;
     semanticBeats.sort((a, b) => a.start - b.start);
     for (let i = 0; i < semanticBeats.length; i++) {
       const b = semanticBeats[i];
       if (b.visualIntent === 'talking_head') continue;
+      const MIN_OVERLAY_VISIBLE = minVisibleFor(b);
       let visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
       if (visible >= MIN_OVERLAY_VISIBLE) continue;
 
@@ -889,14 +893,21 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
           visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
         }
       }
-      // 3) still too short → revert to narrator (better than a flash)
+      // 3) still too short → revert to narrator (better than a flash). For a
+      //    promo beat we first try to keep it as stock-backed b-roll if it at
+      //    least meets the shorter b-roll minimum.
       if (visible < MIN_OVERLAY_VISIBLE - 0.15) {
-        console.log(`[runPipeline] ⤵ Overlay at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s visible — reverting to talking_head`);
-        b.visualIntent = 'talking_head';
-        b.overlayDelaySeconds = 0;
-        b.showNarrator = true;
+        if (b.visualIntent === 'screencast' && visible >= MIN_BROLL_VISIBLE) {
+          console.log(`[runPipeline] ⤵ Promo at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s (<3s) — keeping as b-roll`);
+          b.visualIntent = 'tactical_broll';
+        } else {
+          console.log(`[runPipeline] ⤵ Overlay at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s visible — reverting to talking_head`);
+          b.visualIntent = 'talking_head';
+          b.overlayDelaySeconds = 0;
+          b.showNarrator = true;
+        }
       } else {
-        console.log(`[runPipeline] ⏱ Overlay at ${b.start.toFixed(2)}s extended to ${visible.toFixed(2)}s visible`);
+        console.log(`[runPipeline] ⏱ Overlay (${b.visualIntent}) at ${b.start.toFixed(2)}s → ${visible.toFixed(2)}s visible`);
       }
     }
     semanticBeats.sort((a, b) => a.start - b.start);

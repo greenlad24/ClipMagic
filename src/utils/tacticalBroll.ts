@@ -372,8 +372,38 @@ export async function retrieveScreencast(
 
   // Avoid defaulting to video beginning (0s) when no segment matched — pick a
   // midpoint so the viewer doesn't always see the intro/logo of the promo.
-  const segStart = segResult?.start ?? (segResult ? 0 : Math.min(5, 0));
-  const segEnd = segResult?.end ?? 10;
+  let segStart = segResult?.start ?? (segResult ? 0 : Math.min(5, 0));
+  let segEnd = segResult?.end ?? 10;
+
+  // Guarantee at least MIN_PROMO_CLIP seconds of RELEVANT footage from the
+  // matched segment. The matched segment can be short; expand it symmetrically
+  // around its center, clamped to the promo clip's real duration, so the
+  // overlay never runs out of footage before the 3s minimum on screen.
+  const MIN_PROMO_CLIP = Math.max(3.0, beatDurationSec);
+  let clipDuration = Infinity;
+  try {
+    if (matchedEntry?.contentIndexJson) {
+      const idx = JSON.parse(matchedEntry.contentIndexJson);
+      const segs: any[] = Array.isArray(idx.segments) ? idx.segments : [];
+      const ends = segs.map((s) => (typeof s.end === 'number' ? s.end : 0));
+      if (typeof idx.durationSeconds === 'number') clipDuration = idx.durationSeconds;
+      else if (ends.length) clipDuration = Math.max(...ends);
+    }
+  } catch { /* */ }
+  if (segEnd - segStart < MIN_PROMO_CLIP) {
+    const center = (segStart + segEnd) / 2;
+    let s = center - MIN_PROMO_CLIP / 2;
+    let e = center + MIN_PROMO_CLIP / 2;
+    if (s < 0) { e -= s; s = 0; }
+    if (Number.isFinite(clipDuration) && e > clipDuration) {
+      const shift = e - clipDuration;
+      s = Math.max(0, s - shift);
+      e = clipDuration;
+    }
+    segStart = parseFloat(s.toFixed(2));
+    segEnd = parseFloat(e.toFixed(2));
+    console.log(`${tag} 📏 Expanded promo segment to ≥${MIN_PROMO_CLIP.toFixed(1)}s → [${segStart}s–${segEnd}s] (clip≈${Number.isFinite(clipDuration) ? clipDuration.toFixed(1) + 's' : 'unknown'})`);
+  }
   let confidence = segResult?.confidence ?? 0.5; // file-level only = 0.5 confidence
   const reason = segResult?.reason ?? `File-level match: ${fileMatch.label}`;
 
