@@ -405,20 +405,27 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   // reloads) to see updated statuses.
   const handleVisionIndexAll = async () => {
     if (visionIndexing) return;
+    // Force re-indexes EVERY promo (re-watches each at 1 frame/sec) so the new
+    // tech/on-screen-text detection is applied to the whole library. Confirm
+    // since it re-processes everything.
+    const ok = window.confirm(
+      'Re-index ALL promo videos? This re-watches every video (1 frame/sec) and rebuilds its segment index — including the new "show the technology, skip intro text" detection. It runs in the background and may take a while for a large library.'
+    );
+    if (!ok) return;
     setVisionIndexing(true);
     try {
       const res = await reindexAllPromos({ force: true });
       if (res.started === false) {
-        toast.info('Vision indexing is already running — check back shortly.');
+        toast.info('Re-indexing is already running — check back shortly.');
       } else {
         toast.success(
-          `Vision indexing started for ${res.queued ?? res.total} videos. ` +
-            `It runs in the background — statuses update to "Indexed" as each finishes.`
+          `Re-indexing started for all ${res.queued ?? res.total} promo videos. ` +
+            `Runs in the background — each flips to "Indexed" as it finishes. Reopen this dialog to refresh statuses.`
         );
       }
       await reload();
     } catch (e: any) {
-      toast.error('Vision indexing failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
+      toast.error('Re-indexing failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
     } finally {
       setVisionIndexing(false);
     }
@@ -622,10 +629,10 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
                 className="h-7 text-xs gap-1.5"
                 disabled={visionIndexing}
                 onClick={handleVisionIndexAll}
-                title="Watch every promo video (1 frame/sec) and index what's on screen each second. Runs once; cached and reused by the AI director on every render."
+                title="Re-index ALL promo videos: re-watch each (1 frame/sec) and rebuild its segment index, including the new 'show the technology, skip intro text' detection. Runs in the background; cached and reused by the AI director on every render."
               >
                 {visionIndexing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
-                {visionIndexing ? 'Indexing…' : 'Vision-index all'}
+                {visionIndexing ? 'Re-indexing…' : 'Re-index all'}
               </Button>
             </div>
           </DialogTitle>
