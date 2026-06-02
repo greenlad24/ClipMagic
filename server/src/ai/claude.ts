@@ -63,6 +63,55 @@ interface AnthropicResponse {
   error?: { message?: string };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * POST to the Anthropic Messages API with retry/backoff on transient errors.
+ * 529 (Overloaded), 429 (rate limit), and 5xx are retried with exponential
+ * backoff + jitter; everything else (and the final attempt) throws.
+ */
+async function anthropicRequest(body: unknown, label: string): Promise<AnthropicResponse> {
+  const maxAttempts = Number.parseInt(process.env.CLAUDE_MAX_RETRIES || "5", 10);
+  let lastErr = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
+        method: "POST",
+        headers: anthropicHeaders(),
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      // Network blip — treat as retryable.
+      lastErr = e instanceof Error ? e.message : String(e);
+      if (attempt < maxAttempts) { await sleep(backoff(attempt)); continue; }
+      throw new Error(`${label} network error after ${attempt} attempts: ${lastErr}`);
+    }
+
+    if (res.ok) return (await res.json()) as AnthropicResponse;
+
+    const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
+    lastErr = `${res.status}: ${json?.error?.message || JSON.stringify(json)}`;
+    const retryable = res.status === 529 || res.status === 429 || (res.status >= 500 && res.status < 600);
+    if (retryable && attempt < maxAttempts) {
+      // Honor Retry-After when present, else exponential backoff + jitter.
+      const ra = Number.parseInt(res.headers.get("retry-after") || "", 10);
+      const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : backoff(attempt);
+      console.warn(`${label} ${res.status} (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(wait)}ms`);
+      await sleep(wait);
+      continue;
+    }
+    throw new Error(`${label} (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
+  }
+  throw new Error(`${label} failed after ${maxAttempts} attempts: ${lastErr}`);
+}
+
+/** Exponential backoff with jitter: ~1s, 2s, 4s, 8s … capped at 20s. */
+function backoff(attempt: number): number {
+  const base = Math.min(20000, 1000 * 2 ** (attempt - 1));
+  return base + Math.random() * 400;
+}
+
 async function callClaude(opts: {
   model: string;
   system: string;
@@ -91,18 +140,7 @@ async function callClaude(opts: {
     messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
   };
 
-  const res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
-    method: "POST",
-    headers: anthropicHeaders(),
-    body: JSON.stringify(body),
-  });
-
-  const json = (await res.json()) as AnthropicResponse;
-  if (!res.ok) {
-    throw new Error(
-      `Claude API error (${res.status}): ${json?.error?.message || JSON.stringify(json)}`
-    );
-  }
+  const json = await anthropicRequest(body, "Claude API error");
   return (json.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
@@ -184,15 +222,7 @@ export async function claudeVisionJSON(opts: {
     messages: [{ role: "user", content }],
   };
 
-  const res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
-    method: "POST",
-    headers: anthropicHeaders(),
-    body: JSON.stringify(body),
-  });
-  const json = (await res.json()) as AnthropicResponse;
-  if (!res.ok) {
-    throw new Error(`Claude vision error (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
-  }
+  const json = await anthropicRequest(body, "Claude vision error");
   const text = (json.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")

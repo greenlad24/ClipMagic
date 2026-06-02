@@ -775,6 +775,9 @@ const reindexAllPromos: Handler = async (input, userId) => {
         console.warn(`[reindexAllPromos] ${id} failed: ${message}`);
       }
       reindexProgress.done++;
+      // Small stagger between videos so a big library doesn't hammer the API
+      // (each video is many vision tokens) and trigger 529 overloads.
+      await new Promise((r) => setTimeout(r, 600));
     }
     reindexProgress.running = false;
     reindexProgress.current = null;
