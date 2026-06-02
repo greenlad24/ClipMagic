@@ -47,5 +47,42 @@ services:
       # Persist all media + the database on the host (or a mounted DO volume).
       - clipmagic-data:/data
 
+  # ── LAB: the product-improver's parallel app ──────────────────────────────
+  # A second, fully separate ClipMagic built from lab/ (its own code + image).
+  # It reads the EXACT SAME keys as the main app (same `env_file: .env`), so it
+  # "calls them like the main version" — but runs on :9090 with its OWN data
+  # volume, so it can never touch the main app's media or database.
+  #
+  # Opt-in via a profile so a plain `docker compose up -d` only starts the main
+  # app. To run the lab on the server (with the same keys):
+  #   docker compose --profile lab up -d --build clipmagic-lab
+  #   then open http://<host>:9090
+  clipmagic-lab:
+    profiles: ["lab"]
+    build:
+      context: ./lab
+      dockerfile: Dockerfile
+    image: clipmagic-lab:latest
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    # Same keys as the main app — single source of truth, no duplication.
+    env_file:
+      - .env
+    environment:
+      PORT: "9090"
+      DATA_DIR: /data
+      RENDER_CONCURRENCY: ${RENDER_CONCURRENCY:-4}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-0}
+      API_TOKEN: ${API_TOKEN:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ZITE_OPENAI_ACCESS_TOKEN: ${ZITE_OPENAI_ACCESS_TOKEN:-}
+      ZITE_KINOVI_API_KEY: ${ZITE_KINOVI_API_KEY:-}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+    volumes:
+      # SEPARATE volume — the lab's media + database never mix with the main app.
+      - clipmagic-lab-data:/data
+
 volumes:
   clipmagic-data:
+  clipmagic-lab-data:

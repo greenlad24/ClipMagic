@@ -27,6 +27,27 @@ the code, data, and port are isolated. The symlinks, builds (`*/dist`), and
 `lab/data/` are git-ignored; the script recreates the symlinks each run, which
 also makes this work after a fresh clone in an ephemeral web session.
 
+## Running it on the server (Docker — same keys as the main app)
+
+On the server the main app runs via `docker compose`, getting its keys from the
+repo-root `.env` (`env_file: .env`). The lab runs the **same way**, so it picks
+up the **same keys** — just on :9090 with its own data volume:
+
+```bash
+docker compose --profile lab up -d --build clipmagic-lab   # build + start lab
+# open http://<host>:9090
+docker compose --profile lab logs -f clipmagic-lab         # watch it
+docker compose --profile lab down                          # stop just the lab
+```
+
+The `lab` profile means a plain `docker compose up -d` still starts only the
+main app — the lab is opt-in. It uses image `clipmagic-lab:latest` and volume
+`clipmagic-lab-data` (separate from the main app's `clipmagic-data`), so the two
+never share media or database.
+
+For quick local iteration (no Docker) `run-lab.sh` is still there; it reads the
+same root `.env` too.
+
 ## API keys
 
 The app reads keys (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `ZITE_KINOVI_API_KEY`)
