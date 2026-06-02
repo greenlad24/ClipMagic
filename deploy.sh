@@ -55,6 +55,11 @@ MAX_UPLOAD_BYTES=0
 # PUBLIC_BASE_URL=https://your-domain.example.com
 # Free Pexels stock footage for situational b-roll (https://www.pexels.com/api/):
 # PEXELS_API_KEY=
+# Anthropic (AI director). Use EITHER an API key:
+# ANTHROPIC_API_KEY=sk-ant-api...
+# ...OR an account access token (e.g. from `claude setup-token`). If both are
+# set, the token wins:
+# ANTHROPIC_AUTH_TOKEN=sk-ant-oat...
 EOF
   sed -i "s|__PORT__|$PORT|; s|__CORES__|$CORES|; s|__TOKEN__|$TOKEN_HINT|" .env
   echo "  -> edit $APP_DIR/.env to set API_TOKEN / PUBLIC_BASE_URL if desired"

@@ -166,7 +166,7 @@ const getServiceStatus: Handler = async () => {
     remotionUrl: undefined,
     // AI pipeline configuration (so the UI / curl can confirm keys are live).
     transcriptionConfigured: !!process.env.GROQ_API_KEY,
-    directorConfigured: !!process.env.ANTHROPIC_API_KEY,
+    directorConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
     kinoviConfigured: !!process.env.ZITE_KINOVI_API_KEY,
     stockConfigured: !!process.env.PEXELS_API_KEY,
   };
@@ -572,10 +572,10 @@ async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot"
       message: "Transcription is not configured. Set GROQ_API_KEY on the server to enable it.",
     });
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     throw new ZiteError({
       code: "BAD_REQUEST",
-      message: "The AI director is not configured. Set ANTHROPIC_API_KEY on the server to enable it.",
+      message: "The AI director is not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) on the server to enable it.",
     });
   }
   let mod;
@@ -784,7 +784,7 @@ const savePromoVideo: Handler = async (input, userId) => {
 
   // 2. Best-effort AI enrichment (keywords, description, deep index). Never
   //    fails the upload — logs and moves on if the bundle/keys are missing.
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN) {
     try {
       const mod = await loadPipeline();
       // The original endpoint creates its own record, so run it and adopt the

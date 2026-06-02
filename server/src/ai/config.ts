@@ -17,9 +17,17 @@ export const aiConfig = {
   groqModel: process.env.GROQ_WHISPER_MODEL || "whisper-large-v3-turbo",
 
   // ── Anthropic (director / LLM) ────────────────────────────────────────────
+  // Two auth modes:
+  //   • API key (sk-ant-api…) via x-api-key  — the standard, ToS-clean path.
+  //   • OAuth/access token (sk-ant-oat…, e.g. `claude setup-token`) via
+  //     Authorization: Bearer + the oauth beta header. Set ANTHROPIC_AUTH_TOKEN
+  //     (or CLAUDE_CODE_OAUTH_TOKEN). If both are set, the token wins.
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
+  anthropicAuthToken:
+    process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN || "",
   anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",
   anthropicVersion: "2023-06-01",
+  anthropicOauthBeta: "oauth-2025-04-20",
 
   // Tiered models. Defaults chosen for "Opus for the director step".
   models: {

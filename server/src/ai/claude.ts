@@ -24,6 +24,30 @@ interface Turn {
   content: string;
 }
 
+/** True when either an API key or an OAuth access token is configured. */
+export function anthropicConfigured(): boolean {
+  return !!(aiConfig.anthropicAuthToken || aiConfig.anthropicApiKey);
+}
+
+/**
+ * Build the Anthropic request headers for whichever auth mode is configured.
+ * An OAuth access token (Bearer + oauth beta) takes precedence over an API key.
+ */
+function anthropicHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "anthropic-version": aiConfig.anthropicVersion,
+  };
+  if (aiConfig.anthropicAuthToken) {
+    headers["authorization"] = `Bearer ${aiConfig.anthropicAuthToken}`;
+    // Anthropic requires this beta header for OAuth/account access tokens.
+    headers["anthropic-beta"] = aiConfig.anthropicOauthBeta;
+  } else {
+    headers["x-api-key"] = aiConfig.anthropicApiKey;
+  }
+  return headers;
+}
+
 function resolveTier(openaiModel: string, system: string): "director" | "research" | "fast" {
   if (openaiModel.includes("mini")) return "fast";
   // The creative beat-planner system prompt is unmistakable.
@@ -45,9 +69,9 @@ async function callClaude(opts: {
   messages: Turn[];
   jsonMode?: boolean;
 }): Promise<string> {
-  if (!aiConfig.anthropicApiKey) {
+  if (!anthropicConfigured()) {
     throw new Error(
-      "ANTHROPIC_API_KEY is not set. Add it to the server environment to enable the AI director."
+      "No Anthropic credentials set. Add ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to enable the AI director."
     );
   }
 
@@ -69,11 +93,7 @@ async function callClaude(opts: {
 
   const res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": aiConfig.anthropicApiKey,
-      "anthropic-version": aiConfig.anthropicVersion,
-    },
+    headers: anthropicHeaders(),
     body: JSON.stringify(body),
   });
 
@@ -134,8 +154,8 @@ export async function claudeVisionJSON(opts: {
   frames: string[];
   model?: string;
 }): Promise<string> {
-  if (!aiConfig.anthropicApiKey) {
-    throw new Error("ANTHROPIC_API_KEY is not set. Add it to enable promo-video vision indexing.");
+  if (!anthropicConfigured()) {
+    throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to enable promo-video vision indexing.");
   }
   const model = opts.model || process.env.CLAUDE_VISION_MODEL || aiConfig.models.research;
 
@@ -166,11 +186,7 @@ export async function claudeVisionJSON(opts: {
 
   const res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": aiConfig.anthropicApiKey,
-      "anthropic-version": aiConfig.anthropicVersion,
-    },
+    headers: anthropicHeaders(),
     body: JSON.stringify(body),
   });
   const json = (await res.json()) as AnthropicResponse;
