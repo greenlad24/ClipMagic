@@ -297,6 +297,55 @@ export default createEndpoint({
       await Projects.update({ id: projectId, record: { status: 'Capturing' } });
     }
 
+    // ── Shared duration guardrail (same 2–4s rule as the AI director) ─────────
+    // Apply the SAME min/max visible-overlay rule the planning stage uses, now
+    // over the final shot records — so review-added/replaced clips also obey it
+    // (a promo never < ~3s and never > 4s on screen; stock 1.6–4s). We adjust
+    // each overlay's overlayDelaySeconds (for the floor) and endTime (for the
+    // cap), handing any trimmed time to the following narrator shot.
+    {
+      const MIN_PROMO = 3.0, FLOOR_PROMO = 2.0, MIN_BROLL = 1.6, MAX_OVERLAY = 4.0;
+      const { records: cur } = await Shots.findAll({ filters: { project: projectId }, limit: 200 });
+      const list = [...cur].sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0));
+      for (let i = 0; i < list.length; i++) {
+        const sh = list[i];
+        if (sh.shotType === 'Talking Head' || !sh.clipUrl) continue;
+        let lbl: Record<string, any> = {};
+        try { if (sh.uiLabelsJson) lbl = JSON.parse(sh.uiLabelsJson); } catch {}
+        const promo = sh.shotType === 'Screencast' || lbl.visualIntent === 'screencast';
+        const start = sh.startTime ?? 0;
+        const end = sh.endTime ?? start;
+        let delay = typeof lbl.overlayDelaySeconds === 'number' ? lbl.overlayDelaySeconds : 0;
+        const beatLen = end - start;
+        let changed = false;
+
+        // MAX: cap visible window to 4s; give the remainder to the next narrator.
+        if (beatLen - delay > MAX_OVERLAY + 0.1) {
+          const newEnd = parseFloat((start + delay + MAX_OVERLAY).toFixed(3));
+          const next = list[i + 1];
+          if (next && next.shotType === 'Talking Head') {
+            await Shots.update({ id: next.id, record: { startTime: newEnd } });
+            next.startTime = newEnd;
+          }
+          await Shots.update({ id: sh.id, record: { endTime: newEnd } });
+          sh.endTime = newEnd;
+          changed = true;
+          console.log(`[reviewEdit] ✂ Capped ${promo ? 'promo' : 'overlay'} at ${start.toFixed(1)}s to ${MAX_OVERLAY}s visible`);
+        }
+
+        // MIN floor: trim the narrator-first delay so the clip shows long enough.
+        const minVis = promo ? MIN_PROMO : MIN_BROLL;
+        const visNow = (sh.endTime ?? end) - (start + delay);
+        if (visNow < minVis && delay > 0) {
+          delay = Math.max(0, (sh.endTime ?? end) - start - minVis);
+          lbl.overlayDelaySeconds = parseFloat(delay.toFixed(2));
+          await Shots.update({ id: sh.id, record: { uiLabelsJson: JSON.stringify(lbl) } });
+          changed = true;
+        }
+        if (changed) { /* persisted above */ }
+      }
+    }
+
     console.log(`[reviewEdit] Reviewed ${beats.length} — kept ${kept}, reverted ${reverted}, added ${added}, de-duplicated ${dedup} (pendingBroll ${pendingBroll})`);
     return { reviewed: beats.length, reverted, added, kept, pendingBroll };
   },
