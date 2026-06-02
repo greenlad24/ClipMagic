@@ -14,6 +14,10 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-https://github.com/greenlad24/clipmagic.git}"
 APP_DIR="${APP_DIR:-/opt/clipmagic}"
 PORT="${PORT:-8080}"
+# The product-improver's parallel "lab" app (separate image/port/data volume).
+# It is started ALONGSIDE the main app and never modifies it. Set SKIP_LAB=1 to
+# deploy only the main app.
+LAB_PORT="${LAB_PORT:-9090}"
 
 say() { printf '\n\033[1;35m== %s\033[0m\n' "$*"; }
 
@@ -79,13 +83,34 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
+# 5b. Lab app (:9090) — ADDITIVE. This starts the separate 'lab' profile service
+# only. It does not rebuild, recreate, or otherwise touch the main app above
+# (different image, port, and data volume). Skip with SKIP_LAB=1.
+if [ "${SKIP_LAB:-0}" != "1" ]; then
+  say "Building and starting the lab app (:$LAB_PORT) — separate from the main app"
+  docker compose --profile lab up -d --build clipmagic-lab
+  say "Waiting for lab health"
+  for i in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:$LAB_PORT/health" >/dev/null 2>&1; then
+      echo "  lab healthy."
+      break
+    fi
+    sleep 2
+  done
+fi
+
 IP="$(curl -fsS https://ifconfig.me 2>/dev/null || echo '<droplet-ip>')"
 say "Done"
 echo "ClipMagic is running."
-echo "  Local:  http://127.0.0.1:$PORT"
-echo "  Public: http://$IP:$PORT   (open the firewall for TCP $PORT)"
+echo "  Main app:  http://127.0.0.1:$PORT   (public http://$IP:$PORT — open TCP $PORT)"
+if [ "${SKIP_LAB:-0}" != "1" ]; then
+  echo "  Lab app:   http://127.0.0.1:$LAB_PORT   (public http://$IP:$LAB_PORT — open TCP $LAB_PORT)"
+fi
 echo
 echo "Manage it:"
-echo "  docker compose -f $APP_DIR/docker-compose.yml logs -f"
-echo "  docker compose -f $APP_DIR/docker-compose.yml restart"
-echo "  docker compose -f $APP_DIR/docker-compose.yml down"
+echo "  docker compose -f $APP_DIR/docker-compose.yml logs -f                       # main app"
+echo "  docker compose -f $APP_DIR/docker-compose.yml restart                       # main app"
+echo "  docker compose -f $APP_DIR/docker-compose.yml down                          # STOPS BOTH apps"
+echo "  docker compose -f $APP_DIR/docker-compose.yml --profile lab logs -f clipmagic-lab   # lab only"
+echo "  docker compose -f $APP_DIR/docker-compose.yml stop clipmagic-lab && \\"
+echo "    docker compose -f $APP_DIR/docker-compose.yml rm -f clipmagic-lab         # stop ONLY the lab"
