@@ -427,6 +427,24 @@ export async function retrieveScreencast(
     segEnd = parseFloat(e.toFixed(2));
     console.log(`${tag} 📏 Expanded promo segment to ≥${MIN_PROMO_CLIP.toFixed(1)}s → [${segStart}s–${segEnd}s] (textFloor=${textFloor}s, clip≈${Number.isFinite(clipDuration) ? clipDuration.toFixed(1) + 's' : 'unknown'})`);
   }
+
+  // Start the promo a beat LATER (skip the first ~0.5s of the chosen window) so
+  // any lingering title/intro text or a transition at the segment boundary is
+  // gone before we cut in. Keep >= MIN_PROMO_CLIP by extending the end if the
+  // clip has room; otherwise shrink the buffer rather than the clip.
+  const TEXT_SKIP_BUFFER = 0.5;
+  if (segEnd - segStart - TEXT_SKIP_BUFFER >= MIN_PROMO_CLIP) {
+    segStart = parseFloat((segStart + TEXT_SKIP_BUFFER).toFixed(2));
+  } else if (Number.isFinite(clipDuration) && clipDuration - segStart - TEXT_SKIP_BUFFER >= MIN_PROMO_CLIP) {
+    segStart = parseFloat((segStart + TEXT_SKIP_BUFFER).toFixed(2));
+    segEnd = parseFloat(Math.min(clipDuration, segStart + MIN_PROMO_CLIP).toFixed(2));
+  } else {
+    // No room for the full buffer — apply whatever fits (keeps the clip length).
+    const room = Math.max(0, (Number.isFinite(clipDuration) ? clipDuration : segEnd) - segStart - MIN_PROMO_CLIP);
+    const buf = Math.min(TEXT_SKIP_BUFFER, room);
+    if (buf > 0) { segStart = parseFloat((segStart + buf).toFixed(2)); segEnd = parseFloat(Math.min(Number.isFinite(clipDuration) ? clipDuration : segEnd + buf, segStart + MIN_PROMO_CLIP).toFixed(2)); }
+  }
+
   let confidence = segResult?.confidence ?? 0.5; // file-level only = 0.5 confidence
   const reason = segResult?.reason ?? `File-level match: ${fileMatch.label}`;
 

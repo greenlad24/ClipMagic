@@ -951,9 +951,16 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
         b.overlayDelaySeconds = Math.max(0, (b.overlayDelaySeconds || 0) - need);
         visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
       }
-      // 2) borrow time from the FOLLOWING narrator beat. Promos borrow harder
-      //    (can shrink the next narrator beat to 0.3s) to guarantee their floor.
+      // 2a) If this is the LAST beat and there's video left after it, extend it
+      //     toward the end — a final overlay should use the time available
+      //     instead of cutting early. (Fixes "the end cut could have been longer.")
       const next = semanticBeats[i + 1];
+      if (visible < target && !next && b.end < duration - 0.05) {
+        b.end = parseFloat(duration.toFixed(3));
+        visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
+      }
+      // 2b) borrow time from the FOLLOWING narrator beat. Promos borrow harder
+      //    (can shrink the next narrator beat to 0.3s) to guarantee their floor.
       if (visible < target && next && next.visualIntent === 'talking_head') {
         const want = target - visible;
         const keepNext = isPromo(b) ? 0.3 : 0.6;
