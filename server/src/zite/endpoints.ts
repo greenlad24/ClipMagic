@@ -680,24 +680,38 @@ async function waitForRender(jobId: string, userId: string): Promise<{ outputUrl
 
 async function runOneProject(item: BulkItem, userId: string): Promise<void> {
   try {
+    // Mirror the single-video flow EXACTLY (ProcessingPage → finishToTimeline),
+    // just synchronously and one at a time. Same handlers, same inputs, same
+    // B-roll gating — only the final render step is added so the batch produces
+    // a downloadable file (in the single flow the user exports from the editor).
+    const projectId = item.projectId;
+
+    // Phase 1–2: direct (transcribe + subtitles + beat plan) then capture media.
     item.status = "Directing";
-    await runPipeline({ projectId: item.projectId }, userId);
+    await runPipeline({ projectId }, userId);
 
     item.status = "Capturing";
-    await captureShots({ projectId: item.projectId }, userId);
-    await waitForBroll(item.projectId, userId);
+    const cap = (await captureShots({ projectId }, userId)) as { pendingBroll?: number };
+    // Only wait when capture actually queued B-roll generation — same as the
+    // single-video page, which polls only if result.pendingBroll > 0.
+    if ((cap?.pendingBroll ?? 0) > 0) await waitForBroll(projectId, userId);
 
+    // Phase 3: AI self-review accuracy pass; may queue a few more B-roll clips.
     item.status = "Reviewing";
-    const rev = (await reviewEdit({ projectId: item.projectId }, userId)) as { pendingBroll?: number };
-    if ((rev?.pendingBroll ?? 0) > 0) await waitForBroll(item.projectId, userId);
+    const rev = (await reviewEdit({ projectId }, userId)) as { pendingBroll?: number };
+    if ((rev?.pendingBroll ?? 0) > 0) await waitForBroll(projectId, userId);
 
+    // Phase 4 (bulk-only): render to a downloadable MP4.
     item.status = "Rendering";
-    const job = (await submitRendiJob({ projectId: item.projectId }, userId)) as { jobId?: string; renderJobRecordId?: string };
+    const job = (await submitRendiJob({ projectId }, userId)) as { jobId?: string; renderJobRecordId?: string };
     const jobId = job.renderJobRecordId ?? job.jobId;
     if (!jobId) throw new Error("Render job was not created");
     const { outputUrl, error } = await waitForRender(jobId, userId);
     if (error || !outputUrl) throw new Error(error || "Render produced no output");
 
+    // Persist the output on the project so it shows on the home grid too,
+    // exactly like a single-video render that completes from the editor.
+    await Projects.update({ id: projectId, record: { status: "Complete", outputUrl } }).catch(() => {});
     item.outputUrl = outputUrl;
     item.status = "Complete";
   } catch (e) {
@@ -717,24 +731,27 @@ const createBulkNarration: Handler = async (input, userId) => {
     : [];
   if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No narration files provided." });
 
-  // Create a project per narration (fully automatic: no context hint; music
-  // auto-picks at render; subtitles rotate per video).
+  // Create a project per narration through the SAME createProject handler the
+  // single-video upload uses, with the same inputs (UploadZone sends exactly
+  // these). This guarantees the project record — and therefore everything the
+  // AI editing reads from it — is identical to a one-by-one upload. Fully
+  // automatic: contextHint blank (AI auto-detects from audio), music auto,
+  // subtitles rotate per video. No `bulk` flag, no special-casing anywhere.
   const bulkItems: BulkItem[] = [];
   for (const it of items) {
     if (!it.narrationUrl) continue;
-    const project = await Projects.create({
-      record: {
-        title: it.title || "Bulk video",
-        status: "Uploading",
+    const { projectId } = (await createProject(
+      {
         narrationUrl: it.narrationUrl,
         audioUrl: it.audioUrl,
         videoChunksJson: JSON.stringify([it.narrationUrl]),
+        contextHint: undefined,
         accentColor: "#FFD60A",
-        user: userId,
-        bulk: true,
+        musicTrackId: undefined,
       },
-    });
-    bulkItems.push({ projectId: project.id, title: it.title || "Bulk video", status: "Queued", outputUrl: null, error: null });
+      userId,
+    )) as { projectId: string };
+    bulkItems.push({ projectId, title: it.title || "Bulk video", status: "Queued", outputUrl: null, error: null });
   }
 
   bulkRun = {
