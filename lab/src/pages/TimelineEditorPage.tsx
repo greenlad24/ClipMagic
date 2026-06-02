@@ -470,6 +470,9 @@ export default function TimelineEditorPage() {
             <option value="white-mont">Subtitles: White Bold</option>
             <option value="yellow-box">Subtitles: Yellow Box</option>
             <option value="black-on-yellow">Subtitles: Black on Yellow</option>
+            <option value="green-pop">Subtitles: Green Pop</option>
+            <option value="pop-scale">Subtitles: Word Pop (scale)</option>
+            <option value="white-bold-bottom">Subtitles: White Bold</option>
           </select>
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={() => setShowTemplate(true)}>
             <FileUp className="w-3.5 h-3.5" />Template

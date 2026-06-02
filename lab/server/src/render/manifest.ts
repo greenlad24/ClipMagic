@@ -61,9 +61,9 @@ export interface SubtitleEvent {
 }
 
 /**
- * The four approved viral subtitle styles. All render center-screen, 2–3 words
- * at a time, with the currently-spoken word highlighted (karaoke). Fonts are
- * bundled in server/assets/fonts and resolved by their internal family names.
+ * The viral subtitle styles. All render center-screen, 2–3 words at a time, with
+ * the currently-spoken word highlighted (karaoke). Fonts are bundled in
+ * server/assets/fonts and resolved by their internal family names.
  *
  *  1. yellow-mont   — Montserrat italic, #FEDA03; spoken word ExtraBold(800),
  *                     rest SemiBold(600); active word turns white; soft shadow.
@@ -73,19 +73,32 @@ export interface SubtitleEvent {
  *                     of box height, equal padding; active word white.
  *  4. black-on-yellow — Montserrat Black (Gotham stand-in), #050000 ALL-CAPS on
  *                     a #F7BD05 rounded box; active word white.
+ *  5. green-pop     — Hormozi green-highlight: white Montserrat ExtraBold, the
+ *                     active word turns #19E07A green. (2025 high-retention combo.)
+ *  6. pop-scale     — true active-word "pop": the spoken word turns yellow AND
+ *                     scales up ~18% (a real size bump, not just a recolor),
+ *                     mimicking the kinetic Hormozi/CapCut karaoke look.
+ *  7. white-bold-bottom — clean white Montserrat ExtraBold, no karaoke recolor,
+ *                     soft shadow; the calm, premium baseline.
  */
 export type SubtitleTemplate =
   | "yellow-mont"
   | "white-mont"
   | "yellow-box"
-  | "black-on-yellow";
+  | "black-on-yellow"
+  | "green-pop"
+  | "pop-scale"
+  | "white-bold-bottom";
 
-/** The 4-style rotation pool — a video randomly picks one of these. */
+/** The style rotation pool — a video randomly picks one of these. */
 export const SUBTITLE_TEMPLATE_POOL: SubtitleTemplate[] = [
   "yellow-mont",
   "white-mont",
   "yellow-box",
   "black-on-yellow",
+  "green-pop",
+  "pop-scale",
+  "white-bold-bottom",
 ];
 
 export interface SubtitleStyle {
@@ -102,6 +115,16 @@ export interface SubtitleStyle {
   wordColor: string | null;
   /** Recolor the active word (karaoke). Styles 1 & 2 only. */
   highlightWord?: boolean;
+  /**
+   * Scale the active word up as it's spoken (a real per-word size "pop", not
+   * just a recolor). Requires highlightWord. Fraction above 1, e.g. 1.18 = +18%.
+   */
+  popScale?: number;
+  /**
+   * Mask profanity in the burned-in caption text (audio untouched). Defaults to
+   * true for brand-safe captions; set false to show verbatim words.
+   */
+  maskProfanity?: boolean;
   allCaps: boolean;
   maxWordsPerLine: number;
   template?: SubtitleTemplate;
@@ -169,6 +192,35 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
     allCaps: true, maxWordsPerLine: 3, template: "black-on-yellow",
     italic: false, letterSpacing: -4, shadow: false,
     box: true, boxColor: "#F7BD05", boxFill: 0.62, boxRadius: 70,
+  },
+  // Hormozi green-highlight: white base, active word turns green. One of the
+  // highest-retention color combos in 2025 short-form captioning.
+  "green-pop": {
+    fontFamily: "Montserrat ExtraBold",
+    fontSize: 96, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#FFFFFF", wordColor: "#19E07A", highlightWord: true,
+    allCaps: false, maxWordsPerLine: 3, template: "green-pop",
+    italic: false, letterSpacing: -2, shadow: true, box: false,
+  },
+  // True active-word "pop": the spoken word recolors AND scales up (+18%),
+  // mimicking the kinetic CapCut/Hormozi karaoke bounce.
+  "pop-scale": {
+    fontFamily: "Montserrat ExtraBold",
+    fontSize: 92, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#FFFFFF", wordColor: "#FEDA03", highlightWord: true, popScale: 1.18,
+    allCaps: true, maxWordsPerLine: 3, template: "pop-scale",
+    italic: false, letterSpacing: -2, shadow: true, box: false,
+  },
+  // Clean premium baseline: white bold, no karaoke recolor, soft shadow.
+  "white-bold-bottom": {
+    fontFamily: "Montserrat ExtraBold",
+    fontSize: 90, position: "center",
+    outlineColor: "#000000", outlineWidth: 0,
+    lineColor: "#FFFFFF", wordColor: null,
+    allCaps: false, maxWordsPerLine: 3, template: "white-bold-bottom",
+    italic: false, letterSpacing: -2, shadow: true, box: false,
   },
 };
 

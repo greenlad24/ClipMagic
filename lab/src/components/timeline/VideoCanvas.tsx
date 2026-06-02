@@ -71,12 +71,15 @@ const RENDER_WIDTH = 1080;
 const SUBTITLE_PREVIEW_STYLES: Record<string, {
   line: string; emph: string; fontPx: number; italic?: boolean; allCaps?: boolean;
   font: string; emphFont: string; weight: number; emphWeight: number;
-  shadow?: boolean; box?: boolean; boxColor?: string; highlightWord?: boolean;
+  shadow?: boolean; box?: boolean; boxColor?: string; highlightWord?: boolean; popScale?: number;
 }> = {
   'yellow-mont':     { line: '#FEDA03', emph: '#FFFFFF', fontPx: 96, italic: true,  font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 600, emphWeight: 800, shadow: true, highlightWord: true },
   'white-mont':      { line: '#FFFFFF', emph: '#FEDA03', fontPx: 96, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true, highlightWord: true },
   'yellow-box':      { line: '#F9FC26', emph: '#FFFFFF', fontPx: 108, italic: false, font: 'Alexandria, sans-serif', emphFont: 'Alexandria, sans-serif', weight: 700, emphWeight: 700, box: true, boxColor: '#000000' },
   'black-on-yellow': { line: '#050000', emph: '#FFFFFF', fontPx: 88, italic: false, allCaps: true, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 900, emphWeight: 900, box: true, boxColor: '#F7BD05' },
+  'green-pop':       { line: '#FFFFFF', emph: '#19E07A', fontPx: 96, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true, highlightWord: true },
+  'pop-scale':       { line: '#FFFFFF', emph: '#FEDA03', fontPx: 92, italic: false, allCaps: true, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true, highlightWord: true, popScale: 1.18 },
+  'white-bold-bottom': { line: '#FFFFFF', emph: '#FFFFFF', fontPx: 90, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true },
 };
 
 export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subtitles, playhead, duration, isPlaying, onPlayPause, onSeek, onTimeUpdate, musicUrl, musicVolume = 0.08, musicMuted = false, subtitleTemplate = 'yellow-mont' }: Props) {
@@ -483,6 +486,8 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
             // Highlight (color/weight change) the active word only for styles
             // 1 & 2. No size animation for any style.
             const isActive = !!tpl.highlightWord && i === activeIdx;
+            // Active-word size "pop" mirrors the ASS render's popScale.
+            const wordPx = isActive && tpl.popScale ? Math.round(baseFont * tpl.popScale) : baseFont;
             return (
               <span
                 key={i}
@@ -491,7 +496,7 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
                   fontFamily: isActive ? tpl.emphFont : tpl.font,
                   fontWeight: isActive ? tpl.emphWeight : tpl.weight,
                   fontStyle: tpl.italic ? 'italic' : 'normal',
-                  fontSize: `${baseFont}px`,
+                  fontSize: `${wordPx}px`,
                   letterSpacing: '-0.02em',
                   // inline-block collapses the trailing whitespace, so add an
                   // explicit gap to keep a normal space between words.
