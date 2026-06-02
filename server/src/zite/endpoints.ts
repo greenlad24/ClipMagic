@@ -631,6 +631,149 @@ const captureShots: Handler = (input, userId) => runBundled("captureShots", inpu
 const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
 const reviewEdit: Handler = (input, userId) => runBundled("reviewEdit", input, userId);
 
+// ── Bulk narration → full pipeline + render, one project at a time ───────────
+// Server-side orchestrator so a batch keeps running even if the browser closes.
+// For each uploaded narration we create a project, then run the SAME chain the
+// single-video flow uses: runPipeline → captureShots → (poll B-roll) →
+// reviewEdit → (poll any new B-roll) → submitRendiJob → (poll render) → save
+// outputUrl. Processed sequentially ("one at a time") to stay gentle on API
+// limits. Progress is polled by the frontend via getBulkRun.
+
+interface BulkItem {
+  projectId: string;
+  title: string;
+  status: "Queued" | "Directing" | "Capturing" | "Reviewing" | "Rendering" | "Complete" | "Error";
+  outputUrl: string | null;
+  error: string | null;
+}
+interface BulkRun {
+  id: string;
+  running: boolean;
+  total: number;
+  doneCount: number;
+  items: BulkItem[];
+  startedAt: number;
+  finishedAt: number | null;
+}
+let bulkRun: BulkRun | null = null;
+let bulkRunning = false;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function waitForBroll(projectId: string, userId: string): Promise<void> {
+  // Poll pollBrollStatus until no B-roll is pending (or a safety timeout).
+  for (let i = 0; i < 240; i++) { // ~20 min max at 5s
+    const r = (await pollBrollStatus({ projectId }, userId)) as { pending?: number };
+    if (!r || (r.pending ?? 0) === 0) return;
+    await sleep(5000);
+  }
+}
+
+async function waitForRender(jobId: string, userId: string): Promise<{ outputUrl: string | null; error: string | null }> {
+  for (let i = 0; i < 600; i++) { // ~30 min max at 3s
+    const r = (await pollRendiStatus({ renderJobRecordId: jobId }, userId)) as any;
+    if (r?.terminal) return { outputUrl: r.outputUrl ?? null, error: r.errorMessage ?? null };
+    await sleep(3000);
+  }
+  return { outputUrl: null, error: "Render timed out" };
+}
+
+async function runOneProject(item: BulkItem, userId: string): Promise<void> {
+  try {
+    item.status = "Directing";
+    await runPipeline({ projectId: item.projectId }, userId);
+
+    item.status = "Capturing";
+    await captureShots({ projectId: item.projectId }, userId);
+    await waitForBroll(item.projectId, userId);
+
+    item.status = "Reviewing";
+    const rev = (await reviewEdit({ projectId: item.projectId }, userId)) as { pendingBroll?: number };
+    if ((rev?.pendingBroll ?? 0) > 0) await waitForBroll(item.projectId, userId);
+
+    item.status = "Rendering";
+    const job = (await submitRendiJob({ projectId: item.projectId }, userId)) as { jobId?: string; renderJobRecordId?: string };
+    const jobId = job.renderJobRecordId ?? job.jobId;
+    if (!jobId) throw new Error("Render job was not created");
+    const { outputUrl, error } = await waitForRender(jobId, userId);
+    if (error || !outputUrl) throw new Error(error || "Render produced no output");
+
+    item.outputUrl = outputUrl;
+    item.status = "Complete";
+  } catch (e) {
+    item.status = "Error";
+    item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+    console.warn(`[bulkNarration] ${item.title} failed: ${item.error}`);
+  }
+}
+
+// Create N projects from uploaded narration URLs and kick the background run.
+const createBulkNarration: Handler = async (input, userId) => {
+  if (bulkRunning) {
+    return { started: false, message: "A bulk run is already in progress.", run: bulkRun };
+  }
+  const items: Array<{ narrationUrl: string; audioUrl?: string; title?: string }> = Array.isArray(input?.items)
+    ? input.items
+    : [];
+  if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No narration files provided." });
+
+  // Create a project per narration (fully automatic: no context hint; music
+  // auto-picks at render; subtitles rotate per video).
+  const bulkItems: BulkItem[] = [];
+  for (const it of items) {
+    if (!it.narrationUrl) continue;
+    const project = await Projects.create({
+      record: {
+        title: it.title || "Bulk video",
+        status: "Uploading",
+        narrationUrl: it.narrationUrl,
+        audioUrl: it.audioUrl,
+        videoChunksJson: JSON.stringify([it.narrationUrl]),
+        accentColor: "#FFD60A",
+        user: userId,
+        bulk: true,
+      },
+    });
+    bulkItems.push({ projectId: project.id, title: it.title || "Bulk video", status: "Queued", outputUrl: null, error: null });
+  }
+
+  bulkRun = {
+    id: nanoidLike(),
+    running: true,
+    total: bulkItems.length,
+    doneCount: 0,
+    items: bulkItems,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  bulkRunning = true;
+
+  // Fire-and-forget: process ONE AT A TIME so we don't overload the AI APIs.
+  (async () => {
+    for (const item of bulkRun!.items) {
+      await runOneProject(item, userId);
+      bulkRun!.doneCount++;
+    }
+    bulkRun!.running = false;
+    bulkRun!.finishedAt = Date.now();
+    bulkRunning = false;
+    console.log(`[bulkNarration] done — ${bulkRun!.items.filter((x) => x.status === "Complete").length}/${bulkRun!.total} complete`);
+  })().catch((e) => {
+    if (bulkRun) { bulkRun.running = false; bulkRun.finishedAt = Date.now(); }
+    bulkRunning = false;
+    console.error("[bulkNarration] run crashed:", e);
+  });
+
+  return { started: true, run: bulkRun };
+};
+
+const getBulkRun: Handler = async () => ({ run: bulkRun });
+
+function nanoidLike(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+
 /**
  * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
  * and ask Claude vision what's actually on screen each second, then cache the
@@ -1122,6 +1265,9 @@ export const HANDLERS: Record<string, Handler> = {
   recaptureShot,
   reviewEdit,
   indexPromoVideo,
+  // bulk narration → full pipeline + render
+  createBulkNarration,
+  getBulkRun,
   validateAssets: async () => ({ ok: true, errors: [] }),
   getWaveform,
   // storage management

@@ -114,6 +114,13 @@ export default function HomePage() {
           <p className="text-muted-foreground">Drop a vertical video (9:16 · 15–90s). The AI locks it to the formula — beat-synced cuts, screencasts, captions.</p>
           <div className="absolute top-0 right-0 flex items-center gap-4">
             <Link
+              to="/bulk"
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Video className="w-3.5 h-3.5" />
+              Bulk videos
+            </Link>
+            <Link
               to="/storage"
               className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
