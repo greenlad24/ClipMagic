@@ -43,17 +43,19 @@ DEFAULT TO "keep". The vast majority of beats — almost all of them — should 
 Stylistic preferences, "could be slightly better", pacing nitpicks, or a merely-okay-but-fine clip are NOT reasons to change anything → "keep".
 
 Verdicts:
-- "keep" — leave the beat exactly as is. (Use this for nearly everything.)
-- "revert" — ONLY on a critical mismatch with no better cutaway: drop it to the narrator.
-- "replace" — a critical mismatch where a clearly better, accurate cutaway exists: swap in the right one (provide addType + query like "add").
+- "keep" — leave the beat exactly as is. (Use this for nearly everything — typically 90%+ of beats.)
+- "replace" — PREFERRED fix for a critical mismatch: swap in a better, accurate cutaway (provide addType + query). Keep the beat VISUAL — do not drop to narrator.
+- "revert" — LAST RESORT, and ONLY for a stock/generated b-roll clip that is critically wrong AND has no better replacement. NEVER revert a PROMO/SCREENCAST (product footage) — if a promo is wrong, use "replace", never "revert".
 - "add" — RARE: only when a beat is on the narrator AND a critical, obviously-missing visual belongs there. Do not add for general "more motion".
     "addType": "screencast" (AI-tech / product footage) | "stock" (people/situations) | "generated" (sparingly).
     "query": 2–5 word concrete, filmable query inheriting the overall video's context (encode place/demographic/setting so generic words aren't ambiguous).
     "brollPrompt": extensive generation prompt (only for "generated").
 
 HARD RULES:
-- Aim to change as FEW beats as possible. If you're unsure, "keep".
+- Aim to change as FEW beats as possible. If you're unsure, "keep". A clip that is on-topic and reasonable = "keep", even if not perfect.
+- NEVER turn a product/promo/screencast beat into the narrator. Prefer "replace" over "revert" everywhere; "revert" is only for a clearly-wrong stock/generated clip.
 - Never touch the hook beat or the final CTA beat.
+- "critical mismatch" means the footage is about a DIFFERENT subject/product/place than the words — not "could be a bit more relevant".
 - Do not revert a promo clip just because another clip might be marginally better — only on a real mismatch.
 
 Return ONLY valid JSON:
@@ -142,7 +144,18 @@ export default createEndpoint({
       const beatDur = Math.max((s.endTime ?? 4) - (s.startTime ?? 0), 1);
 
       // ── REVERT an inaccurate overlay → narrator ──
+      // RULE: a chosen PROMO/SCREENCAST is never reverted to the narrator (it
+      // was chosen for a reason — rule 4). If the reviewer flags a promo as a
+      // mismatch, we REPLACE it with a better clip if it provided one, but we
+      // never drop it back to the narrator. Only stock/generated b-roll may
+      // revert, and only on a genuine critical mismatch.
+      const isPromoShot = s.shotType === 'Screencast' || labels.brollTrack === 'promo' || labels.visualIntent === 'screencast';
       if (r?.verdict === 'revert' && hasClip) {
+        if (isPromoShot) {
+          console.log(`[reviewEdit] ⛔ Ignored revert of PROMO at ${(s.startTime ?? 0).toFixed(1)}s (promos never revert to narrator)`);
+          kept++;
+          continue;
+        }
         await Shots.update({
           id: s.id,
           record: {
@@ -158,8 +171,16 @@ export default createEndpoint({
       // ── ADD a visual to a narrator beat, or REPLACE a mismatched clip ──
       if ((r?.verdict === 'add' && !hasClip) || r?.verdict === 'replace') {
         const addType = r.addType ?? 'stock';
-        const overlayDelay = computeOverlayDelay(beatDur);
-        const baseLabels = { ...labels, reviewAdded: true, reviewReason: r.reason ?? 'Added accurate visual', showNarratorFirst: true, overlayDelaySeconds: overlayDelay };
+        // Enforce the minimum-visible rule on review-added/replaced overlays too
+        // (these bypass the planning-stage guardrail). Promos need >=3s visible
+        // (>=2s hard floor), stock >=1.6s — cap the narrator-first delay so the
+        // clip is actually on screen long enough.
+        const minVisible = addType === 'screencast' ? 3.0 : 1.6;
+        let overlayDelay = computeOverlayDelay(beatDur);
+        if (beatDur - overlayDelay < minVisible) {
+          overlayDelay = Math.max(0, beatDur - minVisible);
+        }
+        const baseLabels = { ...labels, reviewAdded: true, reviewReason: r.reason ?? 'Added accurate visual', showNarratorFirst: overlayDelay > 0.05, overlayDelaySeconds: parseFloat(overlayDelay.toFixed(2)) };
 
         // 1) Screencast (promo retrieval)
         if (addType === 'screencast' && promoPool.length > 0) {
