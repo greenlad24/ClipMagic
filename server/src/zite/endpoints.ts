@@ -197,6 +197,10 @@ const getPromoVideos: Handler = async () => {
         addedAt: r.addedAt ?? r.createdAt,
         indexStatus: r.indexStatus,
         segmentCount,
+        // true when the cached index is a vision index at the CURRENT standard
+        // (so "Re-index all" will skip it). false = needs re-indexing.
+        indexCurrent: isIndexCurrent(r.contentIndexJson),
+        hasVideo: !!r.videoUrl,
       };
     });
   return { videos };
@@ -754,6 +758,32 @@ let reindexProgress: ReindexProgress = {
 
 const getReindexProgress: Handler = async () => ({ ...reindexProgress });
 
+/**
+ * Current vision-index standard. Bump this when the index shape/fields change
+ * so older indexes are recognized as out-of-date and get re-indexed once.
+ * v3 = vision mode with per-segment techScore + hasText (skip-intro-text).
+ */
+const INDEX_STANDARD_VERSION = 3;
+
+/** True when a promo's cached index is a VISION index at the CURRENT standard
+ *  (so it does not need re-indexing). Old/coarse/partial indexes return false. */
+function isIndexCurrent(contentIndexJson: unknown): boolean {
+  if (typeof contentIndexJson !== "string" || !contentIndexJson) return false;
+  try {
+    const idx = JSON.parse(contentIndexJson);
+    if (idx?.mode !== "vision") return false;
+    if ((idx?.version ?? 0) < INDEX_STANDARD_VERSION) return false;
+    const segs = Array.isArray(idx?.segments) ? idx.segments : [];
+    if (segs.length === 0) return false;
+    // Every segment must carry the current-standard fields.
+    return segs.every(
+      (s: any) => typeof s?.techScore === "number" && typeof s?.hasText === "boolean"
+    );
+  } catch {
+    return false;
+  }
+}
+
 const reindexAllPromos: Handler = async (input, userId) => {
   if (bulkIndexRunning) {
     return { success: true, started: false, message: "Indexing is already running.", progress: { ...reindexProgress } };
@@ -761,21 +791,24 @@ const reindexAllPromos: Handler = async (input, userId) => {
   const force = input?.force === true;
   const { records } = await PromoVideos.findAll({ limit: 1000 });
 
-  // Decide the work set now, and mark them queued so the UI reflects it at once.
+  // Decide the work set. Skip videos that are ALREADY at the current standard
+  // (unless forced) and skip entries with no video to analyze.
   const todo: Array<{ id: string; name: string }> = [];
+  let skippedCurrent = 0;
+  let skippedNoVideo = 0;
   for (const v of records) {
-    let alreadyVision = false;
-    if (!force && v.contentIndexJson) {
-      try {
-        alreadyVision = JSON.parse(v.contentIndexJson as string)?.mode === "vision";
-      } catch {
-        /* not vision */
-      }
-    }
-    if (!alreadyVision) {
-      todo.push({ id: v.id, name: (v.productName as string) || "Promo" });
-      await PromoVideos.update({ id: v.id, record: { indexStatus: "Indexing" } });
-    }
+    const name = (v.productName as string) || "Promo";
+    if (!v.videoUrl) { skippedNoVideo++; continue; } // nothing to index
+    if (!force && isIndexCurrent(v.contentIndexJson)) { skippedCurrent++; continue; }
+    todo.push({ id: v.id, name });
+    await PromoVideos.update({ id: v.id, record: { indexStatus: "Indexing" } });
+  }
+  console.log(`[reindexAllPromos] queued=${todo.length} skipped(current)=${skippedCurrent} skipped(no-video)=${skippedNoVideo} force=${force}`);
+
+  // Nothing to do — everything is already at the current standard (or has no
+  // video). Return immediately without spinning up a background run.
+  if (todo.length === 0) {
+    return { success: true, started: false, queued: 0, total: records.length, skippedCurrent, skippedNoVideo, upToDate: true };
   }
 
   bulkIndexRunning = true;
@@ -823,7 +856,7 @@ const reindexAllPromos: Handler = async (input, userId) => {
     console.error("[reindexAllPromos] background run crashed:", e);
   });
 
-  return { success: true, started: true, queued: todo.length, total: records.length };
+  return { success: true, started: todo.length > 0, queued: todo.length, total: records.length, skippedCurrent, skippedNoVideo };
 };
 
 /**

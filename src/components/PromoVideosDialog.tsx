@@ -447,22 +447,30 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
 
   useEffect(() => () => { if (reindexPoll.current) clearInterval(reindexPoll.current); }, []);
 
-  const handleVisionIndexAll = async () => {
+  const handleVisionIndexAll = async (force = false) => {
     if (visionIndexing) return;
-    // Force re-indexes EVERY promo (re-watches each at 1 frame/sec) so the new
-    // tech/on-screen-text detection is applied to the whole library. Confirm
-    // since it re-processes everything.
+    // Default: index only videos that are NOT already at the latest standard
+    // (and that have a video). Hold Shift / use "Force" to re-do everything.
     const ok = window.confirm(
-      'Re-index ALL promo videos? This re-watches every video (1 frame/sec) and rebuilds its segment index — including the new "show the technology, skip intro text" detection. It runs in the background and may take a while for a large library.'
+      force
+        ? 'FORCE re-index ALL promo videos (including ones already up-to-date)? Re-watches every video at 1 frame/sec — slower and uses more API.'
+        : 'Index promo videos that aren\'t up-to-date yet? Videos already indexed to the latest standard are skipped. Runs in the background.'
     );
     if (!ok) return;
     setVisionIndexing(true);
     try {
-      const res = await reindexAllPromos({ force: true });
+      const res = await reindexAllPromos({ force });
+      if (res.upToDate) {
+        const extra = res.skippedNoVideo ? ` (${res.skippedNoVideo} have no video to index)` : '';
+        toast.success(`All ${res.skippedCurrent ?? 0} promo videos are already indexed to the latest standard — nothing to re-index${extra}.`);
+        setVisionIndexing(false);
+        return;
+      }
       if (res.started === false) {
         toast.info('Re-indexing is already running — showing live progress.');
       } else {
-        toast.success(`Re-indexing started for all ${res.queued ?? res.total} promo videos.`);
+        const skipMsg = res.skippedCurrent ? ` (${res.skippedCurrent} already up-to-date, skipped)` : '';
+        toast.success(`Re-indexing ${res.queued} promo video${res.queued !== 1 ? 's' : ''}${skipMsg}.`);
       }
       startReindexPolling();
     } catch (e: any) {
@@ -699,11 +707,11 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
                 size="sm"
                 className="h-7 text-xs gap-1.5"
                 disabled={visionIndexing}
-                onClick={handleVisionIndexAll}
-                title="Re-index ALL promo videos: re-watch each (1 frame/sec) and rebuild its segment index, including the new 'show the technology, skip intro text' detection. Runs in the background; cached and reused by the AI director on every render."
+                onClick={(e) => handleVisionIndexAll(e.shiftKey)}
+                title="Index promo videos that aren't up-to-date (videos already at the latest standard are skipped). Shift+click to FORCE re-index everything. Runs in the background; cached and reused by the AI director."
               >
                 {visionIndexing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
-                {visionIndexing ? 'Re-indexing…' : 'Re-index all'}
+                {visionIndexing ? 'Indexing…' : 'Index videos'}
               </Button>
               <Button
                 variant="outline"
