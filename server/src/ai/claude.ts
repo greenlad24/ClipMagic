@@ -192,9 +192,35 @@ export async function claudeVisionJSON(opts: {
   frames: string[];
   model?: string;
 }): Promise<string> {
+  // Try Claude first (when configured); on overload/failure, fall back to Groq
+  // vision so promo indexing still produces a real vision index. If Claude
+  // isn't configured at all, go straight to Groq.
+  const { groqVisionConfigured, groqVisionJSON } = await import("./groqVision.js");
   if (!anthropicConfigured()) {
-    throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to enable promo-video vision indexing.");
+    if (groqVisionConfigured()) {
+      console.warn("[vision] No Anthropic creds — using Groq vision.");
+      return groqVisionJSON({ system: opts.system, userText: opts.userText, frames: opts.frames });
+    }
+    throw new Error("No vision provider configured. Set ANTHROPIC_API_KEY or GROQ_API_KEY.");
   }
+  try {
+    return await claudeVisionAnthropic(opts);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (groqVisionConfigured()) {
+      console.warn(`[vision] Claude vision failed (${msg.slice(0, 80)}) — falling back to Groq vision.`);
+      return groqVisionJSON({ system: opts.system, userText: opts.userText, frames: opts.frames });
+    }
+    throw e;
+  }
+}
+
+async function claudeVisionAnthropic(opts: {
+  system: string;
+  userText: string;
+  frames: string[];
+  model?: string;
+}): Promise<string> {
   const model = opts.model || process.env.CLAUDE_VISION_MODEL || aiConfig.models.research;
 
   // Build a single user turn: all frames (each labeled), then the instruction.

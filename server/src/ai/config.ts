@@ -11,10 +11,13 @@
  * Sonnet for cheaper runs) without a rebuild.
  */
 export const aiConfig = {
-  // ── Groq (transcription) ──────────────────────────────────────────────────
+  // ── Groq (transcription + vision fallback) ────────────────────────────────
   groqApiKey: process.env.GROQ_API_KEY || "",
   groqBaseUrl: process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1",
   groqModel: process.env.GROQ_WHISPER_MODEL || "whisper-large-v3-turbo",
+  // Multimodal Groq model used to index promo frames when Claude vision is
+  // overloaded/unavailable. Llama 4 Scout accepts images and is fast/cheap.
+  groqVisionModel: process.env.GROQ_VISION_MODEL || "meta-llama/llama-4-scout-17b-16e-instruct",
 
   // ── Anthropic (director / LLM) ────────────────────────────────────────────
   // Two auth modes:
