@@ -1,0 +1,17 @@
+{
+  "name": "clipmagic-motion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Remotion motion-graphics compositions for ClipMagic. Rendered to alpha (transparent) clips by the server motion service and composited over the finished video with ffmpeg. Kept deliberately small and tasteful — a handful of high-craft graphics, not a template library.",
+  "scripts": {
+    "preview": "remotion studio src/index.ts",
+    "still": "remotion still src/index.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.0",
+    "@remotion/renderer": "4.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "remotion": "4.0.0"
+  }
+}
