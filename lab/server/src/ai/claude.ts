@@ -18,6 +18,7 @@
  * Opus 4.8 / Sonnet 4.6 / Haiku 4.5 unchanged.
  */
 import { aiConfig, modelForTier } from "./config.js";
+import { recordAnthropicUsage, type CallPurpose } from "./runAccounting.js";
 
 interface Turn {
   role: "user" | "assistant";
@@ -57,10 +58,32 @@ function resolveTier(openaiModel: string, system: string): "director" | "researc
   return "research";
 }
 
+interface AnthropicUsage {
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_creation_input_tokens?: number;
+  cache_read_input_tokens?: number;
+}
+
 interface AnthropicResponse {
   content: Array<{ type: string; text?: string }>;
   stop_reason?: string;
+  usage?: AnthropicUsage;
   error?: { message?: string };
+}
+
+/**
+ * Classify an LLM call's PURPOSE for the per-run optimization report, from its
+ * tier and system prompt. The pipeline reuses the gpt-4o model name for both
+ * URL research and the final self-review, so we disambiguate by prompt text
+ * (same approach resolveTier already uses for director vs research).
+ */
+function resolvePurpose(tier: "director" | "research" | "fast", system: string): CallPurpose {
+  if (tier === "director") return "director";
+  if (tier === "fast") return "emphasis-fallback";
+  // research tier: URL research vs the final accuracy review.
+  if (/QUALITY-CONTROL PASS|final quality|CRITICAL MISMATCH|reviews/i.test(system)) return "review";
+  return "url-research";
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -117,6 +140,8 @@ async function callClaude(opts: {
   system: string;
   messages: Turn[];
   jsonMode?: boolean;
+  /** Purpose for per-run accounting (so the optimization report can attribute cost). */
+  purpose?: CallPurpose;
 }): Promise<string> {
   if (!anthropicConfigured()) {
     throw new Error(
@@ -140,7 +165,12 @@ async function callClaude(opts: {
     messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
   };
 
+  const t0 = Date.now();
   const json = await anthropicRequest(body, "Claude API error");
+  // Record the REAL usage from Anthropic's response into the active run's report.
+  if (opts.purpose) {
+    recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+  }
   return (json.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
@@ -154,7 +184,12 @@ export async function claudeChat(opts: {
   messages: Turn[];
 }): Promise<string> {
   const tier = resolveTier(opts.model, opts.system);
-  return callClaude({ model: modelForTier(tier), system: opts.system, messages: opts.messages });
+  return callClaude({
+    model: modelForTier(tier),
+    system: opts.system,
+    messages: opts.messages,
+    purpose: resolvePurpose(tier, opts.system),
+  });
 }
 
 /**
@@ -172,6 +207,7 @@ export async function claudeChatJSON(opts: {
     system: opts.system,
     messages: opts.messages,
     jsonMode: true,
+    purpose: resolvePurpose(tier, opts.system),
   });
   return extractJson(raw);
 }

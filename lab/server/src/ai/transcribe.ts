@@ -10,6 +10,7 @@
  * alignment logic depends on.
  */
 import { aiConfig } from "./config.js";
+import { recordGroqTranscription } from "./runAccounting.js";
 
 export interface TranscriptWord {
   word: string;
@@ -44,11 +45,13 @@ export async function transcribeWithGroq(opts: {
   if (opts.wantWords) form.append("timestamp_granularities[]", "word");
   if (opts.language) form.append("language", opts.language);
 
+  const t0 = Date.now();
   const res = await fetch(`${aiConfig.groqBaseUrl}/audio/transcriptions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${aiConfig.groqApiKey}` },
     body: form,
   });
+  const transcribeMs = Date.now() - t0;
 
   const json = (await res.json()) as any;
   if (!res.ok) {
@@ -72,6 +75,10 @@ export async function transcribeWithGroq(opts: {
       : words.length
       ? words[words.length - 1].end
       : 0;
+
+  // Record the real transcription for the per-run optimization report (priced
+  // per minute of audio — the actual billing unit for Whisper).
+  recordGroqTranscription({ model: aiConfig.groqModel, audioSeconds: duration, ms: transcribeMs });
 
   return { text: json.text ?? "", duration, words };
 }
