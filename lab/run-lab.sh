@@ -31,6 +31,12 @@ PORT_WANT="${PORT:-9090}"   # capture intended port before any .env can change i
 BUILD=1
 [ "${1:-}" = "--no-build" ] && BUILD=0
 
+# This Claude Code container injects ANTHROPIC_BASE_URL / auth tokens for the
+# harness itself. The app would otherwise send its real ANTHROPIC_API_KEY to
+# that proxy and fail, so clear them first; a real .env below can still set its
+# own ANTHROPIC_BASE_URL if you actually want a custom endpoint.
+unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+
 # --- Load API keys from a .env (shared with the main app, or a duplicate) ----
 ENV_FILE=""
 for cand in "$LAB_DIR/server/.env" "$LAB_DIR/.env" "$ROOT_DIR/server/.env" "$ROOT_DIR/.env"; do
