@@ -872,7 +872,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const PROMO_HARD_FLOOR = 2.0; // promos never show for less than this
     const MIN_BROLL_VISIBLE = 1.6;
     const isPromo = (b: SemanticBeat) => b.visualIntent === 'screencast';
-    const isOverlay = (b: SemanticBeat) => b.visualIntent !== 'talking_head';
+    // isOverlay is already defined earlier in this scope (coverage guardrail).
     const floorFor = (b: SemanticBeat) => (isPromo(b) ? PROMO_HARD_FLOOR : MIN_BROLL_VISIBLE);
 
     // ── Pre-pass: fix machine-gun cuts WITHOUT reverting to narrator ──────────
