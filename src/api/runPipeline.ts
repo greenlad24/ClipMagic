@@ -338,7 +338,8 @@ For each beat, decide:
     • When the narrator talks about AI TECHNOLOGY — what it is, how it works, how it's advancing, a specific AI product/tool/feature, or how AI is affecting things — use a "screencast" (PROMO footage of that technology). This is the primary reason to insert a promo. Set productEntity + matchKeywords to the specific technology being described (e.g. "image generation", "voice cloning", "AI video editor") so retrieval can find the segment that SHOWS that exact tech.
     • When the narrator talks about PEOPLE or real-world SITUATIONS (someone doing something, a workplace, an emotion, a scenario) — use "tactical_broll" (PEXELS stock of that situation), NOT a promo.
   ★ NAME-DROP RULE: whenever the narrator NAMES or references a product, tool, app, brand, or feature, PLAN a "screencast" beat for it. If no promo footage exists, fall back to brand-fitting stock via tactical_broll — do NOT just stay on the narrator for a name-drop.
-  MAX ENERGY, LOOSE FITS ALLOWED: prioritize constant motion. A reasonably on-theme clip that keeps the pace is acceptable. (Only the HOOK and clearly-wrong/contradictory footage are off-limits.)
+  ★ MINIMUM SHOT LENGTH — NO MACHINE-GUN CUTS: every overlay must hold for at least ~2s (promos ~3s). Do NOT plan a string of different promos back-to-back where each shows for under 2s — that looks broken/glitchy. If you want to show several products in a row, give EACH its own ≥2–3s beat; if there isn't enough time/words for that, show FEWER products longer, or return to the narrator between them. Two consecutive overlays must be ≥2s each.
+  MAX ENERGY, LOOSE FITS ALLOWED: prioritize constant motion, but never at the cost of sub-2s flashes. A reasonably on-theme clip that keeps the pace is acceptable. (Only the HOOK and clearly-wrong/contradictory footage are off-limits.)
   ORDER OF PREFERENCE for each cutaway: (1) matching promo/screencast footage (for AI-tech moments) → (2) topic-fitting Pexels stock (for people/situations) → (3) a generated situational clip (≤2/video) → (4) only then hold on the narrator.
   TONE: confident and premium — purposeful, well-motivated cuts, fast but intentional.
 
@@ -871,6 +872,71 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const PROMO_HARD_FLOOR = 2.0; // promos never show for less than this
     const MIN_BROLL_VISIBLE = 1.6;
     const isPromo = (b: SemanticBeat) => b.visualIntent === 'screencast';
+    const isOverlay = (b: SemanticBeat) => b.visualIntent !== 'talking_head';
+    const floorFor = (b: SemanticBeat) => (isPromo(b) ? PROMO_HARD_FLOOR : MIN_BROLL_VISIBLE);
+
+    // ── Pre-pass: collapse RUNS of consecutive overlays so we never get a
+    // machine-gun of <2s cuts (promo→promo→promo with no narrator between).
+    // Within each contiguous overlay run, if a beat is under its floor, merge it
+    // into the neighbor that shares its clip/product (or the longer neighbor),
+    // extending that neighbor to cover the dropped beat's time. Repeats until
+    // every overlay in the run clears its floor or only one remains.
+    semanticBeats.sort((a, b) => a.start - b.start);
+    {
+      const sameSource = (a: SemanticBeat, c: SemanticBeat) => {
+        // Same promo product → definitely mergeable. If either names a DIFFERENT
+        // product, NOT the same (don't merge Claude footage into Veo footage).
+        if (a.productEntity && c.productEntity) return a.productEntity === c.productEntity;
+        if (a.productEntity || c.productEntity) return false;
+        // Neither names a product (stock/generated) → same only if same intent.
+        return a.visualIntent === c.visualIntent;
+      };
+      let merged = true;
+      let guard = 0;
+      while (merged && guard++ < 50) {
+        merged = false;
+        for (let i = 0; i < semanticBeats.length; i++) {
+          const b = semanticBeats[i];
+          if (!isOverlay(b)) continue;
+          const vis = b.end - (b.start + (b.overlayDelaySeconds || 0));
+          if (vis >= floorFor(b)) continue;
+          const prev = semanticBeats[i - 1];
+          const next = semanticBeats[i + 1];
+          const prevOv = prev && isOverlay(prev);
+          const nextOv = next && isOverlay(next);
+          if (!prevOv && !nextOv) continue; // handled by the borrow-from-narrator pass below
+
+          // ONLY merge into a neighbor showing the SAME source (same promo
+          // product, or same stock/generated intent). We never fuse different
+          // products together. If a short overlay has no same-source neighbor,
+          // it's left for the floor pass below (which extends it by pulling its
+          // start earlier into the adjacent beat).
+          const prevSame = prevOv && sameSource(b, prev!);
+          const nextSame = nextOv && sameSource(b, next!);
+          let target: SemanticBeat | null = null;
+          if (prevSame && nextSame) target = (prev!.end - prev!.start) >= (next!.end - next!.start) ? prev! : next!;
+          else if (prevSame) target = prev!;
+          else if (nextSame) target = next!;
+          if (!target) continue;
+
+          // Absorb b's time into target, then remove b.
+          if (target === prev) target.end = Math.max(target.end, b.end);
+          else { target.start = Math.min(target.start, b.start); }
+          semanticBeats.splice(i, 1);
+          merged = true;
+          break; // restart scan after a structural change
+        }
+      }
+    }
+
+    // ── Minimum visible-overlay guardrail ────────────────────────────────────
+    // An overlay is only visible from (start + overlayDelaySeconds) to end.
+    // Targets / floors:
+    //   • PROMO (screencast): TARGET 3s. NEVER reverts to narration (rule 4) —
+    //     a chosen promo was chosen for a reason; we keep it, with a hard 2s
+    //     floor enforced by borrowing/trimming.
+    //   • stock / generated (tactical_broll): target 1.6s; may revert if it
+    //     truly can't reach a usable length.
     semanticBeats.sort((a, b) => a.start - b.start);
     for (let i = 0; i < semanticBeats.length; i++) {
       const b = semanticBeats[i];
@@ -899,19 +965,30 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
         }
       }
 
+      const prev = semanticBeats[i - 1];
+      const prevIsNarr = !prev || prev.visualIntent === 'talking_head';
       if (isPromo(b)) {
-        // RULE 4 — never revert a promo to narration. If we still can't reach
-        // the 3s target, accept whatever we have (>= the 2s hard floor); if it
-        // is below the 2s floor, pull the start earlier to force >=2s visible.
-        if (visible < PROMO_HARD_FLOOR) {
+        // Try to reach the 2s floor by pulling the start earlier — but ONLY into
+        // a narrator beat (never eat a different promo, which would just create
+        // another short cut). If the previous beat is another overlay and we're
+        // still under the floor, this promo can't be shown cleanly: drop it to
+        // the narrator (removing it REDUCES choppiness — the opposite of a sub-2s
+        // flash). Promos with room are always kept (rule 4).
+        if (visible < PROMO_HARD_FLOOR && prevIsNarr) {
           const deficit = PROMO_HARD_FLOOR - visible;
           b.start = parseFloat(Math.max(0, b.start - deficit).toFixed(3));
-          const prev = semanticBeats[i - 1];
           if (prev && prev.end > b.start) prev.end = b.start;
           b.overlayDelaySeconds = 0;
           visible = b.end - b.start;
         }
-        console.log(`[runPipeline] 🎬 Promo at ${b.start.toFixed(2)}s kept (never reverts) → ${visible.toFixed(2)}s visible`);
+        if (visible < PROMO_HARD_FLOOR - 0.15) {
+          console.log(`[runPipeline] ⤵ Promo at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s and boxed in by overlays — dropping to narrator to avoid a choppy <2s cut`);
+          b.visualIntent = 'talking_head';
+          b.overlayDelaySeconds = 0;
+          b.showNarrator = true;
+        } else {
+          console.log(`[runPipeline] 🎬 Promo at ${b.start.toFixed(2)}s kept → ${visible.toFixed(2)}s visible`);
+        }
       } else if (visible < target - 0.15) {
         // stock/generated that can't reach a usable length → revert to narrator
         console.log(`[runPipeline] ⤵ B-roll at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s — reverting to talking_head`);
