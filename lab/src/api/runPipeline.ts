@@ -188,25 +188,14 @@ export default createEndpoint({
       }
       if (currentGroup.length > 0) phraseGroups.push(currentGroup);
 
-      let emphasisIndices = new Set<number>();
-      try {
-        const wordList = words.map((w, i) => `${i}:${w.word}`).join(' ');
-        const emphRes = await client.chat.completions.create({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `Identify emotionally stressed, key, or impactful words for kinetic subtitle emphasis styling.\nReturn ONLY valid JSON: {"emphasis":[2,5,9,14]} — 0-based word indices.\nMark: product names, power verbs, key nouns, charged words, numbers, superlatives.\nDo NOT mark: articles (a, the), prepositions, conjunctions, filler words.\nAim for ~15–25% of total words.`,
-            },
-            { role: 'user', content: `WORDS (index:word):\n${wordList}` },
-          ],
-          response_format: { type: 'json_object' },
-        });
-        const emphData = JSON.parse(emphRes.choices[0]?.message?.content ?? '{}');
-        if (Array.isArray(emphData.emphasis)) emphasisIndices = new Set(emphData.emphasis.map(Number));
-      } catch (e: any) {
-        console.warn('[runPipeline] Subtitle emphasis detection skipped (non-fatal):', e.message);
-      }
+      // Subtitle emphasis (which words "pop" in the kinetic captions) is now
+      // produced by the DIRECTOR call below — it already reads the entire script
+      // with full rhetorical context, so its emphasis choices are smarter than a
+      // generic 15–25% heuristic AND it costs one fewer LLM round-trip per video.
+      // We seed an empty set here, build the subtitle events, then apply the
+      // director's emphasis after it returns. The standalone mini-model call is
+      // kept only as a fallback when the director doesn't return emphasis.
+      const emphasisIndices = new Set<number>();
 
       let globalWordIndex = 0;
       for (const group of phraseGroups) {
@@ -226,11 +215,12 @@ export default createEndpoint({
       }
     }
 
-    const subtitlesJson = subtitleEvents.length ? JSON.stringify(subtitleEvents) : undefined;
-
+    // Subtitle emphasis is applied AFTER the director runs (it returns the
+    // emphasis words), so we persist subtitlesJson then. For now persist without
+    // it; the director-emphasis pass below re-saves with the final events.
     await Projects.update({
       id: projectId,
-      record: { transcript: fullText, durationSeconds: duration, title: shortTitle, status: 'Directing', subtitlesJson },
+      record: { transcript: fullText, durationSeconds: duration, title: shortTitle, status: 'Directing' },
     });
 
     // ── Phase 1.5: URL Research ───────────────────────────────────────────────
@@ -408,6 +398,9 @@ Return ONLY valid JSON (no markdown fences):
   "intensity_map": [{"second":0,"intensity":60},{"second":1,"intensity":45}]
 }
 
+★ ALSO PICK THE SUBTITLE EMPHASIS WORDS (return as "emphasisWords"):
+  The kinetic captions "pop" certain words in an accent color/size. Since you've read the WHOLE script, choose the words that genuinely carry the punch — the ones a great human editor would highlight. Return "emphasisWords" as a flat array of 0-based word indices into the TRANSCRIPT word order (the same order shown above). Mark: product/brand names, power verbs, key nouns, numbers/stats, superlatives, and the emotional peak of each line. Do NOT mark articles, prepositions, conjunctions, or filler. Aim for ~15–25% of words — quality over quantity, and never two adjacent words unless both truly land.
+
 Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(duration)}, assign a numeric value 0–100 (this drives a SUBTLE camera push on the narrator — keep it premium and restrained):
   0–14 = static/baseline | 15–39 = subtle zoom | 40–69 = moderate zoom | 70–89 = strong push zoom | 90–100 = snap zoom peak
   For this CONFIDENT/PREMIUM tone, keep most seconds in the 15–55 range (subtle/moderate). Reserve 70+ for the opening hook, a major reveal, or the CTA only. Avoid frequent snap zooms.`;
@@ -458,6 +451,60 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     } catch (e: any) {
       console.warn('[runPipeline] ⚠ Semantic beat planner failed — using fallback:', e.message);
       usedFallback = true;
+    }
+
+    // ── Phase 1.4b: Apply subtitle emphasis (director-chosen, mini-call fallback)
+    // The director call above also returns emphasisWords (0-based transcript word
+    // indices). Apply them to the already-built subtitle events. If the director
+    // didn't return usable emphasis (older model / parse miss), fall back to the
+    // standalone fast-tier call so emphasis still gets set. Either way we persist
+    // the final subtitlesJson once here.
+    if (subtitleEvents.length > 0) {
+      let emphasisSet = new Set<number>();
+      try {
+        const parsed = JSON.parse(directorRaw);
+        const raw = parsed?.emphasisWords ?? parsed?.emphasis_words ?? parsed?.emphasis;
+        if (Array.isArray(raw)) {
+          emphasisSet = new Set(raw.map((n: any) => Number(n)).filter((n: number) => Number.isInteger(n) && n >= 0));
+        }
+      } catch { /* */ }
+
+      if (emphasisSet.size === 0 && words.length > 0) {
+        // Fallback: the director gave us nothing usable — use the fast tier.
+        try {
+          const wordList = words.map((w, i) => `${i}:${w.word}`).join(' ');
+          const emphRes = await client.chat.completions.create({
+            model: 'gpt-4o-mini',
+            messages: [
+              {
+                role: 'system',
+                content: `Identify emotionally stressed, key, or impactful words for kinetic subtitle emphasis styling.\nReturn ONLY valid JSON: {"emphasis":[2,5,9,14]} — 0-based word indices.\nMark: product names, power verbs, key nouns, charged words, numbers, superlatives.\nDo NOT mark: articles (a, the), prepositions, conjunctions, filler words.\nAim for ~15–25% of total words.`,
+              },
+              { role: 'user', content: `WORDS (index:word):\n${wordList}` },
+            ],
+            response_format: { type: 'json_object' },
+          });
+          const emphData = JSON.parse(emphRes.choices[0]?.message?.content ?? '{}');
+          if (Array.isArray(emphData.emphasis)) emphasisSet = new Set(emphData.emphasis.map(Number));
+          console.log('[runPipeline] Subtitle emphasis from fallback fast-tier call');
+        } catch (e: any) {
+          console.warn('[runPipeline] Subtitle emphasis fallback skipped (non-fatal):', e.message);
+        }
+      } else {
+        console.log(`[runPipeline] Subtitle emphasis from director (${emphasisSet.size} words) — saved one LLM call`);
+      }
+
+      // Apply to events in transcript word order (1:1 with the global index).
+      let gi = 0;
+      for (const ev of subtitleEvents) {
+        for (const w of ev.words) {
+          w.emphasis = emphasisSet.has(gi++);
+        }
+      }
+    }
+    const finalSubtitlesJson = subtitleEvents.length ? JSON.stringify(subtitleEvents) : undefined;
+    if (finalSubtitlesJson) {
+      await Projects.update({ id: projectId, record: { subtitlesJson: finalSubtitlesJson } });
     }
 
     // ── Log semantic beats ────────────────────────────────────────────────────

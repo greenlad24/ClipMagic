@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SubtitleEvent, SubtitleStyle } from "./manifest.js";
 import { config } from "../config.js";
+import { cleanCaptionWord } from "./subtitleText.js";
 
 /**
  * Generate an ASS subtitle file for the four approved viral caption styles.
@@ -67,11 +68,46 @@ export interface AssOptions {
 }
 
 /**
+ * Per-render memo for measured text sizes. Each caption build spawns 2 ffmpeg
+ * processes per measurement, and a typical video re-measures the SAME line-height
+ * reference string once per event plus repeats phrases — so an unbounded video
+ * could spawn 60-90 ffmpeg processes just to size captions. Memoizing on the
+ * exact (text, font, size, italic, spacing) tuple collapses those duplicates to
+ * one spawn each. The map is created fresh per buildAss() call so it never grows
+ * across renders. ~30-90 spawns → ~5-15 per video.
+ */
+type MeasureCache = Map<string, { w: number; h: number }>;
+
+/**
  * Measure the rendered ink size (px) of a single line at a given font/size by
  * rendering it to a transparent frame and cropping. Used to size the box and
  * fit text to the frame width. Falls back to a heuristic if ffmpeg fails.
+ *
+ * Results are memoized in `cache` (when provided) keyed by the full measurement
+ * tuple so identical lines aren't re-rendered.
  */
 async function measureText(
+  text: string,
+  fontFamily: string,
+  fontSize: number,
+  italic: boolean,
+  letterSpacing: number,
+  fontsDir: string,
+  cache?: MeasureCache,
+): Promise<{ w: number; h: number }> {
+  const key = cache
+    ? `${fontFamily} ${fontSize} ${italic ? 1 : 0} ${letterSpacing} ${text}`
+    : "";
+  if (cache) {
+    const hit = cache.get(key);
+    if (hit) return hit;
+  }
+  const result = await measureTextUncached(text, fontFamily, fontSize, italic, letterSpacing, fontsDir);
+  if (cache) cache.set(key, result);
+  return result;
+}
+
+async function measureTextUncached(
   text: string,
   fontFamily: string,
   fontSize: number,
@@ -155,6 +191,9 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
   const cyBottom = Math.round(height * 0.80); // bottom-center band when a promo plays
   const maxTextWidth = width * 0.9;
   const overlayWindows = opts.overlayWindows ?? [];
+  // Memoize text measurements for the lifetime of THIS document build so the
+  // same phrase / line-height reference isn't re-rendered through ffmpeg.
+  const measureCache: MeasureCache = new Map();
 
   const header = [
     "[Script Info]",
@@ -189,18 +228,24 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
     const event = subtitles[ei];
     const words = (event.words ?? []).filter((w) => (w.text ?? "").trim().length > 0);
     if (words.length === 0) continue;
-    const rendered = words.map((w) => assText(style.allCaps ? w.text.toUpperCase() : w.text));
+    // Brand-safe by default: mask profanity in the BURNED-IN text (audio is
+    // untouched). Disable per-style with maskProfanity:false.
+    const mask = style.maskProfanity !== false;
+    const rendered = words.map((w) => {
+      const cleaned = cleanCaptionWord(w.text, mask);
+      return assText(style.allCaps ? cleaned.toUpperCase() : cleaned);
+    });
     const phrase = rendered.join(" ");
 
     // Fit font to width (and measure for the box). Account for the emphasis
     // word being a heavier face (slightly wider).
     let fs = fontSize;
-    const measured = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir);
+    const measured = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache);
     if (measured.w > maxTextWidth) {
       fs = Math.max(40, Math.floor(fs * (maxTextWidth / measured.w)));
     }
     // Re-measure ink height at the fitted size for accurate box sizing.
-    const ink = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir);
+    const ink = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache);
 
     const startAll = shift(event.start ?? words[0].start);
     if (startAll >= duration) continue;
@@ -212,9 +257,17 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
       nextEv && nextEv.words && nextEv.words.length
         ? shift(nextEv.start ?? nextEv.words[0].start)
         : Infinity;
+    // Reading-speed floor: a viral caption that flashes for a few frames is
+    // unreadable. Guarantee enough dwell to read the phrase at ~17 CPS (the
+    // broadcast/Netflix standard), with a hard 0.5s floor — but never push past
+    // the next caption's start (the no-overlap rule still wins).
+    const READ_CPS = 17;
+    const ceiling = nextStart === Infinity ? duration : nextStart - GAP;
+    const readSeconds = Math.max(0.5, phrase.replace(/\s/g, "").length / READ_CPS);
+    const desiredEnd = Math.max(rawEnd, startAll + readSeconds);
     const captionEnd = Math.max(
       startAll + 0.05,
-      Math.min(rawEnd, duration, nextStart === Infinity ? duration : nextStart - GAP),
+      Math.min(desiredEnd, duration, ceiling),
     );
     const fadeTag = `\\fad(0,${FADE_MS})`;
 
@@ -233,7 +286,7 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
       const fill = style.boxFill ?? 0.82;
       // Use a CONSISTENT line height (ascenders+descenders) so the box doesn't
       // collapse for lowercase-only phrases. Measure a reference once per fit.
-      const lineRef = await measureText("Abdfghjpqy", emphFont, fs, !!style.italic, ls, fontsDir);
+      const lineRef = await measureText("Abdfghjpqy", emphFont, fs, !!style.italic, ls, fontsDir, measureCache);
       const lineH = Math.max(ink.h, lineRef.h);
       const boxH = lineH / fill;
       const pad = (boxH - lineH) / 2; // equal padding all sides
@@ -259,11 +312,14 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
         if (wEnd <= wStart || wStart >= duration) continue;
         const fade = j === words.length - 1 ? fadeTag : "";
 
+        // Optional active-word size "pop" (e.g. +18%) for a kinetic karaoke bump.
+        const activeFs = style.popScale && style.popScale > 1 ? Math.round(fs * style.popScale) : fs;
         const parts = rendered.map((txt, k) => {
           const isActive = k === j;
           const fnt = isActive ? emphFont : baseFont;
           const col = isActive ? accent : primary;
-          return `{\\fn${fnt}\\fs${fs}\\c${col}}${txt}`;
+          const sz = isActive ? activeFs : fs;
+          return `{\\fn${fnt}\\fs${sz}\\c${col}}${txt}`;
         });
         const text = `{\\an${anchor}\\pos(${cx},${cy})${fade}}` + parts.join(" ");
 
