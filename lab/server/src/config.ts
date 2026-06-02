@@ -84,6 +84,32 @@ export const config = {
 
   /** Render job retry attempts before marking failed. */
   jobAttempts: envInt("JOB_ATTEMPTS", 2),
+
+  // ── Motion graphics (Remotion) ──────────────────────────────────────────────
+  /**
+   * Master feature flag. OFF by default so the existing pipeline renders exactly
+   * as before with zero added compute. Set MOTION_GRAPHICS=1 to let the director
+   * plan graphics and the render step composite them. Even when on, every stage
+   * falls back gracefully if Remotion/Chromium is unavailable.
+   */
+  motionGraphicsEnabled: (process.env.MOTION_GRAPHICS || "") === "1",
+  /**
+   * How many Remotion (headless-Chromium) renders may run at once across the
+   * whole process. Each browser render is RAM- and CPU-heavy and competes with
+   * ffmpeg on a 4 vCPU / 8 GB droplet, so this is deliberately tiny (default 1).
+   */
+  motionConcurrency: Math.max(1, envInt("MOTION_CONCURRENCY", 1)),
+  /**
+   * Per-Remotion-render Chromium concurrency (tabs/threads). 2 keeps a single
+   * graphic render from monopolizing the box while ffmpeg jobs also run.
+   */
+  motionChromiumConcurrency: Math.max(1, envInt("MOTION_CHROMIUM_CONCURRENCY", 2)),
+  /** Built Remotion bundle dir (created on first render, cached thereafter). */
+  motionBundleDir: process.env.MOTION_BUNDLE_DIR || path.join(DATA_DIR, "motion-bundle"),
+  /** Remotion project entry (the React Root that registers the compositions). */
+  motionEntryPoint:
+    process.env.MOTION_ENTRY_POINT ||
+    path.resolve(SERVER_ROOT, "..", "remotion", "src", "index.ts"),
 };
 
 export function ensureDirs(): void {
