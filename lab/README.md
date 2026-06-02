@@ -37,8 +37,13 @@ up the **same keys** — just on :9090 with its own data volume:
 docker compose --profile lab up -d --build clipmagic-lab   # build + start lab
 # open http://<host>:9090
 docker compose --profile lab logs -f clipmagic-lab         # watch it
-docker compose --profile lab down                          # stop just the lab
+docker compose stop clipmagic-lab && docker compose rm -f clipmagic-lab  # stop ONLY the lab
 ```
+
+> Don't use `docker compose down` to stop the lab — that tears down the whole
+> project (including the main app on :8080). Always stop the lab by name as
+> shown above. The main app is never restarted by `up ... clipmagic-lab`
+> because the service is named explicitly.
 
 The `lab` profile means a plain `docker compose up -d` still starts only the
 main app — the lab is opt-in. It uses image `clipmagic-lab:latest` and volume
