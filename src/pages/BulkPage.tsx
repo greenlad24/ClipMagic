@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Film, Play } from 'lucide-react';
+import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Film, Play, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { extractAudio, uploadBlobToZite } from '@/utils/videoUtils';
@@ -179,10 +179,16 @@ export default function BulkPage() {
                     </p>
                   </button>
                   {it.status === 'Complete' && it.outputUrl && (
-                    <a href={it.outputUrl} target="_blank" rel="noreferrer" download
-                      className="flex items-center gap-1 text-xs text-primary hover:underline shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <Download className="w-3.5 h-3.5" /> Download
-                    </a>
+                    <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <a href={it.outputUrl} target="_blank" rel="noreferrer"
+                        className="flex items-center gap-1 text-xs text-primary hover:underline">
+                        <Eye className="w-3.5 h-3.5" /> View
+                      </a>
+                      <a href={it.outputUrl} target="_blank" rel="noreferrer" download
+                        className="flex items-center gap-1 text-xs text-primary hover:underline">
+                        <Download className="w-3.5 h-3.5" /> Download
+                      </a>
+                    </div>
                   )}
                   {it.status === 'Complete' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                     : it.status === 'Error' ? <XCircle className="w-4 h-4 text-destructive shrink-0" />
