@@ -16,6 +16,7 @@ import { uploadFile } from 'zite-file-upload-sdk';
 import { useUndoRedo } from '@/hooks/useUndoRedo';
 import { renderInBrowser, RenderProgress, RenderDiagnostics, ClipDiagnostic, formatLabel, fileExtension, preflightValidation } from '@/utils/browserRenderer';
 import FinalRenderPanel from '@/components/FinalRenderPanel';
+import OptimizationReportPanel from '@/components/OptimizationReportPanel';
 import VideoCanvas from '@/components/timeline/VideoCanvas';
 import TimelinePanel from '@/components/timeline/TimelinePanel';
 import PropertyPanel from '@/components/timeline/PropertyPanel';
@@ -483,6 +484,7 @@ export default function TimelineEditorPage() {
           <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" onClick={handleExportJson}>
             <FileJson className="w-3.5 h-3.5" />Export JSON
           </Button>
+          <OptimizationReportPanel optimizationReportJson={project?.optimizationReportJson} />
           {project?.outputUrl && (
             <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" disabled={downloading} onClick={async () => {
               setDownloading(true);
