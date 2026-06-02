@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Library, Settings, Trash2, CheckSquare, Square, X, Video, HardDrive } from 'lucide-react';
+import { Library, Settings, Trash2, CheckSquare, Square, X, Video, HardDrive, Scissors } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
@@ -119,6 +119,13 @@ export default function HomePage() {
             >
               <Video className="w-3.5 h-3.5" />
               Bulk videos
+            </Link>
+            <Link
+              to="/cutter"
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Scissors className="w-3.5 h-3.5" />
+              Narration Cutter
             </Link>
             <Link
               to="/storage"

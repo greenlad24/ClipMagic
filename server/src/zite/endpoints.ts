@@ -10,13 +10,18 @@
  * clear, structured responses so the UI works and shows where Stage 2 wiring
  * (OpenAI + Kinovi + capture service) will plug in.
  */
-import { Projects, Shots, MusicTracks, PromoVideos, ZiteError } from "./store.js";
+import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, ZiteError } from "./store.js";
 import { listStorage, deleteStorageFiles } from "./storage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
 import { createJob, getJob } from "../db/jobs.js";
 import { db } from "../db/index.js";
 import { pump } from "../render/worker.js";
+import { resolveInput } from "../render/resolve.js";
+import { probe } from "../render/ffmpeg.js";
+import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
+import { planCuts } from "../cutter/plan.js";
+import { transcribeWithGroq } from "../ai/transcribe.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
@@ -790,6 +795,171 @@ function nanoidLike(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+// ── Narration Cutter (separate product) ──────────────────────────────────────
+// Phase 1 (deterministic): for each raw clip we transcribe it (Groq, word-level
+// timestamps), plan the cuts (remove >0.35s silences + "um"/"uh" fillers), then
+// run a single ffmpeg trim+concat "cut" job. Processed one at a time so the AI
+// API and the render queue stay gentle. Progress is polled via getCutRun.
+
+interface CutStats {
+  originalDuration: number;
+  keptDuration: number;
+  removedDuration: number;
+  silenceCuts: number;
+  fillerCuts: number;
+}
+interface CutItem {
+  cutId: string;
+  title: string;
+  status: "Queued" | "Transcribing" | "Analyzing" | "Rendering" | "Complete" | "Error";
+  outputUrl: string | null;
+  error: string | null;
+  stats: CutStats | null;
+}
+interface CutRun {
+  id: string;
+  running: boolean;
+  total: number;
+  doneCount: number;
+  items: CutItem[];
+  startedAt: number;
+  finishedAt: number | null;
+}
+let cutRun: CutRun | null = null;
+let cutRunning = false;
+
+async function waitForCutJob(jobId: string): Promise<{ outputUrl: string | null; error: string | null }> {
+  for (let i = 0; i < 1200; i++) { // ~60 min max at 3s
+    const job = getJob(jobId);
+    if (!job) return { outputUrl: null, error: "Render job not found" };
+    if (job.status === "completed") {
+      return { outputUrl: job.output_file ? `/api/outputs/${job.output_file}` : null, error: null };
+    }
+    if (job.status === "failed" || job.status === "canceled") {
+      return { outputUrl: null, error: job.error ?? "Render failed" };
+    }
+    await sleep(3000);
+  }
+  return { outputUrl: null, error: "Render timed out" };
+}
+
+async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
+  try {
+    item.status = "Transcribing";
+    const srcPath = await resolveInput(sourceUrl);
+    const meta = await probe(srcPath);
+    const duration = meta.duration ?? 0;
+    if (!duration) throw new Error("Could not read the video's duration");
+    const audio = await extractAudioForTranscription(srcPath);
+    const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
+
+    item.status = "Analyzing";
+    const plan = planCuts(tr.words, tr.duration || duration, {});
+    const stats: CutStats = {
+      originalDuration: plan.originalDuration,
+      keptDuration: plan.keptDuration,
+      removedDuration: plan.removedDuration,
+      silenceCuts: plan.silenceCuts,
+      fillerCuts: plan.fillerCuts,
+    };
+    item.stats = stats;
+    await NarrationCuts.update({
+      id: item.cutId,
+      record: { status: "Rendering", transcript: tr.text, stats, segments: plan.keep },
+    }).catch(() => {});
+
+    item.status = "Rendering";
+    const spec: CutSpec = { source: srcPath, segments: plan.keep, hasAudio: meta.hasAudio };
+    const jobId = createJob({
+      kind: "cut",
+      manifest: spec,
+      outputName: `${item.title || "cut"}.mp4`,
+      projectId: item.cutId,
+    });
+    db.prepare("UPDATE render_jobs SET duration_sec=? WHERE id=?").run(plan.keptDuration, jobId);
+    await NarrationCuts.update({ id: item.cutId, record: { renderJobId: jobId } }).catch(() => {});
+    pump();
+
+    const { outputUrl, error } = await waitForCutJob(jobId);
+    if (error || !outputUrl) throw new Error(error || "Render produced no output");
+
+    await NarrationCuts.update({ id: item.cutId, record: { status: "Complete", outputUrl } }).catch(() => {});
+    item.outputUrl = outputUrl;
+    item.status = "Complete";
+  } catch (e) {
+    item.status = "Error";
+    item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+    await NarrationCuts.update({ id: item.cutId, record: { status: "Error", error: item.error } }).catch(() => {});
+    console.warn(`[narrationCut] ${item.title} failed: ${item.error}`);
+  }
+}
+
+// Create N cut records from uploaded raw clips and kick the background run.
+const createBulkCut: Handler = async (input, userId) => {
+  if (cutRunning) {
+    return { started: false, message: "A cut run is already in progress.", run: cutRun };
+  }
+  const items: Array<{ sourceUrl: string; title?: string }> = Array.isArray(input?.items) ? input.items : [];
+  if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No videos provided." });
+
+  const cutItems: CutItem[] = [];
+  const sources: string[] = [];
+  for (const it of items) {
+    if (!it.sourceUrl) continue;
+    const rec = await NarrationCuts.create({
+      record: { title: it.title || "Cut", status: "Queued", sourceUrl: it.sourceUrl, outputUrl: null, user: userId },
+    });
+    cutItems.push({ cutId: rec.id, title: it.title || "Cut", status: "Queued", outputUrl: null, error: null, stats: null });
+    sources.push(it.sourceUrl);
+  }
+
+  cutRun = {
+    id: nanoidLike(),
+    running: true,
+    total: cutItems.length,
+    doneCount: 0,
+    items: cutItems,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  cutRunning = true;
+
+  // Fire-and-forget: process ONE AT A TIME (gentle on the transcription API).
+  (async () => {
+    for (let i = 0; i < cutRun!.items.length; i++) {
+      await runOneCut(cutRun!.items[i], sources[i]);
+      cutRun!.doneCount++;
+    }
+    cutRun!.running = false;
+    cutRun!.finishedAt = Date.now();
+    cutRunning = false;
+    console.log(`[narrationCut] done — ${cutRun!.items.filter((x) => x.status === "Complete").length}/${cutRun!.total} complete`);
+  })().catch((e) => {
+    if (cutRun) { cutRun.running = false; cutRun.finishedAt = Date.now(); }
+    cutRunning = false;
+    console.error("[narrationCut] run crashed:", e);
+  });
+
+  return { started: true, run: cutRun };
+};
+
+const getCutRun: Handler = async () => ({ run: cutRun });
+
+const getNarrationCuts: Handler = async (_input, userId) => {
+  const { records } = await NarrationCuts.findAll({ filters: { user: userId }, limit: 200 });
+  const cuts = records.sort(sortByCreatedDesc).map((c) => ({
+    id: c.id,
+    title: c.title,
+    status: c.status,
+    outputUrl: c.outputUrl,
+    sourceUrl: c.sourceUrl,
+    stats: c.stats,
+    error: c.error,
+    createdAt: c.createdAt,
+  }));
+  return { cuts };
+};
+
 
 /**
  * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
@@ -1285,6 +1455,9 @@ export const HANDLERS: Record<string, Handler> = {
   // bulk narration → full pipeline + render
   createBulkNarration,
   getBulkRun,
+  createBulkCut,
+  getCutRun,
+  getNarrationCuts,
   validateAssets: async () => ({ ok: true, errors: [] }),
   getWaveform,
   // storage management

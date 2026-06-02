@@ -4,7 +4,7 @@ import { db, type JobStatus } from "./index.js";
 /** A render job row, as used by the queue and the Rendi-compatible API. */
 export interface RenderJob {
   id: string;
-  kind: "command" | "manifest";
+  kind: "command" | "manifest" | "cut";
   status: JobStatus;
   progress: number;
   command: string | null;
@@ -27,7 +27,7 @@ export interface RenderJob {
 const now = () => Date.now();
 
 export interface CreateJobInput {
-  kind: "command" | "manifest";
+  kind: "command" | "manifest" | "cut";
   command?: string;
   inputFiles?: Record<string, string>;
   outputName?: string;

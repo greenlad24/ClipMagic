@@ -7,6 +7,7 @@ import SetupPage from './pages/SetupPage';
 import TimelineEditorPage from './pages/TimelineEditorPage';
 import StoragePage from './pages/StoragePage';
 import BulkPage from './pages/BulkPage';
+import CutterPage from './pages/CutterPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/bulk" element={<BulkPage />} />
+        <Route path="/cutter" element={<CutterPage />} />
       </Routes>
       <Toaster theme="dark" />
     </BrowserRouter>

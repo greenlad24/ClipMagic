@@ -11,6 +11,7 @@ import {
 } from "../db/jobs.js";
 import { resolveCommand } from "./command.js";
 import { buildArgsFromManifest } from "./build.js";
+import { buildCutArgs, type CutSpec } from "./cut.js";
 import { runFfmpeg } from "./ffmpeg.js";
 import type { RenderManifest } from "./manifest.js";
 
@@ -43,6 +44,13 @@ async function processJob(job: RenderJob): Promise<void> {
   if (job.kind === "manifest") {
     const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
     const built = await buildArgsFromManifest(manifest, abs);
+    args = built.args;
+    totalDuration = built.totalDuration;
+  } else if (job.kind === "cut") {
+    // Narration cut: trim source to keep-segments and concatenate. The spec is
+    // stored in the manifest_json column.
+    const spec = JSON.parse(job.manifest_json || "{}") as CutSpec;
+    const built = buildCutArgs(spec, abs);
     args = built.args;
     totalDuration = built.totalDuration;
   } else {
