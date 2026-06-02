@@ -334,9 +334,12 @@ For each beat, decide:
 
 ★ CORE PRINCIPLE — USE YOUR FOOTAGE. FAST CUTS. NARRATOR IS THE GLUE, NOT THE DEFAULT:
   This must feel like a high-retention, FAST-PACED viral short with CONSTANT MOTION — change the visual roughly every 2–3 seconds. The narrator is the connective tissue BETWEEN visuals, not the fallback you sit on. A talking-head-heavy edit is only correct for story_opinion.
-  ★ NAME-DROP RULE (critical — this is what was being missed): whenever the narrator NAMES or clearly references a product, tool, app, brand, website, or feature, PLAN A "screencast" BEAT for it (set productEntity + matchKeywords to the name). Show it MOST OF THE TIME a name is dropped and you might have footage. If no promo footage exists for that name, fall back to brand-fitting STOCK (a generic scene matching that product's category/vibe) via tactical_broll — do NOT just stay on the narrator for a name-drop.
-  MAX ENERGY, LOOSE FITS ALLOWED: prioritize constant motion. A reasonably on-theme clip that keeps the pace is acceptable — you do NOT need a perfect match to cut. (Only the HOOK and clearly-wrong/contradictory footage are off-limits.)
-  ORDER OF PREFERENCE for each cutaway: (1) matching promo/screencast footage → (2) brand/topic-fitting stock (tactical_broll, filled from free stock) → (3) a generated situational clip (≤2/video) → (4) only then hold on the narrator. Reach for a visual FIRST; hold on the narrator only when nothing on-theme exists.
+  ★ PROMO vs STOCK — WHICH SOURCE TO USE (decisive rule):
+    • When the narrator talks about AI TECHNOLOGY — what it is, how it works, how it's advancing, a specific AI product/tool/feature, or how AI is affecting things — use a "screencast" (PROMO footage of that technology). This is the primary reason to insert a promo. Set productEntity + matchKeywords to the specific technology being described (e.g. "image generation", "voice cloning", "AI video editor") so retrieval can find the segment that SHOWS that exact tech.
+    • When the narrator talks about PEOPLE or real-world SITUATIONS (someone doing something, a workplace, an emotion, a scenario) — use "tactical_broll" (PEXELS stock of that situation), NOT a promo.
+  ★ NAME-DROP RULE: whenever the narrator NAMES or references a product, tool, app, brand, or feature, PLAN a "screencast" beat for it. If no promo footage exists, fall back to brand-fitting stock via tactical_broll — do NOT just stay on the narrator for a name-drop.
+  MAX ENERGY, LOOSE FITS ALLOWED: prioritize constant motion. A reasonably on-theme clip that keeps the pace is acceptable. (Only the HOOK and clearly-wrong/contradictory footage are off-limits.)
+  ORDER OF PREFERENCE for each cutaway: (1) matching promo/screencast footage (for AI-tech moments) → (2) topic-fitting Pexels stock (for people/situations) → (3) a generated situational clip (≤2/video) → (4) only then hold on the narrator.
   TONE: confident and premium — purposeful, well-motivated cuts, fast but intentional.
 
 ★ THE HOOK IS THE EXCEPTION — EARN THE FIRST ~3 SECONDS:
@@ -857,55 +860,64 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const shotRecords: ShotRec[] = [];
 
     // ── Minimum visible-overlay guardrail ────────────────────────────────────
-    // A stock/promo overlay is only visible from (start + overlayDelaySeconds)
-    // to end. Make sure that visible window is long enough so no clip flashes:
-    //   • PROMO (screencast): at least 3s — promo footage needs room to read.
-    //   • stock / generated (tactical_broll): at least 1.6s.
-    // Fix order per beat: trim the narrator-first delay, then borrow time from
-    // the FOLLOWING narrator beat, and if still too short demote to talking_head.
+    // An overlay is only visible from (start + overlayDelaySeconds) to end.
+    // Targets / floors:
+    //   • PROMO (screencast): TARGET 3s. NEVER reverts to narration (rule 4) —
+    //     a chosen promo was chosen for a reason; we keep it, with a hard 2s
+    //     floor enforced by borrowing/trimming.
+    //   • stock / generated (tactical_broll): target 1.6s; may revert if it
+    //     truly can't reach a usable length.
     const MIN_PROMO_VISIBLE = 3.0;
+    const PROMO_HARD_FLOOR = 2.0; // promos never show for less than this
     const MIN_BROLL_VISIBLE = 1.6;
-    const minVisibleFor = (b: SemanticBeat) =>
-      b.visualIntent === 'screencast' ? MIN_PROMO_VISIBLE : MIN_BROLL_VISIBLE;
+    const isPromo = (b: SemanticBeat) => b.visualIntent === 'screencast';
     semanticBeats.sort((a, b) => a.start - b.start);
     for (let i = 0; i < semanticBeats.length; i++) {
       const b = semanticBeats[i];
       if (b.visualIntent === 'talking_head') continue;
-      const MIN_OVERLAY_VISIBLE = minVisibleFor(b);
+      const target = isPromo(b) ? MIN_PROMO_VISIBLE : MIN_BROLL_VISIBLE;
       let visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
-      if (visible >= MIN_OVERLAY_VISIBLE) continue;
+      if (visible >= target) continue;
 
-      // 1) cut the delay down (keep a touch of narrator-first if room allows)
+      // 1) cut the narrator-first delay down (promos may drop it entirely)
       if ((b.overlayDelaySeconds || 0) > 0) {
-        const need = MIN_OVERLAY_VISIBLE - visible;
+        const need = target - visible;
         b.overlayDelaySeconds = Math.max(0, (b.overlayDelaySeconds || 0) - need);
         visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
       }
-      // 2) borrow from the next beat if it's a narrator beat (and stays usable)
+      // 2) borrow time from the FOLLOWING narrator beat. Promos borrow harder
+      //    (can shrink the next narrator beat to 0.3s) to guarantee their floor.
       const next = semanticBeats[i + 1];
-      if (visible < MIN_OVERLAY_VISIBLE && next && next.visualIntent === 'talking_head') {
-        const want = MIN_OVERLAY_VISIBLE - visible;
-        const nextDur = next.end - next.start;
-        const give = Math.min(want, Math.max(0, nextDur - 0.6)); // leave next ≥0.6s
+      if (visible < target && next && next.visualIntent === 'talking_head') {
+        const want = target - visible;
+        const keepNext = isPromo(b) ? 0.3 : 0.6;
+        const give = Math.min(want, Math.max(0, (next.end - next.start) - keepNext));
         if (give > 0) {
           b.end = parseFloat((b.end + give).toFixed(3));
           next.start = b.end;
           visible = b.end - (b.start + (b.overlayDelaySeconds || 0));
         }
       }
-      // 3) still too short → revert to narrator (better than a flash). For a
-      //    promo beat we first try to keep it as stock-backed b-roll if it at
-      //    least meets the shorter b-roll minimum.
-      if (visible < MIN_OVERLAY_VISIBLE - 0.15) {
-        if (b.visualIntent === 'screencast' && visible >= MIN_BROLL_VISIBLE) {
-          console.log(`[runPipeline] ⤵ Promo at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s (<3s) — keeping as b-roll`);
-          b.visualIntent = 'tactical_broll';
-        } else {
-          console.log(`[runPipeline] ⤵ Overlay at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s visible — reverting to talking_head`);
-          b.visualIntent = 'talking_head';
+
+      if (isPromo(b)) {
+        // RULE 4 — never revert a promo to narration. If we still can't reach
+        // the 3s target, accept whatever we have (>= the 2s hard floor); if it
+        // is below the 2s floor, pull the start earlier to force >=2s visible.
+        if (visible < PROMO_HARD_FLOOR) {
+          const deficit = PROMO_HARD_FLOOR - visible;
+          b.start = parseFloat(Math.max(0, b.start - deficit).toFixed(3));
+          const prev = semanticBeats[i - 1];
+          if (prev && prev.end > b.start) prev.end = b.start;
           b.overlayDelaySeconds = 0;
-          b.showNarrator = true;
+          visible = b.end - b.start;
         }
+        console.log(`[runPipeline] 🎬 Promo at ${b.start.toFixed(2)}s kept (never reverts) → ${visible.toFixed(2)}s visible`);
+      } else if (visible < target - 0.15) {
+        // stock/generated that can't reach a usable length → revert to narrator
+        console.log(`[runPipeline] ⤵ B-roll at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s — reverting to talking_head`);
+        b.visualIntent = 'talking_head';
+        b.overlayDelaySeconds = 0;
+        b.showNarrator = true;
       } else {
         console.log(`[runPipeline] ⏱ Overlay (${b.visualIntent}) at ${b.start.toFixed(2)}s → ${visible.toFixed(2)}s visible`);
       }

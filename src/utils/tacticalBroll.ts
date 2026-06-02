@@ -381,6 +381,7 @@ export async function retrieveScreencast(
   // overlay never runs out of footage before the 3s minimum on screen.
   const MIN_PROMO_CLIP = Math.max(3.0, beatDurationSec);
   let clipDuration = Infinity;
+  let textFloor = 0; // never start the clip before this (skips a leading text/intro)
   try {
     if (matchedEntry?.contentIndexJson) {
       const idx = JSON.parse(matchedEntry.contentIndexJson);
@@ -388,21 +389,43 @@ export async function retrieveScreencast(
       const ends = segs.map((s) => (typeof s.end === 'number' ? s.end : 0));
       if (typeof idx.durationSeconds === 'number') clipDuration = idx.durationSeconds;
       else if (ends.length) clipDuration = Math.max(...ends);
+      // If the promo OPENS with on-screen text/intro segments, don't let the
+      // window reach back into them — start no earlier than where the text ends
+      // (rule 3: show the technology, not the intro text card).
+      let floor = 0;
+      for (const s of segs) {
+        const ss = typeof s.start === 'number' ? s.start : 0;
+        const se = typeof s.end === 'number' ? s.end : 0;
+        if (s.hasText && ss <= floor + 0.05) floor = Math.max(floor, se);
+        else break; // stop at the first non-text segment
+      }
+      // Only honor the floor if there's still enough non-text footage after it.
+      if (Number.isFinite(clipDuration) && clipDuration - floor >= MIN_PROMO_CLIP) {
+        textFloor = floor;
+      }
     }
   } catch { /* */ }
+
+  // Pull the window forward off any leading text intro.
+  if (segStart < textFloor) {
+    const len = Math.max(segEnd - segStart, MIN_PROMO_CLIP);
+    segStart = textFloor;
+    segEnd = Math.min(Number.isFinite(clipDuration) ? clipDuration : segStart + len, segStart + len);
+  }
+
   if (segEnd - segStart < MIN_PROMO_CLIP) {
     const center = (segStart + segEnd) / 2;
     let s = center - MIN_PROMO_CLIP / 2;
     let e = center + MIN_PROMO_CLIP / 2;
-    if (s < 0) { e -= s; s = 0; }
+    if (s < textFloor) { e += (textFloor - s); s = textFloor; }
     if (Number.isFinite(clipDuration) && e > clipDuration) {
       const shift = e - clipDuration;
-      s = Math.max(0, s - shift);
+      s = Math.max(textFloor, s - shift);
       e = clipDuration;
     }
     segStart = parseFloat(s.toFixed(2));
     segEnd = parseFloat(e.toFixed(2));
-    console.log(`${tag} 📏 Expanded promo segment to ≥${MIN_PROMO_CLIP.toFixed(1)}s → [${segStart}s–${segEnd}s] (clip≈${Number.isFinite(clipDuration) ? clipDuration.toFixed(1) + 's' : 'unknown'})`);
+    console.log(`${tag} 📏 Expanded promo segment to ≥${MIN_PROMO_CLIP.toFixed(1)}s → [${segStart}s–${segEnd}s] (textFloor=${textFloor}s, clip≈${Number.isFinite(clipDuration) ? clipDuration.toFixed(1) + 's' : 'unknown'})`);
   }
   let confidence = segResult?.confidence ?? 0.5; // file-level only = 0.5 confidence
   const reason = segResult?.reason ?? `File-level match: ${fileMatch.label}`;
@@ -468,7 +491,7 @@ async function matchBestSegment(
   ctx?: MatchContext,
 ): Promise<{ segmentIndex: number; start: number; end: number; summary: string; reason: string; confidence: number } | null> {
   const segList = segments.map((s: any, i: number) =>
-    `${i}: [${s.start?.toFixed?.(1) ?? s.start}s–${s.end?.toFixed?.(1) ?? s.end}s] ${s.summary ?? ''} | feature=${s.featureLabel ?? ''} | keywords=${(s.keywords ?? []).join(',')} | hero=${s.heroScore ?? 0} proof=${s.proofScore ?? 0}`
+    `${i}: [${s.start?.toFixed?.(1) ?? s.start}s–${s.end?.toFixed?.(1) ?? s.end}s] ${s.summary ?? ''} | feature=${s.featureLabel ?? ''} | keywords=${(s.keywords ?? []).join(',')} | tech=${s.techScore ?? s.proofScore ?? 0} proof=${s.proofScore ?? 0} hero=${s.heroScore ?? 0} ${s.hasText ? 'ON-SCREEN-TEXT' : 'no-text'}`
   ).join('\n');
 
   const userLines: string[] = [`Shot caption: "${caption}"`];
@@ -478,7 +501,7 @@ async function matchBestSegment(
   if (ctx?.transcriptSnippet) userLines.push(`Narrator says: "${ctx.transcriptSnippet}"`);
   if (ctx?.targetUrl) userLines.push(`Target URL: ${ctx.targetUrl}`);
   if (ctx?.followsRequiredTacticalBroll) {
-    userLines.push(`IMPORTANT: This beat follows the required tactical B-roll opening. Prefer segments with high proofScore or that demonstrate a concrete feature/workflow. Do NOT pick segment 0 (intro/logo) unless it genuinely shows the best proof content.`);
+    userLines.push(`IMPORTANT: This beat follows the required tactical B-roll opening. Prefer segments with high techScore that demonstrate a concrete feature/workflow.`);
     if (ctx.intendedRole) userLines.push(`Intended editorial role: ${ctx.intendedRole}`);
   }
 
@@ -488,21 +511,22 @@ async function matchBestSegment(
       messages: [
         {
           role: 'system',
-          content: `You are a video editor selecting the best SEGMENT within a promo video for a screencast shot.
+          content: `You are a video editor selecting the best SEGMENT within a promo video to show while a narrator talks about a TECHNOLOGY.
+
+GOAL: pick the segment that SHOWS THE EXACT TECHNOLOGY the narrator is describing, in action.
 
 SCORING — ranked by importance:
-1. PRODUCT/FEATURE ENTITY MATCH: segment's featureLabel matches the product or feature the narrator mentions → strongest signal.
-2. TRANSCRIPT SIMILARITY: segment summary/keywords closely match what the narrator is saying.
-3. KEYWORD OVERLAP: segment keywords match the shot's matchKeywords.
-4. PROOF/DEMO STRENGTH: higher proofScore = better for demo/proof beats.
-5. HERO SCORE: higher heroScore = better for hook/payoff beats.
-6. URL/DOMAIN RELEVANCE: if a target URL is given, segments showing that product are preferred.
+1. TECHNOLOGY MATCH: the segment's featureLabel/keywords/summary show the SAME technology/feature the narrator names. Strongest signal.
+2. TECH IN ACTION: prefer HIGH techScore — the actual product/feature/result on screen.
+3. AVOID INTRO TEXT: segments marked ON-SCREEN-TEXT are title/intro/logo cards. Do NOT pick them — the viewer should see the technology, not a text card. Only pick a text segment if NO other segment shows the technology at all.
+4. TRANSCRIPT / KEYWORD OVERLAP with what the narrator is saying.
+5. Avoid the very first segment if it's just an intro/logo.
 
 Rate your confidence 0.0–1.0:
-- 0.9+ = segment clearly shows the exact feature/screen the narrator describes
-- 0.7–0.89 = good thematic match, right product area
-- 0.5–0.69 = loosely related, same product but different feature
-- below 0.5 = weak match, mostly filler
+- 0.9+ = segment clearly shows the exact technology the narrator describes, no intro text
+- 0.7–0.89 = right technology area, mostly clean
+- 0.5–0.69 = same product, different feature
+- below 0.5 = weak / mostly filler or text
 
 Segments (0-indexed):
 ${segList}

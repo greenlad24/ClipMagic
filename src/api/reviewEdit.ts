@@ -33,27 +33,31 @@ function describeAssignedVisual(labels: Record<string, any>): { shows: string; s
   return { shows: `Promo footage: "${String(seg).slice(0, 200)}"`, source: 'promo', confidence: conf };
 }
 
-const REVIEW_SYSTEM = `You are a senior short-form video editor doing a FINAL ACCURACY REVIEW of your own edit before it ships. You judge each beat and may also IMPROVE the edit.
+const REVIEW_SYSTEM = `You are a senior editor doing a FINAL QUALITY-CONTROL PASS on an edit that is already good. Your job is NOT to re-edit it — it is to catch the FEW CRITICAL MISTAKES and leave everything else alone.
 
-You are given the full transcript and, per beat: the time, what the NARRATOR says, the current VISUAL (either "narrator" on camera, or an assigned cutaway with what it shows).
+You are given the full transcript and, per beat: the time, what the NARRATOR says, and the current VISUAL (either "narrator" on camera, or an assigned cutaway with what it shows).
 
-For EACH beat return one verdict:
-- "keep" — leave the beat exactly as is.
-- "revert" — (only for beats that currently have a cutaway) the visual is off-topic / misleading / contradicts the words → drop it and stay on the narrator.
-- "add" — (only for beats currently on the narrator) an accurate cutaway clearly belongs here to reinforce the words. Specify what to add:
-    "addType": "screencast" (real product/promo footage — use when the line names a product/feature you likely have footage for),
-               "stock" (real stock footage of a real-world situation/scene),
-               or "generated" (an AI situational clip — use sparingly, only when no real footage could exist).
-    "query": 2–5 word concrete, filmable stock search query (for screencast/stock). It MUST inherit context from the overall video topic — encode place/demographic/setting so generic words aren't ambiguous (e.g. for a US-job-market video use "american office workers", never just "workers" which could return footage from the wrong country).
-    "brollPrompt": an extensive situational generation prompt (only for "generated").
+DEFAULT TO "keep". The vast majority of beats — almost all of them — should be "keep". Only intervene on a CRITICAL MISMATCH, defined as:
+  • the visual clearly CONTRADICTS or is unrelated to what the narrator is saying (e.g. footage of the wrong product/place/subject), or
+  • a clearly WRONG/confusing clip that would make a viewer go "that doesn't match".
+Stylistic preferences, "could be slightly better", pacing nitpicks, or a merely-okay-but-fine clip are NOT reasons to change anything → "keep".
 
-RULES:
-- Accuracy first. If unsure, prefer "keep"/"revert" — staying on the narrator is never wrong.
-- Don't over-edit: only "add" when it genuinely strengthens that exact moment. Most narrator beats should stay "keep".
-- Never add to the very first hook beat or the final CTA beat.
+Verdicts:
+- "keep" — leave the beat exactly as is. (Use this for nearly everything.)
+- "revert" — ONLY on a critical mismatch with no better cutaway: drop it to the narrator.
+- "replace" — a critical mismatch where a clearly better, accurate cutaway exists: swap in the right one (provide addType + query like "add").
+- "add" — RARE: only when a beat is on the narrator AND a critical, obviously-missing visual belongs there. Do not add for general "more motion".
+    "addType": "screencast" (AI-tech / product footage) | "stock" (people/situations) | "generated" (sparingly).
+    "query": 2–5 word concrete, filmable query inheriting the overall video's context (encode place/demographic/setting so generic words aren't ambiguous).
+    "brollPrompt": extensive generation prompt (only for "generated").
+
+HARD RULES:
+- Aim to change as FEW beats as possible. If you're unsure, "keep".
+- Never touch the hook beat or the final CTA beat.
+- Do not revert a promo clip just because another clip might be marginally better — only on a real mismatch.
 
 Return ONLY valid JSON:
-{"reviews":[{"shotId":"...","verdict":"keep|revert|add","addType":"screencast|stock|generated","query":"...","brollPrompt":"...","reason":"short reason"}]}`;
+{"reviews":[{"shotId":"...","verdict":"keep|revert|replace|add","addType":"screencast|stock|generated","query":"...","brollPrompt":"...","reason":"short reason"}]}`;
 
 export default createEndpoint({
   authenticated: true,
@@ -151,8 +155,8 @@ export default createEndpoint({
         continue;
       }
 
-      // ── ADD an accurate visual to a narrator beat ──
-      if (r?.verdict === 'add' && !hasClip) {
+      // ── ADD a visual to a narrator beat, or REPLACE a mismatched clip ──
+      if ((r?.verdict === 'add' && !hasClip) || r?.verdict === 'replace') {
         const addType = r.addType ?? 'stock';
         const overlayDelay = computeOverlayDelay(beatDur);
         const baseLabels = { ...labels, reviewAdded: true, reviewReason: r.reason ?? 'Added accurate visual', showNarratorFirst: true, overlayDelaySeconds: overlayDelay };
