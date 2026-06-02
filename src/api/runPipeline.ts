@@ -338,7 +338,7 @@ For each beat, decide:
     • When the narrator talks about AI TECHNOLOGY — what it is, how it works, how it's advancing, a specific AI product/tool/feature, or how AI is affecting things — use a "screencast" (PROMO footage of that technology). This is the primary reason to insert a promo. Set productEntity + matchKeywords to the specific technology being described (e.g. "image generation", "voice cloning", "AI video editor") so retrieval can find the segment that SHOWS that exact tech.
     • When the narrator talks about PEOPLE or real-world SITUATIONS (someone doing something, a workplace, an emotion, a scenario) — use "tactical_broll" (PEXELS stock of that situation), NOT a promo.
   ★ NAME-DROP RULE: whenever the narrator NAMES or references a product, tool, app, brand, or feature, PLAN a "screencast" beat for it. If no promo footage exists, fall back to brand-fitting stock via tactical_broll — do NOT just stay on the narrator for a name-drop.
-  ★ MINIMUM SHOT LENGTH — NO MACHINE-GUN CUTS: every overlay must hold for at least ~2s (promos ~3s). Do NOT plan a string of different promos back-to-back where each shows for under 2s — that looks broken/glitchy. If you want to show several products in a row, give EACH its own ≥2–3s beat; if there isn't enough time/words for that, show FEWER products longer, or return to the narrator between them. Two consecutive overlays must be ≥2s each.
+  ★ SHOT LENGTH — NO MACHINE-GUN CUTS, NO LINGERING: every overlay holds between ~2s and ~4s (promos ~3s). Do NOT plan back-to-back sub-2s promos (looks glitchy), and do NOT keep a single promo/clip on screen longer than ~4s (drags + over-shows the footage) — cut back to the narrator and move on. If you want several products in a row, give EACH its own 2–4s beat; otherwise show fewer, and return to the narrator between long stretches. Two consecutive overlays must be ≥2s each.
   MAX ENERGY, LOOSE FITS ALLOWED: prioritize constant motion, but never at the cost of sub-2s flashes. A reasonably on-theme clip that keeps the pace is acceptable. (Only the HOOK and clearly-wrong/contradictory footage are off-limits.)
   ORDER OF PREFERENCE for each cutaway: (1) matching promo/screencast footage (for AI-tech moments) → (2) topic-fitting Pexels stock (for people/situations) → (3) a generated situational clip (≤2/video) → (4) only then hold on the narrator.
   TONE: confident and premium — purposeful, well-motivated cuts, fast but intentional.
@@ -991,7 +991,44 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     }
     semanticBeats.sort((a, b) => a.start - b.start);
 
-    // Beat types that benefit from narrator-return (cut back to face before beat ends)
+    // ── Maximum overlay duration: no single clip holds longer than ~4s ───────
+    // A promo/stock/generated clip on screen for more than 4s drags the pace and
+    // gives away too much footage. Cap the VISIBLE window at MAX_OVERLAY_VISIBLE
+    // and hand the remainder to the narrator (so we cut back to the face), which
+    // keeps the edit moving. Applies to every overlay type.
+    const MAX_OVERLAY_VISIBLE = 4.0;
+    for (let i = 0; i < semanticBeats.length; i++) {
+      const b = semanticBeats[i];
+      if (b.visualIntent === 'talking_head') continue;
+      const visStart = b.start + (b.overlayDelaySeconds || 0);
+      const visible = b.end - visStart;
+      if (visible <= MAX_OVERLAY_VISIBLE + 0.1) continue;
+      const newEnd = parseFloat((visStart + MAX_OVERLAY_VISIBLE).toFixed(3));
+      const remainderEnd = b.end;
+      b.end = newEnd;
+      // Cut back to the narrator for the leftover time (merge into the next beat
+      // if it's already a narrator, else insert a fresh narrator beat).
+      const next = semanticBeats[i + 1];
+      if (next && next.visualIntent === 'talking_head') {
+        next.start = newEnd;
+      } else {
+        semanticBeats.splice(i + 1, 0, {
+          start: newEnd,
+          end: remainderEnd,
+          beatType: 'transition',
+          summary: 'Back to narrator',
+          visualIntent: 'talking_head',
+          showNarrator: true,
+          overlayDelaySeconds: 0,
+          priority: 6,
+          transcriptSnippet: '',
+          matchKeywords: [],
+        } as SemanticBeat);
+      }
+      console.log(`[runPipeline] ✂ Capped overlay at ${b.start.toFixed(2)}s to ${MAX_OVERLAY_VISIBLE}s visible (was ${visible.toFixed(2)}s) — narrator takes the rest`);
+    }
+    semanticBeats.sort((a, b) => a.start - b.start);
+
     const NARRATOR_RETURN_BEATS = new Set(['hook', 'pain', 'objection', 'cta', 'transition']);
     const DEFAULT_NARRATOR_RETURN_LEAD = 0.8; // seconds before beat end to cut back
 
