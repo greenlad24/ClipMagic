@@ -875,56 +875,48 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
     const isOverlay = (b: SemanticBeat) => b.visualIntent !== 'talking_head';
     const floorFor = (b: SemanticBeat) => (isPromo(b) ? PROMO_HARD_FLOOR : MIN_BROLL_VISIBLE);
 
-    // ── Pre-pass: collapse RUNS of consecutive overlays so we never get a
-    // machine-gun of <2s cuts (promo→promo→promo with no narrator between).
-    // Within each contiguous overlay run, if a beat is under its floor, merge it
-    // into the neighbor that shares its clip/product (or the longer neighbor),
-    // extending that neighbor to cover the dropped beat's time. Repeats until
-    // every overlay in the run clears its floor or only one remains.
+    // ── Pre-pass: fix machine-gun cuts WITHOUT reverting to narrator ──────────
+    // Find each contiguous RUN of overlays. If the run contains any sub-floor
+    // (<2s) cut, it's choppy — collapse the WHOLE run into its single most
+    // important beat and let that one clip fill the entire run's span. We never
+    // drop a choppy run back to the narrator; we keep the best visual and give
+    // it the time. Importance = required hook > promo(screencast) > generated >
+    // stock, then longer duration, then lower priority number.
     semanticBeats.sort((a, b) => a.start - b.start);
     {
-      const sameSource = (a: SemanticBeat, c: SemanticBeat) => {
-        // Same promo product → definitely mergeable. If either names a DIFFERENT
-        // product, NOT the same (don't merge Claude footage into Veo footage).
-        if (a.productEntity && c.productEntity) return a.productEntity === c.productEntity;
-        if (a.productEntity || c.productEntity) return false;
-        // Neither names a product (stock/generated) → same only if same intent.
-        return a.visualIntent === c.visualIntent;
+      const importance = (b: SemanticBeat): number => {
+        let s = 0;
+        if (b.isRequiredTacticalSlot) s += 1000;
+        if (b.visualIntent === 'screencast') s += 400;            // promo footage wins
+        else if (b.brollPrompt) s += 200;                          // generated situational
+        else s += 100;                                             // stock
+        s += Math.min(50, (b.end - b.start) * 10);                // prefer the longer one
+        s += Math.max(0, 20 - (b.priority ?? 10));                // lower priority# = more important
+        return s;
       };
-      let merged = true;
-      let guard = 0;
-      while (merged && guard++ < 50) {
-        merged = false;
-        for (let i = 0; i < semanticBeats.length; i++) {
-          const b = semanticBeats[i];
-          if (!isOverlay(b)) continue;
-          const vis = b.end - (b.start + (b.overlayDelaySeconds || 0));
-          if (vis >= floorFor(b)) continue;
-          const prev = semanticBeats[i - 1];
-          const next = semanticBeats[i + 1];
-          const prevOv = prev && isOverlay(prev);
-          const nextOv = next && isOverlay(next);
-          if (!prevOv && !nextOv) continue; // handled by the borrow-from-narrator pass below
-
-          // ONLY merge into a neighbor showing the SAME source (same promo
-          // product, or same stock/generated intent). We never fuse different
-          // products together. If a short overlay has no same-source neighbor,
-          // it's left for the floor pass below (which extends it by pulling its
-          // start earlier into the adjacent beat).
-          const prevSame = prevOv && sameSource(b, prev!);
-          const nextSame = nextOv && sameSource(b, next!);
-          let target: SemanticBeat | null = null;
-          if (prevSame && nextSame) target = (prev!.end - prev!.start) >= (next!.end - next!.start) ? prev! : next!;
-          else if (prevSame) target = prev!;
-          else if (nextSame) target = next!;
-          if (!target) continue;
-
-          // Absorb b's time into target, then remove b.
-          if (target === prev) target.end = Math.max(target.end, b.end);
-          else { target.start = Math.min(target.start, b.start); }
-          semanticBeats.splice(i, 1);
-          merged = true;
-          break; // restart scan after a structural change
+      let i = 0;
+      while (i < semanticBeats.length) {
+        if (!isOverlay(semanticBeats[i])) { i++; continue; }
+        // Extent of this contiguous overlay run [i, j)
+        let j = i;
+        while (j < semanticBeats.length && isOverlay(semanticBeats[j])) j++;
+        const run = semanticBeats.slice(i, j);
+        const choppy = run.some((b) => (b.end - (b.start + (b.overlayDelaySeconds || 0))) < floorFor(b));
+        if (run.length > 1 && choppy) {
+          // Winner takes the whole span [run.start, run.end].
+          const winner = run.reduce((best, b) => (importance(b) > importance(best) ? b : best), run[0]);
+          const spanStart = run[0].start;
+          const spanEnd = run[run.length - 1].end;
+          winner.start = spanStart;
+          winner.end = spanEnd;
+          winner.overlayDelaySeconds = 0; // it now opens the span
+          if (!winner.rationale) winner.rationale = `Collapsed a choppy run of ${run.length} short cuts into this one clip so it holds for the full ${(spanEnd - spanStart).toFixed(1)}s.`;
+          // Replace the whole run with just the winner.
+          semanticBeats.splice(i, run.length, winner);
+          console.log(`[runPipeline] 🧹 Collapsed ${run.length} back-to-back short overlays at ${spanStart.toFixed(1)}s → kept ${winner.visualIntent}${winner.productEntity ? ' (' + winner.productEntity + ')' : ''} for ${(spanEnd - spanStart).toFixed(1)}s`);
+          i += 1; // move past the winner
+        } else {
+          i = j;
         }
       }
     }
@@ -975,12 +967,10 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       const prev = semanticBeats[i - 1];
       const prevIsNarr = !prev || prev.visualIntent === 'talking_head';
       if (isPromo(b)) {
-        // Try to reach the 2s floor by pulling the start earlier — but ONLY into
-        // a narrator beat (never eat a different promo, which would just create
-        // another short cut). If the previous beat is another overlay and we're
-        // still under the floor, this promo can't be shown cleanly: drop it to
-        // the narrator (removing it REDUCES choppiness — the opposite of a sub-2s
-        // flash). Promos with room are always kept (rule 4).
+        // Reach the 2s floor by pulling the start earlier into a narrator beat.
+        // Promos are NEVER reverted to the narrator (rule 4) — the run-collapse
+        // pass above already removed choppy promo runs, so any remaining short
+        // promo is just kept at whatever length it has.
         if (visible < PROMO_HARD_FLOOR && prevIsNarr) {
           const deficit = PROMO_HARD_FLOOR - visible;
           b.start = parseFloat(Math.max(0, b.start - deficit).toFixed(3));
@@ -988,14 +978,7 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
           b.overlayDelaySeconds = 0;
           visible = b.end - b.start;
         }
-        if (visible < PROMO_HARD_FLOOR - 0.15) {
-          console.log(`[runPipeline] ⤵ Promo at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s and boxed in by overlays — dropping to narrator to avoid a choppy <2s cut`);
-          b.visualIntent = 'talking_head';
-          b.overlayDelaySeconds = 0;
-          b.showNarrator = true;
-        } else {
-          console.log(`[runPipeline] 🎬 Promo at ${b.start.toFixed(2)}s kept → ${visible.toFixed(2)}s visible`);
-        }
+        console.log(`[runPipeline] 🎬 Promo at ${b.start.toFixed(2)}s kept → ${visible.toFixed(2)}s visible`);
       } else if (visible < target - 0.15) {
         // stock/generated that can't reach a usable length → revert to narrator
         console.log(`[runPipeline] ⤵ B-roll at ${b.start.toFixed(2)}s only ${visible.toFixed(2)}s — reverting to talking_head`);
