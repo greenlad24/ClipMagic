@@ -65,6 +65,13 @@ export interface AssOptions {
    * so it doesn't cover the promo footage; otherwise it stays centered.
    */
   overlayWindows?: Array<{ start: number; end: number }>;
+  /**
+   * Optional out-param: buildAss writes how many text measurements were served
+   * from the memo cache (hits) vs computed via ffmpeg (misses). Each miss spawns
+   * 2 ffmpeg processes, so hits are a direct compute/speed saving. Surfaced in
+   * the Optimization Report's speed section.
+   */
+  measureStats?: { hits: number; misses: number };
 }
 
 /**
@@ -94,14 +101,19 @@ async function measureText(
   letterSpacing: number,
   fontsDir: string,
   cache?: MeasureCache,
+  stats?: { hits: number; misses: number },
 ): Promise<{ w: number; h: number }> {
   const key = cache
     ? `${fontFamily} ${fontSize} ${italic ? 1 : 0} ${letterSpacing} ${text}`
     : "";
   if (cache) {
     const hit = cache.get(key);
-    if (hit) return hit;
+    if (hit) {
+      if (stats) stats.hits += 1;
+      return hit;
+    }
   }
+  if (stats) stats.misses += 1;
   const result = await measureTextUncached(text, fontFamily, fontSize, italic, letterSpacing, fontsDir);
   if (cache) cache.set(key, result);
   return result;
@@ -194,6 +206,7 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
   // Memoize text measurements for the lifetime of THIS document build so the
   // same phrase / line-height reference isn't re-rendered through ffmpeg.
   const measureCache: MeasureCache = new Map();
+  const measureStats = { hits: 0, misses: 0 };
 
   const header = [
     "[Script Info]",
@@ -240,12 +253,12 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
     // Fit font to width (and measure for the box). Account for the emphasis
     // word being a heavier face (slightly wider).
     let fs = fontSize;
-    const measured = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache);
+    const measured = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache, measureStats);
     if (measured.w > maxTextWidth) {
       fs = Math.max(40, Math.floor(fs * (maxTextWidth / measured.w)));
     }
     // Re-measure ink height at the fitted size for accurate box sizing.
-    const ink = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache);
+    const ink = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache, measureStats);
 
     const startAll = shift(event.start ?? words[0].start);
     if (startAll >= duration) continue;
@@ -286,7 +299,7 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
       const fill = style.boxFill ?? 0.82;
       // Use a CONSISTENT line height (ascenders+descenders) so the box doesn't
       // collapse for lowercase-only phrases. Measure a reference once per fit.
-      const lineRef = await measureText("Abdfghjpqy", emphFont, fs, !!style.italic, ls, fontsDir, measureCache);
+      const lineRef = await measureText("Abdfghjpqy", emphFont, fs, !!style.italic, ls, fontsDir, measureCache, measureStats);
       const lineH = Math.max(ink.h, lineRef.h);
       const boxH = lineH / fill;
       const pad = (boxH - lineH) / 2; // equal padding all sides
@@ -353,6 +366,10 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
     }
   }
 
+  if (opts.measureStats) {
+    opts.measureStats.hits = measureStats.hits;
+    opts.measureStats.misses = measureStats.misses;
+  }
   if (events.length === 0) return null;
   return header.join("\n") + "\n" + events.join("\n") + "\n";
 }

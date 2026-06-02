@@ -73,6 +73,13 @@ interface InputSpec {
 export interface BuiltCommand {
   args: string[];
   totalDuration: number;
+  /**
+   * Caption text-measurement memo stats for this build (manifest renders only):
+   * how many measurements were reused from cache vs computed via ffmpeg. Each
+   * miss = 2 ffmpeg spawns; hits are a direct compute/speed saving surfaced in
+   * the Optimization Report.
+   */
+  measureStats?: { hits: number; misses: number };
 }
 
 export async function buildArgsFromManifest(
@@ -201,6 +208,7 @@ export async function buildArgsFromManifest(
     start: shift(ov.scene.startTime + (ov.scene.overlay?.overlayDelaySeconds ?? 0)),
     end: shift(ov.scene.endTime),
   }));
+  const measureStats = { hits: 0, misses: 0 };
   const assDoc = await buildAss(m.subtitles, {
     width: W,
     height: H,
@@ -208,6 +216,7 @@ export async function buildArgsFromManifest(
     shift,
     duration: effectiveDuration,
     overlayWindows,
+    measureStats,
   });
   if (assDoc) {
     const assPath = path.join(config.tmpDir, `subs_${randomUUID()}.ass`);
@@ -286,7 +295,7 @@ export async function buildArgsFromManifest(
   if (effectiveDuration > 0) args.push("-t", effectiveDuration.toFixed(3));
   args.push("-progress", "pipe:1", "-nostats", outputPath);
 
-  return { args, totalDuration: effectiveDuration };
+  return { args, totalDuration: effectiveDuration, measureStats };
 }
 
 function buildSubtitleDrawtext(

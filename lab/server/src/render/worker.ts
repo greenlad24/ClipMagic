@@ -14,6 +14,8 @@ import { buildArgsFromManifest } from "./build.js";
 import { buildCutArgs, type CutSpec } from "./cut.js";
 import { runFfmpeg } from "./ffmpeg.js";
 import type { RenderManifest } from "./manifest.js";
+import { Projects } from "../zite/store.js";
+import { mergeRenderStats, type OptimizationReport } from "../ai/runAccounting.js";
 
 /**
  * In-process render worker pool backed by the SQLite job queue. Runs up to
@@ -40,12 +42,14 @@ async function processJob(job: RenderJob): Promise<void> {
   const { file, abs } = outputPathFor(job);
   let totalDuration = 0;
   let args: string[];
+  let measureStats: { hits: number; misses: number } | undefined;
 
   if (job.kind === "manifest") {
     const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
     const built = await buildArgsFromManifest(manifest, abs);
     args = built.args;
     totalDuration = built.totalDuration;
+    measureStats = built.measureStats;
   } else if (job.kind === "cut") {
     // Narration cut: trim source to keep-segments and concatenate. The spec is
     // stored in the manifest_json column.
@@ -72,6 +76,32 @@ async function processJob(job: RenderJob): Promise<void> {
   });
 
   completeJob(job.id, file, result.durationSec);
+
+  // Complete the Optimization Report's speed section with REAL render-time
+  // numbers: caption-memo hits/misses and the ffmpeg spawn count (1 main render
+  // + 2 per caption measurement). Best-effort — never fails the render.
+  if (job.kind === "manifest" && job.project_id && measureStats) {
+    try {
+      const project = await Projects.findOne({ id: job.project_id });
+      if (project?.optimizationReportJson) {
+        const report = JSON.parse(project.optimizationReportJson as string) as OptimizationReport;
+        const ffmpegSpawns = 1 + measureStats.misses * 2;
+        const updated = mergeRenderStats(report, {
+          captionMeasureHits: measureStats.hits,
+          captionMeasureMisses: measureStats.misses,
+          ffmpegSpawns,
+        });
+        await Projects.update({
+          id: job.project_id,
+          record: { optimizationReportJson: JSON.stringify(updated) },
+        });
+      }
+    } catch (e) {
+      console.warn(
+        `[OptimizationReport] render-stats merge skipped for ${job.project_id}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 }
 
 /** Run a single slot: claim one job, process it, then refill the pool. */
