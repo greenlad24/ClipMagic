@@ -27,6 +27,23 @@ the code, data, and port are isolated. The symlinks, builds (`*/dist`), and
 `lab/data/` are git-ignored; the script recreates the symlinks each run, which
 also makes this work after a fresh clone in an ephemeral web session.
 
+## API keys
+
+The app reads keys (`ANTHROPIC_API_KEY`, `GROQ_API_KEY`, `ZITE_KINOVI_API_KEY`)
+straight from the process environment — there is no `dotenv` in the code.
+
+- If the keys are already set in your shell or your web-environment config, the
+  lab inherits them automatically. Nothing to do.
+- Otherwise `run-lab.sh` loads the first `.env` it finds, so the lab can share
+  the **main app's** keys (or a duplicate copy if you prefer):
+  `lab/server/.env` → `lab/.env` → `../server/.env` → `../.env`.
+
+Sharing the main app's `.env` is safe: keys are just credentials, like the
+shared `node_modules`. Whatever the `.env` sets, `run-lab.sh` forces `PORT` and
+all data paths (`DATA_DIR`, uploads/outputs/tmp/db, frontend) back to the lab's
+isolated values, so a shared `.env` can never make the lab read or write the
+main app's data.
+
 ## Promoting a lab change into the main app
 
 Because the lab is a literal copy, improvements don't auto-merge. To bring one
