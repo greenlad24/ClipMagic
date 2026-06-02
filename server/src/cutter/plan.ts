@@ -32,6 +32,8 @@ export interface PlanOptions {
   keepPad?: number;
   /** Remove um/uh fillers. Default true. */
   removeFillers?: boolean;
+  /** Extra forced-cut ranges (e.g. losing duplicate takes) to also remove. */
+  extraCuts?: Segment[];
 }
 
 export interface CutPlan {
@@ -147,6 +149,15 @@ export function planCuts(
       if (isFiller(w.word)) {
         cuts.push({ start: Math.max(0, w.start - 0.02), end: Math.min(duration, w.end + 0.06) });
         fillerCuts++;
+      }
+    }
+  }
+
+  // 5. Caller-supplied forced cuts (losing duplicate takes).
+  if (opts.extraCuts) {
+    for (const c of opts.extraCuts) {
+      if (Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start) {
+        cuts.push({ start: Math.max(0, c.start), end: Math.min(duration, c.end) });
       }
     }
   }

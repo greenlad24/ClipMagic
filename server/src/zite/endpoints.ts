@@ -21,6 +21,7 @@ import { resolveInput } from "../render/resolve.js";
 import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
+import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
 
@@ -807,6 +808,7 @@ interface CutStats {
   removedDuration: number;
   silenceCuts: number;
   fillerCuts: number;
+  takesRemoved: number;
 }
 interface CutItem {
   cutId: string;
@@ -854,13 +856,18 @@ async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
     const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
 
     item.status = "Analyzing";
-    const plan = planCuts(tr.words, tr.duration || duration, {});
+    // Phase 2: find repeated takes and keep only the best (vision + audio energy).
+    // Best-effort — degrades to silence/filler-only if AI/analysis is unavailable.
+    const takeDecision = await planTakeDecision(srcPath, tr.words, tr.duration || duration)
+      .catch(() => ({ groupsFound: 0, takesRemoved: 0, dropRanges: [] as { start: number; end: number }[] }));
+    const plan = planCuts(tr.words, tr.duration || duration, { extraCuts: takeDecision.dropRanges });
     const stats: CutStats = {
       originalDuration: plan.originalDuration,
       keptDuration: plan.keptDuration,
       removedDuration: plan.removedDuration,
       silenceCuts: plan.silenceCuts,
       fillerCuts: plan.fillerCuts,
+      takesRemoved: takeDecision.takesRemoved,
     };
     item.stats = stats;
     await NarrationCuts.update({
