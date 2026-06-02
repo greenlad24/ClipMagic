@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   submitRendiJob,
   pollRendiStatus,
+  getProject,
   SubmitRendiJobOutputType,
   PollRendiStatusOutputType,
 } from 'zite-endpoints-sdk';
 import {
-  Loader2, Film, CheckCircle2, XCircle, AlertTriangle, Download, ExternalLink,
+  Loader2, Film, CheckCircle2, XCircle, AlertTriangle, Download, ExternalLink, Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -14,6 +15,9 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import {
+  OptimizationReportBody, parseReport, hasRenderStats, type OptimizationReport,
+} from '@/components/OptimizationReportPanel';
 
 // ─── Status mapping ──────────────────────────────────────────────────────────
 
@@ -74,15 +78,42 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
     outputDuration: number | null;
   } | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [report, setReport] = useState<OptimizationReport | null>(null);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const reportPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
+      if (reportPollRef.current) clearInterval(reportPollRef.current);
     };
   }, []);
+
+  // Poll getProject for the persisted optimization report. The cost figures are
+  // final by render time (the AI pipeline already ran), but the render worker
+  // writes the real render-speed stats (caption-memo hits, ffmpeg spawns) into
+  // the report as the render runs — so we keep polling until those land, then
+  // stop. Safe to start eagerly; it self-stops once render stats are in.
+  const startReportPolling = useCallback(() => {
+    if (reportPollRef.current) clearInterval(reportPollRef.current);
+    const tick = async () => {
+      try {
+        const { project } = await getProject({ projectId });
+        const parsed = parseReport(project.optimizationReportJson);
+        if (parsed) {
+          setReport(parsed);
+          if (hasRenderStats(parsed) && reportPollRef.current) {
+            clearInterval(reportPollRef.current);
+            reportPollRef.current = null;
+          }
+        }
+      } catch { /* keep polling */ }
+    };
+    tick();
+    reportPollRef.current = setInterval(tick, 4000);
+  }, [projectId]);
 
   const startPolling = useCallback((renderJobRecordId: string, intervalMs: number) => {
     if (pollRef.current) clearInterval(pollRef.current);
@@ -103,6 +134,9 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
         if (res.terminal) {
           if (pollRef.current) clearInterval(pollRef.current);
           pollRef.current = null;
+          // One last report fetch to capture render-speed stats the worker wrote
+          // just before completing; then the report poll self-stops once they're in.
+          startReportPolling();
 
           if (mapped === 'done') {
             setOutputUrl(res.outputUrl);
@@ -125,7 +159,7 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
 
     poll();
     pollRef.current = setInterval(poll, intervalMs);
-  }, []);
+  }, [startReportPolling]);
 
   const handleSubmit = async () => {
     setShowConfirm(false);
@@ -134,6 +168,10 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
     setOutputUrl(null);
     setDiagnostics(null);
     setRenderMeta(null);
+
+    // Load the persisted optimization report (cost figures are final by now) and
+    // keep polling so the render worker's live render-speed stats fill in.
+    startReportPolling();
 
     try {
       const res = await submitRendiJob({ projectId });
@@ -191,9 +229,11 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
     );
   }
 
+  const renderActive = stage === 'queued' || stage === 'rendering' || stage === 'finalizing';
+
   return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center">
-      <div className="bg-card border border-border rounded-2xl p-8 w-[440px] shadow-xl flex flex-col gap-5">
+    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className={`bg-card border border-border rounded-2xl p-8 shadow-xl flex flex-col gap-5 max-h-[90vh] overflow-y-auto ${report ? 'w-[min(640px,94vw)]' : 'w-[440px]'}`}>
         {/* Header */}
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
@@ -242,6 +282,29 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
           </div>
         )}
 
+        {/* Optimization report — cost figures are final by render time; the
+            render-speed stats fill in live as the worker writes them. Stays
+            visible through the done state (no auto-dismiss). */}
+        {stage !== 'failed' && (
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-primary" />
+              <p className="text-sm font-semibold text-foreground">Optimization Report</p>
+              <span className="text-[11px] text-muted-foreground ml-auto">
+                real API usage · prices {report?.pricingSourceDate ?? '—'}
+              </span>
+            </div>
+            {report ? (
+              <OptimizationReportBody report={report} compact live={renderActive} />
+            ) : (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground rounded-lg border border-border bg-muted/30 p-3">
+                <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                Loading this run&apos;s optimization report…
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Done */}
         {stage === 'done' && (
           <div className="space-y-4">
@@ -284,7 +347,10 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
               variant="outline"
               size="sm"
               className="w-full"
-              onClick={() => { setStage('idle'); setOutputUrl(null); setDiagnostics(null); setRenderMeta(null); }}
+              onClick={() => {
+                if (reportPollRef.current) { clearInterval(reportPollRef.current); reportPollRef.current = null; }
+                setStage('idle'); setOutputUrl(null); setDiagnostics(null); setRenderMeta(null); setReport(null);
+              }}
             >
               Close
             </Button>
@@ -313,7 +379,10 @@ export default function FinalRenderPanel({ projectId, disabled }: FinalRenderPan
                 variant="outline"
                 size="sm"
                 className="flex-1"
-                onClick={() => { setStage('idle'); setErrorMessage(null); setDiagnostics(null); }}
+                onClick={() => {
+                  if (reportPollRef.current) { clearInterval(reportPollRef.current); reportPollRef.current = null; }
+                  setStage('idle'); setErrorMessage(null); setDiagnostics(null); setReport(null);
+                }}
               >
                 Close
               </Button>

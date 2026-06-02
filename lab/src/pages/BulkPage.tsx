@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Film, Play, Eye } from 'lucide-react';
+import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Film, Play, Eye, Sparkles, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { extractAudio, uploadBlobToZite } from '@/utils/videoUtils';
-import { createBulkNarration, getBulkRun } from 'zite-endpoints-sdk';
+import { createBulkNarration, getBulkRun, getProject } from 'zite-endpoints-sdk';
+import {
+  OptimizationReportBody, parseReport, hasRenderStats, rollupReports, usd,
+  type OptimizationReport,
+} from '@/components/OptimizationReportPanel';
 
 interface BulkItem {
   projectId: string;
@@ -38,6 +43,8 @@ export default function BulkPage() {
   const [uploadMsg, setUploadMsg] = useState('');
   const [run, setRun] = useState<BulkRun | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [reports, setReports] = useState<Record<string, OptimizationReport>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -64,6 +71,42 @@ export default function BulkPage() {
     })();
     return () => { if (poll.current) clearInterval(poll.current); };
   }, [startPolling]);
+
+  // Pull each item's persisted optimization report once its pipeline has
+  // produced one (Rendering = cost is final; Complete = render-speed stats in).
+  // Re-fetch items we already have but whose render-speed stats haven't landed,
+  // so the per-item report and the batch rollup stay live as renders finish.
+  useEffect(() => {
+    if (!run) return;
+    const targets = run.items.filter(
+      (it) =>
+        (it.status === 'Rendering' || it.status === 'Complete') &&
+        (!reports[it.projectId] || !hasRenderStats(reports[it.projectId])),
+    );
+    if (targets.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      for (const it of targets) {
+        try {
+          const { project } = await getProject({ projectId: it.projectId });
+          const parsed = parseReport(project.optimizationReportJson);
+          if (parsed && !cancelled) {
+            setReports((prev) => ({ ...prev, [it.projectId]: parsed }));
+          }
+        } catch { /* skip — no report yet */ }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [run, reports]);
+
+  const toggleExpanded = (projectId: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
@@ -103,6 +146,14 @@ export default function BulkPage() {
 
   const completed = run?.items.filter((i) => i.status === 'Complete').length ?? 0;
   const failed = run?.items.filter((i) => i.status === 'Error').length ?? 0;
+
+  // Batch rollup: sum only the reports we actually have. Same accurate split as
+  // a single report — "saved" is like-for-like only; net delta & quality
+  // investment are summed separately and never folded into "saved".
+  const collectedReports = run
+    ? run.items.map((i) => reports[i.projectId]).filter((r): r is OptimizationReport => !!r)
+    : [];
+  const rollup = collectedReports.length > 0 ? rollupReports(collectedReports) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -150,6 +201,45 @@ export default function BulkPage() {
           </div>
         )}
 
+        {/* Batch optimization rollup — like-for-like cost saved across all
+            items that already have a report. Shows nothing until at least one
+            report exists (no placeholder numbers). */}
+        {rollup && (
+          <div className="rounded-xl border border-border bg-card/40 p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-4 h-4 text-primary" />
+              <span className="text-sm font-semibold">Batch optimization rollup</span>
+              <span className="text-[11px] text-muted-foreground ml-auto">
+                {rollup.count} of {run?.total ?? rollup.count} video{(run?.total ?? rollup.count) !== 1 ? 's' : ''} · real API usage
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div className="rounded-lg border border-border bg-card p-3">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Like-for-like saved</p>
+                <p className="text-xl font-bold mt-0.5 text-primary">{usd(rollup.savedUsd)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{rollup.savedPercent.toFixed(0)}% vs main app</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-3">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Batch cost</p>
+                <p className="text-xl font-bold mt-0.5 text-foreground">{usd(rollup.labTotalUsd)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">main app: {usd(rollup.baselineTotalUsd)}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-card p-3">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Net delta</p>
+                <p className={`text-xl font-bold mt-0.5 ${rollup.netDeltaUsd >= 0 ? 'text-primary' : 'text-foreground'}`}>{usd(rollup.netDeltaUsd)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {rollup.qualityInvestmentUsd > 0 ? `incl. ${usd(rollup.qualityInvestmentUsd)} Opus upgrade` : 'all-in vs main app'}
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-3 leading-snug">
+              &quot;Saved&quot; sums only the genuinely-comparable reductions (Groq transcription + the eliminated
+              emphasis call). The Opus director quality upgrade is shown separately in net delta, never added to
+              savings. Open a video below for its full per-item report.
+            </p>
+          </div>
+        )}
+
         {/* Run progress */}
         {run && (
           <div className="rounded-xl border border-border overflow-hidden">
@@ -166,35 +256,65 @@ export default function BulkPage() {
               <div className="h-full bg-primary transition-[width] duration-500" style={{ width: `${run.total ? Math.round((run.doneCount / run.total) * 100) : 0}%` }} />
             </div>
             <div className="divide-y divide-border/60">
-              {run.items.map((it) => (
-                <div key={it.projectId} className="px-4 py-2.5 flex items-center gap-3 hover:bg-muted/30">
-                  <button
-                    onClick={() => navigate(`/project/${it.projectId}/timeline`)}
-                    className="min-w-0 flex-1 text-left"
-                    title="Open this video's timeline"
-                  >
-                    <p className="text-sm font-medium truncate hover:text-primary transition-colors">{it.title}</p>
-                    <p className={`text-[11px] ${STATUS_STYLE[it.status]}`}>
-                      {it.status === 'Complete' ? '✓ Complete' : it.status === 'Error' ? `✗ ${it.error ?? 'Failed'}` : it.status + '…'}
-                    </p>
-                  </button>
-                  {it.status === 'Complete' && it.outputUrl && (
-                    <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
-                      <a href={it.outputUrl} target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1 text-xs text-primary hover:underline">
-                        <Eye className="w-3.5 h-3.5" /> View
-                      </a>
-                      <a href={it.outputUrl} target="_blank" rel="noreferrer" download
-                        className="flex items-center gap-1 text-xs text-primary hover:underline">
-                        <Download className="w-3.5 h-3.5" /> Download
-                      </a>
+              {run.items.map((it) => {
+                const itemReport = reports[it.projectId];
+                const isOpen = expanded.has(it.projectId);
+                return (
+                  <div key={it.projectId}>
+                    <div className="px-4 py-2.5 flex items-center gap-3 hover:bg-muted/30">
+                      <button
+                        onClick={() => navigate(`/project/${it.projectId}/timeline`)}
+                        className="min-w-0 flex-1 text-left"
+                        title="Open this video's timeline"
+                      >
+                        <p className="text-sm font-medium truncate hover:text-primary transition-colors">{it.title}</p>
+                        <p className={`text-[11px] ${STATUS_STYLE[it.status]}`}>
+                          {it.status === 'Complete' ? '✓ Complete' : it.status === 'Error' ? `✗ ${it.error ?? 'Failed'}` : it.status + '…'}
+                        </p>
+                      </button>
+                      {itemReport && (
+                        <button
+                          onClick={() => toggleExpanded(it.projectId)}
+                          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground shrink-0"
+                          title="Show this video's optimization report"
+                          aria-expanded={isOpen}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-primary" />
+                          <span className="hidden sm:inline">Optimization report</span>
+                          {itemReport.cost.savedUsd > 0 && (
+                            <Badge variant="default" className="h-4 px-1.5 text-[10px] leading-none">saved {usd(itemReport.cost.savedUsd)}</Badge>
+                          )}
+                          <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                        </button>
+                      )}
+                      {it.status === 'Complete' && it.outputUrl && (
+                        <div className="flex items-center gap-3 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <a href={it.outputUrl} target="_blank" rel="noreferrer"
+                            className="flex items-center gap-1 text-xs text-primary hover:underline">
+                            <Eye className="w-3.5 h-3.5" /> View
+                          </a>
+                          <a href={it.outputUrl} target="_blank" rel="noreferrer" download
+                            className="flex items-center gap-1 text-xs text-primary hover:underline">
+                            <Download className="w-3.5 h-3.5" /> Download
+                          </a>
+                        </div>
+                      )}
+                      {it.status === 'Complete' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        : it.status === 'Error' ? <XCircle className="w-4 h-4 text-destructive shrink-0" />
+                        : <Loader2 className="w-4 h-4 text-muted-foreground animate-spin shrink-0" />}
                     </div>
-                  )}
-                  {it.status === 'Complete' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    : it.status === 'Error' ? <XCircle className="w-4 h-4 text-destructive shrink-0" />
-                    : <Loader2 className="w-4 h-4 text-muted-foreground animate-spin shrink-0" />}
-                </div>
-              ))}
+                    {itemReport && isOpen && (
+                      <div className="px-4 pb-4 pt-1 bg-muted/20">
+                        <OptimizationReportBody
+                          report={itemReport}
+                          compact
+                          live={it.status === 'Rendering'}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

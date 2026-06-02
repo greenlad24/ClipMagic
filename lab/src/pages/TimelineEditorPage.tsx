@@ -16,7 +16,7 @@ import { uploadFile } from 'zite-file-upload-sdk';
 import { useUndoRedo } from '@/hooks/useUndoRedo';
 import { renderInBrowser, RenderProgress, RenderDiagnostics, ClipDiagnostic, formatLabel, fileExtension, preflightValidation } from '@/utils/browserRenderer';
 import FinalRenderPanel from '@/components/FinalRenderPanel';
-import OptimizationReportPanel from '@/components/OptimizationReportPanel';
+import OptimizationReportPanel, { OptimizationReportBody, parseReport } from '@/components/OptimizationReportPanel';
 import VideoCanvas from '@/components/timeline/VideoCanvas';
 import TimelinePanel from '@/components/timeline/TimelinePanel';
 import PropertyPanel from '@/components/timeline/PropertyPanel';
@@ -427,6 +427,7 @@ export default function TimelineEditorPage() {
 
   const duration = project?.durationSeconds ?? 60;
   const selectedShot = shots.find(s => s.id === selectedId) ?? null;
+  const optimizationReport = parseReport(project?.optimizationReportJson);
 
   if (authLoading || loading) {
     return (
@@ -671,8 +672,8 @@ export default function TimelineEditorPage() {
 
       {/* Export progress overlay */}
       {renderProgress && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center">
-          <div className="bg-card border border-border rounded-2xl p-8 w-[420px] shadow-xl flex flex-col gap-5">
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className={`bg-card border border-border rounded-2xl p-8 shadow-xl flex flex-col gap-5 max-h-[90vh] overflow-y-auto ${optimizationReport ? 'w-[min(640px,94vw)]' : 'w-[420px]'}`}>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                 {renderProgress.pct >= 1
@@ -717,6 +718,26 @@ export default function TimelineEditorPage() {
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Optimization report — cost figures are final by export time. This
+                is a browser render, so the render-speed numbers reflect the
+                server FFmpeg path, not this local export. */}
+            {optimizationReport && (
+              <div className="border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <Sparkles className="w-4 h-4 text-primary" />
+                  <p className="text-sm font-semibold text-foreground">Optimization Report</p>
+                  <span className="text-[11px] text-muted-foreground ml-auto">
+                    real API usage · prices {optimizationReport.pricingSourceDate}
+                  </span>
+                </div>
+                <OptimizationReportBody
+                  report={optimizationReport}
+                  compact
+                  renderModeNote="browser render — speed stats reflect the server FFmpeg render"
+                />
               </div>
             )}
           </div>
