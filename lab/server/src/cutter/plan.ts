@@ -52,6 +52,9 @@ export interface CutPlan {
 const FILLERS = new Set([
   "um", "umm", "ummm", "uhm", "uhmm",
   "uh", "uhh", "uhhh", "er", "err", "erm", "ehm",
+  // Non-lexical hesitations. "mm"/"mhm"/"hmm" are pure thinking-sounds in raw
+  // narration (never real words), so they're safe to trim alongside um/uh.
+  "mm", "mmm", "mhm", "hmm", "hmmm", "huh",
 ]);
 
 function normalizeToken(w: string): string {
