@@ -32,6 +32,42 @@ export interface StorageItem {
   size: number;        // bytes
   mtime: number;       // epoch ms
   url?: string;        // serve URL (for preview/download)
+  /** Upload role: which part of the app references this file. */
+  kind?: "music" | "promo" | "narrator";
+}
+
+/** Extract the upload id/token from an /api/uploads/<id> (or bare) URL. */
+function uploadIdFromUrl(url: unknown): string | null {
+  if (typeof url !== "string" || !url) return null;
+  const m = url.match(/\/(?:api\/)?uploads\/([^/?#]+)/);
+  const token = m ? decodeURIComponent(m[1]) : url;
+  // token may be "<id>" or "<id>.<ext>" — strip an extension.
+  return token.replace(/\.[a-z0-9]+$/i, "");
+}
+
+/** Collect the set of upload ids referenced as music / promo / narration. */
+function referencedUploadIds(): { music: Set<string>; promo: Set<string>; narrator: Set<string> } {
+  const music = new Set<string>();
+  const promo = new Set<string>();
+  const narrator = new Set<string>();
+  const collect = (table: string, urlFields: string[], target: Set<string>) => {
+    try {
+      const rows = db.prepare(`SELECT doc FROM ${table}`).all() as Array<{ doc: string }>;
+      for (const r of rows) {
+        let doc: any;
+        try { doc = JSON.parse(r.doc); } catch { continue; }
+        for (const f of urlFields) {
+          const id = uploadIdFromUrl(doc?.[f]);
+          if (id) target.add(id);
+        }
+      }
+    } catch { /* table may not exist */ }
+  };
+  collect("z_music_tracks", ["audioUrl"], music);
+  collect("z_promo_videos", ["videoUrl"], promo);
+  // Narrator = the source video/audio attached to projects.
+  collect("z_projects", ["narrationUrl", "audioUrl"], narrator);
+  return { music, promo, narrator };
 }
 
 /** Resolve a category+name to an absolute path, rejecting any traversal. */
@@ -72,7 +108,9 @@ export async function listStorage() {
   const outputs = listDir("outputs");
   const tmp = listDir("tmp");
 
-  // Enrich uploads from the files table (id / original name / mime).
+  // Enrich uploads from the files table (id / original name / mime) and tag the
+  // role (music / promo / narrator) by cross-referencing the app's records.
+  const refs = referencedUploadIds();
   try {
     const rows = db
       .prepare("SELECT id, stored, original, mime FROM files")
@@ -85,6 +123,11 @@ export async function listStorage() {
         f.original = r.original ?? undefined;
         f.mime = r.mime ?? undefined;
       }
+      // Classify by the upload id (fall back to the on-disk name without ext).
+      const fid = f.id ?? f.name.replace(/\.[a-z0-9]+$/i, "");
+      if (refs.music.has(fid)) f.kind = "music";
+      else if (refs.promo.has(fid)) f.kind = "promo";
+      else f.kind = "narrator"; // everything else is narrator source media
       f.url = `/api/uploads/${encodeURIComponent(f.id ?? f.name)}`;
     }
   } catch {
@@ -92,15 +135,21 @@ export async function listStorage() {
   }
   for (const f of outputs) f.url = `/api/outputs/${encodeURIComponent(f.name)}`;
 
+  // Split uploads into role-based groups for the UI.
+  const narratorUploads = uploads.filter((f) => f.kind === "narrator");
+  const musicUploads = uploads.filter((f) => f.kind === "music");
+  const promoUploads = uploads.filter((f) => f.kind === "promo");
+
   // Biggest first — that's what the operator wants to clear.
   const bySize = (a: StorageItem, b: StorageItem) => b.size - a.size;
-  uploads.sort(bySize);
-  outputs.sort(bySize);
-  tmp.sort(bySize);
+  [uploads, outputs, tmp, narratorUploads, musicUploads, promoUploads].forEach((a) => a.sort(bySize));
 
   const sum = (arr: StorageItem[]) => arr.reduce((s, f) => s + f.size, 0);
   const totals = {
     uploads: sum(uploads),
+    narrator: sum(narratorUploads),
+    music: sum(musicUploads),
+    promo: sum(promoUploads),
     outputs: sum(outputs),
     tmp: sum(tmp),
     all: sum(uploads) + sum(outputs) + sum(tmp),
@@ -121,12 +170,22 @@ export async function listStorage() {
   }
 
   return {
-    uploads,
+    uploads,                 // all uploads (kept for back-compat)
+    narratorUploads,         // narrator source videos only (not music/promo)
+    musicUploads,            // background-music tracks
+    promoUploads,            // promo-library videos
     outputs,
     tmp,
     totals,
     disk,
-    counts: { uploads: uploads.length, outputs: outputs.length, tmp: tmp.length },
+    counts: {
+      uploads: uploads.length,
+      narrator: narratorUploads.length,
+      music: musicUploads.length,
+      promo: promoUploads.length,
+      outputs: outputs.length,
+      tmp: tmp.length,
+    },
   };
 }
 

@@ -19,14 +19,18 @@ interface StorageItem {
   size: number;
   mtime: number;
   url?: string;
+  kind?: 'music' | 'promo' | 'narrator';
 }
 interface StorageData {
   uploads: StorageItem[];
+  narratorUploads: StorageItem[];
+  musicUploads: StorageItem[];
+  promoUploads: StorageItem[];
   outputs: StorageItem[];
   tmp: StorageItem[];
-  totals: { uploads: number; outputs: number; tmp: number; all: number };
+  totals: { uploads: number; narrator: number; music: number; promo: number; outputs: number; tmp: number; all: number };
   disk: { total: number; free: number } | null;
-  counts: { uploads: number; outputs: number; tmp: number };
+  counts: { uploads: number; narrator: number; music: number; promo: number; outputs: number; tmp: number };
 }
 
 const fmtBytes = (n: number) => {
@@ -38,10 +42,22 @@ const fmtBytes = (n: number) => {
 const fmtDate = (ms: number) => new Date(ms).toLocaleString();
 const keyOf = (it: StorageItem) => `${it.category}/${it.name}`;
 
-const SECTIONS: { cat: Category; label: string; icon: typeof Film; hint: string; danger?: boolean }[] = [
-  { cat: 'outputs', label: 'Renders', icon: Film, hint: 'Finished export videos. Safe to delete — you can re-export.' },
-  { cat: 'uploads', label: 'Uploads', icon: Upload, hint: 'Source media (narration, music). Deleting one breaks any project that uses it.', danger: true },
-  { cat: 'tmp', label: 'Download cache', icon: Database, hint: 'Cached remote downloads. Always safe — re-fetched on demand.' },
+// dataKey = which array in StorageData to render; cat = delete category sent to
+// the server (all upload groups delete as "uploads"); totalKey = totals field.
+const SECTIONS: {
+  dataKey: 'outputs' | 'narratorUploads' | 'musicUploads' | 'promoUploads' | 'tmp';
+  totalKey: keyof StorageData['totals'];
+  cat: Category;
+  label: string;
+  icon: typeof Film;
+  hint: string;
+  danger?: boolean;
+}[] = [
+  { dataKey: 'outputs', totalKey: 'outputs', cat: 'outputs', label: 'Renders', icon: Film, hint: 'Finished export videos. Safe to delete — you can re-export.' },
+  { dataKey: 'narratorUploads', totalKey: 'narrator', cat: 'uploads', label: 'Narrator videos', icon: Upload, hint: 'Source narration videos you uploaded (not music or promo). Deleting one breaks any project that uses it.', danger: true },
+  { dataKey: 'musicUploads', totalKey: 'music', cat: 'uploads', label: 'Background music', icon: Database, hint: 'Music tracks in your library. Deleting one removes it from projects using it.', danger: true },
+  { dataKey: 'promoUploads', totalKey: 'promo', cat: 'uploads', label: 'Promo videos', icon: Film, hint: 'Promo-library videos. Deleting one removes it from the AI director\'s footage pool.', danger: true },
+  { dataKey: 'tmp', totalKey: 'tmp', cat: 'tmp', label: 'Download cache', icon: Database, hint: 'Cached remote downloads. Always safe — re-fetched on demand.' },
 ];
 
 export default function StoragePage() {
@@ -67,7 +83,9 @@ export default function StoragePage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const allItems: StorageItem[] = data ? [...data.outputs, ...data.uploads, ...data.tmp] : [];
+  const allItems: StorageItem[] = data
+    ? [...data.outputs, ...data.narratorUploads, ...data.musicUploads, ...data.promoUploads, ...data.tmp]
+    : [];
   const selectedItems = allItems.filter((it) => selected.has(keyOf(it)));
   const selectedBytes = selectedItems.reduce((s, it) => s + it.size, 0);
 
@@ -145,7 +163,7 @@ export default function StoragePage() {
               <div className={`h-full rounded-full ${diskPct! > 90 ? 'bg-destructive' : diskPct! > 75 ? 'bg-amber-500' : 'bg-primary'}`} style={{ width: `${diskPct}%` }} />
             </div>
             <div className="text-[11px] text-muted-foreground">
-              ClipMagic data: {fmtBytes(data.totals.all)} ({fmtBytes(data.totals.outputs)} renders · {fmtBytes(data.totals.uploads)} uploads · {fmtBytes(data.totals.tmp)} cache)
+              ClipMagic data: {fmtBytes(data.totals.all)} ({fmtBytes(data.totals.outputs)} renders · {fmtBytes(data.totals.narrator)} narrator · {fmtBytes(data.totals.music)} music · {fmtBytes(data.totals.promo)} promo · {fmtBytes(data.totals.tmp)} cache)
             </div>
           </div>
         )}
@@ -156,12 +174,12 @@ export default function StoragePage() {
           </div>
         )}
 
-        {data && SECTIONS.map(({ cat, label, icon: Icon, hint, danger }) => {
-          const items = data[cat];
-          const total = data.totals[cat];
+        {data && SECTIONS.map(({ dataKey, totalKey, label, icon: Icon, hint, danger }) => {
+          const items = data[dataKey];
+          const total = data.totals[totalKey];
           const allSel = items.length > 0 && items.every((it) => selected.has(keyOf(it)));
           return (
-            <div key={cat} className="rounded-xl border border-border overflow-hidden">
+            <div key={dataKey} className="rounded-xl border border-border overflow-hidden">
               <div className="px-4 py-3 bg-card/40 border-b border-border flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
