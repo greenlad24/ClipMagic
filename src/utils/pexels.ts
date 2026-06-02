@@ -107,6 +107,7 @@ export async function searchPexelsVideo(
   query: string,
   minDurationSec: number,
   tag: string,
+  exclude?: Set<string>,
 ): Promise<StockClip | null> {
   const key = (process.env.PEXELS_API_KEY ?? "").trim();
   if (!key) return null;
@@ -148,6 +149,9 @@ export async function searchPexelsVideo(
     let rejected = 0;
     for (const v of videos) {
       const dur = typeof v.duration === "number" ? v.duration : 0;
+      // Skip whole videos we've already used (by Pexels id) so the same clip is
+      // never inserted twice in one render.
+      if (exclude && v.id != null && exclude.has(`id:${v.id}`)) continue;
       const files: any[] = Array.isArray(v.video_files) ? v.video_files : [];
       for (const f of files) {
         inspected++;
@@ -155,6 +159,7 @@ export async function searchPexelsVideo(
         const h = f.height ?? 0;
         const link = (f.link as string | undefined) ?? "";
         if (!link) { rejected++; continue; }
+        if (exclude && exclude.has(link)) { rejected++; continue; } // already used
         if (IMAGE_EXT.test(link)) { rejected++; continue; }       // never an image
         if (/\.m3u8(\?|$)/i.test(link)) { rejected++; continue; } // skip HLS manifests
         // The link itself MUST be a video container — this is what guarantees

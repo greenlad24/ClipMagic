@@ -58,6 +58,14 @@ export default createEndpoint({
     const usedPromoUrls = new Set<string>(
       shots.filter(s => s.shotType === 'Screencast' && s.captureStatus === 'Done' && s.clipUrl).map(s => s.clipUrl!)
     );
+    // Stock (Pexels) clips already used in this video — keep them UNIQUE so the
+    // same clip is never inserted twice. Seeded with any already-assigned stock.
+    const usedStockUrls = new Set<string>(
+      shots
+        .filter(s => s.clipUrl)
+        .map(s => { try { return JSON.parse(s.uiLabelsJson || '{}')?.brollTrack === 'stock' ? s.clipUrl! : ''; } catch { return ''; } })
+        .filter(Boolean)
+    );
 
     const screenshotPending = shots
       .filter(s => s.shotType === 'Screencast' && s.captureStatus !== 'Done')
@@ -219,8 +227,9 @@ export default createEndpoint({
               tag,
             );
             const beatDur = Math.max((shot.endTime ?? 4) - (shot.startTime ?? 0), 1);
-            const stock = await searchPexelsVideo(stockQuery, beatDur, tag);
+            const stock = await searchPexelsVideo(stockQuery, beatDur, tag, usedStockUrls);
             if (stock) {
+              usedStockUrls.add(stock.url); // reserve immediately so no duplicate
               await Shots.update({
                 id: shot.id,
                 record: {

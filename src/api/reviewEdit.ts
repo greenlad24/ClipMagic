@@ -53,6 +53,7 @@ Verdicts:
 
 HARD RULES:
 - Aim to change as FEW beats as possible. If you're unsure, "keep". A clip that is on-topic and reasonable = "keep", even if not perfect.
+- UNIQUENESS: the same clip must NEVER appear twice in the video. If two beats show the same visual, "replace" the later one with a different relevant clip.
 - NEVER turn a product/promo/screencast beat into the narrator. Prefer "replace" over "revert" everywhere; "revert" is only for a clearly-wrong stock/generated clip.
 - Never touch the hook beat or the final CTA beat.
 - "critical mismatch" means the footage is about a DIFFERENT subject/product/place than the words — not "could be a bit more relevant".
@@ -100,6 +101,73 @@ export default createEndpoint({
     const usedPromoUrls = new Set<string>(
       ordered.filter((s) => s.shotType === 'Screencast' && s.clipUrl).map((s) => s.clipUrl!),
     );
+
+    // ── Uniqueness pass (deterministic): no clip may appear twice ─────────────
+    // The reviewer must ensure every b-roll/screencast is UNIQUE. Scan overlays
+    // in order; the first use of a clip is kept, any later duplicate is replaced
+    // with a fresh clip (a new unique Pexels stock, or a different promo).
+    let dedup = 0;
+    {
+      const seen = new Set<string>();
+      for (const s of ordered) {
+        if (s.shotType === 'Talking Head' || !s.clipUrl) continue;
+        let labels: Record<string, any> = {};
+        try { if (s.uiLabelsJson) labels = JSON.parse(s.uiLabelsJson); } catch {}
+        if (!seen.has(s.clipUrl)) { seen.add(s.clipUrl); usedPromoUrls.add(s.clipUrl); continue; }
+
+        // Duplicate — find a unique replacement.
+        const beatDur = Math.max((s.endTime ?? 4) - (s.startTime ?? 0), 1);
+        const isStock = labels.brollTrack === 'stock';
+        const isPromo = s.shotType === 'Screencast' || labels.visualIntent === 'screencast';
+        let replaced = false;
+
+        if (isPromo && promoPool.length > 0) {
+          // Try a different promo not yet used.
+          const ctx: MatchContext = { matchKeywords: Array.isArray(labels.matchKeywords) ? labels.matchKeywords : [], transcriptSnippet: labels.transcriptSnippet ?? '', productEntity: labels.productEntity, featureEntity: labels.featureEntity };
+          const pool = promoPool.filter((p) => !usedPromoUrls.has(p.url));
+          if (pool.length > 0) {
+            const result = await retrieveScreencast(client, labels.transcriptSnippet ?? s.caption ?? 'product', pool, beatDur, `[reviewEdit:dedup:${s.id}]`, ctx);
+            if (result && result.retrieval.confidence >= WEAK_SCREENCAST_THRESHOLD && !seen.has(result.retrieval.url)) {
+              usedPromoUrls.add(result.retrieval.url); seen.add(result.retrieval.url);
+              await Shots.update({ id: s.id, record: { clipUrl: result.retrieval.url, uiLabelsJson: JSON.stringify({ ...labels, ...result.labels, dedupReplaced: true }) } });
+              console.log(`[reviewEdit] 🔁 De-duplicated promo at ${(s.startTime ?? 0).toFixed(1)}s → ${result.retrieval.url}`);
+              dedup++; replaced = true;
+            }
+          }
+        }
+        if (!replaced && (isStock || !isPromo)) {
+          // Fetch a fresh unique stock clip for the same query.
+          const q = labels.stockQuery || labels.transcriptSnippet || s.caption || '';
+          const stock = await searchPexelsVideo(q, beatDur, `[reviewEdit:dedup:${s.id}]`, seen);
+          if (stock && !seen.has(stock.url)) {
+            seen.add(stock.url); usedPromoUrls.add(stock.url);
+            await Shots.update({ id: s.id, record: { clipUrl: stock.url, uiLabelsJson: JSON.stringify({ ...labels, brollTrack: 'stock', brollSource: 'pexels', mediaType: 'video', stockQuery: q, dedupReplaced: true }) } });
+            console.log(`[reviewEdit] 🔁 De-duplicated stock at ${(s.startTime ?? 0).toFixed(1)}s → ${stock.url}`);
+            dedup++; replaced = true;
+          }
+        }
+        if (!replaced) {
+          // No unique replacement found — drop this duplicate to the narrator so
+          // the same clip doesn't show twice (only for non-promo; promos never
+          // revert, so keep it as a last resort but flag it).
+          if (isPromo) {
+            console.warn(`[reviewEdit] ⚠ Duplicate promo at ${(s.startTime ?? 0).toFixed(1)}s — no alternative; keeping (promos never revert)`);
+            seen.add(s.clipUrl);
+          } else {
+            await Shots.update({ id: s.id, record: { shotType: 'Talking Head', clipUrl: null, uiLabelsJson: JSON.stringify({ ...labels, visualIntent: 'talking_head', showNarrator: true, overlayDelaySeconds: 0, dedupRevert: true }) } });
+            console.log(`[reviewEdit] ⤵ Duplicate b-roll at ${(s.startTime ?? 0).toFixed(1)}s — no unique replacement, reverted to narrator`);
+            dedup++;
+          }
+        }
+      }
+    }
+
+    // Reload after dedup so the relevance review sees the updated clips.
+    if (dedup > 0) {
+      const fresh = await Shots.findAll({ filters: { project: projectId }, limit: 200 });
+      ordered.length = 0;
+      ordered.push(...[...fresh.records].sort((a, b) => (a.startTime ?? 0) - (b.startTime ?? 0)));
+    }
 
     const lastIdx = ordered.length - 1;
     const beats = ordered.map((s, i) => {
@@ -229,7 +297,7 @@ export default createEndpoint({
       await Projects.update({ id: projectId, record: { status: 'Capturing' } });
     }
 
-    console.log(`[reviewEdit] Reviewed ${beats.length} — kept ${kept}, reverted ${reverted}, added ${added} (pendingBroll ${pendingBroll})`);
+    console.log(`[reviewEdit] Reviewed ${beats.length} — kept ${kept}, reverted ${reverted}, added ${added}, de-duplicated ${dedup} (pendingBroll ${pendingBroll})`);
     return { reviewed: beats.length, reverted, added, kept, pendingBroll };
   },
 });
