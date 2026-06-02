@@ -237,9 +237,7 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
       const lineH = Math.max(ink.h, lineRef.h);
       const boxH = lineH / fill;
       const pad = (boxH - lineH) / 2; // equal padding all sides
-      // Extra horizontal breathing room inside the box (style-configurable).
-      const padX = pad + (style.boxPadX ?? 0) * fs;
-      const boxW = ink.w + 2 * padX;
+      const boxW = ink.w + 2 * pad;
       const radius = Math.min(style.boxRadius ?? 60, boxH / 2);
       const boxColor = assColor(style.boxColor, "000000");
       events.push(

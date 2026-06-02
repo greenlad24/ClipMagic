@@ -71,11 +71,11 @@ const RENDER_WIDTH = 1080;
 const SUBTITLE_PREVIEW_STYLES: Record<string, {
   line: string; emph: string; fontPx: number; italic?: boolean; allCaps?: boolean;
   font: string; emphFont: string; weight: number; emphWeight: number;
-  shadow?: boolean; box?: boolean; boxColor?: string; highlightWord?: boolean; boxPadX?: number;
+  shadow?: boolean; box?: boolean; boxColor?: string; highlightWord?: boolean;
 }> = {
   'yellow-mont':     { line: '#FEDA03', emph: '#FFFFFF', fontPx: 96, italic: true,  font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 600, emphWeight: 800, shadow: true, highlightWord: true },
   'white-mont':      { line: '#FFFFFF', emph: '#FEDA03', fontPx: 96, italic: false, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 800, emphWeight: 800, shadow: true, highlightWord: true },
-  'yellow-box':      { line: '#F9FC26', emph: '#FFFFFF', fontPx: 108, italic: false, font: 'Alexandria, sans-serif', emphFont: 'Alexandria, sans-serif', weight: 700, emphWeight: 700, box: true, boxColor: '#000000', boxPadX: 0.32 },
+  'yellow-box':      { line: '#F9FC26', emph: '#FFFFFF', fontPx: 108, italic: false, font: 'Alexandria, sans-serif', emphFont: 'Alexandria, sans-serif', weight: 700, emphWeight: 700, box: true, boxColor: '#000000' },
   'black-on-yellow': { line: '#050000', emph: '#FFFFFF', fontPx: 88, italic: false, allCaps: true, font: 'Montserrat, sans-serif', emphFont: 'Montserrat, sans-serif', weight: 900, emphWeight: 900, box: true, boxColor: '#F7BD05' },
 };
 
@@ -518,7 +518,7 @@ export default function VideoCanvas({ narrationUrl, videoChunksJson, shots, subt
                   textTransform: tpl.allCaps ? 'uppercase' : 'none',
                   lineHeight: 1.1,
                   margin: 0,
-                  padding: tpl.box ? `${baseFont * 0.16}px ${baseFont * (0.16 + (tpl.boxPadX ?? 0))}px` : 0,
+                  padding: tpl.box ? `${baseFont * 0.16}px ${baseFont * 0.16}px` : 0,
                   display: 'inline-block',
                   background: tpl.box ? tpl.boxColor : 'transparent',
                   borderRadius: tpl.box ? baseFont * 0.4 : 0,
