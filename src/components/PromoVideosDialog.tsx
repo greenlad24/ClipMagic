@@ -11,6 +11,7 @@ import {
   reindexAllPromos,
   getReindexProgress,
   getPromoIndex,
+  exportPromoIndexes,
 } from 'zite-endpoints-sdk';
 import { GetPromoVideosOutputType } from 'zite-endpoints-sdk';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -19,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Trash2, Film, Upload, Loader2, Play, Pause, Video,
-  Sparkles, Pencil, X, Check, Clock, RefreshCw, Database, Eye,
+  Sparkles, Pencil, X, Check, Clock, RefreshCw, Database, Eye, Download,
 } from 'lucide-react';
 
 type PromoVideo = GetPromoVideosOutputType['videos'][0];
@@ -421,6 +422,20 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
           await reload();
           if ((p.failed ?? 0) > 0) toast.warning(`Re-index finished: ${p.indexed} indexed, ${p.failed} failed.`);
           else if ((p.total ?? 0) > 0) toast.success(`Re-index complete: ${p.indexed} videos indexed.`);
+          // Offer the full index JSON for review as soon as it's done.
+          if ((p.total ?? 0) > 0) {
+            try {
+              const data = await exportPromoIndexes({});
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `promo-indexes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 10000);
+              toast.success('Index JSON downloaded — paste it for review.');
+            } catch { /* user can still use the Export button */ }
+          }
           // Clear the bar a few seconds after completion.
           setTimeout(() => setReindexProg(null), 6000);
         }
@@ -453,6 +468,27 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
     } catch (e: any) {
       toast.error('Re-indexing failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
       setVisionIndexing(false);
+    }
+  };
+
+  // Download the FULL raw index JSON for all promos (for review).
+  const [exporting, setExporting] = useState(false);
+  const handleExportIndexes = async () => {
+    setExporting(true);
+    try {
+      const data = await exportPromoIndexes({});
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `promo-indexes-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+      toast.success(`Exported ${data.count ?? 0} promo indexes.`);
+    } catch (e: any) {
+      toast.error('Export failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -668,6 +704,17 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
               >
                 {visionIndexing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Video className="w-3 h-3" />}
                 {visionIndexing ? 'Re-indexing…' : 'Re-index all'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs gap-1.5"
+                disabled={exporting}
+                onClick={handleExportIndexes}
+                title="Download the full raw index JSON for every promo video (for review)."
+              >
+                {exporting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                {exporting ? 'Exporting…' : 'Export index JSON'}
               </Button>
             </div>
           </DialogTitle>

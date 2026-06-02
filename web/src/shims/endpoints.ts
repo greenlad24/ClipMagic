@@ -86,6 +86,7 @@ export const importPromoIndex = endpoint("importPromoIndex");
 export const reindexAllPromos = endpoint("reindexAllPromos");
 export const getReindexProgress = endpoint("getReindexProgress");
 export const getPromoIndex = endpoint("getPromoIndex");
+export const exportPromoIndexes = endpoint("exportPromoIndexes");
 export const pollBrollStatus = endpoint("pollBrollStatus");
 export const recaptureShot = endpoint("recaptureShot");
 export const runPipeline = endpoint("runPipeline");

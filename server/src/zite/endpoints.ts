@@ -226,6 +226,38 @@ const getPromoIndex: Handler = async (input) => {
     segments: Array.isArray(index?.segments) ? index.segments : [],
   };
 };
+
+/**
+ * Export the FULL raw content-index JSON for review — all promo videos (or one
+ * if videoId is given). Returns a single JSON object you can copy/paste.
+ */
+const exportPromoIndexes: Handler = async (input) => {
+  const { records } = await PromoVideos.findAll({ limit: 1000 });
+  const pick = input?.videoId ?? input?.id;
+  const out = records
+    .filter((v) => (pick ? v.id === pick : true))
+    .map((v) => {
+      let index: any = null;
+      if (v.contentIndexJson) {
+        try { index = JSON.parse(v.contentIndexJson as string); } catch { index = "<<unparseable>>"; }
+      }
+      return {
+        id: v.id,
+        productName: v.productName ?? null,
+        videoUrl: v.videoUrl ?? null,
+        indexStatus: v.indexStatus ?? null,
+        mediaKind: v.mediaKind ?? null,
+        keywords: v.keywords ?? null,
+        indexMode: index && typeof index === "object" ? index.mode ?? null : null,
+        index,
+      };
+    });
+  return {
+    exportedAt: new Date().toISOString(),
+    count: out.length,
+    videos: out,
+  };
+};
 // savePromoVideo runs the original endpoint (it derives product metadata via an
 // LLM, with a filename fallback) — wired through the bundle further below.
 const updatePromoVideo: Handler = async (input) => {
@@ -1035,6 +1067,7 @@ export const HANDLERS: Record<string, Handler> = {
   getServiceStatus,
   getPromoVideos,
   getPromoIndex,
+  exportPromoIndexes,
   savePromoVideo,
   updatePromoVideo,
   deletePromoVideo,
