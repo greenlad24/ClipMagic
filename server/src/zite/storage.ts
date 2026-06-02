@@ -45,28 +45,49 @@ function uploadIdFromUrl(url: unknown): string | null {
   return token.replace(/\.[a-z0-9]+$/i, "");
 }
 
-/** Collect the set of upload ids referenced as music / promo / narration. */
-function referencedUploadIds(): { music: Set<string>; promo: Set<string>; narrator: Set<string> } {
-  const music = new Set<string>();
-  const promo = new Set<string>();
-  const narrator = new Set<string>();
-  const collect = (table: string, urlFields: string[], target: Set<string>) => {
+/** Normalize a name/filename for fuzzy matching (lowercase, alnum only). */
+function normName(s: unknown): string {
+  return typeof s === "string" ? s.toLowerCase().replace(/\.[a-z0-9]+$/i, "").replace(/[^a-z0-9]+/g, "") : "";
+}
+
+/** Audio file? (music tracks). */
+function isAudioFile(name: string, mime?: string): boolean {
+  if (mime && mime.startsWith("audio/")) return true;
+  return /\.(mp3|m4a|aac|wav|flac|ogg|opus|wma)$/i.test(name);
+}
+
+/**
+ * Collect, per role, the upload ids AND normalized names referenced by the
+ * app's records — so we can classify an upload by URL OR by filename match
+ * (the URL match alone misses bulk-imported / re-uploaded promos).
+ */
+function referencedUploads(): {
+  music: { ids: Set<string>; names: Set<string> };
+  promo: { ids: Set<string>; names: Set<string> };
+  narrator: { ids: Set<string> };
+} {
+  const music = { ids: new Set<string>(), names: new Set<string>() };
+  const promo = { ids: new Set<string>(), names: new Set<string>() };
+  const narrator = { ids: new Set<string>() };
+  const rowsOf = (table: string): any[] => {
     try {
-      const rows = db.prepare(`SELECT doc FROM ${table}`).all() as Array<{ doc: string }>;
-      for (const r of rows) {
-        let doc: any;
-        try { doc = JSON.parse(r.doc); } catch { continue; }
-        for (const f of urlFields) {
-          const id = uploadIdFromUrl(doc?.[f]);
-          if (id) target.add(id);
-        }
-      }
-    } catch { /* table may not exist */ }
+      return (db.prepare(`SELECT doc FROM ${table}`).all() as Array<{ doc: string }>)
+        .map((r) => { try { return JSON.parse(r.doc); } catch { return null; } })
+        .filter(Boolean);
+    } catch { return []; }
   };
-  collect("z_music_tracks", ["audioUrl"], music);
-  collect("z_promo_videos", ["videoUrl"], promo);
-  // Narrator = the source video/audio attached to projects.
-  collect("z_projects", ["narrationUrl", "audioUrl"], narrator);
+  for (const d of rowsOf("z_music_tracks")) {
+    const id = uploadIdFromUrl(d?.audioUrl); if (id) music.ids.add(id);
+    const n = normName(d?.trackName); if (n) music.names.add(n);
+  }
+  for (const d of rowsOf("z_promo_videos")) {
+    const id = uploadIdFromUrl(d?.videoUrl); if (id) promo.ids.add(id);
+    const n = normName(d?.productName); if (n) promo.names.add(n);
+  }
+  for (const d of rowsOf("z_projects")) {
+    const a = uploadIdFromUrl(d?.narrationUrl); if (a) narrator.ids.add(a);
+    const b = uploadIdFromUrl(d?.audioUrl); if (b) narrator.ids.add(b);
+  }
   return { music, promo, narrator };
 }
 
@@ -109,8 +130,10 @@ export async function listStorage() {
   const tmp = listDir("tmp");
 
   // Enrich uploads from the files table (id / original name / mime) and tag the
-  // role (music / promo / narrator) by cross-referencing the app's records.
-  const refs = referencedUploadIds();
+  // role (music / promo / narrator) by cross-referencing the app's records —
+  // matching on upload-id OR original filename, since bulk-imported / re-uploaded
+  // promos won't have a URL pointing back at the upload id.
+  const refs = referencedUploads();
   try {
     const rows = db
       .prepare("SELECT id, stored, original, mime FROM files")
@@ -123,11 +146,26 @@ export async function listStorage() {
         f.original = r.original ?? undefined;
         f.mime = r.mime ?? undefined;
       }
-      // Classify by the upload id (fall back to the on-disk name without ext).
       const fid = f.id ?? f.name.replace(/\.[a-z0-9]+$/i, "");
-      if (refs.music.has(fid)) f.kind = "music";
-      else if (refs.promo.has(fid)) f.kind = "promo";
-      else f.kind = "narrator"; // everything else is narrator source media
+      const fname = normName(f.original ?? f.name);
+      // Fuzzy name match: exact, or either side contains the other (>=4 chars)
+      // so "veo31" matches the promo "Veo 3.1 NEW" → "veo31new".
+      const nameMatches = (names: Set<string>) => {
+        if (!fname) return false;
+        if (names.has(fname)) return true;
+        for (const n of names) {
+          if (n.length >= 4 && fname.length >= 4 && (n.includes(fname) || fname.includes(n))) return true;
+        }
+        return false;
+      };
+      // Classify: explicit id/name reference wins; then audio→music; else narrator.
+      if (refs.music.ids.has(fid) || nameMatches(refs.music.names) || isAudioFile(f.original ?? f.name, f.mime)) {
+        f.kind = "music";
+      } else if (refs.promo.ids.has(fid) || nameMatches(refs.promo.names)) {
+        f.kind = "promo";
+      } else {
+        f.kind = "narrator";
+      }
       f.url = `/api/uploads/${encodeURIComponent(f.id ?? f.name)}`;
     }
   } catch {
