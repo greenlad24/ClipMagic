@@ -512,10 +512,19 @@ export function reportLogLine(r: OptimizationReport): string {
  */
 export function mergeRenderStats(
   report: OptimizationReport,
-  stats: { captionMeasureHits: number; captionMeasureMisses: number; ffmpegSpawns: number },
+  stats: {
+    captionMeasureHits: number;
+    captionMeasureMisses: number;
+    ffmpegSpawns: number;
+    /** Extra ffmpeg spawns from the motion-graphics composite pass (0 if off). */
+    motionGraphicsSpawns?: number;
+  },
 ): OptimizationReport {
   const speed: SpeedLineItem[] = report.speed.filter(
-    (s) => s.label !== "Caption-measurement memoization" && s.label !== "ffmpeg invocations",
+    (s) =>
+      s.label !== "Caption-measurement memoization" &&
+      s.label !== "ffmpeg invocations" &&
+      s.label !== "Motion-graphics render",
   );
   if (stats.captionMeasureHits > 0) {
     // Each avoided measurement would have cost 2 ffmpeg spawns.
@@ -525,9 +534,18 @@ export function mergeRenderStats(
       detail: `${stats.captionMeasureHits} repeated caption measurements served from cache (${stats.captionMeasureMisses} computed) at render time — avoided ~${avoidedSpawns} extra ffmpeg measurement spawns. Compute/speed saving, $0 API impact.`,
     });
   }
+  const motionSpawns = stats.motionGraphicsSpawns ?? 0;
+  if (motionSpawns > 0) {
+    // Honest compute cost — NOT a saving. Reflects the extra render time/compute
+    // the Remotion motion-graphics composite pass added to this run.
+    speed.push({
+      label: "Motion-graphics render",
+      detail: `Remotion motion graphics composited this run: +1 headless-Chromium render per graphic and ${motionSpawns} extra ffmpeg overlay spawn(s). This is added compute (more render time), surfaced honestly — not a cost saving.`,
+    });
+  }
   speed.push({
     label: "ffmpeg invocations",
-    detail: `${stats.ffmpegSpawns} ffmpeg process spawn(s) measured for this run's render (1 main render + ${stats.captionMeasureMisses * 2} caption-measurement spawns).`,
+    detail: `${stats.ffmpegSpawns} ffmpeg process spawn(s) measured for this run's render (1 main render + ${stats.captionMeasureMisses * 2} caption-measurement spawns${motionSpawns > 0 ? ` + ${motionSpawns} motion-graphics overlay spawn(s)` : ""}).`,
   });
   report.speed = speed;
   report.ffmpegSpawns = stats.ffmpegSpawns;

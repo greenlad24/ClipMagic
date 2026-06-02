@@ -16,6 +16,8 @@ import { runFfmpeg } from "./ffmpeg.js";
 import type { RenderManifest } from "./manifest.js";
 import { Projects } from "../zite/store.js";
 import { mergeRenderStats, type OptimizationReport } from "../ai/runAccounting.js";
+import { applyMotionGraphics } from "../motion/stage.js";
+import fs from "node:fs";
 
 /**
  * In-process render worker pool backed by the SQLite job queue. Runs up to
@@ -75,6 +77,32 @@ async function processJob(job: RenderJob): Promise<void> {
     }
   });
 
+  // ── Motion-graphics stage (flag-gated, best-effort) ────────────────────────
+  // Composite the director's Remotion overlays onto the just-finished render. A
+  // SEPARATE pass that writes a new file and atomically replaces `abs`; if the
+  // flag is off or anything fails, `abs` is left exactly as the main render
+  // produced it (zero regression). Only manifest jobs carry motion graphics.
+  let motionSpawns = 0;
+  if (job.kind === "manifest" && config.motionGraphicsEnabled) {
+    const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
+    const graphics = manifest.motionGraphics ?? [];
+    if (graphics.length > 0) {
+      try {
+        const r = await applyMotionGraphics(abs, graphics, totalDuration);
+        if (r.replacedFile && r.replacedFile !== abs) {
+          fs.renameSync(r.replacedFile, abs);
+        }
+        motionSpawns = r.ffmpegSpawns;
+      } catch (e) {
+        console.warn(
+          `[worker] motion-graphics stage skipped for job ${job.id}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+  }
+
   completeJob(job.id, file, result.durationSec);
 
   // Complete the Optimization Report's speed section with REAL render-time
@@ -85,11 +113,12 @@ async function processJob(job: RenderJob): Promise<void> {
       const project = await Projects.findOne({ id: job.project_id });
       if (project?.optimizationReportJson) {
         const report = JSON.parse(project.optimizationReportJson as string) as OptimizationReport;
-        const ffmpegSpawns = 1 + measureStats.misses * 2;
+        const ffmpegSpawns = 1 + measureStats.misses * 2 + motionSpawns;
         const updated = mergeRenderStats(report, {
           captionMeasureHits: measureStats.hits,
           captionMeasureMisses: measureStats.misses,
           ffmpegSpawns,
+          motionGraphicsSpawns: motionSpawns,
         });
         await Projects.update({
           id: job.project_id,

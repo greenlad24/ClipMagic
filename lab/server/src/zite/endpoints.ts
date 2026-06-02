@@ -23,7 +23,8 @@ import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
-import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
+import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
+import { planMotionGraphics } from "../motion/director.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -484,6 +485,21 @@ const submitRendiJob: Handler = async (input) => {
     scenes.reduce((max, s) => Math.max(max, s.endTime), 0) ||
     0;
 
+  // ── Motion graphics (flag-gated) ───────────────────────────────────────────
+  // Ask the director where (if anywhere) tasteful Remotion overlays are
+  // motivated by the script. Best-effort: returns [] when MOTION_GRAPHICS is
+  // off, Claude is unconfigured, or nothing is warranted — the manifest is then
+  // identical to before and the render is unaffected.
+  let motionGraphics: MotionGraphicClip[] = [];
+  if (config.motionGraphicsEnabled) {
+    const beats = scenes.map((s) => ({ start: s.startTime, end: s.endTime }));
+    motionGraphics = await planMotionGraphics({
+      transcript: (project.transcript as string) || "",
+      durationSeconds: duration || 1,
+      beats,
+    });
+  }
+
   const manifest = {
     version: 1,
     projectId,
@@ -495,6 +511,7 @@ const submitRendiJob: Handler = async (input) => {
     music,
     scenes,
     subtitles,
+    motionGraphics,
     // Subtitle template: if the project pinned one, use it; otherwise ROTATE
     // randomly across the 4 approved styles per video (persist the pick so the
     // editor preview and any re-render stay consistent).

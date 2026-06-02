@@ -62,6 +62,17 @@ echo "[lab] sharing dependencies from the main app (read-only libs)…"
 ln -sfn "$ROOT_DIR/server/node_modules" "$LAB_DIR/server/node_modules"
 ln -sfn "$ROOT_DIR/web/node_modules"    "$LAB_DIR/web/node_modules"
 
+# --- Motion graphics (optional, flag-gated) ----------------------------------
+# Remotion lives in lab/remotion with its OWN deps (heavy: headless Chromium).
+# Only install them when the feature is actually on, so a normal lab run stays
+# fast and dependency-free. When off, the server's motion stage falls back to a
+# no-op (it can't import @remotion/* and renders normally).
+if [ "${MOTION_GRAPHICS:-}" = "1" ] && [ ! -d "$LAB_DIR/remotion/node_modules" ]; then
+  echo "[lab] MOTION_GRAPHICS=1 — installing Remotion deps (one-time, downloads Chromium on first render)…"
+  ( cd "$LAB_DIR/remotion" && npm install --no-audit --no-fund ) \
+    || echo "[lab] ⚠ Remotion install failed — motion graphics will fall back to off (normal render still works)."
+fi
+
 if [ "$BUILD" = "1" ]; then
   echo "[lab] building server…"
   ( cd "$LAB_DIR/server" && npm run build )

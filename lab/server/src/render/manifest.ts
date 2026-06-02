@@ -47,6 +47,34 @@ export interface Scene {
   sfxIn?: string | null;
 }
 
+/**
+ * A single Remotion-rendered motion-graphic overlay, composited (alpha) over the
+ * finished video at director-chosen times. The shapes mirror the props each
+ * Remotion composition (lab/remotion/src/compositions) accepts; `id` selects the
+ * composition and `data` is passed straight through as inputProps.
+ *
+ * These are deliberately SPARSE — a skilled editor uses 2–4 graphics in a 60s
+ * short, motivated by the content (a name intro, a key stat, a section turn),
+ * never as constant decoration. The director enforces that restraint upstream.
+ */
+export type MotionGraphicKind = "lower-third" | "stat-callout" | "section-card";
+
+export interface MotionGraphicClip {
+  /** Which Remotion composition renders this graphic. */
+  kind: MotionGraphicKind;
+  /** Output-timeline start, in seconds (when the graphic enters). */
+  startTime: number;
+  /** Output-timeline end, in seconds (when the graphic has fully exited). */
+  endTime: number;
+  /**
+   * Composition props (passed verbatim to Remotion as inputProps). Shape depends
+   * on `kind`; see the per-composition prop types in the Remotion project.
+   */
+  data: Record<string, unknown>;
+  /** Short human rationale from the director (why this graphic, here). Logged. */
+  reason?: string;
+}
+
 export interface SubtitleWord {
   text: string;
   start: number;
@@ -154,6 +182,13 @@ export interface RenderManifest {
   scenes: Scene[];
   subtitles: SubtitleEvent[];
   subtitleStyle: SubtitleStyle;
+  /**
+   * Optional Remotion motion-graphic overlays, chosen by the director and
+   * composited onto the final render. Absent/empty on every path where the
+   * MOTION_GRAPHICS flag is off or no graphic was motivated — the render is
+   * byte-for-byte unchanged in that case.
+   */
+  motionGraphics?: MotionGraphicClip[];
   meta?: unknown;
 }
 

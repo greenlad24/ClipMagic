@@ -38,11 +38,29 @@ RUN test -f dist/ai/pipeline-bundle.js \
       || (echo "ERROR: dist/ai/pipeline-bundle.js was not built" >&2; exit 1)
 RUN npm prune --omit=dev
 
+# ── Stage 2b: Remotion motion-graphics project (optional feature) ─────────────
+# Installs the @remotion/* SSR deps for the motion-graphics service. Kept in its
+# own stage so a failure here (or a future removal) never affects the core build,
+# and so its heavy deps are copied into the runtime ONLY for this feature. The
+# feature is still gated at runtime by MOTION_GRAPHICS=1.
+FROM node:22-bookworm-slim AS motion
+WORKDIR /build/remotion
+COPY remotion/package.json remotion/package-lock.json* ./
+RUN npm install --no-audit --no-fund
+COPY remotion ./
+
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim
+# Base render deps + the system libraries Remotion's headless Chromium needs.
+# The Chromium libs add ~300MB; they're harmless when MOTION_GRAPHICS is off
+# (Chromium is simply never launched). Remotion downloads its own Chromium binary
+# on first ensureBrowser() into REMOTION_BROWSER cache under /data.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        ffmpeg fonts-dejavu-core fontconfig ca-certificates \
+       libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+       libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+       libpango-1.0-0 libcairo2 libatspi2.0-0 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -52,11 +70,16 @@ COPY server/package.json ./
 COPY server/public ./public
 COPY server/assets ./assets
 COPY --from=web /build/web/dist ./web/dist
+# Remotion project (source + its node_modules) for the motion-graphics service.
+COPY --from=motion /build/remotion ./remotion
 
 ENV NODE_ENV=production \
     PORT=9090 \
     DATA_DIR=/data \
-    FRONTEND_DIR=/app/web/dist
+    FRONTEND_DIR=/app/web/dist \
+    MOTION_ENTRY_POINT=/app/remotion/src/index.ts \
+    REMOTION_BROWSER_EXECUTABLE= \
+    REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium
 
 VOLUME ["/data"]
 EXPOSE 9090
