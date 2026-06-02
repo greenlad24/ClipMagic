@@ -115,6 +115,9 @@ export interface SubtitleStyle {
   boxColor?: string;
   /** Fraction of the box height the text should fill (e.g. 0.82). */
   boxFill?: number;
+  /** Extra horizontal padding inside the box, as a fraction of the font size
+   *  (added to each side on top of the default symmetric padding). */
+  boxPadX?: number;
   /** Corner radius hint (scaled to the box). */
   boxRadius?: number;
 }
@@ -154,12 +157,12 @@ export const SUBTITLE_TEMPLATES: Record<SubtitleTemplate, SubtitleStyle> = {
   },
   "yellow-box": {
     fontFamily: "Alexandria",
-    fontSize: 92, position: "center",
+    fontSize: 108, position: "center",
     outlineColor: "#000000", outlineWidth: 0,
     lineColor: "#F9FC26", wordColor: "#FFFFFF",
     allCaps: false, maxWordsPerLine: 3, template: "yellow-box",
     italic: false, letterSpacing: -4, shadow: false,
-    box: true, boxColor: "#000000", boxFill: 0.82, boxRadius: 70,
+    box: true, boxColor: "#000000", boxFill: 0.82, boxPadX: 0.32, boxRadius: 70,
   },
   "black-on-yellow": {
     fontFamily: "Montserrat Black",
