@@ -690,7 +690,7 @@ const indexPromoVideo: Handler = async (input) => {
         indexStatus: "Indexed",
       },
     });
-    return { success: true, mode: "fallback", segmentCount: segments.length, seconds: 0, mediaKind: "mixed" };
+    return { success: true, mode: "fallback", segmentCount: segments.length, seconds: 0, mediaKind: "mixed", error: msg };
   }
 };
 
@@ -757,11 +757,11 @@ const reindexAllPromos: Handler = async (input, userId) => {
     for (const { id, name } of todo) {
       reindexProgress.current = name;
       try {
-        const r = (await indexPromoVideo({ videoId: id }, userId)) as { mode?: string };
+        const r = (await indexPromoVideo({ videoId: id }, userId)) as { mode?: string; error?: string };
         if (r?.mode === "vision") reindexProgress.indexed++;
         else {
           reindexProgress.failed++;
-          reindexProgress.errors.push({ name, message: "Fell back to coarse index (no vision)" });
+          reindexProgress.errors.push({ name, message: `Vision failed (used coarse index): ${r?.error ?? "unknown reason"}`.slice(0, 200) });
         }
       } catch (e) {
         reindexProgress.failed++;
