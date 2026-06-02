@@ -703,16 +703,34 @@ const indexPromoVideo: Handler = async (input) => {
  * { force: true } to redo all.
  */
 let bulkIndexRunning = false;
+// Live progress for the bulk re-index, polled by the promo dialog's progress bar.
+interface ReindexProgress {
+  running: boolean;
+  total: number;       // videos in this run
+  done: number;        // processed (indexed + failed)
+  indexed: number;
+  failed: number;
+  current: string | null;   // product name being indexed now
+  errors: Array<{ name: string; message: string }>;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+let reindexProgress: ReindexProgress = {
+  running: false, total: 0, done: 0, indexed: 0, failed: 0,
+  current: null, errors: [], startedAt: null, finishedAt: null,
+};
+
+const getReindexProgress: Handler = async () => ({ ...reindexProgress });
 
 const reindexAllPromos: Handler = async (input, userId) => {
   if (bulkIndexRunning) {
-    return { success: true, started: false, message: "Indexing is already running." };
+    return { success: true, started: false, message: "Indexing is already running.", progress: { ...reindexProgress } };
   }
   const force = input?.force === true;
   const { records } = await PromoVideos.findAll({ limit: 1000 });
 
   // Decide the work set now, and mark them queued so the UI reflects it at once.
-  const todo: string[] = [];
+  const todo: Array<{ id: string; name: string }> = [];
   for (const v of records) {
     let alreadyVision = false;
     if (!force && v.contentIndexJson) {
@@ -723,34 +741,49 @@ const reindexAllPromos: Handler = async (input, userId) => {
       }
     }
     if (!alreadyVision) {
-      todo.push(v.id);
+      todo.push({ id: v.id, name: (v.productName as string) || "Promo" });
       await PromoVideos.update({ id: v.id, record: { indexStatus: "Indexing" } });
     }
   }
 
   bulkIndexRunning = true;
+  reindexProgress = {
+    running: true, total: todo.length, done: 0, indexed: 0, failed: 0,
+    current: null, errors: [], startedAt: Date.now(), finishedAt: null,
+  };
+
   // Fire-and-forget: do NOT await — the HTTP response returns right away.
   (async () => {
-    let indexed = 0;
-    let failed = 0;
-    for (const id of todo) {
+    for (const { id, name } of todo) {
+      reindexProgress.current = name;
       try {
         const r = (await indexPromoVideo({ videoId: id }, userId)) as { mode?: string };
-        if (r?.mode === "vision") indexed++;
-        else failed++;
+        if (r?.mode === "vision") reindexProgress.indexed++;
+        else {
+          reindexProgress.failed++;
+          reindexProgress.errors.push({ name, message: "Fell back to coarse index (no vision)" });
+        }
       } catch (e) {
-        failed++;
+        reindexProgress.failed++;
+        const message = e instanceof Error ? e.message : String(e);
+        reindexProgress.errors.push({ name, message: message.slice(0, 160) });
         try {
           await PromoVideos.update({ id, record: { indexStatus: "Error" } });
         } catch {
           /* */
         }
-        console.warn(`[reindexAllPromos] ${id} failed: ${e instanceof Error ? e.message : String(e)}`);
+        console.warn(`[reindexAllPromos] ${id} failed: ${message}`);
       }
+      reindexProgress.done++;
     }
+    reindexProgress.running = false;
+    reindexProgress.current = null;
+    reindexProgress.finishedAt = Date.now();
     bulkIndexRunning = false;
-    console.log(`[reindexAllPromos] done — indexed=${indexed} failed=${failed} of ${todo.length}`);
+    console.log(`[reindexAllPromos] done — indexed=${reindexProgress.indexed} failed=${reindexProgress.failed} of ${todo.length}`);
   })().catch((e) => {
+    reindexProgress.running = false;
+    reindexProgress.finishedAt = Date.now();
     bulkIndexRunning = false;
     console.error("[reindexAllPromos] background run crashed:", e);
   });
@@ -1004,6 +1037,7 @@ export const HANDLERS: Record<string, Handler> = {
   deletePromoVideo,
   importPromoIndex,
   reindexAllPromos,
+  getReindexProgress,
   getDownloadUrl,
   // render
   submitRendiJob,

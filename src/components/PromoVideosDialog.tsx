@@ -9,6 +9,7 @@ import {
   indexPromoVideo,
   importPromoIndex,
   reindexAllPromos,
+  getReindexProgress,
   getPromoIndex,
 } from 'zite-endpoints-sdk';
 import { GetPromoVideosOutputType } from 'zite-endpoints-sdk';
@@ -394,6 +395,10 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   const [importing, setImporting] = useState(false);
   const [visionIndexing, setVisionIndexing] = useState(false);
   const [viewIndexId, setViewIndexId] = useState<string | null>(null);
+  // Live re-index progress (polled while a bulk re-index runs).
+  interface ReindexProg { running: boolean; total: number; done: number; indexed: number; failed: number; current: string | null; errors: Array<{ name: string; message: string }>; }
+  const [reindexProg, setReindexProg] = useState<ReindexProg | null>(null);
+  const reindexPoll = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
@@ -403,6 +408,30 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   // on every render). Runs in the BACKGROUND on the server — this returns fast;
   // each video flips to "Indexing" then "Indexed". Re-open the dialog (or it
   // reloads) to see updated statuses.
+  // Poll the backend for live re-index progress; stops itself when finished.
+  const startReindexPolling = useCallback(() => {
+    if (reindexPoll.current) return;
+    const tick = async () => {
+      try {
+        const p = await getReindexProgress({});
+        setReindexProg(p);
+        if (!p.running) {
+          if (reindexPoll.current) { clearInterval(reindexPoll.current); reindexPoll.current = null; }
+          setVisionIndexing(false);
+          await reload();
+          if ((p.failed ?? 0) > 0) toast.warning(`Re-index finished: ${p.indexed} indexed, ${p.failed} failed.`);
+          else if ((p.total ?? 0) > 0) toast.success(`Re-index complete: ${p.indexed} videos indexed.`);
+          // Clear the bar a few seconds after completion.
+          setTimeout(() => setReindexProg(null), 6000);
+        }
+      } catch { /* keep polling */ }
+    };
+    reindexPoll.current = setInterval(tick, 1500);
+    tick();
+  }, []);
+
+  useEffect(() => () => { if (reindexPoll.current) clearInterval(reindexPoll.current); }, []);
+
   const handleVisionIndexAll = async () => {
     if (visionIndexing) return;
     // Force re-indexes EVERY promo (re-watches each at 1 frame/sec) so the new
@@ -416,17 +445,13 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
     try {
       const res = await reindexAllPromos({ force: true });
       if (res.started === false) {
-        toast.info('Re-indexing is already running — check back shortly.');
+        toast.info('Re-indexing is already running — showing live progress.');
       } else {
-        toast.success(
-          `Re-indexing started for all ${res.queued ?? res.total} promo videos. ` +
-            `Runs in the background — each flips to "Indexed" as it finishes. Reopen this dialog to refresh statuses.`
-        );
+        toast.success(`Re-indexing started for all ${res.queued ?? res.total} promo videos.`);
       }
-      await reload();
+      startReindexPolling();
     } catch (e: any) {
       toast.error('Re-indexing failed — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
-    } finally {
       setVisionIndexing(false);
     }
   };
@@ -467,6 +492,16 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
   };
 
   useEffect(() => { if (open) reload(); }, [open]);
+  // If a bulk re-index is already running when the dialog opens, resume the bar.
+  useEffect(() => {
+    if (!open) return;
+    (async () => {
+      try {
+        const p = await getReindexProgress({});
+        if (p.running) { setReindexProg(p); setVisionIndexing(true); startReindexPolling(); }
+      } catch { /* */ }
+    })();
+  }, [open, startReindexPolling]);
 
   const CLIP_THRESHOLD_BYTES = 25 * 1024 * 1024;  // files over 25 MB get clipped
   const CHUNK_SIZE_BYTES     = 15 * 1024 * 1024;  // keep only the first 15 MB chunk
@@ -639,6 +674,38 @@ export default function PromoVideosDialog({ open, onClose }: Props) {
           <p className="text-xs text-muted-foreground">
             Upload real product/brand videos. The AI Director selects them automatically when the product is mentioned in the script.
           </p>
+
+          {/* Live re-index progress bar */}
+          {reindexProg && (reindexProg.running || reindexProg.done > 0) && (
+            <div className="mt-2 rounded-lg border border-border bg-muted/30 p-2.5 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="font-medium text-foreground flex items-center gap-1.5">
+                  {reindexProg.running && <Loader2 className="w-3 h-3 animate-spin" />}
+                  {reindexProg.running ? 'Re-indexing promo videos…' : 'Re-index complete'}
+                </span>
+                <span className="font-mono text-muted-foreground">
+                  {reindexProg.done}/{reindexProg.total}
+                  {reindexProg.failed > 0 && <span className="text-destructive"> · {reindexProg.failed} failed</span>}
+                </span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-300 ${reindexProg.failed > 0 ? 'bg-amber-500' : 'bg-primary'}`}
+                  style={{ width: `${reindexProg.total ? Math.round((reindexProg.done / reindexProg.total) * 100) : 0}%` }}
+                />
+              </div>
+              {reindexProg.running && reindexProg.current && (
+                <p className="text-[10px] text-muted-foreground truncate">Now: {reindexProg.current}</p>
+              )}
+              {reindexProg.errors.length > 0 && (
+                <div className="max-h-16 overflow-y-auto space-y-0.5 pt-0.5">
+                  {reindexProg.errors.slice(-5).map((er, i) => (
+                    <p key={i} className="text-[10px] text-destructive truncate">✗ {er.name}: {er.message}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </DialogHeader>
 
         {/* Video list */}
