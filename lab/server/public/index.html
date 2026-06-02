@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ClipMagic — Bulk Editor</title>
+<style>
+  :root { --bg:#0b0b12; --panel:#15151f; --panel2:#1d1d2b; --line:#2a2a3c;
+          --txt:#e7e7f0; --mut:#9a9ab0; --accent:#c084fc; --accent2:#7c3aed;
+          --ok:#34d399; --err:#f87171; --warn:#fbbf24; --blue:#60a5fa; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { padding:16px 24px; border-bottom:1px solid var(--line);
+           display:flex; align-items:center; gap:12px; position:sticky; top:0;
+           background:rgba(11,11,18,.92); backdrop-filter:blur(8px); z-index:20; }
+  header h1 { font-size:18px; margin:0; font-weight:700;
+              background:linear-gradient(90deg,var(--accent),var(--blue));
+              -webkit-background-clip:text; background-clip:text; color:transparent; }
+  header .pill { margin-left:auto; font-size:12px; color:var(--mut);
+                 border:1px solid var(--line); padding:4px 10px; border-radius:999px; }
+  .steps { display:flex; gap:8px; padding:12px 24px; border-bottom:1px solid var(--line);
+           position:sticky; top:57px; background:var(--bg); z-index:19; flex-wrap:wrap; }
+  .step { font-size:12px; color:var(--mut); padding:6px 12px; border-radius:999px;
+          border:1px solid var(--line); cursor:pointer; user-select:none; }
+  .step.active { color:#fff; border-color:var(--accent);
+                 background:linear-gradient(90deg,rgba(124,58,237,.35),rgba(192,132,252,.25)); }
+  .step .n { display:inline-block; width:18px; height:18px; line-height:18px; text-align:center;
+             border-radius:50%; background:var(--panel2); margin-right:6px; font-size:11px; }
+  main { max-width:1280px; margin:0 auto; padding:22px 24px 80px; }
+  .view { display:none; } .view.show { display:block; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; margin-bottom:18px; }
+  .card h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--mut); margin:0 0 14px; }
+  label { display:block; font-size:12px; color:var(--mut); margin:10px 0 4px; }
+  input,select,textarea { width:100%; background:var(--panel2); border:1px solid var(--line);
+                 color:var(--txt); border-radius:8px; padding:9px 11px; font:inherit; }
+  textarea { resize:vertical; min-height:70px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; } .row > div { flex:1; min-width:120px; }
+  .drop { border:2px dashed var(--line); border-radius:12px; padding:34px; text-align:center;
+          color:var(--mut); cursor:pointer; transition:.15s; }
+  .drop.hot { border-color:var(--accent); color:var(--txt); background:var(--panel2); }
+  button { background:linear-gradient(90deg,var(--accent2),var(--accent)); color:#fff;
+           border:0; border-radius:9px; padding:10px 16px; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.ghost { background:transparent; border:1px solid var(--line); color:var(--txt); font-weight:500; }
+  button.sm { padding:5px 10px; font-size:12px; }
+  button.danger { background:transparent; border:1px solid var(--err); color:var(--err); }
+  .files { margin-top:14px; max-height:240px; overflow:auto; }
+  .file { display:flex; align-items:center; gap:10px; padding:7px 2px; border-bottom:1px solid var(--line); font-size:13px; }
+  .file .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .file .sz { color:var(--mut); font-variant-numeric:tabular-nums; }
+  .file .st { font-size:11px; }
+  .bar { height:6px; background:var(--panel2); border-radius:4px; overflow:hidden; min-width:80px; }
+  .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,var(--accent2),var(--accent)); transition:width .3s; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--mut); font-weight:600; font-size:11px; text-transform:uppercase; position:sticky; top:0; background:var(--panel); }
+  td input { padding:6px 8px; }
+  td.num input { width:74px; }
+  .tablewrap { max-height:60vh; overflow:auto; border:1px solid var(--line); border-radius:10px; }
+  .status { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--line); white-space:nowrap; }
+  .s-completed{ color:var(--ok); border-color:var(--ok); }
+  .s-active{ color:var(--warn); border-color:var(--warn); }
+  .s-failed{ color:var(--err); border-color:var(--err); }
+  .s-queued,.s-canceled{ color:var(--mut); }
+  .muted{ color:var(--mut); } .mt{ margin-top:16px; } .mb{ margin-bottom:12px; }
+  .toolbar{ display:flex; gap:10px; align-items:center; margin-bottom:14px; flex-wrap:wrap; }
+  a.dl{ color:var(--accent); text-decoration:none; }
+  .summary{ display:flex; gap:16px; font-variant-numeric:tabular-nums; align-items:center; }
+  .summary b{ font-size:17px; }
+  code,kbd{ background:var(--panel2); padding:1px 5px; border-radius:4px; font-size:12px; }
+  .hint{ font-size:12px; color:var(--mut); margin-top:8px; }
+  .footerbar{ position:fixed; bottom:0; left:0; right:0; background:rgba(11,11,18,.95);
+              border-top:1px solid var(--line); padding:12px 24px; display:flex; gap:12px;
+              align-items:center; z-index:30; backdrop-filter:blur(8px); }
+  .footerbar .spacer{ flex:1; }
+  .err-text{ color:var(--err); font-size:12px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chk{ width:auto; }
+  details{ border:1px solid var(--line); border-radius:8px; padding:8px 12px; margin-top:10px; }
+  summary{ cursor:pointer; color:var(--mut); font-size:12px; }
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:780px){ .grid2{ grid-template-columns:1fr; } }
+  .preview-thumb{ width:54px; height:96px; object-fit:cover; border-radius:6px; background:#000; border:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ClipMagic</h1>
+  <span class="muted">bulk editor</span>
+  <span class="pill" id="health">connecting…</span>
+</header>
+
+<nav class="steps">
+  <div class="step active" data-step="upload"><span class="n">1</span>Upload</div>
+  <div class="step" data-step="template"><span class="n">2</span>Template</div>
+  <div class="step" data-step="edit"><span class="n">3</span>Edit (<span id="editCount">0</span>)</div>
+  <div class="step" data-step="render"><span class="n">4</span>Render</div>
+</nav>
+
+<main>
+  <!-- STEP 1: UPLOAD -->
+  <section class="view show" id="view-upload">
+    <div class="card">
+      <h2>Upload source videos — no size limit, 300+ supported</h2>
+      <div class="drop" id="drop">
+        <strong>Drop videos here</strong><br />
+        <span>or click to browse. Big files stream straight to the droplet's disk.</span>
+        <input type="file" id="picker" multiple accept="video/*" hidden />
+      </div>
+      <div class="toolbar mt">
+        <button id="uploadBtn" disabled>Upload all</button>
+        <button class="ghost sm" id="clearBtn" disabled>Clear</button>
+        <span id="uploadMsg" class="muted"></span>
+        <div class="spacer" style="flex:1"></div>
+        <span class="muted" id="uploadCount"></span>
+      </div>
+      <div class="bar mb" id="upBarWrap" style="display:none"><i id="upBar"></i></div>
+      <div class="files" id="fileList"></div>
+    </div>
+    <div class="card">
+      <h2>Background music (optional, shared by all)</h2>
+      <input type="file" id="musicPick" accept="audio/*" />
+      <div class="hint" id="musicMsg"></div>
+    </div>
+  </section>
+
+  <!-- STEP 2: TEMPLATE -->
+  <section class="view" id="view-template">
+    <div class="card">
+      <h2>Template — defaults applied to every video (override per-video in step 3)</h2>
+      <div class="grid2">
+        <div>
+          <div class="row">
+            <div><label>Width</label><input id="t_w" type="number" value="1080" /></div>
+            <div><label>Height</label><input id="t_h" type="number" value="1920" /></div>
+            <div><label>FPS</label><input id="t_fps" type="number" value="30" /></div>
+          </div>
+          <div class="row">
+            <div>
+              <label>Aspect preset</label>
+              <select id="t_preset">
+                <option value="1080x1920">Vertical 9:16 (1080×1920)</option>
+                <option value="1080x1080">Square 1:1 (1080×1080)</option>
+                <option value="1920x1080">Landscape 16:9 (1920×1080)</option>
+                <option value="">Custom (use fields above)</option>
+              </select>
+            </div>
+            <div><label>Output format</label>
+              <select id="t_fmt"><option value="mp4">MP4 (H.264)</option><option value="webm">WebM (VP9)</option></select>
+            </div>
+          </div>
+        </div>
+        <div>
+          <label>Output filename pattern</label>
+          <input id="t_namePat" value="{{name}}" />
+          <div class="hint">Variables: <code>{{name}}</code> (source filename), <code>{{index}}</code>.</div>
+          <label>Caption text (burned-in, optional)</label>
+          <input id="t_cap" placeholder="e.g. {{name}}  — leave blank for none" />
+          <div class="row">
+            <div><label>Caption seconds</label><input id="t_capDur" type="number" step="0.5" value="4" /></div>
+            <div><label>Music volume (0–1)</label><input id="t_mvol" type="number" step="0.01" value="0.15" /></div>
+          </div>
+        </div>
+      </div>
+      <div class="toolbar mt">
+        <button id="toEditBtn">Continue to edit →</button>
+        <span class="muted">Applies these defaults to all <b id="tplCount">0</b> videos.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 3: EDIT -->
+  <section class="view" id="view-edit">
+    <div class="card">
+      <h2>Edit each video</h2>
+      <div class="toolbar">
+        <button class="ghost sm" id="applyAllBtn">Apply a value to all…</button>
+        <button class="ghost sm" id="importCsvBtn">Import CSV</button>
+        <button class="ghost sm" id="exportCsvBtn">Export CSV</button>
+        <input type="file" id="csvFile" accept=".csv,text/csv" hidden />
+        <div class="spacer" style="flex:1"></div>
+        <span class="muted">Trim, rename and set caption per video. Blank = use template.</span>
+      </div>
+      <div class="tablewrap">
+        <table id="editTable">
+          <thead><tr>
+            <th>#</th><th>Source</th><th>Output name</th><th>Caption</th>
+            <th>Trim start</th><th>Trim end</th><th>Dur</th>
+          </tr></thead>
+          <tbody id="editBody"></tbody>
+        </table>
+      </div>
+      <details class="mt">
+        <summary>CSV format</summary>
+        <p class="hint">Header row with any of: <code>name,outputName,caption,trimStart,trimEnd,width,height,fps,musicVolume</code>.
+        Rows are matched to videos by order, or by a <code>name</code> column matching the source filename (without extension).</p>
+      </details>
+      <div class="toolbar mt">
+        <button id="toRenderBtn">Continue to render →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 4: RENDER -->
+  <section class="view" id="view-render">
+    <div class="card">
+      <div class="toolbar">
+        <label style="margin:0">Batch name</label>
+        <input id="batchName" value="batch-1" style="max-width:240px" />
+        <button id="renderBtn">Render all</button>
+        <button class="ghost sm" id="retryFailedBtn" style="display:none">Retry failed</button>
+        <a class="dl" id="downloadAll" href="#" style="display:none">⬇ Download all (zip)</a>
+        <div class="spacer" style="flex:1"></div>
+        <span class="summary" id="summary"></span>
+      </div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>#</th><th>Name</th><th>Status</th><th style="width:26%">Progress</th><th>Output</th></tr></thead>
+          <tbody id="dash"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="footerbar">
+  <span class="muted" id="footNote">Upload videos to begin.</span>
+  <div class="spacer"></div>
+  <button class="ghost" id="backBtn" disabled>← Back</button>
+  <button id="nextBtn" disabled>Next →</button>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

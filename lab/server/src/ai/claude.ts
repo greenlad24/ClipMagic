@@ -1,0 +1,275 @@
+/**
+ * Anthropic Claude client (via fetch — no SDK dependency needed in the bundle).
+ *
+ * The original pipeline issues three kinds of chat calls, all through the
+ * OpenAI shim. We pick the Claude tier per call:
+ *   - model "gpt-4o-mini"                -> fast tier   (Haiku)  : emphasis tags
+ *   - model "gpt-4o" + director prompt   -> director tier (Opus) : beat planner
+ *   - model "gpt-4o" + research prompt   -> research tier (Sonnet): URL research
+ *   - anything else with "gpt-4o"        -> research tier (Sonnet)
+ *
+ * The director vs research split is detected from the system prompt text, since
+ * the original code uses the same model name for both. Big system prompts are
+ * sent with prompt caching to cut cost on repeated runs.
+ *
+ * Note: no temperature / top_p / thinking.budget_tokens — those are removed on
+ * current Opus, and adaptive thinking is the default. We keep the request
+ * surface minimal (model + system + messages + max_tokens) so it works across
+ * Opus 4.8 / Sonnet 4.6 / Haiku 4.5 unchanged.
+ */
+import { aiConfig, modelForTier } from "./config.js";
+
+interface Turn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** True when either an API key or an OAuth access token is configured. */
+export function anthropicConfigured(): boolean {
+  return !!(aiConfig.anthropicAuthToken || aiConfig.anthropicApiKey);
+}
+
+/**
+ * Build the Anthropic request headers for whichever auth mode is configured.
+ * An OAuth access token (Bearer + oauth beta) takes precedence over an API key.
+ */
+function anthropicHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "anthropic-version": aiConfig.anthropicVersion,
+  };
+  if (aiConfig.anthropicAuthToken) {
+    headers["authorization"] = `Bearer ${aiConfig.anthropicAuthToken}`;
+    // Anthropic requires this beta header for OAuth/account access tokens.
+    headers["anthropic-beta"] = aiConfig.anthropicOauthBeta;
+  } else {
+    headers["x-api-key"] = aiConfig.anthropicApiKey;
+  }
+  return headers;
+}
+
+function resolveTier(openaiModel: string, system: string): "director" | "research" | "fast" {
+  if (openaiModel.includes("mini")) return "fast";
+  // The creative beat-planner system prompt is unmistakable.
+  if (/senior short-form video editor|semantic beat|creative director|elite short-form/i.test(system)) {
+    return "director";
+  }
+  return "research";
+}
+
+interface AnthropicResponse {
+  content: Array<{ type: string; text?: string }>;
+  stop_reason?: string;
+  error?: { message?: string };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * POST to the Anthropic Messages API with retry/backoff on transient errors.
+ * 529 (Overloaded), 429 (rate limit), and 5xx are retried with exponential
+ * backoff + jitter; everything else (and the final attempt) throws.
+ */
+async function anthropicRequest(body: unknown, label: string): Promise<AnthropicResponse> {
+  const maxAttempts = Number.parseInt(process.env.CLAUDE_MAX_RETRIES || "5", 10);
+  let lastErr = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
+        method: "POST",
+        headers: anthropicHeaders(),
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      // Network blip — treat as retryable.
+      lastErr = e instanceof Error ? e.message : String(e);
+      if (attempt < maxAttempts) { await sleep(backoff(attempt)); continue; }
+      throw new Error(`${label} network error after ${attempt} attempts: ${lastErr}`);
+    }
+
+    if (res.ok) return (await res.json()) as AnthropicResponse;
+
+    const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
+    lastErr = `${res.status}: ${json?.error?.message || JSON.stringify(json)}`;
+    const retryable = res.status === 529 || res.status === 429 || (res.status >= 500 && res.status < 600);
+    if (retryable && attempt < maxAttempts) {
+      // Honor Retry-After when present, else exponential backoff + jitter.
+      const ra = Number.parseInt(res.headers.get("retry-after") || "", 10);
+      const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : backoff(attempt);
+      console.warn(`${label} ${res.status} (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(wait)}ms`);
+      await sleep(wait);
+      continue;
+    }
+    throw new Error(`${label} (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
+  }
+  throw new Error(`${label} failed after ${maxAttempts} attempts: ${lastErr}`);
+}
+
+/** Exponential backoff with jitter: ~1s, 2s, 4s, 8s … capped at 20s. */
+function backoff(attempt: number): number {
+  const base = Math.min(20000, 1000 * 2 ** (attempt - 1));
+  return base + Math.random() * 400;
+}
+
+async function callClaude(opts: {
+  model: string;
+  system: string;
+  messages: Turn[];
+  jsonMode?: boolean;
+}): Promise<string> {
+  if (!anthropicConfigured()) {
+    throw new Error(
+      "No Anthropic credentials set. Add ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to enable the AI director."
+    );
+  }
+
+  const system = opts.jsonMode
+    ? `${opts.system}\n\nIMPORTANT: Respond with ONLY the raw JSON object. No markdown, no code fences, no commentary.`
+    : opts.system;
+
+  // Prompt-cache the (large, reused) system prompt.
+  const systemBlocks = system
+    ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+    : undefined;
+
+  const body = {
+    model: opts.model,
+    max_tokens: aiConfig.maxTokens,
+    ...(systemBlocks ? { system: systemBlocks } : {}),
+    messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+  };
+
+  const json = await anthropicRequest(body, "Claude API error");
+  return (json.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("");
+}
+
+/** Plain text chat completion. */
+export async function claudeChat(opts: {
+  model: string;
+  system: string;
+  messages: Turn[];
+}): Promise<string> {
+  const tier = resolveTier(opts.model, opts.system);
+  return callClaude({ model: modelForTier(tier), system: opts.system, messages: opts.messages });
+}
+
+/**
+ * JSON chat completion. Returns a JSON string (the pipeline calls JSON.parse on
+ * it). We strip any accidental code fences so JSON.parse always succeeds.
+ */
+export async function claudeChatJSON(opts: {
+  model: string;
+  system: string;
+  messages: Turn[];
+}): Promise<string> {
+  const tier = resolveTier(opts.model, opts.system);
+  const raw = await callClaude({
+    model: modelForTier(tier),
+    system: opts.system,
+    messages: opts.messages,
+    jsonMode: true,
+  });
+  return extractJson(raw);
+}
+
+/**
+ * Vision JSON completion: send a set of base64 JPEG frames + a prompt to Claude
+ * and get JSON back. Used by indexPromoVideo to actually "watch" a promo video
+ * (1 frame/sec) and describe what's on screen each second. Runs once per video
+ * at index time; the result is cached in the DB.
+ *
+ * Uses the research tier (Sonnet) by default — strong vision at lower cost than
+ * Opus for this descriptive task; override with CLAUDE_VISION_MODEL.
+ */
+export async function claudeVisionJSON(opts: {
+  system: string;
+  userText: string;
+  /** Base64-encoded JPEG frames, in chronological order. */
+  frames: string[];
+  model?: string;
+}): Promise<string> {
+  // Try Claude first (when configured); on overload/failure, fall back to Groq
+  // vision so promo indexing still produces a real vision index. If Claude
+  // isn't configured at all, go straight to Groq.
+  const { groqVisionConfigured, groqVisionJSON } = await import("./groqVision.js");
+  if (!anthropicConfigured()) {
+    if (groqVisionConfigured()) {
+      console.warn("[vision] No Anthropic creds — using Groq vision.");
+      return groqVisionJSON({ system: opts.system, userText: opts.userText, frames: opts.frames });
+    }
+    throw new Error("No vision provider configured. Set ANTHROPIC_API_KEY or GROQ_API_KEY.");
+  }
+  try {
+    return await claudeVisionAnthropic(opts);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (groqVisionConfigured()) {
+      console.warn(`[vision] Claude vision failed (${msg.slice(0, 80)}) — falling back to Groq vision.`);
+      return groqVisionJSON({ system: opts.system, userText: opts.userText, frames: opts.frames });
+    }
+    throw e;
+  }
+}
+
+async function claudeVisionAnthropic(opts: {
+  system: string;
+  userText: string;
+  frames: string[];
+  model?: string;
+}): Promise<string> {
+  const model = opts.model || process.env.CLAUDE_VISION_MODEL || aiConfig.models.research;
+
+  // Build a single user turn: all frames (each labeled), then the instruction.
+  const content: any[] = [];
+  opts.frames.forEach((b64, i) => {
+    content.push({ type: "text", text: `Frame at ${i}s:` });
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: "image/jpeg", data: b64 },
+    });
+  });
+  content.push({
+    type: "text",
+    text:
+      opts.userText +
+      "\n\nRespond with ONLY the raw JSON object. No markdown, no code fences, no commentary.",
+  });
+
+  const body = {
+    model,
+    max_tokens: aiConfig.maxTokens,
+    system: opts.system
+      ? [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }]
+      : undefined,
+    messages: [{ role: "user", content }],
+  };
+
+  const json = await anthropicRequest(body, "Claude vision error");
+  const text = (json.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("");
+  return extractJson(text);
+}
+
+/** Pull the JSON payload out of a model response, tolerating fences/prose. */
+export function extractJson(text: string): string {
+  let t = text.trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  const firstObj = t.indexOf("{");
+  const firstArr = t.indexOf("[");
+  const start =
+    firstArr === -1 ? firstObj : firstObj === -1 ? firstArr : Math.min(firstObj, firstArr);
+  if (start > 0) {
+    const lastObj = t.lastIndexOf("}");
+    const lastArr = t.lastIndexOf("]");
+    const end = Math.max(lastObj, lastArr);
+    if (end > start) t = t.slice(start, end + 1);
+  }
+  return t;
+}

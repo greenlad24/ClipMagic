@@ -1,0 +1,1475 @@
+/**
+ * Ported ClipMagic endpoints — Stage 1 (app shell + data).
+ *
+ * These reimplement the original Zite endpoints' request/response contracts
+ * against the local SQLite document store, so the real frontend runs end-to-end
+ * for everything that is pure data (projects, shots, music, settings).
+ *
+ * The AI / capture / render-pipeline endpoints (runPipeline, captureShots,
+ * generateShot, recaptureShot, pollBrollStatus, testKinoviApi) are stubbed with
+ * clear, structured responses so the UI works and shows where Stage 2 wiring
+ * (OpenAI + Kinovi + capture service) will plug in.
+ */
+import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, ZiteError } from "./store.js";
+import { listStorage, deleteStorageFiles } from "./storage.js";
+import type { Record_ } from "./store.js";
+import { config } from "../config.js";
+import { createJob, getJob } from "../db/jobs.js";
+import { db } from "../db/index.js";
+import { pump } from "../render/worker.js";
+import { resolveInput } from "../render/resolve.js";
+import { probe } from "../render/ffmpeg.js";
+import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
+import { planCuts } from "../cutter/plan.js";
+import { planTakeDecision } from "../cutter/takes.js";
+import { transcribeWithGroq } from "../ai/transcribe.js";
+import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate } from "../render/manifest.js";
+
+type Handler = (input: any, userId: string) => Promise<any>;
+
+const sortByCreatedDesc = (a: Record_, b: Record_) =>
+  (b.createdAt ?? "") > (a.createdAt ?? "") ? 1 : -1;
+
+// ── Projects ────────────────────────────────────────────────────────────────
+const createProject: Handler = async (input, userId) => {
+  const project = await Projects.create({
+    record: {
+      title: "Processing…",
+      status: "Uploading",
+      narrationUrl: input.narrationUrl || undefined,
+      contextHint: input.contextHint,
+      accentColor: input.accentColor ?? "#FFD60A",
+      musicTrack: input.musicTrackId ?? undefined,
+      user: userId,
+      audioUrl: input.audioUrl,
+      videoChunksJson: input.videoChunksJson,
+    },
+  });
+  return { projectId: project.id };
+};
+
+const getProjects: Handler = async (_input, userId) => {
+  const { records } = await Projects.findAll({ filters: { user: userId }, limit: 200 });
+  const projects = records.sort(sortByCreatedDesc).map((p) => ({
+    id: p.id,
+    title: p.title,
+    status: p.status,
+    narrationUrl: p.narrationUrl,
+    outputUrl: p.outputUrl,
+    accentColor: p.accentColor,
+    durationSeconds: p.durationSeconds,
+    createdAt: p.createdAt,
+  }));
+  return { projects };
+};
+
+const getProject: Handler = async (input) => {
+  const p = await Projects.findOne({ id: input.projectId ?? input.id });
+  if (!p) throw new ZiteError({ code: "NOT_FOUND", message: "Project not found." });
+  return { project: p };
+};
+
+const updateProjectSettings: Handler = async (input) => {
+  const { projectId, musicTrackId, ...rest } = input;
+  // Map musicTrackId → the project's musicTrack field (the "auto" picker and
+  // the home dropdown both send musicTrackId).
+  if (musicTrackId !== undefined) (rest as Record<string, unknown>).musicTrack = musicTrackId;
+  await Projects.update({ id: projectId, record: rest });
+  return { success: true };
+};
+
+const completeProject: Handler = async (input) => {
+  const record: Record<string, unknown> = { status: "Complete" };
+  if (input.outputUrl) record.outputUrl = input.outputUrl;
+  await Projects.update({ id: input.projectId, record });
+  return { success: true };
+};
+
+const deleteProject: Handler = async (input) => {
+  const ids: string[] = input.projectIds ?? (input.projectId ? [input.projectId] : []);
+  for (const id of ids) {
+    const { records } = await Shots.findAll({ filters: { project: id } });
+    for (const s of records) await Shots.delete({ id: s.id });
+    await Projects.delete({ id });
+  }
+  return { deleted: ids.length };
+};
+
+// ── Shots ───────────────────────────────────────────────────────────────────
+const getShots: Handler = async (input) => {
+  const { records } = await Shots.findAll({ filters: { project: input.projectId }, limit: 1000 });
+  const shots = records.sort((a, b) => ((a.startTime as number) ?? 0) - ((b.startTime as number) ?? 0));
+  return { shots };
+};
+
+const updateShot: Handler = async (input) => {
+  const { shotId, id, ...rest } = input;
+  const record = input.record ?? rest;
+  await Shots.update({ id: shotId ?? id, record });
+  return { success: true };
+};
+
+const deleteShots: Handler = async (input) => {
+  const ids: string[] = input.shotIds ?? [];
+  let deleted = 0;
+  for (const id of ids) {
+    await Shots.delete({ id });
+    deleted++;
+  }
+  return { success: deleted > 0, deleted };
+};
+
+// ── Music ───────────────────────────────────────────────────────────────────
+const getMusicTracks: Handler = async (_input, userId) => {
+  const { records } = await MusicTracks.findAll({ filters: { user: userId }, limit: 200 });
+  const tracks = records.sort(sortByCreatedDesc).map((t) => ({
+    id: t.id,
+    trackName: t.trackName,
+    bpm: t.bpm,
+    key: t.key,
+    durationSeconds: t.durationSeconds,
+    mood: t.mood ?? [],
+    analysisStatus: t.analysisStatus ?? "Ready",
+    audioUrl: t.audioUrl,
+  }));
+  return { tracks };
+};
+
+const saveMusicTrack: Handler = async (input, userId) => {
+  const track = await MusicTracks.create({
+    record: {
+      trackName: input.trackName ?? input.name ?? "Untitled",
+      audioUrl: input.audioUrl,
+      bpm: input.bpm,
+      key: input.key,
+      mood: input.mood,
+      durationSeconds: input.durationSeconds,
+      // The library/home dropdown only shows tracks with analysisStatus 'Ready'.
+      // We have no separate analysis step, so a saved track is ready immediately.
+      analysisStatus: "Ready",
+      user: userId,
+    },
+  });
+  return { trackId: track.id };
+};
+
+const deleteMusicTrack: Handler = async (input) => {
+  await MusicTracks.delete({ id: input.trackId ?? input.id });
+  return { success: true };
+};
+
+// ── Service status (drives the /setup page) ──────────────────────────────────
+const getServiceStatus: Handler = async () => {
+  // On the self-hosted server, render is always available locally.
+  return {
+    captureConfigured: !!process.env.ZITE_CAPTURE_SERVICE_URL,
+    renderConfigured: true,
+    veo3Configured: !!process.env.ZITE_KINOVI_API_KEY,
+    remotionConfigured: false,
+    captureUrl: process.env.ZITE_CAPTURE_SERVICE_URL || undefined,
+    renderUrl: "local (built-in FFmpeg)",
+    veo3Url: process.env.ZITE_KINOVI_API_KEY ? "configured" : undefined,
+    remotionUrl: undefined,
+    // AI pipeline configuration (so the UI / curl can confirm keys are live).
+    transcriptionConfigured: !!process.env.GROQ_API_KEY,
+    directorConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
+    kinoviConfigured: !!process.env.ZITE_KINOVI_API_KEY,
+    stockConfigured: !!process.env.PEXELS_API_KEY,
+  };
+};
+
+// ── Promo videos (library is global, not per-user — matches the original) ────
+const getPromoVideos: Handler = async () => {
+  const { records } = await PromoVideos.findAll({ limit: 200 });
+  const videos = records
+    .slice()
+    .sort(sortByCreatedDesc)
+    .map((r) => {
+      let segmentCount: number | undefined;
+      if (r.contentIndexJson) {
+        try {
+          const idx = JSON.parse(r.contentIndexJson as string);
+          segmentCount = Array.isArray(idx.segments) ? idx.segments.length : undefined;
+        } catch {
+          /* ignore */
+        }
+      }
+      return {
+        id: r.id,
+        productName: r.productName,
+        keywords: r.keywords,
+        description: r.description,
+        videoUrl: r.videoUrl,
+        addedAt: r.addedAt ?? r.createdAt,
+        indexStatus: r.indexStatus,
+        segmentCount,
+        // true when the cached index is a vision index at the CURRENT standard
+        // (so "Re-index all" will skip it). false = needs re-indexing.
+        indexCurrent: isIndexCurrent(r.contentIndexJson),
+        hasVideo: !!r.videoUrl,
+      };
+    });
+  return { videos };
+};
+
+/** Return the full cached content index (segments + per-second captions) for
+ *  one promo video, so the UI can show exactly what the AI sees each second. */
+const getPromoIndex: Handler = async (input) => {
+  const v = await PromoVideos.findOne({ id: input.videoId ?? input.id });
+  if (!v) throw new ZiteError({ code: "NOT_FOUND", message: "Promo video not found" });
+  let index: any = null;
+  if (v.contentIndexJson) {
+    try {
+      index = JSON.parse(v.contentIndexJson as string);
+    } catch {
+      /* corrupt */
+    }
+  }
+  return {
+    id: v.id,
+    productName: v.productName,
+    videoUrl: v.videoUrl,
+    indexStatus: v.indexStatus,
+    mode: index?.mode ?? null,
+    mediaKind: index?.mediaKind ?? v.mediaKind ?? null,
+    perSecond: Array.isArray(index?.perSecond) ? index.perSecond : [],
+    segments: Array.isArray(index?.segments) ? index.segments : [],
+  };
+};
+
+/**
+ * Export the FULL raw content-index JSON for review — all promo videos (or one
+ * if videoId is given). Returns a single JSON object you can copy/paste.
+ */
+const exportPromoIndexes: Handler = async (input) => {
+  const { records } = await PromoVideos.findAll({ limit: 1000 });
+  const pick = input?.videoId ?? input?.id;
+  const out = records
+    .filter((v) => (pick ? v.id === pick : true))
+    .map((v) => {
+      let index: any = null;
+      if (v.contentIndexJson) {
+        try { index = JSON.parse(v.contentIndexJson as string); } catch { index = "<<unparseable>>"; }
+      }
+      return {
+        id: v.id,
+        productName: v.productName ?? null,
+        videoUrl: v.videoUrl ?? null,
+        indexStatus: v.indexStatus ?? null,
+        mediaKind: v.mediaKind ?? null,
+        keywords: v.keywords ?? null,
+        indexMode: index && typeof index === "object" ? index.mode ?? null : null,
+        index,
+      };
+    });
+  return {
+    exportedAt: new Date().toISOString(),
+    count: out.length,
+    videos: out,
+  };
+};
+// savePromoVideo runs the original endpoint (it derives product metadata via an
+// LLM, with a filename fallback) — wired through the bundle further below.
+const updatePromoVideo: Handler = async (input) => {
+  const { id, videoId, record, ...rest } = input;
+  const targetId = id ?? videoId;
+  if (!targetId) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "updatePromoVideo requires an id/videoId." });
+  }
+  await PromoVideos.update({ id: targetId, record: record ?? rest });
+  return { success: true };
+};
+const deletePromoVideo: Handler = async (input) => {
+  await PromoVideos.delete({ id: input.id ?? input.videoId });
+  return { success: true };
+};
+
+/**
+ * Bulk-import a promo-video metadata index (e.g. an exported pool from the old
+ * Zite app). Each entry may carry path_lower / downloadUrl, but we DO NOT store
+ * those — they're only used to match an entry to a promo video that's already in
+ * the library (by base filename). Matched entries are enriched in place; the
+ * rest are created as metadata-only records (videoUrl is set from downloadUrl so
+ * retrieval still works, but the path_lower/downloadUrl fields themselves are
+ * dropped from storage).
+ *
+ * Stored fields per video: productName, keywords, description, videoUrl,
+ * contentIndexJson (stringified), indexStatus.
+ */
+const baseFileName = (p: string): string => {
+  const last = String(p || "").split("/").pop() || "";
+  return last.replace(/\.[^.]+$/, "").trim().toLowerCase();
+};
+
+const importPromoIndex: Handler = async (input) => {
+  // Accept either a raw array or { entries: [...] } / { index: [...] }.
+  const entries: any[] = Array.isArray(input)
+    ? input
+    : Array.isArray(input?.entries)
+    ? input.entries
+    : Array.isArray(input?.index)
+    ? input.index
+    : Array.isArray(input?.videos)
+    ? input.videos
+    : [];
+  if (entries.length === 0) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "No index entries provided (expected a JSON array)." });
+  }
+
+  // Existing promo videos, keyed by the base filename we can recover from their
+  // stored videoUrl or productName, so re-imports update rather than duplicate.
+  const { records: existing } = await PromoVideos.findAll({ limit: 1000 });
+  const byKey = new Map<string, Record_>();
+  for (const v of existing) {
+    const keys = [
+      baseFileName((v.videoUrl as string) || ""),
+      String(v.productName || "").trim().toLowerCase(),
+    ].filter(Boolean);
+    for (const k of keys) if (!byKey.has(k)) byKey.set(k, v);
+  }
+
+  let updated = 0;
+  let created = 0;
+  for (const e of entries) {
+    // Strip path_lower / downloadUrl from what we persist; use them only to
+    // derive a match key and a usable videoUrl.
+    const { path_lower, downloadUrl, name, productName, keywords, description, contentIndexJson, videoUrl } = e;
+    const matchKey = baseFileName(path_lower || "");
+    const nameKey = String(name || productName || "").trim().toLowerCase();
+
+    // contentIndexJson may be an object (as in the export) or already a string.
+    const indexStr =
+      contentIndexJson == null
+        ? undefined
+        : typeof contentIndexJson === "string"
+        ? contentIndexJson
+        : JSON.stringify(contentIndexJson);
+
+    const record: Record<string, unknown> = {
+      productName: name ?? productName,
+      keywords,
+      description,
+      // Prefer an already-stored videoUrl; else fall back to the export's
+      // downloadUrl so retrieval still resolves a clip. (downloadUrl itself is
+      // not stored as a separate field — only as videoUrl.)
+      videoUrl: videoUrl ?? downloadUrl,
+      contentIndexJson: indexStr,
+      indexStatus: indexStr ? "Indexed" : "Not Indexed",
+    };
+
+    const match =
+      (matchKey && byKey.get(matchKey)) || (nameKey && byKey.get(nameKey)) || undefined;
+
+    if (match) {
+      // Don't clobber an existing local videoUrl with the export's downloadUrl.
+      if (match.videoUrl) record.videoUrl = match.videoUrl;
+      await PromoVideos.update({ id: match.id, record });
+      updated++;
+    } else {
+      record.addedAt = new Date().toISOString();
+      await PromoVideos.create({ record });
+      created++;
+    }
+  }
+
+  return { success: true, updated, created, total: entries.length };
+};
+
+// ── Misc data helpers ────────────────────────────────────────────────────────
+const getDownloadUrl: Handler = async (input) => {
+  // Our uploads are already directly served URLs.
+  return { url: input.url ?? input.fileUrl ?? "" };
+};
+
+// ── Final render via the local FFmpeg engine (Rendi-compatible contract) ─────
+// Builds a manifest from the project's narration + shots and queues a render
+// job; the frontend polls pollRendiStatus until terminal.
+const submitRendiJob: Handler = async (input) => {
+  const projectId: string = input.projectId;
+  const project = await Projects.findOne({ id: projectId });
+  if (!project) throw new ZiteError({ code: "NOT_FOUND", message: "Project not found." });
+
+  const narrationUrl = (project.narrationUrl as string) || (project.audioUrl as string) || "";
+  if (!narrationUrl) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Project has no narration video to render." });
+  }
+
+  const { records: shotRecords } = await Shots.findAll({ filters: { project: projectId }, limit: 1000 });
+  const shots = shotRecords.sort((a, b) => ((a.startTime as number) ?? 0) - ((b.startTime as number) ?? 0));
+
+  // Subtitles, if the project carries them.
+  let subtitles: any[] = [];
+  if (project.subtitlesJson) {
+    try { subtitles = JSON.parse(project.subtitlesJson as string); } catch { /* */ }
+  }
+
+  // Pick the subtitle style: a pinned project.subtitleTemplate wins; otherwise
+  // rotate randomly across the 4 approved styles and remember the pick.
+  let chosenTemplate: SubtitleTemplate =
+    (project.subtitleTemplate as SubtitleTemplate) ||
+    SUBTITLE_TEMPLATE_POOL[Math.floor(Math.random() * SUBTITLE_TEMPLATE_POOL.length)];
+  if (!project.subtitleTemplate) {
+    await Projects.update({ id: projectId, record: { subtitleTemplate: chosenTemplate } }).catch(() => {});
+  }
+
+  // Music track (optional).
+  let music: { audioUrl: string; volume: number } | null = null;
+  const musicTrackId = (project.musicTrack as string) || undefined;
+  if (musicTrackId) {
+    const track = await MusicTracks.findOne({ id: musicTrackId });
+    if (track?.audioUrl) {
+      // musicVolume is stored as a 0–1 gain; default to 8% (quiet bed).
+      const raw = typeof project.musicVolume === "number" ? (project.musicVolume as number) : 0.08;
+      const vol = Math.max(0, Math.min(1, raw));
+      music = { audioUrl: track.audioUrl as string, volume: vol };
+      console.log(`[submitRendiJob] Music: track=${musicTrackId} vol=${vol} url=${track.audioUrl}`);
+    } else {
+      console.warn(`[submitRendiJob] Music track ${musicTrackId} has no audioUrl — render will be silent music`);
+    }
+  } else {
+    console.warn(`[submitRendiJob] Project ${projectId} has NO musicTrack set — no background music in render`);
+  }
+
+  // Map shots -> manifest scenes (overlay clips for screencast/broll).
+  const scenes = shots
+    .filter((s) => s.startTime !== undefined && s.endTime !== undefined)
+    .map((s) => {
+      const type = String(s.shotType || "broll").toLowerCase().replace(/[\s_-]/g, "");
+      const sceneType = type === "talkinghead" ? "talking-head" : type === "screencast" ? "screencast" : "broll";
+      const clipUrl = (s.clipUrl as string) || "";
+      // Pull the overlay timing the director/retrieval computed (segment within
+      // the promo clip, narrator-first delay, narrator-return) out of uiLabelsJson.
+      let lbl: Record<string, any> = {};
+      try { if (s.uiLabelsJson) lbl = JSON.parse(s.uiLabelsJson as string); } catch { /* */ }
+      const num = (v: any, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+      // Trust the stored mediaType (stock/promo/generated clips are video); only
+      // fall back to URL sniffing when the pipeline didn't record one.
+      const isImage = lbl.mediaType === "image"
+        ? true
+        : lbl.mediaType === "video"
+        ? false
+        : /\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(clipUrl.split("?")[0]);
+      // Rule: overlays appear AFTER ~1s of narrator. Honor 1s as a floor (only a
+      // very short beat may reduce it, handled upstream by computeOverlayDelay).
+      const storedDelay = num(lbl.overlayDelaySeconds, 1.0);
+      const beatLen = (s.endTime as number) - (s.startTime as number);
+      const overlayDelay = beatLen > 2 ? Math.max(1.0, storedDelay) : storedDelay;
+      return {
+        shotId: s.id,
+        type: sceneType,
+        startTime: s.startTime as number,
+        endTime: s.endTime as number,
+        overlay:
+          sceneType !== "talking-head" && clipUrl
+            ? {
+                mediaType: isImage ? "image" : "video",
+                clipUrl,
+                clipStartOffset: num(lbl.clipStartOffset, 0),
+                clipEndOffset: num(lbl.clipEndOffset, 0),
+                overlayDelaySeconds: overlayDelay,
+                showNarratorFirst: lbl.showNarratorFirst === true,
+                returnToNarrator: lbl.returnToNarratorBeforeEnd === true,
+                narratorReturnLeadSeconds: num(lbl.narratorReturnLeadSeconds, 0),
+                fadeInSeconds: 0.15,
+                isTacticalBroll: lbl.brollMode === "tactical_broll" || lbl.isRequiredTacticalSlot === true,
+              }
+            : null,
+        transitionIn: null,
+        sfxIn: null,
+      };
+    });
+
+  const duration =
+    (project.durationSeconds as number) ||
+    scenes.reduce((max, s) => Math.max(max, s.endTime), 0) ||
+    0;
+
+  const manifest = {
+    version: 1,
+    projectId,
+    width: 1080,
+    height: 1920,
+    fps: 30,
+    durationSeconds: duration || 1,
+    narration: { videoUrl: narrationUrl, chunkUrls: [] },
+    music,
+    scenes,
+    subtitles,
+    // Subtitle template: if the project pinned one, use it; otherwise ROTATE
+    // randomly across the 4 approved styles per video (persist the pick so the
+    // editor preview and any re-render stay consistent).
+    subtitleStyle:
+      SUBTITLE_TEMPLATES[(project.subtitleTemplate as SubtitleTemplate)] ?? SUBTITLE_TEMPLATES[chosenTemplate],
+  };
+
+  const jobId = createJob({
+    kind: "manifest",
+    manifest,
+    outputName: `${(project.title as string) || projectId}.mp4`,
+    projectId,
+  });
+  db.prepare("UPDATE render_jobs SET duration_sec=? WHERE id=?").run(manifest.durationSeconds, jobId);
+  await Projects.update({ id: projectId, record: { status: "Rendering", renderJobId: jobId } });
+  pump();
+
+  return {
+    jobId,
+    renderJobRecordId: jobId,
+    rendiCommandId: jobId,
+    status: "Submitted",
+    reused: false,
+    diagnostics: {
+      totalScenes: scenes.length,
+      hasSubtitles: subtitles.length > 0,
+      hasMusic: !!music,
+      srtLineCount: subtitles.length,
+      estimatedPayloadKB: Math.round(JSON.stringify(manifest).length / 1024),
+    },
+  };
+};
+
+const pollRendiStatus: Handler = async (input) => {
+  const id = input.renderJobRecordId ?? input.jobId;
+  const job = getJob(id);
+  if (!job) throw new ZiteError({ code: "NOT_FOUND", message: "Render job not found." });
+
+  const statusMap: Record<string, string> = {
+    queued: "Submitted",
+    active: "Processing",
+    completed: "Done",
+    failed: "Error",
+    canceled: "Error",
+  };
+  const terminal = job.status === "completed" || job.status === "failed" || job.status === "canceled";
+  const outputUrl = job.output_file ? `/api/outputs/${job.output_file}` : null;
+
+  if (job.project_id && terminal) {
+    await Projects.update({
+      id: job.project_id,
+      record: job.status === "completed" ? { status: "Complete", outputUrl } : { status: "Error" },
+    });
+  }
+
+  return {
+    status: statusMap[job.status] || "Processing",
+    terminal,
+    outputUrl,
+    subtitleAssUrl: null,
+    renderingTime: job.duration_sec ?? null,
+    outputWidth: 1080,
+    outputHeight: 1920,
+    outputDuration: job.duration_sec ?? null,
+    errorMessage: job.error ?? null,
+    pollIntervalMs: 3000,
+  };
+};
+
+const renderVideo: Handler = async (input) => submitRendiJob(input, "local");
+
+// ── AI pipeline (Stage 2): transcription (Groq) + director (Claude) ──────────
+// The heavy lifting lives in the esbuild bundle dist/ai/pipeline-bundle.js,
+// which runs the ORIGINAL src/api/runPipeline.ts unchanged with the OpenAI SDK
+// aliased to our Groq+Claude shim. Imported lazily so a missing bundle or
+// missing API keys produces a clear error instead of crashing startup.
+type PipelineCtx = { user: { id: string; email: string } };
+type PipelineFn = (input: unknown, ctx: PipelineCtx) => Promise<unknown>;
+let pipelineMod: {
+  runPipeline: PipelineFn;
+  captureShots: PipelineFn;
+  recaptureShot: PipelineFn;
+  reviewEdit: PipelineFn;
+  indexPromoVideo: PipelineFn;
+  savePromoVideo: PipelineFn;
+  getWaveform: PipelineFn;
+} | null = null;
+async function loadPipeline() {
+  if (pipelineMod) return pipelineMod;
+  try {
+    // @ts-ignore - bundle produced by the build:pipeline step (absent at tsc time)
+    pipelineMod = (await import("../ai/pipeline-bundle.js")) as any;
+  } catch (e) {
+    // Surface the REAL reason (missing file vs. a load/runtime error inside the
+    // bundle) instead of a generic "not found" — this is what we debug from.
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[loadPipeline] failed to import dist/ai/pipeline-bundle.js:", msg);
+    if (e instanceof Error && e.stack) console.error(e.stack);
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: `AI pipeline bundle failed to load: ${msg}`,
+    });
+  }
+  return pipelineMod!;
+}
+
+/**
+ * Run a bundled AI endpoint (runPipeline / captureShots / recaptureShot /
+ * indexPromoVideo). All require the AI providers; capture additionally uses
+ * Kinovi for B-roll, but that key is checked inside the bundled logic so a
+ * project with only screencast/talking-head shots still works without it.
+ */
+async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot" | "reviewEdit", input: unknown, userId: string) {
+  if (!process.env.GROQ_API_KEY) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Transcription is not configured. Set GROQ_API_KEY on the server to enable it.",
+    });
+  }
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "The AI director is not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) on the server to enable it.",
+    });
+  }
+  let mod;
+  try {
+    mod = await loadPipeline();
+  } catch {
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: "AI pipeline bundle not found. Run the server build (npm run build) to generate it.",
+    });
+  }
+  return mod[name](input, { user: { id: userId, email: "you@clipmagic.local" } });
+}
+
+const runPipeline: Handler = (input, userId) => runBundled("runPipeline", input, userId);
+const captureShots: Handler = (input, userId) => runBundled("captureShots", input, userId);
+const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
+const reviewEdit: Handler = (input, userId) => runBundled("reviewEdit", input, userId);
+
+// ── Bulk narration → full pipeline + render, one project at a time ───────────
+// Server-side orchestrator so a batch keeps running even if the browser closes.
+// For each uploaded narration we create a project, then run the SAME chain the
+// single-video flow uses: runPipeline → captureShots → (poll B-roll) →
+// reviewEdit → (poll any new B-roll) → submitRendiJob → (poll render) → save
+// outputUrl. Processed sequentially ("one at a time") to stay gentle on API
+// limits. Progress is polled by the frontend via getBulkRun.
+
+interface BulkItem {
+  projectId: string;
+  title: string;
+  status: "Queued" | "Directing" | "Capturing" | "Reviewing" | "Rendering" | "Complete" | "Error";
+  outputUrl: string | null;
+  error: string | null;
+}
+interface BulkRun {
+  id: string;
+  running: boolean;
+  total: number;
+  doneCount: number;
+  items: BulkItem[];
+  startedAt: number;
+  finishedAt: number | null;
+}
+let bulkRun: BulkRun | null = null;
+let bulkRunning = false;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function waitForBroll(projectId: string, userId: string): Promise<void> {
+  // Poll pollBrollStatus until no B-roll is pending (or a safety timeout).
+  for (let i = 0; i < 240; i++) { // ~20 min max at 5s
+    const r = (await pollBrollStatus({ projectId }, userId)) as { pending?: number };
+    if (!r || (r.pending ?? 0) === 0) return;
+    await sleep(5000);
+  }
+}
+
+async function waitForRender(jobId: string, userId: string): Promise<{ outputUrl: string | null; error: string | null }> {
+  for (let i = 0; i < 600; i++) { // ~30 min max at 3s
+    const r = (await pollRendiStatus({ renderJobRecordId: jobId }, userId)) as any;
+    if (r?.terminal) return { outputUrl: r.outputUrl ?? null, error: r.errorMessage ?? null };
+    await sleep(3000);
+  }
+  return { outputUrl: null, error: "Render timed out" };
+}
+
+async function runOneProject(item: BulkItem, userId: string): Promise<void> {
+  try {
+    // Mirror the single-video flow EXACTLY (ProcessingPage → finishToTimeline),
+    // just synchronously and one at a time. Same handlers, same inputs, same
+    // B-roll gating — only the final render step is added so the batch produces
+    // a downloadable file (in the single flow the user exports from the editor).
+    const projectId = item.projectId;
+
+    // Phase 1–2: direct (transcribe + subtitles + beat plan) then capture media.
+    item.status = "Directing";
+    await runPipeline({ projectId }, userId);
+
+    item.status = "Capturing";
+    const cap = (await captureShots({ projectId }, userId)) as { pendingBroll?: number };
+    // Only wait when capture actually queued B-roll generation — same as the
+    // single-video page, which polls only if result.pendingBroll > 0.
+    if ((cap?.pendingBroll ?? 0) > 0) await waitForBroll(projectId, userId);
+
+    // Phase 3: AI self-review accuracy pass; may queue a few more B-roll clips.
+    item.status = "Reviewing";
+    const rev = (await reviewEdit({ projectId }, userId)) as { pendingBroll?: number };
+    if ((rev?.pendingBroll ?? 0) > 0) await waitForBroll(projectId, userId);
+
+    // Phase 4 (bulk-only): render to a downloadable MP4.
+    item.status = "Rendering";
+    const job = (await submitRendiJob({ projectId }, userId)) as { jobId?: string; renderJobRecordId?: string };
+    const jobId = job.renderJobRecordId ?? job.jobId;
+    if (!jobId) throw new Error("Render job was not created");
+    const { outputUrl, error } = await waitForRender(jobId, userId);
+    if (error || !outputUrl) throw new Error(error || "Render produced no output");
+
+    // Persist the output on the project so it shows on the home grid too,
+    // exactly like a single-video render that completes from the editor.
+    await Projects.update({ id: projectId, record: { status: "Complete", outputUrl } }).catch(() => {});
+    item.outputUrl = outputUrl;
+    item.status = "Complete";
+  } catch (e) {
+    item.status = "Error";
+    item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+    console.warn(`[bulkNarration] ${item.title} failed: ${item.error}`);
+  }
+}
+
+// Create N projects from uploaded narration URLs and kick the background run.
+const createBulkNarration: Handler = async (input, userId) => {
+  if (bulkRunning) {
+    return { started: false, message: "A bulk run is already in progress.", run: bulkRun };
+  }
+  const items: Array<{ narrationUrl: string; audioUrl?: string; title?: string }> = Array.isArray(input?.items)
+    ? input.items
+    : [];
+  if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No narration files provided." });
+
+  // Create a project per narration through the SAME createProject handler the
+  // single-video upload uses, with the same inputs (UploadZone sends exactly
+  // these). This guarantees the project record — and therefore everything the
+  // AI editing reads from it — is identical to a one-by-one upload. Fully
+  // automatic: contextHint blank (AI auto-detects from audio), music auto,
+  // subtitles rotate per video. No `bulk` flag, no special-casing anywhere.
+  const bulkItems: BulkItem[] = [];
+  for (const it of items) {
+    if (!it.narrationUrl) continue;
+    const { projectId } = (await createProject(
+      {
+        narrationUrl: it.narrationUrl,
+        audioUrl: it.audioUrl,
+        videoChunksJson: JSON.stringify([it.narrationUrl]),
+        contextHint: undefined,
+        accentColor: "#FFD60A",
+        musicTrackId: undefined,
+      },
+      userId,
+    )) as { projectId: string };
+    bulkItems.push({ projectId, title: it.title || "Bulk video", status: "Queued", outputUrl: null, error: null });
+  }
+
+  bulkRun = {
+    id: nanoidLike(),
+    running: true,
+    total: bulkItems.length,
+    doneCount: 0,
+    items: bulkItems,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  bulkRunning = true;
+
+  // Fire-and-forget: process ONE AT A TIME so we don't overload the AI APIs.
+  (async () => {
+    for (const item of bulkRun!.items) {
+      await runOneProject(item, userId);
+      bulkRun!.doneCount++;
+    }
+    bulkRun!.running = false;
+    bulkRun!.finishedAt = Date.now();
+    bulkRunning = false;
+    console.log(`[bulkNarration] done — ${bulkRun!.items.filter((x) => x.status === "Complete").length}/${bulkRun!.total} complete`);
+  })().catch((e) => {
+    if (bulkRun) { bulkRun.running = false; bulkRun.finishedAt = Date.now(); }
+    bulkRunning = false;
+    console.error("[bulkNarration] run crashed:", e);
+  });
+
+  return { started: true, run: bulkRun };
+};
+
+const getBulkRun: Handler = async () => ({ run: bulkRun });
+
+function nanoidLike(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// ── Narration Cutter (separate product) ──────────────────────────────────────
+// Phase 1 (deterministic): for each raw clip we transcribe it (Groq, word-level
+// timestamps), plan the cuts (remove >0.35s silences + "um"/"uh" fillers), then
+// run a single ffmpeg trim+concat "cut" job. Processed one at a time so the AI
+// API and the render queue stay gentle. Progress is polled via getCutRun.
+
+interface CutStats {
+  originalDuration: number;
+  keptDuration: number;
+  removedDuration: number;
+  silenceCuts: number;
+  fillerCuts: number;
+  takesRemoved: number;
+}
+interface CutItem {
+  cutId: string;
+  title: string;
+  status: "Queued" | "Transcribing" | "Analyzing" | "Rendering" | "Complete" | "Error";
+  outputUrl: string | null;
+  error: string | null;
+  stats: CutStats | null;
+}
+interface CutRun {
+  id: string;
+  running: boolean;
+  total: number;
+  doneCount: number;
+  items: CutItem[];
+  startedAt: number;
+  finishedAt: number | null;
+}
+let cutRun: CutRun | null = null;
+let cutRunning = false;
+
+async function waitForCutJob(jobId: string): Promise<{ outputUrl: string | null; error: string | null }> {
+  for (let i = 0; i < 1200; i++) { // ~60 min max at 3s
+    const job = getJob(jobId);
+    if (!job) return { outputUrl: null, error: "Render job not found" };
+    if (job.status === "completed") {
+      return { outputUrl: job.output_file ? `/api/outputs/${job.output_file}` : null, error: null };
+    }
+    if (job.status === "failed" || job.status === "canceled") {
+      return { outputUrl: null, error: job.error ?? "Render failed" };
+    }
+    await sleep(3000);
+  }
+  return { outputUrl: null, error: "Render timed out" };
+}
+
+async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
+  try {
+    item.status = "Transcribing";
+    const srcPath = await resolveInput(sourceUrl);
+    const meta = await probe(srcPath);
+    const duration = meta.duration ?? 0;
+    if (!duration) throw new Error("Could not read the video's duration");
+    const audio = await extractAudioForTranscription(srcPath);
+    const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
+
+    item.status = "Analyzing";
+    // Phase 2: find repeated takes and keep only the best (vision + audio energy).
+    // Best-effort — degrades to silence/filler-only if AI/analysis is unavailable.
+    const takeDecision = await planTakeDecision(srcPath, tr.words, tr.duration || duration)
+      .catch(() => ({ groupsFound: 0, takesRemoved: 0, dropRanges: [] as { start: number; end: number }[] }));
+    const plan = planCuts(tr.words, tr.duration || duration, { extraCuts: takeDecision.dropRanges });
+    const stats: CutStats = {
+      originalDuration: plan.originalDuration,
+      keptDuration: plan.keptDuration,
+      removedDuration: plan.removedDuration,
+      silenceCuts: plan.silenceCuts,
+      fillerCuts: plan.fillerCuts,
+      takesRemoved: takeDecision.takesRemoved,
+    };
+    item.stats = stats;
+    await NarrationCuts.update({
+      id: item.cutId,
+      record: { status: "Rendering", transcript: tr.text, stats, segments: plan.keep },
+    }).catch(() => {});
+
+    item.status = "Rendering";
+    const spec: CutSpec = { source: srcPath, segments: plan.keep, hasAudio: meta.hasAudio };
+    const jobId = createJob({
+      kind: "cut",
+      manifest: spec,
+      outputName: `${item.title || "cut"}.mp4`,
+      projectId: item.cutId,
+    });
+    db.prepare("UPDATE render_jobs SET duration_sec=? WHERE id=?").run(plan.keptDuration, jobId);
+    await NarrationCuts.update({ id: item.cutId, record: { renderJobId: jobId } }).catch(() => {});
+    pump();
+
+    const { outputUrl, error } = await waitForCutJob(jobId);
+    if (error || !outputUrl) throw new Error(error || "Render produced no output");
+
+    await NarrationCuts.update({ id: item.cutId, record: { status: "Complete", outputUrl } }).catch(() => {});
+    item.outputUrl = outputUrl;
+    item.status = "Complete";
+  } catch (e) {
+    item.status = "Error";
+    item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+    await NarrationCuts.update({ id: item.cutId, record: { status: "Error", error: item.error } }).catch(() => {});
+    console.warn(`[narrationCut] ${item.title} failed: ${item.error}`);
+  }
+}
+
+// Create N cut records from uploaded raw clips and kick the background run.
+const createBulkCut: Handler = async (input, userId) => {
+  if (cutRunning) {
+    return { started: false, message: "A cut run is already in progress.", run: cutRun };
+  }
+  const items: Array<{ sourceUrl: string; title?: string }> = Array.isArray(input?.items) ? input.items : [];
+  if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No videos provided." });
+
+  const cutItems: CutItem[] = [];
+  const sources: string[] = [];
+  for (const it of items) {
+    if (!it.sourceUrl) continue;
+    const rec = await NarrationCuts.create({
+      record: { title: it.title || "Cut", status: "Queued", sourceUrl: it.sourceUrl, outputUrl: null, user: userId },
+    });
+    cutItems.push({ cutId: rec.id, title: it.title || "Cut", status: "Queued", outputUrl: null, error: null, stats: null });
+    sources.push(it.sourceUrl);
+  }
+
+  cutRun = {
+    id: nanoidLike(),
+    running: true,
+    total: cutItems.length,
+    doneCount: 0,
+    items: cutItems,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  cutRunning = true;
+
+  // Fire-and-forget: process ONE AT A TIME (gentle on the transcription API).
+  (async () => {
+    for (let i = 0; i < cutRun!.items.length; i++) {
+      await runOneCut(cutRun!.items[i], sources[i]);
+      cutRun!.doneCount++;
+    }
+    cutRun!.running = false;
+    cutRun!.finishedAt = Date.now();
+    cutRunning = false;
+    console.log(`[narrationCut] done — ${cutRun!.items.filter((x) => x.status === "Complete").length}/${cutRun!.total} complete`);
+  })().catch((e) => {
+    if (cutRun) { cutRun.running = false; cutRun.finishedAt = Date.now(); }
+    cutRunning = false;
+    console.error("[narrationCut] run crashed:", e);
+  });
+
+  return { started: true, run: cutRun };
+};
+
+const getCutRun: Handler = async () => ({ run: cutRun });
+
+const getNarrationCuts: Handler = async (_input, userId) => {
+  const { records } = await NarrationCuts.findAll({ filters: { user: userId }, limit: 200 });
+  const cuts = records.sort(sortByCreatedDesc).map((c) => ({
+    id: c.id,
+    title: c.title,
+    status: c.status,
+    outputUrl: c.outputUrl,
+    sourceUrl: c.sourceUrl,
+    stats: c.stats,
+    error: c.error,
+    createdAt: c.createdAt,
+  }));
+  return { cuts };
+};
+
+
+/**
+ * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
+ * and ask Claude vision what's actually on screen each second, then cache the
+ * result on the video's contentIndexJson. Runs once per video (index/reindex),
+ * never during a render — the director/retrieval reads the cached index.
+ *
+ * Falls back to coarse time-bucket segments if frame extraction or vision fails
+ * (e.g. no ANTHROPIC key, unreachable video), so indexing never hard-blocks.
+ */
+const indexPromoVideo: Handler = async (input) => {
+  const videoId: string = input.videoId ?? input.id;
+  const video = await PromoVideos.findOne({ id: videoId });
+  if (!video) throw new ZiteError({ code: "NOT_FOUND", message: "Promo video not found" });
+
+  const productName = (video.productName as string) || "Unknown Product";
+  const videoRef = (video.videoUrl as string) || "";
+  if (!videoRef) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Promo video has no videoUrl to analyze." });
+  }
+
+  await PromoVideos.update({ id: videoId, record: { indexStatus: "Indexing" } });
+
+  // Lazy import so tsc/runtime only load the vision modules when indexing runs.
+  try {
+    const { buildVisionIndex } = await import("../ai/visionIndex.js");
+    const index = await buildVisionIndex({
+      videoRef,
+      productName,
+      keywords: video.keywords as string | undefined,
+      description: video.description as string | undefined,
+    });
+    const enrichedKw =
+      index.totalKeywords.length > 0 ? index.totalKeywords.join(", ") : (video.keywords as string);
+    await PromoVideos.update({
+      id: videoId,
+      record: {
+        contentIndexJson: JSON.stringify(index),
+        indexStatus: "Indexed",
+        mediaKind: index.mediaKind,
+        keywords: enrichedKw,
+      },
+    });
+    console.log(
+      `[indexPromoVideo:${videoId}] ✅ vision-indexed "${productName}" — ` +
+        `${index.perSecond.length}s, ${index.segments.length} segments, mediaKind=${index.mediaKind}`
+    );
+    return {
+      success: true,
+      mode: "vision",
+      segmentCount: index.segments.length,
+      seconds: index.perSecond.length,
+      mediaKind: index.mediaKind,
+      bestFeatureMoments: index.bestFeatureMoments.length,
+      bestProofMoments: index.bestProofMoments.length,
+      bestHeroMoments: index.bestHeroMoments.length,
+    };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[indexPromoVideo:${videoId}] vision indexing failed, using fallback: ${msg}`);
+    // Coarse fallback: still give the retrieval usable segments.
+    const dur = (video.durationSeconds as number) || input.durationEstimate || 30;
+    const buckets = Math.max(3, Math.min(8, Math.round(dur / 5)));
+    const bucketDur = dur / buckets;
+    const kw = (video.keywords as string | undefined)?.split(",").map((k) => k.trim()).filter(Boolean) || [productName];
+    const segments = Array.from({ length: buckets }, (_, i) => ({
+      start: parseFloat((i * bucketDur).toFixed(2)),
+      end: parseFloat(((i + 1) * bucketDur).toFixed(2)),
+      summary: i === 0 ? `Opening — ${productName}` : `${productName} segment ${i + 1}`,
+      featureLabel: productName,
+      keywords: kw,
+      visualType: i === 0 ? "landing_page" : "feature_demo",
+      heroScore: i === 0 ? 70 : 40,
+      proofScore: 40,
+      embeddingText: `${productName} ${(video.description as string) || ""} ${kw.join(" ")}`.trim(),
+      confidence: 0.3,
+    }));
+    await PromoVideos.update({
+      id: videoId,
+      record: {
+        contentIndexJson: JSON.stringify({
+          version: 3,
+          indexedAt: new Date().toISOString(),
+          mode: "fallback",
+          productName,
+          mediaKind: "mixed",
+          perSecond: [],
+          segments,
+          bestFeatureMoments: [],
+          bestProofMoments: [],
+          bestHeroMoments: [],
+          totalKeywords: kw,
+        }),
+        indexStatus: "Indexed",
+      },
+    });
+    return { success: true, mode: "fallback", segmentCount: segments.length, seconds: 0, mediaKind: "mixed", error: msg };
+  }
+};
+
+/**
+ * Bulk vision-(re)index the whole promo library. Returns IMMEDIATELY and runs
+ * the indexing in the background, flipping each video's indexStatus to
+ * "Indexing" then "Indexed" as it goes — so the UI shows live per-video progress
+ * (poll getPromoVideos) instead of one long blocking request. Sequential to keep
+ * memory/cost bounded. By default skips already-vision-indexed videos; pass
+ * { force: true } to redo all.
+ */
+let bulkIndexRunning = false;
+// Live progress for the bulk re-index, polled by the promo dialog's progress bar.
+interface ReindexProgress {
+  running: boolean;
+  total: number;       // videos in this run
+  done: number;        // processed (indexed + failed)
+  indexed: number;
+  failed: number;
+  current: string | null;   // product name being indexed now
+  errors: Array<{ name: string; message: string }>;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+let reindexProgress: ReindexProgress = {
+  running: false, total: 0, done: 0, indexed: 0, failed: 0,
+  current: null, errors: [], startedAt: null, finishedAt: null,
+};
+
+const getReindexProgress: Handler = async () => ({ ...reindexProgress });
+
+/**
+ * Current vision-index standard. Bump this when the index shape/fields change
+ * so older indexes are recognized as out-of-date and get re-indexed once.
+ * v3 = vision mode with per-segment techScore + hasText (skip-intro-text).
+ */
+const INDEX_STANDARD_VERSION = 3;
+
+/** True when a promo's cached index is a VISION index at the CURRENT standard
+ *  (so it does not need re-indexing). Old/coarse/partial indexes return false. */
+function isIndexCurrent(contentIndexJson: unknown): boolean {
+  if (typeof contentIndexJson !== "string" || !contentIndexJson) return false;
+  try {
+    const idx = JSON.parse(contentIndexJson);
+    if (idx?.mode !== "vision") return false;
+    if ((idx?.version ?? 0) < INDEX_STANDARD_VERSION) return false;
+    const segs = Array.isArray(idx?.segments) ? idx.segments : [];
+    if (segs.length === 0) return false;
+    // Every segment must carry the current-standard fields.
+    return segs.every(
+      (s: any) => typeof s?.techScore === "number" && typeof s?.hasText === "boolean"
+    );
+  } catch {
+    return false;
+  }
+}
+
+const reindexAllPromos: Handler = async (input, userId) => {
+  if (bulkIndexRunning) {
+    return { success: true, started: false, message: "Indexing is already running.", progress: { ...reindexProgress } };
+  }
+  const force = input?.force === true;
+  const { records } = await PromoVideos.findAll({ limit: 1000 });
+
+  // Decide the work set. Skip videos that are ALREADY at the current standard
+  // (unless forced) and skip entries with no video to analyze.
+  const todo: Array<{ id: string; name: string }> = [];
+  let skippedCurrent = 0;
+  let skippedNoVideo = 0;
+  for (const v of records) {
+    const name = (v.productName as string) || "Promo";
+    if (!v.videoUrl) { skippedNoVideo++; continue; } // nothing to index
+    if (!force && isIndexCurrent(v.contentIndexJson)) { skippedCurrent++; continue; }
+    todo.push({ id: v.id, name });
+    await PromoVideos.update({ id: v.id, record: { indexStatus: "Indexing" } });
+  }
+  console.log(`[reindexAllPromos] queued=${todo.length} skipped(current)=${skippedCurrent} skipped(no-video)=${skippedNoVideo} force=${force}`);
+
+  // Nothing to do — everything is already at the current standard (or has no
+  // video). Return immediately without spinning up a background run.
+  if (todo.length === 0) {
+    return { success: true, started: false, queued: 0, total: records.length, skippedCurrent, skippedNoVideo, upToDate: true };
+  }
+
+  bulkIndexRunning = true;
+  reindexProgress = {
+    running: true, total: todo.length, done: 0, indexed: 0, failed: 0,
+    current: null, errors: [], startedAt: Date.now(), finishedAt: null,
+  };
+
+  // Fire-and-forget: do NOT await — the HTTP response returns right away.
+  (async () => {
+    for (const { id, name } of todo) {
+      reindexProgress.current = name;
+      try {
+        const r = (await indexPromoVideo({ videoId: id }, userId)) as { mode?: string; error?: string };
+        if (r?.mode === "vision") reindexProgress.indexed++;
+        else {
+          reindexProgress.failed++;
+          reindexProgress.errors.push({ name, message: `Vision failed (used coarse index): ${r?.error ?? "unknown reason"}`.slice(0, 200) });
+        }
+      } catch (e) {
+        reindexProgress.failed++;
+        const message = e instanceof Error ? e.message : String(e);
+        reindexProgress.errors.push({ name, message: message.slice(0, 160) });
+        try {
+          await PromoVideos.update({ id, record: { indexStatus: "Error" } });
+        } catch {
+          /* */
+        }
+        console.warn(`[reindexAllPromos] ${id} failed: ${message}`);
+      }
+      reindexProgress.done++;
+      // Small stagger between videos so a big library doesn't hammer the API
+      // (each video is many vision tokens) and trigger 529 overloads.
+      await new Promise((r) => setTimeout(r, 600));
+    }
+    reindexProgress.running = false;
+    reindexProgress.current = null;
+    reindexProgress.finishedAt = Date.now();
+    bulkIndexRunning = false;
+    console.log(`[reindexAllPromos] done — indexed=${reindexProgress.indexed} failed=${reindexProgress.failed} of ${todo.length}`);
+  })().catch((e) => {
+    reindexProgress.running = false;
+    reindexProgress.finishedAt = Date.now();
+    bulkIndexRunning = false;
+    console.error("[reindexAllPromos] background run crashed:", e);
+  });
+
+  return { success: true, started: todo.length > 0, queued: todo.length, total: records.length, skippedCurrent, skippedNoVideo };
+};
+
+/**
+ * Save a promo video to the library.
+ *
+ * Library management must ALWAYS work (it's basic CRUD); the AI enrichment
+ * (LLM keyword/description seeding + deep segment indexing) is a bonus. So we:
+ *   1. create the record immediately from the filename (fast, never fails),
+ *   2. then best-effort run the original endpoint via the bundle to enrich it.
+ * If the bundle is unavailable or the AI keys are unset, the upload still
+ * succeeds with filename-derived metadata.
+ */
+const savePromoVideo: Handler = async (input, userId) => {
+  const fileName: string = input.fileName ?? input.filename ?? "promo.mp4";
+  const rawName = fileName.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ").trim() || "Untitled";
+
+  // 1. Always create the record so the library updates right away.
+  const rec = await PromoVideos.create({
+    record: {
+      productName: rawName,
+      videoUrl: input.videoUrl ?? input.url,
+      addedAt: new Date().toISOString(),
+      indexStatus: "Not Indexed",
+    },
+  });
+
+  // 2. Best-effort AI enrichment (keywords, description, deep index). Never
+  //    fails the upload — logs and moves on if the bundle/keys are missing.
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    try {
+      const mod = await loadPipeline();
+      // The original endpoint creates its own record, so run it and adopt the
+      // richer result; then remove our placeholder to avoid a duplicate.
+      const enriched = (await mod.savePromoVideo(
+        { ...input, fileName },
+        { user: { id: userId, email: "you@clipmagic.local" } }
+      )) as { videoId?: string } & Record<string, unknown>;
+      if (enriched?.videoId && enriched.videoId !== rec.id) {
+        await PromoVideos.delete({ id: rec.id });
+        return enriched;
+      }
+      return enriched ?? { videoId: rec.id, productName: rawName, indexStatus: "Not Indexed" };
+    } catch (e) {
+      console.warn(
+        `[savePromoVideo] AI enrichment skipped (kept basic record): ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  }
+
+  return { videoId: rec.id, productName: rawName, indexStatus: "Not Indexed" };
+};
+
+/**
+ * Timeline waveform/beat-grid for a music track. The original endpoint
+ * synthesizes peaks from the track's bpm/duration (no AI, no audio decode), so
+ * we run it via the bundle with no key gate. If the bundle is unavailable, fall
+ * back to a simple synthesized waveform so the timeline still renders.
+ */
+const getWaveform: Handler = async (input, userId) => {
+  try {
+    const mod = await loadPipeline();
+    return await mod.getWaveform(input, { user: { id: userId, email: "you@clipmagic.local" } });
+  } catch {
+    const track = await MusicTracks.findOne({ id: input.trackId });
+    const bpm = (track?.bpm as number) || 124;
+    const duration = (track?.durationSeconds as number) || 60;
+    const n = Math.max(60, Math.round(duration * 8));
+    const peaks = Array.from({ length: n }, (_, i) =>
+      Math.max(0.05, Math.min(1, 0.5 + 0.4 * Math.sin(i / 6) * Math.sin(i / 23)))
+    );
+    const beatDur = 60 / bpm;
+    const beatGrid: number[] = [];
+    for (let t = 0; t <= duration + beatDur; t += beatDur) beatGrid.push(parseFloat(t.toFixed(3)));
+    return {
+      peaks,
+      bpm,
+      duration,
+      beatGrid,
+      downbeats: beatGrid.filter((_, i) => i % 4 === 0),
+      sectionMarkers: {},
+    };
+  }
+};
+
+// ── Kinovi B-roll generation (native port of src/api/generateShot.ts) ────────
+const kinoviBase = () => process.env.ZITE_KINOVI_BASE_URL || "https://api.kinovi.ai";
+
+const generateShot: Handler = async (input) => {
+  const key = process.env.ZITE_KINOVI_API_KEY;
+  if (!key) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Set ZITE_KINOVI_API_KEY to generate B-roll shots." });
+  }
+  const res = await fetch(`${kinoviBase()}/v1/generate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      prompt: input.prompt,
+      model: input.kinoviModel || "kinovi-1",
+      duration: input.durationSeconds || 5,
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) {
+    throw new ZiteError({
+      code: "INTERNAL_ERROR",
+      message: `Kinovi error (${res.status}): ${data?.error?.message || JSON.stringify(data)}`,
+    });
+  }
+  const taskId = data.taskId ?? data.id;
+  if (input.shotId && taskId) {
+    await Shots.update({ id: input.shotId, record: { kinoviTaskId: taskId, captureStatus: "Capturing" } });
+  }
+  return { success: true, taskId, status: data.status ?? "pending" };
+};
+
+// Poll Kinovi task status for any B-Roll shots still generating in a project.
+//
+// IMPORTANT: B-roll tasks are created by the bundled captureShots via
+// `createSeedanceTask` (POST https://kinovi.ai/api/v1/jobs/createTask) which
+// returns a task_id stored INSIDE the shot's uiLabelsJson as `kinoviTaskId`.
+// Status is read from `…/v1/jobs/recordInfo?taskId=…`. The previous version
+// polled a different endpoint, read kinoviTaskId as a top-level column, and
+// returned {status, ready, shots} — none of which matched, so the UI's
+// `result.pending === 0` check never fired and it span on "checking every 5s…"
+// forever even after Kinovi finished. The shape below matches the frontend
+// (ProcessingPage reads result.pending/done/failed).
+const kinoviJobsBase = () => process.env.ZITE_KINOVI_JOBS_URL || "https://kinovi.ai/api";
+
+const pollBrollStatus: Handler = async (input) => {
+  const key = (process.env.ZITE_KINOVI_API_KEY ?? "").trim();
+  if (!input.projectId) return { pending: 0, done: 0, failed: 0 };
+
+  const { records } = await Shots.findAll({ filters: { project: input.projectId }, limit: 200 });
+  const capturing = records.filter(
+    (s) => s.shotType === "B-Roll" && s.captureStatus === "Capturing"
+  );
+
+  if (capturing.length === 0) {
+    // Nothing pending — make sure the project status reflects completion.
+    await Projects.update({ id: input.projectId, record: { status: "Complete" } }).catch(() => {});
+    return { pending: 0, done: 0, failed: 0 };
+  }
+
+  let pending = 0;
+  let done = 0;
+  let failed = 0;
+
+  await Promise.all(
+    capturing.map(async (shot) => {
+      let labels: Record<string, any> = {};
+      try {
+        if (shot.uiLabelsJson) labels = JSON.parse(shot.uiLabelsJson as string);
+      } catch {
+        /* */
+      }
+      // captureShots stores the id in uiLabelsJson; tolerate a legacy top-level field too.
+      const taskId = labels.kinoviTaskId ?? (shot as any).kinoviTaskId;
+
+      if (!taskId || !key) {
+        await Shots.update({ id: shot.id, record: { captureStatus: "Error" } });
+        failed++;
+        return;
+      }
+
+      try {
+        const pr = await fetch(
+          `${kinoviJobsBase()}/v1/jobs/recordInfo?taskId=${encodeURIComponent(String(taskId))}`,
+          { headers: { Authorization: `Bearer ${key}` } }
+        );
+        const rawText = await pr.text().catch(() => "");
+        if (!pr.ok) {
+          pending++; // transient — keep polling
+          return;
+        }
+        let pd: any = {};
+        try {
+          pd = JSON.parse(rawText);
+        } catch {
+          pending++;
+          return;
+        }
+        const st = String(pd.status ?? pd.state ?? "").toLowerCase();
+        const outputUrl = Array.isArray(pd.output) ? pd.output[0]?.url : pd.output?.url;
+        const videoUrl = pd.video_url ?? pd.videoUrl ?? pd.output_url ?? outputUrl;
+
+        if ((st === "success" || st === "succeeded" || st === "completed") && videoUrl) {
+          await Shots.update({
+            id: shot.id,
+            record: {
+              clipUrl: videoUrl,
+              captureStatus: "Done",
+              uiLabelsJson: JSON.stringify({ ...labels, brollTrack: "generated" }),
+            },
+          });
+          done++;
+        } else if (st === "fail" || st === "failed" || st === "error") {
+          await Shots.update({ id: shot.id, record: { captureStatus: "Error" } });
+          failed++;
+        } else {
+          pending++; // queued / processing
+        }
+      } catch {
+        pending++; // transient network error — keep polling
+      }
+    })
+  );
+
+  if (pending === 0) {
+    await Projects.update({ id: input.projectId, record: { status: "Complete" } }).catch(() => {});
+  }
+  return { pending, done, failed };
+};
+
+const testKinoviApi: Handler = async () => {
+  const key = process.env.ZITE_KINOVI_API_KEY;
+  if (!key) {
+    return { success: false, message: "Kinovi API key not set. Add ZITE_KINOVI_API_KEY to enable shot generation." };
+  }
+  try {
+    const res = await fetch(`${kinoviBase()}/v1/models`, { headers: { Authorization: `Bearer ${key}` } });
+    return { success: res.ok, message: res.ok ? "Kinovi API reachable." : `Kinovi returned HTTP ${res.status}.` };
+  } catch (e) {
+    return { success: false, message: "Could not reach Kinovi: " + (e instanceof Error ? e.message : String(e)) };
+  }
+};
+
+export const HANDLERS: Record<string, Handler> = {
+  // data
+  createProject,
+  getProjects,
+  getProject,
+  updateProjectSettings,
+  completeProject,
+  deleteProject,
+  getShots,
+  updateShot,
+  deleteShots,
+  getMusicTracks,
+  saveMusicTrack,
+  deleteMusicTrack,
+  getServiceStatus,
+  getPromoVideos,
+  getPromoIndex,
+  exportPromoIndexes,
+  savePromoVideo,
+  updatePromoVideo,
+  deletePromoVideo,
+  importPromoIndex,
+  reindexAllPromos,
+  getReindexProgress,
+  getDownloadUrl,
+  // render
+  submitRendiJob,
+  pollRendiStatus,
+  renderVideo,
+  // pollers / status
+  pollBrollStatus,
+  testKinoviApi,
+  // stage-2 AI
+  runPipeline,
+  generateShot,
+  captureShots,
+  recaptureShot,
+  reviewEdit,
+  indexPromoVideo,
+  // bulk narration → full pipeline + render
+  createBulkNarration,
+  getBulkRun,
+  createBulkCut,
+  getCutRun,
+  getNarrationCuts,
+  validateAssets: async () => ({ ok: true, errors: [] }),
+  getWaveform,
+  // storage management
+  listStorage,
+  deleteStorageFiles,
+};
+
+void config;
