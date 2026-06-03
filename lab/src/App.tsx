@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import HomePage from './pages/HomePage';
+import CreatePage from './pages/CreatePage';
 import ProcessingPage from './pages/ProcessingPage';
 import PreviewPage from './pages/PreviewPage';
 import SetupPage from './pages/SetupPage';
@@ -20,6 +21,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/create" element={<CreatePage />} />
         <Route path="/project/:id/processing" element={<ProcessingPage />} />
         <Route path="/project/:id/preview" element={<PreviewRedirect />} />
         <Route path="/project/:id/timeline" element={<TimelineEditorPage />} />

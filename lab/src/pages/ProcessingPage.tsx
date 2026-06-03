@@ -249,7 +249,7 @@ export default function ProcessingPage() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-foreground">Pipeline failed</p>
                 <p className="text-sm text-muted-foreground mt-0.5">{error}</p>
-                <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate('/')}>
+                <Button variant="outline" size="sm" className="mt-3" onClick={() => navigate('/create')}>
                   Start over
                 </Button>
               </div>
