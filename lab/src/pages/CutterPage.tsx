@@ -12,6 +12,7 @@ interface CutStats {
   removedDuration: number;
   silenceCuts: number;
   fillerCuts: number;
+  stutterCuts: number;
   takesRemoved: number;
 }
 interface CutItem {
@@ -138,8 +139,9 @@ export default function CutterPage() {
           <UploadCloud className="w-7 h-7 mx-auto text-muted-foreground mb-2" />
           <p className="text-sm font-medium">Drop raw footage — or click to choose</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Auto-removes silences (&gt;0.35s), “um”/“uh” fillers, and duplicate takes (keeps the best by
-            expression + audio energy), then renders a tightened cut.
+            Auto-removes long silences (keeping a natural pause), “um”/“uh” fillers, stutters, and
+            duplicate takes (keeps the best by expression + audio energy), then renders a tightened cut
+            with click-free splices.
           </p>
           <input ref={inputRef} type="file" accept="video/*" multiple className="hidden"
             onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ''; }} />
@@ -187,7 +189,7 @@ export default function CutterPage() {
                     <p className="text-sm font-medium truncate">{it.title}</p>
                     <p className={`text-[11px] ${STATUS_STYLE[it.status]}`}>
                       {it.status === 'Complete' && it.stats
-                        ? `✓ Removed ${fmtDur(it.stats.removedDuration)} · ${fmtDur(it.stats.keptDuration)} kept · ${it.stats.silenceCuts} silences, ${it.stats.fillerCuts} fillers${it.stats.takesRemoved ? `, ${it.stats.takesRemoved} dup take${it.stats.takesRemoved !== 1 ? 's' : ''}` : ''}`
+                        ? `✓ Removed ${fmtDur(it.stats.removedDuration)} · ${fmtDur(it.stats.keptDuration)} kept · ${it.stats.silenceCuts} silences, ${it.stats.fillerCuts} fillers${it.stats.stutterCuts ? `, ${it.stats.stutterCuts} stutter${it.stats.stutterCuts !== 1 ? 's' : ''}` : ''}${it.stats.takesRemoved ? `, ${it.stats.takesRemoved} dup take${it.stats.takesRemoved !== 1 ? 's' : ''}` : ''}`
                         : it.status === 'Error' ? `✗ ${it.error ?? 'Failed'}`
                         : it.status + '…'}
                     </p>

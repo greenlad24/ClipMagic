@@ -31,6 +31,15 @@ export function buildCutArgs(spec: CutSpec, outputPath: string): { args: string[
 
   const totalDuration = segs.reduce((s, seg) => s + (seg.end - seg.start), 0);
 
+  // Every splice between two non-adjacent source regions lands at an arbitrary
+  // waveform sample, almost never a zero crossing — so a raw concat produces an
+  // audible click/pop at each junction. Professional editors apply a tiny fade
+  // (even ~1ms) at every audio edit to kill those clicks. We apply a short
+  // micro-fade to the head and tail of every kept audio segment: long enough to
+  // remove the discontinuity, short enough to be inaudible as a "fade". It's
+  // clamped to never exceed a third of a (very short) segment.
+  const FADE = 0.008; // 8ms
+
   const parts: string[] = [];
   const concatInputs: string[] = [];
   segs.forEach((seg, i) => {
@@ -38,7 +47,14 @@ export function buildCutArgs(spec: CutSpec, outputPath: string): { args: string[
     const e = seg.end.toFixed(3);
     parts.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS[v${i}]`);
     if (spec.hasAudio) {
-      parts.push(`[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS[a${i}]`);
+      const segDur = seg.end - seg.start;
+      const fade = Math.max(0.001, Math.min(FADE, segDur / 3));
+      const fadeOutStart = Math.max(0, segDur - fade).toFixed(4);
+      parts.push(
+        `[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS,` +
+          `afade=t=in:st=0:d=${fade.toFixed(4)},` +
+          `afade=t=out:st=${fadeOutStart}:d=${fade.toFixed(4)}[a${i}]`,
+      );
       concatInputs.push(`[v${i}][a${i}]`);
     } else {
       concatInputs.push(`[v${i}]`);

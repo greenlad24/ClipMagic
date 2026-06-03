@@ -2,13 +2,21 @@
  * Narration-cut planner (Phase 1, deterministic).
  *
  * Given word-level transcript timestamps, decide which parts of the clip to
- * KEEP. Two kinds of removals:
- *   1. Silence / dead air: any gap between spoken words longer than
- *      `silenceThreshold` (default 0.35s) is cut down to a short, natural pause
- *      (a small pad is kept on each side so words aren't clipped).
+ * KEEP. Removals are conservative-by-default — we never aggressively delete
+ * real speech. Four kinds:
+ *   1. Silence / dead air: a gap between spoken words is trimmed only when it
+ *      is both long enough to trigger (`silenceThreshold`) AND the dead span is
+ *      at least `minSilence` long, so natural mid-sentence micro-pauses survive.
+ *      A short, natural pause stub is left in place of a long pause (we don't
+ *      butt-join words — that sounds robotic), and a generous keep-pad protects
+ *      word onsets/tails and breaths from being clipped.
  *   2. Filler words: hesitation tokens ("um", "uh" and close variants) are cut
- *      out entirely, wherever they occur. We deliberately do NOT touch "so",
- *      "like" or "you know" — those are usually real sentence words.
+ *      out entirely. We deliberately do NOT touch "so", "like" or "you know" —
+ *      those are usually real sentence words.
+ *   3. Stutters / false starts: an immediately-repeated word ("the the cat",
+ *      "I-I-I think") is collapsed to its final, clean utterance — only when the
+ *      repeats are tightly adjacent, so genuine rhetorical repetition survives.
+ *   4. Caller-supplied forced cuts (e.g. losing duplicate takes).
  *
  * The output is a list of keep-segments (in source time) whose concatenation is
  * the tightened clip. Pure + side-effect free so it can be unit-tested.
@@ -26,12 +34,25 @@ export interface Segment {
 }
 
 export interface PlanOptions {
-  /** Gap (s) between words above which the silence is trimmed. Default 0.35. */
+  /** Gap (s) between words above which a silence is *eligible* to be trimmed. Default 0.45. */
   silenceThreshold?: number;
-  /** Breathing room (s) kept on each side of retained speech. Default 0.08. */
+  /**
+   * Minimum length (s) of dead air to actually remove. A gap can exceed the
+   * threshold but still be left if the removable span (gap minus the pauseStub
+   * and pads) is below this — avoids choppy micro-cuts. Default 0.30.
+   */
+  minSilence?: number;
+  /**
+   * Natural pause (s) preserved in place of a trimmed silence so words don't
+   * butt-join. Leading/trailing dead air is removed fully (no stub). Default 0.18.
+   */
+  pauseStub?: number;
+  /** Breathing room (s) kept on each side of retained speech. Default 0.12. */
   keepPad?: number;
   /** Remove um/uh fillers. Default true. */
   removeFillers?: boolean;
+  /** Collapse immediate stutters / false-start word repeats. Default true. */
+  removeStutters?: boolean;
   /** Extra forced-cut ranges (e.g. losing duplicate takes) to also remove. */
   extraCuts?: Segment[];
 }
@@ -44,6 +65,7 @@ export interface CutPlan {
   removedDuration: number;
   silenceCuts: number;
   fillerCuts: number;
+  stutterCuts: number;
 }
 
 // Hesitation fillers only — "um", "uh" and their close spelling variants. These
@@ -63,6 +85,47 @@ function normalizeToken(w: string): string {
 
 export function isFiller(word: string): boolean {
   return FILLERS.has(normalizeToken(word));
+}
+
+// Words that are commonly, legitimately repeated for emphasis or as part of a
+// phrase ("very very", "no no no", "so so"). Excluded from stutter collapsing so
+// intentional rhetorical repetition is preserved.
+const EMPHATIC_REPEATS = new Set(["very", "no", "so", "really", "yes", "way", "way,"]);
+
+/**
+ * Find immediate stutter / false-start repeats to remove. A run of the SAME
+ * normalized token where each repeat starts within `maxGap` of the previous
+ * one's end is treated as a stutter; we keep the LAST occurrence (the clean
+ * one the speaker settled on) and cut the earlier fragments. Conservative:
+ * only tight, adjacent repeats — never words separated by other words, and
+ * never emphatic repeats.
+ */
+function findStutterCuts(words: PlanWord[], pad: number, maxGap = 0.5): Segment[] {
+  const cuts: Segment[] = [];
+  let i = 0;
+  while (i < words.length - 1) {
+    const tok = normalizeToken(words[i].word);
+    if (!tok || EMPHATIC_REPEATS.has(tok)) { i++; continue; }
+    // Extend a run of the same token while each is tightly adjacent.
+    let j = i;
+    while (
+      j + 1 < words.length &&
+      normalizeToken(words[j + 1].word) === tok &&
+      words[j + 1].start - words[j].end <= maxGap
+    ) {
+      j++;
+    }
+    if (j > i) {
+      // Repeats words[i..j-1] are dropped; words[j] (the last) is kept.
+      const start = Math.max(0, words[i].start - pad);
+      const end = words[j].start - pad; // cut up to just before the kept word
+      if (end > start) cuts.push({ start, end });
+      i = j + 1;
+    } else {
+      i++;
+    }
+  }
+  return cuts;
 }
 
 /** Merge overlapping/touching segments (sorted by start). */
@@ -100,9 +163,12 @@ export function planCuts(
   duration: number,
   opts: PlanOptions = {},
 ): CutPlan {
-  const SIL = opts.silenceThreshold ?? 0.35;
-  const PAD = opts.keepPad ?? 0.08;
+  const SIL = opts.silenceThreshold ?? 0.45;
+  const MIN_SIL = opts.minSilence ?? 0.30;
+  const STUB = opts.pauseStub ?? 0.18;
+  const PAD = opts.keepPad ?? 0.12;
   const removeFillers = opts.removeFillers ?? true;
+  const removeStutters = opts.removeStutters ?? true;
 
   // Use only words with sane timestamps, in order.
   const valid = words
@@ -116,6 +182,7 @@ export function planCuts(
     removedDuration: 0,
     silenceCuts: 0,
     fillerCuts: 0,
+    stutterCuts: 0,
   };
   // No usable transcript → keep the whole clip untouched.
   if (valid.length === 0 || duration <= 0) return fullClip;
@@ -123,27 +190,49 @@ export function planCuts(
   const cuts: Segment[] = [];
   let silenceCuts = 0;
   let fillerCuts = 0;
+  let stutterCuts = 0;
 
-  // 1. Leading dead air before the first word.
+  // Helper: trim an inter-word silence of `gapStart..gapEnd`, keeping a natural
+  // pause stub centered in the original gap so words never butt-join. Returns
+  // true if a cut was actually recorded.
+  const trimGap = (gapStart: number, gapEnd: number, keepStub: boolean): boolean => {
+    const gap = gapEnd - gapStart;
+    if (gap <= SIL) return false;
+    // The removable interior after reserving pads on each side (+ a stub if we
+    // keep one mid-clip). If too little is removable, leave the pause natural.
+    const reserved = (keepStub ? STUB : 0) + (keepStub ? 2 * PAD : PAD);
+    const removable = gap - reserved;
+    if (removable < MIN_SIL) return false;
+    if (keepStub) {
+      // Remove the middle, leaving PAD+½stub of room next to each word.
+      const cutStart = gapStart + PAD + STUB / 2;
+      const cutEnd = gapEnd - PAD - STUB / 2;
+      if (cutEnd > cutStart) { cuts.push({ start: cutStart, end: cutEnd }); return true; }
+    } else {
+      // Leading/trailing dead air: cut all but a PAD of room next to the word.
+      const cutStart = gapStart;
+      const cutEnd = gapEnd - PAD; // (trailing) or gapStart..word-PAD (leading)
+      if (cutEnd > cutStart) { cuts.push({ start: cutStart, end: cutEnd }); return true; }
+    }
+    return false;
+  };
+
+  // 1. Leading dead air before the first word — cut down to a PAD of room.
   if (valid[0].start > SIL) {
-    cuts.push({ start: 0, end: valid[0].start - PAD });
-    silenceCuts++;
+    const cutEnd = valid[0].start - PAD;
+    if (cutEnd > MIN_SIL) { cuts.push({ start: 0, end: cutEnd }); silenceCuts++; }
   }
 
-  // 2. Gaps between consecutive words.
+  // 2. Gaps between consecutive words — keep a natural pause stub.
   for (let i = 0; i < valid.length - 1; i++) {
-    const gap = valid[i + 1].start - valid[i].end;
-    if (gap > SIL) {
-      cuts.push({ start: valid[i].end + PAD, end: valid[i + 1].start - PAD });
-      silenceCuts++;
-    }
+    if (trimGap(valid[i].end, valid[i + 1].start, true)) silenceCuts++;
   }
 
   // 3. Trailing dead air after the last word.
   const last = valid[valid.length - 1];
   if (duration - last.end > SIL) {
-    cuts.push({ start: last.end + PAD, end: duration });
-    silenceCuts++;
+    const cutStart = last.end + PAD;
+    if (duration - cutStart > MIN_SIL) { cuts.push({ start: cutStart, end: duration }); silenceCuts++; }
   }
 
   // 4. Filler words — cut each one fully (tiny pad to swallow the breath/click).
@@ -156,7 +245,16 @@ export function planCuts(
     }
   }
 
-  // 5. Caller-supplied forced cuts (losing duplicate takes).
+  // 5. Stutters / false-start word repeats — collapse to the clean final word.
+  if (removeStutters) {
+    const stut = findStutterCuts(valid, 0.02);
+    for (const c of stut) {
+      cuts.push({ start: Math.max(0, c.start), end: Math.min(duration, c.end) });
+      stutterCuts++;
+    }
+  }
+
+  // 6. Caller-supplied forced cuts (losing duplicate takes).
   if (opts.extraCuts) {
     for (const c of opts.extraCuts) {
       if (Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start) {
@@ -188,5 +286,6 @@ export function planCuts(
     removedDuration: Math.max(0, duration - keptDuration),
     silenceCuts,
     fillerCuts,
+    stutterCuts,
   };
 }
