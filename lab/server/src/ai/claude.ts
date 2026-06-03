@@ -213,6 +213,29 @@ export async function claudeChatJSON(opts: {
 }
 
 /**
+ * JSON completion on an EXPLICIT tier + purpose. Used for calls whose system
+ * prompt doesn't fit the gpt-4o-name heuristic resolveTier/resolvePurpose use
+ * (e.g. the Narration Cutter's take-detection, which is a cheap structured
+ * extraction that belongs on the fast/Haiku tier and must be attributed to its
+ * own purpose in the optimization report — not mis-billed as url-research).
+ */
+export async function claudeJSONForPurpose(opts: {
+  tier: "director" | "research" | "fast";
+  purpose: CallPurpose;
+  system: string;
+  messages: Turn[];
+}): Promise<string> {
+  const raw = await callClaude({
+    model: modelForTier(opts.tier),
+    system: opts.system,
+    messages: opts.messages,
+    jsonMode: true,
+    purpose: opts.purpose,
+  });
+  return extractJson(raw);
+}
+
+/**
  * Vision JSON completion: send a set of base64 JPEG frames + a prompt to Claude
  * and get JSON back. Used by indexPromoVideo to actually "watch" a promo video
  * (1 frame/sec) and describe what's on screen each second. Runs once per video

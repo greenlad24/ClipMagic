@@ -23,6 +23,7 @@ import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
+import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
 import { planMotionGraphics } from "../motion/director.js";
 
@@ -825,6 +826,7 @@ interface CutStats {
   removedDuration: number;
   silenceCuts: number;
   fillerCuts: number;
+  stutterCuts: number;
   takesRemoved: number;
 }
 interface CutItem {
@@ -863,6 +865,9 @@ async function waitForCutJob(jobId: string): Promise<{ outputUrl: string | null;
 }
 
 async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
+  // Account every AI call this cut makes (transcription + take-detection) so the
+  // cutter's real cost/speed shows up honestly in the optimization report.
+  beginRun(item.cutId);
   try {
     item.status = "Transcribing";
     const srcPath = await resolveInput(sourceUrl);
@@ -884,12 +889,28 @@ async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
       removedDuration: plan.removedDuration,
       silenceCuts: plan.silenceCuts,
       fillerCuts: plan.fillerCuts,
+      stutterCuts: plan.stutterCuts,
       takesRemoved: takeDecision.takesRemoved,
     };
     item.stats = stats;
+
+    // Snapshot the optimization report (transcription + take-detection savings)
+    // onto the cut record before we hand off to the render queue.
+    let optimizationReportJson: string | undefined;
+    try {
+      const report = buildReport(item.cutId);
+      if (report) { console.log(reportLogLine(report)); optimizationReportJson = JSON.stringify(report); }
+    } catch { /* reporting is best-effort, never blocks the cut */ }
+
     await NarrationCuts.update({
       id: item.cutId,
-      record: { status: "Rendering", transcript: tr.text, stats, segments: plan.keep },
+      record: {
+        status: "Rendering",
+        transcript: tr.text,
+        stats,
+        segments: plan.keep,
+        ...(optimizationReportJson ? { optimizationReportJson } : {}),
+      },
     }).catch(() => {});
 
     item.status = "Rendering";
@@ -915,6 +936,8 @@ async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
     item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
     await NarrationCuts.update({ id: item.cutId, record: { status: "Error", error: item.error } }).catch(() => {});
     console.warn(`[narrationCut] ${item.title} failed: ${item.error}`);
+  } finally {
+    finishRun(item.cutId);
   }
 }
 

@@ -44,7 +44,9 @@ export type CallPurpose =
   | "url-research"
   | "director"
   | "emphasis-fallback"
-  | "review";
+  | "review"
+  // Narration Cutter: duplicate-take grouping (cheap structured extraction).
+  | "take-detection";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";
@@ -288,6 +290,27 @@ export function buildReport(projectId: string): OptimizationReport | null {
     });
     whatWasOptimized.push(
       `Transcription ran on Groq ${tr.model} instead of OpenAI whisper-1 (~9× cheaper per minute of audio).`,
+    );
+  }
+
+  // ── Line item: take-detection (Narration Cutter) ────────────────────────────
+  // The cutter's duplicate-take grouping runs on the fast (Haiku) tier. The
+  // main-app equivalent would be a gpt-4o call (it has no dedicated cheap tier
+  // for this), so the baseline prices the SAME real tokens at gpt-4o.
+  const take = run.calls.find((c) => c.purpose === "take-detection");
+  if (take) {
+    const baseline = tokenCost(OPENAI_RATES["gpt-4o"], take.inputTokens, take.outputTokens);
+    const saved = baseline - take.costUsd;
+    lineItems.push({
+      label: "Duplicate-take detection (Narration Cutter)",
+      labUsd: roundUsd(take.costUsd),
+      baselineUsd: roundUsd(baseline),
+      savedUsd: roundUsd(saved),
+      note: `Claude ${take.model} (Haiku, fast tier) vs gpt-4o — same ${take.inputTokens} in / ${take.outputTokens} out tokens. Cheap structured extraction; skipped entirely when no phrase recurs in the transcript.`,
+      kind: saved >= 0 ? "saving" : "quality-investment",
+    });
+    whatWasOptimized.push(
+      `Duplicate-take grouping ran on Claude ${take.model} (fast tier) instead of a gpt-4o-class call, and is skipped outright when a cheap pre-filter finds no repeated phrase.`,
     );
   }
 

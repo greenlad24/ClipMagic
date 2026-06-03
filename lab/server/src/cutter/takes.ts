@@ -17,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
-import { claudeChatJSON, anthropicConfigured } from "../ai/claude.js";
+import { claudeJSONForPurpose, anthropicConfigured } from "../ai/claude.js";
 import { claudeVisionJSON } from "../ai/claude.js";
 import { groqVisionConfigured } from "../ai/groqVision.js";
 import type { PlanWord, Segment } from "./plan.js";
@@ -52,9 +52,33 @@ function similarity(a: string, b: string): number {
   return inter / (A.size + B.size - inter);
 }
 
+/**
+ * Cheap deterministic pre-filter: does the transcript plausibly contain a
+ * repeated take at all? We slide a window over short word-shingles and look for
+ * the SAME ~6-word phrase recurring later in the recording. If nothing repeats,
+ * there is no point spending an LLM call (and its latency) on grouping — the
+ * common case for a clean read. Conservative: a single hit is enough to proceed
+ * (the LLM still validates), but zero hits reliably means "no duplicate takes".
+ */
+function hasLikelyRepeat(words: PlanWord[]): boolean {
+  const W = 6;
+  if (words.length < W * 2) return false;
+  const toks = normTokens(words.map((w) => w.word).join(" "));
+  if (toks.length < W * 2) return false;
+  const seen = new Set<string>();
+  for (let i = 0; i + W <= toks.length; i++) {
+    const shingle = toks.slice(i, i + W).join(" ");
+    if (seen.has(shingle)) return true;
+    seen.add(shingle);
+  }
+  return false;
+}
+
 /** Ask Claude to find groups of repeated takes from the timestamped transcript. */
 async function detectTakeGroups(words: PlanWord[], duration: number): Promise<TakeGroup[]> {
   if (!anthropicConfigured() || words.length < 6) return [];
+  // Skip the LLM round-trip entirely when no phrase visibly recurs.
+  if (!hasLikelyRepeat(words)) return [];
 
   const ts = words.map((w) => `[${w.start.toFixed(2)}] ${w.word}`).join(" ");
   const system = `You are a meticulous video editor reviewing a RAW, unedited narration recording.
@@ -72,7 +96,16 @@ Strict rules:
   const user = `Recording duration: ${duration.toFixed(1)}s.\nWord-timestamped transcript:\n${ts}`;
 
   try {
-    const raw = await claudeChatJSON({ model: "gpt-4o", system, messages: [{ role: "user", content: user }] });
+    // Take-grouping is a cheap structured-extraction task — run it on the fast
+    // (Haiku) tier and attribute it to its own purpose so the optimization
+    // report bills it correctly (it was previously mis-routed to Sonnet and
+    // counted as url-research).
+    const raw = await claudeJSONForPurpose({
+      tier: "fast",
+      purpose: "take-detection",
+      system,
+      messages: [{ role: "user", content: user }],
+    });
     const data = JSON.parse(raw);
     const groups: TakeGroup[] = Array.isArray(data?.groups) ? data.groups : [];
     return groups
@@ -141,18 +174,16 @@ function extractFrameAt(srcPath: string, t: number): Promise<string | null> {
 /** Score each take's on-camera delivery 0..100 from one mid-take frame each. */
 async function scoreGroupVision(srcPath: string, takes: Take[]): Promise<number[] | null> {
   if (!(anthropicConfigured() || groqVisionConfigured())) return null;
-  const frames: string[] = [];
-  for (const t of takes) {
-    const mid = t.start + (t.end - t.start) * 0.5;
-    const f = await extractFrameAt(srcPath, mid);
-    if (!f) return null; // a missing frame makes the comparison unreliable
-    frames.push(f);
-  }
+  // Extract every take's mid-frame in parallel — independent ffmpeg seeks.
+  const frames = await Promise.all(
+    takes.map((t) => extractFrameAt(srcPath, t.start + (t.end - t.start) * 0.5)),
+  );
+  if (frames.some((f) => f == null)) return null; // a missing frame makes the comparison unreliable
   const system = `You are reviewing one frame from each of several TAKES of the SAME spoken line in a talking-head video. Rate each take's ON-CAMERA DELIVERY from 0 to 100. Reward: a natural/positive expression or smile, eyes open, looking toward the camera, engaged confident energy, good framing. Penalize: blinking/closed eyes, looking away, flat or awkward expression, bad framing.
 Return ONLY JSON: {"scores":[{"take":1,"score":83}, ...]} with one entry per take in order.`;
   const userText = `There are ${takes.length} takes, one frame each, in order (Take 1 … Take ${takes.length}). Score every take.`;
   try {
-    const raw = await claudeVisionJSON({ system, userText, frames });
+    const raw = await claudeVisionJSON({ system, userText, frames: frames as string[] });
     const data = JSON.parse(raw);
     const arr: any[] = Array.isArray(data?.scores) ? data.scores : [];
     const scores = takes.map((_, i) => {
@@ -200,9 +231,14 @@ export async function planTakeDecision(
   const dropRanges: Segment[] = [];
   let takesRemoved = 0;
   for (const g of groups) {
-    const audio: (number | null)[] = [];
-    for (const t of g.takes) audio.push(await meanVolumeDb(srcPath, t.start, t.end - t.start));
-    const vision = await scoreGroupVision(srcPath, g.takes);
+    // Audio energy (per take) and vision scoring are independent — run the
+    // per-take volume probes in parallel, and overlap them with the single
+    // vision call, so a group's analysis is bound by its slowest leg, not the
+    // sum of all legs.
+    const [audio, vision] = await Promise.all([
+      Promise.all(g.takes.map((t) => meanVolumeDb(srcPath, t.start, t.end - t.start))),
+      scoreGroupVision(srcPath, g.takes),
+    ]);
     const winner = pickWinner(g.takes, audio, vision);
     g.takes.forEach((t, i) => {
       if (i === winner) return;
