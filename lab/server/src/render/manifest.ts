@@ -189,6 +189,22 @@ export interface RenderManifest {
    * byte-for-byte unchanged in that case.
    */
   motionGraphics?: MotionGraphicClip[];
+  /**
+   * Optional emphasis stickers for the Meme/Sticker editor — funny generated
+   * stills that slap on BELOW the captions, rendered via the Remotion
+   * `emphasis-sticker` composition and composited in a separate best-effort
+   * stage (server/src/meme). Absent on every other render path, so the standard
+   * pipeline is byte-for-byte unchanged. Typed loosely here (the concrete shape
+   * is EmphasisStickerClip in server/src/meme/sticker.ts) to avoid a cross-module
+   * import in this renderer-contract file.
+   */
+  emphasisStickers?: Array<{
+    startTime: number;
+    endTime: number;
+    imageUrl: string;
+    restTiltDeg: number;
+    phrase?: string;
+  }>;
   meta?: unknown;
 }
 

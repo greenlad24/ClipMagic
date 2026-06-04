@@ -35,7 +35,7 @@ const FPS = 30;
  * so the lab type-checks and builds WITHOUT them installed; if they're missing
  * at runtime the import throws and every caller falls back gracefully.
  */
-const importRenderer = (): Promise<any> =>
+export const importRenderer = (): Promise<any> =>
   import(/* @vite-ignore */ "@remotion/renderer" as string);
 const importBundler = (): Promise<any> =>
   import(/* @vite-ignore */ "@remotion/bundler" as string);
@@ -90,7 +90,13 @@ export async function motionAvailable(): Promise<boolean> {
 // ── Bundle (cached across renders) ───────────────────────────────────────────
 let bundlePromise: Promise<string> | null = null;
 
-async function getBundle(): Promise<string> {
+/**
+ * The cached Remotion serve-URL bundle. Exported so sibling stages (e.g. the
+ * Meme/Sticker editor's emphasis stickers) reuse the SAME bundle + Chromium
+ * availability probe instead of rebuilding their own — same Remotion project,
+ * one bundle per process.
+ */
+export async function getBundle(): Promise<string> {
   if (!bundlePromise) {
     bundlePromise = (async () => {
       const { bundle } = await importBundler();

@@ -14,9 +14,10 @@ import { buildArgsFromManifest } from "./build.js";
 import { buildCutArgs, type CutSpec } from "./cut.js";
 import { runFfmpeg } from "./ffmpeg.js";
 import type { RenderManifest } from "./manifest.js";
-import { Projects } from "../zite/store.js";
+import { Projects, MemeProjects } from "../zite/store.js";
 import { mergeRenderStats, type OptimizationReport } from "../ai/runAccounting.js";
 import { applyMotionGraphics } from "../motion/stage.js";
+import { applyEmphasisStickers } from "../meme/stage.js";
 import fs from "node:fs";
 
 /**
@@ -103,6 +104,32 @@ async function processJob(job: RenderJob): Promise<void> {
     }
   }
 
+  // ── Emphasis-sticker stage (Meme/Sticker editor, best-effort) ──────────────
+  // Composites the funny generated stills BELOW the captions for manifest jobs
+  // that carry emphasisStickers. Same isolated, never-throws design as the
+  // motion stage: on missing Chromium / image / any error, `abs` is left as the
+  // captions-only render produced it (graceful fallback). Independent of the
+  // MOTION_GRAPHICS flag — the meme editor opts in by populating the field.
+  if (job.kind === "manifest") {
+    const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
+    const stickers = manifest.emphasisStickers ?? [];
+    if (stickers.length > 0) {
+      try {
+        const r = await applyEmphasisStickers(abs, stickers, totalDuration);
+        if (r.replacedFile && r.replacedFile !== abs) {
+          fs.renameSync(r.replacedFile, abs);
+        }
+        motionSpawns += r.ffmpegSpawns;
+      } catch (e) {
+        console.warn(
+          `[worker] emphasis-sticker stage skipped for job ${job.id}: ${
+            e instanceof Error ? e.message : String(e)
+          }`,
+        );
+      }
+    }
+  }
+
   completeJob(job.id, file, result.durationSec);
 
   // Complete the Optimization Report's speed section with REAL render-time
@@ -110,7 +137,14 @@ async function processJob(job: RenderJob): Promise<void> {
   // + 2 per caption measurement). Best-effort — never fails the render.
   if (job.kind === "manifest" && job.project_id && measureStats) {
     try {
-      const project = await Projects.findOne({ id: job.project_id });
+      // The report lives on the project record. Short-form/bulk use Projects;
+      // the Meme/Sticker editor uses MemeProjects. Look up whichever holds it so
+      // the meme editor's render-time sticker spawns land in its report too.
+      const inProjects = await Projects.findOne({ id: job.project_id });
+      const store = inProjects?.optimizationReportJson ? Projects : MemeProjects;
+      const project = inProjects?.optimizationReportJson
+        ? inProjects
+        : await MemeProjects.findOne({ id: job.project_id });
       if (project?.optimizationReportJson) {
         const report = JSON.parse(project.optimizationReportJson as string) as OptimizationReport;
         const ffmpegSpawns = 1 + measureStats.misses * 2 + motionSpawns;
@@ -120,7 +154,7 @@ async function processJob(job: RenderJob): Promise<void> {
           ffmpegSpawns,
           motionGraphicsSpawns: motionSpawns,
         });
-        await Projects.update({
+        await store.update({
           id: job.project_id,
           record: { optimizationReportJson: JSON.stringify(updated) },
         });

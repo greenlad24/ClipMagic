@@ -10,7 +10,7 @@
  * clear, structured responses so the UI works and shows where Stage 2 wiring
  * (OpenAI + Kinovi + capture service) will plug in.
  */
-import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, ZiteError } from "./store.js";
+import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects, ZiteError } from "./store.js";
 import { listStorage, deleteStorageFiles } from "./storage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
@@ -28,6 +28,7 @@ import { transcribeWithGroq } from "../ai/transcribe.js";
 import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
 import { planMotionGraphics } from "../motion/director.js";
+import { runMemePipeline } from "../meme/pipeline.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -1044,6 +1045,170 @@ const getNarrationCuts: Handler = async (_input, userId) => {
 };
 
 
+// ── Meme / Sticker editor (separate product) ─────────────────────────────────
+// Lean pipeline: transcribe → popping captions (reused render path) → emphasis
+// director (Claude picks ~1-sticker-per-4s moments + image prompts) → image gen
+// (one funny static still per moment, cached) → manifest render that composites
+// the stickers BELOW the captions via Remotion. No b-roll/screencast/stock/
+// AI-video and runPipeline is never touched. Processed one at a time; polled via
+// getMemeRun. AI cost is accounted per item (beginRun/finishRun) and surfaced in
+// the Optimization Report (transcription + director + N images + sticker compute).
+
+interface MemeItem {
+  memeId: string;
+  title: string;
+  status: "Queued" | "Transcribing" | "Planning" | "Generating" | "Rendering" | "Complete" | "Error";
+  outputUrl: string | null;
+  error: string | null;
+  momentsPlanned: number | null;
+  stickers: number | null;
+  captionsOnly: boolean;
+}
+interface MemeRun {
+  id: string;
+  running: boolean;
+  total: number;
+  doneCount: number;
+  items: MemeItem[];
+  startedAt: number;
+  finishedAt: number | null;
+}
+let memeRun: MemeRun | null = null;
+let memeRunning = false;
+
+const MEME_STAGE: Record<string, MemeItem["status"]> = {
+  Transcribing: "Transcribing",
+  Planning: "Planning",
+  Generating: "Generating",
+  Rendering: "Rendering",
+};
+
+async function runOneMeme(item: MemeItem, sourceUrl: string): Promise<void> {
+  beginRun(item.memeId);
+  try {
+    const result = await runMemePipeline({
+      projectId: item.memeId,
+      sourceUrl,
+      onStage: (stage) => {
+        item.status = MEME_STAGE[stage] ?? item.status;
+      },
+    });
+    item.momentsPlanned = result.momentsPlanned;
+    item.stickers = result.stickersWithImages;
+    item.captionsOnly = result.captionsOnly;
+
+    // Snapshot the optimization report (transcription + director + N images)
+    // onto the meme record before the render queue runs. Render-time sticker
+    // compute is merged in later by the worker (mergeRenderStats).
+    let optimizationReportJson: string | undefined;
+    try {
+      const report = buildReport(item.memeId);
+      if (report) { console.log(reportLogLine(report)); optimizationReportJson = JSON.stringify(report); }
+    } catch { /* reporting is best-effort */ }
+
+    await MemeProjects.update({
+      id: item.memeId,
+      record: {
+        status: "Rendering",
+        renderJobId: result.jobId,
+        momentsPlanned: result.momentsPlanned,
+        stickers: result.stickersWithImages,
+        captionsOnly: result.captionsOnly,
+        durationSeconds: result.durationSeconds,
+        ...(optimizationReportJson ? { optimizationReportJson } : {}),
+      },
+    }).catch(() => {});
+
+    item.status = "Rendering";
+    const { outputUrl, error } = await waitForCutJob(result.jobId);
+    if (error || !outputUrl) throw new Error(error || "Render produced no output");
+
+    await MemeProjects.update({ id: item.memeId, record: { status: "Complete", outputUrl } }).catch(() => {});
+    item.outputUrl = outputUrl;
+    item.status = "Complete";
+  } catch (e) {
+    item.status = "Error";
+    item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+    await MemeProjects.update({ id: item.memeId, record: { status: "Error", error: item.error } }).catch(() => {});
+    console.warn(`[meme] ${item.title} failed: ${item.error}`);
+  } finally {
+    finishRun(item.memeId);
+  }
+}
+
+// Create N meme records from uploaded narrations and kick the background run.
+const createMeme: Handler = async (input, userId) => {
+  if (memeRunning) {
+    return { started: false, message: "A sticker run is already in progress.", run: memeRun };
+  }
+  const items: Array<{ sourceUrl: string; title?: string }> = Array.isArray(input?.items) ? input.items : [];
+  if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No videos provided." });
+
+  const memeItems: MemeItem[] = [];
+  const sources: string[] = [];
+  for (const it of items) {
+    if (!it.sourceUrl) continue;
+    const rec = await MemeProjects.create({
+      record: { title: it.title || "Meme short", status: "Queued", sourceUrl: it.sourceUrl, outputUrl: null, user: userId },
+    });
+    memeItems.push({
+      memeId: rec.id, title: it.title || "Meme short", status: "Queued",
+      outputUrl: null, error: null, momentsPlanned: null, stickers: null, captionsOnly: false,
+    });
+    sources.push(it.sourceUrl);
+  }
+
+  memeRun = {
+    id: nanoidLike(),
+    running: true,
+    total: memeItems.length,
+    doneCount: 0,
+    items: memeItems,
+    startedAt: Date.now(),
+    finishedAt: null,
+  };
+  memeRunning = true;
+
+  // Fire-and-forget: process ONE AT A TIME (gentle on the AI + image APIs).
+  (async () => {
+    for (let i = 0; i < memeRun!.items.length; i++) {
+      await runOneMeme(memeRun!.items[i], sources[i]);
+      memeRun!.doneCount++;
+    }
+    memeRun!.running = false;
+    memeRun!.finishedAt = Date.now();
+    memeRunning = false;
+    console.log(`[meme] done — ${memeRun!.items.filter((x) => x.status === "Complete").length}/${memeRun!.total} complete`);
+  })().catch((e) => {
+    if (memeRun) { memeRun.running = false; memeRun.finishedAt = Date.now(); }
+    memeRunning = false;
+    console.error("[meme] run crashed:", e);
+  });
+
+  return { started: true, run: memeRun };
+};
+
+const getMemeRun: Handler = async () => ({ run: memeRun });
+
+const getMemeProjects: Handler = async (_input, userId) => {
+  const { records } = await MemeProjects.findAll({ filters: { user: userId }, limit: 200 });
+  const memes = records.sort(sortByCreatedDesc).map((m) => ({
+    id: m.id,
+    title: m.title,
+    status: m.status,
+    outputUrl: m.outputUrl,
+    sourceUrl: m.sourceUrl,
+    momentsPlanned: m.momentsPlanned ?? null,
+    stickers: m.stickers ?? null,
+    captionsOnly: m.captionsOnly ?? false,
+    durationSeconds: m.durationSeconds ?? null,
+    error: m.error,
+    createdAt: m.createdAt,
+  }));
+  return { memes };
+};
+
+
 /**
  * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
  * and ask Claude vision what's actually on screen each second, then cache the
@@ -1541,6 +1706,9 @@ export const HANDLERS: Record<string, Handler> = {
   createBulkCut,
   getCutRun,
   getNarrationCuts,
+  createMeme,
+  getMemeRun,
+  getMemeProjects,
   validateAssets: async () => ({ ok: true, errors: [] }),
   getWaveform,
   // storage management
