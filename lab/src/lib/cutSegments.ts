@@ -4,8 +4,8 @@
  * THIS FILE IS THE SINGLE SOURCE OF TRUTH for "given the edit settings, which
  * spans of the source do we keep?". It is intentionally dependency-free (no Node,
  * no ffmpeg, no DOM) so the EXACT same function can run:
- *   - in the browser, live, as the user drags the dB threshold / gap sliders and
- *     deletes takes (the interactive timeline editor), and
+ *   - in the browser, live, as the user drags the silence floor / gap / min-take
+ *     controls and deletes takes (the interactive timeline editor), and
  *   - on the server, to render precisely what was previewed.
  *
  * An identical copy lives at `lab/src/lib/cutSegments.ts` for the frontend
@@ -14,16 +14,24 @@
  * AND that this math agrees with the legacy `planCuts` for silence removal, so
  * "what you preview is what renders" is a tested guarantee, not a hope.
  *
- * The model is deliberately simpler and more PREDICTABLE than `planCuts`: the
- * user is now in direct control, so we derive keep-spans from a transparent,
- * explainable rule set they can see recompute live:
- *   1. Threshold the energy envelope at `silenceDb` to find low-energy frames.
- *   2. A run of low-energy frames ≥ `minSilence` long is a removable silence;
- *      we shrink it by `keepPad` on each side so word onsets/tails survive.
- *   3. The complement (over [0,duration]) is the kept "takes".
- *   4. Drop any take the user manually deleted (`deletedTakeIds`).
- *   5. The kept takes are spaced by a fixed `gap` (default 0.35s) at render — the
- *      gap is metadata on the plan, honored identically by preview and render.
+ * THE EDITING RULES (exactly what the user asked for):
+ *   1. Breaks = COMPLETE silence only. `silenceDb` is a true-silence floor
+ *      (default -45 dBFS). Breaths and quiet speech sit above it and are NEVER
+ *      treated as a break.
+ *   2. Only silences LONGER than `minSilence` (default 0.35s) are cut. A pause
+ *      ≤ 0.35s is natural in-take spacing and is kept untouched.
+ *   3. A silence > 0.35s is collapsed to EXACTLY a `gap` (default 0.35s) of dead
+ *      air between takes — never more. The full detected silence is removed and
+ *      the fixed gap is re-inserted by both preview and render.
+ *   4. Leading silence (before the first take) and trailing silence (after the
+ *      last take) are removed ENTIRELY — the gap is only ever BETWEEN takes.
+ *   5. Takes are AUDIO-DRIVEN: they are the loud (above-floor) spans of the
+ *      energy envelope over the FULL file. The transcript only LABELS takes; an
+ *      absence of words never drops or shortens a take (this is what lets the
+ *      untranscribed tail still become a real take).
+ *   6. Only big chunks are takes. A loud island shorter than `minTake`
+ *      (default 0.4s) is a stray blip — it is dropped along with the silence
+ *      around it, never kept as its own take.
  */
 
 export interface Seg {
@@ -42,21 +50,41 @@ export interface Envelope {
 }
 
 export interface CutSettings {
-  /** Silence floor in dBFS. Frames quieter than this are candidate silence. Default -32. */
+  /**
+   * COMPLETE-SILENCE floor in dBFS. A gap counts as a cuttable break only when
+   * the audio is quieter than this — i.e. genuine digital silence, not breaths
+   * or low-energy speech. Default -45 (well below speech/breath energy).
+   */
   silenceDb: number;
-  /** Minimum length (s) of continuous sub-threshold audio to remove. Default 0.5. */
+  /**
+   * Minimum length (s) of continuous complete-silence to cut. Silences at or
+   * below this stay untouched (natural in-take spacing). Default 0.35.
+   */
   minSilence: number;
-  /** Breathing room (s) kept on each side of speech (shrinks each silence). Default 0.12. */
+  /**
+   * Breathing room (s) kept on each side of speech (shrinks each removed
+   * silence so word onsets/tails survive). Small by default so the collapsed
+   * spacing stays close to `gap`. Default 0.05.
+   */
   keepPad: number;
-  /** Fixed spacing (s) inserted between kept takes at render. Default 0.35. */
+  /**
+   * Fixed spacing (s) a cut silence collapses to — inserted between kept takes
+   * at preview and render. Default 0.35.
+   */
   gap: number;
+  /**
+   * Minimum take length (s). A loud island shorter than this is a stray blip
+   * (not a real take) and is dropped with the surrounding silence. Default 0.4.
+   */
+  minTake: number;
 }
 
 export const DEFAULT_SETTINGS: CutSettings = {
-  silenceDb: -32,
-  minSilence: 0.5,
-  keepPad: 0.12,
+  silenceDb: -45,
+  minSilence: 0.35,
+  keepPad: 0.05,
   gap: 0.35,
+  minTake: 0.4,
 };
 
 /** A kept chunk of speech ("take"), with a stable id and optional transcript. */
@@ -77,11 +105,15 @@ export function takeId(start: number): string {
 }
 
 /**
- * Find removable silence regions by thresholding the energy envelope. A maximal
- * run of frames at-or-below `silenceDb` whose duration ≥ `minSilence` becomes a
- * silence; we then pull `keepPad` off each end so we never clip the neighbouring
- * word's onset/tail. Pure function of (envelope, settings) — this is exactly
- * what the client recomputes live as the threshold slider moves.
+ * Find removable silence regions by thresholding the energy envelope at the
+ * COMPLETE-SILENCE floor. A maximal run of frames at-or-below `silenceDb` whose
+ * duration > `minSilence` becomes a removable silence; we then pull `keepPad`
+ * off each end so we never clip the neighbouring word's onset/tail. Pure
+ * function of (envelope, settings) — exactly what the client recomputes live as
+ * the silence-floor slider moves.
+ *
+ * Note the strict `>` test on `minSilence`: a pause of EXACTLY `minSilence`
+ * (0.35s) is natural in-take spacing and is preserved, per the rules.
  */
 export function silencesFromEnvelope(env: Envelope, s: CutSettings): Seg[] {
   const { db, hop, duration } = env;
@@ -97,7 +129,8 @@ export function silencesFromEnvelope(env: Envelope, s: CutSettings): Seg[] {
       const lastQuiet = quiet ? i : i - 1;
       const start = runStart * hop;
       const end = Math.min(duration, (lastQuiet + 1) * hop);
-      if (end - start >= s.minSilence) {
+      // Only silences LONGER than minSilence are cut (≤ minSilence is kept).
+      if (end - start > s.minSilence) {
         // Shrink by keepPad each side, but only the removable interior remains.
         const cs = start + s.keepPad;
         const ce = end - s.keepPad;
@@ -125,11 +158,15 @@ export function invert(removed: Seg[], duration: number): Seg[] {
 }
 
 /**
- * Segment the narration into takes: the kept spans after thresholding silence,
- * each labelled with the transcript words that fall inside it. Tiny slivers
- * (<0.08s, far too short to hold a word) are dropped so the timeline stays clean.
- * Each take gets a STABLE id keyed to its start so manual deletes survive a
- * threshold change.
+ * Segment the narration into takes (RULE 5 + 6). The kept spans after removing
+ * complete-silence are the takes — derived purely from AUDIO ENERGY over the
+ * full file, so audio with no transcript (e.g. the untranscribed tail) still
+ * becomes a real take. We then DROP any take shorter than `minTake`: a too-short
+ * loud island flanked by silence is a stray blip, not a real take, so it is
+ * removed along with its surrounding silence (RULE 6). The transcript only
+ * LABELS the surviving takes; missing words never drop or shorten one — a take
+ * with no words is shown with an em-dash placeholder. Each take gets a STABLE id
+ * keyed to its start so manual deletes survive a settings change.
  */
 export function segmentTakes(
   env: Envelope,
@@ -137,7 +174,9 @@ export function segmentTakes(
   s: CutSettings,
 ): Take[] {
   const silences = silencesFromEnvelope(env, s);
-  const kept = invert(silences, env.duration).filter((k) => k.end - k.start >= 0.08);
+  // A take must hold at least minTake of audio; tiny slivers/blips are dropped.
+  const minTake = Math.max(0.05, s.minTake);
+  const kept = invert(silences, env.duration).filter((k) => k.end - k.start >= minTake);
   return kept.map((k) => {
     const inside = words
       .filter((w) => w.end > k.start + 0.01 && w.start < k.end - 0.01)
@@ -153,6 +192,11 @@ export function segmentTakes(
  * preview plays and render trims to. Both sides call this; the render path
  * trims exactly these segments and inserts `gap` of silence between them. No
  * re-detection on the server → what you previewed is what you get.
+ *
+ * Because the keep list is just the surviving takes and the spacing is a fixed
+ * `gap` re-inserted only BETWEEN them, every cut silence (interior, leading, or
+ * trailing) collapses correctly: interior → exactly one `gap`, leading/trailing
+ * → nothing (RULES 3 & 4).
  */
 export function computeKeepSegments(
   env: Envelope,
