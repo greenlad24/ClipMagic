@@ -94,6 +94,19 @@ export const OPENAI_IMAGE_PER_IMAGE: Record<string, number> = {
   "dall-e-3": 0.04,
 };
 
+/**
+ * Reaction-sticker LIBRARIES used by the Sticker/Meme editor's DEFAULT source.
+ * Both are FREE with a developer API key — there is no per-image charge, so the
+ * per-image cost line for this source is $0. The only AI cost in this source is
+ * the vision fit-review (priced via ANTHROPIC_RATES like any other vision call).
+ *   • Giphy Developers — free API (rate-limited). https://developers.giphy.com/
+ *   • Tenor (Google) API — free with an API key.  https://developers.google.com/tenor
+ */
+export const STICKER_LIBRARY_PER_IMAGE: Record<string, number> = {
+  giphy: 0,
+  tenor: 0,
+};
+
 /** Groq whisper-large-v3-turbo: $0.04/hour = $0.04/60 per minute. */
 export const GROQ_WHISPER_PER_MINUTE = 0.04 / 60;
 

@@ -43,6 +43,11 @@ services:
       # https://www.pexels.com/api/). Without it, situational beats fall back to
       # AI generation. Set PEXELS_API_KEY in .env (same as the keys above).
       PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      # Reaction-sticker libraries for the Sticker Shorts editor (both FREE; get
+      # keys at developers.giphy.com and developers.google.com/tenor). Without
+      # them the editor falls back to OpenAI image-gen, then captions-only.
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      TENOR_API_KEY: ${TENOR_API_KEY:-}
     volumes:
       # Persist all media + the database on the host (or a mounted DO volume).
       - clipmagic-data:/data
@@ -79,6 +84,11 @@ services:
       ZITE_OPENAI_ACCESS_TOKEN: ${ZITE_OPENAI_ACCESS_TOKEN:-}
       ZITE_KINOVI_API_KEY: ${ZITE_KINOVI_API_KEY:-}
       PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      # Reaction-sticker libraries for the lab's Sticker Shorts editor (both FREE;
+      # same keys as the main app via the shared .env). The lab's default sticker
+      # source is Giphy + Tenor static reaction stickers + an AI fit-review.
+      GIPHY_API_KEY: ${GIPHY_API_KEY:-}
+      TENOR_API_KEY: ${TENOR_API_KEY:-}
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data
