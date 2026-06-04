@@ -119,6 +119,7 @@ export const pollRendiStatus = endpoint("pollRendiStatus");
 export const renderVideo = endpoint("renderVideo");
 export const listStorage = endpoint("listStorage");
 export const deleteStorageFiles = endpoint("deleteStorageFiles");
+export const deleteStorageArea = endpoint("deleteStorageArea");
 export const reviewEdit = endpoint("reviewEdit");
 
 // ── Output/Input types used by the frontend. The originals were generated from
