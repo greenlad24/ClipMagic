@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Loader2, Play, Pause, Scissors, Trash2, Undo2, RotateCcw, Film, Download,
-  ZoomIn, ZoomOut, Eye, EyeOff, X,
+  ZoomIn, ZoomOut, Eye, EyeOff, X, Copy,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -36,8 +36,11 @@ export default function TimelineEditor({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // ── Edit state (the user's decisions) ──────────────────────────────────────
+  // `toggled` flips a take's DEFAULT keep/drop: a kept take in the set is dropped
+  // (manual delete), and an auto-removed duplicate in the set is restored. This
+  // is the same set the shared core reads, so preview == render.
   const [settings, setSettings] = useState<CutSettings>(DEFAULT_SETTINGS);
-  const [deleted, setDeleted] = useState<string[]>([]);
+  const [toggled, setToggled] = useState<string[]>([]);
   const [history, setHistory] = useState<string[][]>([]); // for undo
   const [selected, setSelected] = useState<string | null>(null);
 
@@ -60,10 +63,19 @@ export default function TimelineEditor({
   );
 
   // Live recompute — the single source of truth, identical to the server math.
+  // `takes` includes auto-removed duplicates (with `duplicateOf` set); `keep` is
+  // only the segments that survive (defaults minus manual deletes, plus restored
+  // duplicates) — exactly what renderManualCut trims.
   const { takes, keep, gap } = useMemo(() => {
     if (!env || !analysis) return { takes: [] as Take[], keep: [] as Seg[], gap: settings.gap };
-    return computeKeepSegments(env, analysis.words, settings, deleted);
-  }, [env, analysis, settings, deleted]);
+    return computeKeepSegments(env, analysis.words, settings, toggled);
+  }, [env, analysis, settings, toggled]);
+
+  // Is a given take currently kept (after defaults + the user's toggles)?
+  const isKept = useCallback((t: Take) => {
+    const removedByDefault = Boolean(t.duplicateOf);
+    return toggled.includes(t.id) ? removedByDefault : !removedByDefault;
+  }, [toggled]);
 
   const editedDuration = useMemo(() => previewDuration(keep, gap), [keep, gap]);
 
@@ -86,35 +98,42 @@ export default function TimelineEditor({
     return () => { alive = false; };
   }, [sourceUrl]);
 
-  // ── Take delete / undo / restore ───────────────────────────────────────────
-  const pushHistory = useCallback(() => setHistory((h) => [...h, deleted]), [deleted]);
-  const deleteTake = useCallback((id: string) => {
+  // ── Take delete / restore / undo ───────────────────────────────────────────
+  // Every edit just flips a take's id in `toggled` (the set the core reads), so
+  // delete and restore are the same non-destructive operation from both ends.
+  const pushHistory = useCallback(() => setHistory((h) => [...h, toggled]), [toggled]);
+  const toggleTake = useCallback((id: string) => {
     pushHistory();
-    setDeleted((d) => d.includes(id) ? d : [...d, id]);
+    setToggled((d) => d.includes(id) ? d.filter((x) => x !== id) : [...d, id]);
     setSelected(null);
   }, [pushHistory]);
   const undo = useCallback(() => {
     setHistory((h) => {
       if (h.length === 0) return h;
       const prev = h[h.length - 1];
-      setDeleted(prev);
+      setToggled(prev);
       return h.slice(0, -1);
     });
   }, []);
-  const restoreAll = useCallback(() => { pushHistory(); setDeleted([]); }, [pushHistory]);
+  // Restore everything currently removed — manual deletes AND auto-removed
+  // duplicates — by toggling each removed take back to kept.
+  const restoreAll = useCallback(() => {
+    pushHistory();
+    setToggled(takes.filter((t) => !isKept(t)).map((t) => t.id));
+  }, [pushHistory, takes, isKept]);
 
-  // Keyboard: Delete removes selected take, Cmd/Ctrl+Z undoes.
+  // Keyboard: Delete removes the selected (kept) take, Cmd/Ctrl+Z undoes.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
-        e.preventDefault(); deleteTake(selected);
+        e.preventDefault(); toggleTake(selected);
       } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault(); undo();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selected, deleteTake, undo]);
+  }, [selected, toggleTake, undo]);
 
   // ── Skip-playback preview ──────────────────────────────────────────────────
   // In edited mode the video element plays the source but jumps past every
@@ -280,7 +299,10 @@ export default function TimelineEditor({
     );
   }
 
-  const removedCount = analysis.takes.length === 0 ? 0 : (analysis.takes.length - takes.length) + deleted.length;
+  const keptCount = keep.length;
+  const removedTakeCount = takes.filter((t) => !isKept(t)).length;
+  // Duplicates auto-removed AND still removed (i.e. not restored by the user).
+  const dupRemovedCount = takes.filter((t) => t.duplicateOf && !isKept(t)).length;
   const playheadX = playhead * pxPerSec * zoom;
 
   return (
@@ -293,8 +315,8 @@ export default function TimelineEditor({
           </h2>
           <p className="text-[11px] text-muted-foreground mt-0.5">
             {fmt(analysis.duration)} original → <span className="text-foreground font-medium">{fmt(editedDuration)}</span> edited ·{' '}
-            {takes.length} take{takes.length !== 1 ? 's' : ''} kept
-            {deleted.length > 0 && <> · {deleted.length} deleted</>}
+            {keptCount} take{keptCount !== 1 ? 's' : ''} kept
+            {dupRemovedCount > 0 && <> · {dupRemovedCount} duplicate{dupRemovedCount !== 1 ? 's' : ''} removed</>}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={onClose}>
@@ -361,16 +383,24 @@ export default function TimelineEditor({
 
       {/* Edit actions */}
       <div className="flex items-center gap-2 flex-wrap">
-        <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5"
-          disabled={!selected} onClick={() => selected && deleteTake(selected)}>
-          <Trash2 className="w-3.5 h-3.5" /> Delete take
-        </Button>
+        {(() => {
+          const sel = takes.find((t) => t.id === selected) ?? null;
+          const selKept = sel ? isKept(sel) : true;
+          return (
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5"
+              disabled={!sel} onClick={() => selected && toggleTake(selected)}>
+              {selKept
+                ? <><Trash2 className="w-3.5 h-3.5" /> Delete take</>
+                : <><RotateCcw className="w-3.5 h-3.5" /> Restore take</>}
+            </Button>
+          );
+        })()}
         <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5"
           disabled={history.length === 0} onClick={undo}>
           <Undo2 className="w-3.5 h-3.5" /> Undo
         </Button>
         <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5"
-          disabled={deleted.length === 0} onClick={restoreAll}>
+          disabled={removedTakeCount === 0} onClick={restoreAll}>
           <RotateCcw className="w-3.5 h-3.5" /> Restore all
         </Button>
         <div className="flex-1" />
@@ -402,21 +432,31 @@ export default function TimelineEditor({
                 const left = t.start * pxPerSec * zoom;
                 const width = Math.max(8, (t.end - t.start) * pxPerSec * zoom);
                 const isSel = selected === t.id;
+                const kept = isKept(t);
+                const isDup = Boolean(t.duplicateOf);
                 return (
                   <button
                     key={t.id}
                     onClick={() => setSelected(isSel ? null : t.id)}
-                    onDoubleClick={() => deleteTake(t.id)}
-                    title={t.text || `Take ${fmt(t.start)}–${fmt(t.end)}`}
+                    onDoubleClick={() => toggleTake(t.id)}
+                    title={t.duplicateOf || t.text || `Take ${fmt(t.start)}–${fmt(t.end)}`}
                     className={`absolute top-0 h-full rounded-md border px-1.5 py-1 text-left overflow-hidden transition-colors ${
                       isSel
                         ? 'border-primary bg-primary/20 ring-1 ring-primary'
-                        : 'border-border bg-muted/60 hover:bg-muted'
-                    }`}
+                        : kept
+                          ? 'border-border bg-muted/60 hover:bg-muted'
+                          : 'border-dashed border-border bg-muted/20 hover:bg-muted/40'
+                    } ${kept ? '' : 'opacity-60'}`}
                     style={{ left, width }}
                   >
-                    <span className="block text-[10px] font-mono text-muted-foreground leading-tight">{fmt(t.start)}</span>
-                    <span className="block text-[11px] text-foreground leading-snug line-clamp-2">{t.text || '—'}</span>
+                    <span className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground leading-tight">
+                      {isDup && <Copy className="w-2.5 h-2.5 shrink-0 text-amber-500" />}
+                      {fmt(t.start)}
+                      {isDup && !kept && <span className="text-amber-500 font-sans not-italic">dup</span>}
+                    </span>
+                    <span className={`block text-[11px] leading-snug line-clamp-2 ${kept ? 'text-foreground' : 'text-muted-foreground line-through decoration-1'}`}>
+                      {t.text || '—'}
+                    </span>
                   </button>
                 );
               })}
@@ -429,7 +469,9 @@ export default function TimelineEditor({
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Click a take to select; press <kbd className="px-1 rounded bg-muted">Delete</kbd> or double-click to remove it.
+          Each block is a whole sentence. Click to select; press <kbd className="px-1 rounded bg-muted">Delete</kbd> or
+          double-click to remove (or restore) it. Repeated lines are auto-removed as
+          <Copy className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" />duplicates (latest take kept) — click one to restore.
           Cuts and the {settings.gap.toFixed(2)}s gaps recompute live and render exactly as previewed.
         </p>
       </div>
@@ -452,7 +494,7 @@ export default function TimelineEditor({
           </div>
         )}
         <span className="text-[11px] text-muted-foreground ml-auto">
-          {removedCount > 0 ? `${removedCount} region${removedCount !== 1 ? 's' : ''} removed` : 'No cuts yet'}
+          {removedTakeCount > 0 ? `${removedTakeCount} take${removedTakeCount !== 1 ? 's' : ''} removed` : 'No takes removed'}
         </span>
       </div>
     </div>
