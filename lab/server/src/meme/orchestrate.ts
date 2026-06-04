@@ -55,6 +55,12 @@ export interface StickerProviders {
   download: (candidate: StickerCandidate) => Promise<{ url: string } | null>;
   /** Generate one OpenAI sticker for a prompt → a servable URL (or null). */
   generate: (prompt: string) => Promise<{ url: string } | null>;
+  /**
+   * Optional live progress: called after each moment is processed in each pass.
+   * `phase` distinguishes the free search/review pass from the paid generation
+   * pass so the UI can label it. Best-effort — never affects the result.
+   */
+  onMomentProgress?: (done: number, total: number, phase: "reviewing" | "generating") => void;
 }
 
 export interface OrchestrationResult {
@@ -101,6 +107,14 @@ export async function orchestrateStickers(
   // Resolved image URL per moment index (null until/unless one is applied).
   const applied: Array<string | null> = moments.map(() => null);
 
+  // Count distinct moments that have been processed across passes (each moment
+  // is processed once: free pass, then possibly the paid pass). The progress
+  // callback reports against the total moment count so the bar fills smoothly.
+  const total = moments.length;
+  const report = (done: number, phase: "reviewing" | "generating") => {
+    try { providers.onMomentProgress?.(done, total, phase); } catch { /* never blocks */ }
+  };
+
   // ── Pass 1: FREE path (Giphy/Tenor + fit-review) for every moment ──────────
   if (providers.searchAvailable && providers.source === "giphy+tenor") {
     for (let i = 0; i < moments.length; i++) {
@@ -112,6 +126,7 @@ export async function orchestrateStickers(
 
       if (candidates.length === 0) {
         diag.review.reason = "no candidates found for query";
+        report(i + 1, "reviewing");
         continue;
       }
       const verdict = await providers.review(m.phrase || m.searchQuery, candidates);
@@ -125,6 +140,7 @@ export async function orchestrateStickers(
           diag.review.reason += " · download failed";
         }
       }
+      report(i + 1, "reviewing");
     }
   }
 
@@ -137,6 +153,7 @@ export async function orchestrateStickers(
     .sort((a, b) => genPriority(a.m, a.i) - genPriority(b.m, b.i));
 
   let openaiUsed = 0;
+  let genDone = 0;
   if (providers.openaiAvailable && openaiCap > 0) {
     for (const { m, i } of needsGen) {
       if (openaiUsed >= openaiCap) {
@@ -156,6 +173,7 @@ export async function orchestrateStickers(
         diags[i].review.reason =
           (diags[i].review.reason ? diags[i].review.reason + " · " : "") + "OpenAI gen returned nothing";
       }
+      report(++genDone, "generating");
     }
   } else if (needsGen.length > 0) {
     // No paid fallback available — annotate the unmatched moments with WHY gen

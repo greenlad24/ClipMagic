@@ -880,10 +880,14 @@ interface CutRun {
 let cutRun: CutRun | null = null;
 let cutRunning = false;
 
-async function waitForCutJob(jobId: string): Promise<{ outputUrl: string | null; error: string | null }> {
+async function waitForCutJob(
+  jobId: string,
+  onProgress?: (status: string, progress: number) => void,
+): Promise<{ outputUrl: string | null; error: string | null }> {
   for (let i = 0; i < 1200; i++) { // ~60 min max at 3s
     const job = getJob(jobId);
     if (!job) return { outputUrl: null, error: "Render job not found" };
+    onProgress?.(job.status, job.progress ?? 0);
     if (job.status === "completed") {
       return { outputUrl: job.output_file ? `/api/outputs/${job.output_file}` : null, error: null };
     }
@@ -1280,6 +1284,15 @@ interface MemeItem {
   subtitleTemplate: string | null;
   /** User-visible reason stickers were skipped this run (or null). */
   skipReason: string | null;
+  // ── Live progress (so the UI narrates every stage, not just a spinner) ──────
+  /** Human sentence for the current stage ("Finding & reviewing stickers 3/8"). */
+  stageLabel: string;
+  /** 0..1 overall progress: the planning band, then the render job's own %. */
+  progress: number;
+  /** Structured per-moment counter for the active stage (or null). */
+  stageDetail: { current: number; total: number } | null;
+  /** Per-moment outcomes for the finished run (phrase + ok + reason). */
+  momentResults: Array<{ phrase?: string; ok: boolean; reason?: string }>;
 }
 interface MemeRun {
   id: string;
@@ -1293,13 +1306,6 @@ interface MemeRun {
 let memeRun: MemeRun | null = null;
 let memeRunning = false;
 
-const MEME_STAGE: Record<string, MemeItem["status"]> = {
-  Transcribing: "Transcribing",
-  Planning: "Planning",
-  Generating: "Generating",
-  Rendering: "Rendering",
-};
-
 async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Promise<void> {
   beginRun(item.memeId);
   try {
@@ -1307,8 +1313,13 @@ async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Pr
       projectId: item.memeId,
       sourceUrl,
       userId,
-      onStage: (stage) => {
-        item.status = MEME_STAGE[stage] ?? item.status;
+      // Live progress: the pipeline narrates each stage + per-moment counter,
+      // which we mirror straight onto the polled item so the UI shows it all.
+      onStage: (p) => {
+        item.status = p.stage;
+        item.stageLabel = p.label;
+        item.progress = Math.max(item.progress, p.progress); // monotonic
+        item.stageDetail = p.detail ?? null;
       },
     });
     item.momentsPlanned = result.momentsPlanned;
@@ -1316,6 +1327,7 @@ async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Pr
     item.captionsOnly = result.captionsOnly;
     item.subtitleTemplate = result.subtitleTemplate;
     item.skipReason = result.diagnostics.skipReason;
+    item.momentResults = result.diagnostics.imageResults;
 
     // Snapshot the optimization report (transcription + director + N images)
     // onto the meme record before the render queue runs. Render-time sticker
@@ -1346,15 +1358,23 @@ async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Pr
     }).catch(() => {});
 
     item.status = "Rendering";
-    const { outputUrl, error } = await waitForCutJob(result.jobId);
+    // Map the render job's own 0..1 into the final 0.95→1.0 band so the bar
+    // keeps moving through compositing instead of sitting at "Rendering".
+    const { outputUrl, error } = await waitForCutJob(result.jobId, (status, prog) => {
+      item.stageLabel = status === "queued" ? "Rendering — waiting for a slot" : "Rendering & compositing";
+      item.progress = Math.max(item.progress, 0.95 + 0.05 * Math.min(1, prog));
+    });
     if (error || !outputUrl) throw new Error(error || "Render produced no output");
 
     await MemeProjects.update({ id: item.memeId, record: { status: "Complete", outputUrl } }).catch(() => {});
     item.outputUrl = outputUrl;
     item.status = "Complete";
+    item.stageLabel = "Complete";
+    item.progress = 1;
   } catch (e) {
     item.status = "Error";
     item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
+    item.stageLabel = `Error: ${item.error}`;
     await MemeProjects.update({ id: item.memeId, record: { status: "Error", error: item.error } }).catch(() => {});
     console.warn(`[meme] ${item.title} failed: ${item.error}`);
   } finally {
@@ -1381,6 +1401,7 @@ const createMeme: Handler = async (input, userId) => {
       memeId: rec.id, title: it.title || "Meme short", status: "Queued",
       outputUrl: null, error: null, momentsPlanned: null, stickers: null, captionsOnly: false,
       subtitleTemplate: null, skipReason: null,
+      stageLabel: "Queued", progress: 0, stageDetail: null, momentResults: [],
     });
     sources.push(it.sourceUrl);
   }

@@ -17,6 +17,11 @@ interface MemeItem {
   captionsOnly: boolean;
   subtitleTemplate: string | null;
   skipReason: string | null;
+  // Live progress mirrored from the server pipeline.
+  stageLabel: string;
+  progress: number;
+  stageDetail: { current: number; total: number } | null;
+  momentResults: Array<{ phrase?: string; ok: boolean; reason?: string }>;
 }
 interface MemeRun {
   id: string;
@@ -181,40 +186,85 @@ export default function MemePage() {
               <div className="h-full bg-primary transition-[width] duration-500" style={{ width: `${run.total ? Math.round((run.doneCount / run.total) * 100) : 0}%` }} />
             </div>
             <div className="divide-y divide-border/60">
-              {run.items.map((it) => (
-                <div key={it.memeId} className="px-4 py-2.5 flex items-center gap-3 hover:bg-muted/30">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">{it.title}</p>
-                    <p className={`text-[11px] ${STATUS_STYLE[it.status]}`}>
-                      {it.status === 'Complete'
-                        ? it.captionsOnly
-                          ? '✓ Captions-only'
-                          : `✓ ${it.stickers ?? 0} sticker${it.stickers === 1 ? '' : 's'} popped in${it.momentsPlanned != null ? ` · ${it.momentsPlanned} emphasis moment${it.momentsPlanned === 1 ? '' : 's'}` : ''}`
-                        : it.status === 'Error' ? `✗ ${it.error ?? 'Failed'}`
-                        : STATUS_LABEL[it.status] + '…'}
-                    </p>
-                    {/* Surface WHY a render fell back to captions-only — never a silent skip. */}
-                    {it.status === 'Complete' && it.captionsOnly && it.skipReason && (
-                      <p className="text-[11px] text-muted-foreground truncate">No stickers: {it.skipReason}</p>
+              {run.items.map((it) => {
+                const active = it.status !== 'Complete' && it.status !== 'Error' && it.status !== 'Queued';
+                const pct = Math.round((it.progress ?? 0) * 100);
+                // Prefer the server's live stage sentence; fall back to the static label.
+                const liveLabel = it.stageLabel && it.status !== 'Complete' && it.status !== 'Error'
+                  ? it.stageLabel
+                  : STATUS_LABEL[it.status];
+                return (
+                  <div key={it.memeId} className="px-4 py-2.5 space-y-2 hover:bg-muted/30">
+                    <div className="flex items-center gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{it.title}</p>
+                        <p className={`text-[11px] ${STATUS_STYLE[it.status]}`}>
+                          {it.status === 'Complete'
+                            ? it.captionsOnly
+                              ? '✓ Captions-only'
+                              : `✓ ${it.stickers ?? 0} sticker${it.stickers === 1 ? '' : 's'} popped in${it.momentsPlanned != null ? ` · ${it.momentsPlanned} emphasis moment${it.momentsPlanned === 1 ? '' : 's'}` : ''}`
+                            : it.status === 'Error' ? `✗ ${it.error ?? 'Failed'}`
+                            : it.status === 'Queued' ? 'Queued'
+                            : `${liveLabel}…`}
+                        </p>
+                        {/* Surface WHY a render fell back to captions-only — never a silent skip. */}
+                        {it.status === 'Complete' && it.captionsOnly && it.skipReason && (
+                          <p className="text-[11px] text-muted-foreground">No stickers: {it.skipReason}</p>
+                        )}
+                      </div>
+                      {it.status === 'Complete' && it.outputUrl && (
+                        <div className="flex items-center gap-3 shrink-0">
+                          <a href={it.outputUrl} target="_blank" rel="noreferrer"
+                            className="flex items-center gap-1 text-xs text-primary hover:underline">
+                            <Eye className="w-3.5 h-3.5" /> View
+                          </a>
+                          <a href={it.outputUrl} target="_blank" rel="noreferrer" download
+                            className="flex items-center gap-1 text-xs text-primary hover:underline">
+                            <Download className="w-3.5 h-3.5" /> Download
+                          </a>
+                        </div>
+                      )}
+                      {it.status === 'Complete' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                        : it.status === 'Error' ? <XCircle className="w-4 h-4 text-destructive shrink-0" />
+                        : <Loader2 className="w-4 h-4 text-muted-foreground animate-spin shrink-0" />}
+                    </div>
+
+                    {/* Per-item progress bar while this item is actively processing. */}
+                    {active && (
+                      <div className="h-1 bg-muted rounded-full overflow-hidden" role="progressbar"
+                        aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${it.title} progress`}>
+                        <div className="h-full bg-primary transition-[width] duration-500" style={{ width: `${Math.max(4, pct)}%` }} />
+                      </div>
+                    )}
+
+                    {/* Clear error block (not just a status line) when this item failed. */}
+                    {it.status === 'Error' && (
+                      <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] text-destructive">
+                        <XCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        <span>{it.error ?? 'This video failed to process.'}</span>
+                      </div>
+                    )}
+
+                    {/* Per-moment outcomes once planning is done — every beat's result,
+                        so a "captions-only" run is explained beat by beat (no silent skips). */}
+                    {it.momentResults && it.momentResults.length > 0 && (it.status === 'Complete' || it.status === 'Rendering') && (
+                      <div className="rounded-lg bg-muted/30 px-2.5 py-1.5 space-y-0.5">
+                        {it.momentResults.map((m, i) => (
+                          <p key={i} className="text-[11px] flex items-start gap-1.5">
+                            {m.ok
+                              ? <CheckCircle2 className="w-3 h-3 mt-0.5 shrink-0 text-emerald-400" />
+                              : <XCircle className="w-3 h-3 mt-0.5 shrink-0 text-muted-foreground" />}
+                            <span className={m.ok ? 'text-foreground' : 'text-muted-foreground'}>
+                              {m.phrase ? `"${m.phrase}"` : `Moment ${i + 1}`}
+                              {!m.ok && m.reason ? ` — ${m.reason}` : m.ok ? ' — sticker applied' : ''}
+                            </span>
+                          </p>
+                        ))}
+                      </div>
                     )}
                   </div>
-                  {it.status === 'Complete' && it.outputUrl && (
-                    <div className="flex items-center gap-3 shrink-0">
-                      <a href={it.outputUrl} target="_blank" rel="noreferrer"
-                        className="flex items-center gap-1 text-xs text-primary hover:underline">
-                        <Eye className="w-3.5 h-3.5" /> View
-                      </a>
-                      <a href={it.outputUrl} target="_blank" rel="noreferrer" download
-                        className="flex items-center gap-1 text-xs text-primary hover:underline">
-                        <Download className="w-3.5 h-3.5" /> Download
-                      </a>
-                    </div>
-                  )}
-                  {it.status === 'Complete' ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                    : it.status === 'Error' ? <XCircle className="w-4 h-4 text-destructive shrink-0" />
-                    : <Loader2 className="w-4 h-4 text-muted-foreground animate-spin shrink-0" />}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}

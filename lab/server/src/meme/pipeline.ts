@@ -147,11 +147,38 @@ export interface MemeDiagnostics {
   imageResults: Array<{ phrase?: string; ok: boolean; reason?: string }>;
   /** Human-readable reason stickers will be skipped this run, or null if not. */
   skipReason: string | null;
+  /** Why the emphasis director produced no moments (unconfigured/errored), or null. */
+  directorReason: string | null;
+}
+
+/** The pipeline stages, in order, as a coarse status the record/UI tracks. */
+export type MemeStage = "Transcribing" | "Planning" | "Generating" | "Rendering";
+
+/**
+ * A live progress tick from the pipeline. `stage` is the coarse phase; `label`
+ * is a human sentence ("Finding & reviewing stickers 3/8"); `progress` is the
+ * pipeline's own 0..1 PLANNING progress (transcribe→plan→source→handoff). The
+ * render itself is tracked separately by the render job. `detail` carries
+ * structured counters (current/total moments) the UI can render as a sub-bar.
+ */
+export interface MemeProgress {
+  stage: MemeStage;
+  label: string;
+  progress: number;
+  detail?: { current: number; total: number } | null;
 }
 
 export interface MemeStageReporter {
-  (stage: "Transcribing" | "Planning" | "Generating" | "Rendering"): void;
+  (p: MemeProgress): void;
 }
+
+/** Progress floor (0..1) for each coarse stage so the bar only moves forward. */
+export const MEME_STAGE_PROGRESS: Record<MemeStage, number> = {
+  Transcribing: 0.05,
+  Planning: 0.3,
+  Generating: 0.45, // per-moment sourcing interpolates between here and Rendering
+  Rendering: 0.95,
+};
 
 /**
  * Run the meme pipeline for one uploaded narration and enqueue the render job.
@@ -166,9 +193,14 @@ export async function runMemePipeline(opts: {
   onStage?: MemeStageReporter;
 }): Promise<MemeResult> {
   const { projectId, sourceUrl, userId, onStage } = opts;
+  const t0 = Date.now();
+  const lap = (label: string, since: number) =>
+    console.log(`[meme] ${label} (${Date.now() - since}ms, +${Date.now() - t0}ms)`);
+  const report = (p: MemeProgress) => { try { onStage?.(p); } catch { /* reporting never blocks */ } };
 
   // ── 1. Resolve + transcribe ────────────────────────────────────────────────
-  onStage?.("Transcribing");
+  report({ stage: "Transcribing", label: "Transcribing narration", progress: MEME_STAGE_PROGRESS.Transcribing });
+  let ts = Date.now();
   const srcPath = await resolveInput(sourceUrl);
   const meta = await probe(srcPath);
   const probedDuration = meta.duration ?? 0;
@@ -181,13 +213,19 @@ export async function runMemePipeline(opts: {
   });
   const duration = tr.duration || probedDuration;
   if (!duration) throw new Error("Could not determine the narration duration.");
+  lap(`transcribed ${tr.words.length} words`, ts);
 
   // ── 2. Caption plan (reuse the existing ASS render path) ───────────────────
   const subtitles = buildCaptionEvents(tr.words);
+  console.log(`[meme] built ${subtitles.length} caption event(s)`);
 
   // ── 3. Emphasis director (content-driven moments + image prompts) ──────────
-  onStage?.("Planning");
-  const moments = await planEmphasisMoments({ transcript: tr.text, durationSeconds: duration });
+  report({ stage: "Planning", label: "Picking emphasis moments", progress: MEME_STAGE_PROGRESS.Planning });
+  ts = Date.now();
+  const { moments, unavailableReason: directorReason } = await planEmphasisMoments({
+    transcript: tr.text, durationSeconds: duration,
+  });
+  lap(`director planned ${moments.length} moment(s)`, ts);
 
   // ── 4. Sticker source: find → AI fit-review → apply (with fallbacks) ────────
   // Source order (configurable; default = Giphy+Tenor reaction stickers):
@@ -195,7 +233,6 @@ export async function runMemePipeline(opts: {
   //   2. OpenAI image-gen fallback — only if the libraries returned nothing (or
   //      have no keys) AND an OpenAI key is present.
   //   3. Nothing available → captions-only with a visible reason.
-  onStage?.("Generating");
   const source = resolveStickerSource();
   const searchAvailable = source === "giphy+tenor" && stickerSearchConfigured();
   const openaiAvailable = imageGenConfigured();
@@ -203,11 +240,24 @@ export async function runMemePipeline(opts: {
     `[meme] director picked ${moments.length} moment(s); source=${source} ` +
       `(giphy=${giphyConfigured()} tenor=${tenorConfigured()} openai=${openaiAvailable})`,
   );
+  report({
+    stage: "Generating",
+    label: moments.length > 0
+      ? `Finding & reviewing stickers 0/${moments.length}`
+      : "No emphasis moments — captions only",
+    progress: MEME_STAGE_PROGRESS.Generating,
+    detail: moments.length > 0 ? { current: 0, total: moments.length } : null,
+  });
+  ts = Date.now();
 
   // Two-pass sourcing — FREE (Giphy/Tenor + review) first for every moment, then
   // the (capped) OpenAI fallback fills only the moments left unmatched. Cap +
   // prioritization + diagnostics all live in the injectable orchestrator so the
   // ordering is unit-testable with mocks.
+  // Interpolate the Generating→Rendering band as moments are processed so the
+  // bar advances per moment (and the label shows "3/8").
+  const GEN_LO = MEME_STAGE_PROGRESS.Generating;
+  const GEN_HI = MEME_STAGE_PROGRESS.Rendering;
   const { stickers, diagnostics: momentDiags, openaiUsed, openaiCap } = await orchestrateStickers(
     moments,
     {
@@ -218,8 +268,18 @@ export async function runMemePipeline(opts: {
       review: (line: string, cands: StickerCandidate[]) => reviewStickerFit(line, cands),
       download: (c: StickerCandidate) => downloadSticker(c),
       generate: (prompt: string) => generateStickerImage(prompt),
+      onMomentProgress: (done, total, phase) => {
+        const frac = total > 0 ? done / total : 1;
+        report({
+          stage: "Generating",
+          label: `${phase === "generating" ? "Generating stickers" : "Finding & reviewing stickers"} ${done}/${total}`,
+          progress: GEN_LO + (GEN_HI - GEN_LO) * frac,
+          detail: { current: done, total },
+        });
+      },
     },
   );
+  lap(`sourced ${stickers.length}/${moments.length} sticker(s)`, ts);
 
   // Per-moment log lines (counts, source, verdict) for the server-side trace.
   for (let i = 0; i < moments.length; i++) {
@@ -247,12 +307,18 @@ export async function runMemePipeline(opts: {
   }));
 
   // Compute a single user-visible reason when this render will be captions-only.
-  const skipReason = computeSkipReason({
+  // When the director itself was the blocker (unconfigured / errored), prefer its
+  // SPECIFIC reason over the generic "no emphasis moments" so the user sees WHY.
+  const genericSkip = computeSkipReason({
     momentsPlanned: moments.length,
     stickersApplied: stickers.length,
     searchAvailable,
     openaiAvailable,
   });
+  const skipReason =
+    stickers.length === 0 && moments.length === 0 && directorReason
+      ? `${directorReason} — captions only`
+      : genericSkip;
   const diagnostics: MemeDiagnostics = {
     source,
     momentsPlanned: moments.length,
@@ -262,10 +328,17 @@ export async function runMemePipeline(opts: {
     moments: momentDiags,
     imageResults,
     skipReason,
+    directorReason: directorReason ?? null,
   };
 
   // ── 5. Build the manifest + enqueue the render ─────────────────────────────
-  onStage?.("Rendering");
+  report({
+    stage: "Rendering",
+    label: stickers.length > 0
+      ? `Rendering with ${stickers.length} sticker${stickers.length === 1 ? "" : "s"}`
+      : "Rendering (captions only)",
+    progress: MEME_STAGE_PROGRESS.Rendering,
+  });
   // Randomize the caption template across the full short-form pool (same rotation
   // behaviour as the short-form editor) and flow the CHOSEN style into the ASS
   // caption render via the manifest.

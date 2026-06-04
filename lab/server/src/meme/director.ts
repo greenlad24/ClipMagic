@@ -145,10 +145,21 @@ export function sanitize(raw: unknown, durationSeconds: number): EmphasisMoment[
  * failure or when Claude isn't configured — the editor then renders captions
  * only (no stickers), never crashing.
  */
-export async function planEmphasisMoments(ctx: EmphasisContext): Promise<EmphasisMoment[]> {
-  if (!anthropicConfigured()) return [];
+/** Director outcome: the moments plus WHY there are none (for the UI/diagnostics). */
+export interface EmphasisPlan {
+  moments: EmphasisMoment[];
+  /** Null when moments were produced (or genuinely none were warranted); else the reason. */
+  unavailableReason: string | null;
+}
+
+export async function planEmphasisMoments(ctx: EmphasisContext): Promise<EmphasisPlan> {
+  if (!anthropicConfigured()) {
+    return { moments: [], unavailableReason: "emphasis director unconfigured (no ANTHROPIC key)" };
+  }
   const transcript = (ctx.transcript || "").trim();
-  if (transcript.length < 40 || ctx.durationSeconds < 6) return [];
+  if (transcript.length < 40 || ctx.durationSeconds < 6) {
+    return { moments: [], unavailableReason: "narration too short for emphasis moments" };
+  }
 
   const user =
     `Video duration: ${ctx.durationSeconds.toFixed(1)}s. ` +
@@ -169,13 +180,12 @@ export async function planEmphasisMoments(ctx: EmphasisContext): Promise<Emphasi
       `[meme] director planned ${moments.length} sticker moment(s)` +
         moments.map((m) => ` @${m.startTime}s "${m.searchQuery}"`).join(""),
     );
-    return moments;
+    // No reason needed even at 0 moments here: the director ran fine and simply
+    // judged none were warranted (computeSkipReason reports that case).
+    return { moments, unavailableReason: null };
   } catch (e) {
-    console.warn(
-      `[meme] emphasis director failed — captions-only this run: ${
-        e instanceof Error ? e.message : String(e)
-      }`,
-    );
-    return [];
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn(`[meme] emphasis director failed — captions-only this run: ${reason}`);
+    return { moments: [], unavailableReason: `emphasis director failed: ${reason}` };
   }
 }

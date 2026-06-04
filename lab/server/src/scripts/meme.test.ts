@@ -567,6 +567,7 @@ function makeProviders(over: Partial<StickerProviders> & {
     },
     async download(c) { calls.download.push(c.url); return { url: `/dl/${c.url}` }; },
     async generate() { calls.generate.push("gen"); const u = genUrls[genIdx++]; return u ? { url: u } : null; },
+    onMomentProgress: over.onMomentProgress,
     calls,
   };
 }
@@ -850,6 +851,65 @@ check("the SFX is synthesized (no sampled/copyrighted audio, no network) — lav
 
 check("SFX volume is audible but well under the narration (not overpowering)", () => {
   assert.ok(MEME_SFX_VOLUME > 0.1 && MEME_SFX_VOLUME < 0.6, `sfx vol ${MEME_SFX_VOLUME} tasteful`);
+});
+
+// ── Live progress reporting (so the UI narrates the pipeline) ─────────────────
+check("orchestrate reports per-moment progress for the free review pass", async () => {
+  const moments = [moment(6, "shocked"), moment(12, "money rain"), moment(18, "fire")];
+  const ticks: Array<{ done: number; total: number; phase: string }> = [];
+  const p = makeProviders({
+    searchResults: { shocked: [cand("giphy", "g.png")], "money rain": [cand("tenor", "t.png")], fire: [cand("giphy", "f.png")] },
+    onMomentProgress: (done, total, phase) => ticks.push({ done, total, phase }),
+  });
+  await orchestrateStickers(moments, p);
+  // One tick per moment, monotonically increasing toward the total.
+  assert.deepEqual(ticks.map((t) => t.done), [1, 2, 3]);
+  assert.ok(ticks.every((t) => t.total === 3), "total is the moment count");
+  assert.ok(ticks.every((t) => t.phase === "reviewing"), "free pass labelled 'reviewing'");
+});
+
+check("orchestrate reports per-moment progress for the paid generation pass", async () => {
+  delete process.env.MEME_OPENAI_MAX;
+  // No search results ⇒ both moments fall through to OpenAI generation.
+  const moments = [moment(6, "a"), moment(12, "b")];
+  const ticks: Array<{ done: number; phase: string }> = [];
+  const p = makeProviders({
+    searchAvailable: false,
+    genUrls: ["/gen/a.png", "/gen/b.png"],
+    onMomentProgress: (done, _total, phase) => ticks.push({ done, phase }),
+  });
+  await orchestrateStickers(moments, p);
+  assert.deepEqual(ticks.map((t) => t.done), [1, 2]);
+  assert.ok(ticks.every((t) => t.phase === "generating"), "paid pass labelled 'generating'");
+});
+
+check("orchestrate works fine with no progress callback (it's optional)", async () => {
+  const moments = [moment(6, "shocked")];
+  const p = makeProviders({ searchResults: { shocked: [cand("giphy", "g.png")] } });
+  delete (p as { onMomentProgress?: unknown }).onMomentProgress;
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(res.stickers.length, 1);
+});
+
+// ── Director surfaces WHY there are no moments (no silent fallback) ────────────
+// `aiConfig` reads the key once at import, so we branch on the actual gate state
+// rather than mutating env (which wouldn't take effect). Either way the director
+// must now return a SPECIFIC reason instead of a bare empty list.
+import { planEmphasisMoments } from "../meme/director.js";
+import { anthropicConfigured } from "../ai/claude.js";
+
+check("planEmphasisMoments always reports a SPECIFIC reason when it yields no moments", async () => {
+  if (!anthropicConfigured()) {
+    // Unconfigured: the gate trips before any network call → 'unconfigured'.
+    const plan = await planEmphasisMoments({ transcript: "x".repeat(200), durationSeconds: 30 });
+    assert.deepEqual(plan.moments, []);
+    assert.ok(/unconfigured/.test(plan.unavailableReason ?? ""), plan.unavailableReason ?? "no reason");
+  } else {
+    // Configured: a tiny narration trips the length gate (still no network).
+    const plan = await planEmphasisMoments({ transcript: "hi", durationSeconds: 3 });
+    assert.deepEqual(plan.moments, []);
+    assert.ok(/too short/.test(plan.unavailableReason ?? ""), plan.unavailableReason ?? "no reason");
+  }
 });
 
 await Promise.all(pending);
