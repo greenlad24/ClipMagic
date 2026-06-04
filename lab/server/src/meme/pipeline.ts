@@ -36,11 +36,51 @@ import { buildReport, reportLogLine } from "../ai/runAccounting.js";
 import { buildCaptionEvents } from "./captions.js";
 import { planEmphasisMoments } from "./director.js";
 import { generateStickerImage, imageGenConfigured } from "./imagegen.js";
+import {
+  searchStickerCandidates,
+  downloadSticker,
+  stickerSearchConfigured,
+  giphyConfigured,
+  tenorConfigured,
+} from "./stickerSearch.js";
+import { reviewStickerFit } from "./stickerReview.js";
 import type { EmphasisStickerClip } from "./sticker.js";
 
 const W = 1080;
 const H = 1920;
 const FPS = 30;
+
+/**
+ * Which sticker source to use, configurable via MEME_STICKER_SOURCE without a
+ * rebuild. Default = "giphy+tenor" (free reaction stickers + AI fit-review);
+ * "openai" forces the legacy image-gen source. Either way the pipeline falls
+ * back gracefully when the chosen source has no keys/results.
+ */
+export function resolveStickerSource(): "giphy+tenor" | "openai" {
+  const v = (process.env.MEME_STICKER_SOURCE || "giphy+tenor").toLowerCase();
+  return v === "openai" ? "openai" : "giphy+tenor";
+}
+
+/**
+ * The whole-run skip reason when NO sticker was applied to any moment. Pure +
+ * deterministic so the source-selection / fallback ordering is unit-testable:
+ * giphy+tenor → openai → captions-only.
+ */
+export function computeSkipReason(opts: {
+  momentsPlanned: number;
+  stickersApplied: number;
+  searchAvailable: boolean;
+  openaiAvailable: boolean;
+}): string | null {
+  if (opts.stickersApplied > 0) return null;
+  if (opts.momentsPlanned === 0) {
+    return "no emphasis moments were found (or the director is unconfigured) — captions only";
+  }
+  if (!opts.searchAvailable && !opts.openaiAvailable) {
+    return "no sticker source available — set GIPHY_API_KEY / TENOR_API_KEY (or an OpenAI key) — captions only";
+  }
+  return "no sticker fit (search/review/generation found nothing usable) — captions only";
+}
 
 export interface MemeResult {
   /** Render job id (poll via the job queue). */
@@ -64,13 +104,38 @@ export interface MemeResult {
   diagnostics: MemeDiagnostics;
 }
 
+/** Which sticker source produced a given moment's image. */
+export type StickerSource = "giphy+tenor" | "openai" | "none";
+
+/** Per-moment trace of the find → review → apply pipeline (for the UI/diagnostics). */
+export interface MomentDiagnostic {
+  phrase?: string;
+  /** The director's reaction-sticker search query. */
+  searchQuery: string;
+  /** Candidate counts per provider from the search step. */
+  candidates: { giphy: number; tenor: number };
+  /** The fit-review decision: which candidate was chosen/dropped and why. */
+  review: { reviewed: boolean; chosen: boolean; reason: string };
+  /** Which source the FINAL applied image came from (or "none"). */
+  appliedSource: StickerSource;
+  /** True if a sticker image was ultimately applied for this moment. */
+  ok: boolean;
+}
+
 /** Why a sticker step was skipped, if it was — surfaced to the user. */
 export interface MemeDiagnostics {
+  /** The sticker source chosen for this run (default = giphy+tenor). */
+  source: StickerSource;
   /** Sticker moments the director picked (post-sanitize). */
   momentsPlanned: number;
-  /** Moments that got a generated image (the rest fall back to captions-only). */
+  /** Moments that got a usable image (the rest fall back to captions-only). */
   imagesGenerated: number;
-  /** Per-moment image-gen outcome (success or the failure reason). */
+  /** Per-moment trace: query, candidate counts, review decision, final source. */
+  moments: MomentDiagnostic[];
+  /**
+   * Per-moment image outcome (kept for backward compatibility with the existing
+   * UI/persistence shape: phrase + ok + reason).
+   */
   imageResults: Array<{ phrase?: string; ok: boolean; reason?: string }>;
   /** Human-readable reason stickers will be skipped this run, or null if not. */
   skipReason: string | null;
@@ -114,61 +179,118 @@ export async function runMemePipeline(opts: {
   onStage?.("Planning");
   const moments = await planEmphasisMoments({ transcript: tr.text, durationSeconds: duration });
 
-  // ── 4. Image generation (one static still per moment, cached) ──────────────
+  // ── 4. Sticker source: find → AI fit-review → apply (with fallbacks) ────────
+  // Source order (configurable; default = Giphy+Tenor reaction stickers):
+  //   1. Giphy + Tenor STATIC transparent stickers, gated by an AI fit-review.
+  //   2. OpenAI image-gen fallback — only if the libraries returned nothing (or
+  //      have no keys) AND an OpenAI key is present.
+  //   3. Nothing available → captions-only with a visible reason.
   onStage?.("Generating");
-  const canGenerate = imageGenConfigured();
-  const stickers: EmphasisStickerClip[] = [];
-  const imageResults: MemeDiagnostics["imageResults"] = [];
+  const source = resolveStickerSource();
+  const searchAvailable = source === "giphy+tenor" && stickerSearchConfigured();
+  const openaiAvailable = imageGenConfigured();
   console.log(
-    `[meme] director picked ${moments.length} moment(s); image gen ${
-      canGenerate ? "configured" : "NOT configured (no ZITE_OPENAI_ACCESS_TOKEN)"
-    }`,
+    `[meme] director picked ${moments.length} moment(s); source=${source} ` +
+      `(giphy=${giphyConfigured()} tenor=${tenorConfigured()} openai=${openaiAvailable})`,
   );
-  if (moments.length > 0) {
-    // Generate in parallel — generateStickerImage bounds its own concurrency.
-    // When the image key is absent generateStickerImage returns null per moment
-    // (graceful captions-only), which we record as a per-moment skip reason.
-    const images = await Promise.all(
-      moments.map((m) => (canGenerate ? generateStickerImage(m.imagePrompt) : Promise.resolve(null))),
-    );
-    moments.forEach((m, i) => {
-      const img = images[i];
-      if (!img) {
-        // No image for this moment → captions-only here. Record WHY so the user
-        // sees a reason instead of a silently-missing sticker.
-        const reason = canGenerate ? "image generation failed" : "no image key";
-        imageResults.push({ phrase: m.phrase, ok: false, reason });
-        console.warn(`[meme]   moment @${m.startTime}s "${m.phrase ?? ""}" — no sticker (${reason})`);
-        return;
+
+  const stickers: EmphasisStickerClip[] = [];
+  const momentDiags: MomentDiagnostic[] = [];
+
+  for (let i = 0; i < moments.length; i++) {
+    const m = moments[i];
+    const diag: MomentDiagnostic = {
+      phrase: m.phrase,
+      searchQuery: m.searchQuery,
+      candidates: { giphy: 0, tenor: 0 },
+      review: { reviewed: false, chosen: false, reason: "" },
+      appliedSource: "none",
+      ok: false,
+    };
+
+    let appliedUrl: string | null = null;
+
+    // 1) Giphy + Tenor reaction stickers → AI fit-review → download.
+    if (searchAvailable) {
+      const candidates = await searchStickerCandidates(m.searchQuery);
+      diag.candidates.giphy = candidates.filter((c) => c.provider === "giphy").length;
+      diag.candidates.tenor = candidates.filter((c) => c.provider === "tenor").length;
+
+      if (candidates.length > 0) {
+        const verdict = await reviewStickerFit(m.phrase || m.searchQuery, candidates);
+        diag.review = {
+          reviewed: verdict.reviewed,
+          chosen: !!verdict.chosen,
+          reason: verdict.reason,
+        };
+        if (verdict.chosen) {
+          const dl = await downloadSticker(verdict.chosen);
+          if (dl) {
+            appliedUrl = dl.url;
+            diag.appliedSource = "giphy+tenor";
+          } else {
+            diag.review.reason += " · download failed";
+          }
+        }
+      } else {
+        diag.review.reason = "no candidates found for query";
       }
-      imageResults.push({ phrase: m.phrase, ok: true });
-      console.log(`[meme]   moment @${m.startTime}s "${m.phrase ?? ""}" — image ok${img.cached ? " (cached)" : ""}`);
+    }
+
+    // 2) OpenAI fallback — only when the libraries produced nothing for this
+    //    moment and an OpenAI key exists.
+    if (!appliedUrl && openaiAvailable && (source === "openai" || searchAvailable)) {
+      const img = await generateStickerImage(m.imagePrompt);
+      if (img) {
+        appliedUrl = img.url;
+        diag.appliedSource = "openai";
+        if (!diag.review.reason) diag.review.reason = "no library sticker — used OpenAI fallback";
+      }
+    }
+
+    if (appliedUrl) {
+      diag.ok = true;
       stickers.push({
         startTime: m.startTime,
         endTime: m.endTime,
-        imageUrl: img.url,
+        imageUrl: appliedUrl,
         // Alternate the resting tilt so adjacent stickers don't all lean the
         // same way (the hand-placed feel).
         restTiltDeg: i % 2 === 0 ? -4 : 4,
         phrase: m.phrase,
       });
-    });
+      console.log(
+        `[meme]   moment @${m.startTime}s "${m.phrase ?? m.searchQuery}" — sticker ok ` +
+          `(${diag.appliedSource}; giphy ${diag.candidates.giphy}/tenor ${diag.candidates.tenor}; ${diag.review.reason})`,
+      );
+    } else {
+      console.warn(
+        `[meme]   moment @${m.startTime}s "${m.phrase ?? m.searchQuery}" — no sticker ` +
+          `(${diag.review.reason || "nothing applied"})`,
+      );
+    }
+    momentDiags.push(diag);
   }
 
+  // Backward-compatible flat per-moment results for the existing UI/persistence.
+  const imageResults: MemeDiagnostics["imageResults"] = momentDiags.map((d) => ({
+    phrase: d.phrase,
+    ok: d.ok,
+    reason: d.ok ? undefined : d.review.reason || "no sticker applied",
+  }));
+
   // Compute a single user-visible reason when this render will be captions-only.
-  let skipReason: string | null = null;
-  if (stickers.length === 0) {
-    if (moments.length === 0) {
-      skipReason = "no emphasis moments were found (or the director is unconfigured) — captions only";
-    } else if (!canGenerate) {
-      skipReason = "no image key configured (ZITE_OPENAI_ACCESS_TOKEN) — captions only";
-    } else {
-      skipReason = "image generation failed for every moment — captions only";
-    }
-  }
+  const skipReason = computeSkipReason({
+    momentsPlanned: moments.length,
+    stickersApplied: stickers.length,
+    searchAvailable,
+    openaiAvailable,
+  });
   const diagnostics: MemeDiagnostics = {
+    source,
     momentsPlanned: moments.length,
     imagesGenerated: stickers.length,
+    moments: momentDiags,
     imageResults,
     skipReason,
   };

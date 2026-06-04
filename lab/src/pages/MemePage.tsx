@@ -40,7 +40,7 @@ const STATUS_LABEL: Record<MemeItem['status'], string> = {
   Queued: 'Queued',
   Transcribing: 'Transcribing narration',
   Planning: 'Picking emphasis moments',
-  Generating: 'Generating sticker images',
+  Generating: 'Finding & reviewing stickers',
   Rendering: 'Rendering video',
   Complete: 'Complete',
   Error: 'Error',
