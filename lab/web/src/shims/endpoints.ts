@@ -93,6 +93,7 @@ export const createBulkCut = endpoint("createBulkCut");
 export const getCutRun = endpoint("getCutRun");
 export const getNarrationCuts = endpoint("getNarrationCuts");
 export const analyzeCut = endpoint("analyzeCut");
+export const getAnalyzeCut = endpoint("getAnalyzeCut");
 export const renderManualCut = endpoint("renderManualCut");
 export const getCutJob = endpoint("getCutJob");
 export const createMeme = endpoint("createMeme");

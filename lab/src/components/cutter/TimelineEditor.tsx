@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Loader2, Play, Pause, Scissors, Trash2, Undo2, RotateCcw, Film, Download,
-  ZoomIn, ZoomOut, Eye, EyeOff, X, Copy,
+  ZoomIn, ZoomOut, Eye, EyeOff, X, Copy, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { analyzeCut, renderManualCut, getCutJob } from 'zite-endpoints-sdk';
+import { analyzeCut, getAnalyzeCut, renderManualCut, getCutJob } from 'zite-endpoints-sdk';
 import {
   computeKeepSegments, previewDuration, sourceToEdited,
   DEFAULT_SETTINGS, type CutSettings, type Take, type Seg,
@@ -21,6 +21,18 @@ interface AnalyzeResult {
   defaults: CutSettings;
 }
 
+// One poll of the analyze job: a live stage label + progress + optional warning,
+// and the full result once the job reaches `done`.
+interface AnalyzePoll {
+  jobId: string;
+  stage: 'queued' | 'resolving' | 'transcribing' | 'waveform' | 'segmenting' | 'done' | 'failed';
+  stageLabel: string;
+  progress: number;
+  warning: string | null;
+  error: string | null;
+  result: AnalyzeResult | null;
+}
+
 function fmt(s: number): string {
   if (!Number.isFinite(s) || s < 0) return '0:00';
   const m = Math.floor(s / 60);
@@ -34,6 +46,10 @@ export default function TimelineEditor({
   const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // Live analyze progress (the step that used to freeze the UI for minutes).
+  const [analyzeStage, setAnalyzeStage] = useState('Queued');
+  const [analyzePct, setAnalyzePct] = useState(2);
+  const [analyzeWarning, setAnalyzeWarning] = useState<string | null>(null);
 
   // ── Edit state (the user's decisions) ──────────────────────────────────────
   // `toggled` flips a take's DEFAULT keep/drop: a kept take in the set is dropped
@@ -55,6 +71,8 @@ export default function TimelineEditor({
   // ── Render state ───────────────────────────────────────────────────────────
   const [rendering, setRendering] = useState(false);
   const [renderPct, setRenderPct] = useState(0);
+  const [renderStage, setRenderStage] = useState('Queued');
+  const [renderError, setRenderError] = useState<string | null>(null);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
 
   const env = useMemo(
@@ -79,23 +97,51 @@ export default function TimelineEditor({
 
   const editedDuration = useMemo(() => previewDuration(keep, gap), [keep, gap]);
 
-  // ── Load analysis ──────────────────────────────────────────────────────────
+  // ── Load analysis (polled job — was a single multi-minute blocking call) ────
+  // Start the analyze job, then poll it for a live stage label + progress bar.
+  // Transcription is best-effort on the server: a timeout/failure surfaces a
+  // non-fatal warning and the timeline still loads energy-only. A fatal step
+  // (resolve/probe/waveform) shows a clear error here, not just a toast.
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     (async () => {
-      setLoading(true); setLoadError(null);
+      setLoading(true); setLoadError(null); setAnalyzeWarning(null);
+      setAnalyzeStage('Queued'); setAnalyzePct(2);
       try {
-        const res = await analyzeCut({ sourceUrl }) as AnalyzeResult;
+        const start = await analyzeCut({ sourceUrl }) as AnalyzePoll;
         if (!alive) return;
-        setAnalysis(res);
-        setSettings(res.defaults ?? DEFAULT_SETTINGS);
+        const jobId = start.jobId;
+        if (!jobId) throw new Error('Could not start analysis.');
+
+        const apply = (p: AnalyzePoll) => {
+          setAnalyzeStage(p.stageLabel || 'Analyzing');
+          setAnalyzePct(Math.max(2, Math.round((p.progress ?? 0) * 100)));
+          if (p.warning) setAnalyzeWarning(p.warning);
+        };
+        apply(start);
+
+        const poll = async (): Promise<void> => {
+          const p = await getAnalyzeCut({ jobId }) as AnalyzePoll;
+          if (!alive) return;
+          apply(p);
+          if (p.stage === 'done' && p.result) {
+            setAnalysis(p.result);
+            setSettings(p.result.defaults ?? DEFAULT_SETTINGS);
+            setLoading(false);
+            return;
+          }
+          if (p.stage === 'failed') {
+            throw new Error(p.error ?? 'Analysis failed');
+          }
+          timer = setTimeout(() => { void poll(); }, 1200);
+        };
+        await poll();
       } catch (e: any) {
-        if (alive) setLoadError(e?.message?.slice(0, 160) ?? 'Analysis failed');
-      } finally {
-        if (alive) setLoading(false);
+        if (alive) { setLoadError(e?.message?.slice(0, 200) ?? 'Analysis failed'); setLoading(false); }
       }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, [sourceUrl]);
 
   // ── Take delete / restore / undo ───────────────────────────────────────────
@@ -255,6 +301,7 @@ export default function TimelineEditor({
   const startRender = useCallback(async () => {
     if (keep.length === 0) { toast.error('Nothing left to render — restore a take.'); return; }
     setRendering(true); setRenderPct(0); setOutputUrl(null);
+    setRenderError(null); setRenderStage('Queued');
     try {
       const { jobId, expectedDuration } = await renderManualCut({
         sourceUrl, title, segments: keep, gap,
@@ -263,6 +310,10 @@ export default function TimelineEditor({
       const poll = async (): Promise<void> => {
         const r = await getCutJob({ jobId }) as { status: string; progress: number; outputUrl: string | null; error: string | null };
         setRenderPct(Math.round((r.progress ?? 0) * 100));
+        setRenderStage(
+          r.status === 'queued' ? 'Queued — waiting for a render slot'
+          : r.status === 'active' ? 'Rendering your cut'
+          : r.status);
         if (r.status === 'completed' && r.outputUrl) {
           setOutputUrl(r.outputUrl); setRendering(false);
           toast.success(`Rendered ${fmt(expectedDuration)} — exactly what you previewed.`);
@@ -276,24 +327,42 @@ export default function TimelineEditor({
       await poll();
     } catch (e: any) {
       setRendering(false);
-      toast.error('Render failed — ' + (e?.message?.slice(0, 120) ?? 'unknown'));
+      const msg = e?.message?.slice(0, 160) ?? 'unknown error';
+      setRenderError(msg);
+      toast.error('Render failed — ' + msg);
     }
   }, [keep, gap, sourceUrl, title]);
 
   // ── Render states ──────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-24 gap-3 text-muted-foreground">
-        <Loader2 className="w-6 h-6 animate-spin" />
-        <p className="text-sm">Analyzing narration — transcribing + reading audio energy…</p>
+      <div className="flex flex-col items-center justify-center py-24 gap-4 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        <div className="w-full max-w-sm space-y-2">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-sm text-foreground font-medium">{analyzeStage}…</p>
+            <span className="text-xs font-mono tabular-nums text-muted-foreground">{analyzePct}%</span>
+          </div>
+          <div className="h-1.5 bg-muted rounded-full overflow-hidden" role="progressbar"
+            aria-valuenow={analyzePct} aria-valuemin={0} aria-valuemax={100} aria-label="Analyzing narration">
+            <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${analyzePct}%` }} />
+          </div>
+          <p className="text-[11px] text-center text-muted-foreground">
+            Transcribing + reading audio energy — this can take a moment for long clips.
+          </p>
+          {analyzeWarning && (
+            <p className="text-[11px] text-center text-amber-500">{analyzeWarning}</p>
+          )}
+        </div>
       </div>
     );
   }
   if (loadError || !analysis) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 gap-3">
+      <div className="flex flex-col items-center justify-center py-20 gap-3 max-w-sm mx-auto text-center">
         <X className="w-6 h-6 text-destructive" />
-        <p className="text-sm text-destructive">{loadError ?? 'Could not analyze this clip.'}</p>
+        <p className="text-sm font-medium text-destructive">Couldn't analyze this clip</p>
+        <p className="text-xs text-muted-foreground break-words">{loadError ?? 'Analysis failed.'}</p>
         <Button variant="outline" size="sm" onClick={onClose}>Back</Button>
       </div>
     );
@@ -323,6 +392,15 @@ export default function TimelineEditor({
           <X className="w-3.5 h-3.5 mr-1" /> Close
         </Button>
       </div>
+
+      {/* Non-fatal analyze warning (e.g. transcription unavailable) — the
+          timeline still works energy-only, but say so instead of failing silently. */}
+      {analyzeWarning && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>{analyzeWarning}</span>
+        </div>
+      )}
 
       {/* Video preview */}
       <div className="rounded-xl border border-border overflow-hidden bg-black/40">
@@ -477,25 +555,39 @@ export default function TimelineEditor({
       </div>
 
       {/* Render */}
-      <div className="rounded-xl border border-border p-3 flex items-center gap-3 flex-wrap">
-        <Button size="sm" className="h-9 text-xs gap-1.5" disabled={rendering || keep.length === 0} onClick={startRender}>
-          {rendering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
-          {rendering ? `Rendering ${renderPct}%…` : `Render edit (${fmt(editedDuration)})`}
-        </Button>
+      <div className="rounded-xl border border-border p-3 space-y-2">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button size="sm" className="h-9 text-xs gap-1.5" disabled={rendering || keep.length === 0} onClick={startRender}>
+            {rendering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Film className="w-4 h-4" />}
+            {rendering ? `Rendering ${renderPct}%…` : `Render edit (${fmt(editedDuration)})`}
+          </Button>
+          {rendering && (
+            <div className="flex-1 min-w-[120px] h-1.5 bg-muted rounded-full overflow-hidden" role="progressbar"
+              aria-valuenow={renderPct} aria-valuemin={0} aria-valuemax={100} aria-label="Rendering">
+              <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${renderPct}%` }} />
+            </div>
+          )}
+          {outputUrl && (
+            <div className="flex items-center gap-3">
+              <a href={outputUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-primary hover:underline"><Eye className="w-3.5 h-3.5" /> View</a>
+              <a href={outputUrl} target="_blank" rel="noreferrer" download className="flex items-center gap-1 text-xs text-primary hover:underline"><Download className="w-3.5 h-3.5" /> Download</a>
+            </div>
+          )}
+          <span className="text-[11px] text-muted-foreground ml-auto">
+            {removedTakeCount > 0 ? `${removedTakeCount} take${removedTakeCount !== 1 ? 's' : ''} removed` : 'No takes removed'}
+          </span>
+        </div>
+        {/* Live render stage so the multi-second render is never an opaque wait. */}
         {rendering && (
-          <div className="flex-1 min-w-[120px] h-1.5 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-primary transition-[width] duration-300" style={{ width: `${renderPct}%` }} />
+          <p className="text-[11px] text-muted-foreground">{renderStage}…</p>
+        )}
+        {/* Surface a render failure inline — not just a toast that fades away. */}
+        {renderError && !rendering && (
+          <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
+            <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>Render failed — {renderError}</span>
           </div>
         )}
-        {outputUrl && (
-          <div className="flex items-center gap-3">
-            <a href={outputUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-primary hover:underline"><Eye className="w-3.5 h-3.5" /> View</a>
-            <a href={outputUrl} target="_blank" rel="noreferrer" download className="flex items-center gap-1 text-xs text-primary hover:underline"><Download className="w-3.5 h-3.5" /> Download</a>
-          </div>
-        )}
-        <span className="text-[11px] text-muted-foreground ml-auto">
-          {removedTakeCount > 0 ? `${removedTakeCount} take${removedTakeCount !== 1 ? 's' : ''} removed` : 'No takes removed'}
-        </span>
       </div>
     </div>
   );

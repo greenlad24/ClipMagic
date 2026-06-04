@@ -26,6 +26,11 @@ import { segmentTakes, markDuplicateTakes, DEFAULT_SETTINGS, type Envelope, type
 import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
+import { withTimeout } from "../util/withTimeout.js";
+import {
+  createAnalyzeJob, getAnalyzeJob, setStage, setWarning, completeAnalyze, failAnalyze,
+  pollSnapshot, type AnalyzeJob,
+} from "../cutter/analyzeJob.js";
 import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
 import { planMotionGraphics, motionGraphicsEnabledFor } from "../motion/director.js";
@@ -1077,56 +1082,128 @@ const getNarrationCuts: Handler = async (_input, userId) => {
 // guaranteed because both sides derive segments from the same envelope via the
 // shared `cutter/segments.ts` math and the render trims that explicit list.
 
+// Per-step timeouts so the analyze job can NEVER hang forever. The Groq path is
+// the historical offender (the whole file, no bound), so it gets the tightest
+// budget and degrades to energy-only on timeout; the ffmpeg passes are fatal if
+// they blow their (generous) budget. Overridable via env without a rebuild.
+const envMs = (name: string, fallback: number): number => {
+  const raw = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+};
+const ANALYZE_TIMEOUTS = {
+  resolve: () => envMs("ANALYZE_RESOLVE_MS", 60_000),
+  probe: () => envMs("ANALYZE_PROBE_MS", 30_000),
+  audio: () => envMs("ANALYZE_AUDIO_MS", 120_000),
+  transcribe: () => envMs("ANALYZE_TRANSCRIBE_MS", 120_000),
+  envelope: () => envMs("ANALYZE_ENVELOPE_MS", 180_000),
+};
+
 /**
- * Analyze one clip for the timeline editor. Transcribes (word timings, for the
- * transcript snippets on each take block), builds a per-frame dBFS envelope (for
- * the waveform + live client-side thresholding), and returns an initial take
- * segmentation at the default settings. Best-effort on transcription: if no
- * GROQ key is present we still return the envelope + duration so the waveform,
- * threshold and gap controls work — just without transcript labels.
+ * Drive the heavy analyze work for one job, narrating each stage onto the job
+ * (which the editor polls) and into the server logs with elapsed ms. Transcription
+ * is best-effort (timeout/failure → energy-only + a warning); resolve/probe/
+ * envelope are fatal. Never throws — it records the outcome on the job.
+ */
+async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> {
+  const t0 = Date.now();
+  const lap = (label: string, since: number) =>
+    console.log(`[analyzeCut:${job.id}] ${label} (${Date.now() - since}ms, +${Date.now() - t0}ms)`);
+  try {
+    // ── resolve + probe (fatal) ──────────────────────────────────────────────
+    setStage(job, "resolving");
+    let ts = Date.now();
+    const srcPath = await withTimeout(resolveInput(sourceUrl), ANALYZE_TIMEOUTS.resolve(), "loading the video");
+    const meta = await withTimeout(probe(srcPath), ANALYZE_TIMEOUTS.probe(), "reading video metadata");
+    const duration = meta.duration ?? 0;
+    if (!duration) { failAnalyze(job, "Could not read the video's duration."); return; }
+    lap("resolved + probed", ts);
+
+    // ── transcribe (best-effort: timeout/failure → energy-only + warning) ─────
+    setStage(job, "transcribing");
+    ts = Date.now();
+    let words: { word: string; start: number; end: number }[] = [];
+    let transcript = "";
+    try {
+      const audio = await withTimeout(
+        extractAudioForTranscription(srcPath), ANALYZE_TIMEOUTS.audio(), "extracting audio");
+      const tr = await withTimeout(
+        transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true }),
+        ANALYZE_TIMEOUTS.transcribe(), "transcription (Groq)");
+      words = tr.words;
+      transcript = tr.text;
+      lap(`transcribed ${words.length} words`, ts);
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
+      setWarning(job, `transcription unavailable: ${reason} — timeline has no transcript labels`);
+      console.warn(`[analyzeCut:${job.id}] transcription unavailable (non-fatal, +${Date.now() - t0}ms): ${reason}`);
+    }
+
+    // ── waveform envelope (fatal) ─────────────────────────────────────────────
+    setStage(job, "waveform");
+    ts = Date.now();
+    const envelope = await withTimeout(
+      computeEnvelope(srcPath, duration), ANALYZE_TIMEOUTS.envelope(), "building the waveform");
+    lap(`built waveform (${envelope.db.length} samples)`, ts);
+
+    // ── initial segmentation ──────────────────────────────────────────────────
+    setStage(job, "segmenting");
+    const env: Envelope = { db: envelope.db, hop: envelope.hop, duration: envelope.duration };
+    // Initial take segmentation at the defaults — the client re-segments live as
+    // the user drags the controls, using the very same `segmentTakes` math.
+    const takes = env.db.length > 0 ? markDuplicateTakes(segmentTakes(env, words, DEFAULT_SETTINGS)) : [];
+
+    completeAnalyze(job, {
+      sourceUrl,
+      duration,
+      hasAudio: meta.hasAudio,
+      width: meta.width,
+      height: meta.height,
+      envelope: { db: envelope.db, hop: envelope.hop, floorDb: envelope.floorDb },
+      words,
+      transcript,
+      takes,
+      defaults: DEFAULT_SETTINGS,
+    });
+    console.log(
+      `[analyzeCut:${job.id}] done in ${Date.now() - t0}ms — ${takes.length} takes, ` +
+        `${words.length} words${job.warning ? " (energy-only: " + job.warning + ")" : ""}`);
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    failAnalyze(job, reason.slice(0, 200));
+    console.error(`[analyzeCut:${job.id}] failed after ${Date.now() - t0}ms: ${reason}`);
+  }
+}
+
+/**
+ * Start analyzing one clip for the timeline editor. Returns a jobId IMMEDIATELY;
+ * the heavy work (transcribe word timings, build a dBFS envelope, seed the take
+ * segmentation) runs in the background with per-stage progress the editor polls
+ * via `getAnalyzeCut`. Best-effort on transcription: with no GROQ key (or on a
+ * timeout) it still returns the envelope + duration so the waveform, threshold
+ * and gap controls work — just without transcript labels.
  */
 const analyzeCut: Handler = async (input) => {
   const sourceUrl: string = input?.sourceUrl;
   if (!sourceUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "sourceUrl is required." });
-  const srcPath = await resolveInput(sourceUrl);
-  const meta = await probe(srcPath);
-  const duration = meta.duration ?? 0;
-  if (!duration) throw new ZiteError({ code: "BAD_REQUEST", message: "Could not read the video's duration." });
+  const job = createAnalyzeJob();
+  console.log(`[analyzeCut:${job.id}] queued for ${sourceUrl}`);
+  // Fire-and-forget — runAnalyzeJob never throws (it records onto the job).
+  void runAnalyzeJob(job, sourceUrl);
+  return pollSnapshot(job);
+};
 
-  // Word timings (for transcript snippets). Non-fatal: the editor degrades to an
-  // energy-only timeline if transcription is unavailable (no key in the lab).
-  let words: { word: string; start: number; end: number }[] = [];
-  let transcript = "";
-  try {
-    const audio = await extractAudioForTranscription(srcPath);
-    const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
-    words = tr.words;
-    transcript = tr.text;
-  } catch (e) {
-    console.warn(`[analyzeCut] transcription unavailable (non-fatal): ${e instanceof Error ? e.message : e}`);
+/** Poll an analyze job for the timeline editor (stage, progress, warning, result). */
+const getAnalyzeCut: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const job = getAnalyzeJob(jobId);
+  if (!job) {
+    return {
+      jobId, stage: "failed", stageLabel: "Failed", progress: 0, warning: null,
+      result: null, error: "Analyze job not found (it may have expired) — reopen the editor to retry.",
+    };
   }
-
-  const envelope = await computeEnvelope(srcPath, duration);
-  const env: Envelope = { db: envelope.db, hop: envelope.hop, duration: envelope.duration };
-  // Initial take segmentation at the defaults — the client re-segments live as
-  // the user drags the controls, using the very same `segmentTakes` math.
-  // Seed takes at the defaults, with transcript-based duplicate marking already
-  // applied (the client recomputes live via computeKeepSegments using the same
-  // math, so this is purely an initial render of the timeline).
-  const takes = env.db.length > 0 ? markDuplicateTakes(segmentTakes(env, words, DEFAULT_SETTINGS)) : [];
-
-  return {
-    sourceUrl,
-    duration,
-    hasAudio: meta.hasAudio,
-    width: meta.width,
-    height: meta.height,
-    envelope: { db: envelope.db, hop: envelope.hop, floorDb: envelope.floorDb },
-    words,
-    transcript,
-    takes,
-    defaults: DEFAULT_SETTINGS,
-  };
+  return pollSnapshot(job);
 };
 
 /**
@@ -1860,6 +1937,7 @@ export const HANDLERS: Record<string, Handler> = {
   getCutRun,
   getNarrationCuts,
   analyzeCut,
+  getAnalyzeCut,
   renderManualCut,
   getCutJob,
   createMeme,
