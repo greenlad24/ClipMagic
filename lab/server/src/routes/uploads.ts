@@ -74,10 +74,21 @@ router.post(
       let width: number | null = null;
       let height: number | null = null;
       if (kind === "video" || kind === "audio" || kind === "image") {
-        const info = await probe(f.path);
-        duration = info.duration;
-        width = info.width;
-        height = info.height;
+        try {
+          const info = await probe(f.path);
+          duration = info.duration;
+          width = info.width;
+          height = info.height;
+        } catch (e) {
+          // A probe failure (truncated / odd-codec file) must NOT 500 the whole
+          // upload — store the file with null metadata and let the editor surface
+          // a clear, actionable error later. Log so the cause is visible server-side.
+          console.warn(
+            `[uploads] probe failed for "${f.originalname}" (${f.size} bytes) — stored without metadata: ${
+              e instanceof Error ? e.message : e
+            }`,
+          );
+        }
       }
       insert.run(id, f.originalname, f.filename, f.mimetype, kind, f.size, duration, width, height, Date.now());
       results.push({

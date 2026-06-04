@@ -909,7 +909,7 @@ async function runOneCut(item: CutItem, sourceUrl: string, aggressiveness: Aggre
     const srcPath = await resolveInput(sourceUrl);
     const meta = await probe(srcPath);
     const duration = meta.duration ?? 0;
-    if (!duration) throw new Error("Could not read the video's duration");
+    if (!duration) throw new Error("Couldn't read the video — the file looks incomplete or unsupported (often a failed/partial upload). Re-upload and try again; MP4 or MOV work best.");
     const audio = await extractAudioForTranscription(srcPath);
     const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
 
@@ -1120,7 +1120,7 @@ async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> 
     const srcPath = await withTimeout(resolveInput(sourceUrl), ANALYZE_TIMEOUTS.resolve(), "loading the video");
     const meta = await withTimeout(probe(srcPath), ANALYZE_TIMEOUTS.probe(), "reading video metadata");
     const duration = meta.duration ?? 0;
-    if (!duration) { failAnalyze(job, "Could not read the video's duration."); return; }
+    if (!duration) { failAnalyze(job, "Couldn't read the video — the file looks incomplete or unsupported (often a failed/partial upload). Re-upload and try again; MP4 or MOV work best."); return; }
     lap("resolved + probed", ts);
 
     // ── transcribe (best-effort: timeout/failure → energy-only + warning) ─────
