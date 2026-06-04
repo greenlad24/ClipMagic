@@ -24,6 +24,7 @@ export type AnalyzeStage =
   | "transcribing"
   | "waveform"
   | "segmenting"
+  | "choosing"
   | "done"
   | "failed";
 
@@ -34,6 +35,7 @@ export const ANALYZE_STAGE_LABEL: Record<AnalyzeStage, string> = {
   transcribing: "Transcribing (Groq)",
   waveform: "Building waveform",
   segmenting: "Segmenting takes",
+  choosing: "Choosing best takes",
   done: "Ready",
   failed: "Failed",
 };
@@ -47,7 +49,8 @@ export const ANALYZE_STAGE_PROGRESS: Record<AnalyzeStage, number> = {
   resolving: 0.1,
   transcribing: 0.35,
   waveform: 0.7,
-  segmenting: 0.9,
+  segmenting: 0.85,
+  choosing: 0.92,
   done: 1,
   failed: 0, // progress is frozen at wherever it failed (see setStage)
 };
@@ -63,7 +66,13 @@ export interface AnalyzeResultPayload {
   words: { word: string; start: number; end: number }[];
   transcript: string;
   takes: unknown[];
-  defaults: unknown;
+  /** The default edit settings (silence floor, gap, min-take, …). */
+  settings: unknown;
+  /**
+   * Server-computed DEFAULT disabled-set (best-take-per-part selection). The
+   * client merges this with the live under-minTake rule + the user's toggles.
+   */
+  takeDefaults: unknown[];
 }
 
 export interface AnalyzeJob {

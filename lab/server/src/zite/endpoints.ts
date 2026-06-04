@@ -23,7 +23,8 @@ import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
 import { detectSilences, computeEnvelope } from "../cutter/silence.js";
-import { segmentTakes, markDuplicateTakes, DEFAULT_SETTINGS, type Envelope, type Seg } from "../cutter/segments.js";
+import { segmentTakes, DEFAULT_SETTINGS, type Envelope, type Seg } from "../cutter/segments.js";
+import { selectBestTakeDefaults } from "../cutter/bestTake.js";
 import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
@@ -1154,8 +1155,26 @@ async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> 
     setStage(job, "segmenting");
     const env: Envelope = { db: envelope.db, hop: envelope.hop, duration: envelope.duration };
     // Initial take segmentation at the defaults — the client re-segments live as
-    // the user drags the controls, using the very same `segmentTakes` math.
-    const takes = env.db.length > 0 ? markDuplicateTakes(segmentTakes(env, words, DEFAULT_SETTINGS)) : [];
+    // the user drags the controls, using the very same `segmentTakes` math. EVERY
+    // detected take is returned (none dropped); short takes come back disabled.
+    const takes = env.db.length > 0 ? segmentTakes(env, words, DEFAULT_SETTINGS) : [];
+
+    // ── best take per script part (AI pass, heuristic fallback) ────────────────
+    // Reconstruct the full script and choose the best take per part so re-takes
+    // are disabled by default (and no part is dropped or duplicated). This is the
+    // server-computed DEFAULT enabled-set; the client merges it with the live
+    // under-minTake rule + the user's manual toggles. Best-effort: any failure or
+    // missing key falls back to a deterministic text heuristic.
+    setStage(job, "choosing");
+    let takeDefaults: unknown[] = [];
+    try {
+      const ts2 = Date.now();
+      const sel = await selectBestTakeDefaults(takes, { minTakeForBest: DEFAULT_SETTINGS.minTake });
+      takeDefaults = sel.defaults;
+      lap(`chose best takes (${sel.defaults.length} re-takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
+    } catch (e) {
+      console.warn(`[analyzeCut:${job.id}] best-take selection failed (non-fatal): ${e instanceof Error ? e.message : e}`);
+    }
 
     completeAnalyze(job, {
       sourceUrl,
@@ -1167,7 +1186,8 @@ async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> 
       words,
       transcript,
       takes,
-      defaults: DEFAULT_SETTINGS,
+      settings: DEFAULT_SETTINGS,
+      takeDefaults,
     });
     console.log(
       `[analyzeCut:${job.id}] done in ${Date.now() - t0}ms — ${takes.length} takes, ` +
