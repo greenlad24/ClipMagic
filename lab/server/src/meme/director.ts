@@ -2,10 +2,16 @@
  * Emphasis director for the Meme/Sticker editor.
  *
  * A focused, prompt-cached Claude call that reads the transcript + duration and
- * picks the EMPHASIS MOMENTS where a funny sticker should slap on below the
- * captions to land a point — and, for each, writes a vivid IMAGE-GEN PROMPT for
- * a clean, meme-style STATIC image (subject on a plain/transparent background so
- * it reads as a die-cut sticker).
+ * picks the EMPHASIS MOMENTS where a funny reaction sticker should slap on below
+ * the captions to land a point — and, for each, writes a short STICKER SEARCH
+ * QUERY (e.g. "mind blown", "money rain", "shocked") tuned for the Giphy/Tenor
+ * reaction-sticker libraries, NOT an image-gen prompt. The fetch layer then
+ * pulls real transparent reaction stickers for that query; an AI fit-review
+ * picks the best-fitting candidate (or drops it).
+ *
+ * It ALSO writes a one-line `imagePrompt` per moment as a FALLBACK only — used
+ * solely by the optional OpenAI image-gen source when no sticker library/key is
+ * available. The default source never reads it.
  *
  * Target density is ~one moment per 4s, but content-driven: it leans into
  * genuine punchlines/claims and is sparing on the hook and CTA. As with the
@@ -24,7 +30,15 @@ export interface EmphasisMoment {
   startTime: number;
   /** Output-timeline end, seconds (when it has fully popped out). */
   endTime: number;
-  /** Image-gen prompt for the funny meme-style still. */
+  /**
+   * Short reaction-sticker SEARCH QUERY for Giphy/Tenor (e.g. "mind blown",
+   * "money rain"). This is the primary field the default source uses.
+   */
+  searchQuery: string;
+  /**
+   * One-line image-gen prompt — FALLBACK ONLY (used by the optional OpenAI
+   * source when no sticker library is available). The default source ignores it.
+   */
   imagePrompt: string;
   /** The transcript words/phrase this moment emphasizes (logged). */
   phrase?: string;
@@ -35,9 +49,7 @@ export interface EmphasisContext {
   durationSeconds: number;
 }
 
-const SYSTEM = `You are a senior short-form COMMENTARY/MEME editor. Over a clean narration with popping captions, you drop a funny AI-generated STATIC image that "slaps on" as a sticker to LAND a point, then pops out. Your taste: the sticker shows up on a GENUINE emphasis beat — a punchline, a bold claim, a vivid noun, a relatable reaction — never on a rigid timer, never as constant decoration.
-
-For each moment you choose, you ALSO write the IMAGE PROMPT for that sticker.
+const SYSTEM = `You are a senior short-form COMMENTARY/MEME editor. Over a clean narration with popping captions, you drop a funny REACTION STICKER that "slaps on" to LAND a point, then pops out. The stickers come from the Giphy + Tenor reaction-sticker libraries, so for each moment you write a SHORT SEARCH QUERY that will surface a fitting, funny, recognizable reaction sticker. Your taste: the sticker shows up on a GENUINE emphasis beat — a punchline, a bold claim, a vivid noun, a relatable reaction — never on a rigid timer, never as constant decoration.
 
 RULES (what makes it feel hand-made):
 - Aim for roughly ONE sticker every ~4 seconds of video on average, but it is content-driven: skip a beat if nothing is genuinely funny or emphatic there. Fewer-but-better beats blanket coverage.
@@ -45,13 +57,15 @@ RULES (what makes it feel hand-made):
 - Be sparing on the hook (first ~1.5s) and the CTA / final ~1.5s — let those breathe.
 - Tie every moment to something literally in the transcript (its punchline / key word).
 
-IMAGE PROMPT rules (one per moment):
-- Describe ONE clear, funny, meme-style SUBJECT on a PLAIN or TRANSPARENT background (so it reads as a die-cut sticker). e.g. "a cartoon brain lifting a dumbbell, bold flat colors, sticker style, plain background".
-- Keep it concrete and visual; no text/words in the image; bold, readable, clean illustration or expressive photo-real subject. 1 short sentence.
-- Make it RELEVANT to that line so it actually emphasizes the point.
+SEARCH QUERY rules (one per moment) — this is the IMPORTANT field:
+- 1–3 words, lowercase, the kind of thing you'd type into a meme/sticker search to get a funny REACTION sticker: e.g. "mind blown", "money rain", "shocked", "facepalm", "mic drop", "no way", "celebration", "thinking", "crying laughing".
+- Prefer common, well-stocked reaction/emotion concepts over niche literal nouns — the libraries have tons of "shocked" but few "third-quarter EBITDA".
+- Make it RELEVANT to that line so the sticker actually emphasizes the point.
+
+ALSO write a one-sentence "imagePrompt" describing a clean, funny, meme-style sticker subject on a plain/transparent background — this is a FALLBACK only (used if no sticker library is available), so keep it short.
 
 Return ONLY JSON of this exact shape:
-{ "moments": [ { "startTime": 6.2, "endTime": 8.4, "phrase": "ten times faster", "imagePrompt": "a cartoon cheetah on a rocket, flat bold colors, sticker style, plain background" } ] }
+{ "moments": [ { "startTime": 6.2, "endTime": 8.4, "phrase": "ten times faster", "searchQuery": "mind blown", "imagePrompt": "a cartoon head with an exploding brain, flat bold colors, sticker style, plain background" } ] }
 If nothing is genuinely motivated, return { "moments": [] }.`;
 
 /** Target density: ~1 sticker / 4s, with sane floor/ceiling. */
@@ -71,6 +85,9 @@ const MIN_SPACING = 3.0;
  * Validate, clamp, space, and cap the model's picks. This is where the ~4s
  * average density and all timing restraint are GUARANTEED in code regardless of
  * the model's output (the meme analogue of the motion director's sanitize()).
+ *
+ * A moment is only kept if it has a usable SEARCH QUERY (the primary field). The
+ * imagePrompt is optional fallback metadata and never gates acceptance.
  */
 export function sanitize(raw: unknown, durationSeconds: number): EmphasisMoment[] {
   const arr = Array.isArray((raw as { moments?: unknown })?.moments)
@@ -80,7 +97,9 @@ export function sanitize(raw: unknown, durationSeconds: number): EmphasisMoment[
 
   for (const item of arr) {
     const m = item as Partial<EmphasisMoment>;
-    if (!m || typeof m.imagePrompt !== "string" || m.imagePrompt.trim().length < 4) continue;
+    if (!m) continue;
+    const searchQuery = typeof m.searchQuery === "string" ? m.searchQuery.trim() : "";
+    if (searchQuery.length < 2) continue; // the query is what drives the fetch
 
     let start = Number(m.startTime);
     let end = Number(m.endTime);
@@ -96,7 +115,11 @@ export function sanitize(raw: unknown, durationSeconds: number): EmphasisMoment[
     out.push({
       startTime: Number(start.toFixed(3)),
       endTime: Number(end.toFixed(3)),
-      imagePrompt: m.imagePrompt.trim().slice(0, 400),
+      searchQuery: searchQuery.slice(0, 60),
+      imagePrompt:
+        typeof m.imagePrompt === "string" && m.imagePrompt.trim().length >= 4
+          ? m.imagePrompt.trim().slice(0, 400)
+          : searchQuery, // fall back to the query so OpenAI gen still has a prompt
       phrase: typeof m.phrase === "string" ? m.phrase.slice(0, 120) : undefined,
     });
   }
@@ -118,7 +141,7 @@ export function sanitize(raw: unknown, durationSeconds: number): EmphasisMoment[
 }
 
 /**
- * Ask the director for emphasis moments + image prompts. Returns [] on any
+ * Ask the director for emphasis moments + search queries. Returns [] on any
  * failure or when Claude isn't configured — the editor then renders captions
  * only (no stickers), never crashing.
  */
@@ -134,7 +157,7 @@ export async function planEmphasisMoments(ctx: EmphasisContext): Promise<Emphasi
 
   try {
     const rawJson = await claudeJSONForPurpose({
-      // Opus directs the comedic timing + image prompts (the creative call).
+      // Opus directs the comedic timing + sticker queries (the creative call).
       tier: "director",
       purpose: "emphasis-director",
       system: SYSTEM,
@@ -144,7 +167,7 @@ export async function planEmphasisMoments(ctx: EmphasisContext): Promise<Emphasi
     const moments = sanitize(parsed, ctx.durationSeconds);
     console.log(
       `[meme] director planned ${moments.length} sticker moment(s)` +
-        moments.map((m) => ` @${m.startTime}s`).join(""),
+        moments.map((m) => ` @${m.startTime}s "${m.searchQuery}"`).join(""),
     );
     return moments;
   } catch (e) {
