@@ -69,16 +69,26 @@ function CAPTION_BOTTOM(): number {
   return Math.round(CANVAS.height * CAPTION_ZONE_BOTTOM_FRACTION);
 }
 
+/** Smallest sticker we'll ever place — below this it reads as a speck. */
+const MIN_STICKER_SIZE = 220;
+/** Max horizontal room any zone can use (clears both side safe rails). */
+function maxWidthRoom(): number {
+  return CANVAS.width - SAFE_LEFT - SAFE_RIGHT;
+}
+
 /**
- * Candidate placement zones, in deterministic rotation order. Each returns a
- * box for the given size, or null if the size can't fit that zone. Coordinates
- * are clamped to the safe area; a zone that would intersect the caption band or
- * run off-frame returns null so the picker moves on.
+ * Candidate placement zones, in deterministic rotation order. Each computes its
+ * top-left for a size CLAMPED to that zone's own room (vertical band + side
+ * rails), then validates the result fits + clears the captions. A zone returns
+ * null only when it genuinely can't hold even the minimum sticker, so every zone
+ * with room is reachable (placement truly varies) while NONE can overlap the
+ * captions or run off-frame.
  */
 type ZoneFn = (size: number) => StickerBox | null;
 
 /** Build a box and validate it fits + clears captions; null if it doesn't. */
 function boxIfFits(zone: string, left: number, top: number, size: number): StickerBox | null {
+  if (size < MIN_STICKER_SIZE) return null;
   const box: StickerBox = { left, top, size, bottom: top + size, zone };
   try {
     assertFits(box);
@@ -94,8 +104,9 @@ const ZONES: Array<{ name: string; fn: ZoneFn }> = [
     name: "below-captions",
     fn: (size) => {
       const top = Math.round(CANVAS.height * STICKER_TOP_FRACTION);
-      const left = Math.round((CANVAS.width - size) / 2);
-      return boxIfFits("below-captions", left, top, size);
+      const room = Math.min(size, CANVAS.height - SAFE_BOTTOM - top, maxWidthRoom());
+      const left = Math.round((CANVAS.width - room) / 2);
+      return boxIfFits("below-captions", left, top, room);
     },
   },
   // 2. Top band, centered under the platform handle/sound row.
@@ -103,8 +114,9 @@ const ZONES: Array<{ name: string; fn: ZoneFn }> = [
     name: "top-center",
     fn: (size) => {
       const top = SAFE_TOP + Math.round(CANVAS.height * 0.01);
-      const left = Math.round((CANVAS.width - size) / 2);
-      return boxIfFits("top-center", left, top, size);
+      const room = Math.min(size, CAPTION_TOP() - top, maxWidthRoom());
+      const left = Math.round((CANVAS.width - room) / 2);
+      return boxIfFits("top-center", left, top, room);
     },
   },
   // 3. Upper-left, hugging the left safe rail.
@@ -112,8 +124,8 @@ const ZONES: Array<{ name: string; fn: ZoneFn }> = [
     name: "upper-left",
     fn: (size) => {
       const top = SAFE_TOP + Math.round(CANVAS.height * 0.02);
-      const left = SAFE_LEFT;
-      return boxIfFits("upper-left", left, top, size);
+      const room = Math.min(size, CAPTION_TOP() - top, maxWidthRoom());
+      return boxIfFits("upper-left", SAFE_LEFT, top, room);
     },
   },
   // 4. Upper-right, hugging the right safe rail.
@@ -121,17 +133,19 @@ const ZONES: Array<{ name: string; fn: ZoneFn }> = [
     name: "upper-right",
     fn: (size) => {
       const top = SAFE_TOP + Math.round(CANVAS.height * 0.02);
-      const left = CANVAS.width - SAFE_RIGHT - size;
-      return boxIfFits("upper-right", left, top, size);
+      const room = Math.min(size, CAPTION_TOP() - top, maxWidthRoom());
+      const left = CANVAS.width - SAFE_RIGHT - room;
+      return boxIfFits("upper-right", left, top, room);
     },
   },
-  // 5. Center-upper: just above the caption band, centered.
+  // 5. Center-upper: sitting just above the caption band, centered.
   {
     name: "center-upper",
     fn: (size) => {
-      const top = CAPTION_TOP() - size - Math.round(CANVAS.height * 0.01);
-      const left = Math.round((CANVAS.width - size) / 2);
-      return boxIfFits("center-upper", left, top, size);
+      const room = Math.min(size, CAPTION_TOP() - SAFE_TOP, maxWidthRoom());
+      const top = CAPTION_TOP() - room - Math.round(CANVAS.height * 0.01);
+      const left = Math.round((CANVAS.width - room) / 2);
+      return boxIfFits("center-upper", left, top, room);
     },
   },
 ];
@@ -139,12 +153,12 @@ const ZONES: Array<{ name: string; fn: ZoneFn }> = [
 /**
  * Pick a fitting zone for the sticker at `index`. Deterministic: the index
  * selects a STARTING zone (so adjacent stickers land in different places), then
- * we scan the rotation for the first zone the sticker actually fits in. If a
- * requested size can't fit any zone we shrink it and retry, finally falling back
- * to the always-valid below-captions slot.
+ * we scan the rotation for the first zone that can hold the sticker (each zone
+ * clamps the size to its own room). If somehow nothing fits we fall back to the
+ * always-valid below-captions slot.
  */
 export function placeSticker(index: number, size: number = defaultStickerSize()): StickerBox {
-  for (let trySize = size; trySize >= 120; trySize = Math.round(trySize * 0.85)) {
+  for (let trySize = size; trySize >= MIN_STICKER_SIZE; trySize = Math.round(trySize * 0.85)) {
     for (let k = 0; k < ZONES.length; k++) {
       const zone = ZONES[(index + k) % ZONES.length];
       const box = zone.fn(trySize);
