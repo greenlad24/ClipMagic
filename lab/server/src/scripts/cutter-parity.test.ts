@@ -24,15 +24,31 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import {
   computeKeepSegments, silencesFromEnvelope, segmentTakes, sentencesFromWords,
-  markDuplicateTakes, previewDuration, sourceToEdited, DEFAULT_SETTINGS, takeId,
-  type Envelope, type Take,
+  heuristicTakeDefaults, applyDefaults, previewDuration, sourceToEdited,
+  DEFAULT_SETTINGS, takeId,
+  type Envelope, type Take, type TakeDefault,
 } from "../cutter/segments.js";
+import { defaultsFromParts, selectBestTakeDefaults } from "../cutter/bestTake.js";
 import { buildCutArgs, type CutSpec } from "../render/cut.js";
 
 let passed = 0;
-function check(name: string, fn: () => void) {
-  try { fn(); passed++; console.log(`  ok  ${name}`); }
-  catch (e) { console.error(`FAIL  ${name}\n      ${e instanceof Error ? e.stack : e}`); process.exitCode = 1; }
+const pending: Promise<void>[] = [];
+function check(name: string, fn: () => void | Promise<void>) {
+  try {
+    const r = fn();
+    if (r && typeof (r as Promise<void>).then === "function") {
+      pending.push(
+        (r as Promise<void>).then(
+          () => { passed++; console.log(`  ok  ${name}`); },
+          (e) => { console.error(`FAIL  ${name}\n      ${e instanceof Error ? e.stack : e}`); process.exitCode = 1; },
+        ),
+      );
+      return;
+    }
+    passed++; console.log(`  ok  ${name}`);
+  } catch (e) {
+    console.error(`FAIL  ${name}\n      ${e instanceof Error ? e.stack : e}`); process.exitCode = 1;
+  }
 }
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -106,19 +122,26 @@ check("silence ≤0.35s kept, >0.35s cut", () => {
   assert.equal(silencesFromEnvelope(mk(25), s).length, 1, "0.50s pause cut");
 });
 
-// 3 ─ Take segmentation labels each kept span with its transcript words.
+// GEO: a low-minTake settings for the silence/gap GEOMETRY tests, so the short
+// synthetic takes aren't disabled by the new 3.0s min-take default (which is
+// exercised separately below). The dB floor + min-silence + gap math is unchanged.
+const GEO = { ...DEFAULT_SETTINGS, minTake: 0.4 };
+
+// 3 ─ Take segmentation labels each kept span with its transcript words, and
+//     returns EVERY take with an explicit enabled flag (none dropped).
 check("segmentTakes yields two takes with the right transcript snippets", () => {
-  const takes = segmentTakes(synthEnv(), words, DEFAULT_SETTINGS);
+  const takes = segmentTakes(synthEnv(), words, GEO);
   assert.equal(takes.length, 2);
   assert.equal(takes[0].text, "hello world");
   assert.equal(takes[1].text, "second take");
+  assert.ok(takes[0].enabled && takes[1].enabled, "both takes enabled at minTake 0.4");
   // Stable ids keyed to start.
   assert.equal(takes[0].id, takeId(takes[0].start));
 });
 
-// 4 ─ Deleting a take drops it; gap + preview duration are exact.
-check("manual delete + 0.35s gap → exact keep list and preview duration", () => {
-  const all = computeKeepSegments(synthEnv(), words, DEFAULT_SETTINGS, []);
+// 4 ─ Disabling a take drops it from keep; gap + preview duration are exact.
+check("manual toggle + 0.35s gap → exact keep list and preview duration", () => {
+  const all = computeKeepSegments(synthEnv(), words, GEO, [], []);
   assert.equal(all.keep.length, 2);
   assert.equal(all.gap, 0.35);
   const body = all.keep.reduce((s, k) => s + (k.end - k.start), 0);
@@ -126,23 +149,23 @@ check("manual delete + 0.35s gap → exact keep list and preview duration", () =
   assert.ok(Math.abs(previewDuration(all.keep, all.gap) - (body + 0.35)) < 1e-6);
 
   const delId = all.takes[0].id;
-  const oneLeft = computeKeepSegments(synthEnv(), words, DEFAULT_SETTINGS, [delId]);
-  assert.equal(oneLeft.keep.length, 1, "deleting a take removes it");
+  const oneLeft = computeKeepSegments(synthEnv(), words, GEO, [], [delId]);
+  assert.equal(oneLeft.keep.length, 1, "toggling a take off removes it");
   // one take → no gap
   assert.ok(Math.abs(previewDuration(oneLeft.keep, oneLeft.gap) - (oneLeft.keep[0].end - oneLeft.keep[0].start)) < 1e-6);
 });
 
 // 5 ─ Determinism: same inputs → identical output (the client gets the same).
 check("computeKeepSegments is deterministic", () => {
-  const a = computeKeepSegments(synthEnv(), words, DEFAULT_SETTINGS, []);
-  const b = computeKeepSegments(synthEnv(), words, DEFAULT_SETTINGS, []);
+  const a = computeKeepSegments(synthEnv(), words, GEO, [], []);
+  const b = computeKeepSegments(synthEnv(), words, GEO, [], []);
   assert.deepEqual(a, b);
 });
 
 // 6 ─ THE PARITY LINK: the keep-segments the editor renders == what the render
 //     path trims, and buildCutArgs' totalDuration == previewDuration().
 check("render path duration (incl. gaps) == client previewDuration()", () => {
-  const plan = computeKeepSegments(synthEnv(), words, DEFAULT_SETTINGS, []);
+  const plan = computeKeepSegments(synthEnv(), words, GEO, [], []);
   const spec: CutSpec = { source: "/dev/null", segments: plan.keep, hasAudio: true, gap: plan.gap };
   // buildCutArgs writes a sidecar filter file; point it at a temp path.
   const tmp = path.join(process.env.TMPDIR || "/tmp", `parity_${Date.now()}.mp4`);
@@ -154,7 +177,7 @@ check("render path duration (incl. gaps) == client previewDuration()", () => {
 
 // 7 ─ sourceToEdited maps a kept source time onto the edited timeline incl. gap.
 check("sourceToEdited places the second take after the first + gap", () => {
-  const plan = computeKeepSegments(synthEnv(), words, DEFAULT_SETTINGS, []);
+  const plan = computeKeepSegments(synthEnv(), words, GEO, [], []);
   const [k0, k1] = plan.keep;
   const atK1Start = sourceToEdited(plan.keep, plan.gap, k1.start);
   const expected = (k0.end - k0.start) + plan.gap;
@@ -182,13 +205,19 @@ function complexEnv(): Envelope {
 // Words only label take A; take B (the "tail") has NO transcript at all.
 const complexWords = [{ word: "alpha", start: 1.4, end: 2.2 }];
 
-check("blip dropped; lead/trail trimmed; >0.35 silence collapses to one 0.35 gap", () => {
-  const r = computeKeepSegments(complexEnv(), complexWords, DEFAULT_SETTINGS, []);
-  // The 0.2s blip is NOT a take; only take A and take B survive.
-  assert.equal(r.takes.length, 2, `expected 2 takes, got ${r.takes.length}`);
+check("blip disabled; lead/trail trimmed; >0.35 silence collapses to one 0.35 gap", () => {
+  // minTake 0.4 keeps the two ~1s takes; the 0.2s blip is below it and is
+  // DISABLED (not dropped) — it appears as a third take, just off by default.
+  const r = computeKeepSegments(complexEnv(), complexWords, GEO, [], []);
+  // The 0.2s blip take is detected but disabled; A + B are enabled.
+  assert.equal(r.takes.length, 3, `expected 3 takes (incl. disabled blip), got ${r.takes.length}`);
+  const enabledTakes = r.takes.filter((t) => t.enabled);
+  assert.equal(enabledTakes.length, 2, "only the two real takes are enabled");
+  const blip = r.takes.find((t) => !t.enabled)!;
+  assert.ok(blip && blip.end - blip.start < 0.4 && /under/.test(blip.reason ?? ""), "blip disabled as under-minTake");
   // Take A keeps its transcript; take B (untranscribed tail) is empty (UI shows —).
-  assert.equal(r.takes[0].text, "alpha");
-  assert.equal(r.takes[1].text, "", "untranscribed tail take must still exist, just unlabelled");
+  assert.equal(enabledTakes[0].text, "alpha");
+  assert.equal(enabledTakes[1].text, "", "untranscribed tail take must still exist, just unlabelled");
   // No keep span starts at 0 or ends at duration → lead/trailing silence fully gone.
   assert.ok(r.keep[0].start > 0.5, `lead-in not trimmed: first keep starts ${r.keep[0].start}`);
   assert.ok(r.keep[r.keep.length - 1].end < 5.9, `trailing not trimmed: last keep ends ${r.keep[r.keep.length - 1].end}`);
@@ -203,10 +232,10 @@ check("blip dropped; lead/trail trimmed; >0.35 silence collapses to one 0.35 gap
 // 9 ─ RULE 5: takes are audio-driven over the FULL duration — the tail take
 //     exists even though no word lands in it, and covers real audio.
 check("audio-driven take covers the untranscribed tail", () => {
-  const r = computeKeepSegments(complexEnv(), complexWords, DEFAULT_SETTINGS, []);
+  const r = computeKeepSegments(complexEnv(), complexWords, GEO, [], []);
   const tail = r.takes[r.takes.length - 1];
   assert.ok(tail.start >= 3.5 && tail.end <= 4.7, `tail take span ${tail.start}-${tail.end}`);
-  assert.ok(tail.end - tail.start >= DEFAULT_SETTINGS.minTake, "tail is a real (big) take");
+  assert.ok(tail.end - tail.start >= GEO.minTake, "tail is a real (big) take");
 });
 
 // ── REFINEMENT 1: sentence-whole takes ───────────────────────────────────────
@@ -241,7 +270,7 @@ check("a whole sentence is ONE take across a sub-0.35s pause + quiet dip", () =>
   assert.ok(!sils.some((s) => s.start >= 1.4 && s.end <= 1.8), "the 0.2s in-sentence pause is not cut");
   const sentences = sentencesFromWords(sentenceWords, sils, DEFAULT_SETTINGS);
   assert.equal(sentences.length, 1, "all words are ONE sentence (no split mid-sentence)");
-  const r = computeKeepSegments(sentenceEnv(), sentenceWords, DEFAULT_SETTINGS, []);
+  const r = computeKeepSegments(sentenceEnv(), sentenceWords, GEO, [], []);
   assert.equal(r.takes.length, 1, "one continuous take for the whole sentence");
   assert.ok(/the quick brown fox jumps/.test(r.takes[0].text), `take text: "${r.takes[0].text}"`);
   // The take spans first word → last word (± keepPad), continuous (no gap inside).
@@ -272,7 +301,7 @@ check("a real >0.35s silence BETWEEN sentences is cut → two takes, one 0.35 ga
   assert.ok(sils.some((s) => s.start >= 1.9 && s.end <= 3.1), "the inter-sentence silence is detected");
   const sentences = sentencesFromWords(twoSentenceWords, sils, DEFAULT_SETTINGS);
   assert.equal(sentences.length, 2, "two sentences (split at the real silence)");
-  const r = computeKeepSegments(twoSentenceEnv(), twoSentenceWords, DEFAULT_SETTINGS, []);
+  const r = computeKeepSegments(twoSentenceEnv(), twoSentenceWords, GEO, [], []);
   assert.equal(r.takes.length, 2, "two takes");
   const body = r.keep.reduce((acc, k) => acc + (k.end - k.start), 0);
   assert.ok(Math.abs(previewDuration(r.keep, r.gap) - (body + 0.35)) < 1e-6,
@@ -295,104 +324,192 @@ check("a long word-gap with no real silence does NOT split a sentence", () => {
   const sils = silencesFromEnvelope(env, DEFAULT_SETTINGS);
   const sentences = sentencesFromWords(words, sils, DEFAULT_SETTINGS);
   assert.equal(sentences.length, 1, "no real silence in the gap → still one sentence");
-  const r = computeKeepSegments(env, words, DEFAULT_SETTINGS, []);
-  assert.equal(r.takes.length, 1, "one continuous take");
+  const r = computeKeepSegments(env, words, GEO, [], []);
+  // The sentence is ONE continuous take that holds all the words (it is not split
+  // mid-sentence). Any sub-minTake audio sliver after the last word is shown as a
+  // disabled take, never dropped — so we assert the sentence take by coverage.
+  const sentenceTake = r.takes.find((t) => t.start <= 0.6 && t.end >= 3.6);
+  assert.ok(sentenceTake && sentenceTake.enabled, "the whole sentence is one enabled take, unsplit");
+  assert.ok(/hello there friend/.test(sentenceTake!.text), `take text: "${sentenceTake!.text}"`);
 });
 
-// ── REFINEMENT 2: transcript-based duplicate removal ─────────────────────────
+// ── DEFAULTS: min-take 3.0, dB→0, disabled-not-dropped, toggle ───────────────
 
-// A pure helper to make sentence-shaped takes directly for dedup unit tests.
+// A pure helper to make sentence-shaped takes directly for selection unit tests.
 function takeFrom(start: number, end: number, text: string): Take {
-  return { id: takeId(start), start, end, text };
+  return { id: takeId(start), start, end, text, enabled: true };
 }
 
-// 12 ─ Exact-duplicate sentences: only the LATEST take is kept; earlier ones are
-//      marked removed with a reason. Order is by start time.
-check("duplicate sentences → keep latest, earlier marked removed with reason", () => {
-  const takes = [
-    takeFrom(0.0, 2.0, "Welcome to the show everyone."),
-    takeFrom(3.0, 5.0, "Welcome to the show everyone."),  // re-take
-    takeFrom(6.0, 8.0, "Today we are talking about coffee."),
-  ];
-  const marked = markDuplicateTakes(takes);
-  assert.ok(marked[0].duplicateOf, "the EARLIER welcome is removed");
-  assert.match(marked[0].duplicateOf!, /duplicate — earlier take of:/);
-  assert.ok(!marked[1].duplicateOf, "the LATEST welcome is kept");
-  assert.ok(!marked[2].duplicateOf, "the unique line is untouched");
+// 12 ─ The min-take default is 3.0s and the dB floor reaches 0.
+check("DEFAULT_SETTINGS: minTake 3.0, silenceDb -39, floor reaches 0", () => {
+  assert.equal(DEFAULT_SETTINGS.minTake, 3.0, "min-take default is 3.0s");
+  assert.equal(DEFAULT_SETTINGS.silenceDb, -39, "silence floor default -39");
+  // The dB slider's range is a UI concern, but the math must behave at 0 dB:
+  // every frame is ≤ 0, so the whole clip is "silence" — degenerate but valid.
+  const env = synthEnv();
+  const sil = silencesFromEnvelope(env, { ...DEFAULT_SETTINGS, silenceDb: 0, minSilence: 0.1, keepPad: 0 });
+  assert.ok(sil.length >= 1, "at a 0 dB floor everything counts as a break");
 });
 
-// 13 ─ NEAR-duplicates (a minor word difference between takes) still match.
-check("near-duplicate takes (minor word diff) are still matched", () => {
-  const takes = [
-    takeFrom(0.0, 2.5, "So today I want to show you my new setup."),
-    takeFrom(3.0, 5.5, "Today I want to show you guys my new setup here."),  // near-dup
-  ];
-  const marked = markDuplicateTakes(takes);
-  assert.ok(marked[0].duplicateOf, "earlier near-duplicate is removed");
-  assert.ok(!marked[1].duplicateOf, "latest near-duplicate is kept");
+// 13 ─ Takes under min-take are DISABLED (not removed) and re-enable when the
+//      slider lowers (without any manual override).
+check("under-minTake takes are disabled-not-dropped, re-enable as the slider lowers", () => {
+  const env = synthEnv(); // two ~0.85s takes
+  // At minTake 3.0 both takes are present but DISABLED (none dropped).
+  const hi = computeKeepSegments(env, words, { ...DEFAULT_SETTINGS, minTake: 3.0 }, [], []);
+  assert.equal(hi.takes.length, 2, "every detected take is still shown");
+  assert.ok(hi.takes.every((t) => !t.enabled), "both are disabled at minTake 3.0");
+  assert.ok(hi.takes.every((t) => /under 3/.test(t.reason ?? "")), "reason names the threshold");
+  assert.equal(hi.keep.length, 0, "disabled takes contribute nothing to keep");
+  // Lowering the slider below the take length re-enables them automatically.
+  const lo = computeKeepSegments(env, words, { ...DEFAULT_SETTINGS, minTake: 0.4 }, [], []);
+  assert.ok(lo.takes.every((t) => t.enabled), "lowering minTake re-enables the short takes");
+  assert.equal(lo.keep.length, 2, "now both contribute to keep");
 });
 
-// 14 ─ NON-duplicates are left alone (no false positives on different lines).
-check("non-duplicate takes are untouched", () => {
-  const takes = [
-    takeFrom(0.0, 2.0, "First we measure the beans carefully."),
-    takeFrom(3.0, 5.0, "Then we heat the water to ninety degrees."),
-    takeFrom(6.0, 8.0, "Finally we pour in slow circles."),
-  ];
-  const marked = markDuplicateTakes(takes);
-  assert.ok(marked.every((t) => !t.duplicateOf), "no take is wrongly flagged a duplicate");
+// 14 ─ Toggling a take on/off updates the enabled keep-set (both directions).
+check("toggle on/off updates the enabled keep-set", () => {
+  const env = synthEnv();
+  const s = { ...DEFAULT_SETTINGS, minTake: 0.4 }; // both enabled by default
+  const base = computeKeepSegments(env, words, s, [], []);
+  assert.equal(base.keep.length, 2);
+  // Toggle the first (enabled) take OFF → 1 kept.
+  const off = computeKeepSegments(env, words, s, [], [base.takes[0].id]);
+  assert.equal(off.keep.length, 1, "toggling an enabled take disables it");
+  assert.ok(!off.takes[0].enabled, "the toggled take is now disabled");
+  // A disabled-by-default (under-minTake) take toggles back ON.
+  const sHi = { ...DEFAULT_SETTINGS, minTake: 3.0 }; // both disabled by default
+  const on = computeKeepSegments(env, words, sHi, [], [base.takes[0].id]);
+  assert.equal(on.keep.length, 1, "toggling a disabled take enables it");
+  assert.ok(on.takes[0].enabled, "the toggled-on take is enabled");
 });
 
-// 15 ─ Dedup is parity-safe: computeKeepSegments auto-removes duplicates BY
-//      DEFAULT (keep list excludes them), and toggling a duplicate id RESTORES
-//      it (and toggling a kept take DELETES it). previewDuration tracks exactly.
-check("dedup is default-removed in keep list, restorable, and deterministic", () => {
-  // Build an envelope with three loud islands separated by real silences, where
-  // islands 1 and 2 carry the SAME sentence (a re-take) and island 3 is unique.
-  const hop = 0.02, duration = 12.0, n = Math.round(duration / hop);
+// ── FULL-SCRIPT VERIFICATION + BEST-TAKE-PER-PART (AI + heuristic) ───────────
+
+// 15 ─ The heuristic fallback (no AI): near-duplicate re-takes are grouped, the
+//      LATEST >3s take per part kept, earlier repeats disabled with a reason.
+check("heuristic best-take: keep latest >3s per part, disable earlier repeats", () => {
+  const takes = [
+    takeFrom(0.0, 3.5, "Welcome to the show everyone."),
+    takeFrom(5.0, 8.6, "Welcome to the show everyone."),       // re-take, later
+    takeFrom(10.0, 13.5, "Today we are talking about coffee."),
+  ];
+  const defs = heuristicTakeDefaults(takes, 3.0);
+  assert.equal(defs.length, 1, "exactly one repeat disabled");
+  assert.equal(defs[0].id, takes[0].id, "the EARLIER welcome is the disabled repeat");
+  assert.match(defs[0].reason, /duplicate — better take kept/);
+});
+
+// 16 ─ The heuristic never chooses a ≤3s take as the keeper (it's a false start).
+check("heuristic best-take considers only takes >3s as the keeper", () => {
+  const takes = [
+    takeFrom(0.0, 3.6, "This is the real complete take of the line."), // >3s, clean
+    takeFrom(5.0, 5.4, "This is the real complete take of."),           // 0.4s false start (same words)
+  ];
+  // The two cluster (near-identical text). Even though the false start is LATER,
+  // it is ≤3s so it can't be the keeper — the >3s earlier take wins.
+  const defs = heuristicTakeDefaults(takes, 3.0);
+  assert.equal(defs.length, 1, "one disabled");
+  assert.equal(defs[0].id, takes[1].id, "the short false start is disabled, the >3s take kept");
+});
+
+// 17 ─ The AI pass with a MOCKED Claude response: full coverage (no part dropped),
+//      no duplicate enabled (one keeper per part), and only >3s chosen.
+check("AI best-take (mocked Claude): full coverage, no duplicate, only >3s chosen", async () => {
+  // Three takes: t0/t1 are re-takes of part 1 (t1 is the long, clean one); t2 is
+  // part 2. t1 is >3s and later → it must be the keeper; t0 disabled.
+  const takes = [
+    takeFrom(0.0, 2.0, "Intro line, flubbed."),     // 2.0s  (re-take, short)
+    takeFrom(4.0, 8.0, "Intro line, clean."),        // 4.0s  (re-take, long → keep)
+    takeFrom(10.0, 14.0, "Second line of the script."), // part 2
+  ];
+  const ids = takes.map((t) => t.id);
+  // Mocked model output: groups t0+t1 as part 1 (best=t1), t2 as part 2.
+  const claudeFn = async () => JSON.stringify({
+    parts: [
+      { part: "Intro line", best: ids[1], takeIds: [ids[0], ids[1]] },
+      { part: "Second line", best: ids[2], takeIds: [ids[2]] },
+    ],
+  });
+  const { defaults, usedAI } = await selectBestTakeDefaults(takes, { minTakeForBest: 3.0, hasKey: true, claudeFn });
+  assert.ok(usedAI, "the AI path was taken");
+  // Apply the defaults: exactly t0 disabled; t1 + t2 enabled → full coverage,
+  // no duplicate, and the >3s take won.
+  const resolved = applyDefaults(takes, defaults, []);
+  const enabled = resolved.filter((t) => t.enabled).map((t) => t.id);
+  assert.deepEqual(enabled.sort(), [ids[1], ids[2]].sort(), "one keeper per part, no duplicate, no part dropped");
+  const disabled = resolved.filter((t) => !t.enabled);
+  assert.equal(disabled.length, 1, "exactly the losing re-take is disabled");
+  assert.equal(disabled[0].id, ids[0], "the short flubbed take is the loser");
+  assert.match(disabled[0].reason ?? "", /duplicate/);
+});
+
+// 18 ─ The guarantee is ENFORCED even when the model misbehaves: a take the model
+//      forgets to assign is NOT dropped (becomes its own part), and a model that
+//      picks a ≤3s 'best' is overridden so the >3s take wins.
+check("defaultsFromParts enforces full coverage + only >3s keeper despite a bad model", () => {
+  const takes = [
+    takeFrom(0.0, 4.0, "Part A clean take."),       // 4.0s
+    takeFrom(6.0, 6.5, "Part A flub."),             // 0.5s (model wrongly calls this best)
+    takeFrom(8.0, 12.0, "Part B, never mentioned by the model."),
+  ];
+  const ids = takes.map((t) => t.id);
+  // Bad model: groups A's two takes but names the 0.5s flub as best, and FORGETS
+  // part B entirely.
+  const parts = [{ part: "Part A", best: ids[1], takeIds: [ids[0], ids[1]] }];
+  const defs = defaultsFromParts(takes, parts as any, 3.0);
+  const resolved = applyDefaults(takes, defs, []);
+  const enabled = resolved.filter((t) => t.enabled).map((t) => t.id);
+  // Part A → the >3s take wins (not the model's 0.5s pick); Part B is NOT dropped.
+  assert.ok(enabled.includes(ids[0]), "the >3s take A is the keeper, overriding the model's short pick");
+  assert.ok(!enabled.includes(ids[1]), "the 0.5s flub is disabled");
+  assert.ok(enabled.includes(ids[2]), "the un-assigned part B is kept as its own part (not dropped)");
+});
+
+// 19 ─ With no key, selection falls back to the heuristic (timeline still works).
+check("no Anthropic key → heuristic fallback (usedAI false)", async () => {
+  const takes = [
+    takeFrom(0.0, 3.5, "Same line take one."),
+    takeFrom(5.0, 8.6, "Same line take one."),
+  ];
+  const { usedAI, defaults } = await selectBestTakeDefaults(takes, { minTakeForBest: 3.0, hasKey: false });
+  assert.ok(!usedAI, "without a key the AI path is skipped");
+  assert.equal(defaults.length, 1, "the heuristic still disables the earlier repeat");
+});
+
+// 20 ─ Full parity through the AI defaults: computeKeepSegments(env,…,defaults)
+//      keep == what renderManualCut trims, and previewDuration == render duration.
+check("parity holds with AI defaults: keep == render segments, durations match", () => {
+  // Three loud islands; islands 1+2 are a re-take of the same long line.
+  const hop = 0.02, duration = 18.0, n = Math.round(duration / hop);
   const loud = (t: number) =>
-    (t >= 0.5 && t < 2.5) || (t >= 4.0 && t < 6.0) || (t >= 7.5 && t < 9.5);
+    (t >= 0.5 && t < 4.5) || (t >= 6.0 && t < 10.0) || (t >= 12.0 && t < 16.0);
   const db: number[] = [];
   for (let i = 0; i < n; i++) db.push(loud(i * hop) ? -12 : -60);
   const env: Envelope = { db, hop, duration };
   const words = [
-    { word: "this", start: 0.6, end: 0.9 }, { word: "is", start: 1.0, end: 1.2 },
-    { word: "the", start: 1.3, end: 1.5 }, { word: "intro.", start: 1.6, end: 2.3 },
-    // re-take of the same line:
-    { word: "this", start: 4.1, end: 4.4 }, { word: "is", start: 4.5, end: 4.7 },
-    { word: "the", start: 4.8, end: 5.0 }, { word: "intro.", start: 5.1, end: 5.8 },
-    // unique line:
-    { word: "now", start: 7.6, end: 7.9 }, { word: "lets", start: 8.0, end: 8.4 },
-    { word: "begin.", start: 8.5, end: 9.3 },
+    { word: "this", start: 0.6, end: 1.0 }, { word: "is", start: 1.1, end: 1.4 },
+    { word: "the", start: 1.5, end: 1.8 }, { word: "intro.", start: 1.9, end: 4.3 },
+    { word: "this", start: 6.1, end: 6.5 }, { word: "is", start: 6.6, end: 6.9 },
+    { word: "the", start: 7.0, end: 7.3 }, { word: "intro.", start: 7.4, end: 9.8 },
+    { word: "now", start: 12.1, end: 12.5 }, { word: "we", start: 12.6, end: 12.9 },
+    { word: "begin.", start: 13.0, end: 15.8 },
   ];
-  const all = computeKeepSegments(env, words, DEFAULT_SETTINGS, []);
-  assert.equal(all.takes.length, 3, "three sentence takes detected");
-  // The earlier "this is the intro" is auto-removed; keep list has 2 segments.
-  assert.equal(all.keep.length, 2, "duplicate auto-removed by default → 2 kept");
-  assert.ok(all.takes[0].duplicateOf, "the earliest take is the removed duplicate");
-  assert.ok(!all.takes[1].duplicateOf && !all.takes[2].duplicateOf, "latest dup + unique kept");
-
-  // Restore the duplicate by toggling its id → 3 kept.
-  const dupId = all.takes[0].id;
-  const restored = computeKeepSegments(env, words, DEFAULT_SETTINGS, [dupId]);
-  assert.equal(restored.keep.length, 3, "toggling the duplicate id restores it");
-
-  // Delete a kept take by toggling its (kept) id → fewer kept.
-  const keptId = all.takes[2].id;
-  const deleted = computeKeepSegments(env, words, DEFAULT_SETTINGS, [keptId]);
-  assert.equal(deleted.keep.length, 1, "toggling a kept take deletes it");
-
-  // Determinism + preview duration tracks the kept body + gaps.
-  const again = computeKeepSegments(env, words, DEFAULT_SETTINGS, []);
-  assert.deepEqual(all, again, "deterministic");
-  const body = all.keep.reduce((acc, k) => acc + (k.end - k.start), 0);
-  assert.ok(Math.abs(previewDuration(all.keep, all.gap) - (body + 0.35)) < 1e-6,
-    "2 kept takes → one 0.35 gap");
+  const detected = segmentTakes(env, words, DEFAULT_SETTINGS);
+  const longTakes = detected.filter((t) => t.end - t.start > DEFAULT_SETTINGS.minTake);
+  assert.equal(longTakes.length, 3, "three long sentence takes (slivers, if any, are short/disabled)");
+  const defs: TakeDefault[] = heuristicTakeDefaults(detected, DEFAULT_SETTINGS.minTake);
+  assert.equal(defs.length, 1, "the earlier intro re-take is disabled by default");
+  const plan = computeKeepSegments(env, words, DEFAULT_SETTINGS, defs, []);
+  assert.equal(plan.keep.length, 2, "two enabled takes → 2 keep segments");
+  // The render trims exactly plan.keep + gap; its duration equals previewDuration.
+  const spec: CutSpec = { source: "/dev/null", segments: plan.keep, hasAudio: true, gap: plan.gap };
+  const tmp = path.join(process.env.TMPDIR || "/tmp", `parity_ai_${Date.now()}.mp4`);
+  const { totalDuration } = buildCutArgs(spec, tmp);
+  try { fs.rmSync(`${tmp}.filter.txt`, { force: true }); } catch { /* */ }
+  assert.ok(Math.abs(totalDuration - previewDuration(plan.keep, plan.gap)) < 1e-6,
+    `render ${totalDuration} != preview ${previewDuration(plan.keep, plan.gap)}`);
 });
 
-// 16 ─ The new default silence floor is -39 dB (the user's tested sweet spot).
-check("DEFAULT_SETTINGS.silenceDb is -39", () => {
-  assert.equal(DEFAULT_SETTINGS.silenceDb, -39);
-});
-
+await Promise.all(pending);
 console.log(`\n${passed} parity checks passed.`);

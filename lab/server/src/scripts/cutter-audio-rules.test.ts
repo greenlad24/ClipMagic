@@ -6,7 +6,7 @@
  *
  * The synthesized narration (12s) deliberately exercises every rule:
  *   [0.0,1.5)   COMPLETE-SILENCE lead-in            → trimmed fully (rule 4)
- *   [1.5,1.7)   tiny tone BLIP (0.2s)               → dropped, < minTake (rule 6)
+ *   [1.5,1.7)   tiny tone BLIP (0.2s)               → disabled, < minTake (rule 6)
  *   [1.7,2.5)   complete silence                    → cut
  *   [2.5,4.5)   real "speech" tone burst (2.0s)     → take A (kept)
  *   [4.5,4.8)   sub-0.35s in-take pause (0.3s)      → kept untouched (rule 2)
@@ -15,6 +15,10 @@
  *   [8.3,8.8)   low "breath" noise (~-38dB, 0.5s)   → NOT a break (rule 1)
  *   [8.8,10.8)  real "speech" tone burst (2.0s)     → take B, NO transcript (rule 5)
  *   [10.8,12.0) COMPLETE-SILENCE trailing           → trimmed fully (rule 4)
+ *
+ * Geometry rules are exercised with a low min-take (GEO) so the two real ~2s
+ * bursts are ENABLED; the new default min-take is 3.0s, so a separate check
+ * confirms a sub-3s take is DISABLED (not dropped) and re-enables when lowered.
  *
  * Run: cd lab/server && npx tsx src/scripts/cutter-audio-rules.test.ts
  */
@@ -92,32 +96,40 @@ async function main() {
     { word: "alpha", start: 2.7, end: 4.3 },
     { word: "again", start: 5.0, end: 6.6 },
   ];
-  const r = computeKeepSegments(env, words, DEFAULT_SETTINGS, []);
+  // Geometry uses a low min-take so the two real ~2s bursts are ENABLED.
+  const GEO = { ...DEFAULT_SETTINGS, minTake: 0.4 };
+  const r = computeKeepSegments(env, words, GEO, [], []);
+  // The two real takes (everything >= GEO.minTake) — A and B.
+  const real = r.takes.filter((t) => t.end - t.start >= GEO.minTake);
 
-  check("exactly two takes: blip dropped, breath not a break, in-take pause kept", () => {
-    assert.equal(r.takes.length, 2, `expected 2 takes, got ${r.takes.length}: ` +
-      r.takes.map((t) => `[${t.start.toFixed(2)}-${t.end.toFixed(2)}]`).join(" "));
+  check("exactly two real takes: breath not a break, in-take pause kept", () => {
+    assert.equal(real.length, 2, `expected 2 real takes, got ${real.length}: ` +
+      r.takes.map((t) => `[${t.start.toFixed(2)}-${t.end.toFixed(2)}${t.enabled ? "" : " off"}]`).join(" "));
+    assert.equal(r.keep.length, 2, "only the two real takes are enabled → 2 keep segments");
   });
 
-  check("RULE 6: the 0.2s blip never became a take", () => {
-    assert.ok(!r.takes.some((t) => t.start < 1.0 && t.end < 2.4),
-      "no take in the lead-in/blip region");
-    assert.ok(r.takes.every((t) => t.end - t.start >= DEFAULT_SETTINGS.minTake),
-      "every surviving take is at least minTake long");
+  check("RULE 6: the 0.2s blip is shown but DISABLED (never silently dropped, never enabled)", () => {
+    // Any take in the blip region must be short AND disabled — not part of keep.
+    const blip = r.takes.find((t) => t.start < 2.4 && t.end - t.start < GEO.minTake);
+    if (blip) {
+      assert.ok(!blip.enabled, "the blip take is disabled by default");
+      assert.match(blip.reason ?? "", /under/);
+    }
+    assert.ok(r.keep.every((k) => k.start > 2.4), "no blip span made it into keep");
   });
 
   check("RULE 1+2: take A spans the 0.3s in-take pause (breath/short pause kept)", () => {
-    const a = r.takes[0];
+    const a = real[0];
     // take A runs ~2.5 → ~6.8 because the 0.3s pause at 4.5-4.8 is NOT cut.
     assert.ok(a.start < 2.8 && a.end > 6.5, `take A is ${a.start.toFixed(2)}-${a.end.toFixed(2)}`);
   });
 
   check("RULE 5: take B covers the untranscribed tail and is labelled —", () => {
-    const b = r.takes[1];
+    const b = real[1];
     assert.ok(b.start > 8.4 && b.end < 11.0, `take B is ${b.start.toFixed(2)}-${b.end.toFixed(2)}`);
     assert.equal(b.text, "", "tail take has no transcript words → blank label (UI shows —)");
     // ...and take A keeps its words.
-    assert.ok(/alpha/.test(r.takes[0].text), "take A keeps its transcript");
+    assert.ok(/alpha/.test(real[0].text), "take A keeps its transcript");
   });
 
   check("RULE 4: lead-in and trailing silence trimmed fully (no edge gap)", () => {
@@ -131,6 +143,17 @@ async function main() {
     assert.equal(r.gap, 0.35);
     assert.ok(Math.abs(previewDuration(r.keep, r.gap) - (body + 0.35)) < 1e-6,
       "preview duration must be body + exactly one 0.35 gap");
+  });
+
+  check("RULE 6 (default 3.0s min-take): a sub-3s take is DISABLED, re-enables when lowered", () => {
+    // At the 3.0s DEFAULT, take B (~2s) is disabled (not dropped); take A (~4.3s)
+    // stays enabled. Lowering min-take re-enables B without any manual toggle.
+    const def = computeKeepSegments(env, words, DEFAULT_SETTINGS, [], []);
+    const b = def.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
+    assert.ok(b && !b.enabled && /under 3/.test(b.reason ?? ""), "take B disabled at 3.0s min-take");
+    const lowered = computeKeepSegments(env, words, GEO, [], []);
+    const b2 = lowered.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
+    assert.ok(b2 && b2.enabled, "lowering min-take re-enables take B");
   });
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* */ }

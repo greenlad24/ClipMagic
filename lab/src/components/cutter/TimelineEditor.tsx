@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { analyzeCut, getAnalyzeCut, renderManualCut, getCutJob } from 'zite-endpoints-sdk';
 import {
   computeKeepSegments, previewDuration, sourceToEdited,
-  DEFAULT_SETTINGS, type CutSettings, type Take, type Seg,
+  DEFAULT_SETTINGS, type CutSettings, type Take, type Seg, type TakeDefault,
 } from '@/lib/cutSegments';
 
 interface AnalyzeResult {
@@ -18,14 +18,16 @@ interface AnalyzeResult {
   envelope: { db: number[]; hop: number; floorDb: number };
   words: { word: string; start: number; end: number }[];
   takes: Take[];
-  defaults: CutSettings;
+  settings: CutSettings;
+  /** Server-computed default disabled-set (best-take-per-part selection). */
+  takeDefaults: TakeDefault[];
 }
 
 // One poll of the analyze job: a live stage label + progress + optional warning,
 // and the full result once the job reaches `done`.
 interface AnalyzePoll {
   jobId: string;
-  stage: 'queued' | 'resolving' | 'transcribing' | 'waveform' | 'segmenting' | 'done' | 'failed';
+  stage: 'queued' | 'resolving' | 'transcribing' | 'waveform' | 'segmenting' | 'choosing' | 'done' | 'failed';
   stageLabel: string;
   progress: number;
   warning: string | null;
@@ -52,10 +54,12 @@ export default function TimelineEditor({
   const [analyzeWarning, setAnalyzeWarning] = useState<string | null>(null);
 
   // ── Edit state (the user's decisions) ──────────────────────────────────────
-  // `toggled` flips a take's DEFAULT keep/drop: a kept take in the set is dropped
-  // (manual delete), and an auto-removed duplicate in the set is restored. This
-  // is the same set the shared core reads, so preview == render.
+  // `toggled` flips a take's DEFAULT enabled/disabled: a take in the set has its
+  // default flipped (enable a disabled take, or disable an enabled one). This is
+  // the same set the shared core reads, so preview == render. `takeDefaults` is
+  // the server's best-take-per-part disabled-set, merged in by the core.
   const [settings, setSettings] = useState<CutSettings>(DEFAULT_SETTINGS);
+  const [takeDefaults, setTakeDefaults] = useState<TakeDefault[]>([]);
   const [toggled, setToggled] = useState<string[]>([]);
   const [history, setHistory] = useState<string[][]>([]); // for undo
   const [selected, setSelected] = useState<string | null>(null);
@@ -81,19 +85,19 @@ export default function TimelineEditor({
   );
 
   // Live recompute — the single source of truth, identical to the server math.
-  // `takes` includes auto-removed duplicates (with `duplicateOf` set); `keep` is
-  // only the segments that survive (defaults minus manual deletes, plus restored
-  // duplicates) — exactly what renderManualCut trims.
+  // `takes` includes EVERY detected take with its resolved `enabled`/`reason`
+  // (under-minTake disabled live by the slider, re-take losers disabled by the
+  // server defaults); `keep` is only the enabled segments — exactly what
+  // renderManualCut trims.
   const { takes, keep, gap } = useMemo(() => {
     if (!env || !analysis) return { takes: [] as Take[], keep: [] as Seg[], gap: settings.gap };
-    return computeKeepSegments(env, analysis.words, settings, toggled);
-  }, [env, analysis, settings, toggled]);
+    return computeKeepSegments(env, analysis.words, settings, takeDefaults, toggled);
+  }, [env, analysis, settings, takeDefaults, toggled]);
 
-  // Is a given take currently kept (after defaults + the user's toggles)?
-  const isKept = useCallback((t: Take) => {
-    const removedByDefault = Boolean(t.duplicateOf);
-    return toggled.includes(t.id) ? removedByDefault : !removedByDefault;
-  }, [toggled]);
+  // Is a given take currently enabled? The core already resolved this onto the
+  // take, so we read it straight off the recomputed list (it reflects defaults +
+  // the live min-take rule + the user's toggles).
+  const isKept = useCallback((t: Take) => t.enabled, []);
 
   const editedDuration = useMemo(() => previewDuration(keep, gap), [keep, gap]);
 
@@ -127,7 +131,8 @@ export default function TimelineEditor({
           apply(p);
           if (p.stage === 'done' && p.result) {
             setAnalysis(p.result);
-            setSettings(p.result.defaults ?? DEFAULT_SETTINGS);
+            setSettings(p.result.settings ?? DEFAULT_SETTINGS);
+            setTakeDefaults(p.result.takeDefaults ?? []);
             setLoading(false);
             return;
           }
@@ -161,12 +166,13 @@ export default function TimelineEditor({
       return h.slice(0, -1);
     });
   }, []);
-  // Restore everything currently removed — manual deletes AND auto-removed
-  // duplicates — by toggling each removed take back to kept.
+  // Enable everything currently disabled — short takes AND re-take duplicates —
+  // by toggling each disabled take back on. (Already-toggled enabled takes keep
+  // their state; we set toggled to exactly the ids whose default is disabled.)
   const restoreAll = useCallback(() => {
     pushHistory();
-    setToggled(takes.filter((t) => !isKept(t)).map((t) => t.id));
-  }, [pushHistory, takes, isKept]);
+    setToggled(takes.filter((t) => !t.enabled).map((t) => t.id));
+  }, [pushHistory, takes]);
 
   // Keyboard: Delete removes the selected (kept) take, Cmd/Ctrl+Z undoes.
   useEffect(() => {
@@ -369,9 +375,9 @@ export default function TimelineEditor({
   }
 
   const keptCount = keep.length;
-  const removedTakeCount = takes.filter((t) => !isKept(t)).length;
-  // Duplicates auto-removed AND still removed (i.e. not restored by the user).
-  const dupRemovedCount = takes.filter((t) => t.duplicateOf && !isKept(t)).length;
+  const removedTakeCount = takes.filter((t) => !t.enabled).length;
+  // Re-takes disabled as duplicates AND still disabled (not re-enabled by the user).
+  const dupRemovedCount = takes.filter((t) => !t.enabled && t.reason?.startsWith('duplicate')).length;
   const playheadX = playhead * pxPerSec * zoom;
 
   return (
@@ -438,8 +444,8 @@ export default function TimelineEditor({
       {/* Controls */}
       <div className="rounded-xl border border-border p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <RangeControl
-          label="Silence floor" value={settings.silenceDb} min={-60} max={-20} step={1} unit=" dB"
-          hint="Complete-silence only — breaths stay"
+          label="Silence floor" value={settings.silenceDb} min={-60} max={0} step={1} unit=" dB"
+          hint="Below this counts as a break (0 = aggressive)"
           onChange={(v) => setSettings((s) => ({ ...s, silenceDb: v }))}
         />
         <RangeControl
@@ -453,8 +459,8 @@ export default function TimelineEditor({
           onChange={(v) => setSettings((s) => ({ ...s, gap: round2(v) }))}
         />
         <RangeControl
-          label="Min take length" value={settings.minTake} min={0.1} max={2} step={0.05} unit="s"
-          hint="Shorter blips are dropped"
+          label="Min take length" value={settings.minTake} min={0.2} max={10} step={0.1} unit="s"
+          hint="Shorter takes are disabled (still toggleable)"
           onChange={(v) => setSettings((s) => ({ ...s, minTake: round2(v) }))}
         />
       </div>
@@ -463,13 +469,13 @@ export default function TimelineEditor({
       <div className="flex items-center gap-2 flex-wrap">
         {(() => {
           const sel = takes.find((t) => t.id === selected) ?? null;
-          const selKept = sel ? isKept(sel) : true;
+          const selKept = sel ? sel.enabled : true;
           return (
             <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5"
               disabled={!sel} onClick={() => selected && toggleTake(selected)}>
               {selKept
-                ? <><Trash2 className="w-3.5 h-3.5" /> Delete take</>
-                : <><RotateCcw className="w-3.5 h-3.5" /> Restore take</>}
+                ? <><Trash2 className="w-3.5 h-3.5" /> Disable take</>
+                : <><RotateCcw className="w-3.5 h-3.5" /> Enable take</>}
             </Button>
           );
         })()}
@@ -479,12 +485,25 @@ export default function TimelineEditor({
         </Button>
         <Button variant="ghost" size="sm" className="h-8 text-xs gap-1.5"
           disabled={removedTakeCount === 0} onClick={restoreAll}>
-          <RotateCcw className="w-3.5 h-3.5" /> Restore all
+          <RotateCcw className="w-3.5 h-3.5" /> Enable all
         </Button>
         <div className="flex-1" />
         <button onClick={() => setZoom((z) => Math.max(0.5, z / 1.5))} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label="Zoom out"><ZoomOut className="w-4 h-4" /></button>
         <button onClick={() => setZoom((z) => Math.min(8, z * 1.5))} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" aria-label="Zoom in"><ZoomIn className="w-4 h-4" /></button>
       </div>
+
+      {/* Why the selected take is disabled (its default reason) — so a toggle is
+          never a mystery. Only shown for a selected, currently-disabled take. */}
+      {(() => {
+        const sel = takes.find((t) => t.id === selected) ?? null;
+        if (!sel || sel.enabled || !sel.reason) return null;
+        return (
+          <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
+            <span>Selected take is off — <span className="text-foreground">{sel.reason}</span>. Enable it to keep it.</span>
+          </p>
+        );
+      })()}
 
       {/* Timeline: waveform + take blocks */}
       <div className="rounded-xl border border-border bg-card/30 p-3 space-y-2">
@@ -510,14 +529,18 @@ export default function TimelineEditor({
                 const left = t.start * pxPerSec * zoom;
                 const width = Math.max(8, (t.end - t.start) * pxPerSec * zoom);
                 const isSel = selected === t.id;
-                const kept = isKept(t);
-                const isDup = Boolean(t.duplicateOf);
+                const kept = t.enabled;
+                const isDup = !kept && t.reason?.startsWith('duplicate');
+                const isShort = !kept && t.reason?.startsWith('under');
+                // Short badge label for the disabled reason.
+                const badge = isDup ? 'dup' : isShort ? 'short' : null;
                 return (
                   <button
                     key={t.id}
                     onClick={() => setSelected(isSel ? null : t.id)}
                     onDoubleClick={() => toggleTake(t.id)}
-                    title={t.duplicateOf || t.text || `Take ${fmt(t.start)}–${fmt(t.end)}`}
+                    title={t.reason ? `${t.reason}\n${t.text || ''}`.trim() : (t.text || `Take ${fmt(t.start)}–${fmt(t.end)}`)}
+                    aria-pressed={kept}
                     className={`absolute top-0 h-full rounded-md border px-1.5 py-1 text-left overflow-hidden transition-colors ${
                       isSel
                         ? 'border-primary bg-primary/20 ring-1 ring-primary'
@@ -530,7 +553,7 @@ export default function TimelineEditor({
                     <span className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground leading-tight">
                       {isDup && <Copy className="w-2.5 h-2.5 shrink-0 text-amber-500" />}
                       {fmt(t.start)}
-                      {isDup && !kept && <span className="text-amber-500 font-sans not-italic">dup</span>}
+                      {badge && <span className="text-amber-500 font-sans not-italic">{badge}</span>}
                     </span>
                     <span className={`block text-[11px] leading-snug line-clamp-2 ${kept ? 'text-foreground' : 'text-muted-foreground line-through decoration-1'}`}>
                       {t.text || '—'}
@@ -547,9 +570,10 @@ export default function TimelineEditor({
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Each block is a whole sentence. Click to select; press <kbd className="px-1 rounded bg-muted">Delete</kbd> or
-          double-click to remove (or restore) it. Repeated lines are auto-removed as
-          <Copy className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" />duplicates (latest take kept) — click one to restore.
+          Each block is a whole sentence — every detected take is shown, none dropped. Click to select; press{' '}
+          <kbd className="px-1 rounded bg-muted">Delete</kbd> or double-click to toggle a take on/off. Re-takes are
+          disabled as <Copy className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" />duplicates (best take kept) and takes
+          shorter than {settings.minTake}s are disabled (<span className="text-amber-500">short</span>) — re-enable any of them.
           Cuts and the {settings.gap.toFixed(2)}s gaps recompute live and render exactly as previewed.
         </p>
       </div>

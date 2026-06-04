@@ -44,7 +44,7 @@ const fakeResult = (): AnalyzeResultPayload => ({
   sourceUrl: "x", duration: 12, hasAudio: true,
   envelope: { db: [-30, -40, -50], hop: 0.1, floorDb: -60 },
   words: [{ word: "hi", start: 0, end: 0.4 }],
-  transcript: "hi", takes: [{ id: "t0" }], defaults: { gap: 0.2 },
+  transcript: "hi", takes: [{ id: "t0" }], settings: { gap: 0.2 }, takeDefaults: [],
 });
 
 // ── Registry: create → fetch → terminal ──────────────────────────────────────
