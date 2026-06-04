@@ -13,6 +13,10 @@ import {
   SectionCard,
   sectionCardDefaults,
 } from "./compositions/SectionCard";
+import {
+  EmphasisSticker,
+  emphasisStickerDefaults,
+} from "./compositions/EmphasisSticker";
 import { loadFonts } from "./loadFonts";
 
 loadFonts();
@@ -77,6 +81,17 @@ export const RemotionRoot: React.FC = () => {
         height={CANVAS.height}
         defaultProps={sectionCardDefaults}
         calculateMetadata={metaFromProps(DEFAULT_DURATION_FRAMES)}
+      />
+      {/* Meme/Sticker editor: a funny still that slaps on below the captions. */}
+      <Composition
+        id="emphasis-sticker"
+        component={EmphasisSticker as React.FC<WithDuration>}
+        durationInFrames={Math.round(2.2 * FPS)}
+        fps={FPS}
+        width={CANVAS.width}
+        height={CANVAS.height}
+        defaultProps={emphasisStickerDefaults}
+        calculateMetadata={metaFromProps(Math.round(2.2 * FPS))}
       />
     </>
   );
