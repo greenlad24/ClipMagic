@@ -800,7 +800,7 @@ check("computeSkipReason: a source existed but nothing fit ⇒ 'no sticker fit'"
 });
 
 // ── Bigger subtitles: meme font-size bump (meme-only) ─────────────────────────
-import { memeSubtitleStyle, MEME_SUBTITLE_FONT_SCALE, MEME_MUSIC_VOLUME, MEME_SFX_VOLUME } from "../meme/config.js";
+import { memeSubtitleStyle, MEME_SUBTITLE_FONT_SCALE, MEME_MUSIC_VOLUME } from "../meme/config.js";
 
 check("memeSubtitleStyle bumps the font size by the meme scale (rounded), nothing else", () => {
   for (const t of SUBTITLE_TEMPLATE_POOL) {
@@ -869,48 +869,6 @@ check("pickMusicTrack ignores tracks with no audioUrl and is random across ready
 check("pickMusicTrack returns null for an empty / url-less library (captions+stickers still apply)", () => {
   assert.equal(pickMusicTrack([], () => 0), null);
   assert.equal(pickMusicTrack([{ id: "a" }, { id: "b" }], () => 0), null);
-});
-
-// ── SFX audio-mix filtergraph: pop at each sticker start, narration full ───────
-import { buildSfxAudioFilters, buildPopArgs, SFX_DURATION_SEC } from "../meme/sfx.js";
-
-check("buildSfxAudioFilters delays a pop to EACH sticker start and amix's with the base audio", () => {
-  const { filters, audioLabel } = buildSfxAudioFilters({
-    baseAudioLabel: "0:a",
-    startTimes: [6.2, 12.5],
-    sfxInputStart: 3, // base + 2 sticker clips
-    volume: MEME_SFX_VOLUME,
-  });
-  const graph = filters.join(";");
-  // One delayed, volume-scaled pop per sticker, at the right input index + ms.
-  assert.ok(graph.includes("[3:a]adelay=6200|6200"), "pop 0 delayed to 6.2s on input 3");
-  assert.ok(graph.includes("[4:a]adelay=12500|12500"), "pop 1 delayed to 12.5s on input 4");
-  assert.ok(graph.includes(`volume=${MEME_SFX_VOLUME}`), "pops gained to the SFX volume");
-  // The base audio is mixed at FULL level (no volume filter on [0:a]) + the pops.
-  assert.ok(graph.includes("[0:a][sfx0][sfx1]amix=inputs=3"), "base + 2 pops mixed");
-  // normalize=0 keeps narration dominant (amix doesn't halve the base).
-  assert.ok(graph.includes("normalize=0"), "amix normalize=0 (narration stays full)");
-  assert.equal(audioLabel, "aout_sfx");
-});
-
-check("buildSfxAudioFilters is a no-op when there are no stickers (carry base audio)", () => {
-  const r = buildSfxAudioFilters({ baseAudioLabel: "0:a", startTimes: [], sfxInputStart: 1, volume: 0.3 });
-  assert.deepEqual(r.filters, []);
-  assert.equal(r.audioLabel, "0:a");
-});
-
-check("the SFX is synthesized (no sampled/copyrighted audio, no network) — lavfi oscillator only", () => {
-  const args = buildPopArgs("/tmp/pop.wav");
-  // Built purely from ffmpeg's lavfi aevalsrc oscillator — no input file, no URL.
-  assert.ok(args.includes("lavfi"), "lavfi source");
-  assert.ok(args.some((a) => a.startsWith("aevalsrc=")), "synthesized waveform");
-  assert.ok(!args.some((a) => /^https?:\/\//.test(a)), "no network input");
-  assert.ok(SFX_DURATION_SEC > 0 && SFX_DURATION_SEC < 1, "short pop");
-  assert.equal(args[args.length - 1], "/tmp/pop.wav", "writes to the given out path");
-});
-
-check("SFX volume is audible but well under the narration (not overpowering)", () => {
-  assert.ok(MEME_SFX_VOLUME > 0.1 && MEME_SFX_VOLUME < 0.6, `sfx vol ${MEME_SFX_VOLUME} tasteful`);
 });
 
 // ── Live progress reporting (so the UI narrates the pipeline) ─────────────────

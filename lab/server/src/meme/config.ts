@@ -1,8 +1,8 @@
 /**
  * Tunable constants for the Meme/Sticker editor — collected here so the
- * meme-only knobs (bigger subtitles, the quiet music bed, the sticker SFX level)
- * are named, documented, and unit-testable in one place rather than sprinkled as
- * magic numbers across the pipeline. None of these touch the short-form editor.
+ * meme-only knobs (bigger subtitles, the quiet music bed) are named, documented,
+ * and unit-testable in one place rather than sprinkled as magic numbers across
+ * the pipeline. None of these touch the short-form editor.
  */
 import type { SubtitleStyle } from "../render/manifest.js";
 
@@ -21,13 +21,6 @@ export const MEME_SUBTITLE_FONT_SCALE = 1.3;
  * track. Mixed via amix with normalize=0 so this exact gain is preserved.
  */
 export const MEME_MUSIC_VOLUME = 0.03;
-
-/**
- * Linear gain for the per-sticker pop SFX in the final mix. Audible punctuation
- * on each sticker entrance, but well under the narration so it never competes
- * with the voice.
- */
-export const MEME_SFX_VOLUME = 0.35;
 
 /**
  * Return a copy of a subtitle style with the meme font-size bump applied. Pure +
