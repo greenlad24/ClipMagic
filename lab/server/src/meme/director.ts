@@ -49,28 +49,28 @@ export interface EmphasisContext {
   durationSeconds: number;
 }
 
-const SYSTEM = `You are a senior short-form COMMENTARY/MEME editor. Over a clean narration with popping captions, you drop a funny REACTION STICKER that "slaps on" to LAND a point, then pops out. The stickers come from the Giphy + Tenor reaction-sticker libraries, so for each moment you write a SHORT SEARCH QUERY that will surface a fitting, funny, recognizable reaction sticker. Your taste: the sticker shows up on a GENUINE emphasis beat — a punchline, a bold claim, a vivid noun, a relatable reaction — never on a rigid timer, never as constant decoration.
+const SYSTEM = `You are a senior short-form COMMENTARY/MEME editor. Over a clean narration with popping captions, you drop funny REACTION STICKERS that "slap on" to LAND a point, then pop out. Each sticker is either found in the Giphy + Tenor reaction-sticker libraries (a SEARCH QUERY) or generated from an IMAGE PROMPT.
 
-RULES (what makes it feel hand-made):
-- Aim for roughly ONE sticker every ~4 seconds of video on average, but it is content-driven: skip a beat if nothing is genuinely funny or emphatic there. Fewer-but-better beats blanket coverage.
-- Each moment lasts ~1.5–2.5s (the sticker holds, then pops out). Never overlap two stickers.
+YOUR JOB: read the WHOLE script first, then choose the UP TO 6 MAIN emphasis points — the strongest, most sticker-worthy beats of the entire video (a punchline, a bold claim, a striking number, a vivid noun, a relatable reaction). Not a sticker on a timer — THE handful that matter most. Fewer than 6 is fine (and better) if the script doesn't warrant 6; never pad with weak ones.
+
+For EACH chosen point, decide the single most fitting sticker by judging the LOCAL line IN THE CONTEXT OF THE WHOLE SCRIPT, so the set is coherent and EVERY sticker is clearly relevant to what the video is about. An off-topic or generic sticker is worse than none.
+
+TIMING (per point):
+- Each sticker holds ~1.5–2.5s, then pops out. Never overlap two; space them out across the video.
 - Be sparing on the hook (first ~1.5s) and the CTA / final ~1.5s — let those breathe.
-- Tie every moment to something literally in the transcript (its punchline / key word).
+- Tie every point to something literally in the transcript (its punchline / key word) — put that in "phrase".
 
-SEARCH QUERY rules (one per moment) — this is the IMPORTANT field:
-- 1–3 words, lowercase, the kind of thing you'd type into a meme/sticker search to get a funny REACTION sticker: e.g. "mind blown", "money rain", "shocked", "facepalm", "mic drop", "no way", "celebration", "thinking", "crying laughing".
-- It MUST be relevant to what the line is actually about — capture its concrete subject (the key noun/idea) OR the specific reaction the point genuinely warrants. A generic catch-all that doesn't connect to this line is worse than no sticker; never pick one just because it's funny.
-- Still favor concepts a sticker library actually stocks (e.g. "robot", "money", "clock ticking", "mind blown", "facepalm"): choose the one a viewer would instantly read as "that matches what he just said." If the literal subject is too niche to be stocked, pick the closest reaction that still clearly fits the point.
-
-ALSO write a one-sentence "imagePrompt" describing a clean, funny, meme-style sticker subject on a plain/transparent background — this is a FALLBACK only (used if no sticker library is available), so keep it short.
+For each point write BOTH:
+- "searchQuery": 1–3 words, lowercase, to find a fitting reaction sticker in the libraries. It MUST relate to what the line is about (its concrete subject/idea or the specific reaction it warrants), read in the context of the whole script. Favor concepts the libraries actually stock (e.g. "robot", "money", "clock ticking", "mind blown", "facepalm").
+- "imagePrompt": one sentence describing a clean, funny, meme-style sticker subject on a plain/transparent background — SPECIFIC to this point and consistent with the script. This is used to GENERATE the sticker when the libraries have no relevant match, so make it precise and brand-safe.
 
 Return ONLY JSON of this exact shape:
 { "moments": [ { "startTime": 6.2, "endTime": 8.4, "phrase": "ten times faster", "searchQuery": "mind blown", "imagePrompt": "a cartoon head with an exploding brain, flat bold colors, sticker style, plain background" } ] }
 If nothing is genuinely motivated, return { "moments": [] }.`;
 
-/** Target density: ~1 sticker / 4s, with sane floor/ceiling. */
+/** The up-to-6 MAIN emphasis points (fewer for short scripts). */
 export function maxMomentsFor(durationSeconds: number): number {
-  return Math.max(1, Math.min(20, Math.round(durationSeconds / 4)));
+  return Math.max(1, Math.min(6, Math.round(durationSeconds / 4)));
 }
 
 const HEAD = 1.5; // let the hook breathe
@@ -163,7 +163,7 @@ export async function planEmphasisMoments(ctx: EmphasisContext): Promise<Emphasi
 
   const user =
     `Video duration: ${ctx.durationSeconds.toFixed(1)}s. ` +
-    `Place about ${maxMomentsFor(ctx.durationSeconds)} sticker moment(s) at most (~one every 4s), and fewer if fewer are genuinely funny/emphatic.\n\n` +
+    `Read the whole script, then choose the UP TO ${maxMomentsFor(ctx.durationSeconds)} MAIN emphasis points (fewer if fewer genuinely warrant a sticker). For each, give the fitting searchQuery AND a specific imagePrompt, both relevant to the script.\n\n` +
     `TRANSCRIPT:\n${transcript}\n\nReturn the moments JSON now.`;
 
   try {

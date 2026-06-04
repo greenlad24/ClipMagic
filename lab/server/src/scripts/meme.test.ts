@@ -61,11 +61,12 @@ function moments(spec: Array<[number, number, string]>): { moments: unknown[] } 
   return { moments: spec.map(([startTime, endTime, searchQuery]) => ({ startTime, endTime, searchQuery })) };
 }
 
-// ── Density target: ~1 sticker per 4s ─────────────────────────────────────────
-check("maxMomentsFor targets ~one sticker every 4s", () => {
-  assert.equal(maxMomentsFor(40), 10);
-  assert.equal(maxMomentsFor(60), 15);
-  assert.equal(maxMomentsFor(4), 1); // floor of 1
+// ── Up to 6 MAIN emphasis points (fewer for short scripts) ─────────────────────
+check("maxMomentsFor caps at 6 main emphasis points", () => {
+  assert.equal(maxMomentsFor(40), 6);  // min(6, 10)
+  assert.equal(maxMomentsFor(60), 6);  // min(6, 15) — never more than 6
+  assert.equal(maxMomentsFor(16), 4);  // short script gets fewer
+  assert.equal(maxMomentsFor(4), 1);   // floor of 1
 });
 
 // ── Spacing: drop anything tighter than ~3s between starts ─────────────────────
