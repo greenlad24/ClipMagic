@@ -38,6 +38,8 @@ export async function compositeMotionGraphics(
   baseVideo: string,
   graphics: RenderedGraphic[],
   totalDuration: number,
+  /** Surfaces the composite re-encode's own 0..1 progress (best-effort). */
+  onComposite?: (frac: number) => void,
 ): Promise<CompositeResult> {
   const usable = graphics.filter((g) => g.file);
   if (usable.length === 0) {
@@ -88,7 +90,7 @@ export async function compositeMotionGraphics(
   args.push("-progress", "pipe:1", "-nostats", out);
 
   try {
-    await runFfmpeg(args, totalDuration);
+    await runFfmpeg(args, totalDuration, onComposite ? (f) => onComposite(f) : undefined);
     return { file: out, composited: true, ffmpegSpawns: 1 };
   } catch (e) {
     console.warn(

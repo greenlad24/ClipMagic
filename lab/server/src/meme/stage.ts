@@ -23,7 +23,17 @@ import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import { runFfmpeg } from "../render/ffmpeg.js";
 import { remotionRuntimeAvailable, getBundle, importRenderer, browserExecutable } from "../motion/render.js";
+import { stageFraction } from "../render/progress.js";
 import type { EmphasisStickerClip } from "./sticker.js";
+
+/**
+ * Progress callback for the post-render stage. `fraction` is 0..1 over the WHOLE
+ * stage (every sticker render + the final composite re-encode); `label` is a
+ * human sentence ("Rendering stickers 3/6", "Compositing video…"). The render
+ * worker maps the fraction into the reserved tail of the job bar. Best-effort —
+ * never blocks the render.
+ */
+export type StageProgressFn = (fraction: number, label: string) => void;
 
 /**
  * Resolve a sticker's image to an ABSOLUTE http URL the headless Chromium can
@@ -155,6 +165,7 @@ async function compositeStickers(
   baseVideo: string,
   stickers: RenderedSticker[],
   totalDuration: number,
+  onComposite?: (frac: number) => void,
 ): Promise<{ file: string; composited: boolean; ffmpegSpawns: number }> {
   const usable = stickers.filter((s) => s.file);
   if (usable.length === 0) return { file: baseVideo, composited: false, ffmpegSpawns: 0 };
@@ -203,7 +214,10 @@ async function compositeStickers(
   args.push("-progress", "pipe:1", "-nostats", out);
 
   try {
-    await runFfmpeg(args, totalDuration);
+    // Surface the composite re-encode's own 0..1 progress (driven by the
+    // `-progress pipe:1` pass already in `args`) so the bar keeps moving through
+    // "Compositing video…" instead of freezing while the whole video re-encodes.
+    await runFfmpeg(args, totalDuration, onComposite ? (f) => onComposite(f) : undefined);
     return { file: out, composited: true, ffmpegSpawns: 1 };
   } catch (e) {
     console.warn(
@@ -224,6 +238,7 @@ export async function applyEmphasisStickers(
   baseVideo: string,
   clips: EmphasisStickerClip[],
   totalDuration: number,
+  onProgress?: StageProgressFn,
 ): Promise<StickerStageResult> {
   const withImages = clips.filter((c) => c.imageUrl);
   if (withImages.length === 0) {
@@ -267,13 +282,19 @@ export async function applyEmphasisStickers(
 
   // Render one sticker at a time (each headless-Chromium render is heavy; this
   // shares the box with ffmpeg). Concurrency knob lives in config.motionConcurrency.
+  const total = withImages.length;
   const rendered: RenderedSticker[] = [];
+  onProgress?.(stageFraction({ rendered: 0, total, composite: 0 }), `Rendering stickers 0/${total}`);
   for (const clip of withImages) {
     const r = await renderOne(serveUrl, clip);
     console.log(
       `[meme]   sticker @${clip.startTime}s render ${r.file ? "ok ✓" : "FAILED ✗ (skipped)"}`,
     );
     rendered.push(r);
+    onProgress?.(
+      stageFraction({ rendered: rendered.length, total, composite: 0 }),
+      `Rendering stickers ${rendered.length}/${total}`,
+    );
   }
   const ok = rendered.filter((r) => r.file);
   if (ok.length === 0) {
@@ -285,7 +306,10 @@ export async function applyEmphasisStickers(
     };
   }
 
-  const result = await compositeStickers(baseVideo, ok, totalDuration);
+  onProgress?.(stageFraction({ rendered: total, total, composite: 0 }), "Compositing video…");
+  const result = await compositeStickers(baseVideo, ok, totalDuration, (cf) =>
+    onProgress?.(stageFraction({ rendered: total, total, composite: cf }), "Compositing video…"),
+  );
   for (const r of rendered) {
     if (r.file) fs.rm(r.file, { force: true }, () => {});
   }

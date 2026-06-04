@@ -18,6 +18,8 @@ export interface RenderJob {
   max_attempts: number;
   project_id: string | null;
   batch_item_id: string | null;
+  /** Human label for the current sub-stage ("Rendering stickers 3/6"), or null. */
+  stage_label: string | null;
   created_at: number;
   updated_at: number;
   started_at: number | null;
@@ -95,11 +97,22 @@ export function setProgress(id: string, progress: number): void {
   db.prepare("UPDATE render_jobs SET progress=?, updated_at=? WHERE id=?").run(progress, now(), id);
 }
 
+/**
+ * Publish the current sub-stage label AND progress in one write. Used by the
+ * render worker to narrate the post-render Remotion stage ("Rendering stickers
+ * 3/6" → "Compositing video…") so the panel/Meme page reflect the slow part
+ * instead of parking at 100%. Pass `label = null` to clear it.
+ */
+export function setStage(id: string, label: string | null, progress: number): void {
+  db.prepare("UPDATE render_jobs SET stage_label=?, progress=?, updated_at=? WHERE id=?")
+    .run(label, progress, now(), id);
+}
+
 export function completeJob(id: string, outputFile: string, durationSec: number): void {
   const t = now();
   db.prepare(
     `UPDATE render_jobs
-       SET status='completed', progress=1, output_file=?, duration_sec=?, error=NULL,
+       SET status='completed', progress=1, stage_label=NULL, output_file=?, duration_sec=?, error=NULL,
            finished_at=?, updated_at=?
      WHERE id=?`
   ).run(outputFile, durationSec, t, t, id);
@@ -137,7 +150,7 @@ export function retryJob(id: string): boolean {
   const t = now();
   db.prepare(
     `UPDATE render_jobs
-       SET status='queued', progress=0, attempts=0, error=NULL,
+       SET status='queued', progress=0, stage_label=NULL, attempts=0, error=NULL,
            output_file=NULL, started_at=NULL, finished_at=NULL, updated_at=?
      WHERE id=?`
   ).run(t, id);
@@ -268,7 +281,10 @@ export function jobStageLabel(job: RenderJob): string {
     case "queued":
       return "Waiting in queue";
     case "active":
-      return "Rendering";
+      // The worker publishes a live sub-stage ("Rendering stickers 3/6",
+      // "Compositing video…") during the post-render Remotion stage; show it so
+      // the panel narrates the slow part instead of a flat "Rendering".
+      return job.stage_label || "Rendering";
     case "paused":
       return "Paused";
     case "completed":

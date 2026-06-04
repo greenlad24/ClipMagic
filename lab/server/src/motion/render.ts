@@ -253,6 +253,8 @@ async function renderOne(
  */
 export async function renderMotionGraphics(
   clips: MotionGraphicClip[],
+  /** Called after each graphic render settles, with the running completed count. */
+  onRendered?: (done: number, total: number) => void,
 ): Promise<RenderedGraphic[]> {
   if (!clips.length) return [];
   if (!(await motionAvailable())) return [];
@@ -270,6 +272,16 @@ export async function renderMotionGraphics(
     return [];
   }
 
-  const results = await Promise.all(clips.map((c) => renderOne(serveUrl, c)));
+  // Renders run under the concurrency semaphore inside renderOne; tick the
+  // progress callback as each settles so the worker's bar advances per graphic.
+  let done = 0;
+  const results = await Promise.all(
+    clips.map((c) =>
+      renderOne(serveUrl, c).then((r) => {
+        onRendered?.(++done, clips.length);
+        return r;
+      }),
+    ),
+  );
   return results.filter((r) => r.file !== null);
 }

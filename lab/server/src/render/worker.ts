@@ -5,6 +5,7 @@ import {
   completeJob,
   failJob,
   setProgress,
+  setStage,
   requeueStuckJobs,
   queueDepth,
   getJob,
@@ -12,6 +13,7 @@ import {
   cancelJob as cancelJobRow,
   type RenderJob,
 } from "../db/jobs.js";
+import { mainRenderProgress, stageProgress } from "./progress.js";
 import { resolveCommand } from "./command.js";
 import { buildArgsFromManifest } from "./build.js";
 import { buildCutArgs, type CutSpec } from "./cut.js";
@@ -99,8 +101,19 @@ async function processJob(job: RenderJob): Promise<void> {
   let args: string[];
   let measureStats: { hits: number; misses: number } | undefined;
 
-  if (job.kind === "manifest") {
-    const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
+  // Parse the manifest once so we know up front whether a post-render Remotion
+  // stage (motion graphics / emphasis stickers) follows the main render. When it
+  // does, the main render only owns the FRONT of the bar and the stage owns the
+  // reserved tail — so 100% means the final output is truly done.
+  const manifest =
+    job.kind === "manifest"
+      ? (JSON.parse(job.manifest_json || "{}") as RenderManifest)
+      : null;
+  const motionGraphics = manifest?.motionGraphics ?? [];
+  const emphasisStickers = manifest?.emphasisStickers ?? [];
+  const hasPostRender = motionGraphics.length > 0 || emphasisStickers.length > 0;
+
+  if (job.kind === "manifest" && manifest) {
     const built = await buildArgsFromManifest(manifest, abs);
     args = built.args;
     totalDuration = built.totalDuration;
@@ -129,8 +142,12 @@ async function processJob(job: RenderJob): Promise<void> {
     args,
     totalDuration,
     (frac) => {
-      const pct = Math.round(frac * 100) / 100;
-      if (pct - lastWritten >= 0.02 || pct >= 1) {
+      // Scale the main caption render into its band: [0, 0.55] when a post-render
+      // stage follows, otherwise the whole bar [0, 1] (unchanged behaviour).
+      const banded = mainRenderProgress(frac, hasPostRender);
+      const pct = Math.round(banded * 100) / 100;
+      // Throttle to ~2% steps; always flush the band's final value (frac>=1).
+      if (pct - lastWritten >= 0.02 || frac >= 1) {
         lastWritten = pct;
         setProgress(job.id, pct);
       }
@@ -150,24 +167,32 @@ async function processJob(job: RenderJob): Promise<void> {
   // signalable) Remotion composite stages begin.
   await checkpoint(job.id);
 
+  // Drive the reserved tail [0.55, 1.0] of the bar from the post-render stage's
+  // own 0..1 progress, and publish its human sub-stage label. Monotonic: never
+  // moves the bar backwards. Best-effort — a reporting hiccup never blocks work.
+  let lastStagePct = lastWritten;
+  const reportStage = (frac: number, label: string) => {
+    const pct = Math.round(stageProgress(frac) * 100) / 100;
+    if (pct >= lastStagePct) {
+      lastStagePct = pct;
+      setStage(job.id, label, pct);
+    }
+  };
+
   let motionSpawns = 0;
-  if (job.kind === "manifest") {
-    const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
-    const graphics = manifest.motionGraphics ?? [];
-    if (graphics.length > 0) {
-      try {
-        const r = await applyMotionGraphics(abs, graphics, totalDuration);
-        if (r.replacedFile && r.replacedFile !== abs) {
-          fs.renameSync(r.replacedFile, abs);
-        }
-        motionSpawns = r.ffmpegSpawns;
-      } catch (e) {
-        console.warn(
-          `[worker] motion-graphics stage skipped for job ${job.id}: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
+  if (job.kind === "manifest" && motionGraphics.length > 0) {
+    try {
+      const r = await applyMotionGraphics(abs, motionGraphics, totalDuration, reportStage);
+      if (r.replacedFile && r.replacedFile !== abs) {
+        fs.renameSync(r.replacedFile, abs);
       }
+      motionSpawns = r.ffmpegSpawns;
+    } catch (e) {
+      console.warn(
+        `[worker] motion-graphics stage skipped for job ${job.id}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
     }
   }
 
@@ -180,22 +205,18 @@ async function processJob(job: RenderJob): Promise<void> {
   await checkpoint(job.id);
 
   let stickerStage: { applied: number; skipReason: string | null } | null = null;
-  if (job.kind === "manifest") {
-    const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
-    const stickers = manifest.emphasisStickers ?? [];
-    if (stickers.length > 0) {
-      try {
-        const r = await applyEmphasisStickers(abs, stickers, totalDuration);
-        if (r.replacedFile && r.replacedFile !== abs) {
-          fs.renameSync(r.replacedFile, abs);
-        }
-        motionSpawns += r.ffmpegSpawns;
-        stickerStage = { applied: r.applied, skipReason: r.skipReason };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.warn(`[worker] emphasis-sticker stage skipped for job ${job.id}: ${msg}`);
-        stickerStage = { applied: 0, skipReason: `sticker stage error: ${msg}`.slice(0, 200) };
+  if (job.kind === "manifest" && emphasisStickers.length > 0) {
+    try {
+      const r = await applyEmphasisStickers(abs, emphasisStickers, totalDuration, reportStage);
+      if (r.replacedFile && r.replacedFile !== abs) {
+        fs.renameSync(r.replacedFile, abs);
       }
+      motionSpawns += r.ffmpegSpawns;
+      stickerStage = { applied: r.applied, skipReason: r.skipReason };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[worker] emphasis-sticker stage skipped for job ${job.id}: ${msg}`);
+      stickerStage = { applied: 0, skipReason: `sticker stage error: ${msg}`.slice(0, 200) };
     }
   }
 

@@ -883,12 +883,12 @@ let cutRunning = false;
 
 async function waitForCutJob(
   jobId: string,
-  onProgress?: (status: string, progress: number) => void,
+  onProgress?: (status: string, progress: number, stageLabel: string | null) => void,
 ): Promise<{ outputUrl: string | null; error: string | null }> {
   for (let i = 0; i < 1200; i++) { // ~60 min max at 3s
     const job = getJob(jobId);
     if (!job) return { outputUrl: null, error: "Render job not found" };
-    onProgress?.(job.status, job.progress ?? 0);
+    onProgress?.(job.status, job.progress ?? 0, job.stage_label ?? null);
     if (job.status === "completed") {
       return { outputUrl: job.output_file ? `/api/outputs/${job.output_file}` : null, error: null };
     }
@@ -1469,10 +1469,17 @@ async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Pr
     }).catch(() => {});
 
     item.status = "Rendering";
-    // Map the render job's own 0..1 into the final 0.95→1.0 band so the bar
-    // keeps moving through compositing instead of sitting at "Rendering".
-    const { outputUrl, error } = await waitForCutJob(result.jobId, (status, prog) => {
-      item.stageLabel = status === "queued" ? "Rendering — waiting for a slot" : "Rendering & compositing";
+    // The render job's progress now spans the WHOLE pipeline: the main caption
+    // render owns the front of the bar and the post-render sticker stage owns the
+    // reserved tail (worker bands it). Map that 0..1 into the item's final
+    // 0.95→1.0 band, and surface the worker's live sub-stage label ("Rendering
+    // stickers 3/6" → "Compositing video…") so the bar keeps moving through the
+    // slow compositing pass instead of parking at "Rendering & compositing 100%".
+    const { outputUrl, error } = await waitForCutJob(result.jobId, (status, prog, stageLabel) => {
+      item.stageLabel =
+        status === "queued"
+          ? "Rendering — waiting for a slot"
+          : stageLabel || "Rendering captions";
       item.progress = Math.max(item.progress, 0.95 + 0.05 * Math.min(1, prog));
     });
     if (error || !outputUrl) throw new Error(error || "Render produced no output");

@@ -128,4 +128,18 @@ CREATE INDEX IF NOT EXISTS idx_shots_project     ON shots(project_id);
 CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
 `);
 
+/**
+ * Additive migration: a human stage label the worker publishes for the CURRENT
+ * sub-stage of a render ("Rendering stickers 3/6", "Compositing video…"). Lets
+ * the panel + Meme page narrate the post-render Remotion stage instead of
+ * sitting at "Rendering" while the bar is parked at 100%. Nullable so existing
+ * rows and non-manifest jobs are unaffected.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(render_jobs)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "stage_label")) {
+    db.exec("ALTER TABLE render_jobs ADD COLUMN stage_label TEXT");
+  }
+}
+
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
