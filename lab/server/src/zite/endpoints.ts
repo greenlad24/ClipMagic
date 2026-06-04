@@ -22,7 +22,7 @@ import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
 import { detectSilences, computeEnvelope } from "../cutter/silence.js";
-import { segmentTakes, DEFAULT_SETTINGS, type Envelope, type Seg } from "../cutter/segments.js";
+import { segmentTakes, markDuplicateTakes, DEFAULT_SETTINGS, type Envelope, type Seg } from "../cutter/segments.js";
 import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
@@ -1110,7 +1110,10 @@ const analyzeCut: Handler = async (input) => {
   const env: Envelope = { db: envelope.db, hop: envelope.hop, duration: envelope.duration };
   // Initial take segmentation at the defaults — the client re-segments live as
   // the user drags the controls, using the very same `segmentTakes` math.
-  const takes = env.db.length > 0 ? segmentTakes(env, words, DEFAULT_SETTINGS) : [];
+  // Seed takes at the defaults, with transcript-based duplicate marking already
+  // applied (the client recomputes live via computeKeepSegments using the same
+  // math, so this is purely an initial render of the timeline).
+  const takes = env.db.length > 0 ? markDuplicateTakes(segmentTakes(env, words, DEFAULT_SETTINGS)) : [];
 
   return {
     sourceUrl,
