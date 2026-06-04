@@ -50,6 +50,8 @@ export type CallPurpose =
   | "take-detection"
   // Sticker/Meme editor: picks the emphasis moments + writes the image prompts.
   | "emphasis-director"
+  // Sticker/Meme editor: vision fit-review of fetched sticker candidates.
+  | "sticker-review"
   // Sticker/Meme editor: one generated still image per emphasis moment.
   | "image-generation";
 
@@ -379,6 +381,31 @@ export function buildReport(projectId: string): OptimizationReport | null {
     );
   }
 
+  // ── Line item: sticker fit-review (vision quality gate) ─────────────────────
+  // The Sticker editor's default source is FREE Giphy/Tenor reaction stickers
+  // ($0/image), but the AI fit-review that picks/drops candidates IS a real
+  // vision call — surfaced here honestly with its real per-call cost.
+  const stickerReview = run.calls.find((c) => c.purpose === "sticker-review");
+  if (stickerReview) {
+    lineItems.push({
+      label: "Sticker fit-review (vision quality gate)",
+      labUsd: roundUsd(stickerReview.costUsd),
+      baselineUsd: roundUsd(stickerReview.costUsd),
+      savedUsd: 0,
+      note:
+        `Claude ${stickerReview.model} vision reviews the fetched Giphy/Tenor candidates per moment and picks the best fit (or drops it) — ` +
+        `${stickerReview.inputTokens} in / ${stickerReview.outputTokens} out tokens, priced ${PRICING_SOURCE_DATE}. ` +
+        `The reaction stickers themselves are FREE ($0/image); this review is the editor's only per-sticker AI cost. New capability, shown as real added cost, not a saving.`,
+      kind: "quality-investment",
+    });
+    qualityImprovements.push(
+      "Each fetched reaction sticker passes an AI VISION fit-review before it's used — off-topic or low-quality stickers are dropped, so a wrong sticker never ships.",
+    );
+    whatWasOptimized.push(
+      "Sticker source switched to FREE Giphy + Tenor reaction stickers ($0/image) — only the per-moment vision fit-review carries any cost.",
+    );
+  }
+
   // ── Line item: image generation (Sticker/Meme editor) ───────────────────────
   const img = run.calls.find((c) => c.purpose === "image-generation");
   if (img && (img.images ?? 0) > 0) {
@@ -388,11 +415,11 @@ export function buildReport(projectId: string): OptimizationReport | null {
       labUsd: roundUsd(img.costUsd),
       baselineUsd: roundUsd(img.costUsd),
       savedUsd: 0,
-      note: `${img.images} × OpenAI ${img.model} still${img.images !== 1 ? "s" : ""} at $${perImage.toFixed(2)}/image (transparent PNG, 1024², priced ${PRICING_SOURCE_DATE}). Added cost unique to this editor — shown transparently, never compared against a tool that doesn't generate images.`,
+      note: `${img.images} × OpenAI ${img.model} still${img.images !== 1 ? "s" : ""} at $${perImage.toFixed(2)}/image (transparent PNG, 1024², priced ${PRICING_SOURCE_DATE}). FALLBACK source only — used when Giphy/Tenor returned nothing (or have no keys) and an OpenAI key is present. Added cost shown transparently.`,
       kind: "quality-investment",
     });
     whatWasOptimized.push(
-      `Sticker editor generated ${img.images} funny still image${img.images !== 1 ? "s" : ""} (OpenAI ${img.model}) — cached by prompt and rendered as bouncy stickers below the captions.`,
+      `Sticker editor used the OpenAI image-gen FALLBACK for ${img.images} moment${img.images !== 1 ? "s" : ""} (no free library sticker fit) — cached by prompt, rendered as bouncy stickers below the captions.`,
     );
   }
 

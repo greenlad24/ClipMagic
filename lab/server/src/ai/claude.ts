@@ -315,6 +315,91 @@ async function claudeVisionAnthropic(opts: {
   return extractJson(text);
 }
 
+/** One labeled image for a vision review (base64 + its real media type). */
+export interface LabeledImage {
+  /** A short label shown before the image (e.g. "Candidate 1 (giphy):"). */
+  label: string;
+  /** Base64-encoded image bytes. */
+  data: string;
+  /** MIME type Anthropic accepts: image/png | image/webp | image/jpeg | image/gif. */
+  mediaType: string;
+}
+
+/**
+ * Vision JSON completion over a small set of LABELED, TYPED images (not the
+ * JPEG-frames helper above). Used by the Sticker editor's AI fit-review to look
+ * at the candidate reaction stickers (transparent PNG/WEBP) for a line and pick
+ * the best fit (or drop it). Records usage under the given purpose so the cost
+ * shows up honestly in the optimization report.
+ *
+ * Routes to Claude vision (Sonnet/research tier by default) and, on failure, to
+ * Groq vision so the gate still runs when only Groq is configured. Throws if no
+ * vision provider is configured at all — the caller treats that as "no review".
+ */
+export async function claudeVisionLabeledJSON(opts: {
+  system: string;
+  userText: string;
+  images: LabeledImage[];
+  purpose: CallPurpose;
+  model?: string;
+}): Promise<string> {
+  const { groqVisionConfigured, groqVisionJSON } = await import("./groqVision.js");
+  if (!anthropicConfigured()) {
+    if (groqVisionConfigured()) {
+      // Groq's OpenAI-compatible path takes data URIs; rebuild them with the type.
+      return groqVisionJSON({
+        system: opts.system,
+        userText: labeledUserText(opts),
+        frames: opts.images.map((im) => im.data), // jpeg-style helper; types below
+        // groqVisionJSON hardcodes image/jpeg in its data URI — stickers are PNG,
+        // but Groq's loader sniffs the bytes, so PNG still decodes. Acceptable
+        // for the fallback path.
+      });
+    }
+    throw new Error("No vision provider configured for sticker fit-review.");
+  }
+
+  const model = opts.model || process.env.CLAUDE_VISION_MODEL || aiConfig.models.research;
+  const content: any[] = [];
+  opts.images.forEach((im) => {
+    content.push({ type: "text", text: im.label });
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: im.mediaType, data: im.data },
+    });
+  });
+  content.push({
+    type: "text",
+    text:
+      opts.userText +
+      "\n\nRespond with ONLY the raw JSON object. No markdown, no code fences, no commentary.",
+  });
+
+  const body = {
+    model,
+    max_tokens: aiConfig.maxTokens,
+    system: opts.system
+      ? [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }]
+      : undefined,
+    messages: [{ role: "user", content }],
+  };
+
+  const t0 = Date.now();
+  const json = await anthropicRequest(body, "Claude sticker fit-review error");
+  recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+  const text = (json.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("");
+  return extractJson(text);
+}
+
+function labeledUserText(opts: { userText: string; images: LabeledImage[] }): string {
+  return (
+    opts.images.map((im) => im.label).join("\n") + "\n" + opts.userText
+  );
+}
+
 /** Pull the JSON payload out of a model response, tolerating fences/prose. */
 export function extractJson(text: string): string {
   let t = text.trim();
