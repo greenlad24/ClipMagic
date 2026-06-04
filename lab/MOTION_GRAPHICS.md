@@ -1,13 +1,20 @@
 # Motion graphics (Remotion) — design, status, and plan
 
-A flag-gated service that lets the AI director composite **tasteful, human-grade
-motion graphics** onto the finished render. Built to look like a skilled editor
-made it — sparing, motivated, professionally eased — not auto-generated.
+A service that lets the AI director composite **tasteful, human-grade motion
+graphics** onto the finished render. Built to look like a skilled editor made it
+— sparing, motivated, professionally eased — not auto-generated.
 
-Everything below is inside `lab/` and runs on `:9090`. The feature is **off by
-default** (`MOTION_GRAPHICS=1` to enable) and **falls back to a normal render**
-whenever Remotion/Chromium is unavailable, the flag is off, or nothing is
+Everything below is inside `lab/` and runs on `:9090`. The feature is **ON by
+default**, controlled **per video by a UI toggle** in the short-form create flow
+(default on, switchable off per video). A global escape hatch — `MOTION_GRAPHICS=0`
+— force-disables it for resource control. It **falls back to a normal render**
+whenever Remotion/Chromium is unavailable, the toggle is off, or nothing is
 motivated — zero regression to the existing pipeline.
+
+Chromium is **pre-baked into the Docker image** (`apt install chromium`, pointed
+to by `REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium`), so Remotion never needs a
+runtime download — the prior reliability risk. `run-lab.sh` auto-detects a system
+Chromium and uses it; otherwise Remotion manages its own (local dev).
 
 ---
 
@@ -98,10 +105,23 @@ returns:
 
 ---
 
-## Infra, flag, concurrency, fallback
+## Infra, default-on, concurrency, fallback
 
-- **Flag:** `MOTION_GRAPHICS=1`. Off → director never runs, manifest has no
-  `motionGraphics`, render is byte-identical to before.
+- **Default ON, per-video toggle:** the create flow's "Motion graphics" switch
+  (default on) sets `project.motionGraphics`; `submitRendiJob` runs the director
+  via `motionGraphicsEnabledFor(project.motionGraphics)`. Toggle off →
+  director skipped, manifest has no `motionGraphics`, render is byte-identical.
+- **Global escape hatch:** `MOTION_GRAPHICS=0` (`config.motionGraphicsForceDisabled`)
+  force-disables the short-form motion stage regardless of the toggle, for
+  resource control. No env / any other value = default-on. The sticker editor is
+  unaffected (it never consults this).
+- **Pre-baked Chromium:** `config.remotionBrowserExecutable`
+  (`REMOTION_BROWSER_EXECUTABLE`) is passed as `browserExecutable` to
+  `openBrowser`/`selectComposition`/`renderMedia` in BOTH the motion stage and
+  the meme/sticker stage, so neither ever triggers Remotion's CDN download.
+- **Readiness:** at boot the server logs `[motion] Remotion ready — chromium=<path>`
+  (or the force-disable / failure reason), and `getServiceStatus` reports
+  `remotionConfigured` + `remotionUrl` + `motionGraphicsForceDisabled`.
 - **Concurrency bounds (4 vCPU / 8 GB droplet, shared with ffmpeg + main app):**
   - `MOTION_CONCURRENCY=1` — at most one headless-Chromium render at a time
     (process-wide semaphore in `render.ts`).
@@ -114,10 +134,12 @@ returns:
 - **Alpha format:** VP8 WebM + `yuva420p` (composites cleanly via ffmpeg `overlay`,
   far lighter than ProRes 4444). `MOTION_CODEC=prores` switches to ProRes 4444
   (`yuva444p10le`, `.mov`) for a server that prefers it.
-- **Docker:** dedicated `motion` build stage installs `@remotion/*`; runtime adds the
-  Chromium system libs (`libnss3`, `libgbm1`, …). Remotion downloads its own Chromium
-  on first render into `/data/.remotion-chromium`. Image still builds and runs with
-  the flag off (Chromium simply never launches).
+- **Docker:** dedicated `motion` build stage installs `@remotion/*`; runtime
+  `apt install`s the **`chromium` browser** (plus its system libs) at build time
+  and sets `REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium`, so Remotion uses the
+  pre-baked binary and NEVER downloads one at runtime. The build fails fast if
+  `/usr/bin/chromium` is missing. Image still builds and runs with motion
+  force-disabled (Chromium simply never launches).
 - **Optimization Report:** the composite pass reports its extra ffmpeg spawns +
   per-graphic Chromium render honestly in the **speed/compute** section as *added
   compute*, never as a cost saving (`mergeRenderStats({ motionGraphicsSpawns })`).

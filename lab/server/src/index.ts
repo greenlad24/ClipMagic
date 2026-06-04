@@ -5,6 +5,7 @@ import path from "node:path";
 import { config, ensureDirs } from "./config.js";
 import { auth } from "./middleware.js";
 import { startWorker } from "./render/worker.js";
+import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
 import uploadsRouter from "./routes/uploads.js";
 import renderRouter, { rendiRouter } from "./routes/render.js";
@@ -100,5 +101,40 @@ app.listen(config.port, config.host, () => {
       `director(ANTHROPIC_API_KEY)=${yn(process.env.ANTHROPIC_API_KEY)} ` +
       `kinovi(ZITE_KINOVI_API_KEY)=${yn(process.env.ZITE_KINOVI_API_KEY)}`
   );
+  // Remotion readiness probe at boot: logs whether motion graphics + stickers
+  // can actually render here and the resolved Chromium executable, so a missing
+  // browser / failed launch is obvious immediately rather than at first render.
+  void logMotionReadiness();
   startWorker();
 });
+
+/**
+ * Probe and log Remotion/Chromium readiness once at boot. Non-blocking: the
+ * server is already listening; this just surfaces the resolved browser path (or
+ * the failure reason) in the logs. The probe result is cached, so getServiceStatus
+ * reuses it without re-launching Chromium.
+ */
+async function logMotionReadiness(): Promise<void> {
+  const exe = config.remotionBrowserExecutable || "(Remotion-managed download)";
+  if (config.motionGraphicsForceDisabled) {
+    console.log(
+      `[motion] short-form motion graphics FORCE-DISABLED via MOTION_GRAPHICS=0 ` +
+        `(stickers still run when Chromium is available) — chromium=${exe}`
+    );
+  }
+  try {
+    const ready = await remotionRuntimeAvailable();
+    if (ready) {
+      console.log(`[motion] Remotion ready — chromium=${exe}`);
+    } else {
+      console.warn(
+        `[motion] Remotion NOT ready — Chromium could not launch (chromium=${exe}). ` +
+          `Motion graphics & stickers will fall back to a normal render.`
+      );
+    }
+  } catch (e) {
+    console.warn(
+      `[motion] Remotion readiness probe errored: ${e instanceof Error ? e.message : String(e)}`
+    );
+  }
+}
