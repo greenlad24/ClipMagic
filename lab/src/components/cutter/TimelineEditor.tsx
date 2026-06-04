@@ -338,24 +338,24 @@ export default function TimelineEditor({
       {/* Controls */}
       <div className="rounded-xl border border-border p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <RangeControl
-          label="Silence floor" value={settings.silenceDb} min={-60} max={-12} step={1} unit=" dB"
-          hint="Quieter than this = silence"
+          label="Silence floor" value={settings.silenceDb} min={-60} max={-20} step={1} unit=" dB"
+          hint="Complete-silence only — breaths stay"
           onChange={(v) => setSettings((s) => ({ ...s, silenceDb: v }))}
         />
         <RangeControl
-          label="Min silence" value={settings.minSilence} min={0.1} max={1.5} step={0.05} unit="s"
-          hint="Shortest pause to cut"
+          label="Only cut silences over" value={settings.minSilence} min={0.1} max={1.5} step={0.05} unit="s"
+          hint="Shorter pauses are kept"
           onChange={(v) => setSettings((s) => ({ ...s, minSilence: round2(v) }))}
         />
         <RangeControl
-          label="Keep padding" value={settings.keepPad} min={0} max={0.4} step={0.01} unit="s"
-          hint="Breathing room per side"
-          onChange={(v) => setSettings((s) => ({ ...s, keepPad: round2(v) }))}
+          label="Collapse gap to" value={settings.gap} min={0} max={1} step={0.05} unit="s"
+          hint="Dead air left between takes"
+          onChange={(v) => setSettings((s) => ({ ...s, gap: round2(v) }))}
         />
         <RangeControl
-          label="Gap between takes" value={settings.gap} min={0} max={1} step={0.05} unit="s"
-          hint="Pause inserted at splices"
-          onChange={(v) => setSettings((s) => ({ ...s, gap: round2(v) }))}
+          label="Min take length" value={settings.minTake} min={0.1} max={2} step={0.05} unit="s"
+          hint="Shorter blips are dropped"
+          onChange={(v) => setSettings((s) => ({ ...s, minTake: round2(v) }))}
         />
       </div>
 
