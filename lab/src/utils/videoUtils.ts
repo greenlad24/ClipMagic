@@ -1,4 +1,5 @@
 import { uploadFile } from 'zite-file-upload-sdk';
+import { startTransfer, updateTransfer, finishTransfer } from '../lib/uploadTracker';
 
 const TARGET_SR = 16000;
 export const CHUNK_BYTES = 20 * 1024 * 1024; // 20 MB per chunk — under Zite's 25 MB limit
@@ -81,8 +82,20 @@ export async function uploadBlobToZite(
 ): Promise<string> {
   const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = `${Date.now()}_${safe}`;
-  const { fileUrl } = await uploadFile({ data: blob, filename: key, onProgress });
-  return fileUrl;
+  // Register the upload so it shows live in the Background Jobs panel.
+  const transferId = startTransfer(filename);
+  try {
+    const { fileUrl } = await uploadFile({
+      data: blob,
+      filename: key,
+      onProgress: (f) => { updateTransfer(transferId, f); onProgress?.(f); },
+    });
+    finishTransfer(transferId, 'done');
+    return fileUrl;
+  } catch (e) {
+    finishTransfer(transferId, 'failed', e instanceof Error ? e.message : String(e));
+    throw e;
+  }
 }
 
 /** @deprecated Use uploadBlobToZite instead */

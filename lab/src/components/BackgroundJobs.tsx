@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { listJobs, pauseJob, resumeJob, cancelJob } from 'zite-endpoints-sdk';
+import { useTransfers, type Transfer } from '@/lib/uploadTracker';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -44,7 +45,7 @@ type JobStatus = 'queued' | 'active' | 'paused' | 'completed' | 'failed' | 'canc
 
 interface PanelJob {
   id: string;
-  source: 'render' | 'analyze';
+  source: 'render' | 'analyze' | 'upload';
   type: string;
   title: string;
   status: JobStatus;
@@ -67,6 +68,29 @@ const POLL_MS = 1800;
 
 function isTerminal(s: JobStatus): boolean {
   return s === 'completed' || s === 'failed' || s === 'canceled';
+}
+
+/** Map a client-side upload transfer into the same shape the panel renders. */
+function transferToJob(t: Transfer): PanelJob {
+  const status: JobStatus =
+    t.status === 'uploading' ? 'active'
+    : t.status === 'done' ? 'completed'
+    : t.status === 'failed' ? 'failed'
+    : 'canceled';
+  return {
+    id: t.id,
+    source: 'upload',
+    type: 'Upload',
+    title: t.title,
+    status,
+    stage: 'Uploading to server',
+    progress: t.progress,
+    error: t.error ?? null,
+    outputUrl: null,
+    controllable: false,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
 }
 
 function statusPill(status: JobStatus): { label: string; className: string; icon: React.ReactNode } {
@@ -119,7 +143,13 @@ export default function BackgroundJobs() {
   const [optimistic, setOptimistic] = useState<Record<string, JobStatus>>({});
   const [confirmCancel, setConfirmCancel] = useState<PanelJob | null>(null);
 
-  const activeCount = data?.activeCount ?? 0;
+  // Client-side uploads (not server jobs) — shown live alongside real jobs.
+  const transfers = useTransfers();
+  const uploadJobs = transfers.map(transferToJob);
+  const uploadActive = uploadJobs.filter((j) => !isTerminal(j.status));
+  const uploadRecent = uploadJobs.filter((j) => isTerminal(j.status));
+
+  const activeCount = (data?.activeCount ?? 0) + uploadActive.length;
   const hasActive = activeCount > 0;
 
   const poll = useCallback(async () => {
@@ -199,8 +229,9 @@ export default function BackgroundJobs() {
 
   const effectiveStatus = (j: PanelJob): JobStatus => optimistic[j.id] ?? j.status;
 
-  const active = data?.active ?? [];
-  const recent = data?.recent ?? [];
+  // Uploads first (they're the most immediate), then server jobs.
+  const active = [...uploadActive, ...(data?.active ?? [])];
+  const recent = [...uploadRecent, ...(data?.recent ?? [])];
 
   return (
     <>
@@ -419,7 +450,7 @@ function JobRow({
       )}
 
       {/* Read-only note for analyze jobs */}
-      {!recent && !job.controllable && !terminal && (
+      {!recent && !job.controllable && !terminal && job.source === 'analyze' && (
         <p className="mt-2 text-xs text-muted-foreground/70">Read-only · runs to completion</p>
       )}
     </li>
