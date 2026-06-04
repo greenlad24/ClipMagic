@@ -22,11 +22,24 @@ import {
 import { buildCaptionEvents } from "../meme/captions.js";
 import { pickRandomCaptionTemplate } from "../meme/captionTemplate.js";
 import { SUBTITLE_TEMPLATE_POOL, SUBTITLE_TEMPLATES } from "../render/manifest.js";
+import { parseGiphyStickers, parseTenorStickers, type StickerCandidate } from "../meme/stickerSearch.js";
+import { applyReviewDecision, reviewStickerFit } from "../meme/stickerReview.js";
+import { resolveStickerSource, computeSkipReason } from "../meme/pipeline.js";
 
 let passed = 0;
-function check(name: string, fn: () => void) {
+const pending: Promise<void>[] = [];
+function check(name: string, fn: () => void | Promise<void>) {
   try {
-    fn();
+    const r = fn();
+    if (r && typeof (r as Promise<void>).then === "function") {
+      pending.push(
+        (r as Promise<void>).then(
+          () => { passed++; console.log(`  ok  ${name}`); },
+          (e) => { console.error(`FAIL  ${name}\n      ${e instanceof Error ? e.message : e}`); process.exitCode = 1; },
+        ),
+      );
+      return;
+    }
     passed++;
     console.log(`  ok  ${name}`);
   } catch (e) {
@@ -35,9 +48,9 @@ function check(name: string, fn: () => void) {
   }
 }
 
-// Build a raw director payload from [start, end, prompt] tuples.
+// Build a raw director payload from [start, end, searchQuery] tuples.
 function moments(spec: Array<[number, number, string]>): { moments: unknown[] } {
-  return { moments: spec.map(([startTime, endTime, imagePrompt]) => ({ startTime, endTime, imagePrompt })) };
+  return { moments: spec.map(([startTime, endTime, searchQuery]) => ({ startTime, endTime, searchQuery })) };
 }
 
 // ── Density target: ~1 sticker per 4s ─────────────────────────────────────────
@@ -99,15 +112,26 @@ check("sanitize clamps each hold to 1.5–2.5s", () => {
 });
 
 // ── Bad input is dropped, not crashed ──────────────────────────────────────────
-check("sanitize drops entries with no/short prompt or bad time", () => {
+check("sanitize drops entries with no/short query or bad time", () => {
   const out = sanitize({ moments: [
-    { startTime: 8, endTime: 10 },                       // no prompt
-    { startTime: 8, endTime: 10, imagePrompt: "x" },     // prompt too short
-    { startTime: "nope", endTime: 10, imagePrompt: "a happy dog" }, // bad start
-    { startTime: 8, endTime: 10, imagePrompt: "a happy dog" },      // good
+    { startTime: 8, endTime: 10 },                        // no query
+    { startTime: 8, endTime: 10, searchQuery: "x" },      // query too short (<2)
+    { startTime: "nope", endTime: 10, searchQuery: "mind blown" }, // bad start
+    { startTime: 8, endTime: 10, searchQuery: "mind blown" },      // good
   ] }, 30);
   assert.equal(out.length, 1);
-  assert.equal(out[0].imagePrompt, "a happy dog");
+  assert.equal(out[0].searchQuery, "mind blown");
+});
+
+// ── imagePrompt is optional fallback metadata, never gates acceptance ──────────
+check("sanitize keeps a moment with only a searchQuery (imagePrompt falls back to it)", () => {
+  const out = sanitize({ moments: [
+    { startTime: 8, endTime: 10, searchQuery: "money rain" }, // no imagePrompt
+  ] }, 30);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].searchQuery, "money rain");
+  // The OpenAI fallback still has a prompt to use — it falls back to the query.
+  assert.equal(out[0].imagePrompt, "money rain");
 });
 
 // ── Placement: the sticker sits BELOW the captions, inside safe margins ────────
@@ -197,4 +221,164 @@ check("pickRandomCaptionTemplate is RANDOM — covers (nearly) the whole pool", 
   assert.ok(seen.size > 1, "must not return a single fixed template");
 });
 
+// ── Giphy parsing: result → transparent STATIC still URL ──────────────────────
+check("parseGiphyStickers extracts the transparent *_still URL (largest first)", () => {
+  // Realistic shape of a /v1/stickers/search hit (trimmed to the relevant keys).
+  const json = {
+    data: [
+      {
+        title: "mind blown sticker",
+        images: {
+          original: { url: "https://media.giphy.com/x/giphy.gif" }, // animated — ignored
+          original_still: { url: "https://media.giphy.com/x/giphy_s.gif" }, // transparent still
+          fixed_height_still: { url: "https://media.giphy.com/x/200_s.gif" },
+        },
+      },
+      {
+        title: "no still here",
+        images: { original: { url: "https://media.giphy.com/y/giphy.gif" } }, // no _still → skipped
+      },
+      {
+        title: "shocked",
+        images: { preview_still: { url: "https://media.giphy.com/z/preview_s.png" } },
+      },
+    ],
+  };
+  const out = parseGiphyStickers(json, 5);
+  assert.equal(out.length, 2, "only results with a *_still are kept");
+  assert.equal(out[0].provider, "giphy");
+  // Prefers original_still over the smaller renditions.
+  assert.equal(out[0].url, "https://media.giphy.com/x/giphy_s.gif");
+  assert.equal(out[0].title, "mind blown sticker");
+  assert.equal(out[1].url, "https://media.giphy.com/z/preview_s.png");
+});
+
+check("parseGiphyStickers tolerates a missing/odd payload", () => {
+  assert.deepEqual(parseGiphyStickers({}, 3), []);
+  assert.deepEqual(parseGiphyStickers({ data: "nope" }, 3), []);
+  assert.deepEqual(parseGiphyStickers(null, 3), []);
+});
+
+// ── Tenor parsing: result → transparent STATIC format URL ─────────────────────
+check("parseTenorStickers extracts a transparent static format (png_transparent first)", () => {
+  // Realistic shape of a v2 /search hit restricted to sticker + transparent.
+  const json = {
+    results: [
+      {
+        content_description: "money rain",
+        media_formats: {
+          gif_transparent: { url: "https://media.tenor.com/a/money_t.gif" },
+          png_transparent: { url: "https://media.tenor.com/a/money_t.png" },
+        },
+      },
+      {
+        title: "celebration",
+        media_formats: {
+          webp_transparent: { url: "https://media.tenor.com/b/celebrate_t.webp" },
+        },
+      },
+      {
+        // No transparent format at all → skipped.
+        media_formats: { gif: { url: "https://media.tenor.com/c/opaque.gif" } },
+      },
+    ],
+  };
+  const out = parseTenorStickers(json, 5);
+  assert.equal(out.length, 2, "only results with a transparent static format are kept");
+  assert.equal(out[0].provider, "tenor");
+  // png_transparent is preferred over gif_transparent.
+  assert.equal(out[0].url, "https://media.tenor.com/a/money_t.png");
+  assert.equal(out[0].title, "money rain");
+  assert.equal(out[1].url, "https://media.tenor.com/b/celebrate_t.webp");
+});
+
+check("parseTenorStickers tolerates a missing/odd payload", () => {
+  assert.deepEqual(parseTenorStickers({}, 3), []);
+  assert.deepEqual(parseTenorStickers({ results: 5 }, 3), []);
+});
+
+check("parse honors the per-provider candidate limit", () => {
+  const giphy = { data: Array.from({ length: 6 }, (_, i) => ({ images: { original_still: { url: `g${i}.gif` } } })) };
+  const tenor = { results: Array.from({ length: 6 }, (_, i) => ({ media_formats: { png_transparent: { url: `t${i}.png` } } })) };
+  assert.equal(parseGiphyStickers(giphy, 3).length, 3);
+  assert.equal(parseTenorStickers(tenor, 2).length, 2);
+});
+
+// ── AI fit-review: pick / drop / invalid (mocked vision decision) ──────────────
+const cands: StickerCandidate[] = [
+  { provider: "giphy", url: "g0.png", title: "mind blown" },
+  { provider: "tenor", url: "t1.png", title: "confused" },
+  { provider: "giphy", url: "g2.png", title: "shocked face" },
+];
+
+check("applyReviewDecision PICKS the candidate the reviewer chose", () => {
+  const r = applyReviewDecision(JSON.stringify({ chosen: 2, reason: "best matches shock" }), cands);
+  assert.equal(r.reviewed, true);
+  assert.equal(r.chosenIndex, 2);
+  assert.equal(r.chosen?.url, "g2.png");
+  assert.equal(r.reason, "best matches shock");
+});
+
+check("applyReviewDecision DROPS the sticker when none fit (chosen: null)", () => {
+  const r = applyReviewDecision(JSON.stringify({ chosen: null, reason: "all off-topic" }), cands);
+  assert.equal(r.reviewed, true);
+  assert.equal(r.chosen, null);
+  assert.equal(r.chosenIndex, null);
+  assert.equal(r.reason, "all off-topic");
+});
+
+check("applyReviewDecision DROPS on an out-of-range index (never mis-picks)", () => {
+  const r = applyReviewDecision(JSON.stringify({ chosen: 9, reason: "x" }), cands);
+  assert.equal(r.chosen, null);
+  assert.ok(/invalid index/.test(r.reason));
+});
+
+check("applyReviewDecision falls back to top result on unparseable JSON", () => {
+  const r = applyReviewDecision("not json at all", cands);
+  assert.equal(r.reviewed, false);
+  assert.equal(r.chosenIndex, 0);
+  assert.equal(r.chosen?.url, "g0.png");
+});
+
+check("reviewStickerFit returns nothing for an empty candidate set", async () => {
+  const r = await reviewStickerFit("a line", []);
+  assert.equal(r.chosen, null);
+  assert.equal(r.reviewed, false);
+});
+
+// ── Source selection + fallback ordering ──────────────────────────────────────
+check("resolveStickerSource defaults to giphy+tenor and honors the override", () => {
+  delete process.env.MEME_STICKER_SOURCE;
+  assert.equal(resolveStickerSource(), "giphy+tenor");
+  process.env.MEME_STICKER_SOURCE = "openai";
+  assert.equal(resolveStickerSource(), "openai");
+  process.env.MEME_STICKER_SOURCE = "GIPHY+TENOR";
+  assert.equal(resolveStickerSource(), "giphy+tenor");
+  delete process.env.MEME_STICKER_SOURCE;
+});
+
+check("computeSkipReason: applied stickers ⇒ no skip reason", () => {
+  assert.equal(
+    computeSkipReason({ momentsPlanned: 3, stickersApplied: 2, searchAvailable: true, openaiAvailable: false }),
+    null,
+  );
+});
+
+check("computeSkipReason: no moments ⇒ director reason", () => {
+  const r = computeSkipReason({ momentsPlanned: 0, stickersApplied: 0, searchAvailable: true, openaiAvailable: true });
+  assert.ok(/no emphasis moments/.test(r!));
+});
+
+check("computeSkipReason: no source at all ⇒ asks for keys (giphy+tenor → openai → captions)", () => {
+  const r = computeSkipReason({ momentsPlanned: 3, stickersApplied: 0, searchAvailable: false, openaiAvailable: false });
+  assert.ok(/GIPHY_API_KEY \/ TENOR_API_KEY/.test(r!), r!);
+  assert.ok(/OpenAI/.test(r!), r!);
+});
+
+check("computeSkipReason: a source existed but nothing fit ⇒ 'no sticker fit'", () => {
+  const r = computeSkipReason({ momentsPlanned: 3, stickersApplied: 0, searchAvailable: true, openaiAvailable: true });
+  assert.ok(/no sticker fit/.test(r!), r!);
+});
+
+await Promise.all(pending);
 console.log(`\n${passed} checks passed.`);
