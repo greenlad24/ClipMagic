@@ -5,7 +5,7 @@
  * Pure/deterministic — no API keys, no ffmpeg. Asserts the cut plan against
  * known word-timestamp fixtures.
  */
-import { planCuts, isFiller, type PlanWord } from "../cutter/plan.js";
+import { planCuts, isFiller, type PlanWord, type SilenceRegion } from "../cutter/plan.js";
 import assert from "node:assert/strict";
 
 let passed = 0;
@@ -164,6 +164,104 @@ check("extraCuts ranges (duplicate takes) are removed", () => {
   // The first "take one" region should be gone.
   const keepsStart = plan.keep[0].start;
   assert.ok(keepsStart >= 0.6, `losing take dropped, kept starts at ${keepsStart}`);
+});
+
+// ── Audio-energy awareness (measured silences) ────────────────────────────────
+// A keep-segment never overlaps a "speech burst" region (no word-clipping), and
+// a measured silent region above min-silence IS removed even if Whisper smeared
+// words across it. Helper: does any keep overlap [a,b]?
+const overlapsKeep = (keep: { start: number; end: number }[], a: number, b: number) =>
+  keep.some((k) => k.start < b - 1e-6 && k.end > a + 1e-6);
+
+check("snap: a keep boundary inside speech is pushed out to true silence (no word clipped)", () => {
+  // Whisper says word2 ENDS at 2.0, but the real audio shows speech runs to 2.30
+  // and silence only starts at 2.30. A transcript-only trim would cut at ~2.0,
+  // clipping the word's tail. With the measured silence, the keep must extend to
+  // at least the silence start so the spoken tail (2.0–2.30) survives.
+  const w = words([
+    ["a", 0.0, 0.4],
+    ["word", 0.45, 2.0],   // Whisper end is loose/early
+    ["next", 4.0, 4.4],    // long gap -> a cut happens between them
+  ]);
+  const silences: SilenceRegion[] = [{ start: 2.3, end: 3.8, thresholdDb: -34 }];
+  const plan = planCuts(w, 4.4, { silences });
+  // The real spoken tail (2.0 .. 2.30) must NOT be removed.
+  assert.ok(overlapsKeep(plan.keep, 2.05, 2.25), "word tail kept (not clipped)");
+  // The kept region's right edge near the gap must sit at/after the silence start.
+  const edge = plan.keep.find((k) => k.end >= 2.0 && k.end <= 3.9);
+  assert.ok(edge && edge.end >= 2.3 - 0.06, `right edge snapped into silence, got ${edge?.end}`);
+  assert.ok(plan.boundariesSnapped >= 1, "a boundary was snapped");
+});
+
+check("audio-detected dead air the transcript missed IS removed", () => {
+  // Whisper transcribed CONTINUOUS words with NO gap above the threshold (it
+  // smeared a word over the pause), but the audio shows a real 1.2s dead-air
+  // region in the middle. The transcript-gap pass can't see it; the audio pass
+  // must remove it.
+  const w = words([
+    ["keep", 0.0, 0.4],
+    ["this", 0.45, 0.9],
+    ["word", 0.95, 2.2],  // Whisper stretched this token across the real pause
+    ["and", 2.25, 2.6],
+    ["this", 2.65, 3.0],
+  ]);
+  const silences: SilenceRegion[] = [{ start: 1.0, end: 2.2, thresholdDb: -40 }];
+  const plan = planCuts(w, 3.0, { silences });
+  // The measured dead-air interior must be removed (nothing kept deep inside it).
+  assert.ok(!overlapsKeep(plan.keep, 1.3, 1.9), "audio dead air removed");
+  // The audio-detected cut is reflected in diagnostics with a measured dB.
+  const audioCut = plan.diagnostics.find((d) => d.reason.includes("audio-detected"));
+  assert.ok(audioCut && audioCut.measuredDb === -40, "audio-detected diagnostic carries dBFS");
+});
+
+check("diagnostics enumerate every kept + removed region with reasons", () => {
+  const w = words([
+    ["intro", 0.0, 0.5],
+    ["um", 0.55, 0.8],
+    ["body", 3.0, 3.5], // big gap -> silence cut
+  ]);
+  const plan = planCuts(w, 4.0, { silences: [{ start: 0.9, end: 2.9, thresholdDb: -36 }] });
+  assert.ok(plan.diagnostics.length >= 2, "has a breakdown");
+  assert.ok(plan.diagnostics.some((d) => d.kind === "keep"), "kept regions listed");
+  assert.ok(plan.diagnostics.some((d) => d.kind === "filler"), "filler region listed");
+  assert.ok(plan.diagnostics.some((d) => d.kind === "silence"), "silence region listed");
+  // Sorted by start time, ascending.
+  for (let i = 1; i < plan.diagnostics.length; i++) {
+    assert.ok(plan.diagnostics[i].start >= plan.diagnostics[i - 1].start, "diagnostics ordered by time");
+  }
+});
+
+check("aggressiveness is monotonic: aggressive removes >= balanced >= gentle", () => {
+  // A read with several medium pauses; more aggressive should remove at least as
+  // much as gentler settings (never less).
+  const w = words([
+    ["one", 0.0, 0.4],
+    ["two", 1.0, 1.4],   // 0.6s gap
+    ["three", 2.2, 2.6], // 0.8s gap
+    ["four", 3.6, 4.0],  // 1.0s gap
+    ["five", 5.2, 5.6],  // 1.2s gap
+  ]);
+  const silences: SilenceRegion[] = [
+    { start: 0.45, end: 0.95, thresholdDb: -36 },
+    { start: 1.45, end: 2.15, thresholdDb: -36 },
+    { start: 2.65, end: 3.55, thresholdDb: -36 },
+    { start: 4.05, end: 5.15, thresholdDb: -36 },
+  ];
+  const gentle = planCuts(w, 5.6, { silences, aggressiveness: "gentle" }).removedDuration;
+  const balanced = planCuts(w, 5.6, { silences, aggressiveness: "balanced" }).removedDuration;
+  const aggressive = planCuts(w, 5.6, { silences, aggressiveness: "aggressive" }).removedDuration;
+  assert.ok(balanced >= gentle - 1e-6, `balanced(${balanced.toFixed(3)}) >= gentle(${gentle.toFixed(3)})`);
+  assert.ok(aggressive >= balanced - 1e-6, `aggressive(${aggressive.toFixed(3)}) >= balanced(${balanced.toFixed(3)})`);
+});
+
+check("falls back to transcript-only behaviour when no silences are provided", () => {
+  const w = words([
+    ["first", 0.0, 0.5],
+    ["second", 2.5, 3.0],
+  ]);
+  const without = planCuts(w, 3.0);
+  assert.equal(without.boundariesSnapped, 0, "no snapping without audio");
+  assert.equal(without.silenceCuts, 1, "transcript silence still trimmed");
 });
 
 console.log(`\n${passed} checks passed.`);
