@@ -572,19 +572,20 @@ function makeProviders(over: Partial<StickerProviders> & {
   };
 }
 
-check("resolveOpenAiMax defaults to ~one-per-moment (relevance-gated) and honors the env override", () => {
+check("resolveOpenAiMax defaults to a hard cap of 6 and honors the env override", () => {
   delete process.env.MEME_OPENAI_MAX;
-  // Default: up to one generation per emphasis moment, floored at 1, ceilinged at 12.
-  assert.equal(resolveOpenAiMax(0), 1, "floor of 1 when no moments");
-  assert.equal(resolveOpenAiMax(3), 3, "one per moment");
-  assert.equal(resolveOpenAiMax(99), 12, "ceiling of 12");
+  // Default: a fixed ceiling of 6 OpenAI generations per video, regardless of
+  // how many moments the director picked.
+  assert.equal(resolveOpenAiMax(0), 6, "default cap is 6 even with no moments");
+  assert.equal(resolveOpenAiMax(3), 6, "default cap is 6, not per-moment");
+  assert.equal(resolveOpenAiMax(99), 6, "default cap stays 6 for many moments");
   // Explicit env override wins regardless of moment count.
   process.env.MEME_OPENAI_MAX = "0";
   assert.equal(resolveOpenAiMax(5), 0);
-  process.env.MEME_OPENAI_MAX = "5";
-  assert.equal(resolveOpenAiMax(2), 5);
+  process.env.MEME_OPENAI_MAX = "3";
+  assert.equal(resolveOpenAiMax(2), 3);
   process.env.MEME_OPENAI_MAX = "nonsense";
-  assert.equal(resolveOpenAiMax(4), 4, "invalid env → per-moment default");
+  assert.equal(resolveOpenAiMax(4), 6, "invalid env → default cap of 6");
   delete process.env.MEME_OPENAI_MAX;
 });
 
@@ -647,14 +648,25 @@ check("orchestrate NEVER exceeds an explicit OpenAI cap (prioritizing earliest m
   delete process.env.MEME_OPENAI_MAX;
 });
 
-check("orchestrate default cap = one gen per moment (relevance-gated, not a fixed 2)", async () => {
-  delete process.env.MEME_OPENAI_MAX; // no override → default allows one per moment
-  const moments = [moment(6, "a"), moment(10, "b"), moment(14, "c"), moment(18, "d")];
-  const p = makeProviders({ searchResults: {}, genUrls: ["/g/a.png", "/g/b.png", "/g/c.png", "/g/d.png"] });
+check("orchestrate default cap is a fixed 6 (generates up to 6, caps the rest)", async () => {
+  delete process.env.MEME_OPENAI_MAX; // no override → default hard cap of 6
+  // Eight unmatched moments; the default cap is 6, so only the six EARLIEST get
+  // generated and the remaining two stay captions-only.
+  const moments = Array.from({ length: 8 }, (_, i) => moment(6 + i * 4, `q${i}`));
+  const p = makeProviders({
+    searchResults: {},
+    genUrls: Array.from({ length: 8 }, (_, i) => `/g/${i}.png`),
+  });
   const res = await orchestrateStickers(moments, p);
-  assert.equal(res.openaiCap, 4, "default cap = number of moments (not 2)");
-  assert.equal(res.openaiUsed, 4, "every unmatched relevant moment can generate");
-  assert.equal(res.stickers.length, 4);
+  assert.equal(res.openaiCap, 6, "default cap = 6 (a fixed ceiling, not per-moment)");
+  assert.equal(res.openaiUsed, 6, "never exceeds the default cap of 6");
+  assert.equal(p.calls.generate.length, 6, "exactly six gen calls");
+  assert.equal(res.stickers.length, 6);
+  // Earliest-first prioritization: the six earliest moments generated, last two capped.
+  assert.deepEqual(res.stickers.map((s) => s.startTime), [6, 10, 14, 18, 22, 26]);
+  assert.equal(res.diagnostics[6].appliedSource, "none", "7th moment past the cap");
+  assert.equal(res.diagnostics[7].appliedSource, "none", "8th moment past the cap");
+  assert.ok(/cap \(6\/video\) reached/.test(res.diagnostics[6].review.reason), res.diagnostics[6].review.reason);
 });
 
 check("orchestrate skips OpenAI gen with a clear reason when no OpenAI key is present", async () => {

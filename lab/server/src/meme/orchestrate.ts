@@ -5,11 +5,10 @@
  *   1. FREE path — search Giphy + Tenor, then an AI fit-review picks the best
  *      candidate (or drops it). This is tried FIRST for every moment.
  *   2. PAID fallback — for moments the free path left WITHOUT a fitting sticker,
- *      generate one with OpenAI (gpt-image-1). Capped per video by
- *      MEME_OPENAI_MAX (default: up to one per emphasis moment, so relevance is
- *      the gate, bounded by a cost ceiling). When more moments need generation
- *      than the cap allows, the strongest/earliest moments win (deterministic
- *      prioritization) and the rest stay captions-only.
+ *      generate one with OpenAI (gpt-image-1). Capped per video at 6 OpenAI
+ *      generations by default (MEME_OPENAI_MAX overrides). When more moments need
+ *      generation than the cap allows, the strongest/earliest moments win
+ *      (deterministic prioritization) and the rest stay captions-only.
  *
  * The provider calls are INJECTED (search/review/generate/download), so this
  * whole orchestration — the source order, the per-video cap, the prioritization,
@@ -26,17 +25,17 @@ import type { EmphasisStickerClip } from "./sticker.js";
 import { placeSticker } from "./sticker.js";
 
 /**
- * OpenAI generations allowed per video. `MEME_OPENAI_MAX` overrides; otherwise we
- * allow up to ONE generation per emphasis moment, so RELEVANCE — not an arbitrary
- * number — is the gate: the director only marks moments where a sticker enhances
- * the message, and the fit-review drops anything off-topic. A safety CEILING
- * bounds the worst-case cost.
+ * OpenAI generations allowed per video. The DEFAULT cap is 6 — a hard ceiling on
+ * how many stickers we'll ever pay to generate per video, keeping cost bounded
+ * regardless of how many moments the director picks. `MEME_OPENAI_MAX` overrides
+ * (any value ≥ 0, e.g. 0 to disable the paid fallback entirely). The free
+ * Giphy/Tenor path is unaffected — this only caps PAID OpenAI generations.
  */
-export function resolveOpenAiMax(momentCount = 0): number {
+export const DEFAULT_OPENAI_MAX = 6;
+export function resolveOpenAiMax(_momentCount = 0): number {
   const raw = Number.parseInt(process.env.MEME_OPENAI_MAX || "", 10);
   if (Number.isFinite(raw) && raw >= 0) return raw;
-  const CEILING = 12;
-  return Math.min(Math.max(momentCount, 1), CEILING);
+  return DEFAULT_OPENAI_MAX;
 }
 
 /** The provider hooks the orchestrator drives (real impls or test mocks). */
