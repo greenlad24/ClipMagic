@@ -5,7 +5,7 @@
  * spans of the source do we keep?". It is intentionally dependency-free (no Node,
  * no ffmpeg, no DOM) so the EXACT same function can run:
  *   - in the browser, live, as the user drags the silence floor / gap / min-take
- *     controls and deletes takes (the interactive timeline editor), and
+ *     controls and toggles takes (the interactive timeline editor), and
  *   - on the server, to render precisely what was previewed.
  *
  * An identical copy lives at `lab/src/lib/cutSegments.ts` for the frontend
@@ -16,8 +16,8 @@
  *
  * THE EDITING RULES (exactly what the user asked for):
  *   1. Breaks = COMPLETE silence only. `silenceDb` is a true-silence floor
- *      (default -39 dBFS). Breaths and quiet speech sit above it and are NEVER
- *      treated as a break.
+ *      (default -39 dBFS, dial-able all the way to 0). Breaths and quiet speech
+ *      sit above it and are NEVER treated as a break.
  *   2. Only silences LONGER than `minSilence` (default 0.35s) are cut. A pause
  *      ≤ 0.35s is natural in-take spacing and is kept untouched.
  *   3. A silence > 0.35s is collapsed to EXACTLY a `gap` (default 0.35s) of dead
@@ -32,14 +32,19 @@
  *      or a sub-`minSilence` pause. Only the true-silence > `minSilence` BETWEEN
  *      sentences is cut. Where there is NO transcript (e.g. an untranscribed
  *      tail), takes fall back to the AUDIO-ENERGY islands so nothing is dropped.
- *   6. Only big chunks are takes. A loud island shorter than `minTake`
- *      (default 0.4s) is a stray blip — it is dropped along with the silence
- *      around it, never kept as its own take.
- *   7. Duplicate takes (the speaker repeating a line / re-takes) are detected
- *      from the TRANSCRIPT TEXT: near-duplicate sentences are grouped and only
- *      the LATEST take is kept; the earlier ones are auto-removed BY DEFAULT with
- *      a clear reason. This is deterministic and text-only (no AI), so preview
- *      and render agree, and the user can restore any of them in the timeline.
+ *   6. EVERY detected take is shown — none is silently dropped. A take shorter
+ *      than `minTake` (default 3.0s) is a likely stray blip, so it is DISABLED by
+ *      default with the reason "under {minTake}s", but it stays visible and the
+ *      user can re-enable it. Lowering the min-take slider re-enables the short
+ *      ones the user hasn't manually overridden. Only ENABLED takes contribute to
+ *      the keep-segments (preview + render).
+ *   7. Re-takes (the speaker repeating a line) are grouped per script PART and
+ *      only the BEST take per part is enabled by default; the other repeats are
+ *      DISABLED by default with the reason "duplicate — better take kept". This
+ *      grouping is the server-computed DEFAULT (an AI pass during analyze, or a
+ *      deterministic text heuristic as fallback) passed in as `defaults` here, so
+ *      the live client recompute and the render agree. The user can re-enable any
+ *      disabled take and disable any enabled one — manual toggles always win.
  */
 
 export interface Seg {
@@ -60,8 +65,9 @@ export interface Envelope {
 export interface CutSettings {
   /**
    * COMPLETE-SILENCE floor in dBFS. A gap counts as a cuttable break only when
-   * the audio is quieter than this — i.e. genuine digital silence, not breaths
-   * or low-energy speech. Default -39 (the user's tested sweet spot).
+   * the audio is quieter than this. Default -39; the slider spans the full
+   * 0…-60 range so the user can treat everything below a chosen loudness as a
+   * break (up to 0 dB) or only true digital silence (down to -60).
    */
   silenceDb: number;
   /**
@@ -82,8 +88,9 @@ export interface CutSettings {
    */
   gap: number;
   /**
-   * Minimum take length (s). A loud island shorter than this is a stray blip
-   * (not a real take) and is dropped with the surrounding silence. Default 0.4.
+   * Minimum take length (s). A take SHORTER than this is disabled by default
+   * (reason "under {minTake}s") but still shown + re-enableable; it never gets
+   * silently dropped. Default 3.0.
    */
   minTake: number;
 }
@@ -93,10 +100,17 @@ export const DEFAULT_SETTINGS: CutSettings = {
   minSilence: 0.35,
   keepPad: 0.05,
   gap: 0.35,
-  minTake: 0.4,
+  minTake: 3.0,
 };
 
-/** A kept chunk of speech ("take"), with a stable id and optional transcript. */
+/**
+ * A detected take ("take"), with a stable id and optional transcript. EVERY
+ * detected take is returned — none is dropped. `enabled` reflects whether it
+ * currently contributes to the keep-segments after defaults + user toggles;
+ * `reason` explains a disabled take ("under 3s" / "duplicate — better take
+ * kept"); `scriptPart` is the AI-assigned script part this take belongs to (for
+ * grouping re-takes), when known.
+ */
 export interface Take {
   /** Stable id derived from the take's rounded source start (survives re-threshold). */
   id: string;
@@ -104,12 +118,29 @@ export interface Take {
   end: number;
   /** Transcript snippet (filled from word timings) shown on the block. */
   text: string;
-  /**
-   * If this take was auto-removed as a duplicate of a LATER take, the human
-   * reason ("duplicate — earlier take of: …"). Undefined for kept takes. The UI
-   * dims these and lets the user restore them; render also drops them by default.
-   */
-  duplicateOf?: string;
+  /** Whether this take is currently enabled (kept). */
+  enabled: boolean;
+  /** Human reason a take is DISABLED (undefined when enabled). */
+  reason?: string;
+  /** The script part (group key) this take covers, when known (re-take grouping). */
+  scriptPart?: string;
+}
+
+/**
+ * The server-computed DEFAULT for which takes start DISABLED and why. This is
+ * the output of the analyze job's best-take selection (AI pass or heuristic
+ * fallback): re-takes that lost to a better take are listed here so the client's
+ * deterministic recompute and the render agree on the same default enabled-set.
+ * The under-minTake disabling is computed live in the core (so the slider
+ * re-enables short takes), NOT carried here.
+ */
+export interface TakeDefault {
+  /** The take id (see `takeId`) this default applies to. */
+  id: string;
+  /** Why it is disabled by default (e.g. "duplicate — better take kept"). */
+  reason: string;
+  /** The script part this take covers (so the UI can show the grouping). */
+  scriptPart?: string;
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -249,9 +280,11 @@ export function sentencesFromWords(words: Word[], silences: Seg[], s: CutSetting
  * are the loud spans of the envelope minus complete-silence. Audio islands that
  * are already covered by a sentence are NOT re-added (the sentence owns them).
  *
- * Finally we DROP any take shorter than `minTake`: a too-short loud island /
- * single-word blip is not a real take (RULE 6). Each take gets a STABLE id keyed
- * to its start so manual deletes survive a settings change.
+ * EVERY detected take is returned (RULE 6) — none is dropped. Each take is
+ * `enabled` by default; a take shorter than `minTake` is DISABLED by default
+ * with the reason "under {minTake}s" but still returned so the timeline can show
+ * it and the user can re-enable it (and lowering the slider re-enables it). Each
+ * take gets a STABLE id keyed to its start so toggles survive a settings change.
  */
 export function segmentTakes(
   env: Envelope,
@@ -282,7 +315,8 @@ export function segmentTakes(
   }
 
   // 3 ─ Order, merge any accidental overlaps (a sentence pad can touch an
-  //     island), drop blips, then label from the words.
+  //     island), then label from the words. Tiny sub-minTake takes are NOT
+  //     dropped — they are disabled by default with a reason (RULE 6).
   raw.sort((a, b) => a.start - b.start);
   const merged: Seg[] = [];
   for (const r of raw) {
@@ -291,23 +325,36 @@ export function segmentTakes(
     else merged.push({ start: r.start, end: r.end });
   }
 
+  // NOISE FLOOR (distinct from the user-facing minTake): a span shorter than
+  // this AND carrying no transcript is a keepPad/edge artifact, not a take the
+  // user recorded — it is never shown. Anything longer, or anything with words,
+  // is a real take and is always shown (disabled if under minTake).
+  const NOISE = 0.2;
+
   return merged
-    .filter((k) => k.end - k.start >= minTake)
     .map((k) => {
       const inside = words
         .filter((w) => w.end > k.start + 0.01 && w.start < k.end - 0.01)
         .map((w) => w.word.trim())
         .filter(Boolean);
+      const text = inside.join(" ").replace(/\s+/g, " ").trim();
+      const dur = k.end - k.start;
+      const short = dur < minTake;
       return {
         id: takeId(round3(k.start)),
         start: round3(k.start),
         end: round3(k.end),
-        text: inside.join(" ").replace(/\s+/g, " ").trim(),
+        text,
+        enabled: !short,
+        reason: short ? `under ${minTake}s` : undefined,
+        _noise: dur < NOISE && text === "",
       };
-    });
+    })
+    .filter((t) => !t._noise)
+    .map(({ _noise, ...t }) => t);
 }
 
-// ── Duplicate-take detection (RULE 7), transcript-text-based, deterministic ──
+// ── Duplicate-take detection (heuristic fallback), transcript-text-based ──────
 
 /** Normalize a take's text for comparison: lowercase, strip punctuation + fillers. */
 function normTokens(text: string): string[] {
@@ -337,49 +384,123 @@ function tokenOverlap(a: string[], b: string[]): number {
 const DUP_THRESHOLD = 0.6;
 
 /**
- * Detect duplicate takes from the transcript text and mark the EARLIER ones in
- * each duplicate group as removed (keep the LATEST). Deterministic and text-only
- * (no AI), so the client computes the exact same set the server renders.
+ * Heuristic, text-only best-take selection (the no-AI FALLBACK for the analyze
+ * job). Groups near-duplicate takes and, considering ONLY takes longer than
+ * `minTakeForBest`, keeps the LATEST qualifying take per group and disables the
+ * earlier repeats with the "duplicate — better take kept" reason. Returns the
+ * DEFAULT disabled-set (`TakeDefault[]`) the core consumes; deterministic so it
+ * matches between server and any client recompute.
  *
- * For each take (latest → earliest), if an EARLIER take's normalized text is a
- * near-duplicate (token overlap ≥ threshold), the earlier take is flagged with
- * `duplicateOf` = the latest take's snippet. Takes with too few content words to
- * compare are never flagged (a bare "—" or single filler can't be a duplicate).
- * Returns a NEW array; the take spans/ids are untouched.
+ * Takes with too few content words to compare are never grouped (a bare "—" or
+ * single filler can't be a duplicate). Short takes (≤ `minTakeForBest`) are
+ * never chosen as the keeper of a group (RULE 7: best take is > 3s).
  */
-export function markDuplicateTakes(takes: Take[]): Take[] {
+export function heuristicTakeDefaults(takes: Take[], minTakeForBest = 3.0): TakeDefault[] {
   const tokens = takes.map((t) => normTokens(t.text));
-  const out = takes.map((t) => ({ ...t }));
-  // Walk latest → earliest; the latest unflagged take in a group is the keeper.
-  for (let later = out.length - 1; later >= 0; later--) {
-    if (out[later].duplicateOf) continue; // already removed → not a keeper
-    if (tokens[later].length < 2) continue; // too little text to match on
-    for (let earlier = later - 1; earlier >= 0; earlier--) {
-      if (out[earlier].duplicateOf) continue;
-      if (tokens[earlier].length < 2) continue;
-      if (tokenOverlap(tokens[later], tokens[earlier]) >= DUP_THRESHOLD) {
-        const snippet = out[later].text.length > 48 ? out[later].text.slice(0, 47).trimEnd() + "…" : out[later].text;
-        out[earlier].duplicateOf = `duplicate — earlier take of: ${snippet}`;
+  const len = (i: number) => takes[i].end - takes[i].start;
+  const assigned = new Array<boolean>(takes.length).fill(false);
+  const defaults: TakeDefault[] = [];
+
+  // Build duplicate clusters by single-link similarity, then keep the BEST take
+  // per cluster (the LATEST take longer than minTakeForBest; if none qualifies,
+  // the longest). Every other member of the cluster is disabled — including a
+  // SHORT false-start that comes AFTER the real take. Order-independent so a
+  // re-take before OR after the keeper is handled.
+  for (let i = 0; i < takes.length; i++) {
+    if (assigned[i] || tokens[i].length < 2) continue;
+    const cluster = [i];
+    assigned[i] = true;
+    for (let j = i + 1; j < takes.length; j++) {
+      if (assigned[j] || tokens[j].length < 2) continue;
+      // Match against any current cluster member (single-link), so a chain of
+      // re-takes with minor drift still groups.
+      if (cluster.some((k) => tokenOverlap(tokens[k], tokens[j]) >= DUP_THRESHOLD)) {
+        cluster.push(j);
+        assigned[j] = true;
       }
     }
+    if (cluster.length < 2) continue; // one attempt → nothing to disable
+
+    // Choose the keeper: latest take > minTakeForBest, else the longest.
+    const qualifying = cluster.filter((k) => len(k) > minTakeForBest);
+    const keeper = qualifying.length
+      ? qualifying[qualifying.length - 1] // cluster is in start order → latest qualifying
+      : cluster.reduce((best, k) => (len(k) > len(best) ? k : best), cluster[0]);
+    const keeperSnippet = takes[keeper].text.length > 48
+      ? takes[keeper].text.slice(0, 47).trimEnd() + "…"
+      : takes[keeper].text;
+    for (const k of cluster) {
+      if (k === keeper) continue;
+      defaults.push({
+        id: takes[k].id,
+        reason: `duplicate — better take kept (${keeperSnippet})`,
+        scriptPart: keeperSnippet,
+      });
+    }
   }
-  return out;
+  return defaults;
 }
 
 /**
- * THE PARITY FUNCTION. Given the envelope, words, settings and the set of
- * manually-toggled take ids, produce the FINAL ordered keep-segment list that
- * preview plays and render trims to. Both sides call this; the render path
- * trims exactly these segments and inserts `gap` of silence between them. No
+ * Apply the server's DEFAULT disabled-set + the under-minTake rule + the user's
+ * manual toggles to the raw segmented takes, producing the final take list with
+ * `enabled`/`reason`/`scriptPart` resolved. Pure + deterministic, used by both
+ * the live client recompute and (indirectly, via computeKeepSegments) the render.
+ *
+ * Default disabled set (in priority order, the FIRST that applies wins the
+ * reason shown):
+ *   - server `defaults` (re-take that lost the best-take selection) → disabled,
+ *   - under-minTake (computed live so the slider re-enables short takes) → disabled.
+ * A manual toggle in `toggledTakeIds` flips whatever the resulting default is.
+ */
+export function applyDefaults(
+  takes: Take[],
+  defaults: TakeDefault[],
+  toggledTakeIds: string[],
+): Take[] {
+  const byId = new Map(defaults.map((d) => [d.id, d]));
+  const toggled = new Set(toggledTakeIds);
+  return takes.map((t) => {
+    const dup = byId.get(t.id);
+    // Build the DEFAULT (pre-toggle) enabled/reason. A re-take loss (server
+    // default) takes precedence over the under-minTake reason; if neither
+    // applies the take is enabled by default. `t.reason`/`t.enabled` already
+    // carry the under-minTake decision from segmentTakes (live with the slider).
+    let defaultEnabled: boolean;
+    let reason: string | undefined;
+    let scriptPart: string | undefined = dup?.scriptPart;
+    if (dup) {
+      defaultEnabled = false;
+      reason = dup.reason;
+    } else {
+      defaultEnabled = t.enabled; // under-minTake decision from segmentTakes
+      reason = t.enabled ? undefined : t.reason;
+    }
+    // Manual toggle flips the default.
+    const enabled = toggled.has(t.id) ? !defaultEnabled : defaultEnabled;
+    return {
+      ...t,
+      enabled,
+      reason: enabled ? undefined : reason,
+      scriptPart,
+    };
+  });
+}
+
+/**
+ * THE PARITY FUNCTION. Given the envelope, words, settings, the server's default
+ * disabled-set (best-take selection) and the set of manually-toggled take ids,
+ * produce the resolved take list AND the FINAL ordered keep-segment list that
+ * preview plays and render trims to. Both sides call this; the render path trims
+ * exactly the returned `keep` and inserts `gap` of silence between them. No
  * re-detection on the server → what you previewed is what you get.
  *
- * Duplicate takes (RULE 7) are auto-removed BY DEFAULT here. `toggledTakeIds`
- * flips a take's default keep/drop: a kept take in the set is dropped (manual
- * delete), and an auto-removed duplicate in the set is restored. This keeps the
- * existing non-destructive delete/undo while letting the user bring back any
- * duplicate the text-matcher removed.
+ * Only ENABLED takes contribute to `keep`. A take is disabled by default when it
+ * is under `minTake` (computed live, so lowering the slider re-enables it) or
+ * when the server's best-take selection marked it a losing re-take. The user's
+ * toggles always win over the defaults.
  *
- * Because the keep list is just the surviving takes and the spacing is a fixed
+ * Because the keep list is just the enabled takes and the spacing is a fixed
  * `gap` re-inserted only BETWEEN them, every cut silence (interior, leading, or
  * trailing) collapses correctly: interior → exactly one `gap`, leading/trailing
  * → nothing (RULES 3 & 4).
@@ -388,16 +509,11 @@ export function computeKeepSegments(
   env: Envelope,
   words: Word[],
   s: CutSettings,
+  defaults: TakeDefault[] = [],
   toggledTakeIds: string[] = [],
 ): { takes: Take[]; keep: Seg[]; gap: number } {
-  const toggled = new Set(toggledTakeIds);
-  const takes = markDuplicateTakes(segmentTakes(env, words, s));
-  const kept = takes.filter((t) => {
-    const removedByDefault = Boolean(t.duplicateOf);
-    // A toggle flips the default: drop a kept take, or restore a duplicate.
-    return toggled.has(t.id) ? removedByDefault : !removedByDefault;
-  });
-  const keep = kept.map((t) => ({ start: t.start, end: t.end }));
+  const takes = applyDefaults(segmentTakes(env, words, s), defaults, toggledTakeIds);
+  const keep = takes.filter((t) => t.enabled).map((t) => ({ start: t.start, end: t.end }));
   return { takes, keep, gap: s.gap };
 }
 
