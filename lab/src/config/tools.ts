@@ -5,6 +5,7 @@ import {
   HardDrive,
   Send,
   FileText,
+  Sticker,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -69,6 +70,16 @@ export const TOOLS: ToolDefinition[] = [
     status: 'live',
     accent: 'green',
     detail: 'Clean-up pass',
+  },
+  {
+    id: 'meme',
+    title: 'Sticker Shorts',
+    description: 'Clean narration + popping captions, with funny AI stickers that pop in below the captions to land the joke.',
+    icon: Sticker,
+    route: '/meme',
+    status: 'live',
+    accent: 'pink',
+    detail: 'Commentary / meme',
   },
   {
     id: 'storage',
