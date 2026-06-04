@@ -62,6 +62,7 @@ async function uploadSinglePost(blob: Blob, filename: string, onProgress?: (f: n
     const xhr = new XMLHttpRequest();
     let settled = false;
     let lastTick = Date.now();
+    let uploadSent = false; // true once the whole body is on the wire
 
     const finish = (fn: () => void) => {
       if (settled) return;
@@ -70,9 +71,13 @@ async function uploadSinglePost(blob: Blob, filename: string, onProgress?: (f: n
       fn();
     };
 
-    // Abort if the upload makes no progress for STALL_MS (frozen connection).
+    // Abort ONLY while bytes are actively in flight. Once the body is fully sent,
+    // the server is processing (disk write + ffprobe of a multi-GB file can take
+    // well over a minute) with NO further progress events — so we must stop the
+    // stall watchdog and just wait for the response. Otherwise a successful big
+    // upload gets aborted as "stalled". (This was the 1GB+ failure.)
     const watchdog = setInterval(() => {
-      if (Date.now() - lastTick > STALL_MS) {
+      if (!uploadSent && Date.now() - lastTick > STALL_MS) {
         try { xhr.abort(); } catch { /* ignore */ }
         finish(() => reject(new Error("Upload stalled — no data sent for 60s. Check your connection and try again.")));
       }
@@ -84,6 +89,8 @@ async function uploadSinglePost(blob: Blob, filename: string, onProgress?: (f: n
       lastTick = Date.now();
       if (e.lengthComputable) onProgress?.(e.loaded / e.total);
     };
+    // Body fully sent → server is now processing; stop the stall watchdog.
+    xhr.upload.onload = () => { uploadSent = true; };
     xhr.upload.onerror = () =>
       finish(() => reject(new Error("Upload failed — network error while sending the file.")));
     xhr.onerror = () => finish(() => reject(new Error("Upload failed — network error.")));
@@ -182,6 +189,7 @@ const xhrChunkSender: ChunkSender = ({ uploadId, index, blob, onProgress }) =>
     const xhr = new XMLHttpRequest();
     let settled = false;
     let lastTick = Date.now();
+    let chunkSent = false;
     const finish = (fn: () => void) => {
       if (settled) return;
       settled = true;
@@ -189,7 +197,7 @@ const xhrChunkSender: ChunkSender = ({ uploadId, index, blob, onProgress }) =>
       fn();
     };
     const watchdog = setInterval(() => {
-      if (Date.now() - lastTick > STALL_MS) {
+      if (!chunkSent && Date.now() - lastTick > STALL_MS) {
         try { xhr.abort(); } catch { /* ignore */ }
         finish(() => reject(new Error("chunk stalled — no data for 60s")));
       }
@@ -201,6 +209,7 @@ const xhrChunkSender: ChunkSender = ({ uploadId, index, blob, onProgress }) =>
       lastTick = Date.now();
       if (e.lengthComputable) onProgress(e.loaded);
     };
+    xhr.upload.onload = () => { chunkSent = true; };
     xhr.upload.onerror = () => finish(() => reject(new Error("network error sending chunk")));
     xhr.onerror = () => finish(() => reject(new Error("network error")));
     xhr.onabort = () => finish(() => reject(new Error("chunk aborted")));
@@ -328,8 +337,11 @@ export async function uploadChunked(
 
 export async function uploadFile(args: UploadFileArgs): Promise<UploadFileResult> {
   const blob = toBlob(args.data);
-  if (blob.size > CHUNKED_THRESHOLD) {
-    return uploadChunked(blob, args.filename, { onProgress: args.onProgress });
-  }
+  // Single streaming upload for ALL sizes — NO 8MB chunking. multer streams the
+  // request body straight to disk (one on-disk copy, no 2x assembly that chunking
+  // needs), and the watchdog now stops once the body is sent so multi-GB files
+  // (1–2GB) aren't falsely aborted during server-side processing. The chunked,
+  // resumable path (`uploadChunked`) stays available for opt-in use but is not
+  // used by default.
   return uploadSinglePost(blob, args.filename, args.onProgress);
 }

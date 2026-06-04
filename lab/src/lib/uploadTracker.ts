@@ -66,12 +66,14 @@ export function finishTransfer(id: string, status: 'done' | 'failed' | 'canceled
   if (error) t.error = error;
   t.updatedAt = Date.now();
   emit();
-  // Keep terminal transfers visible briefly in the panel's "Recent" section,
-  // then drop them so the store doesn't grow unbounded.
+  // A SUCCESSFUL transfer disappears quickly; a FAILED/canceled one lingers for
+  // minutes so the user actually sees (and can read) why it failed — otherwise a
+  // fast failure would vanish before they look at the panel.
+  const ttl = status === 'done' ? 8_000 : 5 * 60_000;
   setTimeout(() => {
     transfers.delete(id);
     emit();
-  }, 8000);
+  }, ttl);
 }
 
 /** React hook: the live list of transfers, newest first. */

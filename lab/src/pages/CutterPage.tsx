@@ -67,6 +67,7 @@ export default function CutterPage() {
   const [files, setFiles] = useState<QueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [run, setRun] = useState<CutRun | null>(null);
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
   const [isDragging, setIsDragging] = useState(false);
@@ -116,6 +117,7 @@ export default function CutterPage() {
   const start = async () => {
     if (files.length === 0) return;
     setUploading(true);
+    setUploadError(null);
     const items: Array<{ sourceUrl: string; title: string }> = [];
     try {
       for (let i = 0; i < files.length; i++) {
@@ -140,7 +142,9 @@ export default function CutterPage() {
       if (res.run) setRun(res.run);
       startPolling();
     } catch (e: any) {
-      toast.error('Upload failed — ' + (e?.message?.slice(0, 100) ?? 'unknown error'));
+      const msg = e?.message ?? 'unknown error';
+      setUploadError(msg);
+      toast.error('Upload failed — ' + String(msg).slice(0, 100));
     } finally {
       setUploading(false);
       setUploadMsg('');
@@ -152,6 +156,7 @@ export default function CutterPage() {
   const openEditor = async () => {
     if (files.length === 0) return;
     setUploading(true);
+    setUploadError(null);
     try {
       const it = files[0];
       const title = it.title.replace(/\.[^.]+$/, '');
@@ -166,7 +171,9 @@ export default function CutterPage() {
       setEditor({ sourceUrl, title });
       setFiles((prev) => prev.slice(1));
     } catch (e: any) {
-      toast.error('Upload failed — ' + (e?.message?.slice(0, 100) ?? 'unknown error'));
+      const msg = e?.message ?? 'unknown error';
+      setUploadError(msg);
+      toast.error('Upload failed — ' + String(msg).slice(0, 100));
     } finally {
       setUploading(false);
       setUploadMsg('');
@@ -279,6 +286,11 @@ export default function CutterPage() {
               </div>
             </div>
             {uploading && <p className="text-xs text-muted-foreground">{uploadMsg}</p>}
+            {!uploading && uploadError && (
+              <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <span className="font-medium">Upload failed.</span> {uploadError}
+              </div>
+            )}
             <div className="max-h-32 overflow-y-auto text-xs text-muted-foreground space-y-0.5">
               {files.map((f, i) => (
                 <div key={i} className="truncate flex items-center gap-1.5">
