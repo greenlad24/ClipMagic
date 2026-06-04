@@ -133,6 +133,11 @@ export type GetServiceStatusOutputType = {
   renderUrl?: string;
   veo3Url?: string;
   remotionUrl?: string;
+  motionGraphicsForceDisabled?: boolean;
+  transcriptionConfigured?: boolean;
+  directorConfigured?: boolean;
+  kinoviConfigured?: boolean;
+  stockConfigured?: boolean;
 };
 export type TestKinoviApiOutputType = {
   success: boolean;

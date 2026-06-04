@@ -28,7 +28,8 @@ import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
 import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
-import { planMotionGraphics } from "../motion/director.js";
+import { planMotionGraphics, motionGraphicsEnabledFor } from "../motion/director.js";
+import { remotionRuntimeAvailable } from "../motion/render.js";
 import { runMemePipeline } from "../meme/pipeline.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
@@ -46,6 +47,9 @@ const createProject: Handler = async (input, userId) => {
       contextHint: input.contextHint,
       accentColor: input.accentColor ?? "#FFD60A",
       musicTrack: input.musicTrackId ?? undefined,
+      // Per-video motion-graphics toggle. Default ON; only persisted as false
+      // when the user explicitly switched it off in the create flow.
+      motionGraphics: input.motionGraphics === false ? false : true,
       user: userId,
       audioUrl: input.audioUrl,
       videoChunksJson: input.videoChunksJson,
@@ -166,16 +170,31 @@ const deleteMusicTrack: Handler = async (input) => {
 
 // ── Service status (drives the /setup page) ──────────────────────────────────
 const getServiceStatus: Handler = async () => {
+  // Probe whether Remotion + Chromium are actually usable here (cached after the
+  // first call), so the UI / curl can confirm motion graphics & stickers will
+  // render — just like the AI keys are reported. This is the RUNTIME probe, so
+  // it reflects real readiness regardless of the per-video toggle.
+  const remotionReady = await remotionRuntimeAvailable();
+  const browserExe = config.remotionBrowserExecutable || undefined;
   // On the self-hosted server, render is always available locally.
   return {
     captureConfigured: !!process.env.ZITE_CAPTURE_SERVICE_URL,
     renderConfigured: true,
     veo3Configured: !!process.env.ZITE_KINOVI_API_KEY,
-    remotionConfigured: false,
+    // Remotion (motion graphics + stickers) is "configured" when Chromium is
+    // actually launchable here, not merely when a flag is set.
+    remotionConfigured: remotionReady,
     captureUrl: process.env.ZITE_CAPTURE_SERVICE_URL || undefined,
     renderUrl: "local (built-in FFmpeg)",
     veo3Url: process.env.ZITE_KINOVI_API_KEY ? "configured" : undefined,
-    remotionUrl: undefined,
+    remotionUrl: remotionReady
+      ? browserExe
+        ? `chromium=${browserExe}`
+        : "ready (bundled Chromium)"
+      : undefined,
+    // Whether the SHORT-FORM motion-graphics stage is globally force-disabled
+    // (MOTION_GRAPHICS=0). Default is on, gated per-video by the create toggle.
+    motionGraphicsForceDisabled: config.motionGraphicsForceDisabled,
     // AI pipeline configuration (so the UI / curl can confirm keys are live).
     transcriptionConfigured: !!process.env.GROQ_API_KEY,
     directorConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
@@ -490,13 +509,16 @@ const submitRendiJob: Handler = async (input) => {
     scenes.reduce((max, s) => Math.max(max, s.endTime), 0) ||
     0;
 
-  // ── Motion graphics (flag-gated) ───────────────────────────────────────────
+  // ── Motion graphics (default ON, per-video toggle) ─────────────────────────
   // Ask the director where (if anywhere) tasteful Remotion overlays are
-  // motivated by the script. Best-effort: returns [] when MOTION_GRAPHICS is
-  // off, Claude is unconfigured, or nothing is warranted — the manifest is then
-  // identical to before and the render is unaffected.
+  // motivated by the script. Default ON: graphics run unless the user switched
+  // the per-video toggle OFF (project.motionGraphics === false) or the global
+  // MOTION_GRAPHICS=0 escape hatch force-disables them. Best-effort even when
+  // on: planMotionGraphics returns [] when Claude is unconfigured, Chromium
+  // isn't usable, or nothing is warranted — the manifest is then identical to
+  // before and the render is unaffected.
   let motionGraphics: MotionGraphicClip[] = [];
-  if (config.motionGraphicsEnabled) {
+  if (motionGraphicsEnabledFor(project.motionGraphics)) {
     const beats = scenes.map((s) => ({ start: s.startTime, end: s.endTime }));
     motionGraphics = await planMotionGraphics({
       transcript: (project.transcript as string) || "",

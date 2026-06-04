@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Library, Trash2, CheckSquare, Square, X, Video, ArrowLeft } from 'lucide-react';
+import { Library, Trash2, CheckSquare, Square, X, Video, ArrowLeft, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
@@ -41,6 +41,8 @@ export default function CreatePage() {
   const [contextHint, setContextHint] = useState('');
   const [accentColor, setAccentColor] = useState('#FFD60A');
   const [selectedTrackId, setSelectedTrackId] = useState('auto');
+  // Motion graphics default ON; users can switch it off per video.
+  const [motionGraphics, setMotionGraphics] = useState(true);
 
   // Selection / delete state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -127,6 +129,7 @@ export default function CreatePage() {
           contextHint={contextHint}
           accentColor={accentColor}
           musicTrackId={selectedTrackId === 'auto' ? undefined : selectedTrackId}
+          motionGraphics={motionGraphics}
           onProjectCreated={handleProjectCreated}
         />
 
@@ -172,6 +175,35 @@ export default function CreatePage() {
               <p className="text-xs text-muted-foreground mt-1">No tracks yet. <button className="underline" onClick={() => setShowLibrary(true)}>Add one</button></p>
             )}
           </div>
+        </div>
+
+        {/* Motion graphics toggle — default on, switchable per video. */}
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/10 px-4 py-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">Motion graphics</p>
+              <p className="text-xs text-muted-foreground">
+                Tasteful AI-placed lower-thirds, stat call-outs &amp; section cards — added only where the script earns them.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={motionGraphics}
+            aria-label="Toggle motion graphics"
+            onClick={() => setMotionGraphics((v) => !v)}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+              motionGraphics ? 'bg-primary' : 'bg-muted'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                motionGraphics ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
         </div>
 
         {projects.length > 0 && (

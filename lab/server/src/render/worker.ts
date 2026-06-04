@@ -78,13 +78,16 @@ async function processJob(job: RenderJob): Promise<void> {
     }
   });
 
-  // ── Motion-graphics stage (flag-gated, best-effort) ────────────────────────
+  // ── Motion-graphics stage (manifest-driven, best-effort) ───────────────────
   // Composite the director's Remotion overlays onto the just-finished render. A
-  // SEPARATE pass that writes a new file and atomically replaces `abs`; if the
-  // flag is off or anything fails, `abs` is left exactly as the main render
-  // produced it (zero regression). Only manifest jobs carry motion graphics.
+  // SEPARATE pass that writes a new file and atomically replaces `abs`. The
+  // decision (default-on toggle / force-disable) was already made at submit time
+  // and is captured by whether the manifest carries any motionGraphics, so the
+  // worker simply applies what's there. applyMotionGraphics still re-checks
+  // Chromium availability and force-disable internally; on any failure `abs` is
+  // left exactly as the main render produced it (zero regression).
   let motionSpawns = 0;
-  if (job.kind === "manifest" && config.motionGraphicsEnabled) {
+  if (job.kind === "manifest") {
     const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
     const graphics = manifest.motionGraphics ?? [];
     if (graphics.length > 0) {

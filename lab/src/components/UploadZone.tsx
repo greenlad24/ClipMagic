@@ -10,6 +10,8 @@ interface Props {
   contextHint: string;
   accentColor: string;
   musicTrackId?: string;
+  /** Per-video motion-graphics toggle (default on). */
+  motionGraphics?: boolean;
   onProjectCreated: (projectId: string) => void;
 }
 
@@ -30,7 +32,7 @@ async function getVideoMeta(file: File): Promise<{ duration: number; aspectRatio
 
 type Step = 'idle' | 'extracting' | 'uploading' | 'creating';
 
-export default function UploadZone({ contextHint, accentColor, musicTrackId, onProjectCreated }: Props) {
+export default function UploadZone({ contextHint, accentColor, musicTrackId, motionGraphics = true, onProjectCreated }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [step, setStep] = useState<Step>('idle');
   const [progress, setProgress] = useState(0);
@@ -95,6 +97,7 @@ export default function UploadZone({ contextHint, accentColor, musicTrackId, onP
         contextHint: contextHint || undefined,
         accentColor,
         musicTrackId: musicTrackId || undefined,
+        motionGraphics,
         audioUrl,
         videoChunksJson: JSON.stringify([videoUrl]),
       });

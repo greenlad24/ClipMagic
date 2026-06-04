@@ -15,6 +15,7 @@
 import { claudeChatJSON, anthropicConfigured } from "../ai/claude.js";
 import { aiConfig } from "../ai/config.js";
 import { config } from "../config.js";
+import { remotionRuntimeAvailable } from "./render.js";
 import type { MotionGraphicClip, MotionGraphicKind } from "../render/manifest.js";
 
 export interface DirectorContext {
@@ -47,6 +48,22 @@ Return ONLY JSON of this exact shape:
 If nothing is motivated, return { "graphics": [] }.`;
 
 const KINDS: MotionGraphicKind[] = ["lower-third", "stat-callout", "section-card"];
+
+/**
+ * Resolve whether the short-form motion-graphics director should run for a given
+ * project, from the per-video toggle and the global escape hatch — the single
+ * source of truth used by submitRendiJob (and unit-tested directly).
+ *
+ * DEFAULT ON: motion graphics run unless the user switched the per-video toggle
+ * OFF (projectMotionGraphics === false) or MOTION_GRAPHICS=0 force-disables them
+ * globally. `undefined`/missing toggle = on (older projects, default create).
+ * This decision is independent of runtime availability (Chromium/Claude), which
+ * planMotionGraphics checks separately and falls back on gracefully.
+ */
+export function motionGraphicsEnabledFor(projectMotionGraphics: unknown): boolean {
+  if (config.motionGraphicsForceDisabled) return false;
+  return projectMotionGraphics !== false;
+}
 
 /** Cap on graphics density: ~1 graphic per 18s of video, min 2 allowance. */
 function maxGraphicsFor(durationSeconds: number): number {
@@ -122,7 +139,12 @@ function sanitize(
 export async function planMotionGraphics(
   ctx: DirectorContext,
 ): Promise<MotionGraphicClip[]> {
-  if (!config.motionGraphicsEnabled) return [];
+  // Default ON. The per-video toggle is decided by the caller (submitRendiJob);
+  // here we only honor the global force-disable escape hatch (MOTION_GRAPHICS=0)
+  // and the Chromium availability probe — no graphics planned if Remotion can't
+  // render them anyway.
+  if (config.motionGraphicsForceDisabled) return [];
+  if (!(await remotionRuntimeAvailable())) return [];
   if (!anthropicConfigured()) return [];
   const transcript = (ctx.transcript || "").trim();
   if (transcript.length < 40 || ctx.durationSeconds < 8) return [];
