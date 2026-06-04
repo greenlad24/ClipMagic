@@ -38,6 +38,27 @@ export function imageGenConfigured(): boolean {
   return !!process.env.ZITE_OPENAI_ACCESS_TOKEN;
 }
 
+/**
+ * Hard content-safety constraint prepended to EVERY generation prompt. An
+ * offensive sticker is never acceptable, so we explicitly forbid the categories
+ * that would make one — no matter what the director's imagePrompt asked for.
+ * OpenAI's own safety filters also apply; this is belt-and-suspenders so the
+ * instruction is in the prompt itself.
+ */
+export const SAFETY_PROMPT =
+  "Clean, brand-safe, all-ages content ONLY. Absolutely NO nudity or sexual " +
+  "content, NO gore/violence/blood, NO slurs/hate symbols/hateful imagery, NO " +
+  "drugs, and NO shocking, disturbing, or offensive imagery of any kind. Keep it " +
+  "a friendly, funny, family-safe reaction sticker.";
+
+/**
+ * Wrap a raw image-gen prompt with the hard safety constraint. Pure (no I/O) so
+ * the guarantee — that the constraint is always present — is unit-testable.
+ */
+export function withSafetyConstraint(prompt: string): string {
+  return `${prompt}\n\n${SAFETY_PROMPT}`;
+}
+
 // ── Tiny semaphore (bounded concurrency) ──────────────────────────────────────
 const MAX_CONCURRENCY = Math.max(1, Number.parseInt(process.env.MEME_IMAGE_CONCURRENCY || "3", 10));
 let active = 0;
@@ -70,7 +91,11 @@ export interface GeneratedImage {
  * Generate (or reuse) one sticker image for a prompt. Returns null on any
  * failure or when no token is configured — caller falls back to captions-only.
  */
-export async function generateStickerImage(prompt: string): Promise<GeneratedImage | null> {
+export async function generateStickerImage(rawPrompt: string): Promise<GeneratedImage | null> {
+  // Hard-constrain EVERY generation to clean, brand-safe content before it ever
+  // reaches the model — an offensive sticker is never acceptable. The cache key
+  // is derived from the SAFE prompt so the constraint can't be bypassed via cache.
+  const prompt = withSafetyConstraint(rawPrompt);
   const key = cacheKey(prompt);
   const file = path.join(stickersDir(), `${key}.png`);
   const url = `/api/outputs/stickers/${key}.png`;

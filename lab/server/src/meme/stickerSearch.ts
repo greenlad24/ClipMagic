@@ -110,9 +110,12 @@ export function parseGiphyStickers(json: unknown, limit = PER_PROVIDER_LIMIT): S
 async function searchGiphy(query: string, limit: number): Promise<StickerCandidate[]> {
   if (!giphyConfigured()) return [];
   try {
+    // rating=pg restricts Giphy to clean, brand-safe stickers (no R/NSFW). This
+    // is a HARD content-safety floor — an offensive sticker is never acceptable,
+    // so we never request beyond a PG rating regardless of how well it might fit.
     const url =
       `${GIPHY_BASE}/v1/stickers/search?api_key=${encodeURIComponent(process.env.GIPHY_API_KEY!)}` +
-      `&q=${encodeURIComponent(query)}&limit=${limit * 2}&rating=pg-13&bundle=messaging_non_clips`;
+      `&q=${encodeURIComponent(query)}&limit=${limit * 2}&rating=pg&bundle=messaging_non_clips`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`giphy ${res.status}`);
     const json = await res.json();
@@ -172,10 +175,13 @@ export function parseTenorStickers(json: unknown, limit = PER_PROVIDER_LIMIT): S
 async function searchTenor(query: string, limit: number): Promise<StickerCandidate[]> {
   if (!tenorConfigured()) return [];
   try {
+    // contentfilter=high is Tenor's strictest safe rating (clean, brand-safe
+    // only). This is a HARD content-safety floor — an offensive sticker is never
+    // acceptable — so we never request below the strictest filter.
     const url =
       `${TENOR_BASE}/v2/search?key=${encodeURIComponent(process.env.TENOR_API_KEY!)}` +
       `&q=${encodeURIComponent(query)}&limit=${limit * 2}&searchfilter=sticker` +
-      `&media_filter=png_transparent,webp_transparent,gif_transparent&contentfilter=medium`;
+      `&media_filter=png_transparent,webp_transparent,gif_transparent&contentfilter=high`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`tenor ${res.status}`);
     const json = await res.json();

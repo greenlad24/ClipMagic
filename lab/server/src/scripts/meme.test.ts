@@ -489,6 +489,54 @@ check("parse honors the per-provider candidate limit", () => {
   assert.equal(parseTenorStickers(tenor, 2).length, 2);
 });
 
+// ── Content safety: clean-only search ratings + a safe-constrained gen prompt ──
+import { searchStickerCandidates } from "../meme/stickerSearch.js";
+import { withSafetyConstraint, SAFETY_PROMPT } from "../meme/imagegen.js";
+
+check("sticker search requests a SAFE content rating on BOTH providers (clean only)", async () => {
+  // Stub fetch to capture the request URLs without any network. Both provider
+  // keys are set so both branches build a URL; we assert the safe-rating params.
+  const realFetch = globalThis.fetch;
+  const realGiphy = process.env.GIPHY_API_KEY;
+  const realTenor = process.env.TENOR_API_KEY;
+  const urls: string[] = [];
+  process.env.GIPHY_API_KEY = "test-giphy";
+  process.env.TENOR_API_KEY = "test-tenor";
+  globalThis.fetch = (async (input: unknown) => {
+    urls.push(String(input));
+    return { ok: true, json: async () => ({ data: [], results: [] }) } as Response;
+  }) as typeof fetch;
+  try {
+    await searchStickerCandidates("anything", 3);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realGiphy === undefined) delete process.env.GIPHY_API_KEY; else process.env.GIPHY_API_KEY = realGiphy;
+    if (realTenor === undefined) delete process.env.TENOR_API_KEY; else process.env.TENOR_API_KEY = realTenor;
+  }
+  const giphyUrl = urls.find((u) => u.includes("/v1/stickers/search"));
+  const tenorUrl = urls.find((u) => u.includes("/v2/search"));
+  assert.ok(giphyUrl, "giphy was queried");
+  assert.ok(tenorUrl, "tenor was queried");
+  // Giphy: rating=pg (clean), and never the laxer pg-13/r/etc.
+  assert.ok(/[?&]rating=pg(&|$)/.test(giphyUrl!), `giphy rating=pg (got ${giphyUrl})`);
+  assert.ok(!/rating=pg-13|rating=r\b|rating=nsfw/.test(giphyUrl!), "giphy never requests an unsafe rating");
+  // Tenor: contentfilter=high (strictest), never medium/low/off.
+  assert.ok(/[?&]contentfilter=high(&|$)/.test(tenorUrl!), `tenor contentfilter=high (got ${tenorUrl})`);
+  assert.ok(!/contentfilter=(medium|low|off)/.test(tenorUrl!), "tenor never requests a lax filter");
+});
+
+check("the OpenAI gen prompt always carries the brand-safety constraint", () => {
+  // The safety text forbids the categories that would make a sticker offensive.
+  for (const banned of [/nudity|sexual/i, /gore|violen/i, /slur|hate/i, /drug/i, /shocking|disturbing|offensive/i]) {
+    assert.ok(banned.test(SAFETY_PROMPT), `safety prompt forbids ${banned}`);
+  }
+  // withSafetyConstraint appends the constraint to ANY raw prompt, so every
+  // generation is hard-constrained regardless of what the director wrote.
+  const wrapped = withSafetyConstraint("a cartoon brain exploding");
+  assert.ok(wrapped.includes("a cartoon brain exploding"), "keeps the original subject");
+  assert.ok(wrapped.includes(SAFETY_PROMPT), "always appends the safety constraint");
+});
+
 // ── AI fit-review: pick / drop / invalid (mocked vision decision) ──────────────
 const cands: StickerCandidate[] = [
   { provider: "giphy", url: "g0.png", title: "mind blown" },
