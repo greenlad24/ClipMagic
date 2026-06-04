@@ -72,6 +72,81 @@ export function parseSilenceDetect(
   return regions;
 }
 
+/** A per-frame dBFS energy envelope of the narration, for the timeline editor. */
+export interface AudioEnvelope {
+  /** dBFS per frame (floored at `floorDb`, never -Infinity), oldest → newest. */
+  db: number[];
+  /** Seconds per frame (== the hop between samples). */
+  hop: number;
+  /** Source duration in seconds. */
+  duration: number;
+  /** The floor used for digital-silent frames. */
+  floorDb: number;
+}
+
+/**
+ * Parse ffmpeg `astats` (metadata mode) stderr/stdout into a dBFS-per-frame
+ * envelope. With `astats=metadata=1:reset=1` + `ametadata=print`, ffmpeg emits,
+ * once per analysis window, a line like:
+ *   lavfi.astats.Overall.RMS_level=-23.456789
+ * Digital silence is reported as `-inf`; we clamp it to `floorDb` so the client
+ * envelope is finite and renders. Split out from the spawn for unit testing.
+ */
+export function parseAstatsEnvelope(text: string, floorDb: number): number[] {
+  const db: number[] = [];
+  const re = /lavfi\.astats\.Overall\.RMS_level=(-?\d+(?:\.\d+)?|-?inf|nan)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const raw = m[1].toLowerCase();
+    let v = raw === "-inf" || raw === "inf" || raw === "nan" ? floorDb : Number.parseFloat(raw);
+    if (!Number.isFinite(v) || v < floorDb) v = floorDb;
+    if (v > 0) v = 0;
+    db.push(Math.round(v * 100) / 100);
+  }
+  return db;
+}
+
+/**
+ * Build a dBFS energy envelope for the timeline editor: ~`fps` samples/second of
+ * RMS level across the whole narration. The client thresholds THIS envelope live
+ * (in `silencesFromEnvelope`) to recompute cut regions without a server round
+ * trip — and because the server renders the explicit keep-segments the client
+ * derives from the very same envelope, preview and render agree by construction.
+ * Best-effort: returns an empty envelope on any ffmpeg failure.
+ */
+export function computeEnvelope(
+  srcPath: string,
+  duration: number,
+  fps = 50,
+  floorDb = -60,
+): Promise<AudioEnvelope> {
+  const hop = 1 / fps;
+  // astats over fixed-length windows = our frame size. metadata=1 prints stats;
+  // reset=1 means each window is independent; ametadata=print emits them.
+  const af =
+    `aresample=16000,asetnsamples=n=${Math.max(1, Math.round(16000 * hop))}:p=0,` +
+    `astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level`;
+  return new Promise((resolve) => {
+    const p = spawn(config.ffmpegPath, [
+      "-hide_banner", "-nostats",
+      "-i", srcPath,
+      "-vn", "-af", af,
+      "-f", "null", "-",
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+    let buf = "";
+    p.stdout.on("data", (d) => (buf += d.toString()));
+    p.stderr.on("data", (d) => (buf += d.toString()));
+    p.on("error", () => resolve({ db: [], hop, duration, floorDb }));
+    p.on("close", () => {
+      try {
+        resolve({ db: parseAstatsEnvelope(buf, floorDb), hop, duration, floorDb });
+      } catch {
+        resolve({ db: [], hop, duration, floorDb });
+      }
+    });
+  });
+}
+
 /**
  * Run a single whole-file `silencedetect` pass and return the true silent
  * regions. Best-effort: returns [] on any ffmpeg failure so the planner can fall

@@ -17,6 +17,13 @@ export interface CutSpec {
   segments: Segment[];
   /** Whether the source has an audio stream. */
   hasAudio: boolean;
+  /**
+   * Fixed pause (s) inserted BETWEEN consecutive kept segments so takes don't
+   * butt-splice. The interactive editor sets this (default 0.35s); it is honored
+   * identically in the browser preview and here at render so "what you preview
+   * is what you get". 0 = legacy butt-splice behaviour (auto bulk path).
+   */
+  gap?: number;
 }
 
 /**
@@ -29,7 +36,12 @@ export function buildCutArgs(spec: CutSpec, outputPath: string): { args: string[
   const segs = spec.segments.filter((s) => s.end > s.start);
   if (segs.length === 0) throw new Error("Cut job has no keep-segments");
 
-  const totalDuration = segs.reduce((s, seg) => s + (seg.end - seg.start), 0);
+  // Fixed inter-take gap (s) inserted between consecutive segments. Held as a
+  // freeze of the previous segment's last frame + silent audio, so the gap is a
+  // natural pause (not a black flash). Must match the browser preview's spacing.
+  const GAP = Math.max(0, spec.gap ?? 0);
+  const gapTotal = GAP * Math.max(0, segs.length - 1);
+  const totalDuration = segs.reduce((s, seg) => s + (seg.end - seg.start), 0) + gapTotal;
 
   // Every splice between two non-adjacent source regions lands at an arbitrary
   // waveform sample, almost never a zero crossing — so a raw concat produces an
@@ -45,15 +57,20 @@ export function buildCutArgs(spec: CutSpec, outputPath: string): { args: string[
   segs.forEach((seg, i) => {
     const s = seg.start.toFixed(3);
     const e = seg.end.toFixed(3);
-    parts.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS[v${i}]`);
+    // Append the inter-take gap to every segment except the last: hold the last
+    // video frame (tpad clone) + pad the audio with silence for `GAP` seconds.
+    const addGap = GAP > 0 && i < segs.length - 1;
+    const vGap = addGap ? `,tpad=stop_mode=clone:stop_duration=${GAP.toFixed(3)}` : "";
+    parts.push(`[0:v]trim=start=${s}:end=${e},setpts=PTS-STARTPTS${vGap}[v${i}]`);
     if (spec.hasAudio) {
       const segDur = seg.end - seg.start;
       const fade = Math.max(0.001, Math.min(FADE, segDur / 3));
       const fadeOutStart = Math.max(0, segDur - fade).toFixed(4);
+      const aGap = addGap ? `,apad=pad_dur=${GAP.toFixed(3)}` : "";
       parts.push(
         `[0:a]atrim=start=${s}:end=${e},asetpts=PTS-STARTPTS,` +
           `afade=t=in:st=0:d=${fade.toFixed(4)},` +
-          `afade=t=out:st=${fadeOutStart}:d=${fade.toFixed(4)}[a${i}]`,
+          `afade=t=out:st=${fadeOutStart}:d=${fade.toFixed(4)}${aGap}[a${i}]`,
       );
       concatInputs.push(`[v${i}][a${i}]`);
     } else {
