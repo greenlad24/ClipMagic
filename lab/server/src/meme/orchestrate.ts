@@ -193,9 +193,8 @@ export async function orchestrateStickers(
   for (let i = 0; i < moments.length; i++) {
     if (applied[i] === null) continue;
     diags[i].ok = true;
-    // Vary placement across applied stickers: the index selects a fitting zone
-    // (top / upper-left / upper-right / center-upper / below-captions) that is
-    // guaranteed to clear the caption band and stay inside the safe area.
+    // Every sticker is placed in the SAME below-captions slot (the hard rule):
+    // centered in the lower third, never above or overlapping the caption band.
     const box = placeSticker(stickers.length);
     stickers.push({
       startTime: moments[i].startTime,

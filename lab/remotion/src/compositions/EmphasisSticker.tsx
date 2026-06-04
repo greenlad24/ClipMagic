@@ -26,14 +26,13 @@ import { CANVAS, SAFE } from "../theme";
  * STICKER LOOK: a clean white outline/border + soft drop shadow around the
  * image, so even a transparent-background cut-out reads as a die-cut sticker.
  *
- * POSITION — the product rule (relaxed): the sticker may slap on ANYWHERE it
- * fits — top band, upper-left/right, center-upper, or below the captions — as
- * long as it never overlaps the centered caption zone and stays inside the 9:16
- * safe margins. The SERVER chooses a fitting zone per sticker (see
- * `placeSticker()` in server/src/meme/sticker.ts, which also asserts it fits +
- * clears the captions) and passes the exact box (boxLeft / boxTop / boxSize) in
- * as props. When no box is given we fall back to the centered below-captions slot
- * so an older manifest still renders correctly.
+ * POSITION — the hard product rule: every sticker slaps on BELOW the captions
+ * (the lower third), never above or overlapping the centered caption zone, and
+ * always inside the 9:16 safe margins. The SERVER computes that below-captions
+ * box (see `placeSticker()` in server/src/meme/sticker.ts, which asserts it fits
+ * + sits below the captions) and passes the exact box (boxLeft / boxTop /
+ * boxSize) in as props. When no box is given we fall back to the centered
+ * below-captions slot so an older manifest still renders correctly.
  */
 
 /**

@@ -103,9 +103,9 @@ async function renderOne(serveUrl: string, clip: EmphasisStickerClip): Promise<R
       restTiltDeg: clip.restTiltDeg,
       bordered: true,
       durationInFrames,
-      // The server-chosen placement zone (any fitting position, never over the
-      // captions). Older manifests omit these → the composition centers below
-      // the captions.
+      // The server-chosen below-captions box (always the lower third, never over
+      // or above the captions). Older manifests omit these → the composition
+      // centers below the captions by default.
       ...(typeof clip.boxLeft === "number" ? { boxLeft: clip.boxLeft } : {}),
       ...(typeof clip.boxTop === "number" ? { boxTop: clip.boxTop } : {}),
       ...(typeof clip.boxSize === "number" ? { boxSize: clip.boxSize } : {}),

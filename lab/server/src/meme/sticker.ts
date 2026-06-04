@@ -1,19 +1,18 @@
 /**
  * Sticker placement geometry + manifest type for the Meme/Sticker editor.
  *
- * THE PRODUCT RULE (relaxed): a sticker may slap on ANYWHERE it fits — top band,
- * upper-left/right, center-upper, or below the captions — as long as it (a) NEVER
- * overlaps the burned-in caption zone, (b) stays inside the 9:16 safe margins,
- * and (c) doesn't run off-frame given its own size. Placement VARIES across
- * stickers (deterministic per moment index) for visual interest, the way a real
- * editor scatters reaction cut-outs around the frame instead of stacking them all
- * in the same lower-third slot.
+ * THE PRODUCT RULE (the hard rule): EVERY sticker slaps on BELOW the captions —
+ * the lower third — and NEVER above or overlapping the centered caption band. A
+ * sticker box must (a) sit entirely below the reserved caption zone, (b) stay
+ * inside the 9:16 safe margins, and (c) not run off-frame given its own size.
+ * Placement does NOT vary by moment — the below-captions slot is the single,
+ * consistent home for every reaction sticker.
  *
  * This file is the single source of truth for that geometry (the Remotion
- * EmphasisSticker composition consumes the chosen box as props). `placeSticker`
- * picks a fitting zone per sticker and `assertFits` is exercised in the tests so
- * a regression that lets a sticker drift into the caption zone — or off-frame —
- * fails the build, not a viewer.
+ * EmphasisSticker composition consumes the box as props). `placeSticker` always
+ * returns the below-captions box, and `assertFits` / `assertBelowCaptions` are
+ * exercised in the tests so a regression that lets a sticker drift up into (or
+ * above) the caption zone — or off-frame — fails the build, not a viewer.
  */
 
 /** 9:16 master canvas — mirrors remotion/src/theme CANVAS. */
@@ -77,103 +76,29 @@ function maxWidthRoom(): number {
 }
 
 /**
- * Candidate placement zones, in deterministic rotation order. Each computes its
- * top-left for a size CLAMPED to that zone's own room (vertical band + side
- * rails), then validates the result fits + clears the captions. A zone returns
- * null only when it genuinely can't hold even the minimum sticker, so every zone
- * with room is reachable (placement truly varies) while NONE can overlap the
- * captions or run off-frame.
+ * Place a sticker in the BELOW-CAPTIONS slot — the single, consistent home for
+ * EVERY reaction sticker (the hard product rule). The box is centered in the
+ * lower third, its size CLAMPED to the band between STICKER_TOP_FRACTION and the
+ * bottom safe margin (and the side safe rails), so it always sits below the
+ * caption zone, inside the safe area, and never off-frame.
+ *
+ * The signature keeps the (unused) `index` parameter for call-site compatibility,
+ * but placement no longer varies — every sticker lands below the captions. The
+ * requested `size` is the ceiling; it shrinks to whatever the band can hold.
  */
-type ZoneFn = (size: number) => StickerBox | null;
-
-/** Build a box and validate it fits + clears captions; null if it doesn't. */
-function boxIfFits(zone: string, left: number, top: number, size: number): StickerBox | null {
-  if (size < MIN_STICKER_SIZE) return null;
-  const box: StickerBox = { left, top, size, bottom: top + size, zone };
-  try {
-    assertFits(box);
-    return box;
-  } catch {
-    return null;
-  }
-}
-
-const ZONES: Array<{ name: string; fn: ZoneFn }> = [
-  // 1. Below the captions, centered (the classic lower-third slot).
-  {
-    name: "below-captions",
-    fn: (size) => {
-      const top = Math.round(CANVAS.height * STICKER_TOP_FRACTION);
-      const room = Math.min(size, CANVAS.height - SAFE_BOTTOM - top, maxWidthRoom());
-      const left = Math.round((CANVAS.width - room) / 2);
-      return boxIfFits("below-captions", left, top, room);
-    },
-  },
-  // 2. Top band, centered under the platform handle/sound row.
-  {
-    name: "top-center",
-    fn: (size) => {
-      const top = SAFE_TOP + Math.round(CANVAS.height * 0.01);
-      const room = Math.min(size, CAPTION_TOP() - top, maxWidthRoom());
-      const left = Math.round((CANVAS.width - room) / 2);
-      return boxIfFits("top-center", left, top, room);
-    },
-  },
-  // 3. Upper-left, hugging the left safe rail.
-  {
-    name: "upper-left",
-    fn: (size) => {
-      const top = SAFE_TOP + Math.round(CANVAS.height * 0.02);
-      const room = Math.min(size, CAPTION_TOP() - top, maxWidthRoom());
-      return boxIfFits("upper-left", SAFE_LEFT, top, room);
-    },
-  },
-  // 4. Upper-right, hugging the right safe rail.
-  {
-    name: "upper-right",
-    fn: (size) => {
-      const top = SAFE_TOP + Math.round(CANVAS.height * 0.02);
-      const room = Math.min(size, CAPTION_TOP() - top, maxWidthRoom());
-      const left = CANVAS.width - SAFE_RIGHT - room;
-      return boxIfFits("upper-right", left, top, room);
-    },
-  },
-  // 5. Center-upper: sitting just above the caption band, centered.
-  {
-    name: "center-upper",
-    fn: (size) => {
-      const room = Math.min(size, CAPTION_TOP() - SAFE_TOP, maxWidthRoom());
-      const top = CAPTION_TOP() - room - Math.round(CANVAS.height * 0.01);
-      const left = Math.round((CANVAS.width - room) / 2);
-      return boxIfFits("center-upper", left, top, room);
-    },
-  },
-];
-
-/**
- * Pick a fitting zone for the sticker at `index`. Deterministic: the index
- * selects a STARTING zone (so adjacent stickers land in different places), then
- * we scan the rotation for the first zone that can hold the sticker (each zone
- * clamps the size to its own room). If somehow nothing fits we fall back to the
- * always-valid below-captions slot.
- */
-export function placeSticker(index: number, size: number = defaultStickerSize()): StickerBox {
-  for (let trySize = size; trySize >= MIN_STICKER_SIZE; trySize = Math.round(trySize * 0.85)) {
-    for (let k = 0; k < ZONES.length; k++) {
-      const zone = ZONES[(index + k) % ZONES.length];
-      const box = zone.fn(trySize);
-      if (box) return box;
-    }
-  }
-  // Guaranteed-valid fallback: the below-captions slot sized to its own band.
+export function placeSticker(_index = 0, size: number = defaultStickerSize()): StickerBox {
   const top = Math.round(CANVAS.height * STICKER_TOP_FRACTION);
-  const maxSize = Math.min(
-    CANVAS.height - SAFE_BOTTOM - top,
-    CANVAS.width - SAFE_LEFT - SAFE_RIGHT,
+  // Room the lower-third band leaves below the captions and above the bottom
+  // safe margin, and within the side safe rails. Clamp the request to it.
+  const room = Math.max(
+    MIN_STICKER_SIZE,
+    Math.min(size, CANVAS.height - SAFE_BOTTOM - top, maxWidthRoom()),
   );
-  const fallbackSize = Math.max(120, maxSize);
-  const left = Math.round((CANVAS.width - fallbackSize) / 2);
-  return { left, top, size: fallbackSize, bottom: top + fallbackSize, zone: "below-captions" };
+  const left = Math.round((CANVAS.width - room) / 2);
+  const box: StickerBox = { left, top, size: room, bottom: top + room, zone: "below-captions" };
+  // Validate the invariants in code so a geometry regression fails fast.
+  assertFits(box);
+  return box;
 }
 
 /** Back-compat: the centered below-captions box (used as a default/fallback). */
@@ -188,9 +113,8 @@ export function stickerBox(): StickerBox {
 
 /**
  * Throw if the sticker box runs off-frame, pokes a safe margin, or overlaps the
- * reserved caption band. The relaxed rule: "fits inside the safe area AND never
- * overlaps the captions" — for ANY zone, not just below-captions. Called by tests
- * and cheap enough to also call at runtime.
+ * reserved caption band: "fits inside the safe area AND never overlaps the
+ * captions". Called by tests and cheap enough to also call at runtime.
  */
 export function assertFits(box: StickerBox): void {
   if (box.size <= 0) {
@@ -222,6 +146,23 @@ export function assertFits(box: StickerBox): void {
     throw new Error(
       `Sticker box (${box.top}-${box.top + box.size}px) overlaps the caption zone ` +
         `(${capTop}-${capBottom}px).`,
+    );
+  }
+}
+
+/**
+ * Throw unless the box sits ENTIRELY below the caption band (the hard product
+ * rule): its top must be at or under the caption-zone bottom, and it must also
+ * fit the safe area. Stricter than assertFits, which also permits an above-the-
+ * captions box — here a sticker is ONLY ever allowed below the captions.
+ */
+export function assertBelowCaptions(box: StickerBox): void {
+  assertFits(box);
+  const capBottom = CAPTION_BOTTOM();
+  if (box.top < capBottom) {
+    throw new Error(
+      `Sticker top (${box.top}px) must be at/under the caption-zone bottom (${capBottom}px) — ` +
+        `every sticker sits BELOW the captions.`,
     );
   }
 }

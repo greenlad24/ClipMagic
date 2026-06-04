@@ -15,6 +15,7 @@ import {
   stickerBox,
   placeSticker,
   assertFits,
+  assertBelowCaptions,
   defaultStickerSize,
   CANVAS,
   SAFE_LEFT,
@@ -141,14 +142,10 @@ check("sanitize keeps a moment with only a searchQuery (imagePrompt falls back t
   assert.equal(out[0].imagePrompt, "money rain");
 });
 
-// ── Flexible placement: ANY fitting zone, never over the captions ──────────────
+// ── Placement: EVERY sticker sits BELOW the captions (the hard rule) ───────────
 const CAP_TOP = Math.round(CANVAS.height * CAPTION_ZONE_TOP_FRACTION);
 const CAP_BOTTOM = Math.round(CANVAS.height * CAPTION_ZONE_BOTTOM_FRACTION);
 
-/** A box overlaps the caption band iff it intersects [CAP_TOP, CAP_BOTTOM]. */
-function overlapsCaptions(box: StickerBox): boolean {
-  return box.top < CAP_BOTTOM && box.top + box.size > CAP_TOP;
-}
 /** A box is inside the safe area iff every edge clears the safe margins. */
 function insideSafe(box: StickerBox): boolean {
   return (
@@ -159,35 +156,38 @@ function insideSafe(box: StickerBox): boolean {
   );
 }
 
-check("placeSticker: every placement fits the safe area AND clears the captions", () => {
-  // Across many sticker indices the picker must ALWAYS return a box that fits and
-  // never overlaps the caption band (the relaxed product rule). assertFits throws
-  // on any violation; we also independently re-check both invariants.
+check("placeSticker: EVERY placement is below the caption band AND fits the safe area", () => {
+  // The hard product rule: a sticker NEVER goes above or into the caption band.
+  // For every index the box top must be at/under the caption-zone bottom and the
+  // whole box must fit the safe area. assertBelowCaptions throws on any violation;
+  // we also independently re-check the invariants.
   for (let i = 0; i < 50; i++) {
     const box = placeSticker(i);
-    assertFits(box); // throws on off-frame / safe-margin / caption overlap
+    assertBelowCaptions(box); // throws if not below the captions / off-frame / unsafe
+    assert.ok(box.top >= CAP_BOTTOM, `box @${i} top ${box.top} >= captionBottom ${CAP_BOTTOM}`);
     assert.ok(insideSafe(box), `box @${i} inside safe area`);
-    assert.ok(!overlapsCaptions(box), `box @${i} clears the caption band`);
+    assert.equal(box.zone, "below-captions", `box @${i} is the below-captions slot`);
     assert.ok(box.size > 0, `box @${i} positive size`);
   }
 });
 
-check("placeSticker VARIES placement across stickers (uses multiple zones)", () => {
-  // Different indices should land in different zones so stickers scatter around
-  // the frame rather than stacking in one slot.
-  const zones = new Set<string>();
-  for (let i = 0; i < 10; i++) zones.add(placeSticker(i).zone ?? "?");
-  assert.ok(zones.size >= 3, `expected ≥3 distinct zones, saw ${[...zones].join(", ")}`);
+check("placeSticker does NOT vary placement — always the below-captions slot", () => {
+  // Reverted flexible placement: every index lands in the SAME below-captions box
+  // (same top + zone), so stickers consistently live in the lower third.
+  const first = placeSticker(0);
+  for (let i = 1; i < 10; i++) {
+    const box = placeSticker(i);
+    assert.equal(box.zone, "below-captions", `box @${i} zone`);
+    assert.equal(box.top, first.top, `box @${i} same top as @0`);
+  }
 });
 
-check("placeSticker exercises every named zone over the rotation", () => {
-  // The full rotation (below-captions, top-center, upper-left, upper-right,
-  // center-upper) must all be reachable at the default size.
-  const zones = new Set<string>();
-  for (let i = 0; i < 25; i++) zones.add(placeSticker(i).zone ?? "?");
-  for (const z of ["below-captions", "top-center", "upper-left", "upper-right", "center-upper"]) {
-    assert.ok(zones.has(z), `zone "${z}" must be reachable (saw ${[...zones].join(", ")})`);
-  }
+check("assertBelowCaptions REJECTS a box that sits above the captions", () => {
+  // A box that fits the safe area but is ABOVE the caption band must be rejected
+  // by the stricter below-captions assertion (assertFits alone would allow it).
+  const above: StickerBox = { left: 300, top: SAFE_TOP, size: 300, bottom: SAFE_TOP + 300, zone: "above" };
+  assertFits(above); // legal as a general fit (above the captions, in safe area)
+  assert.throws(() => assertBelowCaptions(above), /BELOW the captions/);
 });
 
 check("assertFits REJECTS a box that overlaps the caption band", () => {
