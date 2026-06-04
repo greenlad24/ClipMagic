@@ -11,7 +11,7 @@
  * (OpenAI + Kinovi + capture service) will plug in.
  */
 import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects, ZiteError } from "./store.js";
-import { listStorage, deleteStorageFiles } from "./storage.js";
+import { listStorage, deleteStorageFiles, deleteStorageArea } from "./storage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
 import { createJob, getJob, listJobs as listRenderJobs } from "../db/jobs.js";
@@ -2092,6 +2092,7 @@ export const HANDLERS: Record<string, Handler> = {
   // storage management
   listStorage,
   deleteStorageFiles,
+  deleteStorageArea,
 };
 
 void config;

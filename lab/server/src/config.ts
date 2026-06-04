@@ -47,6 +47,16 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, "db", "clipmagic.db"),
 
   /**
+   * Where Remotion caches the Chromium it may download. In Docker this is
+   * REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium. With a pre-baked
+   * Chromium (remotionBrowserExecutable) it stays empty, but an old run may
+   * have left a downloaded browser here — surfaced in Storage so it can be
+   * reclaimed. Defaults under DATA_DIR so the Storage manager can locate it.
+   */
+  remotionBrowserCacheDir:
+    process.env.REMOTION_BROWSER_CACHE_DIR || path.join(DATA_DIR, ".remotion-chromium"),
+
+  /**
    * Built Vite frontend (the full ClipMagic React app), served by this server
    * so one process answers UI + API. Built from /web into /web/dist.
    */
