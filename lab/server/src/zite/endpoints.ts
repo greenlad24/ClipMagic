@@ -21,6 +21,8 @@ import { resolveInput } from "../render/resolve.js";
 import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
+import { detectSilences } from "../cutter/silence.js";
+import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
 import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
@@ -864,7 +866,7 @@ async function waitForCutJob(jobId: string): Promise<{ outputUrl: string | null;
   return { outputUrl: null, error: "Render timed out" };
 }
 
-async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
+async function runOneCut(item: CutItem, sourceUrl: string, aggressiveness: Aggressiveness): Promise<void> {
   // Account every AI call this cut makes (transcription + take-detection) so the
   // cutter's real cost/speed shows up honestly in the optimization report.
   beginRun(item.cutId);
@@ -880,9 +882,29 @@ async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
     item.status = "Analyzing";
     // Phase 2: find repeated takes and keep only the best (vision + audio energy).
     // Best-effort — degrades to silence/filler-only if AI/analysis is unavailable.
-    const takeDecision = await planTakeDecision(srcPath, tr.words, tr.duration || duration)
-      .catch(() => ({ groupsFound: 0, takesRemoved: 0, dropRanges: [] as { start: number; end: number }[] }));
-    const plan = planCuts(tr.words, tr.duration || duration, { extraCuts: takeDecision.dropRanges });
+    // In parallel, run ONE whole-file silencedetect pass to learn where speech
+    // actually is (Whisper word timings are loose). Both legs are independent.
+    const planDuration = tr.duration || duration;
+    const [takeDecision, silences] = await Promise.all([
+      planTakeDecision(srcPath, tr.words, planDuration)
+        .catch(() => ({ groupsFound: 0, takesRemoved: 0, dropRanges: [] as { start: number; end: number }[] })),
+      detectSilences(srcPath, planDuration, {
+        noiseFloorDb: AGGRESSION_PRESETS[aggressiveness].noiseFloorDb,
+      }).catch(() => []),
+    ]);
+    const plan = planCuts(tr.words, planDuration, {
+      extraCuts: takeDecision.dropRanges,
+      silences,
+      aggressiveness,
+    });
+    // Per-cut diagnostics → server log so a misfiring region can be pinpointed.
+    console.log(
+      `[narrationCut] ${item.title}: ${aggressiveness}, ${silences.length} silent region(s), ` +
+        `${plan.boundariesSnapped} boundary snap(s); ` +
+        plan.diagnostics
+          .map((d) => `${d.kind}[${d.start.toFixed(2)}-${d.end.toFixed(2)}${d.measuredDb != null ? ` ${d.measuredDb}dB` : ""}] ${d.reason}`)
+          .join(" | "),
+    );
     const stats: CutStats = {
       originalDuration: plan.originalDuration,
       keptDuration: plan.keptDuration,
@@ -909,6 +931,11 @@ async function runOneCut(item: CutItem, sourceUrl: string): Promise<void> {
         transcript: tr.text,
         stats,
         segments: plan.keep,
+        // Persist the audio-energy breakdown so a misfiring region can be shared.
+        diagnostics: plan.diagnostics,
+        aggressiveness,
+        silentRegions: silences.length,
+        boundariesSnapped: plan.boundariesSnapped,
         ...(optimizationReportJson ? { optimizationReportJson } : {}),
       },
     }).catch(() => {});
@@ -948,6 +975,12 @@ const createBulkCut: Handler = async (input, userId) => {
   }
   const items: Array<{ sourceUrl: string; title?: string }> = Array.isArray(input?.items) ? input.items : [];
   if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No videos provided." });
+  // How much non-speech to cut (gentle/balanced/aggressive) — the subjective
+  // "how much to cut" is the user's call; default conservative-balanced.
+  const aggressiveness: Aggressiveness =
+    input?.aggressiveness === "gentle" || input?.aggressiveness === "aggressive"
+      ? input.aggressiveness
+      : "balanced";
 
   const cutItems: CutItem[] = [];
   const sources: string[] = [];
@@ -974,7 +1007,7 @@ const createBulkCut: Handler = async (input, userId) => {
   // Fire-and-forget: process ONE AT A TIME (gentle on the transcription API).
   (async () => {
     for (let i = 0; i < cutRun!.items.length; i++) {
-      await runOneCut(cutRun!.items[i], sources[i]);
+      await runOneCut(cutRun!.items[i], sources[i], aggressiveness);
       cutRun!.doneCount++;
     }
     cutRun!.running = false;
@@ -1001,6 +1034,9 @@ const getNarrationCuts: Handler = async (_input, userId) => {
     outputUrl: c.outputUrl,
     sourceUrl: c.sourceUrl,
     stats: c.stats,
+    diagnostics: c.diagnostics ?? null,
+    aggressiveness: c.aggressiveness ?? null,
+    boundariesSnapped: c.boundariesSnapped ?? null,
     error: c.error,
     createdAt: c.createdAt,
   }));
