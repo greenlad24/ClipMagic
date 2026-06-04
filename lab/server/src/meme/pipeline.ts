@@ -24,7 +24,12 @@ import { resolveInput } from "../render/resolve.js";
 import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription } from "../render/cut.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
-import { SUBTITLE_TEMPLATES, type RenderManifest } from "../render/manifest.js";
+import {
+  SUBTITLE_TEMPLATES,
+  type RenderManifest,
+  type SubtitleTemplate,
+} from "../render/manifest.js";
+import { pickRandomCaptionTemplate } from "./captionTemplate.js";
 import { createJob } from "../db/jobs.js";
 import { pump } from "../render/worker.js";
 import { buildReport, reportLogLine } from "../ai/runAccounting.js";
@@ -37,9 +42,6 @@ const W = 1080;
 const H = 1920;
 const FPS = 30;
 
-/** The caption template — a popping viral style (pop-scale: recolor + size pop). */
-const MEME_CAPTION_TEMPLATE = SUBTITLE_TEMPLATES["pop-scale"];
-
 export interface MemeResult {
   /** Render job id (poll via the job queue). */
   jobId: string;
@@ -51,6 +53,27 @@ export interface MemeResult {
   stickersWithImages: number;
   /** True when no image token is configured (render will be captions-only). */
   captionsOnly: boolean;
+  /** The randomly-chosen subtitle template for this render (logged/persisted). */
+  subtitleTemplate: SubtitleTemplate;
+  /**
+   * Per-step diagnostics for this run, surfaced to the user when stickers are
+   * skipped (e.g. "no image key", "Chromium unavailable"). Persisted on the meme
+   * record so the page can show WHY a render was captions-only instead of
+   * silently producing none.
+   */
+  diagnostics: MemeDiagnostics;
+}
+
+/** Why a sticker step was skipped, if it was — surfaced to the user. */
+export interface MemeDiagnostics {
+  /** Sticker moments the director picked (post-sanitize). */
+  momentsPlanned: number;
+  /** Moments that got a generated image (the rest fall back to captions-only). */
+  imagesGenerated: number;
+  /** Per-moment image-gen outcome (success or the failure reason). */
+  imageResults: Array<{ phrase?: string; ok: boolean; reason?: string }>;
+  /** Human-readable reason stickers will be skipped this run, or null if not. */
+  skipReason: string | null;
 }
 
 export interface MemeStageReporter {
@@ -95,12 +118,31 @@ export async function runMemePipeline(opts: {
   onStage?.("Generating");
   const canGenerate = imageGenConfigured();
   const stickers: EmphasisStickerClip[] = [];
-  if (canGenerate && moments.length > 0) {
+  const imageResults: MemeDiagnostics["imageResults"] = [];
+  console.log(
+    `[meme] director picked ${moments.length} moment(s); image gen ${
+      canGenerate ? "configured" : "NOT configured (no ZITE_OPENAI_ACCESS_TOKEN)"
+    }`,
+  );
+  if (moments.length > 0) {
     // Generate in parallel — generateStickerImage bounds its own concurrency.
-    const images = await Promise.all(moments.map((m) => generateStickerImage(m.imagePrompt)));
+    // When the image key is absent generateStickerImage returns null per moment
+    // (graceful captions-only), which we record as a per-moment skip reason.
+    const images = await Promise.all(
+      moments.map((m) => (canGenerate ? generateStickerImage(m.imagePrompt) : Promise.resolve(null))),
+    );
     moments.forEach((m, i) => {
       const img = images[i];
-      if (!img) return; // this moment falls back to captions-only
+      if (!img) {
+        // No image for this moment → captions-only here. Record WHY so the user
+        // sees a reason instead of a silently-missing sticker.
+        const reason = canGenerate ? "image generation failed" : "no image key";
+        imageResults.push({ phrase: m.phrase, ok: false, reason });
+        console.warn(`[meme]   moment @${m.startTime}s "${m.phrase ?? ""}" — no sticker (${reason})`);
+        return;
+      }
+      imageResults.push({ phrase: m.phrase, ok: true });
+      console.log(`[meme]   moment @${m.startTime}s "${m.phrase ?? ""}" — image ok${img.cached ? " (cached)" : ""}`);
       stickers.push({
         startTime: m.startTime,
         endTime: m.endTime,
@@ -113,8 +155,31 @@ export async function runMemePipeline(opts: {
     });
   }
 
+  // Compute a single user-visible reason when this render will be captions-only.
+  let skipReason: string | null = null;
+  if (stickers.length === 0) {
+    if (moments.length === 0) {
+      skipReason = "no emphasis moments were found (or the director is unconfigured) — captions only";
+    } else if (!canGenerate) {
+      skipReason = "no image key configured (ZITE_OPENAI_ACCESS_TOKEN) — captions only";
+    } else {
+      skipReason = "image generation failed for every moment — captions only";
+    }
+  }
+  const diagnostics: MemeDiagnostics = {
+    momentsPlanned: moments.length,
+    imagesGenerated: stickers.length,
+    imageResults,
+    skipReason,
+  };
+
   // ── 5. Build the manifest + enqueue the render ─────────────────────────────
   onStage?.("Rendering");
+  // Randomize the caption template across the full short-form pool (same rotation
+  // behaviour as the short-form editor) and flow the CHOSEN style into the ASS
+  // caption render via the manifest.
+  const subtitleTemplate = pickRandomCaptionTemplate();
+  console.log(`[meme] caption template (random from pool): ${subtitleTemplate}`);
   const manifest: RenderManifest = {
     version: 1,
     projectId,
@@ -126,7 +191,7 @@ export async function runMemePipeline(opts: {
     music: null,
     scenes: [], // no overlays — clean narration only
     subtitles,
-    subtitleStyle: MEME_CAPTION_TEMPLATE,
+    subtitleStyle: SUBTITLE_TEMPLATES[subtitleTemplate],
     emphasisStickers: stickers,
   };
 
@@ -153,6 +218,8 @@ export async function runMemePipeline(opts: {
     durationSeconds: duration,
     momentsPlanned: moments.length,
     stickersWithImages: stickers.length,
-    captionsOnly: !canGenerate || stickers.length === 0,
+    captionsOnly: stickers.length === 0,
+    subtitleTemplate,
+    diagnostics,
   };
 }
