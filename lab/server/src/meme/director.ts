@@ -59,8 +59,8 @@ RULES (what makes it feel hand-made):
 
 SEARCH QUERY rules (one per moment) — this is the IMPORTANT field:
 - 1–3 words, lowercase, the kind of thing you'd type into a meme/sticker search to get a funny REACTION sticker: e.g. "mind blown", "money rain", "shocked", "facepalm", "mic drop", "no way", "celebration", "thinking", "crying laughing".
-- Prefer common, well-stocked reaction/emotion concepts over niche literal nouns — the libraries have tons of "shocked" but few "third-quarter EBITDA".
-- Make it RELEVANT to that line so the sticker actually emphasizes the point.
+- It MUST be relevant to what the line is actually about — capture its concrete subject (the key noun/idea) OR the specific reaction the point genuinely warrants. A generic catch-all that doesn't connect to this line is worse than no sticker; never pick one just because it's funny.
+- Still favor concepts a sticker library actually stocks (e.g. "robot", "money", "clock ticking", "mind blown", "facepalm"): choose the one a viewer would instantly read as "that matches what he just said." If the literal subject is too niche to be stocked, pick the closest reaction that still clearly fits the point.
 
 ALSO write a one-sentence "imagePrompt" describing a clean, funny, meme-style sticker subject on a plain/transparent background — this is a FALLBACK only (used if no sticker library is available), so keep it short.
 

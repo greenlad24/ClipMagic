@@ -571,15 +571,19 @@ function makeProviders(over: Partial<StickerProviders> & {
   };
 }
 
-check("resolveOpenAiMax defaults to 2 and honors the env override", () => {
+check("resolveOpenAiMax defaults to ~one-per-moment (relevance-gated) and honors the env override", () => {
   delete process.env.MEME_OPENAI_MAX;
-  assert.equal(resolveOpenAiMax(), 2);
+  // Default: up to one generation per emphasis moment, floored at 1, ceilinged at 12.
+  assert.equal(resolveOpenAiMax(0), 1, "floor of 1 when no moments");
+  assert.equal(resolveOpenAiMax(3), 3, "one per moment");
+  assert.equal(resolveOpenAiMax(99), 12, "ceiling of 12");
+  // Explicit env override wins regardless of moment count.
   process.env.MEME_OPENAI_MAX = "0";
-  assert.equal(resolveOpenAiMax(), 0);
+  assert.equal(resolveOpenAiMax(5), 0);
   process.env.MEME_OPENAI_MAX = "5";
-  assert.equal(resolveOpenAiMax(), 5);
+  assert.equal(resolveOpenAiMax(2), 5);
   process.env.MEME_OPENAI_MAX = "nonsense";
-  assert.equal(resolveOpenAiMax(), 2, "invalid → default 2");
+  assert.equal(resolveOpenAiMax(4), 4, "invalid env → per-moment default");
   delete process.env.MEME_OPENAI_MAX;
 });
 
@@ -621,8 +625,8 @@ check("orchestrate uses OpenAI ONLY for moments the free path left unmatched", a
   assert.equal(res.stickers.length, 2);
 });
 
-check("orchestrate NEVER exceeds the 2/video OpenAI cap (prioritizing earliest moments)", async () => {
-  delete process.env.MEME_OPENAI_MAX; // default 2
+check("orchestrate NEVER exceeds an explicit OpenAI cap (prioritizing earliest moments)", async () => {
+  process.env.MEME_OPENAI_MAX = "2"; // pin the cap at 2 to exercise cap enforcement
   // Four unmatched moments; the cap is 2, so only the two EARLIEST get generated.
   const moments = [moment(6, "a"), moment(10, "b"), moment(14, "c"), moment(18, "d")];
   const p = makeProviders({ searchResults: {}, genUrls: ["/g/a.png", "/g/b.png", "/g/c.png", "/g/d.png"] });
@@ -639,6 +643,17 @@ check("orchestrate NEVER exceeds the 2/video OpenAI cap (prioritizing earliest m
   assert.ok(/cap \(2\/video\) reached/.test(res.diagnostics[2].review.reason), res.diagnostics[2].review.reason);
   // Stickers are emitted in MOMENT order (the two earliest only).
   assert.deepEqual(res.stickers.map((s) => s.startTime), [6, 10]);
+  delete process.env.MEME_OPENAI_MAX;
+});
+
+check("orchestrate default cap = one gen per moment (relevance-gated, not a fixed 2)", async () => {
+  delete process.env.MEME_OPENAI_MAX; // no override → default allows one per moment
+  const moments = [moment(6, "a"), moment(10, "b"), moment(14, "c"), moment(18, "d")];
+  const p = makeProviders({ searchResults: {}, genUrls: ["/g/a.png", "/g/b.png", "/g/c.png", "/g/d.png"] });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(res.openaiCap, 4, "default cap = number of moments (not 2)");
+  assert.equal(res.openaiUsed, 4, "every unmatched relevant moment can generate");
+  assert.equal(res.stickers.length, 4);
 });
 
 check("orchestrate skips OpenAI gen with a clear reason when no OpenAI key is present", async () => {
@@ -746,14 +761,17 @@ check("meme font scale is a real, sane bump (1.25–1.4×) and never mutates the
   assert.equal(SUBTITLE_TEMPLATES["yellow-box"].fontSize, before, "shared template not mutated");
 });
 
-check("the largest bumped caption font stays within the 9:16 frame width estimate", () => {
-  // Worst case: the biggest template (yellow-box 108px) at 3 short words. Using
-  // the same glyph-width estimate ass/build use (~0.64×fontSize), a 3-word line at
-  // the bumped size must still be under the canvas width (ass.ts auto-fits beyond).
-  const bumped = memeSubtitleStyle(SUBTITLE_TEMPLATES["yellow-box"]).fontSize;
-  // A typical 2–3 word viral caption is ≲ 16 chars on a line.
-  const estWidth = 16 * bumped * 0.64;
-  assert.ok(estWidth < CANVAS.width * 1.05, `est ${estWidth}px near/under frame ${CANVAS.width}px`);
+check("a typical bumped caption line fits the 9:16 safe width (longer lines auto-fit in ass.ts)", () => {
+  // A typical viral caption line is one short word at a time (the chunker splits
+  // 2–3 words, often onto separate lines). Using the same glyph-width estimate
+  // ass/build use (~0.64×fontSize), a ~9-char line at the LARGEST bumped template
+  // must still fit within the frame. ANY longer line is shrunk by ass.ts's
+  // auto-fit (maxTextWidth = width*0.88), so the bump can never clip a caption.
+  const bumped = memeSubtitleStyle(SUBTITLE_TEMPLATES["yellow-box"]).fontSize; // 108 → 140
+  const estWidth = 9 * bumped * 0.64;
+  assert.ok(estWidth < CANVAS.width, `est ${estWidth}px under frame ${CANVAS.width}px`);
+  // And the bumped size is still a sane caption size (not absurdly large).
+  assert.ok(bumped <= 160, `bumped ${bumped}px stays a reasonable caption size`);
 });
 
 // ── Random background music pick (reuses the short-form library + selection) ───

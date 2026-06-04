@@ -5,10 +5,11 @@
  *   1. FREE path — search Giphy + Tenor, then an AI fit-review picks the best
  *      candidate (or drops it). This is tried FIRST for every moment.
  *   2. PAID fallback — for moments the free path left WITHOUT a fitting sticker,
- *      generate one with OpenAI (gpt-image-1). This is HARD-CAPPED at
- *      MEME_OPENAI_MAX generations per video (default 2). When more moments need
- *      generation than the cap allows, the strongest/earliest moments win
- *      (deterministic prioritization) and the rest stay captions-only.
+ *      generate one with OpenAI (gpt-image-1). Capped per video by
+ *      MEME_OPENAI_MAX (default: up to one per emphasis moment, so relevance is
+ *      the gate, bounded by a cost ceiling). When more moments need generation
+ *      than the cap allows, the strongest/earliest moments win (deterministic
+ *      prioritization) and the rest stay captions-only.
  *
  * The provider calls are INJECTED (search/review/generate/download), so this
  * whole orchestration — the source order, the per-video cap, the prioritization,
@@ -24,11 +25,18 @@ import type { MomentDiagnostic } from "./pipeline.js";
 import type { EmphasisStickerClip } from "./sticker.js";
 import { placeSticker } from "./sticker.js";
 
-/** Hard cap on OpenAI generations per video (env-overridable, default 2). */
-export function resolveOpenAiMax(): number {
+/**
+ * OpenAI generations allowed per video. `MEME_OPENAI_MAX` overrides; otherwise we
+ * allow up to ONE generation per emphasis moment, so RELEVANCE — not an arbitrary
+ * number — is the gate: the director only marks moments where a sticker enhances
+ * the message, and the fit-review drops anything off-topic. A safety CEILING
+ * bounds the worst-case cost.
+ */
+export function resolveOpenAiMax(momentCount = 0): number {
   const raw = Number.parseInt(process.env.MEME_OPENAI_MAX || "", 10);
   if (Number.isFinite(raw) && raw >= 0) return raw;
-  return 2;
+  const CEILING = 12;
+  return Math.min(Math.max(momentCount, 1), CEILING);
 }
 
 /** The provider hooks the orchestrator drives (real impls or test mocks). */
@@ -81,7 +89,7 @@ export async function orchestrateStickers(
   moments: EmphasisMoment[],
   providers: StickerProviders,
 ): Promise<OrchestrationResult> {
-  const openaiCap = resolveOpenAiMax();
+  const openaiCap = resolveOpenAiMax(moments.length);
   const diags: MomentDiagnostic[] = moments.map((m) => ({
     phrase: m.phrase,
     searchQuery: m.searchQuery,
