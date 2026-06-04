@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Scissors, Play, Eye } from 'lucide-react';
+import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Scissors, Play, Eye, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { uploadBlobToZite } from '@/utils/videoUtils';
 import { createBulkCut, getCutRun } from 'zite-endpoints-sdk';
+import TimelineEditor from '@/components/cutter/TimelineEditor';
 
 interface CutStats {
   originalDuration: number;
@@ -63,6 +64,7 @@ export default function CutterPage() {
   const [run, setRun] = useState<CutRun | null>(null);
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
   const [isDragging, setIsDragging] = useState(false);
+  const [editor, setEditor] = useState<{ sourceUrl: string; title: string } | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -122,8 +124,44 @@ export default function CutterPage() {
     }
   };
 
+  // Open the interactive timeline editor for a SINGLE clip: upload the first
+  // queued file, then hand off to the Descript-style editor.
+  const openEditor = async () => {
+    if (files.length === 0) return;
+    setUploading(true);
+    try {
+      const f = files[0];
+      setUploadMsg(`Uploading ${f.name}…`);
+      const sourceUrl = await uploadBlobToZite(f, f.name);
+      setEditor({ sourceUrl, title: f.name.replace(/\.[^.]+$/, '') });
+      setFiles((prev) => prev.slice(1));
+    } catch (e: any) {
+      toast.error('Upload failed — ' + (e?.message?.slice(0, 100) ?? 'unknown error'));
+    } finally {
+      setUploading(false);
+      setUploadMsg('');
+    }
+  };
+
   const completed = run?.items.filter((i) => i.status === 'Complete').length ?? 0;
   const failed = run?.items.filter((i) => i.status === 'Error').length ?? 0;
+
+  if (editor) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="border-b border-border px-4 py-3 flex items-center gap-2.5 sticky top-0 bg-background z-10">
+          <button onClick={() => setEditor(null)} className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="Back">
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <Scissors className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold">Timeline Editor</span>
+        </div>
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          <TimelineEditor sourceUrl={editor.sourceUrl} title={editor.title} onClose={() => setEditor(null)} />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -147,9 +185,9 @@ export default function CutterPage() {
           <UploadCloud className="w-7 h-7 mx-auto text-muted-foreground mb-2" />
           <p className="text-sm font-medium">Drop raw footage — or click to choose</p>
           <p className="text-xs text-muted-foreground mt-1">
-            Auto-removes long silences (keeping a natural pause), “um”/“uh” fillers, stutters, and
-            duplicate takes (keeps the best by expression + audio energy), then renders a tightened cut
-            with click-free splices.
+            <span className="text-foreground font-medium">Edit on timeline</span> for full control — set the silence
+            threshold, delete takes, and preview the exact result before rendering. Or <span className="text-foreground font-medium">auto-cut</span> a
+            batch: removes long silences, fillers, stutters and duplicate takes automatically.
           </p>
           <input ref={inputRef} type="file" accept="video/*" multiple className="hidden"
             onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ''; }} />
@@ -191,9 +229,14 @@ export default function CutterPage() {
               <span className="text-sm font-medium">{files.length} file{files.length !== 1 ? 's' : ''} ready</span>
               <div className="flex gap-2">
                 <Button variant="ghost" size="sm" className="h-7 text-xs" disabled={uploading} onClick={() => setFiles([])}>Clear</Button>
+                <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5" disabled={uploading} onClick={openEditor}
+                  title="Open the first clip in the interactive timeline editor — set the cuts and preview before rendering">
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  Edit on timeline
+                </Button>
                 <Button size="sm" className="h-7 text-xs gap-1.5" disabled={uploading} onClick={start}>
                   {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                  {uploading ? 'Uploading…' : `Cut ${files.length}`}
+                  {uploading ? 'Uploading…' : `Auto-cut ${files.length}`}
                 </Button>
               </div>
             </div>
