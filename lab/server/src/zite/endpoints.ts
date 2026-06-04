@@ -14,7 +14,8 @@ import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects,
 import { listStorage, deleteStorageFiles } from "./storage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
-import { createJob, getJob } from "../db/jobs.js";
+import { createJob, getJob, listJobs as listRenderJobs } from "../db/jobs.js";
+import { pauseJob as pauseRenderJob, resumeJob as resumeRenderJob, cancelJob as cancelRenderJob } from "../render/jobActions.js";
 import { db } from "../db/index.js";
 import { pump } from "../render/worker.js";
 import { resolveInput } from "../render/resolve.js";
@@ -29,7 +30,7 @@ import { transcribeWithGroq } from "../ai/transcribe.js";
 import { withTimeout } from "../util/withTimeout.js";
 import {
   createAnalyzeJob, getAnalyzeJob, setStage, setWarning, completeAnalyze, failAnalyze,
-  pollSnapshot, type AnalyzeJob,
+  pollSnapshot, listAnalyzeJobs, type AnalyzeJob,
 } from "../cutter/analyzeJob.js";
 import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
@@ -1262,6 +1263,116 @@ const getCutJob: Handler = async (input) => {
 };
 
 
+// ── Background Jobs panel: list + Pause / Resume / Cancel ─────────────────────
+// One global view over every background job. The render queue (render_jobs) has
+// FULL pause/resume/cancel; the cutter's in-memory analyze jobs are SHOWN
+// read-only (no controllable child here). The shapes are unified so the panel
+// renders them the same way.
+
+interface PanelJob {
+  id: string;
+  source: "render" | "analyze";
+  type: string;
+  title: string;
+  status: "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
+  stage: string;
+  progress: number;
+  error: string | null;
+  outputUrl: string | null;
+  /** Which controls apply. Analyze jobs are read-only (all false). */
+  controllable: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Map the analyze stage machine onto the unified panel status vocabulary. */
+function analyzeStatus(stage: string): PanelJob["status"] {
+  if (stage === "done") return "completed";
+  if (stage === "failed") return "failed";
+  if (stage === "queued") return "queued";
+  return "active";
+}
+
+const listJobs: Handler = async (input) => {
+  const recentLimit = Number.isFinite(input?.recentLimit) ? Math.max(1, Math.min(50, input.recentLimit)) : 12;
+  const { active, recent } = listRenderJobs(recentLimit);
+
+  const mapRender = (j: ReturnType<typeof listRenderJobs>["active"][number]): PanelJob => ({
+    id: j.id,
+    source: "render",
+    type: j.type,
+    title: j.title,
+    status: j.status as PanelJob["status"],
+    stage: j.stage,
+    progress: j.progress,
+    error: j.error,
+    outputUrl: j.outputFile ? `/api/outputs/${j.outputFile}` : null,
+    controllable: true,
+    createdAt: j.createdAt,
+    updatedAt: j.updatedAt,
+  });
+
+  const analyze = listAnalyzeJobs().map<PanelJob>((j) => {
+    const status = analyzeStatus(j.stage);
+    const terminal = status === "completed" || status === "failed" || status === "canceled";
+    return {
+      id: j.id,
+      source: "analyze",
+      type: "Narration analyze",
+      title: "Analyzing clip",
+      status,
+      stage: j.stageLabel,
+      progress: j.progress,
+      error: j.error,
+      outputUrl: null,
+      controllable: false,
+      createdAt: j.createdAt,
+      updatedAt: j.updatedAt,
+      _terminal: terminal,
+    } as PanelJob & { _terminal: boolean };
+  });
+
+  const analyzeActive = (analyze as Array<PanelJob & { _terminal: boolean }>)
+    .filter((j) => !j._terminal)
+    .map(({ _terminal, ...j }) => j);
+  const analyzeRecent = (analyze as Array<PanelJob & { _terminal: boolean }>)
+    .filter((j) => j._terminal)
+    .map(({ _terminal, ...j }) => j);
+
+  return {
+    active: [...active.map(mapRender), ...analyzeActive],
+    recent: [...recent.map(mapRender), ...analyzeRecent]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, recentLimit),
+    activeCount: active.length + analyzeActive.length,
+  };
+};
+
+const pauseJob: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const r = pauseRenderJob(jobId);
+  if (!r.ok) throw new ZiteError({ code: "BAD_REQUEST", message: r.message ?? "Could not pause job." });
+  return { ok: true, status: r.status };
+};
+
+const resumeJob: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const r = resumeRenderJob(jobId);
+  if (!r.ok) throw new ZiteError({ code: "BAD_REQUEST", message: r.message ?? "Could not resume job." });
+  return { ok: true, status: r.status };
+};
+
+const cancelJob: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const r = cancelRenderJob(jobId);
+  if (!r.ok) throw new ZiteError({ code: "BAD_REQUEST", message: r.message ?? "Could not cancel job." });
+  return { ok: true, status: r.status };
+};
+
+
 // ── Meme / Sticker editor (separate product) ─────────────────────────────────
 // Lean pipeline: transcribe → popping captions (reused render path) → emphasis
 // director (Claude picks ~1-sticker-per-4s moments + image prompts) → image gen
@@ -1961,6 +2072,11 @@ export const HANDLERS: Record<string, Handler> = {
   getAnalyzeCut,
   renderManualCut,
   getCutJob,
+  // background jobs panel
+  listJobs,
+  pauseJob,
+  resumeJob,
+  cancelJob,
   createMeme,
   getMemeRun,
   getMemeProjects,

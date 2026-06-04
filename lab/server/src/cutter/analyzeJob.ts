@@ -172,6 +172,16 @@ export function getAnalyzeJob(id: string): AnalyzeJob | undefined {
   return jobs.get(id);
 }
 
+/**
+ * Snapshot of every live analyze job, newest first. Used by the Background Jobs
+ * panel to SHOW these in-memory cutter analyses read-only (they have no
+ * pause/resume/cancel — they're short-lived with no killable child here).
+ */
+export function listAnalyzeJobs(): AnalyzeJob[] {
+  reapExpired();
+  return [...jobs.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
 function reapExpired(): void {
   const cutoff = Date.now() - JOB_TTL_MS;
   for (const [id, job] of jobs) {

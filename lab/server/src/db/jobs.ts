@@ -69,9 +69,15 @@ export function getJob(id: string): RenderJob | undefined {
   return db.prepare("SELECT * FROM render_jobs WHERE id = ?").get(id) as RenderJob | undefined;
 }
 
+/** A render job is in a terminal state — no further work or control applies. */
+export function isTerminalStatus(status: JobStatus): boolean {
+  return status === "completed" || status === "failed" || status === "canceled";
+}
+
 /**
  * Atomically claim the next queued job and mark it active. Uses an immediate
- * transaction so concurrent worker slots never grab the same row.
+ * transaction so concurrent worker slots never grab the same row. Paused-queued
+ * jobs are intentionally NOT claimed (their status is 'paused', not 'queued').
  */
 export const claimNextJob = db.transaction((): RenderJob | undefined => {
   const row = db
@@ -158,6 +164,177 @@ export function requeueStuckJobs(): number {
     .prepare("UPDATE render_jobs SET status='queued', updated_at=? WHERE status='active'")
     .run(now());
   return res.changes;
+}
+
+/** Set a job's status directly (used by the control layer after signaling). */
+export function setStatus(id: string, status: JobStatus): void {
+  const t = now();
+  const finished = isTerminalStatus(status) ? t : null;
+  db.prepare(
+    "UPDATE render_jobs SET status=?, finished_at=COALESCE(?, finished_at), updated_at=? WHERE id=?"
+  ).run(status, finished, t, id);
+}
+
+/**
+ * Pause a job's QUEUE state. A queued job becomes 'paused' so `pump` won't start
+ * it; an already-active job is left to the live control layer (it stays 'active'
+ * in the DB until the worker observes the SIGSTOP — see markPaused). Returns the
+ * resulting DB status, or undefined if the job is missing/terminal.
+ */
+export function pauseQueuedJob(id: string): JobStatus | undefined {
+  const job = getJob(id);
+  if (!job || isTerminalStatus(job.status)) return undefined;
+  if (job.status === "queued") {
+    setStatus(id, "paused");
+    return "paused";
+  }
+  return job.status; // active/paused — caller handles the live process
+}
+
+/** Mark a running job paused once its process tree has been SIGSTOP'd. */
+export function markPaused(id: string): void {
+  const job = getJob(id);
+  if (!job || isTerminalStatus(job.status)) return;
+  setStatus(id, "paused");
+}
+
+/**
+ * Resume a paused job. A paused-queued (never-started) job returns to 'queued'
+ * so `pump` picks it up; a paused-running job returns to 'active' (its process
+ * tree is SIGCONT'd by the control layer). `wasRunning` tells us which: true if
+ * the live registry still holds the job's process. Returns the new status.
+ */
+export function resumeJob(id: string, wasRunning: boolean): JobStatus | undefined {
+  const job = getJob(id);
+  if (!job || job.status !== "paused") return undefined;
+  const next: JobStatus = wasRunning ? "active" : "queued";
+  setStatus(id, next);
+  return next;
+}
+
+/**
+ * Cancel a job. Always lands on 'canceled' (terminal). The control layer is
+ * responsible for killing any live process tree and cleaning partial output.
+ */
+export function cancelJob(id: string, reason = "Canceled by user"): boolean {
+  const job = getJob(id);
+  if (!job || isTerminalStatus(job.status)) return false;
+  const t = now();
+  db.prepare(
+    "UPDATE render_jobs SET status='canceled', error=?, finished_at=?, updated_at=? WHERE id=?"
+  ).run(reason, t, t, id);
+  return true;
+}
+
+/** A friendly, human-readable label for a job, derived from its kind/manifest. */
+export function jobTitle(job: RenderJob): string {
+  // The render manifest / cut spec / command may carry a usable name.
+  if (job.output_name && job.output_name !== "output.mp4") {
+    const base = job.output_name.replace(/\.[^.]+$/, "");
+    if (base.trim()) return base;
+  }
+  try {
+    if (job.manifest_json) {
+      const m = JSON.parse(job.manifest_json) as { title?: string };
+      if (m.title) return String(m.title);
+    }
+  } catch {
+    /* ignore */
+  }
+  return jobTypeLabel(job);
+}
+
+/** A coarse type label for the panel grouping ("Short-form render", etc.). */
+export function jobTypeLabel(job: RenderJob): string {
+  if (job.kind === "cut") return "Narration cut";
+  if (job.kind === "command") return "Render";
+  // kind === "manifest": distinguish meme (emphasis stickers) from short-form.
+  try {
+    const m = JSON.parse(job.manifest_json || "{}") as {
+      emphasisStickers?: unknown[];
+      motionGraphics?: unknown[];
+    };
+    if (Array.isArray(m.emphasisStickers) && m.emphasisStickers.length > 0) return "Meme render";
+    if (Array.isArray(m.motionGraphics) && m.motionGraphics.length > 0) return "Motion render";
+  } catch {
+    /* ignore */
+  }
+  return "Short-form render";
+}
+
+/** A short stage label per status, surfaced in the panel under the title. */
+export function jobStageLabel(job: RenderJob): string {
+  switch (job.status) {
+    case "queued":
+      return "Waiting in queue";
+    case "active":
+      return "Rendering";
+    case "paused":
+      return "Paused";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return job.error ? "Failed" : "Failed";
+    case "canceled":
+      return "Canceled";
+    default:
+      return "";
+  }
+}
+
+export interface JobSummary {
+  id: string;
+  type: string;
+  title: string;
+  status: JobStatus;
+  stage: string;
+  progress: number;
+  error: string | null;
+  outputFile: string | null;
+  createdAt: number;
+  updatedAt: number;
+  finishedAt: number | null;
+}
+
+function toSummary(job: RenderJob): JobSummary {
+  return {
+    id: job.id,
+    type: jobTypeLabel(job),
+    title: jobTitle(job),
+    status: job.status,
+    stage: jobStageLabel(job),
+    progress: job.progress ?? 0,
+    error: job.error ?? null,
+    outputFile: job.output_file ?? null,
+    createdAt: job.created_at,
+    updatedAt: job.updated_at,
+    finishedAt: job.finished_at ?? null,
+  };
+}
+
+/**
+ * List jobs for the Background Jobs panel: every non-terminal job (queued,
+ * active, paused) plus the most recent `recentLimit` terminal jobs. Active jobs
+ * sort to the top, then queued/paused, then recent terminal by finish time.
+ */
+export function listJobs(recentLimit = 12): { active: JobSummary[]; recent: JobSummary[] } {
+  const live = db
+    .prepare(
+      `SELECT * FROM render_jobs
+        WHERE status IN ('active','queued','paused')
+        ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+                 created_at ASC`
+    )
+    .all() as RenderJob[];
+  const recent = db
+    .prepare(
+      `SELECT * FROM render_jobs
+        WHERE status IN ('completed','failed','canceled')
+        ORDER BY COALESCE(finished_at, updated_at) DESC
+        LIMIT ?`
+    )
+    .all(recentLimit) as RenderJob[];
+  return { active: live.map(toSummary), recent: recent.map(toSummary) };
 }
 
 export function queueDepth(): { queued: number; active: number } {

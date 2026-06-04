@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS batch_items (
 CREATE TABLE IF NOT EXISTS render_jobs (
   id               TEXT PRIMARY KEY,
   kind             TEXT NOT NULL,          -- 'command' (Rendi-style) | 'manifest'
-  status           TEXT NOT NULL,          -- queued | active | completed | failed | canceled
+  status           TEXT NOT NULL,          -- queued | active | paused | completed | failed | canceled
   progress         REAL NOT NULL DEFAULT 0,
   -- For kind='command': raw ffmpeg argv template + input file map.
   command          TEXT,
@@ -128,4 +128,4 @@ CREATE INDEX IF NOT EXISTS idx_shots_project     ON shots(project_id);
 CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
 `);
 
-export type JobStatus = "queued" | "active" | "completed" | "failed" | "canceled";
+export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";

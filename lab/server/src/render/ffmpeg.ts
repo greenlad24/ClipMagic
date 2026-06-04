@@ -1,7 +1,16 @@
 import { spawn } from "node:child_process";
 import { config } from "../config.js";
+import { registerChild, clearChild } from "./jobControl.js";
 
 export type ProgressFn = (fraction: number) => void;
+
+/** Thrown by runFfmpeg when its child was terminated by a cancel signal. */
+export class FfmpegCanceledError extends Error {
+  constructor() {
+    super("ffmpeg canceled");
+    this.name = "FfmpegCanceledError";
+  }
+}
 
 export interface RunResult {
   durationSec: number;
@@ -11,14 +20,24 @@ export interface RunResult {
  * Spawn the local ffmpeg binary with the given argv and resolve when it exits 0.
  * Progress 0..1 is reported by parsing ffmpeg's `-progress pipe:1` stream and
  * dividing the current output time by the known total duration.
+ *
+ * When `jobId` is supplied the child is spawned `detached` (its own process
+ * group) and registered with the job-control registry so a Pause/Resume/Cancel
+ * can SIGSTOP/SIGCONT/kill the whole ffmpeg tree.
  */
 export function runFfmpeg(
   args: string[],
   totalDuration: number,
-  onProgress?: ProgressFn
+  onProgress?: ProgressFn,
+  jobId?: string
 ): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(config.ffmpegPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(config.ffmpegPath, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      // Lead our own process group so signals reach the whole ffmpeg tree.
+      detached: Boolean(jobId),
+    });
+    if (jobId) registerChild(jobId, child);
 
     let stderrTail = "";
     let progressBuf = "";
@@ -46,12 +65,19 @@ export function runFfmpeg(
       stderrTail = (stderrTail + chunk.toString()).slice(-6000);
     });
 
-    child.on("error", (err) => reject(new Error(`Failed to start ffmpeg: ${err.message}`)));
+    child.on("error", (err) => {
+      if (jobId) clearChild(jobId, child);
+      reject(new Error(`Failed to start ffmpeg: ${err.message}`));
+    });
 
-    child.on("close", (code) => {
+    child.on("close", (code, signal) => {
+      if (jobId) clearChild(jobId, child);
       if (code === 0) {
         onProgress?.(1);
         resolve({ durationSec: totalDuration });
+      } else if (signal === "SIGTERM" || signal === "SIGKILL") {
+        // Killed by a cancel — surface as a typed reason the worker recognises.
+        reject(new FfmpegCanceledError());
       } else {
         reject(new Error(`ffmpeg exited with code ${code}\n${stderrTail}`));
       }

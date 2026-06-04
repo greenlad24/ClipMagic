@@ -7,12 +7,16 @@ import {
   setProgress,
   requeueStuckJobs,
   queueDepth,
+  getJob,
+  markPaused,
+  cancelJob as cancelJobRow,
   type RenderJob,
 } from "../db/jobs.js";
 import { resolveCommand } from "./command.js";
 import { buildArgsFromManifest } from "./build.js";
 import { buildCutArgs, type CutSpec } from "./cut.js";
-import { runFfmpeg } from "./ffmpeg.js";
+import { runFfmpeg, FfmpegCanceledError } from "./ffmpeg.js";
+import { getIntent, forgetJob } from "./jobControl.js";
 import type { RenderManifest } from "./manifest.js";
 import { Projects, MemeProjects } from "../zite/store.js";
 import { mergeRenderStats, type OptimizationReport } from "../ai/runAccounting.js";
@@ -39,6 +43,54 @@ function outputPathFor(job: RenderJob): { file: string; abs: string } {
   const ext = path.extname(job.output_name) || ".mp4";
   const file = `${job.id}${ext}`;
   return { file, abs: path.join(config.outputsDir, file) };
+}
+
+/**
+ * After a canceled job unwinds: ensure the row is 'canceled' (the control layer
+ * usually set it already, but a forced ffmpeg kill can race ahead of it) and
+ * remove any partial output file so a half-written .mp4 is never served.
+ */
+function finalizeCanceled(job: RenderJob): void {
+  const fresh = getJob(job.id);
+  if (fresh && fresh.status !== "canceled") {
+    cancelJobRow(job.id, "Canceled by user");
+  }
+  const { abs } = outputPathFor(job);
+  fs.rm(abs, { force: true }, () => {});
+}
+
+/** Raised when a job is canceled mid-flight so processJob unwinds cleanly. */
+class JobCanceledError extends Error {
+  constructor() {
+    super("job canceled");
+    this.name = "JobCanceledError";
+  }
+}
+
+/**
+ * A cooperative checkpoint between heavy stages. The main ffmpeg render is
+ * paused/killed at the process level, but the sequential Remotion composite
+ * stages can't be SIGSTOP'd cleanly — so before each we honour any pause/cancel
+ * intent here: cancel throws to unwind; pause blocks (and flips the DB to
+ * 'paused') until the operator resumes or cancels.
+ */
+async function checkpoint(jobId: string): Promise<void> {
+  let announcedPause = false;
+  for (;;) {
+    const intent = getIntent(jobId);
+    if (intent === "cancel") throw new JobCanceledError();
+    if (intent === "pause") {
+      if (!announcedPause) {
+        markPaused(jobId);
+        announcedPause = true;
+      }
+      await new Promise((r) => setTimeout(r, 250));
+      continue;
+    }
+    // intent === "none". If we had paused, the resume already flipped the DB
+    // row back to 'active' (control layer), so just proceed.
+    return;
+  }
 }
 
 async function processJob(job: RenderJob): Promise<void> {
@@ -69,14 +121,22 @@ async function processJob(job: RenderJob): Promise<void> {
     totalDuration = job.duration_sec ?? 0;
   }
 
+  // If a cancel was requested while the job sat queued, skip the spawn entirely.
+  if (getIntent(job.id) === "cancel") throw new JobCanceledError();
+
   let lastWritten = 0;
-  const result = await runFfmpeg(args, totalDuration, (frac) => {
-    const pct = Math.round(frac * 100) / 100;
-    if (pct - lastWritten >= 0.02 || pct >= 1) {
-      lastWritten = pct;
-      setProgress(job.id, pct);
-    }
-  });
+  const result = await runFfmpeg(
+    args,
+    totalDuration,
+    (frac) => {
+      const pct = Math.round(frac * 100) / 100;
+      if (pct - lastWritten >= 0.02 || pct >= 1) {
+        lastWritten = pct;
+        setProgress(job.id, pct);
+      }
+    },
+    job.id,
+  );
 
   // ── Motion-graphics stage (manifest-driven, best-effort) ───────────────────
   // Composite the director's Remotion overlays onto the just-finished render. A
@@ -86,6 +146,10 @@ async function processJob(job: RenderJob): Promise<void> {
   // worker simply applies what's there. applyMotionGraphics still re-checks
   // Chromium availability and force-disable internally; on any failure `abs` is
   // left exactly as the main render produced it (zero regression).
+  // Honour a pause/cancel requested during the main render before the (un-
+  // signalable) Remotion composite stages begin.
+  await checkpoint(job.id);
+
   let motionSpawns = 0;
   if (job.kind === "manifest") {
     const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
@@ -113,6 +177,8 @@ async function processJob(job: RenderJob): Promise<void> {
   // motion stage: on missing Chromium / image / any error, `abs` is left as the
   // captions-only render produced it (graceful fallback). Independent of the
   // MOTION_GRAPHICS flag — the meme editor opts in by populating the field.
+  await checkpoint(job.id);
+
   let stickerStage: { applied: number; skipReason: string | null } | null = null;
   if (job.kind === "manifest") {
     const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
@@ -194,20 +260,30 @@ async function processJob(job: RenderJob): Promise<void> {
 function startSlot(): void {
   activeSlots++; // synchronous — pump() relies on this being set before it loops
   void (async () => {
+    let claimedId: string | null = null;
     try {
       const job = claimNextJob();
       if (!job) return;
+      claimedId = job.id;
       try {
         await processJob(job);
         console.log(`[worker] job ${job.id} completed`);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        const status = failJob(job.id, msg);
-        console.error(
-          `[worker] job ${job.id} ${status === "queued" ? "retrying" : "failed"}: ${msg.split("\n")[0]}`
-        );
+        if (err instanceof JobCanceledError || err instanceof FfmpegCanceledError) {
+          // Cooperative/forced cancel — never retry. The control layer already
+          // (or will) mark the row 'canceled' and clean partial output.
+          finalizeCanceled(job);
+          console.log(`[worker] job ${job.id} canceled`);
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          const status = failJob(job.id, msg);
+          console.error(
+            `[worker] job ${job.id} ${status === "queued" ? "retrying" : "failed"}: ${msg.split("\n")[0]}`
+          );
+        }
       }
     } finally {
+      if (claimedId) forgetJob(claimedId);
       activeSlots--;
       pump();
     }
