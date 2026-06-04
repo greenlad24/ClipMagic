@@ -17,8 +17,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { parseSilenceDetect, detectSilences } from "../cutter/silence.js";
+import { parseSilenceDetect, detectSilences, parseAstatsEnvelope, computeEnvelope } from "../cutter/silence.js";
 import { planCuts, type PlanWord, type SilenceRegion } from "../cutter/plan.js";
+import { silencesFromEnvelope } from "../cutter/segments.js";
 
 const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
 
@@ -92,6 +93,17 @@ async function main() {
     assert.deepEqual(regions[0], { start: 5.0, end: 6.0, thresholdDb: -30 });
   });
 
+  check("parseAstatsEnvelope: parses RMS levels and floors -inf", () => {
+    const out = [
+      "lavfi.astats.Overall.RMS_level=-12.50",
+      "lavfi.astats.Overall.RMS_level=-inf",
+      "lavfi.astats.Overall.RMS_level=-3.0",
+      "lavfi.astats.Overall.RMS_level=nan",
+    ].join("\n");
+    const db = parseAstatsEnvelope(out, -60);
+    assert.deepEqual(db, [-12.5, -60, -3.0, -60]);
+  });
+
   // ── Real ffmpeg: synthesized tone bursts + known silent gaps ─────────────────
   const ffOk = (await run(FFMPEG, ["-version"])) === 0;
   if (!ffOk) {
@@ -121,6 +133,28 @@ async function main() {
       const insideSilence = silences.some((s) => mid > s.start + 0.05 && mid < s.end - 0.05);
       assert.ok(!insideSilence, `burst ${b.start}-${b.end} mid (${mid}) must not be silent`);
     }
+  });
+
+  // ── Energy envelope (timeline editor) round-trip ─────────────────────────────
+  // The browser thresholds THIS envelope live; assert it (a) sees both bursts as
+  // loud and the gaps as quiet, and (b) the client-side silencesFromEnvelope at
+  // the same floor reproduces the known silent gaps — the basis of preview↔render
+  // parity, exercised against real ffmpeg-measured audio.
+  await acheck("computeEnvelope + client threshold reproduce the known silent gaps", async () => {
+    const env = await computeEnvelope(wav, TOTAL, 50, -60);
+    assert.ok(env.db.length > 0, "envelope has frames");
+    assert.ok(Math.abs(env.duration - TOTAL) < 0.2);
+    const dbAt = (t: number) => env.db[Math.min(env.db.length - 1, Math.floor(t / env.hop))];
+    for (const b of BURSTS) assert.ok(dbAt((b.start + b.end) / 2) > -45, `burst ${b.start} loud`);
+    assert.ok(dbAt(1.5) < -45 && dbAt(3.75) < -45, "gaps are quiet in the envelope");
+
+    const sil = silencesFromEnvelope(
+      { db: env.db, hop: env.hop, duration: env.duration },
+      { silenceDb: -35, minSilence: 0.3, keepPad: 0.1, gap: 0.35 },
+    );
+    const covers = (a: number, b: number) => sil.some((s) => s.start <= b - 0.2 && s.end >= a + 0.2);
+    assert.ok(covers(1.0, 2.0), `gap 1.0–2.0 from envelope, got ${JSON.stringify(sil)}`);
+    assert.ok(covers(3.0, 4.5), `gap 3.0–4.5 from envelope, got ${JSON.stringify(sil)}`);
   });
 
   // Whisper-style word timings that DELIBERATELY drift into the gaps (loose
