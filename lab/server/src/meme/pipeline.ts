@@ -45,6 +45,8 @@ import {
 } from "./stickerSearch.js";
 import { reviewStickerFit } from "./stickerReview.js";
 import type { EmphasisStickerClip } from "./sticker.js";
+import type { StickerCandidate } from "./stickerSearch.js";
+import { orchestrateStickers } from "./orchestrate.js";
 
 const W = 1080;
 const H = 1920;
@@ -130,6 +132,10 @@ export interface MemeDiagnostics {
   momentsPlanned: number;
   /** Moments that got a usable image (the rest fall back to captions-only). */
   imagesGenerated: number;
+  /** How many of the applied stickers came from a (capped) OpenAI generation. */
+  openaiGenerated: number;
+  /** The per-video OpenAI generation cap in force this run (env MEME_OPENAI_MAX). */
+  openaiCap: number;
   /** Per-moment trace: query, candidate counts, review decision, final source. */
   moments: MomentDiagnostic[];
   /**
@@ -194,86 +200,43 @@ export async function runMemePipeline(opts: {
       `(giphy=${giphyConfigured()} tenor=${tenorConfigured()} openai=${openaiAvailable})`,
   );
 
-  const stickers: EmphasisStickerClip[] = [];
-  const momentDiags: MomentDiagnostic[] = [];
+  // Two-pass sourcing — FREE (Giphy/Tenor + review) first for every moment, then
+  // the (capped) OpenAI fallback fills only the moments left unmatched. Cap +
+  // prioritization + diagnostics all live in the injectable orchestrator so the
+  // ordering is unit-testable with mocks.
+  const { stickers, diagnostics: momentDiags, openaiUsed, openaiCap } = await orchestrateStickers(
+    moments,
+    {
+      searchAvailable,
+      openaiAvailable,
+      source,
+      search: (q: string) => searchStickerCandidates(q),
+      review: (line: string, cands: StickerCandidate[]) => reviewStickerFit(line, cands),
+      download: (c: StickerCandidate) => downloadSticker(c),
+      generate: (prompt: string) => generateStickerImage(prompt),
+    },
+  );
 
+  // Per-moment log lines (counts, source, verdict) for the server-side trace.
   for (let i = 0; i < moments.length; i++) {
     const m = moments[i];
-    const diag: MomentDiagnostic = {
-      phrase: m.phrase,
-      searchQuery: m.searchQuery,
-      candidates: { giphy: 0, tenor: 0 },
-      review: { reviewed: false, chosen: false, reason: "" },
-      appliedSource: "none",
-      ok: false,
-    };
-
-    let appliedUrl: string | null = null;
-
-    // 1) Giphy + Tenor reaction stickers → AI fit-review → download.
-    if (searchAvailable) {
-      const candidates = await searchStickerCandidates(m.searchQuery);
-      diag.candidates.giphy = candidates.filter((c) => c.provider === "giphy").length;
-      diag.candidates.tenor = candidates.filter((c) => c.provider === "tenor").length;
-
-      if (candidates.length > 0) {
-        const verdict = await reviewStickerFit(m.phrase || m.searchQuery, candidates);
-        diag.review = {
-          reviewed: verdict.reviewed,
-          chosen: !!verdict.chosen,
-          reason: verdict.reason,
-        };
-        if (verdict.chosen) {
-          const dl = await downloadSticker(verdict.chosen);
-          if (dl) {
-            appliedUrl = dl.url;
-            diag.appliedSource = "giphy+tenor";
-          } else {
-            diag.review.reason += " · download failed";
-          }
-        }
-      } else {
-        diag.review.reason = "no candidates found for query";
-      }
-    }
-
-    // 2) OpenAI fallback — only when the libraries produced nothing for this
-    //    moment and an OpenAI key exists.
-    if (!appliedUrl && openaiAvailable && (source === "openai" || searchAvailable)) {
-      const img = await generateStickerImage(m.imagePrompt);
-      if (img) {
-        appliedUrl = img.url;
-        diag.appliedSource = "openai";
-        if (!diag.review.reason) diag.review.reason = "no library sticker — used OpenAI fallback";
-      }
-    }
-
-    if (appliedUrl) {
-      diag.ok = true;
-      stickers.push({
-        startTime: m.startTime,
-        endTime: m.endTime,
-        imageUrl: appliedUrl,
-        // Alternate the resting tilt so adjacent stickers don't all lean the
-        // same way (the hand-placed feel).
-        restTiltDeg: i % 2 === 0 ? -4 : 4,
-        phrase: m.phrase,
-      });
+    const d = momentDiags[i];
+    if (d.ok) {
       console.log(
         `[meme]   moment @${m.startTime}s "${m.phrase ?? m.searchQuery}" — sticker ok ` +
-          `(${diag.appliedSource}; giphy ${diag.candidates.giphy}/tenor ${diag.candidates.tenor}; ${diag.review.reason})`,
+          `(${d.appliedSource}; giphy ${d.candidates.giphy}/tenor ${d.candidates.tenor}; ${d.review.reason})`,
       );
     } else {
       console.warn(
         `[meme]   moment @${m.startTime}s "${m.phrase ?? m.searchQuery}" — no sticker ` +
-          `(${diag.review.reason || "nothing applied"})`,
+          `(${d.review.reason || "nothing applied"})`,
       );
     }
-    momentDiags.push(diag);
   }
+  console.log(`[meme] sticker sourcing: ${stickers.length}/${moments.length} applied; OpenAI gen ${openaiUsed}/${openaiCap}`);
 
   // Backward-compatible flat per-moment results for the existing UI/persistence.
-  const imageResults: MemeDiagnostics["imageResults"] = momentDiags.map((d) => ({
+  const imageResults: MemeDiagnostics["imageResults"] = momentDiags.map((d: MomentDiagnostic) => ({
     phrase: d.phrase,
     ok: d.ok,
     reason: d.ok ? undefined : d.review.reason || "no sticker applied",
@@ -290,6 +253,8 @@ export async function runMemePipeline(opts: {
     source,
     momentsPlanned: moments.length,
     imagesGenerated: stickers.length,
+    openaiGenerated: openaiUsed,
+    openaiCap,
     moments: momentDiags,
     imageResults,
     skipReason,

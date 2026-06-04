@@ -198,6 +198,122 @@ check("buildCaptionEvents breaks on a clause comma once it has 2+ words", () => 
   assert.equal(events[1].words.map((w) => w.text).join(" "), "boom");
 });
 
+// ── Subtitle PARITY with the short-form editor ────────────────────────────────
+// A faithful REPLICA of src/api/runPipeline.ts's caption builder (its inline
+// "Hormozi-style" loop + per-word { text, start, end, emphasis } shape). The meme
+// builder must produce structurally IDENTICAL SubtitleEvents for the same words
+// and the same director-chosen emphasis set, so the two render identically. If
+// runPipeline's rules change, this replica documents what parity means.
+type RefWord = { word: string; start: number; end: number };
+function shortFormReference(words: RefWord[], emphasisIndices = new Set<number>()) {
+  const phraseGroups: RefWord[][] = [];
+  let currentGroup: RefWord[] = [];
+  const CHARS_2WORD_LIMIT = 13;
+  const wlen = (g: Array<{ word: string }>) =>
+    g.reduce((n, w) => n + w.word.replace(/[^\p{L}\p{N}]/gu, "").length, 0);
+  for (let i = 0; i < words.length; i++) {
+    currentGroup.push(words[i]);
+    const nextW = words[i + 1];
+    const gap = nextW ? nextW.start - words[i].end : Infinity;
+    const endsSentence = /[.!?…]$/.test(words[i].word.trim());
+    const endsClause = /[,;:]$/.test(words[i].word.trim());
+    const curChars = wlen(currentGroup);
+    const nextChars = nextW ? nextW.word.replace(/[^\p{L}\p{N}]/gu, "").length : 0;
+    const longTwo = currentGroup.length >= 2 && (curChars > CHARS_2WORD_LIMIT || curChars + nextChars > 16);
+    if (
+      currentGroup.length >= 3 ||
+      longTwo ||
+      gap > 0.35 ||
+      endsSentence ||
+      (endsClause && currentGroup.length >= 2)
+    ) {
+      phraseGroups.push([...currentGroup]);
+      currentGroup = [];
+    }
+  }
+  if (currentGroup.length > 0) phraseGroups.push(currentGroup);
+
+  const events: any[] = [];
+  let gi = 0;
+  for (const group of phraseGroups) {
+    const swArr = group.map((w) => ({
+      text: w.word, start: w.start, end: w.end, emphasis: emphasisIndices.has(gi++),
+    }));
+    events.push({ start: swArr[0].start, end: swArr[swArr.length - 1].end, words: swArr });
+  }
+  return events;
+}
+
+check("meme captions are STRUCTURALLY identical to the short-form builder (same words → same word-level karaoke events)", () => {
+  const words: RefWord[] = [
+    { word: "This", start: 0.0, end: 0.30 },
+    { word: "tool", start: 0.30, end: 0.55 },
+    { word: "is", start: 0.55, end: 0.70 },
+    { word: "absolutely", start: 0.70, end: 1.20 },
+    { word: "incredible,", start: 1.20, end: 1.90 },
+    { word: "watch", start: 2.40, end: 2.70 }, // pause → new chunk
+    { word: "what", start: 2.70, end: 2.90 },
+    { word: "happens", start: 2.90, end: 3.40 },
+    { word: "next.", start: 3.40, end: 3.90 },
+  ];
+  const meme = buildCaptionEvents(words);
+  const ref = shortFormReference(words);
+  // The per-word karaoke structure (text + timings + emphasis) and the event
+  // boundaries must match the short-form editor exactly.
+  assert.deepEqual(meme, ref, "meme events must equal the short-form builder's events");
+  // Spot-check the word-level structure the karaoke highlight reads (per-word
+  // start/end present and ordered within each event).
+  for (const ev of meme) {
+    assert.ok(ev.words.length >= 1 && ev.words.length <= 3);
+    for (const w of ev.words) {
+      assert.equal(typeof w.start, "number");
+      assert.equal(typeof w.end, "number");
+      assert.equal(typeof w.emphasis, "boolean");
+    }
+  }
+});
+
+check("meme captions honor a director emphasis set the SAME way as the short-form editor", () => {
+  const words: RefWord[] = [
+    { word: "Ten", start: 0.0, end: 0.2 },
+    { word: "times", start: 0.2, end: 0.5 },
+    { word: "faster.", start: 0.5, end: 1.0 },
+    { word: "No", start: 1.4, end: 1.6 },
+    { word: "joke.", start: 1.6, end: 2.0 },
+  ];
+  const emphasis = new Set([0, 2]); // "Ten" and "faster."
+  const meme = buildCaptionEvents(words, emphasis);
+  const ref = shortFormReference(words, emphasis);
+  assert.deepEqual(meme, ref, "emphasis marking must match the short-form builder");
+  // The exact words flagged emphasis are the director's chosen indices.
+  const flat = meme.flatMap((e) => e.words);
+  assert.equal(flat[0].emphasis, true, "index 0 emphasized");
+  assert.equal(flat[1].emphasis, false);
+  assert.equal(flat[2].emphasis, true, "index 2 emphasized");
+});
+
+check("meme captions do NOT force uppercase — casing follows template.allCaps at render time", () => {
+  // The builder must preserve the transcript's original casing; ALL-CAPS is a
+  // render-time decision per the chosen template's `allCaps` (applied in ass.ts),
+  // NOT baked into the event text — so a mixed-case template stays mixed-case and
+  // an all-caps template uppercases the SAME events.
+  const words: RefWord[] = [
+    { word: "iPhone", start: 0.0, end: 0.4 },
+    { word: "Pro", start: 0.4, end: 0.7 },
+    { word: "Max.", start: 0.7, end: 1.0 },
+  ];
+  const meme = buildCaptionEvents(words);
+  const rendered = meme.flatMap((e) => e.words).map((w) => w.text);
+  assert.deepEqual(rendered, ["iPhone", "Pro", "Max."], "original casing preserved (not forced caps)");
+  // Sanity: the all-caps templates exist in the pool, and applying their allCaps
+  // rule (as ass.ts does) uppercases the SAME preserved text.
+  for (const t of ["black-on-yellow", "pop-scale"] as const) {
+    assert.equal(SUBTITLE_TEMPLATES[t].allCaps, true, `${t} is an all-caps template`);
+  }
+  const mixed = SUBTITLE_TEMPLATES["yellow-mont"];
+  assert.equal(mixed.allCaps, false, "yellow-mont keeps original casing");
+});
+
 // ── Template selection: random draw from the FULL short-form pool ─────────────
 check("pickRandomCaptionTemplate only ever returns a template from the full pool", () => {
   for (let i = 0; i < 200; i++) {
@@ -344,6 +460,164 @@ check("reviewStickerFit returns nothing for an empty candidate set", async () =>
   const r = await reviewStickerFit("a line", []);
   assert.equal(r.chosen, null);
   assert.equal(r.reviewed, false);
+});
+
+// ── Sticker SOURCING ORCHESTRATION: free-first, capped OpenAI fallback ─────────
+// These exercise the injectable orchestrator with MOCK providers (no network):
+// Giphy/Tenor + review is tried FIRST for every moment; OpenAI fills ONLY the
+// unmatched moments, hard-capped at MEME_OPENAI_MAX/video, prioritized
+// deterministically; the no-OpenAI-key path skips gen with a clear reason.
+import { orchestrateStickers, resolveOpenAiMax, type StickerProviders } from "../meme/orchestrate.js";
+import type { FitReviewResult } from "../meme/stickerReview.js";
+
+function moment(startTime: number, query: string, phrase?: string): EmphasisMoment {
+  return { startTime, endTime: startTime + 2, searchQuery: query, imagePrompt: `gen:${query}`, phrase };
+}
+function cand(provider: "giphy" | "tenor", url: string): StickerCandidate {
+  return { provider, url, title: url };
+}
+/** A spy-able provider set with sensible defaults; override per test. */
+function makeProviders(over: Partial<StickerProviders> & {
+  searchResults?: Record<string, StickerCandidate[]>;
+  reviewPicks?: (line: string, c: StickerCandidate[]) => FitReviewResult;
+  genUrls?: string[];
+}): StickerProviders & { calls: { search: string[]; review: string[]; download: string[]; generate: string[] } } {
+  const calls = { search: [] as string[], review: [] as string[], download: [] as string[], generate: [] as string[] };
+  const searchResults = over.searchResults ?? {};
+  const genUrls = over.genUrls ?? [];
+  let genIdx = 0;
+  return {
+    searchAvailable: over.searchAvailable ?? true,
+    openaiAvailable: over.openaiAvailable ?? true,
+    source: over.source ?? "giphy+tenor",
+    async search(q) { calls.search.push(q); return searchResults[q] ?? []; },
+    async review(line, c) {
+      calls.review.push(line);
+      if (over.reviewPicks) return over.reviewPicks(line, c);
+      return { chosen: c[0] ?? null, chosenIndex: c.length ? 0 : null, reason: "top", reviewed: true };
+    },
+    async download(c) { calls.download.push(c.url); return { url: `/dl/${c.url}` }; },
+    async generate() { calls.generate.push("gen"); const u = genUrls[genIdx++]; return u ? { url: u } : null; },
+    calls,
+  };
+}
+
+check("resolveOpenAiMax defaults to 2 and honors the env override", () => {
+  delete process.env.MEME_OPENAI_MAX;
+  assert.equal(resolveOpenAiMax(), 2);
+  process.env.MEME_OPENAI_MAX = "0";
+  assert.equal(resolveOpenAiMax(), 0);
+  process.env.MEME_OPENAI_MAX = "5";
+  assert.equal(resolveOpenAiMax(), 5);
+  process.env.MEME_OPENAI_MAX = "nonsense";
+  assert.equal(resolveOpenAiMax(), 2, "invalid → default 2");
+  delete process.env.MEME_OPENAI_MAX;
+});
+
+check("orchestrate tries Giphy/Tenor + review FIRST for every moment (no gen when all matched)", async () => {
+  delete process.env.MEME_OPENAI_MAX;
+  const moments = [moment(6, "shocked"), moment(12, "money rain")];
+  const p = makeProviders({
+    searchResults: {
+      shocked: [cand("giphy", "g_shock.png")],
+      "money rain": [cand("tenor", "t_money.png")],
+    },
+  });
+  const res = await orchestrateStickers(moments, p);
+  // The free path ran for BOTH moments before any generation.
+  assert.deepEqual(p.calls.search, ["shocked", "money rain"], "searched both, in order");
+  assert.equal(p.calls.review.length, 2, "reviewed both");
+  assert.equal(p.calls.generate.length, 0, "no OpenAI gen when the free path matched all");
+  assert.equal(res.openaiUsed, 0);
+  assert.equal(res.stickers.length, 2);
+  assert.equal(res.diagnostics[0].appliedSource, "giphy+tenor");
+  assert.equal(res.diagnostics[1].appliedSource, "giphy+tenor");
+  // Per-moment diagnostics carry candidate counts + verdict.
+  assert.equal(res.diagnostics[0].candidates.giphy, 1);
+  assert.equal(res.diagnostics[1].candidates.tenor, 1);
+});
+
+check("orchestrate uses OpenAI ONLY for moments the free path left unmatched", async () => {
+  delete process.env.MEME_OPENAI_MAX; // cap = 2
+  const moments = [moment(6, "matched"), moment(12, "unmatched")];
+  const p = makeProviders({
+    searchResults: { matched: [cand("giphy", "g.png")] /* "unmatched" → [] */ },
+    genUrls: ["/gen/u.png"],
+  });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(p.calls.generate.length, 1, "generated once — only for the unmatched moment");
+  assert.equal(res.diagnostics[0].appliedSource, "giphy+tenor");
+  assert.equal(res.diagnostics[1].appliedSource, "openai");
+  assert.equal(res.openaiUsed, 1);
+  assert.equal(res.stickers.length, 2);
+});
+
+check("orchestrate NEVER exceeds the 2/video OpenAI cap (prioritizing earliest moments)", async () => {
+  delete process.env.MEME_OPENAI_MAX; // default 2
+  // Four unmatched moments; the cap is 2, so only the two EARLIEST get generated.
+  const moments = [moment(6, "a"), moment(10, "b"), moment(14, "c"), moment(18, "d")];
+  const p = makeProviders({ searchResults: {}, genUrls: ["/g/a.png", "/g/b.png", "/g/c.png", "/g/d.png"] });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(res.openaiCap, 2);
+  assert.equal(res.openaiUsed, 2, "never exceeds the cap");
+  assert.equal(p.calls.generate.length, 2, "exactly two gen calls");
+  // Deterministic prioritization: the two EARLIEST moments (6s, 10s) are generated.
+  assert.equal(res.diagnostics[0].appliedSource, "openai", "@6s generated");
+  assert.equal(res.diagnostics[1].appliedSource, "openai", "@10s generated");
+  assert.equal(res.diagnostics[2].appliedSource, "none", "@14s past the cap → captions-only");
+  assert.equal(res.diagnostics[3].appliedSource, "none", "@18s past the cap → captions-only");
+  // The capped-out moments record WHY (so the UI can surface it).
+  assert.ok(/cap \(2\/video\) reached/.test(res.diagnostics[2].review.reason), res.diagnostics[2].review.reason);
+  // Stickers are emitted in MOMENT order (the two earliest only).
+  assert.deepEqual(res.stickers.map((s) => s.startTime), [6, 10]);
+});
+
+check("orchestrate skips OpenAI gen with a clear reason when no OpenAI key is present", async () => {
+  delete process.env.MEME_OPENAI_MAX;
+  const moments = [moment(6, "nope")];
+  const p = makeProviders({ openaiAvailable: false, searchResults: {} });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(p.calls.generate.length, 0, "no gen attempted without a key");
+  assert.equal(res.openaiUsed, 0);
+  assert.equal(res.stickers.length, 0, "captions-only for that moment");
+  assert.ok(/no OpenAI key/.test(res.diagnostics[0].review.reason), res.diagnostics[0].review.reason);
+});
+
+check("orchestrate: review DROP leaves the moment for the capped OpenAI fallback", async () => {
+  delete process.env.MEME_OPENAI_MAX;
+  const moments = [moment(6, "weird")];
+  const p = makeProviders({
+    searchResults: { weird: [cand("giphy", "g_weird.png")] },
+    reviewPicks: () => ({ chosen: null, chosenIndex: null, reason: "all off-topic — dropped", reviewed: true }),
+    genUrls: ["/gen/weird.png"],
+  });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(p.calls.review.length, 1, "review ran");
+  assert.equal(p.calls.generate.length, 1, "drop → OpenAI fallback filled it");
+  assert.equal(res.diagnostics[0].appliedSource, "openai");
+  assert.equal(res.openaiUsed, 1);
+});
+
+check("orchestrate legacy 'openai' source skips the free path entirely", async () => {
+  delete process.env.MEME_OPENAI_MAX;
+  const moments = [moment(6, "x"), moment(12, "y")];
+  const p = makeProviders({ source: "openai", genUrls: ["/g/x.png", "/g/y.png"] });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(p.calls.search.length, 0, "no library search in legacy openai mode");
+  assert.equal(p.calls.review.length, 0, "no review in legacy openai mode");
+  assert.equal(p.calls.generate.length, 2, "both generated (within the cap)");
+  assert.equal(res.openaiUsed, 2);
+});
+
+check("orchestrate with MEME_OPENAI_MAX=0 disables gen and records the reason", async () => {
+  process.env.MEME_OPENAI_MAX = "0";
+  const moments = [moment(6, "z")];
+  const p = makeProviders({ searchResults: {} });
+  const res = await orchestrateStickers(moments, p);
+  assert.equal(p.calls.generate.length, 0, "cap 0 ⇒ no gen");
+  assert.equal(res.openaiCap, 0);
+  assert.ok(/gen disabled \(cap 0\)/.test(res.diagnostics[0].review.reason), res.diagnostics[0].review.reason);
+  delete process.env.MEME_OPENAI_MAX;
 });
 
 // ── Source selection + fallback ordering ──────────────────────────────────────
