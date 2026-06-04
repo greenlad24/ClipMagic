@@ -19,7 +19,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { parseSilenceDetect, detectSilences, parseAstatsEnvelope, computeEnvelope } from "../cutter/silence.js";
 import { planCuts, type PlanWord, type SilenceRegion } from "../cutter/plan.js";
-import { silencesFromEnvelope } from "../cutter/segments.js";
+import { silencesFromEnvelope, DEFAULT_SETTINGS } from "../cutter/segments.js";
 
 const FFMPEG = process.env.FFMPEG_PATH || "ffmpeg";
 
@@ -150,7 +150,7 @@ async function main() {
 
     const sil = silencesFromEnvelope(
       { db: env.db, hop: env.hop, duration: env.duration },
-      { silenceDb: -35, minSilence: 0.3, keepPad: 0.1, gap: 0.35 },
+      { ...DEFAULT_SETTINGS, silenceDb: -35, minSilence: 0.3, keepPad: 0.1, gap: 0.35 },
     );
     const covers = (a: number, b: number) => sil.some((s) => s.start <= b - 0.2 && s.end >= a + 0.2);
     assert.ok(covers(1.0, 2.0), `gap 1.0–2.0 from envelope, got ${JSON.stringify(sil)}`);
