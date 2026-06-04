@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
+import BackgroundJobs from './components/BackgroundJobs';
 import HomePage from './pages/HomePage';
 import CreatePage from './pages/CreatePage';
 import ProcessingPage from './pages/ProcessingPage';
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/cutter" element={<CutterPage />} />
         <Route path="/meme" element={<MemePage />} />
       </Routes>
+      <BackgroundJobs />
       <Toaster theme="dark" />
     </BrowserRouter>
   );
