@@ -31,6 +31,13 @@ interface CutRun {
   items: CutItem[];
 }
 
+type Aggressiveness = 'gentle' | 'balanced' | 'aggressive';
+const AGGRESSION: { value: Aggressiveness; label: string; hint: string }[] = [
+  { value: 'gentle', label: 'Gentle', hint: 'Only obvious dead air' },
+  { value: 'balanced', label: 'Balanced', hint: 'Recommended' },
+  { value: 'aggressive', label: 'Aggressive', hint: 'Tightest, cuts more pauses' },
+];
+
 const STATUS_STYLE: Record<CutItem['status'], string> = {
   Queued: 'text-muted-foreground',
   Transcribing: 'text-blue-400',
@@ -54,6 +61,7 @@ export default function CutterPage() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
   const [run, setRun] = useState<CutRun | null>(null);
+  const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
   const [isDragging, setIsDragging] = useState(false);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -100,7 +108,7 @@ export default function CutterPage() {
         items.push({ sourceUrl, title: f.name.replace(/\.[^.]+$/, '') });
       }
       setUploadMsg('Starting cut run…');
-      const res = await createBulkCut({ items });
+      const res = await createBulkCut({ items, aggressiveness });
       if (res.started === false) toast.info(res.message ?? 'A cut run is already in progress.');
       else toast.success(`Cutting ${items.length} video${items.length !== 1 ? 's' : ''}.`);
       setFiles([]);
@@ -145,6 +153,35 @@ export default function CutterPage() {
           </p>
           <input ref={inputRef} type="file" accept="video/*" multiple className="hidden"
             onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ''; }} />
+        </div>
+
+        {/* Cut strength — how much non-speech to remove (the user's call). */}
+        <div className="rounded-xl border border-border p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-muted-foreground">Cut strength</span>
+            <span className="text-[11px] text-muted-foreground">
+              {AGGRESSION.find((a) => a.value === aggressiveness)?.hint}
+            </span>
+          </div>
+          <div role="radiogroup" aria-label="Cut strength" className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+            {AGGRESSION.map((a) => (
+              <button
+                key={a.value}
+                role="radio"
+                aria-checked={aggressiveness === a.value}
+                disabled={uploading}
+                onClick={() => setAggressiveness(a.value)}
+                title={a.hint}
+                className={`h-8 rounded-md text-xs font-medium transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  aggressiveness === a.value
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {a.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Queued files (pre-upload) */}
