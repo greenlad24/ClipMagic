@@ -31,6 +31,7 @@ import {
   OPENAI_RATES,
   OPENAI_WHISPER_PER_MINUTE,
   GROQ_WHISPER_PER_MINUTE,
+  OPENAI_IMAGE_PER_IMAGE,
   PRICING_SOURCE_DATE,
   tokenCost,
   transcriptionCost,
@@ -46,7 +47,11 @@ export type CallPurpose =
   | "emphasis-fallback"
   | "review"
   // Narration Cutter: duplicate-take grouping (cheap structured extraction).
-  | "take-detection";
+  | "take-detection"
+  // Sticker/Meme editor: picks the emphasis moments + writes the image prompts.
+  | "emphasis-director"
+  // Sticker/Meme editor: one generated still image per emphasis moment.
+  | "image-generation";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";
@@ -58,6 +63,8 @@ export interface AiCallRecord {
   cacheReadTokens: number;
   /** For transcription calls: minutes of audio (tokens are 0). */
   audioMinutes?: number;
+  /** For image-generation calls: how many images were generated (tokens are 0). */
+  images?: number;
   costUsd: number;
   ms: number;
 }
@@ -161,6 +168,45 @@ export function recordGroqTranscription(args: {
     cacheWriteTokens: 0,
     cacheReadTokens: 0,
     audioMinutes: minutes,
+    costUsd: roundUsd(cost),
+    ms: args.ms,
+  });
+}
+
+/**
+ * Record generated still images for the Sticker/Meme editor. Each image is a
+ * flat per-image OpenAI charge (no tokens). We aggregate one record per run with
+ * the image count and total cost so the optimization report shows a single,
+ * honest "N images × $rate" line. `model` is the image model actually used.
+ */
+export function recordImageGeneration(args: {
+  model: string;
+  images: number;
+  ms: number;
+}): void {
+  if (!activeRun) return;
+  if (args.images <= 0) return;
+  const per = OPENAI_IMAGE_PER_IMAGE[args.model] ?? 0;
+  const cost = per * args.images;
+  // Fold into one running line per model so the report reads "N images".
+  const existing = activeRun.calls.find(
+    (c) => c.purpose === "image-generation" && c.model === args.model,
+  );
+  if (existing) {
+    existing.images = (existing.images ?? 0) + args.images;
+    existing.costUsd = roundUsd((existing.costUsd ?? 0) + cost);
+    existing.ms += args.ms;
+    return;
+  }
+  activeRun.calls.push({
+    provider: "openai",
+    model: args.model,
+    purpose: "image-generation",
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheWriteTokens: 0,
+    cacheReadTokens: 0,
+    images: args.images,
     costUsd: roundUsd(cost),
     ms: args.ms,
   });
@@ -311,6 +357,42 @@ export function buildReport(projectId: string): OptimizationReport | null {
     });
     whatWasOptimized.push(
       `Duplicate-take grouping ran on Claude ${take.model} (fast tier) instead of a gpt-4o-class call, and is skipped outright when a cheap pre-filter finds no repeated phrase.`,
+    );
+  }
+
+  // ── Line item: emphasis director (Sticker/Meme editor) ──────────────────────
+  // This editor is a NEW tool with no main-app equivalent, so there is no
+  // apples-to-apples "savings vs main app" to claim. We surface its ACTUAL cost
+  // honestly: baseline = lab (no saving), counted toward the net spend.
+  const emphasis = run.calls.find((c) => c.purpose === "emphasis-director");
+  if (emphasis) {
+    lineItems.push({
+      label: "Emphasis director (Sticker editor)",
+      labUsd: roundUsd(emphasis.costUsd),
+      baselineUsd: roundUsd(emphasis.costUsd),
+      savedUsd: 0,
+      note: `Claude ${emphasis.model} picks the on-beat emphasis moments and writes each image prompt — ${emphasis.inputTokens} in / ${emphasis.outputTokens} out tokens. New capability with no main-app equivalent, so this is the editor's real added cost, not a saving.`,
+      kind: "quality-investment",
+    });
+    qualityImprovements.push(
+      "A content-driven director picks emphasis moments (~every 4s, sparing on hook/CTA) and writes a meme-style image prompt for each — captions stay clean while a funny sticker lands the point.",
+    );
+  }
+
+  // ── Line item: image generation (Sticker/Meme editor) ───────────────────────
+  const img = run.calls.find((c) => c.purpose === "image-generation");
+  if (img && (img.images ?? 0) > 0) {
+    const perImage = OPENAI_IMAGE_PER_IMAGE[img.model] ?? 0;
+    lineItems.push({
+      label: `Sticker image generation · ${img.images} image${img.images !== 1 ? "s" : ""}`,
+      labUsd: roundUsd(img.costUsd),
+      baselineUsd: roundUsd(img.costUsd),
+      savedUsd: 0,
+      note: `${img.images} × OpenAI ${img.model} still${img.images !== 1 ? "s" : ""} at $${perImage.toFixed(2)}/image (transparent PNG, 1024², priced ${PRICING_SOURCE_DATE}). Added cost unique to this editor — shown transparently, never compared against a tool that doesn't generate images.`,
+      kind: "quality-investment",
+    });
+    whatWasOptimized.push(
+      `Sticker editor generated ${img.images} funny still image${img.images !== 1 ? "s" : ""} (OpenAI ${img.model}) — cached by prompt and rendered as bouncy stickers below the captions.`,
     );
   }
 

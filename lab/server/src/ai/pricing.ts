@@ -77,6 +77,23 @@ export const OPENAI_RATES: Record<string, TokenRate> = {
 /** OpenAI Whisper transcription: $0.006 per minute of audio. */
 export const OPENAI_WHISPER_PER_MINUTE = 0.006;
 
+/**
+ * OpenAI IMAGE generation — flat per-image price by model+size. Used by the
+ * Sticker / Meme editor, which generates one funny still per emphasis moment.
+ * These are real published rates (verified 2026-06-02):
+ *   • gpt-image-1 — image pricing page, 1024×1024 "medium" quality = $0.04/image
+ *     (the default we request; transparent-background PNG).
+ *     https://platform.openai.com/docs/pricing  (image generation)
+ *   • dall-e-3   — 1024×1024 standard = $0.04/image (fallback model).
+ *     https://openai.com/api/pricing
+ * Keyed by the exact model string we send so a price lookup can never silently
+ * mis-attribute (unknown model → cost marked n/a, never guessed).
+ */
+export const OPENAI_IMAGE_PER_IMAGE: Record<string, number> = {
+  "gpt-image-1": 0.04,
+  "dall-e-3": 0.04,
+};
+
 /** Groq whisper-large-v3-turbo: $0.04/hour = $0.04/60 per minute. */
 export const GROQ_WHISPER_PER_MINUTE = 0.04 / 60;
 
