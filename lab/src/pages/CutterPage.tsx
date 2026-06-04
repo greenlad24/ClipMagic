@@ -1,11 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Scissors, Play, Eye, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Scissors, Play, Eye, SlidersHorizontal, HardDrive } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { uploadBlobToZite } from '@/utils/videoUtils';
 import { createBulkCut, getCutRun } from 'zite-endpoints-sdk';
 import TimelineEditor from '@/components/cutter/TimelineEditor';
+import StoragePickerDialog, { type StoredFile } from '@/components/StoragePickerDialog';
+
+/** A queued source: either a local file to upload, or a stored file to reuse. */
+type QueueItem =
+  | { kind: 'file'; file: File; title: string }
+  | { kind: 'stored'; sourceUrl: string; title: string };
 
 interface CutStats {
   originalDuration: number;
@@ -58,12 +64,13 @@ function fmtDur(s: number): string {
 
 export default function CutterPage() {
   const navigate = useNavigate();
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<QueueItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState('');
   const [run, setRun] = useState<CutRun | null>(null);
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('balanced');
   const [isDragging, setIsDragging] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [editor, setEditor] = useState<{ sourceUrl: string; title: string } | null>(null);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -95,7 +102,15 @@ export default function CutterPage() {
     if (!list) return;
     const vids = Array.from(list).filter((f) => /video\//.test(f.type) || /\.(mp4|mov|m4v|webm|mkv)$/i.test(f.name));
     if (vids.length === 0) { toast.error('Drop video files (MP4/MOV/WebM…)'); return; }
-    setFiles((prev) => [...prev, ...vids]);
+    setFiles((prev) => [...prev, ...vids.map((f): QueueItem => ({ kind: 'file', file: f, title: f.name }))]);
+  };
+
+  // Reuse a file already in storage — queue it pre-resolved (no re-upload).
+  const addStored = (picked: StoredFile[]) => {
+    setFiles((prev) => [
+      ...prev,
+      ...picked.map((s): QueueItem => ({ kind: 'stored', sourceUrl: s.url!, title: s.original || s.name })),
+    ]);
   };
 
   const start = async () => {
@@ -104,10 +119,16 @@ export default function CutterPage() {
     const items: Array<{ sourceUrl: string; title: string }> = [];
     try {
       for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        setUploadMsg(`Uploading ${i + 1}/${files.length}: ${f.name}`);
-        const sourceUrl = await uploadBlobToZite(f, f.name);
-        items.push({ sourceUrl, title: f.name.replace(/\.[^.]+$/, '') });
+        const it = files[i];
+        const title = it.title.replace(/\.[^.]+$/, '');
+        if (it.kind === 'stored') {
+          // Already on the server — feed its URL straight in.
+          items.push({ sourceUrl: it.sourceUrl, title });
+          continue;
+        }
+        setUploadMsg(`Uploading ${i + 1}/${files.length}: ${it.file.name}`);
+        const sourceUrl = await uploadBlobToZite(it.file, it.file.name);
+        items.push({ sourceUrl, title });
       }
       setUploadMsg('Starting cut run…');
       const res = await createBulkCut({ items, aggressiveness });
@@ -130,10 +151,16 @@ export default function CutterPage() {
     if (files.length === 0) return;
     setUploading(true);
     try {
-      const f = files[0];
-      setUploadMsg(`Uploading ${f.name}…`);
-      const sourceUrl = await uploadBlobToZite(f, f.name);
-      setEditor({ sourceUrl, title: f.name.replace(/\.[^.]+$/, '') });
+      const it = files[0];
+      const title = it.title.replace(/\.[^.]+$/, '');
+      let sourceUrl: string;
+      if (it.kind === 'stored') {
+        sourceUrl = it.sourceUrl;
+      } else {
+        setUploadMsg(`Uploading ${it.file.name}…`);
+        sourceUrl = await uploadBlobToZite(it.file, it.file.name);
+      }
+      setEditor({ sourceUrl, title });
       setFiles((prev) => prev.slice(1));
     } catch (e: any) {
       toast.error('Upload failed — ' + (e?.message?.slice(0, 100) ?? 'unknown error'));
@@ -193,6 +220,14 @@ export default function CutterPage() {
             onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ''; }} />
         </div>
 
+        {/* Reuse an already-uploaded narration instead of uploading again. */}
+        <div className="flex justify-center -mt-2">
+          <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5"
+            onClick={() => setPickerOpen(true)}>
+            <HardDrive className="w-3.5 h-3.5" /> Choose from storage
+          </Button>
+        </div>
+
         {/* Cut strength — how much non-speech to remove (the user's call). */}
         <div className="rounded-xl border border-border p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -242,7 +277,12 @@ export default function CutterPage() {
             </div>
             {uploading && <p className="text-xs text-muted-foreground">{uploadMsg}</p>}
             <div className="max-h-32 overflow-y-auto text-xs text-muted-foreground space-y-0.5">
-              {files.map((f, i) => <div key={i} className="truncate">• {f.name}</div>)}
+              {files.map((f, i) => (
+                <div key={i} className="truncate flex items-center gap-1.5">
+                  {f.kind === 'stored' && <HardDrive className="w-3 h-3 shrink-0 text-primary" />}
+                  <span className="truncate">{f.title}</span>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -295,6 +335,13 @@ export default function CutterPage() {
           </div>
         )}
       </div>
+
+      <StoragePickerDialog
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onSelect={addStored}
+        description="Reuse footage you already uploaded — it goes straight to the queue, no re-upload."
+      />
     </div>
   );
 }
