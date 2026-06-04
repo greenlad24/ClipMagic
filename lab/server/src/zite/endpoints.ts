@@ -21,7 +21,8 @@ import { resolveInput } from "../render/resolve.js";
 import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
-import { detectSilences } from "../cutter/silence.js";
+import { detectSilences, computeEnvelope } from "../cutter/silence.js";
+import { segmentTakes, DEFAULT_SETTINGS, type Envelope, type Seg } from "../cutter/segments.js";
 import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
@@ -1044,6 +1045,116 @@ const getNarrationCuts: Handler = async (_input, userId) => {
   return { cuts };
 };
 
+// ── Interactive timeline editor (single-clip, Descript-style) ────────────────
+// The bulk auto path above is untouched. This pair of endpoints powers the
+// manual timeline editor in the Narration Cutter: `analyzeCut` returns the data
+// the browser needs to build the timeline (a dBFS energy envelope, word timings
+// for transcript snippets, and an initial take segmentation), and
+// `renderManualCut` renders the EXACT keep-segment list the editor computed —
+// no re-detection — so what the user previewed is what gets produced. Parity is
+// guaranteed because both sides derive segments from the same envelope via the
+// shared `cutter/segments.ts` math and the render trims that explicit list.
+
+/**
+ * Analyze one clip for the timeline editor. Transcribes (word timings, for the
+ * transcript snippets on each take block), builds a per-frame dBFS envelope (for
+ * the waveform + live client-side thresholding), and returns an initial take
+ * segmentation at the default settings. Best-effort on transcription: if no
+ * GROQ key is present we still return the envelope + duration so the waveform,
+ * threshold and gap controls work — just without transcript labels.
+ */
+const analyzeCut: Handler = async (input) => {
+  const sourceUrl: string = input?.sourceUrl;
+  if (!sourceUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "sourceUrl is required." });
+  const srcPath = await resolveInput(sourceUrl);
+  const meta = await probe(srcPath);
+  const duration = meta.duration ?? 0;
+  if (!duration) throw new ZiteError({ code: "BAD_REQUEST", message: "Could not read the video's duration." });
+
+  // Word timings (for transcript snippets). Non-fatal: the editor degrades to an
+  // energy-only timeline if transcription is unavailable (no key in the lab).
+  let words: { word: string; start: number; end: number }[] = [];
+  let transcript = "";
+  try {
+    const audio = await extractAudioForTranscription(srcPath);
+    const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
+    words = tr.words;
+    transcript = tr.text;
+  } catch (e) {
+    console.warn(`[analyzeCut] transcription unavailable (non-fatal): ${e instanceof Error ? e.message : e}`);
+  }
+
+  const envelope = await computeEnvelope(srcPath, duration);
+  const env: Envelope = { db: envelope.db, hop: envelope.hop, duration: envelope.duration };
+  // Initial take segmentation at the defaults — the client re-segments live as
+  // the user drags the controls, using the very same `segmentTakes` math.
+  const takes = env.db.length > 0 ? segmentTakes(env, words, DEFAULT_SETTINGS) : [];
+
+  return {
+    sourceUrl,
+    duration,
+    hasAudio: meta.hasAudio,
+    width: meta.width,
+    height: meta.height,
+    envelope: { db: envelope.db, hop: envelope.hop, floorDb: envelope.floorDb },
+    words,
+    transcript,
+    takes,
+    defaults: DEFAULT_SETTINGS,
+  };
+};
+
+/**
+ * Render the EXACT edit the timeline editor previewed. Accepts the explicit
+ * ordered keep-segment list + the inter-take gap and renders precisely that
+ * (the render path inserts the gap and applies the same micro-fades as the auto
+ * path). No transcription, no take-detection, no silence re-detection — the
+ * decision was already made client-side, so preview ↔ render parity is exact.
+ */
+const renderManualCut: Handler = async (input, userId) => {
+  const sourceUrl: string = input?.sourceUrl;
+  if (!sourceUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "sourceUrl is required." });
+  const rawSegs: Seg[] = Array.isArray(input?.segments) ? input.segments : [];
+  const segments = rawSegs
+    .filter((s) => Number.isFinite(s?.start) && Number.isFinite(s?.end) && s.end > s.start)
+    .map((s) => ({ start: Math.max(0, s.start), end: s.end }))
+    .sort((a, b) => a.start - b.start);
+  if (segments.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No keep-segments to render." });
+  const gap = Number.isFinite(input?.gap) ? Math.max(0, Math.min(2, input.gap)) : DEFAULT_SETTINGS.gap;
+  const title: string = (input?.title && String(input.title)) || "Manual cut";
+
+  const srcPath = await resolveInput(sourceUrl);
+  const meta = await probe(srcPath);
+
+  const rec = await NarrationCuts.create({
+    record: { title, status: "Rendering", sourceUrl, outputUrl: null, user: userId, manual: true },
+  });
+
+  const spec: CutSpec = { source: srcPath, segments, hasAudio: meta.hasAudio, gap };
+  const keptDuration = segments.reduce((s, seg) => s + (seg.end - seg.start), 0) + gap * Math.max(0, segments.length - 1);
+  const jobId = createJob({ kind: "cut", manifest: spec, outputName: `${title}.mp4`, projectId: rec.id });
+  db.prepare("UPDATE render_jobs SET duration_sec=? WHERE id=?").run(keptDuration, jobId);
+  await NarrationCuts.update({ id: rec.id, record: { renderJobId: jobId, segments, gap } }).catch(() => {});
+  pump();
+
+  return { cutId: rec.id, jobId, expectedDuration: keptDuration };
+};
+
+/** Poll a single manual-cut render job (by jobId) for the timeline editor. */
+const getCutJob: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const job = getJob(jobId);
+  if (!job) return { status: "missing", progress: 0, outputUrl: null, error: "Job not found" };
+  const outputUrl = job.status === "completed" && job.output_file ? `/api/outputs/${job.output_file}` : null;
+  return {
+    status: job.status,
+    progress: job.progress ?? 0,
+    outputUrl,
+    error: job.status === "failed" || job.status === "canceled" ? (job.error ?? "Render failed") : null,
+  };
+};
+
 
 // ── Meme / Sticker editor (separate product) ─────────────────────────────────
 // Lean pipeline: transcribe → popping captions (reused render path) → emphasis
@@ -1706,6 +1817,9 @@ export const HANDLERS: Record<string, Handler> = {
   createBulkCut,
   getCutRun,
   getNarrationCuts,
+  analyzeCut,
+  renderManualCut,
+  getCutJob,
   createMeme,
   getMemeRun,
   getMemeProjects,
