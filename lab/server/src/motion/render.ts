@@ -64,6 +64,17 @@ async function importRemotionPkg(pkg: string): Promise<any> {
 export const importRenderer = (): Promise<any> => importRemotionPkg("@remotion/renderer");
 const importBundler = (): Promise<any> => importRemotionPkg("@remotion/bundler");
 
+/**
+ * The pre-baked Chromium executable Remotion should use, or undefined to let
+ * Remotion download/locate its own. In the Docker image config sets this to the
+ * apt-installed /usr/bin/chromium so a render never depends on Remotion's CDN.
+ * Exported so EVERY Remotion call site (the runtime probe, the short-form motion
+ * stage, AND the meme/sticker stage) passes the SAME executable.
+ */
+export function browserExecutable(): string | undefined {
+  return config.remotionBrowserExecutable || undefined;
+}
+
 export interface RenderedGraphic {
   clip: MotionGraphicClip;
   /** Local path to the rendered alpha clip (WebM/ProRes), or null if it failed. */
@@ -95,7 +106,14 @@ export async function remotionRuntimeAvailable(): Promise<boolean> {
           throw new Error("@remotion/renderer missing selectComposition");
         }
         if (typeof renderer.openBrowser === "function") {
-          const browser = await renderer.openBrowser("chrome");
+          // Use the pre-baked Chromium when configured (REMOTION_BROWSER_EXECUTABLE)
+          // so the probe — and therefore every real render — never triggers
+          // Remotion's runtime Chromium download.
+          const exe = browserExecutable();
+          const browser = await renderer.openBrowser(
+            "chrome",
+            exe ? { browserExecutable: exe } : undefined,
+          );
           await browser.close?.();
         }
         return true;
@@ -119,7 +137,8 @@ export async function remotionRuntimeAvailable(): Promise<boolean> {
  * stickers run whenever Chromium is present, regardless of the flag.
  */
 export async function motionAvailable(): Promise<boolean> {
-  if (!config.motionGraphicsEnabled) return false;
+  // MOTION_GRAPHICS=0 force-disables the short-form motion stage globally.
+  if (config.motionGraphicsForceDisabled) return false;
   return remotionRuntimeAvailable();
 }
 
@@ -185,6 +204,7 @@ async function renderOne(
   try {
     const { selectComposition, renderMedia } = await importRenderer();
     const { codec, pixelFormat, ext } = codecConfig();
+    const exe = browserExecutable();
 
     const lengthSec = Math.max(0.6, clip.endTime - clip.startTime);
     const durationInFrames = Math.max(1, Math.round(lengthSec * FPS));
@@ -194,6 +214,7 @@ async function renderOne(
       serveUrl,
       id: clip.kind,
       inputProps,
+      ...(exe ? { browserExecutable: exe } : {}),
     });
 
     const outFile = path.join(config.tmpDir, `mg_${clip.kind}_${randomUUID()}.${ext}`);
@@ -208,6 +229,8 @@ async function renderOne(
       outputLocation: outFile,
       inputProps,
       concurrency: config.motionChromiumConcurrency,
+      // Pre-baked Chromium (REMOTION_BROWSER_EXECUTABLE) — never a runtime download.
+      ...(exe ? { browserExecutable: exe } : {}),
       ...(codec === "prores" ? { proResProfile: "4444" as never } : {}),
     });
 

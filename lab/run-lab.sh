@@ -62,15 +62,38 @@ echo "[lab] sharing dependencies from the main app (read-only libs)…"
 ln -sfn "$ROOT_DIR/server/node_modules" "$LAB_DIR/server/node_modules"
 ln -sfn "$ROOT_DIR/web/node_modules"    "$LAB_DIR/web/node_modules"
 
-# --- Motion graphics (optional, flag-gated) ----------------------------------
-# Remotion lives in lab/remotion with its OWN deps (heavy: headless Chromium).
-# Only install them when the feature is actually on, so a normal lab run stays
-# fast and dependency-free. When off, the server's motion stage falls back to a
-# no-op (it can't import @remotion/* and renders normally).
-if [ "${MOTION_GRAPHICS:-}" = "1" ] && [ ! -d "$LAB_DIR/remotion/node_modules" ]; then
-  echo "[lab] MOTION_GRAPHICS=1 — installing Remotion deps (one-time, downloads Chromium on first render)…"
+# --- Motion graphics (default ON; Remotion + Chromium) -----------------------
+# Motion graphics now default ON (per-video UI toggle; MOTION_GRAPHICS=0 to
+# force-disable globally). Remotion lives in lab/remotion with its OWN heavy deps
+# (the @remotion/* SSR packages). To keep a normal local run fast we DON'T force
+# that install on every run — the server's motion stage falls back to a no-op if
+# the deps aren't present (it can't import @remotion/* and renders normally).
+#
+# Chromium: if a system browser (or REMOTION_BROWSER_EXECUTABLE) is present, use
+# it so Remotion never has to download its own. Otherwise leave it unset and fall
+# back to Remotion's managed Chromium (its existing behavior on first render).
+if [ -z "${REMOTION_BROWSER_EXECUTABLE:-}" ]; then
+  for chrome_bin in chromium chromium-browser google-chrome google-chrome-stable; do
+    if command -v "$chrome_bin" >/dev/null 2>&1; then
+      export REMOTION_BROWSER_EXECUTABLE="$(command -v "$chrome_bin")"
+      break
+    fi
+  done
+fi
+if [ -n "${REMOTION_BROWSER_EXECUTABLE:-}" ]; then
+  echo "[lab] Remotion Chromium: $REMOTION_BROWSER_EXECUTABLE (pre-set; no download)"
+else
+  echo "[lab] Remotion Chromium: none found — Remotion will manage its own on first render"
+fi
+# Install Remotion's SSR deps only when explicitly requested (REMOTION_INSTALL=1)
+# and not already present — this is the one heavy step, so it stays opt-in.
+if [ "${REMOTION_INSTALL:-}" = "1" ] && [ ! -d "$LAB_DIR/remotion/node_modules" ]; then
+  echo "[lab] REMOTION_INSTALL=1 — installing Remotion deps (one-time)…"
   ( cd "$LAB_DIR/remotion" && npm install --no-audit --no-fund ) \
-    || echo "[lab] ⚠ Remotion install failed — motion graphics will fall back to off (normal render still works)."
+    || echo "[lab] ⚠ Remotion install failed — motion graphics fall back to off (normal render still works)."
+fi
+if [ "${MOTION_GRAPHICS:-}" = "0" ]; then
+  echo "[lab] MOTION_GRAPHICS=0 — short-form motion graphics force-disabled (stickers unaffected)."
 fi
 
 if [ "$BUILD" = "1" ]; then

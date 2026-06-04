@@ -87,12 +87,25 @@ export const config = {
 
   // ── Motion graphics (Remotion) ──────────────────────────────────────────────
   /**
-   * Master feature flag. OFF by default so the existing pipeline renders exactly
-   * as before with zero added compute. Set MOTION_GRAPHICS=1 to let the director
-   * plan graphics and the render step composite them. Even when on, every stage
-   * falls back gracefully if Remotion/Chromium is unavailable.
+   * Default ON. Short-form motion graphics now run by default — the director
+   * plans tasteful overlays and the render step composites them — controlled
+   * per-video by a UI toggle (default on) rather than a global env flag. Even
+   * when on, every stage falls back gracefully if Remotion/Chromium is missing.
+   *
+   * ESCAPE HATCH: set MOTION_GRAPHICS=0 to FORCE-DISABLE globally (e.g. for
+   * resource control on a tiny box) regardless of the per-video toggle. Any
+   * other value (including unset) leaves the default-on behavior intact.
    */
-  motionGraphicsEnabled: (process.env.MOTION_GRAPHICS || "") === "1",
+  motionGraphicsForceDisabled: (process.env.MOTION_GRAPHICS || "") === "0",
+  /**
+   * Pre-baked Chromium executable for Remotion. In the Docker image this is set
+   * to the apt-installed /usr/bin/chromium so Remotion NEVER needs a runtime
+   * download (the server's network may block Remotion's Chromium CDN — the real
+   * reliability risk). When empty, Remotion falls back to its own ensureBrowser
+   * download path (fine for local dev with network). Passed through to
+   * openBrowser/selectComposition/renderMedia as `browserExecutable`.
+   */
+  remotionBrowserExecutable: process.env.REMOTION_BROWSER_EXECUTABLE || "",
   /**
    * How many Remotion (headless-Chromium) renders may run at once across the
    * whole process. Each browser render is RAM- and CPU-heavy and competes with

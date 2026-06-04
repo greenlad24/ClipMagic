@@ -51,17 +51,24 @@ COPY remotion ./
 
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim
-# Base render deps + the system libraries Remotion's headless Chromium needs.
-# The Chromium libs add ~300MB; they're harmless when MOTION_GRAPHICS is off
-# (Chromium is simply never launched). Remotion downloads its own Chromium binary
-# on first ensureBrowser() into REMOTION_BROWSER cache under /data.
+# Base render deps + a PRE-BAKED Chromium for Remotion. We install the system
+# `chromium` package at BUILD time (alongside the Chromium shared libs it needs)
+# and point Remotion at /usr/bin/chromium via REMOTION_BROWSER_EXECUTABLE below.
+# This removes any reliance on Remotion's runtime ensureBrowser() download —
+# the real reliability risk, since the server's network may block Remotion's
+# Chromium CDN. The browser is harmless when motion graphics are off (it's
+# simply never launched).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        ffmpeg fonts-dejavu-core fontconfig ca-certificates \
+       chromium \
        libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
        libpango-1.0-0 libcairo2 libatspi2.0-0 \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+  # Fail the build if the executable isn't where we expect — a silent missing
+  # Chromium is exactly the failure mode we're eliminating.
+  && test -x /usr/bin/chromium
 
 WORKDIR /app
 COPY --from=server /build/server/node_modules ./node_modules
@@ -78,7 +85,10 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     FRONTEND_DIR=/app/web/dist \
     MOTION_ENTRY_POINT=/app/remotion/src/index.ts \
-    REMOTION_BROWSER_EXECUTABLE= \
+    # Pre-baked Chromium (installed above). Remotion uses this executable for
+    # every render — it never downloads its own. Motion graphics default ON;
+    # set MOTION_GRAPHICS=0 to force-disable the short-form motion stage.
+    REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium \
     REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium
 
 VOLUME ["/data"]

@@ -22,7 +22,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import { runFfmpeg } from "../render/ffmpeg.js";
-import { remotionRuntimeAvailable, getBundle, importRenderer } from "../motion/render.js";
+import { remotionRuntimeAvailable, getBundle, importRenderer, browserExecutable } from "../motion/render.js";
 import type { EmphasisStickerClip } from "./sticker.js";
 
 /**
@@ -87,6 +87,7 @@ async function renderOne(serveUrl: string, clip: EmphasisStickerClip): Promise<R
   try {
     const { selectComposition, renderMedia } = await importRenderer();
     const { codec, pixelFormat, ext } = codecConfig();
+    const exe = browserExecutable();
 
     const lengthSec = Math.max(0.6, clip.endTime - clip.startTime);
     const durationInFrames = Math.max(1, Math.round(lengthSec * FPS));
@@ -106,6 +107,7 @@ async function renderOne(serveUrl: string, clip: EmphasisStickerClip): Promise<R
       serveUrl,
       id: "emphasis-sticker",
       inputProps,
+      ...(exe ? { browserExecutable: exe } : {}),
     });
 
     const outFile = path.join(config.tmpDir, `sticker_${randomUUID()}.${ext}`);
@@ -121,6 +123,8 @@ async function renderOne(serveUrl: string, clip: EmphasisStickerClip): Promise<R
       outputLocation: outFile,
       inputProps,
       concurrency: config.motionChromiumConcurrency,
+      // Pre-baked Chromium (REMOTION_BROWSER_EXECUTABLE) — never a runtime download.
+      ...(exe ? { browserExecutable: exe } : {}),
       ...(codec === "prores" ? { proResProfile: "4444" as never } : {}),
     });
 
