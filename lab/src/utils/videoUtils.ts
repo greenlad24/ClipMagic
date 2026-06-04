@@ -74,10 +74,14 @@ export async function extractAudio(file: File): Promise<Blob> {
  * Upload a Blob to Zite's built-in file storage.
  * Returns a permanent URL usable anywhere.
  */
-export async function uploadBlobToZite(blob: Blob, filename: string): Promise<string> {
+export async function uploadBlobToZite(
+  blob: Blob,
+  filename: string,
+  onProgress?: (fraction: number) => void,
+): Promise<string> {
   const safe = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
   const key = `${Date.now()}_${safe}`;
-  const { fileUrl } = await uploadFile({ data: blob, filename: key });
+  const { fileUrl } = await uploadFile({ data: blob, filename: key, onProgress });
   return fileUrl;
 }
 

@@ -126,8 +126,10 @@ export default function CutterPage() {
           items.push({ sourceUrl: it.sourceUrl, title });
           continue;
         }
-        setUploadMsg(`Uploading ${i + 1}/${files.length}: ${it.file.name}`);
-        const sourceUrl = await uploadBlobToZite(it.file, it.file.name);
+        const label = `Uploading ${i + 1}/${files.length}: ${it.file.name}`;
+        setUploadMsg(`${label} — 0%`);
+        const sourceUrl = await uploadBlobToZite(it.file, it.file.name, (f) =>
+          setUploadMsg(`${label} — ${Math.round(f * 100)}%`));
         items.push({ sourceUrl, title });
       }
       setUploadMsg('Starting cut run…');
@@ -157,8 +159,9 @@ export default function CutterPage() {
       if (it.kind === 'stored') {
         sourceUrl = it.sourceUrl;
       } else {
-        setUploadMsg(`Uploading ${it.file.name}…`);
-        sourceUrl = await uploadBlobToZite(it.file, it.file.name);
+        setUploadMsg(`Uploading ${it.file.name}… 0%`);
+        sourceUrl = await uploadBlobToZite(it.file, it.file.name, (f) =>
+          setUploadMsg(`Uploading ${it.file.name}… ${Math.round(f * 100)}%`));
       }
       setEditor({ sourceUrl, title });
       setFiles((prev) => prev.slice(1));
