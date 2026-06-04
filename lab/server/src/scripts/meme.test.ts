@@ -20,6 +20,8 @@ import {
   STICKER_TOP_FRACTION,
 } from "../meme/sticker.js";
 import { buildCaptionEvents } from "../meme/captions.js";
+import { pickRandomCaptionTemplate } from "../meme/captionTemplate.js";
+import { SUBTITLE_TEMPLATE_POOL, SUBTITLE_TEMPLATES } from "../render/manifest.js";
 
 let passed = 0;
 function check(name: string, fn: () => void) {
@@ -145,6 +147,54 @@ check("buildCaptionEvents makes ≤3-word chunks and breaks on pauses/punctuatio
   // Event start/end track the contained words.
   assert.equal(events[0].start, 0.0);
   assert.equal(events[0].end, 0.9);
+});
+
+// ── Caption chunking matches the short-form editor's "long two" rule ──────────
+check("buildCaptionEvents caps long pairs at 2 words (matches short-form rule)", () => {
+  // Two long words (>13 letters together) must NOT take a 3rd word, exactly like
+  // the short-form chunker (CHARS_2WORD_LIMIT). "incredible powerful" = 18 letters.
+  const events = buildCaptionEvents([
+    { word: "incredible", start: 0.0, end: 0.4 },
+    { word: "powerful", start: 0.4, end: 0.8 },
+    { word: "tool", start: 0.8, end: 1.0 },
+  ]);
+  // First chunk must be the 2 long words only; "tool" spills to the next chunk.
+  assert.equal(events[0].words.map((w) => w.text).join(" "), "incredible powerful");
+  assert.equal(events[1].words.map((w) => w.text).join(" "), "tool");
+});
+
+check("buildCaptionEvents breaks on a clause comma once it has 2+ words", () => {
+  const events = buildCaptionEvents([
+    { word: "wait", start: 0.0, end: 0.3 },
+    { word: "for", start: 0.3, end: 0.5 },  // 2 words + next ends clause...
+    { word: "it,", start: 0.5, end: 0.8 },  // clause comma with ≥2 words → break
+    { word: "boom", start: 0.9, end: 1.2 },
+  ]);
+  assert.equal(events[0].words.map((w) => w.text).join(" "), "wait for it,");
+  assert.equal(events[1].words.map((w) => w.text).join(" "), "boom");
+});
+
+// ── Template selection: random draw from the FULL short-form pool ─────────────
+check("pickRandomCaptionTemplate only ever returns a template from the full pool", () => {
+  for (let i = 0; i < 200; i++) {
+    const t = pickRandomCaptionTemplate();
+    assert.ok(SUBTITLE_TEMPLATE_POOL.includes(t), `picked ${t} must be in the pool`);
+    assert.ok(SUBTITLE_TEMPLATES[t], `picked ${t} must resolve to a style`);
+  }
+});
+
+check("pickRandomCaptionTemplate is RANDOM — covers (nearly) the whole pool", () => {
+  // Over many draws every (or nearly every) pool entry should appear. This proves
+  // it ROTATES across ALL templates, not a single pinned one (the old bug pinned
+  // pop-scale). Allow a 1-template slack for RNG variance on small pools.
+  const seen = new Set<string>();
+  for (let i = 0; i < 1000; i++) seen.add(pickRandomCaptionTemplate());
+  assert.ok(
+    seen.size >= SUBTITLE_TEMPLATE_POOL.length - 1,
+    `saw ${seen.size}/${SUBTITLE_TEMPLATE_POOL.length} templates over 1000 draws`,
+  );
+  // And it is NOT pinned to the old fixed pop-scale.
+  assert.ok(seen.size > 1, "must not return a single fixed template");
 });
 
 console.log(`\n${passed} checks passed.`);

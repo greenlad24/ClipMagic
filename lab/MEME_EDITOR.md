@@ -3,9 +3,12 @@
 A stripped-down sibling of the short-form creator. It does exactly two things on
 top of a narration:
 
-1. **Popping captions** — reuses the existing viral caption system (the
-   `pop-scale` template: recolor + per-word size pop) and the burned-in ASS
-   render path.
+1. **Popping captions** — reuses the existing viral caption system: the SAME
+   2–3-word chunking guidelines as the short-form editor (`meme/captions.ts`
+   mirrors `src/api/runPipeline.ts`'s "Hormozi" rules) and a caption template
+   picked at RANDOM from the FULL short-form rotation pool
+   (`SUBTITLE_TEMPLATE_POOL`) per render — the same rotation the short-form
+   editor uses — then burned in via the ASS render path.
 2. **Funny AI sticker stills** — one static, meme-style image per emphasis beat,
    generated on the fly and **slapped on as a STICKER below the captions** via a
    Remotion composition, on average ~every 4s (content-driven, not a timer).
@@ -69,9 +72,32 @@ emphasis director + N images + sticker render compute — as honest added cost
 - No Groq key → clear error (can't caption without a transcript).
 - No Claude → captions only (no stickers).
 - No image token / no credit → captions only.
-- No Chromium / Remotion → captions only (the meme stage no-ops; reuses the
-  motion service's availability probe).
-Any of these leaves a valid captions-only vertical render — never a crash.
+- No Chromium / Remotion → captions only (the meme stage no-ops; uses the motion
+  service's FLAG-FREE runtime probe `remotionRuntimeAvailable()`).
+Any of these leaves a valid captions-only vertical render — never a crash. Every
+fallback is OBSERVABLE: the reason (e.g. "no image key", "Chromium unavailable",
+"sticker composite failed") is logged, persisted on the meme record
+(`stickerSkipReason`), and shown on the page under a captions-only result.
+
+## NOT gated by MOTION_GRAPHICS (the bug fix)
+
+Stickers are the entire point of this tool, so the sticker stage runs whenever
+Chromium + an image are available — it does NOT consult `config.motionGraphicsEnabled`
+(`MOTION_GRAPHICS=1`). That flag only gates the SHORT-FORM director's motion
+graphics. `motion/render.ts` splits the two: `remotionRuntimeAvailable()` is the
+flag-free runtime probe (used by the meme stage); `motionAvailable()` is the
+probe AND the flag (used only by the short-form motion stage).
+
+## Sticker alpha codec — ProRes 4444 (not VP8 WebM)
+
+The rendered sticker clip is composited over the finished video, so its
+background MUST be transparent. Remotion 4.0's VP8/VP9 WebM-alpha path silently
+emits an OPAQUE `yuv420p` clip (no alpha) on this stack, which blacks out the
+whole base frame when overlaid. The meme stage therefore defaults to ProRes 4444
+(`yuva444p10le` .mov), which reliably carries alpha (verified by frame inspection
+here). Override with `MEME_CODEC` / `MOTION_CODEC` on a server with a fixed WebM
+path. The clip is short and deleted right after compositing, so the larger ProRes
+bytes are negligible.
 
 ## Verified here vs. needs a live server run
 
@@ -81,8 +107,13 @@ Any of these leaves a valid captions-only vertical render — never a crash.
   endpoints respond; full create→process→error lifecycle (graceful, no crash).
 - `meme.test.ts` (10 checks): director density/spacing/hold/buffer sanitize,
   caption chunking, and sticker placement below captions.
-- Remotion `emphasis-sticker` bundles and renders a still **and** a WebM alpha
+- Remotion `emphasis-sticker` bundles and renders a still **and** a ProRes-alpha
   clip; the sticker image loads (http URL) and lands below the caption zone.
+- **Full end-to-end sticker proof** (`scripts/meme-e2e.ts`, no keys needed): a
+  synthesized base video + placeholder PNG → the REAL meme stage composites an
+  animated sticker BELOW the caption zone WITHOUT `MOTION_GRAPHICS`. Asserts via
+  frame diffs that the sticker is visible, the base video is preserved (no
+  black-out), and the sticker ANIMATES (region color changes across the window).
 - Report math (`verify-report-math.ts`) and the image-gen cost line stay honest.
 
 **Needs a live-key + Chromium server run:**
