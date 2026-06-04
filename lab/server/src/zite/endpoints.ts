@@ -1223,12 +1223,13 @@ const MEME_STAGE: Record<string, MemeItem["status"]> = {
   Rendering: "Rendering",
 };
 
-async function runOneMeme(item: MemeItem, sourceUrl: string): Promise<void> {
+async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Promise<void> {
   beginRun(item.memeId);
   try {
     const result = await runMemePipeline({
       projectId: item.memeId,
       sourceUrl,
+      userId,
       onStage: (stage) => {
         item.status = MEME_STAGE[stage] ?? item.status;
       },
@@ -1321,7 +1322,7 @@ const createMeme: Handler = async (input, userId) => {
   // Fire-and-forget: process ONE AT A TIME (gentle on the AI + image APIs).
   (async () => {
     for (let i = 0; i < memeRun!.items.length; i++) {
-      await runOneMeme(memeRun!.items[i], sources[i]);
+      await runOneMeme(memeRun!.items[i], sources[i], userId);
       memeRun!.doneCount++;
     }
     memeRun!.running = false;

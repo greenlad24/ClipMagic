@@ -26,19 +26,19 @@ import { CANVAS, SAFE } from "../theme";
  * STICKER LOOK: a clean white outline/border + soft drop shadow around the
  * image, so even a transparent-background cut-out reads as a die-cut sticker.
  *
- * POSITION — the hard product rule: the sticker sits BELOW the captions.
- * Captions burn in at screen CENTER, so the sticker's box is centered
- * horizontally and its TOP edge starts below center (STICKER_TOP_FRACTION of the
- * canvas height) and is sized to never cross into the bottom platform-UI safe
- * margin. It can never overlap the caption zone. See `stickerBox()` in
- * server/src/meme/sticker.ts for the matching server-side geometry/assert.
+ * POSITION — the product rule (relaxed): the sticker may slap on ANYWHERE it
+ * fits — top band, upper-left/right, center-upper, or below the captions — as
+ * long as it never overlaps the centered caption zone and stays inside the 9:16
+ * safe margins. The SERVER chooses a fitting zone per sticker (see
+ * `placeSticker()` in server/src/meme/sticker.ts, which also asserts it fits +
+ * clears the captions) and passes the exact box (boxLeft / boxTop / boxSize) in
+ * as props. When no box is given we fall back to the centered below-captions slot
+ * so an older manifest still renders correctly.
  */
 
 /**
- * Top of the sticker box as a fraction of canvas height. 0.60 = the box begins
- * at 60% down the frame — comfortably below the centered caption line, in the
- * lower third. The server keeps this in sync (and asserts it lands below the
- * caption zone within the bottom safe margin).
+ * Fallback top of the sticker box as a fraction of canvas height, used only when
+ * the server didn't pass an explicit box. 0.60 = below the centered caption line.
  */
 export const STICKER_TOP_FRACTION = 0.6;
 
@@ -49,6 +49,12 @@ export interface EmphasisStickerProps {
   restTiltDeg?: number;
   /** Show the white die-cut border + shadow (the sticker look). Default true. */
   bordered?: boolean;
+  /** Chosen box left edge X in canvas px (server-picked zone). */
+  boxLeft?: number;
+  /** Chosen box top edge Y in canvas px (server-picked zone). */
+  boxTop?: number;
+  /** Chosen box side length in px (server-picked zone). */
+  boxSize?: number;
 }
 
 export const emphasisStickerDefaults: EmphasisStickerProps = {
@@ -61,6 +67,9 @@ export const EmphasisSticker: React.FC<EmphasisStickerProps> = ({
   imageUrl,
   restTiltDeg = -4,
   bordered = true,
+  boxLeft,
+  boxTop,
+  boxSize,
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
@@ -95,26 +104,29 @@ export const EmphasisSticker: React.FC<EmphasisStickerProps> = ({
   const wiggle = Math.sin(wiggleT * 22) * 10 * Math.exp(-wiggleT * 7);
   const rotation = (restTiltDeg + wiggle) * pop * exit;
 
-  // ── Box geometry — BELOW the captions, within the bottom safe margin. ───────
-  const boxTop = Math.round(CANVAS.height * STICKER_TOP_FRACTION);
-  // Leave the platform-UI safe strip clear at the bottom.
-  const boxBottom = CANVAS.height - SAFE.bottom;
-  const boxHeight = boxBottom - boxTop;
-  // A tasteful square-ish sticker, capped by the available height and a sane
-  // width so it never spans edge-to-edge.
-  const size = Math.min(boxHeight, Math.round(CANVAS.width * 0.52));
+  // ── Box geometry — the SERVER-chosen zone (any fitting position), or a
+  //    centered below-captions fallback for older manifests. ───────────────────
+  const fallbackTop = Math.round(CANVAS.height * STICKER_TOP_FRACTION);
+  const fallbackSize = Math.min(
+    CANVAS.height - SAFE.bottom - fallbackTop,
+    Math.round(CANVAS.width * 0.52),
+  );
+  const size = typeof boxSize === "number" && boxSize > 0 ? boxSize : fallbackSize;
+  const top = typeof boxTop === "number" ? boxTop : fallbackTop;
+  const left =
+    typeof boxLeft === "number" ? boxLeft : Math.round((CANVAS.width - size) / 2);
 
   return (
     <AbsoluteFill>
       <div
         style={{
           position: "absolute",
-          top: boxTop,
-          left: 0,
-          width: CANVAS.width,
-          height: boxHeight,
+          top,
+          left,
+          width: size,
+          height: size,
           display: "flex",
-          alignItems: "flex-start",
+          alignItems: "center",
           justifyContent: "center",
         }}
       >

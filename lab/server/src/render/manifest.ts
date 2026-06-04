@@ -203,6 +203,10 @@ export interface RenderManifest {
     endTime: number;
     imageUrl: string;
     restTiltDeg: number;
+    /** Chosen placement box (any fitting zone, never over the captions). */
+    boxLeft?: number;
+    boxTop?: number;
+    boxSize?: number;
     phrase?: string;
   }>;
   meta?: unknown;

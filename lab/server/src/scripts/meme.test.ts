@@ -13,11 +13,18 @@ import assert from "node:assert/strict";
 import { sanitize, maxMomentsFor, type EmphasisMoment } from "../meme/director.js";
 import {
   stickerBox,
-  assertBelowCaptions,
+  placeSticker,
+  assertFits,
+  defaultStickerSize,
   CANVAS,
+  SAFE_LEFT,
+  SAFE_RIGHT,
+  SAFE_TOP,
   SAFE_BOTTOM,
+  CAPTION_ZONE_TOP_FRACTION,
   CAPTION_ZONE_BOTTOM_FRACTION,
   STICKER_TOP_FRACTION,
+  type StickerBox,
 } from "../meme/sticker.js";
 import { buildCaptionEvents } from "../meme/captions.js";
 import { pickRandomCaptionTemplate } from "../meme/captionTemplate.js";
@@ -134,23 +141,85 @@ check("sanitize keeps a moment with only a searchQuery (imagePrompt falls back t
   assert.equal(out[0].imagePrompt, "money rain");
 });
 
-// ── Placement: the sticker sits BELOW the captions, inside safe margins ────────
-check("sticker box is strictly below the caption zone", () => {
-  const box = stickerBox();
-  assertBelowCaptions(box); // throws if it overlaps captions or the safe margin
-  const captionBottom = Math.round(CANVAS.height * CAPTION_ZONE_BOTTOM_FRACTION);
-  assert.ok(box.top >= captionBottom, `top ${box.top} >= captionBottom ${captionBottom}`);
+// ── Flexible placement: ANY fitting zone, never over the captions ──────────────
+const CAP_TOP = Math.round(CANVAS.height * CAPTION_ZONE_TOP_FRACTION);
+const CAP_BOTTOM = Math.round(CANVAS.height * CAPTION_ZONE_BOTTOM_FRACTION);
+
+/** A box overlaps the caption band iff it intersects [CAP_TOP, CAP_BOTTOM]. */
+function overlapsCaptions(box: StickerBox): boolean {
+  return box.top < CAP_BOTTOM && box.top + box.size > CAP_TOP;
+}
+/** A box is inside the safe area iff every edge clears the safe margins. */
+function insideSafe(box: StickerBox): boolean {
+  return (
+    box.left >= SAFE_LEFT &&
+    box.left + box.size <= CANVAS.width - SAFE_RIGHT &&
+    box.top >= SAFE_TOP &&
+    box.top + box.size <= CANVAS.height - SAFE_BOTTOM
+  );
+}
+
+check("placeSticker: every placement fits the safe area AND clears the captions", () => {
+  // Across many sticker indices the picker must ALWAYS return a box that fits and
+  // never overlaps the caption band (the relaxed product rule). assertFits throws
+  // on any violation; we also independently re-check both invariants.
+  for (let i = 0; i < 50; i++) {
+    const box = placeSticker(i);
+    assertFits(box); // throws on off-frame / safe-margin / caption overlap
+    assert.ok(insideSafe(box), `box @${i} inside safe area`);
+    assert.ok(!overlapsCaptions(box), `box @${i} clears the caption band`);
+    assert.ok(box.size > 0, `box @${i} positive size`);
+  }
 });
 
-check("sticker box stays above the bottom platform safe margin", () => {
+check("placeSticker VARIES placement across stickers (uses multiple zones)", () => {
+  // Different indices should land in different zones so stickers scatter around
+  // the frame rather than stacking in one slot.
+  const zones = new Set<string>();
+  for (let i = 0; i < 10; i++) zones.add(placeSticker(i).zone ?? "?");
+  assert.ok(zones.size >= 3, `expected ≥3 distinct zones, saw ${[...zones].join(", ")}`);
+});
+
+check("placeSticker exercises every named zone over the rotation", () => {
+  // The full rotation (below-captions, top-center, upper-left, upper-right,
+  // center-upper) must all be reachable at the default size.
+  const zones = new Set<string>();
+  for (let i = 0; i < 25; i++) zones.add(placeSticker(i).zone ?? "?");
+  for (const z of ["below-captions", "top-center", "upper-left", "upper-right", "center-upper"]) {
+    assert.ok(zones.has(z), `zone "${z}" must be reachable (saw ${[...zones].join(", ")})`);
+  }
+});
+
+check("assertFits REJECTS a box that overlaps the caption band", () => {
+  // A box straddling screen center sits squarely in the reserved caption band.
+  const bad: StickerBox = { left: 270, top: CAP_TOP - 10, size: 540, bottom: CAP_TOP - 10 + 540, zone: "bad" };
+  assert.throws(() => assertFits(bad), /overlaps the caption zone/);
+});
+
+check("assertFits REJECTS a box that runs off the safe area", () => {
+  const offRight: StickerBox = { left: CANVAS.width - 100, top: SAFE_TOP, size: 300, bottom: SAFE_TOP + 300, zone: "bad" };
+  assert.throws(() => assertFits(offRight), /right safe margin/);
+  const offTop: StickerBox = { left: 300, top: 10, size: 300, bottom: 310, zone: "bad" };
+  assert.throws(() => assertFits(offTop), /top safe margin/);
+});
+
+check("placeSticker shrinks an oversized request until it fits a zone", () => {
+  // An absurdly large size can't fit any zone at full size; the picker must shrink
+  // it (and still return a valid, caption-clearing box).
+  const box = placeSticker(0, CANVAS.height /* way too big */);
+  assertFits(box);
+  assert.ok(box.size < CANVAS.height, "oversized request was shrunk");
+});
+
+check("stickerBox (back-compat default) still lands below the captions, in safe", () => {
   const box = stickerBox();
-  assert.ok(box.bottom <= CANVAS.height - SAFE_BOTTOM, "bottom within safe area");
-  assert.ok(box.size > 0, "positive size");
+  assertFits(box);
+  assert.ok(box.top >= CAP_BOTTOM, `top ${box.top} >= captionBottom ${CAP_BOTTOM}`);
+  assert.ok(box.size > 0 && defaultStickerSize() > 0, "positive sizes");
 });
 
 check("composition STICKER_TOP_FRACTION matches the server geometry", () => {
-  // The Remotion composition and the server must agree on the box top, else the
-  // computed Y assertion here would not reflect what actually renders.
+  // The Remotion composition and the server must agree on the fallback box top.
   assert.equal(STICKER_TOP_FRACTION, 0.6);
 });
 
@@ -652,6 +721,117 @@ check("computeSkipReason: no source at all ⇒ asks for keys (giphy+tenor → op
 check("computeSkipReason: a source existed but nothing fit ⇒ 'no sticker fit'", () => {
   const r = computeSkipReason({ momentsPlanned: 3, stickersApplied: 0, searchAvailable: true, openaiAvailable: true });
   assert.ok(/no sticker fit/.test(r!), r!);
+});
+
+// ── Bigger subtitles: meme font-size bump (meme-only) ─────────────────────────
+import { memeSubtitleStyle, MEME_SUBTITLE_FONT_SCALE, MEME_MUSIC_VOLUME, MEME_SFX_VOLUME } from "../meme/config.js";
+
+check("memeSubtitleStyle bumps the font size by the meme scale (rounded), nothing else", () => {
+  for (const t of SUBTITLE_TEMPLATE_POOL) {
+    const base = SUBTITLE_TEMPLATES[t];
+    const bumped = memeSubtitleStyle(base);
+    assert.equal(bumped.fontSize, Math.round(base.fontSize * MEME_SUBTITLE_FONT_SCALE), `${t} bumped`);
+    assert.ok(bumped.fontSize > base.fontSize, `${t} is bigger`);
+    // Every OTHER field is preserved (template look unchanged).
+    assert.equal(bumped.fontFamily, base.fontFamily);
+    assert.equal(bumped.template, base.template);
+    assert.equal(bumped.allCaps, base.allCaps);
+  }
+});
+
+check("meme font scale is a real, sane bump (1.25–1.4×) and never mutates the shared map", () => {
+  assert.ok(MEME_SUBTITLE_FONT_SCALE >= 1.25 && MEME_SUBTITLE_FONT_SCALE <= 1.4, "scale in range");
+  const before = SUBTITLE_TEMPLATES["yellow-box"].fontSize;
+  memeSubtitleStyle(SUBTITLE_TEMPLATES["yellow-box"]);
+  assert.equal(SUBTITLE_TEMPLATES["yellow-box"].fontSize, before, "shared template not mutated");
+});
+
+check("the largest bumped caption font stays within the 9:16 frame width estimate", () => {
+  // Worst case: the biggest template (yellow-box 108px) at 3 short words. Using
+  // the same glyph-width estimate ass/build use (~0.64×fontSize), a 3-word line at
+  // the bumped size must still be under the canvas width (ass.ts auto-fits beyond).
+  const bumped = memeSubtitleStyle(SUBTITLE_TEMPLATES["yellow-box"]).fontSize;
+  // A typical 2–3 word viral caption is ≲ 16 chars on a line.
+  const estWidth = 16 * bumped * 0.64;
+  assert.ok(estWidth < CANVAS.width * 1.05, `est ${estWidth}px near/under frame ${CANVAS.width}px`);
+});
+
+// ── Random background music pick (reuses the short-form library + selection) ───
+import { pickMusicTrack, type PickableTrack } from "../meme/music.js";
+
+check("pickMusicTrack returns a track at the meme volume (0.03) from the library", () => {
+  const tracks: PickableTrack[] = [
+    { id: "a", audioUrl: "/m/a.mp3", trackName: "A", bpm: 120 },
+    { id: "b", audioUrl: "/m/b.mp3", trackName: "B" },
+  ];
+  const m = pickMusicTrack(tracks, () => 0); // rng=0 → first ready track
+  assert.ok(m);
+  assert.equal(m!.audioUrl, "/m/a.mp3");
+  assert.equal(m!.volume, MEME_MUSIC_VOLUME);
+  assert.equal(MEME_MUSIC_VOLUME, 0.03, "music bed is exactly 0.03");
+});
+
+check("pickMusicTrack ignores tracks with no audioUrl and is random across ready ones", () => {
+  const tracks: PickableTrack[] = [
+    { id: "x" }, // no audioUrl → never picked
+    { id: "y", audioUrl: "/m/y.mp3" },
+    { id: "z", audioUrl: "/m/z.mp3" },
+  ];
+  // rng→ last ready track (index 1 of [y,z]) when rng ~0.99.
+  const m = pickMusicTrack(tracks, () => 0.99);
+  assert.equal(m!.audioUrl, "/m/z.mp3");
+  // The no-url track is never returned across many draws.
+  for (let i = 0; i < 50; i++) {
+    const r = pickMusicTrack(tracks, () => i / 50);
+    assert.ok(r && r.audioUrl !== undefined, "always a usable url");
+  }
+});
+
+check("pickMusicTrack returns null for an empty / url-less library (captions+stickers still apply)", () => {
+  assert.equal(pickMusicTrack([], () => 0), null);
+  assert.equal(pickMusicTrack([{ id: "a" }, { id: "b" }], () => 0), null);
+});
+
+// ── SFX audio-mix filtergraph: pop at each sticker start, narration full ───────
+import { buildSfxAudioFilters, buildPopArgs, SFX_DURATION_SEC } from "../meme/sfx.js";
+
+check("buildSfxAudioFilters delays a pop to EACH sticker start and amix's with the base audio", () => {
+  const { filters, audioLabel } = buildSfxAudioFilters({
+    baseAudioLabel: "0:a",
+    startTimes: [6.2, 12.5],
+    sfxInputStart: 3, // base + 2 sticker clips
+    volume: MEME_SFX_VOLUME,
+  });
+  const graph = filters.join(";");
+  // One delayed, volume-scaled pop per sticker, at the right input index + ms.
+  assert.ok(graph.includes("[3:a]adelay=6200|6200"), "pop 0 delayed to 6.2s on input 3");
+  assert.ok(graph.includes("[4:a]adelay=12500|12500"), "pop 1 delayed to 12.5s on input 4");
+  assert.ok(graph.includes(`volume=${MEME_SFX_VOLUME}`), "pops gained to the SFX volume");
+  // The base audio is mixed at FULL level (no volume filter on [0:a]) + the pops.
+  assert.ok(graph.includes("[0:a][sfx0][sfx1]amix=inputs=3"), "base + 2 pops mixed");
+  // normalize=0 keeps narration dominant (amix doesn't halve the base).
+  assert.ok(graph.includes("normalize=0"), "amix normalize=0 (narration stays full)");
+  assert.equal(audioLabel, "aout_sfx");
+});
+
+check("buildSfxAudioFilters is a no-op when there are no stickers (carry base audio)", () => {
+  const r = buildSfxAudioFilters({ baseAudioLabel: "0:a", startTimes: [], sfxInputStart: 1, volume: 0.3 });
+  assert.deepEqual(r.filters, []);
+  assert.equal(r.audioLabel, "0:a");
+});
+
+check("the SFX is synthesized (no sampled/copyrighted audio, no network) — lavfi oscillator only", () => {
+  const args = buildPopArgs("/tmp/pop.wav");
+  // Built purely from ffmpeg's lavfi aevalsrc oscillator — no input file, no URL.
+  assert.ok(args.includes("lavfi"), "lavfi source");
+  assert.ok(args.some((a) => a.startsWith("aevalsrc=")), "synthesized waveform");
+  assert.ok(!args.some((a) => /^https?:\/\//.test(a)), "no network input");
+  assert.ok(SFX_DURATION_SEC > 0 && SFX_DURATION_SEC < 1, "short pop");
+  assert.equal(args[args.length - 1], "/tmp/pop.wav", "writes to the given out path");
+});
+
+check("SFX volume is audible but well under the narration (not overpowering)", () => {
+  assert.ok(MEME_SFX_VOLUME > 0.1 && MEME_SFX_VOLUME < 0.6, `sfx vol ${MEME_SFX_VOLUME} tasteful`);
 });
 
 await Promise.all(pending);

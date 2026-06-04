@@ -24,6 +24,8 @@ import { config } from "../config.js";
 import { runFfmpeg } from "../render/ffmpeg.js";
 import { remotionRuntimeAvailable, getBundle, importRenderer, browserExecutable } from "../motion/render.js";
 import type { EmphasisStickerClip } from "./sticker.js";
+import { getStickerPop, buildSfxAudioFilters } from "./sfx.js";
+import { MEME_SFX_VOLUME } from "./config.js";
 
 /**
  * Resolve a sticker's image to an ABSOLUTE http URL the headless Chromium can
@@ -101,6 +103,12 @@ async function renderOne(serveUrl: string, clip: EmphasisStickerClip): Promise<R
       restTiltDeg: clip.restTiltDeg,
       bordered: true,
       durationInFrames,
+      // The server-chosen placement zone (any fitting position, never over the
+      // captions). Older manifests omit these → the composition centers below
+      // the captions.
+      ...(typeof clip.boxLeft === "number" ? { boxLeft: clip.boxLeft } : {}),
+      ...(typeof clip.boxTop === "number" ? { boxTop: clip.boxTop } : {}),
+      ...(typeof clip.boxSize === "number" ? { boxSize: clip.boxSize } : {}),
     };
 
     const composition = await selectComposition({
@@ -159,8 +167,18 @@ async function compositeStickers(
     `${path.basename(baseVideo, ext)}_stk_${randomUUID().slice(0, 8)}${ext}`,
   );
 
+  // A pop SFX per sticker, synced to its entrance. Best-effort: if the synth
+  // fails we composite the stickers WITHOUT sound (copy the base audio).
+  const popFile = await getStickerPop();
+
   const args: string[] = ["-y", "-hide_banner", "-i", baseVideo];
   for (const s of usable) args.push("-i", s.file as string);
+  // SFX inputs come AFTER the base video + every sticker clip. Their input index
+  // therefore starts at 1 (base) + usable.length.
+  const sfxInputStart = 1 + usable.length;
+  if (popFile) {
+    for (let i = 0; i < usable.length; i++) args.push("-i", popFile);
+  }
 
   const filters: string[] = [];
   let last = "0:v";
@@ -178,15 +196,34 @@ async function compositeStickers(
     last = outLabel;
   });
 
+  // ── Audio: base (narration + music bed) + a pop at each sticker start ───────
+  // The base video already carries the full mix (narration + music @ 0.03) from
+  // the manifest render; here we lay the per-sticker pops over it.
+  const startTimes = usable.map((s) => Math.max(0, s.clip.startTime));
+  const sfx = popFile
+    ? buildSfxAudioFilters({
+        baseAudioLabel: "0:a",
+        startTimes,
+        sfxInputStart,
+        volume: MEME_SFX_VOLUME,
+      })
+    : { filters: [] as string[], audioLabel: "" };
+  filters.push(...sfx.filters);
+
   args.push("-filter_complex", filters.join(";"));
   args.push("-map", `[${last}]`);
-  args.push("-map", "0:a?");
+  if (sfx.audioLabel) {
+    args.push("-map", `[${sfx.audioLabel}]`);
+  } else {
+    // No SFX (synth failed or base had no audio) → carry the base audio through.
+    args.push("-map", "0:a?");
+  }
   args.push(
     "-c:v", "libx264",
     "-preset", "medium",
     "-crf", "20",
     "-pix_fmt", "yuv420p",
-    "-c:a", "copy",
+    ...(sfx.audioLabel ? ["-c:a", "aac", "-b:a", "192k"] : ["-c:a", "copy"]),
     "-movflags", "+faststart",
   );
   if (totalDuration > 0) args.push("-t", totalDuration.toFixed(3));

@@ -47,6 +47,8 @@ import { reviewStickerFit } from "./stickerReview.js";
 import type { EmphasisStickerClip } from "./sticker.js";
 import type { StickerCandidate } from "./stickerSearch.js";
 import { orchestrateStickers } from "./orchestrate.js";
+import { memeSubtitleStyle } from "./config.js";
+import { pickRandomMusicTrack } from "./music.js";
 
 const W = 1080;
 const H = 1920;
@@ -159,9 +161,11 @@ export interface MemeStageReporter {
 export async function runMemePipeline(opts: {
   projectId: string;
   sourceUrl: string;
+  /** Owner of the render — used to pick a random track from THEIR music library. */
+  userId?: string;
   onStage?: MemeStageReporter;
 }): Promise<MemeResult> {
-  const { projectId, sourceUrl, onStage } = opts;
+  const { projectId, sourceUrl, userId, onStage } = opts;
 
   // ── 1. Resolve + transcribe ────────────────────────────────────────────────
   onStage?.("Transcribing");
@@ -267,6 +271,23 @@ export async function runMemePipeline(opts: {
   // caption render via the manifest.
   const subtitleTemplate = pickRandomCaptionTemplate();
   console.log(`[meme] caption template (random from pool): ${subtitleTemplate}`);
+  // Bigger/bolder captions for the meme editor ONLY — scale the chosen template's
+  // font size (the short-form editor keeps the base sizes). ass.ts still auto-fits
+  // any line that would otherwise overflow the safe width.
+  const subtitleStyle = memeSubtitleStyle(SUBTITLE_TEMPLATES[subtitleTemplate]);
+  console.log(
+    `[meme] caption font size: ${SUBTITLE_TEMPLATES[subtitleTemplate].fontSize}px → ${subtitleStyle.fontSize}px (meme bump)`,
+  );
+
+  // Random background music from the user's existing library (same library +
+  // random selection the short-form editor's "auto" mode uses), mixed quietly.
+  const music = userId ? await pickRandomMusicTrack(userId) : null;
+  if (music) {
+    console.log(`[meme] background music (random): "${music.trackName ?? "track"}" @ vol ${music.volume}`);
+  } else {
+    console.log(`[meme] no background music (empty library or no user) — narration only bed`);
+  }
+
   const manifest: RenderManifest = {
     version: 1,
     projectId,
@@ -275,10 +296,10 @@ export async function runMemePipeline(opts: {
     fps: FPS,
     durationSeconds: duration,
     narration: { videoUrl: sourceUrl },
-    music: null,
+    music,
     scenes: [], // no overlays — clean narration only
     subtitles,
-    subtitleStyle: SUBTITLE_TEMPLATES[subtitleTemplate],
+    subtitleStyle,
     emphasisStickers: stickers,
   };
 

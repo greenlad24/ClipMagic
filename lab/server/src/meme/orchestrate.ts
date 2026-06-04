@@ -22,6 +22,7 @@ import type { StickerCandidate } from "./stickerSearch.js";
 import type { FitReviewResult } from "./stickerReview.js";
 import type { MomentDiagnostic } from "./pipeline.js";
 import type { EmphasisStickerClip } from "./sticker.js";
+import { placeSticker } from "./sticker.js";
 
 /** Hard cap on OpenAI generations per video (env-overridable, default 2). */
 export function resolveOpenAiMax(): number {
@@ -167,6 +168,10 @@ export async function orchestrateStickers(
   for (let i = 0; i < moments.length; i++) {
     if (applied[i] === null) continue;
     diags[i].ok = true;
+    // Vary placement across applied stickers: the index selects a fitting zone
+    // (top / upper-left / upper-right / center-upper / below-captions) that is
+    // guaranteed to clear the caption band and stay inside the safe area.
+    const box = placeSticker(stickers.length);
     stickers.push({
       startTime: moments[i].startTime,
       endTime: moments[i].endTime,
@@ -174,6 +179,9 @@ export async function orchestrateStickers(
       // Alternate the resting tilt so adjacent stickers don't all lean the same
       // way (the hand-placed feel). Index over APPLIED stickers, not all moments.
       restTiltDeg: stickers.length % 2 === 0 ? -4 : 4,
+      boxLeft: box.left,
+      boxTop: box.top,
+      boxSize: box.size,
       phrase: moments[i].phrase,
     });
   }
