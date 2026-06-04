@@ -214,7 +214,7 @@ check("blip disabled; lead/trail trimmed; >0.35 silence collapses to one 0.35 ga
   const enabledTakes = r.takes.filter((t) => t.enabled);
   assert.equal(enabledTakes.length, 2, "only the two real takes are enabled");
   const blip = r.takes.find((t) => !t.enabled)!;
-  assert.ok(blip && blip.end - blip.start < 0.4 && /under/.test(blip.reason ?? ""), "blip disabled as under-minTake");
+  assert.ok(blip && blip.end - blip.start < 0.5 && blip.reason === "short", "blip disabled as a short take");
   // Take A keeps its transcript; take B (untranscribed tail) is empty (UI shows —).
   assert.equal(enabledTakes[0].text, "alpha");
   assert.equal(enabledTakes[1].text, "", "untranscribed tail take must still exist, just unlabelled");
@@ -359,7 +359,7 @@ check("under-minTake takes are disabled-not-dropped, re-enable as the slider low
   const hi = computeKeepSegments(env, words, { ...DEFAULT_SETTINGS, minTake: 3.0 }, [], []);
   assert.equal(hi.takes.length, 2, "every detected take is still shown");
   assert.ok(hi.takes.every((t) => !t.enabled), "both are disabled at minTake 3.0");
-  assert.ok(hi.takes.every((t) => /under 3/.test(t.reason ?? "")), "reason names the threshold");
+  assert.ok(hi.takes.every((t) => t.reason === "short"), "reason names the short-take gate");
   assert.equal(hi.keep.length, 0, "disabled takes contribute nothing to keep");
   // Lowering the slider below the take length re-enables them automatically.
   const lo = computeKeepSegments(env, words, { ...DEFAULT_SETTINGS, minTake: 0.4 }, [], []);
@@ -384,103 +384,173 @@ check("toggle on/off updates the enabled keep-set", () => {
   assert.ok(on.takes[0].enabled, "the toggled-on take is enabled");
 });
 
-// ── FULL-SCRIPT VERIFICATION + BEST-TAKE-PER-PART (AI + heuristic) ───────────
+// ── STAGE 1: big-chunk detection (merge + volume gate + scattered exclusion) ──
 
-// 15 ─ The heuristic fallback (no AI): near-duplicate re-takes are grouped, the
-//      LATEST >3s take per part kept, earlier repeats disabled with a reason.
-check("heuristic best-take: keep latest >3s per part, disable earlier repeats", () => {
-  const takes = [
-    takeFrom(0.0, 3.5, "Welcome to the show everyone."),
-    takeFrom(5.0, 8.6, "Welcome to the show everyone."),       // re-take, later
-    takeFrom(10.0, 13.5, "Today we are talking about coffee."),
-  ];
-  const defs = heuristicTakeDefaults(takes, 3.0);
-  assert.equal(defs.length, 1, "exactly one repeat disabled");
-  assert.equal(defs[0].id, takes[0].id, "the EARLIER welcome is the disabled repeat");
-  assert.match(defs[0].reason, /duplicate — better take kept/);
+// 15 ─ A take is ONE big block: above-floor runs separated by a SHORT pause
+//      (≤ minSilence) MERGE into one contiguous take and never split inside.
+check("Stage 1: short internal pauses merge into one big block (no mid-block split)", () => {
+  // Loud [0.5,1.4), 0.2s pause, loud [1.6,3.5). The 0.2s pause ≤ minSilence(0.35)
+  // → the two runs are the SAME block. A 1.0s silence then starts the next block.
+  const hop = 0.02, duration = 6.0, n = Math.round(duration / hop);
+  const loud = (t: number) => (t >= 0.5 && t < 1.4) || (t >= 1.6 && t < 3.5) || (t >= 4.5 && t < 5.8);
+  const db: number[] = [];
+  for (let i = 0; i < n; i++) db.push(loud(i * hop) ? -12 : -60);
+  const env: Envelope = { db, hop, duration };
+  const takes = segmentTakes(env, [], GEO);
+  // First block spans the whole [0.5,3.5] across the short pause; second is [4.5,5.8].
+  assert.equal(takes.length, 2, "two big blocks (the 0.2s pause did not split the first)");
+  assert.ok(takes[0].start <= 0.55 && takes[0].end >= 3.45, `block 1 span ${takes[0].start}-${takes[0].end}`);
+  assert.ok(takes[1].start >= 4.4, `block 2 starts at ${takes[1].start}`);
 });
 
-// 16 ─ The heuristic never chooses a ≤3s take as the keeper (it's a false start).
-check("heuristic best-take considers only takes >3s as the keeper", () => {
-  const takes = [
-    takeFrom(0.0, 3.6, "This is the real complete take of the line."), // >3s, clean
-    takeFrom(5.0, 5.4, "This is the real complete take of."),           // 0.4s false start (same words)
-  ];
-  // The two cluster (near-identical text). Even though the false start is LATER,
-  // it is ≤3s so it can't be the keeper — the >3s earlier take wins.
-  const defs = heuristicTakeDefaults(takes, 3.0);
-  assert.equal(defs.length, 1, "one disabled");
-  assert.equal(defs[0].id, takes[1].id, "the short false start is disabled, the >3s take kept");
+// 16 ─ Scattered, FAINT words between the big blocks are NOT takes: a long but
+//      low-level block is disabled "low/scattered", never enabled by default.
+check("Stage 1: faint scattered audio is disabled low/scattered (not a take)", () => {
+  // A real loud block [0.5,4.0] at -12, then a long FAINT block [5.0,9.0] at -33
+  // (above the -39 floor but below the -27 speaking gate = floor + margin 12).
+  const hop = 0.02, duration = 10.0, n = Math.round(duration / hop);
+  const db: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i * hop;
+    db.push((t >= 0.5 && t < 4.0) ? -12 : (t >= 5.0 && t < 9.0) ? -33 : -60);
+  }
+  const env: Envelope = { db, hop, duration };
+  const takes = segmentTakes(env, [], DEFAULT_SETTINGS);
+  assert.equal(takes.length, 2, "both blocks are detected (none dropped)");
+  const real = takes[0], faint = takes[1];
+  assert.ok(real.enabled, "the loud block is a real enabled take");
+  assert.ok(!faint.enabled && faint.reason === "low/scattered",
+    `the faint block is disabled low/scattered (got enabled=${faint.enabled}, reason=${faint.reason})`);
+  // It is long (>minTake) yet still excluded — volume, not length, gates it.
+  assert.ok(faint.end - faint.start > DEFAULT_SETTINGS.minTake, "the faint block is long, yet still not a take");
 });
 
-// 17 ─ The AI pass with a MOCKED Claude response: full coverage (no part dropped),
-//      no duplicate enabled (one keeper per part), and only >3s chosen.
-check("AI best-take (mocked Claude): full coverage, no duplicate, only >3s chosen", async () => {
-  // Three takes: t0/t1 are re-takes of part 1 (t1 is the long, clean one); t2 is
-  // part 2. t1 is >3s and later → it must be the keeper; t0 disabled.
+// 16b ─ STAGE 2: each big block carries the transcript spoken INSIDE it (words
+//       mapped by midpoint), independent of sentence punctuation.
+check("Stage 2: per-chunk transcript = the words inside that block's span", () => {
+  const hop = 0.02, duration = 8.0, n = Math.round(duration / hop);
+  const loud = (t: number) => (t >= 0.5 && t < 3.5) || (t >= 5.0 && t < 7.5);
+  const db: number[] = [];
+  for (let i = 0; i < n; i++) db.push(loud(i * hop) ? -12 : -60);
+  const env: Envelope = { db, hop, duration };
+  const words = [
+    { word: "first", start: 0.7, end: 1.2 }, { word: "block.", start: 1.3, end: 3.2 },
+    { word: "second", start: 5.2, end: 5.9 }, { word: "block.", start: 6.0, end: 7.2 },
+  ];
+  const takes = segmentTakes(env, words, GEO);
+  assert.equal(takes.length, 2);
+  assert.equal(takes[0].text, "first block.", "block 1 gets only its own words");
+  assert.equal(takes[1].text, "second block.", "block 2 gets only its own words");
+});
+
+// ── STAGE 3: keep-LAST dedup + in-code guarantees ────────────────────────────
+
+// 17 ─ The heuristic fallback (no AI): re-takes are grouped and the LAST
+//      occurrence is kept; the EARLIER ones are disabled "earlier take".
+check("Stage 3 heuristic: keep the LAST re-take, disable the earlier ones", () => {
   const takes = [
-    takeFrom(0.0, 2.0, "Intro line, flubbed."),     // 2.0s  (re-take, short)
-    takeFrom(4.0, 8.0, "Intro line, clean."),        // 4.0s  (re-take, long → keep)
-    takeFrom(10.0, 14.0, "Second line of the script."), // part 2
+    takeFrom(0.0, 3.5, "Welcome to the show everyone."),       // earlier → disabled
+    takeFrom(5.0, 8.6, "Welcome to the show everyone."),       // LAST → kept
+    takeFrom(10.0, 13.5, "Today we are talking about coffee."),// said once → kept
+  ];
+  const defs = heuristicTakeDefaults(takes);
+  assert.equal(defs.length, 1, "exactly one earlier repeat disabled");
+  assert.equal(defs[0].id, takes[0].id, "the EARLIER welcome is the disabled one");
+  assert.match(defs[0].reason, /earlier take — final kept/);
+  // The keep-LAST rule is UNCONDITIONAL — even a SHORT final re-take wins.
+  const shortLast = [
+    takeFrom(0.0, 6.0, "This is the line said in full."),  // long, earlier
+    takeFrom(8.0, 8.4, "This is the line said in full."),  // 0.4s LAST re-take
+  ];
+  const d2 = heuristicTakeDefaults(shortLast);
+  assert.equal(d2.length, 1, "one disabled");
+  assert.equal(d2[0].id, shortLast[0].id, "the LAST take is kept even though it is shorter");
+});
+
+// 18 ─ A line said ONCE is ALWAYS kept; conservative grouping never merges two
+//      genuinely different lines (no unique part is dropped).
+check("Stage 3: single-occurrence kept; distinct lines never merged", () => {
+  const takes = [
+    takeFrom(0.0, 4.0, "The mitochondria is the powerhouse of the cell."),
+    takeFrom(6.0, 10.0, "Photosynthesis happens inside the chloroplast."),
+    takeFrom(12.0, 16.0, "Today we learn about plant biology basics."),
+  ];
+  const defs = heuristicTakeDefaults(takes);
+  assert.equal(defs.length, 0, "three distinct lines → nothing grouped, nothing dropped");
+  // A pair that shares only a couple of common words is NOT grouped (conservative).
+  const nearMiss = [
+    takeFrom(0.0, 4.0, "We are going to the market today."),
+    takeFrom(6.0, 10.0, "We are leaving the office tomorrow."),
+  ];
+  assert.equal(heuristicTakeDefaults(nearMiss).length, 0,
+    "shared function words must not merge two different lines");
+});
+
+// 19 ─ The AI pass with a MOCKED Claude grouping: full coverage (no part dropped),
+//      exactly one keeper per group = the LAST, regardless of the model.
+check("Stage 3 AI (mocked Claude): keep-LAST + full coverage enforced in code", async () => {
+  const takes = [
+    takeFrom(0.0, 4.0, "Intro line, take one."),      // earlier re-take
+    takeFrom(6.0, 10.0, "Intro line, take two."),     // LAST re-take → keeper
+    takeFrom(12.0, 16.0, "Second line of the script."), // part 2 (once)
   ];
   const ids = takes.map((t) => t.id);
-  // Mocked model output: groups t0+t1 as part 1 (best=t1), t2 as part 2.
+  // The model only GROUPS (no "best" field) — keep-LAST is enforced in code.
   const claudeFn = async () => JSON.stringify({
     parts: [
-      { part: "Intro line", best: ids[1], takeIds: [ids[0], ids[1]] },
-      { part: "Second line", best: ids[2], takeIds: [ids[2]] },
+      { part: "Intro line", takeIds: [ids[0], ids[1]] },
+      { part: "Second line", takeIds: [ids[2]] },
     ],
   });
-  const { defaults, usedAI } = await selectBestTakeDefaults(takes, { minTakeForBest: 3.0, hasKey: true, claudeFn });
+  const { defaults, usedAI } = await selectBestTakeDefaults(takes, { hasKey: true, claudeFn });
   assert.ok(usedAI, "the AI path was taken");
-  // Apply the defaults: exactly t0 disabled; t1 + t2 enabled → full coverage,
-  // no duplicate, and the >3s take won.
   const resolved = applyDefaults(takes, defaults, []);
   const enabled = resolved.filter((t) => t.enabled).map((t) => t.id);
-  assert.deepEqual(enabled.sort(), [ids[1], ids[2]].sort(), "one keeper per part, no duplicate, no part dropped");
+  assert.deepEqual(enabled.sort(), [ids[1], ids[2]].sort(), "LAST of group 1 + the unique part 2 kept");
   const disabled = resolved.filter((t) => !t.enabled);
-  assert.equal(disabled.length, 1, "exactly the losing re-take is disabled");
-  assert.equal(disabled[0].id, ids[0], "the short flubbed take is the loser");
-  assert.match(disabled[0].reason ?? "", /duplicate/);
+  assert.equal(disabled.length, 1, "exactly the earlier re-take is disabled");
+  assert.equal(disabled[0].id, ids[0], "the EARLIER intro is the one disabled");
+  assert.match(disabled[0].reason ?? "", /earlier take/);
 });
 
-// 18 ─ The guarantee is ENFORCED even when the model misbehaves: a take the model
-//      forgets to assign is NOT dropped (becomes its own part), and a model that
-//      picks a ≤3s 'best' is overridden so the >3s take wins.
-check("defaultsFromParts enforces full coverage + only >3s keeper despite a bad model", () => {
+// 20 ─ Guarantees ENFORCED despite a MISBEHAVING model: a forgotten take is not
+//      dropped (own part), and the code keeps the LAST even if the model tried
+//      to (via a bogus 'best' field) pick an earlier one.
+check("Stage 3: guarantees hold under a misbehaving model (no drop, keep-LAST, order)", () => {
   const takes = [
-    takeFrom(0.0, 4.0, "Part A clean take."),       // 4.0s
-    takeFrom(6.0, 6.5, "Part A flub."),             // 0.5s (model wrongly calls this best)
-    takeFrom(8.0, 12.0, "Part B, never mentioned by the model."),
+    takeFrom(0.0, 4.0, "Part A, first delivery."),   // earlier A
+    takeFrom(6.0, 10.0, "Part A, final delivery."),  // LAST A → must be keeper
+    takeFrom(12.0, 16.0, "Part B, never mentioned by the model."),
   ];
   const ids = takes.map((t) => t.id);
-  // Bad model: groups A's two takes but names the 0.5s flub as best, and FORGETS
-  // part B entirely.
-  const parts = [{ part: "Part A", best: ids[1], takeIds: [ids[0], ids[1]] }];
-  const defs = defaultsFromParts(takes, parts as any, 3.0);
+  // Bad model: groups A's two but injects a bogus "best" naming the EARLIER take,
+  // and FORGETS part B entirely. The code ignores 'best' and never drops B.
+  const parts = [{ part: "Part A", best: ids[0], takeIds: [ids[0], ids[1]] }];
+  const defs = defaultsFromParts(takes, parts as any);
   const resolved = applyDefaults(takes, defs, []);
   const enabled = resolved.filter((t) => t.enabled).map((t) => t.id);
-  // Part A → the >3s take wins (not the model's 0.5s pick); Part B is NOT dropped.
-  assert.ok(enabled.includes(ids[0]), "the >3s take A is the keeper, overriding the model's short pick");
-  assert.ok(!enabled.includes(ids[1]), "the 0.5s flub is disabled");
+  assert.ok(enabled.includes(ids[1]), "the LAST take A is the keeper, ignoring the model's 'best'");
+  assert.ok(!enabled.includes(ids[0]), "the earlier take A is disabled");
   assert.ok(enabled.includes(ids[2]), "the un-assigned part B is kept as its own part (not dropped)");
+  // Order preserved: the enabled set in time order is the full transcript once.
+  assert.deepEqual(enabled, [ids[1], ids[2]], "enabled set is in time order, each part once");
 });
 
-// 19 ─ With no key, selection falls back to the heuristic (timeline still works).
+// 21 ─ With no key, selection falls back to the heuristic (timeline still works).
 check("no Anthropic key → heuristic fallback (usedAI false)", async () => {
   const takes = [
     takeFrom(0.0, 3.5, "Same line take one."),
     takeFrom(5.0, 8.6, "Same line take one."),
   ];
-  const { usedAI, defaults } = await selectBestTakeDefaults(takes, { minTakeForBest: 3.0, hasKey: false });
+  const { usedAI, defaults } = await selectBestTakeDefaults(takes, { hasKey: false });
   assert.ok(!usedAI, "without a key the AI path is skipped");
   assert.equal(defaults.length, 1, "the heuristic still disables the earlier repeat");
 });
 
-// 20 ─ Full parity through the AI defaults: computeKeepSegments(env,…,defaults)
+// 22 ─ Full parity through the keep-LAST defaults: computeKeepSegments(env,…,defaults)
 //      keep == what renderManualCut trims, and previewDuration == render duration.
-check("parity holds with AI defaults: keep == render segments, durations match", () => {
-  // Three loud islands; islands 1+2 are a re-take of the same long line.
+check("parity holds with keep-LAST defaults: keep == render segments, durations match", () => {
+  // Three loud blocks; blocks 1+2 are a re-take of the same long line.
   const hop = 0.02, duration = 18.0, n = Math.round(duration / hop);
   const loud = (t: number) =>
     (t >= 0.5 && t < 4.5) || (t >= 6.0 && t < 10.0) || (t >= 12.0 && t < 16.0);
@@ -496,12 +566,13 @@ check("parity holds with AI defaults: keep == render segments, durations match",
     { word: "begin.", start: 13.0, end: 15.8 },
   ];
   const detected = segmentTakes(env, words, DEFAULT_SETTINGS);
-  const longTakes = detected.filter((t) => t.end - t.start > DEFAULT_SETTINGS.minTake);
-  assert.equal(longTakes.length, 3, "three long sentence takes (slivers, if any, are short/disabled)");
-  const defs: TakeDefault[] = heuristicTakeDefaults(detected, DEFAULT_SETTINGS.minTake);
-  assert.equal(defs.length, 1, "the earlier intro re-take is disabled by default");
+  assert.equal(detected.filter((t) => t.enabled).length, 3, "three real big blocks");
+  const defs: TakeDefault[] = heuristicTakeDefaults(detected);
+  assert.equal(defs.length, 1, "the EARLIER intro re-take is disabled by default");
   const plan = computeKeepSegments(env, words, DEFAULT_SETTINGS, defs, []);
   assert.equal(plan.keep.length, 2, "two enabled takes → 2 keep segments");
+  // The kept intro is the LATER one (block 2), confirming keep-LAST in the keep set.
+  assert.ok(plan.keep[0].start >= 5.9, `kept intro is the LATER block, starts ${plan.keep[0].start}`);
   // The render trims exactly plan.keep + gap; its duration equals previewDuration.
   const spec: CutSpec = { source: "/dev/null", segments: plan.keep, hasAudio: true, gap: plan.gap };
   const tmp = path.join(process.env.TMPDIR || "/tmp", `parity_ai_${Date.now()}.mp4`);

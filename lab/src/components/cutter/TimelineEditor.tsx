@@ -376,8 +376,8 @@ export default function TimelineEditor({
 
   const keptCount = keep.length;
   const removedTakeCount = takes.filter((t) => !t.enabled).length;
-  // Re-takes disabled as duplicates AND still disabled (not re-enabled by the user).
-  const dupRemovedCount = takes.filter((t) => !t.enabled && t.reason?.startsWith('duplicate')).length;
+  // Earlier re-takes disabled (final take kept) AND still disabled (not re-enabled).
+  const dupRemovedCount = takes.filter((t) => !t.enabled && t.reason?.startsWith('earlier take')).length;
   const playheadX = playhead * pxPerSec * zoom;
 
   return (
@@ -391,7 +391,7 @@ export default function TimelineEditor({
           <p className="text-[11px] text-muted-foreground mt-0.5">
             {fmt(analysis.duration)} original → <span className="text-foreground font-medium">{fmt(editedDuration)}</span> edited ·{' '}
             {keptCount} take{keptCount !== 1 ? 's' : ''} kept
-            {dupRemovedCount > 0 && <> · {dupRemovedCount} duplicate{dupRemovedCount !== 1 ? 's' : ''} removed</>}
+            {dupRemovedCount > 0 && <> · {dupRemovedCount} earlier re-take{dupRemovedCount !== 1 ? 's' : ''} dropped</>}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={onClose}>
@@ -442,7 +442,7 @@ export default function TimelineEditor({
       </div>
 
       {/* Controls */}
-      <div className="rounded-xl border border-border p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="rounded-xl border border-border p-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <RangeControl
           label="Silence floor" value={settings.silenceDb} min={-60} max={0} step={1} unit=" dB"
           hint="Below this counts as a break (0 = aggressive)"
@@ -462,6 +462,11 @@ export default function TimelineEditor({
           label="Min take length" value={settings.minTake} min={0.2} max={10} step={0.1} unit="s"
           hint="Shorter takes are disabled (still toggleable)"
           onChange={(v) => setSettings((s) => ({ ...s, minTake: round2(v) }))}
+        />
+        <RangeControl
+          label="Speaking volume gate" value={settings.speakingMargin} min={0} max={30} step={1} unit=" dB"
+          hint="Above the floor to count as a real take (faint bits → low/scattered)"
+          onChange={(v) => setSettings((s) => ({ ...s, speakingMargin: v }))}
         />
       </div>
 
@@ -530,10 +535,11 @@ export default function TimelineEditor({
                 const width = Math.max(8, (t.end - t.start) * pxPerSec * zoom);
                 const isSel = selected === t.id;
                 const kept = t.enabled;
-                const isDup = !kept && t.reason?.startsWith('duplicate');
-                const isShort = !kept && t.reason?.startsWith('under');
+                const isDup = !kept && t.reason?.startsWith('earlier take');
+                const isShort = !kept && t.reason === 'short';
+                const isFaint = !kept && t.reason === 'low/scattered';
                 // Short badge label for the disabled reason.
-                const badge = isDup ? 'dup' : isShort ? 'short' : null;
+                const badge = isDup ? 'earlier' : isShort ? 'short' : isFaint ? 'low' : null;
                 return (
                   <button
                     key={t.id}
@@ -570,11 +576,13 @@ export default function TimelineEditor({
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Each block is a whole sentence — every detected take is shown, none dropped. Click to select; press{' '}
-          <kbd className="px-1 rounded bg-muted">Delete</kbd> or double-click to toggle a take on/off. Re-takes are
-          disabled as <Copy className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" />duplicates (best take kept) and takes
-          shorter than {settings.minTake}s are disabled (<span className="text-amber-500">short</span>) — re-enable any of them.
-          Cuts and the {settings.gap.toFixed(2)}s gaps recompute live and render exactly as previewed.
+          Each block is one big chunk of speech — every detected take is shown, none dropped. Click to select; press{' '}
+          <kbd className="px-1 rounded bg-muted">Delete</kbd> or double-click to toggle a take on/off. When a line is
+          re-recorded, the earlier takes are disabled as{' '}
+          <Copy className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" />earlier (the final take is kept). Takes
+          shorter than {settings.minTake}s show <span className="text-amber-500">short</span> and faint scattered bits show{' '}
+          <span className="text-amber-500">low</span> — re-enable any of them. Cuts and the {settings.gap.toFixed(2)}s gaps
+          recompute live and render exactly as previewed.
         </p>
       </div>
 

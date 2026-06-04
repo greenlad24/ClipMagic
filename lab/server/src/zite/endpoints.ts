@@ -1169,9 +1169,9 @@ async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> 
     let takeDefaults: unknown[] = [];
     try {
       const ts2 = Date.now();
-      const sel = await selectBestTakeDefaults(takes, { minTakeForBest: DEFAULT_SETTINGS.minTake });
+      const sel = await selectBestTakeDefaults(takes);
       takeDefaults = sel.defaults;
-      lap(`chose best takes (${sel.defaults.length} re-takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
+      lap(`keep-last dedup (${sel.defaults.length} earlier re-takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
     } catch (e) {
       console.warn(`[analyzeCut:${job.id}] best-take selection failed (non-fatal): ${e instanceof Error ? e.message : e}`);
     }

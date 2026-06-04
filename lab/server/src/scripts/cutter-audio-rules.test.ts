@@ -113,7 +113,7 @@ async function main() {
     const blip = r.takes.find((t) => t.start < 2.4 && t.end - t.start < GEO.minTake);
     if (blip) {
       assert.ok(!blip.enabled, "the blip take is disabled by default");
-      assert.match(blip.reason ?? "", /under/);
+      assert.equal(blip.reason, "short");
     }
     assert.ok(r.keep.every((k) => k.start > 2.4), "no blip span made it into keep");
   });
@@ -150,7 +150,7 @@ async function main() {
     // stays enabled. Lowering min-take re-enables B without any manual toggle.
     const def = computeKeepSegments(env, words, DEFAULT_SETTINGS, [], []);
     const b = def.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
-    assert.ok(b && !b.enabled && /under 3/.test(b.reason ?? ""), "take B disabled at 3.0s min-take");
+    assert.ok(b && !b.enabled && b.reason === "short", "take B disabled at 3.0s min-take");
     const lowered = computeKeepSegments(env, words, GEO, [], []);
     const b2 = lowered.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
     assert.ok(b2 && b2.enabled, "lowering min-take re-enables take B");

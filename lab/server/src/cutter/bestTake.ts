@@ -1,28 +1,32 @@
 /**
- * Narration Cutter — full-script verification + BEST-TAKE-PER-PART selection.
+ * Narration Cutter — STAGE 3: full-transcript keep-LAST dedup of the big blocks.
  *
  * This is the server-side DEFAULT for which takes start enabled in the timeline
- * editor. It runs once during the analyze job (it can't live in the deterministic
- * client core because it's AI-assisted), and its output — a `TakeDefault[]`
+ * editor. It runs once during the analyze job (the AI-assisted grouping can't
+ * live in the deterministic client core), and its output — a `TakeDefault[]`
  * disabled-set — is returned to the client, which then recomputes live and lets
  * the user override any of it. The render uses the explicit enabled keep-segments
  * the client sends, so parity is preserved.
  *
- * The problem this fixes: the speaker re-records lines, so the raw take list has
- * the SAME script part covered by several takes. The old behaviour both DROPPED
- * some parts and DUPLICATED others. Here we:
- *   1. determine the intended FULL SCRIPT — the distinct parts, in order;
- *   2. group the takes that cover the same part (tolerant of minor wording);
- *   3. choose the BEST take per part (prefer a clean, complete, LATER take),
- *      considering only takes longer than `minTakeForBest` (default 3s);
- *   4. GUARANTEE every distinct part is covered by exactly ONE enabled take (no
- *      part dropped) and no part is enabled twice (no duplicate).
+ * The problem this fixes: the narrator re-records lines, so the big-block list
+ * has the SAME script part covered by several blocks. The old behaviour both
+ * DROPPED some parts and KEPT THE WRONG repeat. Here we:
+ *   1. order the big blocks by time and group the ones that are re-takes of the
+ *      same line (tolerant of minor wording, but CONSERVATIVE so distinct lines
+ *      are never merged);
+ *   2. KEEP THE LAST occurrence of each group (the narrator's final delivery) and
+ *      disable the EARLIER ones with the reason "earlier take — final kept";
+ *   3. a block said ONCE is ALWAYS kept (never grouped, never dropped).
  *
- * With no Anthropic key (or on any AI failure) we fall back to the deterministic
+ * The AI (Claude) only ASSISTS the fuzzy grouping when a key is present. The hard
+ * GUARANTEES are enforced in CODE afterward (`defaultsFromParts`), independent of
+ * the model: no unique part is ever dropped, every group keeps exactly its LAST
+ * member, and order is preserved — a misbehaving model cannot break any of these.
+ * With no key (or on any AI failure) we fall back to the deterministic
  * `heuristicTakeDefaults` text grouping, so the timeline still works fully.
  */
 import { claudeJSONForPurpose, anthropicConfigured } from "../ai/claude.js";
-import { heuristicTakeDefaults, type Take, type TakeDefault } from "./segments.js";
+import { heuristicTakeDefaults, EARLIER_TAKE_REASON, type Take, type TakeDefault } from "./segments.js";
 
 /** The Claude pass, injectable so tests can MOCK it instead of calling the API. */
 export type ClaudeJSONFn = (opts: {
@@ -36,26 +40,23 @@ export type ClaudeJSONFn = (opts: {
 interface ModelPart {
   /** A short label/snippet for the part (shown in the UI as the group). */
   part: string;
-  /** The take id the model chose as best (must be one of `takeIds`). */
-  best: string;
-  /** All take ids that cover this part (re-takes), including `best`. */
+  /** All take ids that are re-takes of this same part (in any order). */
   takeIds: string[];
 }
 
 function buildSystem(): string {
-  return `You are a meticulous video editor reviewing a RAW, unedited narration recording that was already split into TAKES (one whole sentence each, with a stable id, a start/end time, and its transcript text).
+  return `You are a meticulous video editor reviewing a RAW, unedited narration recording that was already split into TAKES — each a BIG contiguous block of speech, with a stable id, a start/end time, and its transcript text.
 
-The speaker frequently RE-RECORDS lines: they flub a sentence, stop, and say essentially the SAME sentence again. Your job is to reconstruct the intended FULL SCRIPT and, for each distinct part of the script, choose the single BEST take to keep.
+The narrator frequently RE-RECORDS lines: they flub a line, stop, and say essentially the SAME line again, sometimes several times. Your ONLY job is to GROUP the takes that are re-records of the SAME line. You do NOT choose which take to keep — the system always keeps the LAST take of each group automatically.
 
 Return ONLY JSON of this exact shape:
-{"parts":[{"part":"a short label for this script line","best":"t123","takeIds":["t45","t123"]}]}
+{"parts":[{"part":"a short label for this script line","takeIds":["t45","t123"]}]}
 
 Strict rules:
-- Reconstruct the script IN ORDER. Each "part" is one distinct line/sentence of the intended final script.
-- "takeIds" lists EVERY take that is an attempt at that same part (re-takes), tolerant of minor wording differences. A part with a single take is fine (one attempt).
-- "best" MUST be one of that part's takeIds. Prefer a CLEAN, COMPLETE, and LATER attempt. Strongly prefer takes longer than 3 seconds — a very short take is usually a false start, not the real line.
+- Each "part" is one distinct line of the intended final script. "takeIds" lists EVERY take that is an attempt at that SAME line (re-takes), tolerant of minor wording differences.
+- A line said only ONCE is its own part with a single take id — that is correct and expected. Most parts may have a single take.
+- BE CONSERVATIVE: only group takes whose text GENUINELY matches the same line. If you are unsure, keep them as SEPARATE single-take parts. Never merge two genuinely different lines just because they share a few words — merging distinct lines would wrongly delete content.
 - EVERY take id you were given must appear in exactly ONE part's takeIds (no take left out, no take in two parts).
-- Do NOT merge genuinely different script lines into one part just because they share a few words.
 Return {"parts":[]} only if there are truly no takes.`;
 }
 
@@ -67,30 +68,31 @@ function buildUser(takes: Take[]): string {
 }
 
 /**
- * Turn the model's per-part grouping into a DEFAULT disabled-set, ENFORCING the
- * guarantees regardless of what the model returned:
- *   - every take belongs to exactly one part (unassigned takes become their own
- *     single-take part so nothing is dropped),
- *   - exactly one take per part is enabled (the best),
- *   - the chosen best is > minTakeForBest when any take in the part qualifies
- *     (so a short false-start can't beat the real line); if NO take in the part
- *     is long enough, the longest is kept enabled (never drop a whole part).
- * Returns the takes to DISABLE (the losing re-takes), each with the keeper's
- * snippet as the reason + scriptPart.
+ * Turn the model's per-part GROUPING into a DEFAULT disabled-set, ENFORCING the
+ * keep-LAST + full-coverage + order guarantees in CODE regardless of what the
+ * model returned:
+ *   - every CANDIDATE take (the real big blocks passed in) belongs to exactly one
+ *     part; a take the model forgot becomes its OWN single-take part, so no unique
+ *     part is ever dropped;
+ *   - within each part the KEEPER is the LAST take by start time — the model has
+ *     no say in which take is kept, so it can never override keep-last;
+ *   - a part with a single take disables nothing (a line said once is always
+ *     kept);
+ *   - order is preserved (groups built in take order; keeper = latest start).
+ * Returns the takes to DISABLE (the earlier re-takes), each with the keeper's
+ * snippet as the scriptPart and the "earlier take — final kept" reason.
+ *
+ * `takes` MUST be the dedup CANDIDATES (the Stage-1-enabled big blocks). Any take
+ * id the model references that isn't a candidate is ignored, so the model cannot
+ * pull a faint/short block into a group or drop a real one.
  */
 export function defaultsFromParts(
   takes: Take[],
   modelParts: ModelPart[],
-  minTakeForBest: number,
 ): TakeDefault[] {
   const byId = new Map(takes.map((t) => [t.id, t]));
-  const len = (id: string) => {
-    const t = byId.get(id);
-    return t ? t.end - t.start : 0;
-  };
 
-  // Assign each take to a part; collect the validated groups (in take order so
-  // the result is deterministic and stable).
+  // Assign each candidate take to a part; collect the validated groups.
   const assigned = new Set<string>();
   const groups: { ids: string[]; label: string }[] = [];
   for (const p of modelParts) {
@@ -99,8 +101,8 @@ export function defaultsFromParts(
     ids.forEach((id) => assigned.add(id));
     groups.push({ ids, label: String(p?.part ?? "").trim() });
   }
-  // Any take the model failed to assign becomes its own single-take part — it is
-  // a distinct part we must NOT drop.
+  // Any candidate the model failed to assign becomes its own single-take part —
+  // a distinct part we must NOT drop. (Guarantee: no unique part dropped.)
   for (const t of takes) {
     if (!assigned.has(t.id)) {
       assigned.add(t.id);
@@ -111,48 +113,51 @@ export function defaultsFromParts(
   const defaults: TakeDefault[] = [];
   for (const g of groups) {
     if (g.ids.length <= 1) continue; // single attempt → nothing to disable
-    // Choose the keeper: among takes > minTakeForBest prefer the LATEST (by
-    // start); if none qualifies, keep the LONGEST so the part is never dropped.
+    // KEEP THE LAST occurrence in time — independent of the model. (Guarantee:
+    // exactly one keeper per group = the LAST; order preserved.)
     const ordered = [...g.ids].sort((a, b) => (byId.get(a)!.start - byId.get(b)!.start));
-    const qualifying = ordered.filter((id) => len(id) > minTakeForBest);
-    const keeper = qualifying.length
-      ? qualifying[qualifying.length - 1]
-      : ordered.reduce((best, id) => (len(id) > len(best) ? id : best), ordered[0]);
+    const keeper = ordered[ordered.length - 1];
     const keeperTake = byId.get(keeper)!;
     const snippet = keeperTake.text.length > 48
       ? keeperTake.text.slice(0, 47).trimEnd() + "…"
-      : (keeperTake.text || g.label || "better take");
+      : (keeperTake.text || g.label || "final take");
     const part = g.label || snippet;
-    for (const id of g.ids) {
+    for (const id of ordered) {
       if (id === keeper) continue;
-      defaults.push({ id, reason: `duplicate — better take kept (${snippet})`, scriptPart: part });
+      defaults.push({ id, reason: EARLIER_TAKE_REASON, scriptPart: part });
     }
   }
   return defaults;
 }
 
 /**
- * Compute the DEFAULT disabled-set (best-take-per-part) for the timeline editor.
- * Uses a focused Claude pass over the takes + transcript when an Anthropic key is
+ * Compute the DEFAULT disabled-set (STAGE 3 keep-LAST dedup) for the timeline
+ * editor. The dedup CANDIDATES are the real big blocks — the Stage-1-ENABLED
+ * takes; short/low-scattered blocks keep their Stage-1 reason and are never
+ * grouped. Uses a focused Claude pass to GROUP re-takes when an Anthropic key is
  * configured; otherwise (or on any failure) falls back to the deterministic
  * `heuristicTakeDefaults`. The Claude call is injectable (`claudeFn`) so it can
  * be mocked in tests without touching the network.
  *
- * GUARANTEE (enforced in `defaultsFromParts`, independent of the model): every
- * distinct script part is covered by exactly one enabled take (no part dropped)
- * and no part is enabled twice (no duplicate).
+ * GUARANTEES (enforced in code, independent of the model): no unique part is ever
+ * dropped; exactly one keeper per re-take group = the LAST occurrence; order is
+ * preserved. The model only ASSISTS the fuzzy grouping.
  */
 export async function selectBestTakeDefaults(
   takes: Take[],
-  opts: { minTakeForBest?: number; claudeFn?: ClaudeJSONFn; hasKey?: boolean } = {},
+  opts: { claudeFn?: ClaudeJSONFn; hasKey?: boolean } = {},
 ): Promise<{ defaults: TakeDefault[]; usedAI: boolean }> {
-  const minTakeForBest = opts.minTakeForBest ?? 3.0;
-  if (takes.length < 2) return { defaults: [], usedAI: false };
+  // Only the real big blocks (Stage-1-enabled) are dedup candidates — re-takes
+  // are big blocks; faint/short blocks aren't keepers and aren't grouped.
+  const candidates = takes.filter((t) => t.enabled);
+  if (candidates.length < 2) return { defaults: [], usedAI: false };
 
   const hasKey = opts.hasKey ?? anthropicConfigured();
   const claudeFn = opts.claudeFn ?? (claudeJSONForPurpose as ClaudeJSONFn);
+  // The heuristic reads `enabled` itself, so it gets the FULL list; the AI path
+  // is fed only the candidates (so the model can't reference a non-candidate).
   if (!hasKey) {
-    return { defaults: heuristicTakeDefaults(takes, minTakeForBest), usedAI: false };
+    return { defaults: heuristicTakeDefaults(takes), usedAI: false };
   }
 
   try {
@@ -160,13 +165,13 @@ export async function selectBestTakeDefaults(
       tier: "fast",
       purpose: "take-detection",
       system: buildSystem(),
-      messages: [{ role: "user", content: buildUser(takes) }],
+      messages: [{ role: "user", content: buildUser(candidates) }],
     });
     const data = JSON.parse(raw);
     const parts: ModelPart[] = Array.isArray(data?.parts) ? data.parts : [];
-    return { defaults: defaultsFromParts(takes, parts, minTakeForBest), usedAI: true };
+    return { defaults: defaultsFromParts(candidates, parts), usedAI: true };
   } catch (e) {
-    console.warn("[bestTake] AI selection failed (non-fatal) — using heuristic:", e instanceof Error ? e.message : e);
-    return { defaults: heuristicTakeDefaults(takes, minTakeForBest), usedAI: false };
+    console.warn("[bestTake] AI grouping failed (non-fatal) — using heuristic:", e instanceof Error ? e.message : e);
+    return { defaults: heuristicTakeDefaults(takes), usedAI: false };
   }
 }
