@@ -15,6 +15,8 @@ interface MemeItem {
   momentsPlanned: number | null;
   stickers: number | null;
   captionsOnly: boolean;
+  subtitleTemplate: string | null;
+  skipReason: string | null;
 }
 interface MemeRun {
   id: string;
@@ -186,11 +188,15 @@ export default function MemePage() {
                     <p className={`text-[11px] ${STATUS_STYLE[it.status]}`}>
                       {it.status === 'Complete'
                         ? it.captionsOnly
-                          ? '✓ Captions-only (no sticker image generated)'
+                          ? '✓ Captions-only'
                           : `✓ ${it.stickers ?? 0} sticker${it.stickers === 1 ? '' : 's'} popped in${it.momentsPlanned != null ? ` · ${it.momentsPlanned} emphasis moment${it.momentsPlanned === 1 ? '' : 's'}` : ''}`
                         : it.status === 'Error' ? `✗ ${it.error ?? 'Failed'}`
                         : STATUS_LABEL[it.status] + '…'}
                     </p>
+                    {/* Surface WHY a render fell back to captions-only — never a silent skip. */}
+                    {it.status === 'Complete' && it.captionsOnly && it.skipReason && (
+                      <p className="text-[11px] text-muted-foreground truncate">No stickers: {it.skipReason}</p>
+                    )}
                   </div>
                   {it.status === 'Complete' && it.outputUrl && (
                     <div className="flex items-center gap-3 shrink-0">

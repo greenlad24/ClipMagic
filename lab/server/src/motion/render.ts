@@ -23,6 +23,8 @@
 import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { config } from "../config.js";
 import type { MotionGraphicClip } from "../render/manifest.js";
 
@@ -30,15 +32,37 @@ const FPS = 30;
 
 /**
  * The @remotion/* SSR packages are OPTIONAL runtime dependencies — they're heavy
- * (headless Chromium) and only present on a server with the motion-graphics
- * feature provisioned. We therefore load them through indirected dynamic imports
- * so the lab type-checks and builds WITHOUT them installed; if they're missing
- * at runtime the import throws and every caller falls back gracefully.
+ * (headless Chromium) and live in the SEPARATE remotion workspace
+ * (lab/remotion/node_modules), NOT the server's node_modules (which the lab
+ * symlinks to the main app's libs). So a plain `import("@remotion/renderer")`
+ * resolved from this file fails even when Remotion is installed.
+ *
+ * We therefore resolve the packages from the remotion project dir (next to
+ * config.motionEntryPoint) via createRequire, then import the resolved absolute
+ * path. We fall back to the bare specifier (covers a hoisted/global install).
+ * Either way, if the packages are genuinely absent the import throws and every
+ * caller falls back gracefully — the lab still type-checks and builds WITHOUT
+ * them installed because these are dynamic, untyped imports.
  */
-export const importRenderer = (): Promise<any> =>
-  import(/* @vite-ignore */ "@remotion/renderer" as string);
-const importBundler = (): Promise<any> =>
-  import(/* @vite-ignore */ "@remotion/bundler" as string);
+function remotionRequire(): NodeRequire {
+  // motionEntryPoint = .../remotion/src/index.ts → resolve from the remotion root
+  // so its node_modules is on the resolution path.
+  const remotionRoot = path.resolve(path.dirname(config.motionEntryPoint), "..");
+  return createRequire(path.join(remotionRoot, "package.json"));
+}
+
+async function importRemotionPkg(pkg: string): Promise<any> {
+  try {
+    const resolved = remotionRequire().resolve(pkg);
+    return await import(/* @vite-ignore */ pathToFileURL(resolved).href as string);
+  } catch {
+    // Fall back to normal specifier resolution (hoisted/global install).
+    return import(/* @vite-ignore */ pkg as string);
+  }
+}
+
+export const importRenderer = (): Promise<any> => importRemotionPkg("@remotion/renderer");
+const importBundler = (): Promise<any> => importRemotionPkg("@remotion/bundler");
 
 export interface RenderedGraphic {
   clip: MotionGraphicClip;
@@ -51,17 +75,18 @@ let availability: Promise<boolean> | null = null;
 
 /**
  * True only if the @remotion SSR packages can be imported AND a headless browser
- * can be opened (which downloads Chromium on first call). Cached so we probe once
- * per process. Any failure → false (caller skips motion graphics and renders
- * normally).
+ * can be opened (which downloads Chromium on first call). This probe is about
+ * the RUNTIME ENVIRONMENT only — it does NOT consult any feature flag — so any
+ * caller (motion graphics OR the meme/sticker editor) can ask "is Remotion +
+ * Chromium usable here?" without coupling to MOTION_GRAPHICS. Cached so we probe
+ * once per process. Any failure → false.
  *
  * Note: renderer 4.x exports `openBrowser` (not `ensureBrowser`); opening a
  * browser here both validates Chromium and triggers the one-time download, so the
  * first real render doesn't pay that latency. We close it immediately — each
  * render opens its own.
  */
-export async function motionAvailable(): Promise<boolean> {
-  if (!config.motionGraphicsEnabled) return false;
+export async function remotionRuntimeAvailable(): Promise<boolean> {
   if (!availability) {
     availability = (async () => {
       try {
@@ -76,7 +101,7 @@ export async function motionAvailable(): Promise<boolean> {
         return true;
       } catch (e) {
         console.warn(
-          `[motion] disabled — Remotion/Chromium unavailable: ${
+          `[remotion] unavailable — Remotion/Chromium not usable here: ${
             e instanceof Error ? e.message : String(e)
           }`,
         );
@@ -85,6 +110,17 @@ export async function motionAvailable(): Promise<boolean> {
     })();
   }
   return availability;
+}
+
+/**
+ * Motion-graphics availability: the runtime probe AND the MOTION_GRAPHICS flag.
+ * The flag gates the SHORT-FORM DIRECTOR's motion graphics only. The meme/sticker
+ * editor must NOT use this — it calls remotionRuntimeAvailable() directly so its
+ * stickers run whenever Chromium is present, regardless of the flag.
+ */
+export async function motionAvailable(): Promise<boolean> {
+  if (!config.motionGraphicsEnabled) return false;
+  return remotionRuntimeAvailable();
 }
 
 // ── Bundle (cached across renders) ───────────────────────────────────────────

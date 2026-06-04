@@ -4,10 +4,15 @@
  * Mirrors the motion-graphics stage (motion/stage.ts) but for the meme editor's
  * one and only overlay type — the funny image that slaps on BELOW the captions.
  * It REUSES the motion render service's Remotion bundle + Chromium availability
- * probe (motion/render.ts exports getBundle / motionAvailable / importRenderer)
- * so there's one bundle per process and one place that knows whether Remotion is
- * usable. The composite is the same isolated, best-effort ffmpeg overlay pass
- * the motion stage uses, so a sticker failure can never regress the base render.
+ * probe (motion/render.ts exports getBundle / importRenderer) so there's one
+ * bundle per process and one place that knows whether Remotion is usable. The
+ * composite is the same isolated, best-effort ffmpeg overlay pass the motion
+ * stage uses, so a sticker failure can never regress the base render.
+ *
+ * CRITICAL: this stage uses `remotionRuntimeAvailable()` (the flag-FREE runtime
+ * probe), NOT `motionAvailable()`. The MOTION_GRAPHICS flag gates the short-form
+ * director's motion graphics; STICKERS are the whole point of THIS tool, so they
+ * must run whenever Chromium + an image are available, regardless of that flag.
  *
  * Every stage is graceful: no Chromium / no generated image / any error → the
  * base captions-only render is returned untouched.
@@ -17,7 +22,7 @@ import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import { runFfmpeg } from "../render/ffmpeg.js";
-import { motionAvailable, getBundle, importRenderer } from "../motion/render.js";
+import { remotionRuntimeAvailable, getBundle, importRenderer } from "../motion/render.js";
 import type { EmphasisStickerClip } from "./sticker.js";
 
 /**
@@ -44,6 +49,12 @@ export interface StickerStageResult {
   ffmpegSpawns: number;
   /** How many stickers actually rendered + composited. */
   applied: number;
+  /**
+   * Why no sticker was applied (Chromium unavailable, bundle failed, every
+   * render failed, composite skipped …), or null on success. Surfaced to the
+   * user so a captions-only render is OBSERVABLE rather than silent.
+   */
+  skipReason: string | null;
 }
 
 interface RenderedSticker {
@@ -52,9 +63,22 @@ interface RenderedSticker {
   file: string | null;
 }
 
+/**
+ * Alpha codec for the rendered sticker clip.
+ *
+ * Default = ProRes 4444 (.mov, yuva444p10le). VERIFIED ON THIS BOX: Remotion
+ * 4.0's `vp8`/`vp9` WebM-alpha path silently emits an OPAQUE `yuv420p` clip (no
+ * alpha channel), so overlaying it BLACKS OUT the entire base video — the exact
+ * "no stickers / black frame" the user saw. ProRes 4444 reliably carries the
+ * alpha, so the sticker composites with a transparent background as intended.
+ * ProRes files are larger, but a sticker clip is only ~1.5–2.5s and is deleted
+ * right after compositing, so the cost is negligible. Override with MEME_CODEC
+ * (or the shared MOTION_CODEC) if a server prefers WebM on a newer Remotion.
+ */
 function codecConfig(): { codec: string; pixelFormat: string; ext: string } {
-  const codec = process.env.MOTION_CODEC || "vp8";
+  const codec = process.env.MEME_CODEC || process.env.MOTION_CODEC || "prores";
   if (codec === "prores") return { codec: "prores", pixelFormat: "yuva444p10le", ext: "mov" };
+  // vp8/vp9 both take yuva420p for WebM-alpha (note the Remotion 4.0 caveat above).
   return { codec, pixelFormat: "yuva420p", ext: "webm" };
 }
 
@@ -188,31 +212,64 @@ export async function applyEmphasisStickers(
   totalDuration: number,
 ): Promise<StickerStageResult> {
   const withImages = clips.filter((c) => c.imageUrl);
-  if (withImages.length === 0) return { replacedFile: baseVideo, ffmpegSpawns: 0, applied: 0 };
-  if (!(await motionAvailable())) {
-    console.warn("[meme] Remotion/Chromium unavailable — rendering captions-only.");
-    return { replacedFile: baseVideo, ffmpegSpawns: 0, applied: 0 };
+  if (withImages.length === 0) {
+    return {
+      replacedFile: baseVideo,
+      ffmpegSpawns: 0,
+      applied: 0,
+      skipReason: "no sticker images — captions only",
+    };
   }
+  // Flag-FREE probe: stickers run whenever Chromium/Remotion is usable here,
+  // independent of MOTION_GRAPHICS (which only gates the short-form director).
+  console.log(`[meme] sticker stage: ${withImages.length} sticker(s) to render; checking Chromium…`);
+  if (!(await remotionRuntimeAvailable())) {
+    console.warn("[meme] Chromium/Remotion unavailable — rendering captions-only.");
+    return {
+      replacedFile: baseVideo,
+      ffmpegSpawns: 0,
+      applied: 0,
+      skipReason: "Chromium/Remotion unavailable on this server — captions only",
+    };
+  }
+  console.log("[meme] Chromium available ✓");
 
   const t0 = Date.now();
   let serveUrl: string;
   try {
     serveUrl = await getBundle();
+    console.log("[meme] Remotion bundle ready ✓");
   } catch (e) {
     console.warn(
       `[meme] Remotion bundle failed — captions-only: ${e instanceof Error ? e.message : String(e)}`,
     );
-    return { replacedFile: baseVideo, ffmpegSpawns: 0, applied: 0 };
+    return {
+      replacedFile: baseVideo,
+      ffmpegSpawns: 0,
+      applied: 0,
+      skipReason: "Remotion bundle failed to build — captions only",
+    };
   }
 
   // Render one sticker at a time (each headless-Chromium render is heavy; this
   // shares the box with ffmpeg). Concurrency knob lives in config.motionConcurrency.
   const rendered: RenderedSticker[] = [];
   for (const clip of withImages) {
-    rendered.push(await renderOne(serveUrl, clip));
+    const r = await renderOne(serveUrl, clip);
+    console.log(
+      `[meme]   sticker @${clip.startTime}s render ${r.file ? "ok ✓" : "FAILED ✗ (skipped)"}`,
+    );
+    rendered.push(r);
   }
   const ok = rendered.filter((r) => r.file);
-  if (ok.length === 0) return { replacedFile: baseVideo, ffmpegSpawns: 0, applied: 0 };
+  if (ok.length === 0) {
+    return {
+      replacedFile: baseVideo,
+      ffmpegSpawns: 0,
+      applied: 0,
+      skipReason: "every sticker render failed — captions only",
+    };
+  }
 
   const result = await compositeStickers(baseVideo, ok, totalDuration);
   for (const r of rendered) {
@@ -221,9 +278,14 @@ export async function applyEmphasisStickers(
 
   const applied = result.composited ? ok.length : 0;
   console.log(
-    `[meme] applied ${applied}/${withImages.length} sticker(s) in ${Date.now() - t0}ms` +
-      (result.composited ? "" : " (composite skipped — kept base render)"),
+    `[meme] composite ${result.composited ? "applied ✓" : "SKIPPED ✗ — kept base render"} — ` +
+      `applied ${applied}/${withImages.length} sticker(s) in ${Date.now() - t0}ms`,
   );
 
-  return { replacedFile: result.file, ffmpegSpawns: result.ffmpegSpawns, applied };
+  return {
+    replacedFile: result.file,
+    ffmpegSpawns: result.ffmpegSpawns,
+    applied,
+    skipReason: result.composited ? null : "sticker composite failed — captions only",
+  };
 }

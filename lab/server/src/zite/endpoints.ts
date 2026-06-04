@@ -1174,6 +1174,10 @@ interface MemeItem {
   momentsPlanned: number | null;
   stickers: number | null;
   captionsOnly: boolean;
+  /** The randomly-chosen subtitle template for this render. */
+  subtitleTemplate: string | null;
+  /** User-visible reason stickers were skipped this run (or null). */
+  skipReason: string | null;
 }
 interface MemeRun {
   id: string;
@@ -1207,6 +1211,8 @@ async function runOneMeme(item: MemeItem, sourceUrl: string): Promise<void> {
     item.momentsPlanned = result.momentsPlanned;
     item.stickers = result.stickersWithImages;
     item.captionsOnly = result.captionsOnly;
+    item.subtitleTemplate = result.subtitleTemplate;
+    item.skipReason = result.diagnostics.skipReason;
 
     // Snapshot the optimization report (transcription + director + N images)
     // onto the meme record before the render queue runs. Render-time sticker
@@ -1225,6 +1231,12 @@ async function runOneMeme(item: MemeItem, sourceUrl: string): Promise<void> {
         momentsPlanned: result.momentsPlanned,
         stickers: result.stickersWithImages,
         captionsOnly: result.captionsOnly,
+        subtitleTemplate: result.subtitleTemplate,
+        // Planning-stage diagnostics (moments, per-image outcomes, skip reason).
+        // The render worker later overwrites stickerSkipReason with the COMPOSITE
+        // outcome if the stage itself skipped (e.g. Chromium unavailable).
+        stickerDiagnosticsJson: JSON.stringify(result.diagnostics),
+        ...(result.diagnostics.skipReason ? { stickerSkipReason: result.diagnostics.skipReason } : {}),
         durationSeconds: result.durationSeconds,
         ...(optimizationReportJson ? { optimizationReportJson } : {}),
       },
@@ -1265,6 +1277,7 @@ const createMeme: Handler = async (input, userId) => {
     memeItems.push({
       memeId: rec.id, title: it.title || "Meme short", status: "Queued",
       outputUrl: null, error: null, momentsPlanned: null, stickers: null, captionsOnly: false,
+      subtitleTemplate: null, skipReason: null,
     });
     sources.push(it.sourceUrl);
   }
@@ -1311,7 +1324,10 @@ const getMemeProjects: Handler = async (_input, userId) => {
     sourceUrl: m.sourceUrl,
     momentsPlanned: m.momentsPlanned ?? null,
     stickers: m.stickers ?? null,
+    stickersApplied: m.stickersApplied ?? null,
     captionsOnly: m.captionsOnly ?? false,
+    subtitleTemplate: m.subtitleTemplate ?? null,
+    stickerSkipReason: m.stickerSkipReason ?? null,
     durationSeconds: m.durationSeconds ?? null,
     error: m.error,
     createdAt: m.createdAt,

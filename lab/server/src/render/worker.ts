@@ -110,6 +110,7 @@ async function processJob(job: RenderJob): Promise<void> {
   // motion stage: on missing Chromium / image / any error, `abs` is left as the
   // captions-only render produced it (graceful fallback). Independent of the
   // MOTION_GRAPHICS flag — the meme editor opts in by populating the field.
+  let stickerStage: { applied: number; skipReason: string | null } | null = null;
   if (job.kind === "manifest") {
     const manifest = JSON.parse(job.manifest_json || "{}") as RenderManifest;
     const stickers = manifest.emphasisStickers ?? [];
@@ -120,17 +121,36 @@ async function processJob(job: RenderJob): Promise<void> {
           fs.renameSync(r.replacedFile, abs);
         }
         motionSpawns += r.ffmpegSpawns;
+        stickerStage = { applied: r.applied, skipReason: r.skipReason };
       } catch (e) {
-        console.warn(
-          `[worker] emphasis-sticker stage skipped for job ${job.id}: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[worker] emphasis-sticker stage skipped for job ${job.id}: ${msg}`);
+        stickerStage = { applied: 0, skipReason: `sticker stage error: ${msg}`.slice(0, 200) };
       }
     }
   }
 
   completeJob(job.id, file, result.durationSec);
+
+  // Persist the render-stage sticker outcome onto the meme record so the page can
+  // show how many stickers landed and WHY a render fell back to captions-only
+  // (Chromium unavailable, composite failed …) — instead of silently producing
+  // none. Best-effort; only meme jobs carry emphasisStickers.
+  if (job.kind === "manifest" && job.project_id && stickerStage) {
+    try {
+      await MemeProjects.update({
+        id: job.project_id,
+        record: {
+          stickersApplied: stickerStage.applied,
+          ...(stickerStage.skipReason ? { stickerSkipReason: stickerStage.skipReason } : {}),
+        },
+      });
+    } catch (e) {
+      console.warn(
+        `[worker] sticker-stage diagnostics persist skipped for ${job.project_id}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
 
   // Complete the Optimization Report's speed section with REAL render-time
   // numbers: caption-memo hits/misses and the ffmpeg spawn count (1 main render
