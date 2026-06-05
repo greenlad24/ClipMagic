@@ -87,6 +87,19 @@ services:
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data
+      # Postiz Settings page (write-only key manager) writes the user's Postiz
+      # keys to /postiz-config/postiz.env on this SHARED volume; the postiz
+      # service mounts the same volume at /config and SOURCES that file at
+      # startup (see the postiz `entrypoint` below), so keys saved in the suite
+      # apply to Postiz with a one-click restart.
+      - postiz-config:/postiz-config
+      # Docker socket — lets the suite restart ONLY the Postiz container (found by
+      # its compose-service label) over the Docker Engine API so saved keys take
+      # effect in one click. NOTE: this is a real privilege (the suite can manage
+      # containers); it's an accepted tradeoff for one-click apply. Used solely to
+      # restart Postiz. Remove this mount to disable auto-restart (keys still
+      # persist; restart Postiz manually on the server instead).
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # ── POSTIZ: self-hosted social-media scheduler (opt-in) ───────────────────
   # The open-source social poster (gitroomhq/postiz-app) that the hub's "Social
@@ -106,6 +119,20 @@ services:
     profiles: ["postiz"]
     image: ghcr.io/gitroomhq/postiz-app:latest
     restart: unless-stopped
+    # Source the suite-managed key file LAST, then run the image's ORIGINAL
+    # startup command. The official postiz-app image declares NO ENTRYPOINT and
+    # CMD ["sh","-c","nginx && pnpm run pm2"] (see gitroomhq/postiz-app
+    # Dockerfile). We wrap that command: `set -a` so sourced vars are exported,
+    # source /config/postiz.env if present (written by the suite's Postiz
+    # Settings page on the shared `postiz-config` volume), then `exec` the
+    # original `nginx && pnpm run pm2`. Because the file is sourced AFTER the
+    # compose `environment:` defaults below are already in the process env, its
+    # values OVERRIDE those defaults. A plain restart re-runs this entrypoint and
+    # re-sources the (possibly updated) file, so new keys apply on restart.
+    entrypoint:
+      - /bin/sh
+      - -lc
+      - 'set -a; [ -f /config/postiz.env ] && . /config/postiz.env; set +a; exec sh -c "nginx && pnpm run pm2"'
     ports:
       # Host port → Postiz's internal port (the unified app image serves on
       # 5000). Override the host side with POSTIZ_PORT in .env; keep it in sync
