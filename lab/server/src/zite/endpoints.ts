@@ -39,6 +39,12 @@ import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, typ
 import { planMotionGraphics, motionGraphicsEnabledFor } from "../motion/director.js";
 import { remotionRuntimeAvailable } from "../motion/render.js";
 import { runMemePipeline } from "../meme/pipeline.js";
+import {
+  getSettings as getPostizSettingsStore,
+  updateSettings as updatePostizSettingsStore,
+  restartPostiz as restartPostizContainer,
+  dockerSocketAvailable,
+} from "../settings/postizSecrets.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -2127,6 +2133,26 @@ const testKinoviApi: Handler = async () => {
   }
 };
 
+// ── Postiz settings (write-only secrets for the social-poster container) ─────
+// The suite manages the Postiz container's config + per-platform OAuth keys.
+// WRITE-ONLY: no handler here ever returns a secret value — only configured-state.
+const getPostizSettings: Handler = async () => {
+  const { keys, envFileWritable } = getPostizSettingsStore();
+  return { keys, envFileWritable, dockerSocketAvailable: dockerSocketAvailable() };
+};
+
+const updatePostizSettings: Handler = async (input) => {
+  // Accepts { values: { KEY: "value" | "" | null }, remove?: [KEY] }. Empty
+  // string = unchanged; null or `remove` = delete. Returns configured-state only.
+  const result = updatePostizSettingsStore({
+    values: input?.values ?? {},
+    remove: Array.isArray(input?.remove) ? input.remove : [],
+  });
+  return result;
+};
+
+const restartPostiz: Handler = async () => restartPostizContainer();
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -2142,6 +2168,9 @@ export const HANDLERS: Record<string, Handler> = {
   saveMusicTrack,
   deleteMusicTrack,
   getServiceStatus,
+  getPostizSettings,
+  updatePostizSettings,
+  restartPostiz,
   getPromoVideos,
   getPromoIndex,
   exportPromoIndexes,

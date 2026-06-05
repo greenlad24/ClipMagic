@@ -79,6 +79,9 @@ export const getProject = endpoint("getProject");
 export const getProjects = endpoint("getProjects");
 export const getPromoVideos = endpoint("getPromoVideos");
 export const getServiceStatus = endpoint("getServiceStatus");
+export const getPostizSettings = endpoint("getPostizSettings");
+export const updatePostizSettings = endpoint("updatePostizSettings");
+export const restartPostiz = endpoint("restartPostiz");
 export const getShots = endpoint("getShots");
 export const getWaveform = endpoint("getWaveform");
 export const indexPromoVideo = endpoint("indexPromoVideo");
@@ -150,6 +153,24 @@ export type GetServiceStatusOutputType = {
   postizUrl?: string;
   postizPort?: string;
 };
+export type PostizKeyState = {
+  key: string;
+  label: string;
+  group: string;
+  connects: string;
+  configured: boolean;
+};
+export type GetPostizSettingsOutputType = {
+  keys: PostizKeyState[];
+  envFileWritable: boolean;
+  dockerSocketAvailable: boolean;
+};
+export type UpdatePostizSettingsOutputType = {
+  keys: PostizKeyState[];
+  envFileWritable: boolean;
+  envWriteError?: string;
+};
+export type RestartPostizOutputType = { success: boolean; message: string };
 export type TestKinoviApiOutputType = {
   success: boolean;
   message?: string;
