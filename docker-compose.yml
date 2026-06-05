@@ -88,6 +88,119 @@ services:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data
 
+  # ── POSTIZ: self-hosted social-media scheduler (opt-in) ───────────────────
+  # The open-source social poster (gitroomhq/postiz-app) that the hub's "Social
+  # poster" tile links to. It's a SEPARATE app — its own container on its own
+  # port, backed by its own Postgres + Redis — so it's gated behind the `postiz`
+  # profile (mirroring `clipmagic-lab`'s `profiles: ["lab"]`). A plain
+  # `docker compose up -d` never starts it, and deploy.sh leaves it alone:
+  # it's heavy (app + Postgres + Redis) for a 4-vCPU/8GB box, so start it
+  # manually only when you want it:
+  #
+  #   docker compose --profile postiz up -d
+  #   then open http://<host>:5000   (the hub tile finds it via POSTIZ_URL/PORT)
+  #
+  # All secrets come from the shared root .env — see lab/POSTIZ.md for the full
+  # list (JWT_SECRET, Postgres creds, the URLs, and per-platform OAuth keys).
+  postiz:
+    profiles: ["postiz"]
+    image: ghcr.io/gitroomhq/postiz-app:latest
+    restart: unless-stopped
+    ports:
+      # Host port → Postiz's internal port (the unified app image serves on
+      # 5000). Override the host side with POSTIZ_PORT in .env; keep it in sync
+      # with the URLs below.
+      - "${POSTIZ_PORT:-5000}:5000"
+    environment:
+      # Public-facing origin (where the browser reaches Postiz). For a bare IP
+      # box the default works; behind a domain/proxy set POSTIZ_URL in .env.
+      MAIN_URL: ${POSTIZ_URL:-http://localhost:5000}
+      FRONTEND_URL: ${POSTIZ_URL:-http://localhost:5000}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_URL:-http://localhost:5000}/api
+      # Internal backend address inside the container (Postiz runs both on one
+      # image); this is fixed and not host-dependent.
+      BACKEND_INTERNAL_URL: http://localhost:3000
+      # Required: a long random string, unique per install. Set in .env.
+      JWT_SECRET: ${POSTIZ_JWT_SECRET:-}
+      # Datastores (point at the sibling containers on the compose network).
+      DATABASE_URL: postgresql://${POSTIZ_POSTGRES_USER:-postiz}:${POSTIZ_POSTGRES_PASSWORD:-postiz-password}@postiz-postgres:5432/${POSTIZ_POSTGRES_DB:-postiz}
+      REDIS_URL: redis://postiz-redis:6379
+      # Local disk storage for uploaded media (no external object store needed).
+      STORAGE_PROVIDER: local
+      UPLOAD_DIRECTORY: /uploads
+      NEXT_PUBLIC_UPLOAD_DIRECTORY: /uploads
+      # Required for the self-hosted (non-cloud) build.
+      IS_GENERAL: "true"
+      DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-false}
+      # ── Per-platform OAuth app credentials ─────────────────────────────────
+      # Empty by default (like the main app's keys). Fill in .env only for the
+      # networks you want to connect; see lab/POSTIZ.md + docs.postiz.com.
+      X_API_KEY: ${X_API_KEY:-}
+      X_API_SECRET: ${X_API_SECRET:-}
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID:-}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      YOUTUBE_CLIENT_ID: ${YOUTUBE_CLIENT_ID:-}
+      YOUTUBE_CLIENT_SECRET: ${YOUTUBE_CLIENT_SECRET:-}
+      TIKTOK_CLIENT_ID: ${TIKTOK_CLIENT_ID:-}
+      TIKTOK_CLIENT_SECRET: ${TIKTOK_CLIENT_SECRET:-}
+      PINTEREST_CLIENT_ID: ${PINTEREST_CLIENT_ID:-}
+      PINTEREST_CLIENT_SECRET: ${PINTEREST_CLIENT_SECRET:-}
+      THREADS_APP_ID: ${THREADS_APP_ID:-}
+      THREADS_APP_SECRET: ${THREADS_APP_SECRET:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      SLACK_ID: ${SLACK_ID:-}
+      SLACK_SECRET: ${SLACK_SECRET:-}
+      MASTODON_CLIENT_ID: ${MASTODON_CLIENT_ID:-}
+      MASTODON_CLIENT_SECRET: ${MASTODON_CLIENT_SECRET:-}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+    volumes:
+      - postiz-uploads:/uploads
+      - postiz-config:/config
+    depends_on:
+      postiz-postgres:
+        condition: service_healthy
+      postiz-redis:
+        condition: service_healthy
+
+  postiz-postgres:
+    profiles: ["postiz"]
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTIZ_POSTGRES_USER:-postiz}
+      POSTGRES_PASSWORD: ${POSTIZ_POSTGRES_PASSWORD:-postiz-password}
+      POSTGRES_DB: ${POSTIZ_POSTGRES_DB:-postiz}
+    volumes:
+      - postiz-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTIZ_POSTGRES_USER:-postiz} -d ${POSTIZ_POSTGRES_DB:-postiz}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postiz-redis:
+    profiles: ["postiz"]
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - postiz-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   clipmagic-data:
   clipmagic-lab-data:
+  postiz-uploads:
+  postiz-config:
+  postiz-postgres-data:
+  postiz-redis-data:
