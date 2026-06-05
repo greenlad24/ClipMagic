@@ -294,8 +294,18 @@ export function lastRunDefaults(takes: Take[], runGapS = RUN_GAP_S): TakeDefault
   const cands = takes.filter((t) => t.enabled).sort((a, b) => a.start - b.start);
   if (cands.length < 2) return [];
 
+  // Find the PASS structure from SUBSTANTIAL takes only (≥ RUN_MIN_TAKE_S). This is
+  // DECOUPLED from the user's min-take: with a small min-take, tiny false-starts /
+  // mutterings sit in the gaps between passes and would otherwise BRIDGE the run
+  // gap and merge two recordings into one. We cluster the big takes, pick the last
+  // substantial run, then keep EVERY enabled take inside that run's time window
+  // (including the small ones that belong to the final take). Fall back to all
+  // candidates if there aren't ≥2 big takes.
+  const big = cands.filter((t) => t.end - t.start >= RUN_MIN_TAKE_S);
+  const basis = big.length >= 2 ? big : cands;
+
   const runs: Take[][] = [];
-  for (const t of cands) {
+  for (const t of basis) {
     const last = runs[runs.length - 1];
     if (last && t.start - last[last.length - 1].end <= runGapS) last.push(t);
     else runs.push([t]);
@@ -306,12 +316,18 @@ export function lastRunDefaults(takes: Take[], runGapS = RUN_GAP_S): TakeDefault
   let chosen = runs.length - 1;
   while (chosen > 0 && dur(runs[chosen]) < MIN_RUN_FRACTION * maxDur) chosen--;
 
-  const keep = new Set(runs[chosen].map((t) => t.id));
-  const runStart = runs[chosen][0].start;
+  // The chosen run's time WINDOW; keep every enabled take whose midpoint falls in
+  // it (so small in-run takes survive), disable everything outside.
+  const winStart = runs[chosen][0].start;
+  const winEnd = runs[chosen][runs[chosen].length - 1].end;
   const defaults: TakeDefault[] = [];
   for (const t of cands) {
-    if (keep.has(t.id)) continue;
-    defaults.push({ id: t.id, reason: t.start < runStart ? SHORT_EARLIER_REASON : SHORT_CHATTER_REASON });
+    const mid = (t.start + t.end) / 2;
+    if (mid >= winStart && mid <= winEnd) continue; // inside the final run → keep
+    defaults.push({ id: t.id, reason: mid < winStart ? SHORT_EARLIER_REASON : SHORT_CHATTER_REASON });
   }
   return defaults;
 }
+
+/** Takes shorter than this don't define the pass structure (find-short only). */
+const RUN_MIN_TAKE_S = 3;

@@ -17,7 +17,7 @@
  *   [10.8,12.0) COMPLETE-SILENCE trailing           → trimmed fully (rule 4)
  *
  * Geometry rules are exercised with a low min-take (GEO) so the two real ~2s
- * bursts are ENABLED; the new default min-take is 3.0s, so a separate check
+ * bursts are ENABLED; the default min-take is 1.3s, so a separate check
  * confirms a sub-3s take is DISABLED (not dropped) and re-enables when lowered.
  *
  * Run: cd lab/server && npx tsx src/scripts/cutter-audio-rules.test.ts
@@ -145,15 +145,15 @@ async function main() {
       "preview duration must be body + exactly one 0.35 gap");
   });
 
-  check("RULE 6 (default 3.0s min-take): a sub-3s take is DISABLED, re-enables when lowered", () => {
-    // At the 3.0s DEFAULT, take B (~2s) is disabled (not dropped); take A (~4.3s)
-    // stays enabled. Lowering min-take re-enables B without any manual toggle.
+  check("RULE 6 (min-take gate): a sub-min-take take is DISABLED, re-enables when lowered", () => {
+    // At a 3.0s min-take, take B (~2s) is disabled (not dropped); at the 1.3s
+    // DEFAULT it's enabled. Take A (~4.3s) stays enabled either way.
+    const hi = computeKeepSegments(env, words, { ...DEFAULT_SETTINGS, minTake: 3.0 }, [], []);
+    const bHi = hi.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
+    assert.ok(bHi && !bHi.enabled && bHi.reason === "short", "take B disabled at a 3.0s min-take");
     const def = computeKeepSegments(env, words, DEFAULT_SETTINGS, [], []);
-    const b = def.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
-    assert.ok(b && !b.enabled && b.reason === "short", "take B disabled at 3.0s min-take");
-    const lowered = computeKeepSegments(env, words, GEO, [], []);
-    const b2 = lowered.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
-    assert.ok(b2 && b2.enabled, "lowering min-take re-enables take B");
+    const bDef = def.takes.find((t) => t.start > 8.4 && t.start < 11.0)!;
+    assert.ok(bDef && bDef.enabled, "take B enabled at the 1.3s default min-take");
   });
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* */ }

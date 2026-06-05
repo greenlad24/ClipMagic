@@ -121,7 +121,7 @@ export const DEFAULT_SETTINGS: CutSettings = {
   minSilence: 0.35,
   keepPad: 0.05,
   gap: 0.35,
-  minTake: 3.0,
+  minTake: 1.3,
   speakingMargin: 12,
 };
 
