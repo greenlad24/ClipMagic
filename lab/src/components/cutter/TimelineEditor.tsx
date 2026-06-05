@@ -422,6 +422,14 @@ export default function TimelineEditor({
   const dupRemovedCount = takes.filter((t) => !t.enabled && t.reason?.startsWith('earlier take')).length;
   // Takes dropped by the "Find the short" pass (chatter / false starts / repeats).
   const shortCutCount = takes.filter((t) => !t.enabled && isShortReason(t.reason)).length;
+  // Live transcript of the SHORT = the enabled takes' text, in recording order.
+  const shortTranscript = [...takes]
+    .filter((t) => t.enabled)
+    .sort((a, b) => a.start - b.start)
+    .map((t) => (t.text || '').trim())
+    .filter(Boolean)
+    .join(' ');
+  const shortWordCount = shortTranscript ? shortTranscript.split(/\s+/).length : 0;
   const playheadX = playhead * pxPerSec * zoom;
 
   return (
@@ -564,8 +572,9 @@ export default function TimelineEditor({
         );
       })()}
 
-      {/* Timeline: waveform + take blocks */}
-      <div className="rounded-xl border border-border bg-card/30 p-3 space-y-2">
+      {/* Timeline + live short transcript, side by side on wide screens */}
+      <div className="flex flex-col lg:flex-row gap-3 items-stretch">
+      <div className="flex-1 min-w-0 rounded-xl border border-border bg-card/30 p-3 space-y-2">
         <div className="relative overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
           <div className="relative" style={{ width: Math.max(timelineWidth, 320) }}>
             {/* Waveform */}
@@ -652,6 +661,24 @@ export default function TimelineEditor({
           <span className="text-amber-500">low</span> — re-enable any of them. Cuts and the {settings.gap.toFixed(2)}s gaps
           recompute live and render exactly as previewed.
         </p>
+      </div>
+
+        {/* Live transcript of the short — the enabled takes, in order */}
+        <aside className="lg:w-72 shrink-0 rounded-xl border border-border bg-card/30 p-3 flex flex-col">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-foreground">Short transcript</h3>
+            <span className="text-[10px] text-muted-foreground">{shortWordCount} words</span>
+          </div>
+          {shortTranscript ? (
+            <p className="text-xs leading-relaxed text-foreground/90 overflow-y-auto max-h-72 lg:max-h-[420px] whitespace-pre-wrap">
+              {shortTranscript}
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              The transcript of your kept takes appears here — enable a take to add it.
+            </p>
+          )}
+        </aside>
       </div>
 
       {/* Render */}

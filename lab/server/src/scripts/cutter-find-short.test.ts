@@ -30,7 +30,7 @@ import {
   isShortReason, DEFAULT_SETTINGS as DEFAULTS,
   type Take, type Envelope,
 } from "../cutter/segments.js";
-import { defaultsFromShort, selectCoherentShort } from "../cutter/findShort.js";
+import { defaultsFromShort, selectCoherentShort, enforceFinalRun } from "../cutter/findShort.js";
 import { buildCutArgs, type CutSpec } from "../render/cut.js";
 
 let passed = 0;
@@ -125,6 +125,24 @@ check("kept short is ordered by source time even if the model scrambles keep[]",
   const defaults = defaultsFromShort(FIXTURE, JSON.parse(scrambled))!;
   const enabled = applyDefaults(FIXTURE, defaults, []).filter((t) => t.enabled).map((t) => t.id);
   assert.deepEqual(enabled, [ID[5], ID[6], ID[7]], "kept set is in time order");
+});
+
+// 2b ─ enforceFinalRun: only the LAST time-contiguous run survives — an earlier
+//      pass take that slipped into the kept set is dropped as "earlier".
+check("enforceFinalRun keeps only the last contiguous run (drops earlier passes)", () => {
+  // Earlier pass at 10–18s, final run at 100–108s (same two lines).
+  const cands: Take[] = [
+    take(10, 14, "line one"),   // earlier pass
+    take(14, 18, "line two"),   // earlier pass
+    take(100, 104, "line one"), // FINAL run
+    take(104, 108, "line two"), // FINAL run
+  ];
+  // Pretend the selection kept an earlier-pass take (0) plus the whole final run
+  // (2,3): only take 1 is currently disabled.
+  const out = enforceFinalRun(cands, [{ id: cands[1].id, reason: SHORT_EARLIER_REASON }]);
+  const disabled = new Set(out.map((d) => d.id));
+  assert.ok(disabled.has(cands[0].id), "earlier-pass take @10s dropped");
+  assert.ok(!disabled.has(cands[2].id) && !disabled.has(cands[3].id), "final run @100s kept");
 });
 
 // 3 ─ NO DUPLICATE TEXT: a misbehaving model that keeps BOTH copies of the hook

@@ -102,9 +102,9 @@ Return ONLY JSON of this exact shape:
 {"keep":["t620","t804","t910"],"excluded":[{"takeId":"t12","reason":"earlier"},{"takeId":"t77","reason":"chatter"}],"rationale":"one short sentence"}
 
 How to choose the short:
-- Identify the intended SCRIPT from the lines that get repeated/attempted across the recording. The short is the cleanest COMPLETE delivery of that script.
-- Prefer the LAST complete run-through. Narrators usually nail it on a later take, so when several runs exist, keep the latest complete one and discard the earlier attempts.
-- "keep" is the ORDERED list of take ids (in recording order) that together form that one coherent short — the script said ONCE through, cleanly. Do NOT include the same line twice.
+- Identify the intended SCRIPT from the lines that get repeated/attempted across the recording.
+- ALWAYS use the LAST COMPLETE run-through — the FINAL time the narrator recorded the whole script start-to-finish. Even if an earlier delivery of a line sounds cleaner, use the FINAL run; NEVER assemble the short from lines taken at different times in the recording.
+- "keep" must be ONE CONTIGUOUS BLOCK: the takes of that final run, in recording order. EVERYTHING before the final run (all earlier recordings/attempts of the script) is excluded as "earlier", and any chatter/false-starts AFTER the final run are excluded too. Do NOT include the same line twice.
 - EXCLUDE and classify every other take in "excluded":
     - "earlier"     — an earlier/repeated attempt of a line that you kept a later, cleaner version of.
     - "false-start" — an incomplete attempt, flub, or trailing-off fragment.
@@ -198,6 +198,48 @@ export function defaultsFromShort(
 }
 
 /**
+ * Largest TIME gap (seconds) allowed between two consecutive KEPT takes before we
+ * treat them as belonging to DIFFERENT recording passes. Within the final run,
+ * kept takes are seconds apart (a cut, a breath, at most a short flub between
+ * them). An earlier pass sits much further back in the recording — typically
+ * minutes — so the gap to it is huge. 10s comfortably allows within-run flubs/
+ * pauses while still cutting off earlier passes.
+ */
+const FINAL_RUN_MAX_GAP_S = 10;
+
+/**
+ * Enforce "ONE contiguous block = the LAST run" in CODE, independent of the model.
+ *
+ * The user's rule: only the LAST time the script was filmed counts — discard every
+ * earlier recording of it. So whatever the model (or heuristic) kept, we keep only
+ * the FINAL time-contiguous cluster: walking the kept takes from the end backward,
+ * we stop at the first big TIME gap (= the boundary to an earlier pass). Everything
+ * before that boundary is re-disabled as an "earlier take".
+ *
+ * `candidates` MUST be the Stage-1-enabled big blocks, in source-time order.
+ */
+export function enforceFinalRun(candidates: Take[], defaults: TakeDefault[]): TakeDefault[] {
+  const disabled = new Set(defaults.map((d) => d.id));
+  const kept = candidates.filter((t) => !disabled.has(t.id)); // time-ordered
+  if (kept.length <= 1) return defaults;
+
+  const finalRun = new Set<string>([kept[kept.length - 1].id]);
+  for (let i = kept.length - 2; i >= 0; i--) {
+    const gap = kept[i + 1].start - kept[i].end; // seconds between consecutive kept takes
+    if (gap <= FINAL_RUN_MAX_GAP_S) finalRun.add(kept[i].id);
+    else break; // earlier pass — everything from here back is discarded
+  }
+  if (finalRun.size === kept.length) return defaults; // already a single run
+
+  // Re-disable the earlier-pass kept takes as "earlier take".
+  const result = [...defaults];
+  for (const t of kept) {
+    if (!finalRun.has(t.id)) result.push({ id: t.id, reason: SHORT_EARLIER_REASON });
+  }
+  return result;
+}
+
+/**
  * Find the single coherent short and return the DEFAULT disabled-set (Stage 4).
  * The dedup CANDIDATES are the real big blocks — the Stage-1-ENABLED takes.
  * Uses a focused Claude pass when an Anthropic key is configured; otherwise (or
@@ -221,8 +263,10 @@ export async function selectCoherentShort(
   const hasKey = opts.hasKey ?? anthropicConfigured();
   const claudeFn = opts.claudeFn ?? (claudeJSONForPurpose as ClaudeJSONFn);
 
-  // No key → deterministic keep-last (the existing Stage-3 selection).
-  if (!hasKey) return { defaults: heuristicTakeDefaults(takes), usedAI: false };
+  // No key → deterministic keep-last, then collapse to the final contiguous run.
+  if (!hasKey) {
+    return { defaults: enforceFinalRun(candidates, heuristicTakeDefaults(takes)), usedAI: false };
+  }
 
   try {
     const raw = await claudeFn({
@@ -234,13 +278,14 @@ export async function selectCoherentShort(
     const data = JSON.parse(raw) as ModelShort;
     const defaults = defaultsFromShort(candidates, data);
     // Model returned nothing usable → fall back so the short is never empty.
-    if (!defaults) return { defaults: heuristicTakeDefaults(takes), usedAI: false };
-    return { defaults, usedAI: true };
+    if (!defaults) return { defaults: enforceFinalRun(candidates, heuristicTakeDefaults(takes)), usedAI: false };
+    // Enforce "last contiguous run only" regardless of how the model selected.
+    return { defaults: enforceFinalRun(candidates, defaults), usedAI: true };
   } catch (e) {
     console.warn(
       "[findShort] AI short-selection failed (non-fatal) — using keep-last heuristic:",
       e instanceof Error ? e.message : e,
     );
-    return { defaults: heuristicTakeDefaults(takes), usedAI: false };
+    return { defaults: enforceFinalRun(candidates, heuristicTakeDefaults(takes)), usedAI: false };
   }
 }

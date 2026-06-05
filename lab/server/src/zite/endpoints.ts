@@ -1188,9 +1188,10 @@ async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> 
     let takeDefaults: unknown[] = [];
     try {
       const ts2 = Date.now();
-      const sel = isLongMessyRecording(takes, duration)
-        ? await selectCoherentShort(takes)
-        : await selectBestTakeDefaults(takes);
+      // Always auto-run "Find the short" so the coherent final run is selected by
+      // default on every clip (the user wants it automatic). selectCoherentShort
+      // is a no-op for <2 takes and dedups cleanly for simple clips.
+      const sel = await selectCoherentShort(takes);
       takeDefaults = sel.defaults;
       lap(`default selection (${sel.defaults.length} takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
     } catch (e) {
