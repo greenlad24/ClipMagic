@@ -254,38 +254,64 @@ export function enforceFinalRun(candidates: Take[], defaults: TakeDefault[]): Ta
  */
 export async function selectCoherentShort(
   takes: Take[],
-  opts: { claudeFn?: ClaudeJSONFn; hasKey?: boolean } = {},
+  _opts: { claudeFn?: ClaudeJSONFn; hasKey?: boolean } = {},
 ): Promise<{ defaults: TakeDefault[]; usedAI: boolean }> {
   const candidates = takes.filter((t) => t.enabled);
   // Fewer than two real takes: nothing to disambiguate — keep what's there.
   if (candidates.length < 2) return { defaults: [], usedAI: false };
+  // The short = the LAST recording RUN, found DETERMINISTICALLY from the audio
+  // structure (cluster by time gaps, keep the last substantial cluster). This is
+  // robust regardless of transcript quality — validated on a real 6-min, 3-take
+  // recording where it correctly lands on the final run — and matches the user's
+  // rule: "only the last time the short was filmed." (The AI grouping helpers
+  // remain exported for finer line-level work but are no longer the selector,
+  // because an LLM over a noisy transcript picks the wrong pass.)
+  return { defaults: lastRunDefaults(takes), usedAI: false };
+}
 
-  const hasKey = opts.hasKey ?? anthropicConfigured();
-  const claudeFn = opts.claudeFn ?? (claudeJSONForPurpose as ClaudeJSONFn);
+/**
+ * RUN-GAP: takes separated by a silence LONGER than this belong to different
+ * RECORDING RUNS (the narrator restarted / re-recorded). Within one run, takes
+ * are at most a dozen-ish seconds apart (a pause, a dropped line); separate
+ * passes sit much further apart. 20s cleanly separates passes — validated on a
+ * real recording where the passes were ~28–50s apart and the final run's own
+ * internal gaps were ≤16s.
+ */
+const RUN_GAP_S = 20;
+/**
+ * The chosen run must be ≥ this fraction of the LONGEST run's speech duration, so
+ * a tiny trailing false start at the very end can't beat the real final run.
+ */
+const MIN_RUN_FRACTION = 0.5;
 
-  // No key → deterministic keep-last, then collapse to the final contiguous run.
-  if (!hasKey) {
-    return { defaults: enforceFinalRun(candidates, heuristicTakeDefaults(takes)), usedAI: false };
+/**
+ * Find the short deterministically: cluster the enabled big-blocks into RUNS by
+ * time gaps, then keep the LAST run that is substantial (≥ MIN_RUN_FRACTION of the
+ * longest run's speech). Everything BEFORE it → "earlier take"; anything AFTER it
+ * (a trailing wrap-up / false start) → chatter. No transcript or AI needed.
+ */
+export function lastRunDefaults(takes: Take[], runGapS = RUN_GAP_S): TakeDefault[] {
+  const cands = takes.filter((t) => t.enabled).sort((a, b) => a.start - b.start);
+  if (cands.length < 2) return [];
+
+  const runs: Take[][] = [];
+  for (const t of cands) {
+    const last = runs[runs.length - 1];
+    if (last && t.start - last[last.length - 1].end <= runGapS) last.push(t);
+    else runs.push([t]);
   }
+  const dur = (run: Take[]) => run.reduce((s, t) => s + (t.end - t.start), 0);
+  const maxDur = Math.max(...runs.map(dur));
 
-  try {
-    const raw = await claudeFn({
-      tier: "director",
-      purpose: "take-detection",
-      system: buildSystem(),
-      messages: [{ role: "user", content: buildUser(candidates) }],
-    });
-    const data = JSON.parse(raw) as ModelShort;
-    const defaults = defaultsFromShort(candidates, data);
-    // Model returned nothing usable → fall back so the short is never empty.
-    if (!defaults) return { defaults: enforceFinalRun(candidates, heuristicTakeDefaults(takes)), usedAI: false };
-    // Enforce "last contiguous run only" regardless of how the model selected.
-    return { defaults: enforceFinalRun(candidates, defaults), usedAI: true };
-  } catch (e) {
-    console.warn(
-      "[findShort] AI short-selection failed (non-fatal) — using keep-last heuristic:",
-      e instanceof Error ? e.message : e,
-    );
-    return { defaults: enforceFinalRun(candidates, heuristicTakeDefaults(takes)), usedAI: false };
+  let chosen = runs.length - 1;
+  while (chosen > 0 && dur(runs[chosen]) < MIN_RUN_FRACTION * maxDur) chosen--;
+
+  const keep = new Set(runs[chosen].map((t) => t.id));
+  const runStart = runs[chosen][0].start;
+  const defaults: TakeDefault[] = [];
+  for (const t of cands) {
+    if (keep.has(t.id)) continue;
+    defaults.push({ id: t.id, reason: t.start < runStart ? SHORT_EARLIER_REASON : SHORT_CHATTER_REASON });
   }
+  return defaults;
 }

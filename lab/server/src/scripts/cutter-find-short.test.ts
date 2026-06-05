@@ -30,7 +30,7 @@ import {
   isShortReason, DEFAULT_SETTINGS as DEFAULTS,
   type Take, type Envelope,
 } from "../cutter/segments.js";
-import { defaultsFromShort, selectCoherentShort, enforceFinalRun } from "../cutter/findShort.js";
+import { defaultsFromShort, selectCoherentShort, enforceFinalRun, lastRunDefaults } from "../cutter/findShort.js";
 import { buildCutArgs, type CutSpec } from "../render/cut.js";
 
 let passed = 0;
@@ -77,9 +77,9 @@ const FIXTURE: Take[] = [
   take(15, 17, "Here's the one— ugh let me start over."),
   take(19, 24, "Batch everything record all your takes back to back."),
   take(26, 28, "All right all right hold on."),
-  take(40, 45, "Here's the one trick that changed how I edit videos."),
-  take(47, 52, "Batch everything record all your takes back to back."),
-  take(54, 59, "Follow for more editing tips like this one."),
+  take(55, 60, "Here's the one trick that changed how I edit videos."),
+  take(62, 67, "Batch everything record all your takes back to back."),
+  take(69, 74, "Follow for more editing tips like this one."),
 ];
 const ID = FIXTURE.map((t) => t.id);
 
@@ -99,20 +99,15 @@ function goodModel(): string {
 }
 
 // 1 ─ The coherent FINAL run is selected; restarts/false-starts/chatter excluded.
-check("selects the coherent final run; drops repeats, false starts, chatter", async () => {
-  const { defaults, usedAI } = await selectCoherentShort(FIXTURE, { hasKey: true, claudeFn: async () => goodModel() });
-  assert.ok(usedAI, "the AI path was taken");
+check("selects the final run (last time-cluster); drops the earlier passes", async () => {
+  // Deterministic: the script is recorded twice; the final run (5,6,7) sits after
+  // a >20s gap, so clustering keeps it and drops the earlier pass + chatter.
+  const { defaults, usedAI } = await selectCoherentShort(FIXTURE);
+  assert.ok(!usedAI, "the last-run selector is deterministic — no AI needed");
   const resolved = applyDefaults(FIXTURE, defaults, []);
   const enabled = resolved.filter((t) => t.enabled).map((t) => t.id);
   assert.deepEqual(enabled, [ID[5], ID[6], ID[7]], "kept = the final hook, tip, CTA in order");
-
-  // Reasons are classified for the UI.
-  const reasonById = new Map(resolved.map((t) => [t.id, t.reason]));
-  assert.equal(reasonById.get(ID[0]), SHORT_CHATTER_REASON, "intro is chatter");
-  assert.equal(reasonById.get(ID[2]), SHORT_FALSE_START_REASON, "the trailing-off attempt is a false start");
-  assert.equal(reasonById.get(ID[1]), SHORT_EARLIER_REASON, "earlier hook is an earlier take");
-  assert.equal(reasonById.get(ID[4]), SHORT_CHATTER_REASON, "the 'all right' aside is chatter");
-  // Every excluded take is tagged with a short-reason (so the UI can explain it).
+  // Every excluded take is tagged with a short-reason so the UI can explain it.
   for (const t of resolved.filter((x) => !x.enabled)) {
     assert.ok(isShortReason(t.reason), `excluded take ${t.id} has a short reason (${t.reason})`);
   }
@@ -159,24 +154,33 @@ check("no duplicate text — model keeping both hook takes keeps only the LAST",
 
 // 4 ─ Candidate-only: a model id that isn't a real candidate is ignored, and a
 //     faint/short take (Stage-1-disabled) can never be pulled into the short.
-check("only real candidates are eligible; bogus or non-candidate ids ignored", async () => {
-  // Add a Stage-1-DISABLED faint take to the list; selectCoherentShort filters to
-  // enabled candidates, so the model never even sees it, and can't keep it.
+check("Stage-1-disabled faint takes are never pulled into the short", () => {
+  // A faint take inside the final run's time window, disabled by Stage 1, must not
+  // become part of the short — the selector clusters only ENABLED candidates.
   const withFaint: Take[] = [
     ...FIXTURE,
-    { ...take(61, 70, "faint mumbling between takes"), enabled: false, reason: "low/scattered" },
+    { ...take(64, 66, "faint mumble"), enabled: false, reason: "low/scattered" },
   ];
-  const claudeFn = async () => JSON.stringify({
-    keep: [ID[5], ID[6], ID[7], "tBOGUS", takeId(61)], // bogus + the faint id
-    excluded: [],
-  });
-  const { defaults } = await selectCoherentShort(withFaint, { hasKey: true, claudeFn });
+  const defaults = lastRunDefaults(withFaint);
   const resolved = applyDefaults(withFaint, defaults, []);
   const enabled = resolved.filter((t) => t.enabled).map((t) => t.id);
-  assert.deepEqual(enabled, [ID[5], ID[6], ID[7]], "bogus id + the faint take are not in the short");
-  // The faint take keeps its own Stage-1 reason (untouched by the short selector).
-  const faint = resolved.find((t) => t.id === takeId(61))!;
-  assert.equal(faint.reason, "low/scattered", "the faint take is left with its Stage-1 reason");
+  assert.deepEqual(enabled, [ID[5], ID[6], ID[7]], "the faint take is not in the short");
+  const faint = resolved.find((t) => t.id === takeId(64))!;
+  assert.equal(faint.reason, "low/scattered", "the faint take keeps its Stage-1 reason");
+});
+
+// 4b ─ The deterministic last-run selector picks the LAST substantial cluster.
+check("lastRunDefaults picks the last substantial run (ignores a tiny trailing blip)", () => {
+  // Two full runs + a 1-take blip at the very end (after a >20s gap). The blip is
+  // too small to be the short, so the SECOND full run wins.
+  const takes: Take[] = [
+    take(2, 7, "line one a"), take(9, 14, "line two a"),                 // run 1
+    take(40, 45, "line one b"), take(47, 52, "line two b"),              // run 2 (final real)
+    take(80, 82, "uh wait"),                                            // tiny trailing blip
+  ];
+  const defaults = lastRunDefaults(takes);
+  const enabled = applyDefaults(takes, defaults, []).filter((t) => t.enabled).map((t) => t.id);
+  assert.deepEqual(enabled, [takes[2].id, takes[3].id], "the last SUBSTANTIAL run is the short");
 });
 
 // 5 ─ NEVER empty: an empty/garbage model selection falls back to keep-last.
@@ -228,7 +232,7 @@ check("user can override the short — a toggle re-enables an excluded take", as
 //     same big blocks segment out, apply the short defaults, and check the link.
 check("parity — short keep == render segments, render duration == previewDuration", () => {
   // Build a 60s envelope loud exactly over the fixture's take spans.
-  const hop = 0.02, duration = 60.0, n = Math.round(duration / hop);
+  const hop = 0.02, duration = 80.0, n = Math.round(duration / hop);
   const loud = (t: number) => FIXTURE.some((tk) => t >= tk.start && t < tk.end);
   const db: number[] = [];
   for (let i = 0; i < n; i++) db.push(loud(i * hop) ? -12 : -60);
