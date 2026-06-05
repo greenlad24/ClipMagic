@@ -448,6 +448,32 @@ const DUP_THRESHOLD = 0.72;
 /** The disabled-reason for an earlier re-take whose final take is kept. */
 export const EARLIER_TAKE_REASON = "earlier take — final kept";
 
+// ── "Find the short" reasons (Stage 4 — the coherent-short selector) ──────────
+// When the AI "Auto-cut / Find the short" pass runs, it disables every take that
+// is NOT part of the single coherent short and tags WHY, so the timeline can
+// explain each excluded take and the user can override any of it. These are the
+// only reasons that selector emits; they live in the shared core so the client
+// renders the same labels the server computed.
+
+/** A take the short-finder excluded as an earlier/repeated attempt of a kept line. */
+export const SHORT_EARLIER_REASON = "earlier take — not in the short";
+/** A take the short-finder excluded as off-topic chatter (not the script). */
+export const SHORT_CHATTER_REASON = "off-topic chatter";
+/** A take the short-finder excluded as an incomplete false start / flub. */
+export const SHORT_FALSE_START_REASON = "false start";
+/** A take the short-finder excluded for any other reason (catch-all). */
+export const SHORT_EXCLUDED_REASON = "not part of the short";
+
+/** True when a disabled reason came from the "Find the short" selector. */
+export function isShortReason(reason: string | undefined): boolean {
+  return (
+    reason === SHORT_EARLIER_REASON ||
+    reason === SHORT_CHATTER_REASON ||
+    reason === SHORT_FALSE_START_REASON ||
+    reason === SHORT_EXCLUDED_REASON
+  );
+}
+
 /**
  * STAGE 3 (heuristic / no-AI FALLBACK) — full-transcript keep-LAST dedup. Groups
  * the BIG blocks (the takes that passed Stage 1) by conservative normalized-text

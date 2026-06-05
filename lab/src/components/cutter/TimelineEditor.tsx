@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   Loader2, Play, Pause, Scissors, Trash2, Undo2, RotateCcw, Film, Download,
-  ZoomIn, ZoomOut, Eye, EyeOff, X, Copy, AlertTriangle,
+  ZoomIn, ZoomOut, Eye, EyeOff, X, Copy, AlertTriangle, Sparkles, MessageSquareOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { analyzeCut, getAnalyzeCut, renderManualCut, getCutJob } from 'zite-endpoints-sdk';
+import { analyzeCut, getAnalyzeCut, findShortCut, renderManualCut, getCutJob } from 'zite-endpoints-sdk';
 import {
-  computeKeepSegments, previewDuration, sourceToEdited,
+  computeKeepSegments, previewDuration, sourceToEdited, isShortReason,
   DEFAULT_SETTINGS, type CutSettings, type Take, type Seg, type TakeDefault,
 } from '@/lib/cutSegments';
 
@@ -78,6 +78,9 @@ export default function TimelineEditor({
   const [renderStage, setRenderStage] = useState('Queued');
   const [renderError, setRenderError] = useState<string | null>(null);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
+
+  // ── "Find the short" (Stage-4 auto-cut) ────────────────────────────────────
+  const [finding, setFinding] = useState(false);
 
   const env = useMemo(
     () => analysis ? { db: analysis.envelope.db, hop: analysis.envelope.hop, duration: analysis.duration } : null,
@@ -173,6 +176,45 @@ export default function TimelineEditor({
     pushHistory();
     setToggled(takes.filter((t) => !t.enabled).map((t) => t.id));
   }, [pushHistory, takes]);
+
+  // ── Auto-cut / Find the short ──────────────────────────────────────────────
+  // Ask the server to find the single coherent short hidden in this messy
+  // recording (one clean run of the script; earlier repeats, false starts and
+  // chatter dropped) and make THAT the new default selection. The returned
+  // disabled-set flows through the same shared core as every other default, so
+  // the result is just a fresh starting point the user can fine-tune with the
+  // existing toggles/sliders. We snapshot the current toggles for undo, then
+  // clear them so the AI's selection is what shows (manual tweaks start fresh).
+  const findShort = useCallback(async () => {
+    if (finding) return;
+    // Send the takes as currently detected (id/span/text + Stage-1 enabled gate).
+    const payload = takes.map((t) => ({
+      id: t.id, start: t.start, end: t.end, text: t.text, enabled: t.enabled,
+    }));
+    if (payload.filter((t) => t.enabled).length < 2) {
+      toast.info('Not enough takes to find a short — adjust the silence floor or min-take.');
+      return;
+    }
+    setFinding(true);
+    try {
+      const res = await findShortCut({ takes: payload }) as {
+        takeDefaults: TakeDefault[]; usedAI: boolean; keptCount: number;
+      };
+      pushHistory();
+      setTakeDefaults(res.takeDefaults ?? []);
+      setToggled([]);
+      setSelected(null);
+      const n = res.keptCount ?? 0;
+      toast.success(
+        `Found the short — ${n} take${n !== 1 ? 's' : ''} kept` +
+        (res.usedAI ? '' : ' (heuristic — add an Anthropic key for smarter detection)'),
+      );
+    } catch (e: any) {
+      toast.error('Couldn\'t find the short — ' + (e?.message?.slice(0, 120) ?? 'unknown error'));
+    } finally {
+      setFinding(false);
+    }
+  }, [finding, takes, pushHistory]);
 
   // Keyboard: Delete removes the selected (kept) take, Cmd/Ctrl+Z undoes.
   useEffect(() => {
@@ -378,6 +420,8 @@ export default function TimelineEditor({
   const removedTakeCount = takes.filter((t) => !t.enabled).length;
   // Earlier re-takes disabled (final take kept) AND still disabled (not re-enabled).
   const dupRemovedCount = takes.filter((t) => !t.enabled && t.reason?.startsWith('earlier take')).length;
+  // Takes dropped by the "Find the short" pass (chatter / false starts / repeats).
+  const shortCutCount = takes.filter((t) => !t.enabled && isShortReason(t.reason)).length;
   const playheadX = playhead * pxPerSec * zoom;
 
   return (
@@ -391,7 +435,9 @@ export default function TimelineEditor({
           <p className="text-[11px] text-muted-foreground mt-0.5">
             {fmt(analysis.duration)} original → <span className="text-foreground font-medium">{fmt(editedDuration)}</span> edited ·{' '}
             {keptCount} take{keptCount !== 1 ? 's' : ''} kept
-            {dupRemovedCount > 0 && <> · {dupRemovedCount} earlier re-take{dupRemovedCount !== 1 ? 's' : ''} dropped</>}
+            {shortCutCount > 0
+              ? <> · {shortCutCount} dropped (repeats · false starts · chatter)</>
+              : dupRemovedCount > 0 && <> · {dupRemovedCount} earlier re-take{dupRemovedCount !== 1 ? 's' : ''} dropped</>}
           </p>
         </div>
         <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={onClose}>
@@ -472,6 +518,14 @@ export default function TimelineEditor({
 
       {/* Edit actions */}
       <div className="flex items-center gap-2 flex-wrap">
+        {/* Auto-cut: find the single coherent short hidden in a messy multi-take
+            recording, then let the user fine-tune. The headline action. */}
+        <Button size="sm" className="h-8 text-xs gap-1.5" disabled={finding || takes.length < 2}
+          onClick={findShort}
+          title="Auto-detect the clean short — one complete run of the script — and drop the earlier takes, false starts and off-topic chatter">
+          {finding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+          {finding ? 'Finding the short…' : 'Find the short'}
+        </Button>
         {(() => {
           const sel = takes.find((t) => t.id === selected) ?? null;
           const selKept = sel ? sel.enabled : true;
@@ -536,10 +590,19 @@ export default function TimelineEditor({
                 const isSel = selected === t.id;
                 const kept = t.enabled;
                 const isDup = !kept && t.reason?.startsWith('earlier take');
-                const isShort = !kept && t.reason === 'short';
+                const isShortGate = !kept && t.reason === 'short';
                 const isFaint = !kept && t.reason === 'low/scattered';
+                const isChatter = !kept && t.reason === 'off-topic chatter';
+                const isFalseStart = !kept && t.reason === 'false start';
+                const fromShort = !kept && isShortReason(t.reason);
                 // Short badge label for the disabled reason.
-                const badge = isDup ? 'earlier' : isShort ? 'short' : isFaint ? 'low' : null;
+                const badge = isChatter ? 'chatter'
+                  : isFalseStart ? 'false start'
+                  : isDup ? 'earlier'
+                  : isShortGate ? 'short'
+                  : isFaint ? 'low'
+                  : fromShort ? 'cut'
+                  : null;
                 return (
                   <button
                     key={t.id}
@@ -557,7 +620,8 @@ export default function TimelineEditor({
                     style={{ left, width }}
                   >
                     <span className="flex items-center gap-1 text-[10px] font-mono text-muted-foreground leading-tight">
-                      {isDup && <Copy className="w-2.5 h-2.5 shrink-0 text-amber-500" />}
+                      {isChatter && <MessageSquareOff className="w-2.5 h-2.5 shrink-0 text-amber-500" />}
+                      {(isDup || (fromShort && !isChatter)) && <Copy className="w-2.5 h-2.5 shrink-0 text-amber-500" />}
                       {fmt(t.start)}
                       {badge && <span className="text-amber-500 font-sans not-italic">{badge}</span>}
                     </span>
@@ -577,8 +641,12 @@ export default function TimelineEditor({
         </div>
         <p className="text-[11px] text-muted-foreground">
           Each block is one big chunk of speech — every detected take is shown, none dropped. Click to select; press{' '}
-          <kbd className="px-1 rounded bg-muted">Delete</kbd> or double-click to toggle a take on/off. When a line is
-          re-recorded, the earlier takes are disabled as{' '}
+          <kbd className="px-1 rounded bg-muted">Delete</kbd> or double-click to toggle a take on/off.{' '}
+          <span className="text-foreground font-medium">Find the short</span> auto-detects the one clean run of your script and
+          drops the rest — <span className="text-amber-500">earlier</span> repeats,{' '}
+          <span className="text-amber-500">false start</span>s and off-topic{' '}
+          <MessageSquareOff className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" /><span className="text-amber-500">chatter</span>.
+          Otherwise, when a line is re-recorded the earlier takes are disabled as{' '}
           <Copy className="inline w-3 h-3 mx-0.5 -mt-0.5 text-amber-500" />earlier (the final take is kept). Takes
           shorter than {settings.minTake}s show <span className="text-amber-500">short</span> and faint scattered bits show{' '}
           <span className="text-amber-500">low</span> — re-enable any of them. Cuts and the {settings.gap.toFixed(2)}s gaps

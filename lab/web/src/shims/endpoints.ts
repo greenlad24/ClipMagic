@@ -94,6 +94,7 @@ export const getCutRun = endpoint("getCutRun");
 export const getNarrationCuts = endpoint("getNarrationCuts");
 export const analyzeCut = endpoint("analyzeCut");
 export const getAnalyzeCut = endpoint("getAnalyzeCut");
+export const findShortCut = endpoint("findShortCut");
 export const renderManualCut = endpoint("renderManualCut");
 export const getCutJob = endpoint("getCutJob");
 export const listJobs = endpoint("listJobs");

@@ -23,8 +23,9 @@ import { probe } from "../render/ffmpeg.js";
 import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
 import { planCuts } from "../cutter/plan.js";
 import { detectSilences, computeEnvelope } from "../cutter/silence.js";
-import { segmentTakes, DEFAULT_SETTINGS, type Envelope, type Seg } from "../cutter/segments.js";
+import { segmentTakes, DEFAULT_SETTINGS, type Envelope, type Seg, type Take } from "../cutter/segments.js";
 import { selectBestTakeDefaults } from "../cutter/bestTake.js";
+import { selectCoherentShort } from "../cutter/findShort.js";
 import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
 import { planTakeDecision } from "../cutter/takes.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
@@ -1105,6 +1106,21 @@ const ANALYZE_TIMEOUTS = {
 };
 
 /**
+ * Heuristic: is this a LONG, MESSY multi-take recording (where auto-finding the
+ * coherent short is the right default), versus a short/simple clip (where the
+ * existing keep-LAST per-part dedup is right and must not regress)? True when the
+ * source is meaningfully longer than a short AND there are several big-block takes
+ * — i.e. enough raw material that restarts / chatter are likely present. Tunable
+ * via env so it can be calibrated on the server without a code change.
+ */
+function isLongMessyRecording(takes: Take[], duration: number): boolean {
+  const minSeconds = envMs("FIND_SHORT_MIN_SOURCE_MS", 90_000) / 1000;
+  const minTakes = Number.parseInt(process.env.FIND_SHORT_MIN_TAKES || "4", 10);
+  const bigTakes = takes.filter((t) => t.enabled).length;
+  return duration >= minSeconds && bigTakes >= minTakes;
+}
+
+/**
  * Drive the heavy analyze work for one job, narrating each stage onto the job
  * (which the editor polls) and into the server logs with elapsed ms. Transcription
  * is best-effort (timeout/failure → energy-only + a warning); resolve/probe/
@@ -1159,21 +1175,26 @@ async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> 
     // detected take is returned (none dropped); short takes come back disabled.
     const takes = env.db.length > 0 ? segmentTakes(env, words, DEFAULT_SETTINGS) : [];
 
-    // ── best take per script part (AI pass, heuristic fallback) ────────────────
-    // Reconstruct the full script and choose the best take per part so re-takes
-    // are disabled by default (and no part is dropped or duplicated). This is the
-    // server-computed DEFAULT enabled-set; the client merges it with the live
-    // under-minTake rule + the user's manual toggles. Best-effort: any failure or
-    // missing key falls back to a deterministic text heuristic.
+    // ── default selection: find the short (long/messy) OR keep-last dedup ───────
+    // For a LONG, MESSY recording (many big takes covering a long source) the
+    // single best default is the AUTO-DETECTED coherent short — one clean run of
+    // the script with the earlier repeats, false starts and chatter dropped. For a
+    // short/simple clip we keep the existing keep-LAST per-part dedup (no
+    // regression). Either way this is just the server-computed DEFAULT disabled-set
+    // the client merges with the live under-minTake rule + the user's toggles; the
+    // user can re-run "Find the short" or fine-tune from the timeline. Best-effort:
+    // any failure or missing key falls back to a deterministic text heuristic.
     setStage(job, "choosing");
     let takeDefaults: unknown[] = [];
     try {
       const ts2 = Date.now();
-      const sel = await selectBestTakeDefaults(takes);
+      const sel = isLongMessyRecording(takes, duration)
+        ? await selectCoherentShort(takes)
+        : await selectBestTakeDefaults(takes);
       takeDefaults = sel.defaults;
-      lap(`keep-last dedup (${sel.defaults.length} earlier re-takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
+      lap(`default selection (${sel.defaults.length} takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
     } catch (e) {
-      console.warn(`[analyzeCut:${job.id}] best-take selection failed (non-fatal): ${e instanceof Error ? e.message : e}`);
+      console.warn(`[analyzeCut:${job.id}] default selection failed (non-fatal): ${e instanceof Error ? e.message : e}`);
     }
 
     completeAnalyze(job, {
@@ -1265,6 +1286,43 @@ const renderManualCut: Handler = async (input, userId) => {
   pump();
 
   return { cutId: rec.id, jobId, expectedDuration: keptDuration };
+};
+
+/**
+ * "Auto-cut / Find the short" — run the Stage-4 coherent-short selector over the
+ * timeline's CURRENT big-chunk takes and return a DEFAULT disabled-set that keeps
+ * only the single best coherent short (discarding earlier repeats, false starts,
+ * and off-topic chatter), each excluded take tagged with a reason for the UI.
+ *
+ * The client sends the takes it already detected at the current settings (id +
+ * span + text + whether each passed the Stage-1 big-block gate). The server runs
+ * the AI pass (Claude, prompt-cached) and returns a `takeDefaults` list the client
+ * applies through the SAME shared core (`applyDefaults`) — so the resulting
+ * enabled-set is just a new default the user can fine-tune, and preview ↔ render
+ * parity is preserved. Graceful: no Anthropic key (or any AI failure) falls back
+ * to the deterministic keep-last selection, so the button always works.
+ */
+const findShortCut: Handler = async (input) => {
+  const rawTakes: any[] = Array.isArray(input?.takes) ? input.takes : [];
+  // Sanitize into the minimal Take shape the selector needs, in source order.
+  const takes: Take[] = rawTakes
+    .filter((t) => t && typeof t.id === "string" && Number.isFinite(t.start) && Number.isFinite(t.end) && t.end > t.start)
+    .map((t) => ({
+      id: t.id,
+      start: t.start,
+      end: t.end,
+      text: typeof t.text === "string" ? t.text : "",
+      enabled: t.enabled !== false,
+    }))
+    .sort((a, b) => a.start - b.start);
+  if (takes.length === 0) {
+    return { takeDefaults: [], usedAI: false, keptCount: 0 };
+  }
+  const { defaults, usedAI } = await selectCoherentShort(takes);
+  const disabledIds = new Set(defaults.map((d) => d.id));
+  const keptCount = takes.filter((t) => t.enabled && !disabledIds.has(t.id)).length;
+  console.log(`[findShortCut] ${usedAI ? "AI" : "heuristic"} short: kept ${keptCount}/${takes.length} takes`);
+  return { takeDefaults: defaults, usedAI, keptCount };
 };
 
 /** Poll a single manual-cut render job (by jobId) for the timeline editor. */
@@ -2097,6 +2155,7 @@ export const HANDLERS: Record<string, Handler> = {
   getNarrationCuts,
   analyzeCut,
   getAnalyzeCut,
+  findShortCut,
   renderManualCut,
   getCutJob,
   // background jobs panel
