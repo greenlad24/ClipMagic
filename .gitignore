@@ -28,3 +28,5 @@ web/node_modules/
 lab/server/src/scripts/fixtures/
 lab/server/src/scripts/analyze-sample.ts
 lab/server/src/scripts/dev-transcribe.ts
+
+lab/server/src/scripts/dev-*.ts
