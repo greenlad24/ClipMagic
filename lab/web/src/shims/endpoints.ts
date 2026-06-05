@@ -145,6 +145,10 @@ export type GetServiceStatusOutputType = {
   directorConfigured?: boolean;
   kinoviConfigured?: boolean;
   stockConfigured?: boolean;
+  /** Postiz social poster (separate self-hosted container). */
+  postizConfigured?: boolean;
+  postizUrl?: string;
+  postizPort?: string;
 };
 export type TestKinoviApiOutputType = {
   success: boolean;

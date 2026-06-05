@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { ArrowUpRight } from 'lucide-react';
+import { ArrowUpRight, ExternalLink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { ACCENT_CLASSES, type ToolDefinition } from '@/config/tools';
@@ -17,6 +17,7 @@ export default function ToolCard({ tool }: ToolCardProps) {
   const navigate = useNavigate();
   const accent = ACCENT_CLASSES[tool.accent];
   const isComingSoon = tool.status === 'coming-soon';
+  const isExternal = !isComingSoon && !!tool.external && !!tool.href;
 
   const Icon = tool.icon;
 
@@ -36,6 +37,8 @@ export default function ToolCard({ tool }: ToolCardProps) {
           <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
             Coming soon
           </Badge>
+        ) : isExternal ? (
+          <ExternalLink className="h-5 w-5 text-muted-foreground transition-all duration-200 group-hover:-translate-y-0.5 group-hover:text-foreground" />
         ) : (
           <ArrowUpRight className="h-5 w-5 text-muted-foreground transition-all duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-foreground" />
         )}
@@ -63,16 +66,33 @@ export default function ToolCard({ tool }: ToolCardProps) {
     );
   }
 
+  const interactiveClasses = cn(
+    baseClasses,
+    'hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-lg hover:shadow-black/20',
+    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+  );
+
+  // External tools (e.g. self-hosted Postiz) open in a new tab.
+  if (isExternal) {
+    return (
+      <a
+        href={tool.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={`Open ${tool.title} in a new tab`}
+        className={interactiveClasses}
+      >
+        {inner}
+      </a>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={() => tool.route && navigate(tool.route)}
       aria-label={`Open ${tool.title}`}
-      className={cn(
-        baseClasses,
-        'hover:-translate-y-0.5 hover:border-primary/40 hover:bg-card hover:shadow-lg hover:shadow-black/20',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-      )}
+      className={interactiveClasses}
     >
       {inner}
     </button>

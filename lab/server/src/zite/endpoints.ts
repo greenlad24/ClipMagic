@@ -184,6 +184,20 @@ const getServiceStatus: Handler = async () => {
   // it reflects real readiness regardless of the per-video toggle.
   const remotionReady = await remotionRuntimeAvailable();
   const browserExe = config.remotionBrowserExecutable || undefined;
+  // Postiz (self-hosted social poster) runs as a SEPARATE container on its own
+  // port, opt-in via the `postiz` compose profile. We surface enough for the hub
+  // tile to decide whether to go live and where to point:
+  //   - POSTIZ_URL: full origin, e.g. https://social.example.com or
+  //     http://1.2.3.4:5000. When set, the tile links straight to it.
+  //   - POSTIZ_PORT: just the port (default 5000). The frontend derives
+  //     http://<current-host>:<port> at click time, so the same .env works on
+  //     any host IP without hardcoding it server-side.
+  // The tile only goes live when one of these is configured; otherwise it stays
+  // "coming soon" so it never opens a dead link.
+  const postizUrl = (process.env.POSTIZ_URL || "").trim() || undefined;
+  const postizPortRaw = (process.env.POSTIZ_PORT || "").trim();
+  const postizEnabled = /^(1|true|yes)$/i.test((process.env.POSTIZ_ENABLED || "").trim());
+  const postizPort = postizPortRaw || (postizUrl || postizEnabled ? "5000" : undefined);
   // On the self-hosted server, render is always available locally.
   return {
     captureConfigured: !!process.env.ZITE_CAPTURE_SERVICE_URL,
@@ -208,6 +222,10 @@ const getServiceStatus: Handler = async () => {
     directorConfigured: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN),
     kinoviConfigured: !!process.env.ZITE_KINOVI_API_KEY,
     stockConfigured: !!process.env.PEXELS_API_KEY,
+    // Postiz social poster (separate container, `postiz` compose profile).
+    postizConfigured: !!(postizUrl || postizEnabled || postizPortRaw),
+    postizUrl,
+    postizPort,
   };
 };
 
