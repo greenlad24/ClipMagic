@@ -27,3 +27,4 @@ web/node_modules/
 # Local test media for cutter algorithm dev (not committed)
 lab/server/src/scripts/fixtures/
 lab/server/src/scripts/analyze-sample.ts
+lab/server/src/scripts/dev-transcribe.ts
