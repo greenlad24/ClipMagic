@@ -113,7 +113,11 @@ export interface CutSettings {
 }
 
 export const DEFAULT_SETTINGS: CutSettings = {
-  silenceDb: -39,
+  // -45 dBFS, tuned on a real ~6-min recording (mean ~-35 dB). At -39 the quieter
+  // speech dipped below the floor and NOTHING was detected; -45 catches it and
+  // still isolates the final run, while -52 over-merged the passes. The adaptive
+  // speaking-volume gate then separates real speech from faint scattered bits.
+  silenceDb: -45,
   minSilence: 0.35,
   keepPad: 0.05,
   gap: 0.35,
@@ -363,9 +367,17 @@ export function segmentTakes(
   s: CutSettings,
 ): Take[] {
   const minTake = Math.max(0.05, s.minTake);
-  // The speaking-volume gate: a block is "real speech" only when its sustained
-  // level clears this. Faint scattered words sit between the floor and this gate.
-  const speakingGate = s.silenceDb + Math.max(0, s.speakingMargin);
+  // The speaking-volume gate is ADAPTIVE to THIS recording's own loudness. A
+  // fixed "floor + margin" gate wrongly rejected quieter recordings entirely
+  // (every real take read as "low/scattered"). We measure the typical loud-speech
+  // level (75th percentile of above-floor frames) and keep blocks within
+  // `speakingMargin` dB of it; faint scattered mutter between takes sits well
+  // below and is excluded. Falls back to floor+margin when there's no speech yet.
+  const speechFrames = env.db.filter((d) => d > s.silenceDb).sort((a, b) => a - b);
+  const loudDb = speechFrames.length
+    ? speechFrames[Math.floor(speechFrames.length * 0.75)]
+    : s.silenceDb + Math.max(0, s.speakingMargin);
+  const speakingGate = Math.max(s.silenceDb, loudDb - Math.max(0, s.speakingMargin));
 
   // STAGE 1 — the big contiguous blocks (merge across short internal pauses).
   const blocks = bigBlocks(env, s);

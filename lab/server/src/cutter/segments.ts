@@ -113,7 +113,11 @@ export interface CutSettings {
 }
 
 export const DEFAULT_SETTINGS: CutSettings = {
-  silenceDb: -39,
+  // -45 dBFS, tuned on a real ~6-min recording (mean ~-35 dB). At -39 the quieter
+  // speech dipped below the floor and NOTHING was detected; -45 catches it and
+  // still isolates the final run, while -52 over-merged the passes. The adaptive
+  // speaking-volume gate then separates real speech from faint scattered bits.
+  silenceDb: -45,
   minSilence: 0.35,
   keepPad: 0.05,
   gap: 0.35,

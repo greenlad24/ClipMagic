@@ -341,9 +341,9 @@ function takeFrom(start: number, end: number, text: string): Take {
 }
 
 // 12 ─ The min-take default is 3.0s and the dB floor reaches 0.
-check("DEFAULT_SETTINGS: minTake 3.0, silenceDb -39, floor reaches 0", () => {
+check("DEFAULT_SETTINGS: minTake 3.0, silenceDb -45, floor reaches 0", () => {
   assert.equal(DEFAULT_SETTINGS.minTake, 3.0, "min-take default is 3.0s");
-  assert.equal(DEFAULT_SETTINGS.silenceDb, -39, "silence floor default -39");
+  assert.equal(DEFAULT_SETTINGS.silenceDb, -45, "silence floor default -45");
   // The dB slider's range is a UI concern, but the math must behave at 0 dB:
   // every frame is ≤ 0, so the whole clip is "silence" — degenerate but valid.
   const env = synthEnv();
