@@ -11,6 +11,7 @@ import StoragePage from './pages/StoragePage';
 import BulkPage from './pages/BulkPage';
 import CutterPage from './pages/CutterPage';
 import MemePage from './pages/MemePage';
+import PostizSettingsPage from './pages/PostizSettingsPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/bulk" element={<BulkPage />} />
         <Route path="/cutter" element={<CutterPage />} />
         <Route path="/meme" element={<MemePage />} />
+        <Route path="/settings/postiz" element={<PostizSettingsPage />} />
       </Routes>
       <BackgroundJobs />
       <Toaster theme="dark" />

@@ -47,6 +47,13 @@ export interface ToolDefinition {
   accent: ToolAccent;
   /** Short hint shown under the description (e.g. format, scope). */
   detail?: string;
+  /**
+   * In-app settings route for tools that need configuration (e.g. Postiz keys).
+   * When set, the tile shows a small "Configure" affordance that navigates here
+   * without triggering the card's primary action. Available even for tools that
+   * are otherwise "coming soon" (you configure first, then it goes live).
+   */
+  configureRoute?: string;
 }
 
 export const TOOLS: ToolDefinition[] = [
@@ -113,6 +120,9 @@ export const TOOLS: ToolDefinition[] = [
     status: 'live',
     accent: 'pink',
     detail: 'Self-hosted',
+    // Manage the Postiz container's keys (core config + per-platform OAuth) from
+    // the suite, write-only, with a one-click restart to apply them.
+    configureRoute: '/settings/postiz',
   },
   {
     id: 'longform',
