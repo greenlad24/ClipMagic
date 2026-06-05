@@ -97,6 +97,33 @@ async function main() {
     assert.ok(!text.includes("X_API_KEY="));
   });
 
+  // ── native-name translation (the bug that broke localhost:5000) ──────────────
+  await check("POSTIZ_URL is translated to MAIN_URL/FRONTEND_URL/NEXT_PUBLIC_BACKEND_URL", () => {
+    const text = buildEnvFileContents({ POSTIZ_URL: "http://139.59.250.178:5000/" });
+    // trailing slash stripped; /api appended only for the backend URL
+    assert.ok(text.includes(`MAIN_URL='http://139.59.250.178:5000'`), `MAIN_URL missing: ${text}`);
+    assert.ok(text.includes(`FRONTEND_URL='http://139.59.250.178:5000'`), "FRONTEND_URL missing");
+    assert.ok(
+      text.includes(`NEXT_PUBLIC_BACKEND_URL='http://139.59.250.178:5000/api'`),
+      "NEXT_PUBLIC_BACKEND_URL missing/incorrect",
+    );
+  });
+
+  await check("POSTIZ_JWT_SECRET is also emitted as native JWT_SECRET", () => {
+    const text = buildEnvFileContents({ POSTIZ_JWT_SECRET: SECRET });
+    assert.ok(text.includes(`JWT_SECRET='${SECRET}'`), "native JWT_SECRET missing");
+  });
+
+  await check("POSTIZ_DISABLE_REGISTRATION is emitted as native DISABLE_REGISTRATION", () => {
+    const text = buildEnvFileContents({ POSTIZ_DISABLE_REGISTRATION: "true" });
+    assert.ok(text.includes(`DISABLE_REGISTRATION='true'`), "native DISABLE_REGISTRATION missing");
+  });
+
+  await check("Postgres password is NOT translated to DATABASE_URL (would break live DB)", () => {
+    const text = buildEnvFileContents({ POSTIZ_POSTGRES_PASSWORD: SECRET });
+    assert.ok(!text.includes("DATABASE_URL"), "DATABASE_URL must not be emitted from the UI");
+  });
+
   // ── empty string = unchanged ──────────────────────────────────────────────────
   await check("empty string leaves an existing key unchanged (no accidental wipe)", () => {
     const r = updateSettings({ values: { POSTIZ_JWT_SECRET: "" } });

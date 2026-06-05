@@ -138,18 +138,42 @@ function envLine(key: string, value: string): string {
   return `${key}='${escaped}'`;
 }
 
+/**
+ * Map the suite's friendly POSTIZ_* core keys onto the *native* env var names
+ * Postiz actually reads.
+ *
+ * This is essential, not cosmetic: compose bakes MAIN_URL / FRONTEND_URL /
+ * NEXT_PUBLIC_BACKEND_URL / JWT_SECRET / DISABLE_REGISTRATION from the root .env
+ * at `up` time (defaulting to http://localhost:5000), and Postiz never reads
+ * "POSTIZ_URL" / "POSTIZ_JWT_SECRET". So emitting only the POSTIZ_* names is a
+ * no-op — the UI value would silently never apply (the frontend keeps calling
+ * localhost:5000). We therefore emit the native names here; the entrypoint
+ * sources this file last, so these override the compose defaults.
+ */
+function nativeOverrides(map: SecretMap): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const url = map.POSTIZ_URL?.trim().replace(/\/+$/, ""); // strip trailing slash(es)
+  if (url) {
+    out.push(["MAIN_URL", url]);
+    out.push(["FRONTEND_URL", url]);
+    out.push(["NEXT_PUBLIC_BACKEND_URL", `${url}/api`]);
+  }
+  if (map.POSTIZ_JWT_SECRET) out.push(["JWT_SECRET", map.POSTIZ_JWT_SECRET]);
+  if (map.POSTIZ_DISABLE_REGISTRATION) {
+    out.push(["DISABLE_REGISTRATION", map.POSTIZ_DISABLE_REGISTRATION]);
+  }
+  // NOTE: POSTIZ_POSTGRES_PASSWORD is intentionally NOT translated to DATABASE_URL.
+  // The Postgres container is initialized with the compose-time password; changing
+  // only DATABASE_URL here would break the live DB connection. The DB password is a
+  // provisioning concern (root .env at first `up`), not a hot-swappable UI value.
+  return out;
+}
+
 /** (Re)write the shared env file from the FULL stored set (0600). */
 function writeEnvFile(map: SecretMap): { written: boolean; reason?: string } {
-  const lines = [
-    "# Postiz keys managed by the ClipMagic suite Settings page — DO NOT EDIT BY HAND.",
-    "# This file is sourced by the Postiz container's entrypoint at startup and",
-    "# overrides the compose `environment:` defaults. Regenerated on every save.",
-    ...POSTIZ_KEY_DEFS.filter((d) => map[d.key]).map((d) => envLine(d.key, map[d.key]!)),
-    "",
-  ];
   try {
     fs.mkdirSync(POSTIZ_CONFIG_DIR, { recursive: true });
-    fs.writeFileSync(ENV_FILE_PATH, lines.join("\n"), { mode: 0o600 });
+    fs.writeFileSync(ENV_FILE_PATH, buildEnvFileContents(map), { mode: 0o600 });
     try {
       fs.chmodSync(ENV_FILE_PATH, 0o600);
     } catch {
@@ -164,13 +188,21 @@ function writeEnvFile(map: SecretMap): { written: boolean; reason?: string } {
 
 // Exported for the env-file generation unit test.
 export function buildEnvFileContents(map: SecretMap): string {
-  return [
+  const lines: string[] = [
     "# Postiz keys managed by the ClipMagic suite Settings page — DO NOT EDIT BY HAND.",
     "# This file is sourced by the Postiz container's entrypoint at startup and",
     "# overrides the compose `environment:` defaults. Regenerated on every save.",
     ...POSTIZ_KEY_DEFS.filter((d) => map[d.key]).map((d) => envLine(d.key, map[d.key]!)),
-    "",
-  ].join("\n");
+  ];
+  // The names Postiz ACTUALLY reads, derived from the friendly POSTIZ_* keys.
+  // Without these the UI values never take effect (see nativeOverrides).
+  const native = nativeOverrides(map);
+  if (native.length) {
+    lines.push("# Derived Postiz-native vars (what Postiz actually reads):");
+    for (const [k, v] of native) lines.push(envLine(k, v));
+  }
+  lines.push("");
+  return lines.join("\n");
 }
 
 // ── Public API (write-only) ──────────────────────────────────────────────────
