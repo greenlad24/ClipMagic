@@ -237,9 +237,11 @@ services:
   # crashes on boot (connect ECONNREFUSED 7233) → 502 from Postiz's nginx.
   # `auto-setup` runs the whole single-binary Temporal server AND provisions its
   # SQL schema + the `default` namespace on first boot. We back it with a small
-  # dedicated Postgres and SKIP Elasticsearch (ENABLE_ES defaults off) — ES is
-  # only needed for advanced visibility/search and would add ~1GB RAM. Standard
-  # visibility runs out of Postgres, which is plenty for Postiz's scheduling.
+  # dedicated Postgres for persistence AND Elasticsearch for visibility:
+  # Postiz's backend registers MORE THAN 3 Text-type custom search attributes on
+  # boot, which Temporal's standard (SQL) visibility forbids ("cannot have more
+  # than 3 search attribute of type Text"). Advanced (ES) visibility lifts that
+  # limit, so ES is REQUIRED for the backend to start — not optional.
   postiz-temporal:
     profiles: ["postiz"]
     image: temporalio/auto-setup:1.28.1
@@ -250,8 +252,14 @@ services:
       POSTGRES_USER: temporal
       POSTGRES_PWD: temporal
       POSTGRES_SEEDS: postiz-temporal-postgres
+      # Advanced visibility via Elasticsearch (required — see comment above).
+      ENABLE_ES: "true"
+      ES_SEEDS: postiz-temporal-elasticsearch
+      ES_VERSION: v7
     depends_on:
       postiz-temporal-postgres:
+        condition: service_healthy
+      postiz-temporal-elasticsearch:
         condition: service_healthy
     healthcheck:
       # auto-setup binds the frontend to the CONTAINER's IP (not 127.0.0.1), so
@@ -282,6 +290,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Elasticsearch for Temporal's advanced visibility (single-node, tiny heap).
+  # 256MB heap keeps it to ~0.6-1GB RSS, well within the box's headroom. The
+  # disk-watermark overrides stop ES going read-only on a fairly full disk.
+  postiz-temporal-elasticsearch:
+    profiles: ["postiz"]
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.9
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms256m -Xmx256m
+      - cluster.routing.allocation.disk.threshold_enabled=true
+      - cluster.routing.allocation.disk.watermark.low=512mb
+      - cluster.routing.allocation.disk.watermark.high=256mb
+      - cluster.routing.allocation.disk.watermark.flood_stage=128mb
+    volumes:
+      - postiz-temporal-es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health 2>/dev/null | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
 volumes:
   clipmagic-data:
   clipmagic-lab-data:
@@ -290,3 +322,4 @@ volumes:
   postiz-postgres-data:
   postiz-redis-data:
   postiz-temporal-postgres-data:
+  postiz-temporal-es-data:
