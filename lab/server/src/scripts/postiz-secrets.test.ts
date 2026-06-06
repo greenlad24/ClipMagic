@@ -33,7 +33,7 @@ async function main() {
   process.env.DOCKER_SOCKET = path.join(configDir, "nonexistent.sock");
 
   const mod = await import("../settings/postizSecrets.js");
-  const { getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS } = mod;
+  const { getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS, getPostizApiKey } = mod;
 
   const SECRET = "super-secret-jwt-value-1234567890";
   const storePath = path.join(path.resolve(root), "postiz-settings.json");
@@ -159,6 +159,44 @@ async function main() {
     assert.ok(!r.keys.some((k) => k.key === "NOT_A_REAL_KEY"));
     const onDisk = JSON.parse(fs.readFileSync(storePath, "utf8"));
     assert.ok(!("NOT_A_REAL_KEY" in onDisk));
+  });
+
+  // ── POSTIZ_API_KEY: write-only + server-only getter + NOT in Postiz env ──────
+  const API_KEY = "postiz-public-api-key-abcdef-9999";
+
+  await check("POSTIZ_API_KEY value never leaks via getSettings/updateSettings", () => {
+    delete process.env.POSTIZ_API_KEY; // ensure we test the STORE path, not env
+    const responses = [
+      JSON.stringify(updateSettings({ values: { POSTIZ_API_KEY: API_KEY } })),
+      JSON.stringify(getSettings()),
+    ];
+    for (const r of responses) {
+      assert.ok(!r.includes(API_KEY), "a response leaked the Postiz API key");
+    }
+  });
+
+  await check("POSTIZ_API_KEY is reported configured after save", () => {
+    const s = getSettings();
+    const k = s.keys.find((x) => x.key === "POSTIZ_API_KEY");
+    assert.equal(k?.configured, true);
+  });
+
+  await check("getPostizApiKey() returns the raw value for server-side use only", () => {
+    delete process.env.POSTIZ_API_KEY;
+    assert.equal(getPostizApiKey(), API_KEY);
+  });
+
+  await check("POSTIZ_API_KEY is NOT emitted into the Postiz container env file", () => {
+    // It's used by the lab server, not by Postiz — must never reach postiz.env.
+    const text = buildEnvFileContents({ POSTIZ_API_KEY: API_KEY, POSTIZ_JWT_SECRET: SECRET });
+    assert.ok(!text.includes("POSTIZ_API_KEY"), "POSTIZ_API_KEY leaked into the Postiz env file");
+    assert.ok(text.includes("POSTIZ_JWT_SECRET="), "other keys should still be emitted");
+  });
+
+  await check("env var POSTIZ_API_KEY takes precedence over the store", () => {
+    process.env.POSTIZ_API_KEY = "from-env-override";
+    assert.equal(getPostizApiKey(), "from-env-override");
+    delete process.env.POSTIZ_API_KEY;
   });
 
   // cleanup

@@ -6,6 +6,7 @@ import {
   Send,
   FileText,
   Sticker,
+  CalendarClock,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -122,6 +123,18 @@ export const TOOLS: ToolDefinition[] = [
     detail: 'Self-hosted',
     // Manage the Postiz container's keys (core config + per-platform OAuth) from
     // the suite, write-only, with a one-click restart to apply them.
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'bulk-scheduler',
+    title: 'Bulk Scheduler',
+    description: 'Bulk-select rendered Shorts and schedule SEO-optimized, per-platform posts into Postiz at the best times.',
+    icon: CalendarClock,
+    route: '/bulk-scheduler',
+    status: 'live',
+    accent: 'green',
+    detail: 'Schedule to social',
+    // Needs the Postiz public API key (set in the same write-only Postiz settings).
     configureRoute: '/settings/postiz',
   },
   {

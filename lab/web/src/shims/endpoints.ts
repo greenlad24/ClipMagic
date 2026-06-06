@@ -82,6 +82,11 @@ export const getServiceStatus = endpoint("getServiceStatus");
 export const getPostizSettings = endpoint("getPostizSettings");
 export const updatePostizSettings = endpoint("updatePostizSettings");
 export const restartPostiz = endpoint("restartPostiz");
+// Bulk Scheduler (Postiz public API)
+export const getBulkSchedulerStatus = endpoint("getBulkSchedulerStatus");
+export const getBulkSchedulerChannels = endpoint("getBulkSchedulerChannels");
+export const previewBulkSchedule = endpoint("previewBulkSchedule");
+export const runBulkSchedule = endpoint("runBulkSchedule");
 export const getShots = endpoint("getShots");
 export const getWaveform = endpoint("getWaveform");
 export const indexPromoVideo = endpoint("indexPromoVideo");
@@ -171,6 +176,51 @@ export type UpdatePostizSettingsOutputType = {
   envWriteError?: string;
 };
 export type RestartPostizOutputType = { success: boolean; message: string };
+
+// ── Bulk Scheduler ───────────────────────────────────────────────────────────
+export type ShortPlatform = 'tiktok' | 'instagram' | 'youtube';
+export type BulkChannel = {
+  id: string;
+  name: string;
+  identifier: string;
+  platform: ShortPlatform | null;
+  picture?: string;
+  profile?: string;
+};
+export type GetBulkSchedulerStatusOutputType = {
+  apiKeyConfigured: boolean;
+  channelCount: number;
+  channels: BulkChannel[];
+  error?: string;
+};
+export type GetBulkSchedulerChannelsOutputType = { channels: BulkChannel[] };
+export type BulkPreviewPost = {
+  fileId: string;
+  channelId: string;
+  channelName: string;
+  identifier: string;
+  platform: ShortPlatform;
+  caption: string;
+  firstLineHook: string;
+  hashtags: string[];
+  scheduledAt: string;
+  reason: string;
+};
+export type PreviewBulkScheduleOutputType = {
+  posts: BulkPreviewPost[];
+  skippedChannels: Array<{ id: string; reason: string }>;
+};
+export type BulkScheduleItemResult = {
+  fileId: string;
+  channelId: string;
+  ok: boolean;
+  error?: string;
+};
+export type RunBulkScheduleOutputType = {
+  results: BulkScheduleItemResult[];
+  scheduled: number;
+  failed: number;
+};
 export type TestKinoviApiOutputType = {
   success: boolean;
   message?: string;

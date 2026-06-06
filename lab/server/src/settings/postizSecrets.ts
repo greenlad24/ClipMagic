@@ -42,6 +42,15 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "POSTIZ_POSTGRES_PASSWORD", label: "Postgres password", group: "Postiz core", connects: "Password for Postiz's database. Change it for anything internet-facing." },
   { key: "POSTIZ_DISABLE_REGISTRATION", label: "Disable registration", group: "Postiz core", connects: "Set to true after creating your account to lock down new sign-ups." },
 
+  // ── Bulk Scheduler (this LAB tool calls Postiz's public API directly) ────────
+  // Unlike every other key here — which is Postiz's OWN container config, re-emitted
+  // into the shared env file Postiz sources at boot — this one is used BY THE LAB
+  // SERVER ITSELF to authenticate to Postiz's /public/v1 API (to push scheduled
+  // posts). It is therefore NOT emitted into the Postiz env file (buildEnvFileContents
+  // skips it below); it's read internally via getPostizApiKey(). Same write-only
+  // guarantee as the rest: never returned through any HTTP response.
+  { key: "POSTIZ_API_KEY", label: "Postiz API key", group: "Bulk Scheduler", connects: "Lets the Bulk Scheduler push SEO-optimized, scheduled posts into Postiz via its public API. Create it in Postiz under Settings → Developers → Public API, then paste it here. Used only by this lab server — never sent to the browser." },
+
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
   { key: "X_API_KEY", label: "X API key", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
   { key: "X_API_SECRET", label: "X API secret", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
@@ -192,7 +201,12 @@ export function buildEnvFileContents(map: SecretMap): string {
     "# Postiz keys managed by the ClipMagic suite Settings page — DO NOT EDIT BY HAND.",
     "# This file is sourced by the Postiz container's entrypoint at startup and",
     "# overrides the compose `environment:` defaults. Regenerated on every save.",
-    ...POSTIZ_KEY_DEFS.filter((d) => map[d.key]).map((d) => envLine(d.key, map[d.key]!)),
+    // Emit Postiz's OWN config keys only. POSTIZ_API_KEY is consumed by THIS lab
+    // server (Bulk Scheduler → Postiz public API), not by the Postiz container,
+    // so it must never leak into Postiz's env file.
+    ...POSTIZ_KEY_DEFS.filter((d) => d.key !== "POSTIZ_API_KEY" && map[d.key]).map((d) =>
+      envLine(d.key, map[d.key]!),
+    ),
   ];
   // The names Postiz ACTUALLY reads, derived from the friendly POSTIZ_* keys.
   // Without these the UI values never take effect (see nativeOverrides).
@@ -230,6 +244,23 @@ export function getSettings(): {
     })),
     envFileWritable: canWriteConfigDir(),
   };
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Postiz public-API key.
+ *
+ * This is the ONE deliberate read of a stored secret value — used by the Bulk
+ * Scheduler's Postiz client (server/src/postiz/client.ts) to authenticate to
+ * Postiz's /public/v1 API. It must NEVER be wired into an HTTP handler or any
+ * response body; doing so would break the write-only guarantee. Returns the raw
+ * value, or null when not configured. An env var (POSTIZ_API_KEY) takes
+ * precedence so a server-managed deployment can inject it without the UI.
+ */
+export function getPostizApiKey(): string | null {
+  const fromEnv = (process.env.POSTIZ_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.POSTIZ_API_KEY || null;
 }
 
 function canWriteConfigDir(): boolean {

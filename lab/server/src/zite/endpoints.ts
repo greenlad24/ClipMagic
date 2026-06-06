@@ -45,6 +45,12 @@ import {
   restartPostiz as restartPostizContainer,
   dockerSocketAvailable,
 } from "../settings/postizSecrets.js";
+import {
+  getStatus as bulkSchedulerStatus,
+  listChannels as bulkSchedulerChannels,
+  preview as bulkSchedulerPreview,
+  schedule as bulkSchedulerSchedule,
+} from "../postiz/bulkScheduler.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -2153,6 +2159,30 @@ const updatePostizSettings: Handler = async (input) => {
 
 const restartPostiz: Handler = async () => restartPostizContainer();
 
+// ── Bulk Scheduler (push SEO-optimized scheduled posts into Postiz) ──────────
+// These talk to Postiz's PUBLIC API via the server-only API key (never sent to
+// the browser). status gates the UI; channels lists connected integrations;
+// preview returns the full plan WITHOUT posting; schedule actually creates the
+// scheduled posts and reports per-item success/failure.
+const getBulkSchedulerStatus: Handler = async () => bulkSchedulerStatus();
+
+const getBulkSchedulerChannels: Handler = async () => {
+  const channels = await bulkSchedulerChannels();
+  return { channels };
+};
+
+const previewBulkSchedule: Handler = async (input) =>
+  bulkSchedulerPreview({
+    files: Array.isArray(input?.files) ? input.files : [],
+    channelIds: Array.isArray(input?.channelIds) ? input.channelIds : [],
+    intent: input?.intent,
+    timezone: input?.timezone,
+    now: input?.now,
+  });
+
+const runBulkSchedule: Handler = async (input) =>
+  bulkSchedulerSchedule({ posts: Array.isArray(input?.posts) ? input.posts : [] });
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -2171,6 +2201,11 @@ export const HANDLERS: Record<string, Handler> = {
   getPostizSettings,
   updatePostizSettings,
   restartPostiz,
+  // Bulk Scheduler
+  getBulkSchedulerStatus,
+  getBulkSchedulerChannels,
+  previewBulkSchedule,
+  runBulkSchedule,
   getPromoVideos,
   getPromoIndex,
   exportPromoIndexes,
