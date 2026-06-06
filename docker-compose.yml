@@ -254,13 +254,15 @@ services:
       postiz-temporal-postgres:
         condition: service_healthy
     healthcheck:
-      # tctl ships in the auto-setup image; exits non-zero until the frontend
-      # is serving, so Postiz only starts once Temporal is actually ready.
-      test: ["CMD", "tctl", "--address", "127.0.0.1:7233", "cluster", "health"]
+      # auto-setup binds the frontend to the CONTAINER's IP (not 127.0.0.1), so
+      # probe via the container's own hostname — the same address Temporal
+      # advertises and that Postiz reaches as postiz-temporal:7233. (tctl prints a
+      # deprecation notice to stderr; we only care that the frontend is SERVING.)
+      test: ["CMD-SHELL", "tctl --address \"$(hostname):7233\" cluster health 2>/dev/null | grep -q SERVING"]
       interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 40s
+      timeout: 10s
+      retries: 18
+      start_period: 60s
 
   postiz-temporal-postgres:
     profiles: ["postiz"]
