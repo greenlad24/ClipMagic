@@ -165,6 +165,12 @@ services:
       # Required for the self-hosted (non-cloud) build.
       IS_GENERAL: "true"
       DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-false}
+      # Allow the auth cookie over plain HTTP. In production mode Postiz marks the
+      # session cookie `Secure`, so browsers DROP it on http:// — login appears to
+      # succeed but bounces straight back to /auth. Defaults to true for the bare-IP
+      # http deployment; set POSTIZ_NOT_SECURED=false in .env once Postiz is behind
+      # HTTPS (a domain + reverse proxy) so the cookie is properly secured again.
+      NOT_SECURED: ${POSTIZ_NOT_SECURED:-true}
       # ── Per-platform OAuth app credentials ─────────────────────────────────
       # Empty by default (like the main app's keys). Fill in .env only for the
       # networks you want to connect; see lab/POSTIZ.md + docs.postiz.com.
