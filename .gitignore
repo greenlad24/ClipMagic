@@ -30,3 +30,6 @@ lab/server/src/scripts/analyze-sample.ts
 lab/server/src/scripts/dev-transcribe.ts
 
 lab/server/src/scripts/dev-*.ts
+
+# Background-agent worktrees (transient; never commit)
+.claude/worktrees/
