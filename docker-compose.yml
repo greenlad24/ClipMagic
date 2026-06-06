@@ -320,6 +320,35 @@ services:
       retries: 12
       start_period: 30s
 
+  # ── CADDY: automatic-HTTPS reverse proxy for Postiz ───────────────────────
+  # Social-platform OAuth (connecting TikTok/Instagram/YouTube) requires Postiz
+  # to be served over https:// on a real domain — providers reject bare-IP http
+  # callbacks. Caddy terminates TLS on 80/443 and proxies to postiz:5000 on the
+  # internal network, fetching+renewing Let's Encrypt certs automatically (stored
+  # in the caddy-data volume). It's in its OWN `caddy` profile so the plain-http
+  # path is unaffected; start it alongside Postiz once your domain's DNS A record
+  # points here and ports 80+443 are open:
+  #
+  #   POSTIZ_DOMAIN=social.example.com  (in .env)
+  #   docker compose --profile postiz --profile caddy up -d
+  #
+  # Then set the Postiz Public URL to https://<POSTIZ_DOMAIN> and POSTIZ_NOT_SECURED=false.
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      POSTIZ_DOMAIN: ${POSTIZ_DOMAIN:?Set POSTIZ_DOMAIN in .env to your Postiz domain, e.g. social.example.com}
+      LAB_DOMAIN: ${LAB_DOMAIN:-}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   clipmagic-data:
   clipmagic-lab-data:
@@ -329,3 +358,5 @@ volumes:
   postiz-redis-data:
   postiz-temporal-postgres-data:
   postiz-temporal-es-data:
+  caddy-data:
+  caddy-config:

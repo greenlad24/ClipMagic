@@ -1,0 +1,25 @@
+# Caddy reverse proxy with automatic HTTPS (Let's Encrypt) for Postiz.
+#
+# Postiz must be reached over https:// for social-platform OAuth (connecting
+# TikTok / Instagram / YouTube etc.) to work — providers reject bare-IP http
+# callbacks. Caddy terminates TLS on :443 and proxies to the Postiz container
+# on the internal Docker network (postiz:5000). Certificates are obtained and
+# renewed automatically; they persist in the `caddy-data` volume.
+#
+# The domain comes from the POSTIZ_DOMAIN env var (set it in /opt/clipmagic/.env,
+# e.g. POSTIZ_DOMAIN=social.example.com). Point that hostname's DNS A record at
+# this server and open ports 80 + 443.
+
+{$POSTIZ_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy postiz:5000
+}
+
+# ── Optional: also put the lab suite behind HTTPS ────────────────────────────
+# Only needed later if you want real Dropbox/Google Drive OAuth pickers (their
+# callbacks return to the lab). Set LAB_DOMAIN in .env and uncomment:
+#
+# {$LAB_DOMAIN} {
+# 	encode zstd gzip
+# 	reverse_proxy clipmagic-lab:9090
+# }
