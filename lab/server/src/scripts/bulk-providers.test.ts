@@ -258,7 +258,7 @@ async function main() {
     const { buildProviderSettings } = await import("../postiz/providerSettings.js");
     const ig = buildProviderSettings("instagram", {});
     assert.equal(ig.__type, "instagram");
-    assert.equal(ig.post_type, "reels");
+    assert.equal(ig.post_type, "post");
     const yt = buildProviderSettings("youtube", { title: "My SEO title" });
     assert.equal(yt.__type, "youtube");
     assert.equal(yt.title, "My SEO title");
