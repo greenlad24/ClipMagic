@@ -254,6 +254,21 @@ async function main() {
     assert.match(ppPost.body.mediaItems[0].url, /dl=1/, "cloud link normalized to a direct download");
   });
 
+  await check("provider settings: instagram→post_type=reel, youtube→title+type, facebook→bare", async () => {
+    const { buildProviderSettings } = await import("../postiz/providerSettings.js");
+    const ig = buildProviderSettings("instagram", {});
+    assert.equal(ig.__type, "instagram");
+    assert.equal(ig.post_type, "reel");
+    const yt = buildProviderSettings("youtube", { title: "My SEO title" });
+    assert.equal(yt.__type, "youtube");
+    assert.equal(yt.title, "My SEO title");
+    assert.equal(yt.type, "public");
+    const fb = buildProviderSettings("facebook", { title: "x" });
+    assert.equal(fb.__type, "facebook");
+    assert.equal(fb.post_type, undefined);
+    assert.equal(fb.title, undefined);
+  });
+
   // ── generic ("facebook") platform support ───────────────────────────────────
   await check("preview() includes a null-platform channel as a GENERIC target (not skipped)", async () => {
     installRoutedFetch({

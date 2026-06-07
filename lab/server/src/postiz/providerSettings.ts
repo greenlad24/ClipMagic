@@ -43,13 +43,15 @@ export function toShortPlatform(identifier: string): ShortPlatform | null {
 export function buildProviderSettings(identifier: string, opts: { title?: string }): Record<string, unknown> & { __type: string } {
   const base: Record<string, unknown> & { __type: string } = { __type: identifier };
   const short = toShortPlatform(identifier);
-  if (short === "youtube" && opts.title) {
-    // YouTube uploads need a title; reuse the SEO first-line hook.
-    base.title = opts.title.slice(0, 100); // YT title hard cap is 100 chars.
+  if (short === "youtube") {
+    // YouTube uploads REQUIRE a title and a visibility `type` (Postiz 400s without).
+    base.title = (opts.title || "Short").slice(0, 100); // YT title hard cap is 100 chars.
+    base.type = "public";
+  } else if (short === "instagram") {
+    // Instagram REQUIRES a post_type; a vertical short-form clip → a Reel.
+    base.post_type = "reel";
   }
-  // TikTok/Instagram: Postiz defaults the optional fields (privacy, duet/stitch,
-  // share-to-feed) — we omit them so the user's Postiz channel defaults apply.
-  // TODO(live): if the live instance requires e.g. TikTok `privacy_level`, add
-  // it here keyed by identifier.
+  // TikTok via Postiz would also need a privacy level, but we post TikTok through
+  // PostPeer, so it isn't built here.
   return base;
 }
