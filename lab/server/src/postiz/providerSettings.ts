@@ -48,8 +48,9 @@ export function buildProviderSettings(identifier: string, opts: { title?: string
     base.title = (opts.title || "Short").slice(0, 100); // YT title hard cap is 100 chars.
     base.type = "public";
   } else if (short === "instagram") {
-    // Instagram REQUIRES a post_type; a vertical short-form clip → a Reel.
-    base.post_type = "reel";
+    // Instagram REQUIRES a post_type enum: "post" | "story" | "reels". A vertical
+    // short-form clip → "reels" (plural is the value Postiz validates against).
+    base.post_type = "reels";
   }
   // TikTok via Postiz would also need a privacy level, but we post TikTok through
   // PostPeer, so it isn't built here.
