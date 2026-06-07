@@ -424,26 +424,6 @@ export interface ScheduleOutput {
   failed: number;
 }
 
-/**
- * Re-evaluate Growth Guardrails for one post SERVER-SIDE (we never trust a
- * client-supplied score — the caption/hashtags may have been edited after
- * preview). Caption is scored from the final text; pre-flight re-probes the
- * file. Platform is derived from the channel `identifier`. `probeFn` is injected
- * for tests. Returns the merged Growth result (or null if the channel isn't a
- * tuned short platform — then there's nothing to gate on).
- */
-async function evaluatePostGrowth(p: SchedulePostInput, probeFn?: ProbeFn): Promise<GrowthDto | null> {
-  const platform = toShortPlatform(p.identifier);
-  // No tuned short-form rules (e.g. a Facebook Page → "generic") → ADVISORY only.
-  // Generic posts still get a computed Growth Score in the preview for info, but
-  // are NEVER gated here: short-form-specific guardrails (vertical, #Shorts, the
-  // strict hashtag ranges) shouldn't block a Facebook post. Only the short trio
-  // (tiktok/instagram/youtube) is gated on its required checks.
-  if (!platform) return null;
-  const captionScore = scoreCaption(p.caption ?? "", p.hashtags ?? [], platform);
-  const pf = await preflightVideo(p.source, { probeFn, nameHint: p.fileId });
-  return combineGrowth(captionScore.checks as GrowthCheckDto[], pf.checks as GrowthCheckDto[]);
-}
 
 /**
  * Schedule each item through ITS channel's provider, aggregating per-item
@@ -465,67 +445,56 @@ export async function schedule(
   input: { posts: SchedulePostInput[] },
   opts: { probeFn?: ProbeFn; loadMedia?: LoadMediaFn } = {},
 ): Promise<ScheduleOutput> {
-  const posts = Array.isArray(input.posts) ? input.posts : [];
-
-  const allowed: SchedulePostInput[] = [];
-  const blocked: ScheduleItemResult[] = [];
-  for (const p of posts) {
-    const growth = await evaluatePostGrowth(p, opts.probeFn);
-    if (growth && hasBlockingFailure(growth) && !p.override) {
-      const failing = growth.checks.filter((c) => c.severity === "required" && c.pass === false);
-      blocked.push({
-        fileId: p.fileId,
-        channelId: p.channelId,
-        ok: false,
-        error: `Blocked by Growth Guardrails: ${failing.map((c) => c.label).join(", ")}. Fix the caption/video, or override to schedule anyway.`,
-        blockedChecks: failing,
-      });
-    } else {
-      allowed.push(p);
-    }
-  }
+  // Growth Guardrails are ADVISORY: the score guides the user in the review UI, but
+  // it NEVER blocks scheduling (no override needed). We just post what was sent.
+  const allowed = Array.isArray(input.posts) ? input.posts : [];
 
   const postizPosts = allowed.filter((p) => (p.provider ?? "postiz") === "postiz");
   const postPeerPosts = allowed.filter((p) => p.provider === "postpeer");
+  const loadMedia = opts.loadMedia ?? loadPostizMedia;
+
+  // Upload each distinct file's BYTES to Postiz ONCE. Postiz needs {id, path} for
+  // its own posts; PostPeer reuses `path` (a PUBLIC https URL Postiz serves, the
+  // same one it hands social platforms) as the media URL for render/upload sources
+  // — so external PostPeer can fetch the video without the lab being public.
+  const needUpload = new Map<string, FileSourceRef>();
+  for (const p of postizPosts) if (!needUpload.has(p.fileId)) needUpload.set(p.fileId, p.source);
+  for (const p of postPeerPosts) if (p.source.kind !== "cloud" && !needUpload.has(p.fileId)) needUpload.set(p.fileId, p.source);
+
+  const mediaByFile = new Map<string, { id: string; path: string } | { error: string }>();
+  if (needUpload.size > 0 && postizApiConfigured()) {
+    const client = createPostizClient();
+    for (const [fileId, source] of needUpload) {
+      try {
+        const media = await loadMedia(source);
+        const up = await client.upload(media.data, media.filename, media.contentType);
+        mediaByFile.set(fileId, { id: up.id, path: up.path });
+      } catch (e) {
+        mediaByFile.set(fileId, { error: errMsg(e) });
+      }
+    }
+  }
 
   const results: ScheduleItemResult[] = [
-    ...blocked,
-    ...(await schedulePostiz(postizPosts, opts.loadMedia ?? loadPostizMedia)),
-    ...(await schedulePostPeer(postPeerPosts)),
+    ...(await schedulePostiz(postizPosts, mediaByFile)),
+    ...(await schedulePostPeer(postPeerPosts, mediaByFile)),
   ];
 
   const scheduled = results.filter((r) => r.ok).length;
   return { results, scheduled, failed: results.length - scheduled };
 }
 
-/** Postiz leg: upload each file's BYTES once, then createPost per item. */
-async function schedulePostiz(posts: SchedulePostInput[], loadMedia: LoadMediaFn): Promise<ScheduleItemResult[]> {
+/** Postiz leg: createPost per item using the pre-uploaded media (id + path). */
+async function schedulePostiz(
+  posts: SchedulePostInput[],
+  mediaByFile: Map<string, { id: string; path: string } | { error: string }>,
+): Promise<ScheduleItemResult[]> {
   if (posts.length === 0) return [];
   const client = createPostizClient();
 
-  // Upload each distinct file's media to Postiz ONCE, then reuse the upload id
-  // for every channel of that file (idempotent-ish: a failed upload fails only
-  // that file's posts, and re-running re-uploads only what's missing).
-  const uploadCache = new Map<string, { id: string; path: string } | { error: string }>();
-  const sourceByFile = new Map<string, FileSourceRef>();
-  for (const p of posts) if (!sourceByFile.has(p.fileId)) sourceByFile.set(p.fileId, p.source);
-
-  for (const [fileId, source] of sourceByFile) {
-    try {
-      // Postiz REFUSES upload-from-url for internal / non-HTTPS URLs, so we hand
-      // it the file BYTES via multipart /upload (also fixes the missing-extension
-      // create-post rejection, #1147, since we control the filename).
-      const media = await loadMedia(source);
-      const up = await client.upload(media.data, media.filename, media.contentType);
-      uploadCache.set(fileId, { id: up.id, path: up.path });
-    } catch (e) {
-      uploadCache.set(fileId, { error: errMsg(e) });
-    }
-  }
-
   const results: ScheduleItemResult[] = [];
   for (const p of posts) {
-    const upload = uploadCache.get(p.fileId);
+    const upload = mediaByFile.get(p.fileId);
     if (!upload || "error" in upload) {
       results.push({
         fileId: p.fileId,
@@ -545,7 +514,8 @@ async function schedulePostiz(posts: SchedulePostInput[], loadMedia: LoadMediaFn
         posts: [
           {
             integration: { id: p.channelId },
-            value: [{ content, image: [{ id: upload.id }] }],
+            // Postiz requires BOTH the upload id AND its path on the image entry.
+            value: [{ content, image: [{ id: upload.id, path: upload.path }] }],
             settings: buildProviderSettings(p.identifier, { title: p.firstLineHook }),
           },
         ],
@@ -559,42 +529,39 @@ async function schedulePostiz(posts: SchedulePostInput[], loadMedia: LoadMediaFn
 }
 
 /**
- * PostPeer leg: PostPeer pulls the media itself, so we send the PUBLIC URL (no
- * pre-upload). The public URL is resolved per file ONCE; a missing PUBLIC_BASE_URL
- * fails only that file's items with a clear, actionable message.
+ * PostPeer leg: PostPeer (external) pulls the media from a URL, which TikTok
+ * requires to be PUBLIC + HTTPS. We resolve each file's public media URL once:
+ *   - cloud source → its own direct share link (already public);
+ *   - render/upload → the PUBLIC https URL Postiz returned from the shared upload
+ *     (`mediaByFile.path`) — Postiz serves it on its own domain, so no public lab
+ *     is needed. Fallback: the lab's PUBLIC_BASE_URL (only if Postiz isn't set up).
  */
-async function schedulePostPeer(posts: SchedulePostInput[]): Promise<ScheduleItemResult[]> {
+async function schedulePostPeer(
+  posts: SchedulePostInput[],
+  mediaByFile: Map<string, { id: string; path: string } | { error: string }>,
+): Promise<ScheduleItemResult[]> {
   if (posts.length === 0) return [];
   const client = createPostPeerClient();
 
-  // Resolve each distinct file's PUBLIC media URL once (cache success or error).
-  const urlCache = new Map<string, { url: string } | { error: string }>();
-  const sourceByFile = new Map<string, FileSourceRef>();
-  for (const p of posts) if (!sourceByFile.has(p.fileId)) sourceByFile.set(p.fileId, p.source);
-  for (const [fileId, source] of sourceByFile) {
-    try {
-      urlCache.set(fileId, { url: resolvePublicSourceUrl(source) });
-    } catch (e) {
-      urlCache.set(fileId, { error: errMsg(e) });
-    }
-  }
-
   const results: ScheduleItemResult[] = [];
   for (const p of posts) {
-    const resolved = urlCache.get(p.fileId);
-    if (!resolved || "error" in resolved) {
-      results.push({
-        fileId: p.fileId,
-        channelId: p.channelId,
-        ok: false,
-        error: resolved && "error" in resolved ? resolved.error : "Public media URL not resolved",
-      });
+    let mediaUrl: string;
+    try {
+      if (p.source.kind === "cloud") {
+        mediaUrl = resolvePublicSourceUrl(p.source);
+      } else {
+        const up = mediaByFile.get(p.fileId);
+        if (up && "error" in up) throw new Error(up.error);
+        mediaUrl = up?.path ?? resolvePublicSourceUrl(p.source);
+      }
+    } catch (e) {
+      results.push({ fileId: p.fileId, channelId: p.channelId, ok: false, error: errMsg(e) });
       continue;
     }
     try {
       await client.createPost({
         accountId: p.channelId,
-        mediaUrl: resolved.url,
+        mediaUrl,
         caption: composeContent(p.caption, p.hashtags),
         scheduledAt: new Date(p.scheduledAt).toISOString(),
         tiktok: p.tiktok ?? { ...DEFAULT_TIKTOK_OPTIONS },

@@ -197,10 +197,10 @@ async function main() {
     assert.equal(hasBlockingFailure({ score: 0, checks: [{ id: "x", label: "X", pass: null, severity: "unknown", hint: "" }] }), false);
   });
 
-  // ── schedule() server-side gate ──────────────────────────────────────────────
-  // A caption missing the required CTA + hashtags blocks; with override it passes
-  // the gate (and then fails at the provider with a NETWORK-FREE error we tolerate
-  // — what matters is it was NOT blocked by the gate).
+  // ── schedule(): guardrails are ADVISORY (never block) ────────────────────────
+  // Even a weak caption (missing CTA, too few tags) is NEVER blocked by a gate.
+  // It proceeds to the provider (and here fails with a network-free provider/media
+  // error we tolerate — what matters is it was NOT blocked by Growth Guardrails).
   const badPost = {
     fileId: "f1",
     source: { kind: "cloud" as const, ref: "https://example.com/clip.mp4" }, // cloud → preflight all-unknown
@@ -213,20 +213,17 @@ async function main() {
   };
   const noProbe: ProbeFn = async () => ({ duration: null, width: null, height: null, hasAudio: false });
 
-  await check("schedule: a required-fail item is BLOCKED (no override) and never posts", async () => {
+  await check("schedule: a weak-caption item is NEVER blocked by guardrails (advisory)", async () => {
     const out = await schedule({ posts: [badPost] }, { probeFn: noProbe });
-    assert.equal(out.scheduled, 0);
-    assert.equal(out.failed, 1);
     const r = out.results[0];
-    assert.equal(r.ok, false);
-    assert.match(r.error ?? "", /Growth Guardrails/);
-    assert.ok((r.blockedChecks ?? []).some((c) => c.id === "comment-cta" || c.id === "hashtag-count"));
+    // It may fail at the provider/media step, but NEVER with a guardrail block.
+    assert.doesNotMatch(r.error ?? "", /Growth Guardrails/);
+    assert.equal(r.blockedChecks, undefined);
   });
 
-  await check("schedule: override:true lets the SAME item past the gate", async () => {
+  await check("schedule: the override flag is a harmless no-op (still advisory)", async () => {
     const out = await schedule({ posts: [{ ...badPost, override: true }] }, { probeFn: noProbe });
     const r = out.results[0];
-    assert.equal(r.ok, false); // still fails — but at the PROVIDER, not the gate
     assert.doesNotMatch(r.error ?? "", /Growth Guardrails/);
     assert.equal(r.blockedChecks, undefined);
   });

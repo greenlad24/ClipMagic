@@ -169,13 +169,17 @@ function SelectPreview({ file }: { file: SelectedFile }) {
   );
 }
 
-// Editable preview row (a copy of a BulkPreviewPost the user can tweak). The
-// local-only `override` lets the user opt past a Growth Guardrails block.
+// Editable preview row (a copy of a BulkPreviewPost the user can tweak).
 type EditablePost = BulkPreviewPost & { override?: boolean };
 
-/** True when a Growth result has a measured, failing `required` check. */
-function isGrowthBlocked(growth: Growth | undefined): boolean {
-  return !!growth?.checks.some((c) => c.severity === 'required' && c.pass === false);
+/**
+ * Growth Guardrails are ADVISORY: the score + checklist are shown for guidance,
+ * but a post is NEVER blocked from scheduling. This always returns false so no
+ * banner, destructive styling, override prompt, or disabled button ever appears.
+ * (The caption generator already auto-satisfies the required checks anyway.)
+ */
+function isGrowthBlocked(_growth: Growth | undefined): boolean {
+  return false;
 }
 
 const PLATFORM_BADGE: Record<string, string> = {

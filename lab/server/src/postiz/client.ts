@@ -75,7 +75,7 @@ export interface PostizUpload {
 /** One per-channel entry inside a create-post request. */
 export interface PostizPostPerChannel {
   integration: { id: string };
-  value: Array<{ content: string; image?: Array<{ id: string }> }>;
+  value: Array<{ content: string; image?: Array<{ id: string; path?: string }> }>;
   /** Groups posts created together (Postiz uses it to relate multi-channel posts). */
   group?: string;
   /** Per-provider settings; always carries `__type` = the channel identifier. */

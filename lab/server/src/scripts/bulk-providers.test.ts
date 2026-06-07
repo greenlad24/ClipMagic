@@ -64,7 +64,7 @@ function installRoutedFetch(opts: {
     if (u.includes("/v1/messages")) return anthropic();
     if (u.includes("/public/v1/integrations")) return json(opts.postizIntegrations ?? []);
     if (u.includes("/public/v1/upload-from-url")) return json({ id: "up1", path: "http://internal/x.mp4" });
-    if (u.includes("/public/v1/upload")) return json({ id: "up1", path: "http://internal/x.mp4" });
+    if (u.includes("/public/v1/upload")) return json({ id: "up1", path: "https://postiz.test/uploads/v.mp4" });
     if (u.includes("/public/v1/posts")) {
       if (opts.failPostizPosts) return json({ message: "boom" }, false, 400);
       return json({ id: "postiz-post" });
@@ -194,11 +194,16 @@ async function main() {
     // Postiz: a multipart byte /upload (NOT upload-from-url) + a /public/v1/posts.
     assert.ok(mock.calls.some((c) => c.url === "http://postiz:5000/public/v1/upload"), "postiz byte upload missing");
     assert.ok(!mock.calls.some((c) => c.url.includes("/upload-from-url")), "must NOT use upload-from-url (Postiz rejects internal URLs)");
-    assert.ok(mock.calls.some((c) => c.url === "http://postiz:5000/public/v1/posts"), "postiz createPost missing");
+    const postizPost = mock.calls.find((c) => c.url === "http://postiz:5000/public/v1/posts")!;
+    assert.ok(postizPost, "postiz createPost missing");
+    // Postiz requires the image to carry BOTH id and path.
+    const img = postizPost.body.posts[0].value[0].image[0];
+    assert.equal(img.id, "up1");
+    assert.equal(img.path, "https://postiz.test/uploads/v.mp4");
 
-    // PostPeer: a /v1/posts with the PUBLIC media url + tiktok platform data.
+    // PostPeer: a /v1/posts reusing the PUBLIC Postiz upload URL (no public lab needed).
     const ppPost = mock.calls.find((c) => c.url === "https://api.postpeer.test/v1/posts")!;
-    assert.equal(ppPost.body.mediaItems[0].url, "https://clips.example.com/api/outputs/v.mp4");
+    assert.equal(ppPost.body.mediaItems[0].url, "https://postiz.test/uploads/v.mp4");
     assert.equal(ppPost.body.platforms[0].platform, "tiktok");
     assert.equal(ppPost.body.platforms[0].accountId, "pp-tt");
     assert.equal(ppPost.body.platforms[0].platformSpecificData.privacyLevel, "PUBLIC_TO_EVERYONE");
@@ -219,21 +224,34 @@ async function main() {
     assert.equal(pp.ok, true);
   });
 
-  await check("schedule() fails a PostPeer item with a clear error when PUBLIC_BASE_URL is unset", async () => {
+  await check("schedule() PostPeer reuses Postiz's public upload URL (works with PUBLIC_BASE_URL unset)", async () => {
     const saved = process.env.PUBLIC_BASE_URL;
-    delete process.env.PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_BASE_URL; // render no longer depends on a public lab
     try {
-      installRoutedFetch({});
+      const mock = installRoutedFetch({});
       const out = await bulk.schedule({
         posts: [
           { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", override: true, tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
         ],
-      });
-      assert.equal(out.failed, 1);
-      assert.match(out.results[0].error ?? "", /PUBLIC_BASE_URL/);
+      }, { loadMedia: stubMedia });
+      assert.equal(out.scheduled, 1, "PostPeer render must succeed via the Postiz public URL");
+      const ppPost = mock.calls.find((c) => c.url === "https://api.postpeer.test/v1/posts")!;
+      assert.equal(ppPost.body.mediaItems[0].url, "https://postiz.test/uploads/v.mp4");
     } finally {
       process.env.PUBLIC_BASE_URL = saved;
     }
+  });
+
+  await check("schedule() PostPeer uses a cloud source's own direct link (no upload)", async () => {
+    const mock = installRoutedFetch({});
+    const out = await bulk.schedule({
+      posts: [
+        { fileId: "fc", source: { kind: "cloud", ref: "https://www.dropbox.com/s/x/v.mp4?dl=0" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", override: true, tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
+      ],
+    }, { loadMedia: stubMedia });
+    assert.equal(out.scheduled, 1);
+    const ppPost = mock.calls.find((c) => c.url === "https://api.postpeer.test/v1/posts")!;
+    assert.match(ppPost.body.mediaItems[0].url, /dl=1/, "cloud link normalized to a direct download");
   });
 
   // ── generic ("facebook") platform support ───────────────────────────────────
