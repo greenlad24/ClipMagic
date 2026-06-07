@@ -99,9 +99,9 @@ async function main() {
   });
 
   await check("scoreCaption: over-cap caption fails length-cap (required)", () => {
-    const long = "Keyword opener here. " + "x".repeat(400) + " comment?";
+    const long = "Keyword opener here. " + "x".repeat(2300) + " comment?";
     const { checks } = scoreCaption(long, ["mealprep", "fyp", "budgetmealprepideas"], "tiktok");
-    assert.equal(checkById(checks, "length-cap")!.pass, false); // tiktok cap = 300
+    assert.equal(checkById(checks, "length-cap")!.pass, false); // tiktok cap = 2200
   });
 
   await check("scoreCaption: niche+broad mix is recommended only", () => {

@@ -50,9 +50,9 @@ export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
     label: "TikTok (US)",
     minTags: 3,
     maxTags: 5,
-    maxCaptionChars: 300,
+    maxCaptionChars: 2200,
     guidance:
-      "Short, punchy hook in the FIRST LINE that is keyword-rich for TikTok search/SEO. Trend-aware, conversational, native to TikTok. 3–5 hashtags mixing niche + broad. No links. Lead with the search keyword, not fluff.",
+      "Punchy, keyword-rich hook in the FIRST LINE for TikTok search/SEO, then a few conversational sentences of real substance (TikTok now allows long captions — use the room for keywords/context, don't pad). 3–5 hashtags mixing niche + broad. No links. End on a question.",
   },
   instagram: {
     platform: "instagram",
@@ -295,7 +295,7 @@ function buildSystemPrompt(platforms: CaptionPlatform[], hasTranscript: boolean)
     "Every caption MUST satisfy these growth guardrails:",
     "- Front-load the primary keyword/topic in the FIRST ~40 characters of the first line (SEO/search). No greeting or emoji opener.",
     "- The first line must be a 3-second hook (curiosity, payoff, or bold claim) — never a slow intro like \"Hi\", \"So\", \"Today\", or \"In this video\".",
-    "- END the caption with a question or an explicit comment-driving CTA (comments are weighted heavily).",
+    "- END the caption with a QUESTION that ends in a '?' and invites the viewer to comment — this is REQUIRED. Never end on a statement (e.g. \"Learn more…\"); ask something they'll want to answer.",
     "- Hashtags: stay within the per-platform count above and MIX broad reach tags (short, e.g. fyp) with specific niche tags (longer, e.g. budgetmealprep).",
     "",
     "For EACH requested platform return: a keyword-rich firstLineHook, a full caption (whose first line IS that hook and which ENDS with the CTA/question), and a hashtags array (no leading '#', no spaces inside a tag).",
@@ -346,7 +346,12 @@ export function assemblePlatformCaption(
     caption = `${firstLineHook}\n\n${caption}`.trim();
   }
   if (caption.length > rule.maxCaptionChars) {
-    caption = caption.slice(0, rule.maxCaptionChars).trimEnd();
+    // Word-safe clamp: never cut mid-word (which would leave a dangling fragment
+    // like "…transforms. Y" and chop a trailing CTA). Back up to the last
+    // whitespace within the cap.
+    const cut = caption.slice(0, rule.maxCaptionChars);
+    const lastWs = cut.replace(/\S+$/, "").trimEnd();
+    caption = (lastWs.length > 0 ? lastWs : cut).trimEnd();
   }
 
   // Hashtags: normalize, dedupe (case-insensitive), clamp to the rule's max.
