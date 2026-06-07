@@ -27,7 +27,7 @@ import {
   type PostPeerTikTokOptions,
 } from "./postpeerClient.js";
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
-import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption } from "./captions.js";
+import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type CaptionPlatform } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput } from "./scheduling.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
@@ -230,7 +230,8 @@ export interface PreviewPostDto {
   provider: Provider;
   channelName: string;
   identifier: string;
-  platform: ShortPlatform;
+  /** Effective caption/timing platform — "generic" for null-platform channels. */
+  platform: CaptionPlatform;
   caption: string;
   firstLineHook: string;
   hashtags: string[];
@@ -253,8 +254,10 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
   const channels = await listChannels();
   const byId = new Map(channels.map((c) => [c.id, c]));
 
-  // Resolve target channels → only connected ones with a tuned short platform.
-  const targets: ChannelDto[] = [];
+  // Resolve target channels. A channel with a tuned short platform keeps it; a
+  // null-platform channel (e.g. a Facebook Page) is targeted as "generic" rather
+  // than skipped. Only genuinely unknown channel ids are dropped.
+  const targets: Array<{ channel: ChannelDto; plat: CaptionPlatform }> = [];
   const skippedChannels: Array<{ id: string; reason: string }> = [];
   for (const id of input.channelIds) {
     const c = byId.get(id);
@@ -262,11 +265,7 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
       skippedChannels.push({ id, reason: "Not a connected channel" });
       continue;
     }
-    if (!c.platform) {
-      skippedChannels.push({ id, reason: `No tuned caption/timing rules for ${c.identifier}` });
-      continue;
-    }
-    targets.push(c);
+    targets.push({ channel: c, plat: c.platform ?? "generic" });
   }
 
   const files = input.files.map((f, i) => ({
@@ -275,8 +274,8 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
   }));
 
   // 1) Captions: one AI call per file, covering all distinct target platforms.
-  const platformsNeeded = unique(targets.map((t) => t.platform!));
-  const captionsByFile = new Map<string, Record<ShortPlatform, PlatformCaption>>();
+  const platformsNeeded = unique(targets.map((t) => t.plat));
+  const captionsByFile = new Map<string, Record<CaptionPlatform, PlatformCaption>>();
   for (const f of files) {
     const brief = (f.brief ?? "").trim() || (await autoSeedBrief(f.source));
     const caps = await generateCaptions(brief, platformsNeeded);
@@ -294,8 +293,8 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
   // 2) Schedule: one (file × channel) item per post, spread across channels.
   const items: ScheduleItemInput[] = [];
   for (const f of files) {
-    for (const c of targets) {
-      items.push({ key: `${f.fileId}|${c.id}`, platform: c.platform! });
+    for (const t of targets) {
+      items.push({ key: `${f.fileId}|${t.channel.id}`, platform: t.plat });
     }
   }
   const schedule = buildSchedule(items, {
@@ -311,10 +310,10 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
   for (const f of files) {
     const caps = captionsByFile.get(f.fileId)!;
     const preflightChecks = preflightByFile.get(f.fileId) ?? [];
-    for (const c of targets) {
-      const cap = caps[c.platform!];
+    for (const { channel: c, plat } of targets) {
+      const cap = caps[plat];
       const sched = scheduleByKey.get(`${f.fileId}|${c.id}`)!;
-      const captionScore = scoreCaption(cap?.caption ?? "", cap?.hashtags ?? [], c.platform!);
+      const captionScore = scoreCaption(cap?.caption ?? "", cap?.hashtags ?? [], plat);
       const growth = combineGrowth(captionScore.checks as GrowthCheckDto[], preflightChecks);
       posts.push({
         fileId: f.fileId,
@@ -322,7 +321,7 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
         provider: c.provider,
         channelName: c.name,
         identifier: c.identifier,
-        platform: c.platform!,
+        platform: plat,
         caption: cap?.caption ?? "",
         firstLineHook: cap?.firstLineHook ?? "",
         hashtags: cap?.hashtags ?? [],
@@ -331,7 +330,7 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
         growth,
         // Seed TikTok Direct-Post controls (PostPeer only) with sensible defaults
         // so the review UI can render the privacy/disclosure toggles.
-        ...(c.provider === "postpeer" && c.platform === "tiktok"
+        ...(c.provider === "postpeer" && plat === "tiktok"
           ? { tiktok: { ...DEFAULT_TIKTOK_OPTIONS } }
           : {}),
       });
@@ -390,7 +389,12 @@ export interface ScheduleOutput {
  */
 async function evaluatePostGrowth(p: SchedulePostInput, probeFn?: ProbeFn): Promise<GrowthDto | null> {
   const platform = toShortPlatform(p.identifier);
-  if (!platform) return null; // no tuned rules → don't gate
+  // No tuned short-form rules (e.g. a Facebook Page → "generic") → ADVISORY only.
+  // Generic posts still get a computed Growth Score in the preview for info, but
+  // are NEVER gated here: short-form-specific guardrails (vertical, #Shorts, the
+  // strict hashtag ranges) shouldn't block a Facebook post. Only the short trio
+  // (tiktok/instagram/youtube) is gated on its required checks.
+  if (!platform) return null;
   const captionScore = scoreCaption(p.caption ?? "", p.hashtags ?? [], platform);
   const pf = await preflightVideo(p.source, { probeFn, nameHint: p.fileId });
   return combineGrowth(captionScore.checks as GrowthCheckDto[], pf.checks as GrowthCheckDto[]);

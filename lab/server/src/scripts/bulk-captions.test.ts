@@ -16,6 +16,7 @@ import {
   assemblePlatformCaption,
   generateCaptions,
   normalizeHashtag,
+  scoreCaption,
   PLATFORM_RULES,
 } from "../postiz/captions.js";
 import { normalizeCloudLink, resolveSourceUrl } from "../postiz/fileSources.js";
@@ -89,6 +90,41 @@ async function main() {
     assert.equal(res.instagram.firstLineHook, "IG hook");
     assert.equal(res.youtube.hashtags[0], "Shorts"); // injected
     assert.notEqual(res.tiktok.caption, res.instagram.caption);
+  });
+
+  await check("generic caption assembles + scores via the generic rule", async () => {
+    // assemble: a Facebook-style long caption + light hashtags, clamped to the
+    // generous generic cap (2000) — never given #Shorts (that's youtube-only).
+    const out = assemblePlatformCaption("generic", {
+      firstLineHook: "Budget meal prep saved me $400",
+      caption: "Budget meal prep saved me $400 this month — here's the full plan you can copy.\nWhich one should I make next?",
+      hashtags: ["mealprep", "budgetmealprepideas", "food"],
+    });
+    assert.equal(out.platform, "generic");
+    assert.ok(out.caption.startsWith("Budget meal prep saved me $400"));
+    assert.ok(!out.hashtags.includes("Shorts"), "generic must NOT get #Shorts");
+    assert.ok(out.caption.length <= PLATFORM_RULES.generic.maxCaptionChars);
+
+    // score: a strong generic caption passes the required checks via the generic rule.
+    const { score, checks } = scoreCaption(out.caption, out.hashtags, "generic");
+    const byId = (id: string) => checks.find((c) => c.id === id)!;
+    assert.equal(byId("keyword-front").pass, true);
+    assert.equal(byId("comment-cta").pass, true);
+    assert.equal(byId("hashtag-count").pass, true); // 3 tags ∈ [2,5]
+    assert.equal(byId("length-cap").pass, true);
+    assert.ok(score >= 80, `expected high generic score, got ${score}`);
+  });
+
+  await check("generateCaptions accepts 'generic' (not filtered out)", async () => {
+    const mock = async () =>
+      JSON.stringify({
+        platforms: {
+          generic: { firstLineHook: "Gen hook", caption: "Gen hook\nbody — thoughts?", hashtags: ["foo", "bar"] },
+        },
+      });
+    const res = await generateCaptions("a brief", ["generic"], mock);
+    assert.ok("generic" in res, "generic must be generated, not filtered");
+    assert.equal(res.generic.firstLineHook, "Gen hook");
   });
 
   await check("generateCaptions tolerates malformed AI JSON (no throw)", async () => {

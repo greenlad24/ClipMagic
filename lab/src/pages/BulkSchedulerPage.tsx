@@ -88,10 +88,19 @@ const PLATFORM_BADGE: Record<string, string> = {
   youtube: 'Shorts',
 };
 
-/** Badge label for a channel/post: TikTok via PostPeer is called out distinctly. */
+/** Title-case a channel identifier for display (e.g. "facebook" → "Facebook"). */
+function prettyIdentifier(identifier: string): string {
+  return identifier ? identifier.charAt(0).toUpperCase() + identifier.slice(1) : identifier;
+}
+
+/**
+ * Badge label for a channel/post: TikTok via PostPeer is called out distinctly;
+ * a tuned short platform shows its native name; everything else (generic /
+ * null-platform channels, e.g. a Facebook Page) badges by its identifier.
+ */
 function channelBadge(provider: BulkProvider, platform: string | null, identifier: string): string {
   if (provider === 'postpeer') return 'TikTok · PostPeer';
-  return PLATFORM_BADGE[platform ?? ''] ?? identifier;
+  return PLATFORM_BADGE[platform ?? ''] ?? prettyIdentifier(identifier);
 }
 
 /** TikTok privacy levels PostPeer exposes (TikTok's own enum). */
@@ -135,18 +144,17 @@ export default function BulkSchedulerPage() {
     loadStatus();
   }, [user, loadStatus]);
 
-  const connectedShortChannels = useMemo(
-    () => (status?.channels ?? []).filter((c) => c.platform),
-    [status],
-  );
+  // Every connected channel is schedulable: a tuned short platform posts with its
+  // tuned rules; a null-platform channel (e.g. a Facebook Page) posts as generic.
+  const connectedChannels = useMemo(() => status?.channels ?? [], [status]);
 
-  // Auto-select all connected short-form channels once loaded.
+  // Auto-select all connected channels once loaded.
   useEffect(() => {
-    if (connectedShortChannels.length && selectedChannelIds.length === 0) {
-      setSelectedChannelIds(connectedShortChannels.map((c) => c.id));
+    if (connectedChannels.length && selectedChannelIds.length === 0) {
+      setSelectedChannelIds(connectedChannels.map((c) => c.id));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectedShortChannels]);
+  }, [connectedChannels]);
 
   // ── Gating ──────────────────────────────────────────────────────────────────
   if (!status) {
@@ -160,7 +168,7 @@ export default function BulkSchedulerPage() {
     );
   }
 
-  if (!status.apiKeyConfigured || connectedShortChannels.length === 0) {
+  if (!status.apiKeyConfigured || connectedChannels.length === 0) {
     return (
       <Layout breadcrumb="Bulk Scheduler">
         <EmptyState
@@ -193,7 +201,7 @@ export default function BulkSchedulerPage() {
       });
       setPosts(res.posts);
       if (res.skippedChannels.length) {
-        toast.info(`${res.skippedChannels.length} channel(s) skipped (no tuned rules).`);
+        toast.info(`${res.skippedChannels.length} channel(s) skipped (not connected).`);
       }
       setStep(2);
     } catch (e) {
@@ -296,7 +304,7 @@ export default function BulkSchedulerPage() {
 
         {step === 1 && (
           <StepSelect
-            channels={connectedShortChannels}
+            channels={connectedChannels}
             selected={selected}
             setSelected={setSelected}
             selectedChannelIds={selectedChannelIds}
@@ -320,7 +328,7 @@ export default function BulkSchedulerPage() {
         {step === 3 && (
           <StepSchedule
             posts={posts}
-            channels={connectedShortChannels}
+            channels={connectedChannels}
             results={results}
             scheduling={scheduling}
             postizUrl={postizUrl}

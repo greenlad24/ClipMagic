@@ -13,9 +13,16 @@
 import { claudeJSONForPurpose } from "../ai/claude.js";
 import type { ShortPlatform } from "./providerSettings.js";
 
+/**
+ * Caption platforms = the tuned short trio PLUS "generic". Channels whose
+ * canonical platform is null (e.g. a Facebook Page) post as "generic": one
+ * general-audience caption rule, reusing the scheduling engine's generic window.
+ */
+export type CaptionPlatform = ShortPlatform | "generic";
+
 /** Output for one platform. */
 export interface PlatformCaption {
-  platform: ShortPlatform;
+  platform: CaptionPlatform;
   /** Keyword-rich first line — the SEO/search hook (also reused as YT title). */
   firstLineHook: string;
   /** Full caption (already includes the hook as its first line). */
@@ -26,7 +33,7 @@ export interface PlatformCaption {
 
 /** Tunable per-platform best-practice guidance the prompt encodes. */
 export interface PlatformRule {
-  platform: ShortPlatform;
+  platform: CaptionPlatform;
   label: string;
   /** Target hashtag count range. */
   minTags: number;
@@ -37,7 +44,7 @@ export interface PlatformRule {
   guidance: string;
 }
 
-export const PLATFORM_RULES: Record<ShortPlatform, PlatformRule> = {
+export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
   tiktok: {
     platform: "tiktok",
     label: "TikTok (US)",
@@ -65,9 +72,24 @@ export const PLATFORM_RULES: Record<ShortPlatform, PlatformRule> = {
     guidance:
       "First line is an SEO TITLE-STYLE phrase (this becomes the video title) — front-load the primary keyword. Follow with a keyword-dense 1–2 sentence description optimized for search/suggested. Include #Shorts plus 2–4 topical tags. Optimize for discovery, not chatter.",
   },
+  // Generic / general-audience (e.g. a Facebook Page). One untuned rule reused
+  // for any channel without a tuned short-form platform — deliberately broad,
+  // not per-network. Facebook allows long captions + outbound links (unlike IG).
+  generic: {
+    platform: "generic",
+    label: "Facebook / general",
+    minTags: 2,
+    maxTags: 5,
+    maxCaptionChars: 2000,
+    guidance:
+      "Write an engaging general-audience caption for a vertical short-form clip. Strong first-line hook that front-loads the topic, then 1–2 sentences of value, ending with a comment-driving CTA. Light hashtag use (2–5). Outbound links are allowed (unlike IG). Conversational and shareable.",
+  },
 };
 
 export const SHORT_PLATFORMS: ShortPlatform[] = ["tiktok", "instagram", "youtube"];
+
+/** Caption platforms we can generate/score for (short trio + generic). */
+export const CAPTION_PLATFORMS: CaptionPlatform[] = [...SHORT_PLATFORMS, "generic"];
 
 // ── Caption growth scoring (PURE — runs independently of the AI) ─────────────
 // These encode 2026 short-form (TikTok-led) caption best-practices so a caption
@@ -132,7 +154,7 @@ function firstLine(caption: string): string {
 export function scoreCaption(
   caption: string,
   hashtags: string[],
-  platform: ShortPlatform,
+  platform: CaptionPlatform,
 ): CaptionScore {
   const rule = PLATFORM_RULES[platform];
   const text = (caption ?? "").trim();
@@ -250,7 +272,7 @@ const defaultGenerate: CaptionAiCall = (system, user) =>
     messages: [{ role: "user", content: user }],
   });
 
-function buildSystemPrompt(platforms: ShortPlatform[]): string {
+function buildSystemPrompt(platforms: CaptionPlatform[]): string {
   const rules = platforms
     .map((p) => {
       const r = PLATFORM_RULES[p];
@@ -276,7 +298,7 @@ function buildSystemPrompt(platforms: ShortPlatform[]): string {
   ].join("\n");
 }
 
-function buildUserPrompt(brief: string, platforms: ShortPlatform[]): string {
+function buildUserPrompt(brief: string, platforms: CaptionPlatform[]): string {
   return [
     `Video brief / topic: ${brief.trim() || "(no brief provided — infer a sensible generic topic from the filename context)"}`,
     `Platforms to write for: ${platforms.join(", ")}`,
@@ -295,7 +317,7 @@ export function normalizeHashtag(raw: unknown): string | null {
  * the assembly is unit-tested without any AI. `youtube` always keeps #Shorts.
  */
 export function assemblePlatformCaption(
-  platform: ShortPlatform,
+  platform: CaptionPlatform,
   raw: { firstLineHook?: unknown; caption?: unknown; hashtags?: unknown },
 ): PlatformCaption {
   const rule = PLATFORM_RULES[platform];
@@ -343,11 +365,11 @@ export function assemblePlatformCaption(
  */
 export async function generateCaptions(
   brief: string,
-  platforms: ShortPlatform[],
+  platforms: CaptionPlatform[],
   generate: CaptionAiCall = defaultGenerate,
-): Promise<Record<ShortPlatform, PlatformCaption>> {
-  const wanted = platforms.filter((p) => SHORT_PLATFORMS.includes(p));
-  if (wanted.length === 0) return {} as Record<ShortPlatform, PlatformCaption>;
+): Promise<Record<CaptionPlatform, PlatformCaption>> {
+  const wanted = platforms.filter((p) => CAPTION_PLATFORMS.includes(p));
+  if (wanted.length === 0) return {} as Record<CaptionPlatform, PlatformCaption>;
 
   const rawJson = await generate(buildSystemPrompt(wanted), buildUserPrompt(brief, wanted));
   let parsed: { platforms?: Record<string, unknown> } = {};
@@ -358,7 +380,7 @@ export async function generateCaptions(
   }
   const byPlatform = (parsed.platforms ?? {}) as Record<string, { firstLineHook?: unknown; caption?: unknown; hashtags?: unknown }>;
 
-  const out = {} as Record<ShortPlatform, PlatformCaption>;
+  const out = {} as Record<CaptionPlatform, PlatformCaption>;
   for (const p of wanted) {
     out[p] = assemblePlatformCaption(p, byPlatform[p] ?? {});
   }

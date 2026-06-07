@@ -179,6 +179,8 @@ export type RestartPostizOutputType = { success: boolean; message: string };
 
 // ── Bulk Scheduler ───────────────────────────────────────────────────────────
 export type ShortPlatform = 'tiktok' | 'instagram' | 'youtube';
+/** Effective caption/timing platform: the short trio PLUS "generic" (e.g. a Facebook Page). */
+export type CaptionPlatform = ShortPlatform | 'generic';
 /** Which API a channel posts through. */
 export type BulkProvider = 'postiz' | 'postpeer';
 /** TikTok Direct-Post controls (PostPeer-only). */
@@ -232,7 +234,7 @@ export type BulkPreviewPost = {
   provider: BulkProvider;
   channelName: string;
   identifier: string;
-  platform: ShortPlatform;
+  platform: CaptionPlatform;
   caption: string;
   firstLineHook: string;
   hashtags: string[];

@@ -42,7 +42,26 @@ function installRoutedFetch(opts: {
     calls.push({ url: u, method: init?.method ?? "GET", body });
     const json = (v: unknown, ok = true, status = 200): Response =>
       ({ ok, status, text: async () => JSON.stringify(v) } as Response);
+    // Anthropic Messages API (caption generation in preview): respond with a
+    // valid caption JSON for whatever platforms were asked for, in the SDK's
+    // content[].text shape. Keyed on the user message listing the platforms.
+    const anthropic = (): Response => {
+      const platforms: string[] = String(body?.messages?.[0]?.content ?? "").includes("generic")
+        ? ["generic"]
+        : ["tiktok"];
+      const caps: Record<string, unknown> = {};
+      for (const p of platforms) {
+        caps[p] = {
+          firstLineHook: "Budget meal prep saved me $400",
+          caption: "Budget meal prep saved me $400 this month — here's the full plan.\nWhich one should I make next?",
+          hashtags: ["mealprep", "budgetmealprepideas", "food"],
+        };
+      }
+      const text = JSON.stringify({ platforms: caps });
+      return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text }], usage: {} }) } as unknown as Response;
+    };
 
+    if (u.includes("/v1/messages")) return anthropic();
     if (u.includes("/public/v1/integrations")) return json(opts.postizIntegrations ?? []);
     if (u.includes("/public/v1/upload-from-url")) return json({ id: "up1", path: "http://internal/x.mp4" });
     if (u.includes("/public/v1/posts")) {
@@ -64,6 +83,8 @@ async function main() {
   process.env.POSTPEER_BASE_URL = "https://api.postpeer.test";
   process.env.CLIPMAGIC_INTERNAL_URL = "http://clipmagic-lab:9090";
   process.env.PUBLIC_BASE_URL = "https://clips.example.com";
+  // Caption generation needs an Anthropic credential; the routed mock answers it.
+  process.env.ANTHROPIC_API_KEY = "anthropic-key";
 
   const fileSources = await import("../postiz/fileSources.js");
   const bulk = await import("../postiz/bulkScheduler.js");
@@ -147,17 +168,19 @@ async function main() {
   });
 
   // ── routing in schedule() ──────────────────────────────────────────────────
+  // These exercise PROVIDER ROUTING, not the Growth gate, so the (deliberately
+  // minimal) captions carry override:true to skip the gate and reach the provider.
   await check("schedule() ROUTES per provider: postiz→Postiz(internal), postpeer→PostPeer(public)", async () => {
     const mock = installRoutedFetch({});
     const out = await bulk.schedule({
       posts: [
         {
           fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-tt",
-          provider: "postiz", identifier: "tiktok", caption: "c1", hashtags: ["a"], scheduledAt: "2026-06-09T13:00:00.000Z",
+          provider: "postiz", identifier: "tiktok", caption: "c1", hashtags: ["a"], scheduledAt: "2026-06-09T13:00:00.000Z", override: true,
         },
         {
           fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt",
-          provider: "postpeer", identifier: "tiktok", caption: "c2", hashtags: ["b"], scheduledAt: "2026-06-09T13:05:00.000Z",
+          provider: "postpeer", identifier: "tiktok", caption: "c2", hashtags: ["b"], scheduledAt: "2026-06-09T13:05:00.000Z", override: true,
           tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false },
         },
       ],
@@ -182,8 +205,8 @@ async function main() {
     installRoutedFetch({ failPostizPosts: true });
     const out = await bulk.schedule({
       posts: [
-        { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-tt", provider: "postiz", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:00:00.000Z" },
-        { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
+        { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-tt", provider: "postiz", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:00:00.000Z", override: true },
+        { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", override: true, tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
       ],
     });
     assert.equal(out.results.length, 2, "both items must be reported");
@@ -200,7 +223,7 @@ async function main() {
       installRoutedFetch({});
       const out = await bulk.schedule({
         posts: [
-          { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
+          { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", override: true, tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
         ],
       });
       assert.equal(out.failed, 1);
@@ -208,6 +231,55 @@ async function main() {
     } finally {
       process.env.PUBLIC_BASE_URL = saved;
     }
+  });
+
+  // ── generic ("facebook") platform support ───────────────────────────────────
+  await check("preview() includes a null-platform channel as a GENERIC target (not skipped)", async () => {
+    installRoutedFetch({
+      // A Facebook Page → identifier "facebook" → canonical platform null.
+      postizIntegrations: [{ id: "pz-fb", name: "My FB Page", identifier: "facebook" }],
+    });
+    const out = await bulk.preview({
+      files: [{ source: { kind: "cloud", ref: "https://www.dropbox.com/s/x/clip.mp4?dl=0" }, fileId: "f1", brief: "budget meal prep" }],
+      channelIds: ["pz-fb"],
+      now: "2026-06-08T12:00:00.000Z",
+    });
+    // NOT skipped, and produces exactly one preview row for the generic channel.
+    assert.equal(out.skippedChannels.length, 0, "facebook channel must not be skipped");
+    assert.equal(out.posts.length, 1);
+    const row = out.posts[0];
+    assert.equal(row.channelId, "pz-fb");
+    assert.equal(row.provider, "postiz");
+    assert.equal(row.platform, "generic");
+    assert.ok(row.caption.length > 0, "generic row must carry a caption");
+    assert.ok(row.scheduledAt && new Date(row.scheduledAt).getTime() > Date.now() - 1, "generic row must have a future schedule time");
+    // It still shows a computed Growth Score (advisory) but is never blocked.
+    assert.equal(typeof row.growth.score, "number");
+  });
+
+  await check("schedule() posts a GENERIC Postiz channel and does NOT gate it", async () => {
+    const mock = installRoutedFetch({});
+    const out = await bulk.schedule({
+      posts: [
+        {
+          fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-fb",
+          provider: "postiz", identifier: "facebook",
+          // A deliberately weak caption (no CTA, 1 tag): for tiktok this would be
+          // GATED, but generic is advisory-only → it must NOT be blocked.
+          caption: "Just a plain caption.", hashtags: ["one"],
+          scheduledAt: "2026-06-09T13:00:00.000Z",
+        },
+      ],
+    });
+    assert.equal(out.scheduled, 1, "generic post must succeed");
+    assert.equal(out.failed, 0);
+    assert.doesNotMatch(out.results[0].error ?? "", /Growth Guardrails/);
+    // The Postiz create-post must carry the caption + settings.__type = "facebook".
+    const post = mock.calls.find((c) => c.url === "http://postiz:5000/public/v1/posts")!;
+    const channel = post.body.posts[0];
+    assert.equal(channel.settings.__type, "facebook");
+    assert.ok(String(channel.value[0].content).includes("Just a plain caption"));
+    assert.equal(channel.settings.title, undefined, "generic must NOT get a YouTube title");
   });
 
   console.log(`\n${passed} checks passed`);
