@@ -14,6 +14,13 @@ import { ZiteError } from "../zite/store.js";
 const router = Router();
 const LOCAL_USER = "local";
 
+/**
+ * Endpoints whose INPUT carries write-only secrets (API keys, app secrets) —
+ * their request body must never be written to logs. Results are safe (the
+ * settings store returns only `configured` booleans, never values).
+ */
+const REDACT_INPUT = new Set(["updatePostizSettings"]);
+
 /** Compact one-line preview of an object for logs (no huge blobs). */
 function preview(obj: unknown, max = 300): string {
   try {
@@ -30,7 +37,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const name = req.params.name;
     const started = Date.now();
-    console.log(`[fn] → ${name} input=${preview(req.body)}`);
+    console.log(`[fn] → ${name} input=${REDACT_INPUT.has(name) ? "[redacted]" : preview(req.body)}`);
 
     const handler = HANDLERS[name];
     if (!handler) {

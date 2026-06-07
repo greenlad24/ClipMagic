@@ -109,9 +109,17 @@ export class PostizApiError extends Error {
   }
 }
 
-/** Internal Postiz base, reachable over the Docker network. */
+/**
+ * Internal Postiz base, reachable over the Docker network.
+ *
+ * The public API is served by the BACKEND, which the in-container proxy mounts
+ * under `/api` (matching Postiz's own NEXT_PUBLIC_BACKEND_URL = MAIN_URL/api).
+ * Hitting `:5000/public/v1` lands on the FRONTEND, which 307-redirects
+ * unauthenticated requests to `/auth` — so the `/api` prefix is required.
+ * Override POSTIZ_INTERNAL_URL with the full backend origin INCLUDING `/api`.
+ */
 export function postizBaseUrl(): string {
-  const base = (process.env.POSTIZ_INTERNAL_URL || "http://postiz:5000").trim().replace(/\/+$/, "");
+  const base = (process.env.POSTIZ_INTERNAL_URL || "http://postiz:5000/api").trim().replace(/\/+$/, "");
   return `${base}/public/v1`;
 }
 

@@ -206,11 +206,15 @@ export function createPostPeerClient(): PostPeerClient {
   return {
     async listAccounts() {
       const raw = await request<unknown>("GET", "/connect/integrations");
-      // The docs show a top-level array; tolerate a { data: [...] } envelope too.
+      // PostPeer wraps the list as { success, total, integrations: [...] }. Also
+      // tolerate a bare array or a { data: [...] } envelope across versions.
+      const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
       const arr = Array.isArray(raw)
         ? raw
-        : raw && typeof raw === "object" && Array.isArray((raw as { data?: unknown }).data)
-        ? ((raw as { data: unknown[] }).data)
+        : obj && Array.isArray(obj.integrations)
+        ? (obj.integrations as unknown[])
+        : obj && Array.isArray(obj.data)
+        ? (obj.data as unknown[])
         : [];
       return arr
         .map((it): PostPeerAccount | null => {
@@ -225,7 +229,13 @@ export function createPostPeerClient(): PostPeerClient {
           const name =
             typeof o.displayName === "string" ? o.displayName : typeof o.name === "string" ? o.name : username;
           const picture =
-            typeof o.avatarUrl === "string" ? o.avatarUrl : typeof o.picture === "string" ? o.picture : undefined;
+            typeof o.imageUrl === "string"
+              ? o.imageUrl
+              : typeof o.avatarUrl === "string"
+              ? o.avatarUrl
+              : typeof o.picture === "string"
+              ? o.picture
+              : undefined;
           return { id, platform, username, name, picture };
         })
         .filter((x): x is PostPeerAccount => x !== null);

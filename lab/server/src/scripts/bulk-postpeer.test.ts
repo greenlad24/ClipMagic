@@ -77,6 +77,20 @@ async function main() {
     assert.equal(accounts[0].name, "N");
   });
 
+  await check("listAccounts() parses the real { success, total, integrations: [...] } envelope", async () => {
+    installMockFetch({
+      success: true,
+      total: 1,
+      integrations: [{ id: "6a25", platform: "tiktok", username: null, displayName: "Jake Dawson", imageUrl: "http://a/y.png" }],
+    });
+    const accounts = await createPostPeerClient().listAccounts();
+    assert.equal(accounts.length, 1);
+    assert.equal(accounts[0].id, "6a25");
+    assert.equal(accounts[0].platform, "tiktok");
+    assert.equal(accounts[0].name, "Jake Dawson");
+    assert.equal(accounts[0].picture, "http://a/y.png");
+  });
+
   await check("createPost() schedules: content + video mediaItem + tiktok platform data + scheduledFor(UTC)", async () => {
     const mock = installMockFetch({ success: true, postId: "p1" });
     await createPostPeerClient().createPost({
