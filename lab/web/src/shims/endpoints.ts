@@ -262,8 +262,19 @@ export type BulkPreviewPost = {
   /** Growth Guardrails score + checklist for this (file × channel) post. */
   growth: Growth;
 };
+/** What one file's captions were grounded in (the transcribe-first pipeline). */
+export type BulkPreviewFile = {
+  fileId: string;
+  /**
+   * Transcript the captions were generated from (trimmed for display), or null
+   * when no speech was detected / transcription was unavailable and the captions
+   * fell back to the brief.
+   */
+  transcript: string | null;
+};
 export type PreviewBulkScheduleOutputType = {
   posts: BulkPreviewPost[];
+  files: BulkPreviewFile[];
   skippedChannels: Array<{ id: string; reason: string }>;
 };
 export type BulkScheduleItemResult = {

@@ -56,6 +56,7 @@ import {
   HardDrive,
   Play,
   Search,
+  FileText,
 } from 'lucide-react';
 import type { Growth, GrowthCheck } from 'zite-endpoints-sdk';
 
@@ -219,6 +220,8 @@ export default function BulkSchedulerPage() {
 
   // Step 2
   const [posts, setPosts] = useState<EditablePost[]>([]);
+  // Per-file transcript the captions were grounded in (null = used the brief).
+  const [transcriptByFile, setTranscriptByFile] = useState<Map<string, string | null>>(new Map());
   const [previewing, setPreviewing] = useState(false);
 
   // Step 3
@@ -298,6 +301,7 @@ export default function BulkSchedulerPage() {
         intent: intent === 'none' ? undefined : intent,
       });
       setPosts(res.posts);
+      setTranscriptByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.transcript])));
       if (res.skippedChannels.length) {
         toast.info(`${res.skippedChannels.length} channel(s) skipped (not connected).`);
       }
@@ -420,6 +424,7 @@ export default function BulkSchedulerPage() {
             posts={posts}
             setPosts={setPosts}
             filesById={filesById}
+            transcriptByFile={transcriptByFile}
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}
           />
@@ -711,7 +716,7 @@ function StepSelect({
                   <Textarea
                     value={f.brief}
                     onChange={(e) => setBrief(f.fileId, e.target.value)}
-                    placeholder="Brief / topic — what's this video about? (auto-seeded from project metadata when available)"
+                    placeholder="Brief / topic (optional) — we transcribe the video and write captions from what's actually said; add a brief only for extra context the audio doesn't cover."
                     className="mt-2 min-h-[52px] text-sm"
                   />
                 </div>
@@ -1136,12 +1141,14 @@ function StepReview({
   posts,
   setPosts,
   filesById,
+  transcriptByFile,
   onBack,
   onNext,
 }: {
   posts: EditablePost[];
   setPosts: React.Dispatch<React.SetStateAction<EditablePost[]>>;
   filesById: Map<string, SelectedFile>;
+  transcriptByFile: Map<string, string | null>;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -1187,6 +1194,7 @@ function StepReview({
                 {file?.label ?? fileId.replace(/^(render|upload|cloud):/, '')}
               </h2>
             </div>
+            <FileTranscript transcript={transcriptByFile.get(fileId) ?? null} />
             <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {rows.map(({ post, index }) => (
                 <PostCard key={`${post.fileId}-${post.channelId}`} post={post} onChange={(patch) => update(index, patch)} />
@@ -1204,6 +1212,51 @@ function StepReview({
           Review schedule <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Read-only, collapsible transcript a file's captions were generated FROM. When
+ * null (no speech detected / transcription unavailable) we say so — the captions
+ * fell back to the brief. Display only: editing to force regen is out of scope.
+ */
+function FileTranscript({ transcript }: { transcript: string | null }) {
+  const [open, setOpen] = useState(false);
+  const hasText = Boolean(transcript && transcript.trim());
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-md border border-border bg-muted/20 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5">
+          <FileText className="h-3.5 w-3.5" />
+          Transcript
+          <span className={hasText ? 'text-muted-foreground' : 'text-amber-500'}>
+            · {hasText ? 'captions grounded in what was said' : 'no speech detected — used your brief'}
+          </span>
+        </span>
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="mt-1.5 rounded-md border border-border bg-background p-2.5">
+          {hasText ? (
+            <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
+              {transcript}
+            </p>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              No speech was detected in this video (or transcription was unavailable), so the captions
+              were written from your brief and project metadata instead.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

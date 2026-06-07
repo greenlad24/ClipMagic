@@ -31,6 +31,7 @@ import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type
 import { buildSchedule, type Intent, type ScheduleItemInput } from "./scheduling.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
+import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
 
 /** Which API a channel posts through. */
 export type Provider = "postiz" | "postpeer";
@@ -243,13 +244,32 @@ export interface PreviewPostDto {
   growth: GrowthDto;
 }
 
+/** Max transcript chars surfaced to the UI per file (display, not the prompt). */
+const MAX_TRANSCRIPT_PREVIEW_CHARS = 2000;
+
+/** What the captions for one file were grounded in (shown in the review step). */
+export interface PreviewFileDto {
+  fileId: string;
+  /**
+   * The transcript the captions were generated from, trimmed for display. null
+   * when no speech was detected / transcription was unavailable — the captions
+   * then fell back to the brief/metadata.
+   */
+  transcript: string | null;
+}
+
 export interface PreviewOutput {
   posts: PreviewPostDto[];
+  /** Per-file transcript surfaced so the UI can show what captions are based on. */
+  files: PreviewFileDto[];
   /** Channels that were requested but skipped (not connected / not short-form). */
   skippedChannels: Array<{ id: string; reason: string }>;
 }
 
-export async function preview(input: PreviewInput): Promise<PreviewOutput> {
+export async function preview(
+  input: PreviewInput,
+  opts: { transcribeDeps?: TranscribeSourceDeps } = {},
+): Promise<PreviewOutput> {
   const now = input.now ? new Date(input.now) : new Date();
   const channels = await listChannels();
   const byId = new Map(channels.map((c) => [c.id, c]));
@@ -273,12 +293,28 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
     fileId: f.fileId || `${f.source.kind}:${f.source.ref}` || `file-${i}`,
   }));
 
-  // 1) Captions: one AI call per file, covering all distinct target platforms.
+  // 1) Transcribe each file FIRST (in parallel across files, cached per resolved
+  // file so we never transcribe the same video twice). Transcription NEVER throws
+  // — a missing key / no speech / ffmpeg-or-download failure / timeout yields null
+  // and that file simply falls back to its brief. One file's failure can't kill
+  // the batch.
+  const transcriber = createTranscriptionCache(opts.transcribeDeps);
+  const transcriptByFile = new Map<string, string | null>();
+  await Promise.all(
+    files.map(async (f) => {
+      const tr = await transcriber.get(f.source);
+      transcriptByFile.set(f.fileId, tr?.text ?? null);
+    }),
+  );
+
+  // 2) Captions: one AI call per file, covering all distinct target platforms,
+  // grounded in the transcript when we have one (brief is supplementary context).
   const platformsNeeded = unique(targets.map((t) => t.plat));
   const captionsByFile = new Map<string, Record<CaptionPlatform, PlatformCaption>>();
   for (const f of files) {
     const brief = (f.brief ?? "").trim() || (await autoSeedBrief(f.source));
-    const caps = await generateCaptions(brief, platformsNeeded);
+    const transcript = transcriptByFile.get(f.fileId) ?? undefined;
+    const caps = await generateCaptions(brief, platformsNeeded, { transcript });
     captionsByFile.set(f.fileId, caps);
   }
 
@@ -337,7 +373,15 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
     }
   }
 
-  return { posts, skippedChannels };
+  const filesDto: PreviewFileDto[] = files.map((f) => {
+    const t = transcriptByFile.get(f.fileId) ?? null;
+    return {
+      fileId: f.fileId,
+      transcript: t ? t.slice(0, MAX_TRANSCRIPT_PREVIEW_CHARS) : null,
+    };
+  });
+
+  return { posts, files: filesDto, skippedChannels };
 }
 
 // ── schedule (actually post) ──────────────────────────────────────────────────

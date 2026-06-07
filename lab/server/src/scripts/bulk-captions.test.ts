@@ -18,6 +18,7 @@ import {
   normalizeHashtag,
   scoreCaption,
   PLATFORM_RULES,
+  MAX_TRANSCRIPT_PROMPT_CHARS,
 } from "../postiz/captions.js";
 import { normalizeCloudLink, resolveSourceUrl } from "../postiz/fileSources.js";
 
@@ -125,6 +126,58 @@ async function main() {
     const res = await generateCaptions("a brief", ["generic"], mock);
     assert.ok("generic" in res, "generic must be generated, not filtered");
     assert.equal(res.generic.firstLineHook, "Gen hook");
+  });
+
+  await check("transcript flows into the caption prompt + supersedes the brief", async () => {
+    let seenSystem = "";
+    let seenUser = "";
+    const mock = async (system: string, user: string) => {
+      seenSystem = system;
+      seenUser = user;
+      return JSON.stringify({ platforms: { tiktok: { firstLineHook: "h", caption: "h\nb?", hashtags: ["fyp"] } } });
+    };
+    const transcript = "I tested three budget espresso machines and one shocked me.";
+    await generateCaptions("a generic brief", ["tiktok"], { transcript, generate: mock });
+    assert.match(seenUser, /Video transcript/);
+    assert.ok(seenUser.includes(transcript), "transcript text must be in the user prompt");
+    assert.match(seenUser, /supplementary context only/);
+    assert.match(seenSystem, /TRANSCRIPT of what is ACTUALLY SAID/);
+  });
+
+  await check("no transcript → prompt behaves as before (brief only)", async () => {
+    let seenUser = "";
+    let seenSystem = "";
+    const mock = async (system: string, user: string) => {
+      seenSystem = system;
+      seenUser = user;
+      return JSON.stringify({ platforms: { tiktok: { firstLineHook: "h", caption: "h\nb?", hashtags: ["fyp"] } } });
+    };
+    await generateCaptions("just a brief", ["tiktok"], { generate: mock });
+    assert.doesNotMatch(seenUser, /Video transcript/);
+    assert.doesNotMatch(seenSystem, /TRANSCRIPT of what is ACTUALLY SAID/);
+    assert.match(seenUser, /Video brief \/ topic: just a brief/);
+  });
+
+  await check("a very long transcript is clipped before going to the model", async () => {
+    let seenUser = "";
+    const mock = async (_s: string, user: string) => {
+      seenUser = user;
+      return JSON.stringify({ platforms: { tiktok: { firstLineHook: "h", caption: "h\nb?", hashtags: ["fyp"] } } });
+    };
+    const huge = "word ".repeat(5000); // ~25k chars
+    await generateCaptions("", ["tiktok"], { transcript: huge, generate: mock });
+    // The user prompt also contains some scaffolding, so allow a small margin.
+    assert.ok(
+      seenUser.length <= MAX_TRANSCRIPT_PROMPT_CHARS + 500,
+      `expected clipped prompt, got ${seenUser.length} chars`,
+    );
+  });
+
+  await check("legacy positional generate fn still works (backward-compat)", async () => {
+    const mock = async () =>
+      JSON.stringify({ platforms: { tiktok: { firstLineHook: "TT", caption: "TT\nbody?", hashtags: ["fyp"] } } });
+    const res = await generateCaptions("brief", ["tiktok"], mock);
+    assert.equal(res.tiktok.firstLineHook, "TT");
   });
 
   await check("generateCaptions tolerates malformed AI JSON (no throw)", async () => {

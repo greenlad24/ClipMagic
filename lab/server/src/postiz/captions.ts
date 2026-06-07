@@ -272,7 +272,10 @@ const defaultGenerate: CaptionAiCall = (system, user) =>
     messages: [{ role: "user", content: user }],
   });
 
-function buildSystemPrompt(platforms: CaptionPlatform[]): string {
+/** Max transcript characters sent to the model (keeps the prompt cost-bounded). */
+export const MAX_TRANSCRIPT_PROMPT_CHARS = 4000;
+
+function buildSystemPrompt(platforms: CaptionPlatform[], hasTranscript: boolean): string {
   const rules = platforms
     .map((p) => {
       const r = PLATFORM_RULES[p];
@@ -281,6 +284,9 @@ function buildSystemPrompt(platforms: CaptionPlatform[]): string {
     .join("\n");
   return [
     "You are a short-form social media SEO copywriter. You write DISTINCT, platform-native captions for the SAME video, optimized for each platform's search and discovery in 2026.",
+    hasTranscript
+      ? "You are given a TRANSCRIPT of what is ACTUALLY SAID in the video. Base every caption on the real spoken content: pull the genuine hook, the key points, and the search keywords straight from the transcript. The brief is only SUPPLEMENTARY context — when the transcript and the brief disagree, trust the transcript. Never invent claims that aren't supported by what's said."
+      : "",
     "Rules per platform:",
     rules,
     "",
@@ -295,14 +301,25 @@ function buildSystemPrompt(platforms: CaptionPlatform[]): string {
     "For EACH requested platform return: a keyword-rich firstLineHook, a full caption (whose first line IS that hook and which ENDS with the CTA/question), and a hashtags array (no leading '#', no spaces inside a tag).",
     "Make each platform's caption genuinely different in tone and structure — do NOT reuse the same text across platforms.",
     'Respond as JSON: { "platforms": { "<platform>": { "firstLineHook": string, "caption": string, "hashtags": string[] } } }',
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-function buildUserPrompt(brief: string, platforms: CaptionPlatform[]): string {
-  return [
-    `Video brief / topic: ${brief.trim() || "(no brief provided — infer a sensible generic topic from the filename context)"}`,
+function buildUserPrompt(brief: string, platforms: CaptionPlatform[], transcript?: string): string {
+  const ts = (transcript ?? "").trim();
+  const lines: string[] = [];
+  if (ts) {
+    const clipped = ts.length > MAX_TRANSCRIPT_PROMPT_CHARS ? ts.slice(0, MAX_TRANSCRIPT_PROMPT_CHARS) : ts;
+    lines.push("Video transcript (what is actually said — ground the captions in this):", clipped, "");
+  }
+  lines.push(
+    `Video brief / topic${ts ? " (supplementary context only)" : ""}: ${
+      brief.trim() || "(no brief provided — infer a sensible topic from the transcript and/or filename context)"
+    }`,
     `Platforms to write for: ${platforms.join(", ")}`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 /** Normalize a single hashtag: strip '#', spaces, punctuation; keep alnum/underscore. */
@@ -359,19 +376,37 @@ export function assemblePlatformCaption(
   };
 }
 
+/** Options for generateCaptions. */
+export interface GenerateCaptionsOptions {
+  /** Transcript of what's actually said in the video — grounds the captions. */
+  transcript?: string;
+  /** Injectable AI call (tests pass a stub). */
+  generate?: CaptionAiCall;
+}
+
 /**
  * Generate captions for one brief across the requested platforms. Returns a map
- * keyed by platform. `generate` is injectable for tests.
+ * keyed by platform.
+ *
+ * The 3rd argument is either the injectable AI call (legacy/positional form used
+ * by existing tests) OR an options object `{ transcript?, generate? }`. When a
+ * transcript is supplied the prompt is grounded in the ACTUAL spoken content;
+ * otherwise behavior is exactly as before (brief/metadata only).
  */
 export async function generateCaptions(
   brief: string,
   platforms: CaptionPlatform[],
-  generate: CaptionAiCall = defaultGenerate,
+  opts: GenerateCaptionsOptions | CaptionAiCall = {},
 ): Promise<Record<CaptionPlatform, PlatformCaption>> {
+  const { transcript, generate } =
+    typeof opts === "function" ? { transcript: undefined, generate: opts } : opts;
+  const gen = generate ?? defaultGenerate;
+  const ts = (transcript ?? "").trim();
+
   const wanted = platforms.filter((p) => CAPTION_PLATFORMS.includes(p));
   if (wanted.length === 0) return {} as Record<CaptionPlatform, PlatformCaption>;
 
-  const rawJson = await generate(buildSystemPrompt(wanted), buildUserPrompt(brief, wanted));
+  const rawJson = await gen(buildSystemPrompt(wanted, Boolean(ts)), buildUserPrompt(brief, wanted, ts));
   let parsed: { platforms?: Record<string, unknown> } = {};
   try {
     parsed = JSON.parse(rawJson);
