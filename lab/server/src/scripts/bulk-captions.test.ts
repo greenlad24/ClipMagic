@@ -17,6 +17,7 @@ import {
   generateCaptions,
   normalizeHashtag,
   scoreCaption,
+  stripTrailingHashtags,
   PLATFORM_RULES,
   MAX_TRANSCRIPT_PROMPT_CHARS,
 } from "../postiz/captions.js";
@@ -75,6 +76,48 @@ async function main() {
     const long = "x".repeat(2000);
     const out = assemblePlatformCaption("tiktok", { firstLineHook: "Hook", caption: long, hashtags: [] });
     assert.ok(out.caption.length <= PLATFORM_RULES.tiktok.maxCaptionChars);
+  });
+
+  await check("stripTrailingHashtags peels only the trailing tag block", () => {
+    const r = stripTrailingHashtags("Real hook. What do you think?\n\n#AI #FutureOfWork #MIT");
+    assert.equal(r.caption, "Real hook. What do you think?");
+    assert.deepEqual(r.tags, ["AI", "FutureOfWork", "MIT"]);
+    // mid-text '#1' is NOT stripped (only a contiguous trailing run).
+    assert.equal(stripTrailingHashtags("My #1 tip is huge").caption, "My #1 tip is huge");
+  });
+
+  await check("assemble strips inline trailing hashtags into the tags array (no dup, ends on ?)", () => {
+    const out = assemblePlatformCaption("tiktok", {
+      firstLineHook: "AI and jobs explained",
+      caption: "AI and jobs explained\n\nThe data is nuanced. What part of your job is safe?\n\n#AI #Jobs #MIT",
+      hashtags: ["AI"],
+    });
+    assert.ok(!out.caption.includes("#"), "caption body must not retain hashtags");
+    assert.ok(/\?\s*$/.test(out.caption), "caption must end on the question");
+    for (const t of ["AI", "Jobs", "MIT"]) assert.ok(out.hashtags.includes(t), `tag ${t} preserved`);
+    // The required comment-CTA passes with no manual fix.
+    const cta = scoreCaption(out.caption, out.hashtags, "tiktok").checks.find((c) => c.id === "comment-cta")!;
+    assert.equal(cta.pass, true);
+  });
+
+  await check("assemble appends a closing question when the model ends on a statement", () => {
+    const out = assemblePlatformCaption("youtube", {
+      firstLineHook: "MIT study: tasks vs jobs",
+      caption: "MIT study: tasks vs jobs\n\nIt's about tasks, not jobs. Remember that.\n\n#Shorts #AI",
+      hashtags: [],
+    });
+    assert.ok(/\?\s*$/.test(out.caption), "a question is guaranteed at the end");
+    const cta = scoreCaption(out.caption, out.hashtags, "youtube").checks.find((c) => c.id === "comment-cta")!;
+    assert.equal(cta.pass, true);
+  });
+
+  await check("scoreCaption: a question followed by a hashtag block still passes comment-cta", () => {
+    const { checks } = scoreCaption(
+      "Keyword hook here. What's the first task AI takes from you?\n\n#AI #FutureOfWork #MIT",
+      ["AI", "FutureOfWork", "MIT"],
+      "tiktok",
+    );
+    assert.equal(checks.find((c) => c.id === "comment-cta")!.pass, true);
   });
 
   await check("generateCaptions returns distinct entries per platform (mock AI)", async () => {

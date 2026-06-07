@@ -175,7 +175,9 @@ export function scoreCaption(
   const strongHook = line1.length > 0 && !weakOpen;
 
   // comment-cta: ends with a question, or contains an explicit comment/CTA prompt.
-  const endsQuestion = /\?\s*$/.test(text);
+  // Ignore a trailing hashtag block so a question followed by "#tag #tag" still
+  // counts as ending on the question.
+  const endsQuestion = /\?\s*$/.test(stripTrailingHashtags(text).caption);
   const hasCta = endsQuestion || CTA_PROMPT_RE.test(text);
 
   // hashtag count + mix.
@@ -330,6 +332,31 @@ export function normalizeHashtag(raw: unknown): string | null {
 }
 
 /**
+ * Peel a TRAILING block of hashtags off a caption body, returning the cleaned
+ * caption + the hashtags that were inline. The model often ends a caption with a
+ * "#tag #tag" block, which (a) duplicates the hashtags we append at post time and
+ * (b) pushes the comment-driving question off the end, breaking the required CTA
+ * check. Hashtags belong in the hashtags array only — this keeps the body ending
+ * on the question. Only a CONTIGUOUS trailing run is removed (mid-text tags stay).
+ */
+export function stripTrailingHashtags(caption: string): { caption: string; tags: string[] } {
+  const tags: string[] = [];
+  let text = (caption ?? "").replace(/\s+$/, "");
+  const trailingTag = /\s*#([A-Za-z0-9_]+)\s*$/;
+  let m: RegExpMatchArray | null;
+  while ((m = text.match(trailingTag)) && m.index !== undefined) {
+    tags.unshift(m[1]);
+    text = text.slice(0, m.index).replace(/\s+$/, "");
+  }
+  return { caption: text.trim(), tags };
+}
+
+/** True when a caption ends on a question or carries an explicit comment CTA. */
+function endsWithCta(caption: string): boolean {
+  return /\?\s*$/.test(caption.trim()) || CTA_PROMPT_RE.test(caption);
+}
+
+/**
  * Validate + clamp one platform's model output to its rule. Exported + pure so
  * the assembly is unit-tested without any AI. `youtube` always keeps #Shorts.
  */
@@ -344,6 +371,16 @@ export function assemblePlatformCaption(
   // Ensure the hook IS the first line of the caption.
   if (firstLineHook && !caption.startsWith(firstLineHook)) {
     caption = `${firstLineHook}\n\n${caption}`.trim();
+  }
+  // Pull any trailing hashtag block OUT of the body (it's merged into the tags
+  // below + appended once at post time). This stops duplicate tags AND keeps the
+  // caption ending on its comment-driving question.
+  const stripped = stripTrailingHashtags(caption);
+  caption = stripped.caption;
+  // GUARANTEE the required comment-CTA passes with zero manual intervention: if
+  // the model ended on a statement (not a question/CTA), append a closing question.
+  if (caption && !endsWithCta(caption)) {
+    caption = `${caption}\n\nWhat do you think?`;
   }
   if (caption.length > rule.maxCaptionChars) {
     // Word-safe clamp: never cut mid-word (which would leave a dangling fragment
@@ -365,6 +402,8 @@ export function assemblePlatformCaption(
     tags.push(t);
   };
   if (Array.isArray(raw.hashtags)) for (const t of raw.hashtags) pushTag(normalizeHashtag(t));
+  // Merge any hashtags we peeled out of the caption body (so none are lost).
+  for (const t of stripped.tags) pushTag(normalizeHashtag(t));
 
   // YouTube must always carry #Shorts (front of the list).
   if (platform === "youtube" && !seen.has("shorts")) {
