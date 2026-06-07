@@ -91,51 +91,6 @@ interface SelectedFile {
   cloudUrl?: string;
 }
 
-/** A small, lazy inline preview tile for a selected clip. */
-function ClipThumb({ file, className }: { file: SelectedFile; className?: string }) {
-  const base = `shrink-0 overflow-hidden rounded-md bg-muted ${className ?? 'h-16 w-10'}`;
-  // render / upload → stream inline (served by the lab); cheap with metadata-only.
-  if (file.source.kind !== 'cloud' && file.thumbUrl) {
-    return <video src={file.thumbUrl} className={`${base} object-cover`} muted preload="metadata" />;
-  }
-  // cloud with a thumbnail (Drive) → image + click-to-play the direct URL.
-  if (file.source.kind === 'cloud' && file.thumbUrl) {
-    return (
-      <a
-        href={file.cloudUrl}
-        target="_blank"
-        rel="noreferrer"
-        className={`group relative block ${base}`}
-        title={`Play ${file.label}`}
-      >
-        <img src={file.thumbUrl} alt="" className="h-full w-full object-cover" />
-        <span className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
-          <Play className="h-4 w-4 text-white" />
-        </span>
-      </a>
-    );
-  }
-  // cloud without a thumbnail (Dropbox) → a play tile pointing at the direct URL.
-  if (file.source.kind === 'cloud' && file.cloudUrl) {
-    return (
-      <a
-        href={file.cloudUrl}
-        target="_blank"
-        rel="noreferrer"
-        className={`flex items-center justify-center ${base} text-muted-foreground transition-colors hover:text-foreground`}
-        title={`Play ${file.label}`}
-      >
-        <Play className="h-5 w-5" />
-      </a>
-    );
-  }
-  return (
-    <div className={`flex items-center justify-center ${base}`}>
-      <Film className="h-5 w-5 text-muted-foreground" />
-    </div>
-  );
-}
-
 /** Larger preview player for the review step — streams renders/uploads inline. */
 function ReviewPreview({ file }: { file: SelectedFile }) {
   const frame = 'h-28 w-[63px] shrink-0 overflow-hidden rounded-lg border border-border bg-muted';
@@ -169,6 +124,46 @@ function ReviewPreview({ file }: { file: SelectedFile }) {
   return (
     <div className={`flex items-center justify-center ${frame}`}>
       <Film className="h-6 w-6 text-muted-foreground" />
+    </div>
+  );
+}
+
+/**
+ * Larger, click-to-play preview for the SELECT-files screen. render/upload clips
+ * stream inline with native controls (the first frame shows as the poster and it
+ * plays on click — metadata-only until then). Cloud clips open their direct URL
+ * in a new tab (cross-origin direct links can't reliably stream inline).
+ */
+function SelectPreview({ file }: { file: SelectedFile }) {
+  const frame = 'h-44 w-[99px] shrink-0 overflow-hidden rounded-lg border border-border bg-black';
+  if (file.source.kind !== 'cloud' && file.thumbUrl) {
+    return <video src={file.thumbUrl} className={`${frame} object-contain`} controls preload="metadata" />;
+  }
+  if (file.source.kind === 'cloud' && file.cloudUrl) {
+    return (
+      <a
+        href={file.cloudUrl}
+        target="_blank"
+        rel="noreferrer"
+        className={`group relative block ${frame}`}
+        title={`Play ${file.label}`}
+      >
+        {file.thumbUrl ? (
+          <img src={file.thumbUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+            <Film className="h-7 w-7" />
+          </span>
+        )}
+        <span className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-90 transition-opacity group-hover:opacity-100">
+          <Play className="h-7 w-7 text-white" />
+        </span>
+      </a>
+    );
+  }
+  return (
+    <div className={`flex items-center justify-center ${frame}`}>
+      <Film className="h-7 w-7 text-muted-foreground" />
     </div>
   );
 }
@@ -703,7 +698,7 @@ function StepSelect({
           <div className="mt-4 space-y-4">
             {selected.map((f) => (
               <div key={f.fileId} className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
-                <ClipThumb file={f} />
+                <SelectPreview file={f} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium text-foreground" title={f.label}>
