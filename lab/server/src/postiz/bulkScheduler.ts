@@ -29,9 +29,10 @@ import {
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
 import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type CaptionPlatform } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput } from "./scheduling.js";
-import { resolveSourceUrl, resolvePublicSourceUrl, type FileSourceRef } from "./fileSources.js";
+import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
 import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
+import { readFile } from "node:fs/promises";
 
 /** Which API a channel posts through. */
 export type Provider = "postiz" | "postpeer";
@@ -457,9 +458,12 @@ async function evaluatePostGrowth(p: SchedulePostInput, probeFn?: ProbeFn): Prom
  * enforced here (not on the client) so an edited caption or a bad video can't be
  * scheduled by tampering with the request. `recommended`/`unknown` never block.
  */
+/** Loads a source's bytes for Postiz's multipart upload. Injectable for tests. */
+export type LoadMediaFn = (source: FileSourceRef) => Promise<{ data: Buffer; filename: string; contentType: string }>;
+
 export async function schedule(
   input: { posts: SchedulePostInput[] },
-  opts: { probeFn?: ProbeFn } = {},
+  opts: { probeFn?: ProbeFn; loadMedia?: LoadMediaFn } = {},
 ): Promise<ScheduleOutput> {
   const posts = Array.isArray(input.posts) ? input.posts : [];
 
@@ -486,7 +490,7 @@ export async function schedule(
 
   const results: ScheduleItemResult[] = [
     ...blocked,
-    ...(await schedulePostiz(postizPosts)),
+    ...(await schedulePostiz(postizPosts, opts.loadMedia ?? loadPostizMedia)),
     ...(await schedulePostPeer(postPeerPosts)),
   ];
 
@@ -494,8 +498,8 @@ export async function schedule(
   return { results, scheduled, failed: results.length - scheduled };
 }
 
-/** Postiz leg: upload each file once (internal URL), then createPost per item. */
-async function schedulePostiz(posts: SchedulePostInput[]): Promise<ScheduleItemResult[]> {
+/** Postiz leg: upload each file's BYTES once, then createPost per item. */
+async function schedulePostiz(posts: SchedulePostInput[], loadMedia: LoadMediaFn): Promise<ScheduleItemResult[]> {
   if (posts.length === 0) return [];
   const client = createPostizClient();
 
@@ -508,8 +512,11 @@ async function schedulePostiz(posts: SchedulePostInput[]): Promise<ScheduleItemR
 
   for (const [fileId, source] of sourceByFile) {
     try {
-      const url = resolveSourceUrl(source);
-      const up = await client.uploadFromUrl(url);
+      // Postiz REFUSES upload-from-url for internal / non-HTTPS URLs, so we hand
+      // it the file BYTES via multipart /upload (also fixes the missing-extension
+      // create-post rejection, #1147, since we control the filename).
+      const media = await loadMedia(source);
+      const up = await client.upload(media.data, media.filename, media.contentType);
       uploadCache.set(fileId, { id: up.id, path: up.path });
     } catch (e) {
       uploadCache.set(fileId, { error: errMsg(e) });
@@ -601,6 +608,43 @@ async function schedulePostPeer(posts: SchedulePostInput[]): Promise<ScheduleIte
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
+/** Safety cap on bytes pulled into memory for a Postiz upload (short clips are small). */
+const MAX_POSTIZ_MEDIA_BYTES = 300 * 1024 * 1024;
+
+/** video/* content-type from a filename extension (defaults to mp4). */
+function guessVideoContentType(name: string): string {
+  const ext = name.toLowerCase().split(".").pop() || "";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "webm") return "video/webm";
+  if (ext === "m4v") return "video/x-m4v";
+  return "video/mp4";
+}
+
+/**
+ * Load a source's bytes for Postiz's multipart /upload. Local renders/uploads are
+ * read from disk; cloud clips are downloaded from their (public) direct URL. We
+ * always upload bytes (never a URL) because Postiz rejects internal/non-HTTPS
+ * upload-from-url targets — and a real filename avoids its missing-extension bug.
+ */
+async function loadPostizMedia(
+  source: FileSourceRef,
+): Promise<{ data: Buffer; filename: string; contentType: string }> {
+  const filename = filenameFor(source);
+  const localPath = await resolveLocalPath(source);
+  if (localPath) {
+    return { data: await readFile(localPath), filename, contentType: guessVideoContentType(filename) };
+  }
+  // No local file (cloud) → download the direct URL into memory.
+  const url = resolveSourceUrl(source);
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) throw new Error(`could not fetch media (HTTP ${res.status})`);
+  const data = Buffer.from(await res.arrayBuffer());
+  if (data.length > MAX_POSTIZ_MEDIA_BYTES) {
+    throw new Error(`media is too large to upload (${Math.round(data.length / 1e6)} MB)`);
+  }
+  return { data, filename, contentType: res.headers.get("content-type") || guessVideoContentType(filename) };
+}
+
 /** Append hashtags to the caption body (most platforms accept inline tags). */
 export function composeContent(caption: string, hashtags: string[]): string {
   const tags = hashtags.filter(Boolean).map((t) => `#${t}`).join(" ");

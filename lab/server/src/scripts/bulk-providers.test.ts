@@ -64,6 +64,7 @@ function installRoutedFetch(opts: {
     if (u.includes("/v1/messages")) return anthropic();
     if (u.includes("/public/v1/integrations")) return json(opts.postizIntegrations ?? []);
     if (u.includes("/public/v1/upload-from-url")) return json({ id: "up1", path: "http://internal/x.mp4" });
+    if (u.includes("/public/v1/upload")) return json({ id: "up1", path: "http://internal/x.mp4" });
     if (u.includes("/public/v1/posts")) {
       if (opts.failPostizPosts) return json({ message: "boom" }, false, 400);
       return json({ id: "postiz-post" });
@@ -170,7 +171,9 @@ async function main() {
   // ── routing in schedule() ──────────────────────────────────────────────────
   // These exercise PROVIDER ROUTING, not the Growth gate, so the (deliberately
   // minimal) captions carry override:true to skip the gate and reach the provider.
-  await check("schedule() ROUTES per provider: postiz→Postiz(internal), postpeer→PostPeer(public)", async () => {
+  // Media bytes are injected (stubMedia) so the schedule path needs no real file.
+  const stubMedia = async () => ({ data: Buffer.from("vid"), filename: "v.mp4", contentType: "video/mp4" });
+  await check("schedule() ROUTES per provider: postiz→Postiz(bytes upload), postpeer→PostPeer(public URL)", async () => {
     const mock = installRoutedFetch({});
     const out = await bulk.schedule({
       posts: [
@@ -184,13 +187,13 @@ async function main() {
           tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false },
         },
       ],
-    });
+    }, { loadMedia: stubMedia });
     assert.equal(out.scheduled, 2);
     assert.equal(out.failed, 0);
 
-    // Postiz: an upload-from-url (internal host) + a /public/v1/posts.
-    const postizUpload = mock.calls.find((c) => c.url.includes("/upload-from-url"))!;
-    assert.ok(postizUpload.body.url.startsWith("http://clipmagic-lab:9090/"), "postiz must pull the INTERNAL url");
+    // Postiz: a multipart byte /upload (NOT upload-from-url) + a /public/v1/posts.
+    assert.ok(mock.calls.some((c) => c.url === "http://postiz:5000/public/v1/upload"), "postiz byte upload missing");
+    assert.ok(!mock.calls.some((c) => c.url.includes("/upload-from-url")), "must NOT use upload-from-url (Postiz rejects internal URLs)");
     assert.ok(mock.calls.some((c) => c.url === "http://postiz:5000/public/v1/posts"), "postiz createPost missing");
 
     // PostPeer: a /v1/posts with the PUBLIC media url + tiktok platform data.
@@ -208,7 +211,7 @@ async function main() {
         { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-tt", provider: "postiz", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:00:00.000Z", override: true },
         { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", override: true, tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
       ],
-    });
+    }, { loadMedia: stubMedia });
     assert.equal(out.results.length, 2, "both items must be reported");
     const pz = out.results.find((r) => r.channelId === "pz-tt")!;
     const pp = out.results.find((r) => r.channelId === "pp-tt")!;
@@ -270,7 +273,7 @@ async function main() {
           scheduledAt: "2026-06-09T13:00:00.000Z",
         },
       ],
-    });
+    }, { loadMedia: stubMedia });
     assert.equal(out.scheduled, 1, "generic post must succeed");
     assert.equal(out.failed, 0);
     assert.doesNotMatch(out.results[0].error ?? "", /Growth Guardrails/);
