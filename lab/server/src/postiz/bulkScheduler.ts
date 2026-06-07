@@ -19,26 +19,71 @@ import {
   PostizApiError,
   type PostizIntegration,
 } from "./client.js";
+import {
+  createPostPeerClient,
+  postPeerApiConfigured,
+  PostPeerApiError,
+  type PostPeerAccount,
+  type PostPeerTikTokOptions,
+} from "./postpeerClient.js";
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
 import { generateCaptions, type PlatformCaption } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput } from "./scheduling.js";
-import { resolveSourceUrl, type FileSourceRef } from "./fileSources.js";
+import { resolveSourceUrl, resolvePublicSourceUrl, type FileSourceRef } from "./fileSources.js";
+
+/** Which API a channel posts through. */
+export type Provider = "postiz" | "postpeer";
+
+/** Sensible TikTok Direct-Post defaults (public, all interactions on, not commercial). */
+export const DEFAULT_TIKTOK_OPTIONS: PostPeerTikTokOptions = {
+  privacyLevel: "PUBLIC_TO_EVERYONE",
+  allowComment: true,
+  allowDuet: true,
+  allowStitch: true,
+  commercialContent: false,
+};
 
 // ── status / channels ────────────────────────────────────────────────────────
-export async function getStatus(): Promise<{ apiKeyConfigured: boolean; channelCount: number; channels: ChannelDto[]; error?: string }> {
-  const apiKeyConfigured = postizApiConfigured();
-  if (!apiKeyConfigured) return { apiKeyConfigured: false, channelCount: 0, channels: [] };
-  try {
-    const channels = await listChannels();
-    return { apiKeyConfigured: true, channelCount: channels.length, channels };
-  } catch (e) {
-    // Configured but Postiz unreachable / key invalid — report it without leaking the key.
-    return { apiKeyConfigured: true, channelCount: 0, channels: [], error: errMsg(e) };
-  }
+/**
+ * Status is provider-aware: each posting provider (Postiz, PostPeer) reports its
+ * own configured-boolean + channel count, and the channels list is the UNION of
+ * both. `apiKeyConfigured` stays for backward-compat = "any provider configured".
+ */
+export interface ProviderStatus {
+  configured: boolean;
+  channelCount: number;
+  /** Set when configured but the provider's API was unreachable / key invalid. */
+  error?: string;
+}
+
+export async function getStatus(): Promise<{
+  apiKeyConfigured: boolean;
+  channelCount: number;
+  channels: ChannelDto[];
+  providers: { postiz: ProviderStatus; postpeer: ProviderStatus };
+  error?: string;
+}> {
+  const [postiz, postpeer] = await Promise.all([listPostizChannels.safe(), listPostPeerChannels.safe()]);
+  const channels = [...postiz.channels, ...postpeer.channels];
+  const providers = {
+    postiz: { configured: postizApiConfigured(), channelCount: postiz.channels.length, error: postiz.error },
+    postpeer: { configured: postPeerApiConfigured(), channelCount: postpeer.channels.length, error: postpeer.error },
+  };
+  // First provider error (if any) surfaces as the top-level error for older UIs.
+  const error = postiz.error || postpeer.error;
+  return {
+    apiKeyConfigured: providers.postiz.configured || providers.postpeer.configured,
+    channelCount: channels.length,
+    channels,
+    providers,
+    ...(error ? { error } : {}),
+  };
 }
 
 export interface ChannelDto {
   id: string;
+  /** Which API this channel posts through. */
+  provider: Provider;
   name: string;
   identifier: string;
   /** Our canonical short-form platform, or null if not a tuned short platform. */
@@ -47,9 +92,10 @@ export interface ChannelDto {
   profile?: string;
 }
 
-function toChannelDto(it: PostizIntegration): ChannelDto {
+function postizToChannelDto(it: PostizIntegration): ChannelDto {
   return {
     id: it.id,
+    provider: "postiz",
     name: it.name,
     identifier: it.identifier,
     platform: toShortPlatform(it.identifier),
@@ -58,11 +104,56 @@ function toChannelDto(it: PostizIntegration): ChannelDto {
   };
 }
 
-/** Connected (non-disabled) channels. */
-export async function listChannels(): Promise<ChannelDto[]> {
+function postPeerToChannelDto(a: PostPeerAccount): ChannelDto {
+  // PostPeer accounts we surface are TikTok only (filtered below).
+  return {
+    id: a.id,
+    provider: "postpeer",
+    name: a.name || a.username || a.id,
+    identifier: a.platform,
+    platform: toShortPlatform(a.platform),
+    picture: a.picture,
+    profile: a.username,
+  };
+}
+
+/** Connected (non-disabled) Postiz channels. */
+async function fetchPostizChannels(): Promise<ChannelDto[]> {
+  if (!postizApiConfigured()) return [];
   const client = createPostizClient();
   const integrations = await client.listIntegrations();
-  return integrations.filter((i) => !i.disabled).map(toChannelDto);
+  return integrations.filter((i) => !i.disabled).map(postizToChannelDto);
+}
+
+/** Connected PostPeer TikTok accounts. */
+async function fetchPostPeerChannels(): Promise<ChannelDto[]> {
+  if (!postPeerApiConfigured()) return [];
+  const client = createPostPeerClient();
+  const accounts = await client.listAccounts();
+  return accounts.filter((a) => a.platform === "tiktok").map(postPeerToChannelDto);
+}
+
+/** Wrap a channel fetch so one provider's failure never hides the other's. */
+function withSafe(fetch: () => Promise<ChannelDto[]>) {
+  return {
+    fetch,
+    async safe(): Promise<{ channels: ChannelDto[]; error?: string }> {
+      try {
+        return { channels: await fetch() };
+      } catch (e) {
+        return { channels: [], error: errMsg(e) };
+      }
+    },
+  };
+}
+
+const listPostizChannels = withSafe(fetchPostizChannels);
+const listPostPeerChannels = withSafe(fetchPostPeerChannels);
+
+/** Connected channels across BOTH providers (degrades to whichever is configured). */
+export async function listChannels(): Promise<ChannelDto[]> {
+  const [postiz, postpeer] = await Promise.all([listPostizChannels.safe(), listPostPeerChannels.safe()]);
+  return [...postiz.channels, ...postpeer.channels];
 }
 
 // ── preview ──────────────────────────────────────────────────────────────────
@@ -90,6 +181,8 @@ export interface PreviewInput {
 export interface PreviewPostDto {
   fileId: string;
   channelId: string;
+  /** Which API this post routes through (postiz | postpeer). */
+  provider: Provider;
   channelName: string;
   identifier: string;
   platform: ShortPlatform;
@@ -98,6 +191,8 @@ export interface PreviewPostDto {
   hashtags: string[];
   scheduledAt: string;
   reason: string;
+  /** TikTok Direct-Post options (postpeer/tiktok only); defaults applied. */
+  tiktok?: PostPeerTikTokOptions;
 }
 
 export interface PreviewOutput {
@@ -166,6 +261,7 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
       posts.push({
         fileId: f.fileId,
         channelId: c.id,
+        provider: c.provider,
         channelName: c.name,
         identifier: c.identifier,
         platform: c.platform!,
@@ -174,6 +270,11 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
         hashtags: cap?.hashtags ?? [],
         scheduledAt: sched.scheduledAt,
         reason: sched.reason,
+        // Seed TikTok Direct-Post controls (PostPeer only) with sensible defaults
+        // so the review UI can render the privacy/disclosure toggles.
+        ...(c.provider === "postpeer" && c.platform === "tiktok"
+          ? { tiktok: { ...DEFAULT_TIKTOK_OPTIONS } }
+          : {}),
       });
     }
   }
@@ -188,12 +289,16 @@ export interface SchedulePostInput {
   /** The media source for this file (so we can upload once per file). */
   source: FileSourceRef;
   channelId: string;
+  /** Which API to route this item through. Defaults to "postiz" (backward-compat). */
+  provider?: Provider;
   identifier: string;
   caption: string;
   hashtags: string[];
   /** SEO title/hook — used as the YouTube video title. */
   firstLineHook?: string;
   scheduledAt: string;
+  /** TikTok Direct-Post options (postpeer/tiktok only); defaults applied if absent. */
+  tiktok?: PostPeerTikTokOptions;
 }
 
 export interface ScheduleItemResult {
@@ -209,9 +314,31 @@ export interface ScheduleOutput {
   failed: number;
 }
 
+/**
+ * Schedule each item through ITS channel's provider, aggregating per-item
+ * success/failure across BOTH providers in one result. Postiz items upload the
+ * media to Postiz first (internal URL pull); PostPeer items hand TikTok the
+ * PUBLIC media URL (PostPeer pulls it externally + drives TikTok's upload/poll).
+ * No item is ever lost — a provider/upload failure fails only the affected items.
+ */
 export async function schedule(input: { posts: SchedulePostInput[] }): Promise<ScheduleOutput> {
-  const client = createPostizClient();
   const posts = Array.isArray(input.posts) ? input.posts : [];
+  const postizPosts = posts.filter((p) => (p.provider ?? "postiz") === "postiz");
+  const postPeerPosts = posts.filter((p) => p.provider === "postpeer");
+
+  const results: ScheduleItemResult[] = [
+    ...(await schedulePostiz(postizPosts)),
+    ...(await schedulePostPeer(postPeerPosts)),
+  ];
+
+  const scheduled = results.filter((r) => r.ok).length;
+  return { results, scheduled, failed: results.length - scheduled };
+}
+
+/** Postiz leg: upload each file once (internal URL), then createPost per item. */
+async function schedulePostiz(posts: SchedulePostInput[]): Promise<ScheduleItemResult[]> {
+  if (posts.length === 0) return [];
+  const client = createPostizClient();
 
   // Upload each distinct file's media to Postiz ONCE, then reuse the upload id
   // for every channel of that file (idempotent-ish: a failed upload fails only
@@ -262,9 +389,56 @@ export async function schedule(input: { posts: SchedulePostInput[] }): Promise<S
       results.push({ fileId: p.fileId, channelId: p.channelId, ok: false, error: errMsg(e) });
     }
   }
+  return results;
+}
 
-  const scheduled = results.filter((r) => r.ok).length;
-  return { results, scheduled, failed: results.length - scheduled };
+/**
+ * PostPeer leg: PostPeer pulls the media itself, so we send the PUBLIC URL (no
+ * pre-upload). The public URL is resolved per file ONCE; a missing PUBLIC_BASE_URL
+ * fails only that file's items with a clear, actionable message.
+ */
+async function schedulePostPeer(posts: SchedulePostInput[]): Promise<ScheduleItemResult[]> {
+  if (posts.length === 0) return [];
+  const client = createPostPeerClient();
+
+  // Resolve each distinct file's PUBLIC media URL once (cache success or error).
+  const urlCache = new Map<string, { url: string } | { error: string }>();
+  const sourceByFile = new Map<string, FileSourceRef>();
+  for (const p of posts) if (!sourceByFile.has(p.fileId)) sourceByFile.set(p.fileId, p.source);
+  for (const [fileId, source] of sourceByFile) {
+    try {
+      urlCache.set(fileId, { url: resolvePublicSourceUrl(source) });
+    } catch (e) {
+      urlCache.set(fileId, { error: errMsg(e) });
+    }
+  }
+
+  const results: ScheduleItemResult[] = [];
+  for (const p of posts) {
+    const resolved = urlCache.get(p.fileId);
+    if (!resolved || "error" in resolved) {
+      results.push({
+        fileId: p.fileId,
+        channelId: p.channelId,
+        ok: false,
+        error: resolved && "error" in resolved ? resolved.error : "Public media URL not resolved",
+      });
+      continue;
+    }
+    try {
+      await client.createPost({
+        accountId: p.channelId,
+        mediaUrl: resolved.url,
+        caption: composeContent(p.caption, p.hashtags),
+        scheduledAt: new Date(p.scheduledAt).toISOString(),
+        tiktok: p.tiktok ?? { ...DEFAULT_TIKTOK_OPTIONS },
+      });
+      results.push({ fileId: p.fileId, channelId: p.channelId, ok: true });
+    } catch (e) {
+      results.push({ fileId: p.fileId, channelId: p.channelId, ok: false, error: errMsg(e) });
+    }
+  }
+  return results;
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
@@ -301,6 +475,6 @@ async function autoSeedBrief(source: FileSourceRef): Promise<string> {
 }
 
 function errMsg(e: unknown): string {
-  if (e instanceof PostizApiError) return e.message;
+  if (e instanceof PostizApiError || e instanceof PostPeerApiError) return e.message;
   return e instanceof Error ? e.message : String(e);
 }

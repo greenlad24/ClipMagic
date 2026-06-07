@@ -1,0 +1,216 @@
+/**
+ * Unit checks for the PROVIDER-AWARE Bulk Scheduler glue (postiz/bulkScheduler +
+ * postiz/fileSources), all against a MOCKED fetch (no network, no real keys):
+ *   - resolvePublicSourceUrl: render/upload use PUBLIC_BASE_URL; cloud is public;
+ *     unset PUBLIC_BASE_URL fails LOUDLY (PublicUrlUnavailableError) for renders.
+ *   - channel UNION: status/listChannels merge Postiz integrations + PostPeer
+ *     TikTok accounts, each tagged with its provider; graceful DEGRADATION when
+ *     only one provider's key is configured, and per-provider status booleans.
+ *   - schedule() ROUTES each item by its channel's provider: postiz → Postiz API
+ *     (internal upload URL), postpeer → PostPeer API (PUBLIC media URL + TikTok
+ *     fields). Failures in one provider never lose the other's items.
+ *
+ * Run:
+ *   cd lab/server && npx tsx src/scripts/bulk-providers.test.ts
+ */
+import assert from "node:assert/strict";
+
+let passed = 0;
+function check(name: string, fn: () => void | Promise<void>) {
+  return Promise.resolve()
+    .then(fn)
+    .then(() => { passed++; console.log(`  ok  ${name}`); })
+    .catch((e) => { console.error(`FAIL  ${name}\n      ${e instanceof Error ? e.stack : e}`); process.exitCode = 1; });
+}
+
+interface Captured { url: string; method: string; body: any }
+/**
+ * Route mocked fetch by URL host: any postiz upload → {id,path}; any postiz
+ * /posts → {}; any postpeer integrations → accounts; any postpeer /posts → {}.
+ * Each call is recorded so tests can assert routing + payloads.
+ */
+function installRoutedFetch(opts: {
+  postizIntegrations?: unknown[];
+  postpeerAccounts?: unknown[];
+  failPostizPosts?: boolean;
+}): { calls: Captured[] } {
+  const calls: Captured[] = [];
+  globalThis.fetch = (async (url: unknown, init?: any) => {
+    const u = String(url);
+    let body: any = undefined;
+    if (typeof init?.body === "string") { try { body = JSON.parse(init.body); } catch { body = init.body; } }
+    calls.push({ url: u, method: init?.method ?? "GET", body });
+    const json = (v: unknown, ok = true, status = 200): Response =>
+      ({ ok, status, text: async () => JSON.stringify(v) } as Response);
+
+    if (u.includes("/public/v1/integrations")) return json(opts.postizIntegrations ?? []);
+    if (u.includes("/public/v1/upload-from-url")) return json({ id: "up1", path: "http://internal/x.mp4" });
+    if (u.includes("/public/v1/posts")) {
+      if (opts.failPostizPosts) return json({ message: "boom" }, false, 400);
+      return json({ id: "postiz-post" });
+    }
+    if (u.includes("/v1/connect/integrations")) return json(opts.postpeerAccounts ?? []);
+    if (u.includes("/v1/posts")) return json({ success: true });
+    throw new Error(`unexpected fetch to ${u}`);
+  }) as typeof fetch;
+  return { calls };
+}
+
+async function main() {
+  // Pin both providers' base URLs + keys + the public/internal origins.
+  process.env.POSTIZ_API_KEY = "postiz-key";
+  process.env.POSTIZ_INTERNAL_URL = "http://postiz:5000";
+  process.env.POSTPEER_API_KEY = "postpeer-key";
+  process.env.POSTPEER_BASE_URL = "https://api.postpeer.test";
+  process.env.CLIPMAGIC_INTERNAL_URL = "http://clipmagic-lab:9090";
+  process.env.PUBLIC_BASE_URL = "https://clips.example.com";
+
+  const fileSources = await import("../postiz/fileSources.js");
+  const bulk = await import("../postiz/bulkScheduler.js");
+
+  // ── public-vs-internal URL selection ──────────────────────────────────────
+  await check("resolvePublicSourceUrl uses PUBLIC_BASE_URL for renders (not the internal name)", () => {
+    const url = fileSources.resolvePublicSourceUrl({ kind: "render", ref: "my clip.mp4" });
+    assert.equal(url, "https://clips.example.com/api/outputs/my%20clip.mp4");
+    assert.ok(!url.includes("clipmagic-lab"), "external URL must not be the Docker-internal host");
+  });
+
+  await check("resolvePublicSourceUrl uses PUBLIC_BASE_URL for uploads", () => {
+    const url = fileSources.resolvePublicSourceUrl({ kind: "upload", ref: "abc123" });
+    assert.equal(url, "https://clips.example.com/api/uploads/abc123");
+  });
+
+  await check("resolvePublicSourceUrl leaves a cloud share link public/normalized", () => {
+    const url = fileSources.resolvePublicSourceUrl({ kind: "cloud", ref: "https://www.dropbox.com/s/x/v.mp4?dl=0" });
+    assert.ok(url.includes("dl=1"), "dropbox link should be forced to dl=1");
+  });
+
+  await check("internal resolveSourceUrl still uses the Docker-internal host (Postiz path unchanged)", () => {
+    const url = fileSources.resolveSourceUrl({ kind: "render", ref: "v.mp4" });
+    assert.ok(url.startsWith("http://clipmagic-lab:9090/api/outputs/"), `got ${url}`);
+  });
+
+  await check("resolvePublicSourceUrl FAILS LOUDLY for a render when PUBLIC_BASE_URL is unset", () => {
+    const saved = process.env.PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    try {
+      assert.throws(
+        () => fileSources.resolvePublicSourceUrl({ kind: "render", ref: "v.mp4" }),
+        (e: unknown) => e instanceof fileSources.PublicUrlUnavailableError && /PUBLIC_BASE_URL/.test((e as Error).message),
+      );
+    } finally {
+      process.env.PUBLIC_BASE_URL = saved;
+    }
+  });
+
+  // ── channel union ──────────────────────────────────────────────────────────
+  await check("listChannels UNIONs Postiz integrations + PostPeer TikTok accounts, tagged by provider", async () => {
+    installRoutedFetch({
+      postizIntegrations: [{ id: "pz-tt", name: "PZ TikTok", identifier: "tiktok" }, { id: "pz-yt", name: "PZ YT", identifier: "youtube" }],
+      postpeerAccounts: [{ id: "pp-tt", platform: "tiktok", name: "PP TikTok" }, { id: "pp-yt", platform: "youtube" }],
+    });
+    const channels = await bulk.listChannels();
+    const byId = new Map(channels.map((c) => [c.id, c]));
+    assert.equal(byId.get("pz-tt")?.provider, "postiz");
+    assert.equal(byId.get("pz-yt")?.provider, "postiz");
+    assert.equal(byId.get("pp-tt")?.provider, "postpeer");
+    // PostPeer accounts are filtered to TikTok only.
+    assert.ok(!byId.has("pp-yt"), "non-TikTok PostPeer accounts must be dropped");
+    assert.equal(byId.get("pp-tt")?.platform, "tiktok");
+  });
+
+  await check("status reports per-provider configured booleans + channel counts", async () => {
+    installRoutedFetch({ postizIntegrations: [{ id: "pz-tt", name: "x", identifier: "tiktok" }], postpeerAccounts: [{ id: "pp-tt", platform: "tiktok" }] });
+    const s = await bulk.getStatus();
+    assert.equal(s.providers.postiz.configured, true);
+    assert.equal(s.providers.postpeer.configured, true);
+    assert.equal(s.providers.postiz.channelCount, 1);
+    assert.equal(s.providers.postpeer.channelCount, 1);
+    assert.equal(s.channelCount, 2);
+    assert.equal(s.apiKeyConfigured, true);
+  });
+
+  await check("graceful DEGRADATION: only PostPeer configured → only PostPeer channels", async () => {
+    const savedPostiz = process.env.POSTIZ_API_KEY;
+    delete process.env.POSTIZ_API_KEY;
+    try {
+      installRoutedFetch({ postpeerAccounts: [{ id: "pp-tt", platform: "tiktok" }] });
+      const s = await bulk.getStatus();
+      assert.equal(s.providers.postiz.configured, false);
+      assert.equal(s.providers.postiz.channelCount, 0);
+      assert.equal(s.providers.postpeer.configured, true);
+      assert.equal(s.channels.length, 1);
+      assert.equal(s.channels[0].provider, "postpeer");
+    } finally {
+      process.env.POSTIZ_API_KEY = savedPostiz;
+    }
+  });
+
+  // ── routing in schedule() ──────────────────────────────────────────────────
+  await check("schedule() ROUTES per provider: postiz→Postiz(internal), postpeer→PostPeer(public)", async () => {
+    const mock = installRoutedFetch({});
+    const out = await bulk.schedule({
+      posts: [
+        {
+          fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-tt",
+          provider: "postiz", identifier: "tiktok", caption: "c1", hashtags: ["a"], scheduledAt: "2026-06-09T13:00:00.000Z",
+        },
+        {
+          fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt",
+          provider: "postpeer", identifier: "tiktok", caption: "c2", hashtags: ["b"], scheduledAt: "2026-06-09T13:05:00.000Z",
+          tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false },
+        },
+      ],
+    });
+    assert.equal(out.scheduled, 2);
+    assert.equal(out.failed, 0);
+
+    // Postiz: an upload-from-url (internal host) + a /public/v1/posts.
+    const postizUpload = mock.calls.find((c) => c.url.includes("/upload-from-url"))!;
+    assert.ok(postizUpload.body.url.startsWith("http://clipmagic-lab:9090/"), "postiz must pull the INTERNAL url");
+    assert.ok(mock.calls.some((c) => c.url === "http://postiz:5000/public/v1/posts"), "postiz createPost missing");
+
+    // PostPeer: a /v1/posts with the PUBLIC media url + tiktok platform data.
+    const ppPost = mock.calls.find((c) => c.url === "https://api.postpeer.test/v1/posts")!;
+    assert.equal(ppPost.body.mediaItems[0].url, "https://clips.example.com/api/outputs/v.mp4");
+    assert.equal(ppPost.body.platforms[0].platform, "tiktok");
+    assert.equal(ppPost.body.platforms[0].accountId, "pp-tt");
+    assert.equal(ppPost.body.platforms[0].platformSpecificData.privacyLevel, "PUBLIC_TO_EVERYONE");
+  });
+
+  await check("schedule() never loses an item: a Postiz failure leaves PostPeer success intact", async () => {
+    installRoutedFetch({ failPostizPosts: true });
+    const out = await bulk.schedule({
+      posts: [
+        { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pz-tt", provider: "postiz", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:00:00.000Z" },
+        { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
+      ],
+    });
+    assert.equal(out.results.length, 2, "both items must be reported");
+    const pz = out.results.find((r) => r.channelId === "pz-tt")!;
+    const pp = out.results.find((r) => r.channelId === "pp-tt")!;
+    assert.equal(pz.ok, false);
+    assert.equal(pp.ok, true);
+  });
+
+  await check("schedule() fails a PostPeer item with a clear error when PUBLIC_BASE_URL is unset", async () => {
+    const saved = process.env.PUBLIC_BASE_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    try {
+      installRoutedFetch({});
+      const out = await bulk.schedule({
+        posts: [
+          { fileId: "f1", source: { kind: "render", ref: "v.mp4" }, channelId: "pp-tt", provider: "postpeer", identifier: "tiktok", caption: "c", hashtags: [], scheduledAt: "2026-06-09T13:05:00.000Z", tiktok: { privacyLevel: "PUBLIC_TO_EVERYONE", allowComment: true, allowDuet: true, allowStitch: true, commercialContent: false } },
+        ],
+      });
+      assert.equal(out.failed, 1);
+      assert.match(out.results[0].error ?? "", /PUBLIC_BASE_URL/);
+    } finally {
+      process.env.PUBLIC_BASE_URL = saved;
+    }
+  });
+
+  console.log(`\n${passed} checks passed`);
+}
+
+void main();

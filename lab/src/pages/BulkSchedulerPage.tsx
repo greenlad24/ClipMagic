@@ -8,6 +8,7 @@ import {
   listStorage,
   type GetBulkSchedulerStatusOutputType,
   type BulkChannel,
+  type BulkProvider,
   type BulkPreviewPost,
   type PreviewBulkScheduleOutputType,
   type RunBulkScheduleOutputType,
@@ -47,11 +48,13 @@ import {
 
 /**
  * Bulk Scheduler — bulk-select rendered Shorts and schedule SEO-optimized,
- * per-platform posts into the self-hosted Postiz via its public API.
+ * per-platform posts through TWO providers:
+ *   - Postiz (self-hosted) for TikTok / Instagram Reels / YouTube Shorts;
+ *   - PostPeer (pre-approved TikTok Direct Post API) for TikTok.
  *
  * Three steps: (1) pick files + brief, (2) review & edit the AI plan, (3) push.
- * The whole tool is gated behind "Postiz API key configured + ≥1 connected
- * channel" with a friendly empty state pointing to the Postiz settings page.
+ * The whole tool is gated behind "at least one provider configured + ≥1
+ * connected channel" with a friendly empty state pointing to the settings page.
  */
 
 // ── Local types mirroring the source bridge (server: postiz/fileSources.ts) ──
@@ -72,6 +75,20 @@ const PLATFORM_BADGE: Record<string, string> = {
   instagram: 'Reels',
   youtube: 'Shorts',
 };
+
+/** Badge label for a channel/post: TikTok via PostPeer is called out distinctly. */
+function channelBadge(provider: BulkProvider, platform: string | null, identifier: string): string {
+  if (provider === 'postpeer') return 'TikTok · PostPeer';
+  return PLATFORM_BADGE[platform ?? ''] ?? identifier;
+}
+
+/** TikTok privacy levels PostPeer exposes (TikTok's own enum). */
+const TIKTOK_PRIVACY_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'PUBLIC_TO_EVERYONE', label: 'Public' },
+  { value: 'MUTUAL_FOLLOW_FRIENDS', label: 'Friends' },
+  { value: 'FOLLOWER_OF_CREATOR', label: 'Followers' },
+  { value: 'SELF_ONLY', label: 'Private (only me)' },
+];
 
 export default function BulkSchedulerPage() {
   const { user } = useAuth();
@@ -135,8 +152,8 @@ export default function BulkSchedulerPage() {
     return (
       <Layout breadcrumb="Bulk Scheduler">
         <EmptyState
-          apiKeyConfigured={status.apiKeyConfigured}
           channelCount={status.channelCount}
+          providers={status.providers}
           error={status.error}
           postizUrl={postizUrl}
           onRetry={loadStatus}
@@ -183,11 +200,13 @@ export default function BulkSchedulerPage() {
           fileId: p.fileId,
           source: sourceByFile.get(p.fileId)!,
           channelId: p.channelId,
+          provider: p.provider,
           identifier: p.identifier,
           caption: p.caption,
           hashtags: p.hashtags,
           firstLineHook: p.firstLineHook,
           scheduledAt: p.scheduledAt,
+          ...(p.tiktok ? { tiktok: p.tiktok } : {}),
         })),
       });
       setResults(res);
@@ -212,11 +231,13 @@ export default function BulkSchedulerPage() {
           fileId: p.fileId,
           source: sourceByFile.get(p.fileId)!,
           channelId: p.channelId,
+          provider: p.provider,
           identifier: p.identifier,
           caption: p.caption,
           hashtags: p.hashtags,
           firstLineHook: p.firstLineHook,
           scheduledAt: p.scheduledAt,
+          ...(p.tiktok ? { tiktok: p.tiktok } : {}),
         })),
       });
       // Merge retry results over the prior results.
@@ -332,18 +353,19 @@ function Stepper({ step }: { step: 1 | 2 | 3 }) {
 
 // ── Empty / gating state ───────────────────────────────────────────────────
 function EmptyState({
-  apiKeyConfigured,
   channelCount,
+  providers,
   error,
   postizUrl,
   onRetry,
 }: {
-  apiKeyConfigured: boolean;
   channelCount: number;
+  providers: GetBulkSchedulerStatusOutputType['providers'];
   error?: string;
   postizUrl: string | null;
   onRetry: () => void;
 }) {
+  const anyConfigured = providers.postiz.configured || providers.postpeer.configured;
   return (
     <div className="max-w-2xl mx-auto px-6 py-16 text-center">
       <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-[hsl(var(--chart-3))]/10">
@@ -351,36 +373,51 @@ function EmptyState({
       </div>
       <h1 className="text-2xl font-bold text-foreground">Bulk Scheduler</h1>
       <p className="mt-2 text-muted-foreground leading-relaxed">
-        Schedule SEO-optimized, per-platform posts straight into your self-hosted Postiz. Two things
-        are needed first:
+        Schedule SEO-optimized, per-platform posts through Postiz and/or PostPeer. Configure at least
+        one provider and connect a channel to get started:
       </p>
 
       <div className="mt-6 space-y-3 text-left">
         <GateRow
-          done={apiKeyConfigured}
+          done={providers.postiz.configured}
           icon={<KeyRound className="h-4 w-4" />}
-          title="Postiz API key"
+          title="Postiz — TikTok / Instagram / YouTube"
           body={
             <>
-              Create it in Postiz under <strong className="text-foreground">Settings → Developers → Public API</strong>,
-              then paste it into the suite&apos;s Postiz settings (Bulk Scheduler group). It&apos;s stored
-              write-only and never shown again.
+              Set <strong className="text-foreground">POSTIZ_API_KEY</strong>: create it in Postiz under
+              {' '}<strong className="text-foreground">Settings → Developers → Public API</strong>, then
+              paste it into the suite&apos;s Postiz settings (Bulk Scheduler group) and connect a
+              TikTok / Instagram / YouTube channel inside Postiz. Stored write-only, never shown again.
             </>
           }
         />
         <GateRow
-          done={apiKeyConfigured && channelCount > 0}
+          done={providers.postpeer.configured}
+          icon={<KeyRound className="h-4 w-4" />}
+          title="PostPeer — TikTok (Direct Post)"
+          body={
+            <>
+              Set <strong className="text-foreground">POSTPEER_API_KEY</strong> (same Bulk Scheduler
+              settings group) and connect a TikTok account in your PostPeer dashboard — no TikTok app
+              review needed. Posting your renders also needs{' '}
+              <strong className="text-foreground">PUBLIC_BASE_URL</strong> set so PostPeer can fetch the
+              video.
+            </>
+          }
+        />
+        <GateRow
+          done={anyConfigured && channelCount > 0}
           icon={<Link2 className="h-4 w-4" />}
           title="At least one connected channel"
           body={
-            apiKeyConfigured ? (
+            anyConfigured ? (
               <>
                 {channelCount === 0
-                  ? 'No connected channels found yet. Connect a TikTok / Instagram / YouTube channel in Postiz.'
+                  ? 'No connected channels found yet. Connect a channel in Postiz, or a TikTok account in PostPeer.'
                   : `${channelCount} channel(s) connected.`}
               </>
             ) : (
-              <>Connect a TikTok / Instagram / YouTube channel inside Postiz.</>
+              <>Connect a channel in Postiz, or a TikTok account in PostPeer.</>
             )
           }
         />
@@ -388,14 +425,14 @@ function EmptyState({
 
       {error && (
         <p className="mt-4 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Couldn&apos;t reach Postiz: {error}
+          Couldn&apos;t reach a posting provider: {error}
         </p>
       )}
 
       <div className="mt-7 flex items-center justify-center gap-2">
         <Button asChild>
           <a href="/settings/postiz">
-            <KeyRound className="h-4 w-4" /> Set Postiz API key
+            <KeyRound className="h-4 w-4" /> Set API keys
           </a>
         </Button>
         {postizUrl && (
@@ -562,7 +599,8 @@ function StepSelect({
       <section className="rounded-xl border border-border bg-card p-5">
         <h2 className="text-sm font-semibold text-foreground">Channels</h2>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Only connected TikTok / Instagram / YouTube channels appear here.
+          Connected Postiz channels (TikTok / Instagram / YouTube) and PostPeer TikTok accounts
+          appear here.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {channels.map((c) => {
@@ -592,7 +630,7 @@ function StepSelect({
                 )}
                 <span className="truncate max-w-32">{c.name}</span>
                 <Badge variant="secondary" className="text-[10px]">
-                  {PLATFORM_BADGE[c.platform ?? ''] ?? c.identifier}
+                  {channelBadge(c.provider, c.platform, c.identifier)}
                 </Badge>
               </button>
             );
@@ -863,7 +901,7 @@ function PostCard({ post, onChange }: { post: EditablePost; onChange: (patch: Pa
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
           <Badge variant="secondary" className="text-[10px]">
-            {PLATFORM_BADGE[post.platform] ?? post.identifier}
+            {channelBadge(post.provider, post.platform, post.identifier)}
           </Badge>
           <span className="truncate max-w-28 text-muted-foreground">{post.channelName}</span>
         </span>
@@ -885,6 +923,8 @@ function PostCard({ post, onChange }: { post: EditablePost; onChange: (patch: Pa
         className="mt-1 text-sm font-mono"
       />
 
+      {post.tiktok && <TikTokControls tiktok={post.tiktok} onChange={(t) => onChange({ tiktok: t })} />}
+
       <label className="mt-2 block text-[11px] font-medium text-muted-foreground">Scheduled time (local)</label>
       <Input
         type="datetime-local"
@@ -895,6 +935,72 @@ function PostCard({ post, onChange }: { post: EditablePost; onChange: (patch: Pa
       <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
         {local} — {post.reason}
       </p>
+    </div>
+  );
+}
+
+/** TikTok Direct-Post controls (PostPeer items): privacy + interaction/disclosure toggles. */
+function TikTokControls({
+  tiktok,
+  onChange,
+}: {
+  tiktok: NonNullable<EditablePost['tiktok']>;
+  onChange: (t: NonNullable<EditablePost['tiktok']>) => void;
+}) {
+  const set = (patch: Partial<NonNullable<EditablePost['tiktok']>>) => onChange({ ...tiktok, ...patch });
+  const toggles: Array<{ key: 'allowComment' | 'allowDuet' | 'allowStitch'; label: string }> = [
+    { key: 'allowComment', label: 'Comments' },
+    { key: 'allowDuet', label: 'Duet' },
+    { key: 'allowStitch', label: 'Stitch' },
+  ];
+  return (
+    <div className="mt-3 rounded-md border border-border bg-muted/20 p-2.5">
+      <p className="text-[11px] font-semibold text-foreground">TikTok options</p>
+
+      <label className="mt-2 block text-[11px] font-medium text-muted-foreground">Privacy</label>
+      <Select value={tiktok.privacyLevel} onValueChange={(v) => set({ privacyLevel: v })}>
+        <SelectTrigger className="mt-1 h-8 text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {TIKTOK_PRIVACY_OPTIONS.map((o) => (
+            <SelectItem key={o.value} value={o.value}>
+              {o.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {toggles.map((t) => {
+          const on = tiktok[t.key];
+          return (
+            <button
+              key={t.key}
+              type="button"
+              aria-pressed={on}
+              onClick={() => set({ [t.key]: !on })}
+              className={`rounded-full border px-2.5 py-1 text-[11px] transition-colors ${
+                on
+                  ? 'border-primary bg-primary/10 text-foreground'
+                  : 'border-border bg-background text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {on ? `${t.label} on` : `${t.label} off`}
+            </button>
+          );
+        })}
+      </div>
+
+      <label className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={tiktok.commercialContent}
+          onChange={(e) => set({ commercialContent: e.target.checked })}
+          className="h-3.5 w-3.5 accent-[hsl(var(--primary))]"
+        />
+        Disclose commercial / branded content
+      </label>
     </div>
   );
 }
@@ -960,7 +1066,7 @@ function StepSchedule({
                   </td>
                   <td className="px-4 py-2">
                     <Badge variant="secondary" className="mr-1.5 text-[10px]">
-                      {PLATFORM_BADGE[p.platform] ?? p.identifier}
+                      {channelBadge(p.provider, p.platform, p.identifier)}
                     </Badge>
                     <span className="text-muted-foreground">{channelName(p.channelId)}</span>
                   </td>

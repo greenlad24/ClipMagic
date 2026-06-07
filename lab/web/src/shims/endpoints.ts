@@ -179,24 +179,42 @@ export type RestartPostizOutputType = { success: boolean; message: string };
 
 // ── Bulk Scheduler ───────────────────────────────────────────────────────────
 export type ShortPlatform = 'tiktok' | 'instagram' | 'youtube';
+/** Which API a channel posts through. */
+export type BulkProvider = 'postiz' | 'postpeer';
+/** TikTok Direct-Post controls (PostPeer-only). */
+export type TikTokOptions = {
+  privacyLevel: string;
+  allowComment: boolean;
+  allowDuet: boolean;
+  allowStitch: boolean;
+  commercialContent: boolean;
+};
 export type BulkChannel = {
   id: string;
+  provider: BulkProvider;
   name: string;
   identifier: string;
   platform: ShortPlatform | null;
   picture?: string;
   profile?: string;
 };
+export type BulkProviderStatus = {
+  configured: boolean;
+  channelCount: number;
+  error?: string;
+};
 export type GetBulkSchedulerStatusOutputType = {
   apiKeyConfigured: boolean;
   channelCount: number;
   channels: BulkChannel[];
+  providers: { postiz: BulkProviderStatus; postpeer: BulkProviderStatus };
   error?: string;
 };
 export type GetBulkSchedulerChannelsOutputType = { channels: BulkChannel[] };
 export type BulkPreviewPost = {
   fileId: string;
   channelId: string;
+  provider: BulkProvider;
   channelName: string;
   identifier: string;
   platform: ShortPlatform;
@@ -205,6 +223,7 @@ export type BulkPreviewPost = {
   hashtags: string[];
   scheduledAt: string;
   reason: string;
+  tiktok?: TikTokOptions;
 };
 export type PreviewBulkScheduleOutputType = {
   posts: BulkPreviewPost[];

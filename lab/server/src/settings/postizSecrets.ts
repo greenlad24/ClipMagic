@@ -50,6 +50,13 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // skips it below); it's read internally via getPostizApiKey(). Same write-only
   // guarantee as the rest: never returned through any HTTP response.
   { key: "POSTIZ_API_KEY", label: "Postiz API key", group: "Bulk Scheduler", connects: "Lets the Bulk Scheduler push SEO-optimized, scheduled posts into Postiz via its public API. Create it in Postiz under Settings → Developers → Public API, then paste it here. Used only by this lab server — never sent to the browser." },
+  // PostPeer is the SECOND Bulk Scheduler posting provider — a pre-approved
+  // TikTok Direct Post API. Like POSTIZ_API_KEY it is consumed by THIS lab
+  // server (postiz/postpeerClient.ts) to authenticate to PostPeer's public API,
+  // NOT by the Postiz container — so it's excluded from the Postiz env file
+  // (buildEnvFileContents skips it below) and read internally via
+  // getPostPeerApiKey(). Same write-only guarantee: never returned via any HTTP response.
+  { key: "POSTPEER_API_KEY", label: "PostPeer API key", group: "Bulk Scheduler", connects: "Lets the Bulk Scheduler post your Shorts to TikTok via PostPeer's pre-approved Direct Post API (no TikTok app review). Create the key in your PostPeer dashboard, connect a TikTok account there, then paste it here. Used only by this lab server — never sent to the browser." },
 
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
   { key: "X_API_KEY", label: "X API key", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
@@ -201,10 +208,11 @@ export function buildEnvFileContents(map: SecretMap): string {
     "# Postiz keys managed by the ClipMagic suite Settings page — DO NOT EDIT BY HAND.",
     "# This file is sourced by the Postiz container's entrypoint at startup and",
     "# overrides the compose `environment:` defaults. Regenerated on every save.",
-    // Emit Postiz's OWN config keys only. POSTIZ_API_KEY is consumed by THIS lab
-    // server (Bulk Scheduler → Postiz public API), not by the Postiz container,
-    // so it must never leak into Postiz's env file.
-    ...POSTIZ_KEY_DEFS.filter((d) => d.key !== "POSTIZ_API_KEY" && map[d.key]).map((d) =>
+    // Emit Postiz's OWN config keys only. POSTIZ_API_KEY and POSTPEER_API_KEY are
+    // consumed by THIS lab server (the Bulk Scheduler's Postiz / PostPeer
+    // clients), not by the Postiz container, so they must never leak into
+    // Postiz's env file.
+    ...POSTIZ_KEY_DEFS.filter((d) => d.key !== "POSTIZ_API_KEY" && d.key !== "POSTPEER_API_KEY" && map[d.key]).map((d) =>
       envLine(d.key, map[d.key]!),
     ),
   ];
@@ -261,6 +269,20 @@ export function getPostizApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.POSTIZ_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the PostPeer public-API key — the exact twin
+ * of getPostizApiKey() for the Bulk Scheduler's PostPeer (TikTok Direct Post)
+ * provider. Used by server/src/postiz/postpeerClient.ts to authenticate; it must
+ * NEVER be wired into an HTTP handler or response body (write-only guarantee).
+ * An env var (POSTPEER_API_KEY) takes precedence over the UI-managed store.
+ */
+export function getPostPeerApiKey(): string | null {
+  const fromEnv = (process.env.POSTPEER_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.POSTPEER_API_KEY || null;
 }
 
 function canWriteConfigDir(): boolean {

@@ -33,7 +33,7 @@ async function main() {
   process.env.DOCKER_SOCKET = path.join(configDir, "nonexistent.sock");
 
   const mod = await import("../settings/postizSecrets.js");
-  const { getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS, getPostizApiKey } = mod;
+  const { getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS, getPostizApiKey, getPostPeerApiKey } = mod;
 
   const SECRET = "super-secret-jwt-value-1234567890";
   const storePath = path.join(path.resolve(root), "postiz-settings.json");
@@ -197,6 +197,50 @@ async function main() {
     process.env.POSTIZ_API_KEY = "from-env-override";
     assert.equal(getPostizApiKey(), "from-env-override");
     delete process.env.POSTIZ_API_KEY;
+  });
+
+  // ── POSTPEER_API_KEY: write-only + server-only getter + NOT in Postiz env ────
+  const POSTPEER_KEY = "postpeer-api-key-zzz-7777";
+
+  await check("POSTPEER_API_KEY is in the registry under the Bulk Scheduler group", () => {
+    const def = POSTIZ_KEY_DEFS.find((d) => d.key === "POSTPEER_API_KEY");
+    assert.ok(def, "POSTPEER_API_KEY missing from the registry");
+    assert.equal(def?.group, "Bulk Scheduler");
+  });
+
+  await check("POSTPEER_API_KEY value never leaks via getSettings/updateSettings", () => {
+    delete process.env.POSTPEER_API_KEY; // test the STORE path, not env
+    const responses = [
+      JSON.stringify(updateSettings({ values: { POSTPEER_API_KEY: POSTPEER_KEY } })),
+      JSON.stringify(getSettings()),
+    ];
+    for (const r of responses) {
+      assert.ok(!r.includes(POSTPEER_KEY), "a response leaked the PostPeer API key");
+    }
+  });
+
+  await check("POSTPEER_API_KEY is reported configured after save", () => {
+    const s = getSettings();
+    const k = s.keys.find((x) => x.key === "POSTPEER_API_KEY");
+    assert.equal(k?.configured, true);
+  });
+
+  await check("getPostPeerApiKey() returns the raw value for server-side use only", () => {
+    delete process.env.POSTPEER_API_KEY;
+    assert.equal(getPostPeerApiKey(), POSTPEER_KEY);
+  });
+
+  await check("POSTPEER_API_KEY is NOT emitted into the Postiz container env file", () => {
+    // It's used by the lab server (PostPeer client), not by Postiz.
+    const text = buildEnvFileContents({ POSTPEER_API_KEY: POSTPEER_KEY, POSTIZ_JWT_SECRET: SECRET });
+    assert.ok(!text.includes("POSTPEER_API_KEY"), "POSTPEER_API_KEY leaked into the Postiz env file");
+    assert.ok(text.includes("POSTIZ_JWT_SECRET="), "other keys should still be emitted");
+  });
+
+  await check("env var POSTPEER_API_KEY takes precedence over the store", () => {
+    process.env.POSTPEER_API_KEY = "pp-env-override";
+    assert.equal(getPostPeerApiKey(), "pp-env-override");
+    delete process.env.POSTPEER_API_KEY;
   });
 
   // cleanup

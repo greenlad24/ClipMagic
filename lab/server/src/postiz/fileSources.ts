@@ -37,6 +37,16 @@ export function internalBaseUrl(): string {
   return base;
 }
 
+/**
+ * PUBLIC base URL of THIS lab server on the internet, for EXTERNAL providers
+ * (PostPeer) that can't reach the Docker-internal name. Reads PUBLIC_BASE_URL
+ * (already an env var on the lab service). Returns "" when unset, so callers can
+ * fail with a clear, actionable error instead of sending an unreachable URL.
+ */
+export function publicBaseUrl(): string {
+  return (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+}
+
 /** Direct URL for a server render (served statically at /api/outputs/<name>). */
 export function renderMediaUrl(name: string): string {
   return `${internalBaseUrl()}/api/outputs/${encodeURIComponent(name)}`;
@@ -99,6 +109,41 @@ export function resolveSourceUrl(src: FileSourceRef): string {
       return renderMediaUrl(src.ref);
     case "upload":
       return uploadMediaUrl(src.ref);
+    case "cloud":
+      return normalizeCloudLink(src.ref);
+    default:
+      throw new Error(`Unknown file source kind: ${(src as FileSourceRef).kind}`);
+  }
+}
+
+/** Thrown by resolvePublicSourceUrl when PUBLIC_BASE_URL is needed but unset. */
+export class PublicUrlUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PublicUrlUnavailableError";
+  }
+}
+
+/**
+ * Resolve a FileSourceRef to a PUBLIC, internet-reachable URL for EXTERNAL
+ * providers (PostPeer). Renders/uploads served by this lab need an absolute
+ * public origin (PUBLIC_BASE_URL); cloud share links are already public. If a
+ * render/upload is requested but PUBLIC_BASE_URL is unset we fail LOUDLY rather
+ * than send a Docker-internal URL PostPeer could never fetch.
+ */
+export function resolvePublicSourceUrl(src: FileSourceRef): string {
+  switch (src.kind) {
+    case "render":
+    case "upload": {
+      const base = publicBaseUrl();
+      if (!base) {
+        throw new PublicUrlUnavailableError(
+          "PUBLIC_BASE_URL isn't set, so PostPeer can't fetch your render. Set PUBLIC_BASE_URL to this server's public origin (e.g. https://clips.example.com) and try again.",
+        );
+      }
+      const path = src.kind === "render" ? "outputs" : "uploads";
+      return `${base}/api/${path}/${encodeURIComponent(src.ref)}`;
+    }
     case "cloud":
       return normalizeCloudLink(src.ref);
     default:
