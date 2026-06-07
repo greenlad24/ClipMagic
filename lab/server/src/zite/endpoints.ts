@@ -51,6 +51,7 @@ import {
   preview as bulkSchedulerPreview,
   schedule as bulkSchedulerSchedule,
 } from "../postiz/bulkScheduler.js";
+import { listCloudFolder, cloudProvidersConfigured } from "../postiz/cloudSources.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -2164,11 +2165,29 @@ const restartPostiz: Handler = async () => restartPostizContainer();
 // the browser). status gates the UI; channels lists connected integrations;
 // preview returns the full plan WITHOUT posting; schedule actually creates the
 // scheduled posts and reports per-item success/failure.
-const getBulkSchedulerStatus: Handler = async () => bulkSchedulerStatus();
+const getBulkSchedulerStatus: Handler = async () => {
+  const status = await bulkSchedulerStatus();
+  // Report which cloud-folder providers are configured (drives the Drive/Dropbox
+  // browse tabs in the UI). Booleans only — no keys ever leave the server.
+  return { ...status, cloudProviders: cloudProvidersConfigured() };
+};
 
 const getBulkSchedulerChannels: Handler = async () => {
   const channels = await bulkSchedulerChannels();
   return { channels };
+};
+
+/**
+ * Browse a public Google Drive / Dropbox FOLDER and return its videos as
+ * ready-to-add cloud sources (each `source.ref` is a DIRECT media URL). The
+ * cloud client surfaces missing-credential / bad-folder errors with actionable
+ * messages; never logs or returns the credentials themselves.
+ */
+const listCloudFolderHandler: Handler = async (input) => {
+  const provider = String(input?.provider ?? "");
+  const folder = String(input?.folder ?? "");
+  const items = await listCloudFolder(provider, folder);
+  return { items };
 };
 
 const previewBulkSchedule: Handler = async (input) =>
@@ -2206,6 +2225,7 @@ export const HANDLERS: Record<string, Handler> = {
   getBulkSchedulerChannels,
   previewBulkSchedule,
   runBulkSchedule,
+  listCloudFolder: listCloudFolderHandler,
   getPromoVideos,
   getPromoIndex,
   exportPromoIndexes,

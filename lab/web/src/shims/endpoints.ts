@@ -87,6 +87,7 @@ export const getBulkSchedulerStatus = endpoint("getBulkSchedulerStatus");
 export const getBulkSchedulerChannels = endpoint("getBulkSchedulerChannels");
 export const previewBulkSchedule = endpoint("previewBulkSchedule");
 export const runBulkSchedule = endpoint("runBulkSchedule");
+export const listCloudFolder = endpoint("listCloudFolder");
 export const getShots = endpoint("getShots");
 export const getWaveform = endpoint("getWaveform");
 export const indexPromoVideo = endpoint("indexPromoVideo");
@@ -205,14 +206,31 @@ export type BulkProviderStatus = {
   channelCount: number;
   error?: string;
 };
+/** Which cloud-folder providers are configured (gates the Drive/Dropbox tabs). */
+export type CloudProvidersStatus = { gdrive: boolean; dropbox: boolean };
 export type GetBulkSchedulerStatusOutputType = {
   apiKeyConfigured: boolean;
   channelCount: number;
   channels: BulkChannel[];
   providers: { postiz: BulkProviderStatus; postpeer: BulkProviderStatus };
+  /** Cloud folder browsing (Drive / Dropbox) availability. */
+  cloudProviders: CloudProvidersStatus;
   error?: string;
 };
 export type GetBulkSchedulerChannelsOutputType = { channels: BulkChannel[] };
+
+/** Cloud provider key for the folder-browse endpoint. */
+export type CloudProvider = 'gdrive' | 'dropbox';
+/** One browsable video in a cloud folder + the cloud source the picker adds. */
+export type CloudFolderItem = {
+  id: string;
+  name: string;
+  mimeType?: string;
+  thumbnailUrl?: string;
+  sizeBytes?: number;
+  source: { kind: 'cloud'; ref: string };
+};
+export type ListCloudFolderOutputType = { items: CloudFolderItem[] };
 /** Growth Guardrails: one graded check on a post (caption or video pre-flight). */
 export type GrowthSeverity = 'required' | 'recommended' | 'unknown';
 export type GrowthCheck = {

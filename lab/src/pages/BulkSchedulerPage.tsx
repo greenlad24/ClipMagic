@@ -4,6 +4,7 @@ import {
   getBulkSchedulerStatus,
   previewBulkSchedule,
   runBulkSchedule,
+  listCloudFolder,
   getServiceStatus,
   listStorage,
   type GetBulkSchedulerStatusOutputType,
@@ -12,6 +13,8 @@ import {
   type BulkPreviewPost,
   type PreviewBulkScheduleOutputType,
   type RunBulkScheduleOutputType,
+  type CloudProvider,
+  type CloudFolderItem,
 } from 'zite-endpoints-sdk';
 import { uploadFiles } from '@/lib/clipmagicClient';
 import { resolvePostizUrl } from '@/config/tools';
@@ -49,6 +52,10 @@ import {
   HelpCircle,
   ChevronDown,
   ShieldCheck,
+  Cloud,
+  HardDrive,
+  Play,
+  Search,
 } from 'lucide-react';
 import type { Growth, GrowthCheck } from 'zite-endpoints-sdk';
 
@@ -70,7 +77,100 @@ interface SelectedFile {
   source: FileSource;
   label: string;
   brief: string;
+  /**
+   * A URL the browser can stream/show for preview. For render/upload this is the
+   * lab-served media URL (<video> plays it). For cloud (Drive) it's the
+   * thumbnail image, if any.
+   */
   thumbUrl?: string;
+  /**
+   * Direct media URL for a cloud clip (the source ref). Used as the
+   * click-to-play target; cloud previews open this rather than streaming inline
+   * (cross-origin direct links may not allow <video> streaming).
+   */
+  cloudUrl?: string;
+}
+
+/** A small, lazy inline preview tile for a selected clip. */
+function ClipThumb({ file, className }: { file: SelectedFile; className?: string }) {
+  const base = `shrink-0 overflow-hidden rounded-md bg-muted ${className ?? 'h-16 w-10'}`;
+  // render / upload → stream inline (served by the lab); cheap with metadata-only.
+  if (file.source.kind !== 'cloud' && file.thumbUrl) {
+    return <video src={file.thumbUrl} className={`${base} object-cover`} muted preload="metadata" />;
+  }
+  // cloud with a thumbnail (Drive) → image + click-to-play the direct URL.
+  if (file.source.kind === 'cloud' && file.thumbUrl) {
+    return (
+      <a
+        href={file.cloudUrl}
+        target="_blank"
+        rel="noreferrer"
+        className={`group relative block ${base}`}
+        title={`Play ${file.label}`}
+      >
+        <img src={file.thumbUrl} alt="" className="h-full w-full object-cover" />
+        <span className="absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition-opacity group-hover:opacity-100">
+          <Play className="h-4 w-4 text-white" />
+        </span>
+      </a>
+    );
+  }
+  // cloud without a thumbnail (Dropbox) → a play tile pointing at the direct URL.
+  if (file.source.kind === 'cloud' && file.cloudUrl) {
+    return (
+      <a
+        href={file.cloudUrl}
+        target="_blank"
+        rel="noreferrer"
+        className={`flex items-center justify-center ${base} text-muted-foreground transition-colors hover:text-foreground`}
+        title={`Play ${file.label}`}
+      >
+        <Play className="h-5 w-5" />
+      </a>
+    );
+  }
+  return (
+    <div className={`flex items-center justify-center ${base}`}>
+      <Film className="h-5 w-5 text-muted-foreground" />
+    </div>
+  );
+}
+
+/** Larger preview player for the review step — streams renders/uploads inline. */
+function ReviewPreview({ file }: { file: SelectedFile }) {
+  const frame = 'h-28 w-[63px] shrink-0 overflow-hidden rounded-lg border border-border bg-muted';
+  // render / upload → a real controllable player (lazy, metadata only, no autoplay).
+  if (file.source.kind !== 'cloud' && file.thumbUrl) {
+    return <video src={file.thumbUrl} className={`${frame} object-cover`} controls preload="metadata" />;
+  }
+  // cloud (Drive thumb / Dropbox placeholder) → click-to-play the direct URL.
+  if (file.source.kind === 'cloud' && file.cloudUrl) {
+    return (
+      <a
+        href={file.cloudUrl}
+        target="_blank"
+        rel="noreferrer"
+        className={`group relative block ${frame}`}
+        title={`Play ${file.label}`}
+      >
+        {file.thumbUrl ? (
+          <img src={file.thumbUrl} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-muted-foreground">
+            <Film className="h-6 w-6" />
+          </span>
+        )}
+        <span className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-80 transition-opacity group-hover:opacity-100">
+          <Play className="h-6 w-6 text-white" />
+        </span>
+      </a>
+    );
+  }
+  return (
+    <div className={`flex items-center justify-center ${frame}`}>
+      <Film className="h-6 w-6 text-muted-foreground" />
+    </div>
+  );
 }
 
 // Editable preview row (a copy of a BulkPreviewPost the user can tweak). The
@@ -147,6 +247,9 @@ export default function BulkSchedulerPage() {
   // Every connected channel is schedulable: a tuned short platform posts with its
   // tuned rules; a null-platform channel (e.g. a Facebook Page) posts as generic.
   const connectedChannels = useMemo(() => status?.channels ?? [], [status]);
+
+  // Selected files keyed by id, so the review step can show a preview per file.
+  const filesById = useMemo(() => new Map(selected.map((f) => [f.fileId, f])), [selected]);
 
   // Auto-select all connected channels once loaded.
   useEffect(() => {
@@ -305,6 +408,7 @@ export default function BulkSchedulerPage() {
         {step === 1 && (
           <StepSelect
             channels={connectedChannels}
+            cloudProviders={status.cloudProviders}
             selected={selected}
             setSelected={setSelected}
             selectedChannelIds={selectedChannelIds}
@@ -320,6 +424,7 @@ export default function BulkSchedulerPage() {
           <StepReview
             posts={posts}
             setPosts={setPosts}
+            filesById={filesById}
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}
           />
@@ -503,6 +608,7 @@ function GateRow({
 // ── Step 1: Select files ─────────────────────────────────────────────────────
 function StepSelect({
   channels,
+  cloudProviders,
   selected,
   setSelected,
   selectedChannelIds,
@@ -513,6 +619,7 @@ function StepSelect({
   previewing,
 }: {
   channels: BulkChannel[];
+  cloudProviders: GetBulkSchedulerStatusOutputType['cloudProviders'];
   selected: SelectedFile[];
   setSelected: React.Dispatch<React.SetStateAction<SelectedFile[]>>;
   selectedChannelIds: string[];
@@ -542,6 +649,12 @@ function StepSelect({
           <TabsTrigger value="upload">
             <Upload className="h-4 w-4" /> Upload
           </TabsTrigger>
+          <TabsTrigger value="gdrive">
+            <HardDrive className="h-4 w-4" /> Google Drive
+          </TabsTrigger>
+          <TabsTrigger value="dropbox">
+            <Cloud className="h-4 w-4" /> Dropbox
+          </TabsTrigger>
           <TabsTrigger value="cloud">
             <Link2 className="h-4 w-4" /> Cloud link
           </TabsTrigger>
@@ -554,6 +667,22 @@ function StepSelect({
           <UploadTab
             isSelected={isSelected}
             onAdd={(f) => setSelected((prev) => [...prev, f])}
+          />
+        </TabsContent>
+        <TabsContent value="gdrive">
+          <CloudFolderTab
+            provider="gdrive"
+            configured={cloudProviders.gdrive}
+            isSelected={isSelected}
+            onToggle={toggleFile}
+          />
+        </TabsContent>
+        <TabsContent value="dropbox">
+          <CloudFolderTab
+            provider="dropbox"
+            configured={cloudProviders.dropbox}
+            isSelected={isSelected}
+            onToggle={toggleFile}
           />
         </TabsContent>
         <TabsContent value="cloud">
@@ -574,18 +703,7 @@ function StepSelect({
           <div className="mt-4 space-y-4">
             {selected.map((f) => (
               <div key={f.fileId} className="flex items-start gap-3 rounded-lg border border-border bg-background p-3">
-                {f.thumbUrl ? (
-                  <video
-                    src={f.thumbUrl}
-                    className="h-16 w-10 shrink-0 rounded-md object-cover bg-muted"
-                    muted
-                    preload="metadata"
-                  />
-                ) : (
-                  <div className="flex h-16 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
-                    <Film className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                )}
+                <ClipThumb file={f} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium text-foreground" title={f.label}>
@@ -857,8 +975,163 @@ function CloudTab({ onAdd }: { onAdd: (f: SelectedFile) => void }) {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        Full Dropbox/Drive pickers (browse &amp; pick) are coming in a later phase.
+        Prefer to browse? Use the <span className="font-medium text-foreground">Google Drive</span> or{' '}
+        <span className="font-medium text-foreground">Dropbox</span> tabs to pick from a whole folder.
       </p>
+    </div>
+  );
+}
+
+/** Folder-name shown per provider in placeholders / labels. */
+const CLOUD_TAB_META: Record<CloudProvider, { name: string; folderLabel: string; placeholder: string; help: string }> = {
+  gdrive: {
+    name: 'Google Drive',
+    folderLabel: 'folder link or id',
+    placeholder: 'https://drive.google.com/drive/folders/… or a folder id',
+    help: 'Paste a PUBLIC ("anyone with the link") Drive folder. We list the videos inside it; each picked clip is fetched via its own direct download URL.',
+  },
+  dropbox: {
+    name: 'Dropbox',
+    folderLabel: 'folder path',
+    placeholder: '/Videos/Shorts',
+    help: "Enter a folder PATH in your Dropbox (e.g. /Videos/Shorts). We list the videos inside it and mint a direct download link per clip.",
+  },
+};
+
+/**
+ * Browse a Google Drive / Dropbox FOLDER (no-OAuth) and multi-select videos.
+ * Gated on the provider's credentials being configured (from status); shows a
+ * friendly "add your keys in Settings" empty state otherwise.
+ */
+function CloudFolderTab({
+  provider,
+  configured,
+  isSelected,
+  onToggle,
+}: {
+  provider: CloudProvider;
+  configured: boolean;
+  isSelected: (id: string) => boolean;
+  onToggle: (f: SelectedFile) => void;
+}) {
+  const meta = CLOUD_TAB_META[provider];
+  const [folder, setFolder] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState<CloudFolderItem[] | null>(null);
+
+  const browse = async () => {
+    const f = folder.trim();
+    if (!f) return;
+    setLoading(true);
+    try {
+      const res = await listCloudFolder({ provider, folder: f });
+      setItems(res.items);
+      if (res.items.length === 0) toast.info('No videos found in that folder.');
+    } catch (e) {
+      setItems(null);
+      toast.error(e instanceof Error ? e.message : 'Failed to browse the folder');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!configured) {
+    return (
+      <div className="mt-4 rounded-xl border border-dashed border-border bg-muted/20 p-8 text-center">
+        <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+          {provider === 'gdrive' ? <HardDrive className="h-5 w-5" /> : <Cloud className="h-5 w-5" />}
+        </div>
+        <p className="text-sm font-medium text-foreground">{meta.name} isn&apos;t connected yet</p>
+        <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-muted-foreground">
+          {provider === 'gdrive'
+            ? 'Add your Drive API key to browse a public folder.'
+            : 'Add your Dropbox app key, app secret and refresh token to browse a folder.'}{' '}
+          Keys are stored write-only and never shown again.
+        </p>
+        <Button variant="outline" size="sm" className="mt-4" asChild>
+          <a href="/settings/postiz">
+            <KeyRound className="h-4 w-4" /> Add keys in Settings
+          </a>
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <p className="text-sm text-muted-foreground">{meta.help}</p>
+      <div className="flex gap-2">
+        <Input
+          value={folder}
+          onChange={(e) => setFolder(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && browse()}
+          placeholder={meta.placeholder}
+          aria-label={`${meta.name} ${meta.folderLabel}`}
+        />
+        <Button onClick={browse} disabled={loading || !folder.trim()}>
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+          Browse
+        </Button>
+      </div>
+
+      {loading && (
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="aspect-[9/16] rounded-lg" />
+          ))}
+        </div>
+      )}
+
+      {!loading && items && items.length === 0 && (
+        <p className="rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+          No videos in that folder. Check the {meta.folderLabel} and that the folder contains video files.
+        </p>
+      )}
+
+      {!loading && items && items.length > 0 && (
+        <div className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+          {items.map((it) => {
+            const fileId = `cloud:${it.source.ref}`;
+            const on = isSelected(fileId);
+            return (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() =>
+                  onToggle({
+                    fileId,
+                    source: it.source,
+                    label: it.name,
+                    brief: '',
+                    thumbUrl: it.thumbnailUrl,
+                    cloudUrl: it.source.ref,
+                  })
+                }
+                aria-pressed={on}
+                className={`group relative aspect-[9/16] overflow-hidden rounded-lg border-2 transition-colors ${
+                  on ? 'border-primary' : 'border-transparent hover:border-border'
+                }`}
+              >
+                {it.thumbnailUrl ? (
+                  <img src={it.thumbnailUrl} alt="" className="h-full w-full object-cover bg-muted" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-muted">
+                    <Film className="h-6 w-6 text-muted-foreground" />
+                  </div>
+                )}
+                {on && (
+                  <span className="absolute right-1.5 top-1.5 rounded-full bg-primary p-0.5 text-primary-foreground">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </span>
+                )}
+                <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
+                  {it.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -867,11 +1140,13 @@ function CloudTab({ onAdd }: { onAdd: (f: SelectedFile) => void }) {
 function StepReview({
   posts,
   setPosts,
+  filesById,
   onBack,
   onNext,
 }: {
   posts: EditablePost[];
   setPosts: React.Dispatch<React.SetStateAction<EditablePost[]>>;
+  filesById: Map<string, SelectedFile>;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -907,18 +1182,24 @@ function StepReview({
           </p>
         </div>
       )}
-      {byFile.map(([fileId, rows]) => (
-        <section key={fileId} className="rounded-xl border border-border bg-card p-5">
-          <h2 className="truncate text-sm font-semibold text-foreground" title={fileId}>
-            {fileId.replace(/^(render|upload|cloud):/, '')}
-          </h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {rows.map(({ post, index }) => (
-              <PostCard key={`${post.fileId}-${post.channelId}`} post={post} onChange={(patch) => update(index, patch)} />
-            ))}
-          </div>
-        </section>
-      ))}
+      {byFile.map(([fileId, rows]) => {
+        const file = filesById.get(fileId);
+        return (
+          <section key={fileId} className="rounded-xl border border-border bg-card p-5">
+            <div className="flex items-start gap-4">
+              {file && <ReviewPreview file={file} />}
+              <h2 className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground" title={fileId}>
+                {file?.label ?? fileId.replace(/^(render|upload|cloud):/, '')}
+              </h2>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              {rows.map(({ post, index }) => (
+                <PostCard key={`${post.fileId}-${post.channelId}`} post={post} onChange={(patch) => update(index, patch)} />
+              ))}
+            </div>
+          </section>
+        );
+      })}
 
       <div className="flex items-center justify-between">
         <Button variant="outline" onClick={onBack}>

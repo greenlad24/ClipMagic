@@ -33,7 +33,10 @@ async function main() {
   process.env.DOCKER_SOCKET = path.join(configDir, "nonexistent.sock");
 
   const mod = await import("../settings/postizSecrets.js");
-  const { getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS, getPostizApiKey, getPostPeerApiKey } = mod;
+  const {
+    getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS,
+    getPostizApiKey, getPostPeerApiKey, getGoogleDriveApiKey, getDropboxCredentials,
+  } = mod;
 
   const SECRET = "super-secret-jwt-value-1234567890";
   const storePath = path.join(path.resolve(root), "postiz-settings.json");
@@ -241,6 +244,82 @@ async function main() {
     process.env.POSTPEER_API_KEY = "pp-env-override";
     assert.equal(getPostPeerApiKey(), "pp-env-override");
     delete process.env.POSTPEER_API_KEY;
+  });
+
+  // ── Cloud sources keys: write-only + server-only getters + NOT in Postiz env ─
+  const DRIVE_KEY = "drive-api-key-aaa-1111";
+  const DROPBOX = { appKey: "dbx-app-key", appSecret: "dbx-app-secret", refreshToken: "dbx-refresh-token" };
+
+  await check("the 4 Cloud sources keys are in the registry under 'Cloud sources'", () => {
+    for (const key of ["GOOGLE_DRIVE_API_KEY", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET", "DROPBOX_REFRESH_TOKEN"]) {
+      const def = POSTIZ_KEY_DEFS.find((d) => d.key === key);
+      assert.ok(def, `${key} missing from the registry`);
+      assert.equal(def?.group, "Cloud sources");
+    }
+  });
+
+  await check("Cloud sources key values NEVER leak via getSettings/updateSettings (write-only)", () => {
+    delete process.env.GOOGLE_DRIVE_API_KEY;
+    delete process.env.DROPBOX_APP_KEY;
+    delete process.env.DROPBOX_APP_SECRET;
+    delete process.env.DROPBOX_REFRESH_TOKEN;
+    const responses = [
+      JSON.stringify(updateSettings({ values: {
+        GOOGLE_DRIVE_API_KEY: DRIVE_KEY,
+        DROPBOX_APP_KEY: DROPBOX.appKey,
+        DROPBOX_APP_SECRET: DROPBOX.appSecret,
+        DROPBOX_REFRESH_TOKEN: DROPBOX.refreshToken,
+      } })),
+      JSON.stringify(getSettings()),
+    ];
+    for (const r of responses) {
+      for (const secret of [DRIVE_KEY, DROPBOX.appKey, DROPBOX.appSecret, DROPBOX.refreshToken]) {
+        assert.ok(!r.includes(secret), "a response leaked a Cloud sources secret");
+      }
+    }
+  });
+
+  await check("Cloud sources keys are reported configured after save", () => {
+    const s = getSettings();
+    for (const key of ["GOOGLE_DRIVE_API_KEY", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET", "DROPBOX_REFRESH_TOKEN"]) {
+      assert.equal(s.keys.find((x) => x.key === key)?.configured, true, `${key} not configured`);
+    }
+  });
+
+  await check("getGoogleDriveApiKey() / getDropboxCredentials() return raw values for server-side use only", () => {
+    delete process.env.GOOGLE_DRIVE_API_KEY;
+    delete process.env.DROPBOX_APP_KEY;
+    delete process.env.DROPBOX_APP_SECRET;
+    delete process.env.DROPBOX_REFRESH_TOKEN;
+    assert.equal(getGoogleDriveApiKey(), DRIVE_KEY);
+    assert.deepEqual(getDropboxCredentials(), DROPBOX);
+  });
+
+  await check("getDropboxCredentials() returns null unless ALL THREE are present", () => {
+    updateSettings({ remove: ["DROPBOX_REFRESH_TOKEN"] });
+    assert.equal(getDropboxCredentials(), null, "partial Dropbox creds must not resolve");
+    // restore for any later checks
+    updateSettings({ values: { DROPBOX_REFRESH_TOKEN: DROPBOX.refreshToken } });
+  });
+
+  await check("the 4 Cloud sources keys are NOT emitted into the Postiz container env file", () => {
+    const text = buildEnvFileContents({
+      GOOGLE_DRIVE_API_KEY: DRIVE_KEY,
+      DROPBOX_APP_KEY: DROPBOX.appKey,
+      DROPBOX_APP_SECRET: DROPBOX.appSecret,
+      DROPBOX_REFRESH_TOKEN: DROPBOX.refreshToken,
+      POSTIZ_JWT_SECRET: SECRET,
+    });
+    for (const key of ["GOOGLE_DRIVE_API_KEY", "DROPBOX_APP_KEY", "DROPBOX_APP_SECRET", "DROPBOX_REFRESH_TOKEN"]) {
+      assert.ok(!text.includes(key), `${key} leaked into the Postiz env file`);
+    }
+    assert.ok(text.includes("POSTIZ_JWT_SECRET="), "other keys should still be emitted");
+  });
+
+  await check("env vars take precedence over the store for Cloud sources getters", () => {
+    process.env.GOOGLE_DRIVE_API_KEY = "drive-env-override";
+    assert.equal(getGoogleDriveApiKey(), "drive-env-override");
+    delete process.env.GOOGLE_DRIVE_API_KEY;
   });
 
   // cleanup

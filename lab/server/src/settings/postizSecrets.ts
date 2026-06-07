@@ -58,6 +58,18 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // getPostPeerApiKey(). Same write-only guarantee: never returned via any HTTP response.
   { key: "POSTPEER_API_KEY", label: "PostPeer API key", group: "Bulk Scheduler", connects: "Lets the Bulk Scheduler post your Shorts to TikTok via PostPeer's pre-approved Direct Post API (no TikTok app review). Create the key in your PostPeer dashboard, connect a TikTok account there, then paste it here. Used only by this lab server — never sent to the browser." },
 
+  // ── Cloud sources (browse + pick videos from a Drive/Dropbox FOLDER) ─────────
+  // Like POSTIZ_API_KEY / POSTPEER_API_KEY these are consumed by THIS lab server
+  // (postiz/cloudSources.ts) to LIST a cloud folder and resolve each video to a
+  // direct media URL — they are NOT Postiz container config, so they're excluded
+  // from the Postiz env file (buildEnvFileContents skips them below) and read
+  // internally via getGoogleDriveApiKey() / getDropboxCredentials(). Same
+  // write-only guarantee as the rest: never returned through any HTTP response.
+  { key: "GOOGLE_DRIVE_API_KEY", label: "Google Drive API key", group: "Cloud sources", connects: "Lets the Bulk Scheduler browse a PUBLIC (\"anyone with the link\") Google Drive folder and pick videos from it. Create an API key in Google Cloud Console (enable the Drive API), then paste it here. Used only for listing — each picked file is fetched via its own direct download URL. Server-only; never sent to the browser." },
+  { key: "DROPBOX_APP_KEY", label: "Dropbox app key", group: "Cloud sources", connects: "App key for your Dropbox app (App Console → your app → Settings). Used with the app secret + refresh token to browse a Dropbox folder and pick videos. Server-only; never sent to the browser." },
+  { key: "DROPBOX_APP_SECRET", label: "Dropbox app secret", group: "Cloud sources", connects: "App secret for your Dropbox app (App Console → your app → Settings). Paired with the app key to mint a short-lived access token from your refresh token. Server-only; never sent to the browser." },
+  { key: "DROPBOX_REFRESH_TOKEN", label: "Dropbox refresh token", group: "Cloud sources", connects: "Long-lived OAuth refresh token for your Dropbox account (generate once with the offline-access flow). The lab exchanges it for short-lived access tokens to list folders + mint temporary download links. Server-only; never sent to the browser." },
+
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
   { key: "X_API_KEY", label: "X API key", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
   { key: "X_API_SECRET", label: "X API secret", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
@@ -99,6 +111,21 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
 ];
 
 const ALLOWED_KEYS = new Set(POSTIZ_KEY_DEFS.map((d) => d.key));
+
+/**
+ * Keys consumed by THIS lab server (never by the Postiz container), so they're
+ * EXCLUDED from the emitted Postiz env file: the Bulk Scheduler's posting-provider
+ * keys (Postiz / PostPeer public APIs) and the Cloud sources credentials
+ * (Drive / Dropbox folder browsing). Read internally via the server-only getters.
+ */
+const LAB_ONLY_KEYS = new Set([
+  "POSTIZ_API_KEY",
+  "POSTPEER_API_KEY",
+  "GOOGLE_DRIVE_API_KEY",
+  "DROPBOX_APP_KEY",
+  "DROPBOX_APP_SECRET",
+  "DROPBOX_REFRESH_TOKEN",
+]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 /** 0600 JSON store inside the lab's own (isolated, git-ignored) data dir. */
@@ -208,11 +235,11 @@ export function buildEnvFileContents(map: SecretMap): string {
     "# Postiz keys managed by the ClipMagic suite Settings page — DO NOT EDIT BY HAND.",
     "# This file is sourced by the Postiz container's entrypoint at startup and",
     "# overrides the compose `environment:` defaults. Regenerated on every save.",
-    // Emit Postiz's OWN config keys only. POSTIZ_API_KEY and POSTPEER_API_KEY are
-    // consumed by THIS lab server (the Bulk Scheduler's Postiz / PostPeer
-    // clients), not by the Postiz container, so they must never leak into
-    // Postiz's env file.
-    ...POSTIZ_KEY_DEFS.filter((d) => d.key !== "POSTIZ_API_KEY" && d.key !== "POSTPEER_API_KEY" && map[d.key]).map((d) =>
+    // Emit Postiz's OWN config keys only. The Bulk Scheduler / Cloud sources keys
+    // (POSTIZ_API_KEY, POSTPEER_API_KEY, and the Drive/Dropbox credentials) are
+    // consumed by THIS lab server, not by the Postiz container, so they must
+    // never leak into Postiz's env file.
+    ...POSTIZ_KEY_DEFS.filter((d) => !LAB_ONLY_KEYS.has(d.key) && map[d.key]).map((d) =>
       envLine(d.key, map[d.key]!),
     ),
   ];
@@ -283,6 +310,43 @@ export function getPostPeerApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.POSTPEER_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Google Drive API key — used by
+ * postiz/cloudSources.ts to LIST a public ("anyone with link") Drive folder.
+ * Like the Postiz/PostPeer keys it must NEVER be wired into an HTTP response
+ * (write-only guarantee). An env var (GOOGLE_DRIVE_API_KEY) takes precedence.
+ */
+export function getGoogleDriveApiKey(): string | null {
+  const fromEnv = (process.env.GOOGLE_DRIVE_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.GOOGLE_DRIVE_API_KEY || null;
+}
+
+/** A configured set of Dropbox app credentials (all three required). */
+export interface DropboxCredentials {
+  appKey: string;
+  appSecret: string;
+  refreshToken: string;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Dropbox app credentials — used by
+ * postiz/cloudSources.ts to mint short-lived access tokens (from the refresh
+ * token) for listing folders + minting temporary download links. Returns null
+ * unless ALL THREE are configured. Env vars take precedence over the store.
+ * Must NEVER be wired into an HTTP response (write-only guarantee).
+ */
+export function getDropboxCredentials(): DropboxCredentials | null {
+  const map = readStore();
+  const pick = (key: string) => (process.env[key] || "").trim() || map[key] || "";
+  const appKey = pick("DROPBOX_APP_KEY");
+  const appSecret = pick("DROPBOX_APP_SECRET");
+  const refreshToken = pick("DROPBOX_REFRESH_TOKEN");
+  if (!appKey || !appSecret || !refreshToken) return null;
+  return { appKey, appSecret, refreshToken };
 }
 
 function canWriteConfigDir(): boolean {
