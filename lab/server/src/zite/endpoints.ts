@@ -2197,6 +2197,7 @@ const previewBulkSchedule: Handler = async (input) =>
     intent: input?.intent,
     timezone: input?.timezone,
     now: input?.now,
+    maxPerDay: typeof input?.maxPerDay === "number" ? input.maxPerDay : undefined,
   });
 
 const runBulkSchedule: Handler = async (input) =>

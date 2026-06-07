@@ -272,10 +272,21 @@ export type BulkPreviewFile = {
    */
   transcript: string | null;
 };
+/** A (file × channel) post dropped as a de-duplicate (already in the ledger). */
+export type BulkSkippedPost = {
+  fileId: string;
+  channelId: string;
+  channelName: string;
+  reason: string;
+};
 export type PreviewBulkScheduleOutputType = {
   posts: BulkPreviewPost[];
   files: BulkPreviewFile[];
   skippedChannels: Array<{ id: string; reason: string }>;
+  /** (file × channel) posts skipped because they're already scheduled to that channel. */
+  skippedPosts: BulkSkippedPost[];
+  /** Per-channel "continuing your queue from <local day>" hints. */
+  continuedFrom: Array<{ channelId: string; channelName: string; fromLocalDay: string }>;
 };
 export type BulkScheduleItemResult = {
   fileId: string;

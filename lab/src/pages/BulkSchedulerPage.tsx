@@ -221,11 +221,17 @@ export default function BulkSchedulerPage() {
   const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [intent, setIntent] = useState<'none' | 'commute' | 'lunch' | 'evening'>('none');
+  // Max posts per channel per day (continuity tops up partially-filled days first).
+  const [maxPerDay, setMaxPerDay] = useState(2);
 
   // Step 2
   const [posts, setPosts] = useState<EditablePost[]>([]);
   // Per-file transcript the captions were grounded in (null = used the brief).
   const [transcriptByFile, setTranscriptByFile] = useState<Map<string, string | null>>(new Map());
+  // (file × channel) pairs dropped because they're already in the ledger.
+  const [skippedPosts, setSkippedPosts] = useState<PreviewBulkScheduleOutputType['skippedPosts']>([]);
+  // Per-channel "continuing your queue from <day>" hints.
+  const [continuedFrom, setContinuedFrom] = useState<PreviewBulkScheduleOutputType['continuedFrom']>([]);
   const [previewing, setPreviewing] = useState(false);
 
   // Step 3
@@ -303,11 +309,21 @@ export default function BulkSchedulerPage() {
         files: selected.map((f) => ({ source: f.source, brief: f.brief, fileId: f.fileId, label: f.label })),
         channelIds: selectedChannelIds,
         intent: intent === 'none' ? undefined : intent,
+        maxPerDay,
       });
       setPosts(res.posts);
       setTranscriptByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.transcript])));
+      setSkippedPosts(res.skippedPosts ?? []);
+      setContinuedFrom(res.continuedFrom ?? []);
       if (res.skippedChannels.length) {
         toast.info(`${res.skippedChannels.length} channel(s) skipped (not connected).`);
+      }
+      if ((res.skippedPosts ?? []).length) {
+        toast.info(`${res.skippedPosts.length} post(s) already scheduled — skipped.`);
+      }
+      if ((res.posts ?? []).length === 0) {
+        toast.info('Everything selected is already scheduled to those channels.');
+        return;
       }
       setStep(2);
     } catch (e) {
@@ -418,6 +434,8 @@ export default function BulkSchedulerPage() {
             setSelectedChannelIds={setSelectedChannelIds}
             intent={intent}
             setIntent={setIntent}
+            maxPerDay={maxPerDay}
+            setMaxPerDay={setMaxPerDay}
             onNext={goPreview}
             previewing={previewing}
           />
@@ -429,6 +447,8 @@ export default function BulkSchedulerPage() {
             setPosts={setPosts}
             filesById={filesById}
             transcriptByFile={transcriptByFile}
+            skippedPosts={skippedPosts}
+            continuedFrom={continuedFrom}
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}
           />
@@ -619,6 +639,8 @@ function StepSelect({
   setSelectedChannelIds,
   intent,
   setIntent,
+  maxPerDay,
+  setMaxPerDay,
   onNext,
   previewing,
 }: {
@@ -630,6 +652,8 @@ function StepSelect({
   setSelectedChannelIds: React.Dispatch<React.SetStateAction<string[]>>;
   intent: 'none' | 'commute' | 'lunch' | 'evening';
   setIntent: (v: 'none' | 'commute' | 'lunch' | 'evening') => void;
+  maxPerDay: number;
+  setMaxPerDay: (v: number) => void;
   onNext: () => void;
   previewing: boolean;
 }) {
@@ -781,19 +805,42 @@ function StepSelect({
           })}
         </div>
 
-        <div className="mt-5 max-w-xs">
-          <label className="text-xs font-medium text-muted-foreground">Timing intent (optional)</label>
-          <Select value={intent} onValueChange={(v) => setIntent(v as typeof intent)}>
-            <SelectTrigger className="mt-1">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">Best per-platform windows</SelectItem>
-              <SelectItem value="commute">Weekday commute (7–9am ET)</SelectItem>
-              <SelectItem value="lunch">Lunch break (12–1pm ET)</SelectItem>
-              <SelectItem value="evening">Evening scroll (7–9pm)</SelectItem>
-            </SelectContent>
-          </Select>
+        <div className="mt-5 grid max-w-xl gap-4 sm:grid-cols-2">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Timing intent (optional)</label>
+            <Select value={intent} onValueChange={(v) => setIntent(v as typeof intent)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Best per-platform windows</SelectItem>
+                <SelectItem value="commute">Weekday commute (7–9am ET)</SelectItem>
+                <SelectItem value="lunch">Lunch break (12–1pm ET)</SelectItem>
+                <SelectItem value="evening">Evening scroll (7–9pm)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="max-per-day" className="text-xs font-medium text-muted-foreground">
+              Max posts per day (per channel)
+            </label>
+            <Input
+              id="max-per-day"
+              type="number"
+              min={1}
+              max={24}
+              value={maxPerDay}
+              onChange={(e) => {
+                const n = Math.round(Number(e.target.value));
+                setMaxPerDay(Number.isFinite(n) ? Math.min(24, Math.max(1, n)) : 1);
+              }}
+              className="mt-1"
+            />
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              Large batches spread across days. We continue after each channel&apos;s existing
+              queue and never schedule the same video to a channel twice.
+            </p>
+          </div>
         </div>
       </section>
 
@@ -1146,6 +1193,8 @@ function StepReview({
   setPosts,
   filesById,
   transcriptByFile,
+  skippedPosts,
+  continuedFrom,
   onBack,
   onNext,
 }: {
@@ -1153,6 +1202,8 @@ function StepReview({
   setPosts: React.Dispatch<React.SetStateAction<EditablePost[]>>;
   filesById: Map<string, SelectedFile>;
   transcriptByFile: Map<string, string | null>;
+  skippedPosts: PreviewBulkScheduleOutputType['skippedPosts'];
+  continuedFrom: PreviewBulkScheduleOutputType['continuedFrom'];
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -1186,6 +1237,44 @@ function StepReview({
             be scheduled. Fix the caption/video below, or toggle{' '}
             <span className="font-medium">override</span> on the item to schedule it anyway.
           </p>
+        </div>
+      )}
+
+      {continuedFrom.length > 0 && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          <CalendarClock className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--chart-3))]" />
+          <p>
+            Continuing your queue: {continuedFrom.length === 1 ? (
+              <>
+                <span className="font-medium text-foreground">{continuedFrom[0].channelName}</span> picks up
+                from <span className="font-medium text-foreground">{formatLocalDay(continuedFrom[0].fromLocalDay)}</span>.
+              </>
+            ) : (
+              <>
+                {continuedFrom.length} channels pick up after their already-scheduled posts (
+                {continuedFrom.map((c) => c.channelName).join(', ')}).
+              </>
+            )}{' '}
+            New posts are appended at up to your per-day cap.
+          </p>
+        </div>
+      )}
+
+      {skippedPosts.length > 0 && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <div className="min-w-0">
+            <p className="font-medium text-foreground">
+              {skippedPosts.length} already scheduled — skipped
+            </p>
+            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              These videos are already in the queue for their channel, so they weren&apos;t added again:{' '}
+              {skippedPosts
+                .map((s) => `${s.fileId.replace(/^(render|upload|cloud):/, '')} → ${s.channelName}`)
+                .join('; ')}
+              .
+            </p>
+          </div>
         </div>
       )}
       {byFile.map(([fileId, rows]) => {
@@ -1657,6 +1746,17 @@ function formatLocal(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/** "YYYY-MM-DD" (audience local day) → a friendly "Mon, Jun 8" label. */
+function formatLocalDay(day: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  if (!y || !m || !d) return day;
+  // Build a noon-local date so timezone shifts can't roll it to the prior day.
+  const dt = new Date(y, m - 1, d, 12, 0, 0);
+  return Number.isNaN(dt.getTime())
+    ? day
+    : dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 /** ISO → value for <input type="datetime-local"> in the browser's local zone. */

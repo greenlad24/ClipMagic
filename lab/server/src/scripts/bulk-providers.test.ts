@@ -14,6 +14,9 @@
  *   cd lab/server && npx tsx src/scripts/bulk-providers.test.ts
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 let passed = 0;
 function check(name: string, fn: () => void | Promise<void>) {
@@ -86,6 +89,12 @@ async function main() {
   process.env.PUBLIC_BASE_URL = "https://clips.example.com";
   // Caption generation needs an Anthropic credential; the routed mock answers it.
   process.env.ANTHROPIC_API_KEY = "anthropic-key";
+  // schedule() records successful posts in the per-channel ledger; point it at a
+  // throwaway file so this test never touches the real lab data dir.
+  process.env.BULK_SCHEDULE_LEDGER_PATH = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "clipmagic-bulkprov-")),
+    "ledger.json",
+  );
 
   const fileSources = await import("../postiz/fileSources.js");
   const bulk = await import("../postiz/bulkScheduler.js");

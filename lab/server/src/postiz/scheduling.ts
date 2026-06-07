@@ -80,9 +80,17 @@ const INTENT_WINDOWS: Record<Exclude<Intent, "none">, { startHour: number; endHo
 };
 
 export interface ScheduleItemInput {
-  /** Stable id for the (file × platform) pair — echoed back on the result. */
+  /** Stable id for the (file × channel) pair — echoed back on the result. */
   key: string;
+  /** Selects the optimal posting WINDOWS (peak hours per platform). */
   platform: ShortPlatform | "generic";
+  /**
+   * The CHANNEL this post targets. Cap, continuity, and collision-avoidance are
+   * all keyed by this (each channel is its own queue), while `platform` only
+   * picks the time windows. Defaults to `platform` when omitted (back-compat with
+   * the old per-platform behavior + the existing unit tests).
+   */
+  channelId?: string;
 }
 
 export interface ScheduleResult {
@@ -93,6 +101,24 @@ export interface ScheduleResult {
   reason: string;
 }
 
+/**
+ * Per-channel STARTING STATE, derived by the caller from the persistent ledger
+ * (bulkScheduler reads it; the engine stays pure). Lets a new batch CONTINUE the
+ * channel's existing queue rather than restart from `now`:
+ *   - `furthestLocalDay` ("YYYY-MM-DD") = the last local day the channel already
+ *     has a post on; scheduling for that channel starts no earlier than this day,
+ *     so it tops up a partially-filled last day before rolling forward.
+ *   - `countsByLocalDay` pre-seeds the per-day fill so the cap is honored ACROSS
+ *     runs (e.g. last day already has 1 post, cap 2 → add exactly 1 more there).
+ *   - `occupiedInstants` pre-seeds the collision set so a new post never lands on
+ *     an already-scheduled minute.
+ */
+export interface ChannelStartState {
+  furthestLocalDay?: string | null;
+  countsByLocalDay?: Record<string, number>;
+  occupiedInstants?: string[];
+}
+
 export interface ScheduleOptions {
   /** IANA tz of the target audience. Default America/New_York ("US"). */
   timezone?: string;
@@ -101,8 +127,13 @@ export interface ScheduleOptions {
   now: Date;
   /** First posting day = today (if a window is still ahead) or tomorrow. */
   startTomorrow?: boolean;
-  /** Max posts per channel per day before rolling to the next day. */
+  /** Max posts per channel per day before rolling to the next day. Default 2. */
   maxPerChannelPerDay?: number;
+  /**
+   * Per-channel continuity seed (from the ledger), keyed by channelId. Channels
+   * absent here simply start from `now` with an empty queue.
+   */
+  channelStartStates?: Record<string, ChannelStartState>;
 }
 
 // Generic window for platforms we don't have tuned rules for.
@@ -197,6 +228,18 @@ function addLocalDays(parts: { y: number; mo: number; d: number }, n: number): {
   };
 }
 
+/** Local "YYYY-MM-DD" key for a local date — matches the ledger's day keys. */
+function localDayKeyOf(parts: { y: number; mo: number; d: number }): string {
+  return `${parts.y}-${String(parts.mo).padStart(2, "0")}-${String(parts.d).padStart(2, "0")}`;
+}
+
+/** Whole calendar days from `fromKey` to `toKey` (both "YYYY-MM-DD"); ≥0 when toKey ≥ fromKey. */
+function daysBetweenLocal(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split("-").map(Number);
+  const [ty, tm, td] = toKey.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
 const WD_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function fmtLocalTime(h: number, mi: number): string {
@@ -215,37 +258,82 @@ const PLATFORM_LABEL: Record<ShortPlatform | "generic", string> = {
 /**
  * Build the schedule. Items are processed in order; per item we pick its
  * platform's best window on the earliest eligible day, then place it at a free
- * minute on that channel (spacing successive posts on the same channel by a few
+ * minute ON ITS CHANNEL (spacing successive posts on the same channel by a few
  * minutes so they never collide and don't all fire at :00).
+ *
+ * Cap, continuity, and collision-avoidance are keyed by CHANNEL (each channel is
+ * its own queue); the posting WINDOWS are still chosen by platform. Per-channel
+ * continuity seeds (furthest day + per-day counts + occupied instants) come from
+ * the caller (the ledger) so a new batch continues AFTER a channel's existing
+ * queue without exceeding the daily cap or colliding with an occupied minute.
  */
 export function buildSchedule(items: ScheduleItemInput[], options: ScheduleOptions): ScheduleResult[] {
   const timezone = options.timezone || "America/New_York";
   const intent: Intent = options.intent ?? "none";
-  const maxPerDay = Math.max(1, options.maxPerChannelPerDay ?? 1);
+  const maxPerDay = Math.max(1, options.maxPerChannelPerDay ?? 2);
   const now = options.now;
+  const startStates = options.channelStartStates ?? {};
 
-  // Per-channel (platform) state: how many we've placed, and the minute-slots
-  // already taken (as ISO strings) so we never double-book the same minute.
-  const takenByPlatform = new Map<string, Set<string>>();
-  const placedCountByPlatformDay = new Map<string, number>(); // `${platform}|${dayIndex}`
+  // Per-CHANNEL state: the minute-slots already taken (as ISO strings) so we
+  // never double-book the same minute, and how many posts land on each LOCAL day
+  // (keyed by "YYYY-MM-DD" so the ledger's seed lines up across runs).
+  const takenByChannel = new Map<string, Set<string>>();
+  const placedByChannelDay = new Map<string, number>(); // `${channelId}|${localDay}`
 
   const today = localDateParts(now, timezone);
-  const startOffsetDays = options.startTomorrow ? 1 : 0;
+  const todayKey = localDayKeyOf(today);
+  const baseStartOffset = options.startTomorrow ? 1 : 0;
+
+  // The channel-state key: an explicit channelId (each channel its own queue) or
+  // the platform when omitted (back-compat with the old per-platform behavior).
+  const channelKeyOf = (item: ScheduleItemInput): string => item.channelId ?? item.platform;
+
+  // Seed per-channel collision sets + per-day counts from the ledger ONCE.
+  const seeded = new Set<string>();
+  function seedChannel(channelId: string): void {
+    if (seeded.has(channelId)) return;
+    seeded.add(channelId);
+    const state = startStates[channelId];
+    if (!state) return;
+    if (state.occupiedInstants?.length) {
+      const taken = takenByChannel.get(channelId) ?? new Set<string>();
+      for (const iso of state.occupiedInstants) {
+        const t = Date.parse(iso);
+        if (!Number.isNaN(t)) taken.add(new Date(t).toISOString());
+      }
+      takenByChannel.set(channelId, taken);
+    }
+    if (state.countsByLocalDay) {
+      for (const [day, n] of Object.entries(state.countsByLocalDay)) {
+        placedByChannelDay.set(`${channelId}|${day}`, n);
+      }
+    }
+  }
 
   const results: ScheduleResult[] = [];
 
   for (const item of items) {
+    const channelId = channelKeyOf(item);
+    seedChannel(channelId);
     const windows = windowsFor(item.platform);
-    const taken = takenByPlatform.get(item.platform) ?? new Set<string>();
-    takenByPlatform.set(item.platform, taken);
+    const taken = takenByChannel.get(channelId) ?? new Set<string>();
+    takenByChannel.set(channelId, taken);
+
+    // Continuity: start no earlier than the channel's furthest already-scheduled
+    // local day (so a partially-filled last day gets topped up first), and never
+    // before today/`now`. The day cap on a seeded last day is honored because
+    // placedByChannelDay was pre-seeded above.
+    const furthest = startStates[channelId]?.furthestLocalDay ?? null;
+    const channelStartKey = furthest && furthest > todayKey ? furthest : todayKey;
+    const startOffsetDays = baseStartOffset + daysBetweenLocal(todayKey, channelStartKey);
 
     let placed: ScheduleResult | null = null;
 
     // Walk forward day by day until we find an eligible window with a free slot.
-    for (let dayOffset = startOffsetDays; dayOffset < startOffsetDays + 60 && !placed; dayOffset++) {
+    for (let dayOffset = startOffsetDays; dayOffset < startOffsetDays + 365 && !placed; dayOffset++) {
       const day = addLocalDays(today, dayOffset);
-      const dayKey = `${item.platform}|${dayOffset}`;
-      const placedToday = placedCountByPlatformDay.get(dayKey) ?? 0;
+      const dayKey = `${channelId}|${localDayKeyOf(day)}`;
+      const placedToday = placedByChannelDay.get(dayKey) ?? 0;
       if (placedToday >= maxPerDay) continue;
 
       // Candidate windows for this weekday, best-first. Intent (when set) takes
@@ -275,7 +363,7 @@ export function buildSchedule(items: ScheduleItemInput[], options: ScheduleOptio
           if (taken.has(iso)) continue;
 
           taken.add(iso);
-          placedCountByPlatformDay.set(dayKey, placedToday + 1);
+          placedByChannelDay.set(dayKey, placedToday + 1);
           const intentNote =
             intent !== "none" && candidates[0]?.startHour === w.startHour ? `${intentLabel(intent)} ` : "";
           placed = {

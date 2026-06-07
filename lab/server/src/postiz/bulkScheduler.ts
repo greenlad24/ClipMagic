@@ -28,7 +28,8 @@ import {
 } from "./postpeerClient.js";
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
 import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type CaptionPlatform } from "./captions.js";
-import { buildSchedule, type Intent, type ScheduleItemInput } from "./scheduling.js";
+import { buildSchedule, type Intent, type ScheduleItemInput, type ChannelStartState } from "./scheduling.js";
+import { getChannelState, recordScheduled, deriveChannelTimeline } from "./scheduleLedger.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
 import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
@@ -223,6 +224,8 @@ export interface PreviewInput {
   timezone?: string;
   /** ISO string; defaults to server now. Lets the UI/tests pin "now". */
   now?: string;
+  /** Max posts per channel per day (default 2). Continuity tops up partial days. */
+  maxPerDay?: number;
 }
 
 export interface PreviewPostDto {
@@ -259,12 +262,33 @@ export interface PreviewFileDto {
   transcript: string | null;
 }
 
+/** One (file × channel) pair dropped from the plan because the ledger already has it. */
+export interface SkippedPostDto {
+  fileId: string;
+  channelId: string;
+  /** Human label for the channel (so the UI doesn't have to re-resolve it). */
+  channelName: string;
+  reason: string;
+}
+
 export interface PreviewOutput {
   posts: PreviewPostDto[];
   /** Per-file transcript surfaced so the UI can show what captions are based on. */
   files: PreviewFileDto[];
   /** Channels that were requested but skipped (not connected / not short-form). */
   skippedChannels: Array<{ id: string; reason: string }>;
+  /**
+   * (file × channel) posts DROPPED as de-duplicates — already scheduled to that
+   * channel by this tool (recorded in the ledger). Surfaced so the UI can show
+   * an "already scheduled — skipped" note rather than silently dropping them.
+   */
+  skippedPosts: SkippedPostDto[];
+  /**
+   * Per-channel continuity hint: the local day a channel's NEW posts continue
+   * from when the ledger pushed them past `now` (so the UI can say "continuing
+   * your queue from <date>"). Only channels that were actually pushed appear.
+   */
+  continuedFrom: Array<{ channelId: string; channelName: string; fromLocalDay: string }>;
 }
 
 export async function preview(
@@ -327,11 +351,51 @@ export async function preview(
     preflightByFile.set(f.fileId, pf.checks as GrowthCheckDto[]);
   }
 
-  // 2) Schedule: one (file × channel) item per post, spread across channels.
+  // 2) DE-DUPE + CONTINUITY: read the per-channel ledger. For each target channel
+  // we (a) drop any (channelId, fileId) already scheduled to it, and (b) derive a
+  // starting state (furthest day + per-day counts + occupied instants) so the new
+  // posts CONTINUE the channel's existing queue at ≤ maxPerDay/day rather than
+  // restart from `now`. The ledger is read HERE (not in the pure engine).
+  const timezone = input.timezone || "America/New_York";
+  const maxPerDay = Math.max(1, Math.floor(input.maxPerDay ?? 2));
+  const channelStates = new Map(targets.map((t) => [t.channel.id, getChannelState(t.channel.id)]));
+
+  const todayLocalKey = localDayKeyInTz(now, timezone);
+  const channelStartStates: Record<string, ChannelStartState> = {};
+  const continuedFrom: PreviewOutput["continuedFrom"] = [];
+  for (const { channel: c } of targets) {
+    const state = channelStates.get(c.id)!;
+    const { furthestLocalDay, countsByLocalDay } = deriveChannelTimeline(state.scheduledAt, timezone);
+    channelStartStates[c.id] = {
+      furthestLocalDay,
+      countsByLocalDay,
+      occupiedInstants: state.scheduledAt,
+    };
+    // Only surface "continuing your queue from X" when the existing queue actually
+    // pushes the new posts forward (furthest day is today or later).
+    if (furthestLocalDay && furthestLocalDay >= todayLocalKey) {
+      continuedFrom.push({ channelId: c.id, channelName: c.name, fromLocalDay: furthestLocalDay });
+    }
+  }
+
+  // One scheduling ITEM per (file × channel), MINUS de-duplicates. Items carry the
+  // channelId so cap/continuity/collisions are keyed by channel; platform stays for
+  // window selection.
   const items: ScheduleItemInput[] = [];
+  const skippedPosts: SkippedPostDto[] = [];
   for (const f of files) {
     for (const t of targets) {
-      items.push({ key: `${f.fileId}|${t.channel.id}`, platform: t.plat });
+      const already = channelStates.get(t.channel.id)!.fileIds.has(f.fileId);
+      if (already) {
+        skippedPosts.push({
+          fileId: f.fileId,
+          channelId: t.channel.id,
+          channelName: t.channel.name,
+          reason: "Already scheduled to this channel",
+        });
+        continue;
+      }
+      items.push({ key: `${f.fileId}|${t.channel.id}`, platform: t.plat, channelId: t.channel.id });
     }
   }
   const schedule = buildSchedule(items, {
@@ -339,15 +403,19 @@ export async function preview(
     timezone: input.timezone,
     intent: input.intent,
     startTomorrow: false,
+    maxPerChannelPerDay: maxPerDay,
+    channelStartStates,
   });
   const scheduleByKey = new Map(schedule.map((s) => [s.key, s]));
+  const skippedKeys = new Set(skippedPosts.map((s) => `${s.fileId}|${s.channelId}`));
 
-  // 3) Assemble preview rows.
+  // 3) Assemble preview rows (skipping de-duplicated pairs).
   const posts: PreviewPostDto[] = [];
   for (const f of files) {
     const caps = captionsByFile.get(f.fileId)!;
     const preflightChecks = preflightByFile.get(f.fileId) ?? [];
     for (const { channel: c, plat } of targets) {
+      if (skippedKeys.has(`${f.fileId}|${c.id}`)) continue;
       const cap = caps[plat];
       const sched = scheduleByKey.get(`${f.fileId}|${c.id}`)!;
       const captionScore = scoreCaption(cap?.caption ?? "", cap?.hashtags ?? [], plat);
@@ -382,7 +450,19 @@ export async function preview(
     };
   });
 
-  return { posts, files: filesDto, skippedChannels };
+  return { posts, files: filesDto, skippedChannels, skippedPosts, continuedFrom };
+}
+
+/** Local "YYYY-MM-DD" for an instant in a zone (for the continuity hint). */
+function localDayKeyInTz(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
 // ── schedule (actually post) ──────────────────────────────────────────────────
@@ -479,6 +559,17 @@ export async function schedule(
     ...(await schedulePostiz(postizPosts, mediaByFile)),
     ...(await schedulePostPeer(postPeerPosts, mediaByFile)),
   ];
+
+  // Record ONLY successful posts in the per-channel ledger, so continuity advances
+  // for real posts and a re-run de-dupes them. Failures are never recorded (a
+  // retry re-schedules only what truly didn't go out). Indexed by (file|channel)
+  // so each result maps back to the instant that was actually requested.
+  const postByKey = new Map(allowed.map((p) => [`${p.fileId}|${p.channelId}`, p]));
+  for (const r of results) {
+    if (!r.ok) continue;
+    const p = postByKey.get(`${r.fileId}|${r.channelId}`);
+    if (p) recordScheduled(p.channelId, p.fileId, new Date(p.scheduledAt).toISOString());
+  }
 
   const scheduled = results.filter((r) => r.ok).length;
   return { results, scheduled, failed: results.length - scheduled };
