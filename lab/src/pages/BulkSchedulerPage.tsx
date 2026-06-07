@@ -44,7 +44,13 @@ import {
   ArrowRight,
   ExternalLink,
   Loader2,
+  Gauge,
+  AlertTriangle,
+  HelpCircle,
+  ChevronDown,
+  ShieldCheck,
 } from 'lucide-react';
+import type { Growth, GrowthCheck } from 'zite-endpoints-sdk';
 
 /**
  * Bulk Scheduler — bulk-select rendered Shorts and schedule SEO-optimized,
@@ -67,8 +73,14 @@ interface SelectedFile {
   thumbUrl?: string;
 }
 
-// Editable preview row (a copy of a BulkPreviewPost the user can tweak).
-type EditablePost = BulkPreviewPost;
+// Editable preview row (a copy of a BulkPreviewPost the user can tweak). The
+// local-only `override` lets the user opt past a Growth Guardrails block.
+type EditablePost = BulkPreviewPost & { override?: boolean };
+
+/** True when a Growth result has a measured, failing `required` check. */
+function isGrowthBlocked(growth: Growth | undefined): boolean {
+  return !!growth?.checks.some((c) => c.severity === 'required' && c.pass === false);
+}
 
 const PLATFORM_BADGE: Record<string, string> = {
   tiktok: 'TikTok',
@@ -207,6 +219,7 @@ export default function BulkSchedulerPage() {
           firstLineHook: p.firstLineHook,
           scheduledAt: p.scheduledAt,
           ...(p.tiktok ? { tiktok: p.tiktok } : {}),
+          ...(p.override ? { override: true } : {}),
         })),
       });
       setResults(res);
@@ -238,6 +251,7 @@ export default function BulkSchedulerPage() {
           firstLineHook: p.firstLineHook,
           scheduledAt: p.scheduledAt,
           ...(p.tiktok ? { tiktok: p.tiktok } : {}),
+          ...(p.override ? { override: true } : {}),
         })),
       });
       // Merge retry results over the prior results.
@@ -867,8 +881,24 @@ function StepReview({
     return Array.from(map.entries());
   }, [posts]);
 
+  // Items still blocked by Growth Guardrails (required-fail, not overridden).
+  const blockedCount = useMemo(
+    () => posts.filter((p) => isGrowthBlocked(p.growth) && !p.override).length,
+    [posts],
+  );
+
   return (
     <div className="space-y-6">
+      {blockedCount > 0 && (
+        <div className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            {blockedCount} post{blockedCount === 1 ? '' : 's'} fail a required Growth Guardrail and can&apos;t
+            be scheduled. Fix the caption/video below, or toggle{' '}
+            <span className="font-medium">override</span> on the item to schedule it anyway.
+          </p>
+        </div>
+      )}
       {byFile.map(([fileId, rows]) => (
         <section key={fileId} className="rounded-xl border border-border bg-card p-5">
           <h2 className="truncate text-sm font-semibold text-foreground" title={fileId}>
@@ -886,7 +916,7 @@ function StepReview({
         <Button variant="outline" onClick={onBack}>
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
-        <Button onClick={onNext} disabled={posts.length === 0}>
+        <Button onClick={onNext} disabled={posts.length === 0 || blockedCount > 0}>
           Review schedule <ArrowRight className="h-4 w-4" />
         </Button>
       </div>
@@ -896,8 +926,9 @@ function StepReview({
 
 function PostCard({ post, onChange }: { post: EditablePost; onChange: (patch: Partial<EditablePost>) => void }) {
   const local = useMemo(() => formatLocal(post.scheduledAt), [post.scheduledAt]);
+  const blocked = isGrowthBlocked(post.growth);
   return (
-    <div className="rounded-lg border border-border bg-background p-3">
+    <div className={`rounded-lg border bg-background p-3 ${blocked && !post.override ? 'border-destructive/40' : 'border-border'}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
           <Badge variant="secondary" className="text-[10px]">
@@ -905,7 +936,16 @@ function PostCard({ post, onChange }: { post: EditablePost; onChange: (patch: Pa
           </Badge>
           <span className="truncate max-w-28 text-muted-foreground">{post.channelName}</span>
         </span>
+        {post.growth && <GrowthScore score={post.growth.score} />}
       </div>
+
+      {post.growth && (
+        <GrowthChecklist
+          growth={post.growth}
+          override={!!post.override}
+          onToggleOverride={(v) => onChange({ override: v })}
+        />
+      )}
 
       <label className="text-[11px] font-medium text-muted-foreground">Caption</label>
       <Textarea
@@ -936,6 +976,116 @@ function PostCard({ post, onChange }: { post: EditablePost; onChange: (patch: Pa
         {local} — {post.reason}
       </p>
     </div>
+  );
+}
+
+// ── Growth Guardrails UI ─────────────────────────────────────────────────────
+/** Color a 0–100 Growth Score by band (success / warning / destructive). */
+function scoreTone(score: number): { text: string; bg: string; ring: string } {
+  if (score >= 80) return { text: 'text-[hsl(var(--chart-3))]', bg: 'bg-[hsl(var(--chart-3))]/10', ring: 'border-[hsl(var(--chart-3))]/30' };
+  if (score >= 55) return { text: 'text-amber-500', bg: 'bg-amber-500/10', ring: 'border-amber-500/30' };
+  return { text: 'text-destructive', bg: 'bg-destructive/10', ring: 'border-destructive/30' };
+}
+
+function GrowthScore({ score }: { score: number }) {
+  const t = scoreTone(score);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${t.ring} ${t.bg} ${t.text}`}
+      title="Growth Score — caption + video best-practices"
+    >
+      <Gauge className="h-3 w-3" /> {score}
+    </span>
+  );
+}
+
+/** Expandable pass/fail checklist with per-item override for required failures. */
+function GrowthChecklist({
+  growth,
+  override,
+  onToggleOverride,
+}: {
+  growth: Growth;
+  override: boolean;
+  onToggleOverride: (v: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const blocked = isGrowthBlocked(growth);
+  const failCount = growth.checks.filter((c) => c.pass === false).length;
+
+  return (
+    <div className="mb-3">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-md border border-border bg-muted/20 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Growth checklist
+          {failCount > 0 && (
+            <span className={blocked ? 'text-destructive' : 'text-amber-500'}>
+              · {failCount} to improve
+            </span>
+          )}
+        </span>
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <ul className="mt-1.5 space-y-1.5 rounded-md border border-border bg-background p-2.5">
+          {growth.checks.map((c) => (
+            <GrowthCheckRow key={c.id} check={c} />
+          ))}
+        </ul>
+      )}
+
+      {blocked && (
+        <label className="mt-1.5 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-1.5 text-[11px] text-foreground">
+          <input
+            type="checkbox"
+            checked={override}
+            onChange={(e) => onToggleOverride(e.target.checked)}
+            className="mt-0.5 h-3.5 w-3.5 accent-[hsl(var(--destructive))]"
+          />
+          <span>
+            <span className="font-medium text-destructive">Override &amp; schedule anyway</span> — this post
+            fails a required guardrail.
+          </span>
+        </label>
+      )}
+    </div>
+  );
+}
+
+function GrowthCheckRow({ check }: { check: GrowthCheck }) {
+  // Icon by state: unknown → muted help; pass → success; fail → severity color.
+  const Icon =
+    check.pass === null ? HelpCircle : check.pass ? CheckCircle2 : check.severity === 'required' ? XCircle : AlertTriangle;
+  const tone =
+    check.pass === null
+      ? 'text-muted-foreground'
+      : check.pass
+      ? 'text-[hsl(var(--chart-3))]'
+      : check.severity === 'required'
+      ? 'text-destructive'
+      : 'text-amber-500';
+  return (
+    <li className="flex items-start gap-2 text-[11px]">
+      <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${tone}`} />
+      <span className="min-w-0">
+        <span className="font-medium text-foreground">{check.label}</span>
+        {check.severity !== 'required' && (
+          <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+            {check.severity === 'unknown' ? 'n/a' : 'tip'}
+          </span>
+        )}
+        {check.pass !== true && (
+          <span className="block text-muted-foreground">{check.hint}</span>
+        )}
+      </span>
+    </li>
   );
 }
 
@@ -1052,6 +1202,7 @@ function StepSchedule({
             <tr>
               <th className="px-4 py-2 font-medium">Video</th>
               <th className="px-4 py-2 font-medium">Channel</th>
+              <th className="px-4 py-2 font-medium">Growth</th>
               <th className="px-4 py-2 font-medium">When</th>
               <th className="px-4 py-2 font-medium text-right">Status</th>
             </tr>
@@ -1070,6 +1221,18 @@ function StepSchedule({
                     </Badge>
                     <span className="text-muted-foreground">{channelName(p.channelId)}</span>
                   </td>
+                  <td className="px-4 py-2">
+                    {p.growth ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <GrowthScore score={p.growth.score} />
+                        {p.override && isGrowthBlocked(p.growth) && (
+                          <span className="text-[10px] uppercase tracking-wide text-amber-500">overridden</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-muted-foreground">{formatLocal(p.scheduledAt)}</td>
                   <td className="px-4 py-2 text-right">
                     {!results ? (
@@ -1077,6 +1240,13 @@ function StepSchedule({
                     ) : r?.ok ? (
                       <span className="inline-flex items-center gap-1 text-[hsl(var(--chart-3))]">
                         <CheckCircle2 className="h-4 w-4" /> Scheduled
+                      </span>
+                    ) : (r?.blockedChecks?.length ?? 0) > 0 ? (
+                      <span
+                        className="inline-flex items-center gap-1 text-destructive"
+                        title={r?.error}
+                      >
+                        <ShieldCheck className="h-4 w-4" /> Blocked
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-destructive" title={r?.error}>

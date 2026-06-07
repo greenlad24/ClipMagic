@@ -27,9 +27,10 @@ import {
   type PostPeerTikTokOptions,
 } from "./postpeerClient.js";
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
-import { generateCaptions, type PlatformCaption } from "./captions.js";
+import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput } from "./scheduling.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, type FileSourceRef } from "./fileSources.js";
+import { preflightVideo, type ProbeFn } from "./preflight.js";
 
 /** Which API a channel posts through. */
 export type Provider = "postiz" | "postpeer";
@@ -42,6 +43,50 @@ export const DEFAULT_TIKTOK_OPTIONS: PostPeerTikTokOptions = {
   allowStitch: true,
   commercialContent: false,
 };
+
+// ── Growth Guardrails (per-post score = caption + pre-flight, merged) ─────────
+// The combined check carries the union severity ("unknown" comes only from
+// pre-flight). A `required` failure GATES scheduling (see schedule()); a
+// `recommended`/`unknown` check never blocks — it only lowers the score.
+export type GrowthSeverity = "required" | "recommended" | "unknown";
+
+export interface GrowthCheckDto {
+  id: string;
+  label: string;
+  /** null when unmeasured (pre-flight `unknown` checks). */
+  pass: boolean | null;
+  severity: GrowthSeverity;
+  hint: string;
+}
+
+export interface GrowthDto {
+  /** 0..100 combined Growth Score (caption + measured pre-flight checks). */
+  score: number;
+  checks: GrowthCheckDto[];
+}
+
+/**
+ * Merge a caption score (always measured) with a pre-flight result (may contain
+ * `unknown` checks) into ONE Growth result. The combined score weighs every
+ * MEASURED check with the shared scoreChecks() weighting; `unknown` checks are
+ * excluded from the score but kept in the list so the UI can show them as
+ * advisory. PURE + exported so the gating + scoring is unit-tested.
+ */
+export function combineGrowth(
+  captionChecks: GrowthCheckDto[],
+  preflightChecks: GrowthCheckDto[],
+): GrowthDto {
+  const checks = [...captionChecks, ...preflightChecks];
+  const measured = checks
+    .filter((c) => c.severity !== "unknown" && c.pass !== null)
+    .map((c) => ({ id: c.id, label: c.label, pass: c.pass === true, severity: c.severity as "required" | "recommended", hint: c.hint }));
+  return { score: scoreChecks(measured), checks };
+}
+
+/** True when a Growth result has at least one MEASURED, FAILING required check. */
+export function hasBlockingFailure(growth: GrowthDto): boolean {
+  return growth.checks.some((c) => c.severity === "required" && c.pass === false);
+}
 
 // ── status / channels ────────────────────────────────────────────────────────
 /**
@@ -193,6 +238,8 @@ export interface PreviewPostDto {
   reason: string;
   /** TikTok Direct-Post options (postpeer/tiktok only); defaults applied. */
   tiktok?: PostPeerTikTokOptions;
+  /** Growth Guardrails: combined caption + pre-flight score + checklist. */
+  growth: GrowthDto;
 }
 
 export interface PreviewOutput {
@@ -236,6 +283,14 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
     captionsByFile.set(f.fileId, caps);
   }
 
+  // 1b) Pre-flight: probe each file's video ONCE (same media across channels).
+  // Cloud links / missing files degrade to `unknown` checks (never fail hard).
+  const preflightByFile = new Map<string, GrowthCheckDto[]>();
+  for (const f of files) {
+    const pf = await preflightVideo(f.source, { nameHint: f.label || f.source.ref });
+    preflightByFile.set(f.fileId, pf.checks as GrowthCheckDto[]);
+  }
+
   // 2) Schedule: one (file × channel) item per post, spread across channels.
   const items: ScheduleItemInput[] = [];
   for (const f of files) {
@@ -255,9 +310,12 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
   const posts: PreviewPostDto[] = [];
   for (const f of files) {
     const caps = captionsByFile.get(f.fileId)!;
+    const preflightChecks = preflightByFile.get(f.fileId) ?? [];
     for (const c of targets) {
       const cap = caps[c.platform!];
       const sched = scheduleByKey.get(`${f.fileId}|${c.id}`)!;
+      const captionScore = scoreCaption(cap?.caption ?? "", cap?.hashtags ?? [], c.platform!);
+      const growth = combineGrowth(captionScore.checks as GrowthCheckDto[], preflightChecks);
       posts.push({
         fileId: f.fileId,
         channelId: c.id,
@@ -270,6 +328,7 @@ export async function preview(input: PreviewInput): Promise<PreviewOutput> {
         hashtags: cap?.hashtags ?? [],
         scheduledAt: sched.scheduledAt,
         reason: sched.reason,
+        growth,
         // Seed TikTok Direct-Post controls (PostPeer only) with sensible defaults
         // so the review UI can render the privacy/disclosure toggles.
         ...(c.provider === "postpeer" && c.platform === "tiktok"
@@ -299,6 +358,11 @@ export interface SchedulePostInput {
   scheduledAt: string;
   /** TikTok Direct-Post options (postpeer/tiktok only); defaults applied if absent. */
   tiktok?: PostPeerTikTokOptions;
+  /**
+   * Explicit per-item bypass of the Growth Guardrails gate. When a `required`
+   * check fails, the item is rejected UNLESS the user opts in with override:true.
+   */
+  override?: boolean;
 }
 
 export interface ScheduleItemResult {
@@ -306,6 +370,8 @@ export interface ScheduleItemResult {
   channelId: string;
   ok: boolean;
   error?: string;
+  /** Set when the item was blocked by Growth Guardrails (the failing checks). */
+  blockedChecks?: GrowthCheckDto[];
 }
 
 export interface ScheduleOutput {
@@ -315,18 +381,63 @@ export interface ScheduleOutput {
 }
 
 /**
+ * Re-evaluate Growth Guardrails for one post SERVER-SIDE (we never trust a
+ * client-supplied score — the caption/hashtags may have been edited after
+ * preview). Caption is scored from the final text; pre-flight re-probes the
+ * file. Platform is derived from the channel `identifier`. `probeFn` is injected
+ * for tests. Returns the merged Growth result (or null if the channel isn't a
+ * tuned short platform — then there's nothing to gate on).
+ */
+async function evaluatePostGrowth(p: SchedulePostInput, probeFn?: ProbeFn): Promise<GrowthDto | null> {
+  const platform = toShortPlatform(p.identifier);
+  if (!platform) return null; // no tuned rules → don't gate
+  const captionScore = scoreCaption(p.caption ?? "", p.hashtags ?? [], platform);
+  const pf = await preflightVideo(p.source, { probeFn, nameHint: p.fileId });
+  return combineGrowth(captionScore.checks as GrowthCheckDto[], pf.checks as GrowthCheckDto[]);
+}
+
+/**
  * Schedule each item through ITS channel's provider, aggregating per-item
  * success/failure across BOTH providers in one result. Postiz items upload the
  * media to Postiz first (internal URL pull); PostPeer items hand TikTok the
  * PUBLIC media URL (PostPeer pulls it externally + drives TikTok's upload/poll).
  * No item is ever lost — a provider/upload failure fails only the affected items.
+ *
+ * GROWTH GATE (server-side, authoritative): before any media is uploaded, every
+ * post is re-scored. An item with a MEASURED, FAILING `required` check is
+ * REJECTED with its failing checks UNLESS it carries override:true. The gate is
+ * enforced here (not on the client) so an edited caption or a bad video can't be
+ * scheduled by tampering with the request. `recommended`/`unknown` never block.
  */
-export async function schedule(input: { posts: SchedulePostInput[] }): Promise<ScheduleOutput> {
+export async function schedule(
+  input: { posts: SchedulePostInput[] },
+  opts: { probeFn?: ProbeFn } = {},
+): Promise<ScheduleOutput> {
   const posts = Array.isArray(input.posts) ? input.posts : [];
-  const postizPosts = posts.filter((p) => (p.provider ?? "postiz") === "postiz");
-  const postPeerPosts = posts.filter((p) => p.provider === "postpeer");
+
+  const allowed: SchedulePostInput[] = [];
+  const blocked: ScheduleItemResult[] = [];
+  for (const p of posts) {
+    const growth = await evaluatePostGrowth(p, opts.probeFn);
+    if (growth && hasBlockingFailure(growth) && !p.override) {
+      const failing = growth.checks.filter((c) => c.severity === "required" && c.pass === false);
+      blocked.push({
+        fileId: p.fileId,
+        channelId: p.channelId,
+        ok: false,
+        error: `Blocked by Growth Guardrails: ${failing.map((c) => c.label).join(", ")}. Fix the caption/video, or override to schedule anyway.`,
+        blockedChecks: failing,
+      });
+    } else {
+      allowed.push(p);
+    }
+  }
+
+  const postizPosts = allowed.filter((p) => (p.provider ?? "postiz") === "postiz");
+  const postPeerPosts = allowed.filter((p) => p.provider === "postpeer");
 
   const results: ScheduleItemResult[] = [
+    ...blocked,
     ...(await schedulePostiz(postizPosts)),
     ...(await schedulePostPeer(postPeerPosts)),
   ];

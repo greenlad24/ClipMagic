@@ -69,6 +69,175 @@ export const PLATFORM_RULES: Record<ShortPlatform, PlatformRule> = {
 
 export const SHORT_PLATFORMS: ShortPlatform[] = ["tiktok", "instagram", "youtube"];
 
+// ── Caption growth scoring (PURE — runs independently of the AI) ─────────────
+// These encode 2026 short-form (TikTok-led) caption best-practices so a caption
+// can be graded WHETHER the AI wrote it OR the user hand-edited it. The scorer
+// never calls the model — it inspects the final text the way the platform would.
+//
+// `required` checks gate scheduling (the caption is missing a fundamental growth
+// signal); `recommended` checks only lower the score (they're things a tool
+// can't truly verify — e.g. whether a hook actually hooks — so they advise, not
+// block). See bulkScheduler.ts for how `required` failures gate the schedule.
+
+export type CheckSeverity = "required" | "recommended";
+
+export interface GrowthCheck {
+  id: string;
+  label: string;
+  pass: boolean;
+  severity: CheckSeverity;
+  /** Actionable, one-line fix shown in the review UI. */
+  hint: string;
+}
+
+export interface CaptionScore {
+  /** 0..100, weighted by severity (required checks weigh more than recommended). */
+  score: number;
+  checks: GrowthCheck[];
+}
+
+/** Question/explicit-CTA detection for the comment-driving check. */
+const CTA_PROMPT_RE =
+  /\b(comment|tell me|drop a|let me know|which|what'?s your|would you|tag (a|someone)|agree\??|thoughts\??|save this|share this|follow for)\b/i;
+
+/** Weak openers that signal a slow intro rather than a 3-second hook. */
+const WEAK_OPENERS = [
+  "hi", "hey", "hello", "so", "today", "in this video", "i want to", "i wanted to",
+  "welcome", "this is", "just", "um", "okay", "ok",
+];
+
+/** First non-empty line of a caption. */
+function firstLine(caption: string): string {
+  return caption.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+}
+
+/**
+ * Score a caption + its hashtags for one platform. PURE: no AI, no IO. Used both
+ * to seed the score on AI-written captions AND to re-validate user edits, so the
+ * gate can't be bypassed by editing the caption after preview.
+ *
+ * Checks (severity in parens):
+ *   - keyword-front (required): a real keyword sits in the first ~40 chars — the
+ *     SEO/search hook. Front-loading the topic is the single biggest 2026 search
+ *     ranking lever on TikTok/Shorts.
+ *   - hook-strength (recommended/ADVISORY): the first line doesn't open with a
+ *     slow filler word. A tool can't verify a hook truly hooks, so this advises.
+ *   - comment-cta (required): the caption ends with a question or explicit prompt
+ *     — comments are weighted heavily by the ranking systems.
+ *   - hashtag-count (required): within the platform's niche+broad range (e.g.
+ *     3–5 on TikTok). 0 kills discovery; a wall of 15 reads as spam.
+ *   - hashtag-mix (recommended/ADVISORY): a spread of tag lengths ≈ niche+broad.
+ *   - length-cap (required): within the platform's caption cap.
+ */
+export function scoreCaption(
+  caption: string,
+  hashtags: string[],
+  platform: ShortPlatform,
+): CaptionScore {
+  const rule = PLATFORM_RULES[platform];
+  const text = (caption ?? "").trim();
+  const line1 = firstLine(text);
+  const head = line1.slice(0, 40);
+  const tags = (hashtags ?? []).map((t) => normalizeHashtag(t)).filter((t): t is string => !!t);
+
+  // keyword-front: ≥2 "word" tokens of ≥3 chars within the first 40 chars, i.e.
+  // the line leads with substantive topic words, not a single emoji or "Hey 👋".
+  const headWords = head.match(/[A-Za-z0-9][A-Za-z0-9'-]{2,}/g) ?? [];
+  const keywordFront = headWords.length >= 2;
+
+  // hook-strength (advisory): doesn't open with a known weak/slow opener.
+  const firstWord = (line1.match(/[A-Za-z']+/)?.[0] ?? "").toLowerCase();
+  const lowerHead = line1.toLowerCase();
+  const weakOpen =
+    WEAK_OPENERS.includes(firstWord) || WEAK_OPENERS.some((w) => w.includes(" ") && lowerHead.startsWith(w));
+  const strongHook = line1.length > 0 && !weakOpen;
+
+  // comment-cta: ends with a question, or contains an explicit comment/CTA prompt.
+  const endsQuestion = /\?\s*$/.test(text);
+  const hasCta = endsQuestion || CTA_PROMPT_RE.test(text);
+
+  // hashtag count + mix.
+  const countOk = tags.length >= rule.minTags && tags.length <= rule.maxTags;
+  // niche+broad heuristic: at least one "broad" short tag AND one "niche" long
+  // tag (length is a cheap proxy — broad tags like #fyp are short, niche ones
+  // like #budgetmealprepideas are long). ADVISORY only.
+  const hasBroad = tags.some((t) => t.length <= 6);
+  const hasNiche = tags.some((t) => t.length >= 10);
+  const goodMix = tags.length >= 2 && hasBroad && hasNiche;
+
+  const withinCap = text.length > 0 && text.length <= rule.maxCaptionChars;
+
+  const checks: GrowthCheck[] = [
+    {
+      id: "keyword-front",
+      label: "Keyword in the first line",
+      pass: keywordFront,
+      severity: "required",
+      hint: "Lead the first ~40 characters with the topic/search keyword, not an emoji or greeting.",
+    },
+    {
+      id: "hook-strength",
+      label: "3-second hook",
+      pass: strongHook,
+      severity: "recommended",
+      hint: weakOpen
+        ? `Don't open with "${firstWord}". Start with curiosity, a payoff, or a question.`
+        : "Open with curiosity, a payoff, or a bold claim so the first line stops the scroll.",
+    },
+    {
+      id: "comment-cta",
+      label: "Comment-driving CTA",
+      pass: hasCta,
+      severity: "required",
+      hint: "End with a question or an explicit prompt (e.g. \"Which would you pick?\") — comments are weighted heavily.",
+    },
+    {
+      id: "hashtag-count",
+      label: `${rule.minTags}–${rule.maxTags} hashtags`,
+      pass: countOk,
+      severity: "required",
+      hint: `Use ${rule.minTags}–${rule.maxTags} hashtags — currently ${tags.length}. Too few hurts reach; too many reads as spam.`,
+    },
+    {
+      id: "hashtag-mix",
+      label: "Niche + broad hashtag mix",
+      pass: goodMix,
+      severity: "recommended",
+      hint: "Mix at least one broad tag (e.g. #fyp) with a specific niche tag (e.g. #budgetmealprep).",
+    },
+    {
+      id: "length-cap",
+      label: `Within ${rule.maxCaptionChars}-char cap`,
+      pass: withinCap,
+      severity: "required",
+      hint:
+        text.length === 0
+          ? "Caption is empty."
+          : `Trim the caption to ≤ ${rule.maxCaptionChars} characters for ${rule.label}.`,
+    },
+  ];
+
+  return { score: scoreChecks(checks), checks };
+}
+
+/**
+ * Weighted 0..100 score over a check list. `required` checks count double so a
+ * caption that satisfies the recommendeds but misses a required still scores
+ * meaningfully below one that nails the fundamentals. Shared by caption +
+ * pre-flight so the combined Growth Score uses one consistent formula.
+ */
+export function scoreChecks(checks: GrowthCheck[]): number {
+  let got = 0;
+  let total = 0;
+  for (const c of checks) {
+    const w = c.severity === "required" ? 2 : 1;
+    total += w;
+    if (c.pass) got += w;
+  }
+  if (total === 0) return 100;
+  return Math.round((got / total) * 100);
+}
+
 /** Injectable AI call — returns the model's raw JSON string. */
 export type CaptionAiCall = (system: string, user: string) => Promise<string>;
 
@@ -89,11 +258,19 @@ function buildSystemPrompt(platforms: ShortPlatform[]): string {
     })
     .join("\n");
   return [
-    "You are a short-form social media SEO copywriter. You write DISTINCT, platform-native captions for the SAME video, optimized for each platform's search and discovery in 2025.",
+    "You are a short-form social media SEO copywriter. You write DISTINCT, platform-native captions for the SAME video, optimized for each platform's search and discovery in 2026.",
     "Rules per platform:",
     rules,
     "",
-    "For EACH requested platform return: a keyword-rich firstLineHook, a full caption (whose first line IS that hook), and a hashtags array (no leading '#', no spaces inside a tag).",
+    // These mirror the PURE growth scorer (scoreCaption) so generated captions
+    // start with a high Growth Score. Keep this list in sync with the checks.
+    "Every caption MUST satisfy these growth guardrails:",
+    "- Front-load the primary keyword/topic in the FIRST ~40 characters of the first line (SEO/search). No greeting or emoji opener.",
+    "- The first line must be a 3-second hook (curiosity, payoff, or bold claim) — never a slow intro like \"Hi\", \"So\", \"Today\", or \"In this video\".",
+    "- END the caption with a question or an explicit comment-driving CTA (comments are weighted heavily).",
+    "- Hashtags: stay within the per-platform count above and MIX broad reach tags (short, e.g. fyp) with specific niche tags (longer, e.g. budgetmealprep).",
+    "",
+    "For EACH requested platform return: a keyword-rich firstLineHook, a full caption (whose first line IS that hook and which ENDS with the CTA/question), and a hashtags array (no leading '#', no spaces inside a tag).",
     "Make each platform's caption genuinely different in tone and structure — do NOT reuse the same text across platforms.",
     'Respond as JSON: { "platforms": { "<platform>": { "firstLineHook": string, "caption": string, "hashtags": string[] } } }',
   ].join("\n");

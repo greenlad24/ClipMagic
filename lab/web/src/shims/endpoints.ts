@@ -211,6 +211,21 @@ export type GetBulkSchedulerStatusOutputType = {
   error?: string;
 };
 export type GetBulkSchedulerChannelsOutputType = { channels: BulkChannel[] };
+/** Growth Guardrails: one graded check on a post (caption or video pre-flight). */
+export type GrowthSeverity = 'required' | 'recommended' | 'unknown';
+export type GrowthCheck = {
+  id: string;
+  label: string;
+  /** null when the check couldn't be measured (e.g. cloud link / ffprobe failed). */
+  pass: boolean | null;
+  severity: GrowthSeverity;
+  hint: string;
+};
+export type Growth = {
+  /** 0..100 combined caption + measured pre-flight score. */
+  score: number;
+  checks: GrowthCheck[];
+};
 export type BulkPreviewPost = {
   fileId: string;
   channelId: string;
@@ -224,6 +239,8 @@ export type BulkPreviewPost = {
   scheduledAt: string;
   reason: string;
   tiktok?: TikTokOptions;
+  /** Growth Guardrails score + checklist for this (file × channel) post. */
+  growth: Growth;
 };
 export type PreviewBulkScheduleOutputType = {
   posts: BulkPreviewPost[];
@@ -234,6 +251,8 @@ export type BulkScheduleItemResult = {
   channelId: string;
   ok: boolean;
   error?: string;
+  /** Set when blocked by Growth Guardrails: the failing required checks. */
+  blockedChecks?: GrowthCheck[];
 };
 export type RunBulkScheduleOutputType = {
   results: BulkScheduleItemResult[];

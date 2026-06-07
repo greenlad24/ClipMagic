@@ -19,6 +19,11 @@
  * instead of pasting a share link). Requires HTTPS callbacks — out of scope here.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { config } from "../config.js";
+import { resolveInput } from "../render/resolve.js";
+
 export type FileSourceKind = "render" | "upload" | "cloud";
 
 export interface FileSourceRef {
@@ -148,6 +153,41 @@ export function resolvePublicSourceUrl(src: FileSourceRef): string {
       return normalizeCloudLink(src.ref);
     default:
       throw new Error(`Unknown file source kind: ${(src as FileSourceRef).kind}`);
+  }
+}
+
+/**
+ * Resolve a FileSourceRef to a LOCAL absolute file path for deep inspection
+ * (ffprobe in the pre-flight validator). Only render/upload items live on this
+ * server's disk; CLOUD share-links are remote and have no local file, so we
+ * return null (the caller degrades those checks to `unknown` rather than
+ * downloading the whole video just to probe it).
+ *
+ *   - render : served from outputsDir/<name> (a direct child; traversal-safe).
+ *   - upload : resolved via the shared resolveInput() (files table → uploadsDir).
+ *   - cloud  : null (no local file).
+ *
+ * Returns null on any miss (unknown id, deleted file) so callers never crash —
+ * pre-flight then reports `unknown` for that item.
+ */
+export async function resolveLocalPath(src: FileSourceRef): Promise<string | null> {
+  try {
+    switch (src.kind) {
+      case "render": {
+        // outputs are served as a flat dir; keep this a direct child (no "..").
+        const abs = path.resolve(config.outputsDir, src.ref);
+        if (path.dirname(abs) !== path.resolve(config.outputsDir)) return null;
+        return fs.existsSync(abs) ? abs : null;
+      }
+      case "upload":
+        return await resolveInput(src.ref);
+      case "cloud":
+        return null;
+      default:
+        return null;
+    }
+  } catch {
+    return null;
   }
 }
 
