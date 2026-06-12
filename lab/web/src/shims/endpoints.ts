@@ -115,6 +115,9 @@ export const getMemeRun = endpoint("getMemeRun");
 export const getMemeProjects = endpoint("getMemeProjects");
 export const pollBrollStatus = endpoint("pollBrollStatus");
 export const recaptureShot = endpoint("recaptureShot");
+// Auto-Screencast: plan + capture real website screencasts into the timeline.
+export const autoScreencast = endpoint<AutoScreencastInputType, AutoScreencastOutputType>("autoScreencast");
+export const recaptureScreencast = endpoint<{ shotId: string }, RecaptureScreencastOutputType>("recaptureScreencast");
 export const runPipeline = endpoint("runPipeline");
 export const saveMusicTrack = endpoint("saveMusicTrack");
 export const savePromoVideo = endpoint("savePromoVideo");
@@ -154,6 +157,8 @@ export type GetServiceStatusOutputType = {
   directorConfigured?: boolean;
   kinoviConfigured?: boolean;
   stockConfigured?: boolean;
+  /** Auto-Screencast is usable here (a real Chromium binary exists). */
+  screencastConfigured?: boolean;
   /** Postiz social poster (separate self-hosted container). */
   postizConfigured?: boolean;
   postizUrl?: string;
@@ -301,6 +306,15 @@ export type RunBulkScheduleOutputType = {
   scheduled: number;
   failed: number;
 };
+/** Auto-Screencast input/output (plan + capture website footage into the timeline). */
+export type AutoScreencastInputType = { projectId: string; maxMoments?: number };
+export type AutoScreencastOutputType = {
+  planned: number;
+  captured: number;
+  skipped: Array<{ reason: string; url?: string }>;
+  failed: Array<{ error: string; url?: string; shotId?: string }>;
+};
+export type RecaptureScreencastOutputType = { success: boolean; clipUrl?: string; error?: string };
 export type TestKinoviApiOutputType = {
   success: boolean;
   message?: string;

@@ -297,7 +297,12 @@ async function main() {
     assert.equal(row.provider, "postiz");
     assert.equal(row.platform, "generic");
     assert.ok(row.caption.length > 0, "generic row must carry a caption");
-    assert.ok(row.scheduledAt && new Date(row.scheduledAt).getTime() > Date.now() - 1, "generic row must have a future schedule time");
+    // Future relative to the PINNED `now` above (not the real wall clock — the
+    // engine is deterministic for a fixed now, and wall time will pass June 8).
+    assert.ok(
+      row.scheduledAt && new Date(row.scheduledAt).getTime() > new Date("2026-06-08T12:00:00.000Z").getTime(),
+      "generic row must be scheduled after the provided now",
+    );
     // It still shows a computed Growth Score (advisory) but is never blocked.
     assert.equal(typeof row.growth.score, "number");
   });

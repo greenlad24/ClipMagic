@@ -13,6 +13,8 @@ import { db } from "../db/index.js";
  *   - a known file id          -> uploadsDir/<stored>
  *   - "file:<id>"              -> uploadsDir/<stored>
  *   - "/uploads/<stored>" or "/api/uploads/<id>"  (our own URLs)
+ *   - "/outputs/<name>" or "/api/outputs/<name>"  (our own rendered/captured files,
+ *      e.g. Auto-Screencast clips) -> outputsDir/<name>
  *   - "http(s)://..."          -> downloaded once into tmpDir and cached
  *   - an existing local path   -> used as-is
  *
@@ -87,6 +89,17 @@ export async function resolveInput(ref: string): Promise<string> {
     const byStored = path.join(config.uploadsDir, token);
     if (fs.existsSync(byStored)) return byStored;
     // fall through to remote download if it's actually absolute
+  }
+
+  // Our own OUTPUTS URLs: /api/outputs/<name> or /outputs/<name> — locally
+  // produced files (final renders, Auto-Screencast capture clips) that live in
+  // outputsDir. Composited directly, no download.
+  const outputsMatch = ref.match(/\/(?:api\/)?outputs\/([^/?#]+)/);
+  if (outputsMatch) {
+    const name = decodeURIComponent(outputsMatch[1]);
+    const abs = path.join(config.outputsDir, name);
+    if (fs.existsSync(abs)) return abs;
+    // fall through (e.g. an absolute http outputs URL) to remote handling below
   }
 
   // Remote URL

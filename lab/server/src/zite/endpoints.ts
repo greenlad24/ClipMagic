@@ -52,6 +52,8 @@ import {
   schedule as bulkSchedulerSchedule,
 } from "../postiz/bulkScheduler.js";
 import { listCloudFolder, cloudProvidersConfigured } from "../postiz/cloudSources.js";
+import { autoScreencast as runAutoScreencast, recaptureScreencastShot } from "../capture/autoScreencast.js";
+import { chromiumAvailable } from "../capture/chromium.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -239,6 +241,9 @@ const getServiceStatus: Handler = async () => {
     postizConfigured: !!(postizUrl || postizEnabled || postizPortRaw),
     postizUrl,
     postizPort,
+    // Auto-Screencast is usable when a real Chromium binary exists here (the same
+    // browser Remotion uses) — the engine drives it via puppeteer-core.
+    screencastConfigured: chromiumAvailable(),
   };
 };
 
@@ -1688,6 +1693,41 @@ const getMemeProjects: Handler = async (_input, userId) => {
 };
 
 
+// ── Auto-Screencast (native, not bundled) ────────────────────────────────────
+// Reads the narrator's transcript, plans which moments reference a real website/
+// source/product, captures REAL website screencast footage with the container's
+// Chromium (puppeteer-core), and inserts the shots into the timeline. The whole
+// engine lives in src/capture/* and uses the native Shots store + claude.ts —
+// NOT the esbuild AI bundle — so it needs no bundle and no Kinovi key. It does
+// need the AI director (for planning) and Chromium (for capture).
+const autoScreencast: Handler = async (input, userId) => {
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "The AI director is not configured. Set ANTHROPIC_API_KEY on the server to enable Auto-Screencast planning.",
+    });
+  }
+  if (!chromiumAvailable()) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "No Chromium browser is available to capture screencasts on this server.",
+    });
+  }
+  return runAutoScreencast({ projectId: input.projectId, userId });
+};
+
+// Recapture a single Screencast shot using its current targetUrl (the editor's
+// per-shot "Recapture" action). Chromium-only — no AI planning needed.
+const recaptureScreencast: Handler = async (input) => {
+  if (!chromiumAvailable()) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "No Chromium browser is available to capture screencasts on this server.",
+    });
+  }
+  return recaptureScreencastShot({ shotId: input.shotId ?? input.id });
+};
+
 /**
  * Deep-index a promo video using REAL frame analysis: extract 1 frame/second
  * and ask Claude vision what's actually on screen each second, then cache the
@@ -2250,6 +2290,9 @@ export const HANDLERS: Record<string, Handler> = {
   captureShots,
   recaptureShot,
   reviewEdit,
+  // Auto-Screencast (native browser capture)
+  autoScreencast,
+  recaptureScreencast,
   indexPromoVideo,
   // bulk narration → full pipeline + render
   createBulkNarration,

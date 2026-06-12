@@ -9,7 +9,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Plus, Trash2, RefreshCw, Sparkles, ImageIcon, Tag, Quote, Clock, Cpu, Library, Eye, AlertTriangle } from 'lucide-react';
-import { recaptureShot, generateShot, updateShot } from 'zite-endpoints-sdk';
+import { recaptureShot, recaptureScreencast, generateShot, updateShot } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 
 const TRANSITIONS = ['Hard Cut', 'Whip Pan', 'Cross Dissolve'];
@@ -62,6 +62,7 @@ function StatusBadge({ status, clipUrl }: { status?: string; clipUrl?: string })
 
 export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Props) {
   const [recapturing, setRecapturing] = useState(false);
+  const [reshooting, setReshooting] = useState(false);
   const [generating, setGenerating] = useState(false);
 
   if (!shot) {
@@ -115,6 +116,29 @@ export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Prop
     try { await recaptureShot({ shotId: shot.id }); toast.success('Re-capture queued'); }
     catch (e: any) { toast.error(e.message ?? 'Failed'); }
     finally { setRecapturing(false); }
+  };
+
+  // Recapture a Screencast shot's REAL website footage from its current target
+  // URL — so the user can edit the URL field above and re-shoot just this shot.
+  const handleReshoot = async () => {
+    if (!shot.targetUrl) { toast.error('Set a target URL first'); return; }
+    setReshooting(true);
+    onShotChange({ captureStatus: 'Capturing' });
+    try {
+      const res = await recaptureScreencast({ shotId: shot.id });
+      if (res.success && res.clipUrl) {
+        onShotChange({ clipUrl: res.clipUrl, captureStatus: 'Done' });
+        toast.success('Page recaptured');
+      } else {
+        onShotChange({ captureStatus: 'Error' });
+        toast.error(res.error ?? 'Recapture failed');
+      }
+    } catch (e: any) {
+      onShotChange({ captureStatus: 'Error' });
+      toast.error(e.message ?? 'Recapture failed');
+    } finally {
+      setReshooting(false);
+    }
   };
 
   const handleGenerate = async () => {
@@ -359,6 +383,16 @@ export default function PropertyPanel({ shot, onShotChange, onDeleteShot }: Prop
             <Label className="text-[10px] text-muted-foreground">Target URL</Label>
             <Input value={shot.targetUrl ?? ''} onChange={e => onShotChange({ targetUrl: e.target.value || undefined })}
               placeholder="https://…" className="h-7 text-xs bg-muted/20 font-mono" />
+            {isSC && (
+              <Button
+                variant="outline" size="sm" className="w-full h-7 text-xs gap-1.5"
+                onClick={handleReshoot} disabled={reshooting || !shot.targetUrl}
+                title="Capture real footage of this URL with the container's browser and replace this shot's clip"
+              >
+                <RefreshCw className={`w-3 h-3 ${reshooting ? 'animate-spin' : ''}`} />
+                {reshooting ? 'Capturing page…' : 'Recapture page'}
+              </Button>
+            )}
           </div>
         )}
 

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from 'zite-auth-sdk';
-import { getProject, getShots, updateShot, getDownloadUrl, getWaveform, completeProject, captureShots, updateProjectSettings, deleteShots, getMusicTracks } from 'zite-endpoints-sdk';
+import { getProject, getShots, updateShot, getDownloadUrl, getWaveform, completeProject, captureShots, autoScreencast, updateProjectSettings, deleteShots, getMusicTracks } from 'zite-endpoints-sdk';
 import { GetProjectOutputType, GetShotsOutputType } from 'zite-endpoints-sdk';
-import { Loader2, ArrowLeft, Undo2, Redo2, Download, FileJson, FileUp, Film, MonitorPlay, Sparkles, CheckSquare, Trash2, Square, Video, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { Loader2, ArrowLeft, Undo2, Redo2, Download, FileJson, FileUp, Film, MonitorPlay, Sparkles, CheckSquare, Trash2, Square, Video, Globe, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
@@ -53,6 +53,7 @@ export default function TimelineEditorPage() {
   const [showPromoVideos, setShowPromoVideos] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [screencasting, setScreencasting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -223,6 +224,39 @@ export default function TimelineEditorPage() {
       toast.error(e?.message ?? 'Generation failed');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  // Auto-Screencast: AI reads the script, finds moments that reference a real
+  // website/source, captures REAL website footage with the container's Chromium,
+  // and inserts the shots automatically. Fully hands-off (the user's choice).
+  const handleAutoScreencast = async () => {
+    if (!projectId) return;
+    setScreencasting(true);
+    const toastId = 'auto-screencast';
+    toast.loading('Reading script → capturing pages…', { id: toastId });
+    try {
+      const result = await autoScreencast({ projectId });
+      toast.dismiss(toastId);
+      const { shots: freshShots } = await getShots({ projectId });
+      history.reset(freshShots.map(toTimelineShot));
+      const noPage = result.skipped.filter(s => /no working page/i.test(s.reason)).length;
+      const tail = [
+        noPage > 0 ? `${noPage} moment${noPage !== 1 ? 's' : ''} skipped — no working page` : '',
+        result.failed.length > 0 ? `${result.failed.length} failed` : '',
+      ].filter(Boolean).join(' · ');
+      if (result.captured > 0) {
+        toast.success(`Added ${result.captured} screencast shot${result.captured !== 1 ? 's' : ''}${tail ? ` · ${tail}` : ''}`);
+      } else if (result.planned === 0 && result.failed.length === 0) {
+        toast('No website moments found in this script.');
+      } else {
+        toast.error(`No screencasts captured${tail ? ` · ${tail}` : ''}`);
+      }
+    } catch (e: any) {
+      toast.dismiss(toastId);
+      toast.error(e?.message ?? 'Auto-screencast failed');
+    } finally {
+      setScreencasting(false);
     }
   };
 
@@ -536,8 +570,18 @@ export default function TimelineEditorPage() {
 
           <Button
             variant="outline" size="sm" className="h-7 text-xs gap-1.5"
+            onClick={handleAutoScreencast}
+            disabled={screencasting || generating || rendering || selectMode}
+            title="Auto screencast — the AI reads your script, finds moments that reference a real website or source, captures real page footage, and inserts the shots automatically"
+          >
+            {screencasting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Globe className="w-3.5 h-3.5" />}
+            {screencasting ? 'Capturing pages…' : 'Auto screencast'}
+          </Button>
+
+          <Button
+            variant="outline" size="sm" className="h-7 text-xs gap-1.5"
             onClick={handleGenerateAll}
-            disabled={generating || rendering || selectMode}
+            disabled={generating || screencasting || rendering || selectMode}
             title={`Regenerate media for all B-Roll and Screencast shots (${shots.filter(s => s.shotType !== 'Talking Head').length} shots)`}
           >
             {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}

@@ -1,5 +1,9 @@
+node_modules
 node_modules/
 dist/
 *.log
 .env
 .env.local
+# Lab-private Auto-Screencast dependency (puppeteer-core) — installed by
+# scripts/install-capture-deps.sh, never committed and never in the main app.
+.capture-deps/

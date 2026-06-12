@@ -55,7 +55,9 @@ export type CallPurpose =
   // Sticker/Meme editor: one generated still image per emphasis moment.
   | "image-generation"
   // Bulk Scheduler: per-platform SEO caption + hashtag generation.
-  | "caption";
+  | "caption"
+  // Auto-Screencast: picks script moments + the real URLs worth showing.
+  | "screencast";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

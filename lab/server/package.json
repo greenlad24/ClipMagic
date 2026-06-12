@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "smoke": "tsx src/scripts/smoke.ts",
-    "build:pipeline": "node scripts/build-pipeline.mjs"
+    "build:pipeline": "node scripts/build-pipeline.mjs",
+    "install:capture-deps": "bash scripts/install-capture-deps.sh"
   },
   "dependencies": {
     "archiver": "^7.0.1",
@@ -20,6 +21,10 @@
     "multer": "^1.4.5-lts.1",
     "nanoid": "^5.0.9",
     "zod": "^3.24.1"
+  },
+  "optionalDependencies": {
+    "//": "puppeteer-core powers Auto-Screencast. It is NOT installed into the main app's shared node_modules — run `npm run install:capture-deps` (or CAPTURE_INSTALL=1 in run-lab.sh) to install it into the lab-private server/.capture-deps. No bundled-browser download; it drives the container's existing Chromium.",
+    "puppeteer-core": "^23.0.0"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.3",
