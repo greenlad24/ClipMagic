@@ -14,6 +14,8 @@ interface Props {
   musicTrackId?: string;
   /** Per-video motion-graphics toggle (default on). */
   motionGraphics?: boolean;
+  /** Per-video auto-screencast toggle (default on). */
+  autoScreencast?: boolean;
   onProjectCreated: (projectId: string) => void;
 }
 
@@ -38,7 +40,7 @@ async function getVideoMeta(file: File): Promise<{ duration: number; aspectRatio
 
 type Step = 'idle' | 'extracting' | 'uploading' | 'creating';
 
-export default function UploadZone({ contextHint, accentColor, musicTrackId, motionGraphics = true, onProjectCreated }: Props) {
+export default function UploadZone({ contextHint, accentColor, musicTrackId, motionGraphics = true, autoScreencast = true, onProjectCreated }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [step, setStep] = useState<Step>('idle');
   const [progress, setProgress] = useState(0);
@@ -105,6 +107,7 @@ export default function UploadZone({ contextHint, accentColor, musicTrackId, mot
         accentColor,
         musicTrackId: musicTrackId || undefined,
         motionGraphics,
+        autoScreencast,
         audioUrl,
         videoChunksJson: JSON.stringify([videoUrl]),
       });
@@ -140,6 +143,7 @@ export default function UploadZone({ contextHint, accentColor, musicTrackId, mot
         accentColor,
         musicTrackId: musicTrackId || undefined,
         motionGraphics,
+        autoScreencast,
         // No separately-extracted audio — the pipeline falls back to the video.
         videoChunksJson: JSON.stringify([item.url]),
       });
@@ -149,7 +153,7 @@ export default function UploadZone({ contextHint, accentColor, musicTrackId, mot
       toast.error('Could not create project — ' + (err.message?.slice(0, 80) ?? 'please try again'));
       setStep('idle'); setProgress(0);
     }
-  }, [contextHint, accentColor, musicTrackId, motionGraphics, onProjectCreated]);
+  }, [contextHint, accentColor, musicTrackId, motionGraphics, autoScreencast, onProjectCreated]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault(); setIsDragging(false);

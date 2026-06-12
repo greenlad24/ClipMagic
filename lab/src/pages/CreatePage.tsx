@@ -21,7 +21,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Library, Trash2, CheckSquare, Square, X, Video, ArrowLeft, Sparkles } from 'lucide-react';
+import { Library, Trash2, CheckSquare, Square, X, Video, ArrowLeft, Sparkles, MonitorPlay } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
@@ -43,6 +43,8 @@ export default function CreatePage() {
   const [selectedTrackId, setSelectedTrackId] = useState('auto');
   // Motion graphics default ON; users can switch it off per video.
   const [motionGraphics, setMotionGraphics] = useState(true);
+  // Auto-screencast default ON; captures real sites the script mentions.
+  const [autoScreencast, setAutoScreencast] = useState(true);
 
   // Selection / delete state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -130,6 +132,7 @@ export default function CreatePage() {
           accentColor={accentColor}
           musicTrackId={selectedTrackId === 'auto' ? undefined : selectedTrackId}
           motionGraphics={motionGraphics}
+          autoScreencast={autoScreencast}
           onProjectCreated={handleProjectCreated}
         />
 
@@ -201,6 +204,35 @@ export default function CreatePage() {
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
                 motionGraphics ? 'translate-x-6' : 'translate-x-1'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Auto-screencast toggle — default on, switchable per video. */}
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/10 px-4 py-3">
+          <div className="flex items-start gap-3 min-w-0">
+            <MonitorPlay className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">Auto screencast</p>
+              <p className="text-xs text-muted-foreground">
+                Captures real recordings of the websites your script mentions and cuts them in where it earns them.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoScreencast}
+            aria-label="Toggle auto screencast"
+            onClick={() => setAutoScreencast((v) => !v)}
+            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+              autoScreencast ? 'bg-primary' : 'bg-muted'
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+                autoScreencast ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
           </button>

@@ -52,7 +52,11 @@ import {
   schedule as bulkSchedulerSchedule,
 } from "../postiz/bulkScheduler.js";
 import { listCloudFolder, cloudProvidersConfigured } from "../postiz/cloudSources.js";
-import { autoScreencast as runAutoScreencast, recaptureScreencastShot } from "../capture/autoScreencast.js";
+import {
+  autoScreencast as runAutoScreencast,
+  recaptureScreencastShot,
+  autoScreencastPipelineStep,
+} from "../capture/autoScreencast.js";
 import { chromiumAvailable } from "../capture/chromium.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
@@ -73,6 +77,10 @@ const createProject: Handler = async (input, userId) => {
       // Per-video motion-graphics toggle. Default ON; only persisted as false
       // when the user explicitly switched it off in the create flow.
       motionGraphics: input.motionGraphics === false ? false : true,
+      // Per-video auto-screencast toggle (same pattern). Default ON; the pipeline
+      // captures the director's Pending Screencast shots into real recordings
+      // unless the user switched this off or SCREENCAST_DISABLED=1 globally.
+      autoScreencast: input.autoScreencast === false ? false : true,
       user: userId,
       audioUrl: input.audioUrl,
       videoChunksJson: input.videoChunksJson,
@@ -244,6 +252,9 @@ const getServiceStatus: Handler = async () => {
     // Auto-Screencast is usable when a real Chromium binary exists here (the same
     // browser Remotion uses) — the engine drives it via puppeteer-core.
     screencastConfigured: chromiumAvailable(),
+    // Whether automatic in-pipeline screencast capture is globally force-disabled
+    // (SCREENCAST_DISABLED=1). Default is on, gated per-video by the create toggle.
+    autoScreencastDisabled: config.autoScreencastDisabled,
   };
 };
 
@@ -721,7 +732,36 @@ async function runBundled(name: "runPipeline" | "captureShots" | "recaptureShot"
 }
 
 const runPipeline: Handler = (input, userId) => runBundled("runPipeline", input, userId);
-const captureShots: Handler = (input, userId) => runBundled("captureShots", input, userId);
+
+/**
+ * captureShots assigns media to every shot. Just BEFORE it runs (and well before
+ * the render reads each shot's clipUrl), we automatically capture the director's
+ * Pending `Screencast` shots — and plan a few extra moments — into REAL website
+ * recordings, mirroring the per-video motion-graphics gate.
+ *
+ * Why here, inline + awaited: the render manifest is built later from each shot's
+ * captureStatus/clipUrl, so a real capture MUST finish first. A Screencast shot
+ * we mark Done (with a clipUrl) is then SKIPPED by the bundled captureShots
+ * (which short-circuits on captureStatus === 'Done'), so it never also receives
+ * stock/Veo3 b-roll — that's the mutual exclusion, enforced for free. Any shot we
+ * leave Pending/Error (site failed, Chromium absent, budget exceeded) flows
+ * through captureShots' existing promo-retrieval / talking-head fallback exactly
+ * as before this feature existed, so generation never breaks.
+ *
+ * Best-effort: gated by the per-video toggle + global SCREENCAST_DISABLED + a
+ * Chromium probe, bounded by an overall budget, and wrapped so any failure is
+ * logged and generation proceeds.
+ */
+const captureShots: Handler = async (input, userId) => {
+  // Capture the director's Pending Screencast shots (and a few planned moments)
+  // into real recordings BEFORE the bundled captureShots assigns media. Isolated:
+  // never throws, no-ops when off/unconfigured. See autoScreencastPipelineStep.
+  await autoScreencastPipelineStep(input?.projectId, userId, {
+    chromiumAvailable,
+    findProject: (id) => Projects.findOne({ id }),
+  });
+  return runBundled("captureShots", input, userId);
+};
 const recaptureShot: Handler = (input, userId) => runBundled("recaptureShot", input, userId);
 const reviewEdit: Handler = (input, userId) => runBundled("reviewEdit", input, userId);
 

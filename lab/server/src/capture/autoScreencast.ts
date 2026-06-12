@@ -20,6 +20,7 @@
  */
 import { Projects, Shots } from "../zite/store.js";
 import type { Record_ } from "../zite/store.js";
+import { config } from "../config.js";
 import { claudeJSONForPurpose } from "../ai/claude.js";
 import {
   planScreencasts,
@@ -29,6 +30,21 @@ import {
 } from "./planner.js";
 import { validateUrlReachable } from "./validateUrl.js";
 import { captureScreencast, type CaptureScreencastResult } from "./screencast.js";
+
+// ── Per-video gate (mirrors motion/director.ts motionGraphicsEnabledFor) ──────
+
+/**
+ * Whether automatic in-pipeline screencast capture should run for a project.
+ * Default ON: it runs unless the user switched the per-video toggle OFF
+ * (project.autoScreencast === false) or the global SCREENCAST_DISABLED=1 escape
+ * hatch force-disables it. `undefined`/missing toggle = on (older projects, the
+ * default create flow). This decision is independent of runtime availability
+ * (Chromium), which the caller probes separately and falls back on gracefully.
+ */
+export function autoScreencastEnabledFor(projectAutoScreencast: unknown): boolean {
+  if (config.autoScreencastDisabled) return false;
+  return projectAutoScreencast !== false;
+}
 
 // ── Injectable seams (default to the real implementations) ────────────────────
 
@@ -50,6 +66,16 @@ export interface AutoScreencastInput {
   userId?: string;
   /** Max NEW AI-planned moments (existing Screencast shots are always captured). */
   maxMoments?: number;
+  /**
+   * Overall wall-clock budget (ms) for this whole run. When the pipeline runs
+   * this INLINE before building the render manifest, the budget guarantees a hung
+   * site can't stall generation: once exceeded we STOP STARTING new captures and
+   * leave the rest Pending (handled by the existing promo-retrieval fallback).
+   * Omit/0 = no overall ceiling (the per-capture nav timeout still applies).
+   */
+  budgetMs?: number;
+  /** Injectable clock for deterministic budget tests. Defaults to Date.now. */
+  now?: () => number;
 }
 
 export interface AutoScreencastResult {
@@ -57,6 +83,8 @@ export interface AutoScreencastResult {
   captured: number;
   skipped: Array<{ reason: string; url?: string }>;
   failed: Array<{ error: string; url?: string; shotId?: string }>;
+  /** True when the overall budget was hit and remaining moments were abandoned. */
+  timedOut?: boolean;
 }
 
 // ── Defaults wiring the real services ─────────────────────────────────────────
@@ -173,6 +201,15 @@ export async function autoScreencast(
 
   const result: AutoScreencastResult = { planned: 0, captured: 0, skipped: [], failed: [] };
 
+  // Overall wall-clock ceiling. The render reads captureStatus/clipUrl, so when
+  // this runs INLINE in the pipeline a hung site must never stall generation:
+  // once the deadline passes we stop STARTING captures and leave the rest
+  // untouched (Pending) for the existing promo-retrieval / talking-head fallback.
+  const now = input.now ?? Date.now;
+  const deadline =
+    input.budgetMs && input.budgetMs > 0 ? now() + input.budgetMs : Number.POSITIVE_INFINITY;
+  const outOfTime = () => now() >= deadline;
+
   // 1) EXISTING Screencast shots the user set (targetUrl present, not yet Done).
   const existingToCapture = shots.filter(
     (s) =>
@@ -201,6 +238,12 @@ export async function autoScreencast(
 
   // ── Capture existing shots (per-item isolation) ────────────────────────────
   for (const shot of existingToCapture) {
+    if (outOfTime()) {
+      // Leave it Pending (we never marked it Capturing) → fallback handles it.
+      result.timedOut = true;
+      result.skipped.push({ reason: "screencast budget exceeded", url: shot.targetUrl as string });
+      continue;
+    }
     const url = (shot.targetUrl as string).trim();
     const durationSec = Math.max(3, ((shot.endTime as number) ?? 4) - ((shot.startTime as number) ?? 0));
     try {
@@ -227,6 +270,13 @@ export async function autoScreencast(
 
   // ── Capture planned AI moments → CREATE new shots (per-item isolation) ──────
   for (const moment of plan.planned) {
+    if (outOfTime()) {
+      // Never created a shot for it → nothing to clean up; the beat simply keeps
+      // whatever visual the director already planned for that window.
+      result.timedOut = true;
+      result.skipped.push({ reason: "screencast budget exceeded", url: moment.url });
+      continue;
+    }
     const durationSec = Math.max(3, moment.endSec - moment.startSec);
     try {
       const cap = await capture({ url: moment.url, durationSec, outName: `plan_${input.projectId}` });
@@ -254,6 +304,65 @@ export async function autoScreencast(
   }
 
   return result;
+}
+
+// ── Pipeline injection step (gated, isolated) ─────────────────────────────────
+
+export interface PipelineStepDeps {
+  /** Cheap probe — true when a real Chromium binary exists on this host. */
+  chromiumAvailable: () => boolean;
+  /** Loads the project so its per-video toggle can be read. */
+  findProject: (id: string) => Promise<Record_ | null>;
+  /** The capture run (defaults to autoScreencast; injected in tests). */
+  run?: (input: AutoScreencastInput) => Promise<AutoScreencastResult>;
+  /** Optional logger (defaults to console.log / console.warn). */
+  log?: (line: string) => void;
+  warn?: (line: string) => void;
+}
+
+/**
+ * The automatic screencast step the generation pipeline runs INLINE, just before
+ * captureShots assigns media (and well before the render reads each shot's
+ * clipUrl). It is intentionally a no-op — never throwing — when:
+ *   • SCREENCAST_DISABLED=1 (global escape hatch), or
+ *   • no Chromium is available here (nothing to capture with), or
+ *   • the project's per-video toggle is OFF (project.autoScreencast === false).
+ *
+ * On any failure it logs and returns null so generation proceeds: every shot it
+ * didn't finish is left Pending and handled by captureShots' existing fallback.
+ *
+ * Returns the run result when it ran, or null when it was skipped/failed.
+ */
+export async function autoScreencastPipelineStep(
+  projectId: string | undefined,
+  userId: string | undefined,
+  deps: PipelineStepDeps,
+): Promise<AutoScreencastResult | null> {
+  const log = deps.log ?? ((l: string) => console.log(l));
+  const warn = deps.warn ?? ((l: string) => console.warn(l));
+  if (!projectId) return null;
+  if (config.autoScreencastDisabled) return null;
+  if (!deps.chromiumAvailable()) return null;
+  try {
+    const project = await deps.findProject(projectId);
+    if (!project || !autoScreencastEnabledFor(project.autoScreencast)) return null;
+    const runner = deps.run ?? ((i: AutoScreencastInput) => autoScreencast(i));
+    const res = await runner({
+      projectId,
+      userId,
+      maxMoments: config.autoScreencastMaxMoments,
+      budgetMs: config.autoScreencastBudgetMs,
+    });
+    log(
+      `[autoScreencast] project=${projectId} captured=${res.captured} planned=${res.planned} ` +
+        `failed=${res.failed.length} skipped=${res.skipped.length}${res.timedOut ? " (budget hit)" : ""}`,
+    );
+    return res;
+  } catch (e) {
+    // A capture-stage failure must NEVER break generation.
+    warn(`[autoScreencast] non-fatal failure for ${projectId}: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
 }
 
 /**

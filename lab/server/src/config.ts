@@ -107,6 +107,33 @@ export const config = {
    * other value (including unset) leaves the default-on behavior intact.
    */
   motionGraphicsForceDisabled: (process.env.MOTION_GRAPHICS || "") === "0",
+
+  // ── Auto-Screencast (headless Chromium capture) ─────────────────────────────
+  /**
+   * Default ON. The AI director already decides screencast moments (Pending
+   * Screencast shots with a researched targetUrl); the capture engine records
+   * those real sites automatically inside the generation pipeline, controlled
+   * per-video by a UI toggle (default on) — mirroring the motion-graphics toggle.
+   *
+   * ESCAPE HATCH: set SCREENCAST_DISABLED=1 to FORCE-DISABLE globally (e.g. for
+   * resource control on a tiny box) regardless of the per-video toggle. Even when
+   * on, capture falls back gracefully when Chromium is absent or a site fails.
+   */
+  autoScreencastDisabled: (process.env.SCREENCAST_DISABLED || "") === "1",
+  /**
+   * Max NEW AI-planned screencast moments per video (existing director-created
+   * Pending Screencast shots are always attempted). Keeps the inline capture step
+   * bounded so generation never stalls. SCREENCAST_MAX_MOMENTS overrides.
+   */
+  autoScreencastMaxMoments: envInt("SCREENCAST_MAX_MOMENTS", 3),
+  /**
+   * Overall wall-clock budget (ms) for the automatic in-pipeline screencast step.
+   * The render reads captureStatus/clipUrl, so captures run INLINE before the
+   * manifest is built; this ceiling guarantees a hung site can never stall
+   * generation forever. Once exceeded, remaining moments are abandoned and left
+   * Pending — handled exactly as before (promo retrieval / talking-head fallback).
+   */
+  autoScreencastBudgetMs: envInt("SCREENCAST_BUDGET_MS", 90_000),
   /**
    * Pre-baked Chromium executable for Remotion. In the Docker image this is set
    * to the apt-installed /usr/bin/chromium so Remotion NEVER needs a runtime
