@@ -38,6 +38,15 @@ app.use(
   express.static(config.outputsDir, { maxAge: "1y", immutable: true })
 );
 
+// Thumbnail Designer character library — read-only reference images stored under
+// DATA_DIR/thumbnail-characters. Short cache since a re-upload reuses the name
+// (the UI cache-busts the preview URL with the update time).
+app.use(
+  "/api/thumbnail-characters",
+  auth,
+  express.static(path.join(config.dataDir, "thumbnail-characters"))
+);
+
 // API
 app.use("/api/uploads", auth, uploadsRouter);
 app.use("/api/render", auth, renderRouter);

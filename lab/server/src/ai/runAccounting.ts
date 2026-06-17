@@ -57,7 +57,12 @@ export type CallPurpose =
   // Bulk Scheduler: per-platform SEO caption + hashtag generation.
   | "caption"
   // Auto-Screencast: picks script moments + the real URLs worth showing.
-  | "screencast";
+  | "screencast"
+  // Thumbnail Designer: vision "art-director" pass — decides which optional
+  // recreation steps apply (font/bold-text/logo/device-screen).
+  | "thumbnail-art-director"
+  // Thumbnail Designer: SEO-first titles + description + hashtags + tags.
+  | "thumbnail-metadata";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

@@ -70,6 +70,15 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "DROPBOX_APP_SECRET", label: "Dropbox app secret", group: "Cloud sources", connects: "App secret for your Dropbox app (App Console → your app → Settings). Paired with the app key to mint a short-lived access token from your refresh token. Server-only; never sent to the browser." },
   { key: "DROPBOX_REFRESH_TOKEN", label: "Dropbox refresh token", group: "Cloud sources", connects: "Long-lived OAuth refresh token for your Dropbox account (generate once with the offline-access flow). The lab exchanges it for short-lived access tokens to list folders + mint temporary download links. Server-only; never sent to the browser." },
 
+  // ── Thumbnail Designer (LAB tool — recreate top YouTube thumbnails) ──────────
+  // Both keys are consumed by THIS lab server (thumbnails/nanoBanana.ts +
+  // thumbnails/youtube.ts), NOT by the Postiz container — so they're excluded
+  // from the Postiz env file (buildEnvFileContents skips LAB_ONLY_KEYS) and read
+  // internally via getGeminiApiKey() / getYoutubeDataApiKey(). Same write-only
+  // guarantee as the rest: never returned through any HTTP response.
+  { key: "GEMINI_API_KEY", label: "Gemini API key", group: "Thumbnail Designer", connects: "Powers the Thumbnail Designer's Nano Banana (Gemini 2.5 Flash Image) editing chain that recreates a top thumbnail with your character. Create a key in Google AI Studio (aistudio.google.com/apikey), then paste it here. Used only by this lab server — never sent to the browser." },
+  { key: "YOUTUBE_DATA_API_KEY", label: "YouTube Data API key", group: "Thumbnail Designer", connects: "Lets the Thumbnail Designer search YouTube for the top-performing thumbnails for a keyword. Create an API key in Google Cloud Console (enable the YouTube Data API v3), then paste it here. Used only for search — server-only; never sent to the browser." },
+
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
   { key: "X_API_KEY", label: "X API key", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
   { key: "X_API_SECRET", label: "X API secret", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
@@ -125,6 +134,9 @@ const LAB_ONLY_KEYS = new Set([
   "DROPBOX_APP_KEY",
   "DROPBOX_APP_SECRET",
   "DROPBOX_REFRESH_TOKEN",
+  // Thumbnail Designer (used by the lab server, never by Postiz).
+  "GEMINI_API_KEY",
+  "YOUTUBE_DATA_API_KEY",
 ]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -347,6 +359,32 @@ export function getDropboxCredentials(): DropboxCredentials | null {
   const refreshToken = pick("DROPBOX_REFRESH_TOKEN");
   if (!appKey || !appSecret || !refreshToken) return null;
   return { appKey, appSecret, refreshToken };
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Gemini (Nano Banana) API key — used by
+ * thumbnails/nanoBanana.ts to run the Gemini 2.5 Flash Image editing chain. Like
+ * the other LAB-only keys it must NEVER be wired into an HTTP response
+ * (write-only guarantee). An env var (GEMINI_API_KEY) takes precedence.
+ */
+export function getGeminiApiKey(): string | null {
+  const fromEnv = (process.env.GEMINI_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.GEMINI_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the YouTube Data API key — used by
+ * thumbnails/youtube.ts to search for top-performing thumbnails. Must NEVER be
+ * wired into an HTTP response (write-only guarantee). An env var
+ * (YOUTUBE_DATA_API_KEY) takes precedence over the UI-managed store.
+ */
+export function getYoutubeDataApiKey(): string | null {
+  const fromEnv = (process.env.YOUTUBE_DATA_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.YOUTUBE_DATA_API_KEY || null;
 }
 
 function canWriteConfigDir(): boolean {

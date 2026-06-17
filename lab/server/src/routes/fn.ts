@@ -19,7 +19,9 @@ const LOCAL_USER = "local";
  * their request body must never be written to logs. Results are safe (the
  * settings store returns only `configured` booleans, never values).
  */
-const REDACT_INPUT = new Set(["updatePostizSettings"]);
+// `uploadThumbnailCharacter` carries a large base64 image (no secret), but
+// logging it would flood the logs — redact its body too.
+const REDACT_INPUT = new Set(["updatePostizSettings", "uploadThumbnailCharacter"]);
 
 /** Compact one-line preview of an object for logs (no huge blobs). */
 function preview(obj: unknown, max = 300): string {

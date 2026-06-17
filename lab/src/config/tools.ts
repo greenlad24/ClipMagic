@@ -7,6 +7,7 @@ import {
   FileText,
   Sticker,
   CalendarClock,
+  Image as ImageIcon,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -135,6 +136,18 @@ export const TOOLS: ToolDefinition[] = [
     accent: 'green',
     detail: 'Schedule to social',
     // Needs the Postiz public API key (set in the same write-only Postiz settings).
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'thumbnail-designer',
+    title: 'Thumbnail Designer',
+    description: 'Recreate top-performing YouTube thumbnails with your own character, plus SEO-first titles, description and tags.',
+    icon: ImageIcon,
+    route: '/thumbnail-designer',
+    status: 'live',
+    accent: 'purple',
+    detail: 'AI thumbnails',
+    // Needs the Gemini + YouTube keys (set in the same write-only Postiz settings).
     configureRoute: '/settings/postiz',
   },
   {

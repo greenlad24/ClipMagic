@@ -58,6 +58,18 @@ import {
   autoScreencastPipelineStep,
 } from "../capture/autoScreencast.js";
 import { chromiumAvailable } from "../capture/chromium.js";
+import { nanoBananaConfigured } from "../thumbnails/nanoBanana.js";
+import { searchTopThumbnails, youtubeConfigured } from "../thumbnails/youtube.js";
+import {
+  listCharacters,
+  saveCharacter,
+  deleteCharacter,
+  uploadedExpressions,
+  isExpression,
+} from "../thumbnails/characters.js";
+import { generateThumbnailVariants } from "../thumbnails/orchestrate.js";
+import { generateMetadata } from "../thumbnails/metadata.js";
+import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -2283,6 +2295,66 @@ const previewBulkSchedule: Handler = async (input) =>
 const runBulkSchedule: Handler = async (input) =>
   bulkSchedulerSchedule({ posts: Array.isArray(input?.posts) ? input.posts : [] });
 
+// ── Thumbnail Designer (LAB tool) ────────────────────────────────────────────
+// Recreates top-performing YouTube thumbnails with the user's character via the
+// Nano Banana (Gemini 2.5 Flash Image) editing chain, and generates SEO-first
+// titles/description/tags. Gated behind: both API keys configured (write-only,
+// server-only getters) + at least one character expression uploaded.
+
+const VIDEO_TYPE_FALLBACK: VideoType = "Tutorial";
+function coerceVideoType(x: unknown): VideoType {
+  return isVideoType(x) ? x : VIDEO_TYPE_FALLBACK;
+}
+
+/** Gate the UI: which keys are set + which expressions are uploaded. No values. */
+const thumbnailStatus: Handler = async () => ({
+  geminiConfigured: nanoBananaConfigured(),
+  youtubeConfigured: youtubeConfigured(),
+  characters: listCharacters(),
+  uploadedExpressions: uploadedExpressions(),
+});
+
+/** Search YouTube for the top thumbnails matching a keyword (≤6). */
+const searchThumbnails: Handler = async (input) => {
+  const results = await searchTopThumbnails(String(input?.keyword ?? ""));
+  return { results };
+};
+
+/** Run the recreation chain for each picked video (≤3), per-item isolated. */
+const generateThumbnails: Handler = async (input) => {
+  const picks = (Array.isArray(input?.picks) ? input.picks : []).map((p: unknown) => String(p)).slice(0, 3);
+  if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to recreate." });
+  const variants = await generateThumbnailVariants({
+    keyword: String(input?.keyword ?? ""),
+    videoType: coerceVideoType(input?.videoType),
+    picks,
+  });
+  return { variants };
+};
+
+/** SEO-first titles + description + hashtags + tags for a keyword/video type. */
+const generateThumbnailMetadata: Handler = async (input) => {
+  const meta = await generateMetadata(String(input?.keyword ?? ""), coerceVideoType(input?.videoType));
+  return meta;
+};
+
+// Character library (list / upload / delete the 4 expression images).
+const listThumbnailCharacters: Handler = async () => ({ characters: listCharacters() });
+
+const uploadThumbnailCharacter: Handler = async (input) => {
+  const expr = input?.expression;
+  if (!isExpression(expr)) throw new ZiteError({ code: "BAD_REQUEST", message: `Unknown expression: ${String(expr)}` });
+  const character = saveCharacter(expr, String(input?.imageBase64 ?? ""));
+  return { character, characters: listCharacters() };
+};
+
+const deleteThumbnailCharacter: Handler = async (input) => {
+  const expr = input?.expression;
+  if (!isExpression(expr)) throw new ZiteError({ code: "BAD_REQUEST", message: `Unknown expression: ${String(expr)}` });
+  const character = deleteCharacter(expr);
+  return { character, characters: listCharacters() };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -2359,6 +2431,14 @@ export const HANDLERS: Record<string, Handler> = {
   listStorage,
   deleteStorageFiles,
   deleteStorageArea,
+  // Thumbnail Designer (LAB tool)
+  thumbnailStatus,
+  searchThumbnails,
+  generateThumbnails,
+  generateThumbnailMetadata,
+  listThumbnailCharacters,
+  uploadThumbnailCharacter,
+  deleteThumbnailCharacter,
 };
 
 void config;

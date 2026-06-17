@@ -134,6 +134,63 @@ export const listStorage = endpoint("listStorage");
 export const deleteStorageFiles = endpoint("deleteStorageFiles");
 export const deleteStorageArea = endpoint("deleteStorageArea");
 export const reviewEdit = endpoint("reviewEdit");
+// Thumbnail Designer (LAB tool)
+export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
+export const searchThumbnails = endpoint<{ keyword: string }, SearchThumbnailsOutputType>("searchThumbnails");
+export const generateThumbnails =
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[] }, GenerateThumbnailsOutputType>("generateThumbnails");
+export const generateThumbnailMetadata =
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType }, ThumbnailMetadataOutputType>("generateThumbnailMetadata");
+export const listThumbnailCharacters =
+  endpoint<Record<string, never>, { characters: ThumbnailCharacterState[] }>("listThumbnailCharacters");
+export const uploadThumbnailCharacter =
+  endpoint<{ expression: ThumbnailExpression; imageBase64: string }, ThumbnailCharacterMutationOutputType>("uploadThumbnailCharacter");
+export const deleteThumbnailCharacter =
+  endpoint<{ expression: ThumbnailExpression }, ThumbnailCharacterMutationOutputType>("deleteThumbnailCharacter");
+
+// ── Thumbnail Designer types ─────────────────────────────────────────────────
+export type ThumbnailExpression = 'smile' | 'surprise' | 'secret' | 'calm';
+export type ThumbnailVideoType = 'Tutorial' | 'Viral' | 'Secret' | 'Review';
+export type ThumbnailCharacterState = {
+  expression: ThumbnailExpression;
+  uploaded: boolean;
+  url: string | null;
+  updatedAt: string | null;
+};
+export type ThumbnailStatusOutputType = {
+  geminiConfigured: boolean;
+  youtubeConfigured: boolean;
+  characters: ThumbnailCharacterState[];
+  uploadedExpressions: ThumbnailExpression[];
+};
+export type ThumbnailSearchResult = { videoId: string; title: string; thumbnailUrl: string };
+export type SearchThumbnailsOutputType = { results: ThumbnailSearchResult[] };
+export type ThumbnailChainStep = {
+  id: string;
+  label: string;
+  instruction: string;
+  applied: boolean;
+  note?: string;
+};
+export type ThumbnailVariant = {
+  videoId: string;
+  sourceThumbnailUrl: string;
+  outputUrl: string | null;
+  expression: ThumbnailExpression;
+  steps: ThumbnailChainStep[];
+  error?: string;
+};
+export type GenerateThumbnailsOutputType = { variants: ThumbnailVariant[] };
+export type ThumbnailMetadataOutputType = {
+  titles: string[];
+  description: string;
+  hashtags: string[];
+  tags: string[];
+};
+export type ThumbnailCharacterMutationOutputType = {
+  character: ThumbnailCharacterState;
+  characters: ThumbnailCharacterState[];
+};
 
 // ── Output/Input types used by the frontend. The originals were generated from
 // each endpoint's zod schema; the app only uses them as TS shapes, so permissive
