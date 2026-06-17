@@ -49,6 +49,29 @@ COPY remotion/package.json remotion/package-lock.json* ./
 RUN npm install --no-audit --no-fund
 COPY remotion ./
 
+# ── Stage 2c: Real-ESRGAN upscaler (local, free) ──────────────────────────────
+# Fetch the PINNED prebuilt realesrgan-ncnn-vulkan binary + its bundled model
+# files (xinntao release v0.2.5.0). Kept in its own stage so the (~5MB) zip +
+# unzip tooling never bloats the runtime layer — only the extracted binary +
+# models/ are copied forward. The Thumbnail Designer's final upscale stage uses
+# it (4× then downsample to 1920×1080); it falls back to ffmpeg lanczos when the
+# binary/Vulkan is unavailable, so this is an enhancement, never a hard dep.
+FROM debian:bookworm-slim AS realesrgan
+ARG REALESRGAN_VERSION=v0.2.5.0
+ARG REALESRGAN_ZIP=realesrgan-ncnn-vulkan-20220424-ubuntu.zip
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /opt/realesrgan \
+  && curl -fsSL -o /tmp/realesrgan.zip \
+       "https://github.com/xinntao/Real-ESRGAN/releases/download/${REALESRGAN_VERSION}/${REALESRGAN_ZIP}" \
+  && unzip -o /tmp/realesrgan.zip -d /opt/realesrgan \
+  && rm -f /tmp/realesrgan.zip \
+  && chmod +x /opt/realesrgan/realesrgan-ncnn-vulkan \
+  # Fail early if the layout isn't what upscale.ts expects.
+  && test -x /opt/realesrgan/realesrgan-ncnn-vulkan \
+  && test -d /opt/realesrgan/models
+
 # ── Stage 3: runtime ─────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim
 # Base render deps + a PRE-BAKED Chromium for Remotion. We install the system
@@ -65,6 +88,11 @@ RUN apt-get update \
        libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
        libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
        libpango-1.0-0 libcairo2 libatspi2.0-0 \
+       # Software-Vulkan runtime so realesrgan-ncnn-vulkan runs on a CPU-only box
+       # (no GPU). Minimal set: loader + Mesa's lavapipe driver + the tool that
+       # lets us probe a working ICD. Real-ESRGAN gracefully falls back to ffmpeg
+       # if Vulkan can't initialise, so these are best-effort runtime libs.
+       libvulkan1 mesa-vulkan-drivers vulkan-tools libgomp1 \
   && rm -rf /var/lib/apt/lists/* \
   # Fail the build if the executable isn't where we expect — a silent missing
   # Chromium is exactly the failure mode we're eliminating.
@@ -79,6 +107,10 @@ COPY server/assets ./assets
 COPY --from=web /build/web/dist ./web/dist
 # Remotion project (source + its node_modules) for the motion-graphics service.
 COPY --from=motion /build/remotion ./remotion
+# Real-ESRGAN binary + models for the Thumbnail Designer's upscale stage. The
+# binary path matches upscale.ts's REALESRGAN_BIN default (/opt/realesrgan/...).
+COPY --from=realesrgan /opt/realesrgan /opt/realesrgan
+RUN test -x /opt/realesrgan/realesrgan-ncnn-vulkan
 
 ENV NODE_ENV=production \
     PORT=9090 \
@@ -89,7 +121,12 @@ ENV NODE_ENV=production \
     # every render — it never downloads its own. Motion graphics default ON;
     # set MOTION_GRAPHICS=0 to force-disable the short-form motion stage.
     REMOTION_BROWSER_EXECUTABLE=/usr/bin/chromium \
-    REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium
+    REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium \
+    # Real-ESRGAN upscaler (Thumbnail Designer). Binary + model dir match the
+    # paths baked above; upscale.ts probes the binary and falls back to ffmpeg
+    # lanczos if it (or the software-Vulkan runtime) isn't usable.
+    REALESRGAN_BIN=/opt/realesrgan/realesrgan-ncnn-vulkan \
+    REALESRGAN_MODELS_DIR=/opt/realesrgan/models
 
 VOLUME ["/data"]
 EXPOSE 9090

@@ -39,6 +39,25 @@ import { getGeminiApiKey } from "../settings/postizSecrets.js";
 export const NANO_BANANA_MODEL = process.env.NANO_BANANA_MODEL || "gemini-2.5-flash-image";
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 
+/**
+ * Target aspect ratio hinted to the image model. Gemini 2.5 Flash Image went GA
+ * with explicit aspect-ratio control via `generationConfig.imageConfig.aspectRatio`
+ * (verified Aug–Oct 2025: developers.googleblog.com "Gemini 2.5 Flash Image now
+ * ready for production with new aspect ratios" + ai.google.dev/gemini-api/docs/
+ * image-generation; supported ratios include "16:9"). Isolated behind one
+ * constant so a future API change is a one-line edit.
+ * TODO: if a NANO_BANANA_MODEL override predates aspect-ratio support, this hint
+ * is simply ignored by the API — the crop.ts finalize still guarantees 16:9.
+ */
+export const NANO_BANANA_ASPECT_RATIO = "16:9";
+
+/**
+ * Appended to every edit instruction so the model doesn't reintroduce black bars
+ * on a widescreen frame. Kept short + literal; the crop.ts finalize is the hard
+ * guarantee, this is the soft hint that keeps inputs clean.
+ */
+export const WIDESCREEN_PREAMBLE = "keep a 16:9 widescreen frame, do not letterbox";
+
 export function nanoBananaConfigured(): boolean {
   return !!getGeminiApiKey();
 }
@@ -81,12 +100,18 @@ export type FetchFn = (url: string, init: { method: string; headers: Record<stri
  */
 export function buildEditRequestBody(instruction: string, images: EditImage[]): {
   contents: Array<{ parts: Array<Record<string, unknown>> }>;
+  generationConfig: { imageConfig: { aspectRatio: string } };
 } {
   const parts: Array<Record<string, unknown>> = [{ text: instruction }];
   for (const img of images) {
     parts.push({ inline_data: { mime_type: img.mimeType, data: img.data.toString("base64") } });
   }
-  return { contents: [{ parts }] };
+  // Hint the model to keep a true 16:9 frame. The crop.ts finalize remains the
+  // hard guarantee regardless of what the model actually returns.
+  return {
+    contents: [{ parts }],
+    generationConfig: { imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO } },
+  };
 }
 
 /**

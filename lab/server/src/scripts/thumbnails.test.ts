@@ -225,31 +225,263 @@ async function main() {
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
 
-  // ── crop/scale ffmpeg arg-builder (pure) ────────────────────────────────────
+  // ── crop/scale ffmpeg arg-builder (pure) — robust to ANY output size ────────
   const crop = await import("../thumbnails/crop.js");
-  await check("buildCropScaleFilter uses the fixed letterbox crop for ~1195x896", () => {
-    assert.equal(crop.buildCropScaleFilter(1195, 896), "crop=1195:670:0:113,scale=1920:1080");
-    // within tolerance
-    assert.equal(crop.buildCropScaleFilter(1192, 898), "crop=1195:670:0:113,scale=1920:1080");
+
+  // Helper: the final crop must always be a 16:9 rectangle that fits the input.
+  const assert16x9 = (filter: string, fullW: number, fullH: number) => {
+    const m = filter.match(/^crop=(\d+):(\d+):(\d+):(\d+),scale=1920:1080:flags=lanczos$/);
+    assert.ok(m, `filter shape wrong: ${filter}`);
+    const [w, h, x, y] = [Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])];
+    // 16:9 within rounding (even dims), within the frame, never padded.
+    assert.ok(Math.abs(w / h - 16 / 9) < 0.02, `not 16:9: ${w}x${h}`);
+    assert.ok(x + w <= fullW && y + h <= fullH, `crop exceeds frame: ${filter}`);
+    assert.ok(!/pad/.test(filter), "must never pad");
+  };
+
+  await check("buildCropScaleFilter center-crops a 4:3 source to 16:9 (no bars)", () => {
+    // 4:3 1024x768 → 16:9 fit is 1024x576, centred (y = (768-576)/2 = 96).
+    const f = crop.buildCropScaleFilter(1024, 768);
+    assert.equal(f, "crop=1024:576:0:96,scale=1920:1080:flags=lanczos");
+    assert16x9(f, 1024, 768);
   });
 
-  await check("buildCropScaleFilter center-crops to 16:9 for the generic case", () => {
-    // A 4:3 1024x768 source: 16:9 fit is 1024x576, centred (y = (768-576)/2 = 96).
-    assert.equal(crop.buildCropScaleFilter(1024, 768), "crop=1024:576:0:96,scale=1920:1080");
-    // An already-16:9 source: full frame, no offset.
-    assert.equal(crop.buildCropScaleFilter(1920, 1080), "crop=1920:1080:0:0,scale=1920:1080");
+  await check("buildCropScaleFilter passes through an already-16:9 source", () => {
+    const f = crop.buildCropScaleFilter(1920, 1080);
+    assert.equal(f, "crop=1920:1080:0:0,scale=1920:1080:flags=lanczos");
+    assert16x9(f, 1920, 1080);
   });
 
-  await check("buildCropScaleFilter never pads (no black bars) — taller-than-16:9 source", () => {
-    // A 1000x1000 (1:1) source: 16:9 fit is 1000x562 (rounded even), centred.
+  await check("buildCropScaleFilter center-crops a square source to 16:9", () => {
     const f = crop.buildCropScaleFilter(1000, 1000);
-    assert.match(f, /^crop=1000:\d+:0:\d+,scale=1920:1080$/);
-    assert.ok(!/pad/.test(f), "must never pad");
+    assert16x9(f, 1000, 1000);
   });
 
-  await check("buildCropScaleArgs produces a single-frame transcode argv", () => {
-    const args = crop.buildCropScaleArgs("in.png", "out.png", 1195, 896);
-    assert.deepEqual(args, ["-y", "-i", "in.png", "-vf", "crop=1195:670:0:113,scale=1920:1080", "-frames:v", "1", "out.png"]);
+  await check("buildCropScaleFilter strips a detected letterbox content rect, then 16:9", () => {
+    // A 1280x900 frame letterboxed: a true-16:9 content box (1280x720) at y=90.
+    const content = { w: 1280, h: 720, x: 0, y: 90 };
+    const f = crop.buildCropScaleFilter(1280, 900, content);
+    // The content box is already 16:9, so the crop is exactly the content box.
+    assert.equal(f, "crop=1280:720:0:90,scale=1920:1080:flags=lanczos");
+    assert16x9(f, 1280, 900);
+  });
+
+  await check("buildCropScaleArgs produces a single-frame transcode argv (with content rect)", () => {
+    const args = crop.buildCropScaleArgs("in.png", "out.png", 1280, 900, { w: 1280, h: 720, x: 0, y: 90 });
+    assert.deepEqual(args, [
+      "-y", "-i", "in.png",
+      "-vf", "crop=1280:720:0:90,scale=1920:1080:flags=lanczos",
+      "-frames:v", "1", "out.png",
+    ]);
+  });
+
+  await check("parseCropdetect returns the content box, ignores a full-frame box", () => {
+    const stderr = "[Parsed_cropdetect] x1:0 ... crop=1195:670:0:113\n[Parsed_cropdetect] crop=1195:670:0:113\n";
+    assert.deepEqual(crop.parseCropdetect(stderr, 1195, 896), { w: 1195, h: 670, x: 0, y: 113 });
+    // A box equal to the full frame = no bars → null (use whole frame).
+    assert.equal(crop.parseCropdetect("crop=1920:1080:0:0", 1920, 1080), null);
+    assert.equal(crop.parseCropdetect("no boxes here", 100, 100), null);
+  });
+
+  // ── art-director: EXACT template filling (only brackets substituted) ────────
+  const artDirector = await import("../thumbnails/artDirector.js");
+  await check("parseDirectorResponse fills steps 4–7 templates verbatim (only brackets)", () => {
+    const steps = artDirector.parseDirectorResponse({
+      "device-screen": { apply: true, character_or_screen: "screen", device: "phone", content: "bright app dashboard" },
+      font: { apply: true, text: "headline", color: "yellow" },
+      "bold-text": { apply: true, text: "FREE" },
+      logo: { apply: true, icon_or_company: "YouTube", target_icon_or_company: "TikTok" },
+    });
+    const byId = Object.fromEntries(steps.map((s) => [s.id, s]));
+    assert.equal(
+      byId["device-screen"].instruction,
+      "change the screen inside of the phone - it needs to be a bright app dashboard",
+    );
+    assert.equal(
+      byId.font.instruction,
+      "I want to change the font of the headline but keep it in the same yellow color the same simple text shape - just the font",
+    );
+    assert.equal(byId["bold-text"].instruction, 'I want to make the "FREE" in bold font');
+    assert.equal(byId.logo.instruction, "change the YouTube logo to another type of a TikTok logo");
+    // Order is device-screen, font, bold-text, logo (steps 4→7).
+    assert.deepEqual(steps.map((s) => s.id), ["device-screen", "font", "bold-text", "logo"]);
+    assert.ok(steps.every((s) => s.apply), "all four apply when slots are present");
+    // No leftover brackets in any emitted instruction.
+    assert.ok(steps.every((s) => !/\[|\]/.test(s.instruction)), "no unfilled bracket placeholders");
+  });
+
+  await check("parseDirectorResponse skips a step when apply is false or a slot is empty", () => {
+    const steps = artDirector.parseDirectorResponse({
+      "device-screen": { apply: false, character_or_screen: "screen", device: "phone", content: "x" },
+      font: { apply: true, text: "headline" }, // missing color → skipped
+      "bold-text": { apply: true, text: "" }, // empty text → skipped
+      logo: { apply: true, icon_or_company: "A" }, // missing target → skipped
+    });
+    assert.ok(steps.every((s) => s.apply === false), "none apply");
+    assert.ok(steps.every((s) => s.instruction === ""), "no instruction when not applied");
+  });
+
+  // ── recreation chain: EXACT verbatim prompts + STEP-2 art-director image ────
+  const recreate = await import("../thumbnails/recreate.js");
+  await check("the chain emits verbatim prompts for steps 1/2/8 and templated 4–7 (+ 16:9 preamble)", async () => {
+    const sent: Array<{ instruction: string; imageCount: number }> = [];
+    const editImage = async (opts: any) => {
+      sent.push({ instruction: opts.instruction, imageCount: opts.images.length });
+      return { file: "/x", outputUrl: "/x", bytes: Buffer.from(`img${sent.length}`), mimeType: "image/png" };
+    };
+    // Art-director returns ONE optional edit (font) so we can see it land between 2 and 8.
+    let directorSawImage: Buffer | undefined;
+    const artDirect = async (o: any) => {
+      directorSawImage = o.imageBytes as Buffer;
+      return artDirector.parseDirectorResponse({ font: { apply: true, text: "title", color: "white" } });
+    };
+    const finalize = async (_c: any, steps: any) => ({ outputUrl: "/out.png", file: "/x", steps });
+    const res = await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("SOURCE"),
+        sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("CHAR"),
+        keyword: "ai editing",
+        videoType: "Tutorial",
+        expression: "smile",
+      },
+      { editImage, artDirect, finalize },
+    );
+    const pre = `(${(await import("../thumbnails/nanoBanana.js")).WIDESCREEN_PREAMBLE})`;
+    // Step 1: exact prompt + TWO inputs (source + character ref).
+    assert.equal(sent[0].instruction, `replace the character with the character in the second image ${pre}`);
+    assert.equal(sent[0].imageCount, 2, "step 1 feeds source + character");
+    // Step 2: exact literal "a t-shirt".
+    assert.equal(sent[1].instruction, `change the character outfit to a t-shirt ${pre}`);
+    // Step (optional font): templated, brackets filled.
+    assert.equal(
+      sent[2].instruction,
+      `I want to change the font of the title but keep it in the same white color the same simple text shape - just the font ${pre}`,
+    );
+    // Step 8 (ALWAYS, last): background color + pattern, verbatim.
+    assert.equal(
+      sent[sent.length - 1].instruction,
+      `change the background color and the background pattern to something different, but keep the character, all text, logos, and the exact position of every element the same ${pre}`,
+    );
+    // The art-director analysed the STEP-2 RESULT image (current working image),
+    // NOT the source thumbnail. Step 1 produced "img1", step 2 produced "img2".
+    assert.ok(directorSawImage, "director was called");
+    assert.equal(directorSawImage!.toString(), "img2", "director saw the STEP-2 result, not the source");
+    assert.notEqual(directorSawImage!.toString(), "SOURCE");
+    void res;
+  });
+
+  await check("the chain always runs the background edit even when the art-director returns nothing", async () => {
+    const sent: string[] = [];
+    const editImage = async (opts: any) => {
+      sent.push(opts.instruction);
+      return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+    };
+    await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("C"), keyword: "k", videoType: "Viral", expression: "surprise",
+      },
+      { editImage, artDirect: async () => [], finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
+    );
+    // 3 edits: replace character, t-shirt, background (no optional steps).
+    assert.equal(sent.length, 3);
+    assert.match(sent[2], /change the background color and the background pattern/);
+  });
+
+  await check("a failed edit keeps the last good image and the chain continues to the end", async () => {
+    let calls = 0;
+    const editImage = async (opts: any) => {
+      calls++;
+      if (calls === 2) throw new Error("safety block"); // outfit step fails
+      return { file: "/x", outputUrl: "/x", bytes: Buffer.from(`ok${calls}`), mimeType: "image/png" };
+    };
+    const res = await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("C"), keyword: "k", videoType: "Review", expression: "calm",
+      },
+      { editImage, artDirect: async () => [], finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
+    );
+    const outfit = res.steps.find((s) => s.id === "outfit");
+    assert.equal(outfit?.applied, false, "outfit step recorded as not applied");
+    assert.match(outfit?.note ?? "", /safety block/);
+    // Background edit (always-on) still ran afterwards.
+    assert.ok(res.steps.find((s) => s.id === "background"), "background step still attempted");
+  });
+
+  // ── 16:9 source selection: maxres → mqdefault, NEVER hqdefault ──────────────
+  await check("downloadSourceThumbnail uses maxres when available (true 16:9)", async () => {
+    const orchestrate = await import("../thumbnails/orchestrate.js");
+    const seen: string[] = [];
+    const download = async (url: string) => {
+      seen.push(url);
+      return { bytes: Buffer.from("img"), mime: "image/jpeg" };
+    };
+    const r = await orchestrate.downloadSourceThumbnail("VID", download);
+    assert.ok(r.url.includes("maxresdefault.jpg"), "prefers maxres (16:9)");
+    assert.ok(!seen.some((u) => u.includes("hqdefault")), "never fetches hqdefault (4:3)");
+  });
+
+  await check("downloadSourceThumbnail falls back to mqdefault (16:9), never hqdefault", async () => {
+    const orchestrate = await import("../thumbnails/orchestrate.js");
+    const seen: string[] = [];
+    const download = async (url: string) => {
+      seen.push(url);
+      if (url.includes("maxresdefault")) throw new Error("404 no maxres");
+      return { bytes: Buffer.from("img"), mime: "image/jpeg" };
+    };
+    const r = await orchestrate.downloadSourceThumbnail("VID", download);
+    assert.ok(r.url.includes("mqdefault.jpg"), "falls back to mqdefault (16:9), not hqdefault");
+    assert.ok(!seen.some((u) => u.includes("hqdefault")), "never fetches hqdefault (4:3)");
+  });
+
+  // ── upscaler: runs when available, FALLS BACK to ffmpeg otherwise / on error ─
+  const upscale = await import("../thumbnails/upscale.js");
+  await check("buildRealesrganArgs / buildResampleArgs produce the expected argv", () => {
+    const r = upscale.buildRealesrganArgs("in.png", "out.png");
+    assert.deepEqual(r.slice(0, 6), ["-i", "in.png", "-o", "out.png", "-s", "4"]);
+    assert.equal(r[7], upscale.REALESRGAN_MODEL);
+    assert.deepEqual(upscale.buildResampleArgs("in.png", "out.png"), [
+      "-y", "-i", "in.png", "-vf", "scale=1920:1080:flags=lanczos", "-frames:v", "1", "out.png",
+    ]);
+  });
+
+  await check("upscaleToThumbnail uses Real-ESRGAN when available", async () => {
+    let realRan = false;
+    let ffmpegRuns = 0;
+    const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      available: () => true,
+      runRealesrgan: async () => { realRan = true; },
+      runFfmpegFn: async () => { ffmpegRuns++; return {}; },
+    });
+    assert.equal(res.method, "realesrgan");
+    assert.ok(realRan, "Real-ESRGAN was invoked");
+    assert.equal(ffmpegRuns, 1, "then one ffmpeg downsample to exactly 1920x1080");
+  });
+
+  await check("upscaleToThumbnail falls back to ffmpeg when the binary is unavailable", async () => {
+    let ffmpegRuns = 0;
+    const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      available: () => false,
+      runRealesrgan: async () => { throw new Error("should not be called"); },
+      runFfmpegFn: async () => { ffmpegRuns++; return {}; },
+    });
+    assert.equal(res.method, "ffmpeg-fallback");
+    assert.equal(ffmpegRuns, 1, "single ffmpeg lanczos scale");
+    assert.match(res.note ?? "", /unavailable/i);
+  });
+
+  await check("upscaleToThumbnail falls back to ffmpeg when Real-ESRGAN ERRORS", async () => {
+    let ffmpegRuns = 0;
+    const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      available: () => true,
+      runRealesrgan: async () => { throw new Error("vulkan exploded"); },
+      runFfmpegFn: async () => { ffmpegRuns++; return {}; },
+    });
+    assert.equal(res.method, "ffmpeg-fallback");
+    assert.equal(ffmpegRuns, 1, "fell back to a single ffmpeg scale");
+    assert.match(res.note ?? "", /vulkan exploded/);
   });
 
   // ── expression selection ────────────────────────────────────────────────────

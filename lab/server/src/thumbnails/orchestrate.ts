@@ -4,7 +4,7 @@
  * per pick with PER-ITEM isolation (one failure never kills the batch) and
  * BOUNDED concurrency (these are slow API chains, so we run them sequentially).
  */
-import { maxresThumbnailUrl, hqThumbnailUrl } from "./youtube.js";
+import { hqThumbnailUrl, maxresThumbnailUrl, mqThumbnailUrl } from "./youtube.js";
 import { readCharacterImage, uploadedExpressions, type Expression } from "./characters.js";
 import { expressionsForVariants, type VideoType } from "./videoType.js";
 import { recreateThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
@@ -43,8 +43,10 @@ const defaultDownload: DownloadFn = async (url) => {
 };
 
 /**
- * Download a video's best-available thumbnail: try maxresdefault, fall back to
- * hqdefault (which always exists). Returns bytes + mime.
+ * Download a video's TRUE-16:9 source thumbnail for recreation: try maxresdefault
+ * (1280×720, 16:9); if it isn't available, fall back to mqdefault (320×180, also
+ * 16:9, always present). We NEVER feed hqdefault (4:3 letterboxed) into the chain
+ * — that would bake black bars into every edit. Returns bytes + mime + URL used.
  */
 export async function downloadSourceThumbnail(
   videoId: string,
@@ -55,9 +57,9 @@ export async function downloadSourceThumbnail(
     const r = await download(maxUrl);
     return { ...r, url: maxUrl };
   } catch {
-    const hqUrl = hqThumbnailUrl(videoId);
-    const r = await download(hqUrl);
-    return { ...r, url: hqUrl };
+    const mqUrl = mqThumbnailUrl(videoId);
+    const r = await download(mqUrl);
+    return { ...r, url: mqUrl };
   }
 }
 

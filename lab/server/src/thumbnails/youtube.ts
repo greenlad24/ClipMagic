@@ -50,12 +50,25 @@ export function youtubeConfigured(): boolean {
 /** Injectable fetch — narrow shape so a test can supply a mock. */
 export type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
 
-/** hqdefault always exists; maxresdefault only for higher-res uploads. */
+/**
+ * YouTube auto-generated thumbnail variants.
+ *
+ * Aspect ratios matter for the recreation chain: the image we FEED into Nano
+ * Banana must be a true 16:9 frame, never the 4:3 letterboxed `hqdefault`.
+ *   - maxresdefault.jpg — 1280×720, 16:9. Only exists for higher-res uploads.
+ *   - mqdefault.jpg     — 320×180,  16:9. Always exists. Our 16:9 fallback.
+ *   - hqdefault.jpg     — 480×360,  4:3 (letterboxed). NEVER fed into the chain;
+ *                         fine only as a cheap grid-preview placeholder.
+ */
 export function hqThumbnailUrl(videoId: string): string {
   return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
 }
 export function maxresThumbnailUrl(videoId: string): string {
   return `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+}
+/** 320×180 — always present, true 16:9. The guaranteed-16:9 fallback source. */
+export function mqThumbnailUrl(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
 }
 
 /**
