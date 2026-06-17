@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Self-hosted ClipMagic backend: unlimited uploads + local FFmpeg rendering + bulk render queue. Replaces Rendi, R2 and the Zite database on a single DigitalOcean droplet.",
+  "//capture": "puppeteer-core (below, optional) powers Auto-Screencast. It ships NO bundled browser — it drives the container's existing Chromium (the one Remotion uses). Kept optional so an install hiccup never fails the image build.",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json && npm run build:pipeline",
@@ -23,7 +24,6 @@
     "zod": "^3.24.1"
   },
   "optionalDependencies": {
-    "//": "puppeteer-core powers Auto-Screencast. It is NOT installed into the main app's shared node_modules — run `npm run install:capture-deps` (or CAPTURE_INSTALL=1 in run-lab.sh) to install it into the lab-private server/.capture-deps. No bundled-browser download; it drives the container's existing Chromium.",
     "puppeteer-core": "^23.0.0"
   },
   "devDependencies": {
