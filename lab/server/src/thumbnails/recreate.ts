@@ -54,7 +54,7 @@ export const STEP1_PROMPT =
   "You are given two images. The FIRST image is a thumbnail scene. The SECOND image is a headshot of a specific person. Replace the person in the first image with the person from the SECOND image: their face, facial features, skin tone, hair colour and style, and beard must be IDENTICAL to the second image — it must be unmistakably the exact same person as the second image, not a similar-looking one. Keep the first image's composition, pose, body, framing, text and everything else exactly the same; change ONLY who the person is to match the second image.";
 export const STEP2_PROMPT = "change the character outfit to a t-shirt";
 export const STEP8_PROMPT =
-  "change the background color and the background pattern to something different, but keep the character, all text, logos, and the exact position of every element the same";
+  "replace the background with a bold, vibrant, high-contrast background — a new color and pattern designed to make the character and the text POP and grab attention for maximum click-through — while keeping the character, all text, logos, and the exact position of every element exactly the same";
 
 /**
  * Append the 16:9 widescreen preamble so edits don't reintroduce letterbox bars.

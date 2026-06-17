@@ -360,11 +360,10 @@ async function main() {
       sent[2].instruction,
       `I want to change the font of the title but keep it in the same white color the same simple text shape - just the font ${pre}`,
     );
-    // Step 8 (ALWAYS, last): background color + pattern, verbatim.
-    assert.equal(
-      sent[sent.length - 1].instruction,
-      `change the background color and the background pattern to something different, but keep the character, all text, logos, and the exact position of every element the same ${pre}`,
-    );
+    // Step 8 (ALWAYS, last): background → bold/high-contrast "pop", positions kept.
+    assert.equal(sent[sent.length - 1].instruction, `${recreate.STEP8_PROMPT} ${pre}`);
+    assert.match(sent[sent.length - 1].instruction, /pop|contrast|vibrant/i, "background should enhance pop");
+    assert.match(sent[sent.length - 1].instruction, /position of every element exactly the same/i, "keeps layout");
     // The art-director analysed the STEP-2 RESULT image (current working image),
     // NOT the source thumbnail. Step 1 produced "img1", step 2 produced "img2".
     assert.ok(directorSawImage, "director was called");
@@ -388,7 +387,7 @@ async function main() {
     );
     // 3 edits: replace character, t-shirt, background (no optional steps).
     assert.equal(sent.length, 3);
-    assert.match(sent[2], /change the background color and the background pattern/);
+    assert.match(sent[2], /background.*(pop|contrast|vibrant)/i);
   });
 
   await check("a failed edit keeps the last good image and the chain continues to the end", async () => {
