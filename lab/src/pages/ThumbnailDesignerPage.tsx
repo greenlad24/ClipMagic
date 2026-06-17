@@ -4,7 +4,8 @@ import {
   thumbnailStatus,
   analyzeThumbnailScript,
   searchThumbnails,
-  generateThumbnails,
+  startThumbnailGeneration,
+  thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
   type ThumbnailStatusOutputType,
@@ -12,7 +13,8 @@ import {
   type ThumbnailExpression,
   type ThumbnailVideoType,
   type ThumbnailSearchResult,
-  type ThumbnailVariant,
+  type ThumbnailJobStatus,
+  type ThumbnailJobVariant,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
@@ -21,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Progress } from '@/components/ui/progress';
 import {
   Select,
   SelectContent,
@@ -96,7 +99,16 @@ export default function ThumbnailDesignerPage() {
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
-  const [variants, setVariants] = useState<ThumbnailVariant[] | null>(null);
+  const [job, setJob] = useState<ThumbnailJobStatus | null>(null);
+
+  // Poll lifecycle: a single interval that we always clear on done/unmount/restart.
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  };
 
   const loadStatus = () =>
     thumbnailStatus({})
@@ -108,6 +120,9 @@ export default function ThumbnailDesignerPage() {
     void loadStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  // Always stop polling when the page unmounts.
+  useEffect(() => () => stopPolling(), []);
 
   const keysReady = !!status?.geminiConfigured && !!status?.youtubeConfigured;
   const hasCharacter = (status?.uploadedExpressions?.length ?? 0) > 0;
@@ -127,7 +142,8 @@ export default function ThumbnailDesignerPage() {
     setAnalyzing(true);
     setResults(null);
     setPicks([]);
-    setVariants(null);
+    stopPolling();
+    setJob(null);
     try {
       const analysis = await analyzeThumbnailScript({ script: script.trim() });
       setKeyword(analysis.keyword);
@@ -150,7 +166,8 @@ export default function ThumbnailDesignerPage() {
     setSearching(true);
     setResults(null);
     setPicks([]);
-    setVariants(null);
+    stopPolling();
+    setJob(null);
     try {
       const { results } = await searchThumbnails({ keyword: keyword.trim() });
       setResults(results);
@@ -162,23 +179,49 @@ export default function ThumbnailDesignerPage() {
     }
   };
 
+  // Start generation, then POLL the job for live progress until it's done.
+  // Each thumbnail's finished image lands the moment that variant completes, so
+  // the results fill in one by one instead of all at the end.
   const onGenerate = async () => {
     if (picks.length === 0) {
       toast.info('Pick at least one thumbnail to recreate.');
       return;
     }
+    stopPolling();
     setGenerating(true);
-    setVariants(null);
+    setJob(null);
     try {
-      const { variants } = await generateThumbnails({ keyword: keyword.trim(), videoType, picks });
-      setVariants(variants);
-      const ok = variants.filter((v) => v.outputUrl).length;
-      if (ok === 0) toast.error('No thumbnails could be generated — see the per-item errors below.');
-      else toast.success(`Generated ${ok} thumbnail${ok === 1 ? '' : 's'}.`);
+      const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks });
+
+      const tick = async () => {
+        try {
+          const snap = await thumbnailJobStatus({ jobId });
+          setJob(snap);
+          if (snap.done) {
+            stopPolling();
+            setGenerating(false);
+            if (snap.error) {
+              toast.error(snap.error);
+              return;
+            }
+            const ok = snap.variants.filter((v) => v.outputUrl).length;
+            if (ok === 0) toast.error('No thumbnails could be generated — see the per-item errors below.');
+            else toast.success(`Generated ${ok} thumbnail${ok === 1 ? '' : 's'}.`);
+          }
+        } catch (e) {
+          // A transient poll failure shouldn't kill the run; surface only if fatal.
+          stopPolling();
+          setGenerating(false);
+          toast.error(e instanceof Error ? e.message : 'Lost track of the generation job.');
+        }
+      };
+
+      // Poll every ~1.2s; run one immediately so the first frame isn't blank.
+      pollRef.current = setInterval(() => void tick(), 1200);
+      void tick();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Thumbnail generation failed');
-    } finally {
       setGenerating(false);
+      toast.error(e instanceof Error ? e.message : 'Thumbnail generation failed');
     }
   };
 
@@ -358,10 +401,8 @@ export default function ThumbnailDesignerPage() {
               )
             )}
 
-            {/* Results */}
-            {(generating || variants) && (
-              <Results generating={generating} variants={variants} />
-            )}
+            {/* Results — live progress while generating, then the finished grid */}
+            {(generating || job) && <Results generating={generating} job={job} />}
           </>
         )}
       </div>
@@ -564,26 +605,52 @@ function CharacterCard({
 
 function Results({
   generating,
-  variants,
+  job,
 }: {
   generating: boolean;
-  variants: ThumbnailVariant[] | null;
+  job: ThumbnailJobStatus | null;
 }) {
+  const variants = job?.variants ?? [];
+  const doneCount = variants.filter((v) => v.status === 'done' || v.status === 'error').length;
+  const overall = job?.percent ?? 0;
+  const active = generating || (job ? !job.done : false);
+
   return (
     <section className="rounded-xl border border-border bg-card p-5 space-y-5">
       <SectionHeader icon={<Sparkles className="w-4 h-4" />} title="Results" subtitle="Your recreated 1920×1080 thumbnails — preview and download." />
 
-      {generating && !variants && (
+      {/* Overall progress bar — always shown once a job exists, with the % number. */}
+      {(active || job) && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium text-foreground flex items-center gap-1.5">
+              {active ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> : <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
+              {active ? 'Generating thumbnails…' : 'Generation complete'}
+            </span>
+            <span className="text-muted-foreground tabular-nums">
+              {variants.length > 0 && <span className="mr-2">{doneCount}/{variants.length} done</span>}
+              <span className="font-medium text-foreground">{Math.round(overall)}%</span>
+            </span>
+          </div>
+          <Progress
+            value={overall}
+            aria-label="Overall thumbnail generation progress"
+          />
+        </div>
+      )}
+
+      {/* Before the first poll lands, show placeholders so the section isn't empty. */}
+      {generating && variants.length === 0 && (
         <div className="grid md:grid-cols-2 gap-4">
           <Skeleton className="aspect-video w-full rounded-lg" />
           <Skeleton className="aspect-video w-full rounded-lg" />
         </div>
       )}
 
-      {variants && (
+      {variants.length > 0 && (
         <div className="space-y-4">
-          {variants.map((v, i) => (
-            <VariantRow key={`${v.videoId}-${i}`} variant={v} index={i} />
+          {variants.map((v) => (
+            <VariantRow key={`${v.videoId}-${v.index}`} variant={v} />
           ))}
         </div>
       )}
@@ -591,18 +658,40 @@ function Results({
   );
 }
 
-function VariantRow({ variant, index }: { variant: ThumbnailVariant; index: number }) {
+function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
+  const running = variant.status === 'running' || variant.status === 'queued';
+  const failed = variant.status === 'error';
   return (
     <div className="rounded-lg border border-border p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-sm font-medium text-foreground">Variant {index + 1}</span>
+        <span className="text-sm font-medium text-foreground">Variant {variant.index + 1}</span>
         <Badge variant="secondary" className="capitalize">{variant.expression}</Badge>
-        {variant.error && (
+        {variant.status === 'done' && (
+          <Badge variant="secondary" className="gap-1 text-primary">
+            <CheckCircle2 className="w-3 h-3" /> Done
+          </Badge>
+        )}
+        {failed && (
           <Badge variant="secondary" className="gap-1 text-destructive">
             <AlertTriangle className="w-3 h-3" /> Failed
           </Badge>
         )}
       </div>
+
+      {/* Per-variant live step + sub-progress (hidden once it's terminal). */}
+      {running && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground flex items-center gap-1.5">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {variant.stepLabel}
+            </span>
+            <span className="text-muted-foreground tabular-nums">{variant.percent}%</span>
+          </div>
+          <Progress value={variant.percent} className="h-1.5" aria-label={`Variant ${variant.index + 1} progress`} />
+        </div>
+      )}
+
       <div className="grid md:grid-cols-2 gap-4">
         <figure className="space-y-1.5">
           <figcaption className="text-xs text-muted-foreground">Original</figcaption>
@@ -615,10 +704,15 @@ function VariantRow({ variant, index }: { variant: ThumbnailVariant; index: numb
           <div className="aspect-video rounded-md overflow-hidden bg-muted flex items-center justify-center">
             {variant.outputUrl ? (
               <img src={variant.outputUrl} alt="Generated thumbnail" className="w-full h-full object-cover" />
-            ) : (
+            ) : failed ? (
               <div className="text-center px-4">
                 <AlertTriangle className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
                 <p className="text-xs text-muted-foreground">{variant.error || 'Could not generate this thumbnail.'}</p>
+              </div>
+            ) : (
+              <div className="text-center px-4">
+                <Loader2 className="w-5 h-5 text-muted-foreground mx-auto mb-1 animate-spin" />
+                <p className="text-xs text-muted-foreground">{variant.stepLabel}</p>
               </div>
             )}
           </div>

@@ -67,7 +67,8 @@ import {
   uploadedExpressions,
   isExpression,
 } from "../thumbnails/characters.js";
-import { generateThumbnailVariants } from "../thumbnails/orchestrate.js";
+import { generateThumbnailVariants, startThumbnailJob } from "../thumbnails/orchestrate.js";
+import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
 
@@ -2327,9 +2328,52 @@ const searchThumbnails: Handler = async (input) => {
   return { results };
 };
 
-/** Run the recreation chain for each picked video (any subset), per-item isolated. */
+function coercePicks(input: any): string[] {
+  return (Array.isArray(input?.picks) ? input.picks : []).map((p: unknown) => String(p));
+}
+
+/**
+ * Start generation: create a progress job (one variant per pick), kick the
+ * recreation chains off in the BACKGROUND, and return the jobId IMMEDIATELY so
+ * the UI can poll `thumbnailJobStatus` for live per-thumbnail progress. Mirrors
+ * the Narration Cutter's analyzeCut start→poll pattern.
+ */
+const startThumbnailGeneration: Handler = async (input) => {
+  const picks = coercePicks(input);
+  if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to recreate." });
+  const job = startThumbnailJob({
+    keyword: String(input?.keyword ?? ""),
+    videoType: coerceVideoType(input?.videoType),
+    picks,
+  });
+  return { jobId: job.id };
+};
+
+/** Poll a generation job for its live progress snapshot (overall % + variants). */
+const thumbnailJobStatus: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const job = getThumbnailJob(jobId);
+  if (!job) {
+    // Expired (TTL/GC) or unknown — report done with a clear note so the UI stops
+    // polling instead of spinning forever.
+    return {
+      jobId,
+      percent: 100,
+      done: true,
+      error: "Generation job not found (it may have expired) — start a new generation.",
+      variants: [],
+    };
+  }
+  return thumbnailJobSnapshot(job);
+};
+
+/**
+ * Synchronous wrapper kept for back-compat (the original blocking contract).
+ * The UI now uses the start→poll pair above; this returns all variants at once.
+ */
 const generateThumbnails: Handler = async (input) => {
-  const picks = (Array.isArray(input?.picks) ? input.picks : []).map((p: unknown) => String(p));
+  const picks = coercePicks(input);
   if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to recreate." });
   const variants = await generateThumbnailVariants({
     keyword: String(input?.keyword ?? ""),
@@ -2436,6 +2480,8 @@ export const HANDLERS: Record<string, Handler> = {
   thumbnailStatus,
   analyzeThumbnailScript,
   searchThumbnails,
+  startThumbnailGeneration,
+  thumbnailJobStatus,
   generateThumbnails,
   listThumbnailCharacters,
   uploadThumbnailCharacter,

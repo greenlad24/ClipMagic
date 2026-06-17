@@ -22,14 +22,32 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { config } from "../config.js";
 import { runFfmpeg, probe } from "../render/ffmpeg.js";
-import { editImage, thumbnailsDir, type EditImage } from "./nanoBanana.js";
+import { editImage as defaultEditImage, thumbnailsDir, type EditImage, type EditResult } from "./nanoBanana.js";
 import { buildCropScaleArgs, TARGET_W, TARGET_H } from "./crop.js";
-import { artDirect, type ArtDirectorStep } from "./artDirector.js";
+import { artDirect as defaultArtDirect, type ArtDirectorStep } from "./artDirector.js";
 import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
+import { phasePercent, PHASE_LABEL } from "./jobs.js";
 
 /** Hard cap on chain length (2 mandatory + up to 4 optional). */
 export const MAX_STEPS = 6;
+
+/**
+ * Live progress callback. The orchestrator passes one in so the chain narrates
+ * each meaningful step (a phase label + the phase-weighted 0..100 percent) onto
+ * the polled job. Best-effort: it must never throw upward or block the chain.
+ */
+export type ProgressFn = (update: { stepLabel: string; percent: number }) => void;
+
+/** The edit primitive, narrowed so tests can inject a fake (no network). */
+export type EditFn = (opts: { instruction: string; images: EditImage[] }) => Promise<EditResult>;
+/** The art-director primitive, narrowed so tests can inject a fake (no AI). */
+export type ArtDirectFn = (opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  keyword: string;
+  videoType: VideoType;
+}) => Promise<ArtDirectorStep[]>;
 
 /** One recorded step in the chain (for the UI's per-variant breakdown). */
 export interface ChainStep {
@@ -55,6 +73,16 @@ export interface RecreateInput {
   keyword: string;
   videoType: VideoType;
   expression: Expression;
+  /** Optional live progress sink (phase label + phase-weighted percent). */
+  onProgress?: ProgressFn;
+}
+
+/** Injectable dependencies — defaulted to the real ones; overridden in tests. */
+export interface RecreateDeps {
+  editImage?: EditFn;
+  artDirect?: ArtDirectFn;
+  /** Crop+upscale finalizer. Defaults to the real ffmpeg pass. */
+  finalize?: (current: EditImage, steps: ChainStep[]) => Promise<RecreateResult>;
 }
 
 export interface RecreateResult {
@@ -81,10 +109,28 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Run the chain. Returns the final 1920×1080 image + a record of every step.
- * `concurrencyGate` is optional — recreate.ts itself doesn't bound concurrency;
- * the orchestrating endpoint runs items sequentially / in a tiny pool.
+ *
+ * Progress is reported through `input.onProgress` using the phase-weighted model
+ * in jobs.ts (fetch is owned by the orchestrator; the chain owns replace
+ * character → outfit → optional edits → finalize). The optional-edits band is
+ * spread across however many edits the art-director actually returns, so the bar
+ * stays smooth whether 0 or 4 optional steps run.
+ *
+ * `deps` lets tests inject the edit / art-director / finalize primitives so the
+ * chain runs with NO network, AI, or ffmpeg.
  */
-export async function recreateThumbnail(input: RecreateInput): Promise<RecreateResult> {
+export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps = {}): Promise<RecreateResult> {
+  const editImage = deps.editImage ?? defaultEditImage;
+  const artDirect = deps.artDirect ?? defaultArtDirect;
+  const finalizeFn = deps.finalize ?? finalize;
+  const report = (stepLabel: string, percent: number) => {
+    try {
+      input.onProgress?.({ stepLabel, percent });
+    } catch {
+      /* progress is best-effort, never blocks the chain */
+    }
+  };
+
   const steps: ChainStep[] = [];
 
   // The "current best" image we carry forward. Starts as the source thumbnail.
@@ -118,14 +164,17 @@ export async function recreateThumbnail(input: RecreateInput): Promise<RecreateR
   };
 
   // ── Step 1 (ALWAYS): swap in the user's character ───────────────────────────
+  report(PHASE_LABEL.replaceCharacter, phasePercent("replaceCharacter", 0));
   await runStep(
     "replace-character",
     "Replace character",
     "Replace the character with the character in the second image. Match the original pose, framing, lighting and composition exactly; keep everything else in the scene identical.",
     [current, character],
   );
+  report(PHASE_LABEL.replaceCharacter, phasePercent("replaceCharacter", 1));
 
   // ── Step 2 (ALWAYS): outfit change ──────────────────────────────────────────
+  report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
   const outfit = deriveOutfit(input.keyword, input.videoType);
   await runStep(
     "outfit",
@@ -133,8 +182,10 @@ export async function recreateThumbnail(input: RecreateInput): Promise<RecreateR
     `Change the character outfit to a ${outfit}. Keep the face, pose, expression and background unchanged.`,
     [current],
   );
+  report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
 
   // ── Steps 3–6 (CONDITIONAL): the art-director decides which apply ───────────
+  report(PHASE_LABEL.edits, phasePercent("edits", 0));
   let directorSteps: ArtDirectorStep[] = [];
   try {
     directorSteps = await artDirect({
@@ -153,13 +204,23 @@ export async function recreateThumbnail(input: RecreateInput): Promise<RecreateR
       note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
   }
-  for (const ds of directorSteps) {
-    if (!ds.apply || !ds.instruction) continue;
+  // Spread the optional-edits band across the edits that will actually run, so
+  // the bar fills smoothly regardless of how many (0..4) the director chose.
+  const planned = directorSteps.filter((ds) => ds.apply && ds.instruction);
+  let doneEdits = 0;
+  for (const ds of planned) {
     await runStep(ds.id, ds.label, ds.instruction, [current]);
+    doneEdits++;
+    report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / planned.length));
   }
+  // No optional edits → consume the whole band so the bar doesn't stall at 65%.
+  if (planned.length === 0) report(PHASE_LABEL.edits, phasePercent("edits", 1));
 
   // ── Crop + upscale to a clean 1920×1080 (no black bars) ─────────────────────
-  return finalize(current, steps);
+  report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
+  const result = await finalizeFn(current, steps);
+  report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
+  return result;
 }
 
 /** Write `current` to disk, probe dims, crop+scale to 1920×1080 via ffmpeg. */

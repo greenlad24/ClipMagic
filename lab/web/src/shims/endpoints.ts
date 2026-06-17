@@ -141,6 +141,10 @@ export const analyzeThumbnailScript =
 export const searchThumbnails = endpoint<{ keyword: string }, SearchThumbnailsOutputType>("searchThumbnails");
 export const generateThumbnails =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[] }, GenerateThumbnailsOutputType>("generateThumbnails");
+export const startThumbnailGeneration =
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[] }, { jobId: string }>("startThumbnailGeneration");
+export const thumbnailJobStatus =
+  endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
 export const listThumbnailCharacters =
   endpoint<Record<string, never>, { characters: ThumbnailCharacterState[] }>("listThumbnailCharacters");
 export const uploadThumbnailCharacter =
@@ -186,6 +190,30 @@ export type ThumbnailVariant = {
   error?: string;
 };
 export type GenerateThumbnailsOutputType = { variants: ThumbnailVariant[] };
+/** One variant's live generation status (polled). */
+export type ThumbnailJobVariant = {
+  index: number;
+  videoId: string;
+  sourceThumbnailUrl: string;
+  expression: ThumbnailExpression;
+  status: 'queued' | 'running' | 'done' | 'error';
+  /** Current step sentence ("Replacing character", "Upscaling to 1080p", …). */
+  stepLabel: string;
+  /** 0..100, monotonic per variant. */
+  percent: number;
+  /** Present the moment this variant finishes. */
+  outputUrl?: string;
+  error?: string;
+};
+/** Live generation snapshot returned by `thumbnailJobStatus`. */
+export type ThumbnailJobStatus = {
+  jobId: string;
+  /** Overall 0..100, monotonic. */
+  percent: number;
+  done: boolean;
+  error: string | null;
+  variants: ThumbnailJobVariant[];
+};
 export type ThumbnailCharacterMutationOutputType = {
   character: ThumbnailCharacterState;
   characters: ThumbnailCharacterState[];

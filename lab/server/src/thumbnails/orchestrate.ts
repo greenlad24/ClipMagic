@@ -7,7 +7,16 @@
 import { maxresThumbnailUrl, hqThumbnailUrl } from "./youtube.js";
 import { readCharacterImage, uploadedExpressions, type Expression } from "./characters.js";
 import { expressionsForVariants, type VideoType } from "./videoType.js";
-import { recreateThumbnail, type ChainStep } from "./recreate.js";
+import { recreateThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
+import {
+  createJob,
+  updateVariant,
+  finishVariant,
+  completeJob,
+  phasePercent,
+  PHASE_LABEL,
+  type ThumbnailJob,
+} from "./jobs.js";
 
 /** One generated variant returned to the UI. */
 export interface ThumbnailVariant {
@@ -110,4 +119,91 @@ export async function generateThumbnailVariants(
     }
   }
   return variants;
+}
+
+// ── Async, observable generation ──────────────────────────────────────────────
+// The endpoint creates a job (one variant per pick), returns its id IMMEDIATELY,
+// then runs THIS in the background. It mirrors `generateThumbnailVariants`'
+// per-pick, per-item-isolated, sequential flow — but drives the progress store
+// instead of returning an array, so the UI can poll live status and see each
+// thumbnail land the moment it finishes. `recreateDeps` is injectable so tests
+// run with no network / AI / ffmpeg.
+
+/** Start a generation job: create it, kick the runner off, return the job. */
+export function startThumbnailJob(
+  input: GenerateInput,
+  download: DownloadFn = defaultDownload,
+  recreateDeps?: RecreateDeps,
+): ThumbnailJob {
+  const available = uploadedExpressions();
+  const expressions = expressionsForVariants(input.videoType, input.picks.length, available);
+  // Seed one queued variant per pick. The source URL starts as the always-exists
+  // hqdefault so the UI shows the original immediately; it's upgraded to the
+  // actual downloaded URL (maxres when available) once the fetch phase runs.
+  const job = createJob(
+    input.picks.map((videoId, i) => ({
+      videoId,
+      sourceThumbnailUrl: hqThumbnailUrl(videoId),
+      expression: expressions[i] ?? (available[0] as string) ?? "smile",
+    })),
+  );
+  // Fire-and-forget. runThumbnailJob never throws (it records onto the job).
+  void runThumbnailJob(job, input, expressions, available, download, recreateDeps);
+  return job;
+}
+
+/**
+ * Drive a generation job to completion. Sequential (one pick at a time) for
+ * clear, coherent progress; per-pick try/catch so one failure becomes that
+ * variant's error and the rest still finish. Never throws.
+ */
+export async function runThumbnailJob(
+  job: ThumbnailJob,
+  input: GenerateInput,
+  expressions: Expression[],
+  available: Expression[],
+  download: DownloadFn = defaultDownload,
+  recreateDeps?: RecreateDeps,
+): Promise<void> {
+  try {
+    for (let i = 0; i < input.picks.length; i++) {
+      const videoId = input.picks[i];
+      const expression = expressions[i];
+      updateVariant(job, i, { status: "running", stepLabel: PHASE_LABEL.fetch, percent: phasePercent("fetch", 0) });
+      try {
+        if (!expression) throw new Error("No character expression available — upload at least one in the library.");
+        const characterBytes = readCharacterImage(expression);
+        if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
+
+        const src = await downloadSourceThumbnail(videoId, download);
+        // Upgrade to the real source URL (maxres when it existed) + close the fetch band.
+        updateVariant(job, i, {
+          stepLabel: PHASE_LABEL.replaceCharacter,
+          percent: phasePercent("fetch", 1),
+        });
+        job.variants[i].sourceThumbnailUrl = src.url;
+
+        const result = await recreateThumbnail(
+          {
+            sourceBytes: src.bytes,
+            sourceMime: src.mime,
+            characterBytes,
+            keyword: input.keyword,
+            videoType: input.videoType,
+            expression,
+            onProgress: ({ stepLabel, percent }) => updateVariant(job, i, { stepLabel, percent }),
+          },
+          recreateDeps,
+        );
+        // Surface the output the MOMENT this variant finishes.
+        finishVariant(job, i, { outputUrl: result.outputUrl });
+      } catch (e) {
+        finishVariant(job, i, { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+    completeJob(job);
+  } catch (e) {
+    // Defensive: the loop is fully guarded, but never leave a job un-terminated.
+    completeJob(job, e instanceof Error ? e.message : String(e));
+  }
 }

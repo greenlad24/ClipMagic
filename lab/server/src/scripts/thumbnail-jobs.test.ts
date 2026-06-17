@@ -1,0 +1,269 @@
+/**
+ * Unit checks for the Thumbnail Designer's ASYNC generation flow (LIVE PROGRESS).
+ * NO network, NO ffmpeg, NO AI, NO real keys — every external boundary (source
+ * download, the Nano Banana edit, the art-director, the crop/upscale finalize)
+ * is injected as a pure fake.
+ *
+ *   - progress model: phase weights sum to 100, phasePercent is monotonic across
+ *     phases and reaches 100 at finalize; per-variant percent never decreases.
+ *   - job lifecycle: start seeds queued variants; a run transitions
+ *     queued→running→done; overall % is the monotonic mean and hits 100 on done.
+ *   - per-variant isolation: one variant erroring doesn't fail the job and the
+ *     others still finish; each variant's outputUrl appears the moment it lands.
+ *   - GC/TTL + cap: finished jobs are reaped after the TTL; the map is bounded.
+ *
+ * Run: cd lab/server && npx tsx src/scripts/thumbnail-jobs.test.ts
+ */
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+let passed = 0;
+function check(name: string, fn: () => void | Promise<void>) {
+  return Promise.resolve()
+    .then(fn)
+    .then(() => { passed++; console.log(`  ok  ${name}`); })
+    .catch((e) => { console.error(`FAIL  ${name}\n      ${e instanceof Error ? e.stack : e}`); process.exitCode = 1; });
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Wait until a predicate holds or a deadline passes (no real work blocks). */
+async function waitUntil(pred: () => boolean, timeoutMs = 2000): Promise<void> {
+  const t0 = Date.now();
+  while (!pred()) {
+    if (Date.now() - t0 > timeoutMs) throw new Error("timed out waiting for condition");
+    await sleep(5);
+  }
+}
+
+async function main() {
+  // Isolate the data dir BEFORE importing modules that read config.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "clipmagic-thumbjob-test-"));
+  const configDir = fs.mkdtempSync(path.join(os.tmpdir(), "clipmagic-thumbjob-cfg-"));
+  process.env.DATA_DIR = root;
+  process.env.POSTIZ_CONFIG_DIR = configDir;
+  process.env.DOCKER_SOCKET = path.join(configDir, "nonexistent.sock");
+  delete process.env.GEMINI_API_KEY;
+  delete process.env.YOUTUBE_DATA_API_KEY;
+
+  const jobs = await import("../thumbnails/jobs.js");
+  const orchestrate = await import("../thumbnails/orchestrate.js");
+  const chars = await import("../thumbnails/characters.js");
+
+  // A 1x1 PNG so readCharacterImage returns real bytes for every expression.
+  const onePx =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+  // ── progress model (pure) ───────────────────────────────────────────────────
+  await check("PHASE_WEIGHTS sum to 100 and PHASE_START is cumulative", () => {
+    const w = jobs.PHASE_WEIGHTS;
+    const sum = w.fetch + w.replaceCharacter + w.outfit + w.edits + w.finalize;
+    assert.equal(sum, 100);
+    assert.equal(jobs.PHASE_START.fetch, 0);
+    assert.equal(jobs.PHASE_START.replaceCharacter, w.fetch);
+    assert.equal(jobs.PHASE_START.finalize, 100 - w.finalize, "finalize starts at 85");
+  });
+
+  await check("phasePercent is monotonic across phases and reaches 100 at finalize=1", () => {
+    const seq = [
+      jobs.phasePercent("fetch", 0),
+      jobs.phasePercent("fetch", 1),
+      jobs.phasePercent("replaceCharacter", 0),
+      jobs.phasePercent("replaceCharacter", 1),
+      jobs.phasePercent("outfit", 1),
+      jobs.phasePercent("edits", 0),
+      jobs.phasePercent("edits", 0.5),
+      jobs.phasePercent("edits", 1),
+      jobs.phasePercent("finalize", 0),
+      jobs.phasePercent("finalize", 1),
+    ];
+    for (let i = 1; i < seq.length; i++) {
+      assert.ok(seq[i] >= seq[i - 1], `phase percent decreased at step ${i}: ${seq[i - 1]} → ${seq[i]}`);
+    }
+    assert.equal(seq[seq.length - 1], 100, "finalize=1 reaches 100");
+    // edits band is genuinely spread (0..4 optional edits all land inside the band).
+    assert.ok(jobs.phasePercent("edits", 0.25) > jobs.phasePercent("edits", 0));
+    assert.ok(jobs.phasePercent("edits", 1) <= jobs.PHASE_START.finalize);
+  });
+
+  await check("updateVariant clamps + never decreases a variant's percent (monotonic)", () => {
+    jobs._resetJobsForTest();
+    const job = jobs.createJob([{ videoId: "A", sourceThumbnailUrl: "u", expression: "smile" }]);
+    jobs.updateVariant(job, 0, { percent: 40 });
+    assert.equal(job.variants[0].percent, 40);
+    jobs.updateVariant(job, 0, { percent: 10 }); // backwards → ignored
+    assert.equal(job.variants[0].percent, 40, "must not go backwards");
+    jobs.updateVariant(job, 0, { percent: 250 }); // clamped to 100
+    assert.equal(job.variants[0].percent, 100);
+  });
+
+  await check("overall percent is the monotonic mean of the per-variant percents", () => {
+    jobs._resetJobsForTest();
+    const job = jobs.createJob([
+      { videoId: "A", sourceThumbnailUrl: "u", expression: "smile" },
+      { videoId: "B", sourceThumbnailUrl: "u", expression: "calm" },
+    ]);
+    jobs.updateVariant(job, 0, { percent: 50 });
+    assert.equal(job.percent, 25, "mean of 50 + 0");
+    jobs.updateVariant(job, 1, { percent: 100 });
+    assert.equal(job.percent, 75, "mean of 50 + 100");
+    // A variant can't drag the overall bar backwards.
+    const before = job.percent;
+    jobs.updateVariant(job, 0, { percent: 10 });
+    assert.ok(job.percent >= before, "overall never decreases");
+  });
+
+  // ── job lifecycle + per-variant isolation (injected fakes, no I/O) ───────────
+  // Fakes: source download succeeds (or throws for a chosen pick), the edit is a
+  // no-op that returns bytes, the art-director returns N optional edits, and the
+  // finalize returns a deterministic outputUrl WITHOUT touching ffmpeg/disk.
+  const fakeDownload = async (url: string) => {
+    if (url.includes("BOOM")) throw new Error("download stubbed-fail");
+    return { bytes: Buffer.from("src"), mime: "image/jpeg" };
+  };
+  const makeDeps = (opts: { edits?: number } = {}) => ({
+    editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("edited"), mimeType: "image/png" }),
+    artDirect: async () =>
+      Array.from({ length: opts.edits ?? 0 }, (_, i) => ({
+        id: "font" as const,
+        label: `edit ${i}`,
+        apply: true,
+        instruction: `do ${i}`,
+      })),
+    finalize: async (_cur: any, _steps: any) => ({ outputUrl: "/api/outputs/thumbnails/out.png", file: "/x", steps: _steps }),
+  });
+
+  await check("startThumbnailJob seeds queued variants and returns a jobId immediately", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const t0 = Date.now();
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"] },
+      fakeDownload,
+      makeDeps(),
+    );
+    const elapsed = Date.now() - t0;
+    assert.ok(job.id, "returns a job with an id");
+    assert.equal(job.variants.length, 2);
+    assert.ok(elapsed < 100, `start should return fast (was ${elapsed}ms)`);
+    // The seeded variants START queued — the work runs in the background.
+    assert.ok(job.variants.every((v) => v.status === "queued" || v.status === "running"));
+    // It must complete on its own (background runner) and hit 100% + done.
+    await waitUntil(() => job.done);
+    assert.equal(job.percent, 100, "overall reaches 100 on done");
+    assert.ok(job.variants.every((v) => v.status === "done"));
+    assert.ok(job.variants.every((v) => v.outputUrl), "every successful variant carries an outputUrl");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("a variant error doesn't fail the job; others still finish; job completes", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Viral", picks: ["A", "BOOM", "C"] }, // middle pick's download throws
+      fakeDownload,
+      makeDeps({ edits: 2 }),
+    );
+    await waitUntil(() => job.done);
+    assert.equal(job.error, undefined, "job-level error stays clear");
+    assert.equal(job.percent, 100, "job still reaches 100 with one variant errored");
+    assert.equal(job.variants[0].status, "done");
+    assert.equal(job.variants[1].status, "error");
+    assert.match(job.variants[1].error ?? "", /stubbed-fail/);
+    assert.equal(job.variants[2].status, "done", "later variant still finishes after an earlier failure");
+    assert.ok(job.variants[0].outputUrl && job.variants[2].outputUrl);
+    assert.equal(job.variants[1].outputUrl, undefined, "errored variant has no output");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("each variant's outputUrl appears the MOMENT it finishes (not all at the end)", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    // Gate the SECOND variant's finalize so we can observe the first land alone.
+    let releaseSecond: () => void = () => {};
+    const gate = new Promise<void>((r) => (releaseSecond = r));
+    let finalizeCalls = 0;
+    const deps = {
+      ...makeDeps(),
+      finalize: async (_c: any, steps: any) => {
+        finalizeCalls++;
+        if (finalizeCalls === 2) await gate; // hold the 2nd variant open
+        return { outputUrl: `/api/outputs/thumbnails/v${finalizeCalls}.png`, file: "/x", steps };
+      },
+    };
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"] },
+      fakeDownload,
+      deps,
+    );
+    // First variant should be DONE (with its URL) while the second is still running.
+    await waitUntil(() => job.variants[0].status === "done");
+    assert.ok(job.variants[0].outputUrl, "first variant's URL is present before the run finishes");
+    assert.notEqual(job.variants[1].status, "done", "second variant is still in flight");
+    assert.ok(!job.done, "job is not done yet");
+    releaseSecond();
+    await waitUntil(() => job.done);
+    assert.ok(job.variants[1].outputUrl);
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("missing character expression → that variant errors with a clear message", async () => {
+    jobs._resetJobsForTest();
+    // No characters uploaded at all → expressionsForVariants returns [] → error.
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Review", picks: ["A"] },
+      fakeDownload,
+      makeDeps(),
+    );
+    await waitUntil(() => job.done);
+    assert.equal(job.variants[0].status, "error");
+    assert.match(job.variants[0].error ?? "", /expression/i);
+    assert.equal(job.percent, 100, "an all-errored job still completes at 100");
+  });
+
+  // ── snapshot isolation ───────────────────────────────────────────────────────
+  await check("snapshot returns an isolated copy (later ticks don't mutate it)", () => {
+    jobs._resetJobsForTest();
+    const job = jobs.createJob([{ videoId: "A", sourceThumbnailUrl: "u", expression: "smile" }]);
+    jobs.updateVariant(job, 0, { percent: 20 });
+    const snap = jobs.snapshot(job);
+    jobs.updateVariant(job, 0, { percent: 90 });
+    assert.equal(snap.variants[0].percent, 20, "snapshot is frozen at capture time");
+    assert.equal(snap.error, null);
+  });
+
+  // ── GC / TTL + cap ────────────────────────────────────────────────────────────
+  await check("finished jobs are reaped after the TTL; live jobs are kept", async () => {
+    jobs._resetJobsForTest();
+    const done = jobs.createJob([]); // empty → done:true immediately
+    assert.ok(done.done);
+    // Force it past the TTL by back-dating updatedAt.
+    done.updatedAt = Date.now() - 11 * 60_000;
+    // Creating a NEW job triggers reap(); the stale finished job should vanish.
+    jobs.createJob([{ videoId: "Z", sourceThumbnailUrl: "u", expression: "smile" }]);
+    assert.equal(jobs.getJob(done.id), undefined, "stale finished job was reaped");
+  });
+
+  await check("the registry is hard-capped so it never grows unbounded", () => {
+    jobs._resetJobsForTest();
+    // Create well past the cap (50). Each createJob runs reap() which enforces it.
+    const ids: string[] = [];
+    for (let i = 0; i < 80; i++) {
+      ids.push(jobs.createJob([{ videoId: `V${i}`, sourceThumbnailUrl: "u", expression: "smile" }]).id);
+    }
+    let alive = 0;
+    for (const id of ids) if (jobs.getJob(id)) alive++;
+    assert.ok(alive <= 50, `registry exceeded the cap: ${alive} alive`);
+    // The most-recently created job must survive.
+    assert.ok(jobs.getJob(ids[ids.length - 1]), "newest job should still be present");
+  });
+
+  // cleanup
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(configDir, { recursive: true, force: true });
+  console.log(`\n${passed} checks passed`);
+}
+
+void main();
