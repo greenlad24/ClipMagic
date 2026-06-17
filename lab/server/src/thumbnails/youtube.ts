@@ -26,12 +26,15 @@ import { getYoutubeDataApiKey } from "../settings/postizSecrets.js";
 
 const YT_BASE = process.env.YOUTUBE_BASE_URL || "https://www.googleapis.com";
 
-/** How many candidates to pull from search before duration-filtering down to 6. */
-const OVERSAMPLE = 25;
+/** How many candidates to pull from search before duration-filtering down to RESULT_COUNT. */
+const OVERSAMPLE = 50; // YouTube search.list max page size
 /** Anything at or below this many seconds is treated as a Short and dropped. */
 const SHORTS_MAX_SECONDS = 180;
 /** Final number of long-form results returned to the UI. */
-const RESULT_COUNT = 6;
+const RESULT_COUNT = 20;
+/** Bias results to English + the US market. */
+const REGION_CODE = "US";
+const RELEVANCE_LANGUAGE = "en";
 
 export interface ThumbnailSearchResult {
   videoId: string;
@@ -181,7 +184,8 @@ async function fetchDurations(ids: string[], key: string, doFetch: FetchFn): Pro
 
 /**
  * Search YouTube for the most-viewed LONG-FORM videos matching a keyword and
- * return up to `maxResults` (default 6) thumbnails. Oversamples by view count,
+ * return up to `maxResults` (default 20) thumbnails, English + US-targeted.
+ * Oversamples by view count,
  * fetches real durations, drops Shorts (≤180s), and returns the top survivors in
  * view-count order. Applies the recency cap (THUMBNAIL_SEARCH_YEARS, default 2y).
  * Surfaces quota / invalid-key / network problems with clear messages.
@@ -203,6 +207,9 @@ export async function searchTopThumbnails(
     type: "video",
     order: "viewCount",
     maxResults: String(OVERSAMPLE),
+    // English + US-targeted results.
+    regionCode: REGION_CODE,
+    relevanceLanguage: RELEVANCE_LANGUAGE,
     q,
     key,
   });

@@ -118,7 +118,9 @@ async function main() {
     const out = await youtube.searchTopThumbnails("ai editing", 6, mockFetch);
     // Search params: most-viewed, oversampled, recency-capped.
     assert.ok(searchUrl.includes("order=viewCount"), "should order by viewCount");
-    assert.ok(searchUrl.includes("maxResults=25"), "should oversample beyond 6");
+    assert.ok(searchUrl.includes("maxResults=50"), "should oversample to the max page size");
+    assert.ok(searchUrl.includes("regionCode=US"), "should target the US region");
+    assert.ok(searchUrl.includes("relevanceLanguage=en"), "should bias to English");
     assert.ok(searchUrl.includes("type=video"));
     assert.ok(searchUrl.includes("publishedAfter="), "should cap recency by default");
     assert.ok(/q=ai\+editing|q=ai%20editing/.test(searchUrl), `query missing: ${searchUrl}`);

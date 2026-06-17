@@ -2321,7 +2321,7 @@ const analyzeThumbnailScript: Handler = async (input) => {
   return analysis;
 };
 
-/** Search YouTube for the top 6 most-viewed long-form thumbnails for a keyword. */
+/** Search YouTube for the top 20 most-viewed long-form English/US thumbnails for a keyword. */
 const searchThumbnails: Handler = async (input) => {
   const results = await searchTopThumbnails(String(input?.keyword ?? ""));
   return { results };
