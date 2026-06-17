@@ -57,6 +57,16 @@ export const STEP8_PROMPT =
   "subtly enhance the existing background so the subject pops a little more — keep the background CLOSE to the original (same general style and colors), only clean it up and slightly increase the contrast/separation behind the subject. Do NOT add dramatic patterns, light rays, or wildly different colors — keep it a light, tasteful change. Keep the character, all text, logos, and the exact position of every element exactly the same";
 
 /**
+ * Appended to EVERY re-render step after the initial swap. Each later edit
+ * (outfit, optional, background) re-renders the whole frame and would otherwise
+ * let the swapped-in identity drift; this re-anchors it to the reference headshot
+ * (passed as the last image on every step) so the final face stays accurate and
+ * the head/body read as one consistent person.
+ */
+export const FACE_LOCK =
+  "IMPORTANT: the on-camera person must stay the EXACT same man as the reference headshot (the LAST image) — keep his face, hairstyle, hair colour and beard identical and do not drift his identity; blend his head, neck and body into one seamless person with matching skin tone";
+
+/**
  * Append the 16:9 widescreen preamble so edits don't reintroduce letterbox bars.
  * Exported so tests can build the EXACT expected instruction string.
  */
@@ -156,21 +166,31 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   const character: EditImage = { data: input.characterBytes, mimeType: "image/png" };
 
   // Helper that runs ONE edit resiliently: on any failure, keep `current`. The
-  // 16:9 widescreen preamble is appended to every instruction sent to the model.
-  const runStep = async (id: string, label: string, instruction: string, images: EditImage[]): Promise<void> => {
+  // 16:9 widescreen preamble is appended to every instruction; for every step
+  // AFTER the initial swap (`holdFace`), the character reference is threaded in as
+  // the last image + the FACE_LOCK clause, so re-renders can't drift the identity.
+  const runStep = async (
+    id: string,
+    label: string,
+    instruction: string,
+    baseImages: EditImage[],
+    holdFace = true,
+  ): Promise<void> => {
     if (steps.filter((s) => s.applied).length + 1 > MAX_STEPS) {
       steps.push({ id, label, instruction, applied: false, note: "step cap reached" });
       return;
     }
+    const images = holdFace ? [...baseImages, character] : baseImages;
+    const sent = withWidescreen(holdFace ? `${instruction} (${FACE_LOCK})` : instruction);
     try {
-      const res = await editImage({ instruction: withWidescreen(instruction), images });
+      const res = await editImage({ instruction: sent, images });
       current = { data: res.bytes, mimeType: res.mimeType };
-      steps.push({ id, label, instruction, applied: true });
+      steps.push({ id, label, instruction: sent, applied: true });
     } catch (e) {
       steps.push({
         id,
         label,
-        instruction,
+        instruction: sent,
         applied: false,
         note: e instanceof Error ? e.message : String(e),
       });
@@ -178,11 +198,13 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   };
 
   // ── Step 1 (ALWAYS): swap in the user's character ───────────────────────────
+  // holdFace:false — step 1's own instruction already defines the swap + the
+  // character ref is its explicit second image.
   report(PHASE_LABEL.replaceCharacter, phasePercent("replaceCharacter", 0));
-  await runStep("replace-character", "Replace character", STEP1_PROMPT, [current, character]);
+  await runStep("replace-character", "Replace character", STEP1_PROMPT, [current, character], false);
   report(PHASE_LABEL.replaceCharacter, phasePercent("replaceCharacter", 1));
 
-  // ── Step 2 (ALWAYS): outfit → a t-shirt ─────────────────────────────────────
+  // ── Step 2 (ALWAYS): outfit → a t-shirt (identity re-anchored) ──────────────
   report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
   await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
   report(PHASE_LABEL.outfit, phasePercent("outfit", 1));

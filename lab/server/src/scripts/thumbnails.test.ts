@@ -353,16 +353,21 @@ async function main() {
     assert.equal(sent[0].instruction, `${recreate.STEP1_PROMPT} ${pre}`);
     assert.match(sent[0].instruction, /SECOND image/i, "must anchor identity to the second image");
     assert.equal(sent[0].imageCount, 2, "step 1 feeds source + character");
-    // Step 2: exact literal "a t-shirt".
-    assert.equal(sent[1].instruction, `change the character outfit to a t-shirt ${pre}`);
-    // Step (optional font): templated, brackets filled.
-    assert.equal(
-      sent[2].instruction,
-      `I want to change the font of the title but keep it in the same white color the same simple text shape - just the font ${pre}`,
+    // Step 2: literal "a t-shirt" core, with the identity re-anchored (FACE_LOCK
+    // + the character ref threaded in as a second image so re-renders don't drift).
+    assert.ok(sent[1].instruction.includes("change the character outfit to a t-shirt"), "step 2 core verbatim");
+    assert.match(sent[1].instruction, /reference headshot/i, "step 2 re-anchors the identity");
+    assert.equal(sent[1].imageCount, 2, "later steps thread the character ref");
+    // Step (optional font): templated core verbatim, brackets filled.
+    assert.ok(
+      sent[2].instruction.includes(
+        "I want to change the font of the title but keep it in the same white color the same simple text shape - just the font",
+      ),
+      "optional font templated verbatim",
     );
-    // Step 8 (ALWAYS, last): background → bold/high-contrast "pop", positions kept.
-    assert.equal(sent[sent.length - 1].instruction, `${recreate.STEP8_PROMPT} ${pre}`);
-    assert.match(sent[sent.length - 1].instruction, /pop|contrast|vibrant/i, "background should enhance pop");
+    // Step 8 (ALWAYS, last): subtle background pop, positions kept, identity anchored.
+    assert.ok(sent[sent.length - 1].instruction.includes(recreate.STEP8_PROMPT), "step 8 core verbatim");
+    assert.match(sent[sent.length - 1].instruction, /reference headshot/i, "step 8 re-anchors the identity");
     assert.match(sent[sent.length - 1].instruction, /position of every element exactly the same/i, "keeps layout");
     // The art-director analysed the STEP-2 RESULT image (current working image),
     // NOT the source thumbnail. Step 1 produced "img1", step 2 produced "img2".
