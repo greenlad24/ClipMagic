@@ -348,8 +348,10 @@ async function main() {
       { editImage, artDirect, finalize },
     );
     const pre = `(${(await import("../thumbnails/nanoBanana.js")).WIDESCREEN_PREAMBLE})`;
-    // Step 1: exact prompt + TWO inputs (source + character ref).
-    assert.equal(sent[0].instruction, `replace the character with the character in the second image ${pre}`);
+    // Step 1: identity-locked swap (must reference the SECOND image as the
+    // identity source) + TWO inputs (source + character ref).
+    assert.equal(sent[0].instruction, `${recreate.STEP1_PROMPT} ${pre}`);
+    assert.match(sent[0].instruction, /SECOND image/i, "must anchor identity to the second image");
     assert.equal(sent[0].imageCount, 2, "step 1 feeds source + character");
     // Step 2: exact literal "a t-shirt".
     assert.equal(sent[1].instruction, `change the character outfit to a t-shirt ${pre}`);
