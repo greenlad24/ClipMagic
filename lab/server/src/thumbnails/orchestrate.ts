@@ -55,7 +55,7 @@ export async function downloadSourceThumbnail(
 export interface GenerateInput {
   keyword: string;
   videoType: VideoType;
-  /** Up to 3 picked video ids. */
+  /** Picked video ids — any subset of the search results (no fixed cap). */
   picks: string[];
 }
 
@@ -69,7 +69,7 @@ export async function generateThumbnailVariants(
   input: GenerateInput,
   download: DownloadFn = defaultDownload,
 ): Promise<ThumbnailVariant[]> {
-  const picks = input.picks.slice(0, 3);
+  const picks = input.picks;
   const available = uploadedExpressions();
   const expressions = expressionsForVariants(input.videoType, picks.length, available);
 

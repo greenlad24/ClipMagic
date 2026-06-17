@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from 'zite-auth-sdk';
 import {
   thumbnailStatus,
+  analyzeThumbnailScript,
   searchThumbnails,
   generateThumbnails,
-  generateThumbnailMetadata,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
   type ThumbnailStatusOutputType,
@@ -13,12 +13,12 @@ import {
   type ThumbnailVideoType,
   type ThumbnailSearchResult,
   type ThumbnailVariant,
-  type ThumbnailMetadataOutputType,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -37,22 +37,22 @@ import {
   Sparkles,
   Loader2,
   Download,
-  Copy,
   CheckCircle2,
   KeyRound,
   AlertTriangle,
   Settings,
   Wand2,
+  FileText,
 } from 'lucide-react';
 
 /**
- * Thumbnail Designer (LAB) — recreate a top YouTube thumbnail with the user's
- * character via the Nano Banana editing chain, and generate SEO-first metadata.
+ * Thumbnail Designer (LAB) — recreate top YouTube thumbnails with the user's
+ * character via the Nano Banana editing chain.
  *
  * Gated behind: both API keys configured (Gemini + YouTube, set write-only in
  * Settings → Thumbnail Designer) AND ≥1 character expression uploaded. Three
- * sections: (1) Character library, (2) Create (search + pick + generate),
- * (3) Results (original vs generated + metadata panel).
+ * sections: (1) Character library, (2) Create (paste script → analyze → search →
+ * multi-select → generate), (3) Results (original vs generated thumbnails).
  */
 
 const EXPRESSION_LABEL: Record<ThumbnailExpression, string> = {
@@ -86,6 +86,10 @@ export default function ThumbnailDesignerPage() {
   const [status, setStatus] = useState<ThumbnailStatusOutputType | null>(null);
 
   // Create flow
+  const [script, setScript] = useState('');
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzed, setAnalyzed] = useState(false);
+  const [rationale, setRationale] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
   const [videoType, setVideoType] = useState<ThumbnailVideoType>('Tutorial');
   const [searching, setSearching] = useState(false);
@@ -93,7 +97,6 @@ export default function ThumbnailDesignerPage() {
   const [picks, setPicks] = useState<string[]>([]);
   const [generating, setGenerating] = useState(false);
   const [variants, setVariants] = useState<ThumbnailVariant[] | null>(null);
-  const [metadata, setMetadata] = useState<ThumbnailMetadataOutputType | null>(null);
 
   const loadStatus = () =>
     thumbnailStatus({})
@@ -111,14 +114,32 @@ export default function ThumbnailDesignerPage() {
   const ready = keysReady && hasCharacter;
 
   const togglePick = (videoId: string) => {
-    setPicks((prev) => {
-      if (prev.includes(videoId)) return prev.filter((id) => id !== videoId);
-      if (prev.length >= 3) {
-        toast.info('You can recreate up to 3 thumbnails at a time.');
-        return prev;
-      }
-      return [...prev, videoId];
-    });
+    setPicks((prev) =>
+      prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [...prev, videoId],
+    );
+  };
+
+  const onAnalyze = async () => {
+    if (!script.trim()) {
+      toast.info('Paste your video script to analyze.');
+      return;
+    }
+    setAnalyzing(true);
+    setResults(null);
+    setPicks([]);
+    setVariants(null);
+    try {
+      const analysis = await analyzeThumbnailScript({ script: script.trim() });
+      setKeyword(analysis.keyword);
+      setVideoType(analysis.videoType);
+      setRationale(analysis.rationale ?? null);
+      setAnalyzed(true);
+      toast.success('Script analyzed — review the keyword and video type, then search.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not analyze the script');
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
   const onSearch = async () => {
@@ -130,11 +151,10 @@ export default function ThumbnailDesignerPage() {
     setResults(null);
     setPicks([]);
     setVariants(null);
-    setMetadata(null);
     try {
       const { results } = await searchThumbnails({ keyword: keyword.trim() });
       setResults(results);
-      if (results.length === 0) toast.info('No videos found for that keyword.');
+      if (results.length === 0) toast.info('No long-form videos found for that keyword.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Search failed');
     } finally {
@@ -149,23 +169,14 @@ export default function ThumbnailDesignerPage() {
     }
     setGenerating(true);
     setVariants(null);
-    setMetadata(null);
     try {
-      // Metadata + thumbnails in parallel — they're independent.
-      const [gen, meta] = await Promise.allSettled([
-        generateThumbnails({ keyword: keyword.trim(), videoType, picks }),
-        generateThumbnailMetadata({ keyword: keyword.trim(), videoType }),
-      ]);
-      if (gen.status === 'fulfilled') {
-        setVariants(gen.value.variants);
-        const ok = gen.value.variants.filter((v) => v.outputUrl).length;
-        if (ok === 0) toast.error('No thumbnails could be generated — see the per-item errors below.');
-        else toast.success(`Generated ${ok} thumbnail${ok === 1 ? '' : 's'}.`);
-      } else {
-        toast.error(gen.reason instanceof Error ? gen.reason.message : 'Thumbnail generation failed');
-      }
-      if (meta.status === 'fulfilled') setMetadata(meta.value);
-      else toast.error(meta.reason instanceof Error ? meta.reason.message : 'Metadata generation failed');
+      const { variants } = await generateThumbnails({ keyword: keyword.trim(), videoType, picks });
+      setVariants(variants);
+      const ok = variants.filter((v) => v.outputUrl).length;
+      if (ok === 0) toast.error('No thumbnails could be generated — see the per-item errors below.');
+      else toast.success(`Generated ${ok} thumbnail${ok === 1 ? '' : 's'}.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Thumbnail generation failed');
     } finally {
       setGenerating(false);
     }
@@ -182,7 +193,7 @@ export default function ThumbnailDesignerPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Thumbnail Designer</h1>
             <p className="text-muted-foreground mt-0.5 text-sm">
-              Recreate top-performing YouTube thumbnails with your own character, then get SEO-first titles and tags.
+              Paste your script and recreate top-performing YouTube thumbnails with your own character.
             </p>
           </div>
         </div>
@@ -203,40 +214,73 @@ export default function ThumbnailDesignerPage() {
             {/* Create */}
             {ready ? (
               <section className="rounded-xl border border-border bg-card p-5 space-y-5">
-                <SectionHeader icon={<Wand2 className="w-4 h-4" />} title="Create" subtitle="Search YouTube, pick up to 3 thumbnails, then generate." />
+                <SectionHeader icon={<Wand2 className="w-4 h-4" />} title="Create" subtitle="Paste your script, confirm the keyword and type, then pick thumbnails to recreate." />
 
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Keyword / topic</label>
-                    <Input
-                      value={keyword}
-                      onChange={(e) => setKeyword(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && onSearch()}
-                      placeholder="e.g. how to edit videos with AI"
-                    />
-                  </div>
-                  <div className="sm:w-48">
-                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Video type</label>
-                    <Select value={videoType} onValueChange={(v) => setVideoType(v as ThumbnailVideoType)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {VIDEO_TYPES.map((t) => (
-                          <SelectItem key={t} value={t}>
-                            {t}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="flex items-end">
-                    <Button onClick={onSearch} disabled={searching} className="w-full sm:w-auto">
-                      {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                      Search
+                {/* Step 1 — paste the script, analyze it */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5" /> Your video script
+                  </label>
+                  <Textarea
+                    value={script}
+                    onChange={(e) => setScript(e.target.value)}
+                    placeholder="Paste your full video script here. We'll pull out the best search keyword and figure out the video type for you."
+                    rows={6}
+                    className="resize-y"
+                  />
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-[11px] text-muted-foreground">
+                      We read the script to extract the keyword and infer the video type — you can edit both before searching.
+                    </p>
+                    <Button onClick={onAnalyze} disabled={analyzing || !script.trim()} variant={analyzed ? 'outline' : 'default'} size="sm" className="shrink-0">
+                      {analyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      {analyzed ? 'Re-analyze' : 'Analyze'}
                     </Button>
                   </div>
                 </div>
+
+                {/* Step 2 — confirm keyword + type (pre-filled, editable), then search */}
+                {analyzed && (
+                  <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
+                    {rationale && (
+                      <p className="text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Why:</span> {rationale}
+                      </p>
+                    )}
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      <div className="flex-1">
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Keyword / topic</label>
+                        <Input
+                          value={keyword}
+                          onChange={(e) => setKeyword(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && onSearch()}
+                          placeholder="e.g. how to edit videos with AI"
+                        />
+                      </div>
+                      <div className="sm:w-48">
+                        <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Video type</label>
+                        <Select value={videoType} onValueChange={(v) => setVideoType(v as ThumbnailVideoType)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {VIDEO_TYPES.map((t) => (
+                              <SelectItem key={t} value={t}>
+                                {t}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-end">
+                        <Button onClick={onSearch} disabled={searching || !keyword.trim()} className="w-full sm:w-auto">
+                          {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                          Search
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Search results grid */}
                 {searching && (
@@ -248,9 +292,12 @@ export default function ThumbnailDesignerPage() {
                 )}
                 {results && results.length > 0 && !searching && (
                   <div className="space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs text-muted-foreground">
-                        {picks.length}/3 selected
+                        Top {results.length} most-viewed (long-form). Select any you want to recreate — one variant each.
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {picks.length} selected
                       </p>
                     </div>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -285,14 +332,21 @@ export default function ThumbnailDesignerPage() {
                         );
                       })}
                     </div>
-                    <Button onClick={onGenerate} disabled={generating || picks.length === 0} className="w-full sm:w-auto">
-                      {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                      Generate {picks.length > 0 ? `${picks.length} ` : ''}thumbnail{picks.length === 1 ? '' : 's'}
-                    </Button>
+                    <div className="space-y-1.5">
+                      <Button onClick={onGenerate} disabled={generating || picks.length === 0} className="w-full sm:w-auto">
+                        {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                        Generate {picks.length > 0 ? `${picks.length} ` : ''}thumbnail{picks.length === 1 ? '' : 's'}
+                      </Button>
+                      {picks.length > 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Each selected thumbnail is recreated separately — time and cost scale with the number you pick.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
                 {results && results.length === 0 && !searching && (
-                  <p className="text-sm text-muted-foreground py-4 text-center">No videos found. Try a different keyword.</p>
+                  <p className="text-sm text-muted-foreground py-4 text-center">No long-form videos found. Try a different keyword.</p>
                 )}
               </section>
             ) : (
@@ -305,8 +359,8 @@ export default function ThumbnailDesignerPage() {
             )}
 
             {/* Results */}
-            {(generating || variants || metadata) && (
-              <Results generating={generating} variants={variants} metadata={metadata} />
+            {(generating || variants) && (
+              <Results generating={generating} variants={variants} />
             )}
           </>
         )}
@@ -511,15 +565,13 @@ function CharacterCard({
 function Results({
   generating,
   variants,
-  metadata,
 }: {
   generating: boolean;
   variants: ThumbnailVariant[] | null;
-  metadata: ThumbnailMetadataOutputType | null;
 }) {
   return (
     <section className="rounded-xl border border-border bg-card p-5 space-y-5">
-      <SectionHeader icon={<Sparkles className="w-4 h-4" />} title="Results" subtitle="Your recreated thumbnails and SEO-ready metadata." />
+      <SectionHeader icon={<Sparkles className="w-4 h-4" />} title="Results" subtitle="Your recreated 1920×1080 thumbnails — preview and download." />
 
       {generating && !variants && (
         <div className="grid md:grid-cols-2 gap-4">
@@ -535,8 +587,6 @@ function Results({
           ))}
         </div>
       )}
-
-      {metadata && <MetadataPanel metadata={metadata} />}
     </section>
   );
 }
@@ -586,77 +636,3 @@ function VariantRow({ variant, index }: { variant: ThumbnailVariant; index: numb
   );
 }
 
-function CopyButton({ text, label }: { text: string; label?: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      toast.error('Could not copy to clipboard.');
-    }
-  };
-  return (
-    <Button variant="ghost" size="sm" onClick={copy} className="h-7 px-2 text-xs">
-      {copied ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-      {label}
-    </Button>
-  );
-}
-
-function MetadataPanel({ metadata }: { metadata: ThumbnailMetadataOutputType }) {
-  return (
-    <div className="rounded-lg border border-border p-4 space-y-4">
-      <h3 className="text-sm font-semibold text-foreground">Titles, description & tags</h3>
-
-      <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground">Titles (SEO keyword first, hook second)</p>
-        {metadata.titles.map((t, i) => (
-          <div key={i} className="flex items-start justify-between gap-2 rounded-md bg-muted/50 px-3 py-2">
-            <span className="text-sm text-foreground">{t}</span>
-            <CopyButton text={t} />
-          </div>
-        ))}
-      </div>
-
-      {metadata.description && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground">Description</p>
-            <CopyButton text={metadata.description} label="Copy" />
-          </div>
-          <p className="text-sm text-foreground whitespace-pre-wrap rounded-md bg-muted/50 px-3 py-2">{metadata.description}</p>
-        </div>
-      )}
-
-      {metadata.hashtags.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground">Hashtags</p>
-            <CopyButton text={metadata.hashtags.join(' ')} label="Copy" />
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {metadata.hashtags.map((h, i) => (
-              <Badge key={i} variant="secondary">{h}</Badge>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {metadata.tags.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-medium text-muted-foreground">Tags</p>
-            <CopyButton text={metadata.tags.join(', ')} label="Copy" />
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {metadata.tags.map((t, i) => (
-              <Badge key={i} variant="outline">{t}</Badge>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}

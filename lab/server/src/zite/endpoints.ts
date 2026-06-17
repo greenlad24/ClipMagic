@@ -68,7 +68,7 @@ import {
   isExpression,
 } from "../thumbnails/characters.js";
 import { generateThumbnailVariants } from "../thumbnails/orchestrate.js";
-import { generateMetadata } from "../thumbnails/metadata.js";
+import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
@@ -2297,9 +2297,10 @@ const runBulkSchedule: Handler = async (input) =>
 
 // ── Thumbnail Designer (LAB tool) ────────────────────────────────────────────
 // Recreates top-performing YouTube thumbnails with the user's character via the
-// Nano Banana (Gemini 2.5 Flash Image) editing chain, and generates SEO-first
-// titles/description/tags. Gated behind: both API keys configured (write-only,
-// server-only getters) + at least one character expression uploaded.
+// Nano Banana (Gemini 2.5 Flash Image) editing chain. The entry point is the
+// user's pasted SCRIPT — an AI step extracts the search keyword + infers the
+// video type. Gated behind: both API keys configured (write-only, server-only
+// getters) + at least one character expression uploaded.
 
 const VIDEO_TYPE_FALLBACK: VideoType = "Tutorial";
 function coerceVideoType(x: unknown): VideoType {
@@ -2314,15 +2315,21 @@ const thumbnailStatus: Handler = async () => ({
   uploadedExpressions: uploadedExpressions(),
 });
 
-/** Search YouTube for the top thumbnails matching a keyword (≤6). */
+/** Read the pasted script → extract the search keyword + infer the video type. */
+const analyzeThumbnailScript: Handler = async (input) => {
+  const analysis = await analyzeScript(String(input?.script ?? ""));
+  return analysis;
+};
+
+/** Search YouTube for the top 6 most-viewed long-form thumbnails for a keyword. */
 const searchThumbnails: Handler = async (input) => {
   const results = await searchTopThumbnails(String(input?.keyword ?? ""));
   return { results };
 };
 
-/** Run the recreation chain for each picked video (≤3), per-item isolated. */
+/** Run the recreation chain for each picked video (any subset), per-item isolated. */
 const generateThumbnails: Handler = async (input) => {
-  const picks = (Array.isArray(input?.picks) ? input.picks : []).map((p: unknown) => String(p)).slice(0, 3);
+  const picks = (Array.isArray(input?.picks) ? input.picks : []).map((p: unknown) => String(p));
   if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to recreate." });
   const variants = await generateThumbnailVariants({
     keyword: String(input?.keyword ?? ""),
@@ -2330,12 +2337,6 @@ const generateThumbnails: Handler = async (input) => {
     picks,
   });
   return { variants };
-};
-
-/** SEO-first titles + description + hashtags + tags for a keyword/video type. */
-const generateThumbnailMetadata: Handler = async (input) => {
-  const meta = await generateMetadata(String(input?.keyword ?? ""), coerceVideoType(input?.videoType));
-  return meta;
 };
 
 // Character library (list / upload / delete the 4 expression images).
@@ -2433,9 +2434,9 @@ export const HANDLERS: Record<string, Handler> = {
   deleteStorageArea,
   // Thumbnail Designer (LAB tool)
   thumbnailStatus,
+  analyzeThumbnailScript,
   searchThumbnails,
   generateThumbnails,
-  generateThumbnailMetadata,
   listThumbnailCharacters,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,

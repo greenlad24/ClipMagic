@@ -61,8 +61,9 @@ export type CallPurpose =
   // Thumbnail Designer: vision "art-director" pass — decides which optional
   // recreation steps apply (font/bold-text/logo/device-screen).
   | "thumbnail-art-director"
-  // Thumbnail Designer: SEO-first titles + description + hashtags + tags.
-  | "thumbnail-metadata";
+  // Thumbnail Designer: reads the pasted script, extracts the search keyword +
+  // infers the video type (cheap structured extraction on the fast tier).
+  | "thumbnail-script-analysis";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

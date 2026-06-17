@@ -136,11 +136,11 @@ export const deleteStorageArea = endpoint("deleteStorageArea");
 export const reviewEdit = endpoint("reviewEdit");
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
+export const analyzeThumbnailScript =
+  endpoint<{ script: string }, ThumbnailScriptAnalysisOutputType>("analyzeThumbnailScript");
 export const searchThumbnails = endpoint<{ keyword: string }, SearchThumbnailsOutputType>("searchThumbnails");
 export const generateThumbnails =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[] }, GenerateThumbnailsOutputType>("generateThumbnails");
-export const generateThumbnailMetadata =
-  endpoint<{ keyword: string; videoType: ThumbnailVideoType }, ThumbnailMetadataOutputType>("generateThumbnailMetadata");
 export const listThumbnailCharacters =
   endpoint<Record<string, never>, { characters: ThumbnailCharacterState[] }>("listThumbnailCharacters");
 export const uploadThumbnailCharacter =
@@ -163,6 +163,11 @@ export type ThumbnailStatusOutputType = {
   characters: ThumbnailCharacterState[];
   uploadedExpressions: ThumbnailExpression[];
 };
+export type ThumbnailScriptAnalysisOutputType = {
+  keyword: string;
+  videoType: ThumbnailVideoType;
+  rationale?: string;
+};
 export type ThumbnailSearchResult = { videoId: string; title: string; thumbnailUrl: string };
 export type SearchThumbnailsOutputType = { results: ThumbnailSearchResult[] };
 export type ThumbnailChainStep = {
@@ -181,12 +186,6 @@ export type ThumbnailVariant = {
   error?: string;
 };
 export type GenerateThumbnailsOutputType = { variants: ThumbnailVariant[] };
-export type ThumbnailMetadataOutputType = {
-  titles: string[];
-  description: string;
-  hashtags: string[];
-  tags: string[];
-};
 export type ThumbnailCharacterMutationOutputType = {
   character: ThumbnailCharacterState;
   characters: ThumbnailCharacterState[];

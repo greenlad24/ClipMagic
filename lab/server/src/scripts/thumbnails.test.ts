@@ -2,10 +2,11 @@
  * Unit checks for the Thumbnail Designer (LAB tool). NO network, NO ffmpeg, NO
  * real keys — every external boundary is mocked / pure:
  *   - YouTube search response parsing (maxres preference + hq fallback)
+ *   - ISO-8601 duration parsing + Shorts (≤180s) exclusion + most-viewed top-6
  *   - Nano Banana request shaping + image extraction from a mocked response
  *   - crop/scale ffmpeg arg-builder (pure): letterbox + generic cases
  *   - expression-by-video-type selection + distinct-per-variant
- *   - metadata assembly with a mocked AI (titles SEO-first)
+ *   - script analysis assembly with a mocked AI (keyword + inferred video type)
  *   - write-only guarantee for GEMINI_API_KEY + YOUTUBE_DATA_API_KEY
  *
  * Run: cd lab/server && npx tsx src/scripts/thumbnails.test.ts
@@ -50,22 +51,94 @@ async function main() {
     assert.equal(out[1].thumbnailUrl, youtube.hqThumbnailUrl("BBB"));
   });
 
-  await check("searchTopThumbnails uses the injected fetch + the right query params", async () => {
-    // Configure the key via the store (write-only path), then search with a mock.
+  await check("parseIsoDurationSeconds handles mins/secs/hours edge cases", () => {
+    assert.equal(youtube.parseIsoDurationSeconds("PT45S"), 45);
+    assert.equal(youtube.parseIsoDurationSeconds("PT3M"), 180);
+    assert.equal(youtube.parseIsoDurationSeconds("PT4M13S"), 253);
+    assert.equal(youtube.parseIsoDurationSeconds("PT1H2M3S"), 3723);
+    assert.equal(youtube.parseIsoDurationSeconds("PT1H"), 3600);
+    assert.equal(youtube.parseIsoDurationSeconds("P1DT1S"), 86401);
+    assert.equal(youtube.parseIsoDurationSeconds("garbage"), 0, "unparseable → 0");
+    assert.equal(youtube.parseIsoDurationSeconds(undefined), 0, "missing → 0");
+  });
+
+  await check("selectLongForm drops Shorts (≤180s) and keeps the top-N in input order", () => {
+    const ordered = [
+      { videoId: "A", title: "a", thumbnailUrl: "" }, // 300s long-form (most-viewed)
+      { videoId: "B", title: "b", thumbnailUrl: "" }, // 60s Short → dropped
+      { videoId: "C", title: "c", thumbnailUrl: "" }, // exactly 180s → dropped (≤180)
+      { videoId: "D", title: "d", thumbnailUrl: "" }, // 181s → kept
+      { videoId: "E", title: "e", thumbnailUrl: "" }, // unknown duration → dropped
+    ];
+    const durations = new Map<string, number>([["A", 300], ["B", 60], ["C", 180], ["D", 181]]);
+    const out = youtube.selectLongForm(ordered, durations, 6);
+    assert.deepEqual(out.map((r) => r.videoId), ["A", "D"], "only long-form, view-count order preserved");
+    // top-N cap: with many long-form candidates we keep exactly N.
+    const many = Array.from({ length: 10 }, (_, i) => ({ videoId: `V${i}`, title: "", thumbnailUrl: "" }));
+    const longAll = new Map(many.map((m) => [m.videoId, 600] as const));
+    assert.equal(youtube.selectLongForm(many, longAll, 6).length, 6, "capped at 6");
+  });
+
+  await check("parseVideoDurations maps id → seconds from a videos.list response", () => {
+    const json = { items: [{ id: "A", contentDetails: { duration: "PT5M" } }, { id: "B", contentDetails: { duration: "PT30S" } }] };
+    const d = youtube.parseVideoDurations(json);
+    assert.equal(d.get("A"), 300);
+    assert.equal(d.get("B"), 30);
+  });
+
+  await check("searchTopThumbnails oversamples, drops Shorts via videos.list, returns most-viewed top-6", async () => {
+    // Configure the key via the store (write-only path), then search with a mock
+    // that answers BOTH the search call and the videos.list (duration) call.
     const secrets = await import("../settings/postizSecrets.js");
     secrets.updateSettings({ values: { YOUTUBE_DATA_API_KEY: "yt-test-key" } });
-    let calledUrl = "";
+    // 8 candidates in view-count order; ids S* are Shorts (≤180s), L* are long-form.
+    const ids = ["L1", "S1", "L2", "L3", "S2", "L4", "L5", "L6"];
+    const durById: Record<string, string> = {
+      L1: "PT8M", S1: "PT0M50S", L2: "PT12M", L3: "PT4M1S", S2: "PT3M", L4: "PT20M", L5: "PT6M", L6: "PT9M",
+    };
+    let searchUrl = "";
+    let videosUrl = "";
     const mockFetch = async (url: string) => {
-      calledUrl = url;
-      return { ok: true, status: 200, json: async () => ({ items: [{ id: { videoId: "Z1" }, snippet: { title: "T" } }] }) };
+      if (url.includes("/youtube/v3/search")) {
+        searchUrl = url;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ items: ids.map((id) => ({ id: { videoId: id }, snippet: { title: id } })) }),
+        };
+      }
+      // videos.list (contentDetails) — return durations for the requested ids.
+      videosUrl = url;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ items: ids.map((id) => ({ id, contentDetails: { duration: durById[id] } })) }),
+      };
     };
     const out = await youtube.searchTopThumbnails("ai editing", 6, mockFetch);
-    assert.equal(out.length, 1);
-    assert.ok(calledUrl.includes("order=viewCount"), "should order by viewCount");
-    assert.ok(calledUrl.includes("maxResults=6"));
-    assert.ok(calledUrl.includes("type=video"));
-    assert.ok(/q=ai\+editing|q=ai%20editing/.test(calledUrl), `query missing: ${calledUrl}`);
+    // Search params: most-viewed, oversampled, recency-capped.
+    assert.ok(searchUrl.includes("order=viewCount"), "should order by viewCount");
+    assert.ok(searchUrl.includes("maxResults=25"), "should oversample beyond 6");
+    assert.ok(searchUrl.includes("type=video"));
+    assert.ok(searchUrl.includes("publishedAfter="), "should cap recency by default");
+    assert.ok(/q=ai\+editing|q=ai%20editing/.test(searchUrl), `query missing: ${searchUrl}`);
+    // Durations were fetched via videos.list for the candidate ids.
+    assert.ok(videosUrl.includes("/youtube/v3/videos"), "should fetch durations");
+    assert.ok(videosUrl.includes("part=contentDetails"));
+    // Result: the 6 most-viewed LONG-FORM videos, Shorts excluded, order preserved.
+    assert.deepEqual(out.map((r) => r.videoId), ["L1", "L2", "L3", "L4", "L5", "L6"]);
     secrets.updateSettings({ remove: ["YOUTUBE_DATA_API_KEY"] });
+  });
+
+  await check("recencyPublishedAfter honors THUMBNAIL_SEARCH_YEARS (0 = all-time)", () => {
+    const prev = process.env.THUMBNAIL_SEARCH_YEARS;
+    const now = new Date("2026-06-17T00:00:00Z");
+    process.env.THUMBNAIL_SEARCH_YEARS = "2";
+    assert.equal(youtube.recencyPublishedAfter(now), "2024-06-17T00:00:00.000Z");
+    process.env.THUMBNAIL_SEARCH_YEARS = "0";
+    assert.equal(youtube.recencyPublishedAfter(now), null, "0 = no recency cap");
+    if (prev === undefined) delete process.env.THUMBNAIL_SEARCH_YEARS;
+    else process.env.THUMBNAIL_SEARCH_YEARS = prev;
   });
 
   await check("searchTopThumbnails surfaces a clear quota error on 403", async () => {
@@ -204,35 +277,64 @@ async function main() {
     assert.deepEqual(vt.expressionsForVariants("Review", 2, []), []);
   });
 
-  // ── metadata assembly (mocked AI) ───────────────────────────────────────────
-  const metadata = await import("../thumbnails/metadata.js");
-  await check("generateMetadata normalizes, keeps 3 titles, fixes #/tags (titles SEO-first)", async () => {
+  // ── script analysis (mocked AI) ─────────────────────────────────────────────
+  const scriptAnalysis = await import("../thumbnails/scriptAnalysis.js");
+  await check("analyzeScript extracts keyword + infers video type from a mocked model", async () => {
     const fakeAi = async () =>
-      JSON.stringify({
-        titles: [
-          "AI Video Editing: The Trick Nobody Shows You",
-          "AI Video Editing — I Tried It For 30 Days",
-          "AI Video Editing in 2026 (Full Walkthrough)",
-          "EXTRA TITLE SHOULD BE DROPPED",
-        ],
-        description: "  A guide to AI video editing.  ",
-        hashtags: ["ai", "#editing", "videoediting"],
-        tags: ["#aiediting", "video editing", ""],
-      });
-    const meta = await metadata.generateMetadata("AI video editing", "Tutorial", fakeAi);
-    assert.equal(meta.titles.length, 3, "capped at 3");
-    assert.ok(meta.titles[0].toLowerCase().startsWith("ai video editing"), "SEO keyword leads the title");
-    assert.equal(meta.description, "A guide to AI video editing.");
-    assert.deepEqual(meta.hashtags, ["#ai", "#editing", "#videoediting"], "every hashtag forced to start with #");
-    assert.deepEqual(meta.tags, ["aiediting", "video editing"], "tags strip # and drop empties");
+      JSON.stringify({ keyword: '"AI video editing"', videoType: "tutorial", rationale: "It teaches a workflow step by step." });
+    const out = await scriptAnalysis.analyzeScript("Today I'll show you how to edit videos with AI...", fakeAi);
+    assert.equal(out.keyword, "AI video editing", "keyword trimmed + surrounding quotes stripped");
+    assert.equal(out.videoType, "Tutorial", "lowercase model type coerced to the canonical VideoType");
+    assert.equal(out.rationale, "It teaches a workflow step by step.");
   });
 
-  await check("generateMetadata throws on non-JSON and on empty titles", async () => {
-    await assert.rejects(() => metadata.generateMetadata("k", "Viral", async () => "not json"), /non-JSON/i);
+  await check("analyzeScript coerces every type case-insensitively (aligned with videoType.ts)", async () => {
+    for (const [modelType, expected] of [["VIRAL", "Viral"], ["secret", "Secret"], ["Review", "Review"]] as const) {
+      const out = await scriptAnalysis.analyzeScript("x", async () => JSON.stringify({ keyword: "k", videoType: modelType }));
+      assert.equal(out.videoType, expected);
+    }
+  });
+
+  await check("analyzeScript throws on non-JSON, missing keyword, and unknown type", async () => {
+    await assert.rejects(() => scriptAnalysis.analyzeScript("x", async () => "not json"), /non-JSON/i);
     await assert.rejects(
-      () => metadata.generateMetadata("k", "Viral", async () => JSON.stringify({ titles: [] })),
-      /no titles/i,
+      () => scriptAnalysis.analyzeScript("x", async () => JSON.stringify({ videoType: "Tutorial" })),
+      /no keyword/i,
     );
+    await assert.rejects(
+      () => scriptAnalysis.analyzeScript("x", async () => JSON.stringify({ keyword: "k", videoType: "podcast" })),
+      /unknown video type/i,
+    );
+    await assert.rejects(() => scriptAnalysis.analyzeScript("   ", async () => "{}"), /paste your video script/i);
+  });
+
+  // ── picks are no longer capped at 3 (multi-select, any subset) ───────────────
+  await check("generateThumbnailVariants assigns one variant per pick (no 3-cap), expressions cycle", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    const chars = await import("../thumbnails/characters.js");
+    // Upload all four expressions so the generator has a full palette.
+    const onePx =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    // Mock the source-thumbnail download; make the recreation chain a no-op by
+    // pointing each pick at a download that throws AFTER selection, so we still
+    // get one (error) variant PER pick — proving the per-pick fan-out, uncapped.
+    const orchestrate = await import("../thumbnails/orchestrate.js");
+    const picks = ["P1", "P2", "P3", "P4", "P5"]; // five > the old cap of three
+    const failingDownload = async () => {
+      throw new Error("download stubbed");
+    };
+    const variants = await orchestrate.generateThumbnailVariants(
+      { keyword: "k", videoType: "Viral", picks },
+      failingDownload,
+    );
+    assert.equal(variants.length, 5, "one variant per pick — NOT capped at 3");
+    assert.deepEqual(variants.map((v) => v.videoId), picks, "order preserved");
+    // Distinct-expression-per-variant cycles the four available expressions.
+    assert.equal(variants[0].expression, "surprise", "Viral's primary leads");
+    assert.equal(variants[4].expression, variants[0].expression, "cycles back after 4 expressions");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+    void secrets;
   });
 
   // ── write-only guarantee for the two new keys ───────────────────────────────
