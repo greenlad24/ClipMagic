@@ -31,6 +31,7 @@ import { recreateThumbnail, composeContrarianThumbnail, type ChainStep, type Rec
 import {
   generateContrarianVariations,
   chooseContrarianBackgrounds,
+  resolveTemplateBackground,
   buildContrarianComposePrompt,
   type ContrarianVariation,
 } from "./contrarian.js";
@@ -521,7 +522,10 @@ async function runContrarianJob(
     for (let i = 0; i < job.variants.length; i++) {
       const v = variations[i];
       const template = templateForIndex(i);
-      const bg = bgCandidates.find((c) => c.id === chosenBgIds[i]) ?? bgCandidates[0];
+      // Each template pins a NAMED background (e.g. "Black"); fall back to the
+      // cycled choice when that name isn't in the uploaded library.
+      const bgId = resolveTemplateBackground(template.backgroundName, bgCandidates, chosenBgIds[i]);
+      const bg = bgCandidates.find((c) => c.id === bgId) ?? bgCandidates[0];
       // The cast expression (validated to an available id by the writer's pad step).
       const exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
       const characterBytes = readCharacterImage(exprId);

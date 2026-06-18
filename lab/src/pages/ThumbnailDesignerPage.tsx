@@ -799,7 +799,7 @@ function BackgroundLibrary({
       <SectionHeader
         icon={<ImageIcon className="w-4 h-4" />}
         title="Background library (optional)"
-        subtitle="Upload backgrounds the AI can swap in — but only when one clearly fits a thumbnail. With none uploaded, the original background is kept and enhanced."
+        subtitle="Used two ways: (1) the AI may swap one into a recreation when it clearly fits; (2) the contrarian originals pin one per template — name them “Open Space Office With Green”, “Black”, and “Office” to control templates 1, 2 and 3 (any unmatched name is reused as a fallback)."
       />
       {backgrounds.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

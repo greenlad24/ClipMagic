@@ -45,9 +45,10 @@ const SYSTEM =
   "angles: an intriguing stat or secret (e.g. \"What 99% Don't Know\" with \"99%\" " +
   "emphasised), a bold promise, or — especially for tutorials — the BRAND NAME plus " +
   "a descriptor like \"FULL TUTORIAL\", \"BEGINNER TO PRO\", \"FULL GUIDE\". " +
-  "Each statement is 2–4 words ideally, NEVER more than 7. ABSOLUTELY NO money " +
-  "claims — no dollar signs, no amounts, no revenue/profit/income/earnings figures " +
-  "(percentages like \"99%\" are fine). " +
+  "Keep it SHORT and punchy — 2–4 words, NEVER more than 5; big bold thumbnails " +
+  "use few words so the text can be huge. No filler, no \"+\" or symbols, no " +
+  "subtitles. ABSOLUTELY NO money claims — no dollar signs, no amounts, no " +
+  "revenue/profit/income/earnings figures (percentages like \"99%\" are fine). " +
   "You also CAST each thumbnail: from the provided expression list choose the one " +
   "that best EMPHASISES that statement's emotion (shock → a shocked/intense look; " +
   "a confident promise → a calm assured look) — vary them across the set.";
@@ -103,7 +104,7 @@ export function normalizeContrarianVariations(raw: any, availableIds: string[]):
   const out: ContrarianVariation[] = [];
   for (const v of list) {
     const text = typeof v?.text === "string" ? v.text.trim().replace(/^["']|["']$/g, "").trim() : "";
-    if (!text || wordCount(text) > 7 || hasMoneyClaim(text)) continue;
+    if (!text || wordCount(text) > 6 || hasMoneyClaim(text)) continue;
     let emphasis = typeof v?.emphasis === "string" ? v.emphasis.trim().replace(/^["']|["']$/g, "").trim() : "";
     if (!emphasis || !text.toLowerCase().includes(emphasis.toLowerCase()) || hasMoneyClaim(emphasis)) {
       const words = text.split(/\s+/).filter(Boolean);
@@ -191,6 +192,27 @@ export function chooseContrarianBackgrounds(availableIds: string[], count: numbe
   return out;
 }
 
+/** Normalize a name for matching (lowercase, alphanumerics only). */
+function normName(s: string): string {
+  return (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/**
+ * Resolve the background id a template should use: the uploaded background whose
+ * NAME matches the template's `backgroundName` (by id or label, normalized), else
+ * `fallbackId`. Pure + exported. Lets each template pin a specific named
+ * background (e.g. "Black"), falling back to a cycled one when it isn't uploaded.
+ */
+export function resolveTemplateBackground(
+  backgroundName: string,
+  candidates: Array<{ id: string; label: string }>,
+  fallbackId: string,
+): string {
+  const want = normName(backgroundName);
+  const match = candidates.find((c) => normName(c.label) === want || normName(c.id) === want);
+  return match ? match.id : fallbackId;
+}
+
 /**
  * Build the COMPOSE instruction: background + character ONLY, NO text (the
  * headline is drawn programmatically afterwards). `placement` is the character's
@@ -210,10 +232,12 @@ export function buildContrarianComposePrompt(
   return (
     "Create a 16:9 landscape image with exactly TWO elements: a background and a person — and NO text at all. " +
     "(1) BACKGROUND: use the FIRST image as the full background, scaled to fill the whole frame. " +
-    "(2) PERSON: place the man from the SECOND image as the subject — keep his EXACT face, head, hairstyle, hair " +
-    "colour and beard (clearly THAT real man), a medium slightly-fit average build, seamless realistic blend onto " +
-    `the background, LARGE and prominent (head/face filling a big portion of the height), positioned ${side}, ` +
-    "looking toward the camera with a confident, intense expression. " +
+    "(2) PERSON: the subject must look EXACTLY like the man in the SECOND image — a 1:1 likeness: the same face, " +
+    "head shape, hairstyle, hair colour, beard, skin tone and features (clearly THAT real man, do not restyle him). " +
+    "Composite him naturally onto the background as a real head-and-shoulders/upper-chest shot — he must be WHOLE " +
+    "and naturally integrated, NOT a cut-out or floating cropped head, with NO hard cut lines or visible edges. " +
+    `Position him ${side}, looking toward the camera with a confident, intense expression. ` +
+    "His face must be LARGE — filling AT LEAST 70% of the thumbnail's HEIGHT (a big, dominant face). " +
     `Keep ${textArea} relatively clean and uncluttered — a headline will be added there afterwards. ` +
     "CRITICAL: do NOT render ANY text, words, letters, numbers, captions, logos, watermarks or graphics anywhere — " +
     "output ONLY the background and the person, nothing else."

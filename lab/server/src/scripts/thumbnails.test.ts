@@ -1116,10 +1116,13 @@ async function main() {
     assert.deepEqual(contrarian.chooseContrarianBackgrounds([], 3), [], "none → empty");
   });
 
-  await check("buildContrarianComposePrompt: bg + character ONLY, NO text, honours placement", () => {
+  await check("buildContrarianComposePrompt: bg + character 1:1, not cut, face >=70%, NO text", () => {
     const p = contrarian.buildContrarianComposePrompt("right", "the LEFT half of the frame");
     assert.match(p, /FIRST image as the full background/i, "background element");
-    assert.match(p, /man from the SECOND image/i, "character element");
+    assert.match(p, /the man in the SECOND image/i, "character element");
+    assert.match(p, /1:1 likeness/i, "1:1 likeness to the uploaded photo");
+    assert.match(p, /NOT a cut-out or floating cropped head/i, "character must not be cut");
+    assert.match(p, /at least 70% of the thumbnail's height/i, "face fills >=70% height");
     assert.match(p, /all the way to the RIGHT/i, "placement honoured");
     assert.match(p, /do NOT render ANY text/i, "the model must NOT draw text (we overlay it)");
     assert.match(p, /the LEFT half of the frame/, "names the clear text area");
@@ -1127,13 +1130,28 @@ async function main() {
 
   // ── text overlay templates (pure layout helpers) ────────────────────────────
   const overlay = await import("../thumbnails/textOverlay.js");
-  await check("there are 3 fixed templates in order: bottom-bar, left-stack, top-strike", () => {
+  await check("there are 3 fixed templates in order, each pinning its named background", () => {
     assert.deepEqual(overlay.CONTRARIAN_TEMPLATES.map((t) => t.id), ["bottom-bar", "left-stack", "top-strike"]);
     assert.equal(overlay.templateForIndex(0).id, "bottom-bar");
     assert.equal(overlay.templateForIndex(1).id, "left-stack");
     assert.equal(overlay.templateForIndex(2).id, "top-strike");
     assert.equal(overlay.templateForIndex(3).id, "bottom-bar", "cycles");
     assert.equal(overlay.templateForIndex(1).charPlacement, "right", "left-stack puts the character on the right");
+    assert.equal(overlay.templateForIndex(0).backgroundName, "Open Space Office With Green");
+    assert.equal(overlay.templateForIndex(1).backgroundName, "Black");
+    assert.equal(overlay.templateForIndex(2).backgroundName, "Office");
+  });
+
+  await check("resolveTemplateBackground matches a named background (normalized), else falls back", () => {
+    const cands = [
+      { id: "black", label: "Black" },
+      { id: "open-space-office-with-green", label: "Open Space Office With Green" },
+      { id: "office", label: "Office" },
+    ];
+    assert.equal(contrarian.resolveTemplateBackground("Black", cands, "x"), "black");
+    assert.equal(contrarian.resolveTemplateBackground("Open Space Office With Green", cands, "x"), "open-space-office-with-green");
+    assert.equal(contrarian.resolveTemplateBackground("office", cands, "x"), "office", "case/space-insensitive");
+    assert.equal(contrarian.resolveTemplateBackground("Studio", cands, "fallback-id"), "fallback-id", "no match → fallback");
   });
 
   await check("splitByEmphasis isolates the emphasis run (case-insensitive), else one segment", () => {

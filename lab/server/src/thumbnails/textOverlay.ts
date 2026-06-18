@@ -36,6 +36,12 @@ export interface ContrarianTemplate {
   textArea: string;
   /** Copy guidance for the writer so the statement suits this template. */
   copyHint: string;
+  /**
+   * The uploaded background this template ALWAYS uses, matched by name (the
+   * creator names their backgrounds these). Falls back to a cycled background
+   * when no upload matches.
+   */
+  backgroundName: string;
 }
 
 /** The 3 fixed templates, in the order variations are produced. */
@@ -45,24 +51,26 @@ export const CONTRARIAN_TEMPLATES: ContrarianTemplate[] = [
     label: "Bottom headline",
     charPlacement: "center",
     textArea: "the BOTTOM strip (lower ~22% of the frame)",
-    copyHint: "one punchy line; the key word(s) at the END become the red-box emphasis (e.g. \"DON'T RUN VIDEO ADS\" → \"VIDEO ADS\")",
+    copyHint: "ONE very short punchy line (2–4 words); the key word(s) at the END are the red-box emphasis (e.g. \"DON'T RUN VIDEO ADS\" → \"VIDEO ADS\")",
+    backgroundName: "Open Space Office With Green",
   },
   {
     id: "left-stack",
     label: "Left stack",
     charPlacement: "right",
     textArea: "the LEFT half of the frame",
-    copyHint: "a strong HOOK first then a short follow-up; the hook (at the START) is the red-box emphasis (e.g. \"#1 MISTAKE\" + \"Everyone Makes\" → \"#1 MISTAKE\")",
+    copyHint: "a SHORT hook (1–2 words) then a SHORT follow-up (1–2 words); the hook is the red-box emphasis (e.g. \"#1 MISTAKE\" + \"Everyone Makes\" → \"#1 MISTAKE\")",
+    backgroundName: "Black",
   },
   {
     id: "top-strike",
     label: "Top strikethrough",
     charPlacement: "center",
     textArea: "the TOP strip (upper ~18% of the frame)",
-    copyHint: "a short phrase where ONE word is 'crossed out' for effect; that word is the emphasis (e.g. \"NEW CUSTOMERS\" → \"CUSTOMERS\")",
+    copyHint: "a SHORT 2–3 word phrase where ONE word is 'crossed out' for effect; that word is the emphasis (e.g. \"NEW CUSTOMERS\" → \"CUSTOMERS\")",
+    backgroundName: "Office",
   },
 ];
-
 /** The template for variation index `i` (cycles, though we always make 3). */
 export function templateForIndex(i: number): ContrarianTemplate {
   return CONTRARIAN_TEMPLATES[i % CONTRARIAN_TEMPLATES.length];
@@ -238,9 +246,10 @@ function drawSingleLine(
   emphasis: string,
   pos: "top" | "bottom",
 ): void {
-  const margin = W * 0.04;
+  const margin = W * 0.035;
   const maxW = W - margin * 2;
-  const size = fitFont(ctx, family, text, maxW, Math.round(H * 0.12));
+  // Big, bold headline like the reference designs (was ~0.12·H — too small).
+  const size = fitFont(ctx, family, text, maxW, Math.round(H * 0.155));
   ctx.font = `${size}px "${family}"`;
   const segs = splitByEmphasis(text, emphasis);
   const padX = Math.round(size * 0.18);
@@ -282,8 +291,9 @@ function drawSingleLine(
 function drawLeftStack(ctx: any, family: string, W: number, H: number, text: string, emphasis: string): void {
   const { line1, line2 } = stackLines(text, emphasis);
   const x = W * 0.05;
-  const maxW = W * 0.52;
-  const size = fitFont(ctx, family, line1.length >= line2.length ? line1 : line2, maxW, Math.round(H * 0.17));
+  const maxW = W * 0.56;
+  // Large stacked headline like the "$40M / At 20" reference (was ~0.17·H).
+  const size = fitFont(ctx, family, line1.length >= line2.length ? line1 : line2, maxW, Math.round(H * 0.215));
   ctx.font = `${size}px "${family}"`;
   const padX = Math.round(size * 0.16);
   const boxH = size * 1.2;
