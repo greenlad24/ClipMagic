@@ -75,21 +75,13 @@ const EXPRESSION_HINT: Record<ThumbnailExpression, string> = {
 const VIDEO_TYPES: ThumbnailVideoType[] = ['Tutorial', 'Viral', 'Secret', 'Review'];
 
 /**
- * Generation modes offered in the generate UI. The DEFAULT is "compare": every
- * pick is generated through BOTH top providers at their best size and shown side
- * by side so you can pick the better one. The single-provider modes are there for
- * when you don't want the comparison/cost.
+ * Generation modes offered in the generate UI — a single image model per run.
+ * The DEFAULT is Nano Banana Pro at 4K (sharpest, best likeness); the cheaper
+ * Flash model is there for drafts and high volume.
  */
-const MODE_OPTIONS: { value: ThumbnailMode; label: string; hint: string; needsOpenAi?: boolean }[] = [
-  {
-    value: 'compare',
-    label: 'Compare both (Pro 4K + OpenAI)',
-    hint: 'Generates each pick TWICE — Nano Banana Pro at 4K and OpenAI at its highest size — side by side so you pick the better one. Runs the full chain twice per thumbnail, so it costs ~2× a single run.',
-    needsOpenAi: true,
-  },
-  { value: 'gemini-pro', label: 'Nano Banana Pro only (sharpest, best likeness)', hint: 'Highest single-model quality — 2K renders, strongest face match. ~$0.13/image, and the chain runs several edits per thumbnail.' },
+const MODE_OPTIONS: { value: ThumbnailMode; label: string; hint: string }[] = [
+  { value: 'gemini-pro', label: 'Nano Banana Pro (sharpest, best likeness)', hint: 'Highest quality — 4K renders, strongest face match. ~$0.24/image, and the chain runs several edits per thumbnail.' },
   { value: 'gemini-flash', label: 'Nano Banana (Flash, cheap)', hint: 'Fast and inexpensive — good for drafts and high volume.' },
-  { value: 'openai', label: 'OpenAI only (gpt-image-1)', hint: 'OpenAI image model with high input-fidelity. Requires an OpenAI API key.', needsOpenAi: true },
 ];
 
 async function fileToBase64(file: File): Promise<string> {
@@ -118,7 +110,7 @@ export default function ThumbnailDesignerPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
-  const [mode, setMode] = useState<ThumbnailMode>('compare');
+  const [mode, setMode] = useState<ThumbnailMode>('gemini-pro');
   const [generating, setGenerating] = useState(false);
   const [job, setJob] = useState<ThumbnailJobStatus | null>(null);
 
@@ -206,14 +198,6 @@ export default function ThumbnailDesignerPage() {
   const onGenerate = async () => {
     if (picks.length === 0) {
       toast.info('Pick at least one thumbnail to recreate.');
-      return;
-    }
-    if ((mode === 'openai' || mode === 'compare') && !status?.openaiConfigured) {
-      toast.error(
-        mode === 'compare'
-          ? 'Compare mode needs an OpenAI API key (Settings → Thumbnail Designer). Pick a single Nano Banana model, or add the key.'
-          : 'Add your OpenAI API key in Settings → Thumbnail Designer to use gpt-image-1.',
-      );
       return;
     }
     stopPolling();
@@ -404,30 +388,26 @@ export default function ThumbnailDesignerPage() {
                         );
                       })}
                     </div>
-                    {/* Mode selector — compare (default) or a single image model. */}
+                    {/* Mode selector — which single image model to generate with. */}
                     <div className="space-y-1.5 sm:max-w-md">
-                      <label className="text-xs font-medium text-muted-foreground block">Generation mode</label>
+                      <label className="text-xs font-medium text-muted-foreground block">Image model</label>
                       <Select value={mode} onValueChange={(v) => setMode(v as ThumbnailMode)}>
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {MODE_OPTIONS.map((m) => {
-                            const disabled = !!m.needsOpenAi && !status?.openaiConfigured;
-                            return (
-                              <SelectItem key={m.value} value={m.value} disabled={disabled}>
-                                {m.label}
-                                {disabled ? ' — add OpenAI key in Settings' : ''}
-                              </SelectItem>
-                            );
-                          })}
+                          {MODE_OPTIONS.map((m) => (
+                            <SelectItem key={m.value} value={m.value}>
+                              {m.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <p className="text-[11px] text-muted-foreground">
                         {MODE_OPTIONS.find((m) => m.value === mode)?.hint}
                       </p>
                     </div>
-                    {/* Cost estimate — bigger for compare (it runs the chain twice). */}
+                    {/* Cost estimate — scales with how many thumbnails you pick. */}
                     {picks.length > 0 && (
                       <CostHint mode={mode} picks={picks.length} />
                     )}
@@ -435,7 +415,6 @@ export default function ThumbnailDesignerPage() {
                       <Button onClick={onGenerate} disabled={generating || picks.length === 0} className="w-full sm:w-auto">
                         {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                         Generate {picks.length > 0 ? `${picks.length} ` : ''}thumbnail{picks.length === 1 ? '' : 's'}
-                        {mode === 'compare' ? ' · both models' : ''}
                       </Button>
                     </div>
                   </div>
@@ -463,27 +442,16 @@ export default function ThumbnailDesignerPage() {
 }
 
 /**
- * Rough cost/time hint. Each thumbnail runs a multi-step chain; compare runs the
- * whole chain TWICE (Pro at 4K + OpenAI), so it's the pricier path — call that out
- * with a bigger, clearer estimate (Pro at 4K ≈ $0.24/image across several steps).
+ * Rough cost/time hint. Each thumbnail runs a multi-step chain on the chosen
+ * model — Nano Banana Pro at 4K is ≈ $0.24/image across several edits; Flash is
+ * cheaper. Cost and time scale with how many thumbnails you pick.
  */
 function CostHint({ mode, picks }: { mode: ThumbnailMode; picks: number }) {
-  if (mode === 'compare') {
-    return (
-      <div className="rounded-lg border border-border bg-muted/40 p-3 text-[11px] text-muted-foreground space-y-1">
-        <p className="text-xs font-medium text-foreground">Heads up — compare runs each thumbnail twice</p>
-        <p>
-          {picks} thumbnail{picks === 1 ? '' : 's'} × 2 models (Nano Banana Pro @ 4K + OpenAI) ={' '}
-          <span className="font-medium text-foreground">{picks * 2} full chains</span>. Pro at 4K is ≈ $0.24/image and the
-          chain runs several edits each, so expect this to take longer and cost noticeably more than a single model.
-          You'll see both results side by side and pick the better one.
-        </p>
-      </div>
-    );
-  }
+  const model = mode === 'gemini-pro' ? 'Nano Banana Pro at 4K (≈ $0.24/image)' : 'Nano Banana Flash (cheaper)';
   return (
     <p className="text-[11px] text-muted-foreground">
-      Each selected thumbnail is recreated separately on one model — time and cost scale with the number you pick.
+      Each of your {picks} selected thumbnail{picks === 1 ? '' : 's'} is recreated on {model} — the chain runs several
+      edits each, so time and cost scale with the number you pick.
     </p>
   );
 }
@@ -738,10 +706,7 @@ function Results({
 
 function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
   const failed = variant.status === 'error';
-  const compare = variant.results.length > 1;
-  // Original + N generated columns. With one model that's the classic 2-up; with
-  // two it's a 3-up (Original · Pro · OpenAI) so they sit side by side to compare.
-  const gridCols = compare ? 'md:grid-cols-3' : 'md:grid-cols-2';
+  // Original + the single generated result, side by side (a classic 2-up).
   return (
     <div className="rounded-lg border border-border p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -757,12 +722,9 @@ function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
             <AlertTriangle className="w-3 h-3" /> Failed
           </Badge>
         )}
-        {compare && (
-          <span className="text-[11px] text-muted-foreground">Pick the better of the two below.</span>
-        )}
       </div>
 
-      <div className={`grid ${gridCols} gap-4`}>
+      <div className="grid md:grid-cols-2 gap-4">
         <figure className="space-y-1.5">
           <figcaption className="text-xs text-muted-foreground">Original</figcaption>
           <div className="aspect-video rounded-md overflow-hidden bg-muted">

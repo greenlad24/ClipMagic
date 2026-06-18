@@ -85,15 +85,14 @@ export function phasePercent(phase: Phase, frac: number): number {
 }
 
 /**
- * One provider sub-run within a variant. In the "compare" default a variant has
- * TWO of these (Nano Banana Pro @ 4K and OpenAI @ its max), each rendered side by
- * side with its OWN progress + download; in a single-provider mode a variant has
- * exactly ONE. Sub-runs are isolated: one failing doesn't stop the other.
+ * One provider sub-run within a variant. A variant now has exactly ONE of these
+ * (the single chosen provider), carrying its OWN progress + download. The list
+ * shape is kept (length 1) so the rest of the job model is unchanged.
  */
 export interface ProviderResult {
   /** Which provider drove this sub-run. */
   provider: string;
-  /** Display label for the column ("Nano Banana Pro · 4K", "OpenAI · 1536×1024"). */
+  /** Display label for the result ("Nano Banana Pro · 4K", "Nano Banana (Flash)"). */
   label: string;
   status: VariantStatus;
   /** Current step sentence for THIS sub-run. */
@@ -107,19 +106,18 @@ export interface ProviderResult {
 }
 
 /**
- * One generated variant (one selected pick). Carries per-provider `results` (the
- * side-by-side sub-runs). The top-level status/stepLabel/percent/outputUrl/error
- * are DERIVED aggregates across the results — `percent` is their mean, `status`
- * is running while any sub-run is in flight, then "done" if any succeeded else
- * "error", and `outputUrl`/`error` surface the first success / first failure —
- * so callers that only need a single summary still work.
+ * One generated variant (one selected pick). Carries its `results` (a single
+ * provider sub-run). The top-level status/stepLabel/percent/outputUrl/error are
+ * DERIVED aggregates over that result — `percent` is its mean, `status` tracks
+ * it, and `outputUrl`/`error` surface its success / failure — so callers that
+ * only need a single summary still work.
  */
 export interface JobVariant {
   index: number;
   videoId: string;
   sourceThumbnailUrl: string;
   expression: string;
-  /** The per-provider sub-runs (1 in single mode, 2 in compare mode). */
+  /** The provider sub-run(s) — always exactly one now. */
   results: ProviderResult[];
   status: VariantStatus;
   /** Current step sentence ("Changing outfit", "Upscaling to 1080p", …). */
@@ -165,9 +163,9 @@ const jobs = new Map<string, ThumbnailJob>();
 
 /**
  * Create a job seeded with one queued variant per pick. Each seed lists the
- * provider sub-runs to render side by side (one entry in single mode, two in the
- * "compare" default). `providers` defaults to a single empty-label sub-run so old
- * callers/tests that don't pass providers still get a coherent one-column variant.
+ * provider sub-run to render (always one entry — the single chosen provider).
+ * `providers` defaults to a single empty-label sub-run so old callers/tests that
+ * don't pass providers still get a coherent one-result variant.
  */
 export function createJob(
   seeds: Array<{

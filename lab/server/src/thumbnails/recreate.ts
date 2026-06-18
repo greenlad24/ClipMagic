@@ -66,7 +66,7 @@ export const MAX_STEPS = 8;
  * identity replacement, NOT a "fix drift" nudge.) Exported so tests can assert it.
  */
 export const STEP1_PROMPT =
-  "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their positions — but the person is now the man from the second image.";
+  "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. His BODY must fit his head naturally: give him a medium build with a slightly fit, average physique that matches his face — a seamless neck join, matching skin tone, and realistic head-to-body proportions. The whole person must read as ONE real man (the man in the SECOND image), NOT a head pasted onto a mismatched or oversized body. Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their positions — but the person is now the man from the second image.";
 /**
  * Alias for STEP1_PROMPT, named for its NEW role: the final full identity swap.
  * Same string, exported under both names so call sites and tests read clearly.
@@ -133,9 +133,9 @@ export interface RecreateInput {
    */
   provider?: ImageProvider;
   /**
-   * Optional per-call resolution hint threaded to the provider (the "compare"
-   * default drives gemini-pro at 4K / openai at its max). Ignored by gemini-flash.
-   * Omit to use the provider's default size.
+   * Optional per-call resolution hint threaded to gemini-pro
+   * (generationConfig.imageConfig.imageSize). Omit to use the provider's default
+   * size (gemini-pro 4K). Ignored by gemini-flash.
    */
   imageSize?: string;
   /** Optional live progress sink (phase label + phase-weighted percent). */

@@ -156,13 +156,12 @@ export const deleteThumbnailCharacter =
 export type ThumbnailExpression = 'smile' | 'surprise' | 'secret' | 'calm';
 export type ThumbnailVideoType = 'Tutorial' | 'Viral' | 'Secret' | 'Review';
 /** Image-edit provider that drives the recreation chain. */
-export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash' | 'openai';
+export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash';
 /**
- * Generation mode. 'compare' (default) generates each pick through BOTH top
- * providers (Nano Banana Pro @ 4K + OpenAI @ its max) side by side; a single
- * provider id runs just that one.
+ * Generation mode = the single image provider. Default 'gemini-pro' (Nano Banana
+ * Pro @ 4K, sharpest); 'gemini-flash' is the cheaper alternative.
  */
-export type ThumbnailMode = 'compare' | ThumbnailProvider;
+export type ThumbnailMode = ThumbnailProvider;
 export type ThumbnailCharacterState = {
   expression: ThumbnailExpression;
   uploaded: boolean;
@@ -171,7 +170,6 @@ export type ThumbnailCharacterState = {
 };
 export type ThumbnailStatusOutputType = {
   geminiConfigured: boolean;
-  openaiConfigured: boolean;
   youtubeConfigured: boolean;
   characters: ThumbnailCharacterState[];
   uploadedExpressions: ThumbnailExpression[];
@@ -205,26 +203,26 @@ export type ThumbnailJobVariant = {
   videoId: string;
   sourceThumbnailUrl: string;
   expression: ThumbnailExpression;
-  /** Per-provider sub-runs (1 in single mode, 2 in compare mode) — shown side by side. */
+  /** The provider sub-run(s) — always exactly one now. */
   results: ThumbnailProviderResult[];
-  /** Aggregate status across the sub-runs (running until all terminal). */
+  /** Aggregate status across the sub-run (running until terminal). */
   status: 'queued' | 'running' | 'done' | 'error';
   /** Current step sentence ("Changing outfit", "Upscaling to 1080p", …). */
   stepLabel: string;
-  /** 0..100, monotonic per variant (mean of the sub-runs). */
+  /** 0..100, monotonic per variant. */
   percent: number;
-  /** First successful sub-run's URL (a one-glance summary). */
+  /** The successful sub-run's URL. */
   outputUrl?: string;
-  /** Present only when EVERY sub-run errored. */
+  /** Present when the sub-run errored. */
   error?: string;
 };
 /**
- * One provider sub-run within a variant. In compare mode a variant has TWO of
- * these (Nano Banana Pro + OpenAI), rendered side by side; in single mode, ONE.
+ * One provider sub-run within a variant — a variant now has exactly ONE (the
+ * single chosen provider).
  */
 export type ThumbnailProviderResult = {
   provider: string;
-  /** Column label ("Nano Banana Pro · 4K", "OpenAI · 1536×1024"). */
+  /** Result label ("Nano Banana Pro · 4K", "Nano Banana (Flash)"). */
   label: string;
   status: 'queued' | 'running' | 'done' | 'error';
   stepLabel: string;

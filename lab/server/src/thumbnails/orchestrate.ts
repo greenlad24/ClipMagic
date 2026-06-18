@@ -78,17 +78,16 @@ export interface GenerateInput {
   /** Picked video ids — any subset of the search results (no fixed cap). */
   picks: string[];
   /**
-   * Generation mode. DEFAULT "compare" → every pick runs through BOTH top
-   * providers (Nano Banana Pro @ 4K + OpenAI @ its max) side by side; a single
-   * provider id → one sub-run on that provider. Falls back to the legacy
-   * `provider` field, then to the compare default.
+   * Generation mode = a single image provider. DEFAULT "gemini-pro" (Nano Banana
+   * Pro @ 4K, the sharpest option); "gemini-flash" is the cheaper alternative.
+   * Falls back to the legacy `provider` field, then to the default.
    */
   mode?: GenerationMode;
   /** @deprecated Back-compat single-provider selector; prefer `mode`. */
   provider?: ImageProvider;
 }
 
-/** Resolve the effective mode from the input (mode → provider → compare). */
+/** Resolve the effective mode from the input (mode → provider → default). */
 function effectiveMode(input: GenerateInput): GenerationMode {
   return input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE;
 }
@@ -117,8 +116,8 @@ export async function generateThumbnailVariants(
       if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
 
       const src = await downloadSourceThumbnail(videoId, download);
-      // The legacy (non-job) path returns ONE outputUrl per pick, so it runs a
-      // single provider: the mode's first sub-run (compare → Nano Banana Pro @ 4K).
+      // One outputUrl per pick: run the mode's single provider sub-run
+      // (default → Nano Banana Pro @ 4K).
       const run = providersForMode(effectiveMode(input))[0];
       const result = await recreateThumbnail({
         sourceBytes: src.bytes,
@@ -167,12 +166,12 @@ export function startThumbnailJob(
 ): ThumbnailJob {
   const available = uploadedExpressions();
   const expressions = expressionsForVariants(input.videoType, input.picks.length, available);
-  // The provider sub-runs each pick fans out to (1 in single mode, 2 in compare).
+  // The single provider sub-run each pick fans out to (always exactly one now).
   const runs = providersForMode(effectiveMode(input));
-  // Seed one queued variant per pick, each carrying its side-by-side provider
-  // columns. The source URL starts as the always-exists hqdefault so the UI shows
-  // the original immediately; it's upgraded to the actual downloaded URL (maxres
-  // when available) once the fetch phase runs.
+  // Seed one queued variant per pick, carrying its single provider result. The
+  // source URL starts as the always-exists hqdefault so the UI shows the original
+  // immediately; it's upgraded to the actual downloaded URL (maxres when
+  // available) once the fetch phase runs.
   const job = createJob(
     input.picks.map((videoId, i) => ({
       videoId,
@@ -187,11 +186,10 @@ export function startThumbnailJob(
 }
 
 /**
- * Drive a generation job to completion. Sequential (one pick at a time, and one
- * provider sub-run at a time within a pick) for clear, coherent progress.
- * Per-pick AND per-provider try/catch: one pick's failure leaves an error variant
- * and the rest still finish; one provider's failure within a pick leaves an error
- * column and the SIBLING provider still produces its result. Never throws.
+ * Drive a generation job to completion. Sequential (one pick at a time) for clear,
+ * coherent progress. Per-pick AND per-provider try/catch: one pick's pre-render
+ * failure leaves an error variant and the rest still finish; the single provider
+ * sub-run's failure leaves that variant's result errored. Never throws.
  */
 export async function runThumbnailJob(
   job: ThumbnailJob,

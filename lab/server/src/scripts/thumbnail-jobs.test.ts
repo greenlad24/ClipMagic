@@ -212,11 +212,11 @@ async function main() {
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 
-  // ── compare mode: TWO sub-runs per pick, side by side, per-provider isolation ─
-  await check("compare mode (default) runs the chain ONCE PER PROVIDER and exposes BOTH results per pick", async () => {
+  // ── default (single Nano Banana Pro @ 4K): ONE sub-run per pick ──────────────
+  await check("the DEFAULT mode seeds a single Nano Banana Pro · 4K result and runs the chain ONCE per pick", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
-    // Count how many times the chain's finalize runs — compare ⇒ 2 per pick.
+    // Count how many times the chain's finalize runs — single ⇒ 1 per pick.
     let chainRuns = 0;
     const deps = {
       ...makeDeps(),
@@ -225,83 +225,48 @@ async function main() {
         return { outputUrl: `/api/outputs/thumbnails/run${chainRuns}.png`, file: "/x", steps };
       },
     };
-    // No mode passed → the compare DEFAULT.
+    // No mode passed → the DEFAULT (single gemini-pro @ 4K).
     const job = orchestrate.startThumbnailJob(
       { keyword: "k", videoType: "Tutorial", picks: ["A"] },
       fakeDownload,
       deps,
     );
-    // Seeded with the two side-by-side provider columns.
-    assert.equal(job.variants[0].results.length, 2, "compare seeds two provider columns");
-    assert.deepEqual(job.variants[0].results.map((r) => r.provider), ["gemini-pro", "openai"]);
+    // Seeded with exactly ONE provider result — Nano Banana Pro at 4K.
+    assert.equal(job.variants[0].results.length, 1, "default seeds a single provider result");
+    assert.equal(job.variants[0].results[0].provider, "gemini-pro");
     assert.match(job.variants[0].results[0].label, /Nano Banana Pro · 4K/);
-    assert.match(job.variants[0].results[1].label, /OpenAI · 1536×1024/);
     await waitUntil(() => job.done);
-    assert.equal(chainRuns, 2, "the full chain ran once per provider (2 sub-runs for 1 pick)");
-    // BOTH provider results are present, each with its own outputUrl.
+    assert.equal(chainRuns, 1, "the full chain ran once (single sub-run for 1 pick)");
     const rs = job.variants[0].results;
-    assert.ok(rs.every((r) => r.status === "done" && r.outputUrl), "both providers produced a result");
-    assert.notEqual(rs[0].outputUrl, rs[1].outputUrl, "each sub-run has its own image");
+    assert.ok(rs[0].status === "done" && rs[0].outputUrl, "the single provider produced a result");
+    assert.equal(job.variants[0].outputUrl, rs[0].outputUrl, "the variant summary surfaces that result");
     assert.equal(job.percent, 100, "the job completes");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 
-  await check("compare mode: one provider failing still shows the OTHER provider's result; job completes", async () => {
-    jobs._resetJobsForTest();
-    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
-    // Fail the FIRST sub-run (gemini-pro) only; the second (openai) succeeds.
-    let run = 0;
-    const deps = {
-      ...makeDeps(),
-      finalize: async (_c: any, steps: any) => {
-        run++;
-        if (run === 1) throw new Error("provider-A blew up");
-        return { outputUrl: "/api/outputs/thumbnails/b.png", file: "/x", steps };
-      },
-    };
-    const job = orchestrate.startThumbnailJob(
-      { keyword: "k", videoType: "Tutorial", picks: ["A"] }, // compare default
-      fakeDownload,
-      deps,
-    );
-    await waitUntil(() => job.done);
-    const rs = job.variants[0].results;
-    assert.equal(rs[0].provider, "gemini-pro");
-    assert.equal(rs[0].status, "error", "the failed provider's column is an error");
-    assert.match(rs[0].error ?? "", /provider-A blew up/);
-    assert.equal(rs[0].outputUrl, undefined, "the failed column has no image");
-    assert.equal(rs[1].provider, "openai");
-    assert.equal(rs[1].status, "done", "the sibling provider still produced a result");
-    assert.ok(rs[1].outputUrl, "the surviving column has its own download");
-    // Variant aggregate: at least one succeeded → variant is "done" (not error),
-    // its summary outputUrl is the surviving one, and the job completes.
-    assert.equal(job.variants[0].status, "done", "a variant with one good result reads as done");
-    assert.equal(job.variants[0].outputUrl, rs[1].outputUrl);
-    assert.equal(job.variants[0].error, undefined, "one good result clears the variant-level error");
-    assert.equal(job.percent, 100, "the job still reaches 100");
-    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
-  });
-
-  await check("compare mode: BOTH providers failing marks the variant errored but the job still completes", async () => {
+  await check("single-run: the provider failing marks the variant errored but the job still completes", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
     const deps = {
       ...makeDeps(),
       finalize: async () => {
-        throw new Error("both providers down");
+        throw new Error("provider blew up");
       },
     };
     const job = orchestrate.startThumbnailJob(
-      { keyword: "k", videoType: "Tutorial", picks: ["A"] },
+      { keyword: "k", videoType: "Tutorial", picks: ["A"] }, // default single mode
       fakeDownload,
       deps,
     );
     await waitUntil(() => job.done);
     const rs = job.variants[0].results;
-    assert.ok(rs.every((r) => r.status === "error"), "both columns errored");
-    assert.equal(job.variants[0].status, "error", "the variant reads as error when every sub-run failed");
-    assert.match(job.variants[0].error ?? "", /both providers down/);
-    assert.equal(job.percent, 100, "an all-errored job still completes at 100");
+    assert.equal(rs.length, 1, "a single provider result");
+    assert.equal(rs[0].status, "error", "the failed provider's result is an error");
+    assert.match(rs[0].error ?? "", /provider blew up/);
+    assert.equal(rs[0].outputUrl, undefined, "the failed result has no image");
+    assert.equal(job.variants[0].status, "error", "the variant reads as error when its sub-run failed");
+    assert.match(job.variants[0].error ?? "", /provider blew up/);
+    assert.equal(job.percent, 100, "an errored job still completes at 100");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 
