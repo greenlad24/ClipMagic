@@ -143,6 +143,9 @@ export const generateThumbnails =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, GenerateThumbnailsOutputType>("generateThumbnails");
 export const startThumbnailGeneration =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, { jobId: string }>("startThumbnailGeneration");
+/** Start the parallel CONTRARIAN ORIGINALS workflow (3 originals from bg + character + statement). */
+export const startContrarianGeneration =
+  endpoint<{ keyword: string; mode?: ThumbnailMode }, { jobId: string }>("startContrarianGeneration");
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
 export const listThumbnailCharacters =

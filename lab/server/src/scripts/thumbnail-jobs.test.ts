@@ -397,6 +397,54 @@ async function main() {
     assert.equal(job.percent, 100, "an all-errored job still completes at 100");
   });
 
+  // ── contrarian originals (the parallel workflow) ─────────────────────────────
+  await check("startContrarianJob makes 3 originals from background + character + statement", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    bgs.saveBackground("Studio", onePx);
+    const instructions: string[] = [];
+    const imageCounts: number[] = [];
+    const recreateDeps = {
+      editImage: async (opts: any) => {
+        instructions.push(opts.instruction);
+        imageCounts.push(opts.images.length);
+        return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+      },
+      finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/c.png", file: "/x", steps }),
+    };
+    // Inject a statement writer so no AI/network is touched.
+    const writeStatements = async (_k: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ text: `STOP DOING THIS ${i}`, emphasis: "STOP" }));
+    const job = orchestrate.startContrarianJob(
+      { keyword: "video ads", mode: "gemini-pro" },
+      recreateDeps as any,
+      writeStatements,
+    );
+    await waitUntil(() => job.done);
+    assert.equal(job.variants.length, 3, "always 3 originals");
+    assert.ok(job.variants.every((v) => v.status === "done" && v.outputUrl), "each original lands");
+    assert.equal(instructions.length, 3, "one compose render per original");
+    assert.ok(imageCounts.every((c) => c === 2), "each compose is fed [background, character]");
+    assert.ok(instructions.every((s) => /SECOND image/i.test(s) && /full background/i.test(s)), "uses both inputs");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+    bgs.deleteBackground("studio");
+  });
+
+  await check("contrarian job errors cleanly when no background is uploaded", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    for (const b of bgs.listBackgrounds()) bgs.deleteBackground(b.id);
+    const job = orchestrate.startContrarianJob(
+      { keyword: "k", mode: "gemini-pro" },
+      { editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" }) } as any,
+      async (_k, n) => Array.from({ length: n }, () => ({ text: "STOP NOW", emphasis: "STOP" })),
+    );
+    await waitUntil(() => job.done);
+    assert.ok(job.variants.every((v) => v.status === "error"), "all variants error without a background");
+    assert.match(job.variants[0].error ?? "", /background/i);
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
   // ── snapshot isolation ───────────────────────────────────────────────────────
   await check("snapshot returns an isolated copy (later ticks don't mutate it)", () => {
     jobs._resetJobsForTest();

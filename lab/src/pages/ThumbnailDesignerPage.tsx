@@ -5,6 +5,7 @@ import {
   analyzeThumbnailScript,
   searchThumbnails,
   startThumbnailGeneration,
+  startContrarianGeneration,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -103,14 +104,50 @@ export default function ThumbnailDesignerPage() {
   const [mode, setMode] = useState<ThumbnailMode>('gemini-pro');
   const [generating, setGenerating] = useState(false);
   const [job, setJob] = useState<ThumbnailJobStatus | null>(null);
+  // Contrarian originals run IN PARALLEL with the recreation job, polled separately.
+  const [contrarianJob, setContrarianJob] = useState<ThumbnailJobStatus | null>(null);
 
-  // Poll lifecycle: a single interval that we always clear on done/unmount/restart.
+  // Poll lifecycle: one interval per job, always cleared on done/unmount/restart.
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const contrarianPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const stopPolling = () => {
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
     }
+    if (contrarianPollRef.current) {
+      clearInterval(contrarianPollRef.current);
+      contrarianPollRef.current = null;
+    }
+  };
+
+  /** Poll a job id until done, pushing snapshots into setSnap. */
+  const pollJob = (
+    jobId: string,
+    ref: React.MutableRefObject<ReturnType<typeof setInterval> | null>,
+    setSnap: (s: ThumbnailJobStatus | null) => void,
+    onDone?: (s: ThumbnailJobStatus) => void,
+  ) => {
+    const tick = async () => {
+      try {
+        const snap = await thumbnailJobStatus({ jobId });
+        setSnap(snap);
+        if (snap.done) {
+          if (ref.current) {
+            clearInterval(ref.current);
+            ref.current = null;
+          }
+          onDone?.(snap);
+        }
+      } catch {
+        if (ref.current) {
+          clearInterval(ref.current);
+          ref.current = null;
+        }
+      }
+    };
+    ref.current = setInterval(() => void tick(), 1200);
+    void tick();
   };
 
   const loadStatus = () =>
@@ -185,6 +222,8 @@ export default function ThumbnailDesignerPage() {
   // Start generation, then POLL the job for live progress until it's done.
   // Each thumbnail's finished image lands the moment that variant completes, so
   // the results fill in one by one instead of all at the end.
+  const hasBackground = (status?.uploadedBackgrounds?.length ?? 0) > 0;
+
   const onGenerate = async () => {
     if (picks.length === 0) {
       toast.info('Pick at least one thumbnail to recreate.');
@@ -193,35 +232,28 @@ export default function ThumbnailDesignerPage() {
     stopPolling();
     setGenerating(true);
     setJob(null);
+    setContrarianJob(null);
+
+    // Kick off the CONTRARIAN ORIGINALS workflow IN PARALLEL (needs a background +
+    // character). It polls independently and shows alongside the recreations.
+    if (hasBackground && hasCharacter && keyword.trim()) {
+      startContrarianGeneration({ keyword: keyword.trim(), mode })
+        .then(({ jobId }) => pollJob(jobId, contrarianPollRef, setContrarianJob))
+        .catch((e) => toast.error(e instanceof Error ? e.message : 'Contrarian originals failed to start'));
+    }
+
     try {
       const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks, mode });
-
-      const tick = async () => {
-        try {
-          const snap = await thumbnailJobStatus({ jobId });
-          setJob(snap);
-          if (snap.done) {
-            stopPolling();
-            setGenerating(false);
-            if (snap.error) {
-              toast.error(snap.error);
-              return;
-            }
-            const ok = snap.variants.filter((v) => v.outputUrl).length;
-            if (ok === 0) toast.error('No thumbnails could be generated — see the per-item errors below.');
-            else toast.success(`Generated ${ok} thumbnail${ok === 1 ? '' : 's'}.`);
-          }
-        } catch (e) {
-          // A transient poll failure shouldn't kill the run; surface only if fatal.
-          stopPolling();
-          setGenerating(false);
-          toast.error(e instanceof Error ? e.message : 'Lost track of the generation job.');
+      pollJob(jobId, pollRef, setJob, (snap) => {
+        setGenerating(false);
+        if (snap.error) {
+          toast.error(snap.error);
+          return;
         }
-      };
-
-      // Poll every ~1.2s; run one immediately so the first frame isn't blank.
-      pollRef.current = setInterval(() => void tick(), 1200);
-      void tick();
+        const ok = snap.variants.filter((v) => v.outputUrl).length;
+        if (ok === 0) toast.error('No thumbnails could be generated — see the per-item errors below.');
+        else toast.success(`Generated ${ok} thumbnail${ok === 1 ? '' : 's'}.`);
+      });
     } catch (e) {
       setGenerating(false);
       toast.error(e instanceof Error ? e.message : 'Thumbnail generation failed');
@@ -239,7 +271,7 @@ export default function ThumbnailDesignerPage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight text-foreground">Thumbnail Designer</h1>
             <p className="text-muted-foreground mt-0.5 text-sm">
-              Paste your script and recreate top-performing YouTube thumbnails with your own character.
+              Paste your script and recreate top-performing YouTube thumbnails with your own character — and, when you've uploaded backgrounds, also get 3 original "contrarian statement" thumbnails in parallel.
             </p>
           </div>
         </div>
@@ -427,6 +459,16 @@ export default function ThumbnailDesignerPage() {
 
             {/* Results — live progress while generating, then the finished grid */}
             {(generating || job) && <Results generating={generating} job={job} />}
+
+            {/* Contrarian originals — the parallel workflow's 3 from-scratch thumbnails */}
+            {contrarianJob && (
+              <Results
+                generating={!contrarianJob.done}
+                job={contrarianJob}
+                title="Contrarian originals"
+                subtitle="3 original thumbnails built from your background + character + a bold contrarian statement (no money claims)."
+              />
+            )}
           </>
         )}
       </div>
@@ -817,9 +859,13 @@ function BackgroundLibrary({
 function Results({
   generating,
   job,
+  title = 'Results',
+  subtitle = 'Your recreated 1920×1080 thumbnails — preview and download.',
 }: {
   generating: boolean;
   job: ThumbnailJobStatus | null;
+  title?: string;
+  subtitle?: string;
 }) {
   const variants = job?.variants ?? [];
   const doneCount = variants.filter((v) => v.status === 'done' || v.status === 'error').length;
@@ -828,7 +874,7 @@ function Results({
 
   return (
     <section className="rounded-xl border border-border bg-card p-5 space-y-5">
-      <SectionHeader icon={<Sparkles className="w-4 h-4" />} title="Results" subtitle="Your recreated 1920×1080 thumbnails — preview and download." />
+      <SectionHeader icon={<Sparkles className="w-4 h-4" />} title={title} subtitle={subtitle} />
 
       {/* Overall progress bar — always shown once a job exists, with the % number. */}
       {(active || job) && (
@@ -871,7 +917,9 @@ function Results({
 
 function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
   const failed = variant.status === 'error';
-  // Original + the single generated result, side by side (a classic 2-up).
+  // Recreations show Original + generated (2-up); contrarian originals have no
+  // source thumbnail, so the generated image stands alone.
+  const hasOriginal = !!variant.sourceThumbnailUrl;
   return (
     <div className="rounded-lg border border-border p-4 space-y-3">
       <div className="flex items-center gap-2 flex-wrap">
@@ -889,13 +937,15 @@ function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
         )}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <figure className="space-y-1.5">
-          <figcaption className="text-xs text-muted-foreground">Original</figcaption>
-          <div className="aspect-video rounded-md overflow-hidden bg-muted">
-            <img src={variant.sourceThumbnailUrl} alt="Original thumbnail" className="w-full h-full object-cover" />
-          </div>
-        </figure>
+      <div className={`grid gap-4 ${hasOriginal ? 'md:grid-cols-2' : 'md:grid-cols-1'}`}>
+        {hasOriginal && (
+          <figure className="space-y-1.5">
+            <figcaption className="text-xs text-muted-foreground">Original</figcaption>
+            <div className="aspect-video rounded-md overflow-hidden bg-muted">
+              <img src={variant.sourceThumbnailUrl} alt="Original thumbnail" className="w-full h-full object-cover" />
+            </div>
+          </figure>
+        )}
         {variant.results.map((r, i) => (
           <ResultColumn key={`${r.provider}-${i}`} variantIndex={variant.index} result={r} />
         ))}

@@ -522,6 +522,70 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
 }
 
 /**
+ * Compose a CONTRARIAN ORIGINAL thumbnail (the second workflow): a single render
+ * from [background, character] using the supplied composition instruction, then
+ * the same finalize/crop as the recreation chain. Element-light (background +
+ * person + short text), so one pass is ideal — no multi-render degradation.
+ * Resilient + injectable for tests.
+ */
+export async function composeContrarianThumbnail(
+  input: {
+    backgroundBytes: Buffer;
+    backgroundMime: string;
+    characterBytes: Buffer;
+    /** The full composition instruction (see contrarian.buildContrarianPrompt). */
+    instruction: string;
+    provider?: ImageProvider;
+    imageSize?: string;
+    onProgress?: ProgressFn;
+  },
+  deps: { editImage?: EditFn; finalize?: (current: EditImage, steps: ChainStep[]) => Promise<RecreateResult>; upscale?: UpscaleDeps } = {},
+): Promise<RecreateResult> {
+  const provider = input.provider ?? DEFAULT_IMAGE_PROVIDER;
+  const editImage =
+    deps.editImage ??
+    ((opts: { instruction: string; images: EditImage[] }) =>
+      editImageWith(provider, { ...opts, imageSize: input.imageSize }));
+  const finalizeFn = deps.finalize ?? ((current, steps) => finalize(current, steps, deps.upscale));
+  const report = (stepLabel: string, percent: number) => {
+    try {
+      input.onProgress?.({ stepLabel, percent });
+    } catch {
+      /* best-effort */
+    }
+  };
+
+  const steps: ChainStep[] = [];
+  const background: EditImage = { data: input.backgroundBytes, mimeType: input.backgroundMime || "image/png" };
+  const character: EditImage = { data: input.characterBytes, mimeType: "image/png" };
+  // Carry the composed image forward; start as the background so a failed render
+  // still finalizes into a (background-only) image rather than crashing.
+  let current: EditImage = background;
+
+  report(PHASE_LABEL.swap, phasePercent("swap", 0));
+  const sent = withWidescreen(input.instruction);
+  try {
+    const res = await editImage({ instruction: sent, images: [background, character] });
+    current = { data: res.bytes, mimeType: res.mimeType };
+    steps.push({ id: "compose", label: "Compose original", instruction: sent, applied: true });
+  } catch (e) {
+    steps.push({
+      id: "compose",
+      label: "Compose original",
+      instruction: sent,
+      applied: false,
+      note: e instanceof Error ? e.message : String(e),
+    });
+  }
+  report(PHASE_LABEL.swap, phasePercent("swap", 1));
+
+  report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
+  const result = await finalizeFn(current, steps);
+  report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
+  return result;
+}
+
+/**
  * Finalize: write `current` to disk, probe dims, strip any letterbox/pillarbox
  * bars + centre-crop to a clean, NATIVE-AWARE 16:9 (see crop.outputDims — a 4K
  * render stays 4K, capped at 4K, floored at 1080p) and deliver a high-quality

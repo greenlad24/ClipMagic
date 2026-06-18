@@ -74,7 +74,10 @@ export type CallPurpose =
   | "thumbnail-expression-director"
   // Thumbnail Designer: vision "background-director" pass — given the source + the
   // uploaded candidate backgrounds, decides whether one clearly fits (else none).
-  | "thumbnail-background-director";
+  | "thumbnail-background-director"
+  // Thumbnail Designer: text pass that writes short CONTRARIAN statements for the
+  // "contrarian originals" workflow (no money claims; ≤7 words).
+  | "thumbnail-contrarian-writer";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

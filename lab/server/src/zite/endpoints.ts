@@ -76,7 +76,7 @@ import {
   deleteBackground,
   uploadedBackgrounds,
 } from "../thumbnails/backgrounds.js";
-import { generateThumbnailVariants, startThumbnailJob } from "../thumbnails/orchestrate.js";
+import { generateThumbnailVariants, startThumbnailJob, startContrarianJob } from "../thumbnails/orchestrate.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
@@ -2363,6 +2363,23 @@ const startThumbnailGeneration: Handler = async (input) => {
   return { jobId: job.id };
 };
 
+/**
+ * Start the CONTRARIAN ORIGINALS workflow (the parallel second workflow): build 3
+ * original thumbnails from the keyword + uploaded background(s) + character, with
+ * a short styled contrarian statement (no money claims). Returns a jobId polled
+ * with the SAME `thumbnailJobStatus` endpoint, so it runs in parallel with a
+ * recreation job.
+ */
+const startContrarianGeneration: Handler = async (input) => {
+  const keyword = String(input?.keyword ?? "").trim();
+  if (!keyword) throw new ZiteError({ code: "BAD_REQUEST", message: "A keyword is required to write contrarian statements." });
+  const job = startContrarianJob({
+    keyword,
+    mode: coerceMode(input?.mode ?? input?.provider),
+  });
+  return { jobId: job.id };
+};
+
 /** Poll a generation job for its live progress snapshot (overall % + variants). */
 const thumbnailJobStatus: Handler = async (input) => {
   const jobId: string = input?.jobId;
@@ -2525,6 +2542,7 @@ export const HANDLERS: Record<string, Handler> = {
   analyzeThumbnailScript,
   searchThumbnails,
   startThumbnailGeneration,
+  startContrarianGeneration,
   thumbnailJobStatus,
   generateThumbnails,
   listThumbnailCharacters,

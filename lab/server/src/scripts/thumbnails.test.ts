@@ -1070,6 +1070,53 @@ async function main() {
     assert.match(txt, /busy/i, "also asks for the element-heavy (busy) flag");
   });
 
+  // ── contrarian originals (the parallel workflow) ────────────────────────────
+  const contrarian = await import("../thumbnails/contrarian.js");
+  await check("hasMoneyClaim flags $ / amounts / money words, allows clean statements", () => {
+    assert.ok(contrarian.hasMoneyClaim("$40M At 20"));
+    assert.ok(contrarian.hasMoneyClaim("Make 300k fast"));
+    assert.ok(contrarian.hasMoneyClaim("Grow your revenue"));
+    assert.ok(!contrarian.hasMoneyClaim("DON'T RUN VIDEO ADS"));
+    assert.ok(!contrarian.hasMoneyClaim("STOP POSTING DAILY"));
+  });
+
+  await check("normalizeContrarianStatements drops money + over-long, fixes emphasis", () => {
+    const out = contrarian.normalizeContrarianStatements({
+      statements: [
+        { text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" }, // keep
+        { text: "Make $40M At 20", emphasis: "$40M" }, // DROP (money)
+        { text: "this statement has way too many words to ever fit", emphasis: "words" }, // DROP (>7)
+        { text: "STOP POSTING DAILY", emphasis: "elsewhere" }, // emphasis not in text → last word
+      ],
+    });
+    assert.equal(out.length, 2, "money + over-long dropped");
+    assert.deepEqual(out[0], { text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" });
+    assert.equal(out[1].text, "STOP POSTING DAILY");
+    assert.equal(out[1].emphasis, "DAILY", "bad emphasis falls back to the last word");
+  });
+
+  await check("padContrarianStatements always reaches the requested count (money-free)", () => {
+    const padded = contrarian.padContrarianStatements([{ text: "STOP NOW", emphasis: "STOP" }], 3);
+    assert.equal(padded.length, 3);
+    assert.ok(padded.every((s) => !contrarian.hasMoneyClaim(s.text)), "fallbacks carry no money claim");
+  });
+
+  await check("chooseContrarianBackgrounds cycles to always fill the count", () => {
+    assert.deepEqual(contrarian.chooseContrarianBackgrounds(["a", "b", "c", "d"], 3), ["a", "b", "c"]);
+    assert.deepEqual(contrarian.chooseContrarianBackgrounds(["a"], 3), ["a", "a", "a"], "1 bg reused for 3");
+    assert.deepEqual(contrarian.chooseContrarianBackgrounds([], 3), [], "none → empty");
+  });
+
+  await check("buildContrarianPrompt encodes the 3 elements + text style + no-money rule", () => {
+    const p = contrarian.buildContrarianPrompt({ text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" });
+    assert.match(p, /FIRST image as the full background/i, "background element");
+    assert.match(p, /man from the SECOND image/i, "character element");
+    assert.match(p, /DON'T RUN VIDEO ADS/, "the statement text");
+    assert.match(p, /BLURRED BLACK DROP SHADOW.*25% opacity/i, "white drop-shadow style");
+    assert.match(p, /"VIDEO ADS" are WHITE text inside a SOLID RED BOX with slightly ROUNDED/i, "red rounded emphasis box");
+    assert.match(p, /NO money/i, "the no-money rule is stated");
+  });
+
   await check("parseBackgroundChoice: matches an available id, else null", () => {
     assert.equal(artDirector.parseBackgroundChoice({ backgroundId: "Red-Grid" }, ["red-grid", "blue"]), "red-grid");
     assert.equal(artDirector.parseBackgroundChoice({ backgroundId: "none" }, ["red-grid"]), null, "unknown → null");
