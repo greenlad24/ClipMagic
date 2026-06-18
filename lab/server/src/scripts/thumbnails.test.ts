@@ -520,15 +520,32 @@ async function main() {
     const r = upscale.buildRealesrganArgs("in.png", "out.png");
     assert.deepEqual(r.slice(0, 6), ["-i", "in.png", "-o", "out.png", "-s", "4"]);
     assert.equal(r[7], upscale.REALESRGAN_MODEL);
+    // default: plain lanczos (used to downsample a crisp Real-ESRGAN 4x output).
     assert.deepEqual(upscale.buildResampleArgs("in.png", "out.png"), [
       "-y", "-i", "in.png", "-vf", "scale=1920:1080:flags=lanczos", "-frames:v", "1", "out.png",
     ]);
+    // sharpen: the default (CPU) path scales UP, so it adds unsharp.
+    assert.ok(upscale.buildResampleArgs("in.png", "out.png", { sharpen: true }).join(" ").includes("unsharp"));
   });
 
-  await check("upscaleToThumbnail uses Real-ESRGAN when available", async () => {
+  await check("upscaleToThumbnail: default is the fast sharpened ffmpeg path (Real-ESRGAN opt-in/off)", async () => {
+    let ffmpegRuns = 0;
+    const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      // no `enabled` → reads the env default (off); Real-ESRGAN must NOT run even if available.
+      available: () => true,
+      runRealesrgan: async () => { throw new Error("should not be called when disabled"); },
+      runFfmpegFn: async () => { ffmpegRuns++; return {}; },
+    });
+    assert.equal(res.method, "ffmpeg-fallback");
+    assert.equal(ffmpegRuns, 1, "single sharpened ffmpeg scale");
+    assert.match(res.note ?? "", /disabled/i);
+  });
+
+  await check("upscaleToThumbnail uses Real-ESRGAN when enabled + available", async () => {
     let realRan = false;
     let ffmpegRuns = 0;
     const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      enabled: () => true,
       available: () => true,
       runRealesrgan: async () => { realRan = true; },
       runFfmpegFn: async () => { ffmpegRuns++; return {}; },
@@ -538,9 +555,10 @@ async function main() {
     assert.equal(ffmpegRuns, 1, "then one ffmpeg downsample to exactly 1920x1080");
   });
 
-  await check("upscaleToThumbnail falls back to ffmpeg when the binary is unavailable", async () => {
+  await check("upscaleToThumbnail falls back to ffmpeg when enabled but the binary is unavailable", async () => {
     let ffmpegRuns = 0;
     const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      enabled: () => true,
       available: () => false,
       runRealesrgan: async () => { throw new Error("should not be called"); },
       runFfmpegFn: async () => { ffmpegRuns++; return {}; },
@@ -553,6 +571,7 @@ async function main() {
   await check("upscaleToThumbnail falls back to ffmpeg when Real-ESRGAN ERRORS", async () => {
     let ffmpegRuns = 0;
     const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      enabled: () => true,
       available: () => true,
       runRealesrgan: async () => { throw new Error("vulkan exploded"); },
       runFfmpegFn: async () => { ffmpegRuns++; return {}; },

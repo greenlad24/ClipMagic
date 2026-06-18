@@ -30,7 +30,18 @@ export const REALESRGAN_MODEL = process.env.REALESRGAN_MODEL || "realesrgan-x4pl
 /** Scale factor (the model is a 4× model). */
 const REALESRGAN_SCALE = 4;
 /** Hard cap so a stuck upscale can never wedge a generation. */
-const REALESRGAN_TIMEOUT_MS = Number(process.env.REALESRGAN_TIMEOUT_MS || 60_000);
+const REALESRGAN_TIMEOUT_MS = Number(process.env.REALESRGAN_TIMEOUT_MS || 25_000);
+
+/**
+ * Real-ESRGAN (ncnn-vulkan) needs a GPU to be practical — on a CPU-only box it
+ * runs through software Vulkan (lavapipe) and is so slow it effectively HANGS the
+ * generation. So it's OPT-IN: only used when THUMBNAIL_UPSCALER=realesrgan (i.e.
+ * you have a GPU). The default path is a fast, SHARPENED ffmpeg scale — instant,
+ * clean, no hang.
+ */
+export function realesrganEnabled(): boolean {
+  return (process.env.THUMBNAIL_UPSCALER || "").toLowerCase() === "realesrgan";
+}
 
 /** True when the Real-ESRGAN binary is present + executable. Never throws. */
 export function realesrganAvailable(bin: string = REALESRGAN_BIN): boolean {
@@ -43,18 +54,16 @@ export function realesrganAvailable(bin: string = REALESRGAN_BIN): boolean {
 }
 
 /**
- * Build the ffmpeg argv that resamples `input` to EXACTLY 1920×1080 (no crop —
- * the input is already 16:9 from the crop stage; this just resizes). Pure +
- * exported so the exact command is testable.
+ * Build the ffmpeg argv that resamples `input` to EXACTLY 1920×1080. With
+ * `sharpen` (the default fallback path, where we're scaling a small chain image
+ * UP) it adds a mild unsharp so the result isn't soft; without it (downsampling a
+ * crisp Real-ESRGAN 4× image) it's a plain lanczos scale. Pure + exported.
  */
-export function buildResampleArgs(input: string, output: string): string[] {
-  return [
-    "-y",
-    "-i", input,
-    "-vf", `scale=${TARGET_W}:${TARGET_H}:flags=lanczos`,
-    "-frames:v", "1",
-    output,
-  ];
+export function buildResampleArgs(input: string, output: string, opts: { sharpen?: boolean } = {}): string[] {
+  const vf = opts.sharpen
+    ? `scale=${TARGET_W}:${TARGET_H}:flags=lanczos,unsharp=5:5:0.8:5:5:0.0`
+    : `scale=${TARGET_W}:${TARGET_H}:flags=lanczos`;
+  return ["-y", "-i", input, "-vf", vf, "-frames:v", "1", output];
 }
 
 /**
@@ -102,6 +111,8 @@ const defaultRealesrganRunner: RealesrganRunner = (input, output) =>
 
 /** Dependencies for upscaleToThumbnail — all injectable so tests stay offline. */
 export interface UpscaleDeps {
+  /** Whether Real-ESRGAN is enabled (opt-in; default reads THUMBNAIL_UPSCALER). */
+  enabled?: () => boolean;
   /** Whether the Real-ESRGAN binary is usable. */
   available?: () => boolean;
   /** Runs Real-ESRGAN (input → output). */
@@ -131,15 +142,21 @@ export async function upscaleToThumbnail(
   outPath: string,
   deps: UpscaleDeps = {},
 ): Promise<UpscaleResult> {
+  const enabled = deps.enabled ?? realesrganEnabled;
   const available = deps.available ?? (() => realesrganAvailable());
   const runRealesrgan = deps.runRealesrgan ?? defaultRealesrganRunner;
   const runFfmpegFn = deps.runFfmpegFn ?? ((args: string[], d: number) => runFfmpeg(args, d));
 
   const fallback = async (note?: string): Promise<UpscaleResult> => {
-    await runFfmpegFn(buildResampleArgs(inputPath, outPath), 1);
+    // Sharpened scale — this path scales a small chain image UP, so soften-guard it.
+    await runFfmpegFn(buildResampleArgs(inputPath, outPath, { sharpen: true }), 1);
     return { file: outPath, method: "ffmpeg-fallback", note };
   };
 
+  // Real-ESRGAN is opt-in (GPU only). Default → fast sharpened ffmpeg scale.
+  if (!enabled()) {
+    return fallback("Real-ESRGAN disabled (set THUMBNAIL_UPSCALER=realesrgan on a GPU box) — used sharpened ffmpeg scale");
+  }
   if (!available()) return fallback("Real-ESRGAN unavailable — used ffmpeg lanczos scale");
 
   fs.mkdirSync(config.tmpDir, { recursive: true });
