@@ -1,26 +1,76 @@
 /**
- * Character library for the Thumbnail Designer — the user uploads up to four
- * named expression reference images ONCE, and every thumbnail run reuses them.
+ * Character library for the Thumbnail Designer.
+ *
+ * There are FOUR built-in expression slots (smile / surprise / secret / calm)
+ * that map to video types, PLUS any number of USER-DEFINED custom expressions
+ * (e.g. "pointing", "shocked-mouth-open") the creator uploads with their own
+ * label. The art-director picks the best-fit expression — built-in OR custom —
+ * per source thumbnail.
  *
  * Storage: each expression is a single PNG under
- *   <dataDir>/thumbnail-characters/<expression>.png
- * served read-only at /api/thumbnail-characters/<expression>.png (see index.ts).
- * A tiny JSON manifest tracks which expressions exist + when they were updated
- * so the UI can show previews and gate the tool.
+ *   <dataDir>/thumbnail-characters/<id>.png
+ * served read-only at /api/thumbnail-characters/<id>.png (see index.ts).
+ * A JSON manifest tracks id → { label, builtin, updatedAt } so the UI can show
+ * previews + names and the generator can list what's available.
  *
- * The four expressions map to video types in the generator (recreate.ts):
- *   smile → Tutorial/How-to · surprise → Viral/Shock · secret → Secret/Insider
- *   · calm → Review/Calm.
+ * Built-in slots always appear in the library (uploaded or not); custom ones
+ * appear once created (by uploading with a name) and can be deleted entirely.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
 
-export const EXPRESSIONS = ["smile", "surprise", "secret", "calm"] as const;
-export type Expression = (typeof EXPRESSIONS)[number];
+/** The four built-in expression slots, tied to video types in videoType.ts. */
+export const BUILTIN_EXPRESSIONS = ["smile", "surprise", "secret", "calm"] as const;
+export type BuiltinExpression = (typeof BUILTIN_EXPRESSIONS)[number];
 
-export function isExpression(x: unknown): x is Expression {
-  return typeof x === "string" && (EXPRESSIONS as readonly string[]).includes(x);
+/** Back-compat alias: callers that only care about the built-ins import this. */
+export const EXPRESSIONS = BUILTIN_EXPRESSIONS;
+
+/**
+ * An expression id is now any safe identifier: a built-in name or a custom slug.
+ * (Kept as a string alias so the rest of the pipeline treats expressions
+ * generically; the built-in union lives in BuiltinExpression.)
+ */
+export type Expression = string;
+
+const BUILTIN_LABEL: Record<BuiltinExpression, string> = {
+  smile: "Smile",
+  surprise: "Surprise",
+  secret: "Secret",
+  calm: "Calm",
+};
+
+/** UI hint shown under each built-in slot (which video type it suits). */
+const BUILTIN_HINT: Record<BuiltinExpression, string> = {
+  smile: "Tutorials / How-to",
+  surprise: "Viral / Shock",
+  secret: "Secret / Insider",
+  calm: "Reviews / Calm",
+};
+
+export function isBuiltinExpression(x: unknown): x is BuiltinExpression {
+  return typeof x === "string" && (BUILTIN_EXPRESSIONS as readonly string[]).includes(x);
+}
+
+/**
+ * Turn a free-text name into a safe, file-system-friendly id (lowercase, dashes,
+ * no leading "builtin collision"). Returns "" when nothing usable remains.
+ */
+export function slugifyExpressionId(name: string): string {
+  return (name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+}
+
+/** A valid id is a built-in name or a safe custom slug. */
+export function isValidExpressionId(x: unknown): x is Expression {
+  if (typeof x !== "string") return false;
+  if (isBuiltinExpression(x)) return true;
+  return /^[a-z0-9][a-z0-9-]{0,39}$/.test(x);
 }
 
 function charsDir(): string {
@@ -34,17 +84,19 @@ function manifestPath(): string {
 }
 
 /** Absolute path to an expression's stored PNG. */
-export function expressionFile(expr: Expression): string {
-  return path.join(charsDir(), `${expr}.png`);
+export function expressionFile(id: Expression): string {
+  return path.join(charsDir(), `${id}.png`);
 }
 
 /** Public, read-only serve URL for an expression image. */
-export function expressionUrl(expr: Expression): string {
-  return `/api/thumbnail-characters/${expr}.png`;
+export function expressionUrl(id: Expression): string {
+  return `/api/thumbnail-characters/${id}.png`;
 }
 
 interface ManifestEntry {
-  expression: Expression;
+  id: Expression;
+  label: string;
+  builtin: boolean;
   updatedAt: string;
 }
 type Manifest = Record<string, ManifestEntry>;
@@ -56,8 +108,13 @@ function readManifest(): Manifest {
     if (parsed && typeof parsed === "object") {
       const out: Manifest = {};
       for (const [k, v] of Object.entries(parsed as Record<string, any>)) {
-        if (isExpression(k) && fs.existsSync(expressionFile(k))) {
-          out[k] = { expression: k, updatedAt: typeof v?.updatedAt === "string" ? v.updatedAt : new Date().toISOString() };
+        if (isValidExpressionId(k) && fs.existsSync(expressionFile(k))) {
+          out[k] = {
+            id: k,
+            label: typeof v?.label === "string" && v.label.trim() ? v.label : defaultLabel(k),
+            builtin: isBuiltinExpression(k),
+            updatedAt: typeof v?.updatedAt === "string" ? v.updatedAt : new Date().toISOString(),
+          };
         }
       }
       return out;
@@ -68,77 +125,128 @@ function readManifest(): Manifest {
   return {};
 }
 
+function defaultLabel(id: Expression): string {
+  return isBuiltinExpression(id) ? BUILTIN_LABEL[id] : id.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 function writeManifest(m: Manifest): void {
   fs.mkdirSync(charsDir(), { recursive: true });
   fs.writeFileSync(manifestPath(), JSON.stringify(m, null, 2));
 }
 
 export interface CharacterState {
+  /** Stable id (built-in name or custom slug). */
+  id: Expression;
+  /** @deprecated kept for back-compat with older UI builds — same as `id`. */
   expression: Expression;
+  /** Display name. */
+  label: string;
+  /** UI hint (which video type a built-in suits); empty for custom. */
+  hint: string;
+  /** Whether this is one of the four built-in slots. */
+  builtin: boolean;
   uploaded: boolean;
   url: string | null;
   updatedAt: string | null;
 }
 
-/** Per-expression state for the UI (always all four, in canonical order). */
-export function listCharacters(): CharacterState[] {
-  const m = readManifest();
-  return EXPRESSIONS.map((expr) => {
-    const entry = m[expr];
-    const onDisk = !!entry && fs.existsSync(expressionFile(expr));
-    return {
-      expression: expr,
-      uploaded: onDisk,
-      // Cache-bust the preview with the update time so a re-upload shows instantly.
-      url: onDisk ? `${expressionUrl(expr)}?t=${Date.parse(entry!.updatedAt) || Date.now()}` : null,
-      updatedAt: onDisk ? entry!.updatedAt : null,
-    };
-  });
-}
-
-/** Which expressions are uploaded (for thumbnailStatus / gating). */
-export function uploadedExpressions(): Expression[] {
-  return listCharacters().filter((c) => c.uploaded).map((c) => c.expression);
+function stateFor(id: Expression, entry: ManifestEntry | undefined): CharacterState {
+  const onDisk = !!entry && fs.existsSync(expressionFile(id));
+  const builtin = isBuiltinExpression(id);
+  return {
+    id,
+    expression: id,
+    label: entry?.label || defaultLabel(id),
+    hint: builtin ? BUILTIN_HINT[id as BuiltinExpression] : "",
+    builtin,
+    uploaded: onDisk,
+    // Cache-bust the preview with the update time so a re-upload shows instantly.
+    url: onDisk ? `${expressionUrl(id)}?t=${Date.parse(entry!.updatedAt) || Date.now()}` : null,
+    updatedAt: onDisk ? entry!.updatedAt : null,
+  };
 }
 
 /**
- * Save an expression image from base64 (the UI reads the file to a data URL and
- * sends the bare base64). Decodes, writes the PNG, updates the manifest. Throws
- * on an unknown expression or empty/oversized data.
+ * Per-expression state for the UI: the four built-in slots ALWAYS (in canonical
+ * order, uploaded or not), then any custom expressions (alphabetical by label).
  */
-export function saveCharacter(expr: Expression, base64: string): CharacterState {
-  if (!isExpression(expr)) throw new Error(`Unknown expression: ${String(expr)}`);
+export function listCharacters(): CharacterState[] {
+  const m = readManifest();
+  const builtins = BUILTIN_EXPRESSIONS.map((id) => stateFor(id, m[id]));
+  const customs = Object.values(m)
+    .filter((e) => !e.builtin)
+    .sort((a, b) => a.label.localeCompare(b.label))
+    .map((e) => stateFor(e.id, e));
+  return [...builtins, ...customs];
+}
+
+/** Which expression ids are uploaded (for thumbnailStatus / gating + generation). */
+export function uploadedExpressions(): Expression[] {
+  return listCharacters().filter((c) => c.uploaded).map((c) => c.id);
+}
+
+/** id → label map for the uploaded expressions (drives the art-director prompt). */
+export function expressionLabels(): Record<Expression, string> {
+  const out: Record<Expression, string> = {};
+  for (const c of listCharacters()) if (c.uploaded) out[c.id] = c.label;
+  return out;
+}
+
+/**
+ * Save an expression image from base64. `id` is a built-in name OR a custom slug;
+ * `label` names a custom one (ignored for built-ins, which have fixed labels).
+ * Decodes, writes the PNG, updates the manifest. Throws on an invalid id or
+ * empty/oversized data.
+ */
+export function saveCharacter(id: Expression, base64: string, opts: { label?: string } = {}): CharacterState {
+  if (!isValidExpressionId(id)) throw new Error(`Invalid expression id: ${String(id)}`);
   const clean = (base64 || "").replace(/^data:[^,]+,/, "").trim();
   if (!clean) throw new Error("No image data provided.");
   const buf = Buffer.from(clean, "base64");
   if (buf.length === 0) throw new Error("Image data is empty or not valid base64.");
   // Sanity cap (10MB) — character refs are small portraits, not videos.
   if (buf.length > 10 * 1024 * 1024) throw new Error("Character image too large (max 10MB).");
-  fs.writeFileSync(expressionFile(expr), buf);
+  fs.writeFileSync(expressionFile(id), buf);
+  const builtin = isBuiltinExpression(id);
+  const label = builtin ? BUILTIN_LABEL[id as BuiltinExpression] : (opts.label?.trim() || defaultLabel(id));
   const m = readManifest();
-  m[expr] = { expression: expr, updatedAt: new Date().toISOString() };
+  m[id] = { id, label, builtin, updatedAt: new Date().toISOString() };
   writeManifest(m);
-  return listCharacters().find((c) => c.expression === expr)!;
+  return listCharacters().find((c) => c.id === id)!;
+}
+
+/**
+ * Create a CUSTOM expression from a free-text name + image. Slugifies the name to
+ * an id; rejects empty names, ids that collide with a built-in, and duplicates.
+ */
+export function saveCustomCharacter(name: string, base64: string): CharacterState {
+  const label = (name || "").trim();
+  if (!label) throw new Error("Please give the expression a name.");
+  const id = slugifyExpressionId(label);
+  if (!id) throw new Error("That name has no usable letters or numbers.");
+  if (isBuiltinExpression(id)) throw new Error(`"${label}" collides with a built-in expression — pick another name.`);
+  return saveCharacter(id, base64, { label });
 }
 
 /** Delete an expression image + manifest entry. Idempotent. */
-export function deleteCharacter(expr: Expression): CharacterState {
-  if (!isExpression(expr)) throw new Error(`Unknown expression: ${String(expr)}`);
+export function deleteCharacter(id: Expression): CharacterState | null {
+  if (!isValidExpressionId(id)) throw new Error(`Invalid expression id: ${String(id)}`);
   try {
-    fs.rmSync(expressionFile(expr), { force: true });
+    fs.rmSync(expressionFile(id), { force: true });
   } catch {
     /* already gone */
   }
   const m = readManifest();
-  delete m[expr];
+  delete m[id];
   writeManifest(m);
-  return listCharacters().find((c) => c.expression === expr)!;
+  // Built-in slots persist (now empty); custom ones disappear entirely.
+  return listCharacters().find((c) => c.id === id) ?? null;
 }
 
 /** Read an expression's image bytes (for feeding into the Nano Banana chain). */
-export function readCharacterImage(expr: Expression): Buffer | null {
+export function readCharacterImage(id: Expression): Buffer | null {
   try {
-    return fs.readFileSync(expressionFile(expr));
+    return fs.readFileSync(expressionFile(id));
   } catch {
     return null;
   }

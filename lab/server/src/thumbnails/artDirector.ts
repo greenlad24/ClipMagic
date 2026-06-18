@@ -433,13 +433,25 @@ export async function analyzeForSwap(opts: {
 // "smile"/"calm", etc. — chosen per variation, not fixed by type. Best-effort:
 // any failure falls back to the video-type's expression (see analyzeSourceThumbnail).
 
-/** Short, literal description of each expression's vibe (drives the choice). */
-const EXPRESSION_GUIDE: Record<Expression, string> = {
+/** One available expression option: its id + a human description for the picker. */
+export interface AvailableExpression {
+  id: Expression;
+  /** Display name / description used to describe the option to the model. */
+  label: string;
+}
+
+/** Short, literal description of each BUILT-IN expression's vibe (custom ones use their label). */
+const EXPRESSION_GUIDE: Record<string, string> = {
   smile: "warm, friendly, confident smile — upbeat, approachable, positive energy",
   surprise: "shocked / amazed, wide eyes, open mouth — high-energy 'wow' reaction (big reveals, shocking numbers, viral)",
   secret: "sly, knowing, leaning-in — an 'insider secret / they don't want you to know' look",
   calm: "calm, composed, serious — measured, trustworthy authority (reviews, explainers)",
 };
+
+/** Describe an option for the prompt: the built-in vibe, else the custom label. */
+function describeExpression(opt: AvailableExpression): string {
+  return EXPRESSION_GUIDE[opt.id] ?? opt.label;
+}
 
 export const EXPRESSION_DIRECTOR_SYSTEM =
   "You are an elite YouTube thumbnail director analysing the ORIGINAL thumbnail " +
@@ -466,37 +478,47 @@ export const EXPRESSION_DIRECTOR_SYSTEM =
 export function buildExpressionDirectorUserText(opts: {
   keyword: string;
   videoType: VideoType;
-  available: Expression[];
+  available: AvailableExpression[];
 }): string {
-  const list = opts.available.map((e) => `  - ${e}: ${EXPRESSION_GUIDE[e]}`).join("\n");
+  const list = opts.available.map((e) => `  - ${e.id}: ${describeExpression(e)}`).join("\n");
+  const ids = opts.available.map((e) => e.id).join(", ");
   return (
     `The video is a ${opts.videoType} video about: "${opts.keyword}".\n\n` +
-    `Available expressions (choose EXACTLY one):\n${list}\n\n` +
-    "Look at the ORIGINAL thumbnail above and (1) pick the single expression that " +
+    `Available expressions (choose EXACTLY one, by its id):\n${list}\n\n` +
+    "Look at the ORIGINAL thumbnail above and (1) pick the single expression id that " +
     "best fits its emotional tone/energy, and (2) decide whether it is element-heavy " +
     "(busy). Return ONLY this JSON object (no prose):\n" +
-    `{ "expression": "<one of: ${opts.available.join(", ")}>", "busy": <true|false>, "reason": "<short>" }`
+    `{ "expression": "<one of: ${ids}>", "busy": <true|false>, "reason": "<short>" }`
   );
 }
 
 /**
- * Coerce the model's choice into one of the AVAILABLE expressions. Case/space
- * tolerant; anything unrecognised → `fallback`. Pure + exported for unit testing.
+ * Coerce the model's choice into one of the AVAILABLE expression ids. Case/space
+ * tolerant, and also matches the option's label; anything unrecognised →
+ * `fallback`. Pure + exported for unit testing.
  */
-export function parseExpressionChoice(json: any, available: Expression[], fallback: Expression): Expression {
+export function parseExpressionChoice(
+  json: any,
+  available: AvailableExpression[],
+  fallback: Expression,
+): Expression {
   const raw = typeof json?.expression === "string" ? json.expression.trim().toLowerCase() : "";
-  const match = available.find((e) => e.toLowerCase() === raw);
-  return match ?? fallback;
+  if (!raw) return fallback;
+  const byId = available.find((e) => e.id.toLowerCase() === raw);
+  if (byId) return byId.id;
+  const byLabel = available.find((e) => e.label.toLowerCase() === raw);
+  return byLabel ? byLabel.id : fallback;
 }
 
 /**
  * The best-fit fallback expression for a video type, restricted to what's
- * available: the type's primary when uploaded, else the first available one.
+ * available: the type's primary when uploaded, else the first available id.
  * Pure + exported (also used by the orchestrator's best-effort wrapper).
  */
-export function fallbackExpression(videoType: VideoType, available: Expression[]): Expression {
+export function fallbackExpression(videoType: VideoType, available: AvailableExpression[]): Expression {
   const primary = expressionForVideoType(videoType);
-  return available.includes(primary) ? primary : available[0];
+  const ids = available.map((e) => e.id);
+  return ids.includes(primary) ? primary : ids[0];
 }
 
 /** Result of the source-thumbnail analysis: the chosen expression + busy flag. */
@@ -517,7 +539,7 @@ export interface SourceAssessment {
 export async function analyzeSourceThumbnail(opts: {
   sourceBytes: Buffer;
   sourceMime: string;
-  available: Expression[];
+  available: AvailableExpression[];
   videoType: VideoType;
   keyword: string;
 }): Promise<SourceAssessment> {
@@ -548,4 +570,101 @@ export async function analyzeSourceThumbnail(opts: {
     expression: parseExpressionChoice(parsed, opts.available, fallback),
     busy: parsed?.busy === true,
   };
+}
+
+// ── Background director ───────────────────────────────────────────────────────
+// When the creator has uploaded background images, this vision pass decides
+// whether ANY of them CLEARLY fits a recreation of the source thumbnail — and if
+// so, which. Conservative by design ("only if it fits"): when nothing is a clear,
+// improving match it returns null and the chain keeps + pops the original
+// background. Best-effort in the orchestrator (any throw → null → keep original).
+
+/** One candidate background to consider (id + label + image bytes). */
+export interface BackgroundCandidate {
+  id: string;
+  label: string;
+  bytes: Buffer;
+  mime: string;
+}
+
+export const BACKGROUND_DIRECTOR_SYSTEM =
+  "You are an elite YouTube thumbnail director. You are shown the ORIGINAL " +
+  "thumbnail being recreated, followed by a set of CANDIDATE background images the " +
+  "creator uploaded. Decide whether swapping the original's background for ONE of " +
+  "the candidates would CLEARLY improve this specific thumbnail while still suiting " +
+  "its topic, mood and composition (the subject + text sit on top, so the " +
+  "background must not fight them). Be CONSERVATIVE: only choose a candidate when " +
+  "it is a clearly good, fitting match. If none clearly fits, choose none. Never " +
+  "force a swap.";
+
+/**
+ * Build the background-director user prompt. Pure + exported. Lists the candidate
+ * ids/labels (the images themselves are attached by the caller, in this order).
+ */
+export function buildBackgroundDirectorUserText(opts: {
+  keyword: string;
+  videoType: VideoType;
+  candidates: Array<{ id: string; label: string }>;
+}): string {
+  const list = opts.candidates.map((c, i) => `  ${i + 1}. id="${c.id}" — ${c.label}`).join("\n");
+  const ids = opts.candidates.map((c) => c.id).join(", ");
+  return (
+    `The video is a ${opts.videoType} video about: "${opts.keyword}".\n\n` +
+    `Candidate backgrounds (in the order shown above):\n${list}\n\n` +
+    "Decide whether ONE candidate clearly fits + improves a recreation of the " +
+    "original thumbnail. Return ONLY this JSON object (no prose):\n" +
+    `{ "backgroundId": <"one of: ${ids}" or null>, "reason": "<short>" }`
+  );
+}
+
+/** Coerce the model's choice into an available id, or null. Pure + exported. */
+export function parseBackgroundChoice(json: any, availableIds: string[]): string | null {
+  const raw = typeof json?.backgroundId === "string" ? json.backgroundId.trim() : "";
+  if (!raw) return null;
+  const match = availableIds.find((id) => id.toLowerCase() === raw.toLowerCase());
+  return match ?? null;
+}
+
+/**
+ * Decide which uploaded background (if any) to swap in for THIS source. Returns
+ * the chosen id or null. Injectable for tests; best-effort in the orchestrator.
+ * Attributed to "thumbnail-background-director" in the report.
+ */
+export async function chooseBackground(opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  candidates: BackgroundCandidate[];
+  videoType: VideoType;
+  keyword: string;
+}): Promise<string | null> {
+  if (opts.candidates.length === 0) return null;
+  const images = [
+    {
+      label: "Original thumbnail being recreated:",
+      data: opts.sourceBytes.toString("base64"),
+      mediaType: opts.sourceMime || "image/jpeg",
+    },
+    ...opts.candidates.map((c, i) => ({
+      label: `Candidate background ${i + 1} (id="${c.id}", ${c.label}):`,
+      data: c.bytes.toString("base64"),
+      mediaType: c.mime || "image/png",
+    })),
+  ];
+  const raw = await claudeVisionLabeledJSON({
+    system: BACKGROUND_DIRECTOR_SYSTEM,
+    userText: buildBackgroundDirectorUserText({
+      keyword: opts.keyword,
+      videoType: opts.videoType,
+      candidates: opts.candidates.map((c) => ({ id: c.id, label: c.label })),
+    }),
+    images,
+    purpose: "thumbnail-background-director",
+  });
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  return parseBackgroundChoice(parsed, opts.candidates.map((c) => c.id));
 }

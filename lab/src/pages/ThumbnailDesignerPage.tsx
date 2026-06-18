@@ -8,9 +8,11 @@ import {
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
+  uploadThumbnailBackground,
+  deleteThumbnailBackground,
   type ThumbnailStatusOutputType,
   type ThumbnailCharacterState,
-  type ThumbnailExpression,
+  type ThumbnailBackgroundState,
   type ThumbnailVideoType,
   type ThumbnailMode,
   type ThumbnailSearchResult,
@@ -60,18 +62,6 @@ import {
  * multi-select → generate), (3) Results (original vs generated thumbnails).
  */
 
-const EXPRESSION_LABEL: Record<ThumbnailExpression, string> = {
-  smile: 'Smile',
-  surprise: 'Surprise',
-  secret: 'Secret',
-  calm: 'Calm',
-};
-const EXPRESSION_HINT: Record<ThumbnailExpression, string> = {
-  smile: 'Tutorials / How-to',
-  surprise: 'Viral / Shock',
-  secret: 'Secret / Insider',
-  calm: 'Reviews / Calm',
-};
 const VIDEO_TYPES: ThumbnailVideoType[] = ['Tutorial', 'Viral', 'Secret', 'Review'];
 
 /**
@@ -266,6 +256,9 @@ export default function ThumbnailDesignerPage() {
 
             {/* Character library */}
             <CharacterLibrary status={status} onChanged={loadStatus} />
+
+            {/* Background library (optional) */}
+            <BackgroundLibrary status={status} onChanged={loadStatus} />
 
             {/* Create */}
             {ready ? (
@@ -509,15 +502,17 @@ function CharacterLibrary({
   status: ThumbnailStatusOutputType;
   onChanged: () => void;
 }) {
-  const [busy, setBusy] = useState<ThumbnailExpression | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const customInput = useRef<HTMLInputElement | null>(null);
 
-  const upload = async (expr: ThumbnailExpression, file: File) => {
-    setBusy(expr);
+  const upload = async (c: ThumbnailCharacterState, file: File) => {
+    setBusy(c.id);
     try {
       const imageBase64 = await fileToBase64(file);
-      await uploadThumbnailCharacter({ expression: expr, imageBase64 });
-      toast.success(`Saved your "${EXPRESSION_LABEL[expr]}" expression.`);
+      await uploadThumbnailCharacter({ id: c.id, imageBase64 });
+      toast.success(`Saved your "${c.label}" expression.`);
       onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Upload failed');
@@ -526,14 +521,34 @@ function CharacterLibrary({
     }
   };
 
-  const remove = async (expr: ThumbnailExpression) => {
-    setBusy(expr);
+  const remove = async (c: ThumbnailCharacterState) => {
+    setBusy(c.id);
     try {
-      await deleteThumbnailCharacter({ expression: expr });
-      toast.success(`Removed your "${EXPRESSION_LABEL[expr]}" expression.`);
+      await deleteThumbnailCharacter({ id: c.id });
+      toast.success(`Removed your "${c.label}" expression.`);
       onChanged();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const addCustom = async (file: File) => {
+    const name = newName.trim();
+    if (!name) {
+      toast.error('Give the expression a name first (e.g. "Pointing").');
+      return;
+    }
+    setBusy('__new__');
+    try {
+      const imageBase64 = await fileToBase64(file);
+      await uploadThumbnailCharacter({ name, imageBase64 });
+      toast.success(`Added your "${name}" expression.`);
+      setNewName('');
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
     } finally {
       setBusy(null);
     }
@@ -546,25 +561,56 @@ function CharacterLibrary({
       <SectionHeader
         icon={<ImageIcon className="w-4 h-4" />}
         title="Character library"
-        subtitle="Upload your face once per expression. The generator reuses these across every run."
+        subtitle="Upload your face once per expression — four built-in slots plus any custom expressions you add. The AI picks the best fit per thumbnail."
       />
       {none && (
         <p className="text-xs text-muted-foreground">
-          Upload at least one clear, well-lit portrait of yourself. Each expression maps to a video type — the generator picks the right one automatically.
+          Upload at least one clear, well-lit portrait of yourself. The four built-in expressions map to video types; you can also add your own named expressions below.
         </p>
       )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {status.characters.map((c) => (
           <CharacterCard
-            key={c.expression}
+            key={c.id}
             character={c}
-            busy={busy === c.expression}
-            onPick={() => inputs.current[c.expression]?.click()}
-            onRemove={() => remove(c.expression)}
-            inputRef={(el) => (inputs.current[c.expression] = el)}
-            onFile={(file) => upload(c.expression, file)}
+            busy={busy === c.id}
+            onPick={() => inputs.current[c.id]?.click()}
+            onRemove={() => remove(c)}
+            inputRef={(el) => (inputs.current[c.id] = el)}
+            onFile={(file) => upload(c, file)}
           />
         ))}
+      </div>
+
+      {/* Add a custom expression: name it, then pick an image. */}
+      <div className="rounded-lg border border-dashed border-border p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder='New expression name (e.g. "Pointing", "Thinking")'
+          className="flex-1"
+          maxLength={40}
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy === '__new__' || !newName.trim()}
+          onClick={() => customInput.current?.click()}
+        >
+          {busy === '__new__' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          Add expression
+        </Button>
+        <input
+          ref={customInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void addCustom(file);
+            e.target.value = '';
+          }}
+        />
       </div>
     </section>
   );
@@ -585,11 +631,13 @@ function CharacterCard({
   inputRef: (el: HTMLInputElement | null) => void;
   onFile: (file: File) => void;
 }) {
+  // Built-in slots persist (Remove just clears the image); custom ones are deleted.
+  const canRemove = character.uploaded;
   return (
     <div className="rounded-lg border border-border overflow-hidden bg-background">
       <div className="aspect-square bg-muted relative">
         {character.uploaded && character.url ? (
-          <img src={character.url} alt={character.expression} className="w-full h-full object-cover" />
+          <img src={character.url} alt={character.label} className="w-full h-full object-cover" />
         ) : (
           <button
             onClick={onPick}
@@ -605,17 +653,20 @@ function CharacterCard({
             <Loader2 className="w-5 h-5 animate-spin text-foreground" />
           </div>
         )}
+        {!character.builtin && (
+          <Badge variant="secondary" className="absolute top-1.5 left-1.5 text-[10px] px-1.5 py-0">Custom</Badge>
+        )}
       </div>
       <div className="p-2.5">
         <div className="flex items-center justify-between gap-1">
-          <span className="text-sm font-medium text-foreground">{EXPRESSION_LABEL[character.expression]}</span>
-          {character.uploaded && (
-            <div className="flex items-center gap-1">
+          <span className="text-sm font-medium text-foreground truncate" title={character.label}>{character.label}</span>
+          {canRemove && (
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 onClick={onPick}
                 disabled={busy}
                 className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                aria-label={`Replace ${character.expression} image`}
+                aria-label={`Replace ${character.label} image`}
                 title="Replace"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -624,15 +675,15 @@ function CharacterCard({
                 onClick={onRemove}
                 disabled={busy}
                 className="text-muted-foreground hover:text-destructive transition-colors p-1"
-                aria-label={`Remove ${character.expression} image`}
-                title="Remove"
+                aria-label={`Remove ${character.label} image`}
+                title={character.builtin ? 'Clear image' : 'Delete expression'}
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
           )}
         </div>
-        <p className="text-[11px] text-muted-foreground">{EXPRESSION_HINT[character.expression]}</p>
+        <p className="text-[11px] text-muted-foreground">{character.hint || (character.builtin ? '' : 'Custom expression')}</p>
       </div>
       <input
         ref={inputRef}
@@ -646,6 +697,120 @@ function CharacterCard({
         }}
       />
     </div>
+  );
+}
+
+function BackgroundLibrary({
+  status,
+  onChanged,
+}: {
+  status: ThumbnailStatusOutputType;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const addInput = useRef<HTMLInputElement | null>(null);
+
+  const add = async (file: File) => {
+    const name = newName.trim();
+    if (!name) {
+      toast.error('Give the background a name first.');
+      return;
+    }
+    setBusy('__new__');
+    try {
+      const imageBase64 = await fileToBase64(file);
+      await uploadThumbnailBackground({ name, imageBase64 });
+      toast.success(`Added background "${name}".`);
+      setNewName('');
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const remove = async (bg: ThumbnailBackgroundState) => {
+    setBusy(bg.id);
+    try {
+      await deleteThumbnailBackground({ id: bg.id });
+      toast.success(`Removed background "${bg.label}".`);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const backgrounds = status.backgrounds ?? [];
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <SectionHeader
+        icon={<ImageIcon className="w-4 h-4" />}
+        title="Background library (optional)"
+        subtitle="Upload backgrounds the AI can swap in — but only when one clearly fits a thumbnail. With none uploaded, the original background is kept and enhanced."
+      />
+      {backgrounds.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {backgrounds.map((bg) => (
+            <div key={bg.id} className="rounded-lg border border-border overflow-hidden bg-background">
+              <div className="aspect-video bg-muted relative">
+                <img src={bg.url} alt={bg.label} className="w-full h-full object-cover" />
+                {busy === bg.id && (
+                  <div className="absolute inset-0 bg-background/60 flex items-center justify-center">
+                    <Loader2 className="w-5 h-5 animate-spin text-foreground" />
+                  </div>
+                )}
+              </div>
+              <div className="p-2.5 flex items-center justify-between gap-1">
+                <span className="text-sm font-medium text-foreground truncate" title={bg.label}>{bg.label}</span>
+                <button
+                  onClick={() => remove(bg)}
+                  disabled={busy === bg.id}
+                  className="text-muted-foreground hover:text-destructive transition-colors p-1 shrink-0"
+                  aria-label={`Remove background ${bg.label}`}
+                  title="Remove"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="rounded-lg border border-dashed border-border p-3 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <Input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder='New background name (e.g. "Red Grid", "Studio")'
+          className="flex-1"
+          maxLength={40}
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy === '__new__' || !newName.trim()}
+          onClick={() => addInput.current?.click()}
+        >
+          {busy === '__new__' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          Add background
+        </Button>
+        <input
+          ref={addInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void add(file);
+            e.target.value = '';
+          }}
+        />
+      </div>
+    </section>
   );
 }
 

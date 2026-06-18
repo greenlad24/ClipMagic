@@ -64,10 +64,18 @@ import { searchTopThumbnails, youtubeConfigured } from "../thumbnails/youtube.js
 import {
   listCharacters,
   saveCharacter,
+  saveCustomCharacter,
   deleteCharacter,
   uploadedExpressions,
-  isExpression,
+  isBuiltinExpression,
+  isValidExpressionId,
 } from "../thumbnails/characters.js";
+import {
+  listBackgrounds,
+  saveBackground,
+  deleteBackground,
+  uploadedBackgrounds,
+} from "../thumbnails/backgrounds.js";
 import { generateThumbnailVariants, startThumbnailJob } from "../thumbnails/orchestrate.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
@@ -2309,12 +2317,14 @@ function coerceVideoType(x: unknown): VideoType {
   return isVideoType(x) ? x : VIDEO_TYPE_FALLBACK;
 }
 
-/** Gate the UI: which keys are set + which expressions are uploaded. No values. */
+/** Gate the UI: which keys are set + which expressions/backgrounds are uploaded. No values. */
 const thumbnailStatus: Handler = async () => ({
   geminiConfigured: nanoBananaConfigured(),
   youtubeConfigured: youtubeConfigured(),
   characters: listCharacters(),
   uploadedExpressions: uploadedExpressions(),
+  backgrounds: listBackgrounds(),
+  uploadedBackgrounds: uploadedBackgrounds(),
 });
 
 /** Read the pasted script → extract the search keyword + infer the video type. */
@@ -2388,21 +2398,50 @@ const generateThumbnails: Handler = async (input) => {
   return { variants };
 };
 
-// Character library (list / upload / delete the 4 expression images).
+// Character library: list / upload / delete expression images. There are four
+// built-in slots (smile/surprise/secret/calm) PLUS any number of custom,
+// user-named expressions. A built-in is uploaded by id; a custom by `name`.
 const listThumbnailCharacters: Handler = async () => ({ characters: listCharacters() });
 
 const uploadThumbnailCharacter: Handler = async (input) => {
-  const expr = input?.expression;
-  if (!isExpression(expr)) throw new ZiteError({ code: "BAD_REQUEST", message: `Unknown expression: ${String(expr)}` });
-  const character = saveCharacter(expr, String(input?.imageBase64 ?? ""));
+  const imageBase64 = String(input?.imageBase64 ?? "");
+  const name = typeof input?.name === "string" ? input.name : "";
+  const expr = input?.expression ?? input?.id;
+  let character;
+  if (name.trim()) {
+    // Custom expression from a free-text name.
+    character = saveCustomCharacter(name, imageBase64);
+  } else if (isBuiltinExpression(expr)) {
+    character = saveCharacter(expr, imageBase64);
+  } else if (isValidExpressionId(expr)) {
+    // Re-upload an existing custom expression by its id.
+    character = saveCharacter(expr, imageBase64);
+  } else {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Provide a built-in expression id or a name for a custom one." });
+  }
   return { character, characters: listCharacters() };
 };
 
 const deleteThumbnailCharacter: Handler = async (input) => {
-  const expr = input?.expression;
-  if (!isExpression(expr)) throw new ZiteError({ code: "BAD_REQUEST", message: `Unknown expression: ${String(expr)}` });
-  const character = deleteCharacter(expr);
+  const id = input?.expression ?? input?.id;
+  if (!isValidExpressionId(id)) throw new ZiteError({ code: "BAD_REQUEST", message: `Invalid expression id: ${String(id)}` });
+  const character = deleteCharacter(id);
   return { character, characters: listCharacters() };
+};
+
+// Background library: list / upload (by name) / delete background images.
+const listThumbnailBackgrounds: Handler = async () => ({ backgrounds: listBackgrounds() });
+
+const uploadThumbnailBackground: Handler = async (input) => {
+  const background = saveBackground(String(input?.name ?? ""), String(input?.imageBase64 ?? ""));
+  return { background, backgrounds: listBackgrounds() };
+};
+
+const deleteThumbnailBackground: Handler = async (input) => {
+  const id = input?.id;
+  if (typeof id !== "string" || !id) throw new ZiteError({ code: "BAD_REQUEST", message: "Background id is required." });
+  deleteBackground(id);
+  return { backgrounds: listBackgrounds() };
 };
 
 export const HANDLERS: Record<string, Handler> = {
@@ -2491,6 +2530,9 @@ export const HANDLERS: Record<string, Handler> = {
   listThumbnailCharacters,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
+  listThumbnailBackgrounds,
+  uploadThumbnailBackground,
+  deleteThumbnailBackground,
 };
 
 void config;

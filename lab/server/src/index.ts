@@ -47,6 +47,14 @@ app.use(
   express.static(path.join(config.dataDir, "thumbnail-characters"))
 );
 
+// Thumbnail Designer background library — read-only uploaded backgrounds under
+// DATA_DIR/thumbnail-backgrounds (same caching/cache-bust scheme as characters).
+app.use(
+  "/api/thumbnail-backgrounds",
+  auth,
+  express.static(path.join(config.dataDir, "thumbnail-backgrounds"))
+);
+
 // API
 app.use("/api/uploads", auth, uploadsRouter);
 app.use("/api/render", auth, renderRouter);

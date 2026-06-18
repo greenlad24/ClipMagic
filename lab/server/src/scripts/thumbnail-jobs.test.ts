@@ -56,6 +56,7 @@ async function main() {
   const jobs = await import("../thumbnails/jobs.js");
   const orchestrate = await import("../thumbnails/orchestrate.js");
   const chars = await import("../thumbnails/characters.js");
+  const bgs = await import("../thumbnails/backgrounds.js");
 
   // A 1x1 PNG so readCharacterImage returns real bytes for every expression.
   const onePx =
@@ -289,6 +290,69 @@ async function main() {
     // Tutorial's video-type default is "smile"; the analysis overrode it to "secret".
     assert.ok(job.variants.every((v) => v.expression === "secret"), "analysis choice overrides the video-type default");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  // ── custom expressions + backgrounds storage ────────────────────────────────
+  await check("custom expressions coexist with the four built-in slots", () => {
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+    const custom = chars.saveCustomCharacter("Pointing Up!", onePx);
+    assert.equal(custom.id, "pointing-up", "name is slugified to an id");
+    assert.equal(custom.label, "Pointing Up!", "label preserved");
+    assert.equal(custom.builtin, false);
+    const list = chars.listCharacters();
+    // Four built-in slots always present + the custom one.
+    assert.equal(list.filter((c) => c.builtin).length, 4, "four built-in slots remain");
+    assert.ok(list.some((c) => c.id === "pointing-up" && c.uploaded), "custom appears uploaded");
+    assert.ok(chars.uploadedExpressions().includes("pointing-up"));
+    chars.deleteCharacter("pointing-up");
+    assert.ok(!chars.uploadedExpressions().includes("pointing-up"), "custom fully removed on delete");
+  });
+
+  await check("saveCustomCharacter rejects a name that collides with a built-in", () => {
+    assert.throws(() => chars.saveCustomCharacter("smile", onePx), /built-in/i);
+  });
+
+  await check("backgrounds: save by name, list, delete", () => {
+    for (const b of bgs.listBackgrounds()) bgs.deleteBackground(b.id);
+    const bg = bgs.saveBackground("Red Grid", onePx);
+    assert.equal(bg.id, "red-grid");
+    assert.equal(bg.label, "Red Grid");
+    assert.deepEqual(bgs.uploadedBackgrounds(), ["red-grid"]);
+    bgs.deleteBackground("red-grid");
+    assert.deepEqual(bgs.uploadedBackgrounds(), [], "removed on delete");
+  });
+
+  await check("a chosen background is SWAPPED into the recreation", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    bgs.saveBackground("Neon City", onePx);
+    const instructions: string[] = [];
+    const imageCounts: number[] = [];
+    const deps = {
+      ...makeDeps(),
+      // The background-director picks our uploaded background.
+      chooseBackground: async () => "neon-city",
+      analyzeSource: async () => ({ expression: "smile" as const, busy: false }),
+      editImage: async (opts: any) => {
+        instructions.push(opts.instruction);
+        imageCounts.push(opts.images.length);
+        return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+      },
+      finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
+    };
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A"], mode: "gemini-pro" },
+      fakeDownload,
+      deps as any,
+    );
+    await waitUntil(() => job.done);
+    assert.equal(job.variants[0].status, "done");
+    // There is a "Replace the entire BACKGROUND" edit fed TWO images (current + bg).
+    const idx = instructions.findIndex((s) => /Replace the entire BACKGROUND/i.test(s));
+    assert.ok(idx >= 0, "background-replace step ran");
+    assert.equal(imageCounts[idx], 2, "background-replace is fed [current, chosen background]");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+    bgs.deleteBackground("neon-city");
   });
 
   await check("a BUSY source is recreated in ONE pass (no multi-step chain)", async () => {

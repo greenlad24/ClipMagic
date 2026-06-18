@@ -1041,29 +1041,40 @@ async function main() {
   });
 
   // ── expression DIRECTOR (per-source vision pick; pure parts) ─────────────────
+  const opt = (id: string, label?: string) => ({ id, label: label ?? id });
   await check("fallbackExpression: type primary when available, else first available", () => {
-    assert.equal(artDirector.fallbackExpression("Viral", ["smile", "surprise", "calm"] as any), "surprise");
-    assert.equal(artDirector.fallbackExpression("Viral", ["smile", "calm"] as any), "smile", "primary missing → first available");
+    assert.equal(artDirector.fallbackExpression("Viral", [opt("smile"), opt("surprise"), opt("calm")] as any), "surprise");
+    assert.equal(artDirector.fallbackExpression("Viral", [opt("smile"), opt("calm")] as any), "smile", "primary missing → first available");
   });
 
-  await check("parseExpressionChoice: accepts an available choice, else falls back (case-insensitive)", () => {
-    const avail: any[] = ["smile", "surprise", "calm"];
+  await check("parseExpressionChoice: accepts an available id OR label, else falls back (case-insensitive)", () => {
+    const avail: any[] = [opt("smile"), opt("surprise"), opt("calm")];
     assert.equal(artDirector.parseExpressionChoice({ expression: "Surprise" }, avail, "smile" as any), "surprise");
     assert.equal(artDirector.parseExpressionChoice({ expression: "secret" }, avail, "smile" as any), "smile", "unavailable → fallback");
     assert.equal(artDirector.parseExpressionChoice({}, avail, "calm" as any), "calm", "missing → fallback");
+    // A custom expression chosen by its human label resolves to its id.
+    const customs: any[] = [opt("pointing-up", "Pointing up")];
+    assert.equal(artDirector.parseExpressionChoice({ expression: "Pointing up" }, customs, "pointing-up" as any), "pointing-up", "matches by label");
   });
 
   await check("buildExpressionDirectorUserText lists only the available expressions + asks for busy", () => {
     const txt = artDirector.buildExpressionDirectorUserText({
       keyword: "make money with AI",
       videoType: "Viral",
-      available: ["surprise", "calm"] as any,
+      available: [opt("surprise"), opt("calm")] as any,
     });
     assert.match(txt, /surprise/);
     assert.match(txt, /calm/);
     assert.doesNotMatch(txt, /\bsecret\b/, "an unavailable expression is not offered");
     assert.match(txt, /one of: surprise, calm/, "the JSON shape constrains to available options");
     assert.match(txt, /busy/i, "also asks for the element-heavy (busy) flag");
+  });
+
+  await check("parseBackgroundChoice: matches an available id, else null", () => {
+    assert.equal(artDirector.parseBackgroundChoice({ backgroundId: "Red-Grid" }, ["red-grid", "blue"]), "red-grid");
+    assert.equal(artDirector.parseBackgroundChoice({ backgroundId: "none" }, ["red-grid"]), null, "unknown → null");
+    assert.equal(artDirector.parseBackgroundChoice({ backgroundId: null }, ["red-grid"]), null, "null → null");
+    assert.equal(artDirector.parseBackgroundChoice({}, ["red-grid"]), null, "missing → null");
   });
 
   await check("buildConsolidatedInstruction: one-shot swap + preserve elements + text + pop", () => {

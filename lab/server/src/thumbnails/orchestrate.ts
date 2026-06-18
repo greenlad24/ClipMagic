@@ -6,9 +6,21 @@
  * the batch) and BOUNDED concurrency (slow API chains → sequential).
  */
 import { hqThumbnailUrl, maxresThumbnailUrl, mqThumbnailUrl } from "./youtube.js";
-import { readCharacterImage, uploadedExpressions, type Expression } from "./characters.js";
+import { readCharacterImage, uploadedExpressions, listCharacters, type Expression } from "./characters.js";
+import {
+  uploadedBackgrounds,
+  readBackgroundImage,
+  backgroundLabels,
+} from "./backgrounds.js";
 import { expressionsForVariants, type VideoType } from "./videoType.js";
-import { analyzeSourceThumbnail, fallbackExpression, type SourceAssessment } from "./artDirector.js";
+import {
+  analyzeSourceThumbnail,
+  chooseBackground,
+  fallbackExpression,
+  type SourceAssessment,
+  type AvailableExpression,
+  type BackgroundCandidate,
+} from "./artDirector.js";
 import { recreateThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
 import {
   providersForMode,
@@ -55,7 +67,7 @@ export type DownloadFn = (url: string) => Promise<{ bytes: Buffer; mime: string 
 export type AnalyzeSourceFn = (opts: {
   sourceBytes: Buffer;
   sourceMime: string;
-  available: Expression[];
+  available: AvailableExpression[];
   videoType: VideoType;
   keyword: string;
 }) => Promise<SourceAssessment>;
@@ -67,6 +79,87 @@ const defaultAnalyzeSource: AnalyzeSourceFn = async (opts) => {
     return { expression: fallbackExpression(opts.videoType, opts.available), busy: false };
   }
 };
+
+/**
+ * Pick an uploaded background for the source, or null. Injectable for tests; the
+ * default is a BEST-EFFORT wrapper around the background-director (any failure →
+ * null → keep + pop the original background).
+ */
+export type AnalyzeBackgroundFn = (opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  candidates: BackgroundCandidate[];
+  videoType: VideoType;
+  keyword: string;
+}) => Promise<string | null>;
+
+const defaultAnalyzeBackground: AnalyzeBackgroundFn = async (opts) => {
+  try {
+    return await chooseBackground(opts);
+  } catch {
+    return null;
+  }
+};
+
+/** The uploaded expressions as {id,label} options for the source analysis. */
+function availableExpressionOptions(): AvailableExpression[] {
+  return listCharacters()
+    .filter((c) => c.uploaded)
+    .map((c) => ({ id: c.id, label: c.label }));
+}
+
+/** Load every uploaded background's bytes as candidates (once per batch). */
+function loadBackgroundCandidates(): BackgroundCandidate[] {
+  const labels = backgroundLabels();
+  const out: BackgroundCandidate[] = [];
+  for (const id of uploadedBackgrounds()) {
+    const bytes = readBackgroundImage(id);
+    if (bytes) out.push({ id, label: labels[id] || id, bytes, mime: "image/png" });
+  }
+  return out;
+}
+
+/**
+ * Run the per-source analysis: best-fit expression + busy flag, and (when
+ * backgrounds are uploaded) the chosen background's bytes. Best-effort; never
+ * throws. Shared by the sync + job flows.
+ */
+async function analyzeForSource(opts: {
+  src: { bytes: Buffer; mime: string };
+  available: AvailableExpression[];
+  bgCandidates: BackgroundCandidate[];
+  videoType: VideoType;
+  keyword: string;
+  fallback: Expression;
+  analyze: AnalyzeSourceFn;
+  analyzeBg: AnalyzeBackgroundFn;
+}): Promise<{ expression: Expression; busy: boolean; backgroundBytes?: Buffer; backgroundMime?: string }> {
+  let expression = opts.fallback;
+  let busy = false;
+  if (opts.available.length > 0) {
+    const a = await opts.analyze({
+      sourceBytes: opts.src.bytes,
+      sourceMime: opts.src.mime,
+      available: opts.available,
+      videoType: opts.videoType,
+      keyword: opts.keyword,
+    });
+    expression = a.expression;
+    busy = a.busy;
+  }
+  let backgroundBytes: Buffer | undefined;
+  if (opts.bgCandidates.length > 0) {
+    const chosenId = await opts.analyzeBg({
+      sourceBytes: opts.src.bytes,
+      sourceMime: opts.src.mime,
+      candidates: opts.bgCandidates,
+      videoType: opts.videoType,
+      keyword: opts.keyword,
+    });
+    if (chosenId) backgroundBytes = opts.bgCandidates.find((c) => c.id === chosenId)?.bytes;
+  }
+  return { expression, busy, backgroundBytes, backgroundMime: backgroundBytes ? "image/png" : undefined };
+}
 
 const defaultDownload: DownloadFn = async (url) => {
   const res = await fetch(url);
@@ -128,9 +221,12 @@ export async function generateThumbnailVariants(
   input: GenerateInput,
   download: DownloadFn = defaultDownload,
   analyze: AnalyzeSourceFn = defaultAnalyzeSource,
+  analyzeBg: AnalyzeBackgroundFn = defaultAnalyzeBackground,
 ): Promise<ThumbnailVariant[]> {
   const picks = input.picks;
   const available = uploadedExpressions();
+  const availOptions = availableExpressionOptions();
+  const bgCandidates = loadBackgroundCandidates();
   const expressions = expressionsForVariants(input.videoType, picks.length, available);
 
   const variants: ThumbnailVariant[] = [];
@@ -142,19 +238,18 @@ export async function generateThumbnailVariants(
       if (!expression) throw new Error("No character expression available — upload at least one in the library.");
 
       const src = await downloadSourceThumbnail(videoId, download);
-      // Analyse THIS source thumbnail: best-fit expression + busy flag (best-effort).
-      let busy = false;
-      if (available.length > 0) {
-        const assessment = await analyze({
-          sourceBytes: src.bytes,
-          sourceMime: src.mime,
-          available,
-          videoType: input.videoType,
-          keyword: input.keyword,
-        });
-        expression = assessment.expression;
-        busy = assessment.busy;
-      }
+      // Analyse THIS source: best-fit expression + busy flag + chosen background.
+      const a = await analyzeForSource({
+        src,
+        available: availOptions,
+        bgCandidates,
+        videoType: input.videoType,
+        keyword: input.keyword,
+        fallback: expression,
+        analyze,
+        analyzeBg,
+      });
+      expression = a.expression;
       const characterBytes = readCharacterImage(expression);
       if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
       // One outputUrl per pick: run the mode's single provider sub-run
@@ -167,7 +262,9 @@ export async function generateThumbnailVariants(
         keyword: input.keyword,
         videoType: input.videoType,
         expression,
-        busy,
+        busy: a.busy,
+        backgroundBytes: a.backgroundBytes,
+        backgroundMime: a.backgroundMime,
         provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
         imageSize: run?.imageSize,
       });
@@ -224,7 +321,8 @@ export function startThumbnailJob(
   );
   // Fire-and-forget. runThumbnailJob never throws (it records onto the job).
   const analyze = recreateDeps?.analyzeSource ?? defaultAnalyzeSource;
-  void runThumbnailJob(job, input, expressions, available, download, recreateDeps, analyze);
+  const analyzeBg = recreateDeps?.chooseBackground ?? defaultAnalyzeBackground;
+  void runThumbnailJob(job, input, expressions, available, download, recreateDeps, analyze, analyzeBg);
   return job;
 }
 
@@ -242,34 +340,42 @@ export async function runThumbnailJob(
   download: DownloadFn = defaultDownload,
   recreateDeps?: RecreateDeps,
   analyze: AnalyzeSourceFn = defaultAnalyzeSource,
+  analyzeBg: AnalyzeBackgroundFn = defaultAnalyzeBackground,
 ): Promise<void> {
   const runs = providersForMode(effectiveMode(input));
+  const availOptions = availableExpressionOptions();
+  const bgCandidates = loadBackgroundCandidates();
   try {
     for (let i = 0; i < input.picks.length; i++) {
       const videoId = input.picks[i];
       // The video-type default; upgraded below by the per-source analysis.
       let expression = expressions[i];
       let busy = false;
+      let backgroundBytes: Buffer | undefined;
+      let backgroundMime: string | undefined;
       // Shared fetch phase: move every sub-run column into "running" together.
       updateVariant(job, i, { status: "running", stepLabel: PHASE_LABEL.fetch, percent: phasePercent("fetch", 0) });
       try {
         if (!expression) throw new Error("No character expression available — upload at least one in the library.");
 
         const src = await downloadSourceThumbnail(videoId, download);
-        // Analyse THIS source thumbnail: best-fit expression + busy flag
+        // Analyse THIS source: best-fit expression + busy flag + chosen background
         // (best-effort); reflect the expression on the variant for the UI.
-        if (available.length > 0) {
-          const assessment = await analyze({
-            sourceBytes: src.bytes,
-            sourceMime: src.mime,
-            available,
-            videoType: input.videoType,
-            keyword: input.keyword,
-          });
-          expression = assessment.expression;
-          busy = assessment.busy;
-          job.variants[i].expression = expression;
-        }
+        const a = await analyzeForSource({
+          src,
+          available: availOptions,
+          bgCandidates,
+          videoType: input.videoType,
+          keyword: input.keyword,
+          fallback: expression,
+          analyze,
+          analyzeBg,
+        });
+        expression = a.expression;
+        busy = a.busy;
+        backgroundBytes = a.backgroundBytes;
+        backgroundMime = a.backgroundMime;
+        job.variants[i].expression = expression;
         const characterBytes = readCharacterImage(expression);
         if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
 
@@ -289,6 +395,8 @@ export async function runThumbnailJob(
                 videoType: input.videoType,
                 expression,
                 busy,
+                backgroundBytes,
+                backgroundMime,
                 provider: run.provider,
                 imageSize: run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>

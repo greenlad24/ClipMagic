@@ -148,12 +148,23 @@ export const thumbnailJobStatus =
 export const listThumbnailCharacters =
   endpoint<Record<string, never>, { characters: ThumbnailCharacterState[] }>("listThumbnailCharacters");
 export const uploadThumbnailCharacter =
-  endpoint<{ expression: ThumbnailExpression; imageBase64: string }, ThumbnailCharacterMutationOutputType>("uploadThumbnailCharacter");
+  endpoint<{ expression?: string; id?: string; name?: string; imageBase64: string }, ThumbnailCharacterMutationOutputType>("uploadThumbnailCharacter");
 export const deleteThumbnailCharacter =
-  endpoint<{ expression: ThumbnailExpression }, ThumbnailCharacterMutationOutputType>("deleteThumbnailCharacter");
+  endpoint<{ expression?: string; id?: string }, ThumbnailCharacterMutationOutputType>("deleteThumbnailCharacter");
+
+// ── Background library SDK ───────────────────────────────────────────────────
+export const listThumbnailBackgrounds =
+  endpoint<Record<string, never>, { backgrounds: ThumbnailBackgroundState[] }>("listThumbnailBackgrounds");
+export const uploadThumbnailBackground =
+  endpoint<{ name: string; imageBase64: string }, { background: ThumbnailBackgroundState; backgrounds: ThumbnailBackgroundState[] }>("uploadThumbnailBackground");
+export const deleteThumbnailBackground =
+  endpoint<{ id: string }, { backgrounds: ThumbnailBackgroundState[] }>("deleteThumbnailBackground");
 
 // ── Thumbnail Designer types ─────────────────────────────────────────────────
-export type ThumbnailExpression = 'smile' | 'surprise' | 'secret' | 'calm';
+/** Expression id: a built-in name OR a custom slug. */
+export type ThumbnailExpression = string;
+/** The four built-in expression slots (custom ones are added on top). */
+export const BUILTIN_THUMBNAIL_EXPRESSIONS = ['smile', 'surprise', 'secret', 'calm'] as const;
 export type ThumbnailVideoType = 'Tutorial' | 'Viral' | 'Secret' | 'Review';
 /** Image-edit provider that drives the recreation chain. */
 export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash';
@@ -163,16 +174,33 @@ export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash';
  */
 export type ThumbnailMode = ThumbnailProvider;
 export type ThumbnailCharacterState = {
+  /** Stable id (built-in name or custom slug). */
+  id: ThumbnailExpression;
+  /** @deprecated same as `id` (back-compat). */
   expression: ThumbnailExpression;
+  /** Display name. */
+  label: string;
+  /** UI hint (which video type a built-in suits); empty for custom. */
+  hint: string;
+  /** Whether this is one of the four built-in slots. */
+  builtin: boolean;
   uploaded: boolean;
   url: string | null;
   updatedAt: string | null;
+};
+export type ThumbnailBackgroundState = {
+  id: string;
+  label: string;
+  url: string;
+  updatedAt: string;
 };
 export type ThumbnailStatusOutputType = {
   geminiConfigured: boolean;
   youtubeConfigured: boolean;
   characters: ThumbnailCharacterState[];
   uploadedExpressions: ThumbnailExpression[];
+  backgrounds: ThumbnailBackgroundState[];
+  uploadedBackgrounds: string[];
 };
 export type ThumbnailScriptAnalysisOutputType = {
   keyword: string;
@@ -240,7 +268,7 @@ export type ThumbnailJobStatus = {
   variants: ThumbnailJobVariant[];
 };
 export type ThumbnailCharacterMutationOutputType = {
-  character: ThumbnailCharacterState;
+  character: ThumbnailCharacterState | null;
   characters: ThumbnailCharacterState[];
 };
 

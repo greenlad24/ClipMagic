@@ -12,7 +12,7 @@
  * different source thumbnails being recreated, not from rotating the character's
  * expression. Pure functions so the selection logic is unit-testable.
  */
-import { EXPRESSIONS, type Expression } from "./characters.js";
+import type { Expression } from "./characters.js";
 
 export const VIDEO_TYPES = ["Tutorial", "Viral", "Secret", "Review"] as const;
 export type VideoType = (typeof VIDEO_TYPES)[number];
@@ -46,12 +46,14 @@ export function expressionsForVariants(
   count: number,
   available: Expression[],
 ): Expression[] {
-  const avail = EXPRESSIONS.filter((e) => available.includes(e));
-  if (avail.length === 0) return [];
+  // `available` may include BOTH built-in and custom expression ids — don't
+  // restrict to the built-ins, or a library of only custom expressions would
+  // wrongly come back empty.
+  if (available.length === 0) return [];
   const primary = expressionForVideoType(videoType);
   // Best-fit for the whole batch: the type's primary when available, else the
   // first available expression. Repeats are intentional — variety comes from the
   // different source thumbnails, not from rotating the character's look.
-  const chosen = avail.includes(primary) ? primary : avail[0];
+  const chosen = available.includes(primary) ? primary : available[0];
   return Array.from({ length: Math.max(0, count) }, () => chosen);
 }

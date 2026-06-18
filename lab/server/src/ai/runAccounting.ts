@@ -71,7 +71,10 @@ export type CallPurpose =
   // Thumbnail Designer: vision "expression-director" pass — looks at the source
   // thumbnail being recreated and picks the host expression that best fits its
   // emotional tone/energy (from the available uploaded expressions).
-  | "thumbnail-expression-director";
+  | "thumbnail-expression-director"
+  // Thumbnail Designer: vision "background-director" pass — given the source + the
+  // uploaded candidate backgrounds, decides whether one clearly fits (else none).
+  | "thumbnail-background-director";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

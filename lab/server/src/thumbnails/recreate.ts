@@ -128,6 +128,14 @@ export function buildFinalSwapInstruction(assessment?: SwapAssessment | null): s
     "Only the person changes — to the man from the second image."
   );
 }
+/**
+ * Background SWAP prompt (used INSTEAD of STEP8 when the art-director chose an
+ * uploaded background). Inputs [current, backgroundImage]: replace the backdrop
+ * with the SECOND image, keeping every foreground element exactly in place.
+ */
+export const BG_REPLACE_PROMPT =
+  "Replace the entire BACKGROUND behind the subject with the background shown in the SECOND image — use it as the new backdrop, scaled to fill the whole frame. Keep the subject (the person), ALL text, logos, badges and every foreground element in their EXACT same positions and sizes; ONLY the backdrop changes. Blend it naturally and make sure the subject still pops cleanly off the new background.";
+
 export const STEP8_PROMPT =
   "give the existing background a BOLD, clearly visible POP so the thumbnail obviously stands out MORE than the original: make its colors noticeably richer and more vibrant/saturated, and strongly boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. The change must be easy to see at a glance. Keep it the SAME general style and scene as the original — this is a strong enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
 
@@ -141,10 +149,22 @@ export const STEP8_PROMPT =
  * place and realistic. `textChanges` are the art-director's verbatim text-rewrite
  * instructions (each "change the text X to Y, keeping…"). Pure + exported.
  */
-export function buildConsolidatedInstruction(opts: { keyword: string; textChanges: string[] }): string {
+export function buildConsolidatedInstruction(opts: {
+  keyword: string;
+  textChanges: string[];
+  /** When true a THIRD image is supplied to use as the new background. */
+  hasBackground?: boolean;
+}): string {
   const textBlock = opts.textChanges.length
     ? ` (3) Apply these exact text changes: ${opts.textChanges.join("; ")}.`
     : "";
+  const backgroundBlock = opts.hasBackground
+    ? " (4) Replace the background with the one shown in the THIRD image — use it as the new backdrop, scaled to fill " +
+      "the frame, keeping every foreground element (person, text, logos, props) in its exact place; make sure the " +
+      "subject still pops cleanly off it."
+    : " (4) Give the background a bold, clearly visible POP — make its colours richer and more vibrant/saturated and " +
+      "boost the contrast behind the subject so it stands out more than the original — WITHOUT changing the scene, " +
+      "layout or any element's position (an enhancement, NOT a redesign: no new light rays, neon or patterns).";
   return (
     "Recreate this thumbnail in a SINGLE edit, keeping ALL of the FIRST image's elements and exact layout " +
     "faithfully — every prop (stacks of money/cash, devices, laptops, phones), every UI panel, badge, logo and " +
@@ -159,10 +179,8 @@ export function buildConsolidatedInstruction(opts: { keyword: string; textChange
     "thumbnail's HEIGHT (a big, bold, dominant face), keeping him on the same side of the frame as in the FIRST image. " +
     "(2) Change that person's outfit to a plain t-shirt." +
     textBlock +
-    " (4) Give the background a bold, clearly visible POP — make its colours richer and more vibrant/saturated and " +
-    "boost the contrast behind the subject so it stands out more than the original — WITHOUT changing the scene, " +
-    "layout or any element's position (an enhancement, NOT a redesign: no new light rays, neon or patterns). " +
-    "Everything else stays exactly as in the FIRST image."
+    backgroundBlock +
+    " Everything else stays exactly as in the FIRST image."
   );
 }
 
@@ -238,6 +256,14 @@ export interface RecreateInput {
    * source analysis; defaults to the normal multi-step chain when omitted.
    */
   busy?: boolean;
+  /**
+   * Optional chosen background image (the art-director's background-director
+   * picked it for THIS source). When present, the chain SWAPS the background to
+   * this image instead of just popping the existing one; when absent the existing
+   * background is enhanced in place (STEP8_PROMPT).
+   */
+  backgroundBytes?: Buffer;
+  backgroundMime?: string;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -247,18 +273,27 @@ export interface RecreateDeps {
   editImage?: EditFn;
   artDirect?: ArtDirectFn;
   /**
-   * Per-variant source analysis (expression + busy). Consumed by the
-   * ORCHESTRATOR (not the chain itself) — it lives on this shared deps bag so
-   * tests that already inject editImage/artDirect/finalize can override it too.
-   * When omitted the orchestrator uses its own best-effort vision default.
+   * Per-variant source analysis (expression + busy) and background choice. Both
+   * are consumed by the ORCHESTRATOR (not the chain itself) — they live on this
+   * shared deps bag so tests that already inject editImage/artDirect/finalize can
+   * override them too. When omitted the orchestrator uses its best-effort vision
+   * defaults.
    */
   analyzeSource?: (opts: {
     sourceBytes: Buffer;
     sourceMime: string;
-    available: Expression[];
+    available: Array<{ id: Expression; label: string }>;
     videoType: VideoType;
     keyword: string;
   }) => Promise<{ expression: Expression; busy: boolean }>;
+  /** Pick an uploaded background for the source, or null. */
+  chooseBackground?: (opts: {
+    sourceBytes: Buffer;
+    sourceMime: string;
+    candidates: Array<{ id: string; label: string; bytes: Buffer; mime: string }>;
+    videoType: VideoType;
+    keyword: string;
+  }) => Promise<string | null>;
   /** Pre-swap body assessment of the working image. Defaults to the real Claude-vision pass. */
   analyzeForSwap?: AnalyzeForSwapFn;
   /** Crop+upscale finalizer. Defaults to the real ffmpeg + Real-ESRGAN pass. */
@@ -311,6 +346,10 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // The "current best" image we carry forward. Starts as the source thumbnail.
   let current: EditImage = { data: input.sourceBytes, mimeType: input.sourceMime || "image/jpeg" };
   const character: EditImage = { data: input.characterBytes, mimeType: "image/png" };
+  // The art-director-chosen background to swap in (when one fit), else null.
+  const backgroundImg: EditImage | null = input.backgroundBytes
+    ? { data: input.backgroundBytes, mimeType: input.backgroundMime || "image/png" }
+    : null;
 
   // Helper that runs ONE edit resiliently: on any failure, keep `current`. The
   // 16:9 widescreen preamble is appended to every instruction. Every middle edit
@@ -373,9 +412,14 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
       });
     }
     report(PHASE_LABEL.swap, phasePercent("swap", 0));
-    const consolidated = buildConsolidatedInstruction({ keyword: input.keyword, textChanges });
-    // One render on [source, characterRef] — minimal degradation for busy frames.
-    await runStep("recreate-oneshot", "Recreate in one pass", consolidated, [current, character]);
+    const consolidated = buildConsolidatedInstruction({
+      keyword: input.keyword,
+      textChanges,
+      hasBackground: !!backgroundImg,
+    });
+    // One render — [source, characterRef] (+ chosen background as a THIRD image).
+    const oneShotImages = backgroundImg ? [current, character, backgroundImg] : [current, character];
+    await runStep("recreate-oneshot", "Recreate in one pass", consolidated, oneShotImages);
     report(PHASE_LABEL.swap, phasePercent("swap", 1));
     report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
     const result = await finalizeFn(current, steps);
@@ -427,8 +471,14 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     doneEdits++;
     report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
   }
-  // Background (ALWAYS): subtle background pop, everything else identical — PLAIN.
-  await runStep("background", "Change background", STEP8_PROMPT, [current]);
+  // Background (ALWAYS): either SWAP in the chosen uploaded background (when the
+  // background-director picked one) or POP the existing one. Both keep every
+  // foreground element in place.
+  if (backgroundImg) {
+    await runStep("background", "Replace background", BG_REPLACE_PROMPT, [current, backgroundImg]);
+  } else {
+    await runStep("background", "Change background", STEP8_PROMPT, [current]);
+  }
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
 
