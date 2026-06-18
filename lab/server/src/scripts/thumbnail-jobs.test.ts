@@ -448,6 +448,53 @@ async function main() {
     bgs.deleteBackground("studio");
   });
 
+  await check("planContrarianVariations returns 3 editable proposals (one per template)", async () => {
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const write = async (_k: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({ text: `PROPOSAL ${i}`, emphasis: `${i}`, expressionId: "smile" }));
+    const planned = await orchestrate.planContrarianVariations({ keyword: "k", titles: ["T1"] }, write as any);
+    assert.equal(planned.length, 3);
+    assert.deepEqual(planned.map((p) => p.templateId), ["bottom-bar", "left-stack", "top-strike"]);
+    assert.equal(planned[0].text, "PROPOSAL 0");
+    assert.ok(planned.every((p) => p.expressionId && p.expressionLabel), "each carries the cast expression + label");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("startContrarianJob uses APPROVED/edited copy (skips the writer)", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    bgs.saveBackground("Studio", onePx);
+    const overlays: any[] = [];
+    let writerCalled = false;
+    const deps = {
+      editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" }),
+      // capture the overlay text passed to the (best-effort) renderer via the chain
+      finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
+    };
+    const job = orchestrate.startContrarianJob(
+      {
+        keyword: "k",
+        mode: "gemini-pro",
+        variations: [
+          { text: "MY EDIT ONE", emphasis: "ONE", expressionId: "smile" },
+          { text: "MY EDIT TWO", emphasis: "TWO", expressionId: "smile" },
+          { text: "MY EDIT THREE", emphasis: "THREE", expressionId: "smile" },
+        ],
+      },
+      deps as any,
+      async () => {
+        writerCalled = true;
+        return [];
+      },
+    );
+    await waitUntil(() => job.done);
+    assert.equal(writerCalled, false, "the writer is skipped when approved copy is supplied");
+    assert.ok(job.variants.every((v) => v.status === "done"));
+    void overlays;
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+    bgs.deleteBackground("studio");
+  });
+
   await check("a centered contrarian template won't cast a left/right-directed character", async () => {
     jobs._resetJobsForTest();
     chars.saveCharacter("smile", onePx); // neutral built-in (no placement directive)

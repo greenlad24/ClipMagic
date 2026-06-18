@@ -143,9 +143,28 @@ export const generateThumbnails =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, GenerateThumbnailsOutputType>("generateThumbnails");
 export const startThumbnailGeneration =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, { jobId: string }>("startThumbnailGeneration");
-/** Start the parallel CONTRARIAN ORIGINALS workflow (3 originals from bg + character + statement). */
+/** Turn the pasted script into viral + SEO titles (shown + used to ground copy). */
+export const generateThumbnailTitles =
+  endpoint<{ script: string }, { titles: ThumbnailTitles }>("generateThumbnailTitles");
+/** PLAN the contrarian copy for review/edit before generation. */
+export const planThumbnailContrarian =
+  endpoint<{ keyword: string; titles?: string[]; script?: string }, { variations: PlannedContrarian[] }>("planThumbnailContrarian");
+/** Start the parallel CONTRARIAN ORIGINALS workflow; accepts approved/edited copy. */
 export const startContrarianGeneration =
-  endpoint<{ keyword: string; mode?: ThumbnailMode }, { jobId: string }>("startContrarianGeneration");
+  endpoint<
+    { keyword: string; mode?: ThumbnailMode; titles?: string[]; script?: string; variations?: PlannedContrarian[] },
+    { jobId: string }
+  >("startContrarianGeneration");
+
+export type ThumbnailTitles = { viral: string[]; seo: string[] };
+export type PlannedContrarian = {
+  templateId: string;
+  templateLabel: string;
+  text: string;
+  emphasis: string;
+  expressionId: string;
+  expressionLabel: string;
+};
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
 export const listThumbnailCharacters =

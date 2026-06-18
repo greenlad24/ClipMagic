@@ -54,13 +54,35 @@ const SYSTEM =
   "that best EMPHASISES that statement's emotion (shock → a shocked/intense look; " +
   "a confident promise → a calm assured look) — vary them across the set.";
 
+/** Extra grounding for the copywriter: the real titles + a script excerpt. */
+export interface ContrarianContext {
+  titles?: string[];
+  /** A short excerpt/summary of the script for grounding. */
+  context?: string;
+}
+
 /** Pure, exported prompt builder so the contract is testable. */
-export function buildContrarianWriterUserText(keyword: string, available: AvailableExpressionOption[]): string {
+export function buildContrarianWriterUserText(
+  keyword: string,
+  available: AvailableExpressionOption[],
+  ground: ContrarianContext = {},
+): string {
   const exprList = available.map((e) => `  - ${e.id}: ${e.label}`).join("\n");
   const ids = available.map((e) => e.id).join(", ");
   const templateList = CONTRARIAN_TEMPLATES.map((t, i) => `  ${i + 1}. ${t.label}: ${t.copyHint}`).join("\n");
+  const titles = (ground.titles ?? []).filter(Boolean).slice(0, 6);
+  const titleBlock = titles.length
+    ? `The chosen/working TITLES for this video (match the thumbnail copy to these — same angle and promise):\n` +
+      titles.map((t) => `  - ${t}`).join("\n") +
+      "\n\n"
+    : "";
+  const contextBlock = ground.context?.trim()
+    ? `What the video is actually about (ground the copy in this, stay TRUE to it):\n${ground.context.trim().slice(0, 1500)}\n\n`
+    : "";
   return (
     `The video's topic/keyword is: "${keyword}".\n\n` +
+    titleBlock +
+    contextBlock +
     `Available expressions to cast from (choose by id):\n${exprList}\n\n` +
     `Design EXACTLY ${CONTRARIAN_TEMPLATES.length} variations, one per template IN THIS ORDER:\n` +
     `${templateList}\n\n` +
@@ -179,12 +201,13 @@ export async function generateContrarianVariations(
   keyword: string,
   count: number,
   available: AvailableExpressionOption[],
+  ground: ContrarianContext = {},
   generate: GenerateJsonFn = defaultGenerate,
 ): Promise<ContrarianVariation[]> {
   const ids = available.map((a) => a.id);
   let variations: ContrarianVariation[] = [];
   try {
-    const raw = await generate({ system: SYSTEM, userText: buildContrarianWriterUserText(keyword, available) });
+    const raw = await generate({ system: SYSTEM, userText: buildContrarianWriterUserText(keyword, available, ground) });
     variations = normalizeContrarianVariations(JSON.parse(raw), ids);
   } catch {
     variations = [];

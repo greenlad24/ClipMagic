@@ -1118,6 +1118,36 @@ async function main() {
     assert.deepEqual(contrarian.chooseContrarianBackgrounds([], 3), [], "none → empty");
   });
 
+  await check("buildContrarianWriterUserText grounds the copy in the titles + context", () => {
+    const txt = contrarian.buildContrarianWriterUserText(
+      "topview ai",
+      [{ id: "smile", label: "Smile" }],
+      { titles: ["Topview AI Full Tutorial", "How Topview AI Works"], context: "a tutorial about generating long-form videos" },
+    );
+    assert.match(txt, /Topview AI Full Tutorial/, "includes a working title");
+    assert.match(txt, /match the thumbnail copy to these/i, "asks to match the titles");
+    assert.match(txt, /generating long-form videos/, "includes the script context");
+  });
+
+  // ── titles step (mocked AI) ─────────────────────────────────────────────────
+  const titlesMod = await import("../thumbnails/titles.js");
+  await check("normalizeTitles trims + dedupes viral/seo arrays", () => {
+    const t = titlesMod.normalizeTitles({ viral: [" A ", "A", "B"], seo: ["C", "C", ""] });
+    assert.deepEqual(t.viral, ["A", "B"]);
+    assert.deepEqual(t.seo, ["C"]);
+  });
+  await check("generateTitles returns the model's titles; empty script → empty", async () => {
+    const fake = async () => JSON.stringify({ viral: ["Topview AI Is Dead"], seo: ["Topview AI Tutorial"] });
+    const out = await titlesMod.generateTitles("a real script about topview ai", fake);
+    assert.deepEqual(out.viral, ["Topview AI Is Dead"]);
+    assert.deepEqual(out.seo, ["Topview AI Tutorial"]);
+    const empty = await titlesMod.generateTitles("   ", fake);
+    assert.deepEqual(empty, { viral: [], seo: [] }, "empty script short-circuits");
+  });
+  await check("titlesAsContext flattens viral-first", () => {
+    assert.deepEqual(titlesMod.titlesAsContext({ viral: ["V1"], seo: ["S1"] }), ["V1", "S1"]);
+  });
+
   await check("buildContrarianComposePrompt: bg + character 1:1, not cut, face >=70%, NO text", () => {
     const p = contrarian.buildContrarianComposePrompt("right", "the LEFT half of the frame");
     assert.match(p, /FIRST image as the full background/i, "background element");

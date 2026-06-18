@@ -33,9 +33,11 @@ import {
   chooseContrarianBackgrounds,
   resolveTemplateBackground,
   buildContrarianComposePrompt,
+  padContrarianVariations,
   type ContrarianVariation,
+  type ContrarianContext,
 } from "./contrarian.js";
-import { templateForIndex } from "./textOverlay.js";
+import { templateForIndex, type ContrarianTemplate } from "./textOverlay.js";
 import {
   providersForMode,
   DEFAULT_GENERATION_MODE,
@@ -464,19 +466,91 @@ export type WriteVariationsFn = (
   keyword: string,
   count: number,
   available: AvailableExpression[],
+  ground: ContrarianContext,
 ) => Promise<ContrarianVariation[]>;
 
 const CONTRARIAN_COUNT = 3;
+const defaultWriteVariations: WriteVariationsFn = (k, n, a, g) => generateContrarianVariations(k, n, a, g);
+
+/**
+ * Resolve the final cast + placement for a template: a CENTERED template never
+ * uses a left/right-directed character (recast to a neutral one); a name
+ * directive otherwise overrides the template side. Pure-ish (reads the library
+ * via `available`). Shared by the plan + run paths so the preview matches output.
+ */
+function castForTemplate(
+  v: ContrarianVariation,
+  template: ContrarianTemplate,
+  available: AvailableExpression[],
+): { exprId: string; placement: "left" | "center" | "right" } {
+  let exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
+  let directive = placementFromLabel(available.find((e) => e.id === exprId)?.label ?? "");
+  if (template.charPlacement === "center" && directive) {
+    const neutral = available.find((e) => placementFromLabel(e.label) === null);
+    if (neutral) {
+      exprId = neutral.id;
+      directive = null;
+    }
+  }
+  return { exprId, placement: directive ?? template.charPlacement };
+}
+
+/** One proposed contrarian variation for the REVIEW step (editable in the UI). */
+export interface PlannedContrarian {
+  templateId: string;
+  templateLabel: string;
+  text: string;
+  emphasis: string;
+  expressionId: string;
+  expressionLabel: string;
+}
+
+/**
+ * PLAN (don't render) the 3 contrarian variations so the user can review/edit the
+ * copy before generating. Grounded in the titles + script context. Returns []
+ * when no character expression is uploaded. Best-effort writer (injectable).
+ */
+export async function planContrarianVariations(
+  input: { keyword: string; titles?: string[]; context?: string },
+  write: WriteVariationsFn = defaultWriteVariations,
+): Promise<PlannedContrarian[]> {
+  const available = availableExpressionOptions();
+  if (available.length === 0) return [];
+  const variations = await write(input.keyword, CONTRARIAN_COUNT, available, {
+    titles: input.titles,
+    context: input.context,
+  });
+  return variations.map((v, i) => {
+    const template = templateForIndex(i);
+    const { exprId } = castForTemplate(v, template, available);
+    return {
+      templateId: template.id,
+      templateLabel: template.label,
+      text: v.text,
+      emphasis: v.emphasis,
+      expressionId: exprId,
+      expressionLabel: available.find((e) => e.id === exprId)?.label ?? exprId,
+    };
+  });
+}
 
 export function startContrarianJob(
-  input: { keyword: string; mode?: GenerationMode; provider?: ImageProvider },
+  input: {
+    keyword: string;
+    mode?: GenerationMode;
+    provider?: ImageProvider;
+    titles?: string[];
+    context?: string;
+    /** Approved/edited copy from the review step — when present the writer is skipped. */
+    variations?: ContrarianVariation[];
+  },
   recreateDeps?: RecreateDeps,
-  writeVariations: WriteVariationsFn = (k, n, a) => generateContrarianVariations(k, n, a),
+  writeVariations: WriteVariationsFn = defaultWriteVariations,
 ): ThumbnailJob {
   const available = availableExpressionOptions();
   const runs = providersForMode(input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE);
   // Seed 3 queued variants (no source thumbnail — these are originals). The
-  // per-variation expression is filled once the copywriter runs.
+  // per-variation expression is filled once the copy is resolved.
   const job = createJob(
     Array.from({ length: CONTRARIAN_COUNT }, (_, i) => ({
       videoId: `contrarian-${i + 1}`,
@@ -491,10 +565,17 @@ export function startContrarianJob(
 
 async function runContrarianJob(
   job: ThumbnailJob,
-  input: { keyword: string; mode?: GenerationMode; provider?: ImageProvider },
+  input: {
+    keyword: string;
+    mode?: GenerationMode;
+    provider?: ImageProvider;
+    titles?: string[];
+    context?: string;
+    variations?: ContrarianVariation[];
+  },
   available: AvailableExpression[],
   recreateDeps?: RecreateDeps,
-  writeVariations: WriteVariationsFn = (k, n, a) => generateContrarianVariations(k, n, a),
+  writeVariations: WriteVariationsFn = defaultWriteVariations,
 ): Promise<void> {
   const run = providersForMode(input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE)[0];
   try {
@@ -515,8 +596,15 @@ async function runContrarianJob(
       return;
     }
 
-    // Art-direct the variations (copy + emphasis + cast + placement) + backgrounds.
-    const variations = await writeVariations(input.keyword, job.variants.length, available);
+    // Use the APPROVED copy from the review step when provided; else art-direct it.
+    const approved = (input.variations ?? []).filter((v) => v && v.text);
+    const variations =
+      approved.length >= job.variants.length
+        ? padContrarianVariations(approved, job.variants.length, available.map((e) => e.id))
+        : await writeVariations(input.keyword, job.variants.length, available, {
+            titles: input.titles,
+            context: input.context,
+          });
     const chosenBgIds = chooseContrarianBackgrounds(bgCandidates.map((c) => c.id), job.variants.length);
 
     for (let i = 0; i < job.variants.length; i++) {
@@ -526,25 +614,8 @@ async function runContrarianJob(
       // cycled choice when that name isn't in the uploaded library.
       const bgId = resolveTemplateBackground(template.backgroundName, bgCandidates, chosenBgIds[i]);
       const bg = bgCandidates.find((c) => c.id === bgId) ?? bgCandidates[0];
-      // The cast expression (validated to an available id by the writer's pad step).
-      let exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
-      let label = available.find((e) => e.id === exprId)?.label ?? "";
-      let directive = placementFromLabel(label);
-      // A CENTERED template must NOT use a character whose name pins it left/right
-      // (a side-posed character looks wrong centred) — recast to a neutral one
-      // (a built-in or any expression with no placement directive).
-      if (template.charPlacement === "center" && directive) {
-        const neutral = available.find((e) => placementFromLabel(e.label) === null);
-        if (neutral) {
-          exprId = neutral.id;
-          label = neutral.label;
-          directive = null;
-        }
-      }
+      const { exprId, placement } = castForTemplate(v, template, available);
       const characterBytes = readCharacterImage(exprId);
-      // The template fixes the character side; a placement directive in the chosen
-      // expression's NAME overrides it (only possible on the side template now).
-      const placement = directive ?? template.charPlacement;
       job.variants[i].expression = exprId;
       updateVariant(job, i, { status: "running", stepLabel: "Composing original", percent: phasePercent("swap", 0) });
       try {

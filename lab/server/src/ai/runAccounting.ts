@@ -77,7 +77,10 @@ export type CallPurpose =
   | "thumbnail-background-director"
   // Thumbnail Designer: text pass that writes short CONTRARIAN statements for the
   // "contrarian originals" workflow (no money claims; ≤7 words).
-  | "thumbnail-contrarian-writer";
+  | "thumbnail-contrarian-writer"
+  // Thumbnail Designer: turns the pasted script into viral + SEO titles that
+  // ground the on-thumbnail copy for both workflows.
+  | "thumbnail-titles";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

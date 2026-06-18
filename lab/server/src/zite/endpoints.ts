@@ -77,7 +77,13 @@ import {
   uploadedBackgrounds,
 } from "../thumbnails/backgrounds.js";
 import { fontStatus, saveFont, deleteFont } from "../thumbnails/fonts.js";
-import { generateThumbnailVariants, startThumbnailJob, startContrarianJob } from "../thumbnails/orchestrate.js";
+import {
+  generateThumbnailVariants,
+  startThumbnailJob,
+  startContrarianJob,
+  planContrarianVariations,
+} from "../thumbnails/orchestrate.js";
+import { generateTitles } from "../thumbnails/titles.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
@@ -2365,12 +2371,47 @@ const startThumbnailGeneration: Handler = async (input) => {
   return { jobId: job.id };
 };
 
+/** Turn the pasted script into viral + SEO titles (shown + used to ground copy). */
+const generateThumbnailTitles: Handler = async (input) => {
+  const titles = await generateTitles(String(input?.script ?? ""));
+  return { titles };
+};
+
+function coerceTitles(input: any): string[] {
+  return (Array.isArray(input?.titles) ? input.titles : []).map((t: unknown) => String(t)).filter(Boolean);
+}
+
+/**
+ * PLAN the contrarian copy for review/edit BEFORE generation: returns the 3
+ * proposed statements (text + emphasis + cast) grounded in the titles + script.
+ */
+const planThumbnailContrarian: Handler = async (input) => {
+  const keyword = String(input?.keyword ?? "").trim();
+  if (!keyword) throw new ZiteError({ code: "BAD_REQUEST", message: "A keyword is required to plan contrarian copy." });
+  const variations = await planContrarianVariations({
+    keyword,
+    titles: coerceTitles(input),
+    context: typeof input?.script === "string" ? input.script : undefined,
+  });
+  return { variations };
+};
+
+function coerceContrarianVariations(input: any): { text: string; emphasis: string; expressionId: string }[] {
+  return (Array.isArray(input?.variations) ? input.variations : [])
+    .map((v: any) => ({
+      text: String(v?.text ?? "").trim(),
+      emphasis: String(v?.emphasis ?? "").trim(),
+      expressionId: String(v?.expressionId ?? "").trim(),
+    }))
+    .filter((v: any) => v.text);
+}
+
 /**
  * Start the CONTRARIAN ORIGINALS workflow (the parallel second workflow): build 3
  * original thumbnails from the keyword + uploaded background(s) + character, with
- * a short styled contrarian statement (no money claims). Returns a jobId polled
- * with the SAME `thumbnailJobStatus` endpoint, so it runs in parallel with a
- * recreation job.
+ * a short styled contrarian statement (no money claims). Accepts approved/edited
+ * `variations` from the review step. Returns a jobId polled with the SAME
+ * `thumbnailJobStatus` endpoint, so it runs in parallel with a recreation job.
  */
 const startContrarianGeneration: Handler = async (input) => {
   const keyword = String(input?.keyword ?? "").trim();
@@ -2378,6 +2419,9 @@ const startContrarianGeneration: Handler = async (input) => {
   const job = startContrarianJob({
     keyword,
     mode: coerceMode(input?.mode ?? input?.provider),
+    titles: coerceTitles(input),
+    context: typeof input?.script === "string" ? input.script : undefined,
+    variations: coerceContrarianVariations(input),
   });
   return { jobId: job.id };
 };
@@ -2553,6 +2597,8 @@ export const HANDLERS: Record<string, Handler> = {
   analyzeThumbnailScript,
   searchThumbnails,
   startThumbnailGeneration,
+  generateThumbnailTitles,
+  planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,
   generateThumbnails,

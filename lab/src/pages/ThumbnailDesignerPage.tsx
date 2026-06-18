@@ -6,6 +6,8 @@ import {
   searchThumbnails,
   startThumbnailGeneration,
   startContrarianGeneration,
+  generateThumbnailTitles,
+  planThumbnailContrarian,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -22,6 +24,8 @@ import {
   type ThumbnailJobStatus,
   type ThumbnailJobVariant,
   type ThumbnailProviderResult,
+  type ThumbnailTitles,
+  type PlannedContrarian,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
@@ -101,6 +105,10 @@ export default function ThumbnailDesignerPage() {
   const [rationale, setRationale] = useState<string | null>(null);
   const [keyword, setKeyword] = useState('');
   const [videoType, setVideoType] = useState<ThumbnailVideoType>('Tutorial');
+  // Titles + contrarian copy review (the intermediate step before generation).
+  const [titles, setTitles] = useState<ThumbnailTitles | null>(null);
+  const [contrarianDraft, setContrarianDraft] = useState<PlannedContrarian[] | null>(null);
+  const [draftLoading, setDraftLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
@@ -194,11 +202,42 @@ export default function ThumbnailDesignerPage() {
       setRationale(analysis.rationale ?? null);
       setAnalyzed(true);
       toast.success('Script analyzed — review the keyword and video type, then search.');
+      // Kick off the titles + contrarian-copy planning step (non-blocking).
+      void prepareCopy(analysis.keyword);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not analyze the script');
     } finally {
       setAnalyzing(false);
     }
+  };
+
+  /** Generate the viral/SEO titles + the proposed contrarian copy for review. */
+  const prepareCopy = async (kw: string) => {
+    const scriptText = script.trim();
+    if (!scriptText || !kw.trim()) return;
+    setDraftLoading(true);
+    setTitles(null);
+    setContrarianDraft(null);
+    try {
+      const { titles: t } = await generateThumbnailTitles({ script: scriptText });
+      setTitles(t);
+      // The contrarian review only applies when a character + background exist.
+      const hasBg = (status?.uploadedBackgrounds?.length ?? 0) > 0;
+      const hasChar = (status?.uploadedExpressions?.length ?? 0) > 0;
+      if (hasBg && hasChar) {
+        const titleList = [...(t?.viral ?? []), ...(t?.seo ?? [])];
+        const { variations } = await planThumbnailContrarian({ keyword: kw.trim(), titles: titleList, script: scriptText });
+        setContrarianDraft(variations);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not prepare titles/copy');
+    } finally {
+      setDraftLoading(false);
+    }
+  };
+
+  const editDraft = (i: number, patch: Partial<PlannedContrarian>) => {
+    setContrarianDraft((prev) => (prev ? prev.map((v, idx) => (idx === i ? { ...v, ...patch } : v)) : prev));
   };
 
   const onSearch = async () => {
@@ -238,9 +277,16 @@ export default function ThumbnailDesignerPage() {
     setContrarianJob(null);
 
     // Kick off the CONTRARIAN ORIGINALS workflow IN PARALLEL (needs a background +
-    // character). It polls independently and shows alongside the recreations.
+    // character). Uses the reviewed/edited copy + the titles for grounding.
     if (hasBackground && hasCharacter && keyword.trim()) {
-      startContrarianGeneration({ keyword: keyword.trim(), mode })
+      const titleList = [...(titles?.viral ?? []), ...(titles?.seo ?? [])];
+      startContrarianGeneration({
+        keyword: keyword.trim(),
+        mode,
+        titles: titleList,
+        script: script.trim() || undefined,
+        variations: contrarianDraft ?? undefined,
+      })
         .then(({ jobId }) => pollJob(jobId, contrarianPollRef, setContrarianJob))
         .catch((e) => toast.error(e instanceof Error ? e.message : 'Contrarian originals failed to start'));
     }
@@ -367,6 +413,17 @@ export default function ThumbnailDesignerPage() {
                       </div>
                     </div>
                   </div>
+                )}
+
+                {/* Titles + contrarian copy review (the intermediate step) */}
+                {analyzed && (draftLoading || titles || contrarianDraft) && (
+                  <CopyReview
+                    titles={titles}
+                    draft={contrarianDraft}
+                    loading={draftLoading}
+                    onEdit={editDraft}
+                    onRegenerate={() => void prepareCopy(keyword)}
+                  />
                 )}
 
                 {/* Search results grid */}
@@ -947,6 +1004,81 @@ function FontUploader({
         }}
       />
     </section>
+  );
+}
+
+function CopyReview({
+  titles,
+  draft,
+  loading,
+  onEdit,
+  onRegenerate,
+}: {
+  titles: ThumbnailTitles | null;
+  draft: PlannedContrarian[] | null;
+  loading: boolean;
+  onEdit: (i: number, patch: Partial<PlannedContrarian>) => void;
+  onRegenerate: () => void;
+}) {
+  return (
+    <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+          <Sparkles className="w-4 h-4 text-primary" /> Titles &amp; thumbnail copy
+        </span>
+        <Button type="button" variant="outline" size="sm" disabled={loading} onClick={onRegenerate}>
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+          Regenerate
+        </Button>
+      </div>
+
+      {/* Titles */}
+      {titles && (titles.viral.length > 0 || titles.seo.length > 0) && (
+        <div className="grid sm:grid-cols-2 gap-3">
+          <div>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1">Viral titles</p>
+            <ul className="space-y-1">
+              {titles.viral.map((t, i) => (
+                <li key={i} className="text-xs text-foreground bg-background rounded px-2 py-1 border border-border">{t}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-[11px] font-medium text-muted-foreground mb-1">SEO titles</p>
+            <ul className="space-y-1">
+              {titles.seo.map((t, i) => (
+                <li key={i} className="text-xs text-foreground bg-background rounded px-2 py-1 border border-border">{t}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {/* Contrarian copy — editable per template */}
+      {loading && !draft && <Skeleton className="h-24 w-full rounded" />}
+      {draft && draft.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-[11px] text-muted-foreground">
+            Review the text for each contrarian thumbnail — edit it however you like. The highlighted word goes in the red box.
+          </p>
+          {draft.map((v, i) => (
+            <div key={i} className="rounded-md border border-border bg-background p-2.5 space-y-2">
+              <span className="text-[11px] font-medium text-muted-foreground">Thumbnail {i + 1} · {v.templateLabel}</span>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex-1">
+                  <label className="text-[10px] text-muted-foreground">Headline (≤4 words)</label>
+                  <Input value={v.text} maxLength={40} onChange={(e) => onEdit(i, { text: e.target.value })} />
+                </div>
+                <div className="sm:w-40">
+                  <label className="text-[10px] text-muted-foreground">Highlighted word(s)</label>
+                  <Input value={v.emphasis} maxLength={24} onChange={(e) => onEdit(i, { emphasis: e.target.value })} />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
