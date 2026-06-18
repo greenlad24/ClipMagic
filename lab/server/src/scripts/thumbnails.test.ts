@@ -1084,18 +1084,20 @@ async function main() {
     const out = contrarian.normalizeContrarianVariations(
       {
         variations: [
-          { text: "What 99% Don't Know", emphasis: "99%", expression: "surprise", placement: "left" }, // keep (% is fine)
-          { text: "Make $40M At 20", emphasis: "$40M", expression: "calm", placement: "right" }, // DROP (money)
-          { text: "this statement has way too many words to ever fit", emphasis: "words", expression: "calm", placement: "left" }, // DROP (>7)
-          { text: "STOP POSTING DAILY", emphasis: "elsewhere", expression: "nope", placement: "sideways" }, // emphasis+cast fixed
+          { text: "Stop Doing This", emphasis: "Stop", expression: "surprise" }, // keep (3 words)
+          { text: "Make $40M Fast", emphasis: "$40M", expression: "calm" }, // DROP (money)
+          { text: "way too many words to ever fit here", emphasis: "words", expression: "calm" }, // DROP (>4)
+          { text: "WHAT AI DOES, TOPVIEW WINS", emphasis: "elsewhere", expression: "nope" }, // DROP (>4 after comma strip)
+          { text: "Avoid, This", emphasis: "elsewhere", expression: "nope" }, // keep → comma stripped, emphasis fixed
         ],
       },
       ["smile", "surprise", "calm"],
     );
     assert.equal(out.length, 2, "money + over-long dropped");
-    assert.equal(out[0].text, "What 99% Don't Know");
+    assert.equal(out[0].text, "Stop Doing This");
     assert.equal(out[0].expressionId, "surprise", "valid cast kept");
-    assert.equal(out[1].emphasis, "DAILY", "bad emphasis → last word");
+    assert.equal(out[1].text, "Avoid This", "comma stripped from the text");
+    assert.equal(out[1].emphasis, "This", "bad emphasis → last word");
     assert.equal(out[1].expressionId, "", "unknown cast cleared (pad will assign)");
   });
 
@@ -1120,7 +1122,8 @@ async function main() {
     const p = contrarian.buildContrarianComposePrompt("right", "the LEFT half of the frame");
     assert.match(p, /FIRST image as the full background/i, "background element");
     assert.match(p, /the man in the SECOND image/i, "character element");
-    assert.match(p, /1:1 likeness/i, "1:1 likeness to the uploaded photo");
+    assert.match(p, /100% IDENTICALLY/i, "100% identical likeness");
+    assert.match(p, /do NOT alter, beautify/i, "never altered");
     assert.match(p, /NOT a cut-out or floating cropped head/i, "character must not be cut");
     assert.match(p, /at least 70% of the thumbnail's height/i, "face fills >=70% height");
     assert.match(p, /all the way to the RIGHT/i, "placement honoured");

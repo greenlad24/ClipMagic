@@ -45,10 +45,11 @@ const SYSTEM =
   "angles: an intriguing stat or secret (e.g. \"What 99% Don't Know\" with \"99%\" " +
   "emphasised), a bold promise, or — especially for tutorials — the BRAND NAME plus " +
   "a descriptor like \"FULL TUTORIAL\", \"BEGINNER TO PRO\", \"FULL GUIDE\". " +
-  "Keep it SHORT and punchy — 2–4 words, NEVER more than 5; big bold thumbnails " +
-  "use few words so the text can be huge. No filler, no \"+\" or symbols, no " +
-  "subtitles. ABSOLUTELY NO money claims — no dollar signs, no amounts, no " +
-  "revenue/profit/income/earnings figures (percentages like \"99%\" are fine). " +
+  "Keep it EXTREMELY short — PREFER 2 words, NEVER more than 4. Big bold " +
+  "thumbnails use very few words so the text can be huge. NO commas, NO " +
+  "punctuation, NO \"+\" or symbols, NO subtitles or second clauses. ABSOLUTELY " +
+  "NO money claims — no dollar signs, no amounts, no revenue/profit/income/" +
+  "earnings figures (percentages like \"99%\" are fine). " +
   "You also CAST each thumbnail: from the provided expression list choose the one " +
   "that best EMPHASISES that statement's emotion (shock → a shocked/intense look; " +
   "a confident promise → a calm assured look) — vary them across the set.";
@@ -90,6 +91,15 @@ function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/** Strip commas/semicolons + collapse whitespace (thumbnail copy has no punctuation). */
+function cleanStatement(s: string): string {
+  return (s || "")
+    .replace(/^["']|["']$/g, "")
+    .replace(/[,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 /**
  * Normalize raw model variations: trim, enforce ≤7 words, DROP money claims, fix
  * the emphasis to be inside the text, and validate the expression id against the
@@ -103,9 +113,10 @@ export function normalizeContrarianVariations(raw: any, availableIds: string[]):
       : [];
   const out: ContrarianVariation[] = [];
   for (const v of list) {
-    const text = typeof v?.text === "string" ? v.text.trim().replace(/^["']|["']$/g, "").trim() : "";
-    if (!text || wordCount(text) > 6 || hasMoneyClaim(text)) continue;
-    let emphasis = typeof v?.emphasis === "string" ? v.emphasis.trim().replace(/^["']|["']$/g, "").trim() : "";
+    const text = cleanStatement(typeof v?.text === "string" ? v.text : "");
+    // Max 4 words (prefer 2) — drop anything longer so the headline stays huge.
+    if (!text || wordCount(text) > 4 || hasMoneyClaim(text)) continue;
+    let emphasis = cleanStatement(typeof v?.emphasis === "string" ? v.emphasis : "");
     if (!emphasis || !text.toLowerCase().includes(emphasis.toLowerCase()) || hasMoneyClaim(emphasis)) {
       const words = text.split(/\s+/).filter(Boolean);
       emphasis = words[words.length - 1] ?? "";
@@ -232,10 +243,11 @@ export function buildContrarianComposePrompt(
   return (
     "Create a 16:9 landscape image with exactly TWO elements: a background and a person — and NO text at all. " +
     "(1) BACKGROUND: use the FIRST image as the full background, scaled to fill the whole frame. " +
-    "(2) PERSON: the subject must look EXACTLY like the man in the SECOND image — a 1:1 likeness: the same face, " +
-    "head shape, hairstyle, hair colour, beard, skin tone and features (clearly THAT real man, do not restyle him). " +
-    "Composite him naturally onto the background as a real head-and-shoulders/upper-chest shot — he must be WHOLE " +
-    "and naturally integrated, NOT a cut-out or floating cropped head, with NO hard cut lines or visible edges. " +
+    "(2) PERSON: the subject must be the man in the SECOND image, reproduced 100% IDENTICALLY — a 1:1 likeness with " +
+    "the EXACT same face, head shape, hairstyle, hair colour, beard, skin tone and features. Do NOT alter, beautify, " +
+    "slim, age, retouch, restyle or change his face or any feature in ANY way — keep his identity pixel-faithful, " +
+    "clearly THAT real man. Composite him naturally onto the background as a real head-and-shoulders/upper-chest " +
+    "shot — he must be WHOLE and naturally integrated, NOT a cut-out or floating cropped head, with NO hard cut lines. " +
     `Position him ${side}, looking toward the camera with a confident, intense expression. ` +
     "His face must be LARGE — filling AT LEAST 70% of the thumbnail's HEIGHT (a big, dominant face). " +
     `Keep ${textArea} relatively clean and uncluttered — a headline will be added there afterwards. ` +

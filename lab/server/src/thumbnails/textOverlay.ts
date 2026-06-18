@@ -105,12 +105,13 @@ export function splitByEmphasis(text: string, emphasis: string): TextSegment[] {
  * text with the emphasis removed (trimmed, collapsed spaces). Pure + exported.
  */
 export function stackLines(text: string, emphasis: string): { line1: string; line2: string } {
-  const e = (emphasis || "").trim();
-  if (!e) return { line1: text.trim(), line2: "" };
+  const strip = (s: string) => s.replace(/^[\s,;:.–—-]+|[\s,;:.–—-]+$/g, "").replace(/\s+/g, " ").trim();
+  const e = strip(emphasis || "");
+  if (!e) return { line1: strip(text), line2: "" };
   const idx = text.toLowerCase().indexOf(e.toLowerCase());
-  if (idx < 0) return { line1: e, line2: text.trim() };
-  const rest = (text.slice(0, idx) + " " + text.slice(idx + e.length)).replace(/\s+/g, " ").trim();
-  return { line1: text.slice(idx, idx + e.length).trim(), line2: rest };
+  if (idx < 0) return { line1: e, line2: strip(text) };
+  const rest = strip(text.slice(0, idx) + " " + text.slice(idx + e.length));
+  return { line1: strip(text.slice(idx, idx + e.length)), line2: rest };
 }
 
 /**
@@ -246,10 +247,10 @@ function drawSingleLine(
   emphasis: string,
   pos: "top" | "bottom",
 ): void {
-  const margin = W * 0.035;
+  const margin = W * 0.03;
   const maxW = W - margin * 2;
-  // Big, bold headline like the reference designs (was ~0.12·H — too small).
-  const size = fitFont(ctx, family, text, maxW, Math.round(H * 0.155));
+  // Big, bold headline like the reference designs — short copy keeps it huge.
+  const size = fitFont(ctx, family, text, maxW, Math.round(H * 0.185));
   ctx.font = `${size}px "${family}"`;
   const segs = splitByEmphasis(text, emphasis);
   const padX = Math.round(size * 0.18);
@@ -291,9 +292,9 @@ function drawSingleLine(
 function drawLeftStack(ctx: any, family: string, W: number, H: number, text: string, emphasis: string): void {
   const { line1, line2 } = stackLines(text, emphasis);
   const x = W * 0.05;
-  const maxW = W * 0.56;
-  // Large stacked headline like the "$40M / At 20" reference (was ~0.17·H).
-  const size = fitFont(ctx, family, line1.length >= line2.length ? line1 : line2, maxW, Math.round(H * 0.215));
+  const maxW = W * 0.58;
+  // Large stacked headline like the "$40M / At 20" reference — short copy → huge.
+  const size = fitFont(ctx, family, line1.length >= line2.length ? line1 : line2, maxW, Math.round(H * 0.25));
   ctx.font = `${size}px "${family}"`;
   const padX = Math.round(size * 0.16);
   const boxH = size * 1.2;

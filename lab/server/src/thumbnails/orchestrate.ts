@@ -527,12 +527,24 @@ async function runContrarianJob(
       const bgId = resolveTemplateBackground(template.backgroundName, bgCandidates, chosenBgIds[i]);
       const bg = bgCandidates.find((c) => c.id === bgId) ?? bgCandidates[0];
       // The cast expression (validated to an available id by the writer's pad step).
-      const exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
+      let exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
+      let label = available.find((e) => e.id === exprId)?.label ?? "";
+      let directive = placementFromLabel(label);
+      // A CENTERED template must NOT use a character whose name pins it left/right
+      // (a side-posed character looks wrong centred) — recast to a neutral one
+      // (a built-in or any expression with no placement directive).
+      if (template.charPlacement === "center" && directive) {
+        const neutral = available.find((e) => placementFromLabel(e.label) === null);
+        if (neutral) {
+          exprId = neutral.id;
+          label = neutral.label;
+          directive = null;
+        }
+      }
       const characterBytes = readCharacterImage(exprId);
       // The template fixes the character side; a placement directive in the chosen
-      // expression's NAME overrides it.
-      const label = available.find((e) => e.id === exprId)?.label ?? "";
-      const placement = placementFromLabel(label) ?? template.charPlacement;
+      // expression's NAME overrides it (only possible on the side template now).
+      const placement = directive ?? template.charPlacement;
       job.variants[i].expression = exprId;
       updateVariant(job, i, { status: "running", stepLabel: "Composing original", percent: phasePercent("swap", 0) });
       try {

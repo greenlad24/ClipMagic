@@ -448,6 +448,33 @@ async function main() {
     bgs.deleteBackground("studio");
   });
 
+  await check("a centered contrarian template won't cast a left/right-directed character", async () => {
+    jobs._resetJobsForTest();
+    chars.saveCharacter("smile", onePx); // neutral built-in (no placement directive)
+    chars.saveCustomCharacter("Pointing - place on the right", onePx); // directed → id pointing-place-on-the-right
+    bgs.saveBackground("Studio", onePx);
+    // The writer casts the DIRECTED character for every variation.
+    const writeVariations = async (_k: string, n: number) =>
+      Array.from({ length: n }, () => ({ text: "STOP NOW", emphasis: "STOP", expressionId: "pointing-place-on-the-right" }));
+    const job = orchestrate.startContrarianJob(
+      { keyword: "k", mode: "gemini-pro" },
+      {
+        editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" }),
+        finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
+      } as any,
+      writeVariations,
+    );
+    await waitUntil(() => job.done);
+    // Templates 0 (bottom) + 2 (top) are CENTERED → must recast to the neutral built-in.
+    assert.equal(job.variants[0].expression, "smile", "center template recasts to a neutral character");
+    assert.equal(job.variants[2].expression, "smile", "center template recasts to a neutral character");
+    // Template 1 (left-stack, character on the right) may keep the directed cast.
+    assert.equal(job.variants[1].expression, "pointing-place-on-the-right", "side template keeps the directed character");
+    chars.deleteCharacter("smile");
+    chars.deleteCharacter("pointing-place-on-the-right");
+    bgs.deleteBackground("studio");
+  });
+
   await check("contrarian job errors cleanly when no background is uploaded", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
