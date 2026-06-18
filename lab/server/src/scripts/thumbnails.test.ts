@@ -742,6 +742,7 @@ async function main() {
     assert.match(last.instruction, /matching skin tone/i, "swap specifies matching skin tone");
     assert.match(last.instruction, /one real man/i, "swap insists the person reads as one real man");
     assert.match(last.instruction, /NOT a head pasted/i, "swap forbids a head pasted on a mismatched/oversized body");
+    assert.match(last.instruction, /at least 70% of the thumbnail's height/i, "swap enforces a large face (≥70% height)");
     // NO instruction anywhere is the old weak re-anchor nudge.
     assert.ok(sent.every((s) => !/fix any drift from the previous edits/i.test(s.instruction)), "no weak re-anchor nudge remains");
     // The art-director analysed the OUTFIT RESULT image (current working image),

@@ -80,7 +80,7 @@ export const MAX_STEPS = 8;
  * identity replacement, NOT a "fix drift" nudge.) Exported so tests can assert it.
  */
 export const STEP1_PROMPT =
-  "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. His BODY must fit his head naturally: give him a medium build with a slightly fit, average physique that matches his face — a seamless neck join, matching skin tone, and realistic head-to-body proportions. The whole person must read as ONE real man (the man in the SECOND image), NOT a head pasted onto a mismatched or oversized body. Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their positions — and keep the BACKGROUND exactly as it appears in the FIRST image, including its enhanced, vibrant colours and stronger contrast (do NOT flatten, dull, desaturate or recolour the background). Only the person changes — to the man from the second image.";
+  "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. His BODY must fit his head naturally: give him a medium build with a slightly fit, average physique that matches his face — a seamless neck join, matching skin tone, and realistic head-to-body proportions. The whole person must read as ONE real man (the man in the SECOND image), NOT a head pasted onto a mismatched or oversized body. Frame him as a LARGE close-up: scale and position him so his head and face fill AT LEAST 70% of the thumbnail's HEIGHT — a big, bold, dominant face, NOT a small or distant figure. Keep him on the same side of the frame as in the FIRST image, keep his pose and any held object, and keep all text and logos in their positions; keep the BACKGROUND exactly as it appears in the FIRST image, including its enhanced, vibrant colours and stronger contrast (do NOT flatten, dull, desaturate or recolour the background). Only the person changes — to the man from the second image.";
 /**
  * Alias for STEP1_PROMPT, named for its NEW role: the final full identity swap.
  * Same string, exported under both names so call sites and tests read clearly.
@@ -120,10 +120,12 @@ export function buildFinalSwapInstruction(assessment?: SwapAssessment | null): s
     "average human proportions, with a seamless neck join, matching skin tone, and realistic head-to-body " +
     "proportions, so the whole person reads as ONE real man (the man in the SECOND image), the body following " +
     "the face — NOT a head pasted onto a mismatched or oversized body. " +
-    "Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their " +
-    "positions — and keep the BACKGROUND exactly as it appears in the FIRST image, including its enhanced, vibrant " +
-    "colours and stronger contrast (do NOT flatten, dull, desaturate or recolour the background). Only the person " +
-    "changes — to the man from the second image."
+    "Frame him as a LARGE close-up: scale and position him so his head and face fill AT LEAST 70% of the " +
+    "thumbnail's HEIGHT — a big, bold, dominant face, NOT a small or distant figure. " +
+    "Keep him on the same side of the frame as in the FIRST image, keep his pose and any held object, and keep all " +
+    "text and logos in their positions; keep the BACKGROUND exactly as it appears in the FIRST image, including its " +
+    "enhanced, vibrant colours and stronger contrast (do NOT flatten, dull, desaturate or recolour the background). " +
+    "Only the person changes — to the man from the second image."
   );
 }
 export const STEP8_PROMPT =
@@ -153,7 +155,8 @@ export function buildConsolidatedInstruction(opts: { keyword: string; textChange
     "hairstyle, hair colour and beard of the man in the SECOND image (clearly THAT man, not the original person); " +
     "give him a medium build with a slightly fit, average physique that matches his face, a seamless neck join, " +
     "matching skin tone and realistic head-to-body proportions, reading as ONE real man, NOT a head pasted onto a " +
-    "mismatched or oversized body. " +
+    "mismatched or oversized body; frame him as a LARGE close-up so his head and face fill AT LEAST 70% of the " +
+    "thumbnail's HEIGHT (a big, bold, dominant face), keeping him on the same side of the frame as in the FIRST image. " +
     "(2) Change that person's outfit to a plain t-shirt." +
     textBlock +
     " (4) Give the background a bold, clearly visible POP — make its colours richer and more vibrant/saturated and " +
