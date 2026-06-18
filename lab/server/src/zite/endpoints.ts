@@ -83,6 +83,7 @@ import {
   startContrarianJob,
   planContrarianVariations,
   planRecreations,
+  planCustomEdit,
 } from "../thumbnails/orchestrate.js";
 import { generateTitles } from "../thumbnails/titles.js";
 import { probeCompositeAvailable } from "../thumbnails/composite.js";
@@ -2368,6 +2369,17 @@ function coerceRewrites(raw: any): { old: string; new: string }[] {
     .filter((r: any) => r.old && r.new);
 }
 
+function coerceElements(raw: any): { id: string; label: string; apply: boolean; instruction: string }[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((e: any) => ({
+      id: String(e?.id ?? "custom").trim() || "custom",
+      label: String(e?.label ?? "Edit").trim() || "Edit",
+      apply: e?.apply !== false,
+      instruction: String(e?.instruction ?? "").trim(),
+    }))
+    .filter((e: any) => e.instruction);
+}
+
 /** Coerce the UI's edited per-pick plans into RecreationPlan[] (best-effort). */
 function coercePlans(input: any): any[] | undefined {
   if (!Array.isArray(input?.plans)) return undefined;
@@ -2380,9 +2392,20 @@ function coercePlans(input: any): any[] | undefined {
       busy: p?.busy === true,
       backgroundId: p?.backgroundId ? String(p.backgroundId) : null,
       rewrites: coerceRewrites(p?.rewrites),
+      elements: coerceElements(p?.elements),
     }))
     .filter((p: any) => p.videoId && p.expression);
 }
+
+/** Free-text → precise edit element(s) for ONE picked thumbnail (review step). */
+const planThumbnailCustomEdit: Handler = async (input) => {
+  const videoId = String(input?.videoId ?? "").trim();
+  const request = String(input?.request ?? "").trim();
+  if (!videoId) throw new ZiteError({ code: "BAD_REQUEST", message: "A videoId is required." });
+  if (!request) return { elements: [] };
+  const elements = await planCustomEdit({ videoId, keyword: String(input?.keyword ?? ""), request });
+  return { elements };
+};
 
 /**
  * PLAN every per-thumbnail decision for review/edit BEFORE generation: for each
@@ -2646,6 +2669,7 @@ export const HANDLERS: Record<string, Handler> = {
   startThumbnailGeneration,
   generateThumbnailTitles,
   planThumbnailRecreations,
+  planThumbnailCustomEdit,
   planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,

@@ -9,6 +9,7 @@ import {
   generateThumbnailTitles,
   planThumbnailContrarian,
   planThumbnailRecreations,
+  planThumbnailCustomEdit,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -28,6 +29,7 @@ import {
   type ThumbnailTitles,
   type PlannedContrarian,
   type RecreationPlan,
+  type PlanElement,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
@@ -214,6 +216,24 @@ export default function ThumbnailDesignerPage() {
   const editPlan = (videoId: string, patch: Partial<RecreationPlan>) =>
     setRecreationPlans((prev) => (prev ? prev.map((p) => (p.videoId === videoId ? { ...p, ...patch } : p)) : prev));
   const setPlanRewrites = (videoId: string, rewrites: RecreationPlan['rewrites']) => editPlan(videoId, { rewrites });
+  const setPlanElements = (videoId: string, elements: PlanElement[]) => editPlan(videoId, { elements });
+
+  /** Free-text → AI edit element(s), appended to a pick's editable element list. */
+  const addCustomEdit = async (videoId: string, request: string): Promise<void> => {
+    if (!request.trim()) return;
+    try {
+      const { elements } = await planThumbnailCustomEdit({ videoId, keyword: keyword.trim(), request });
+      if (elements.length === 0) {
+        toast.info('No change could be derived from that request — try rephrasing.');
+        return;
+      }
+      const plan = recreationPlans?.find((p) => p.videoId === videoId);
+      setPlanElements(videoId, [...(plan?.elements ?? []), ...elements]);
+      toast.success(`Added ${elements.length} edit${elements.length === 1 ? '' : 's'} from your request.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not create the edit');
+    }
+  };
 
   const onAnalyze = async () => {
     if (!script.trim()) {
@@ -549,6 +569,8 @@ export default function ThumbnailDesignerPage() {
                         onReview={reviewChoices}
                         onEditPlan={editPlan}
                         onSetRewrites={setPlanRewrites}
+                        onSetElements={setPlanElements}
+                        onAddCustomEdit={addCustomEdit}
                       />
                     )}
                     <div className="flex flex-wrap gap-2">
@@ -1190,6 +1212,8 @@ function RecreationReview({
   onReview,
   onEditPlan,
   onSetRewrites,
+  onSetElements,
+  onAddCustomEdit,
 }: {
   plans: RecreationPlan[] | null;
   planning: boolean;
@@ -1197,6 +1221,8 @@ function RecreationReview({
   onReview: () => void;
   onEditPlan: (videoId: string, patch: Partial<RecreationPlan>) => void;
   onSetRewrites: (videoId: string, rewrites: RecreationPlan['rewrites']) => void;
+  onSetElements: (videoId: string, elements: PlanElement[]) => void;
+  onAddCustomEdit: (videoId: string, request: string) => Promise<void>;
 }) {
   const charOptions = status.characters.filter((c) => c.uploaded);
   const bgOptions = status.backgrounds;
@@ -1308,8 +1334,83 @@ function RecreationReview({
                 </div>
               ))}
             </div>
+
+            {/* Other elements the AI will change — toggle + edit each instruction. */}
+            {p.elements.length > 0 && (
+              <div className="space-y-1.5">
+                <label className="text-[10px] text-muted-foreground">Other element changes</label>
+                {p.elements.map((el, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      checked={el.apply}
+                      className="mt-2 accent-primary"
+                      onChange={(e) =>
+                        onSetElements(p.videoId, p.elements.map((x, i) => (i === idx ? { ...x, apply: e.target.checked } : x)))
+                      }
+                    />
+                    <div className="flex-1">
+                      <span className="text-[10px] text-muted-foreground">{el.label}</span>
+                      <Textarea
+                        value={el.instruction}
+                        rows={2}
+                        className="text-xs resize-y"
+                        onChange={(e) =>
+                          onSetElements(p.videoId, p.elements.map((x, i) => (i === idx ? { ...x, instruction: e.target.value } : x)))
+                        }
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-destructive text-xs px-1 mt-2"
+                      onClick={() => onSetElements(p.videoId, p.elements.filter((_, i) => i !== idx))}
+                      aria-label="Remove"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Free-text: describe a change → the AI crafts a precise edit for it. */}
+            <CustomEditField onSubmit={(req) => onAddCustomEdit(p.videoId, req)} />
           </div>
         ))}
+    </div>
+  );
+}
+
+/** A free-text "what to change" box; on submit the AI turns it into edit element(s). */
+function CustomEditField({ onSubmit }: { onSubmit: (request: string) => Promise<void> }) {
+  const [request, setRequest] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!request.trim() || busy) return;
+    setBusy(true);
+    try {
+      await onSubmit(request);
+      setRequest('');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="space-y-1.5">
+      <label className="text-[10px] text-muted-foreground">Describe another change (the AI writes the precise edit)</label>
+      <div className="flex items-end gap-2">
+        <Textarea
+          value={request}
+          rows={2}
+          placeholder="e.g. make the laptop screen show a video editor; change the sky to sunset"
+          className="text-xs resize-y flex-1"
+          onChange={(e) => setRequest(e.target.value)}
+        />
+        <Button type="button" variant="outline" size="sm" disabled={busy || !request.trim()} onClick={submit}>
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+          Add edit
+        </Button>
+      </div>
     </div>
   );
 }

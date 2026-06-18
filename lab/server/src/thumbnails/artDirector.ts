@@ -527,6 +527,84 @@ export async function planTextRewrites(opts: {
   }
 }
 
+// ── Custom free-text edits (review step) ──────────────────────────────────────
+// The creator types, in plain words, what they want changed on a specific
+// thumbnail ("make the laptop screen show a video editor", "change the sky to
+// sunset"). This vision pass LOOKS at the source and turns that request into
+// precise Nano Banana edit instruction(s) that change ONLY those elements and
+// keep everything else — never touching the brand/keyword's own logo or mascot.
+
+export interface CustomEdit {
+  label: string;
+  instruction: string;
+}
+
+const CUSTOM_EDIT_SYSTEM =
+  "You are an elite YouTube thumbnail editor. You are shown a thumbnail and a " +
+  "creator's REQUEST describing what they want changed on it. Turn the request " +
+  "into one or more PRECISE image-edit instructions that change ONLY the elements " +
+  "the creator mentioned and keep EVERYTHING ELSE exactly as it is (same layout, " +
+  "people, text, colours, positions). Each instruction must be concrete and refer " +
+  "to what is actually visible. Never alter the brand/subject's own logo or mascot, " +
+  "and never invent a brand name. If the request is impossible or refers to " +
+  "something not in the image, return an empty list.";
+
+/** Build the custom-edit user prompt. Pure + exported for testing. */
+export function buildCustomEditUserText(keyword: string, request: string): string {
+  return (
+    `The video's brand/subject (keyword) is: "${keyword}". Do NOT change its own logo/mascot.\n\n` +
+    `The creator's request:\n"${request.trim().slice(0, 600)}"\n\n` +
+    "Return ONLY this JSON object — one entry per distinct change, each a short " +
+    "label + a precise instruction that changes ONLY what was asked and preserves " +
+    "everything else:\n" +
+    "{\n" +
+    '  "edits": [ { "label": string, "instruction": string } ]\n' +
+    "}\n"
+  );
+}
+
+/** Coerce the model's custom-edit JSON into clean, non-empty edits. Pure + exported. */
+export function parseCustomEdits(json: any): CustomEdit[] {
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  const list = Array.isArray(json?.edits) ? json.edits : [];
+  return list
+    .map((e: any) => ({ label: str(e?.label) || "Custom edit", instruction: str(e?.instruction) }))
+    .filter((e: CustomEdit) => e.instruction.length > 0)
+    .slice(0, 5);
+}
+
+/**
+ * Turn a creator's free-text request into precise edit instruction(s) for a source
+ * thumbnail. Best-effort: any failure → []. Injectable vision call for tests.
+ */
+export async function planCustomEdits(opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  keyword: string;
+  request: string;
+  vision?: typeof claudeVisionLabeledJSON;
+}): Promise<CustomEdit[]> {
+  if (!opts.request.trim()) return [];
+  const vision = opts.vision ?? claudeVisionLabeledJSON;
+  try {
+    const raw = await vision({
+      system: CUSTOM_EDIT_SYSTEM,
+      userText: buildCustomEditUserText(opts.keyword, opts.request),
+      images: [
+        {
+          label: "Thumbnail to edit:",
+          data: opts.sourceBytes.toString("base64"),
+          mediaType: opts.sourceMime || "image/jpeg",
+        },
+      ],
+      purpose: "thumbnail-art-director",
+    });
+    return parseCustomEdits(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
 // ── Expression director ───────────────────────────────────────────────────────
 // Per-variant expression selection: rather than always using the video-type's
 // single best-fit expression for every recreation, this vision pass LOOKS at the

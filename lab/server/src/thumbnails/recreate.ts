@@ -298,6 +298,14 @@ export interface RecreateInput {
    * dropped); omit the field entirely to keep the director's automatic behaviour.
    */
   textRewrites?: TextRewrite[];
+  /**
+   * Optional REVIEWED non-text edits (device-screen / font / logo / custom) from
+   * the plan step — already template-filled instructions. When provided ALONGSIDE
+   * textRewrites (i.e. a full reviewed plan), the in-chain art-director is SKIPPED
+   * entirely and exactly these edits + textRewrites are applied. When provided
+   * without textRewrites, they replace only the director's non-text steps.
+   */
+  plannedElements?: { id: string; label: string; instruction: string }[];
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -474,44 +482,56 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
   report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
 
-  // ── Step 2 (VISION): the art-director looks at the OUTFIT RESULT image ───────
+  // ── Step 2 (VISION or REVIEWED PLAN): decide the optional edits ──────────────
   // The director analyses `current` (the original person now in a t-shirt). Its
   // text/logo/device decisions are identity-independent, so it's fine that the
-  // swap hasn't happened yet.
+  // swap hasn't happened yet. BUT when a full reviewed plan was supplied (both the
+  // non-text elements AND the text rewrites), we SKIP the art-director entirely and
+  // use exactly what the user approved.
   report(PHASE_LABEL.edits, phasePercent("edits", 0));
-  let directorSteps: ArtDirectorStep[] = [];
-  try {
-    directorSteps = await artDirect({
-      imageBytes: current.data,
-      imageMime: current.mimeType || "image/png",
-      keyword: input.keyword,
-      videoType: input.videoType,
-    });
-  } catch (e) {
-    // The director is best-effort: if it fails, we skip the optional steps (the
-    // always-on background edit below still runs).
-    steps.push({
-      id: "art-director",
-      label: "Art director",
-      instruction: "(decide optional edits)",
-      applied: false,
-      note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
-    });
-  }
+  const elementsToStep = (els: { id: string; label: string; instruction: string }[]): ArtDirectorStep[] =>
+    els
+      .filter((e) => e.instruction)
+      .map((e) => ({ id: e.id as ArtDirectorStep["id"], label: e.label, apply: true, instruction: e.instruction }));
+  const textToSteps = (rewrites: TextRewrite[]): ArtDirectorStep[] =>
+    rewrites.map((r) => ({
+      id: "text-rewrite" as const,
+      label: "Rewrite text",
+      apply: true,
+      instruction: buildTextRewriteInstruction(r.old, r.new),
+    }));
 
-  // When the user reviewed the copy, REPLACE the director's text-rewrites with the
-  // approved list (the structured device/font/logo steps still come from the
-  // director). An empty approved list means "no text changes" → all text-rewrites
-  // are dropped. Omitting input.textRewrites keeps the director's automatic copy.
-  if (input.textRewrites) {
-    directorSteps = directorSteps.filter((s) => s.id !== "text-rewrite");
-    for (const r of input.textRewrites) {
-      directorSteps.push({
-        id: "text-rewrite",
-        label: "Rewrite text",
-        apply: true,
-        instruction: buildTextRewriteInstruction(r.old, r.new),
+  let directorSteps: ArtDirectorStep[] = [];
+  const fullPlan = input.plannedElements != null && input.textRewrites != null;
+  if (fullPlan) {
+    // Fully reviewed: exactly the approved non-text edits + text rewrites.
+    directorSteps = [...elementsToStep(input.plannedElements!), ...textToSteps(input.textRewrites!)];
+  } else {
+    try {
+      directorSteps = await artDirect({
+        imageBytes: current.data,
+        imageMime: current.mimeType || "image/png",
+        keyword: input.keyword,
+        videoType: input.videoType,
       });
+    } catch (e) {
+      // The director is best-effort: if it fails, we skip the optional steps (the
+      // always-on background edit below still runs).
+      steps.push({
+        id: "art-director",
+        label: "Art director",
+        instruction: "(decide optional edits)",
+        applied: false,
+        note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+    // Partial review: replace just the text-rewrites (keep the director's elements)…
+    if (input.textRewrites) {
+      directorSteps = [...directorSteps.filter((s) => s.id !== "text-rewrite"), ...textToSteps(input.textRewrites)];
+    }
+    // …or replace just the non-text elements (keep the director's text-rewrites).
+    if (input.plannedElements) {
+      directorSteps = [...directorSteps.filter((s) => s.id === "text-rewrite"), ...elementsToStep(input.plannedElements)];
     }
   }
 

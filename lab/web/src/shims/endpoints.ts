@@ -154,6 +154,7 @@ export const planThumbnailRecreations =
   >("planThumbnailRecreations");
 
 export type TextRewrite = { old: string; new: string };
+export type PlanElement = { id: string; label: string; apply: boolean; instruction: string };
 export type RecreationPlan = {
   videoId: string;
   sourceThumbnailUrl: string;
@@ -162,7 +163,11 @@ export type RecreationPlan = {
   busy: boolean;
   backgroundId: string | null;
   rewrites: TextRewrite[];
+  elements: PlanElement[];
 };
+/** Free-text → precise edit element(s) for one picked thumbnail. */
+export const planThumbnailCustomEdit =
+  endpoint<{ videoId: string; keyword: string; request: string }, { elements: PlanElement[] }>("planThumbnailCustomEdit");
 /** Turn the pasted script into viral + SEO titles (shown + used to ground copy). */
 export const generateThumbnailTitles =
   endpoint<{ script: string }, { titles: ThumbnailTitles }>("generateThumbnailTitles");

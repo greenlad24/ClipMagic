@@ -1168,6 +1168,31 @@ async function main() {
       'change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style',
     );
   });
+  await check("parseCustomEdits keeps non-empty edits (label + instruction)", () => {
+    const edits = ad.parseCustomEdits({
+      edits: [
+        { label: "Screen", instruction: "change the laptop screen to a video editor timeline" },
+        { label: "", instruction: "" },
+        { instruction: "make the sky a sunset" },
+      ],
+    });
+    assert.equal(edits.length, 2);
+    assert.equal(edits[0].label, "Screen");
+    assert.equal(edits[1].label, "Custom edit", "missing label gets a default");
+  });
+  await check("planCustomEdits turns a free-text request into precise instruction(s)", async () => {
+    const vision = async () => JSON.stringify({ edits: [{ label: "Screen", instruction: "change the phone screen to a chart" }] });
+    const out = await ad.planCustomEdits({
+      sourceBytes: Buffer.from("x"),
+      sourceMime: "image/jpeg",
+      keyword: "OpenClaw",
+      request: "make the phone show a growth chart",
+      vision: vision as any,
+    });
+    assert.deepEqual(out, [{ label: "Screen", instruction: "change the phone screen to a chart" }]);
+    // Empty request short-circuits (no vision call).
+    assert.deepEqual(await ad.planCustomEdits({ sourceBytes: Buffer.from("x"), sourceMime: "image/jpeg", keyword: "k", request: "  " }), []);
+  });
   await check("buildTextPlannerUserText grounds the rewrites in the titles + keyword", () => {
     const txt = ad.buildTextPlannerUserText("OpenClaw", "Tutorial", ["OpenClaw Full Tutorial"]);
     assert.match(txt, /OpenClaw Full Tutorial/);
@@ -1304,6 +1329,38 @@ async function main() {
     assert.ok(renderedHeadH >= 1000 * 0.7, `head fills ≥70% height (got ${Math.round(renderedHeadH)})`);
     // "right" placement anchors the head centre at 70% of the width.
     assert.ok(Math.abs(placed.destX + 50 * placed.scale - 700) < 1, "head centred at 0.70·W for right placement");
+  });
+
+  await check("a full reviewed plan SKIPS the art-director and applies its elements + text", async () => {
+    let directorCalled = false;
+    const sent: string[] = [];
+    await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("src"),
+        sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("char"),
+        keyword: "OpenClaw",
+        videoType: "Tutorial",
+        expression: "smile",
+        // A full reviewed plan: both non-text elements AND text rewrites.
+        plannedElements: [{ id: "logo", label: "Swap logo", instruction: "change the gear logo to a bell logo" }],
+        textRewrites: [{ old: "CLAWDBOT", new: "OpenClaw" }],
+      },
+      {
+        artDirect: async () => {
+          directorCalled = true;
+          return [];
+        },
+        editImage: async (o: any) => {
+          sent.push(o.instruction);
+          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+        },
+        finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
+      },
+    );
+    assert.equal(directorCalled, false, "the in-chain art-director is skipped for a full plan");
+    assert.ok(sent.some((s) => /change the gear logo to a bell logo/.test(s)), "the reviewed element edit ran");
+    assert.ok(sent.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)), "the reviewed text rewrite ran");
   });
 
   await check("composeContrarianThumbnail uses the programmatic composite (no AI when it returns bytes)", async () => {

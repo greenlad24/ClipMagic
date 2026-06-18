@@ -420,6 +420,7 @@ async function main() {
             busy: false,
             backgroundId: null,
             rewrites: [{ old: "CLAWDBOT", new: "OpenClaw" }],
+            elements: [{ id: "logo", label: "Swap logo", apply: true, instruction: "change the [icon] logo to another type" }],
           },
         ],
       },

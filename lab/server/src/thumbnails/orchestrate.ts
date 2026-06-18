@@ -24,6 +24,8 @@ import {
   chooseBackground,
   fallbackExpression,
   planTextRewrites,
+  planCustomEdits,
+  artDirect as defaultArtDirect,
   type SourceAssessment,
   type AvailableExpression,
   type BackgroundCandidate,
@@ -263,6 +265,17 @@ export interface RecreationPlan {
   backgroundId: string | null;
   /** The proposed text changes (editable old→new pairs). */
   rewrites: TextRewrite[];
+  /** Every OTHER element the AI will change (device/font/logo + custom), editable. */
+  elements: PlanElement[];
+}
+
+/** One non-text element edit in the review: toggle + an editable instruction. */
+export interface PlanElement {
+  /** "device-screen" | "font" | "bold-text" | "logo" | "custom". */
+  id: string;
+  label: string;
+  apply: boolean;
+  instruction: string;
 }
 
 /** Injectable text-planner (so plan tests run offline). */
@@ -274,12 +287,35 @@ export type PlanTextFn = (opts: {
   titles?: string[];
 }) => Promise<TextRewrite[]>;
 
+/** Injectable element-planner: the AI's non-text edits (device/font/logo). */
+export type PlanElementsFn = (opts: {
+  imageBytes: Buffer;
+  imageMime: string;
+  keyword: string;
+  videoType: VideoType;
+}) => Promise<PlanElement[]>;
+
+const defaultPlanElements: PlanElementsFn = async (opts) => {
+  const steps = await defaultArtDirect({
+    imageBytes: opts.imageBytes,
+    imageMime: opts.imageMime,
+    keyword: opts.keyword,
+    videoType: opts.videoType,
+  });
+  // Surface the NON-text changes the director wants to make (text is handled as
+  // editable old→new pairs separately). Only applied steps carry an instruction.
+  return steps
+    .filter((s) => s.id !== "text-rewrite" && s.apply && s.instruction)
+    .map((s) => ({ id: s.id, label: s.label, apply: true, instruction: s.instruction }));
+};
+
 /**
  * PLAN (don't render) every per-thumbnail decision for the chosen picks so the
  * user can review + edit them: the cast expression, the busy flag, the chosen
- * background, and the text rewrites (grounded in the titles). Per-pick try/catch —
- * one bad source yields a minimal editable row instead of aborting. Best-effort
- * vision passes are injectable for tests.
+ * background, the text rewrites (grounded in the titles), AND every other element
+ * the AI will change (device-screen / font / logo …). Per-pick try/catch — one
+ * bad source yields a minimal editable row instead of aborting. The vision passes
+ * run concurrently (per pick AND across picks) so the review stays snappy.
  */
 export async function planRecreations(
   input: { picks: string[]; keyword: string; videoType: VideoType; titles?: string[] },
@@ -287,33 +323,31 @@ export async function planRecreations(
   analyze: AnalyzeSourceFn = defaultAnalyzeSource,
   analyzeBg: AnalyzeBackgroundFn = defaultAnalyzeBackground,
   planText: PlanTextFn = planTextRewrites,
+  planElements: PlanElementsFn = defaultPlanElements,
 ): Promise<RecreationPlan[]> {
   const available = availableExpressionOptions();
   const bgCandidates = loadBackgroundCandidates();
   const labelFor = (id: string) => available.find((e) => e.id === id)?.label ?? id;
   const fallback = available.length ? fallbackExpression(input.videoType, available) : (("smile" as unknown) as Expression);
-  const out: RecreationPlan[] = [];
-  for (const videoId of input.picks) {
+  const planOne = async (videoId: string): Promise<RecreationPlan> => {
     try {
       const src = await downloadSourceThumbnail(videoId, download);
-      const a = await analyzeForSource({
-        src,
-        available,
-        bgCandidates,
-        videoType: input.videoType,
-        keyword: input.keyword,
-        fallback,
-        analyze,
-        analyzeBg,
-      });
-      const rewrites = await planText({
-        sourceBytes: src.bytes,
-        sourceMime: src.mime,
-        keyword: input.keyword,
-        videoType: input.videoType,
-        titles: input.titles,
-      });
-      out.push({
+      // All the per-source vision passes are independent → run them concurrently.
+      const [a, rewrites, elements] = await Promise.all([
+        analyzeForSource({
+          src,
+          available,
+          bgCandidates,
+          videoType: input.videoType,
+          keyword: input.keyword,
+          fallback,
+          analyze,
+          analyzeBg,
+        }),
+        planText({ sourceBytes: src.bytes, sourceMime: src.mime, keyword: input.keyword, videoType: input.videoType, titles: input.titles }),
+        planElements({ imageBytes: src.bytes, imageMime: src.mime, keyword: input.keyword, videoType: input.videoType }).catch(() => []),
+      ]);
+      return {
         videoId,
         sourceThumbnailUrl: src.url,
         expression: a.expression,
@@ -321,10 +355,11 @@ export async function planRecreations(
         busy: a.busy,
         backgroundId: a.backgroundId ?? null,
         rewrites,
-      });
+        elements,
+      };
     } catch {
       // Minimal editable row so the UI still shows the pick.
-      out.push({
+      return {
         videoId,
         sourceThumbnailUrl: hqThumbnailUrl(videoId),
         expression: fallback,
@@ -332,10 +367,31 @@ export async function planRecreations(
         busy: false,
         backgroundId: null,
         rewrites: [],
-      });
+        elements: [],
+      };
     }
+  };
+  return Promise.all(input.picks.map(planOne));
+}
+
+/**
+ * Turn the creator's free-text request into precise edit element(s) for ONE pick
+ * (downloads the source, runs the custom-edit vision pass). Returned as
+ * PlanElements the UI appends to that pick's editable element list. Best-effort.
+ */
+export async function planCustomEdit(
+  input: { videoId: string; keyword: string; request: string },
+  download: DownloadFn = defaultDownload,
+  plan: typeof planCustomEdits = planCustomEdits,
+): Promise<PlanElement[]> {
+  if (!input.request.trim()) return [];
+  try {
+    const src = await downloadSourceThumbnail(input.videoId, download);
+    const edits = await plan({ sourceBytes: src.bytes, sourceMime: src.mime, keyword: input.keyword, request: input.request });
+    return edits.map((e) => ({ id: "custom", label: e.label, apply: true, instruction: e.instruction }));
+  } catch {
+    return [];
   }
-  return out;
 }
 
 /** Resolve the effective mode from the input (mode → provider → default). */
@@ -488,6 +544,7 @@ export async function runThumbnailJob(
       let backgroundMime: string | undefined;
       let placement: "left" | "right" | null | undefined;
       let textRewrites: TextRewrite[] | undefined;
+      let plannedElements: { id: string; label: string; instruction: string }[] | undefined;
       // A reviewed/edited plan for THIS pick (matched by videoId) overrides the
       // automatic vision analysis entirely.
       const plan = input.plans?.find((p) => p.videoId === videoId);
@@ -508,6 +565,10 @@ export async function runThumbnailJob(
             backgroundMime = backgroundBytes ? "image/png" : undefined;
           }
           textRewrites = plan.rewrites;
+          // The reviewed non-text edits (device/font/logo/custom) — applied ones only.
+          plannedElements = (plan.elements ?? [])
+            .filter((e) => e.apply && e.instruction)
+            .map((e) => ({ id: e.id, label: e.label, instruction: e.instruction }));
         } else {
           // Analyse THIS source: best-fit expression + busy flag + chosen background
           // (best-effort); reflect the expression on the variant for the UI.
@@ -551,6 +612,7 @@ export async function runThumbnailJob(
                 backgroundMime,
                 characterPlacement: placement,
                 textRewrites,
+                plannedElements,
                 provider: run.provider,
                 imageSize: run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>
