@@ -130,6 +130,40 @@ export const STEP8_PROMPT =
   "give the existing background a BOLD, clearly visible POP so the thumbnail obviously stands out MORE than the original: make its colors noticeably richer and more vibrant/saturated, and strongly boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. The change must be easy to see at a glance. Keep it the SAME general style and scene as the original — this is a strong enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
 
 /**
+ * Build the ONE-SHOT recreation instruction for ELEMENT-HEAVY (busy) thumbnails.
+ * Instead of the multi-step chain (which re-renders a busy frame several times
+ * and degrades the money/screens/props), this single edit — run on [source,
+ * characterRef] — does everything at once: swap the character (same identity +
+ * body clause as the strong swap), change the outfit to a t-shirt, apply the text
+ * changes, and pop the background, all while keeping every original element in
+ * place and realistic. `textChanges` are the art-director's verbatim text-rewrite
+ * instructions (each "change the text X to Y, keeping…"). Pure + exported.
+ */
+export function buildConsolidatedInstruction(opts: { keyword: string; textChanges: string[] }): string {
+  const textBlock = opts.textChanges.length
+    ? ` (3) Apply these exact text changes: ${opts.textChanges.join("; ")}.`
+    : "";
+  return (
+    "Recreate this thumbnail in a SINGLE edit, keeping ALL of the FIRST image's elements and exact layout " +
+    "faithfully — every prop (stacks of money/cash, devices, laptops, phones), every UI panel, badge, logo and " +
+    "graphic must stay in the same place and size and look REALISTIC and sharp. Do NOT distort, warp, melt, smear " +
+    "or candy-ify the money, screens, text or any object, and do NOT move or resize anything. In this ONE pass make " +
+    "exactly these changes: " +
+    "(1) Replace the on-camera person with the man in the SECOND image — the result MUST have the exact face, head, " +
+    "hairstyle, hair colour and beard of the man in the SECOND image (clearly THAT man, not the original person); " +
+    "give him a medium build with a slightly fit, average physique that matches his face, a seamless neck join, " +
+    "matching skin tone and realistic head-to-body proportions, reading as ONE real man, NOT a head pasted onto a " +
+    "mismatched or oversized body. " +
+    "(2) Change that person's outfit to a plain t-shirt." +
+    textBlock +
+    " (4) Give the background a bold, clearly visible POP — make its colours richer and more vibrant/saturated and " +
+    "boost the contrast behind the subject so it stands out more than the original — WITHOUT changing the scene, " +
+    "layout or any element's position (an enhancement, NOT a redesign: no new light rays, neon or patterns). " +
+    "Everything else stays exactly as in the FIRST image."
+  );
+}
+
+/**
  * Append the 16:9 widescreen preamble so edits don't reintroduce letterbox bars.
  * Exported so tests can build the EXACT expected instruction string.
  */
@@ -193,6 +227,14 @@ export interface RecreateInput {
    * size (gemini-pro 4K). Ignored by gemini-flash.
    */
   imageSize?: string;
+  /**
+   * When true, the source is ELEMENT-HEAVY (money, devices, many text blocks).
+   * Such thumbnails degrade when re-rendered many times, so we recreate them in a
+   * SINGLE consolidated pass off the ORIGINAL (swap + outfit + text + background
+   * pop all at once) instead of the multi-step chain. Set by the orchestrator's
+   * source analysis; defaults to the normal multi-step chain when omitted.
+   */
+  busy?: boolean;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -202,18 +244,18 @@ export interface RecreateDeps {
   editImage?: EditFn;
   artDirect?: ArtDirectFn;
   /**
-   * Per-variant expression picker. Consumed by the ORCHESTRATOR (not the chain
-   * itself) — it lives on this shared deps bag so tests that already inject
-   * editImage/artDirect/finalize can override the expression choice too. When
-   * omitted the orchestrator uses its own best-effort vision default.
+   * Per-variant source analysis (expression + busy). Consumed by the
+   * ORCHESTRATOR (not the chain itself) — it lives on this shared deps bag so
+   * tests that already inject editImage/artDirect/finalize can override it too.
+   * When omitted the orchestrator uses its own best-effort vision default.
    */
-  pickExpression?: (opts: {
+  analyzeSource?: (opts: {
     sourceBytes: Buffer;
     sourceMime: string;
     available: Expression[];
     videoType: VideoType;
     keyword: string;
-  }) => Promise<Expression>;
+  }) => Promise<{ expression: Expression; busy: boolean }>;
   /** Pre-swap body assessment of the working image. Defaults to the real Claude-vision pass. */
   analyzeForSwap?: AnalyzeForSwapFn;
   /** Crop+upscale finalizer. Defaults to the real ffmpeg + Real-ESRGAN pass. */
@@ -297,6 +339,46 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
       });
     }
   };
+
+  // ── BUSY thumbnails: ONE-SHOT recreation (avoid multi-render degradation) ────
+  // Element-heavy thumbnails (money, devices, lots of text) fall apart if we
+  // re-render them several times. So we do EVERYTHING in a single edit off the
+  // ORIGINAL: swap the character, change the outfit, change the text, and pop the
+  // background — keeping every element in place. We still ask the art-director
+  // (best-effort) for the text rewrites so the copy is freshened + the brand
+  // keyword lands; only the text-rewrite instructions are used here.
+  if (input.busy) {
+    report(PHASE_LABEL.edits, phasePercent("edits", 0));
+    let textChanges: string[] = [];
+    try {
+      const ds = await artDirect({
+        imageBytes: input.sourceBytes,
+        imageMime: current.mimeType,
+        keyword: input.keyword,
+        videoType: input.videoType,
+      });
+      textChanges = ds
+        .filter((s) => s.id === "text-rewrite" && s.apply && s.instruction)
+        .map((s) => s.instruction);
+    } catch (e) {
+      steps.push({
+        id: "art-director",
+        label: "Art director",
+        instruction: "(decide text changes)",
+        applied: false,
+        note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+    report(PHASE_LABEL.swap, phasePercent("swap", 0));
+    const consolidated = buildConsolidatedInstruction({ keyword: input.keyword, textChanges });
+    // One render on [source, characterRef] — minimal degradation for busy frames.
+    await runStep("recreate-oneshot", "Recreate in one pass", consolidated, [current, character]);
+    report(PHASE_LABEL.swap, phasePercent("swap", 1));
+    report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
+    const result = await finalizeFn(current, steps);
+    report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
+    return result;
+  }
 
   // ── Step 1 (ALWAYS): outfit → a t-shirt — a PLAIN edit on the ORIGINAL person ─
   // No swap has happened yet, so this is the original on-camera person; no ref,

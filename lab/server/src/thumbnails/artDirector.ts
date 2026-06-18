@@ -431,7 +431,7 @@ export async function analyzeForSwap(opts: {
 // the ones the user actually uploaded) that best matches its emotional tone /
 // energy. So a shocking money reveal gets "surprise", a calm explainer gets
 // "smile"/"calm", etc. — chosen per variation, not fixed by type. Best-effort:
-// any failure falls back to the video-type's expression (see analyzeExpressionForSource).
+// any failure falls back to the video-type's expression (see analyzeSourceThumbnail).
 
 /** Short, literal description of each expression's vibe (drives the choice). */
 const EXPRESSION_GUIDE: Record<Expression, string> = {
@@ -442,19 +442,26 @@ const EXPRESSION_GUIDE: Record<Expression, string> = {
 };
 
 export const EXPRESSION_DIRECTOR_SYSTEM =
-  "You are an elite YouTube thumbnail director choosing the HOST'S FACIAL EXPRESSION " +
-  "for a recreation. You are shown the ORIGINAL thumbnail being recreated. Judge its " +
-  "emotional tone, energy and intent, then pick the ONE expression — from ONLY the " +
-  "available list you are given — that best matches it and would maximise " +
-  "click-through for THIS specific thumbnail. Guidance: a shocking result / big " +
-  "money or number reveal / hype → surprise; a warm, approachable how-to or " +
-  "explainer → smile; a sneaky 'insider trick / secret' angle → secret; a serious, " +
-  "trustworthy review or analysis → calm. Choose ONLY from the offered expressions.";
+  "You are an elite YouTube thumbnail director analysing the ORIGINAL thumbnail " +
+  "being recreated. You do TWO things. (1) EXPRESSION: judge the thumbnail's " +
+  "emotional tone, energy and intent and pick the ONE host expression — from ONLY " +
+  "the available list you are given — that best matches it and would maximise " +
+  "click-through. Guidance: a shocking result / big money or number reveal / hype " +
+  "→ surprise; a warm, approachable how-to or explainer → smile; a sneaky 'insider " +
+  "trick / secret' angle → secret; a serious, trustworthy review or analysis → " +
+  "calm. Choose ONLY from the offered expressions. (2) BUSY: judge whether the " +
+  "thumbnail is ELEMENT-HEAVY — i.e. it contains MANY distinct things besides the " +
+  "person and the headline (props like stacks of money/cash, on-screen devices " +
+  "like laptops/phones, app or chat UI panels, multiple separate text blocks, " +
+  "badges, logos). A busy thumbnail degrades if it is re-rendered many times " +
+  "(money turns to mush, screens warp), so it should be recreated in ONE pass. " +
+  "Set busy=true when there are several such elements; false for a simple " +
+  "person+headline(+background) thumbnail.";
 
 /**
- * Build the JSON-shaping user prompt for the expression director. Pure + exported
- * so the contract is testable without the network. Lists ONLY the available
- * expressions (with their vibe) and asks for one back.
+ * Build the JSON-shaping user prompt for the source director. Pure + exported so
+ * the contract is testable without the network. Lists ONLY the available
+ * expressions (with their vibe) and asks for the expression + the busy flag.
  */
 export function buildExpressionDirectorUserText(opts: {
   keyword: string;
@@ -465,9 +472,10 @@ export function buildExpressionDirectorUserText(opts: {
   return (
     `The video is a ${opts.videoType} video about: "${opts.keyword}".\n\n` +
     `Available expressions (choose EXACTLY one):\n${list}\n\n` +
-    "Look at the ORIGINAL thumbnail above and pick the single expression that best " +
-    "fits its emotional tone/energy. Return ONLY this JSON object (no prose):\n" +
-    `{ "expression": "<one of: ${opts.available.join(", ")}>", "reason": "<short>" }`
+    "Look at the ORIGINAL thumbnail above and (1) pick the single expression that " +
+    "best fits its emotional tone/energy, and (2) decide whether it is element-heavy " +
+    "(busy). Return ONLY this JSON object (no prose):\n" +
+    `{ "expression": "<one of: ${opts.available.join(", ")}>", "busy": <true|false>, "reason": "<short>" }`
   );
 }
 
@@ -491,22 +499,29 @@ export function fallbackExpression(videoType: VideoType, available: Expression[]
   return available.includes(primary) ? primary : available[0];
 }
 
+/** Result of the source-thumbnail analysis: the chosen expression + busy flag. */
+export interface SourceAssessment {
+  expression: Expression;
+  /** True when the thumbnail is element-heavy → recreate it in ONE pass. */
+  busy: boolean;
+}
+
 /**
- * Look at the SOURCE thumbnail and choose the best-fit expression from the ones
- * the user uploaded. Injectable for tests; best-effort in the orchestrator (any
- * throw → the video-type fallback). Uses claudeVisionLabeledJSON so usage is
- * attributed to "thumbnail-expression-director" in the report.
+ * Analyse the SOURCE thumbnail in ONE vision call: choose the best-fit expression
+ * (from the uploaded ones) AND decide whether the thumbnail is element-heavy
+ * (busy → the chain recreates it in a single pass to avoid multi-render
+ * degradation). Injectable for tests; best-effort in the orchestrator (any throw
+ * → the video-type expression + busy:false). Usage is attributed to
+ * "thumbnail-expression-director" in the report.
  */
-export async function analyzeExpressionForSource(opts: {
+export async function analyzeSourceThumbnail(opts: {
   sourceBytes: Buffer;
   sourceMime: string;
   available: Expression[];
   videoType: VideoType;
   keyword: string;
-}): Promise<Expression> {
+}): Promise<SourceAssessment> {
   const fallback = fallbackExpression(opts.videoType, opts.available);
-  // Nothing to choose between → just return the fallback (don't spend a call).
-  if (opts.available.length <= 1) return fallback;
   const raw = await claudeVisionLabeledJSON({
     system: EXPRESSION_DIRECTOR_SYSTEM,
     userText: buildExpressionDirectorUserText({
@@ -527,7 +542,10 @@ export async function analyzeExpressionForSource(opts: {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return fallback;
+    return { expression: fallback, busy: false };
   }
-  return parseExpressionChoice(parsed, opts.available, fallback);
+  return {
+    expression: parseExpressionChoice(parsed, opts.available, fallback),
+    busy: parsed?.busy === true,
+  };
 }

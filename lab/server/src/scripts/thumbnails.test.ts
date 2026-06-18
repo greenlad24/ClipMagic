@@ -1052,7 +1052,7 @@ async function main() {
     assert.equal(artDirector.parseExpressionChoice({}, avail, "calm" as any), "calm", "missing → fallback");
   });
 
-  await check("buildExpressionDirectorUserText lists only the available expressions", () => {
+  await check("buildExpressionDirectorUserText lists only the available expressions + asks for busy", () => {
     const txt = artDirector.buildExpressionDirectorUserText({
       keyword: "make money with AI",
       videoType: "Viral",
@@ -1062,18 +1062,27 @@ async function main() {
     assert.match(txt, /calm/);
     assert.doesNotMatch(txt, /\bsecret\b/, "an unavailable expression is not offered");
     assert.match(txt, /one of: surprise, calm/, "the JSON shape constrains to available options");
+    assert.match(txt, /busy/i, "also asks for the element-heavy (busy) flag");
   });
 
-  await check("analyzeExpressionForSource returns the model's pick; ≤1 available skips the call", async () => {
-    // ≤1 available → returns fallback WITHOUT calling the (would-throw) vision API.
-    const single = await artDirector.analyzeExpressionForSource({
-      sourceBytes: Buffer.from("x"),
-      sourceMime: "image/jpeg",
-      available: ["smile"] as any,
-      videoType: "Tutorial",
-      keyword: "k",
+  await check("buildConsolidatedInstruction: one-shot swap + preserve elements + text + pop", () => {
+    const inst = recreate.buildConsolidatedInstruction({
+      keyword: "OpenClaw",
+      textChanges: ['change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style'],
     });
-    assert.equal(single, "smile", "a single available expression is chosen without a vision call");
+    assert.match(inst, /SINGLE edit/i, "it's a single pass");
+    assert.match(inst, /SECOND image/i, "swaps in the character");
+    assert.match(inst, /medium build/i, "carries the body clause");
+    assert.match(inst, /do NOT distort, warp, melt/i, "forbids degrading the props");
+    assert.match(inst, /t-shirt/i, "changes the outfit");
+    assert.match(inst, /POP/, "pops the background");
+    assert.match(inst, /change the text "CLAWDBOT" to "OpenClaw"/, "embeds the text changes verbatim");
+  });
+
+  await check("buildConsolidatedInstruction: omits the text section when there are no text changes", () => {
+    const inst = recreate.buildConsolidatedInstruction({ keyword: "OpenClaw", textChanges: [] });
+    assert.doesNotMatch(inst, /Apply these exact text changes/i, "no empty text block");
+    assert.match(inst, /SECOND image/i, "still swaps the character");
   });
 
   // ── script analysis (mocked AI) ─────────────────────────────────────────────

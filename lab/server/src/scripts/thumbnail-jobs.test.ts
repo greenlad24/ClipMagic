@@ -275,19 +275,47 @@ async function main() {
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 
-  await check("the per-source expression picker drives each variant's expression", async () => {
+  await check("the per-source analysis drives each variant's expression", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
-    // A fake picker (injected via deps) overrides the video-type default per pick.
-    const pickExpression = async () => "secret" as const;
+    // A fake source analysis (injected via deps) overrides the video-type default.
+    const analyzeSource = async () => ({ expression: "secret" as const, busy: false });
     const job = orchestrate.startThumbnailJob(
       { keyword: "k", videoType: "Tutorial", picks: ["A", "B"], mode: "gemini-pro" },
       fakeDownload,
-      { ...makeDeps(), pickExpression } as any,
+      { ...makeDeps(), analyzeSource } as any,
     );
     await waitUntil(() => job.done);
-    // Tutorial's video-type default is "smile"; the picker overrode it to "secret".
-    assert.ok(job.variants.every((v) => v.expression === "secret"), "picker's choice overrides the video-type default");
+    // Tutorial's video-type default is "smile"; the analysis overrode it to "secret".
+    assert.ok(job.variants.every((v) => v.expression === "secret"), "analysis choice overrides the video-type default");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("a BUSY source is recreated in ONE pass (no multi-step chain)", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const instructions: string[] = [];
+    const analyzeSource = async () => ({ expression: "surprise" as const, busy: true });
+    const deps = {
+      ...makeDeps({ edits: 3 }), // even with optional edits proposed, busy path ignores them
+      editImage: async (opts: any) => {
+        instructions.push(opts.instruction);
+        return { file: "/x", outputUrl: "/x", bytes: Buffer.from("edited"), mimeType: "image/png" };
+      },
+      analyzeSource,
+      finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
+    };
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "OpenClaw", videoType: "Viral", picks: ["A"], mode: "gemini-pro" },
+      fakeDownload,
+      deps as any,
+    );
+    await waitUntil(() => job.done);
+    assert.equal(job.variants[0].status, "done");
+    // Busy → exactly ONE image edit (the consolidated one-shot), not 1+3+1+1.
+    assert.equal(instructions.length, 1, "busy thumbnails render in a single pass");
+    assert.match(instructions[0], /SINGLE edit/i, "the one edit is the consolidated recreation");
+    assert.match(instructions[0], /SECOND image/i, "it swaps in the character");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 
