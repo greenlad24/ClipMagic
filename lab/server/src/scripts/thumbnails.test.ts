@@ -531,6 +531,29 @@ async function main() {
     assert.equal(trs[0].instruction, "");
   });
 
+  await check("parseDirectorResponse: the source's DIFFERENT product title is rewritten TO the keyword", () => {
+    // Source thumbnail title is "CLAWDBOT" (an old/other name); keyword is "OpenClaw".
+    const steps = artDirector.parseDirectorResponse(
+      {
+        "text-rewrite": {
+          apply: true,
+          rewrites: [
+            { old: "CLAWDBOT", new: "OpenClaw" }, // main title → keyword
+            { old: "24/7 AI EMPLOYEE", new: "YOUR AI AGENT WORKS NONSTOP" }, // secondary
+          ],
+        },
+      },
+      "OpenClaw",
+    );
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    assert.equal(trs.length, 2, "both the title→keyword and the secondary rewrite are emitted");
+    assert.ok(trs.every((s) => s.apply));
+    assert.equal(
+      trs[0].instruction,
+      'change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style',
+    );
+  });
+
   await check("parseDirectorResponse: a SECONDARY-only rewrite applies while the brand text is left untouched", () => {
     // The exact user case: keep "OpenClaw", rewrite only the "Full Guide" tagline.
     const steps = artDirector.parseDirectorResponse(

@@ -12,14 +12,15 @@
  *   device-screen — change the character/screen inside an on-screen device.
  *   font          — restyle the headline text's font, keeping color + shape.
  *   bold-text     — make a specific text string bold.
- *   text-rewrite  — PROACTIVELY rewrite SECONDARY/supporting text (a tagline or
- *                   sub-line like "Full Guide" or "24/7 AI EMPLOYEE") into a fresh,
- *                   equally-relevant variant so the recreation's copy reads a
- *                   little differently from the original instead of being an exact
- *                   copy. The brand/subject term (the keyword) is KEPT — that block
- *                   is left alone or, if rewritten, must still contain the brand —
- *                   and a different brand is NEVER invented. The director returns
- *                   an ARRAY of {old,new} rewrites; each becomes its own edit.
+ *   text-rewrite  — TWO jobs. (1) MANDATORY main-title→keyword: the source
+ *                   thumbnail came from a DIFFERENT video, so its big title often
+ *                   shows a different/older product name (e.g. "CLAWDBOT" when the
+ *                   keyword is "OpenClaw"); that title is rewritten TO the keyword.
+ *                   (2) PROACTIVE secondary rewrite: a tagline/sub-line (like "Full
+ *                   Guide" or "24/7 AI EMPLOYEE") is rewritten to a fresh,
+ *                   equally-relevant variant so the copy isn't an exact copy. A
+ *                   brand OTHER than the keyword is NEVER invented. The director
+ *                   returns an ARRAY of {old,new} rewrites; each becomes its own edit.
  *   logo          — swap a GENERIC/unrelated stock icon for another of the same
  *                   type. The brand/subject's own logo or mascot is NEVER swapped.
  *
@@ -81,25 +82,33 @@ const SYSTEM =
   "applying ONLY what helps. Be conservative: every edit you apply re-renders the " +
   "whole frame and can soften or distort it, so do NOT over-edit — skip an edit " +
   "unless it clearly makes the thumbnail better.\n\n" +
-  "The video's brand/subject is given to you (the keyword). This is the SACRED " +
-  "subject of the thumbnail. You must NEVER touch it: never rewrite away its name, " +
-  "and never swap, restyle or replace its own logo or mascot. The logo swap is " +
-  "ONLY for a generic, unrelated stock icon (e.g. a plain gear, bell, or generic " +
-  "app glyph) — if an icon/logo/mascot IS the subject brand, set apply:false for " +
-  "the logo step and leave it untouched.\n\n" +
+  "The video's brand/subject is the KEYWORD given to you. The keyword — and ONLY " +
+  "the keyword — is the sacred subject of THIS thumbnail. Its mascot/logo is also " +
+  "sacred: never swap, restyle or replace the subject's own logo or mascot. The " +
+  "logo swap is ONLY for a generic, unrelated stock icon (e.g. a plain gear, bell, " +
+  "or generic app glyph) — if an icon/logo/mascot IS the subject, set apply:false " +
+  "for the logo step and leave it untouched.\n\n" +
+  "CRITICAL — the MAIN TITLE must be the keyword. You are recreating a thumbnail " +
+  "that originally belonged to a DIFFERENT video, so its big main title often shows " +
+  "a DIFFERENT or OLDER product/brand NAME (e.g. the title reads \"CLAWDBOT\" but " +
+  "the keyword is \"OpenClaw\" — the same thing under a new name, or a competitor). " +
+  "Because THIS video is about the keyword, you MUST rewrite that main title text " +
+  "to the keyword EXACTLY whenever the displayed title is a product/brand name that " +
+  "is not already the keyword. This title rewrite is the MOST IMPORTANT one — never " +
+  "leave a different or old product name as the headline. Analyse the text first: " +
+  "identify the main title, compare it to the keyword, and if they differ, rewrite " +
+  "the title to the keyword.\n\n" +
   "Apply an edit only when the image clearly warrants it (e.g. don't swap a logo " +
   "if there is no generic logo, don't edit a device screen if there is no " +
   "on-screen device). TEXT-REWRITE IS THE EXCEPTION — be PROACTIVE with it. " +
-  "Whenever the thumbnail has any SECONDARY/supporting text beyond the brand name " +
-  "(a tagline, badge or sub-line such as \"Full Guide\", \"Full Tutorial\" or " +
-  "\"24/7 AI EMPLOYEE\"), you SHOULD rewrite at least one such line into a fresh, " +
-  "equally-relevant, punchier variant (e.g. \"Full Guide\" → \"Complete Breakdown\" " +
-  "or \"Step-by-Step\") so the recreation's wording is a LITTLE different from the " +
-  "original instead of an exact copy. The brand/subject text itself (the keyword) " +
-  "must be KEPT — either leave that block alone, or if you do rewrite it its new " +
-  "version MUST still contain the brand word exactly. NEVER invent a different " +
-  "brand name in any rewrite, and only rewrite text that genuinely exists. Return " +
-  "ONE {old,new} pair per distinct text block you want to change. " +
+  "Beyond the mandatory main-title→keyword rewrite above, whenever the thumbnail " +
+  "has any SECONDARY/supporting text (a tagline, badge or sub-line such as \"Full " +
+  "Guide\", \"Full Tutorial\" or \"24/7 AI EMPLOYEE\"), you SHOULD also rewrite at " +
+  "least one such line into a fresh, equally-relevant, punchier variant (e.g. " +
+  "\"Full Guide\" → \"Complete Breakdown\") so the recreation's wording is a LITTLE " +
+  "different from the original instead of an exact copy. NEVER invent a brand name " +
+  "OTHER than the keyword in any rewrite, and only rewrite text that genuinely " +
+  "exists. Return ONE {old,new} pair per distinct text block you want to change. " +
   "For the structured edits, fill the bracketed placeholders in each FIXED " +
   "template with short, literal values describing what you SEE in the image. Never " +
   "reword the template text outside the brackets. Keep every edit brand-safe and " +
@@ -113,10 +122,17 @@ const SYSTEM =
 export function buildDirectorUserText(keyword: string, videoType: VideoType): string {
   return (
     `The video is a ${videoType} video about: "${keyword}".\n\n` +
-    `The brand/subject term is "${keyword}". This is sacred: NEVER rewrite it away, ` +
-    "and NEVER swap or restyle its own logo or mascot. The logo swap is ONLY for a " +
-    "GENERIC, unrelated stock icon — if a logo/icon/mascot IS this brand/subject, " +
-    "set its apply to false.\n\n" +
+    `The brand/subject of THIS video is the keyword "${keyword}". Its mascot/logo is ` +
+    "sacred: NEVER swap or restyle the subject's own logo or mascot (the logo swap " +
+    "is ONLY for a GENERIC, unrelated stock icon — if a logo/icon/mascot IS this " +
+    "subject, set its apply to false).\n\n" +
+    `IMPORTANT — analyse the text first. The big MAIN TITLE in this image came from a ` +
+    `DIFFERENT original video and may show a DIFFERENT or OLDER product/brand name ` +
+    `than "${keyword}" (e.g. it reads "CLAWDBOT" while the keyword is "OpenClaw" — the ` +
+    `same product, new name). If the main title's text is a product/brand name that is ` +
+    `NOT already "${keyword}", you MUST rewrite that main title to "${keyword}" exactly ` +
+    `via a text-rewrite {old,new} pair. This is the most important rewrite — the ` +
+    `headline of the recreation must be "${keyword}", not the original's name.\n\n` +
     "For each optional edit, decide whether it GENUINELY improves click-through, " +
     "and if so, fill ONLY the bracketed slots of its fixed template (text-rewrite " +
     "returns an ARRAY of {old,new} pairs — one per editable text block). Be " +
@@ -136,12 +152,13 @@ export function buildDirectorUserText(keyword: string, videoType: VideoType): st
     '  "logo": { "apply": boolean, "icon_or_company": string, "target_icon_or_company": string }\n' +
     "}\n\n" +
     'Example device-screen slots: character_or_screen="screen", device="phone", content="bright app dashboard".\n' +
-    `For text-rewrite, be PROACTIVE: if any SECONDARY/supporting text exists beyond the brand name ` +
-    `(a tagline, badge or sub-line like "Full Guide" or "Full Tutorial"), include a {old,new} pair that ` +
-    `rewrites it into a fresh, equally-relevant variant so the recreation reads a little differently from ` +
-    `the original. KEEP the brand/subject text "${keyword}" — either don't rewrite that block, or if you ` +
-    `do, its "new" MUST still contain "${keyword}" exactly. NO rewrite may introduce a different brand name. ` +
-    "For logo, leave the brand's own logo/mascot untouched (apply false); only swap a generic icon."
+    `For text-rewrite: FIRST, if the main title shows a product/brand name that is not "${keyword}", ` +
+    `include a {old,new} pair rewriting it to "${keyword}" (the mandatory main-title→keyword rewrite). ` +
+    `THEN be PROACTIVE with secondary text: if any tagline/badge/sub-line exists (like "Full Guide" or ` +
+    `"24/7 AI EMPLOYEE"), include a {old,new} pair rewriting it into a fresh, equally-relevant variant so ` +
+    `the recreation reads a little differently from the original. NO rewrite may introduce a brand name ` +
+    `OTHER than "${keyword}". For logo, leave the subject's own logo/mascot untouched (apply false); only ` +
+    `swap a generic icon.`
   );
 }
 
