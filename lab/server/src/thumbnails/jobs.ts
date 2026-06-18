@@ -116,6 +116,8 @@ export interface ContrarianOverlay {
   emphasis: string;
   /** The size multiplier currently rendered (1 = box fit). */
   textScale: number;
+  /** The vertical nudge currently rendered (fraction of frame height; 0 = centred). */
+  textOffsetY: number;
 }
 
 /**

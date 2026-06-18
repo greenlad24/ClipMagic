@@ -31,6 +31,8 @@ export interface ContrarianVariation {
   expressionId: string;
   /** User multiplier on the fitted headline size (UI slider; default 1). */
   textScale?: number;
+  /** Vertical nudge as a fraction of frame height (UI slider; +down, −up; default 0). */
+  textOffsetY?: number;
 }
 
 /** One available expression option offered to the copywriter. */

@@ -1197,6 +1197,18 @@ function CopyReview({
                     className="w-full accent-primary"
                   />
                 </div>
+                <div className="flex-1">
+                  <label className="text-[10px] text-muted-foreground">Text position {(v.textOffsetY ?? 0) === 0 ? '· centred' : (v.textOffsetY ?? 0) < 0 ? '· higher' : '· lower'}</label>
+                  <input
+                    type="range"
+                    min={-0.35}
+                    max={0.35}
+                    step={0.02}
+                    value={v.textOffsetY ?? 0}
+                    onChange={(e) => onEdit(i, { textOffsetY: Number(e.target.value) })}
+                    className="w-full accent-primary"
+                  />
+                </div>
               </div>
             </div>
           ))}
@@ -1523,15 +1535,16 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
   // Fall back to a generic caption when there's only a single (label-less) run.
   const caption = result.label || 'Generated';
 
-  // Contrarian only: a live "text size" slider that re-renders the headline on
-  // the saved base image (no full regen). Local overrides win over the polled URL.
+  // Contrarian only: live "text size" + "text position" sliders that re-render the
+  // headline on the saved base image (no full regen). Local overrides win over poll.
   const overlay = result.overlay;
   const [scale, setScale] = useState(overlay?.textScale ?? 1);
+  const [offsetY, setOffsetY] = useState(overlay?.textOffsetY ?? 0);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [restyling, setRestyling] = useState(false);
   const restyleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onScale = (next: number) => {
-    setScale(next);
+  // Debounced re-render using the latest size + position (either slider triggers it).
+  const applyRestyle = (nextScale: number, nextOffset: number) => {
     if (!overlay) return;
     if (restyleTimer.current) clearTimeout(restyleTimer.current);
     restyleTimer.current = setTimeout(async () => {
@@ -1542,15 +1555,24 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
           templateId: overlay.templateId,
           text: overlay.text,
           emphasis: overlay.emphasis,
-          textScale: next,
+          textScale: nextScale,
+          textOffsetY: nextOffset,
         });
         setLocalUrl(outputUrl);
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Could not resize the headline');
+        toast.error(e instanceof Error ? e.message : 'Could not restyle the headline');
       } finally {
         setRestyling(false);
       }
     }, 350);
+  };
+  const onScale = (next: number) => {
+    setScale(next);
+    applyRestyle(next, offsetY);
+  };
+  const onOffset = (next: number) => {
+    setOffsetY(next);
+    applyRestyle(scale, next);
   };
   const shownUrl = localUrl ?? result.outputUrl;
   return (
@@ -1606,6 +1628,20 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
             onChange={(e) => onScale(Number(e.target.value))}
             className="w-full accent-primary"
             aria-label="Headline text size"
+          />
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1">
+            <span>Text position</span>
+            <span className="tabular-nums">{offsetY === 0 ? 'centred' : offsetY < 0 ? 'higher' : 'lower'}</span>
+          </div>
+          <input
+            type="range"
+            min={-0.35}
+            max={0.35}
+            step={0.02}
+            value={offsetY}
+            onChange={(e) => onOffset(Number(e.target.value))}
+            className="w-full accent-primary"
+            aria-label="Headline vertical position"
           />
         </div>
       )}

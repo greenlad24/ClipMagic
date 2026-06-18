@@ -206,6 +206,7 @@ export async function renderContrarianText(
   text: string,
   emphasis: string,
   sizeScale = 1,
+  offsetY = 0,
 ): Promise<Buffer> {
   let canvasMod: any;
   try {
@@ -242,6 +243,7 @@ export async function renderContrarianText(
       align: template.id === "left-stack" ? "left" : "center",
       emphStyle: template.id === "top-strike" ? "strike" : "box",
       sizeScale,
+      offsetY,
     });
 
     return await canvas.encode("jpeg", 92);
@@ -321,6 +323,8 @@ interface WrapOpts {
   emphStyle: "box" | "strike";
   /** User multiplier on the fitted size (UI slider; 1 = fit the box). */
   sizeScale?: number;
+  /** Vertical nudge as a fraction of frame height (UI slider; +down, −up, 0 = centred). */
+  offsetY?: number;
 }
 
 /** A line's rendered width at `size`, including inter-run spaces + emphasis box pad. */
@@ -392,11 +396,14 @@ function drawWrapped(ctx: any, family: string, text: string, emphasis: string, o
   const lineH = size * 1.18;
   const lineGap = size * 0.3;
   const blockH = lines.length * lineH + (lines.length - 1) * lineGap;
-  // Vertically centre the block within the box (clamp to the box top if it spills).
-  const yTop = Math.max(opts.box.y, opts.box.y + (opts.box.h - blockH) / 2);
-  const space = measureAt(" ", size);
   // The drop shadow scales with the render height (see setWhiteShadow).
   const frameH = ctx.canvas?.height ?? 1080;
+  // Vertically centre the block within the box, then apply the user's up/down nudge
+  // (a fraction of frame height); keep the block fully on-canvas.
+  const centred = opts.box.y + (opts.box.h - blockH) / 2;
+  const nudged = centred + (opts.offsetY ?? 0) * frameH;
+  const yTop = Math.max(0, Math.min(nudged, frameH - blockH));
+  const space = measureAt(" ", size);
 
   lines.forEach((line, li) => {
     const cy = yTop + li * (lineH + lineGap) + lineH / 2;

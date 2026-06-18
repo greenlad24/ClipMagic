@@ -190,6 +190,7 @@ export type PlannedContrarian = {
   expressionId: string;
   expressionLabel: string;
   textScale: number;
+  textOffsetY: number;
 };
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
@@ -314,12 +315,14 @@ export type ContrarianOverlay = {
   text: string;
   emphasis: string;
   textScale: number;
+  textOffsetY: number;
 };
-/** Live "text size" slider: re-render a contrarian headline on its base image. */
+/** Live size/position sliders: re-render a contrarian headline on its base image. */
 export const restyleContrarianText =
-  endpoint<{ baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number }, { outputUrl: string }>(
-    'restyleContrarianText',
-  );
+  endpoint<
+    { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number; textOffsetY?: number },
+    { outputUrl: string }
+  >('restyleContrarianText');
 /**
  * One provider sub-run within a variant — a variant now has exactly ONE (the
  * single chosen provider).

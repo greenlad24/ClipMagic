@@ -373,8 +373,8 @@ export interface RecreateResult {
   outputUrl: string;
   file: string;
   steps: ChainStep[];
-  /** Contrarian only: lets the UI re-render the headline at a new size live. */
-  overlay?: { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number };
+  /** Contrarian only: lets the UI re-render the headline at a new size/position live. */
+  overlay?: { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number; textOffsetY: number };
 }
 
 /**
@@ -656,7 +656,7 @@ export async function composeContrarianThumbnail(
     /** Head-top inset (frame-height fraction) so the headline strip stays clear. */
     headTopFrac?: number;
     /** When set, the headline is drawn programmatically onto the finalized image. */
-    overlay?: { template: ContrarianTemplate; text: string; emphasis: string; sizeScale?: number };
+    overlay?: { template: ContrarianTemplate; text: string; emphasis: string; sizeScale?: number; offsetY?: number };
     provider?: ImageProvider;
     imageSize?: string;
     onProgress?: ProgressFn;
@@ -755,6 +755,7 @@ export async function composeContrarianThumbnail(
           text: input.overlay.text,
           emphasis: input.overlay.emphasis,
           textScale: input.overlay.sizeScale ?? 1,
+          textOffsetY: input.overlay.offsetY ?? 0,
         };
       } catch {
         /* base copy is best-effort — the live slider just won't be available */
@@ -765,6 +766,7 @@ export async function composeContrarianThumbnail(
         input.overlay.text,
         input.overlay.emphasis,
         input.overlay.sizeScale ?? 1,
+        input.overlay.offsetY ?? 0,
       );
       if (withText && withText.length > 0 && withText !== baseBytes) {
         fs.writeFileSync(result.file, withText);
@@ -802,6 +804,7 @@ export async function restyleContrarianText(input: {
   text: string;
   emphasis: string;
   textScale: number;
+  textOffsetY?: number;
 }): Promise<{ outputUrl: string }> {
   const dir = thumbnailsDir();
   const base = path.basename(input.baseUrl); // strip any path → a name within dir
@@ -810,7 +813,8 @@ export async function restyleContrarianText(input: {
   const { renderContrarianText, CONTRARIAN_TEMPLATES } = await import("./textOverlay.js");
   const template = CONTRARIAN_TEMPLATES.find((t) => t.id === input.templateId) ?? CONTRARIAN_TEMPLATES[0];
   const scale = Math.min(2, Math.max(0.4, input.textScale || 1));
-  const withText = await renderContrarianText(bytes, template, input.text, input.emphasis, scale);
+  const offsetY = Math.min(0.45, Math.max(-0.45, input.textOffsetY || 0));
+  const withText = await renderContrarianText(bytes, template, input.text, input.emphasis, scale, offsetY);
   const name = `${crypto.randomBytes(12).toString("hex")}.jpg`;
   fs.writeFileSync(path.join(dir, name), withText);
   return { outputUrl: `/api/outputs/thumbnails/${name}` };

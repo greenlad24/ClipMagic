@@ -2408,6 +2408,7 @@ const restyleContrarianText: Handler = async (input) => {
     text: String(input?.text ?? ""),
     emphasis: String(input?.emphasis ?? ""),
     textScale: Number.isFinite(input?.textScale) ? Number(input.textScale) : 1,
+    textOffsetY: Number.isFinite(input?.textOffsetY) ? Number(input.textOffsetY) : 0,
   });
 };
 
@@ -2486,6 +2487,7 @@ function coerceContrarianVariations(input: any): { text: string; emphasis: strin
       emphasis: String(v?.emphasis ?? "").trim(),
       expressionId: String(v?.expressionId ?? "").trim(),
       textScale: Number.isFinite(v?.textScale) ? Math.min(2, Math.max(0.4, Number(v.textScale))) : 1,
+      textOffsetY: Number.isFinite(v?.textOffsetY) ? Math.min(0.45, Math.max(-0.45, Number(v.textOffsetY))) : 0,
     }))
     .filter((v: any) => v.text);
 }
