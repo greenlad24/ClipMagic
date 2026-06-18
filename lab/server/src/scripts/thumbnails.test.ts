@@ -497,25 +497,53 @@ async function main() {
     );
   });
 
-  await check("parseDirectorResponse: ALL rewrites are REJECTED when none keeps the brand word", () => {
+  await check("parseDirectorResponse: a brand-ERASING rewrite is dropped, but a safe secondary rewrite still applies", () => {
     const steps = artDirector.parseDirectorResponse(
       {
         "text-rewrite": {
           apply: true,
           rewrites: [
-            { old: "OpenClaw is here", new: "I tried this for 30 days" },
-            { old: "AI EMPLOYEE", new: "24/7 AI EMPLOYEE" },
+            { old: "OpenClaw is here", new: "I tried this for 30 days" }, // ERASES the brand → dropped
+            { old: "AI EMPLOYEE", new: "24/7 AI EMPLOYEE" }, // secondary, no brand → kept
           ],
         },
       },
       "OpenClaw",
     );
     const trs = steps.filter((s) => s.id === "text-rewrite");
-    // The whole text-rewrite is dropped (one disabled placeholder, no instructions)
-    // so we never erase the subject from the thumbnail.
+    // The brand-erasing rewrite is dropped per-rewrite; the secondary one survives.
+    assert.equal(trs.length, 1, "only the safe secondary rewrite is emitted");
+    assert.ok(trs[0].apply, "the secondary rewrite applies");
+    assert.equal(
+      trs[0].instruction,
+      'change the text "AI EMPLOYEE" to "24/7 AI EMPLOYEE", keeping it in the same place, size and style',
+    );
+  });
+
+  await check("parseDirectorResponse: the ONLY rewrite is dropped when it erases the brand (nothing survives)", () => {
+    const steps = artDirector.parseDirectorResponse(
+      { "text-rewrite": { apply: true, rewrites: [{ old: "OpenClaw is here", new: "I tried this for 30 days" }] } },
+      "OpenClaw",
+    );
+    const trs = steps.filter((s) => s.id === "text-rewrite");
     assert.equal(trs.length, 1, "a single disabled placeholder remains");
-    assert.equal(trs[0].apply, false, "must NOT rewrite if NO block keeps the brand/subject term");
+    assert.equal(trs[0].apply, false, "a lone brand-erasing rewrite leaves nothing to apply");
     assert.equal(trs[0].instruction, "");
+  });
+
+  await check("parseDirectorResponse: a SECONDARY-only rewrite applies while the brand text is left untouched", () => {
+    // The exact user case: keep "OpenClaw", rewrite only the "Full Guide" tagline.
+    const steps = artDirector.parseDirectorResponse(
+      { "text-rewrite": { apply: true, rewrites: [{ old: "Full Guide", new: "Complete Breakdown" }] } },
+      "OpenClaw",
+    );
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    assert.equal(trs.length, 1, "the secondary rewrite is emitted even though no rewrite mentions the brand");
+    assert.ok(trs[0].apply, "secondary text varies while the brand block stays put");
+    assert.equal(
+      trs[0].instruction,
+      'change the text "Full Guide" to "Complete Breakdown", keeping it in the same place, size and style',
+    );
   });
 
   await check("parseDirectorResponse: a secondary line WITHOUT the brand is allowed as long as the main text keeps it", () => {

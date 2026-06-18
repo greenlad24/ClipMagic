@@ -12,13 +12,14 @@
  *   device-screen — change the character/screen inside an on-screen device.
  *   font          — restyle the headline text's font, keeping color + shape.
  *   bold-text     — make a specific text string bold.
- *   text-rewrite  — rewrite EVERY editable text element (e.g. a headline AND a
- *                   secondary line like "24/7 AI EMPLOYEE") to a punchier,
- *                   higher-CTR version so the recreation's copy no longer mirrors
- *                   the original — ALWAYS keeping the brand/subject term (the
- *                   keyword) intact in at least the main text, and NEVER inventing
- *                   a different brand. The director returns an ARRAY of {old,new}
- *                   rewrites; each becomes its own edit instruction.
+ *   text-rewrite  — PROACTIVELY rewrite SECONDARY/supporting text (a tagline or
+ *                   sub-line like "Full Guide" or "24/7 AI EMPLOYEE") into a fresh,
+ *                   equally-relevant variant so the recreation's copy reads a
+ *                   little differently from the original instead of being an exact
+ *                   copy. The brand/subject term (the keyword) is KEPT — that block
+ *                   is left alone or, if rewritten, must still contain the brand —
+ *                   and a different brand is NEVER invented. The director returns
+ *                   an ARRAY of {old,new} rewrites; each becomes its own edit.
  *   logo          — swap a GENERIC/unrelated stock icon for another of the same
  *                   type. The brand/subject's own logo or mascot is NEVER swapped.
  *
@@ -88,14 +89,17 @@ const SYSTEM =
   "the logo step and leave it untouched.\n\n" +
   "Apply an edit only when the image clearly warrants it (e.g. don't swap a logo " +
   "if there is no generic logo, don't edit a device screen if there is no " +
-  "on-screen device, don't restyle or rewrite text if there is no editable " +
-  "text). For text-rewrite, rewrite EVERY editable text element in the thumbnail " +
-  "(e.g. a main headline AND any secondary line like \"24/7 AI EMPLOYEE\") into " +
-  "punchier, higher-CTR copy, so the recreation's text no longer mirrors the " +
-  "original — return ONE {old,new} pair per distinct text block you want to " +
-  "change. The MAIN text's new version MUST still contain the brand/subject word " +
-  "exactly, and you must NEVER invent a different brand name in any rewrite. Only " +
-  "rewrite text that genuinely exists and a better version helps. " +
+  "on-screen device). TEXT-REWRITE IS THE EXCEPTION — be PROACTIVE with it. " +
+  "Whenever the thumbnail has any SECONDARY/supporting text beyond the brand name " +
+  "(a tagline, badge or sub-line such as \"Full Guide\", \"Full Tutorial\" or " +
+  "\"24/7 AI EMPLOYEE\"), you SHOULD rewrite at least one such line into a fresh, " +
+  "equally-relevant, punchier variant (e.g. \"Full Guide\" → \"Complete Breakdown\" " +
+  "or \"Step-by-Step\") so the recreation's wording is a LITTLE different from the " +
+  "original instead of an exact copy. The brand/subject text itself (the keyword) " +
+  "must be KEPT — either leave that block alone, or if you do rewrite it its new " +
+  "version MUST still contain the brand word exactly. NEVER invent a different " +
+  "brand name in any rewrite, and only rewrite text that genuinely exists. Return " +
+  "ONE {old,new} pair per distinct text block you want to change. " +
   "For the structured edits, fill the bracketed placeholders in each FIXED " +
   "template with short, literal values describing what you SEE in the image. Never " +
   "reword the template text outside the brackets. Keep every edit brand-safe and " +
@@ -132,9 +136,11 @@ export function buildDirectorUserText(keyword: string, videoType: VideoType): st
     '  "logo": { "apply": boolean, "icon_or_company": string, "target_icon_or_company": string }\n' +
     "}\n\n" +
     'Example device-screen slots: character_or_screen="screen", device="phone", content="bright app dashboard".\n' +
-    `For text-rewrite, include ONE {old,new} pair for EACH editable text block you want to change ` +
-    `(e.g. the headline AND a secondary line). At least the MAIN text's "new" MUST still contain the ` +
-    `brand/subject word "${keyword}" exactly, and NO rewrite may introduce a different brand name. ` +
+    `For text-rewrite, be PROACTIVE: if any SECONDARY/supporting text exists beyond the brand name ` +
+    `(a tagline, badge or sub-line like "Full Guide" or "Full Tutorial"), include a {old,new} pair that ` +
+    `rewrites it into a fresh, equally-relevant variant so the recreation reads a little differently from ` +
+    `the original. KEEP the brand/subject text "${keyword}" — either don't rewrite that block, or if you ` +
+    `do, its "new" MUST still contain "${keyword}" exactly. NO rewrite may introduce a different brand name. ` +
     "For logo, leave the brand's own logo/mascot untouched (apply false); only swap a generic icon."
   );
 }
@@ -155,11 +161,12 @@ function containsBrand(text: string, keyword: string): boolean {
  * testing.
  *
  * `keyword` is the brand/subject term. It guards two brand-safety rules:
- *   - text-rewrite: rewrites EVERY editable text block (an array of {old,new}).
- *     At least one rewrite (the main text) MUST still contain the brand term, else
- *     the WHOLE text-rewrite is rejected so we never erase the subject. Each
- *     rewrite becomes its OWN step (so the chain runs one edit per text block);
- *     when none keeps the brand, none are emitted.
+ *   - text-rewrite: rewrites editable text blocks (an array of {old,new}). The
+ *     guard is PER-REWRITE — a rewrite may not ERASE the brand from a block that
+ *     contained it (old has the brand → new must keep it), but a rewrite of a
+ *     secondary line that never had the brand is always allowed. Each surviving
+ *     rewrite becomes its OWN step; brand-erasing rewrites are dropped, and if
+ *     none survive, none are emitted.
  *   - logo: a generic-icon swap is rejected when either the source OR target
  *     icon IS the subject brand, so the brand's own logo/mascot is never touched.
  */
@@ -205,11 +212,14 @@ export function parseDirectorResponse(json: any, keyword = ""): ArtDirectorStep[
   }
 
   // text-rewrite — change the text "[old]" to "[new]", ... (ONE per text block)
-  // Brand guard: at least ONE rewrite's NEW text must still contain the brand/
-  // subject term (the main text), so the recreation can never erase the subject.
-  // Each valid rewrite becomes its OWN step; if none keeps the brand (or there is
-  // no editable text), NONE are emitted and a disabled placeholder is recorded so
-  // the step is still visible in the chain breakdown.
+  // Brand guard is PER-REWRITE: a rewrite may NEVER ERASE the brand/subject term
+  // from a block that contained it (old has the brand → new MUST keep it), so we
+  // never strip the subject's name. A rewrite of a SECONDARY line that never
+  // contained the brand (e.g. a "Full Guide" tagline) is always allowed — that's
+  // how a recreation gets fresh, non-copied supporting copy while the brand text
+  // stays put. Each surviving rewrite becomes its OWN step; if none survive (or
+  // there is no editable text), a disabled placeholder is recorded so the step is
+  // still visible in the chain breakdown.
   {
     const node = json?.["text-rewrite"];
     // Accept the new array shape (rewrites: [{old,new}]) AND the legacy single
@@ -222,11 +232,12 @@ export function parseDirectorResponse(json: any, keyword = ""): ArtDirectorStep[
     const pairs = rawList
       .map((r) => ({ old: str(r?.old), new: str(r?.new) }))
       .filter((r) => !!r.old && !!r.new && r.old !== r.new);
-    const keepsBrand = pairs.some((r) => containsBrand(r.new, keyword));
-    const apply = node?.apply === true && pairs.length > 0 && keepsBrand;
+    // Drop ONLY rewrites that would erase the brand from a brand-bearing block.
+    const safe = pairs.filter((r) => !containsBrand(r.old, keyword) || containsBrand(r.new, keyword));
+    const apply = node?.apply === true && safe.length > 0;
     if (apply) {
-      // Emit one instruction per text block, each verbatim from the template.
-      for (const r of pairs) {
+      // Emit one instruction per surviving text block, verbatim from the template.
+      for (const r of safe) {
         const inst = STEP_TEMPLATES["text-rewrite"].replace("[old]", r.old).replace("[new]", r.new);
         out.push({ id: "text-rewrite", label: STEP_META["text-rewrite"], apply: true, instruction: inst });
       }
