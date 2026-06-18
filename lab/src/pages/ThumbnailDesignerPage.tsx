@@ -11,6 +11,8 @@ import {
   deleteThumbnailCharacter,
   uploadThumbnailBackground,
   deleteThumbnailBackground,
+  uploadThumbnailFont,
+  deleteThumbnailFont,
   type ThumbnailStatusOutputType,
   type ThumbnailCharacterState,
   type ThumbnailBackgroundState,
@@ -51,6 +53,7 @@ import {
   Settings,
   Wand2,
   FileText,
+  Type,
 } from 'lucide-react';
 
 /**
@@ -291,6 +294,9 @@ export default function ThumbnailDesignerPage() {
 
             {/* Background library (optional) */}
             <BackgroundLibrary status={status} onChanged={loadStatus} />
+
+            {/* Headline font for the contrarian originals */}
+            <FontUploader status={status} onChanged={loadStatus} />
 
             {/* Create */}
             {ready ? (
@@ -852,6 +858,94 @@ function BackgroundLibrary({
           }}
         />
       </div>
+    </section>
+  );
+}
+
+function FontUploader({
+  status,
+  onChanged,
+}: {
+  status: ThumbnailStatusOutputType;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const font = status.font;
+
+  const upload = async (file: File) => {
+    setBusy(true);
+    try {
+      const fontBase64 = await fileToBase64(file);
+      await uploadThumbnailFont({ filename: file.name, fontBase64 });
+      toast.success(`Headline font set to "${file.name}".`);
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await deleteThumbnailFont({});
+      toast.success('Reverted to the default Helvetica-compatible font.');
+      onChanged();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <SectionHeader
+        icon={<Type className="w-4 h-4" />}
+        title="Headline font (contrarian originals)"
+        subtitle="Upload your Helvetica (or any .ttf / .otf / .woff) for the contrarian headline text. Defaults to a Helvetica-compatible font."
+      />
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background p-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground truncate">
+            {font?.uploaded ? font.name : 'Default — Liberation Sans Bold (Helvetica-compatible)'}
+          </p>
+          <p className="text-[11px] text-muted-foreground">
+            {font?.uploaded ? 'Your custom font is used for the contrarian headline text.' : 'No custom font uploaded yet.'}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => inputRef.current?.click()}>
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            {font?.uploaded ? 'Replace' : 'Upload font'}
+          </Button>
+          {font?.uploaded && (
+            <button
+              type="button"
+              onClick={remove}
+              disabled={busy}
+              className="text-muted-foreground hover:text-destructive transition-colors p-2"
+              aria-label="Remove custom font"
+              title="Remove"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".ttf,.otf,.ttc,.woff,.woff2,font/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void upload(f);
+          e.target.value = '';
+        }}
+      />
     </section>
   );
 }

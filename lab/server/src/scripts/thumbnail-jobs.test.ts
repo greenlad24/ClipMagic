@@ -312,6 +312,19 @@ async function main() {
     assert.throws(() => chars.saveCustomCharacter("smile", onePx), /built-in/i);
   });
 
+  await check("headline font: upload (replaces), status, delete; rejects bad type", async () => {
+    const fonts = await import("../thumbnails/fonts.js");
+    assert.equal(fonts.fontStatus().uploaded, false, "none uploaded initially");
+    const st = fonts.saveFont("Helvetica.ttf", onePx); // bytes don't need to be a real font for the store test
+    assert.equal(st.uploaded, true);
+    assert.equal(st.name, "Helvetica.ttf");
+    assert.ok(fonts.uploadedFontPath(), "an uploaded font path is resolved");
+    assert.throws(() => fonts.saveFont("notafont.png", onePx), /\.ttf|\.otf|\.woff/i, "bad extension rejected");
+    fonts.deleteFont();
+    assert.equal(fonts.fontStatus().uploaded, false, "removed on delete");
+    assert.equal(fonts.uploadedFontPath(), null);
+  });
+
   await check("backgrounds: save by name, list, delete", () => {
     for (const b of bgs.listBackgrounds()) bgs.deleteBackground(b.id);
     const bg = bgs.saveBackground("Red Grid", onePx);

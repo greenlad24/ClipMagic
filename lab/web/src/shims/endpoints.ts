@@ -163,6 +163,12 @@ export const uploadThumbnailBackground =
 export const deleteThumbnailBackground =
   endpoint<{ id: string }, { backgrounds: ThumbnailBackgroundState[] }>("deleteThumbnailBackground");
 
+// ── Headline font (contrarian overlay) SDK ───────────────────────────────────
+export const uploadThumbnailFont =
+  endpoint<{ filename: string; fontBase64: string }, { font: ThumbnailFontState }>("uploadThumbnailFont");
+export const deleteThumbnailFont =
+  endpoint<Record<string, never>, { font: ThumbnailFontState }>("deleteThumbnailFont");
+
 // ── Thumbnail Designer types ─────────────────────────────────────────────────
 /** Expression id: a built-in name OR a custom slug. */
 export type ThumbnailExpression = string;
@@ -197,6 +203,11 @@ export type ThumbnailBackgroundState = {
   url: string;
   updatedAt: string;
 };
+export type ThumbnailFontState = {
+  uploaded: boolean;
+  name: string | null;
+  updatedAt: string | null;
+};
 export type ThumbnailStatusOutputType = {
   geminiConfigured: boolean;
   youtubeConfigured: boolean;
@@ -204,6 +215,7 @@ export type ThumbnailStatusOutputType = {
   uploadedExpressions: ThumbnailExpression[];
   backgrounds: ThumbnailBackgroundState[];
   uploadedBackgrounds: string[];
+  font: ThumbnailFontState;
 };
 export type ThumbnailScriptAnalysisOutputType = {
   keyword: string;

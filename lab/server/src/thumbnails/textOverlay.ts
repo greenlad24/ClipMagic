@@ -23,6 +23,8 @@
  * thumbnail always finishes. The layout math is pure + exported for unit tests.
  */
 
+import { uploadedFontPath } from "./fonts.js";
+
 export type ContrarianTemplateId = "bottom-bar" | "left-stack" | "top-strike";
 
 export interface ContrarianTemplate {
@@ -103,26 +105,37 @@ export function stackLines(text: string, emphasis: string): { line1: string; lin
   return { line1: text.slice(idx, idx + e.length).trim(), line2: rest };
 }
 
-/** Resolve the headline font file: THUMBNAIL_FONT_PATH or the bundled default. */
+/**
+ * Resolve the headline font file, in priority order:
+ *   1. an UPLOADED font (managed in the UI, stored under the data dir),
+ *   2. THUMBNAIL_FONT_PATH (a mounted file),
+ *   3. the bundled Liberation Sans Bold (metric-compatible Helvetica).
+ */
 export function thumbnailFontPath(): string {
-  return (
-    process.env.THUMBNAIL_FONT_PATH ||
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
-  );
+  try {
+    // Lazy require so the pure exports here don't pull the data-dir store.
+    const uploaded = uploadedFontPath();
+    if (uploaded) return uploaded;
+  } catch {
+    /* fall through to env / default */
+  }
+  return process.env.THUMBNAIL_FONT_PATH || "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf";
 }
 
 const RED = "#E01B1B";
 const FONT_FAMILY = "ThumbHeadline";
-let fontRegistered = false;
+/** The font path we last registered (re-register when the user uploads a new one). */
+let registeredPath: string | null = null;
 
-/** Best-effort font registration (idempotent). Returns the family or null. */
-async function ensureFont(canvasMod: any): Promise<string | null> {
+/** Best-effort font registration (re-registers when the resolved path changes). */
+async function ensureFont(canvasMod: any): Promise<string> {
   try {
-    if (!fontRegistered) {
-      const ok = canvasMod.GlobalFonts.registerFromPath(thumbnailFontPath(), FONT_FAMILY);
-      fontRegistered = !!ok;
+    const p = thumbnailFontPath();
+    if (registeredPath !== p) {
+      const ok = canvasMod.GlobalFonts.registerFromPath(p, FONT_FAMILY);
+      registeredPath = ok ? p : null;
     }
-    return fontRegistered ? FONT_FAMILY : "sans-serif";
+    return registeredPath ? FONT_FAMILY : "sans-serif";
   } catch {
     return "sans-serif";
   }

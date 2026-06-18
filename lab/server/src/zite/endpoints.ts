@@ -76,6 +76,7 @@ import {
   deleteBackground,
   uploadedBackgrounds,
 } from "../thumbnails/backgrounds.js";
+import { fontStatus, saveFont, deleteFont } from "../thumbnails/fonts.js";
 import { generateThumbnailVariants, startThumbnailJob, startContrarianJob } from "../thumbnails/orchestrate.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
@@ -2325,6 +2326,7 @@ const thumbnailStatus: Handler = async () => ({
   uploadedExpressions: uploadedExpressions(),
   backgrounds: listBackgrounds(),
   uploadedBackgrounds: uploadedBackgrounds(),
+  font: fontStatus(),
 });
 
 /** Read the pasted script → extract the search keyword + infer the video type. */
@@ -2461,6 +2463,15 @@ const deleteThumbnailBackground: Handler = async (input) => {
   return { backgrounds: listBackgrounds() };
 };
 
+// Headline font (contrarian-originals overlay): upload / delete a custom font.
+const uploadThumbnailFont: Handler = async (input) => {
+  const filename = String(input?.filename ?? "");
+  const font = saveFont(filename, String(input?.fontBase64 ?? ""));
+  return { font };
+};
+
+const deleteThumbnailFont: Handler = async () => ({ font: deleteFont() });
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -2551,6 +2562,8 @@ export const HANDLERS: Record<string, Handler> = {
   listThumbnailBackgrounds,
   uploadThumbnailBackground,
   deleteThumbnailBackground,
+  uploadThumbnailFont,
+  deleteThumbnailFont,
 };
 
 void config;
