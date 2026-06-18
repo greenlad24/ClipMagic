@@ -461,6 +461,7 @@ export default function ThumbnailDesignerPage() {
                     titles={titles}
                     draft={contrarianDraft}
                     loading={draftLoading}
+                    status={status}
                     onEdit={editDraft}
                     onRegenerate={() => void prepareCopy(keyword)}
                   />
@@ -1062,15 +1063,20 @@ function CopyReview({
   titles,
   draft,
   loading,
+  status,
   onEdit,
   onRegenerate,
 }: {
   titles: ThumbnailTitles | null;
   draft: PlannedContrarian[] | null;
   loading: boolean;
+  status: ThumbnailStatusOutputType;
   onEdit: (i: number, patch: Partial<PlannedContrarian>) => void;
   onRegenerate: () => void;
 }) {
+  const charOptions = status.characters.filter((c) => c.uploaded);
+  const composite = status.composite;
+  const composite11 = !!composite?.canvas && !!composite?.removal;
   return (
     <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
       <div className="flex items-center justify-between gap-2">
@@ -1082,6 +1088,21 @@ function CopyReview({
           Regenerate
         </Button>
       </div>
+
+      {/* Composite mode — confirms the character uses the REAL uploaded pixels. */}
+      {composite && (
+        <div
+          className={`text-[11px] rounded px-2 py-1 border ${
+            composite11
+              ? 'text-emerald-500 border-emerald-500/30 bg-emerald-500/5'
+              : 'text-amber-500 border-amber-500/30 bg-amber-500/5'
+          }`}
+        >
+          {composite11
+            ? 'Character: composited 1:1 from your uploaded image (no AI redraw).'
+            : `Character: AI fallback — the 1:1 composite is unavailable (${!composite.canvas ? 'canvas' : 'background-removal'} not loaded). Rebuild the image to enable it.`}
+        </div>
+      )}
 
       {/* Titles */}
       {titles && (titles.viral.length > 0 || titles.seo.length > 0) && (
@@ -1123,6 +1144,35 @@ function CopyReview({
                 <div className="sm:w-40">
                   <label className="text-[10px] text-muted-foreground">Highlighted word(s)</label>
                   <Input value={v.emphasis} maxLength={24} onChange={(e) => onEdit(i, { emphasis: e.target.value })} />
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 items-end">
+                <div className="sm:w-48">
+                  <label className="text-[10px] text-muted-foreground">Character</label>
+                  <Select value={v.expressionId} onValueChange={(val) => onEdit(i, { expressionId: val })}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {charOptions.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex-1">
+                  <label className="text-[10px] text-muted-foreground">Text size · {Math.round((v.textScale ?? 1) * 100)}%</label>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={1.8}
+                    step={0.05}
+                    value={v.textScale ?? 1}
+                    onChange={(e) => onEdit(i, { textScale: Number(e.target.value) })}
+                    className="w-full accent-primary"
+                  />
                 </div>
               </div>
             </div>

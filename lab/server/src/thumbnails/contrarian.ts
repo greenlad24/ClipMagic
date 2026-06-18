@@ -29,6 +29,8 @@ export interface ContrarianVariation {
   emphasis: string;
   /** Chosen expression id (from the uploaded library) that fits the statement. */
   expressionId: string;
+  /** User multiplier on the fitted headline size (UI slider; default 1). */
+  textScale?: number;
 }
 
 /** One available expression option offered to the copywriter. */

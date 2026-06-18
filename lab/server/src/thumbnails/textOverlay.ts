@@ -41,6 +41,12 @@ export interface ContrarianTemplate {
   /** Copy guidance for the writer so the statement suits this template. */
   copyHint: string;
   /**
+   * The rectangle (as fractions of W,H) the headline must fit inside. The text
+   * size is MEASURED to fit this box (width + height) — so the copy fills, but
+   * never overflows, its allotted space.
+   */
+  textBox: { x: number; y: number; w: number; h: number };
+  /**
    * The uploaded background this template ALWAYS uses, matched by name (the
    * creator names their backgrounds these). Falls back to a cycled background
    * when no upload matches.
@@ -56,6 +62,7 @@ export const CONTRARIAN_TEMPLATES: ContrarianTemplate[] = [
     charPlacement: "center",
     textArea: "the BOTTOM strip (lower ~22% of the frame)",
     copyHint: "ONE very short punchy line (2–4 words); the key word(s) at the END are the red-box emphasis (e.g. \"DON'T RUN VIDEO ADS\" → \"VIDEO ADS\")",
+    textBox: { x: 0.04, y: 0.74, w: 0.92, h: 0.22 },
     backgroundName: "Open Space Office With Green",
   },
   {
@@ -64,6 +71,7 @@ export const CONTRARIAN_TEMPLATES: ContrarianTemplate[] = [
     charPlacement: "right",
     textArea: "the LEFT half of the frame",
     copyHint: "a SHORT hook (1–2 words) then a SHORT follow-up (1–2 words); the hook is the red-box emphasis (e.g. \"#1 MISTAKE\" + \"Everyone Makes\" → \"#1 MISTAKE\")",
+    textBox: { x: 0.05, y: 0.12, w: 0.46, h: 0.76 },
     backgroundName: "Black",
   },
   {
@@ -72,6 +80,7 @@ export const CONTRARIAN_TEMPLATES: ContrarianTemplate[] = [
     charPlacement: "center",
     textArea: "the TOP strip (upper ~18% of the frame)",
     copyHint: "a SHORT 2–3 word phrase where ONE word is 'crossed out' for effect; that word is the emphasis (e.g. \"NEW CUSTOMERS\" → \"CUSTOMERS\")",
+    textBox: { x: 0.04, y: 0.05, w: 0.92, h: 0.17 },
     backgroundName: "Office",
   },
 ];
@@ -196,6 +205,7 @@ export async function renderContrarianText(
   template: ContrarianTemplate,
   text: string,
   emphasis: string,
+  sizeScale = 1,
 ): Promise<Buffer> {
   let canvasMod: any;
   try {
@@ -219,39 +229,20 @@ export async function renderContrarianText(
 
     const upperText = text.toUpperCase();
     const upperEmph = emphasis.toUpperCase();
-
-    if (template.id === "left-stack") {
-      // Image 2: left-aligned, vertically centred, wraps in the left ~58%. Text is
-      // 20% BIGGER than the other two templates (per spec). Emphasis = red box.
-      drawWrapped(ctx, family, W, H, upperText, upperEmph, {
-        align: "left",
-        vpos: "middle",
-        x0: W * 0.05,
-        maxW: W * 0.58,
-        startSize: Math.round(H * 0.25 * 1.2),
-        emphStyle: "box",
-      });
-    } else if (template.id === "top-strike") {
-      // Image 3: centred top strip; emphasis = red strikethrough. Size unchanged.
-      drawWrapped(ctx, family, W, H, upperText, upperEmph, {
-        align: "center",
-        vpos: "top",
-        x0: W * 0.03,
-        maxW: W * 0.94,
-        startSize: Math.round(H * 0.185),
-        emphStyle: "strike",
-      });
-    } else {
-      // Image 1: centred bottom strip; emphasis = red box. Size unchanged.
-      drawWrapped(ctx, family, W, H, upperText, upperEmph, {
-        align: "center",
-        vpos: "bottom",
-        x0: W * 0.03,
-        maxW: W * 0.94,
-        startSize: Math.round(H * 0.185),
-        emphStyle: "box",
-      });
-    }
+    // The headline is MEASURED to fit the template's text box (width + height),
+    // then the user's sizeScale (UI slider, default 1) nudges it.
+    const box = {
+      x: template.textBox.x * W,
+      y: template.textBox.y * H,
+      w: template.textBox.w * W,
+      h: template.textBox.h * H,
+    };
+    drawWrapped(ctx, family, upperText, upperEmph, {
+      box,
+      align: template.id === "left-stack" ? "left" : "center",
+      emphStyle: template.id === "top-strike" ? "strike" : "box",
+      sizeScale,
+    });
 
     return await canvas.encode("jpeg", 92);
   } catch {
@@ -318,74 +309,113 @@ export function lineRuns(line: Word[]): TextSegment[] {
   return runs;
 }
 
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 interface WrapOpts {
+  box: Box;
   align: "left" | "center";
-  vpos: "top" | "middle" | "bottom";
-  x0: number;
-  maxW: number;
-  startSize: number;
   emphStyle: "box" | "strike";
+  /** User multiplier on the fitted size (UI slider; 1 = fit the box). */
+  sizeScale?: number;
+}
+
+/** A line's rendered width at `size`, including inter-run spaces + emphasis box pad. */
+function measuredLineWidth(
+  measureAt: (text: string, size: number) => number,
+  line: Word[],
+  size: number,
+  emphBox: boolean,
+): number {
+  const runs = lineRuns(line);
+  const space = measureAt(" ", size);
+  const padX = Math.round(size * 0.16);
+  let w = 0;
+  runs.forEach((r, i) => {
+    if (i > 0) w += space;
+    w += measureAt(r.text, size) + (r.emph && emphBox ? padX * 2 : 0);
+  });
+  return w;
 }
 
 /**
- * The unified headline renderer for all three templates: word-wrap the copy in
- * its natural order and highlight the emphasis run(s) IN PLACE — a red box (or a
- * strikethrough) drawn exactly where the emphasis word(s) fall, even mid-line.
- * The font shrinks until every wrapped line fits `maxW`.
+ * Largest font size whose wrapped lines all FIT the box (width + total height).
+ * `measureAt(text,size)` returns the rendered width at that size. Pure + exported
+ * so the box-fit contract is unit-tested without a canvas.
  */
-function drawWrapped(ctx: any, family: string, W: number, H: number, text: string, emphasis: string, opts: WrapOpts): void {
-  const words = toWords(text, emphasis);
-  if (words.length === 0) return;
-
-  // Shrink the font until every wrapped line fits maxW (incl. emphasis box pad).
-  let size = opts.startSize;
-  let lines: Word[][] = [];
-  const padXFor = (s: number) => Math.round(s * 0.16);
-  const lineWidth = (line: Word[], s: number): number => {
-    const runs = lineRuns(line);
-    const space = ctx.measureText(" ").width;
-    const padX = padXFor(s);
-    let w = 0;
-    runs.forEach((r, i) => {
-      if (i > 0) w += space;
-      w += ctx.measureText(r.text).width + (r.emph && opts.emphStyle === "box" ? padX * 2 : 0);
-    });
-    return w;
-  };
-  while (size > 14) {
-    ctx.font = `${size}px "${family}"`;
-    lines = wrapWords((s) => ctx.measureText(s).width, words, opts.maxW);
-    if (lines.every((ln) => lineWidth(ln, size) <= opts.maxW)) break;
+export function fitFontToBox(
+  measureAt: (text: string, size: number) => number,
+  words: Word[],
+  boxW: number,
+  boxH: number,
+  emphBox: boolean,
+): { size: number; lines: Word[][] } {
+  // A single line can't be taller than the box → that bounds the start size.
+  let size = Math.max(10, Math.floor(boxH / 1.18));
+  let lines = wrapWords((s) => measureAt(s, size), words, boxW);
+  while (size > 10) {
+    lines = wrapWords((s) => measureAt(s, size), words, boxW);
+    const blockH = lines.length * (size * 1.18) + (lines.length - 1) * (size * 0.3);
+    const widthOk = lines.every((ln) => measuredLineWidth(measureAt, ln, size, emphBox) <= boxW);
+    if (widthOk && blockH <= boxH) break;
     size -= Math.max(2, Math.round(size * 0.06));
   }
-  ctx.font = `${size}px "${family}"`;
+  return { size, lines };
+}
 
-  const padX = padXFor(size);
-  const boxH = size * 1.18;
+/**
+ * The unified headline renderer for all three templates: MEASURE the copy to fit
+ * the template's text box (so it never overflows its space), apply the user's
+ * size slider, then word-wrap in natural order and highlight the emphasis run(s)
+ * IN PLACE — a red box (or strikethrough) exactly where the emphasis word(s) fall.
+ */
+function drawWrapped(ctx: any, family: string, text: string, emphasis: string, opts: WrapOpts): void {
+  const words = toWords(text, emphasis);
+  if (words.length === 0) return;
+  const emphBox = opts.emphStyle === "box";
+  const measureAt = (s: string, size: number): number => {
+    ctx.font = `${size}px "${family}"`;
+    return ctx.measureText(s).width;
+  };
+
+  // Fit to the box, then nudge by the user's slider (clamped so it stays sane).
+  const fit = fitFontToBox(measureAt, words, opts.box.w, opts.box.h, emphBox);
+  const scale = Math.min(2, Math.max(0.4, opts.sizeScale ?? 1));
+  const size = Math.max(10, Math.round(fit.size * scale));
+  ctx.font = `${size}px "${family}"`;
+  const lines = wrapWords((s) => measureAt(s, size), words, opts.box.w);
+
+  const padX = Math.round(size * 0.16);
+  const lineH = size * 1.18;
   const lineGap = size * 0.3;
-  const blockH = lines.length * boxH + (lines.length - 1) * lineGap;
-  const margin = H * 0.07;
-  const yTop = opts.vpos === "top" ? margin : opts.vpos === "bottom" ? H - margin - blockH : (H - blockH) / 2;
-  const space = ctx.measureText(" ").width;
+  const blockH = lines.length * lineH + (lines.length - 1) * lineGap;
+  // Vertically centre the block within the box (clamp to the box top if it spills).
+  const yTop = Math.max(opts.box.y, opts.box.y + (opts.box.h - blockH) / 2);
+  const space = measureAt(" ", size);
+  // The drop shadow scales with the render height (see setWhiteShadow).
+  const frameH = ctx.canvas?.height ?? 1080;
 
   lines.forEach((line, li) => {
-    const cy = yTop + li * (boxH + lineGap) + boxH / 2;
+    const cy = yTop + li * (lineH + lineGap) + lineH / 2;
     const runs = lineRuns(line);
-    const lw = lineWidth(line, size);
-    let x = opts.align === "center" ? Math.max(opts.x0, (W - lw) / 2) : opts.x0;
+    const lw = measuredLineWidth(measureAt, line, size, emphBox);
+    let x = opts.align === "center" ? opts.box.x + Math.max(0, (opts.box.w - lw) / 2) : opts.box.x;
     runs.forEach((r, ri) => {
       if (ri > 0) x += space;
-      const tw = ctx.measureText(r.text).width;
-      if (r.emph && opts.emphStyle === "box") {
+      const tw = measureAt(r.text, size);
+      if (r.emph && emphBox) {
         clearShadow(ctx);
         ctx.fillStyle = RED;
-        roundRectPath(ctx, x, cy - boxH / 2, tw + padX * 2, boxH, size * 0.14);
+        roundRectPath(ctx, x, cy - lineH / 2, tw + padX * 2, lineH, size * 0.14);
         ctx.fill();
         ctx.fillStyle = "#FFFFFF";
         ctx.fillText(r.text, x + padX, cy);
         x += tw + padX * 2;
       } else {
-        setWhiteShadow(ctx, H);
+        setWhiteShadow(ctx, frameH);
         ctx.fillText(r.text, x, cy);
         if (r.emph && opts.emphStyle === "strike") {
           clearShadow(ctx);

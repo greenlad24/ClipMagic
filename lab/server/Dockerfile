@@ -4,9 +4,11 @@ FROM node:22-bookworm-slim
 
 # FFmpeg + fonts for burned-in subtitles. fontconfig lets libass/drawtext
 # resolve font names; ca-certificates lets the server fetch remote input URLs.
+# libgomp1 is required by onnxruntime-node (the background-removal model used to
+# cut characters out for the contrarian workflow's 1:1 programmatic composite).
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
-       ffmpeg fonts-dejavu-core fontconfig ca-certificates \
+       ffmpeg fonts-dejavu-core fontconfig ca-certificates libgomp1 \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

@@ -1380,6 +1380,22 @@ async function main() {
     assert.deepEqual(lines.map((l) => l.map((w) => w.text).join(" ")), ["AI FILMMAKING", "WITH TOPVIEW"]);
   });
 
+  await check("fitFontToBox shrinks the size so the copy fits its box (width + height)", () => {
+    // Proportional measure: ~0.55·size per char (incl. spaces).
+    const measureAt = (t: string, size: number) => t.length * size * 0.55;
+    const words = overlay.toWords("TOPVIEW BEATS HOLLYWOOD", "BEATS");
+    // A WIDE but SHORT box → the limiter is height (one line can't exceed h/1.18).
+    const wide = overlay.fitFontToBox(measureAt, words, 4000, 120, true);
+    assert.ok(wide.size <= Math.floor(120 / 1.18), "size never exceeds the box height bound");
+    // A NARROW box → must wrap to multiple lines and shrink further than the wide one.
+    const narrow = overlay.fitFontToBox(measureAt, words, 600, 1000, true);
+    assert.ok(narrow.lines.length >= 2, "narrow box wraps the copy");
+    assert.ok(
+      narrow.lines.every((ln) => ln.reduce((a, w) => a + w.text.length, 0) * narrow.size * 0.55 <= 600 + 1),
+      "every line fits the narrow box width",
+    );
+  });
+
   await check("lineRuns merges contiguous emphasis into ONE run (one box per run)", () => {
     const runs = overlay.lineRuns([
       { text: "WITH", emph: false },

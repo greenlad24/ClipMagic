@@ -596,7 +596,7 @@ export async function composeContrarianThumbnail(
     /** Head-top inset (frame-height fraction) so the headline strip stays clear. */
     headTopFrac?: number;
     /** When set, the headline is drawn programmatically onto the finalized image. */
-    overlay?: { template: ContrarianTemplate; text: string; emphasis: string };
+    overlay?: { template: ContrarianTemplate; text: string; emphasis: string; sizeScale?: number };
     provider?: ImageProvider;
     imageSize?: string;
     onProgress?: ProgressFn;
@@ -688,6 +688,7 @@ export async function composeContrarianThumbnail(
         input.overlay.template,
         input.overlay.text,
         input.overlay.emphasis,
+        input.overlay.sizeScale ?? 1,
       );
       if (withText && withText.length > 0 && withText !== baseBytes) {
         fs.writeFileSync(result.file, withText);

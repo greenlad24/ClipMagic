@@ -184,6 +184,7 @@ export type PlannedContrarian = {
   emphasis: string;
   expressionId: string;
   expressionLabel: string;
+  textScale: number;
 };
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
@@ -255,6 +256,8 @@ export type ThumbnailStatusOutputType = {
   backgrounds: ThumbnailBackgroundState[];
   uploadedBackgrounds: string[];
   font: ThumbnailFontState;
+  /** Whether the contrarian character is composited 1:1 from real pixels vs. AI. */
+  composite?: { canvas: boolean; removal: boolean };
 };
 export type ThumbnailScriptAnalysisOutputType = {
   keyword: string;

@@ -628,6 +628,8 @@ export interface PlannedContrarian {
   emphasis: string;
   expressionId: string;
   expressionLabel: string;
+  /** Headline size multiplier (UI slider; 1 = fit the box). */
+  textScale: number;
 }
 
 /**
@@ -655,6 +657,7 @@ export async function planContrarianVariations(
       emphasis: v.emphasis,
       expressionId: exprId,
       expressionLabel: available.find((e) => e.id === exprId)?.label ?? exprId,
+      textScale: v.textScale ?? 1,
     };
   });
 }
@@ -755,7 +758,7 @@ async function runContrarianJob(
             // (top-strike has text up top → drop the head lower).
             placement,
             headTopFrac: template.id === "top-strike" ? 0.2 : 0.05,
-            overlay: { template, text: v.text, emphasis: v.emphasis },
+            overlay: { template, text: v.text, emphasis: v.emphasis, sizeScale: v.textScale },
             provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
             imageSize: run?.imageSize,
             onProgress: ({ stepLabel, percent }) =>

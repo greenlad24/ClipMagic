@@ -142,12 +142,37 @@ async function loadCanvas(): Promise<any | null> {
   }
 }
 
+/** Lazy import of the background-removal module (or null when unavailable). */
+async function loadRemoval(): Promise<any | null> {
+  try {
+    const spec = "@imgly/background-removal-node";
+    return await import(/* @vite-ignore */ spec);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Probe whether the PROGRAMMATIC 1:1 composite can actually run here: both the
+ * canvas and the background-removal module must import. Surfaced in the UI so the
+ * creator can confirm the character is composited from their real pixels (not the
+ * AI fallback). Best-effort + cached (the import cost is paid once).
+ */
+let probeCache: { canvas: boolean; removal: boolean } | null = null;
+export async function probeCompositeAvailable(force = false): Promise<{ canvas: boolean; removal: boolean }> {
+  if (probeCache && !force) return probeCache;
+  const canvas = (await loadCanvas()) != null;
+  const rm = await loadRemoval();
+  const removal = !!(rm && (rm.removeBackground ?? rm.default?.removeBackground));
+  probeCache = { canvas, removal };
+  return probeCache;
+}
+
 /** Best-effort background removal via @imgly/background-removal-node → PNG bytes. */
 async function removeBackground(bytes: Buffer): Promise<Buffer | null> {
   try {
-    const spec = "@imgly/background-removal-node";
-    const mod: any = await import(/* @vite-ignore */ spec);
-    const fn = mod.removeBackground ?? mod.default?.removeBackground;
+    const mod: any = await loadRemoval();
+    const fn = mod?.removeBackground ?? mod?.default?.removeBackground;
     if (typeof fn !== "function") return null;
     const blob = await fn(bytes, { output: { format: "image/png" } });
     const ab = await blob.arrayBuffer();

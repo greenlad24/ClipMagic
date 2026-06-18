@@ -85,6 +85,7 @@ import {
   planRecreations,
 } from "../thumbnails/orchestrate.js";
 import { generateTitles } from "../thumbnails/titles.js";
+import { probeCompositeAvailable } from "../thumbnails/composite.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
@@ -2334,6 +2335,9 @@ const thumbnailStatus: Handler = async () => ({
   backgrounds: listBackgrounds(),
   uploadedBackgrounds: uploadedBackgrounds(),
   font: fontStatus(),
+  // Whether the contrarian character is composited from the REAL uploaded pixels
+  // (1:1) vs. the AI fallback — both libs must load for the programmatic path.
+  composite: await probeCompositeAvailable(),
 });
 
 /** Read the pasted script → extract the search keyword + infer the video type. */
@@ -2444,6 +2448,7 @@ function coerceContrarianVariations(input: any): { text: string; emphasis: strin
       text: String(v?.text ?? "").trim(),
       emphasis: String(v?.emphasis ?? "").trim(),
       expressionId: String(v?.expressionId ?? "").trim(),
+      textScale: Number.isFinite(v?.textScale) ? Math.min(2, Math.max(0.4, Number(v.textScale))) : 1,
     }))
     .filter((v: any) => v.text);
 }
