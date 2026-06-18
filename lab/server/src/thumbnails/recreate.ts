@@ -29,8 +29,10 @@
  * keep the last good image and continue — one bad step never aborts the
  * thumbnail. The whole chain is capped at MAX_STEPS.
  *
- * Finally: crop the result to a clean 16:9 (no bars) → Real-ESRGAN upscale →
- * EXACTLY 1920×1080 (with a clean ffmpeg fallback so a thumbnail always finishes).
+ * Finally: crop the result to a clean 16:9 (no bars) at its NATIVE resolution
+ * (a 4K render stays 4K; capped at 4K, floored at 1080p; only small content is
+ * upscaled) and deliver a high-quality JPG. Resilient: if probing/cropping fails
+ * a thumbnail still finishes (it may just be the raw chain image).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -44,9 +46,9 @@ import {
   type EditResult,
 } from "./nanoBanana.js";
 import { editImageWith, DEFAULT_IMAGE_PROVIDER, type ImageProvider } from "./imageProviders.js";
-import { buildCropScaleArgs, detectContentRect, TARGET_W, TARGET_H } from "./crop.js";
+import { buildCropScaleArgs, detectContentRect, outputDims, TARGET_W, TARGET_H } from "./crop.js";
 import { artDirect as defaultArtDirect, type ArtDirectorStep } from "./artDirector.js";
-import { upscaleToThumbnail, type UpscaleDeps } from "./upscale.js";
+import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
 import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
@@ -153,14 +155,15 @@ export interface RecreateDeps {
 }
 
 export interface RecreateResult {
-  /** Final 1920×1080 thumbnail. */
+  /** Final native-resolution 16:9 thumbnail (JPG; 4K stays 4K, floored at 1080p). */
   outputUrl: string;
   file: string;
   steps: ChainStep[];
 }
 
 /**
- * Run the chain. Returns the final 1920×1080 image + a record of every step.
+ * Run the chain. Returns the final native-resolution 16:9 image + a record of
+ * every step.
  *
  * Progress is reported through `input.onProgress` using the phase-weighted model
  * in jobs.ts. The optional-edits band (which also carries the always-on
@@ -283,7 +286,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   await runStep("swap-character", "Swap in character", FINAL_SWAP_PROMPT, [current, character]);
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
-  // ── Crop to 16:9 → Real-ESRGAN upscale → exactly 1920×1080 ──────────────────
+  // ── Crop to a clean, native-resolution 16:9 JPG (4K stays 4K) ───────────────
   report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
   const result = await finalizeFn(current, steps);
   report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
@@ -292,18 +295,29 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
 
 /**
  * Finalize: write `current` to disk, probe dims, strip any letterbox/pillarbox
- * bars + centre-crop to 16:9 (ffmpeg), then Real-ESRGAN upscale → exactly
- * 1920×1080 (ffmpeg lanczos fallback). Robust to ANY Nano Banana output size.
+ * bars + centre-crop to a clean, NATIVE-AWARE 16:9 (see crop.outputDims — a 4K
+ * render stays 4K, capped at 4K, floored at 1080p) and deliver a high-quality
+ * JPG. The crop step IS the final stage in the default path: we do NOT resample a
+ * ≥1920 image down to 1080p afterwards.
+ *
+ * The Real-ESRGAN upscaler stays OPT-IN (THUMBNAIL_UPSCALER=realesrgan) and is
+ * only meaningful for the SMALL-source case (content below the 1920 floor that
+ * the crop step had to upscale): there we hand the cropped frame to the upscaler
+ * with the native target dims so it never downscales a ≥1920 image. Robust to ANY
+ * Nano Banana output size — if probing/cropping fails, the raw chain image is
+ * kept so a thumbnail always finishes.
  */
 async function finalize(current: EditImage, steps: ChainStep[], upscaleDeps?: UpscaleDeps): Promise<RecreateResult> {
   const dir = thumbnailsDir();
   const ext = /png/i.test(current.mimeType) ? "png" : /jpe?g/i.test(current.mimeType) ? "jpg" : "png";
   fs.mkdirSync(config.tmpDir, { recursive: true });
   const stageFile = path.join(config.tmpDir, `tn-stage-${crypto.randomBytes(8).toString("hex")}.${ext}`);
-  const croppedFile = path.join(config.tmpDir, `tn-crop-${crypto.randomBytes(8).toString("hex")}.png`);
+  // Cropped output is the FINAL deliverable: a high-quality JPG at native dims.
+  const croppedFile = path.join(config.tmpDir, `tn-crop-${crypto.randomBytes(8).toString("hex")}.jpg`);
   fs.writeFileSync(stageFile, current.data);
 
-  const name = `${crypto.randomBytes(12).toString("hex")}-1080p.png`;
+  // YouTube caps thumbnails at 2 MB, so a 4K PNG can be too big → deliver a JPG.
+  const name = `${crypto.randomBytes(12).toString("hex")}.jpg`;
   const outFile = path.join(dir, name);
 
   try {
@@ -311,32 +325,50 @@ async function finalize(current: EditImage, steps: ChainStep[], upscaleDeps?: Up
     const w = dims.width ?? TARGET_W;
     const h = dims.height ?? TARGET_H;
 
-    // 1. Detect + strip uniform bars (any size), then centre-crop to 16:9.
+    // 1. Detect + strip uniform bars (any size), centre-crop to 16:9, and scale to
+    //    the native-aware output dims — this writes the FINAL JPG directly.
     const content = await detectContentRect(stageFile, w, h);
+    const out = outputDims(content?.w ?? w, content?.h ?? h);
     const cropArgs = buildCropScaleArgs(stageFile, croppedFile, w, h, content ?? undefined);
     await runFfmpeg(cropArgs, 1);
+    const cropOk = fs.existsSync(croppedFile);
     steps.push({
       id: "crop",
-      label: "Crop to 16:9",
+      label: "Crop to native 16:9",
       instruction: cropArgs.join(" "),
-      applied: fs.existsSync(croppedFile),
-      note: content ? `stripped bars: ${content.w}x${content.h}@${content.x},${content.y}` : undefined,
+      applied: cropOk,
+      note: [
+        content ? `stripped bars: ${content.w}x${content.h}@${content.x},${content.y}` : undefined,
+        `output ${out.w}x${out.h} JPG`,
+      ]
+        .filter(Boolean)
+        .join("; "),
     });
 
-    // 2. Upscale (Real-ESRGAN → exactly 1920×1080, ffmpeg fallback). When the
-    //    chain image was already ≥ the 1920-wide target (gemini-pro 2K / openai
-    //    1536+), the crop step's lanczos pass already produced a crisp, clean
-    //    DOWNSCALE — so we skip the unsharp (which is only for scaling small
-    //    images UP) to avoid needlessly re-sharpening an already-sharp frame.
-    const upscaleInput = fs.existsSync(croppedFile) ? croppedFile : stageFile;
-    const up = await upscaleToThumbnail(upscaleInput, outFile, upscaleDeps, { sourceWidth: w });
-    steps.push({
-      id: "upscale",
-      label: "Upscaling to 1080p",
-      instruction: up.method === "realesrgan" ? "Real-ESRGAN 4× → 1920×1080" : "ffmpeg lanczos → 1920×1080",
-      applied: fs.existsSync(outFile),
-      note: up.note,
-    });
+    // 2. OPT-IN Real-ESRGAN — only worthwhile when the crop had to UPSCALE small
+    //    content (below the 1920 floor). For a ≥1920 native/4K frame the crop is
+    //    already the final image, so we skip the upscaler entirely (never resample
+    //    a ≥1920 image back down). The target dims are passed so the upscaler's
+    //    downsample step lands on the native dims, never the old 1080 force.
+    const smallSource = w < TARGET_W;
+    if (cropOk && realesrganEnabled() && smallSource) {
+      const up = await upscaleToThumbnail(croppedFile, outFile, upscaleDeps, {
+        sourceWidth: w,
+        targetWidth: out.w,
+        targetHeight: out.h,
+      });
+      steps.push({
+        id: "upscale",
+        label: "Upscale (small source)",
+        instruction:
+          up.method === "realesrgan" ? `Real-ESRGAN 4× → ${out.w}×${out.h}` : `ffmpeg lanczos → ${out.w}×${out.h}`,
+        applied: fs.existsSync(outFile),
+        note: up.note,
+      });
+    } else if (cropOk) {
+      // Default path: the cropped native JPG IS the final file.
+      fs.copyFileSync(croppedFile, outFile);
+    }
   } finally {
     for (const f of [stageFile, croppedFile]) {
       try {
@@ -348,12 +380,12 @@ async function finalize(current: EditImage, steps: ChainStep[], upscaleDeps?: Up
   }
 
   if (!fs.existsSync(outFile)) {
-    // Both crop + upscale produced nothing — fall back to the raw chain image so
-    // the user still gets a thumbnail (better than failing the whole item).
+    // Cropping produced nothing — fall back to the raw chain image so the user
+    // still gets a thumbnail (better than failing the whole item).
     fs.writeFileSync(outFile, current.data);
     steps.push({
-      id: "upscale",
-      label: "Upscaling to 1080p",
+      id: "crop",
+      label: "Crop to native 16:9",
       instruction: "(ffmpeg unavailable — raw chain image kept)",
       applied: false,
       note: "no output produced; kept the un-cropped chain image",

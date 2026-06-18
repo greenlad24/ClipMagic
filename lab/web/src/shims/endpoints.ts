@@ -207,7 +207,7 @@ export type ThumbnailJobVariant = {
   results: ThumbnailProviderResult[];
   /** Aggregate status across the sub-run (running until terminal). */
   status: 'queued' | 'running' | 'done' | 'error';
-  /** Current step sentence ("Changing outfit", "Upscaling to 1080p", …). */
+  /** Current step sentence ("Changing outfit", "Finalizing thumbnail", …). */
   stepLabel: string;
   /** 0..100, monotonic per variant. */
   percent: number;

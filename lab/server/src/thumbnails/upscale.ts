@@ -1,14 +1,19 @@
 /**
- * Final upscale stage for the Thumbnail Designer.
+ * OPT-IN Real-ESRGAN upscale stage for the Thumbnail Designer.
  *
- * After the chain crops its result to a clean 16:9, we sharpen it with a LOCAL,
- * FREE Real-ESRGAN pass (realesrgan-ncnn-vulkan, software-Vulkan on a CPU box),
- * then resample to EXACTLY 1920×1080. Upscaling 4× and downsampling back is
- * crisper than a single scale.
+ * The default finalize path crops the chain result straight to a clean,
+ * native-resolution 16:9 JPG — a 4K render stays 4K, nothing is downscaled. This
+ * module is ONLY exercised when THUMBNAIL_UPSCALER=realesrgan AND the source was
+ * SMALLER than the 1920 floor (so the crop had to upscale it). In that case we
+ * sharpen it with a LOCAL, FREE Real-ESRGAN 4× pass (realesrgan-ncnn-vulkan),
+ * then resample to the NATIVE TARGET dims (defaulting to the 1920×1080 floor).
+ * Upscaling 4× and downsampling back is crisper than a single scale.
  *
  * Bulletproof by design — generation must NEVER fail because of the upscaler:
  *   - If the binary / Vulkan runtime is unavailable, or the run errors / times
- *     out, we FALL BACK to a plain ffmpeg lanczos scale to 1920×1080.
+ *     out, we FALL BACK to a plain ffmpeg lanczos scale to the target dims.
+ *   - It NEVER downscales a ≥1920 image (the caller only invokes it for small
+ *     sources, and the target dims never sit below the source).
  *   - The Real-ESRGAN runner is INJECTABLE so tests never touch a real binary.
  *
  * The binary is located via REALESRGAN_BIN (default a known install path) and a
@@ -54,15 +59,21 @@ export function realesrganAvailable(bin: string = REALESRGAN_BIN): boolean {
 }
 
 /**
- * Build the ffmpeg argv that resamples `input` to EXACTLY 1920×1080. With
- * `sharpen` (the default fallback path, where we're scaling a small chain image
- * UP) it adds a mild unsharp so the result isn't soft; without it (downsampling a
- * crisp Real-ESRGAN 4× image) it's a plain lanczos scale. Pure + exported.
+ * Build the ffmpeg argv that resamples `input` to the target dims (default the
+ * 1920×1080 floor). With `sharpen` (scaling a small chain image UP) it adds a
+ * mild unsharp so the result isn't soft; without it (downsampling a crisp
+ * Real-ESRGAN 4× image) it's a plain lanczos scale. Pure + exported.
  */
-export function buildResampleArgs(input: string, output: string, opts: { sharpen?: boolean } = {}): string[] {
+export function buildResampleArgs(
+  input: string,
+  output: string,
+  opts: { sharpen?: boolean; width?: number; height?: number } = {},
+): string[] {
+  const w = opts.width ?? TARGET_W;
+  const h = opts.height ?? TARGET_H;
   const vf = opts.sharpen
-    ? `scale=${TARGET_W}:${TARGET_H}:flags=lanczos,unsharp=5:5:0.8:5:5:0.0`
-    : `scale=${TARGET_W}:${TARGET_H}:flags=lanczos`;
+    ? `scale=${w}:${h}:flags=lanczos,unsharp=5:5:0.8:5:5:0.0`
+    : `scale=${w}:${h}:flags=lanczos`;
   return ["-y", "-i", input, "-vf", vf, "-frames:v", "1", output];
 }
 
@@ -122,7 +133,7 @@ export interface UpscaleDeps {
 }
 
 export interface UpscaleResult {
-  /** Path to the final 1920×1080 file. */
+  /** Path to the final (target-dims) file. */
   file: string;
   /** Which path produced it — for the chain record / progress note. */
   method: "realesrgan" | "ffmpeg-fallback";
@@ -130,27 +141,30 @@ export interface UpscaleResult {
   note?: string;
 }
 
-/** Per-call hints for the finalize stage (what the input actually is). */
+/** Per-call hints for the upscale stage (what the input is + where to land it). */
 export interface UpscaleOpts {
   /**
    * Width (px) of the ORIGINAL chain image before the crop pass. When it's ≥ the
-   * 1920-wide target (gemini-pro 2K / openai 1536+), the crop's lanczos pass
-   * already produced a crisp DOWNSCALE, so the fallback skips the unsharp (which
-   * is only for scaling small images UP) to avoid needless re-sharpening.
+   * target width the crop already produced a crisp result, so the fallback skips
+   * the unsharp (which is only for scaling small images UP) to avoid needless
+   * re-sharpening. The caller only invokes this stage for SMALL sources.
    */
   sourceWidth?: number;
+  /** Native target width to resample to. Defaults to the 1920-wide floor. */
+  targetWidth?: number;
+  /** Native target height to resample to. Defaults to the 1080-tall floor. */
+  targetHeight?: number;
 }
 
 /**
- * Upscale `inputPath` (an already-16:9 image) to EXACTLY 1920×1080 at `outPath`.
- * Real-ESRGAN 4× then ffmpeg-resample when the binary is available; otherwise a
- * single ffmpeg lanczos scale. NEVER throws for a missing/failed upscaler — it
- * falls back. Only a total ffmpeg failure (which would already have failed the
- * crop stage) propagates.
+ * Upscale `inputPath` (an already-16:9, SMALL-source image) to the native target
+ * dims (default the 1920×1080 floor) at `outPath`. Real-ESRGAN 4× then
+ * ffmpeg-resample when the binary is available; otherwise a single ffmpeg lanczos
+ * scale. NEVER throws for a missing/failed upscaler — it falls back. Only a total
+ * ffmpeg failure (which would already have failed the crop stage) propagates.
  *
- * When the source was already ≥ 1920 wide (a large pro/openai output), the
- * fallback does a PLAIN lanczos scale (no unsharp) — a clean downscale that
- * doesn't soften; only a genuine UP-scale of a small image adds the unsharp.
+ * This stage is opt-in and only invoked for small sources, so it always scales
+ * UP (the soften-guard unsharp applies); it never downscales a ≥1920 image.
  */
 export async function upscaleToThumbnail(
   inputPath: string,
@@ -163,12 +177,14 @@ export async function upscaleToThumbnail(
   const runRealesrgan = deps.runRealesrgan ?? defaultRealesrganRunner;
   const runFfmpegFn = deps.runFfmpegFn ?? ((args: string[], d: number) => runFfmpeg(args, d));
 
-  // A large source (≥ target width) was DOWNSCALED by the crop's lanczos pass and
-  // is already crisp → no unsharp. A small source is scaled UP → soften-guard it.
-  const downscaling = (opts.sourceWidth ?? 0) >= TARGET_W;
+  const width = opts.targetWidth ?? TARGET_W;
+  const height = opts.targetHeight ?? TARGET_H;
+  // A source already ≥ the target width is crisp after the crop → no unsharp.
+  // Otherwise we're scaling UP → soften-guard it.
+  const downscaling = (opts.sourceWidth ?? 0) >= width;
 
   const fallback = async (note?: string): Promise<UpscaleResult> => {
-    await runFfmpegFn(buildResampleArgs(inputPath, outPath, { sharpen: !downscaling }), 1);
+    await runFfmpegFn(buildResampleArgs(inputPath, outPath, { sharpen: !downscaling, width, height }), 1);
     return { file: outPath, method: "ffmpeg-fallback", note };
   };
 
@@ -183,7 +199,7 @@ export async function upscaleToThumbnail(
   try {
     await runRealesrgan(inputPath, upscaledTmp);
     // Downsample the crisp 4× image to the exact target via ffmpeg.
-    await runFfmpegFn(buildResampleArgs(upscaledTmp, outPath), 1);
+    await runFfmpegFn(buildResampleArgs(upscaledTmp, outPath, { width, height }), 1);
     return { file: outPath, method: "realesrgan" };
   } catch (e) {
     return fallback(`Real-ESRGAN failed (${e instanceof Error ? e.message : String(e)}) — used ffmpeg lanczos scale`);

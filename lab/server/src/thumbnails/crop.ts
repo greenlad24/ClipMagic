@@ -1,6 +1,6 @@
 /**
- * Crop + scale a Nano Banana output to a clean 16:9 1920×1080 thumbnail with NO
- * black bars — robust to ANY output dimensions the model returns.
+ * Crop + scale a Nano Banana output to a clean 16:9 thumbnail with NO black bars,
+ * at NATIVE resolution — robust to ANY output dimensions the model returns.
  *
  * Nano Banana sometimes returns a frame with uniform letterbox (top/bottom) or
  * pillarbox (left/right) bars around a smaller real image. Rather than hard-code
@@ -8,7 +8,10 @@
  *   1. ffprobe the real dimensions,
  *   2. run ffmpeg `cropdetect` to find the bounding box of the actual content
  *      (this strips uniform bars of any thickness/color), and
- *   3. centre-crop THAT content box to a 16:9 rectangle, then scale to 1920×1080.
+ *   3. centre-crop THAT content box to a 16:9 rectangle, then scale to the
+ *      NATIVE-AWARE output dims (see outputDims): we never needlessly downscale a
+ *      4K render to 1080p — we keep its resolution, only capping at 4K and only
+ *      upscaling content that is smaller than the 1920-wide floor.
  * We NEVER pad, so a bar is never (re)introduced.
  *
  * The argument builders are PURE, exported functions (no fs / no spawn) so the
@@ -16,8 +19,12 @@
  * inputs. The runtime bar-detection (cropdetect parsing) lives in detectContentRect.
  */
 
+/** Minimum / floor output dims: small content is UPSCALED up to at least this. */
 export const TARGET_W = 1920;
 export const TARGET_H = 1080;
+/** Maximum / cap output dims: content larger than 4K is DOWNSCALED to this. */
+export const MAX_W = 3840;
+export const MAX_H = 2160;
 
 /** A rectangle within a source image (the detected content region). */
 export interface Rect {
@@ -69,18 +76,44 @@ export function crop16x9WithinContent(width: number, height: number, content?: R
 }
 
 /**
- * Build the ffmpeg `-vf` filter string that turns a source w×h (with an optional
- * pre-detected content rect) into a clean 1920×1080 16:9 image with no padding:
- * centre-crop the 16:9 region of the content box, then scale. Pure.
+ * Native-aware output dimensions for a 16:9 crop of `cropW`×`cropH`. The crop is
+ * already 16:9, so the result stays 16:9. Policy (preserve the render's native
+ * resolution — never needlessly downscale a 4K render to 1080p):
+ *   - cropW ≥ 3840 (MAX_W) → 3840×2160 — cap at 4K; only DOWNSCALE when larger.
+ *   - cropW ≥ 1920 (TARGET_W) → cropW×cropH — keep NATIVE, no scaling at all.
+ *   - cropW < 1920 → 1920×1080 — only UPSCALE content below the floor.
+ * Pure + exported for unit testing.
  */
-export function buildCropScaleFilter(width: number, height: number, content?: Rect): string {
-  const c = crop16x9WithinContent(width, height, content);
-  return `crop=${c.w}:${c.h}:${c.x}:${c.y},scale=${TARGET_W}:${TARGET_H}:flags=lanczos`;
+export function outputDims(cropW: number, cropH: number): { w: number; h: number } {
+  if (cropW >= MAX_W) return { w: MAX_W, h: MAX_H };
+  if (cropW >= TARGET_W) return { w: cropW, h: cropH };
+  return { w: TARGET_W, h: TARGET_H };
 }
 
 /**
- * Full ffmpeg argv to convert `input` into a 1920×1080 PNG/JPG `output`. Pure +
- * exported so the exact command is testable; the caller runs it via runFfmpeg.
+ * Build the ffmpeg `-vf` filter string that turns a source w×h (with an optional
+ * pre-detected content rect) into a clean, NATIVE-AWARE 16:9 image with no
+ * padding: centre-crop the 16:9 region of the content box, then scale to
+ * outputDims(...). When the output dims equal the crop dims (the ≥1920 native
+ * case), we emit ONLY the crop — never an upscale or a needless re-scale. Pure.
+ */
+export function buildCropScaleFilter(width: number, height: number, content?: Rect): string {
+  const c = crop16x9WithinContent(width, height, content);
+  const out = outputDims(c.w, c.h);
+  const cropF = `crop=${c.w}:${c.h}:${c.x}:${c.y}`;
+  // Native pass-through: the crop already IS the output size → no scale at all.
+  if (out.w === c.w && out.h === c.h) return cropF;
+  return `${cropF},scale=${out.w}:${out.h}:flags=lanczos`;
+}
+
+/**
+ * Full ffmpeg argv to convert `input` into a NATIVE-AWARE 16:9 high-quality JPG
+ * `output` (a 4K PNG can exceed YouTube's 2 MB thumbnail cap, so we deliver JPG;
+ * `-q:v 3` lands ~1–2 MB at 4K). Pure + exported so the exact command is
+ * testable; the caller runs it via runFfmpeg.
+ *
+ * TODO(size-guard): if a 4K q:v 3 frame ever exceeds ~2 MB, we could re-encode at
+ * a higher q:v value (4–5) and pick the largest result that stays under the cap.
  */
 export function buildCropScaleArgs(
   input: string,
@@ -94,6 +127,7 @@ export function buildCropScaleArgs(
     "-i", input,
     "-vf", buildCropScaleFilter(width, height, content),
     "-frames:v", "1",
+    "-q:v", "3",
     output,
   ];
 }

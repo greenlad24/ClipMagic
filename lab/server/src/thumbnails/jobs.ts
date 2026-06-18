@@ -36,7 +36,7 @@ export type VariantStatus = "queued" | "running" | "done" | "error";
  *   change outfit      20
  *   optional edits     25   (spread across however many actually run + background)
  *   swap in character  35   (the strong final identity swap — the most important)
- *   finalize           15   (crop + upscale to 1080p)
+ *   finalize           15   (crop to a clean, native-resolution 16:9 JPG)
  *                     ───
  *                     100
  */
@@ -68,7 +68,7 @@ export const PHASE_LABEL: Record<Phase, string> = {
   outfit: "Changing outfit",
   edits: "Applying text/logo edits",
   swap: "Swapping in your character",
-  finalize: "Upscaling to 1080p",
+  finalize: "Finalizing thumbnail",
 };
 
 /**
@@ -120,7 +120,7 @@ export interface JobVariant {
   /** The provider sub-run(s) — always exactly one now. */
   results: ProviderResult[];
   status: VariantStatus;
-  /** Current step sentence ("Changing outfit", "Upscaling to 1080p", …). */
+  /** Current step sentence ("Changing outfit", "Finalizing thumbnail", …). */
   stepLabel: string;
   /** 0..100, monotonic per variant (mean of the sub-runs). */
   percent: number;

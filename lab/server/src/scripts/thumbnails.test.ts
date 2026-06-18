@@ -312,27 +312,60 @@ async function main() {
   const crop = await import("../thumbnails/crop.js");
 
   // Helper: the final crop must always be a 16:9 rectangle that fits the input.
+  // The scale target is now NATIVE-AWARE (or absent for a ≥1920 native crop), so
+  // we accept an optional `,scale=W:H:flags=lanczos` tail (or none).
   const assert16x9 = (filter: string, fullW: number, fullH: number) => {
-    const m = filter.match(/^crop=(\d+):(\d+):(\d+):(\d+),scale=1920:1080:flags=lanczos$/);
+    const m = filter.match(/^crop=(\d+):(\d+):(\d+):(\d+)(?:,scale=(\d+):(\d+):flags=lanczos)?$/);
     assert.ok(m, `filter shape wrong: ${filter}`);
     const [w, h, x, y] = [Number(m![1]), Number(m![2]), Number(m![3]), Number(m![4])];
     // 16:9 within rounding (even dims), within the frame, never padded.
     assert.ok(Math.abs(w / h - 16 / 9) < 0.02, `not 16:9: ${w}x${h}`);
     assert.ok(x + w <= fullW && y + h <= fullH, `crop exceeds frame: ${filter}`);
     assert.ok(!/pad/.test(filter), "must never pad");
+    // When present, the scale target is itself 16:9 (a 16:9 crop scaled to 16:9).
+    if (m![5]) assert.ok(Math.abs(Number(m![5]) / Number(m![6]) - 16 / 9) < 0.02, `scale not 16:9: ${filter}`);
   };
 
-  await check("buildCropScaleFilter center-crops a 4:3 source to 16:9 (no bars)", () => {
-    // 4:3 1024x768 → 16:9 fit is 1024x576, centred (y = (768-576)/2 = 96).
+  // ── outputDims policy: native-aware, capped at 4K, floored at 1080p ─────────
+  await check("outputDims: 4K stays 4K, larger-than-4K is capped to 4K", () => {
+    assert.deepEqual(crop.outputDims(3840, 2160), { w: 3840, h: 2160 }, "exactly 4K → 4K");
+    assert.deepEqual(crop.outputDims(5760, 3240), { w: 3840, h: 2160 }, "8K-ish → capped at 4K");
+  });
+
+  await check("outputDims: a 2560-wide (2K-ish) crop stays NATIVE (no scaling)", () => {
+    assert.deepEqual(crop.outputDims(2560, 1440), { w: 2560, h: 1440 }, "≥1920 and <4K → native");
+  });
+
+  await check("outputDims: exactly-1920 stays NATIVE (not upscaled past the floor)", () => {
+    assert.deepEqual(crop.outputDims(1920, 1080), { w: 1920, h: 1080 }, "exactly the floor → native");
+  });
+
+  await check("outputDims: a 1280-wide (small) crop UPSCALES to the 1080p floor", () => {
+    assert.deepEqual(crop.outputDims(1280, 720), { w: 1920, h: 1080 }, "<1920 → upscale to floor");
+  });
+
+  await check("buildCropScaleFilter center-crops a 4:3 source to 16:9, upscaling small content to the floor", () => {
+    // 4:3 1024x768 → 16:9 fit is 1024x576, centred (y = (768-576)/2 = 96). 1024<1920 → upscale to floor.
     const f = crop.buildCropScaleFilter(1024, 768);
     assert.equal(f, "crop=1024:576:0:96,scale=1920:1080:flags=lanczos");
     assert16x9(f, 1024, 768);
   });
 
-  await check("buildCropScaleFilter passes through an already-16:9 source", () => {
+  await check("buildCropScaleFilter passes through an already-16:9 1080p source WITHOUT scaling (native)", () => {
     const f = crop.buildCropScaleFilter(1920, 1080);
-    assert.equal(f, "crop=1920:1080:0:0,scale=1920:1080:flags=lanczos");
+    // 1920 is exactly the floor and already 16:9 → native crop, NO scale at all.
+    assert.equal(f, "crop=1920:1080:0:0");
     assert16x9(f, 1920, 1080);
+  });
+
+  await check("buildCropScaleFilter keeps a 4K letterboxed source at ~4K (NOT downscaled to 1080)", () => {
+    // A 3840x2400 frame with a true-16:9 4K content box (3840x2160) centred (y=120).
+    const content = { w: 3840, h: 2160, x: 0, y: 120 };
+    const f = crop.buildCropScaleFilter(3840, 2400, content);
+    // The content box is already 4K 16:9 → native crop, NO scale (stays 4K).
+    assert.equal(f, "crop=3840:2160:0:120");
+    assert16x9(f, 3840, 2400);
+    assert.ok(!/scale=1920:1080/.test(f), "a 4K render must NOT be downscaled to 1080p");
   });
 
   await check("buildCropScaleFilter center-crops a square source to 16:9", () => {
@@ -340,22 +373,37 @@ async function main() {
     assert16x9(f, 1000, 1000);
   });
 
-  await check("buildCropScaleFilter strips a detected letterbox content rect, then 16:9", () => {
+  await check("buildCropScaleFilter strips a detected letterbox content rect, then 16:9 (small → floor)", () => {
     // A 1280x900 frame letterboxed: a true-16:9 content box (1280x720) at y=90.
     const content = { w: 1280, h: 720, x: 0, y: 90 };
     const f = crop.buildCropScaleFilter(1280, 900, content);
-    // The content box is already 16:9, so the crop is exactly the content box.
+    // The content box is already 16:9 but 1280<1920 → upscale to the 1080p floor.
     assert.equal(f, "crop=1280:720:0:90,scale=1920:1080:flags=lanczos");
     assert16x9(f, 1280, 900);
   });
 
-  await check("buildCropScaleArgs produces a single-frame transcode argv (with content rect)", () => {
-    const args = crop.buildCropScaleArgs("in.png", "out.png", 1280, 900, { w: 1280, h: 720, x: 0, y: 90 });
+  await check("buildCropScaleArgs produces a single-frame high-quality JPG transcode argv (with content rect)", () => {
+    const args = crop.buildCropScaleArgs("in.png", "out.jpg", 1280, 900, { w: 1280, h: 720, x: 0, y: 90 });
     assert.deepEqual(args, [
       "-y", "-i", "in.png",
       "-vf", "crop=1280:720:0:90,scale=1920:1080:flags=lanczos",
-      "-frames:v", "1", "out.png",
+      "-frames:v", "1",
+      "-q:v", "3",
+      "out.jpg",
     ]);
+  });
+
+  await check("buildCropScaleArgs emits a JPG quality flag (under YouTube's 2 MB cap) and no needless 4K scale", () => {
+    // A native 4K 16:9 input → crop only, no scale, still a -q:v JPG.
+    const args = crop.buildCropScaleArgs("in.png", "out.jpg", 3840, 2160);
+    assert.deepEqual(args, [
+      "-y", "-i", "in.png",
+      "-vf", "crop=3840:2160:0:0",
+      "-frames:v", "1",
+      "-q:v", "3",
+      "out.jpg",
+    ]);
+    assert.ok(args.includes("-q:v"), "delivers a quality JPG (PNG 4K can exceed 2 MB)");
   });
 
   await check("parseCropdetect returns the content box, ignores a full-frame box", () => {
@@ -861,6 +909,29 @@ async function main() {
     assert.equal(res.method, "ffmpeg-fallback");
     assert.ok(!vf.includes("unsharp"), "a downscale of a large source must NOT add unsharp (clean lanczos only)");
     assert.ok(vf.includes("scale=1920:1080:flags=lanczos"), "still resamples to exactly 1920x1080");
+  });
+
+  await check("buildResampleArgs honors native target dims (never forces 1080) and defaults to the floor", () => {
+    // Native target dims thread through — e.g. a small source upscaled to a 4K box.
+    assert.deepEqual(upscale.buildResampleArgs("in.png", "out.jpg", { width: 3840, height: 2160 }), [
+      "-y", "-i", "in.png", "-vf", "scale=3840:2160:flags=lanczos", "-frames:v", "1", "out.jpg",
+    ]);
+    // No dims given → defaults to the 1920×1080 floor (backward compatible).
+    assert.deepEqual(upscale.buildResampleArgs("in.png", "out.jpg"), [
+      "-y", "-i", "in.png", "-vf", "scale=1920:1080:flags=lanczos", "-frames:v", "1", "out.jpg",
+    ]);
+  });
+
+  await check("upscaleToThumbnail resamples to the NATIVE target dims when threaded (no 1080 force)", async () => {
+    let vf = "";
+    const res = await upscale.upscaleToThumbnail("in.png", "out.jpg", {
+      enabled: () => true,
+      available: () => true,
+      runRealesrgan: async () => {},
+      runFfmpegFn: async (args: string[]) => { vf = args[args.indexOf("-vf") + 1]; return {}; },
+    }, { sourceWidth: 1280, targetWidth: 1920, targetHeight: 1080 });
+    assert.equal(res.method, "realesrgan");
+    assert.ok(vf.includes("scale=1920:1080:flags=lanczos"), "downsamples the 4× image to the native target");
   });
 
   await check("upscaleToThumbnail still soften-guards (unsharp) when scaling a SMALL source UP", async () => {
