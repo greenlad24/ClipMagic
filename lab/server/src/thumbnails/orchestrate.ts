@@ -6,7 +6,13 @@
  * the batch) and BOUNDED concurrency (slow API chains → sequential).
  */
 import { hqThumbnailUrl, maxresThumbnailUrl, mqThumbnailUrl } from "./youtube.js";
-import { readCharacterImage, uploadedExpressions, listCharacters, type Expression } from "./characters.js";
+import {
+  readCharacterImage,
+  uploadedExpressions,
+  listCharacters,
+  placementFromLabel,
+  type Expression,
+} from "./characters.js";
 import {
   uploadedBackgrounds,
   readBackgroundImage,
@@ -139,7 +145,13 @@ async function analyzeForSource(opts: {
   fallback: Expression;
   analyze: AnalyzeSourceFn;
   analyzeBg: AnalyzeBackgroundFn;
-}): Promise<{ expression: Expression; busy: boolean; backgroundBytes?: Buffer; backgroundMime?: string }> {
+}): Promise<{
+  expression: Expression;
+  busy: boolean;
+  backgroundBytes?: Buffer;
+  backgroundMime?: string;
+  placement?: "left" | "right" | null;
+}> {
   let expression = opts.fallback;
   let busy = false;
   if (opts.available.length > 0) {
@@ -153,6 +165,9 @@ async function analyzeForSource(opts: {
     expression = a.expression;
     busy = a.busy;
   }
+  // Forced side from the chosen expression's name (e.g. "…place on the right").
+  const chosenLabel = opts.available.find((e) => e.id === expression)?.label ?? "";
+  const placement = placementFromLabel(chosenLabel);
   let backgroundBytes: Buffer | undefined;
   if (opts.bgCandidates.length > 0) {
     const chosenId = await opts.analyzeBg({
@@ -164,7 +179,7 @@ async function analyzeForSource(opts: {
     });
     if (chosenId) backgroundBytes = opts.bgCandidates.find((c) => c.id === chosenId)?.bytes;
   }
-  return { expression, busy, backgroundBytes, backgroundMime: backgroundBytes ? "image/png" : undefined };
+  return { expression, busy, backgroundBytes, backgroundMime: backgroundBytes ? "image/png" : undefined, placement };
 }
 
 const defaultDownload: DownloadFn = async (url) => {
@@ -271,6 +286,7 @@ export async function generateThumbnailVariants(
         busy: a.busy,
         backgroundBytes: a.backgroundBytes,
         backgroundMime: a.backgroundMime,
+        characterPlacement: a.placement,
         provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
         imageSize: run?.imageSize,
       });
@@ -359,6 +375,7 @@ export async function runThumbnailJob(
       let busy = false;
       let backgroundBytes: Buffer | undefined;
       let backgroundMime: string | undefined;
+      let placement: "left" | "right" | null | undefined;
       // Shared fetch phase: move every sub-run column into "running" together.
       updateVariant(job, i, { status: "running", stepLabel: PHASE_LABEL.fetch, percent: phasePercent("fetch", 0) });
       try {
@@ -381,6 +398,7 @@ export async function runThumbnailJob(
         busy = a.busy;
         backgroundBytes = a.backgroundBytes;
         backgroundMime = a.backgroundMime;
+        placement = a.placement;
         job.variants[i].expression = expression;
         const characterBytes = readCharacterImage(expression);
         if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
@@ -403,6 +421,7 @@ export async function runThumbnailJob(
                 busy,
                 backgroundBytes,
                 backgroundMime,
+                characterPlacement: placement,
                 provider: run.provider,
                 imageSize: run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>
@@ -476,6 +495,9 @@ async function runContrarianJob(
   writeStatements: WriteStatementsFn = (k, n) => generateContrarianStatements(k, n),
 ): Promise<void> {
   const run = providersForMode(input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE)[0];
+  // Forced side from the chosen expression's name (e.g. "…place on the right").
+  const chosenLabel = availableExpressionOptions().find((e) => e.id === expression)?.label ?? "";
+  const placement = placementFromLabel(chosenLabel);
   try {
     // Gate: need a character expression + at least one uploaded background.
     const characterBytes = expression ? readCharacterImage(expression) : null;
@@ -509,7 +531,7 @@ async function runContrarianJob(
             backgroundBytes: bg.bytes,
             backgroundMime: bg.mime,
             characterBytes,
-            instruction: buildContrarianPrompt(statement),
+            instruction: buildContrarianPrompt(statement, placement),
             provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
             imageSize: run?.imageSize,
             onProgress: ({ stepLabel, percent }) =>

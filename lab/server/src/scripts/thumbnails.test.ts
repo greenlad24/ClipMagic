@@ -1117,6 +1117,30 @@ async function main() {
     assert.match(p, /NO money/i, "the no-money rule is stated");
   });
 
+  await check("buildContrarianPrompt honours a placement directive", () => {
+    const right = contrarian.buildContrarianPrompt({ text: "STOP NOW", emphasis: "STOP" }, "right");
+    assert.match(right, /ALL THE WAY to the RIGHT/i, "forced to the right");
+    const free = contrarian.buildContrarianPrompt({ text: "STOP NOW", emphasis: "STOP" }, null);
+    assert.match(free, /positioned to ONE side/i, "no directive → free side");
+  });
+
+  // ── placement parsed from the character NAME ────────────────────────────────
+  await check("placementFromLabel reads an explicit 'place … left/right' instruction", async () => {
+    const charsMod = await import("../thumbnails/characters.js");
+    assert.equal(charsMod.placementFromLabel("Pointing to the left - place on the right"), "right");
+    assert.equal(charsMod.placementFromLabel("Pointing to the right - place on the left"), "left");
+    assert.equal(charsMod.placementFromLabel("Place on the LEFT"), "left");
+    assert.equal(charsMod.placementFromLabel("Smile"), null, "no directive → null");
+    assert.equal(charsMod.placementFromLabel("Pointing to the left"), null, "pose alone doesn't move him");
+  });
+
+  await check("placementClause overrides framing to a forced side (or empty)", () => {
+    assert.match(recreate.placementClause("right"), /ALL THE WAY to the RIGHT/);
+    assert.match(recreate.placementClause("left"), /ALL THE WAY to the LEFT/);
+    assert.equal(recreate.placementClause(null), "");
+    assert.equal(recreate.placementClause(undefined), "");
+  });
+
   await check("parseBackgroundChoice: matches an available id, else null", () => {
     assert.equal(artDirector.parseBackgroundChoice({ backgroundId: "Red-Grid" }, ["red-grid", "blue"]), "red-grid");
     assert.equal(artDirector.parseBackgroundChoice({ backgroundId: "none" }, ["red-grid"]), null, "unknown → null");

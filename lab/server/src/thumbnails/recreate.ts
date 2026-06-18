@@ -193,6 +193,21 @@ export function withWidescreen(instruction: string): string {
 }
 
 /**
+ * A placement directive (parsed from the character's name) that forces the
+ * subject to one side of the frame, overriding "keep the original framing". Empty
+ * string when there's no directive. Pure + exported.
+ */
+export function placementClause(placement?: "left" | "right" | null): string {
+  if (placement !== "left" && placement !== "right") return "";
+  const side = placement.toUpperCase();
+  const other = placement === "left" ? "RIGHT" : "LEFT";
+  return (
+    ` IMPORTANT placement: regardless of the original framing, position the man ALL THE WAY to the ${side} side of ` +
+    `the frame so he occupies the ${side} portion, leaving the ${other} side open for the background and text.`
+  );
+}
+
+/**
  * Live progress callback. The orchestrator passes one in so the chain narrates
  * each meaningful step (a phase label + the phase-weighted 0..100 percent) onto
  * the polled job. Best-effort: it must never throw upward or block the chain.
@@ -264,6 +279,12 @@ export interface RecreateInput {
    */
   backgroundBytes?: Buffer;
   backgroundMime?: string;
+  /**
+   * Optional forced side for the swapped-in character, parsed from the chosen
+   * expression's name (e.g. a name containing "place on the right"). When set,
+   * the swap/one-shot prompt positions him all the way to that side.
+   */
+  characterPlacement?: "left" | "right" | null;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -412,11 +433,12 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
       });
     }
     report(PHASE_LABEL.swap, phasePercent("swap", 0));
-    const consolidated = buildConsolidatedInstruction({
-      keyword: input.keyword,
-      textChanges,
-      hasBackground: !!backgroundImg,
-    });
+    const consolidated =
+      buildConsolidatedInstruction({
+        keyword: input.keyword,
+        textChanges,
+        hasBackground: !!backgroundImg,
+      }) + placementClause(input.characterPlacement);
     // One render — [source, characterRef] (+ chosen background as a THIRD image).
     const oneShotImages = backgroundImg ? [current, character, backgroundImg] : [current, character];
     await runStep("recreate-oneshot", "Recreate in one pass", consolidated, oneShotImages);
@@ -490,13 +512,13 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // back to the static FINAL_SWAP_PROMPT (which already carries a medium body
   // clause) — generation must never break.
   report(PHASE_LABEL.swap, phasePercent("swap", 0));
-  let swapInstruction = FINAL_SWAP_PROMPT;
+  let swapInstruction = FINAL_SWAP_PROMPT + placementClause(input.characterPlacement);
   try {
     const assessment = await analyzeForSwap({
       imageBytes: current.data,
       imageMime: current.mimeType || "image/png",
     });
-    swapInstruction = buildFinalSwapInstruction(assessment);
+    swapInstruction = buildFinalSwapInstruction(assessment) + placementClause(input.characterPlacement);
   } catch (e) {
     steps.push({
       id: "swap-director",

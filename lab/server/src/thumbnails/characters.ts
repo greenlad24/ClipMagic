@@ -251,3 +251,18 @@ export function readCharacterImage(id: Expression): Buffer | null {
     return null;
   }
 }
+
+/**
+ * Parse a PLACEMENT directive out of an expression's label/name. Creators can
+ * encode where the character should sit in the frame, e.g.
+ *   "Pointing to the left - place on the right"  → "right"
+ *   "Place on the left"                          → "left"
+ * Only an explicit "place … left/right" counts (so "pointing to the left" alone,
+ * which describes the pose, does NOT move him). Returns null when there's no
+ * placement instruction. Pure + exported.
+ */
+export function placementFromLabel(label: string): "left" | "right" | null {
+  const m = (label || "").toLowerCase().match(/place[^.]*?\b(left|right)\b/);
+  return m ? (m[1] as "left" | "right") : null;
+}
+

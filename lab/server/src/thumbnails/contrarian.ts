@@ -159,7 +159,14 @@ export function chooseContrarianBackgrounds(availableIds: string[], count: numbe
  * the model are [BACKGROUND (first), CHARACTER (second)]. Pure + exported so the
  * exact contract (style + no-money rule) is unit-testable.
  */
-export function buildContrarianPrompt(statement: ContrarianStatement): string {
+export function buildContrarianPrompt(statement: ContrarianStatement, placement?: "left" | "right" | null): string {
+  // Honour a placement directive parsed from the character's name; otherwise the
+  // model is free to pick a side.
+  const sideClause =
+    placement === "left" || placement === "right"
+      ? `positioned ALL THE WAY to the ${placement.toUpperCase()} side of the frame (he occupies the ${placement.toUpperCase()} ` +
+        `portion; keep the ${placement === "left" ? "RIGHT" : "LEFT"} side clearer for the text)`
+      : "positioned to ONE side so the opposite side stays clearer for the text";
   return (
     "Create a high-CTR YouTube thumbnail (16:9 landscape) FROM SCRATCH using EXACTLY three elements and nothing else: " +
     "a background, a person, and one short text statement. " +
@@ -167,8 +174,7 @@ export function buildContrarianPrompt(statement: ContrarianStatement): string {
     "(2) PERSON: place the man from the SECOND image as the subject — keep his EXACT face, head, hairstyle, hair " +
     "colour and beard (clearly THAT real man), with a medium, slightly-fit average build and a seamless, realistic " +
     "blend onto the background. Make him LARGE and prominent (his head/face filling a big portion of the height), " +
-    "positioned to ONE side so the opposite side stays clearer for the text, looking toward the camera with an " +
-    "intense, confident, slightly serious expression. " +
+    `${sideClause}, looking toward the camera with an intense, confident, slightly serious expression. ` +
     `(3) TEXT: render this exact statement: "${statement.text}". Style it like a bold modern YouTube thumbnail — ` +
     "a big, heavy, condensed sans-serif in UPPERCASE. Most of the words are WHITE with a SOFT, BLURRED BLACK DROP " +
     "SHADOW at about 25% opacity (subtle, not harsh). " +
