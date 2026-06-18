@@ -39,7 +39,8 @@
  * so usage is attributed to the "thumbnail-art-director" purpose in the report.
  */
 import { claudeVisionLabeledJSON } from "../ai/claude.js";
-import type { VideoType } from "./videoType.js";
+import { expressionForVideoType, type VideoType } from "./videoType.js";
+import type { Expression } from "./characters.js";
 
 export interface ArtDirectorStep {
   /** Stable id used in the chain record. */
@@ -100,15 +101,20 @@ const SYSTEM =
   "the title to the keyword.\n\n" +
   "Apply an edit only when the image clearly warrants it (e.g. don't swap a logo " +
   "if there is no generic logo, don't edit a device screen if there is no " +
-  "on-screen device). TEXT-REWRITE IS THE EXCEPTION — be PROACTIVE with it. " +
-  "Beyond the mandatory main-title→keyword rewrite above, whenever the thumbnail " +
-  "has any SECONDARY/supporting text (a tagline, badge or sub-line such as \"Full " +
-  "Guide\", \"Full Tutorial\" or \"24/7 AI EMPLOYEE\"), you SHOULD also rewrite at " +
-  "least one such line into a fresh, equally-relevant, punchier variant (e.g. " +
-  "\"Full Guide\" → \"Complete Breakdown\") so the recreation's wording is a LITTLE " +
-  "different from the original instead of an exact copy. NEVER invent a brand name " +
-  "OTHER than the keyword in any rewrite, and only rewrite text that genuinely " +
-  "exists. Return ONE {old,new} pair per distinct text block you want to change. " +
+  "on-screen device). TEXT-REWRITE IS THE EXCEPTION — be PROACTIVE and THOROUGH " +
+  "with it. Beyond the mandatory main-title→keyword rewrite above, rewrite EVERY " +
+  "OTHER distinct, readable text block in the thumbnail into a fresh, " +
+  "equally-relevant, punchier variant so the recreation's wording is clearly a " +
+  "little different from the original instead of an exact copy. This INCLUDES: " +
+  "sub-headlines and taglines (e.g. \"Full Guide\" → \"Complete Breakdown\"), " +
+  "corner badges (e.g. \"new\" → \"hot\"), AND — importantly — any text shown " +
+  "INSIDE an on-screen device, app, chat bubble, button or computer/phone screen " +
+  "(e.g. a typed message like \"Make me $100K\" or a reply like \"On it.\"). Do not " +
+  "stop after one rewrite — return one {old,new} pair for EACH readable text block " +
+  "you change, including the ones inside devices. Keep each rewrite the same intent " +
+  "and roughly the same length so it fits the original's space. NEVER invent a " +
+  "brand name OTHER than the keyword in any rewrite, and only rewrite text that " +
+  "genuinely exists. " +
   "For the structured edits, fill the bracketed placeholders in each FIXED " +
   "template with short, literal values describing what you SEE in the image. Never " +
   "reword the template text outside the brackets. Keep every edit brand-safe and " +
@@ -154,11 +160,12 @@ export function buildDirectorUserText(keyword: string, videoType: VideoType): st
     'Example device-screen slots: character_or_screen="screen", device="phone", content="bright app dashboard".\n' +
     `For text-rewrite: FIRST, if the main title shows a product/brand name that is not "${keyword}", ` +
     `include a {old,new} pair rewriting it to "${keyword}" (the mandatory main-title→keyword rewrite). ` +
-    `THEN be PROACTIVE with secondary text: if any tagline/badge/sub-line exists (like "Full Guide" or ` +
-    `"24/7 AI EMPLOYEE"), include a {old,new} pair rewriting it into a fresh, equally-relevant variant so ` +
-    `the recreation reads a little differently from the original. NO rewrite may introduce a brand name ` +
-    `OTHER than "${keyword}". For logo, leave the subject's own logo/mascot untouched (apply false); only ` +
-    `swap a generic icon.`
+    `THEN be PROACTIVE and THOROUGH: rewrite EVERY other distinct readable text block into a fresh, ` +
+    `equally-relevant variant — taglines/sub-lines (like "Full Guide" or "24/7 AI EMPLOYEE"), corner ` +
+    `badges (like "new" → "hot"), AND any text inside an on-screen device/app/chat/button/computer screen ` +
+    `(like a typed "Make me $100K" or a reply "On it."). Return one {old,new} pair PER block you change ` +
+    `(don't stop after one). NO rewrite may introduce a brand name OTHER than "${keyword}". For logo, ` +
+    `leave the subject's own logo/mascot untouched (apply false); only swap a generic icon.`
   );
 }
 
@@ -415,4 +422,112 @@ export async function analyzeForSwap(opts: {
     throw new Error("swap-director returned non-JSON");
   }
   return parseSwapAssessment(parsed);
+}
+
+// ── Expression director ───────────────────────────────────────────────────────
+// Per-variant expression selection: rather than always using the video-type's
+// single best-fit expression for every recreation, this vision pass LOOKS at the
+// specific SOURCE thumbnail being recreated and picks the host expression (from
+// the ones the user actually uploaded) that best matches its emotional tone /
+// energy. So a shocking money reveal gets "surprise", a calm explainer gets
+// "smile"/"calm", etc. — chosen per variation, not fixed by type. Best-effort:
+// any failure falls back to the video-type's expression (see analyzeExpressionForSource).
+
+/** Short, literal description of each expression's vibe (drives the choice). */
+const EXPRESSION_GUIDE: Record<Expression, string> = {
+  smile: "warm, friendly, confident smile — upbeat, approachable, positive energy",
+  surprise: "shocked / amazed, wide eyes, open mouth — high-energy 'wow' reaction (big reveals, shocking numbers, viral)",
+  secret: "sly, knowing, leaning-in — an 'insider secret / they don't want you to know' look",
+  calm: "calm, composed, serious — measured, trustworthy authority (reviews, explainers)",
+};
+
+export const EXPRESSION_DIRECTOR_SYSTEM =
+  "You are an elite YouTube thumbnail director choosing the HOST'S FACIAL EXPRESSION " +
+  "for a recreation. You are shown the ORIGINAL thumbnail being recreated. Judge its " +
+  "emotional tone, energy and intent, then pick the ONE expression — from ONLY the " +
+  "available list you are given — that best matches it and would maximise " +
+  "click-through for THIS specific thumbnail. Guidance: a shocking result / big " +
+  "money or number reveal / hype → surprise; a warm, approachable how-to or " +
+  "explainer → smile; a sneaky 'insider trick / secret' angle → secret; a serious, " +
+  "trustworthy review or analysis → calm. Choose ONLY from the offered expressions.";
+
+/**
+ * Build the JSON-shaping user prompt for the expression director. Pure + exported
+ * so the contract is testable without the network. Lists ONLY the available
+ * expressions (with their vibe) and asks for one back.
+ */
+export function buildExpressionDirectorUserText(opts: {
+  keyword: string;
+  videoType: VideoType;
+  available: Expression[];
+}): string {
+  const list = opts.available.map((e) => `  - ${e}: ${EXPRESSION_GUIDE[e]}`).join("\n");
+  return (
+    `The video is a ${opts.videoType} video about: "${opts.keyword}".\n\n` +
+    `Available expressions (choose EXACTLY one):\n${list}\n\n` +
+    "Look at the ORIGINAL thumbnail above and pick the single expression that best " +
+    "fits its emotional tone/energy. Return ONLY this JSON object (no prose):\n" +
+    `{ "expression": "<one of: ${opts.available.join(", ")}>", "reason": "<short>" }`
+  );
+}
+
+/**
+ * Coerce the model's choice into one of the AVAILABLE expressions. Case/space
+ * tolerant; anything unrecognised → `fallback`. Pure + exported for unit testing.
+ */
+export function parseExpressionChoice(json: any, available: Expression[], fallback: Expression): Expression {
+  const raw = typeof json?.expression === "string" ? json.expression.trim().toLowerCase() : "";
+  const match = available.find((e) => e.toLowerCase() === raw);
+  return match ?? fallback;
+}
+
+/**
+ * The best-fit fallback expression for a video type, restricted to what's
+ * available: the type's primary when uploaded, else the first available one.
+ * Pure + exported (also used by the orchestrator's best-effort wrapper).
+ */
+export function fallbackExpression(videoType: VideoType, available: Expression[]): Expression {
+  const primary = expressionForVideoType(videoType);
+  return available.includes(primary) ? primary : available[0];
+}
+
+/**
+ * Look at the SOURCE thumbnail and choose the best-fit expression from the ones
+ * the user uploaded. Injectable for tests; best-effort in the orchestrator (any
+ * throw → the video-type fallback). Uses claudeVisionLabeledJSON so usage is
+ * attributed to "thumbnail-expression-director" in the report.
+ */
+export async function analyzeExpressionForSource(opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  available: Expression[];
+  videoType: VideoType;
+  keyword: string;
+}): Promise<Expression> {
+  const fallback = fallbackExpression(opts.videoType, opts.available);
+  // Nothing to choose between → just return the fallback (don't spend a call).
+  if (opts.available.length <= 1) return fallback;
+  const raw = await claudeVisionLabeledJSON({
+    system: EXPRESSION_DIRECTOR_SYSTEM,
+    userText: buildExpressionDirectorUserText({
+      keyword: opts.keyword,
+      videoType: opts.videoType,
+      available: opts.available,
+    }),
+    images: [
+      {
+        label: "Original thumbnail being recreated:",
+        data: opts.sourceBytes.toString("base64"),
+        mediaType: opts.sourceMime || "image/jpeg",
+      },
+    ],
+    purpose: "thumbnail-expression-director",
+  });
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+  return parseExpressionChoice(parsed, opts.available, fallback);
 }

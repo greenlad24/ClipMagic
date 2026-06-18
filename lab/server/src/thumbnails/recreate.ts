@@ -80,7 +80,7 @@ export const MAX_STEPS = 8;
  * identity replacement, NOT a "fix drift" nudge.) Exported so tests can assert it.
  */
 export const STEP1_PROMPT =
-  "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. His BODY must fit his head naturally: give him a medium build with a slightly fit, average physique that matches his face — a seamless neck join, matching skin tone, and realistic head-to-body proportions. The whole person must read as ONE real man (the man in the SECOND image), NOT a head pasted onto a mismatched or oversized body. Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their positions — but the person is now the man from the second image.";
+  "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. His BODY must fit his head naturally: give him a medium build with a slightly fit, average physique that matches his face — a seamless neck join, matching skin tone, and realistic head-to-body proportions. The whole person must read as ONE real man (the man in the SECOND image), NOT a head pasted onto a mismatched or oversized body. Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their positions — and keep the BACKGROUND exactly as it appears in the FIRST image, including its enhanced, vibrant colours and stronger contrast (do NOT flatten, dull, desaturate or recolour the background). Only the person changes — to the man from the second image.";
 /**
  * Alias for STEP1_PROMPT, named for its NEW role: the final full identity swap.
  * Same string, exported under both names so call sites and tests read clearly.
@@ -121,11 +121,13 @@ export function buildFinalSwapInstruction(assessment?: SwapAssessment | null): s
     "proportions, so the whole person reads as ONE real man (the man in the SECOND image), the body following " +
     "the face — NOT a head pasted onto a mismatched or oversized body. " +
     "Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their " +
-    "positions — but the person is now the man from the second image."
+    "positions — and keep the BACKGROUND exactly as it appears in the FIRST image, including its enhanced, vibrant " +
+    "colours and stronger contrast (do NOT flatten, dull, desaturate or recolour the background). Only the person " +
+    "changes — to the man from the second image."
   );
 }
 export const STEP8_PROMPT =
-  "give the existing background a clearly noticeable, tasteful POP so the thumbnail visibly stands out MORE than the original: make its colors richer and more vibrant/saturated, and meaningfully boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. Keep it the SAME general style and scene as the original — this is a mid-level enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
+  "give the existing background a BOLD, clearly visible POP so the thumbnail obviously stands out MORE than the original: make its colors noticeably richer and more vibrant/saturated, and strongly boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. The change must be easy to see at a glance. Keep it the SAME general style and scene as the original — this is a strong enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
 
 /**
  * Append the 16:9 widescreen preamble so edits don't reintroduce letterbox bars.
@@ -199,6 +201,19 @@ export interface RecreateInput {
 export interface RecreateDeps {
   editImage?: EditFn;
   artDirect?: ArtDirectFn;
+  /**
+   * Per-variant expression picker. Consumed by the ORCHESTRATOR (not the chain
+   * itself) — it lives on this shared deps bag so tests that already inject
+   * editImage/artDirect/finalize can override the expression choice too. When
+   * omitted the orchestrator uses its own best-effort vision default.
+   */
+  pickExpression?: (opts: {
+    sourceBytes: Buffer;
+    sourceMime: string;
+    available: Expression[];
+    videoType: VideoType;
+    keyword: string;
+  }) => Promise<Expression>;
   /** Pre-swap body assessment of the working image. Defaults to the real Claude-vision pass. */
   analyzeForSwap?: AnalyzeForSwapFn;
   /** Crop+upscale finalizer. Defaults to the real ffmpeg + Real-ESRGAN pass. */

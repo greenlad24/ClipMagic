@@ -47,6 +47,11 @@ async function main() {
   process.env.DOCKER_SOCKET = path.join(configDir, "nonexistent.sock");
   delete process.env.GEMINI_API_KEY;
   delete process.env.YOUTUBE_DATA_API_KEY;
+  // Keep the expression-director (a vision call) fully offline: with no vision
+  // creds the best-effort default falls straight back to the video-type pick.
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_AUTH_TOKEN;
+  delete process.env.GROQ_API_KEY;
 
   const jobs = await import("../thumbnails/jobs.js");
   const orchestrate = await import("../thumbnails/orchestrate.js");
@@ -267,6 +272,22 @@ async function main() {
     assert.equal(job.variants[0].status, "error", "the variant reads as error when its sub-run failed");
     assert.match(job.variants[0].error ?? "", /provider blew up/);
     assert.equal(job.percent, 100, "an errored job still completes at 100");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("the per-source expression picker drives each variant's expression", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    // A fake picker (injected via deps) overrides the video-type default per pick.
+    const pickExpression = async () => "secret" as const;
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"], mode: "gemini-pro" },
+      fakeDownload,
+      { ...makeDeps(), pickExpression } as any,
+    );
+    await waitUntil(() => job.done);
+    // Tutorial's video-type default is "smile"; the picker overrode it to "secret".
+    assert.ok(job.variants.every((v) => v.expression === "secret"), "picker's choice overrides the video-type default");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 

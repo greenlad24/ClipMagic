@@ -1,12 +1,14 @@
 /**
  * Orchestration for the Thumbnail Designer endpoints: download source
- * thumbnails, pick a DISTINCT expression per variant, run the recreation chain
- * per pick with PER-ITEM isolation (one failure never kills the batch) and
- * BOUNDED concurrency (these are slow API chains, so we run them sequentially).
+ * thumbnails, pick the best-fit expression PER variant by analysing each source
+ * thumbnail (best-effort vision; falls back to the video-type's expression), run
+ * the recreation chain per pick with PER-ITEM isolation (one failure never kills
+ * the batch) and BOUNDED concurrency (slow API chains → sequential).
  */
 import { hqThumbnailUrl, maxresThumbnailUrl, mqThumbnailUrl } from "./youtube.js";
 import { readCharacterImage, uploadedExpressions, type Expression } from "./characters.js";
 import { expressionsForVariants, type VideoType } from "./videoType.js";
+import { analyzeExpressionForSource, fallbackExpression } from "./artDirector.js";
 import { recreateThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
 import {
   providersForMode,
@@ -41,6 +43,29 @@ export interface ThumbnailVariant {
 
 /** Fetch impl injectable for tests. Returns bytes + mime, or throws. */
 export type DownloadFn = (url: string) => Promise<{ bytes: Buffer; mime: string }>;
+
+/**
+ * Per-variant expression picker: looks at the SOURCE thumbnail + chooses the
+ * best-fit expression from the uploaded ones. Injectable for tests. The default
+ * is a BEST-EFFORT wrapper around the expression-director vision pass: any
+ * failure (no creds, bad JSON, network) falls back to the video-type's expression
+ * so generation never breaks and tests stay offline.
+ */
+export type PickExpressionFn = (opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  available: Expression[];
+  videoType: VideoType;
+  keyword: string;
+}) => Promise<Expression>;
+
+const defaultPickExpression: PickExpressionFn = async (opts) => {
+  try {
+    return await analyzeExpressionForSource(opts);
+  } catch {
+    return fallbackExpression(opts.videoType, opts.available);
+  }
+};
 
 const defaultDownload: DownloadFn = async (url) => {
   const res = await fetch(url);
@@ -93,14 +118,15 @@ function effectiveMode(input: GenerateInput): GenerationMode {
 }
 
 /**
- * Generate one recreated thumbnail per pick. Each pick gets a DISTINCT
- * expression (cycling through what's in the library, the video-type's primary
- * first). Runs sequentially with per-item try/catch so a single failure yields
- * an error variant instead of aborting the run.
+ * Generate one recreated thumbnail per pick. Each pick's expression is chosen by
+ * analysing its OWN source thumbnail (best-effort; falls back to the video-type's
+ * expression). Runs sequentially with per-item try/catch so a single failure
+ * yields an error variant instead of aborting the run.
  */
 export async function generateThumbnailVariants(
   input: GenerateInput,
   download: DownloadFn = defaultDownload,
+  pick: PickExpressionFn = defaultPickExpression,
 ): Promise<ThumbnailVariant[]> {
   const picks = input.picks;
   const available = uploadedExpressions();
@@ -109,13 +135,24 @@ export async function generateThumbnailVariants(
   const variants: ThumbnailVariant[] = [];
   for (let i = 0; i < picks.length; i++) {
     const videoId = picks[i];
-    const expression = expressions[i];
+    // The video-type default; upgraded below by the per-source expression pick.
+    let expression = expressions[i];
     try {
       if (!expression) throw new Error("No character expression available — upload at least one in the library.");
-      const characterBytes = readCharacterImage(expression);
-      if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
 
       const src = await downloadSourceThumbnail(videoId, download);
+      // Pick the best-fit expression for THIS source thumbnail (best-effort).
+      if (available.length > 1) {
+        expression = await pick({
+          sourceBytes: src.bytes,
+          sourceMime: src.mime,
+          available,
+          videoType: input.videoType,
+          keyword: input.keyword,
+        });
+      }
+      const characterBytes = readCharacterImage(expression);
+      if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
       // One outputUrl per pick: run the mode's single provider sub-run
       // (default → Nano Banana Pro @ 4K).
       const run = providersForMode(effectiveMode(input))[0];
@@ -181,7 +218,8 @@ export function startThumbnailJob(
     })),
   );
   // Fire-and-forget. runThumbnailJob never throws (it records onto the job).
-  void runThumbnailJob(job, input, expressions, available, download, recreateDeps);
+  const pick = recreateDeps?.pickExpression ?? defaultPickExpression;
+  void runThumbnailJob(job, input, expressions, available, download, recreateDeps, pick);
   return job;
 }
 
@@ -198,20 +236,35 @@ export async function runThumbnailJob(
   available: Expression[],
   download: DownloadFn = defaultDownload,
   recreateDeps?: RecreateDeps,
+  pick: PickExpressionFn = defaultPickExpression,
 ): Promise<void> {
   const runs = providersForMode(effectiveMode(input));
   try {
     for (let i = 0; i < input.picks.length; i++) {
       const videoId = input.picks[i];
-      const expression = expressions[i];
+      // The video-type default; upgraded below by the per-source expression pick.
+      let expression = expressions[i];
       // Shared fetch phase: move every sub-run column into "running" together.
       updateVariant(job, i, { status: "running", stepLabel: PHASE_LABEL.fetch, percent: phasePercent("fetch", 0) });
       try {
         if (!expression) throw new Error("No character expression available — upload at least one in the library.");
+
+        const src = await downloadSourceThumbnail(videoId, download);
+        // Pick the best-fit expression for THIS source thumbnail (best-effort);
+        // reflect it on the variant so the UI shows the real choice.
+        if (available.length > 1) {
+          expression = await pick({
+            sourceBytes: src.bytes,
+            sourceMime: src.mime,
+            available,
+            videoType: input.videoType,
+            keyword: input.keyword,
+          });
+          job.variants[i].expression = expression;
+        }
         const characterBytes = readCharacterImage(expression);
         if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
 
-        const src = await downloadSourceThumbnail(videoId, download);
         // Upgrade to the real source URL (maxres when it existed) + close the fetch band.
         updateVariant(job, i, { stepLabel: PHASE_LABEL.outfit, percent: phasePercent("fetch", 1) });
         job.variants[i].sourceThumbnailUrl = src.url;

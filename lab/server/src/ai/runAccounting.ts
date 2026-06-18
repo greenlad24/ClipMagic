@@ -67,7 +67,11 @@ export type CallPurpose =
   | "thumbnail-swap-director"
   // Thumbnail Designer: reads the pasted script, extracts the search keyword +
   // infers the video type (cheap structured extraction on the fast tier).
-  | "thumbnail-script-analysis";
+  | "thumbnail-script-analysis"
+  // Thumbnail Designer: vision "expression-director" pass — looks at the source
+  // thumbnail being recreated and picks the host expression that best fits its
+  // emotional tone/energy (from the available uploaded expressions).
+  | "thumbnail-expression-director";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

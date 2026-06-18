@@ -1039,6 +1039,43 @@ async function main() {
     assert.deepEqual(vt.expressionsForVariants("Review", 2, []), []);
   });
 
+  // ── expression DIRECTOR (per-source vision pick; pure parts) ─────────────────
+  await check("fallbackExpression: type primary when available, else first available", () => {
+    assert.equal(artDirector.fallbackExpression("Viral", ["smile", "surprise", "calm"] as any), "surprise");
+    assert.equal(artDirector.fallbackExpression("Viral", ["smile", "calm"] as any), "smile", "primary missing → first available");
+  });
+
+  await check("parseExpressionChoice: accepts an available choice, else falls back (case-insensitive)", () => {
+    const avail: any[] = ["smile", "surprise", "calm"];
+    assert.equal(artDirector.parseExpressionChoice({ expression: "Surprise" }, avail, "smile" as any), "surprise");
+    assert.equal(artDirector.parseExpressionChoice({ expression: "secret" }, avail, "smile" as any), "smile", "unavailable → fallback");
+    assert.equal(artDirector.parseExpressionChoice({}, avail, "calm" as any), "calm", "missing → fallback");
+  });
+
+  await check("buildExpressionDirectorUserText lists only the available expressions", () => {
+    const txt = artDirector.buildExpressionDirectorUserText({
+      keyword: "make money with AI",
+      videoType: "Viral",
+      available: ["surprise", "calm"] as any,
+    });
+    assert.match(txt, /surprise/);
+    assert.match(txt, /calm/);
+    assert.doesNotMatch(txt, /\bsecret\b/, "an unavailable expression is not offered");
+    assert.match(txt, /one of: surprise, calm/, "the JSON shape constrains to available options");
+  });
+
+  await check("analyzeExpressionForSource returns the model's pick; ≤1 available skips the call", async () => {
+    // ≤1 available → returns fallback WITHOUT calling the (would-throw) vision API.
+    const single = await artDirector.analyzeExpressionForSource({
+      sourceBytes: Buffer.from("x"),
+      sourceMime: "image/jpeg",
+      available: ["smile"] as any,
+      videoType: "Tutorial",
+      keyword: "k",
+    });
+    assert.equal(single, "smile", "a single available expression is chosen without a vision call");
+  });
+
   // ── script analysis (mocked AI) ─────────────────────────────────────────────
   const scriptAnalysis = await import("../thumbnails/scriptAnalysis.js");
   await check("analyzeScript extracts keyword + infers video type from a mocked model", async () => {
