@@ -463,6 +463,51 @@ async function main() {
     );
   });
 
+  await check("a 'None' character plan skips the swap (one pass, no person, edits applied)", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const instructions: string[] = [];
+    const deps = {
+      ...makeDeps(),
+      editImage: async (opts: any) => {
+        instructions.push(opts.instruction);
+        return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+      },
+      finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
+    };
+    const job = orchestrate.startThumbnailJob(
+      {
+        keyword: "OpenClaw",
+        videoType: "Tutorial",
+        picks: ["A"],
+        mode: "gemini-pro",
+        plans: [
+          {
+            videoId: "A",
+            sourceThumbnailUrl: "",
+            expression: orchestrate.NO_CHARACTER,
+            expressionLabel: "None",
+            busy: false,
+            backgroundId: null,
+            rewrites: [{ old: "Use this", new: "The new way" }],
+            elements: [{ id: "custom", label: "Right text", apply: true, instruction: "replace 'Instead' with 'of editing'" }],
+          },
+        ],
+      },
+      fakeDownload,
+      deps as any,
+    );
+    await waitUntil(() => job.done);
+    assert.equal(job.variants[0].status, "done");
+    // ONE consolidated render, no person swap, both edits present.
+    const oneShot = instructions.find((s) => /SINGLE edit/.test(s));
+    assert.ok(oneShot, "ran a single consolidated pass");
+    assert.doesNotMatch(oneShot!, /Replace the on-camera person/, "no character swap");
+    assert.match(oneShot!, /change the text "Use this" to "The new way"/);
+    assert.match(oneShot!, /replace 'Instead' with 'of editing'/);
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
   await check("a BUSY source is recreated in ONE pass (no multi-step chain)", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);

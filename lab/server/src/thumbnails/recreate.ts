@@ -144,46 +144,63 @@ export const STEP8_PROMPT =
   "give the existing background a BOLD, clearly visible POP so the thumbnail obviously stands out MORE than the original: make its colors noticeably richer and more vibrant/saturated, and strongly boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. The change must be easy to see at a glance. Keep it the SAME general style and scene as the original — this is a strong enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
 
 /**
- * Build the ONE-SHOT recreation instruction for ELEMENT-HEAVY (busy) thumbnails.
- * Instead of the multi-step chain (which re-renders a busy frame several times
- * and degrades the money/screens/props), this single edit — run on [source,
- * characterRef] — does everything at once: swap the character (same identity +
- * body clause as the strong swap), change the outfit to a t-shirt, apply the text
- * changes, and pop the background, all while keeping every original element in
- * place and realistic. `textChanges` are the art-director's verbatim text-rewrite
- * instructions (each "change the text X to Y, keeping…"). Pure + exported.
+ * Build the ONE-SHOT recreation instruction. Used for ELEMENT-HEAVY (busy)
+ * thumbnails AND for fully-REVIEWED plans, because a single coherent edit
+ * preserves layout far better than many sequential re-renders (each re-render
+ * drifts). It can: swap the character (same identity + body clause as the strong
+ * swap) OR skip the swap entirely when the source has no person to replace
+ * (`swap:false` — e.g. an icon/text thumbnail), change the outfit, apply the text
+ * changes, apply explicit element changes, and pop/replace the background — all
+ * while keeping every original element in place. Pure + exported.
  */
 export function buildConsolidatedInstruction(opts: {
   keyword: string;
+  /** Replace the on-camera person with the character ref. Default true. */
+  swap?: boolean;
   textChanges: string[];
-  /** When true a THIRD image is supplied to use as the new background. */
+  /** Explicit reviewed element edits (device/font/logo/custom instructions). */
+  elementChanges?: string[];
+  /** When true a background image is supplied as the LAST input image. */
   hasBackground?: boolean;
 }): string {
-  const textBlock = opts.textChanges.length
-    ? ` (3) Apply these exact text changes: ${opts.textChanges.join("; ")}.`
-    : "";
-  const backgroundBlock = opts.hasBackground
-    ? " (4) Replace the background with the one shown in the THIRD image — use it as the new backdrop, scaled to fill " +
-      "the frame, keeping every foreground element (person, text, logos, props) in its exact place; make sure the " +
-      "subject still pops cleanly off it."
-    : " (4) Give the background a bold, clearly visible POP — make its colours richer and more vibrant/saturated and " +
-      "boost the contrast behind the subject so it stands out more than the original — WITHOUT changing the scene, " +
-      "layout or any element's position (an enhancement, NOT a redesign: no new light rays, neon or patterns).";
+  const swap = opts.swap !== false;
+  // The character ref is the SECOND image only when we swap; the background image
+  // is then the THIRD (with swap) or the SECOND (without).
+  const bgOrdinal = swap ? "THIRD" : "SECOND";
+  const parts: string[] = [];
+  let n = 1;
+  if (swap) {
+    parts.push(
+      `(${n++}) Replace the on-camera person with the man in the SECOND image — the result MUST have the exact face, ` +
+        "head, hairstyle, hair colour and beard of the man in the SECOND image (clearly THAT man, not the original " +
+        "person); give him a medium build with a slightly fit, average physique that matches his face, a seamless neck " +
+        "join, matching skin tone and realistic head-to-body proportions, reading as ONE real man, NOT a head pasted " +
+        "onto a mismatched or oversized body; frame him as a LARGE close-up so his head and face fill AT LEAST 70% of " +
+        "the thumbnail's HEIGHT (a big, bold, dominant face), keeping him on the same side of the frame as in the FIRST image.",
+    );
+    parts.push(`(${n++}) Change that person's outfit to a plain t-shirt.`);
+  }
+  if (opts.textChanges.length) parts.push(`(${n++}) Apply these EXACT text changes: ${opts.textChanges.join("; ")}.`);
+  if (opts.elementChanges?.length) parts.push(`(${n++}) Make these specific changes: ${opts.elementChanges.join("; ")}.`);
+  parts.push(
+    opts.hasBackground
+      ? `(${n++}) Replace the background with the one shown in the ${bgOrdinal} image — use it as the new backdrop, scaled ` +
+          "to fill the frame, keeping every foreground element (person, text, logos, props) in its exact place; make sure " +
+          "the subject still pops cleanly off it."
+      : `(${n++}) Give the background a bold, clearly visible POP — make its colours richer and more vibrant/saturated and ` +
+          "boost the contrast behind the subject so it stands out more than the original — WITHOUT changing the scene, " +
+          "layout or any element's position (an enhancement, NOT a redesign: no new light rays, neon or patterns).",
+  );
+  const subjectLine = swap
+    ? "every prop (stacks of money/cash, devices, laptops, phones), every UI panel, badge, logo and graphic"
+    : "EVERY element — the person/subject, every icon, logo, badge, device, panel and graphic";
   return (
     "Recreate this thumbnail in a SINGLE edit, keeping ALL of the FIRST image's elements and exact layout " +
-    "faithfully — every prop (stacks of money/cash, devices, laptops, phones), every UI panel, badge, logo and " +
-    "graphic must stay in the same place and size and look REALISTIC and sharp. Do NOT distort, warp, melt, smear " +
-    "or candy-ify the money, screens, text or any object, and do NOT move or resize anything. In this ONE pass make " +
-    "exactly these changes: " +
-    "(1) Replace the on-camera person with the man in the SECOND image — the result MUST have the exact face, head, " +
-    "hairstyle, hair colour and beard of the man in the SECOND image (clearly THAT man, not the original person); " +
-    "give him a medium build with a slightly fit, average physique that matches his face, a seamless neck join, " +
-    "matching skin tone and realistic head-to-body proportions, reading as ONE real man, NOT a head pasted onto a " +
-    "mismatched or oversized body; frame him as a LARGE close-up so his head and face fill AT LEAST 70% of the " +
-    "thumbnail's HEIGHT (a big, bold, dominant face), keeping him on the same side of the frame as in the FIRST image. " +
-    "(2) Change that person's outfit to a plain t-shirt." +
-    textBlock +
-    backgroundBlock +
+    `faithfully — ${subjectLine} must stay in the same place and size and look REALISTIC and sharp. Do NOT distort, ` +
+    "warp, melt, smear or candy-ify the money, screens, text or any object, and do NOT move or resize anything. " +
+    (swap ? "" : "There is NO person to replace — keep the subject and layout exactly as they are. ") +
+    "In this ONE pass make ONLY these changes: " +
+    parts.join(" ") +
     " Everything else stays exactly as in the FIRST image."
   );
 }
@@ -306,6 +323,13 @@ export interface RecreateInput {
    * without textRewrites, they replace only the director's non-text steps.
    */
   plannedElements?: { id: string; label: string; instruction: string }[];
+  /**
+   * Whether to replace the on-camera person with the character ref. Default true.
+   * Set false when the source has NO person to swap (e.g. an icon/text thumbnail):
+   * the chain then skips the swap + outfit and applies only the reviewed edits +
+   * background in a single coherent pass, preserving the original layout.
+   */
+  swapCharacter?: boolean;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -426,18 +450,24 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     }
   };
 
-  // ── BUSY thumbnails: ONE-SHOT recreation (avoid multi-render degradation) ────
-  // Element-heavy thumbnails (money, devices, lots of text) fall apart if we
-  // re-render them several times. So we do EVERYTHING in a single edit off the
-  // ORIGINAL: swap the character, change the outfit, change the text, and pop the
-  // background — keeping every element in place. We still ask the art-director
-  // (best-effort) for the text rewrites so the copy is freshened + the brand
-  // keyword lands; only the text-rewrite instructions are used here.
-  if (input.busy) {
+  // ── ONE-SHOT recreation (avoid multi-render degradation) ─────────────────────
+  // We do everything in a SINGLE edit when either:
+  //   • the source is element-heavy (busy) — many re-renders would melt it, OR
+  //   • the source has NO person to swap (swapCharacter:false, e.g. an icon/text
+  //     thumbnail) — re-rendering such a fragile layout several times destroys it.
+  // A single coherent pass keeps the layout intact and applies the text + element
+  // changes together. For a reviewed plan we use its exact text + element edits;
+  // for an un-reviewed busy source we ask the art-director for the text rewrites.
+  const swap = input.swapCharacter !== false;
+  const fullPlan = input.plannedElements != null && input.textRewrites != null;
+  if (input.busy || !swap) {
     report(PHASE_LABEL.edits, phasePercent("edits", 0));
     let textChanges: string[] = [];
-    if (input.textRewrites) {
-      // User-approved copy from the review step — use it verbatim, no AI text pass.
+    let elementChanges: string[] = [];
+    if (fullPlan) {
+      textChanges = input.textRewrites!.map((r) => buildTextRewriteInstruction(r.old, r.new));
+      elementChanges = input.plannedElements!.map((e) => e.instruction).filter(Boolean);
+    } else if (input.textRewrites) {
       textChanges = input.textRewrites.map((r) => buildTextRewriteInstruction(r.old, r.new));
     } else {
       try {
@@ -447,9 +477,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
           keyword: input.keyword,
           videoType: input.videoType,
         });
-        textChanges = ds
-          .filter((s) => s.id === "text-rewrite" && s.apply && s.instruction)
-          .map((s) => s.instruction);
+        textChanges = ds.filter((s) => s.id === "text-rewrite" && s.apply && s.instruction).map((s) => s.instruction);
       } catch (e) {
         steps.push({
           id: "art-director",
@@ -464,12 +492,21 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     const consolidated =
       buildConsolidatedInstruction({
         keyword: input.keyword,
+        swap,
         textChanges,
+        elementChanges,
         hasBackground: !!backgroundImg,
-      }) + placementClause(input.characterPlacement);
-    // One render — [source, characterRef] (+ chosen background as a THIRD image).
-    const oneShotImages = backgroundImg ? [current, character, backgroundImg] : [current, character];
-    await runStep("recreate-oneshot", "Recreate in one pass", consolidated, oneShotImages);
+      }) + (swap ? placementClause(input.characterPlacement) : "");
+    // One render. With a swap the character ref is the SECOND image (+ background
+    // THIRD); without a swap there's no character (background is SECOND).
+    const oneShotImages = swap
+      ? backgroundImg
+        ? [current, character, backgroundImg]
+        : [current, character]
+      : backgroundImg
+        ? [current, backgroundImg]
+        : [current];
+    await runStep("recreate-oneshot", swap ? "Recreate in one pass" : "Apply edits (no character)", consolidated, oneShotImages);
     report(PHASE_LABEL.swap, phasePercent("swap", 1));
     report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
     const result = await finalizeFn(current, steps);
@@ -504,7 +541,6 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     }));
 
   let directorSteps: ArtDirectorStep[] = [];
-  const fullPlan = input.plannedElements != null && input.textRewrites != null;
   if (fullPlan) {
     // Fully reviewed: exactly the approved non-text edits + text rewrites.
     directorSteps = [...elementsToStep(input.plannedElements!), ...textToSteps(input.textRewrites!)];

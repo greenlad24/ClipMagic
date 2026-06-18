@@ -1331,6 +1331,24 @@ async function main() {
     assert.ok(Math.abs(placed.destX + 50 * placed.scale - 700) < 1, "head centred at 0.70·W for right placement");
   });
 
+  await check("buildConsolidatedInstruction: swap=false drops the person swap + outfit, keeps edits", () => {
+    const withSwap = recreate.buildConsolidatedInstruction({ keyword: "k", textChanges: ['change "A" to "B"'], elementChanges: ["recolor X"], hasBackground: false });
+    assert.match(withSwap, /Replace the on-camera person/);
+    assert.match(withSwap, /t-shirt/);
+    assert.match(withSwap, /change "A" to "B"/);
+    assert.match(withSwap, /recolor X/);
+    const noSwap = recreate.buildConsolidatedInstruction({ keyword: "k", swap: false, textChanges: ['change "A" to "B"'], elementChanges: ["recolor X"], hasBackground: false });
+    assert.doesNotMatch(noSwap, /Replace the on-camera person/, "no person swap");
+    assert.doesNotMatch(noSwap, /t-shirt/, "no outfit change");
+    assert.match(noSwap, /NO person to replace/);
+    assert.match(noSwap, /change "A" to "B"/);
+    assert.match(noSwap, /recolor X/);
+  });
+  await check("buildConsolidatedInstruction: background ordinal is THIRD with swap, SECOND without", () => {
+    assert.match(recreate.buildConsolidatedInstruction({ keyword: "k", textChanges: [], hasBackground: true }), /the THIRD image/);
+    assert.match(recreate.buildConsolidatedInstruction({ keyword: "k", swap: false, textChanges: [], hasBackground: true }), /the SECOND image/);
+  });
+
   await check("a full reviewed plan SKIPS the art-director and applies its elements + text", async () => {
     let directorCalled = false;
     const sent: string[] = [];

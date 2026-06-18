@@ -1270,6 +1270,8 @@ function RecreationReview({
                           {c.label}
                         </SelectItem>
                       ))}
+                      {/* For sources with NO person (icon/text thumbnails) — don't swap a face in. */}
+                      <SelectItem value="__none__">None — keep layout (no character)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

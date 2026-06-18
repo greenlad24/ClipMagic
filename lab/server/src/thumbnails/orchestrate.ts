@@ -226,6 +226,13 @@ export async function downloadSourceThumbnail(
   }
 }
 
+/**
+ * Sentinel expression id meaning "this source has NO person — don't swap a
+ * character in" (e.g. an icon/text thumbnail). The recreation then keeps the
+ * layout and applies only the reviewed edits + background.
+ */
+export const NO_CHARACTER = "__none__";
+
 export interface GenerateInput {
   keyword: string;
   videoType: VideoType;
@@ -546,6 +553,7 @@ export async function runThumbnailJob(
       let placement: "left" | "right" | null | undefined;
       let textRewrites: TextRewrite[] | undefined;
       let plannedElements: { id: string; label: string; instruction: string }[] | undefined;
+      let swapCharacter = true;
       // A reviewed/edited plan for THIS pick (matched by videoId) overrides the
       // automatic vision analysis entirely.
       const plan = input.plans?.find((p) => p.videoId === videoId);
@@ -557,7 +565,9 @@ export async function runThumbnailJob(
         const src = await downloadSourceThumbnail(videoId, download);
         if (plan) {
           // Use the reviewed choices verbatim; skip the per-source vision analysis.
-          expression = availOptions.some((e) => e.id === plan.expression) ? plan.expression : expression;
+          // "None" → no person to swap: skip the swap/outfit, keep the layout.
+          swapCharacter = plan.expression !== NO_CHARACTER;
+          expression = swapCharacter && availOptions.some((e) => e.id === plan.expression) ? plan.expression : (swapCharacter ? expression : "none");
           busy = plan.busy;
           const label = availOptions.find((e) => e.id === expression)?.label ?? "";
           placement = placementFromLabel(label);
@@ -590,8 +600,10 @@ export async function runThumbnailJob(
           placement = a.placement;
         }
         job.variants[i].expression = expression;
-        const characterBytes = readCharacterImage(expression);
-        if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
+        // No swap → no character image needed (we keep the original layout).
+        const loaded = swapCharacter ? readCharacterImage(expression) : Buffer.alloc(0);
+        if (swapCharacter && !loaded) throw new Error(`Character image for "${expression}" is missing.`);
+        const characterBytes: Buffer = loaded ?? Buffer.alloc(0);
 
         // Upgrade to the real source URL (maxres when it existed) + close the fetch band.
         updateVariant(job, i, { stepLabel: PHASE_LABEL.outfit, percent: phasePercent("fetch", 1) });
@@ -614,6 +626,7 @@ export async function runThumbnailJob(
                 characterPlacement: placement,
                 textRewrites,
                 plannedElements,
+                swapCharacter,
                 provider: run.provider,
                 imageSize: run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>
