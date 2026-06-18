@@ -15,6 +15,11 @@
  *   7. (optional) logo
  *   8. ALWAYS — change the background color + pattern, keeping every other
  *               element (character, text, logos, positions) identical.
+ *   9. ALWAYS — re-anchor the character: a final identity-correction pass that
+ *               re-applies the reference man so any face/hair drift introduced by
+ *               the outfit/optional/background re-renders is fixed at the very
+ *               end. Everything else (pose, outfit, background, text, logos,
+ *               positions) is kept exactly the same.
  *
  * Every step is resilient: if a step fails (safety block, network, no image), we
  * keep the last good image and continue — one bad step never aborts the
@@ -42,8 +47,12 @@ import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
 
-/** Hard cap on chain length (2 mandatory + up to 4 optional + 1 final bg edit). */
-export const MAX_STEPS = 7;
+/**
+ * Hard cap on chain length: 2 mandatory (replace + outfit) + up to 5 optional
+ * (device-screen, font, bold-text, text-rewrite, logo) + 1 background edit +
+ * 1 final re-anchor edit = 9, so the always-on final re-anchor never gets capped.
+ */
+export const MAX_STEPS = 9;
 
 /**
  * EXACT verbatim prompts for the always-on edits. Steps 4–7's prompts are built
@@ -55,6 +64,16 @@ export const STEP1_PROMPT =
 export const STEP2_PROMPT = "change the character outfit to a t-shirt";
 export const STEP8_PROMPT =
   "subtly enhance the existing background so the subject pops a little more — keep the background CLOSE to the original (same general style and colors), only clean it up and slightly increase the contrast/separation behind the subject. Do NOT add dramatic patterns, light rays, or wildly different colors — keep it a light, tasteful change. Keep the character, all text, logos, and the exact position of every element exactly the same";
+
+/**
+ * FINAL always-on step, run AFTER the background edit. The outfit/optional/
+ * background re-renders can each nudge the swapped-in face; this last pass
+ * re-applies the reference man (passed as the LAST image) to correct any drift
+ * so the FINAL face is accurate — while keeping every other element identical.
+ * Exported so tests can assert it verbatim.
+ */
+export const FINAL_CHARACTER_PROMPT =
+  "Make sure the on-camera person is EXACTLY the man in the reference image (the last image) — correct his face, hairstyle, hair colour and beard to match the reference precisely and fix any drift from the previous edits; keep the pose, outfit, background, text, logos and the position of every element exactly the same.";
 
 /**
  * Appended to EVERY re-render step after the initial swap. Each later edit
@@ -93,7 +112,7 @@ export type ArtDirectFn = (opts: {
 
 /** One recorded step in the chain (for the UI's per-variant breakdown). */
 export interface ChainStep {
-  /** Short id: "replace-character" | "outfit" | "device-screen" | "font" | "bold-text" | "logo" | "background" | "crop" | "upscale". */
+  /** Short id: "replace-character" | "outfit" | "device-screen" | "font" | "bold-text" | "text-rewrite" | "logo" | "background" | "refine-character" | "crop" | "upscale". */
   id: string;
   /** Human label for the UI. */
   label: string;
@@ -233,11 +252,12 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     });
   }
 
-  // ── Steps 4–7 (CONDITIONAL) + Step 8 (ALWAYS, background) ───────────────────
-  // The edits band covers the chosen optional edits PLUS the guaranteed final
-  // background edit, spread evenly so the bar fills smoothly (always ≥1 edit).
+  // ── Optional edits (CONDITIONAL) + background (ALWAYS) + re-anchor (ALWAYS) ──
+  // The edits band covers the chosen optional edits PLUS the two guaranteed final
+  // edits (background, then the character re-anchor), spread evenly so the bar
+  // fills smoothly (always ≥2 edits).
   const planned = directorSteps.filter((ds) => ds.apply && ds.instruction);
-  const totalEdits = planned.length + 1; // +1 for the always-on background edit
+  const totalEdits = planned.length + 2; // +1 background, +1 final re-anchor
   let doneEdits = 0;
   for (const ds of planned) {
     await runStep(ds.id, ds.label, ds.instruction, [current]);
@@ -246,6 +266,13 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   }
   // Step 8 (ALWAYS): new background color + pattern, everything else identical.
   await runStep("background", "Change background", STEP8_PROMPT, [current]);
+  doneEdits++;
+  report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
+
+  // FINAL step (ALWAYS, last): re-anchor the character so the FINAL face matches
+  // the reference exactly, correcting any drift from the prior re-renders. Runs
+  // AFTER the background edit and carries the character ref as the last image.
+  await runStep("refine-character", "Refine character", FINAL_CHARACTER_PROMPT, [current]);
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
 

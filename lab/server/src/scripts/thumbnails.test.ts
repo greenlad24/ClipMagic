@@ -303,10 +303,12 @@ async function main() {
     );
     assert.equal(byId["bold-text"].instruction, 'I want to make the "FREE" in bold font');
     assert.equal(byId.logo.instruction, "change the YouTube logo to another type of a TikTok logo");
-    // Order is device-screen, font, bold-text, logo (steps 4→7).
-    assert.deepEqual(steps.map((s) => s.id), ["device-screen", "font", "bold-text", "logo"]);
-    assert.ok(steps.every((s) => s.apply), "all four apply when slots are present");
-    // No leftover brackets in any emitted instruction.
+    // Order is device-screen, font, bold-text, text-rewrite, logo.
+    assert.deepEqual(steps.map((s) => s.id), ["device-screen", "font", "bold-text", "text-rewrite", "logo"]);
+    // text-rewrite wasn't proposed here → present but not applied; the other four apply.
+    assert.ok(steps.filter((s) => s.id !== "text-rewrite").every((s) => s.apply), "the four structured edits apply when slots are present");
+    assert.equal(byId["text-rewrite"].apply, false, "no text-rewrite proposed → skipped");
+    // No leftover brackets in any emitted (applied) instruction.
     assert.ok(steps.every((s) => !/\[|\]/.test(s.instruction)), "no unfilled bracket placeholders");
   });
 
@@ -319,6 +321,61 @@ async function main() {
     });
     assert.ok(steps.every((s) => s.apply === false), "none apply");
     assert.ok(steps.every((s) => s.instruction === ""), "no instruction when not applied");
+  });
+
+  await check("parseDirectorResponse: text-rewrite assembles the instruction + keeps the brand word", () => {
+    const steps = artDirector.parseDirectorResponse(
+      { "text-rewrite": { apply: true, old: "OpenClaw is here", new: "I tried OpenClaw for 30 days" } },
+      "OpenClaw",
+    );
+    const tr = steps.find((s) => s.id === "text-rewrite")!;
+    assert.equal(tr.apply, true, "applies when the new headline keeps the brand word");
+    assert.equal(
+      tr.instruction,
+      'change the headline text from "OpenClaw is here" to "I tried OpenClaw for 30 days", keeping it in the same place, size and style',
+    );
+  });
+
+  await check("parseDirectorResponse: text-rewrite is REJECTED when the new headline drops the brand word", () => {
+    const steps = artDirector.parseDirectorResponse(
+      { "text-rewrite": { apply: true, old: "OpenClaw is here", new: "I tried this for 30 days" } },
+      "OpenClaw",
+    );
+    const tr = steps.find((s) => s.id === "text-rewrite")!;
+    assert.equal(tr.apply, false, "must NOT rewrite away the brand/subject term");
+    assert.equal(tr.instruction, "");
+  });
+
+  await check("parseDirectorResponse: text-rewrite skipped when there is no editable headline", () => {
+    const steps = artDirector.parseDirectorResponse(
+      { "text-rewrite": { apply: true, old: "", new: "" } },
+      "OpenClaw",
+    );
+    const tr = steps.find((s) => s.id === "text-rewrite")!;
+    assert.equal(tr.apply, false, "no editable text → no rewrite");
+  });
+
+  await check("parseDirectorResponse: brand logo/mascot is NEVER swapped; generic icon still swappable", () => {
+    // The subject brand's own mascot/logo → leave untouched.
+    const brandLogo = artDirector.parseDirectorResponse(
+      { logo: { apply: true, icon_or_company: "OpenClaw mascot", target_icon_or_company: "robot icon" } },
+      "OpenClaw",
+    );
+    assert.equal(brandLogo.find((s) => s.id === "logo")!.apply, false, "the brand's own logo/mascot is off-limits");
+    // A generic, unrelated stock icon → still swappable.
+    const genericLogo = artDirector.parseDirectorResponse(
+      { logo: { apply: true, icon_or_company: "gear icon", target_icon_or_company: "bell icon" } },
+      "OpenClaw",
+    );
+    const g = genericLogo.find((s) => s.id === "logo")!;
+    assert.equal(g.apply, true, "a generic icon is still swappable");
+    assert.equal(g.instruction, "change the gear icon logo to another type of a bell icon logo");
+    // Reject even when only the TARGET is the brand (can't introduce the brand mark either).
+    const intoBrand = artDirector.parseDirectorResponse(
+      { logo: { apply: true, icon_or_company: "gear icon", target_icon_or_company: "OpenClaw logo" } },
+      "OpenClaw",
+    );
+    assert.equal(intoBrand.find((s) => s.id === "logo")!.apply, false, "don't swap a generic icon INTO the brand mark");
   });
 
   // ── recreation chain: EXACT verbatim prompts + STEP-2 art-director image ────
@@ -365,10 +422,19 @@ async function main() {
       ),
       "optional font templated verbatim",
     );
-    // Step 8 (ALWAYS, last): subtle background pop, positions kept, identity anchored.
-    assert.ok(sent[sent.length - 1].instruction.includes(recreate.STEP8_PROMPT), "step 8 core verbatim");
-    assert.match(sent[sent.length - 1].instruction, /reference headshot/i, "step 8 re-anchors the identity");
-    assert.match(sent[sent.length - 1].instruction, /position of every element exactly the same/i, "keeps layout");
+    // Step 8 (ALWAYS): subtle background pop, positions kept, identity anchored.
+    // It is now SECOND-to-last — the final re-anchor step runs after it.
+    const bg = sent[sent.length - 2];
+    assert.ok(bg.instruction.includes(recreate.STEP8_PROMPT), "step 8 core verbatim");
+    assert.match(bg.instruction, /reference headshot/i, "step 8 re-anchors the identity");
+    assert.match(bg.instruction, /position of every element exactly the same/i, "keeps layout");
+    // FINAL step (ALWAYS, genuinely LAST): re-anchor the character so the final
+    // face matches the reference exactly, carrying the character ref as the last image.
+    const last = sent[sent.length - 1];
+    assert.ok(last.instruction.includes(recreate.FINAL_CHARACTER_PROMPT), "final re-anchor core verbatim");
+    assert.match(last.instruction, /EXACTLY the man in the reference image/i, "final step re-applies the reference man");
+    assert.match(last.instruction, /reference headshot/i, "final step still threads FACE_LOCK + the ref");
+    assert.equal(last.imageCount, 2, "final step carries the character ref as the last image");
     // The art-director analysed the STEP-2 RESULT image (current working image),
     // NOT the source thumbnail. Step 1 produced "img1", step 2 produced "img2".
     assert.ok(directorSawImage, "director was called");
@@ -377,22 +443,28 @@ async function main() {
     void res;
   });
 
-  await check("the chain always runs the background edit even when the art-director returns nothing", async () => {
+  await check("the chain always runs background then the final re-anchor even when the art-director returns nothing", async () => {
     const sent: string[] = [];
     const editImage = async (opts: any) => {
       sent.push(opts.instruction);
       return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
     };
-    await recreate.recreateThumbnail(
+    const res = await recreate.recreateThumbnail(
       {
         sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
         characterBytes: Buffer.from("C"), keyword: "k", videoType: "Viral", expression: "surprise",
       },
       { editImage, artDirect: async () => [], finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
     );
-    // 3 edits: replace character, t-shirt, background (no optional steps).
-    assert.equal(sent.length, 3);
-    assert.match(sent[2], /background.*(pop|contrast|vibrant)/i);
+    // 4 edits: replace character, t-shirt, background, refine-character (no optionals).
+    assert.equal(sent.length, 4);
+    assert.match(sent[2], /background.*(pop|contrast|vibrant)/i, "background is third");
+    assert.match(sent[3], /EXACTLY the man in the reference image/i, "final re-anchor runs LAST, after background");
+    // The chain records the final re-anchor step with the expected id/label.
+    const refine = res.steps.find((s) => s.id === "refine-character");
+    assert.ok(refine, "the final re-anchor is recorded as a chain step");
+    assert.equal(refine!.label, "Refine character");
+    assert.equal(refine!.applied, true);
   });
 
   await check("a failed edit keeps the last good image and the chain continues to the end", async () => {
