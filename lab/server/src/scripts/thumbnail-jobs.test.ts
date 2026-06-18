@@ -412,13 +412,18 @@ async function main() {
       },
       finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/c.png", file: "/x", steps }),
     };
-    // Inject a statement writer so no AI/network is touched.
-    const writeStatements = async (_k: string, n: number) =>
-      Array.from({ length: n }, (_, i) => ({ text: `STOP DOING THIS ${i}`, emphasis: "STOP" }));
+    // Inject a variation writer so no AI/network is touched.
+    const writeVariations = async (_k: string, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        text: `STOP DOING THIS ${i}`,
+        emphasis: "STOP",
+        expressionId: "smile",
+        placement: "right" as const,
+      }));
     const job = orchestrate.startContrarianJob(
       { keyword: "video ads", mode: "gemini-pro" },
       recreateDeps as any,
-      writeStatements,
+      writeVariations,
     );
     await waitUntil(() => job.done);
     assert.equal(job.variants.length, 3, "always 3 originals");
@@ -437,7 +442,8 @@ async function main() {
     const job = orchestrate.startContrarianJob(
       { keyword: "k", mode: "gemini-pro" },
       { editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" }) } as any,
-      async (_k, n) => Array.from({ length: n }, () => ({ text: "STOP NOW", emphasis: "STOP" })),
+      async (_k, n) =>
+        Array.from({ length: n }, () => ({ text: "STOP NOW", emphasis: "STOP", expressionId: "smile", placement: "right" as const })),
     );
     await waitUntil(() => job.done);
     assert.ok(job.variants.every((v) => v.status === "error"), "all variants error without a background");

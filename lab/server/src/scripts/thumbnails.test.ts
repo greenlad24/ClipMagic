@@ -1080,25 +1080,35 @@ async function main() {
     assert.ok(!contrarian.hasMoneyClaim("STOP POSTING DAILY"));
   });
 
-  await check("normalizeContrarianStatements drops money + over-long, fixes emphasis", () => {
-    const out = contrarian.normalizeContrarianStatements({
-      statements: [
-        { text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" }, // keep
-        { text: "Make $40M At 20", emphasis: "$40M" }, // DROP (money)
-        { text: "this statement has way too many words to ever fit", emphasis: "words" }, // DROP (>7)
-        { text: "STOP POSTING DAILY", emphasis: "elsewhere" }, // emphasis not in text → last word
-      ],
-    });
+  await check("normalizeContrarianVariations drops money + over-long, fixes emphasis + validates cast", () => {
+    const out = contrarian.normalizeContrarianVariations(
+      {
+        variations: [
+          { text: "What 99% Don't Know", emphasis: "99%", expression: "surprise", placement: "left" }, // keep (% is fine)
+          { text: "Make $40M At 20", emphasis: "$40M", expression: "calm", placement: "right" }, // DROP (money)
+          { text: "this statement has way too many words to ever fit", emphasis: "words", expression: "calm", placement: "left" }, // DROP (>7)
+          { text: "STOP POSTING DAILY", emphasis: "elsewhere", expression: "nope", placement: "sideways" }, // emphasis+cast fixed
+        ],
+      },
+      ["smile", "surprise", "calm"],
+    );
     assert.equal(out.length, 2, "money + over-long dropped");
-    assert.deepEqual(out[0], { text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" });
-    assert.equal(out[1].text, "STOP POSTING DAILY");
-    assert.equal(out[1].emphasis, "DAILY", "bad emphasis falls back to the last word");
+    assert.equal(out[0].text, "What 99% Don't Know");
+    assert.equal(out[0].expressionId, "surprise", "valid cast kept");
+    assert.equal(out[1].emphasis, "DAILY", "bad emphasis → last word");
+    assert.equal(out[1].expressionId, "", "unknown cast cleared (pad will assign)");
   });
 
-  await check("padContrarianStatements always reaches the requested count (money-free)", () => {
-    const padded = contrarian.padContrarianStatements([{ text: "STOP NOW", emphasis: "STOP" }], 3);
+  await check("padContrarianVariations reaches the count, money-free, with placement + cast filled", () => {
+    const padded = contrarian.padContrarianVariations(
+      [{ text: "STOP NOW", emphasis: "STOP", expressionId: "", placement: "" as any }],
+      3,
+      ["smile", "surprise"],
+    );
     assert.equal(padded.length, 3);
-    assert.ok(padded.every((s) => !contrarian.hasMoneyClaim(s.text)), "fallbacks carry no money claim");
+    assert.ok(padded.every((v) => !contrarian.hasMoneyClaim(v.text)), "fallbacks carry no money claim");
+    assert.ok(padded.every((v) => ["left", "center", "right"].includes(v.placement)), "every variation has a placement");
+    assert.ok(padded.every((v) => ["smile", "surprise"].includes(v.expressionId)), "every cast is an available id");
   });
 
   await check("chooseContrarianBackgrounds cycles to always fill the count", () => {
@@ -1107,21 +1117,21 @@ async function main() {
     assert.deepEqual(contrarian.chooseContrarianBackgrounds([], 3), [], "none → empty");
   });
 
-  await check("buildContrarianPrompt encodes the 3 elements + text style + no-money rule", () => {
-    const p = contrarian.buildContrarianPrompt({ text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" });
+  await check("buildContrarianPrompt encodes the 3 elements + Helvetica + text style + no-money rule", () => {
+    const p = contrarian.buildContrarianPrompt({ text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" }, "right");
     assert.match(p, /FIRST image as the full background/i, "background element");
     assert.match(p, /man from the SECOND image/i, "character element");
     assert.match(p, /DON'T RUN VIDEO ADS/, "the statement text");
+    assert.match(p, /HELVETICA BLACK \/ HELVETICA BOLD/i, "Helvetica font specified");
     assert.match(p, /BLURRED BLACK DROP SHADOW.*25% opacity/i, "white drop-shadow style");
     assert.match(p, /"VIDEO ADS" are WHITE text inside a SOLID RED BOX with slightly ROUNDED/i, "red rounded emphasis box");
     assert.match(p, /NO money/i, "the no-money rule is stated");
   });
 
-  await check("buildContrarianPrompt honours a placement directive", () => {
-    const right = contrarian.buildContrarianPrompt({ text: "STOP NOW", emphasis: "STOP" }, "right");
-    assert.match(right, /ALL THE WAY to the RIGHT/i, "forced to the right");
-    const free = contrarian.buildContrarianPrompt({ text: "STOP NOW", emphasis: "STOP" }, null);
-    assert.match(free, /positioned to ONE side/i, "no directive → free side");
+  await check("buildContrarianPrompt lays out each placement (left/center/right)", () => {
+    assert.match(contrarian.buildContrarianPrompt({ text: "A B", emphasis: "B" }, "left"), /ALL THE WAY to the LEFT/i);
+    assert.match(contrarian.buildContrarianPrompt({ text: "A B", emphasis: "B" }, "right"), /ALL THE WAY to the RIGHT/i);
+    assert.match(contrarian.buildContrarianPrompt({ text: "A B", emphasis: "B" }, "center"), /in the CENTER/i);
   });
 
   // ── placement parsed from the character NAME ────────────────────────────────

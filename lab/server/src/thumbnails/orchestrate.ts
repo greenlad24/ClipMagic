@@ -29,10 +29,10 @@ import {
 } from "./artDirector.js";
 import { recreateThumbnail, composeContrarianThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
 import {
-  generateContrarianStatements,
+  generateContrarianVariations,
   chooseContrarianBackgrounds,
   buildContrarianPrompt,
-  type ContrarianStatement,
+  type ContrarianVariation,
 } from "./contrarian.js";
 import {
   providersForMode,
@@ -450,59 +450,55 @@ export async function runThumbnailJob(
 
 // ── Contrarian originals (the second, parallel workflow) ──────────────────────
 // Builds 3 ORIGINAL thumbnails from scratch: an uploaded BACKGROUND + the
-// CHARACTER + a short styled CONTRARIAN statement (no money claims). Reuses the
-// SAME job store so the UI polls it identically and it runs in parallel with a
-// recreation job. Backgrounds are reused (cycled) to always reach 3.
+// CHARACTER + a short styled CONTRARIAN statement (no money claims). An
+// art-director copywriter picks, PER variation, the statement + emphasis + the
+// best-fit expression + the placement (varied). A placement directive in the
+// chosen expression's name still overrides. Reuses the SAME job store so the UI
+// polls it identically and it runs in parallel with a recreation job. Backgrounds
+// are reused (cycled) to always reach 3.
 
-/** Prefer an intense/serious look for contrarian originals, else first available. */
-function pickContrarianExpression(available: AvailableExpression[]): Expression | undefined {
-  const ids = available.map((e) => e.id);
-  for (const pref of ["secret", "calm", "surprise", "smile"]) if (ids.includes(pref)) return pref;
-  return ids[0];
-}
-
-/** Injectable statement writer (so the job can run offline in tests). */
-export type WriteStatementsFn = (keyword: string, count: number) => Promise<ContrarianStatement[]>;
+/** Injectable variation writer (so the job can run offline in tests). */
+export type WriteVariationsFn = (
+  keyword: string,
+  count: number,
+  available: AvailableExpression[],
+) => Promise<ContrarianVariation[]>;
 
 const CONTRARIAN_COUNT = 3;
 
 export function startContrarianJob(
   input: { keyword: string; mode?: GenerationMode; provider?: ImageProvider },
   recreateDeps?: RecreateDeps,
-  writeStatements: WriteStatementsFn = (k, n) => generateContrarianStatements(k, n),
+  writeVariations: WriteVariationsFn = (k, n, a) => generateContrarianVariations(k, n, a),
 ): ThumbnailJob {
   const available = availableExpressionOptions();
-  const expression = pickContrarianExpression(available);
   const runs = providersForMode(input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE);
-  // Seed 3 queued variants (no source thumbnail — these are originals).
+  // Seed 3 queued variants (no source thumbnail — these are originals). The
+  // per-variation expression is filled once the copywriter runs.
   const job = createJob(
     Array.from({ length: CONTRARIAN_COUNT }, (_, i) => ({
       videoId: `contrarian-${i + 1}`,
       sourceThumbnailUrl: "",
-      expression: expression ?? "—",
+      expression: available[0]?.id ?? "—",
       providers: runs.map((r) => ({ provider: r.provider, label: r.label })),
     })),
   );
-  void runContrarianJob(job, input, expression, recreateDeps, writeStatements);
+  void runContrarianJob(job, input, available, recreateDeps, writeVariations);
   return job;
 }
 
 async function runContrarianJob(
   job: ThumbnailJob,
   input: { keyword: string; mode?: GenerationMode; provider?: ImageProvider },
-  expression: Expression | undefined,
+  available: AvailableExpression[],
   recreateDeps?: RecreateDeps,
-  writeStatements: WriteStatementsFn = (k, n) => generateContrarianStatements(k, n),
+  writeVariations: WriteVariationsFn = (k, n, a) => generateContrarianVariations(k, n, a),
 ): Promise<void> {
   const run = providersForMode(input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE)[0];
-  // Forced side from the chosen expression's name (e.g. "…place on the right").
-  const chosenLabel = availableExpressionOptions().find((e) => e.id === expression)?.label ?? "";
-  const placement = placementFromLabel(chosenLabel);
   try {
     // Gate: need a character expression + at least one uploaded background.
-    const characterBytes = expression ? readCharacterImage(expression) : null;
     const bgCandidates = loadBackgroundCandidates();
-    if (!characterBytes) {
+    if (available.length === 0) {
       for (let i = 0; i < job.variants.length; i++) {
         finishVariant(job, i, { error: "Upload at least one character expression to make contrarian originals." });
       }
@@ -517,21 +513,30 @@ async function runContrarianJob(
       return;
     }
 
-    // Write the statements + choose backgrounds (cycled to fill all 3).
-    const statements = await writeStatements(input.keyword, job.variants.length);
+    // Art-direct the variations (copy + emphasis + cast + placement) + backgrounds.
+    const variations = await writeVariations(input.keyword, job.variants.length, available);
     const chosenBgIds = chooseContrarianBackgrounds(bgCandidates.map((c) => c.id), job.variants.length);
 
     for (let i = 0; i < job.variants.length; i++) {
-      const statement = statements[i];
+      const v = variations[i];
       const bg = bgCandidates.find((c) => c.id === chosenBgIds[i]) ?? bgCandidates[0];
+      // The cast expression (validated to an available id by the writer's pad step).
+      const exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
+      const characterBytes = readCharacterImage(exprId);
+      // A placement directive in the chosen expression's NAME overrides the
+      // copywriter's varied placement.
+      const label = available.find((e) => e.id === exprId)?.label ?? "";
+      const placement = placementFromLabel(label) ?? v.placement;
+      job.variants[i].expression = exprId;
       updateVariant(job, i, { status: "running", stepLabel: "Composing original", percent: phasePercent("swap", 0) });
       try {
+        if (!characterBytes) throw new Error(`Character image for "${exprId}" is missing.`);
         const result = await composeContrarianThumbnail(
           {
             backgroundBytes: bg.bytes,
             backgroundMime: bg.mime,
             characterBytes,
-            instruction: buildContrarianPrompt(statement, placement),
+            instruction: buildContrarianPrompt(v, placement),
             provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
             imageSize: run?.imageSize,
             onProgress: ({ stepLabel, percent }) =>
