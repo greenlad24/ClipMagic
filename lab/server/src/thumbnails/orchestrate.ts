@@ -751,6 +751,10 @@ async function runContrarianJob(
             backgroundMime: bg.mime,
             characterBytes,
             instruction: buildContrarianComposePrompt(placement, template.textArea),
+            // Programmatic composite: which side + leave the headline strip clear
+            // (top-strike has text up top → drop the head lower).
+            placement,
+            headTopFrac: template.id === "top-strike" ? 0.2 : 0.05,
             overlay: { template, text: v.text, emphasis: v.emphasis },
             provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
             imageSize: run?.imageSize,

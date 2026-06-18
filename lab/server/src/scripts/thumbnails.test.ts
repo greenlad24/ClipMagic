@@ -1252,6 +1252,109 @@ async function main() {
     });
   });
 
+  // ── programmatic composite (workflow 2: exact character, big face) ──────────
+  const composite = await import("../thumbnails/composite.js");
+  await check("rowSpans returns the silhouette's per-row L/R extent (skips empty rows)", () => {
+    // 4x3 alpha: row0 empty, row1 has cols1..2, row2 has cols0..3.
+    const A = [0, 0, 0, 0, /*r1*/ 0, 255, 255, 0, /*r2*/ 255, 255, 255, 255];
+    const spans = composite.rowSpans(A, 4, 3);
+    assert.deepEqual(spans, [
+      { row: 1, l: 1, r: 2, width: 2 },
+      { row: 2, l: 0, r: 3, width: 4 },
+    ]);
+  });
+
+  await check("detectHead finds the NECK (narrowing) before the shoulders widen", () => {
+    // Rows 0..3 = head (width 6), row4 = neck (width 2), rows 5..7 = shoulders (width 10).
+    const spans = [
+      { row: 0, l: 2, r: 7, width: 6 },
+      { row: 1, l: 2, r: 7, width: 6 },
+      { row: 2, l: 2, r: 7, width: 6 },
+      { row: 3, l: 3, r: 6, width: 4 },
+      { row: 4, l: 4, r: 5, width: 2 },
+      { row: 5, l: 0, r: 9, width: 10 },
+      { row: 6, l: 0, r: 9, width: 10 },
+      { row: 7, l: 0, r: 9, width: 10 },
+    ];
+    const head = composite.detectHead(spans);
+    assert.equal(head.headTopRow, 0);
+    assert.equal(head.headBottomRow, 4, "head ends at the neck row, not the shoulders");
+  });
+
+  await check("detectHead treats a neck-less headshot as all head", () => {
+    const spans = [
+      { row: 0, l: 0, r: 9, width: 10 },
+      { row: 1, l: 0, r: 9, width: 10 },
+      { row: 2, l: 0, r: 9, width: 10 },
+    ];
+    assert.equal(composite.detectHead(spans).headBottomRow, 2, "no neck → whole silhouette is head");
+  });
+
+  await check("computeCharacterPlacement scales the HEAD to ≥70% of frame height", () => {
+    // head spans rows 0..71 → headH=72. Target faceFrac 0.72 of a 1000px frame = 720 → scale 10.
+    const placed = composite.computeCharacterPlacement({
+      head: { headTopRow: 0, headBottomRow: 71, headCenterX: 50 },
+      cutoutW: 100,
+      cutoutH: 200,
+      frameW: 1000,
+      frameH: 1000,
+      placement: "right",
+    });
+    const renderedHeadH = (placed.scale * 72);
+    assert.ok(renderedHeadH >= 1000 * 0.7, `head fills ≥70% height (got ${Math.round(renderedHeadH)})`);
+    // "right" placement anchors the head centre at 70% of the width.
+    assert.ok(Math.abs(placed.destX + 50 * placed.scale - 700) < 1, "head centred at 0.70·W for right placement");
+  });
+
+  await check("composeContrarianThumbnail uses the programmatic composite (no AI when it returns bytes)", async () => {
+    let aiCalled = false;
+    const result = await recreate.composeContrarianThumbnail(
+      {
+        backgroundBytes: Buffer.from("bg"),
+        backgroundMime: "image/png",
+        characterBytes: Buffer.from("char"),
+        instruction: "(ai fallback prompt)",
+        placement: "right",
+      },
+      {
+        composite: async () => Buffer.from("COMPOSITED-PNG"),
+        editImage: async () => {
+          aiCalled = true;
+          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("ai"), mimeType: "image/png" };
+        },
+        finalize: async (cur: any, steps: any) => {
+          // The finalize receives the PROGRAMMATIC bytes, not an AI render.
+          assert.equal(cur.data.toString(), "COMPOSITED-PNG");
+          return { outputUrl: "/api/outputs/thumbnails/c.jpg", file: "/x", steps };
+        },
+      },
+    );
+    assert.equal(aiCalled, false, "the character never goes through the image model");
+    assert.ok(result.steps.some((s) => s.id === "compose" && /1:1/.test(s.label) && s.applied));
+  });
+
+  await check("composeContrarianThumbnail FALLS BACK to AI when the composite is unavailable", async () => {
+    let aiCalled = false;
+    await recreate.composeContrarianThumbnail(
+      {
+        backgroundBytes: Buffer.from("bg"),
+        backgroundMime: "image/png",
+        characterBytes: Buffer.from("char"),
+        instruction: "(ai fallback prompt)",
+        placement: "center",
+      },
+      {
+        composite: async () => null, // canvas/removal unavailable
+        editImage: async () => {
+          aiCalled = true;
+          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("ai"), mimeType: "image/png" };
+        },
+        finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
+      },
+    );
+    assert.equal(aiCalled, true, "AI compose runs only as the fallback");
+  });
+
   await check("toWords keeps natural order + flags the emphasis word(s) WHEREVER they are", () => {
     // Emphasis at the END (the reported bug): NOT reordered to the front.
     assert.deepEqual(overlay.toWords("AI FILMMAKING WITH TOPVIEW", "TOPVIEW"), [

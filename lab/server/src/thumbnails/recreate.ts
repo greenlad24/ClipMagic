@@ -63,6 +63,7 @@ import {
   type TextRewrite,
 } from "./artDirector.js";
 import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
+import { compositeContrarian, type Placement } from "./composite.js";
 import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
 import type { ContrarianTemplate } from "./textOverlay.js";
@@ -588,21 +589,32 @@ export async function composeContrarianThumbnail(
     backgroundBytes: Buffer;
     backgroundMime: string;
     characterBytes: Buffer;
-    /** The text-free compose instruction (see contrarian.buildContrarianComposePrompt). */
+    /** The text-free compose instruction — only used by the AI FALLBACK path. */
     instruction: string;
+    /** Which side the character sits on (drives the programmatic placement). */
+    placement?: Placement;
+    /** Head-top inset (frame-height fraction) so the headline strip stays clear. */
+    headTopFrac?: number;
     /** When set, the headline is drawn programmatically onto the finalized image. */
     overlay?: { template: ContrarianTemplate; text: string; emphasis: string };
     provider?: ImageProvider;
     imageSize?: string;
     onProgress?: ProgressFn;
   },
-  deps: { editImage?: EditFn; finalize?: (current: EditImage, steps: ChainStep[]) => Promise<RecreateResult>; upscale?: UpscaleDeps } = {},
+  deps: {
+    editImage?: EditFn;
+    /** Injectable programmatic composite (defaults to the real canvas one). */
+    composite?: typeof compositeContrarian;
+    finalize?: (current: EditImage, steps: ChainStep[]) => Promise<RecreateResult>;
+    upscale?: UpscaleDeps;
+  } = {},
 ): Promise<RecreateResult> {
   const provider = input.provider ?? DEFAULT_IMAGE_PROVIDER;
   const editImage =
     deps.editImage ??
     ((opts: { instruction: string; images: EditImage[] }) =>
       editImageWith(provider, { ...opts, imageSize: input.imageSize }));
+  const composite = deps.composite ?? compositeContrarian;
   const finalizeFn = deps.finalize ?? ((current, steps) => finalize(current, steps, deps.upscale));
   const report = (stepLabel: string, percent: number) => {
     try {
@@ -620,19 +632,45 @@ export async function composeContrarianThumbnail(
   let current: EditImage = background;
 
   report(PHASE_LABEL.swap, phasePercent("swap", 0));
-  const sent = withWidescreen(input.instruction);
+  // PRIMARY: composite the EXACT character pixels (cut out, head ≥70% of height)
+  // onto the background with code — no image model touches the character, so it
+  // can't be warped, regenerated or cut. FALLBACK: only if the programmatic path
+  // is unavailable (no canvas / background-removal), use the AI compose so a
+  // thumbnail still finishes.
+  let composited: Buffer | null = null;
   try {
-    const res = await editImage({ instruction: sent, images: [background, character] });
-    current = { data: res.bytes, mimeType: res.mimeType };
-    steps.push({ id: "compose", label: "Compose original", instruction: sent, applied: true });
-  } catch (e) {
+    composited = await composite({
+      backgroundBytes: input.backgroundBytes,
+      characterBytes: input.characterBytes,
+      placement: input.placement ?? "center",
+      headTopFrac: input.headTopFrac,
+    });
+  } catch {
+    composited = null;
+  }
+  if (composited) {
+    current = { data: composited, mimeType: "image/png" };
     steps.push({
       id: "compose",
-      label: "Compose original",
-      instruction: sent,
-      applied: false,
-      note: e instanceof Error ? e.message : String(e),
+      label: "Compose original (1:1)",
+      instruction: `programmatic composite — exact character, head ≥70% height, ${input.placement ?? "center"}`,
+      applied: true,
     });
+  } else {
+    const sent = withWidescreen(input.instruction);
+    try {
+      const res = await editImage({ instruction: sent, images: [background, character] });
+      current = { data: res.bytes, mimeType: res.mimeType };
+      steps.push({ id: "compose", label: "Compose original", instruction: sent, applied: true, note: "AI fallback (programmatic composite unavailable)" });
+    } catch (e) {
+      steps.push({
+        id: "compose",
+        label: "Compose original",
+        instruction: sent,
+        applied: false,
+        note: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
