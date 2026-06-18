@@ -12,6 +12,7 @@ import {
   type ThumbnailCharacterState,
   type ThumbnailExpression,
   type ThumbnailVideoType,
+  type ThumbnailProvider,
   type ThumbnailSearchResult,
   type ThumbnailJobStatus,
   type ThumbnailJobVariant,
@@ -72,6 +73,13 @@ const EXPRESSION_HINT: Record<ThumbnailExpression, string> = {
 };
 const VIDEO_TYPES: ThumbnailVideoType[] = ['Tutorial', 'Viral', 'Secret', 'Review'];
 
+/** Image-edit providers offered in the generate UI (label + one-line hint). */
+const PROVIDER_OPTIONS: { value: ThumbnailProvider; label: string; hint: string }[] = [
+  { value: 'gemini-pro', label: 'Nano Banana Pro (sharpest, best likeness)', hint: 'Highest quality — 2K renders, strongest face match. ~$0.13/image, and the chain runs several edits per thumbnail.' },
+  { value: 'gemini-flash', label: 'Nano Banana (Flash, cheap)', hint: 'Fast and inexpensive — good for drafts and high volume.' },
+  { value: 'openai', label: 'OpenAI (gpt-image-1)', hint: 'OpenAI image model with high input-fidelity. Requires an OpenAI API key.' },
+];
+
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -98,6 +106,7 @@ export default function ThumbnailDesignerPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
+  const [provider, setProvider] = useState<ThumbnailProvider>('gemini-pro');
   const [generating, setGenerating] = useState(false);
   const [job, setJob] = useState<ThumbnailJobStatus | null>(null);
 
@@ -187,11 +196,15 @@ export default function ThumbnailDesignerPage() {
       toast.info('Pick at least one thumbnail to recreate.');
       return;
     }
+    if (provider === 'openai' && !status?.openaiConfigured) {
+      toast.error('Add your OpenAI API key in Settings → Thumbnail Designer to use gpt-image-1.');
+      return;
+    }
     stopPolling();
     setGenerating(true);
     setJob(null);
     try {
-      const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks });
+      const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks, provider });
 
       const tick = async () => {
         try {
@@ -374,6 +387,29 @@ export default function ThumbnailDesignerPage() {
                           </button>
                         );
                       })}
+                    </div>
+                    {/* Provider selector — which image model drives the chain. */}
+                    <div className="space-y-1.5 sm:max-w-md">
+                      <label className="text-xs font-medium text-muted-foreground block">Image model</label>
+                      <Select value={provider} onValueChange={(v) => setProvider(v as ThumbnailProvider)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PROVIDER_OPTIONS.map((p) => {
+                            const disabled = p.value === 'openai' && !status?.openaiConfigured;
+                            return (
+                              <SelectItem key={p.value} value={p.value} disabled={disabled}>
+                                {p.label}
+                                {disabled ? ' — add OpenAI key in Settings' : ''}
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        {PROVIDER_OPTIONS.find((p) => p.value === provider)?.hint}
+                      </p>
                     </div>
                     <div className="space-y-1.5">
                       <Button onClick={onGenerate} disabled={generating || picks.length === 0} className="w-full sm:w-auto">

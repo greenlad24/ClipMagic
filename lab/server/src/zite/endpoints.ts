@@ -59,6 +59,7 @@ import {
 } from "../capture/autoScreencast.js";
 import { chromiumAvailable } from "../capture/chromium.js";
 import { nanoBananaConfigured } from "../thumbnails/nanoBanana.js";
+import { openAiConfigured, coerceProvider } from "../thumbnails/imageProviders.js";
 import { searchTopThumbnails, youtubeConfigured } from "../thumbnails/youtube.js";
 import {
   listCharacters,
@@ -2311,6 +2312,7 @@ function coerceVideoType(x: unknown): VideoType {
 /** Gate the UI: which keys are set + which expressions are uploaded. No values. */
 const thumbnailStatus: Handler = async () => ({
   geminiConfigured: nanoBananaConfigured(),
+  openaiConfigured: openAiConfigured(),
   youtubeConfigured: youtubeConfigured(),
   characters: listCharacters(),
   uploadedExpressions: uploadedExpressions(),
@@ -2345,6 +2347,7 @@ const startThumbnailGeneration: Handler = async (input) => {
     keyword: String(input?.keyword ?? ""),
     videoType: coerceVideoType(input?.videoType),
     picks,
+    provider: coerceProvider(input?.provider),
   });
   return { jobId: job.id };
 };
@@ -2379,6 +2382,7 @@ const generateThumbnails: Handler = async (input) => {
     keyword: String(input?.keyword ?? ""),
     videoType: coerceVideoType(input?.videoType),
     picks,
+    provider: coerceProvider(input?.provider),
   });
   return { variants };
 };

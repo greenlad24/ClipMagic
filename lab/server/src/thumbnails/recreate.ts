@@ -34,12 +34,12 @@ import crypto from "node:crypto";
 import { config } from "../config.js";
 import { probe, runFfmpeg } from "../render/ffmpeg.js";
 import {
-  editImage as defaultEditImage,
   thumbnailsDir,
   WIDESCREEN_PREAMBLE,
   type EditImage,
   type EditResult,
 } from "./nanoBanana.js";
+import { editImageWith, DEFAULT_IMAGE_PROVIDER, type ImageProvider } from "./imageProviders.js";
 import { buildCropScaleArgs, detectContentRect, TARGET_W, TARGET_H } from "./crop.js";
 import { artDirect as defaultArtDirect, type ArtDirectorStep } from "./artDirector.js";
 import { upscaleToThumbnail, type UpscaleDeps } from "./upscale.js";
@@ -134,6 +134,13 @@ export interface RecreateInput {
   keyword: string;
   videoType: VideoType;
   expression: Expression;
+  /**
+   * Which image-edit provider drives every step of the chain. Defaults to the
+   * sharpest option (Nano Banana Pro). The chain's `editImage` is defaulted to
+   * `(opts) => editImageWith(provider, opts)` so ALL steps — including the
+   * identity-anchoring re-renders — run on the chosen provider.
+   */
+  provider?: ImageProvider;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -167,7 +174,11 @@ export interface RecreateResult {
  * primitives so the chain runs with NO network, AI, ffmpeg, or upscaler binary.
  */
 export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps = {}): Promise<RecreateResult> {
-  const editImage = deps.editImage ?? defaultEditImage;
+  // Default the edit primitive to the chosen provider's router. Tests still inject
+  // `deps.editImage` directly (no network); production routes every step through
+  // editImageWith(provider, …) so the whole chain uses the picked provider.
+  const provider = input.provider ?? DEFAULT_IMAGE_PROVIDER;
+  const editImage = deps.editImage ?? ((opts: { instruction: string; images: EditImage[] }) => editImageWith(provider, opts));
   const artDirect = deps.artDirect ?? defaultArtDirect;
   const finalizeFn = deps.finalize ?? ((current, steps) => finalize(current, steps, deps.upscale));
   const report = (stepLabel: string, percent: number) => {
@@ -316,9 +327,13 @@ async function finalize(current: EditImage, steps: ChainStep[], upscaleDeps?: Up
       note: content ? `stripped bars: ${content.w}x${content.h}@${content.x},${content.y}` : undefined,
     });
 
-    // 2. Upscale (Real-ESRGAN → exactly 1920×1080, ffmpeg fallback).
+    // 2. Upscale (Real-ESRGAN → exactly 1920×1080, ffmpeg fallback). When the
+    //    chain image was already ≥ the 1920-wide target (gemini-pro 2K / openai
+    //    1536+), the crop step's lanczos pass already produced a crisp, clean
+    //    DOWNSCALE — so we skip the unsharp (which is only for scaling small
+    //    images UP) to avoid needlessly re-sharpening an already-sharp frame.
     const upscaleInput = fs.existsSync(croppedFile) ? croppedFile : stageFile;
-    const up = await upscaleToThumbnail(upscaleInput, outFile, upscaleDeps);
+    const up = await upscaleToThumbnail(upscaleInput, outFile, upscaleDeps, { sourceWidth: w });
     steps.push({
       id: "upscale",
       label: "Upscaling to 1080p",

@@ -130,26 +130,45 @@ export interface UpscaleResult {
   note?: string;
 }
 
+/** Per-call hints for the finalize stage (what the input actually is). */
+export interface UpscaleOpts {
+  /**
+   * Width (px) of the ORIGINAL chain image before the crop pass. When it's ≥ the
+   * 1920-wide target (gemini-pro 2K / openai 1536+), the crop's lanczos pass
+   * already produced a crisp DOWNSCALE, so the fallback skips the unsharp (which
+   * is only for scaling small images UP) to avoid needless re-sharpening.
+   */
+  sourceWidth?: number;
+}
+
 /**
  * Upscale `inputPath` (an already-16:9 image) to EXACTLY 1920×1080 at `outPath`.
  * Real-ESRGAN 4× then ffmpeg-resample when the binary is available; otherwise a
  * single ffmpeg lanczos scale. NEVER throws for a missing/failed upscaler — it
  * falls back. Only a total ffmpeg failure (which would already have failed the
  * crop stage) propagates.
+ *
+ * When the source was already ≥ 1920 wide (a large pro/openai output), the
+ * fallback does a PLAIN lanczos scale (no unsharp) — a clean downscale that
+ * doesn't soften; only a genuine UP-scale of a small image adds the unsharp.
  */
 export async function upscaleToThumbnail(
   inputPath: string,
   outPath: string,
   deps: UpscaleDeps = {},
+  opts: UpscaleOpts = {},
 ): Promise<UpscaleResult> {
   const enabled = deps.enabled ?? realesrganEnabled;
   const available = deps.available ?? (() => realesrganAvailable());
   const runRealesrgan = deps.runRealesrgan ?? defaultRealesrganRunner;
   const runFfmpegFn = deps.runFfmpegFn ?? ((args: string[], d: number) => runFfmpeg(args, d));
 
+  // A large source (≥ target width) was DOWNSCALED by the crop's lanczos pass and
+  // is already crisp → no unsharp. A small source is scaled UP → soften-guard it.
+  const downscaling = (opts.sourceWidth ?? 0) >= TARGET_W;
+
   const fallback = async (note?: string): Promise<UpscaleResult> => {
-    // Sharpened scale — this path scales a small chain image UP, so soften-guard it.
-    await runFfmpegFn(buildResampleArgs(inputPath, outPath, { sharpen: true }), 1);
+    await runFfmpegFn(buildResampleArgs(inputPath, outPath, { sharpen: !downscaling }), 1);
     return { file: outPath, method: "ffmpeg-fallback", note };
   };
 

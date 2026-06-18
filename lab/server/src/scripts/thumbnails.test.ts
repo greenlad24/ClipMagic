@@ -225,6 +225,116 @@ async function main() {
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
 
+  // ── image-provider router: routes to the right endpoint/model + request shape ─
+  const providers = await import("../thumbnails/imageProviders.js");
+
+  await check("editImageWith('gemini-pro') hits the Nano Banana Pro model with 2K + 16:9 imageConfig", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ values: { GEMINI_API_KEY: "gem-test-key" } });
+    let calledUrl = "";
+    let sentBody: any = null;
+    const data = Buffer.from("PROIMG").toString("base64");
+    const geminiFetch = async (url: string, init: any) => {
+      calledUrl = url;
+      sentBody = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inline_data: { mime_type: "image/png", data } }] } }] }) };
+    };
+    const res = await providers.editImageWith(
+      "gemini-pro",
+      { instruction: "edit", images: [{ data: Buffer.from("s"), mimeType: "image/jpeg" }] },
+      { geminiFetch },
+    );
+    assert.ok(calledUrl.includes(`models/${providers.NANO_BANANA_PRO_MODEL}:generateContent`), `should hit the pro model: ${calledUrl}`);
+    assert.equal(providers.NANO_BANANA_PRO_MODEL, "gemini-3-pro-image-preview");
+    // Same generateContent shape as flash, plus the pro resolution hint.
+    assert.deepEqual(sentBody.contents[0].parts[0], { text: "edit" });
+    assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, "2K");
+    assert.equal(fs.readFileSync(res.file).toString(), "PROIMG");
+    secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
+  });
+
+  await check("editImageWith('gemini-flash') hits the flash model (no imageSize) — backward-compat", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ values: { GEMINI_API_KEY: "gem-test-key" } });
+    let calledUrl = "";
+    let sentBody: any = null;
+    const data = Buffer.from("FLASHIMG").toString("base64");
+    const geminiFetch = async (url: string, init: any) => {
+      calledUrl = url;
+      sentBody = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inline_data: { mime_type: "image/png", data } }] } }] }) };
+    };
+    await providers.editImageWith(
+      "gemini-flash",
+      { instruction: "edit", images: [{ data: Buffer.from("s"), mimeType: "image/jpeg" }] },
+      { geminiFetch },
+    );
+    assert.ok(calledUrl.includes(`models/${nano.NANO_BANANA_MODEL}:generateContent`), `should hit the flash model: ${calledUrl}`);
+    assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, undefined, "flash request carries no imageSize");
+    secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
+  });
+
+  await check("editImageWith('openai') POSTs multipart to /images/edits with input_fidelity=high + the images, extracts b64", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ values: { OPENAI_API_KEY: "oai-test-key" } });
+    const captured: { url: string; auth: string; form?: FormData } = { url: "", auth: "" };
+    const data = Buffer.from("OAIIMG").toString("base64");
+    const openaiFetch = async (url: string, init: any) => {
+      captured.url = url;
+      captured.auth = init.headers.Authorization;
+      captured.form = init.body as FormData;
+      return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: data }] }) };
+    };
+    const res = await providers.editImageWith(
+      "openai",
+      { instruction: "edit", images: [{ data: Buffer.from("src"), mimeType: "image/jpeg" }, { data: Buffer.from("ref"), mimeType: "image/png" }] },
+      { openaiFetch },
+    );
+    assert.ok(captured.url.endsWith("/v1/images/edits"), `should POST to the edits endpoint: ${captured.url}`);
+    assert.equal(captured.auth, "Bearer oai-test-key");
+    const form = captured.form;
+    assert.ok(form, "a multipart FormData body was sent");
+    assert.equal(form.get("model"), "gpt-image-1");
+    assert.equal(form.get("prompt"), "edit");
+    assert.equal(form.get("size"), "1536x1024");
+    assert.equal(form.get("input_fidelity"), "high");
+    assert.equal(form.get("n"), "1");
+    // BOTH input images are appended under the image[] array field.
+    assert.equal(form.getAll("image[]").length, 2, "source + character ref both posted as image[]");
+    // The b64 response decodes to the saved file.
+    assert.equal(fs.readFileSync(res.file).toString(), "OAIIMG");
+    secrets.updateSettings({ remove: ["OPENAI_API_KEY"] });
+  });
+
+  await check("extractOpenAiImage decodes data[0].b64_json; null when missing", () => {
+    const b64 = Buffer.from("HELLO").toString("base64");
+    const img = providers.extractOpenAiImage({ data: [{ b64_json: b64 }] });
+    assert.equal(img!.data.toString(), "HELLO");
+    assert.equal(img!.mimeType, "image/png");
+    assert.equal(providers.extractOpenAiImage({ data: [] }), null);
+    assert.equal(providers.extractOpenAiImage({}), null);
+  });
+
+  await check("editImageWith('openai') errors clearly when the OpenAI key is missing", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ remove: ["OPENAI_API_KEY"] });
+    delete process.env.OPENAI_API_KEY;
+    await assert.rejects(
+      () => providers.editImageWith("openai", { instruction: "x", images: [{ data: Buffer.from("a"), mimeType: "image/png" }] }),
+      /OpenAI API key not configured/i,
+    );
+  });
+
+  await check("coerceProvider defaults to gemini-pro and accepts the three known providers", () => {
+    assert.equal(providers.coerceProvider(undefined), "gemini-pro");
+    assert.equal(providers.coerceProvider("nonsense"), "gemini-pro");
+    assert.equal(providers.coerceProvider("gemini-flash"), "gemini-flash");
+    assert.equal(providers.coerceProvider("openai"), "openai");
+    assert.equal(providers.coerceProvider("gemini-pro"), "gemini-pro");
+  });
+
   // ── crop/scale ffmpeg arg-builder (pure) — robust to ANY output size ────────
   const crop = await import("../thumbnails/crop.js");
 
@@ -323,36 +433,96 @@ async function main() {
     assert.ok(steps.every((s) => s.instruction === ""), "no instruction when not applied");
   });
 
-  await check("parseDirectorResponse: text-rewrite assembles the instruction + keeps the brand word", () => {
+  await check("parseDirectorResponse: text-rewrite (array) assembles one instruction per text block + keeps the brand word", () => {
+    // Rewrite BOTH a headline AND a secondary line; the brand word stays in the main text.
+    const steps = artDirector.parseDirectorResponse(
+      {
+        "text-rewrite": {
+          apply: true,
+          rewrites: [
+            { old: "OpenClaw is here", new: "I tried OpenClaw for 30 days" },
+            { old: "AI EMPLOYEE", new: "24/7 AI EMPLOYEE" },
+          ],
+        },
+      },
+      "OpenClaw",
+    );
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    assert.equal(trs.length, 2, "one step emitted per editable text block");
+    assert.ok(trs.every((s) => s.apply), "both rewrites apply");
+    assert.equal(
+      trs[0].instruction,
+      'change the text "OpenClaw is here" to "I tried OpenClaw for 30 days", keeping it in the same place, size and style',
+    );
+    assert.equal(
+      trs[1].instruction,
+      'change the text "AI EMPLOYEE" to "24/7 AI EMPLOYEE", keeping it in the same place, size and style',
+    );
+    // No leftover bracket placeholders in any emitted instruction.
+    assert.ok(trs.every((s) => !/\[|\]/.test(s.instruction)), "no unfilled bracket placeholders");
+  });
+
+  await check("parseDirectorResponse: legacy single {old,new} text-rewrite still works", () => {
     const steps = artDirector.parseDirectorResponse(
       { "text-rewrite": { apply: true, old: "OpenClaw is here", new: "I tried OpenClaw for 30 days" } },
       "OpenClaw",
     );
-    const tr = steps.find((s) => s.id === "text-rewrite")!;
-    assert.equal(tr.apply, true, "applies when the new headline keeps the brand word");
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    assert.equal(trs.length, 1);
+    assert.equal(trs[0].apply, true);
     assert.equal(
-      tr.instruction,
-      'change the headline text from "OpenClaw is here" to "I tried OpenClaw for 30 days", keeping it in the same place, size and style',
+      trs[0].instruction,
+      'change the text "OpenClaw is here" to "I tried OpenClaw for 30 days", keeping it in the same place, size and style',
     );
   });
 
-  await check("parseDirectorResponse: text-rewrite is REJECTED when the new headline drops the brand word", () => {
+  await check("parseDirectorResponse: ALL rewrites are REJECTED when none keeps the brand word", () => {
     const steps = artDirector.parseDirectorResponse(
-      { "text-rewrite": { apply: true, old: "OpenClaw is here", new: "I tried this for 30 days" } },
+      {
+        "text-rewrite": {
+          apply: true,
+          rewrites: [
+            { old: "OpenClaw is here", new: "I tried this for 30 days" },
+            { old: "AI EMPLOYEE", new: "24/7 AI EMPLOYEE" },
+          ],
+        },
+      },
       "OpenClaw",
     );
-    const tr = steps.find((s) => s.id === "text-rewrite")!;
-    assert.equal(tr.apply, false, "must NOT rewrite away the brand/subject term");
-    assert.equal(tr.instruction, "");
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    // The whole text-rewrite is dropped (one disabled placeholder, no instructions)
+    // so we never erase the subject from the thumbnail.
+    assert.equal(trs.length, 1, "a single disabled placeholder remains");
+    assert.equal(trs[0].apply, false, "must NOT rewrite if NO block keeps the brand/subject term");
+    assert.equal(trs[0].instruction, "");
   });
 
-  await check("parseDirectorResponse: text-rewrite skipped when there is no editable headline", () => {
+  await check("parseDirectorResponse: a secondary line WITHOUT the brand is allowed as long as the main text keeps it", () => {
     const steps = artDirector.parseDirectorResponse(
-      { "text-rewrite": { apply: true, old: "", new: "" } },
+      {
+        "text-rewrite": {
+          apply: true,
+          rewrites: [
+            { old: "old headline", new: "OpenClaw changed everything" }, // main keeps brand
+            { old: "sub line", new: "in just 24 hours" }, // secondary, no brand — fine
+          ],
+        },
+      },
       "OpenClaw",
     );
-    const tr = steps.find((s) => s.id === "text-rewrite")!;
-    assert.equal(tr.apply, false, "no editable text → no rewrite");
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    assert.equal(trs.length, 2, "both rewrites emitted once the main text anchors the brand");
+    assert.ok(trs.every((s) => s.apply));
+  });
+
+  await check("parseDirectorResponse: text-rewrite skipped when there is no editable text", () => {
+    const steps = artDirector.parseDirectorResponse(
+      { "text-rewrite": { apply: true, rewrites: [] } },
+      "OpenClaw",
+    );
+    const trs = steps.filter((s) => s.id === "text-rewrite");
+    assert.equal(trs.length, 1, "disabled placeholder");
+    assert.equal(trs[0].apply, false, "no editable text → no rewrite");
   });
 
   await check("parseDirectorResponse: brand logo/mascot is NEVER swapped; generic icon still swappable", () => {
@@ -486,6 +656,31 @@ async function main() {
     assert.match(outfit?.note ?? "", /safety block/);
     // Background edit (always-on) still ran afterwards.
     assert.ok(res.steps.find((s) => s.id === "background"), "background step still attempted");
+  });
+
+  await check("recreateThumbnail threads the chosen provider into the default edit primitive (no editImage dep)", async () => {
+    // With NO editImage injected, the chain defaults to editImageWith(provider,…).
+    // Clear keys so each step's edit fails with a PROVIDER-SPECIFIC error — the
+    // resilient chain records that note, proving which provider was routed to.
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ remove: ["GEMINI_API_KEY", "OPENAI_API_KEY"] });
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    const base = {
+      sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
+      characterBytes: Buffer.from("C"), keyword: "k", videoType: "Viral" as const, expression: "surprise" as const,
+    };
+    const finalize = async (_c: any, steps: any) => ({ outputUrl: "/o", file: "/x", steps });
+
+    const openaiRun = await recreate.recreateThumbnail({ ...base, provider: "openai" }, { artDirect: async () => [], finalize });
+    assert.match(openaiRun.steps[0].note ?? "", /OpenAI API key not configured/i, "openai provider routed to the OpenAI back-end");
+
+    const geminiRun = await recreate.recreateThumbnail({ ...base, provider: "gemini-pro" }, { artDirect: async () => [], finalize });
+    assert.match(geminiRun.steps[0].note ?? "", /Gemini API key not configured/i, "gemini-pro provider routed to the Gemini back-end");
+
+    // Default (no provider) → gemini-pro (the sharpest option).
+    const defaultRun = await recreate.recreateThumbnail({ ...base }, { artDirect: async () => [], finalize });
+    assert.match(defaultRun.steps[0].note ?? "", /Gemini API key not configured/i, "default provider is a Gemini path");
   });
 
   // ── 16:9 source selection: maxres → mqdefault, NEVER hqdefault ──────────────
@@ -668,56 +863,100 @@ async function main() {
     void secrets;
   });
 
-  // ── write-only guarantee for the two new keys ───────────────────────────────
+  // ── upscale: a LARGE source downscales cleanly (no needless re-sharpen) ──────
+  await check("upscaleToThumbnail does a PLAIN lanczos scale (no unsharp) for a large source (2K → 1080p)", async () => {
+    let vf = "";
+    const res = await upscale.upscaleToThumbnail("in.png", "out.png", {
+      available: () => false,
+      runRealesrgan: async () => { throw new Error("nope"); },
+      runFfmpegFn: async (args: string[]) => { vf = args[args.indexOf("-vf") + 1]; return {}; },
+    }, { sourceWidth: 2048 });
+    assert.equal(res.method, "ffmpeg-fallback");
+    assert.ok(!vf.includes("unsharp"), "a downscale of a large source must NOT add unsharp (clean lanczos only)");
+    assert.ok(vf.includes("scale=1920:1080:flags=lanczos"), "still resamples to exactly 1920x1080");
+  });
+
+  await check("upscaleToThumbnail still soften-guards (unsharp) when scaling a SMALL source UP", async () => {
+    let vf = "";
+    await upscale.upscaleToThumbnail("in.png", "out.png", {
+      available: () => false,
+      runRealesrgan: async () => { throw new Error("nope"); },
+      runFfmpegFn: async (args: string[]) => { vf = args[args.indexOf("-vf") + 1]; return {}; },
+    }, { sourceWidth: 1280 });
+    assert.ok(vf.includes("unsharp"), "a small upscaled source keeps the unsharp guard");
+  });
+
+  // ── write-only guarantee for the Thumbnail Designer keys ─────────────────────
   const secrets = await import("../settings/postizSecrets.js");
   const GEM = "gemini-secret-AAAA-1111";
   const YT = "youtube-secret-BBBB-2222";
-  await check("the two keys are in the registry under 'Thumbnail Designer'", () => {
-    for (const key of ["GEMINI_API_KEY", "YOUTUBE_DATA_API_KEY"]) {
+  const OAI = "openai-secret-CCCC-3333";
+  await check("the three keys are in the registry under 'Thumbnail Designer'", () => {
+    for (const key of ["GEMINI_API_KEY", "OPENAI_API_KEY", "YOUTUBE_DATA_API_KEY"]) {
       const def = secrets.POSTIZ_KEY_DEFS.find((d) => d.key === key);
       assert.ok(def, `${key} missing from the registry`);
       assert.equal(def!.group, "Thumbnail Designer");
     }
   });
 
-  await check("GEMINI/YOUTUBE values NEVER leak via getSettings/updateSettings (write-only)", () => {
+  await check("GEMINI/OPENAI/YOUTUBE values NEVER leak via getSettings/updateSettings (write-only)", () => {
     delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
     delete process.env.YOUTUBE_DATA_API_KEY;
     const responses = [
-      JSON.stringify(secrets.updateSettings({ values: { GEMINI_API_KEY: GEM, YOUTUBE_DATA_API_KEY: YT } })),
+      JSON.stringify(secrets.updateSettings({ values: { GEMINI_API_KEY: GEM, OPENAI_API_KEY: OAI, YOUTUBE_DATA_API_KEY: YT } })),
       JSON.stringify(secrets.getSettings()),
     ];
     for (const r of responses) {
       assert.ok(!r.includes(GEM), "a response leaked the Gemini key");
+      assert.ok(!r.includes(OAI), "a response leaked the OpenAI key");
       assert.ok(!r.includes(YT), "a response leaked the YouTube key");
     }
   });
 
-  await check("both keys are reported configured after save", () => {
+  await check("all three keys are reported configured after save", () => {
     const s = secrets.getSettings();
     assert.equal(s.keys.find((k) => k.key === "GEMINI_API_KEY")?.configured, true);
+    assert.equal(s.keys.find((k) => k.key === "OPENAI_API_KEY")?.configured, true);
     assert.equal(s.keys.find((k) => k.key === "YOUTUBE_DATA_API_KEY")?.configured, true);
   });
 
-  await check("server-only getters return the raw value for internal use", () => {
+  await check("server-only getters return the raw value for internal use (incl. OpenAI)", () => {
     delete process.env.GEMINI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
     delete process.env.YOUTUBE_DATA_API_KEY;
     assert.equal(secrets.getGeminiApiKey(), GEM);
+    assert.equal(secrets.getOpenAiApiKey(), OAI);
     assert.equal(secrets.getYoutubeDataApiKey(), YT);
   });
 
-  await check("neither key is emitted into the Postiz container env file", () => {
-    const text = secrets.buildEnvFileContents({ GEMINI_API_KEY: GEM, YOUTUBE_DATA_API_KEY: YT, POSTIZ_JWT_SECRET: "jwt" });
+  await check("none of the three keys is emitted into the Postiz container env file", () => {
+    const text = secrets.buildEnvFileContents({ GEMINI_API_KEY: GEM, OPENAI_API_KEY: OAI, YOUTUBE_DATA_API_KEY: YT, POSTIZ_JWT_SECRET: "jwt" });
     assert.ok(!text.includes("GEMINI_API_KEY"), "GEMINI_API_KEY leaked into the Postiz env file");
+    assert.ok(!text.includes("OPENAI_API_KEY"), "OPENAI_API_KEY leaked into the Postiz env file");
     assert.ok(!text.includes("YOUTUBE_DATA_API_KEY"), "YOUTUBE_DATA_API_KEY leaked into the Postiz env file");
-    assert.ok(!text.includes(GEM) && !text.includes(YT), "a key value leaked into the env file");
+    assert.ok(!text.includes(GEM) && !text.includes(OAI) && !text.includes(YT), "a key value leaked into the env file");
     assert.ok(text.includes("POSTIZ_JWT_SECRET="), "other keys should still be emitted");
+  });
+
+  await check("thumbnailStatus-style gate reports openaiConfigured from the store", () => {
+    // Mirror the endpoint's openAiConfigured() gate (no values exposed).
+    delete process.env.OPENAI_API_KEY;
+    assert.equal(providers.openAiConfigured(), true, "configured once OPENAI_API_KEY is saved");
+    secrets.updateSettings({ remove: ["OPENAI_API_KEY"] });
+    delete process.env.OPENAI_API_KEY;
+    assert.equal(providers.openAiConfigured(), false, "not configured once removed");
+    // restore for any later checks
+    secrets.updateSettings({ values: { OPENAI_API_KEY: OAI } });
   });
 
   await check("env var takes precedence over the store for the new getters", () => {
     process.env.GEMINI_API_KEY = "gem-env-override";
     assert.equal(secrets.getGeminiApiKey(), "gem-env-override");
     delete process.env.GEMINI_API_KEY;
+    process.env.OPENAI_API_KEY = "oai-env-override";
+    assert.equal(secrets.getOpenAiApiKey(), "oai-env-override");
+    delete process.env.OPENAI_API_KEY;
   });
 
   // cleanup

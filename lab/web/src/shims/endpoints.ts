@@ -140,9 +140,9 @@ export const analyzeThumbnailScript =
   endpoint<{ script: string }, ThumbnailScriptAnalysisOutputType>("analyzeThumbnailScript");
 export const searchThumbnails = endpoint<{ keyword: string }, SearchThumbnailsOutputType>("searchThumbnails");
 export const generateThumbnails =
-  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[] }, GenerateThumbnailsOutputType>("generateThumbnails");
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; provider?: ThumbnailProvider }, GenerateThumbnailsOutputType>("generateThumbnails");
 export const startThumbnailGeneration =
-  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[] }, { jobId: string }>("startThumbnailGeneration");
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; provider?: ThumbnailProvider }, { jobId: string }>("startThumbnailGeneration");
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
 export const listThumbnailCharacters =
@@ -155,6 +155,8 @@ export const deleteThumbnailCharacter =
 // ── Thumbnail Designer types ─────────────────────────────────────────────────
 export type ThumbnailExpression = 'smile' | 'surprise' | 'secret' | 'calm';
 export type ThumbnailVideoType = 'Tutorial' | 'Viral' | 'Secret' | 'Review';
+/** Image-edit provider that drives the recreation chain. */
+export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash' | 'openai';
 export type ThumbnailCharacterState = {
   expression: ThumbnailExpression;
   uploaded: boolean;
@@ -163,6 +165,7 @@ export type ThumbnailCharacterState = {
 };
 export type ThumbnailStatusOutputType = {
   geminiConfigured: boolean;
+  openaiConfigured: boolean;
   youtubeConfigured: boolean;
   characters: ThumbnailCharacterState[];
   uploadedExpressions: ThumbnailExpression[];

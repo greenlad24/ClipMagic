@@ -12,8 +12,13 @@
  *   device-screen — change the character/screen inside an on-screen device.
  *   font          — restyle the headline text's font, keeping color + shape.
  *   bold-text     — make a specific text string bold.
- *   text-rewrite  — rewrite the headline to a punchier, higher-CTR version,
- *                   ALWAYS keeping the brand/subject term (the keyword) intact.
+ *   text-rewrite  — rewrite EVERY editable text element (e.g. a headline AND a
+ *                   secondary line like "24/7 AI EMPLOYEE") to a punchier,
+ *                   higher-CTR version so the recreation's copy no longer mirrors
+ *                   the original — ALWAYS keeping the brand/subject term (the
+ *                   keyword) intact in at least the main text, and NEVER inventing
+ *                   a different brand. The director returns an ARRAY of {old,new}
+ *                   rewrites; each becomes its own edit instruction.
  *   logo          — swap a GENERIC/unrelated stock icon for another of the same
  *                   type. The brand/subject's own logo or mascot is NEVER swapped.
  *
@@ -49,7 +54,7 @@ const STEP_META: Record<ArtDirectorStep["id"], string> = {
   "device-screen": "Replace device-screen content",
   font: "Restyle headline font",
   "bold-text": "Bolden headline text",
-  "text-rewrite": "Rewrite headline text",
+  "text-rewrite": "Rewrite text",
   logo: "Swap logo",
 };
 
@@ -63,7 +68,7 @@ export const STEP_TEMPLATES = {
   "device-screen": "change the [character/screen] inside of the [device] - it needs to be a [content]",
   font: "I want to change the font of the [text] but keep it in the same [color] color the same simple text shape - just the font",
   "bold-text": 'I want to make the "[text]" in bold font',
-  "text-rewrite": 'change the headline text from "[old]" to "[new]", keeping it in the same place, size and style',
+  "text-rewrite": 'change the text "[old]" to "[new]", keeping it in the same place, size and style',
   logo: "change the [icon/company] logo to another type of a [icon/company] logo",
 } as const;
 
@@ -84,9 +89,13 @@ const SYSTEM =
   "Apply an edit only when the image clearly warrants it (e.g. don't swap a logo " +
   "if there is no generic logo, don't edit a device screen if there is no " +
   "on-screen device, don't restyle or rewrite text if there is no editable " +
-  "headline). For text-rewrite, you may propose a punchier, higher-CTR headline " +
-  "ONLY when there is editable headline text AND a better version genuinely helps " +
-  "— and the rewritten headline MUST still contain the brand/subject word exactly. " +
+  "text). For text-rewrite, rewrite EVERY editable text element in the thumbnail " +
+  "(e.g. a main headline AND any secondary line like \"24/7 AI EMPLOYEE\") into " +
+  "punchier, higher-CTR copy, so the recreation's text no longer mirrors the " +
+  "original — return ONE {old,new} pair per distinct text block you want to " +
+  "change. The MAIN text's new version MUST still contain the brand/subject word " +
+  "exactly, and you must NEVER invent a different brand name in any rewrite. Only " +
+  "rewrite text that genuinely exists and a better version helps. " +
   "For the structured edits, fill the bracketed placeholders in each FIXED " +
   "template with short, literal values describing what you SEE in the image. Never " +
   "reword the template text outside the brackets. Keep every edit brand-safe and " +
@@ -106,8 +115,8 @@ export function buildDirectorUserText(keyword: string, videoType: VideoType): st
     "set its apply to false.\n\n" +
     "For each optional edit, decide whether it GENUINELY improves click-through, " +
     "and if so, fill ONLY the bracketed slots of its fixed template (text-rewrite " +
-    "uses old + new headline). Be conservative — skip edits that don't clearly " +
-    "help. The templates are:\n" +
+    "returns an ARRAY of {old,new} pairs — one per editable text block). Be " +
+    "conservative — skip edits that don't clearly help. The templates are:\n" +
     `  device-screen: "${STEP_TEMPLATES["device-screen"]}"\n` +
     `  font:          "${STEP_TEMPLATES.font}"\n` +
     `  bold-text:     "${STEP_TEMPLATES["bold-text"]}"\n` +
@@ -119,12 +128,13 @@ export function buildDirectorUserText(keyword: string, videoType: VideoType): st
     '  "device-screen": { "apply": boolean, "character_or_screen": string, "device": string, "content": string },\n' +
     '  "font": { "apply": boolean, "text": string, "color": string },\n' +
     '  "bold-text": { "apply": boolean, "text": string },\n' +
-    '  "text-rewrite": { "apply": boolean, "old": string, "new": string },\n' +
+    '  "text-rewrite": { "apply": boolean, "rewrites": [ { "old": string, "new": string } ] },\n' +
     '  "logo": { "apply": boolean, "icon_or_company": string, "target_icon_or_company": string }\n' +
     "}\n\n" +
     'Example device-screen slots: character_or_screen="screen", device="phone", content="bright app dashboard".\n' +
-    `For text-rewrite, "new" MUST still contain the brand/subject word "${keyword}" exactly ` +
-    "(e.g. rewrite a flat headline into a punchier hook that keeps the brand term). " +
+    `For text-rewrite, include ONE {old,new} pair for EACH editable text block you want to change ` +
+    `(e.g. the headline AND a secondary line). At least the MAIN text's "new" MUST still contain the ` +
+    `brand/subject word "${keyword}" exactly, and NO rewrite may introduce a different brand name. ` +
     "For logo, leave the brand's own logo/mascot untouched (apply false); only swap a generic icon."
   );
 }
@@ -145,8 +155,11 @@ function containsBrand(text: string, keyword: string): boolean {
  * testing.
  *
  * `keyword` is the brand/subject term. It guards two brand-safety rules:
- *   - text-rewrite: the new headline MUST still contain the brand term, else the
- *     rewrite is rejected (apply:false) so we never erase the subject.
+ *   - text-rewrite: rewrites EVERY editable text block (an array of {old,new}).
+ *     At least one rewrite (the main text) MUST still contain the brand term, else
+ *     the WHOLE text-rewrite is rejected so we never erase the subject. Each
+ *     rewrite becomes its OWN step (so the chain runs one edit per text block);
+ *     when none keeps the brand, none are emitted.
  *   - logo: a generic-icon swap is rejected when either the source OR target
  *     icon IS the subject brand, so the brand's own logo/mascot is never touched.
  */
@@ -191,17 +204,36 @@ export function parseDirectorResponse(json: any, keyword = ""): ArtDirectorStep[
     pushStep("bold-text", apply, inst);
   }
 
-  // text-rewrite — change the headline text from "[old]" to "[new]", ...
-  // Brand guard: the NEW headline must still contain the brand/subject term, so a
-  // punchier rewrite can never erase the subject. No editable text → apply:false.
+  // text-rewrite — change the text "[old]" to "[new]", ... (ONE per text block)
+  // Brand guard: at least ONE rewrite's NEW text must still contain the brand/
+  // subject term (the main text), so the recreation can never erase the subject.
+  // Each valid rewrite becomes its OWN step; if none keeps the brand (or there is
+  // no editable text), NONE are emitted and a disabled placeholder is recorded so
+  // the step is still visible in the chain breakdown.
   {
     const node = json?.["text-rewrite"];
-    const oldText = str(node?.old);
-    const newText = str(node?.new);
-    const apply =
-      node?.apply === true && !!oldText && !!newText && oldText !== newText && containsBrand(newText, keyword);
-    const inst = STEP_TEMPLATES["text-rewrite"].replace("[old]", oldText).replace("[new]", newText);
-    pushStep("text-rewrite", apply, inst);
+    // Accept the new array shape (rewrites: [{old,new}]) AND the legacy single
+    // {old,new} for back-compat. Keep only well-formed, changing pairs.
+    const rawList: any[] = Array.isArray(node?.rewrites)
+      ? node.rewrites
+      : node && (node.old !== undefined || node.new !== undefined)
+        ? [{ old: node.old, new: node.new }]
+        : [];
+    const pairs = rawList
+      .map((r) => ({ old: str(r?.old), new: str(r?.new) }))
+      .filter((r) => !!r.old && !!r.new && r.old !== r.new);
+    const keepsBrand = pairs.some((r) => containsBrand(r.new, keyword));
+    const apply = node?.apply === true && pairs.length > 0 && keepsBrand;
+    if (apply) {
+      // Emit one instruction per text block, each verbatim from the template.
+      for (const r of pairs) {
+        const inst = STEP_TEMPLATES["text-rewrite"].replace("[old]", r.old).replace("[new]", r.new);
+        out.push({ id: "text-rewrite", label: STEP_META["text-rewrite"], apply: true, instruction: inst });
+      }
+    } else {
+      // Visible-but-skipped placeholder (mirrors pushStep's disabled shape).
+      out.push({ id: "text-rewrite", label: STEP_META["text-rewrite"], apply: false, instruction: "" });
+    }
   }
 
   // logo — change the [icon/company] logo to another type of a [icon/company] logo

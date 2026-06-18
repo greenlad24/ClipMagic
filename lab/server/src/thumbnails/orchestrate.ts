@@ -8,6 +8,7 @@ import { hqThumbnailUrl, maxresThumbnailUrl, mqThumbnailUrl } from "./youtube.js
 import { readCharacterImage, uploadedExpressions, type Expression } from "./characters.js";
 import { expressionsForVariants, type VideoType } from "./videoType.js";
 import { recreateThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
+import type { ImageProvider } from "./imageProviders.js";
 import {
   createJob,
   updateVariant,
@@ -68,6 +69,8 @@ export interface GenerateInput {
   videoType: VideoType;
   /** Picked video ids — any subset of the search results (no fixed cap). */
   picks: string[];
+  /** Image-edit provider for the recreation chain (defaults to Nano Banana Pro). */
+  provider?: ImageProvider;
 }
 
 /**
@@ -101,6 +104,7 @@ export async function generateThumbnailVariants(
         keyword: input.keyword,
         videoType: input.videoType,
         expression,
+        provider: input.provider,
       });
       variants.push({
         videoId,
@@ -193,6 +197,7 @@ export async function runThumbnailJob(
             keyword: input.keyword,
             videoType: input.videoType,
             expression,
+            provider: input.provider,
             onProgress: ({ stepLabel, percent }) => updateVariant(job, i, { stepLabel, percent }),
           },
           recreateDeps,

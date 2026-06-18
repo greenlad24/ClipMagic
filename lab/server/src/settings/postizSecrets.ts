@@ -76,7 +76,8 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // from the Postiz env file (buildEnvFileContents skips LAB_ONLY_KEYS) and read
   // internally via getGeminiApiKey() / getYoutubeDataApiKey(). Same write-only
   // guarantee as the rest: never returned through any HTTP response.
-  { key: "GEMINI_API_KEY", label: "Gemini API key", group: "Thumbnail Designer", connects: "Powers the Thumbnail Designer's Nano Banana (Gemini 2.5 Flash Image) editing chain that recreates a top thumbnail with your character. Create a key in Google AI Studio (aistudio.google.com/apikey), then paste it here. Used only by this lab server — never sent to the browser." },
+  { key: "GEMINI_API_KEY", label: "Gemini API key", group: "Thumbnail Designer", connects: "Powers the Thumbnail Designer's Nano Banana editing chain (Gemini 2.5 Flash Image AND Nano Banana Pro / Gemini 3 Pro Image) that recreates a top thumbnail with your character. Create a key in Google AI Studio (aistudio.google.com/apikey), then paste it here. Used only by this lab server — never sent to the browser." },
+  { key: "OPENAI_API_KEY", label: "OpenAI API key", group: "Thumbnail Designer", connects: "Lets the Thumbnail Designer use OpenAI's gpt-image-1 model as an alternative image-editing provider in the recreation chain. Create a key at platform.openai.com/api-keys, then paste it here. Used only by this lab server — never sent to the browser." },
   { key: "YOUTUBE_DATA_API_KEY", label: "YouTube Data API key", group: "Thumbnail Designer", connects: "Lets the Thumbnail Designer search YouTube for the top-performing thumbnails for a keyword. Create an API key in Google Cloud Console (enable the YouTube Data API v3), then paste it here. Used only for search — server-only; never sent to the browser." },
 
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
@@ -136,6 +137,7 @@ const LAB_ONLY_KEYS = new Set([
   "DROPBOX_REFRESH_TOKEN",
   // Thumbnail Designer (used by the lab server, never by Postiz).
   "GEMINI_API_KEY",
+  "OPENAI_API_KEY",
   "YOUTUBE_DATA_API_KEY",
 ]);
 
@@ -372,6 +374,20 @@ export function getGeminiApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.GEMINI_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the OpenAI API key — used by
+ * thumbnails/imageProviders.ts to run the gpt-image-1 image-edits provider in the
+ * recreation chain. Like the other LAB-only keys it must NEVER be wired into an
+ * HTTP response (write-only guarantee). An env var (OPENAI_API_KEY) takes
+ * precedence over the UI-managed store.
+ */
+export function getOpenAiApiKey(): string | null {
+  const fromEnv = (process.env.OPENAI_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.OPENAI_API_KEY || null;
 }
 
 /**

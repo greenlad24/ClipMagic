@@ -148,6 +148,12 @@ function extForMime(mime: string): string {
  * returned image and persist it. Throws a clear error on a safety block / quota
  * / no-image response so the caller (the resilient chain) can keep the previous
  * good image and continue. The Gemini key is never logged.
+ *
+ * This is the Gemini 2.5 Flash Image (cheap) path, kept for backward-compat:
+ * imageProviders.ts's `editImageWith("gemini-flash", …)` reuses the SAME pure
+ * builder (buildEditRequestBody) + extractor (extractInlineImage) so the two
+ * paths can never drift. New callers route through editImageWith to pick a
+ * provider; this remains the default flash primitive.
  */
 export async function editImage(
   opts: { instruction: string; images: EditImage[] },
