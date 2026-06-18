@@ -71,7 +71,8 @@ export const STEP_TEMPLATES = {
   "device-screen": "change the [character/screen] inside of the [device] - it needs to be a [content]",
   font: "I want to change the font of the [text] but keep it in the same [color] color the same simple text shape - just the font",
   "bold-text": 'I want to make the "[text]" in bold font',
-  "text-rewrite": 'change the text "[old]" to "[new]", keeping it in the same place, size and style',
+  "text-rewrite":
+    'change the text "[old]" to "[new]", rendering the COMPLETE new text exactly as written including EVERY word; keep it in the same position, colour and style, and RESIZE the text to fit the space if the new text is longer or shorter — do NOT omit, shorten, abbreviate or drop any word of the new text',
   logo: "change the [icon/company] logo to another type of a [icon/company] logo",
 } as const;
 

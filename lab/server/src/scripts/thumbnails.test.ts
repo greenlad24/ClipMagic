@@ -473,11 +473,11 @@ async function main() {
     assert.ok(trs.every((s) => s.apply), "both rewrites apply");
     assert.equal(
       trs[0].instruction,
-      'change the text "OpenClaw is here" to "I tried OpenClaw for 30 days", keeping it in the same place, size and style',
+      artDirector.buildTextRewriteInstruction("OpenClaw is here", "I tried OpenClaw for 30 days"),
     );
     assert.equal(
       trs[1].instruction,
-      'change the text "AI EMPLOYEE" to "24/7 AI EMPLOYEE", keeping it in the same place, size and style',
+      artDirector.buildTextRewriteInstruction("AI EMPLOYEE", "24/7 AI EMPLOYEE"),
     );
     // No leftover bracket placeholders in any emitted instruction.
     assert.ok(trs.every((s) => !/\[|\]/.test(s.instruction)), "no unfilled bracket placeholders");
@@ -493,7 +493,7 @@ async function main() {
     assert.equal(trs[0].apply, true);
     assert.equal(
       trs[0].instruction,
-      'change the text "OpenClaw is here" to "I tried OpenClaw for 30 days", keeping it in the same place, size and style',
+      artDirector.buildTextRewriteInstruction("OpenClaw is here", "I tried OpenClaw for 30 days"),
     );
   });
 
@@ -516,7 +516,7 @@ async function main() {
     assert.ok(trs[0].apply, "the secondary rewrite applies");
     assert.equal(
       trs[0].instruction,
-      'change the text "AI EMPLOYEE" to "24/7 AI EMPLOYEE", keeping it in the same place, size and style',
+      artDirector.buildTextRewriteInstruction("AI EMPLOYEE", "24/7 AI EMPLOYEE"),
     );
   });
 
@@ -550,7 +550,7 @@ async function main() {
     assert.ok(trs.every((s) => s.apply));
     assert.equal(
       trs[0].instruction,
-      'change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style',
+      artDirector.buildTextRewriteInstruction("CLAWDBOT", "OpenClaw"),
     );
   });
 
@@ -565,7 +565,7 @@ async function main() {
     assert.ok(trs[0].apply, "secondary text varies while the brand block stays put");
     assert.equal(
       trs[0].instruction,
-      'change the text "Full Guide" to "Complete Breakdown", keeping it in the same place, size and style',
+      artDirector.buildTextRewriteInstruction("Full Guide", "Complete Breakdown"),
     );
   });
 
@@ -1162,11 +1162,14 @@ async function main() {
     // A rewrite that ERASES the brand from a brand-bearing block is dropped.
     assert.deepEqual(ad.parseTextRewritePairs({ rewrites: [{ old: "OpenClaw Pro", new: "Something Else" }] }, "OpenClaw"), []);
   });
-  await check("buildTextRewriteInstruction fills the EXACT template", () => {
-    assert.equal(
-      ad.buildTextRewriteInstruction("CLAWDBOT", "OpenClaw"),
-      'change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style',
-    );
+  await check("buildTextRewriteInstruction fills the template + demands the FULL new text", () => {
+    const inst = ad.buildTextRewriteInstruction("CLAWDBOT", "AI OpenClaw");
+    assert.ok(inst.startsWith('change the text "CLAWDBOT" to "AI OpenClaw"'), "fills old + new");
+    // The instruction must insist every word of the new text renders (the dropped
+    // "AI" prefix bug) and allow re-fitting longer/shorter copy.
+    assert.match(inst, /EVERY word/);
+    assert.match(inst, /RESIZE the text to fit/);
+    assert.match(inst, /do NOT omit, shorten, abbreviate or drop any word/);
   });
   await check("parseCustomEdits keeps non-empty edits (label + instruction)", () => {
     const edits = ad.parseCustomEdits({
@@ -1518,7 +1521,7 @@ async function main() {
   await check("buildConsolidatedInstruction: one-shot swap + preserve elements + text + pop", () => {
     const inst = recreate.buildConsolidatedInstruction({
       keyword: "OpenClaw",
-      textChanges: ['change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style'],
+      textChanges: [artDirector.buildTextRewriteInstruction("CLAWDBOT", "OpenClaw")],
     });
     assert.match(inst, /SINGLE edit/i, "it's a single pass");
     assert.match(inst, /SECOND image/i, "swaps in the character");
