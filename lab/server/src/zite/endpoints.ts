@@ -82,6 +82,7 @@ import {
   startThumbnailJob,
   startContrarianJob,
   planContrarianVariations,
+  planRecreations,
 } from "../thumbnails/orchestrate.js";
 import { generateTitles } from "../thumbnails/titles.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
@@ -2357,6 +2358,45 @@ function coercePicks(input: any): string[] {
  * the UI can poll `thumbnailJobStatus` for live per-thumbnail progress. Mirrors
  * the Narration Cutter's analyzeCut start→poll pattern.
  */
+function coerceRewrites(raw: any): { old: string; new: string }[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((r: any) => ({ old: String(r?.old ?? "").trim(), new: String(r?.new ?? "").trim() }))
+    .filter((r: any) => r.old && r.new);
+}
+
+/** Coerce the UI's edited per-pick plans into RecreationPlan[] (best-effort). */
+function coercePlans(input: any): any[] | undefined {
+  if (!Array.isArray(input?.plans)) return undefined;
+  return input.plans
+    .map((p: any) => ({
+      videoId: String(p?.videoId ?? "").trim(),
+      sourceThumbnailUrl: String(p?.sourceThumbnailUrl ?? ""),
+      expression: String(p?.expression ?? "").trim(),
+      expressionLabel: String(p?.expressionLabel ?? ""),
+      busy: p?.busy === true,
+      backgroundId: p?.backgroundId ? String(p.backgroundId) : null,
+      rewrites: coerceRewrites(p?.rewrites),
+    }))
+    .filter((p: any) => p.videoId && p.expression);
+}
+
+/**
+ * PLAN every per-thumbnail decision for review/edit BEFORE generation: for each
+ * picked source, the chosen character expression, the busy flag, the chosen
+ * background, and the proposed text rewrites (grounded in the titles).
+ */
+const planThumbnailRecreations: Handler = async (input) => {
+  const picks = coercePicks(input);
+  if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to review." });
+  const plans = await planRecreations({
+    picks,
+    keyword: String(input?.keyword ?? ""),
+    videoType: coerceVideoType(input?.videoType),
+    titles: coerceTitles(input),
+  });
+  return { plans };
+};
+
 const startThumbnailGeneration: Handler = async (input) => {
   const picks = coercePicks(input);
   if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to recreate." });
@@ -2367,6 +2407,8 @@ const startThumbnailGeneration: Handler = async (input) => {
     // `mode` selects the single image provider — default "gemini-pro" (Nano
     // Banana Pro @ 4K), or "gemini-flash". Falls back to the legacy `provider`.
     mode: coerceMode(input?.mode ?? input?.provider),
+    // Reviewed/edited per-pick plans (character + background + text) when supplied.
+    plans: coercePlans(input),
   });
   return { jobId: job.id };
 };
@@ -2598,6 +2640,7 @@ export const HANDLERS: Record<string, Handler> = {
   searchThumbnails,
   startThumbnailGeneration,
   generateThumbnailTitles,
+  planThumbnailRecreations,
   planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,

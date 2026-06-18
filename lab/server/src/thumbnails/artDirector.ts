@@ -176,6 +176,37 @@ function containsBrand(text: string, keyword: string): boolean {
   return text.toLowerCase().includes(k);
 }
 
+/** One proposed text change on a thumbnail: rewrite `old` → `new`. */
+export interface TextRewrite {
+  old: string;
+  new: string;
+}
+
+/** Assemble the EXACT text-rewrite instruction from a pair (verbatim template). */
+export function buildTextRewriteInstruction(oldText: string, newText: string): string {
+  return STEP_TEMPLATES["text-rewrite"].replace("[old]", oldText).replace("[new]", newText);
+}
+
+/**
+ * Parse the text-rewrite node (the array shape `{ rewrites:[{old,new}] }`, or the
+ * legacy single `{old,new}`) into validated, brand-safe pairs. The brand guard is
+ * PER-REWRITE: a rewrite may never ERASE the brand from a block that contained it
+ * (old has the brand → new must keep it); a rewrite of a line that never had the
+ * brand is always allowed. Pure + exported; shared by the director + text planner.
+ */
+export function parseTextRewritePairs(node: any, keyword = ""): TextRewrite[] {
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  const rawList: any[] = Array.isArray(node?.rewrites)
+    ? node.rewrites
+    : node && (node.old !== undefined || node.new !== undefined)
+      ? [{ old: node.old, new: node.new }]
+      : [];
+  return rawList
+    .map((r) => ({ old: str(r?.old), new: str(r?.new) }))
+    .filter((r) => !!r.old && !!r.new && r.old !== r.new)
+    .filter((r) => !containsBrand(r.old, keyword) || containsBrand(r.new, keyword));
+}
+
 /**
  * Parse the director's JSON into an ordered, validated step list, assembling
  * each FINAL instruction from its EXACT template with only the bracket slots
@@ -247,23 +278,18 @@ export function parseDirectorResponse(json: any, keyword = ""): ArtDirectorStep[
   {
     const node = json?.["text-rewrite"];
     // Accept the new array shape (rewrites: [{old,new}]) AND the legacy single
-    // {old,new} for back-compat. Keep only well-formed, changing pairs.
-    const rawList: any[] = Array.isArray(node?.rewrites)
-      ? node.rewrites
-      : node && (node.old !== undefined || node.new !== undefined)
-        ? [{ old: node.old, new: node.new }]
-        : [];
-    const pairs = rawList
-      .map((r) => ({ old: str(r?.old), new: str(r?.new) }))
-      .filter((r) => !!r.old && !!r.new && r.old !== r.new);
-    // Drop ONLY rewrites that would erase the brand from a brand-bearing block.
-    const safe = pairs.filter((r) => !containsBrand(r.old, keyword) || containsBrand(r.new, keyword));
+    // {old,new}; keep only well-formed, changing, brand-safe pairs.
+    const safe = parseTextRewritePairs(node, keyword);
     const apply = node?.apply === true && safe.length > 0;
     if (apply) {
       // Emit one instruction per surviving text block, verbatim from the template.
       for (const r of safe) {
-        const inst = STEP_TEMPLATES["text-rewrite"].replace("[old]", r.old).replace("[new]", r.new);
-        out.push({ id: "text-rewrite", label: STEP_META["text-rewrite"], apply: true, instruction: inst });
+        out.push({
+          id: "text-rewrite",
+          label: STEP_META["text-rewrite"],
+          apply: true,
+          instruction: buildTextRewriteInstruction(r.old, r.new),
+        });
       }
     } else {
       // Visible-but-skipped placeholder (mirrors pushStep's disabled shape).
@@ -422,6 +448,83 @@ export async function analyzeForSwap(opts: {
     throw new Error("swap-director returned non-JSON");
   }
   return parseSwapAssessment(parsed);
+}
+
+// ── Text planner (review step) ────────────────────────────────────────────────
+// For the REVIEW step we plan the text changes UP FRONT, from the SOURCE
+// thumbnail, so the user can see + edit every rewrite before any rendering. This
+// is the text-rewrite portion of the art-director, run on the original image and
+// grounded in the chosen titles so the new copy matches the video's packaging.
+// Best-effort: any failure returns [] (generation then falls back to the in-chain
+// art-director). Attributed to "thumbnail-art-director" in the report.
+
+const TEXT_PLANNER_SYSTEM =
+  "You are an elite YouTube thumbnail copy editor. You are shown the ORIGINAL " +
+  "thumbnail being recreated for a DIFFERENT video. Identify EVERY distinct, " +
+  "readable text block in it and propose a rewrite for each, so the recreation's " +
+  "wording is fresh and on-topic instead of an exact copy.\n\n" +
+  "Rules: (1) The MAIN TITLE must become the KEYWORD — the original often shows a " +
+  "different/older product or brand name; if the main title is a brand/product name " +
+  "that is not already the keyword, rewrite it TO the keyword exactly. This is the " +
+  "most important rewrite. (2) Rewrite every OTHER readable block (sub-headlines, " +
+  "taglines, corner badges, AND text inside on-screen devices/apps/chat bubbles/" +
+  "buttons) into a fresh, equally-relevant, punchier variant of the SAME intent and " +
+  "roughly the SAME length so it fits the original's space. (3) NEVER invent a brand " +
+  "name OTHER than the keyword. (4) Only rewrite text that genuinely exists in the " +
+  "image. Keep the copy true to what the video is actually about.";
+
+/** Build the text-planner user prompt. Pure + exported so the contract is testable. */
+export function buildTextPlannerUserText(keyword: string, videoType: VideoType, titles: string[] = []): string {
+  const cleaned = titles.filter(Boolean).slice(0, 6);
+  const titleBlock = cleaned.length
+    ? `The chosen/working TITLES for this video (align the new copy with these — same angle + promise):\n` +
+      cleaned.map((t) => `  - ${t}`).join("\n") +
+      "\n\n"
+    : "";
+  return (
+    `The video is a ${videoType} video about: "${keyword}".\n\n` +
+    titleBlock +
+    `Read the thumbnail's text. FIRST, if the main title is a product/brand name that is not "${keyword}", ` +
+    `add a rewrite changing it to "${keyword}" exactly. THEN rewrite every other readable block (taglines, ` +
+    `badges, and text inside any device/app/chat/button) into a fresh, equally-relevant variant of the same ` +
+    `length. NO rewrite may introduce a brand name OTHER than "${keyword}". Return ONLY this JSON object:\n` +
+    "{\n" +
+    '  "rewrites": [ { "old": string, "new": string } ]\n' +
+    "}\n"
+  );
+}
+
+/**
+ * Plan the text rewrites for a SOURCE thumbnail (review step). Returns the
+ * brand-safe {old,new} pairs. Best-effort: any failure → []. Injectable vision
+ * call for tests.
+ */
+export async function planTextRewrites(opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  keyword: string;
+  videoType: VideoType;
+  titles?: string[];
+  vision?: typeof claudeVisionLabeledJSON;
+}): Promise<TextRewrite[]> {
+  const vision = opts.vision ?? claudeVisionLabeledJSON;
+  try {
+    const raw = await vision({
+      system: TEXT_PLANNER_SYSTEM,
+      userText: buildTextPlannerUserText(opts.keyword, opts.videoType, opts.titles ?? []),
+      images: [
+        {
+          label: "Original thumbnail being recreated:",
+          data: opts.sourceBytes.toString("base64"),
+          mediaType: opts.sourceMime || "image/jpeg",
+        },
+      ],
+      purpose: "thumbnail-art-director",
+    });
+    return parseTextRewritePairs(JSON.parse(raw), opts.keyword);
+  } catch {
+    return [];
+  }
 }
 
 // ── Expression director ───────────────────────────────────────────────────────

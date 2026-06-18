@@ -6,17 +6,21 @@
  * every time (the model can't guarantee that). Three fixed templates, modelled on
  * the reference designs:
  *
- *   1. bottom-bar  — character centred; one headline line across the BOTTOM,
- *                    emphasis word(s) in a solid RED rounded box.
- *   2. left-stack  — character on the RIGHT; two stacked lines on the LEFT,
- *                    the emphasis as the top line in a RED box.
- *   3. top-strike  — character centred; one headline line across the TOP,
- *                    a RED strikethrough through the emphasis word(s).
+ *   1. bottom-bar  — character centred; headline across the BOTTOM, the
+ *                    emphasis word(s) in a solid RED rounded box (in place).
+ *   2. left-stack  — character on the RIGHT; headline word-wrapped on the LEFT
+ *                    (20% larger), the emphasis word(s) in a RED box WHEREVER
+ *                    they occur in the copy (start, middle or end).
+ *   3. top-strike  — character centred; headline across the TOP, a RED
+ *                    strikethrough through the emphasis word(s) in place.
  *
- * Font: Helvetica. Real Helvetica can't be bundled, so the font file is
- * configurable via THUMBNAIL_FONT_PATH (the creator mounts their Helvetica
- * Black/Bold); it defaults to Liberation Sans Bold (metric-compatible, installed
- * in the image). All text is UPPERCASE with a soft 25%-opacity drop shadow.
+ * All three share one renderer (drawWrapped): the copy keeps its natural word
+ * order and the emphasis run is highlighted exactly where it falls — it is never
+ * reordered to a fixed line. Font: Helvetica. Real Helvetica can't be bundled, so
+ * the font file is configurable via THUMBNAIL_FONT_PATH (the creator mounts their
+ * Helvetica Black/Bold); it defaults to Liberation Sans Bold (metric-compatible,
+ * installed in the image). All text is UPPERCASE with a 25%-opacity drop shadow
+ * (0px 4px 8px rgba(0,0,0,0.25), scaled to the render height).
  *
  * The renderer is BEST-EFFORT and lazy: if @napi-rs/canvas or the font isn't
  * available, or anything throws, it returns the base image unchanged so a
@@ -150,13 +154,17 @@ async function ensureFont(canvasMod: any): Promise<string> {
   }
 }
 
-/** Set the white-text-with-soft-shadow style for the given height. */
+/**
+ * Set the white-text drop shadow. The spec is `0px 4px 8px rgba(0,0,0,0.25)`
+ * (offsetX 0, offsetY 4, blur 8) authored against a 720p-tall thumbnail, so we
+ * scale offset + blur by H/720 to keep it identical at any render resolution.
+ */
 function setWhiteShadow(ctx: any, H: number): void {
   ctx.fillStyle = "#FFFFFF";
   ctx.shadowColor = "rgba(0,0,0,0.25)";
-  ctx.shadowBlur = Math.round(H * 0.012);
-  ctx.shadowOffsetX = Math.round(H * 0.004);
-  ctx.shadowOffsetY = Math.round(H * 0.006);
+  ctx.shadowBlur = Math.round((H * 8) / 720);
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = Math.round((H * 4) / 720);
 }
 
 function clearShadow(ctx: any): void {
@@ -176,17 +184,6 @@ function roundRectPath(ctx: any, x: number, y: number, w: number, h: number, r: 
   ctx.arcTo(x, y + h, x, y, rr);
   ctx.arcTo(x, y, x + w, y, rr);
   ctx.closePath();
-}
-
-/** Largest font size (≤ `start`) whose measured width fits `maxWidth`. */
-function fitFont(ctx: any, family: string, text: string, maxWidth: number, start: number): number {
-  let size = start;
-  while (size > 12) {
-    ctx.font = `${size}px "${family}"`;
-    if (ctx.measureText(text).width <= maxWidth) break;
-    size -= Math.max(2, Math.round(size * 0.06));
-  }
-  return size;
 }
 
 /**
@@ -224,11 +221,36 @@ export async function renderContrarianText(
     const upperEmph = emphasis.toUpperCase();
 
     if (template.id === "left-stack") {
-      drawLeftStack(ctx, family, W, H, upperText, upperEmph);
+      // Image 2: left-aligned, vertically centred, wraps in the left ~58%. Text is
+      // 20% BIGGER than the other two templates (per spec). Emphasis = red box.
+      drawWrapped(ctx, family, W, H, upperText, upperEmph, {
+        align: "left",
+        vpos: "middle",
+        x0: W * 0.05,
+        maxW: W * 0.58,
+        startSize: Math.round(H * 0.25 * 1.2),
+        emphStyle: "box",
+      });
     } else if (template.id === "top-strike") {
-      drawSingleLine(ctx, family, W, H, upperText, upperEmph, "top");
+      // Image 3: centred top strip; emphasis = red strikethrough. Size unchanged.
+      drawWrapped(ctx, family, W, H, upperText, upperEmph, {
+        align: "center",
+        vpos: "top",
+        x0: W * 0.03,
+        maxW: W * 0.94,
+        startSize: Math.round(H * 0.185),
+        emphStyle: "strike",
+      });
     } else {
-      drawSingleLine(ctx, family, W, H, upperText, upperEmph, "bottom");
+      // Image 1: centred bottom strip; emphasis = red box. Size unchanged.
+      drawWrapped(ctx, family, W, H, upperText, upperEmph, {
+        align: "center",
+        vpos: "bottom",
+        x0: W * 0.03,
+        maxW: W * 0.94,
+        startSize: Math.round(H * 0.185),
+        emphStyle: "box",
+      });
     }
 
     return await canvas.encode("jpeg", 92);
@@ -237,84 +259,145 @@ export async function renderContrarianText(
   }
 }
 
-/** bottom-bar + top-strike: one line; bottom uses a red box, top uses a strike. */
-function drawSingleLine(
-  ctx: any,
-  family: string,
-  W: number,
-  H: number,
-  text: string,
-  emphasis: string,
-  pos: "top" | "bottom",
-): void {
-  const margin = W * 0.03;
-  const maxW = W - margin * 2;
-  // Big, bold headline like the reference designs — short copy keeps it huge.
-  const size = fitFont(ctx, family, text, maxW, Math.round(H * 0.185));
-  ctx.font = `${size}px "${family}"`;
-  const segs = splitByEmphasis(text, emphasis);
-  const padX = Math.round(size * 0.18);
-  const widths = segs.map((s) => ctx.measureText(s.text).width);
-  const totalW = widths.reduce((a, b) => a + b, 0) + segs.filter((s) => s.emph).length * padX * 2;
-  let x = Math.max(margin, (W - totalW) / 2);
-  const y = pos === "bottom" ? H * 0.87 : H * 0.13;
-  const boxH = size * 1.18;
-
-  segs.forEach((s, i) => {
-    const w = widths[i];
-    if (s.emph && pos === "bottom") {
-      clearShadow(ctx);
-      ctx.fillStyle = RED;
-      roundRectPath(ctx, x, y - boxH / 2, w + padX * 2, boxH, size * 0.14);
-      ctx.fill();
-      ctx.fillStyle = "#FFFFFF";
-      ctx.fillText(s.text, x + padX, y);
-      x += w + padX * 2;
-    } else {
-      setWhiteShadow(ctx, H);
-      ctx.fillText(s.text, x, y);
-      if (s.emph && pos === "top") {
-        // Red strikethrough across the emphasis word(s).
-        clearShadow(ctx);
-        ctx.strokeStyle = RED;
-        ctx.lineWidth = Math.max(3, size * 0.1);
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(x + w, y);
-        ctx.stroke();
-      }
-      x += w;
-    }
-  });
+/** One word, flagged emphasis or not (a finer-grained TextSegment for wrapping). */
+export interface Word {
+  text: string;
+  emph: boolean;
 }
 
-/** left-stack: hook line (red box) over a white follow-up line, left-aligned. */
-function drawLeftStack(ctx: any, family: string, W: number, H: number, text: string, emphasis: string): void {
-  const { line1, line2 } = stackLines(text, emphasis);
-  const x = W * 0.05;
-  const maxW = W * 0.58;
-  // Large stacked headline like the "$40M / At 20" reference — short copy → huge.
-  const size = fitFont(ctx, family, line1.length >= line2.length ? line1 : line2, maxW, Math.round(H * 0.25));
-  ctx.font = `${size}px "${family}"`;
-  const padX = Math.round(size * 0.16);
-  const boxH = size * 1.2;
-  const gap = size * 0.28;
-  const total = line2 ? boxH + gap + size : boxH;
-  let y = (H - total) / 2 + boxH / 2;
-
-  // Line 1 — the hook in a red box.
-  const w1 = ctx.measureText(line1).width;
-  clearShadow(ctx);
-  ctx.fillStyle = RED;
-  roundRectPath(ctx, x, y - boxH / 2, w1 + padX * 2, boxH, size * 0.14);
-  ctx.fill();
-  ctx.fillStyle = "#FFFFFF";
-  ctx.fillText(line1, x + padX, y);
-
-  // Line 2 — white follow-up with a soft shadow.
-  if (line2) {
-    y += boxH / 2 + gap + size / 2;
-    setWhiteShadow(ctx, H);
-    ctx.fillText(line2, x, y);
+/**
+ * Split `text` into per-WORD tokens, each carrying the emphasis flag of the
+ * segment it came from. Keeps the natural word order (no reordering), so the
+ * emphasis stays wherever it occurs — start, middle or end. Pure + exported.
+ */
+export function toWords(text: string, emphasis: string): Word[] {
+  const out: Word[] = [];
+  for (const seg of splitByEmphasis(text, emphasis)) {
+    for (const w of seg.text.split(/\s+/).filter(Boolean)) out.push({ text: w, emph: seg.emph });
   }
+  return out;
+}
+
+/**
+ * Greedy word-wrap into lines that fit `maxW`, using the injected `measure`
+ * (so it's testable without a canvas). A single word wider than maxW gets its own
+ * line (the caller shrinks the font until lines fit). Pure + exported.
+ */
+export function wrapWords(measure: (s: string) => number, words: Word[], maxW: number): Word[][] {
+  const lines: Word[][] = [];
+  let line: Word[] = [];
+  let lineW = 0;
+  const space = measure(" ");
+  for (const w of words) {
+    const ww = measure(w.text);
+    const add = line.length ? space + ww : ww;
+    if (line.length && lineW + add > maxW) {
+      lines.push(line);
+      line = [w];
+      lineW = ww;
+    } else {
+      line.push(w);
+      lineW += add;
+    }
+  }
+  if (line.length) lines.push(line);
+  return lines;
+}
+
+/**
+ * Merge a line's words into contiguous RUNS of the same emphasis flag, so each
+ * emphasis run gets ONE red box (not a box per word). Pure + exported.
+ */
+export function lineRuns(line: Word[]): TextSegment[] {
+  const runs: TextSegment[] = [];
+  for (const w of line) {
+    const last = runs[runs.length - 1];
+    if (last && last.emph === w.emph) last.text += " " + w.text;
+    else runs.push({ text: w.text, emph: w.emph });
+  }
+  return runs;
+}
+
+interface WrapOpts {
+  align: "left" | "center";
+  vpos: "top" | "middle" | "bottom";
+  x0: number;
+  maxW: number;
+  startSize: number;
+  emphStyle: "box" | "strike";
+}
+
+/**
+ * The unified headline renderer for all three templates: word-wrap the copy in
+ * its natural order and highlight the emphasis run(s) IN PLACE — a red box (or a
+ * strikethrough) drawn exactly where the emphasis word(s) fall, even mid-line.
+ * The font shrinks until every wrapped line fits `maxW`.
+ */
+function drawWrapped(ctx: any, family: string, W: number, H: number, text: string, emphasis: string, opts: WrapOpts): void {
+  const words = toWords(text, emphasis);
+  if (words.length === 0) return;
+
+  // Shrink the font until every wrapped line fits maxW (incl. emphasis box pad).
+  let size = opts.startSize;
+  let lines: Word[][] = [];
+  const padXFor = (s: number) => Math.round(s * 0.16);
+  const lineWidth = (line: Word[], s: number): number => {
+    const runs = lineRuns(line);
+    const space = ctx.measureText(" ").width;
+    const padX = padXFor(s);
+    let w = 0;
+    runs.forEach((r, i) => {
+      if (i > 0) w += space;
+      w += ctx.measureText(r.text).width + (r.emph && opts.emphStyle === "box" ? padX * 2 : 0);
+    });
+    return w;
+  };
+  while (size > 14) {
+    ctx.font = `${size}px "${family}"`;
+    lines = wrapWords((s) => ctx.measureText(s).width, words, opts.maxW);
+    if (lines.every((ln) => lineWidth(ln, size) <= opts.maxW)) break;
+    size -= Math.max(2, Math.round(size * 0.06));
+  }
+  ctx.font = `${size}px "${family}"`;
+
+  const padX = padXFor(size);
+  const boxH = size * 1.18;
+  const lineGap = size * 0.3;
+  const blockH = lines.length * boxH + (lines.length - 1) * lineGap;
+  const margin = H * 0.07;
+  const yTop = opts.vpos === "top" ? margin : opts.vpos === "bottom" ? H - margin - blockH : (H - blockH) / 2;
+  const space = ctx.measureText(" ").width;
+
+  lines.forEach((line, li) => {
+    const cy = yTop + li * (boxH + lineGap) + boxH / 2;
+    const runs = lineRuns(line);
+    const lw = lineWidth(line, size);
+    let x = opts.align === "center" ? Math.max(opts.x0, (W - lw) / 2) : opts.x0;
+    runs.forEach((r, ri) => {
+      if (ri > 0) x += space;
+      const tw = ctx.measureText(r.text).width;
+      if (r.emph && opts.emphStyle === "box") {
+        clearShadow(ctx);
+        ctx.fillStyle = RED;
+        roundRectPath(ctx, x, cy - boxH / 2, tw + padX * 2, boxH, size * 0.14);
+        ctx.fill();
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText(r.text, x + padX, cy);
+        x += tw + padX * 2;
+      } else {
+        setWhiteShadow(ctx, H);
+        ctx.fillText(r.text, x, cy);
+        if (r.emph && opts.emphStyle === "strike") {
+          clearShadow(ctx);
+          ctx.strokeStyle = RED;
+          ctx.lineWidth = Math.max(3, size * 0.1);
+          ctx.beginPath();
+          ctx.moveTo(x, cy);
+          ctx.lineTo(x + tw, cy);
+          ctx.stroke();
+        }
+        x += tw;
+      }
+    });
+  });
 }

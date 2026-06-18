@@ -1148,6 +1148,51 @@ async function main() {
     assert.deepEqual(titlesMod.titlesAsContext({ viral: ["V1"], seo: ["S1"] }), ["V1", "S1"]);
   });
 
+  // ── text planner (workflow-1 review) ────────────────────────────────────────
+  const ad = await import("../thumbnails/artDirector.js");
+  await check("parseTextRewritePairs keeps changing pairs + drops brand-erasing ones", () => {
+    const pairs = ad.parseTextRewritePairs(
+      { rewrites: [{ old: "OLDNAME", new: "OpenClaw" }, { old: "Full Guide", new: "Complete Breakdown" }, { old: "x", new: "x" }] },
+      "OpenClaw",
+    );
+    assert.deepEqual(pairs, [
+      { old: "OLDNAME", new: "OpenClaw" },
+      { old: "Full Guide", new: "Complete Breakdown" },
+    ]);
+    // A rewrite that ERASES the brand from a brand-bearing block is dropped.
+    assert.deepEqual(ad.parseTextRewritePairs({ rewrites: [{ old: "OpenClaw Pro", new: "Something Else" }] }, "OpenClaw"), []);
+  });
+  await check("buildTextRewriteInstruction fills the EXACT template", () => {
+    assert.equal(
+      ad.buildTextRewriteInstruction("CLAWDBOT", "OpenClaw"),
+      'change the text "CLAWDBOT" to "OpenClaw", keeping it in the same place, size and style',
+    );
+  });
+  await check("buildTextPlannerUserText grounds the rewrites in the titles + keyword", () => {
+    const txt = ad.buildTextPlannerUserText("OpenClaw", "Tutorial", ["OpenClaw Full Tutorial"]);
+    assert.match(txt, /OpenClaw Full Tutorial/);
+    assert.match(txt, /main title is a product\/brand name that is not "OpenClaw"/);
+  });
+  await check("planTextRewrites parses the vision JSON into pairs; best-effort on failure", async () => {
+    const vision = async () => JSON.stringify({ rewrites: [{ old: "CLAWDBOT", new: "OpenClaw" }] });
+    const pairs = await ad.planTextRewrites({
+      sourceBytes: Buffer.from("x"),
+      sourceMime: "image/jpeg",
+      keyword: "OpenClaw",
+      videoType: "Tutorial",
+      vision: vision as any,
+    });
+    assert.deepEqual(pairs, [{ old: "CLAWDBOT", new: "OpenClaw" }]);
+    const bad = await ad.planTextRewrites({
+      sourceBytes: Buffer.from("x"),
+      sourceMime: "image/jpeg",
+      keyword: "OpenClaw",
+      videoType: "Tutorial",
+      vision: (async () => "not json") as any,
+    });
+    assert.deepEqual(bad, [], "non-JSON → []");
+  });
+
   await check("buildContrarianComposePrompt: bg + character 1:1, not cut, face >=70%, NO text", () => {
     const p = contrarian.buildContrarianComposePrompt("right", "the LEFT half of the frame");
     assert.match(p, /FIRST image as the full background/i, "background element");
@@ -1205,6 +1250,43 @@ async function main() {
       line1: "#1 MISTAKE",
       line2: "everyone makes",
     });
+  });
+
+  await check("toWords keeps natural order + flags the emphasis word(s) WHEREVER they are", () => {
+    // Emphasis at the END (the reported bug): NOT reordered to the front.
+    assert.deepEqual(overlay.toWords("AI FILMMAKING WITH TOPVIEW", "TOPVIEW"), [
+      { text: "AI", emph: false },
+      { text: "FILMMAKING", emph: false },
+      { text: "WITH", emph: false },
+      { text: "TOPVIEW", emph: true },
+    ]);
+    // Emphasis in the MIDDLE works too.
+    assert.deepEqual(overlay.toWords("THE BIG SECRET REVEALED", "BIG SECRET"), [
+      { text: "THE", emph: false },
+      { text: "BIG", emph: true },
+      { text: "SECRET", emph: true },
+      { text: "REVEALED", emph: false },
+    ]);
+  });
+
+  await check("wrapWords greedily fills lines to maxW (char-count measure)", () => {
+    const measure = (s: string) => s.length; // 1 unit per char incl. the space
+    const words = overlay.toWords("AI FILMMAKING WITH TOPVIEW", "TOPVIEW");
+    const lines = overlay.wrapWords(measure, words, 14);
+    // "AI FILMMAKING"=2+1+10=13 fits; +" WITH" would be 18>14 → wraps.
+    assert.deepEqual(lines.map((l) => l.map((w) => w.text).join(" ")), ["AI FILMMAKING", "WITH TOPVIEW"]);
+  });
+
+  await check("lineRuns merges contiguous emphasis into ONE run (one box per run)", () => {
+    const runs = overlay.lineRuns([
+      { text: "WITH", emph: false },
+      { text: "BIG", emph: true },
+      { text: "SECRET", emph: true },
+    ]);
+    assert.deepEqual(runs, [
+      { text: "WITH", emph: false },
+      { text: "BIG SECRET", emph: true },
+    ]);
   });
 
   await check("renderContrarianText is best-effort: returns the base bytes when canvas is absent", async () => {

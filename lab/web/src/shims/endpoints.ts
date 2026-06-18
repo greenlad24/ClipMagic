@@ -142,7 +142,27 @@ export const searchThumbnails = endpoint<{ keyword: string }, SearchThumbnailsOu
 export const generateThumbnails =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, GenerateThumbnailsOutputType>("generateThumbnails");
 export const startThumbnailGeneration =
-  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, { jobId: string }>("startThumbnailGeneration");
+  endpoint<
+    { keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode; plans?: RecreationPlan[] },
+    { jobId: string }
+  >("startThumbnailGeneration");
+/** PLAN every per-thumbnail decision (cast + background + text) for review/edit. */
+export const planThumbnailRecreations =
+  endpoint<
+    { keyword: string; videoType: ThumbnailVideoType; picks: string[]; titles?: string[] },
+    { plans: RecreationPlan[] }
+  >("planThumbnailRecreations");
+
+export type TextRewrite = { old: string; new: string };
+export type RecreationPlan = {
+  videoId: string;
+  sourceThumbnailUrl: string;
+  expression: string;
+  expressionLabel: string;
+  busy: boolean;
+  backgroundId: string | null;
+  rewrites: TextRewrite[];
+};
 /** Turn the pasted script into viral + SEO titles (shown + used to ground copy). */
 export const generateThumbnailTitles =
   endpoint<{ script: string }, { titles: ThumbnailTitles }>("generateThumbnailTitles");

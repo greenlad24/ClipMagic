@@ -8,6 +8,7 @@ import {
   startContrarianGeneration,
   generateThumbnailTitles,
   planThumbnailContrarian,
+  planThumbnailRecreations,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -26,6 +27,7 @@ import {
   type ThumbnailProviderResult,
   type ThumbnailTitles,
   type PlannedContrarian,
+  type RecreationPlan,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
@@ -109,6 +111,10 @@ export default function ThumbnailDesignerPage() {
   const [titles, setTitles] = useState<ThumbnailTitles | null>(null);
   const [contrarianDraft, setContrarianDraft] = useState<PlannedContrarian[] | null>(null);
   const [draftLoading, setDraftLoading] = useState(false);
+  // Workflow-1 per-thumbnail review: the AI's choices (cast + background + text),
+  // editable before generation. Invalidated whenever the picks change.
+  const [recreationPlans, setRecreationPlans] = useState<RecreationPlan[] | null>(null);
+  const [planning, setPlanning] = useState(false);
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
@@ -180,10 +186,34 @@ export default function ThumbnailDesignerPage() {
   const ready = keysReady && hasCharacter;
 
   const togglePick = (videoId: string) => {
+    // Changing the selection invalidates any reviewed plan (it's per-pick).
+    setRecreationPlans(null);
     setPicks((prev) =>
       prev.includes(videoId) ? prev.filter((id) => id !== videoId) : [...prev, videoId],
     );
   };
+
+  /** Load the AI's per-thumbnail choices (cast + background + text) for review. */
+  const reviewChoices = async () => {
+    if (picks.length === 0) {
+      toast.info('Pick at least one thumbnail first.');
+      return;
+    }
+    setPlanning(true);
+    try {
+      const titleList = [...(titles?.viral ?? []), ...(titles?.seo ?? [])];
+      const { plans } = await planThumbnailRecreations({ keyword: keyword.trim(), videoType, picks, titles: titleList });
+      setRecreationPlans(plans);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load the thumbnail choices');
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const editPlan = (videoId: string, patch: Partial<RecreationPlan>) =>
+    setRecreationPlans((prev) => (prev ? prev.map((p) => (p.videoId === videoId ? { ...p, ...patch } : p)) : prev));
+  const setPlanRewrites = (videoId: string, rewrites: RecreationPlan['rewrites']) => editPlan(videoId, { rewrites });
 
   const onAnalyze = async () => {
     if (!script.trim()) {
@@ -292,7 +322,17 @@ export default function ThumbnailDesignerPage() {
     }
 
     try {
-      const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks, mode });
+      const { jobId } = await startThumbnailGeneration({
+        keyword: keyword.trim(),
+        videoType,
+        picks,
+        mode,
+        // Send the reviewed/edited choices when they match the current picks.
+        plans:
+          recreationPlans && recreationPlans.length === picks.length && recreationPlans.every((p) => picks.includes(p.videoId))
+            ? recreationPlans
+            : undefined,
+      });
       pollJob(jobId, pollRef, setJob, (snap) => {
         setGenerating(false);
         if (snap.error) {
@@ -499,7 +539,18 @@ export default function ThumbnailDesignerPage() {
                     {picks.length > 0 && (
                       <CostHint mode={mode} picks={picks.length} />
                     )}
-                    <div className="space-y-1.5">
+                    {/* Per-thumbnail review: edit the AI's choices before generating. */}
+                    {picks.length > 0 && status && (
+                      <RecreationReview
+                        plans={recreationPlans}
+                        planning={planning}
+                        status={status}
+                        onReview={reviewChoices}
+                        onEditPlan={editPlan}
+                        onSetRewrites={setPlanRewrites}
+                      />
+                    )}
+                    <div className="flex flex-wrap gap-2">
                       <Button onClick={onGenerate} disabled={generating || picks.length === 0} className="w-full sm:w-auto">
                         {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                         Generate {picks.length > 0 ? `${picks.length} ` : ''}thumbnail{picks.length === 1 ? '' : 's'}
@@ -1078,6 +1129,137 @@ function CopyReview({
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function RecreationReview({
+  plans,
+  planning,
+  status,
+  onReview,
+  onEditPlan,
+  onSetRewrites,
+}: {
+  plans: RecreationPlan[] | null;
+  planning: boolean;
+  status: ThumbnailStatusOutputType;
+  onReview: () => void;
+  onEditPlan: (videoId: string, patch: Partial<RecreationPlan>) => void;
+  onSetRewrites: (videoId: string, rewrites: RecreationPlan['rewrites']) => void;
+}) {
+  const charOptions = status.characters.filter((c) => c.uploaded);
+  const bgOptions = status.backgrounds;
+  return (
+    <div className="space-y-3 rounded-lg border border-border bg-muted/20 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+          <Wand2 className="w-4 h-4 text-primary" /> Review the AI's choices
+        </span>
+        <Button type="button" variant="outline" size="sm" disabled={planning} onClick={onReview}>
+          {planning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+          {plans ? 'Re-plan' : 'Review choices'}
+        </Button>
+      </div>
+      {!plans && !planning && (
+        <p className="text-[11px] text-muted-foreground">
+          Optional: see + edit the character, background and text the AI will use for each thumbnail before generating.
+          Skip it to let the AI decide automatically.
+        </p>
+      )}
+      {planning && !plans && <Skeleton className="h-28 w-full rounded" />}
+      {plans &&
+        plans.map((p) => (
+          <div key={p.videoId} className="rounded-md border border-border bg-background p-3 space-y-3">
+            <div className="flex gap-3">
+              <img
+                src={p.sourceThumbnailUrl || `https://i.ytimg.com/vi/${p.videoId}/hqdefault.jpg`}
+                alt="source"
+                className="w-28 aspect-video object-cover rounded border border-border shrink-0"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).src = `https://i.ytimg.com/vi/${p.videoId}/hqdefault.jpg`;
+                }}
+              />
+              <div className="flex-1 grid sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Character</label>
+                  <Select value={p.expression} onValueChange={(v) => onEditPlan(p.videoId, { expression: v })}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {charOptions.map((c) => (
+                        <SelectItem key={c.id} value={c.id}>
+                          {c.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-muted-foreground">Background</label>
+                  <Select
+                    value={p.backgroundId ?? '__auto__'}
+                    onValueChange={(v) => onEditPlan(p.videoId, { backgroundId: v === '__auto__' ? null : v })}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__auto__">Keep / enhance original</SelectItem>
+                      {bgOptions.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+            {/* Text changes — editable old→new pairs. */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] text-muted-foreground">Text changes (original → new)</label>
+                <button
+                  type="button"
+                  className="text-[11px] text-primary hover:underline"
+                  onClick={() => onSetRewrites(p.videoId, [...p.rewrites, { old: '', new: '' }])}
+                >
+                  + Add
+                </button>
+              </div>
+              {p.rewrites.length === 0 && (
+                <p className="text-[11px] text-muted-foreground">No text changes — the original copy is kept (titles aside).</p>
+              )}
+              {p.rewrites.map((r, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <Input
+                    value={r.old}
+                    placeholder="original text"
+                    className="h-8 text-xs"
+                    onChange={(e) => onSetRewrites(p.videoId, p.rewrites.map((x, i) => (i === idx ? { ...x, old: e.target.value } : x)))}
+                  />
+                  <span className="text-muted-foreground text-xs">→</span>
+                  <Input
+                    value={r.new}
+                    placeholder="new text"
+                    className="h-8 text-xs"
+                    onChange={(e) => onSetRewrites(p.videoId, p.rewrites.map((x, i) => (i === idx ? { ...x, new: e.target.value } : x)))}
+                  />
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-destructive text-xs px-1"
+                    onClick={() => onSetRewrites(p.videoId, p.rewrites.filter((_, i) => i !== idx))}
+                    aria-label="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
     </div>
   );
 }

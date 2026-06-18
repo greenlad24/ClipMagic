@@ -57,8 +57,10 @@ import {
   artDirect as defaultArtDirect,
   analyzeForSwap as defaultAnalyzeForSwap,
   buildLooksOversized,
+  buildTextRewriteInstruction,
   type ArtDirectorStep,
   type SwapAssessment,
+  type TextRewrite,
 } from "./artDirector.js";
 import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
 import type { Expression } from "./characters.js";
@@ -286,6 +288,15 @@ export interface RecreateInput {
    * the swap/one-shot prompt positions him all the way to that side.
    */
   characterPlacement?: "left" | "right" | null;
+  /**
+   * Optional REVIEWED text rewrites (from the plan/review step). When provided,
+   * these REPLACE the art-director's own text-rewrite decisions: the director
+   * still runs for the structured edits (device/font/logo), but its text-rewrites
+   * are dropped in favour of this exact, user-approved list. An empty array means
+   * "the user approved NO text changes" (the director's text-rewrites are still
+   * dropped); omit the field entirely to keep the director's automatic behaviour.
+   */
+  textRewrites?: TextRewrite[];
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -414,24 +425,29 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   if (input.busy) {
     report(PHASE_LABEL.edits, phasePercent("edits", 0));
     let textChanges: string[] = [];
-    try {
-      const ds = await artDirect({
-        imageBytes: input.sourceBytes,
-        imageMime: current.mimeType,
-        keyword: input.keyword,
-        videoType: input.videoType,
-      });
-      textChanges = ds
-        .filter((s) => s.id === "text-rewrite" && s.apply && s.instruction)
-        .map((s) => s.instruction);
-    } catch (e) {
-      steps.push({
-        id: "art-director",
-        label: "Art director",
-        instruction: "(decide text changes)",
-        applied: false,
-        note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
-      });
+    if (input.textRewrites) {
+      // User-approved copy from the review step — use it verbatim, no AI text pass.
+      textChanges = input.textRewrites.map((r) => buildTextRewriteInstruction(r.old, r.new));
+    } else {
+      try {
+        const ds = await artDirect({
+          imageBytes: input.sourceBytes,
+          imageMime: current.mimeType,
+          keyword: input.keyword,
+          videoType: input.videoType,
+        });
+        textChanges = ds
+          .filter((s) => s.id === "text-rewrite" && s.apply && s.instruction)
+          .map((s) => s.instruction);
+      } catch (e) {
+        steps.push({
+          id: "art-director",
+          label: "Art director",
+          instruction: "(decide text changes)",
+          applied: false,
+          note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
     }
     report(PHASE_LABEL.swap, phasePercent("swap", 0));
     const consolidated =
@@ -480,6 +496,22 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
       applied: false,
       note: `art-director skipped: ${e instanceof Error ? e.message : String(e)}`,
     });
+  }
+
+  // When the user reviewed the copy, REPLACE the director's text-rewrites with the
+  // approved list (the structured device/font/logo steps still come from the
+  // director). An empty approved list means "no text changes" → all text-rewrites
+  // are dropped. Omitting input.textRewrites keeps the director's automatic copy.
+  if (input.textRewrites) {
+    directorSteps = directorSteps.filter((s) => s.id !== "text-rewrite");
+    for (const r of input.textRewrites) {
+      directorSteps.push({
+        id: "text-rewrite",
+        label: "Rewrite text",
+        apply: true,
+        instruction: buildTextRewriteInstruction(r.old, r.new),
+      });
+    }
   }
 
   // ── Optional edits (CONDITIONAL) + background (ALWAYS) + final swap (ALWAYS) ──

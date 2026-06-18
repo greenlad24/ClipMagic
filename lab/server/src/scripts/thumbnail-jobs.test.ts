@@ -368,6 +368,76 @@ async function main() {
     bgs.deleteBackground("neon-city");
   });
 
+  await check("planRecreations returns an editable plan per pick (cast + bg + text)", async () => {
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    bgs.saveBackground("Neon City", onePx);
+    const plans = await orchestrate.planRecreations(
+      { picks: ["A", "B"], keyword: "OpenClaw", videoType: "Tutorial", titles: ["OpenClaw Tutorial"] },
+      fakeDownload,
+      async () => ({ expression: "surprise" as const, busy: true }),
+      async () => "neon-city",
+      async () => [{ old: "CLAWDBOT", new: "OpenClaw" }],
+    );
+    assert.equal(plans.length, 2);
+    assert.equal(plans[0].expression, "surprise");
+    assert.equal(plans[0].busy, true);
+    assert.equal(plans[0].backgroundId, "neon-city");
+    assert.deepEqual(plans[0].rewrites, [{ old: "CLAWDBOT", new: "OpenClaw" }]);
+    assert.ok(plans[0].expressionLabel, "carries a human label for the cast");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+    bgs.deleteBackground("neon-city");
+  });
+
+  await check("a reviewed PLAN drives generation: uses its cast + text, SKIPS analysis", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const instructions: string[] = [];
+    let analyzeCalled = false;
+    const deps = {
+      ...makeDeps({ edits: 1 }),
+      analyzeSource: async () => {
+        analyzeCalled = true;
+        return { expression: "smile" as const, busy: false };
+      },
+      editImage: async (opts: any) => {
+        instructions.push(opts.instruction);
+        return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+      },
+      finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
+    };
+    const job = orchestrate.startThumbnailJob(
+      {
+        keyword: "OpenClaw",
+        videoType: "Tutorial",
+        picks: ["A"],
+        mode: "gemini-pro",
+        plans: [
+          {
+            videoId: "A",
+            sourceThumbnailUrl: "",
+            expression: "surprise",
+            expressionLabel: "Surprise",
+            busy: false,
+            backgroundId: null,
+            rewrites: [{ old: "CLAWDBOT", new: "OpenClaw" }],
+          },
+        ],
+      },
+      fakeDownload,
+      deps as any,
+    );
+    await waitUntil(() => job.done);
+    assert.equal(analyzeCalled, false, "the plan replaces the per-source vision analysis");
+    assert.equal(job.variants[0].expression, "surprise", "uses the plan's chosen character");
+    // The approved rewrite is applied verbatim (template-filled) and REPLACES any
+    // art-director text-rewrites.
+    assert.ok(
+      instructions.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)),
+      "the approved text rewrite was applied",
+    );
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
   await check("a BUSY source is recreated in ONE pass (no multi-step chain)", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);

@@ -23,9 +23,11 @@ import {
   analyzeSourceThumbnail,
   chooseBackground,
   fallbackExpression,
+  planTextRewrites,
   type SourceAssessment,
   type AvailableExpression,
   type BackgroundCandidate,
+  type TextRewrite,
 } from "./artDirector.js";
 import { recreateThumbnail, composeContrarianThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
 import {
@@ -152,6 +154,7 @@ async function analyzeForSource(opts: {
 }): Promise<{
   expression: Expression;
   busy: boolean;
+  backgroundId?: string | null;
   backgroundBytes?: Buffer;
   backgroundMime?: string;
   placement?: "left" | "right" | null;
@@ -172,6 +175,7 @@ async function analyzeForSource(opts: {
   // Forced side from the chosen expression's name (e.g. "…place on the right").
   const chosenLabel = opts.available.find((e) => e.id === expression)?.label ?? "";
   const placement = placementFromLabel(chosenLabel);
+  let backgroundId: string | null = null;
   let backgroundBytes: Buffer | undefined;
   if (opts.bgCandidates.length > 0) {
     const chosenId = await opts.analyzeBg({
@@ -181,9 +185,12 @@ async function analyzeForSource(opts: {
       videoType: opts.videoType,
       keyword: opts.keyword,
     });
-    if (chosenId) backgroundBytes = opts.bgCandidates.find((c) => c.id === chosenId)?.bytes;
+    if (chosenId) {
+      backgroundId = chosenId;
+      backgroundBytes = opts.bgCandidates.find((c) => c.id === chosenId)?.bytes;
+    }
   }
-  return { expression, busy, backgroundBytes, backgroundMime: backgroundBytes ? "image/png" : undefined, placement };
+  return { expression, busy, backgroundId, backgroundBytes, backgroundMime: backgroundBytes ? "image/png" : undefined, placement };
 }
 
 const defaultDownload: DownloadFn = async (url) => {
@@ -229,6 +236,106 @@ export interface GenerateInput {
   mode?: GenerationMode;
   /** @deprecated Back-compat single-provider selector; prefer `mode`. */
   provider?: ImageProvider;
+  /**
+   * Optional REVIEWED per-pick plans (from the review step). When a plan matches a
+   * pick (by videoId), its choices are used VERBATIM and the per-source vision
+   * analysis is skipped: the chosen character expression, the busy flag, the
+   * chosen background, and the approved text rewrites all come from the plan.
+   */
+  plans?: RecreationPlan[];
+}
+
+/**
+ * One reviewed/editable recreation plan: every decision the system made for a
+ * single source thumbnail, surfaced so the user can edit it before generation.
+ */
+export interface RecreationPlan {
+  videoId: string;
+  /** The resolved source thumbnail URL (maxres when it existed). */
+  sourceThumbnailUrl: string;
+  /** Chosen character/expression id (editable → any uploaded expression). */
+  expression: Expression;
+  /** Human label for the chosen expression. */
+  expressionLabel: string;
+  /** Recreate element-heavy thumbnails in one pass (computed; carried for consistency). */
+  busy: boolean;
+  /** Chosen uploaded background id, or null to keep/enhance the original. */
+  backgroundId: string | null;
+  /** The proposed text changes (editable old→new pairs). */
+  rewrites: TextRewrite[];
+}
+
+/** Injectable text-planner (so plan tests run offline). */
+export type PlanTextFn = (opts: {
+  sourceBytes: Buffer;
+  sourceMime: string;
+  keyword: string;
+  videoType: VideoType;
+  titles?: string[];
+}) => Promise<TextRewrite[]>;
+
+/**
+ * PLAN (don't render) every per-thumbnail decision for the chosen picks so the
+ * user can review + edit them: the cast expression, the busy flag, the chosen
+ * background, and the text rewrites (grounded in the titles). Per-pick try/catch —
+ * one bad source yields a minimal editable row instead of aborting. Best-effort
+ * vision passes are injectable for tests.
+ */
+export async function planRecreations(
+  input: { picks: string[]; keyword: string; videoType: VideoType; titles?: string[] },
+  download: DownloadFn = defaultDownload,
+  analyze: AnalyzeSourceFn = defaultAnalyzeSource,
+  analyzeBg: AnalyzeBackgroundFn = defaultAnalyzeBackground,
+  planText: PlanTextFn = planTextRewrites,
+): Promise<RecreationPlan[]> {
+  const available = availableExpressionOptions();
+  const bgCandidates = loadBackgroundCandidates();
+  const labelFor = (id: string) => available.find((e) => e.id === id)?.label ?? id;
+  const fallback = available.length ? fallbackExpression(input.videoType, available) : (("smile" as unknown) as Expression);
+  const out: RecreationPlan[] = [];
+  for (const videoId of input.picks) {
+    try {
+      const src = await downloadSourceThumbnail(videoId, download);
+      const a = await analyzeForSource({
+        src,
+        available,
+        bgCandidates,
+        videoType: input.videoType,
+        keyword: input.keyword,
+        fallback,
+        analyze,
+        analyzeBg,
+      });
+      const rewrites = await planText({
+        sourceBytes: src.bytes,
+        sourceMime: src.mime,
+        keyword: input.keyword,
+        videoType: input.videoType,
+        titles: input.titles,
+      });
+      out.push({
+        videoId,
+        sourceThumbnailUrl: src.url,
+        expression: a.expression,
+        expressionLabel: labelFor(a.expression),
+        busy: a.busy,
+        backgroundId: a.backgroundId ?? null,
+        rewrites,
+      });
+    } catch {
+      // Minimal editable row so the UI still shows the pick.
+      out.push({
+        videoId,
+        sourceThumbnailUrl: hqThumbnailUrl(videoId),
+        expression: fallback,
+        expressionLabel: labelFor(fallback),
+        busy: false,
+        backgroundId: null,
+        rewrites: [],
+      });
+    }
+  }
+  return out;
 }
 
 /** Resolve the effective mode from the input (mode → provider → default). */
@@ -380,29 +487,46 @@ export async function runThumbnailJob(
       let backgroundBytes: Buffer | undefined;
       let backgroundMime: string | undefined;
       let placement: "left" | "right" | null | undefined;
+      let textRewrites: TextRewrite[] | undefined;
+      // A reviewed/edited plan for THIS pick (matched by videoId) overrides the
+      // automatic vision analysis entirely.
+      const plan = input.plans?.find((p) => p.videoId === videoId);
       // Shared fetch phase: move every sub-run column into "running" together.
       updateVariant(job, i, { status: "running", stepLabel: PHASE_LABEL.fetch, percent: phasePercent("fetch", 0) });
       try {
         if (!expression) throw new Error("No character expression available — upload at least one in the library.");
 
         const src = await downloadSourceThumbnail(videoId, download);
-        // Analyse THIS source: best-fit expression + busy flag + chosen background
-        // (best-effort); reflect the expression on the variant for the UI.
-        const a = await analyzeForSource({
-          src,
-          available: availOptions,
-          bgCandidates,
-          videoType: input.videoType,
-          keyword: input.keyword,
-          fallback: expression,
-          analyze,
-          analyzeBg,
-        });
-        expression = a.expression;
-        busy = a.busy;
-        backgroundBytes = a.backgroundBytes;
-        backgroundMime = a.backgroundMime;
-        placement = a.placement;
+        if (plan) {
+          // Use the reviewed choices verbatim; skip the per-source vision analysis.
+          expression = availOptions.some((e) => e.id === plan.expression) ? plan.expression : expression;
+          busy = plan.busy;
+          const label = availOptions.find((e) => e.id === expression)?.label ?? "";
+          placement = placementFromLabel(label);
+          if (plan.backgroundId) {
+            backgroundBytes = bgCandidates.find((c) => c.id === plan.backgroundId)?.bytes;
+            backgroundMime = backgroundBytes ? "image/png" : undefined;
+          }
+          textRewrites = plan.rewrites;
+        } else {
+          // Analyse THIS source: best-fit expression + busy flag + chosen background
+          // (best-effort); reflect the expression on the variant for the UI.
+          const a = await analyzeForSource({
+            src,
+            available: availOptions,
+            bgCandidates,
+            videoType: input.videoType,
+            keyword: input.keyword,
+            fallback: expression,
+            analyze,
+            analyzeBg,
+          });
+          expression = a.expression;
+          busy = a.busy;
+          backgroundBytes = a.backgroundBytes;
+          backgroundMime = a.backgroundMime;
+          placement = a.placement;
+        }
         job.variants[i].expression = expression;
         const characterBytes = readCharacterImage(expression);
         if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
@@ -426,6 +550,7 @@ export async function runThumbnailJob(
                 backgroundBytes,
                 backgroundMime,
                 characterPlacement: placement,
+                textRewrites,
                 provider: run.provider,
                 imageSize: run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>
