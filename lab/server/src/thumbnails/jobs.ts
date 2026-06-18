@@ -103,6 +103,19 @@ export interface ProviderResult {
   outputUrl?: string;
   /** Present when this sub-run errored (the sibling keeps going). */
   error?: string;
+  /** Contrarian only: lets the UI re-render the headline at a new size live. */
+  overlay?: ContrarianOverlay;
+}
+
+/** Everything needed to RE-RENDER a contrarian headline onto its base image. */
+export interface ContrarianOverlay {
+  /** Served URL of the pre-text composite (the base to re-draw the headline on). */
+  baseUrl: string;
+  templateId: string;
+  text: string;
+  emphasis: string;
+  /** The size multiplier currently rendered (1 = box fit). */
+  textScale: number;
 }
 
 /**
@@ -128,6 +141,8 @@ export interface JobVariant {
   outputUrl?: string;
   /** Present when EVERY sub-run errored (per-provider failures live on results). */
   error?: string;
+  /** Contrarian only: re-render info for the first successful sub-run. */
+  overlay?: ContrarianOverlay;
 }
 
 export interface ThumbnailJob {
@@ -248,8 +263,21 @@ function recomputeVariant(v: JobVariant): void {
     v.status = anyDone ? "done" : "error";
     v.stepLabel = anyDone ? "Done" : "Failed";
   }
-  v.outputUrl = rs.find((r) => r.status === "done" && r.outputUrl)?.outputUrl;
+  const firstDone = rs.find((r) => r.status === "done" && r.outputUrl);
+  v.outputUrl = firstDone?.outputUrl;
+  v.overlay = firstDone?.overlay;
   v.error = anyDone ? undefined : rs.find((r) => r.error)?.error;
+}
+
+/** Attach contrarian re-render info to a finished sub-run (and re-derive the aggregate). */
+export function attachResultOverlay(job: ThumbnailJob, variantIndex: number, provider: string, overlay: ContrarianOverlay): void {
+  const v = job.variants[variantIndex];
+  if (!v) return;
+  const r = findResult(v, provider);
+  if (!r) return;
+  r.overlay = overlay;
+  recomputeVariant(v);
+  job.updatedAt = Date.now();
 }
 
 /** Locate a sub-run within a variant by provider id (or index for the lone run). */

@@ -55,6 +55,7 @@ import {
   updateResult,
   finishVariant,
   finishResult,
+  attachResultOverlay,
   completeJob,
   phasePercent,
   PHASE_LABEL,
@@ -828,7 +829,10 @@ async function runContrarianJob(
           },
           recreateDeps,
         );
-        finishResult(job, i, run?.provider ?? DEFAULT_IMAGE_PROVIDER, { outputUrl: result.outputUrl });
+        const prov = run?.provider ?? DEFAULT_IMAGE_PROVIDER;
+        finishResult(job, i, prov, { outputUrl: result.outputUrl });
+        // Carry the re-render info so the UI can adjust the headline size live.
+        if (result.overlay) attachResultOverlay(job, i, prov, { ...result.overlay });
       } catch (e) {
         finishResult(job, i, run?.provider ?? DEFAULT_IMAGE_PROVIDER, { error: e instanceof Error ? e.message : String(e) });
       }

@@ -439,6 +439,30 @@ async function main() {
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 
+  await check("restyleContrarianText re-renders the headline onto the saved base → new output", async () => {
+    const recreate = await import("../thumbnails/recreate.js");
+    const nb = await import("../thumbnails/nanoBanana.js");
+    const dir = nb.thumbnailsDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const baseName = "unit-base.base.jpg";
+    fs.writeFileSync(path.join(dir, baseName), Buffer.from("pretend-jpeg-bytes"));
+    const { outputUrl } = await recreate.restyleContrarianText({
+      baseUrl: `/api/outputs/thumbnails/${baseName}`,
+      templateId: "bottom-bar",
+      text: "TOPVIEW BEATS HOLLYWOOD",
+      emphasis: "BEATS",
+      textScale: 1.3,
+    });
+    assert.match(outputUrl, /^\/api\/outputs\/thumbnails\/[a-f0-9]+\.jpg$/, "returns a fresh served URL");
+    const outName = outputUrl.split("/").pop()!;
+    assert.ok(fs.existsSync(path.join(dir, outName)), "wrote a new output file (canvas absent → base bytes)");
+    // Path traversal in the base name is stripped (basename only).
+    await assert.rejects(
+      recreate.restyleContrarianText({ baseUrl: "/etc/passwd", templateId: "bottom-bar", text: "x", emphasis: "x", textScale: 1 }),
+      /invalid base image|ENOENT/,
+    );
+  });
+
   await check("a BUSY source is recreated in ONE pass (no multi-step chain)", async () => {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);

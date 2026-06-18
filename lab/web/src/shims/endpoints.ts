@@ -305,7 +305,21 @@ export type ThumbnailJobVariant = {
   outputUrl?: string;
   /** Present when the sub-run errored. */
   error?: string;
+  /** Contrarian only: re-render info for the live "text size" slider. */
+  overlay?: ContrarianOverlay;
 };
+export type ContrarianOverlay = {
+  baseUrl: string;
+  templateId: string;
+  text: string;
+  emphasis: string;
+  textScale: number;
+};
+/** Live "text size" slider: re-render a contrarian headline on its base image. */
+export const restyleContrarianText =
+  endpoint<{ baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number }, { outputUrl: string }>(
+    'restyleContrarianText',
+  );
 /**
  * One provider sub-run within a variant — a variant now has exactly ONE (the
  * single chosen provider).

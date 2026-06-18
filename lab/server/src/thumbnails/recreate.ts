@@ -349,6 +349,8 @@ export interface RecreateResult {
   outputUrl: string;
   file: string;
   steps: ChainStep[];
+  /** Contrarian only: lets the UI re-render the headline at a new size live. */
+  overlay?: { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number };
 }
 
 /**
@@ -698,11 +700,27 @@ export async function composeContrarianThumbnail(
   const result = await finalizeFn(current, steps);
 
   // Programmatic headline overlay onto the finalized 16:9 image. BEST-EFFORT:
-  // any failure (no canvas/font, unreadable file) leaves the image as-is.
+  // any failure (no canvas/font, unreadable file) leaves the image as-is. We also
+  // SAVE the pre-text base so the UI can re-render the headline at a new size live.
   if (input.overlay) {
     try {
       const { renderContrarianText } = await import("./textOverlay.js");
       const baseBytes = fs.readFileSync(result.file);
+      // Persist the base (no-text) image as a sibling file: <name>.jpg → <name>.base.jpg.
+      const baseFile = result.file.replace(/\.jpg$/i, ".base.jpg");
+      try {
+        fs.copyFileSync(result.file, baseFile);
+        const baseUrl = result.outputUrl.replace(/\.jpg$/i, ".base.jpg");
+        result.overlay = {
+          baseUrl,
+          templateId: input.overlay.template.id,
+          text: input.overlay.text,
+          emphasis: input.overlay.emphasis,
+          textScale: input.overlay.sizeScale ?? 1,
+        };
+      } catch {
+        /* base copy is best-effort — the live slider just won't be available */
+      }
       const withText = await renderContrarianText(
         baseBytes,
         input.overlay.template,
@@ -732,6 +750,32 @@ export async function composeContrarianThumbnail(
 
   report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
   return result;
+}
+
+/**
+ * RE-RENDER a contrarian headline onto its saved base image at a new size — the
+ * UI's live "text size" slider. Reads the pre-text base (saved during compose),
+ * draws the headline at `textScale`, and writes a NEW output (the base is reused,
+ * so this is cheap: no model, no compositing). Returns the new served URL.
+ */
+export async function restyleContrarianText(input: {
+  baseUrl: string;
+  templateId: string;
+  text: string;
+  emphasis: string;
+  textScale: number;
+}): Promise<{ outputUrl: string }> {
+  const dir = thumbnailsDir();
+  const base = path.basename(input.baseUrl); // strip any path → a name within dir
+  if (!/\.jpg$/i.test(base)) throw new Error("invalid base image");
+  const bytes = fs.readFileSync(path.join(dir, base));
+  const { renderContrarianText, CONTRARIAN_TEMPLATES } = await import("./textOverlay.js");
+  const template = CONTRARIAN_TEMPLATES.find((t) => t.id === input.templateId) ?? CONTRARIAN_TEMPLATES[0];
+  const scale = Math.min(2, Math.max(0.4, input.textScale || 1));
+  const withText = await renderContrarianText(bytes, template, input.text, input.emphasis, scale);
+  const name = `${crypto.randomBytes(12).toString("hex")}.jpg`;
+  fs.writeFileSync(path.join(dir, name), withText);
+  return { outputUrl: `/api/outputs/thumbnails/${name}` };
 }
 
 /**

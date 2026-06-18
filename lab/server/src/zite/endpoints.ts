@@ -87,6 +87,7 @@ import {
 } from "../thumbnails/orchestrate.js";
 import { generateTitles } from "../thumbnails/titles.js";
 import { probeCompositeAvailable } from "../thumbnails/composite.js";
+import { restyleContrarianText as restyleContrarian } from "../thumbnails/recreate.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
@@ -2397,6 +2398,19 @@ function coercePlans(input: any): any[] | undefined {
     .filter((p: any) => p.videoId && p.expression);
 }
 
+/** Live "text size" slider: re-render a contrarian headline on its base image. */
+const restyleContrarianText: Handler = async (input) => {
+  const baseUrl = String(input?.baseUrl ?? "").trim();
+  if (!baseUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "A base image is required." });
+  return restyleContrarian({
+    baseUrl,
+    templateId: String(input?.templateId ?? "bottom-bar"),
+    text: String(input?.text ?? ""),
+    emphasis: String(input?.emphasis ?? ""),
+    textScale: Number.isFinite(input?.textScale) ? Number(input.textScale) : 1,
+  });
+};
+
 /** Free-text → precise edit element(s) for ONE picked thumbnail (review step). */
 const planThumbnailCustomEdit: Handler = async (input) => {
   const videoId = String(input?.videoId ?? "").trim();
@@ -2670,6 +2684,7 @@ export const HANDLERS: Record<string, Handler> = {
   generateThumbnailTitles,
   planThumbnailRecreations,
   planThumbnailCustomEdit,
+  restyleContrarianText,
   planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,

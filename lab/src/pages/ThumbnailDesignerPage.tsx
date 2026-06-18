@@ -10,6 +10,7 @@ import {
   planThumbnailContrarian,
   planThumbnailRecreations,
   planThumbnailCustomEdit,
+  restyleContrarianText,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -1519,6 +1520,37 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
   const failed = result.status === 'error';
   // Fall back to a generic caption when there's only a single (label-less) run.
   const caption = result.label || 'Generated';
+
+  // Contrarian only: a live "text size" slider that re-renders the headline on
+  // the saved base image (no full regen). Local overrides win over the polled URL.
+  const overlay = result.overlay;
+  const [scale, setScale] = useState(overlay?.textScale ?? 1);
+  const [localUrl, setLocalUrl] = useState<string | null>(null);
+  const [restyling, setRestyling] = useState(false);
+  const restyleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onScale = (next: number) => {
+    setScale(next);
+    if (!overlay) return;
+    if (restyleTimer.current) clearTimeout(restyleTimer.current);
+    restyleTimer.current = setTimeout(async () => {
+      setRestyling(true);
+      try {
+        const { outputUrl } = await restyleContrarianText({
+          baseUrl: overlay.baseUrl,
+          templateId: overlay.templateId,
+          text: overlay.text,
+          emphasis: overlay.emphasis,
+          textScale: next,
+        });
+        setLocalUrl(outputUrl);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not resize the headline');
+      } finally {
+        setRestyling(false);
+      }
+    }, 350);
+  };
+  const shownUrl = localUrl ?? result.outputUrl;
   return (
     <figure className="space-y-1.5">
       <figcaption className="text-xs text-muted-foreground flex items-center justify-between gap-2">
@@ -1541,8 +1573,8 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
       )}
 
       <div className="aspect-video rounded-md overflow-hidden bg-muted flex items-center justify-center">
-        {result.outputUrl ? (
-          <img src={result.outputUrl} alt={`${caption} thumbnail`} className="w-full h-full object-cover" />
+        {shownUrl ? (
+          <img src={shownUrl} alt={`${caption} thumbnail`} className="w-full h-full object-cover" />
         ) : failed ? (
           <div className="text-center px-4">
             <AlertTriangle className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
@@ -1555,9 +1587,30 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
           </div>
         )}
       </div>
-      {result.outputUrl && (
+
+      {/* Live headline size slider (contrarian only). */}
+      {overlay && result.status === 'done' && (
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>Text size {restyling ? '· updating…' : ''}</span>
+            <span className="tabular-nums">{Math.round(scale * 100)}%</span>
+          </div>
+          <input
+            type="range"
+            min={0.5}
+            max={1.8}
+            step={0.05}
+            value={scale}
+            onChange={(e) => onScale(Number(e.target.value))}
+            className="w-full accent-primary"
+            aria-label="Headline text size"
+          />
+        </div>
+      )}
+
+      {shownUrl && (
         <Button asChild variant="outline" size="sm" className="w-full">
-          <a href={result.outputUrl} download>
+          <a href={shownUrl} download>
             <Download className="w-4 h-4" />
             Download
           </a>
