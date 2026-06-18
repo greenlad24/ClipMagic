@@ -63,6 +63,7 @@ import {
 import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
 import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
+import type { ContrarianTemplate } from "./textOverlay.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
 
 /**
@@ -555,8 +556,10 @@ export async function composeContrarianThumbnail(
     backgroundBytes: Buffer;
     backgroundMime: string;
     characterBytes: Buffer;
-    /** The full composition instruction (see contrarian.buildContrarianPrompt). */
+    /** The text-free compose instruction (see contrarian.buildContrarianComposePrompt). */
     instruction: string;
+    /** When set, the headline is drawn programmatically onto the finalized image. */
+    overlay?: { template: ContrarianTemplate; text: string; emphasis: string };
     provider?: ImageProvider;
     imageSize?: string;
     onProgress?: ProgressFn;
@@ -603,6 +606,39 @@ export async function composeContrarianThumbnail(
 
   report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
   const result = await finalizeFn(current, steps);
+
+  // Programmatic headline overlay onto the finalized 16:9 image. BEST-EFFORT:
+  // any failure (no canvas/font, unreadable file) leaves the image as-is.
+  if (input.overlay) {
+    try {
+      const { renderContrarianText } = await import("./textOverlay.js");
+      const baseBytes = fs.readFileSync(result.file);
+      const withText = await renderContrarianText(
+        baseBytes,
+        input.overlay.template,
+        input.overlay.text,
+        input.overlay.emphasis,
+      );
+      if (withText && withText.length > 0 && withText !== baseBytes) {
+        fs.writeFileSync(result.file, withText);
+      }
+      steps.push({
+        id: "text-overlay",
+        label: "Add headline",
+        instruction: `${input.overlay.template.id}: "${input.overlay.text}"`,
+        applied: true,
+      });
+    } catch (e) {
+      steps.push({
+        id: "text-overlay",
+        label: "Add headline",
+        instruction: `${input.overlay.template.id}: "${input.overlay.text}"`,
+        applied: false,
+        note: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
   return result;
 }

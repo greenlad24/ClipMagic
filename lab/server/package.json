@@ -24,7 +24,8 @@
     "zod": "^3.24.1"
   },
   "optionalDependencies": {
-    "puppeteer-core": "^23.0.0"
+    "puppeteer-core": "^23.0.0",
+    "@napi-rs/canvas": "^0.1.65"
   },
   "devDependencies": {
     "@types/archiver": "^6.0.3",

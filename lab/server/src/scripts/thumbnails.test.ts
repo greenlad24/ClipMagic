@@ -1099,15 +1099,14 @@ async function main() {
     assert.equal(out[1].expressionId, "", "unknown cast cleared (pad will assign)");
   });
 
-  await check("padContrarianVariations reaches the count, money-free, with placement + cast filled", () => {
+  await check("padContrarianVariations reaches the count, money-free, with cast filled", () => {
     const padded = contrarian.padContrarianVariations(
-      [{ text: "STOP NOW", emphasis: "STOP", expressionId: "", placement: "" as any }],
+      [{ text: "STOP NOW", emphasis: "STOP", expressionId: "" }],
       3,
       ["smile", "surprise"],
     );
     assert.equal(padded.length, 3);
     assert.ok(padded.every((v) => !contrarian.hasMoneyClaim(v.text)), "fallbacks carry no money claim");
-    assert.ok(padded.every((v) => ["left", "center", "right"].includes(v.placement)), "every variation has a placement");
     assert.ok(padded.every((v) => ["smile", "surprise"].includes(v.expressionId)), "every cast is an available id");
   });
 
@@ -1117,21 +1116,52 @@ async function main() {
     assert.deepEqual(contrarian.chooseContrarianBackgrounds([], 3), [], "none → empty");
   });
 
-  await check("buildContrarianPrompt encodes the 3 elements + Helvetica + text style + no-money rule", () => {
-    const p = contrarian.buildContrarianPrompt({ text: "DON'T RUN VIDEO ADS", emphasis: "VIDEO ADS" }, "right");
+  await check("buildContrarianComposePrompt: bg + character ONLY, NO text, honours placement", () => {
+    const p = contrarian.buildContrarianComposePrompt("right", "the LEFT half of the frame");
     assert.match(p, /FIRST image as the full background/i, "background element");
     assert.match(p, /man from the SECOND image/i, "character element");
-    assert.match(p, /DON'T RUN VIDEO ADS/, "the statement text");
-    assert.match(p, /HELVETICA BLACK \/ HELVETICA BOLD/i, "Helvetica font specified");
-    assert.match(p, /BLURRED BLACK DROP SHADOW.*25% opacity/i, "white drop-shadow style");
-    assert.match(p, /"VIDEO ADS" are WHITE text inside a SOLID RED BOX with slightly ROUNDED/i, "red rounded emphasis box");
-    assert.match(p, /NO money/i, "the no-money rule is stated");
+    assert.match(p, /all the way to the RIGHT/i, "placement honoured");
+    assert.match(p, /do NOT render ANY text/i, "the model must NOT draw text (we overlay it)");
+    assert.match(p, /the LEFT half of the frame/, "names the clear text area");
   });
 
-  await check("buildContrarianPrompt lays out each placement (left/center/right)", () => {
-    assert.match(contrarian.buildContrarianPrompt({ text: "A B", emphasis: "B" }, "left"), /ALL THE WAY to the LEFT/i);
-    assert.match(contrarian.buildContrarianPrompt({ text: "A B", emphasis: "B" }, "right"), /ALL THE WAY to the RIGHT/i);
-    assert.match(contrarian.buildContrarianPrompt({ text: "A B", emphasis: "B" }, "center"), /in the CENTER/i);
+  // ── text overlay templates (pure layout helpers) ────────────────────────────
+  const overlay = await import("../thumbnails/textOverlay.js");
+  await check("there are 3 fixed templates in order: bottom-bar, left-stack, top-strike", () => {
+    assert.deepEqual(overlay.CONTRARIAN_TEMPLATES.map((t) => t.id), ["bottom-bar", "left-stack", "top-strike"]);
+    assert.equal(overlay.templateForIndex(0).id, "bottom-bar");
+    assert.equal(overlay.templateForIndex(1).id, "left-stack");
+    assert.equal(overlay.templateForIndex(2).id, "top-strike");
+    assert.equal(overlay.templateForIndex(3).id, "bottom-bar", "cycles");
+    assert.equal(overlay.templateForIndex(1).charPlacement, "right", "left-stack puts the character on the right");
+  });
+
+  await check("splitByEmphasis isolates the emphasis run (case-insensitive), else one segment", () => {
+    assert.deepEqual(overlay.splitByEmphasis("DON'T RUN VIDEO ADS", "VIDEO ADS"), [
+      { text: "DON'T RUN ", emph: false },
+      { text: "VIDEO ADS", emph: true },
+    ]);
+    assert.deepEqual(overlay.splitByEmphasis("NEW CUSTOMERS", "customers"), [
+      { text: "NEW ", emph: false },
+      { text: "CUSTOMERS", emph: true },
+    ]);
+    assert.deepEqual(overlay.splitByEmphasis("HELLO", "zzz"), [{ text: "HELLO", emph: false }], "not found → one segment");
+  });
+
+  await check("stackLines splits the hook (emphasis) from the follow-up", () => {
+    assert.deepEqual(overlay.stackLines("$40M At 20", "$40M"), { line1: "$40M", line2: "At 20" });
+    assert.deepEqual(overlay.stackLines("#1 MISTAKE everyone makes", "#1 MISTAKE"), {
+      line1: "#1 MISTAKE",
+      line2: "everyone makes",
+    });
+  });
+
+  await check("renderContrarianText is best-effort: returns the base bytes when canvas is absent", async () => {
+    const base = Buffer.from("not-a-real-image");
+    const out = await overlay.renderContrarianText(base, overlay.templateForIndex(0), "STOP NOW", "STOP");
+    assert.ok(Buffer.isBuffer(out), "always returns a buffer");
+    // In this offline env @napi-rs/canvas isn't installed → unchanged base bytes.
+    assert.equal(out.toString(), base.toString(), "no canvas → image unchanged (never throws)");
   });
 
   // ── placement parsed from the character NAME ────────────────────────────────

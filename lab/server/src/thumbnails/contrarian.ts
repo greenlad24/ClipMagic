@@ -1,37 +1,34 @@
 /**
  * Contrarian originals — the second Thumbnail Designer workflow.
  *
- * Builds ORIGINAL thumbnails from scratch in the bold "statement" style of the
- * reference designs: a big HELVETICA headline where most words are WHITE (soft
- * blurred black drop shadow ~25% opacity) and the emphasis word(s) sit in a solid
- * RED rounded box. Each original has exactly THREE elements: an uploaded
- * BACKGROUND, the uploaded CHARACTER, and the styled TEXT.
+ * Builds 3 ORIGINAL thumbnails from FIXED templates (see textOverlay.ts): an
+ * uploaded BACKGROUND + the CHARACTER + a styled Helvetica headline. The image
+ * model composes ONLY the background + character (no text); the headline is drawn
+ * programmatically so each template lands in exact, repeatable positions.
  *
  * An "art-director copywriter" (one fast-tier call) returns, per variation:
- *   - text      — a curiosity/shock statement that does NOT damage the brand
- *                 (e.g. "What 99% Don't Know", or for a tutorial the brand name +
- *                 "FULL TUTORIAL" / "BEGINNER TO PRO"). ≤7 words, 2–4 ideal.
- *   - emphasis  — the word(s) to put in the red box.
- *   - expression— which uploaded expression best EMPHASIZES this statement.
- *   - placement — left / center / right (varied across the batch).
+ *   - text      — a curiosity/shock statement that does NOT damage the brand,
+ *                 shaped to fit that template (≤7 words, 2–4 ideal).
+ *   - emphasis  — the word(s) for the red box / strikethrough.
+ *   - expression— which uploaded expression best EMPHASISES this statement.
+ * The placement/layout is fixed by the template (the copywriter no longer picks
+ * it); a placement directive in the chosen expression's NAME can still override
+ * which side the character sits on.
  *
- * HARD RULE: NO money claim anywhere (no "$", no dollar amounts, no revenue /
- * income figures). Percentages/stats like "99%" are fine. Enforced in the prompt
- * AND by dropping any money-smelling statement.
+ * HARD RULE: NO money claim anywhere (no "$", no amounts, no revenue/income
+ * figures). Percentages/stats like "99%" are fine. Enforced in the prompt AND by
+ * dropping any money-smelling statement.
  */
 import { claudeJSONForPurpose } from "../ai/claude.js";
-
-export type ContrarianPlacement = "left" | "center" | "right";
+import { CONTRARIAN_TEMPLATES } from "./textOverlay.js";
 
 export interface ContrarianVariation {
   /** The full statement (≤7 words). */
   text: string;
-  /** The word(s) within `text` to render in the red emphasis box. */
+  /** The word(s) to render in the red box / strikethrough. */
   emphasis: string;
   /** Chosen expression id (from the uploaded library) that fits the statement. */
   expressionId: string;
-  /** Where the character sits in the frame (varied across the batch). */
-  placement: ContrarianPlacement;
 }
 
 /** One available expression option offered to the copywriter. */
@@ -41,49 +38,39 @@ export interface AvailableExpressionOption {
 }
 
 const SYSTEM =
-  "You are an elite YouTube thumbnail ART DIRECTOR and COPYWRITER. For a given " +
-  "video topic you design bold, high-CTR ORIGINAL thumbnails in the style of the " +
-  "reference designs: a big Helvetica headline, most words WHITE with a soft drop " +
-  "shadow and the punchy word(s) inside a RED box. " +
+  "You are an elite YouTube thumbnail ART DIRECTOR and COPYWRITER. You design a " +
+  "set of bold, high-CTR ORIGINAL thumbnails, each following a FIXED template. " +
   "Your COPY must invoke CURIOSITY or SHOCK and make people want to click, but it " +
   "must NEVER damage, insult or speak negatively about the brand/topic. Good " +
   "angles: an intriguing stat or secret (e.g. \"What 99% Don't Know\" with \"99%\" " +
-  "emphasised), a bold promise, or — especially for tutorials — the BRAND NAME as " +
-  "the headline plus a descriptor like \"FULL TUTORIAL\", \"BEGINNER TO PRO\", " +
-  "\"FULL GUIDE\" (descriptor emphasised). Vary the angle across the set. " +
+  "emphasised), a bold promise, or — especially for tutorials — the BRAND NAME plus " +
+  "a descriptor like \"FULL TUTORIAL\", \"BEGINNER TO PRO\", \"FULL GUIDE\". " +
   "Each statement is 2–4 words ideally, NEVER more than 7. ABSOLUTELY NO money " +
   "claims — no dollar signs, no amounts, no revenue/profit/income/earnings figures " +
   "(percentages like \"99%\" are fine). " +
-  "You also CAST and STAGE each thumbnail: choose, from the provided expression " +
-  "list, the expression that best EMPHASISES that specific statement's emotion " +
-  "(e.g. a shocking claim → a shocked/intense look; a confident promise → a calm, " +
-  "assured look) — vary them across the set, don't reuse the same one every time. " +
-  "And choose a placement (left, center, or right) for the person, varying it " +
-  "across the set.";
+  "You also CAST each thumbnail: from the provided expression list choose the one " +
+  "that best EMPHASISES that statement's emotion (shock → a shocked/intense look; " +
+  "a confident promise → a calm assured look) — vary them across the set.";
 
 /** Pure, exported prompt builder so the contract is testable. */
-export function buildContrarianWriterUserText(
-  keyword: string,
-  count: number,
-  available: AvailableExpressionOption[],
-): string {
-  const list = available.map((e) => `  - ${e.id}: ${e.label}`).join("\n");
+export function buildContrarianWriterUserText(keyword: string, available: AvailableExpressionOption[]): string {
+  const exprList = available.map((e) => `  - ${e.id}: ${e.label}`).join("\n");
   const ids = available.map((e) => e.id).join(", ");
+  const templateList = CONTRARIAN_TEMPLATES.map((t, i) => `  ${i + 1}. ${t.label}: ${t.copyHint}`).join("\n");
   return (
     `The video's topic/keyword is: "${keyword}".\n\n` +
-    `Available expressions to cast from (choose by id):\n${list}\n\n` +
-    `Design ${count} DISTINCT thumbnail variations. Return ONLY this JSON object:\n` +
+    `Available expressions to cast from (choose by id):\n${exprList}\n\n` +
+    `Design EXACTLY ${CONTRARIAN_TEMPLATES.length} variations, one per template IN THIS ORDER:\n` +
+    `${templateList}\n\n` +
+    "Return ONLY this JSON object:\n" +
     "{\n" +
     '  "variations": [\n' +
-    '    { "text": string, "emphasis": string, "expression": string, "placement": "left" | "center" | "right" }\n' +
+    '    { "text": string, "emphasis": string, "expression": string }\n' +
     "  ]\n" +
     "}\n\n" +
-    "Rules: `text` 2–4 words ideal (max 7), no surrounding quotes, no money claims. " +
-    "`emphasis` = 1–2 words that appear inside `text`. " +
-    `\`expression\` = one of: ${ids}. ` +
-    "`placement` = left | center | right. VARY both the expression and the " +
-    "placement across the variations; pick the expression that best fits each " +
-    "statement's emotion; keep the brand portrayed positively."
+    "Rules: `text` 2–4 words ideal (max 7), no surrounding quotes, no money claims, brand kept positive. " +
+    "`emphasis` = the word(s) inside `text` that this template highlights (see each template's note). " +
+    `\`expression\` = one of: ${ids}. Vary the expression across the variations and fit it to each statement.`
   );
 }
 
@@ -102,15 +89,10 @@ function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-function isPlacement(x: unknown): x is ContrarianPlacement {
-  return x === "left" || x === "center" || x === "right";
-}
-
 /**
  * Normalize raw model variations: trim, enforce ≤7 words, DROP money claims, fix
- * the emphasis to be inside the text, validate the expression id against the
- * available ones, and keep a valid placement (else left undefined for the pad
- * step to rotate). Pure + exported. `availableIds` gates the expression choice.
+ * the emphasis to be inside the text, and validate the expression id against the
+ * available ones (else cleared for the pad step to assign). Pure + exported.
  */
 export function normalizeContrarianVariations(raw: any, availableIds: string[]): ContrarianVariation[] {
   const list: any[] = Array.isArray(raw?.variations)
@@ -129,8 +111,7 @@ export function normalizeContrarianVariations(raw: any, availableIds: string[]):
     }
     const exprRaw = typeof v?.expression === "string" ? v.expression.trim() : "";
     const expressionId = availableIds.find((id) => id.toLowerCase() === exprRaw.toLowerCase()) ?? "";
-    const placement = isPlacement(v?.placement) ? v.placement : ("" as ContrarianPlacement | "");
-    out.push({ text, emphasis, expressionId, placement: placement as ContrarianPlacement });
+    out.push({ text, emphasis, expressionId });
   }
   return out;
 }
@@ -143,12 +124,9 @@ const FALLBACK_TEXTS: Array<{ text: string; emphasis: string }> = [
   { text: "Nobody Tells You This", emphasis: "NOBODY" },
 ];
 
-const PLACEMENT_ROTATION: ContrarianPlacement[] = ["left", "center", "right"];
-
 /**
  * Pad/trim to exactly `count`, and GUARANTEE every variation has a valid
- * placement (rotated for variety) and a valid expression id (cycled across the
- * available ones). Pure + exported. `availableIds` must be non-empty.
+ * expression id (cycled across the available ones). Pure + exported.
  */
 export function padContrarianVariations(
   variations: ContrarianVariation[],
@@ -158,11 +136,10 @@ export function padContrarianVariations(
   const out = [...variations];
   for (let i = 0; out.length < count; i++) {
     const f = FALLBACK_TEXTS[i % FALLBACK_TEXTS.length];
-    out.push({ text: f.text, emphasis: f.emphasis, expressionId: "", placement: "" as ContrarianPlacement });
+    out.push({ text: f.text, emphasis: f.emphasis, expressionId: "" });
   }
   return out.slice(0, count).map((v, i) => ({
     ...v,
-    placement: isPlacement(v.placement) ? v.placement : PLACEMENT_ROTATION[i % PLACEMENT_ROTATION.length],
     expressionId:
       v.expressionId && availableIds.includes(v.expressionId)
         ? v.expressionId
@@ -195,7 +172,7 @@ export async function generateContrarianVariations(
   const ids = available.map((a) => a.id);
   let variations: ContrarianVariation[] = [];
   try {
-    const raw = await generate({ system: SYSTEM, userText: buildContrarianWriterUserText(keyword, count, available) });
+    const raw = await generate({ system: SYSTEM, userText: buildContrarianWriterUserText(keyword, available) });
     variations = normalizeContrarianVariations(JSON.parse(raw), ids);
   } catch {
     variations = [];
@@ -214,44 +191,31 @@ export function chooseContrarianBackgrounds(availableIds: string[], count: numbe
   return out;
 }
 
-/** Describe where the person sits + where the text goes, given a placement. */
-function layoutClause(placement: ContrarianPlacement): string {
-  if (placement === "left") {
-    return "positioned ALL THE WAY to the LEFT (he occupies the left portion); lay the text out on the RIGHT side";
-  }
-  if (placement === "right") {
-    return "positioned ALL THE WAY to the RIGHT (he occupies the right portion); lay the text out on the LEFT side";
-  }
-  return (
-    "positioned in the CENTER of the frame; lay the text out as a bold band across the BOTTOM (or top) of the frame, " +
-    "spanning the width, NOT covering the face"
-  );
-}
-
 /**
- * Build the ONE-SHOT composition instruction for a contrarian original. Inputs to
- * the model are [BACKGROUND (first), CHARACTER (second)]. The placement comes from
- * the variation (or a name directive, resolved by the caller). Pure + exported.
+ * Build the COMPOSE instruction: background + character ONLY, NO text (the
+ * headline is drawn programmatically afterwards). `placement` is the character's
+ * side; `textArea` names the region to leave clear for the headline. Pure +
+ * exported so the (text-free) contract is testable.
  */
-export function buildContrarianPrompt(
-  variation: { text: string; emphasis: string },
-  placement: ContrarianPlacement = "right",
+export function buildContrarianComposePrompt(
+  placement: "left" | "center" | "right",
+  textArea: string,
 ): string {
+  const side =
+    placement === "left"
+      ? "all the way to the LEFT"
+      : placement === "right"
+        ? "all the way to the RIGHT"
+        : "centred";
   return (
-    "Create a high-CTR YouTube thumbnail (16:9 landscape) FROM SCRATCH in the style of a bold, modern statement " +
-    "thumbnail, using EXACTLY three elements and nothing else: a background, a person, and one short text statement. " +
+    "Create a 16:9 landscape image with exactly TWO elements: a background and a person — and NO text at all. " +
     "(1) BACKGROUND: use the FIRST image as the full background, scaled to fill the whole frame. " +
     "(2) PERSON: place the man from the SECOND image as the subject — keep his EXACT face, head, hairstyle, hair " +
     "colour and beard (clearly THAT real man), a medium slightly-fit average build, seamless realistic blend onto " +
-    `the background, LARGE and prominent (head/face filling a big portion of the height), ${layoutClause(placement)}, ` +
-    "looking toward the camera with an expression that matches the statement. " +
-    `(3) TEXT: render this exact statement: "${variation.text}". Typeset it in HELVETICA BLACK / HELVETICA BOLD ` +
-    "(a heavy, bold, geometric sans-serif), UPPERCASE, big and crisply readable. Most of the words are WHITE with a " +
-    "SOFT, BLURRED BLACK DROP SHADOW at about 25% opacity (subtle, not harsh). " +
-    `The emphasis word(s) "${variation.emphasis}" are WHITE text inside a SOLID RED BOX with slightly ROUNDED ` +
-    "CORNERS, so they pop. Keep the text to 1–2 lines. " +
-    "STRICT RULES: do NOT add any other element, logo, watermark, emoji or extra text. Absolutely NO money anywhere " +
-    "— no dollar signs, no prices, no amounts, no revenue/income figures (a percentage like \"99%\" is fine). " +
-    "Keep it clean: only the background, the person, and this one styled Helvetica statement."
+    `the background, LARGE and prominent (head/face filling a big portion of the height), positioned ${side}, ` +
+    "looking toward the camera with a confident, intense expression. " +
+    `Keep ${textArea} relatively clean and uncluttered — a headline will be added there afterwards. ` +
+    "CRITICAL: do NOT render ANY text, words, letters, numbers, captions, logos, watermarks or graphics anywhere — " +
+    "output ONLY the background and the person, nothing else."
   );
 }

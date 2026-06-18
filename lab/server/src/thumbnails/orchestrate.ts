@@ -31,9 +31,10 @@ import { recreateThumbnail, composeContrarianThumbnail, type ChainStep, type Rec
 import {
   generateContrarianVariations,
   chooseContrarianBackgrounds,
-  buildContrarianPrompt,
+  buildContrarianComposePrompt,
   type ContrarianVariation,
 } from "./contrarian.js";
+import { templateForIndex } from "./textOverlay.js";
 import {
   providersForMode,
   DEFAULT_GENERATION_MODE,
@@ -519,14 +520,15 @@ async function runContrarianJob(
 
     for (let i = 0; i < job.variants.length; i++) {
       const v = variations[i];
+      const template = templateForIndex(i);
       const bg = bgCandidates.find((c) => c.id === chosenBgIds[i]) ?? bgCandidates[0];
       // The cast expression (validated to an available id by the writer's pad step).
       const exprId = available.some((e) => e.id === v.expressionId) ? v.expressionId : available[0].id;
       const characterBytes = readCharacterImage(exprId);
-      // A placement directive in the chosen expression's NAME overrides the
-      // copywriter's varied placement.
+      // The template fixes the character side; a placement directive in the chosen
+      // expression's NAME overrides it.
       const label = available.find((e) => e.id === exprId)?.label ?? "";
-      const placement = placementFromLabel(label) ?? v.placement;
+      const placement = placementFromLabel(label) ?? template.charPlacement;
       job.variants[i].expression = exprId;
       updateVariant(job, i, { status: "running", stepLabel: "Composing original", percent: phasePercent("swap", 0) });
       try {
@@ -536,7 +538,8 @@ async function runContrarianJob(
             backgroundBytes: bg.bytes,
             backgroundMime: bg.mime,
             characterBytes,
-            instruction: buildContrarianPrompt(v, placement),
+            instruction: buildContrarianComposePrompt(placement, template.textArea),
+            overlay: { template, text: v.text, emphasis: v.emphasis },
             provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
             imageSize: run?.imageSize,
             onProgress: ({ stepLabel, percent }) =>
