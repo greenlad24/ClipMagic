@@ -1,11 +1,16 @@
 /**
  * Video type → character expression mapping for the Thumbnail Designer, plus the
- * "distinct expression per variant" rule used when generating multiple options.
+ * per-variant expression rule used when generating multiple options.
  *
  * Mapping (per spec):
  *   Tutorial/How-to → smile · Viral/Shock → surprise · Secret/Insider → secret
  *   · Review/Calm → calm.
- * Pure functions so the selection logic is unit-testable.
+ *
+ * Per-variant policy: every variant uses the SAME best-fit expression for the
+ * video type. We do NOT force a distinct look per variation — the art director is
+ * free to reuse the same character photo across variants. Variety comes from the
+ * different source thumbnails being recreated, not from rotating the character's
+ * expression. Pure functions so the selection logic is unit-testable.
  */
 import { EXPRESSIONS, type Expression } from "./characters.js";
 
@@ -29,11 +34,12 @@ export function expressionForVideoType(videoType: VideoType): Expression {
 }
 
 /**
- * Choose distinct expressions for `count` variants of a video type, restricted
- * to the expressions actually AVAILABLE in the library. The type's primary
- * expression leads; the rest cycle through the remaining available ones so each
- * variant differs (for variety). When fewer expressions are available than
- * variants, it reuses from the front rather than failing.
+ * Choose the character expression for each of `count` variants of a video type,
+ * restricted to the expressions actually AVAILABLE in the library. Every variant
+ * gets the SAME best-fit expression — we no longer force a distinct look per
+ * variation, so the art director may reuse the same character photo across
+ * variants. If the type's primary expression isn't available we fall back to the
+ * first available one. Returns [] when nothing is available.
  */
 export function expressionsForVariants(
   videoType: VideoType,
@@ -43,12 +49,9 @@ export function expressionsForVariants(
   const avail = EXPRESSIONS.filter((e) => available.includes(e));
   if (avail.length === 0) return [];
   const primary = expressionForVideoType(videoType);
-  // Order: primary first (if available), then the rest in canonical order.
-  const ordered: Expression[] = [];
-  if (avail.includes(primary)) ordered.push(primary);
-  for (const e of avail) if (!ordered.includes(e)) ordered.push(e);
-  // Assign one per variant, cycling if there are more variants than expressions.
-  const out: Expression[] = [];
-  for (let i = 0; i < count; i++) out.push(ordered[i % ordered.length]);
-  return out;
+  // Best-fit for the whole batch: the type's primary when available, else the
+  // first available expression. Repeats are intentional — variety comes from the
+  // different source thumbnails, not from rotating the character's look.
+  const chosen = avail.includes(primary) ? primary : avail[0];
+  return Array.from({ length: Math.max(0, count) }, () => chosen);
 }

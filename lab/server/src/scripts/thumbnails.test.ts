@@ -971,18 +971,17 @@ async function main() {
     assert.equal(vt.expressionForVideoType("Review"), "calm");
   });
 
-  await check("expressionsForVariants leads with the type's primary, distinct per variant", () => {
+  await check("expressionsForVariants uses the type's primary for every variant (repeats allowed)", () => {
     const all: any[] = ["smile", "surprise", "secret", "calm"];
     const out = vt.expressionsForVariants("Viral", 3, all);
-    assert.equal(out[0], "surprise", "primary leads");
-    assert.equal(new Set(out).size, 3, "all distinct when enough available");
+    assert.equal(out.length, 3);
+    assert.deepEqual(out, ["surprise", "surprise", "surprise"], "same best-fit expression, no forced variety");
   });
 
-  await check("expressionsForVariants cycles (reuses) when fewer expressions than variants", () => {
-    const out = vt.expressionsForVariants("Tutorial", 3, ["smile", "calm"] as any);
+  await check("expressionsForVariants falls back to first available when primary is missing", () => {
+    const out = vt.expressionsForVariants("Viral", 3, ["smile", "calm"] as any);
     assert.equal(out.length, 3);
-    assert.equal(out[0], "smile");
-    assert.equal(out[2], "smile", "cycles back to the front");
+    assert.deepEqual(out, ["smile", "smile", "smile"], "primary 'surprise' unavailable → first available 'smile'");
   });
 
   await check("expressionsForVariants returns [] when nothing is available", () => {
@@ -1021,7 +1020,7 @@ async function main() {
   });
 
   // ── picks are no longer capped at 3 (multi-select, any subset) ───────────────
-  await check("generateThumbnailVariants assigns one variant per pick (no 3-cap), expressions cycle", async () => {
+  await check("generateThumbnailVariants assigns one variant per pick (no 3-cap), same expression per variant", async () => {
     const secrets = await import("../settings/postizSecrets.js");
     const chars = await import("../thumbnails/characters.js");
     // Upload all four expressions so the generator has a full palette.
@@ -1042,9 +1041,8 @@ async function main() {
     );
     assert.equal(variants.length, 5, "one variant per pick — NOT capped at 3");
     assert.deepEqual(variants.map((v) => v.videoId), picks, "order preserved");
-    // Distinct-expression-per-variant cycles the four available expressions.
-    assert.equal(variants[0].expression, "surprise", "Viral's primary leads");
-    assert.equal(variants[4].expression, variants[0].expression, "cycles back after 4 expressions");
+    // Every variant uses the type's best-fit expression — no forced look-change.
+    assert.ok(variants.every((v) => v.expression === "surprise"), "all variants use Viral's best-fit 'surprise'");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
     void secrets;
   });
