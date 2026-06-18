@@ -12,8 +12,14 @@
  *      art-director decides which optional edits apply and fills their templates.
  *   3. (optional) device-screen / font / bold-text / text-rewrite / logo — all
  *               PLAIN edits on the original person.
- *   4. ALWAYS — subtly enhance the background, keeping every other element
- *               (person, text, logos, positions) identical — a PLAIN edit.
+ *   4. ALWAYS — give the background a MODERATE, tasteful pop (richer/more vibrant
+ *               color + stronger contrast/separation behind the subject), keeping
+ *               every other element (person, text, logos, positions) identical —
+ *               a PLAIN edit.
+ *   4b. VISION (pre-swap) — assess the CURRENT working image's BODY/framing
+ *               (identity-independent) so the swap below can RESIZE an oversized
+ *               original body to match the new face. Best-effort: on failure the
+ *               swap falls back to the static FINAL_SWAP_PROMPT.
  *   5. ALWAYS, LAST — the STRONG FULL SWAP: inputs [current, characterRef],
  *               replace the on-camera person with the reference man (the SECOND
  *               image). Because this is the very last image operation, the face
@@ -47,7 +53,13 @@ import {
 } from "./nanoBanana.js";
 import { editImageWith, DEFAULT_IMAGE_PROVIDER, type ImageProvider } from "./imageProviders.js";
 import { buildCropScaleArgs, detectContentRect, outputDims, TARGET_W, TARGET_H } from "./crop.js";
-import { artDirect as defaultArtDirect, type ArtDirectorStep } from "./artDirector.js";
+import {
+  artDirect as defaultArtDirect,
+  analyzeForSwap as defaultAnalyzeForSwap,
+  buildLooksOversized,
+  type ArtDirectorStep,
+  type SwapAssessment,
+} from "./artDirector.js";
 import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
 import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
@@ -75,8 +87,45 @@ export const STEP1_PROMPT =
  */
 export const FINAL_SWAP_PROMPT = STEP1_PROMPT;
 export const STEP2_PROMPT = "change the character outfit to a t-shirt";
+
+/**
+ * Build the FINAL SWAP instruction, optionally TAILORED by the swap-director's
+ * body assessment of the current working image. Pure + exported for testing.
+ *
+ * The static {@link FINAL_SWAP_PROMPT} already asks for a medium / slightly-fit
+ * average body, but when the original on-camera person has an oversized / bulky /
+ * mascot-costume build the model tends to KEEP that body and just paste the new
+ * face on it. So when the assessment reads as oversized (and a body is actually
+ * visible), we swap in an EXPLICIT clause that names the current build and orders
+ * the model to replace/resize it — the body must follow the new face, not the
+ * reverse. Otherwise (no assessment, body not visible, or already an average
+ * build) we return the static prompt unchanged.
+ */
+export function buildFinalSwapInstruction(assessment?: SwapAssessment | null): string {
+  if (!assessment || !assessment.bodyVisible) return FINAL_SWAP_PROMPT;
+  const build = assessment.currentBuild.trim();
+  if (!build || !buildLooksOversized(build)) return FINAL_SWAP_PROMPT;
+  // Identity opening (verbatim from the static prompt) + a tailored body clause +
+  // the layout-preservation tail (verbatim). The tailored clause keeps the same
+  // anchor phrases the static prompt uses ("medium build", "slightly fit, average
+  // physique", "seamless neck", "matching skin tone", "one real man", "NOT a head
+  // pasted") so both paths read consistently and assert the same body contract.
+  return (
+    "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, " +
+    "REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, " +
+    "hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original " +
+    "person from the first image. Do NOT keep the original person's face or beard. " +
+    `The current person's body is ${build}; do NOT keep it. Give the new man a natural, medium build with a ` +
+    "slightly fit, average physique that matches HIS face — resize the torso and shoulders down to realistic " +
+    "average human proportions, with a seamless neck join, matching skin tone, and realistic head-to-body " +
+    "proportions, so the whole person reads as ONE real man (the man in the SECOND image), the body following " +
+    "the face — NOT a head pasted onto a mismatched or oversized body. " +
+    "Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their " +
+    "positions — but the person is now the man from the second image."
+  );
+}
 export const STEP8_PROMPT =
-  "subtly enhance the existing background so the subject pops a little more — keep the background CLOSE to the original (same general style and colors), only clean it up and slightly increase the contrast/separation behind the subject. Do NOT add dramatic patterns, light rays, or wildly different colors — keep it a light, tasteful change. Keep the character, all text, logos, and the exact position of every element exactly the same";
+  "give the existing background a clearly noticeable, tasteful POP so the thumbnail visibly stands out MORE than the original: make its colors richer and more vibrant/saturated, and meaningfully boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. Keep it the SAME general style and scene as the original — this is a mid-level enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
 
 /**
  * Append the 16:9 widescreen preamble so edits don't reintroduce letterbox bars.
@@ -102,6 +151,8 @@ export type ArtDirectFn = (opts: {
   keyword: string;
   videoType: VideoType;
 }) => Promise<ArtDirectorStep[]>;
+/** The pre-swap body-assessment primitive, narrowed so tests can inject a fake (no AI). */
+export type AnalyzeForSwapFn = (opts: { imageBytes: Buffer; imageMime: string }) => Promise<SwapAssessment>;
 
 /** One recorded step in the chain (for the UI's per-variant breakdown). */
 export interface ChainStep {
@@ -148,6 +199,8 @@ export interface RecreateInput {
 export interface RecreateDeps {
   editImage?: EditFn;
   artDirect?: ArtDirectFn;
+  /** Pre-swap body assessment of the working image. Defaults to the real Claude-vision pass. */
+  analyzeForSwap?: AnalyzeForSwapFn;
   /** Crop+upscale finalizer. Defaults to the real ffmpeg + Real-ESRGAN pass. */
   finalize?: (current: EditImage, steps: ChainStep[]) => Promise<RecreateResult>;
   /** Upscaler seam (passed through to the default finalize). No real binary in tests. */
@@ -183,6 +236,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     ((opts: { instruction: string; images: EditImage[] }) =>
       editImageWith(provider, { ...opts, imageSize: input.imageSize }));
   const artDirect = deps.artDirect ?? defaultArtDirect;
+  const analyzeForSwap = deps.analyzeForSwap ?? defaultAnalyzeForSwap;
   const finalizeFn = deps.finalize ?? ((current, steps) => finalize(current, steps, deps.upscale));
   const report = (stepLabel: string, percent: number) => {
     try {
@@ -278,12 +332,36 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
 
+  // ── VISION (pre-swap): assess the CURRENT working image's BODY ───────────────
+  // Run on `current` (the original person, post-edits/background) — its build and
+  // framing are identity-independent. When the original has an oversized / bulky /
+  // mascot-costume body, the swap below gets an EXPLICIT "replace + resize the
+  // body" clause so the body follows the new face. Best-effort: any failure falls
+  // back to the static FINAL_SWAP_PROMPT (which already carries a medium body
+  // clause) — generation must never break.
+  report(PHASE_LABEL.swap, phasePercent("swap", 0));
+  let swapInstruction = FINAL_SWAP_PROMPT;
+  try {
+    const assessment = await analyzeForSwap({
+      imageBytes: current.data,
+      imageMime: current.mimeType || "image/png",
+    });
+    swapInstruction = buildFinalSwapInstruction(assessment);
+  } catch (e) {
+    steps.push({
+      id: "swap-director",
+      label: "Assess body for swap",
+      instruction: "(assess body/framing before swap)",
+      applied: false,
+      note: `swap-director skipped: ${e instanceof Error ? e.message : String(e)}`,
+    });
+  }
+
   // ── FINAL step (ALWAYS, genuinely LAST): the STRONG FULL SWAP ────────────────
   // Inputs [current, character]: replace the on-camera person with the reference
   // man (the SECOND image). This is the very last image operation, so the face
   // lands fresh and cannot drift — nothing re-renders it afterwards.
-  report(PHASE_LABEL.swap, phasePercent("swap", 0));
-  await runStep("swap-character", "Swap in character", FINAL_SWAP_PROMPT, [current, character]);
+  await runStep("swap-character", "Swap in character", swapInstruction, [current, character]);
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
   // ── Crop to a clean, native-resolution 16:9 JPG (4K stays 4K) ───────────────

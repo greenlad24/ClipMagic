@@ -285,3 +285,106 @@ export async function artDirect(opts: {
   }
   return parseDirectorResponse(parsed, opts.keyword);
 }
+
+/**
+ * The "swap-director" vision pass — run on the CURRENT working image (the
+ * post-background image, just BEFORE the final character swap). It reports the
+ * on-camera person's BODY so the swap can make the body follow the new face: a
+ * recreation often starts from someone with an oversized/costume/mascot build,
+ * and the swapped-in man has a natural, average frame. Without this, the swap
+ * keeps the original (mismatched) body and just pastes the new face on it.
+ *
+ * The assessment is identity-INDEPENDENT (it's about the original person's
+ * build/framing, not who's about to be swapped in), so running it on the working
+ * image before the swap is fine. It is best-effort — see analyzeForSwap.
+ */
+export interface SwapAssessment {
+  /** Short literal description of the on-camera person's CURRENT build, e.g. "oversized/bulky mascot-costume torso" or "natural average build". */
+  currentBuild: string;
+  /** Is the person's body (not just a head/face) actually visible in the frame? */
+  bodyVisible: boolean;
+  /** Short literal framing note, e.g. "chest-up close-up" or "full-body, centred". */
+  framing: string;
+}
+
+const SWAP_DIRECTOR_SYSTEM =
+  "You are a thumbnail compositing assistant. You are shown the CURRENT working " +
+  "image of a YouTube thumbnail recreation, taken just BEFORE the on-camera person " +
+  "is replaced with a different man. Look ONLY at the on-camera person's BODY and " +
+  "how they are framed — NOT their face or identity. We need to know whether the " +
+  "current person has a normal, average human build or an unusually large, bulky, " +
+  "costumed, mascot-like, muscular or otherwise oversized/mismatched build, because " +
+  "the replacement man has a natural, medium, slightly-fit average frame and his " +
+  "body must end up matching HIS face. Describe what you literally SEE in short, " +
+  "plain words.";
+
+/**
+ * Build the swap-director's JSON-shaping user prompt. Pure + exported so the
+ * contract is testable without the network.
+ */
+export function buildSwapDirectorUserText(): string {
+  return (
+    "Assess ONLY the on-camera person's body and framing. Return ONLY this JSON " +
+    "object (no prose):\n" +
+    "{\n" +
+    '  "currentBuild": string,  // short literal description of the body, e.g. "oversized/bulky mascot-costume torso", "very muscular bodybuilder frame", or "natural average build"\n' +
+    '  "bodyVisible": boolean,  // is the torso/body (not just a head) actually visible?\n' +
+    '  "framing": string        // short literal framing note, e.g. "chest-up close-up" or "full-body, centred"\n' +
+    "}\n"
+  );
+}
+
+/** Coerce a raw model object into a safe SwapAssessment (tolerant of junk). */
+export function parseSwapAssessment(json: any): SwapAssessment {
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  return {
+    currentBuild: str(json?.currentBuild),
+    bodyVisible: json?.bodyVisible === true,
+    framing: str(json?.framing),
+  };
+}
+
+/**
+ * Heuristic: does the assessed build read as LARGE / mismatched relative to a
+ * natural average man? When true, the final swap gets an EXPLICIT "do not keep
+ * this body — resize it" clause; otherwise the static body clause is enough.
+ * Pure + exported for unit testing.
+ */
+export function buildLooksOversized(currentBuild: string): boolean {
+  const b = currentBuild.toLowerCase();
+  if (!b) return false;
+  return /oversiz|bulk|mascot|costume|muscul|massive|huge|large|wide|broad|hulk|giant|burly|stocky|heavy|fat|obese|big[\s-]?bod|barrel/.test(
+    b,
+  );
+}
+
+/**
+ * Analyse the CURRENT working image (post-background, pre-swap) and return a
+ * short structured body/framing assessment. Injectable for tests; best-effort in
+ * the chain (the caller falls back to the static swap prompt on any throw). Uses
+ * claudeVisionLabeledJSON so usage is attributed to "thumbnail-swap-director".
+ */
+export async function analyzeForSwap(opts: {
+  imageBytes: Buffer;
+  imageMime: string;
+}): Promise<SwapAssessment> {
+  const raw = await claudeVisionLabeledJSON({
+    system: SWAP_DIRECTOR_SYSTEM,
+    userText: buildSwapDirectorUserText(),
+    images: [
+      {
+        label: "Current working image (the on-camera person about to be replaced):",
+        data: opts.imageBytes.toString("base64"),
+        mediaType: opts.imageMime,
+      },
+    ],
+    purpose: "thumbnail-swap-director",
+  });
+  let parsed: any;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("swap-director returned non-JSON");
+  }
+  return parseSwapAssessment(parsed);
+}

@@ -61,6 +61,10 @@ export type CallPurpose =
   // Thumbnail Designer: vision "art-director" pass — decides which optional
   // recreation steps apply (font/bold-text/logo/device-screen).
   | "thumbnail-art-director"
+  // Thumbnail Designer: vision "swap-director" pass — reads the post-background
+  // working image just before the final swap and reports the on-camera person's
+  // current build/framing so the swap can resize the body to fit the new face.
+  | "thumbnail-swap-director"
   // Thumbnail Designer: reads the pasted script, extracts the search keyword +
   // infers the video type (cheap structured extraction on the fast tier).
   | "thumbnail-script-analysis";

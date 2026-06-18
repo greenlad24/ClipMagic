@@ -569,8 +569,52 @@ async function main() {
     assert.equal(intoBrand.find((s) => s.id === "logo")!.apply, false, "don't swap a generic icon INTO the brand mark");
   });
 
+  // ── swap-director: body assessment parsing + oversized heuristic (pure) ─────
+  await check("parseSwapAssessment coerces a model object + tolerates junk", () => {
+    assert.deepEqual(
+      artDirector.parseSwapAssessment({ currentBuild: "  bulky torso ", bodyVisible: true, framing: "chest-up" }),
+      { currentBuild: "bulky torso", bodyVisible: true, framing: "chest-up" },
+    );
+    // Missing/garbage → safe defaults (empty strings, bodyVisible only on literal true).
+    assert.deepEqual(artDirector.parseSwapAssessment(null), { currentBuild: "", bodyVisible: false, framing: "" });
+    assert.deepEqual(artDirector.parseSwapAssessment({ bodyVisible: "yes" }), { currentBuild: "", bodyVisible: false, framing: "" });
+  });
+
+  await check("buildLooksOversized flags large/costume builds and passes natural ones", () => {
+    for (const b of ["oversized/bulky mascot-costume torso", "very muscular bodybuilder frame", "huge broad shoulders", "stocky burly build"]) {
+      assert.equal(artDirector.buildLooksOversized(b), true, `should flag: ${b}`);
+    }
+    for (const b of ["natural average build", "slim medium frame", "", "normal proportions"]) {
+      assert.equal(artDirector.buildLooksOversized(b), false, `should NOT flag: ${b}`);
+    }
+  });
+
   // ── recreation chain: swap is LAST; middle steps are PLAIN (no FACE_LOCK/ref) ─
   const recreate = await import("../thumbnails/recreate.js");
+
+  await check("buildFinalSwapInstruction: oversized → tailored resize clause; else → static prompt", () => {
+    // No assessment / body not visible / average build → the static prompt verbatim.
+    assert.equal(recreate.buildFinalSwapInstruction(undefined), recreate.FINAL_SWAP_PROMPT);
+    assert.equal(
+      recreate.buildFinalSwapInstruction({ currentBuild: "oversized torso", bodyVisible: false, framing: "x" }),
+      recreate.FINAL_SWAP_PROMPT,
+      "body not visible → don't tailor",
+    );
+    assert.equal(
+      recreate.buildFinalSwapInstruction({ currentBuild: "natural average build", bodyVisible: true, framing: "x" }),
+      recreate.FINAL_SWAP_PROMPT,
+      "already average → static prompt",
+    );
+    // Oversized + visible → a tailored instruction that names the build + orders a resize.
+    const tailored = recreate.buildFinalSwapInstruction({
+      currentBuild: "oversized/bulky mascot-costume torso", bodyVisible: true, framing: "chest-up",
+    });
+    assert.notEqual(tailored, recreate.FINAL_SWAP_PROMPT);
+    assert.match(tailored, /oversized\/bulky mascot-costume torso/);
+    assert.match(tailored, /do NOT keep it/i);
+    assert.match(tailored, /resize the torso and shoulders/i);
+    assert.match(tailored, /the body following\s+the face/i);
+  });
   await check("the chain runs plain outfit/optional/background edits, then the STRONG full swap LAST (+ 16:9 preamble)", async () => {
     const sent: Array<{ instruction: string; imageCount: number }> = [];
     const editImage = async (opts: any) => {
@@ -584,6 +628,13 @@ async function main() {
       return artDirector.parseDirectorResponse({ font: { apply: true, text: "title", color: "white" } });
     };
     const finalize = async (_c: any, steps: any) => ({ outputUrl: "/out.png", file: "/x", steps });
+    // Pre-swap body assessment: a NATURAL/average build → the static swap prompt is
+    // used unchanged (no resize clause). Capture what image the analyzer saw.
+    let swapDirectorSawImage: Buffer | undefined;
+    const analyzeForSwap = async (o: any) => {
+      swapDirectorSawImage = o.imageBytes as Buffer;
+      return { currentBuild: "natural average build", bodyVisible: true, framing: "chest-up close-up" };
+    };
     const res = await recreate.recreateThumbnail(
       {
         sourceBytes: Buffer.from("SOURCE"),
@@ -593,7 +644,7 @@ async function main() {
         videoType: "Tutorial",
         expression: "smile",
       },
-      { editImage, artDirect, finalize },
+      { editImage, artDirect, analyzeForSwap, finalize },
     );
     const pre = `(${(await import("../thumbnails/nanoBanana.js")).WIDESCREEN_PREAMBLE})`;
     // There is NO early swap: the FIRST edit is the plain outfit change on the
@@ -617,6 +668,13 @@ async function main() {
     assert.equal(bg.imageCount, 1, "background is a plain edit (no ref)");
     assert.doesNotMatch(bg.instruction, /reference headshot/i, "background must NOT carry FACE_LOCK");
     assert.match(bg.instruction, /position of every element exactly the same/i, "keeps layout");
+    // The background pop is MODERATE: clearly noticeable (pop + vibrant/saturated +
+    // contrast) but NOT a wild redesign (no dramatic rays / neon / new patterns).
+    assert.match(bg.instruction, /pop/i, "mentions a pop");
+    assert.match(bg.instruction, /vibrant|saturat/i, "mentions richer/vibrant/saturated color");
+    assert.match(bg.instruction, /contrast/i, "mentions stronger contrast/separation");
+    assert.match(bg.instruction, /NOT a redesign|not a redesign/i, "stays a mid-level enhancement, not a redesign");
+    assert.match(bg.instruction, /do NOT add dramatic|light rays|neon/i, "no wild rays/neon");
     // FINAL step (ALWAYS, genuinely LAST): the STRONG FULL SWAP — the same verbatim
     // strong-swap text, carrying the character ref as the SECOND image (2 inputs).
     const last = sent[sent.length - 1];
@@ -640,6 +698,10 @@ async function main() {
     assert.ok(directorSawImage, "director was called");
     assert.equal(directorSawImage!.toString(), "img1", "director saw the OUTFIT result, not the source");
     assert.notEqual(directorSawImage!.toString(), "SOURCE");
+    // The PRE-SWAP body analyzer ran on the POST-BACKGROUND working image (the 3rd
+    // edit, "img3"), NOT the source and NOT the freshly-swapped image.
+    assert.ok(swapDirectorSawImage, "swap-director was called before the swap");
+    assert.equal(swapDirectorSawImage!.toString(), "img3", "swap-director saw the post-background working image");
     void res;
   });
 
@@ -654,7 +716,12 @@ async function main() {
         sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
         characterBytes: Buffer.from("C"), keyword: "k", videoType: "Viral", expression: "surprise",
       },
-      { editImage, artDirect: async () => [], finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
+      {
+        editImage,
+        artDirect: async () => [],
+        analyzeForSwap: async () => ({ currentBuild: "natural average build", bodyVisible: true, framing: "chest-up" }),
+        finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }),
+      },
     );
     // 3 edits: outfit, background, swap (no optionals — the early swap is GONE).
     assert.equal(sent.length, 3, "no early swap: outfit + background + final swap");
@@ -692,6 +759,90 @@ async function main() {
     // Background edit AND the final swap still ran afterwards.
     assert.ok(res.steps.find((s) => s.id === "background"), "background step still attempted");
     assert.ok(res.steps.find((s) => s.id === "swap-character")?.applied, "the final swap still ran");
+  });
+
+  // ── pre-swap body assessment: the body follows the FACE ─────────────────────
+  await check("an OVERSIZED current body weaves an EXPLICIT resize clause into the final swap", async () => {
+    const sent: Array<{ instruction: string; imageCount: number }> = [];
+    const editImage = async (opts: any) => {
+      sent.push({ instruction: opts.instruction, imageCount: opts.images.length });
+      return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+    };
+    const analyzeForSwap = async () => ({
+      currentBuild: "oversized/bulky mascot-costume torso",
+      bodyVisible: true,
+      framing: "chest-up, centred",
+    });
+    const res = await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("C"), keyword: "k", videoType: "Viral", expression: "surprise",
+      },
+      { editImage, artDirect: async () => [], analyzeForSwap, finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
+    );
+    const last = sent[sent.length - 1];
+    assert.equal(last.imageCount, 2, "the final swap still carries the character ref as the SECOND image");
+    // It is NOT the static prompt — it names the current build and orders a resize.
+    assert.notEqual(last.instruction, `${recreate.STEP1_PROMPT} (${nano.WIDESCREEN_PREAMBLE})`, "the swap was tailored, not static");
+    assert.match(last.instruction, /oversized\/bulky mascot-costume torso/, "names the current oversized build verbatim");
+    assert.match(last.instruction, /do NOT keep it/i, "explicitly says NOT to keep the current body");
+    assert.match(last.instruction, /resize the torso and shoulders/i, "explicitly orders a torso/shoulder resize");
+    assert.match(last.instruction, /the body following\s+the face/i, "the body follows the face, not the reverse");
+    // Identity + body contract is still intact (same anchor phrases as the static prompt).
+    assert.match(last.instruction, /exact face, head, hairstyle, hair colour and beard of the man in the SECOND image/i, "identity text preserved");
+    assert.match(last.instruction, /medium build/i, "still asks for a medium build");
+    assert.match(last.instruction, /slightly fit, average physique/i, "still asks for a slightly-fit average physique");
+    assert.match(last.instruction, /seamless neck/i, "seamless neck");
+    assert.match(last.instruction, /matching skin tone/i, "matching skin tone");
+    assert.match(last.instruction, /one real man/i, "reads as one real man");
+    assert.match(last.instruction, /NOT a head pasted/i, "forbids a head pasted on a mismatched/oversized body");
+    assert.match(last.instruction, /all text and logos in their/i, "layout/text/logos preserved");
+    // It is recorded as the swap-character step (applied).
+    assert.ok(res.steps.find((s) => s.id === "swap-character")?.applied, "final swap applied");
+  });
+
+  await check("a NON-oversized (average) current body leaves the swap as the static FINAL_SWAP_PROMPT", async () => {
+    const sent: Array<{ instruction: string }> = [];
+    const editImage = async (opts: any) => {
+      sent.push({ instruction: opts.instruction });
+      return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+    };
+    const analyzeForSwap = async () => ({ currentBuild: "natural average build", bodyVisible: true, framing: "chest-up" });
+    await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("C"), keyword: "k", videoType: "Viral", expression: "surprise",
+      },
+      { editImage, artDirect: async () => [], analyzeForSwap, finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
+    );
+    const last = sent[sent.length - 1];
+    assert.equal(last.instruction, `${recreate.STEP1_PROMPT} (${nano.WIDESCREEN_PREAMBLE})`, "an average build → static swap, no resize clause");
+    assert.doesNotMatch(last.instruction, /do NOT keep it/i, "no resize clause for an average build");
+  });
+
+  await check("a FAILING pre-swap analyzer falls back to the static FINAL_SWAP_PROMPT and the chain still finishes", async () => {
+    const sent: Array<{ instruction: string; imageCount: number }> = [];
+    const editImage = async (opts: any) => {
+      sent.push({ instruction: opts.instruction, imageCount: opts.images.length });
+      return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+    };
+    const analyzeForSwap = async () => { throw new Error("vision exploded"); };
+    const res = await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("S"), sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("C"), keyword: "k", videoType: "Review", expression: "calm",
+      },
+      { editImage, artDirect: async () => [], analyzeForSwap, finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
+    );
+    const last = sent[sent.length - 1];
+    // Falls back to the STATIC strong-swap prompt (which already carries a body clause).
+    assert.equal(last.instruction, `${recreate.STEP1_PROMPT} (${nano.WIDESCREEN_PREAMBLE})`, "analyzer failure → static swap prompt");
+    assert.equal(last.imageCount, 2, "the final swap still feeds [current, character ref]");
+    // The swap STILL ran (the chain finished) and the failure was recorded.
+    assert.ok(res.steps.find((s) => s.id === "swap-character")?.applied, "the swap still ran after analyzer failure");
+    const sd = res.steps.find((s) => s.id === "swap-director");
+    assert.ok(sd && sd.applied === false, "the swap-director failure is recorded as a skipped step");
+    assert.match(sd!.note ?? "", /vision exploded/);
   });
 
   await check("recreateThumbnail threads the chosen provider into the default edit primitive (no editImage dep)", async () => {
