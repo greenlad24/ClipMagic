@@ -12,10 +12,11 @@ import {
   type ThumbnailCharacterState,
   type ThumbnailExpression,
   type ThumbnailVideoType,
-  type ThumbnailProvider,
+  type ThumbnailMode,
   type ThumbnailSearchResult,
   type ThumbnailJobStatus,
   type ThumbnailJobVariant,
+  type ThumbnailProviderResult,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
@@ -73,11 +74,22 @@ const EXPRESSION_HINT: Record<ThumbnailExpression, string> = {
 };
 const VIDEO_TYPES: ThumbnailVideoType[] = ['Tutorial', 'Viral', 'Secret', 'Review'];
 
-/** Image-edit providers offered in the generate UI (label + one-line hint). */
-const PROVIDER_OPTIONS: { value: ThumbnailProvider; label: string; hint: string }[] = [
-  { value: 'gemini-pro', label: 'Nano Banana Pro (sharpest, best likeness)', hint: 'Highest quality — 2K renders, strongest face match. ~$0.13/image, and the chain runs several edits per thumbnail.' },
+/**
+ * Generation modes offered in the generate UI. The DEFAULT is "compare": every
+ * pick is generated through BOTH top providers at their best size and shown side
+ * by side so you can pick the better one. The single-provider modes are there for
+ * when you don't want the comparison/cost.
+ */
+const MODE_OPTIONS: { value: ThumbnailMode; label: string; hint: string; needsOpenAi?: boolean }[] = [
+  {
+    value: 'compare',
+    label: 'Compare both (Pro 4K + OpenAI)',
+    hint: 'Generates each pick TWICE — Nano Banana Pro at 4K and OpenAI at its highest size — side by side so you pick the better one. Runs the full chain twice per thumbnail, so it costs ~2× a single run.',
+    needsOpenAi: true,
+  },
+  { value: 'gemini-pro', label: 'Nano Banana Pro only (sharpest, best likeness)', hint: 'Highest single-model quality — 2K renders, strongest face match. ~$0.13/image, and the chain runs several edits per thumbnail.' },
   { value: 'gemini-flash', label: 'Nano Banana (Flash, cheap)', hint: 'Fast and inexpensive — good for drafts and high volume.' },
-  { value: 'openai', label: 'OpenAI (gpt-image-1)', hint: 'OpenAI image model with high input-fidelity. Requires an OpenAI API key.' },
+  { value: 'openai', label: 'OpenAI only (gpt-image-1)', hint: 'OpenAI image model with high input-fidelity. Requires an OpenAI API key.', needsOpenAi: true },
 ];
 
 async function fileToBase64(file: File): Promise<string> {
@@ -106,7 +118,7 @@ export default function ThumbnailDesignerPage() {
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
-  const [provider, setProvider] = useState<ThumbnailProvider>('gemini-pro');
+  const [mode, setMode] = useState<ThumbnailMode>('compare');
   const [generating, setGenerating] = useState(false);
   const [job, setJob] = useState<ThumbnailJobStatus | null>(null);
 
@@ -196,15 +208,19 @@ export default function ThumbnailDesignerPage() {
       toast.info('Pick at least one thumbnail to recreate.');
       return;
     }
-    if (provider === 'openai' && !status?.openaiConfigured) {
-      toast.error('Add your OpenAI API key in Settings → Thumbnail Designer to use gpt-image-1.');
+    if ((mode === 'openai' || mode === 'compare') && !status?.openaiConfigured) {
+      toast.error(
+        mode === 'compare'
+          ? 'Compare mode needs an OpenAI API key (Settings → Thumbnail Designer). Pick a single Nano Banana model, or add the key.'
+          : 'Add your OpenAI API key in Settings → Thumbnail Designer to use gpt-image-1.',
+      );
       return;
     }
     stopPolling();
     setGenerating(true);
     setJob(null);
     try {
-      const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks, provider });
+      const { jobId } = await startThumbnailGeneration({ keyword: keyword.trim(), videoType, picks, mode });
 
       const tick = async () => {
         try {
@@ -350,7 +366,7 @@ export default function ThumbnailDesignerPage() {
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs text-muted-foreground">
-                        Top {results.length} most-viewed (long-form). Select any you want to recreate — one variant each.
+                        Top {results.length} most-viewed (long-form). Select any you want to recreate.
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {picks.length} selected
@@ -388,19 +404,19 @@ export default function ThumbnailDesignerPage() {
                         );
                       })}
                     </div>
-                    {/* Provider selector — which image model drives the chain. */}
+                    {/* Mode selector — compare (default) or a single image model. */}
                     <div className="space-y-1.5 sm:max-w-md">
-                      <label className="text-xs font-medium text-muted-foreground block">Image model</label>
-                      <Select value={provider} onValueChange={(v) => setProvider(v as ThumbnailProvider)}>
+                      <label className="text-xs font-medium text-muted-foreground block">Generation mode</label>
+                      <Select value={mode} onValueChange={(v) => setMode(v as ThumbnailMode)}>
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {PROVIDER_OPTIONS.map((p) => {
-                            const disabled = p.value === 'openai' && !status?.openaiConfigured;
+                          {MODE_OPTIONS.map((m) => {
+                            const disabled = !!m.needsOpenAi && !status?.openaiConfigured;
                             return (
-                              <SelectItem key={p.value} value={p.value} disabled={disabled}>
-                                {p.label}
+                              <SelectItem key={m.value} value={m.value} disabled={disabled}>
+                                {m.label}
                                 {disabled ? ' — add OpenAI key in Settings' : ''}
                               </SelectItem>
                             );
@@ -408,19 +424,19 @@ export default function ThumbnailDesignerPage() {
                         </SelectContent>
                       </Select>
                       <p className="text-[11px] text-muted-foreground">
-                        {PROVIDER_OPTIONS.find((p) => p.value === provider)?.hint}
+                        {MODE_OPTIONS.find((m) => m.value === mode)?.hint}
                       </p>
                     </div>
+                    {/* Cost estimate — bigger for compare (it runs the chain twice). */}
+                    {picks.length > 0 && (
+                      <CostHint mode={mode} picks={picks.length} />
+                    )}
                     <div className="space-y-1.5">
                       <Button onClick={onGenerate} disabled={generating || picks.length === 0} className="w-full sm:w-auto">
                         {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                         Generate {picks.length > 0 ? `${picks.length} ` : ''}thumbnail{picks.length === 1 ? '' : 's'}
+                        {mode === 'compare' ? ' · both models' : ''}
                       </Button>
-                      {picks.length > 0 && (
-                        <p className="text-[11px] text-muted-foreground">
-                          Each selected thumbnail is recreated separately — time and cost scale with the number you pick.
-                        </p>
-                      )}
                     </div>
                   </div>
                 )}
@@ -443,6 +459,32 @@ export default function ThumbnailDesignerPage() {
         )}
       </div>
     </Layout>
+  );
+}
+
+/**
+ * Rough cost/time hint. Each thumbnail runs a multi-step chain; compare runs the
+ * whole chain TWICE (Pro at 4K + OpenAI), so it's the pricier path — call that out
+ * with a bigger, clearer estimate (Pro at 4K ≈ $0.24/image across several steps).
+ */
+function CostHint({ mode, picks }: { mode: ThumbnailMode; picks: number }) {
+  if (mode === 'compare') {
+    return (
+      <div className="rounded-lg border border-border bg-muted/40 p-3 text-[11px] text-muted-foreground space-y-1">
+        <p className="text-xs font-medium text-foreground">Heads up — compare runs each thumbnail twice</p>
+        <p>
+          {picks} thumbnail{picks === 1 ? '' : 's'} × 2 models (Nano Banana Pro @ 4K + OpenAI) ={' '}
+          <span className="font-medium text-foreground">{picks * 2} full chains</span>. Pro at 4K is ≈ $0.24/image and the
+          chain runs several edits each, so expect this to take longer and cost noticeably more than a single model.
+          You'll see both results side by side and pick the better one.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      Each selected thumbnail is recreated separately on one model — time and cost scale with the number you pick.
+    </p>
   );
 }
 
@@ -695,11 +737,14 @@ function Results({
 }
 
 function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
-  const running = variant.status === 'running' || variant.status === 'queued';
   const failed = variant.status === 'error';
+  const compare = variant.results.length > 1;
+  // Original + N generated columns. With one model that's the classic 2-up; with
+  // two it's a 3-up (Original · Pro · OpenAI) so they sit side by side to compare.
+  const gridCols = compare ? 'md:grid-cols-3' : 'md:grid-cols-2';
   return (
     <div className="rounded-lg border border-border p-4 space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-sm font-medium text-foreground">Variant {variant.index + 1}</span>
         <Badge variant="secondary" className="capitalize">{variant.expression}</Badge>
         {variant.status === 'done' && (
@@ -712,57 +757,78 @@ function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
             <AlertTriangle className="w-3 h-3" /> Failed
           </Badge>
         )}
+        {compare && (
+          <span className="text-[11px] text-muted-foreground">Pick the better of the two below.</span>
+        )}
       </div>
 
-      {/* Per-variant live step + sub-progress (hidden once it's terminal). */}
-      {running && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="text-muted-foreground flex items-center gap-1.5">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              {variant.stepLabel}
-            </span>
-            <span className="text-muted-foreground tabular-nums">{variant.percent}%</span>
-          </div>
-          <Progress value={variant.percent} className="h-1.5" aria-label={`Variant ${variant.index + 1} progress`} />
-        </div>
-      )}
-
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className={`grid ${gridCols} gap-4`}>
         <figure className="space-y-1.5">
           <figcaption className="text-xs text-muted-foreground">Original</figcaption>
           <div className="aspect-video rounded-md overflow-hidden bg-muted">
             <img src={variant.sourceThumbnailUrl} alt="Original thumbnail" className="w-full h-full object-cover" />
           </div>
         </figure>
-        <figure className="space-y-1.5">
-          <figcaption className="text-xs text-muted-foreground">Generated · 1920×1080</figcaption>
-          <div className="aspect-video rounded-md overflow-hidden bg-muted flex items-center justify-center">
-            {variant.outputUrl ? (
-              <img src={variant.outputUrl} alt="Generated thumbnail" className="w-full h-full object-cover" />
-            ) : failed ? (
-              <div className="text-center px-4">
-                <AlertTriangle className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
-                <p className="text-xs text-muted-foreground">{variant.error || 'Could not generate this thumbnail.'}</p>
-              </div>
-            ) : (
-              <div className="text-center px-4">
-                <Loader2 className="w-5 h-5 text-muted-foreground mx-auto mb-1 animate-spin" />
-                <p className="text-xs text-muted-foreground">{variant.stepLabel}</p>
-              </div>
-            )}
-          </div>
-          {variant.outputUrl && (
-            <Button asChild variant="outline" size="sm">
-              <a href={variant.outputUrl} download>
-                <Download className="w-4 h-4" />
-                Download
-              </a>
-            </Button>
-          )}
-        </figure>
+        {variant.results.map((r, i) => (
+          <ResultColumn key={`${r.provider}-${i}`} variantIndex={variant.index} result={r} />
+        ))}
       </div>
     </div>
+  );
+}
+
+/** One provider sub-run's column: label, live progress, image / error, download. */
+function ResultColumn({ variantIndex, result }: { variantIndex: number; result: ThumbnailProviderResult }) {
+  const running = result.status === 'running' || result.status === 'queued';
+  const failed = result.status === 'error';
+  // Fall back to a generic caption when there's only a single (label-less) run.
+  const caption = result.label || 'Generated';
+  return (
+    <figure className="space-y-1.5">
+      <figcaption className="text-xs text-muted-foreground flex items-center justify-between gap-2">
+        <span className="truncate font-medium text-foreground/80">{caption}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">1920×1080</span>
+      </figcaption>
+
+      {/* Per-column live step + sub-progress (hidden once terminal). */}
+      {running && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground flex items-center gap-1.5 truncate">
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+              <span className="truncate">{result.stepLabel}</span>
+            </span>
+            <span className="text-muted-foreground tabular-nums shrink-0">{result.percent}%</span>
+          </div>
+          <Progress value={result.percent} className="h-1.5" aria-label={`${caption} progress`} />
+        </div>
+      )}
+
+      <div className="aspect-video rounded-md overflow-hidden bg-muted flex items-center justify-center">
+        {result.outputUrl ? (
+          <img src={result.outputUrl} alt={`${caption} thumbnail`} className="w-full h-full object-cover" />
+        ) : failed ? (
+          <div className="text-center px-4">
+            <AlertTriangle className="w-5 h-5 text-muted-foreground mx-auto mb-1" />
+            <p className="text-xs text-muted-foreground">{result.error || 'Could not generate this thumbnail.'}</p>
+          </div>
+        ) : (
+          <div className="text-center px-4">
+            <Loader2 className="w-5 h-5 text-muted-foreground mx-auto mb-1 animate-spin" />
+            <p className="text-xs text-muted-foreground">{result.stepLabel}</p>
+          </div>
+        )}
+      </div>
+      {result.outputUrl && (
+        <Button asChild variant="outline" size="sm" className="w-full">
+          <a href={result.outputUrl} download>
+            <Download className="w-4 h-4" />
+            Download
+          </a>
+        </Button>
+      )}
+      <span className="sr-only">Variant {variantIndex + 1} {caption}</span>
+    </figure>
   );
 }
 

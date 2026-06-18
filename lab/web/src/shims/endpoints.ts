@@ -140,9 +140,9 @@ export const analyzeThumbnailScript =
   endpoint<{ script: string }, ThumbnailScriptAnalysisOutputType>("analyzeThumbnailScript");
 export const searchThumbnails = endpoint<{ keyword: string }, SearchThumbnailsOutputType>("searchThumbnails");
 export const generateThumbnails =
-  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; provider?: ThumbnailProvider }, GenerateThumbnailsOutputType>("generateThumbnails");
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, GenerateThumbnailsOutputType>("generateThumbnails");
 export const startThumbnailGeneration =
-  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; provider?: ThumbnailProvider }, { jobId: string }>("startThumbnailGeneration");
+  endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, { jobId: string }>("startThumbnailGeneration");
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
 export const listThumbnailCharacters =
@@ -157,6 +157,12 @@ export type ThumbnailExpression = 'smile' | 'surprise' | 'secret' | 'calm';
 export type ThumbnailVideoType = 'Tutorial' | 'Viral' | 'Secret' | 'Review';
 /** Image-edit provider that drives the recreation chain. */
 export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash' | 'openai';
+/**
+ * Generation mode. 'compare' (default) generates each pick through BOTH top
+ * providers (Nano Banana Pro @ 4K + OpenAI @ its max) side by side; a single
+ * provider id runs just that one.
+ */
+export type ThumbnailMode = 'compare' | ThumbnailProvider;
 export type ThumbnailCharacterState = {
   expression: ThumbnailExpression;
   uploaded: boolean;
@@ -199,12 +205,30 @@ export type ThumbnailJobVariant = {
   videoId: string;
   sourceThumbnailUrl: string;
   expression: ThumbnailExpression;
+  /** Per-provider sub-runs (1 in single mode, 2 in compare mode) — shown side by side. */
+  results: ThumbnailProviderResult[];
+  /** Aggregate status across the sub-runs (running until all terminal). */
   status: 'queued' | 'running' | 'done' | 'error';
-  /** Current step sentence ("Replacing character", "Upscaling to 1080p", …). */
+  /** Current step sentence ("Changing outfit", "Upscaling to 1080p", …). */
   stepLabel: string;
-  /** 0..100, monotonic per variant. */
+  /** 0..100, monotonic per variant (mean of the sub-runs). */
   percent: number;
-  /** Present the moment this variant finishes. */
+  /** First successful sub-run's URL (a one-glance summary). */
+  outputUrl?: string;
+  /** Present only when EVERY sub-run errored. */
+  error?: string;
+};
+/**
+ * One provider sub-run within a variant. In compare mode a variant has TWO of
+ * these (Nano Banana Pro + OpenAI), rendered side by side; in single mode, ONE.
+ */
+export type ThumbnailProviderResult = {
+  provider: string;
+  /** Column label ("Nano Banana Pro · 4K", "OpenAI · 1536×1024"). */
+  label: string;
+  status: 'queued' | 'running' | 'done' | 'error';
+  stepLabel: string;
+  percent: number;
   outputUrl?: string;
   error?: string;
 };

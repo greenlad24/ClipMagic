@@ -254,6 +254,72 @@ async function main() {
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
 
+  await check("editImageWith('gemini-pro', {imageSize:'4K'}) requests 4K — the compare default path", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ values: { GEMINI_API_KEY: "gem-test-key" } });
+    let sentBody: any = null;
+    const data = Buffer.from("PRO4K").toString("base64");
+    const geminiFetch = async (_url: string, init: any) => {
+      sentBody = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inline_data: { mime_type: "image/png", data } }] } }] }) };
+    };
+    await providers.editImageWith(
+      "gemini-pro",
+      { instruction: "edit", images: [{ data: Buffer.from("s"), mimeType: "image/jpeg" }], imageSize: providers.NANO_BANANA_PRO_IMAGE_SIZE_MAX },
+      { geminiFetch },
+    );
+    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE_MAX, "4K", "the compare default drives the pro model at 4K");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, "4K", "the request asks for 4K when imageSize is overridden");
+    assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
+    secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
+  });
+
+  await check("editImageWith('openai', {imageSize: MAX}) requests the highest size gpt-image-1 supports", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ values: { OPENAI_API_KEY: "oai-test-key" } });
+    let form: FormData | undefined;
+    const data = Buffer.from("OAIMAX").toString("base64");
+    const openaiFetch = async (_url: string, init: any) => {
+      form = init.body as FormData;
+      return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: data }] }) };
+    };
+    await providers.editImageWith(
+      "openai",
+      { instruction: "edit", images: [{ data: Buffer.from("s"), mimeType: "image/jpeg" }], imageSize: providers.OPENAI_IMAGE_SIZE_MAX },
+      { openaiFetch },
+    );
+    // gpt-image-1's max landscape size is 1536x1024 (the edits API allows only
+    // 1024x1024 | 1536x1024 | 1024x1536); OPENAI_IMAGE_SIZE_MAX captures that.
+    assert.equal(providers.OPENAI_IMAGE_SIZE_MAX, "1536x1024", "gpt-image-1's highest landscape size");
+    assert.equal(form!.get("size"), "1536x1024", "the request asks for the max size when overridden");
+  });
+
+  await check("providersForMode: compare → Pro@4K + OpenAI@max side by side; single → one default-size run", () => {
+    const compare = providers.providersForMode("compare");
+    assert.equal(compare.length, 2, "compare runs BOTH top providers");
+    assert.deepEqual(compare.map((r) => r.provider), ["gemini-pro", "openai"]);
+    assert.equal(compare[0].imageSize, "4K", "Pro sub-run drives 4K");
+    assert.equal(compare[1].imageSize, "1536x1024", "OpenAI sub-run drives its max");
+    assert.match(compare[0].label, /Nano Banana Pro · 4K/);
+    assert.match(compare[1].label, /OpenAI · 1536×1024/);
+    // Single-provider mode → exactly one sub-run at the provider's DEFAULT size.
+    const singlePro = providers.providersForMode("gemini-pro");
+    assert.equal(singlePro.length, 1);
+    assert.equal(singlePro[0].provider, "gemini-pro");
+    assert.equal(singlePro[0].imageSize, undefined, "single gemini-pro keeps the default (2K), not 4K");
+    assert.equal(providers.providersForMode("openai").length, 1);
+    assert.equal(providers.providersForMode("gemini-flash").length, 1);
+  });
+
+  await check("coerceMode defaults to compare and accepts compare + the three providers", () => {
+    assert.equal(providers.coerceMode(undefined), "compare");
+    assert.equal(providers.coerceMode("nonsense"), "compare");
+    assert.equal(providers.coerceMode("compare"), "compare");
+    assert.equal(providers.coerceMode("gemini-pro"), "gemini-pro");
+    assert.equal(providers.coerceMode("openai"), "openai");
+    assert.equal(providers.coerceMode("gemini-flash"), "gemini-flash");
+  });
+
   await check("editImageWith('gemini-flash') hits the flash model (no imageSize) — backward-compat", async () => {
     const secrets = await import("../settings/postizSecrets.js");
     secrets.updateSettings({ values: { GEMINI_API_KEY: "gem-test-key" } });
@@ -548,15 +614,15 @@ async function main() {
     assert.equal(intoBrand.find((s) => s.id === "logo")!.apply, false, "don't swap a generic icon INTO the brand mark");
   });
 
-  // ── recreation chain: EXACT verbatim prompts + STEP-2 art-director image ────
+  // ── recreation chain: swap is LAST; middle steps are PLAIN (no FACE_LOCK/ref) ─
   const recreate = await import("../thumbnails/recreate.js");
-  await check("the chain emits verbatim prompts for steps 1/2/8 and templated 4–7 (+ 16:9 preamble)", async () => {
+  await check("the chain runs plain outfit/optional/background edits, then the STRONG full swap LAST (+ 16:9 preamble)", async () => {
     const sent: Array<{ instruction: string; imageCount: number }> = [];
     const editImage = async (opts: any) => {
       sent.push({ instruction: opts.instruction, imageCount: opts.images.length });
       return { file: "/x", outputUrl: "/x", bytes: Buffer.from(`img${sent.length}`), mimeType: "image/png" };
     };
-    // Art-director returns ONE optional edit (font) so we can see it land between 2 and 8.
+    // Art-director returns ONE optional edit (font) so we can see it land between outfit and background.
     let directorSawImage: Buffer | undefined;
     const artDirect = async (o: any) => {
       directorSawImage = o.imageBytes as Buffer;
@@ -575,48 +641,48 @@ async function main() {
       { editImage, artDirect, finalize },
     );
     const pre = `(${(await import("../thumbnails/nanoBanana.js")).WIDESCREEN_PREAMBLE})`;
-    // Step 1: identity-locked swap (must reference the SECOND image as the
-    // identity source) + TWO inputs (source + character ref).
-    assert.equal(sent[0].instruction, `${recreate.STEP1_PROMPT} ${pre}`);
-    assert.match(sent[0].instruction, /SECOND image/i, "must anchor identity to the second image");
-    assert.equal(sent[0].imageCount, 2, "step 1 feeds source + character");
-    // Step 2: literal "a t-shirt" core, with the identity re-anchored (FACE_LOCK
-    // + the character ref threaded in as a second image so re-renders don't drift).
-    assert.ok(sent[1].instruction.includes("change the character outfit to a t-shirt"), "step 2 core verbatim");
-    assert.match(sent[1].instruction, /reference headshot/i, "step 2 re-anchors the identity");
-    assert.equal(sent[1].imageCount, 2, "later steps thread the character ref");
-    // Step (optional font): templated core verbatim, brackets filled.
+    // There is NO early swap: the FIRST edit is the plain outfit change on the
+    // ORIGINAL person — ONE image, no character ref, no FACE_LOCK.
+    assert.equal(sent[0].instruction, `${recreate.STEP2_PROMPT} ${pre}`);
+    assert.ok(sent[0].instruction.includes("change the character outfit to a t-shirt"), "step 1 is the plain outfit edit");
+    assert.equal(sent[0].imageCount, 1, "outfit is a plain edit on the original person (no ref)");
+    assert.doesNotMatch(sent[0].instruction, /reference headshot|SECOND image/i, "outfit must NOT thread a face-lock/ref");
+    // Optional font edit: templated core verbatim, brackets filled, PLAIN (1 image).
     assert.ok(
-      sent[2].instruction.includes(
+      sent[1].instruction.includes(
         "I want to change the font of the title but keep it in the same white color the same simple text shape - just the font",
       ),
       "optional font templated verbatim",
     );
-    // Step 8 (ALWAYS): subtle background pop, positions kept, identity anchored.
-    // It is now SECOND-to-last — the final re-anchor step runs after it.
+    assert.equal(sent[1].imageCount, 1, "optional edits are plain (no ref)");
+    assert.doesNotMatch(sent[1].instruction, /reference headshot/i, "optional edit must NOT carry FACE_LOCK");
+    // Background (ALWAYS) is SECOND-to-last — a PLAIN edit (1 image), no face-lock.
     const bg = sent[sent.length - 2];
-    assert.ok(bg.instruction.includes(recreate.STEP8_PROMPT), "step 8 core verbatim");
-    assert.match(bg.instruction, /reference headshot/i, "step 8 re-anchors the identity");
+    assert.ok(bg.instruction.includes(recreate.STEP8_PROMPT), "background core verbatim");
+    assert.equal(bg.imageCount, 1, "background is a plain edit (no ref)");
+    assert.doesNotMatch(bg.instruction, /reference headshot/i, "background must NOT carry FACE_LOCK");
     assert.match(bg.instruction, /position of every element exactly the same/i, "keeps layout");
-    // FINAL step (ALWAYS, genuinely LAST): re-anchor the character so the final
-    // face matches the reference exactly, carrying the character ref as the last image.
+    // FINAL step (ALWAYS, genuinely LAST): the STRONG FULL SWAP — the same verbatim
+    // strong-swap text, carrying the character ref as the SECOND image (2 inputs).
     const last = sent[sent.length - 1];
-    assert.ok(last.instruction.includes(recreate.FINAL_CHARACTER_PROMPT), "final re-anchor core verbatim");
-    assert.match(last.instruction, /EXACTLY the man in the reference image/i, "final step re-applies the reference man");
-    assert.match(last.instruction, /reference headshot/i, "final step still threads FACE_LOCK + the ref");
-    assert.equal(last.imageCount, 2, "final step carries the character ref as the last image");
-    // The art-director analysed the STEP-2 RESULT image (current working image),
-    // NOT the source thumbnail. Step 1 produced "img1", step 2 produced "img2".
+    assert.equal(last.instruction, `${recreate.STEP1_PROMPT} ${pre}`, "the LAST edit is the verbatim strong swap");
+    assert.equal(recreate.FINAL_SWAP_PROMPT, recreate.STEP1_PROMPT, "final swap reuses the strong swap text");
+    assert.match(last.instruction, /SECOND image/i, "final swap anchors identity to the second image");
+    assert.equal(last.imageCount, 2, "final swap feeds [current, character ref]");
+    // NO instruction anywhere is the old weak re-anchor nudge.
+    assert.ok(sent.every((s) => !/fix any drift from the previous edits/i.test(s.instruction)), "no weak re-anchor nudge remains");
+    // The art-director analysed the OUTFIT RESULT image (current working image),
+    // NOT the source thumbnail. The outfit edit produced "img1".
     assert.ok(directorSawImage, "director was called");
-    assert.equal(directorSawImage!.toString(), "img2", "director saw the STEP-2 result, not the source");
+    assert.equal(directorSawImage!.toString(), "img1", "director saw the OUTFIT result, not the source");
     assert.notEqual(directorSawImage!.toString(), "SOURCE");
     void res;
   });
 
-  await check("the chain always runs background then the final re-anchor even when the art-director returns nothing", async () => {
-    const sent: string[] = [];
+  await check("the chain runs outfit → background → strong swap LAST even when the art-director returns nothing", async () => {
+    const sent: Array<{ instruction: string; imageCount: number }> = [];
     const editImage = async (opts: any) => {
-      sent.push(opts.instruction);
+      sent.push({ instruction: opts.instruction, imageCount: opts.images.length });
       return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
     };
     const res = await recreate.recreateThumbnail(
@@ -626,22 +692,27 @@ async function main() {
       },
       { editImage, artDirect: async () => [], finalize: async (_c, steps) => ({ outputUrl: "/o", file: "/x", steps }) },
     );
-    // 4 edits: replace character, t-shirt, background, refine-character (no optionals).
-    assert.equal(sent.length, 4);
-    assert.match(sent[2], /background.*(pop|contrast|vibrant)/i, "background is third");
-    assert.match(sent[3], /EXACTLY the man in the reference image/i, "final re-anchor runs LAST, after background");
-    // The chain records the final re-anchor step with the expected id/label.
-    const refine = res.steps.find((s) => s.id === "refine-character");
-    assert.ok(refine, "the final re-anchor is recorded as a chain step");
-    assert.equal(refine!.label, "Refine character");
-    assert.equal(refine!.applied, true);
+    // 3 edits: outfit, background, swap (no optionals — the early swap is GONE).
+    assert.equal(sent.length, 3, "no early swap: outfit + background + final swap");
+    assert.ok(sent[0].instruction.includes("change the character outfit to a t-shirt"), "outfit is first");
+    assert.match(sent[1].instruction, /background.*(pop|contrast|vibrant)/i, "background is second");
+    assert.equal(sent[2].instruction, `${recreate.STEP1_PROMPT} (${(await import("../thumbnails/nanoBanana.js")).WIDESCREEN_PREAMBLE})`, "strong swap runs LAST");
+    assert.equal(sent[2].imageCount, 2, "the final swap carries the character ref");
+    // The chain records the final swap step with the expected id/label.
+    const swap = res.steps.find((s) => s.id === "swap-character");
+    assert.ok(swap, "the final swap is recorded as a chain step");
+    assert.equal(swap!.label, "Swap in character");
+    assert.equal(swap!.applied, true);
+    // No early replace-character / refine-character steps remain.
+    assert.equal(res.steps.find((s) => s.id === "replace-character"), undefined, "no early swap step");
+    assert.equal(res.steps.find((s) => s.id === "refine-character"), undefined, "no weak re-anchor step");
   });
 
   await check("a failed edit keeps the last good image and the chain continues to the end", async () => {
     let calls = 0;
     const editImage = async (opts: any) => {
       calls++;
-      if (calls === 2) throw new Error("safety block"); // outfit step fails
+      if (calls === 1) throw new Error("safety block"); // outfit step (first) fails
       return { file: "/x", outputUrl: "/x", bytes: Buffer.from(`ok${calls}`), mimeType: "image/png" };
     };
     const res = await recreate.recreateThumbnail(
@@ -654,8 +725,9 @@ async function main() {
     const outfit = res.steps.find((s) => s.id === "outfit");
     assert.equal(outfit?.applied, false, "outfit step recorded as not applied");
     assert.match(outfit?.note ?? "", /safety block/);
-    // Background edit (always-on) still ran afterwards.
+    // Background edit AND the final swap still ran afterwards.
     assert.ok(res.steps.find((s) => s.id === "background"), "background step still attempted");
+    assert.ok(res.steps.find((s) => s.id === "swap-character")?.applied, "the final swap still ran");
   });
 
   await check("recreateThumbnail threads the chosen provider into the default edit primitive (no editImage dep)", async () => {

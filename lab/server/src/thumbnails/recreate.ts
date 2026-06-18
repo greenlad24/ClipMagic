@@ -2,24 +2,28 @@
  * The thumbnail recreation chain.
  *
  * Given ONE source thumbnail + a chosen character reference, we run a sequence of
- * Nano Banana edits, each fed the PREVIOUS step's result image:
- *   1. ALWAYS — inputs [sourceThumbnail, characterRef]:
- *               "replace the character with the character in the second image"
- *   2. ALWAYS — "change the character outfit to a t-shirt"
- *   3. VISION ANALYSIS on the STEP-2 RESULT image (the current working image, NOT
- *      the source): the art-director (Claude vision) decides which of steps 4–7
- *      apply and fills the bracketed slots of their EXACT templates.
- *   4. (optional) device-screen
- *   5. (optional) font
- *   6. (optional) bold-text
- *   7. (optional) logo
- *   8. ALWAYS — change the background color + pattern, keeping every other
- *               element (character, text, logos, positions) identical.
- *   9. ALWAYS — re-anchor the character: a final identity-correction pass that
- *               re-applies the reference man so any face/hair drift introduced by
- *               the outfit/optional/background re-renders is fixed at the very
- *               end. Everything else (pose, outfit, background, text, logos,
- *               positions) is kept exactly the same.
+ * Nano Banana edits, each fed the PREVIOUS step's result image. The character swap
+ * is the LAST image operation, so the final face can't drift afterwards:
+ *   1. ALWAYS — "change the character outfit to a t-shirt" — a PLAIN edit on the
+ *               ORIGINAL person (no character ref, no face-lock: there is no Jake
+ *               to hold yet, so forcing "be the reference" here would be incoherent).
+ *   2. VISION ANALYSIS on the STEP-1 RESULT image (the ORIGINAL person now in a
+ *      t-shirt — its text/logo/device decisions are identity-independent): the
+ *      art-director decides which optional edits apply and fills their templates.
+ *   3. (optional) device-screen / font / bold-text / text-rewrite / logo — all
+ *               PLAIN edits on the original person.
+ *   4. ALWAYS — subtly enhance the background, keeping every other element
+ *               (person, text, logos, positions) identical — a PLAIN edit.
+ *   5. ALWAYS, LAST — the STRONG FULL SWAP: inputs [current, characterRef],
+ *               replace the on-camera person with the reference man (the SECOND
+ *               image). Because this is the very last image operation, the face
+ *               lands fresh and CANNOT drift — nothing re-renders it afterwards.
+ *               Layout, outfit, background, text and logos are preserved.
+ *
+ * (Previously the swap ran TWICE — an early swap then a weak "fix drift" re-anchor.
+ *  That was redundant; the most accurate face comes from a single, STRONG swap as
+ *  the last step, so the early swap is removed and the final step is a full
+ *  identity replacement, not a nudge.)
  *
  * Every step is resilient: if a step fails (safety block, network, no image), we
  * keep the last good image and continue — one bad step never aborts the
@@ -48,42 +52,29 @@ import type { VideoType } from "./videoType.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
 
 /**
- * Hard cap on chain length: 2 mandatory (replace + outfit) + up to 5 optional
+ * Hard cap on chain length: 1 mandatory outfit edit + up to 5 optional
  * (device-screen, font, bold-text, text-rewrite, logo) + 1 background edit +
- * 1 final re-anchor edit = 9, so the always-on final re-anchor never gets capped.
+ * 1 final swap edit = 8, so the always-on final swap never gets capped.
  */
-export const MAX_STEPS = 9;
+export const MAX_STEPS = 8;
 
 /**
- * EXACT verbatim prompts for the always-on edits. Steps 4–7's prompts are built
- * by the art-director from its templates; these three are fixed strings emitted
- * untouched (per the user's spec). Exported so tests can assert them verbatim.
+ * The STRONG FULL SWAP prompt, run LAST. Inputs are [current, characterRef]: it
+ * replaces the on-camera person with the man in the SECOND image. This is the very
+ * last image operation, so the swapped-in face lands fresh and cannot drift.
+ * (Same verbatim text that used to drive the early swap — reused here as the final
+ * identity replacement, NOT a "fix drift" nudge.) Exported so tests can assert it.
  */
 export const STEP1_PROMPT =
   "Take the man shown in the SECOND image and place him into the FIRST image as the on-camera person, REPLACING whoever is currently there. The resulting person MUST have the exact face, head, hairstyle, hair colour and beard of the man in the SECOND image — it must clearly be THAT man, not the original person from the first image. Do NOT keep the original person's face or beard. Preserve the first image's layout — camera framing, pose, any held object, and all text and logos in their positions — but the person is now the man from the second image.";
+/**
+ * Alias for STEP1_PROMPT, named for its NEW role: the final full identity swap.
+ * Same string, exported under both names so call sites and tests read clearly.
+ */
+export const FINAL_SWAP_PROMPT = STEP1_PROMPT;
 export const STEP2_PROMPT = "change the character outfit to a t-shirt";
 export const STEP8_PROMPT =
   "subtly enhance the existing background so the subject pops a little more — keep the background CLOSE to the original (same general style and colors), only clean it up and slightly increase the contrast/separation behind the subject. Do NOT add dramatic patterns, light rays, or wildly different colors — keep it a light, tasteful change. Keep the character, all text, logos, and the exact position of every element exactly the same";
-
-/**
- * FINAL always-on step, run AFTER the background edit. The outfit/optional/
- * background re-renders can each nudge the swapped-in face; this last pass
- * re-applies the reference man (passed as the LAST image) to correct any drift
- * so the FINAL face is accurate — while keeping every other element identical.
- * Exported so tests can assert it verbatim.
- */
-export const FINAL_CHARACTER_PROMPT =
-  "Make sure the on-camera person is EXACTLY the man in the reference image (the last image) — correct his face, hairstyle, hair colour and beard to match the reference precisely and fix any drift from the previous edits; keep the pose, outfit, background, text, logos and the position of every element exactly the same.";
-
-/**
- * Appended to EVERY re-render step after the initial swap. Each later edit
- * (outfit, optional, background) re-renders the whole frame and would otherwise
- * let the swapped-in identity drift; this re-anchors it to the reference headshot
- * (passed as the last image on every step) so the final face stays accurate and
- * the head/body read as one consistent person.
- */
-export const FACE_LOCK =
-  "IMPORTANT: the on-camera person must stay the EXACT same man as the reference headshot (the LAST image) — keep his face, hairstyle, hair colour and beard identical and do not drift his identity; blend his head, neck and body into one seamless person with matching skin tone";
 
 /**
  * Append the 16:9 widescreen preamble so edits don't reintroduce letterbox bars.
@@ -137,10 +128,16 @@ export interface RecreateInput {
   /**
    * Which image-edit provider drives every step of the chain. Defaults to the
    * sharpest option (Nano Banana Pro). The chain's `editImage` is defaulted to
-   * `(opts) => editImageWith(provider, opts)` so ALL steps — including the
-   * identity-anchoring re-renders — run on the chosen provider.
+   * `(opts) => editImageWith(provider, opts)` so ALL steps — including the final
+   * full swap — run on the chosen provider.
    */
   provider?: ImageProvider;
+  /**
+   * Optional per-call resolution hint threaded to the provider (the "compare"
+   * default drives gemini-pro at 4K / openai at its max). Ignored by gemini-flash.
+   * Omit to use the provider's default size.
+   */
+  imageSize?: string;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -178,7 +175,10 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // `deps.editImage` directly (no network); production routes every step through
   // editImageWith(provider, …) so the whole chain uses the picked provider.
   const provider = input.provider ?? DEFAULT_IMAGE_PROVIDER;
-  const editImage = deps.editImage ?? ((opts: { instruction: string; images: EditImage[] }) => editImageWith(provider, opts));
+  const editImage =
+    deps.editImage ??
+    ((opts: { instruction: string; images: EditImage[] }) =>
+      editImageWith(provider, { ...opts, imageSize: input.imageSize }));
   const artDirect = deps.artDirect ?? defaultArtDirect;
   const finalizeFn = deps.finalize ?? ((current, steps) => finalize(current, steps, deps.upscale));
   const report = (stepLabel: string, percent: number) => {
@@ -196,22 +196,21 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   const character: EditImage = { data: input.characterBytes, mimeType: "image/png" };
 
   // Helper that runs ONE edit resiliently: on any failure, keep `current`. The
-  // 16:9 widescreen preamble is appended to every instruction; for every step
-  // AFTER the initial swap (`holdFace`), the character reference is threaded in as
-  // the last image + the FACE_LOCK clause, so re-renders can't drift the identity.
+  // 16:9 widescreen preamble is appended to every instruction. Every middle edit
+  // (outfit, optional, background) is a PLAIN edit on the original person — no
+  // character ref, no face-lock; the swap happens once, as the LAST step, so there
+  // is nothing to "hold" earlier. The caller passes the exact `images` to send.
   const runStep = async (
     id: string,
     label: string,
     instruction: string,
-    baseImages: EditImage[],
-    holdFace = true,
+    images: EditImage[],
   ): Promise<void> => {
     if (steps.filter((s) => s.applied).length + 1 > MAX_STEPS) {
       steps.push({ id, label, instruction, applied: false, note: "step cap reached" });
       return;
     }
-    const images = holdFace ? [...baseImages, character] : baseImages;
-    const sent = withWidescreen(holdFace ? `${instruction} (${FACE_LOCK})` : instruction);
+    const sent = withWidescreen(instruction);
     try {
       const res = await editImage({ instruction: sent, images });
       current = { data: res.bytes, mimeType: res.mimeType };
@@ -227,21 +226,17 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     }
   };
 
-  // ── Step 1 (ALWAYS): swap in the user's character ───────────────────────────
-  // holdFace:false — step 1's own instruction already defines the swap + the
-  // character ref is its explicit second image.
-  report(PHASE_LABEL.replaceCharacter, phasePercent("replaceCharacter", 0));
-  await runStep("replace-character", "Replace character", STEP1_PROMPT, [current, character], false);
-  report(PHASE_LABEL.replaceCharacter, phasePercent("replaceCharacter", 1));
-
-  // ── Step 2 (ALWAYS): outfit → a t-shirt (identity re-anchored) ──────────────
+  // ── Step 1 (ALWAYS): outfit → a t-shirt — a PLAIN edit on the ORIGINAL person ─
+  // No swap has happened yet, so this is the original on-camera person; no ref,
+  // no face-lock.
   report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
   await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
   report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
 
-  // ── Step 3 (VISION): the art-director looks at the STEP-2 RESULT image ──────
-  // The director analyses `current` (the post-outfit working image), NOT the
-  // source thumbnail, so its decisions match what the recreation actually is now.
+  // ── Step 2 (VISION): the art-director looks at the OUTFIT RESULT image ───────
+  // The director analyses `current` (the original person now in a t-shirt). Its
+  // text/logo/device decisions are identity-independent, so it's fine that the
+  // swap hasn't happened yet.
   report(PHASE_LABEL.edits, phasePercent("edits", 0));
   let directorSteps: ArtDirectorStep[] = [];
   try {
@@ -263,29 +258,30 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     });
   }
 
-  // ── Optional edits (CONDITIONAL) + background (ALWAYS) + re-anchor (ALWAYS) ──
+  // ── Optional edits (CONDITIONAL) + background (ALWAYS) + final swap (ALWAYS) ──
   // The edits band covers the chosen optional edits PLUS the two guaranteed final
-  // edits (background, then the character re-anchor), spread evenly so the bar
-  // fills smoothly (always ≥2 edits).
+  // edits (background, then the full character swap), spread evenly so the bar
+  // fills smoothly (always ≥1 optional-or-background edit, then the swap band).
   const planned = directorSteps.filter((ds) => ds.apply && ds.instruction);
-  const totalEdits = planned.length + 2; // +1 background, +1 final re-anchor
+  const totalEdits = planned.length + 1; // +1 background (the swap has its own band)
   let doneEdits = 0;
   for (const ds of planned) {
     await runStep(ds.id, ds.label, ds.instruction, [current]);
     doneEdits++;
     report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
   }
-  // Step 8 (ALWAYS): new background color + pattern, everything else identical.
+  // Background (ALWAYS): subtle background pop, everything else identical — PLAIN.
   await runStep("background", "Change background", STEP8_PROMPT, [current]);
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
 
-  // FINAL step (ALWAYS, last): re-anchor the character so the FINAL face matches
-  // the reference exactly, correcting any drift from the prior re-renders. Runs
-  // AFTER the background edit and carries the character ref as the last image.
-  await runStep("refine-character", "Refine character", FINAL_CHARACTER_PROMPT, [current]);
-  doneEdits++;
-  report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
+  // ── FINAL step (ALWAYS, genuinely LAST): the STRONG FULL SWAP ────────────────
+  // Inputs [current, character]: replace the on-camera person with the reference
+  // man (the SECOND image). This is the very last image operation, so the face
+  // lands fresh and cannot drift — nothing re-renders it afterwards.
+  report(PHASE_LABEL.swap, phasePercent("swap", 0));
+  await runStep("swap-character", "Swap in character", FINAL_SWAP_PROMPT, [current, character]);
+  report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
   // ── Crop to 16:9 → Real-ESRGAN upscale → exactly 1920×1080 ──────────────────
   report(PHASE_LABEL.finalize, phasePercent("finalize", 0));

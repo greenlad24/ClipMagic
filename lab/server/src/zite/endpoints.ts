@@ -59,7 +59,7 @@ import {
 } from "../capture/autoScreencast.js";
 import { chromiumAvailable } from "../capture/chromium.js";
 import { nanoBananaConfigured } from "../thumbnails/nanoBanana.js";
-import { openAiConfigured, coerceProvider } from "../thumbnails/imageProviders.js";
+import { openAiConfigured, coerceMode } from "../thumbnails/imageProviders.js";
 import { searchTopThumbnails, youtubeConfigured } from "../thumbnails/youtube.js";
 import {
   listCharacters,
@@ -2347,7 +2347,9 @@ const startThumbnailGeneration: Handler = async (input) => {
     keyword: String(input?.keyword ?? ""),
     videoType: coerceVideoType(input?.videoType),
     picks,
-    provider: coerceProvider(input?.provider),
+    // New: a `mode` selects "compare" (default — Pro 4K + OpenAI side by side) or
+    // a single provider. Falls back to the legacy `provider` field when present.
+    mode: coerceMode(input?.mode ?? input?.provider),
   });
   return { jobId: job.id };
 };
@@ -2382,7 +2384,7 @@ const generateThumbnails: Handler = async (input) => {
     keyword: String(input?.keyword ?? ""),
     videoType: coerceVideoType(input?.videoType),
     picks,
-    provider: coerceProvider(input?.provider),
+    mode: coerceMode(input?.mode ?? input?.provider),
   });
   return { variants };
 };

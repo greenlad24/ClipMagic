@@ -28,21 +28,23 @@ export type VariantStatus = "queued" | "running" | "done" | "error";
 /**
  * The recreation chain runs in phases of fixed RELATIVE weight (summing to 100)
  * so the per-variant bar stays smooth even though the optional art-director
- * edits vary in count from 0 to 4:
+ * edits vary in count from 0 to 4. The character SWAP is now the LAST image
+ * operation (so the final face can't drift), so it owns the heaviest band and
+ * sits just before finalize:
  *
  *   fetch source        5
- *   replace character  35
- *   change outfit      25
- *   optional edits     20   (spread across however many actually run)
+ *   change outfit      20
+ *   optional edits     25   (spread across however many actually run + background)
+ *   swap in character  35   (the strong final identity swap — the most important)
  *   finalize           15   (crop + upscale to 1080p)
  *                     ───
  *                     100
  */
 export const PHASE_WEIGHTS = {
   fetch: 5,
-  replaceCharacter: 35,
-  outfit: 25,
-  edits: 20,
+  outfit: 20,
+  edits: 25,
+  swap: 35,
   finalize: 15,
 } as const;
 export type Phase = keyof typeof PHASE_WEIGHTS;
@@ -50,22 +52,22 @@ export type Phase = keyof typeof PHASE_WEIGHTS;
 /** Cumulative percent AT THE START of each phase (its floor). */
 export const PHASE_START: Record<Phase, number> = {
   fetch: 0,
-  replaceCharacter: PHASE_WEIGHTS.fetch, // 5
-  outfit: PHASE_WEIGHTS.fetch + PHASE_WEIGHTS.replaceCharacter, // 40
-  edits: PHASE_WEIGHTS.fetch + PHASE_WEIGHTS.replaceCharacter + PHASE_WEIGHTS.outfit, // 65
+  outfit: PHASE_WEIGHTS.fetch, // 5
+  edits: PHASE_WEIGHTS.fetch + PHASE_WEIGHTS.outfit, // 25
+  swap: PHASE_WEIGHTS.fetch + PHASE_WEIGHTS.outfit + PHASE_WEIGHTS.edits, // 50
   finalize:
     PHASE_WEIGHTS.fetch +
-    PHASE_WEIGHTS.replaceCharacter +
     PHASE_WEIGHTS.outfit +
-    PHASE_WEIGHTS.edits, // 85
+    PHASE_WEIGHTS.edits +
+    PHASE_WEIGHTS.swap, // 85
 };
 
 /** Human label per phase (shown under each variant). */
 export const PHASE_LABEL: Record<Phase, string> = {
   fetch: "Fetching source thumbnail",
-  replaceCharacter: "Replacing character",
   outfit: "Changing outfit",
   edits: "Applying text/logo edits",
+  swap: "Swapping in your character",
   finalize: "Upscaling to 1080p",
 };
 
@@ -82,20 +84,51 @@ export function phasePercent(phase: Phase, frac: number): number {
   return Math.round(start + weight * f);
 }
 
-/** One generated variant, surfaced live to the UI. */
+/**
+ * One provider sub-run within a variant. In the "compare" default a variant has
+ * TWO of these (Nano Banana Pro @ 4K and OpenAI @ its max), each rendered side by
+ * side with its OWN progress + download; in a single-provider mode a variant has
+ * exactly ONE. Sub-runs are isolated: one failing doesn't stop the other.
+ */
+export interface ProviderResult {
+  /** Which provider drove this sub-run. */
+  provider: string;
+  /** Display label for the column ("Nano Banana Pro · 4K", "OpenAI · 1536×1024"). */
+  label: string;
+  status: VariantStatus;
+  /** Current step sentence for THIS sub-run. */
+  stepLabel: string;
+  /** 0..100, monotonic per sub-run. */
+  percent: number;
+  /** Present THE MOMENT this sub-run finishes successfully. */
+  outputUrl?: string;
+  /** Present when this sub-run errored (the sibling keeps going). */
+  error?: string;
+}
+
+/**
+ * One generated variant (one selected pick). Carries per-provider `results` (the
+ * side-by-side sub-runs). The top-level status/stepLabel/percent/outputUrl/error
+ * are DERIVED aggregates across the results — `percent` is their mean, `status`
+ * is running while any sub-run is in flight, then "done" if any succeeded else
+ * "error", and `outputUrl`/`error` surface the first success / first failure —
+ * so callers that only need a single summary still work.
+ */
 export interface JobVariant {
   index: number;
   videoId: string;
   sourceThumbnailUrl: string;
   expression: string;
+  /** The per-provider sub-runs (1 in single mode, 2 in compare mode). */
+  results: ProviderResult[];
   status: VariantStatus;
-  /** Current step sentence ("Replacing character", "Upscaling to 1080p", …). */
+  /** Current step sentence ("Changing outfit", "Upscaling to 1080p", …). */
   stepLabel: string;
-  /** 0..100, monotonic per variant. */
+  /** 0..100, monotonic per variant (mean of the sub-runs). */
   percent: number;
-  /** Present THE MOMENT this variant finishes successfully. */
+  /** Present THE MOMENT a sub-run finishes successfully (first success). */
   outputUrl?: string;
-  /** Present when this variant errored (others keep going). */
+  /** Present when EVERY sub-run errored (per-provider failures live on results). */
   error?: string;
 }
 
@@ -130,9 +163,19 @@ const JOB_TTL_MS = 10 * 60_000; // keep finished jobs pollable for 10 min
 const MAX_JOBS = 50; // hard cap (oldest evicted first)
 const jobs = new Map<string, ThumbnailJob>();
 
-/** Create a job seeded with one queued variant per pick. */
+/**
+ * Create a job seeded with one queued variant per pick. Each seed lists the
+ * provider sub-runs to render side by side (one entry in single mode, two in the
+ * "compare" default). `providers` defaults to a single empty-label sub-run so old
+ * callers/tests that don't pass providers still get a coherent one-column variant.
+ */
 export function createJob(
-  seeds: Array<{ videoId: string; sourceThumbnailUrl: string; expression: string }>,
+  seeds: Array<{
+    videoId: string;
+    sourceThumbnailUrl: string;
+    expression: string;
+    providers?: Array<{ provider: string; label: string }>;
+  }>,
 ): ThumbnailJob {
   reap();
   const now = Date.now();
@@ -140,15 +183,25 @@ export function createJob(
     id: nanoid(),
     percent: 0,
     done: seeds.length === 0,
-    variants: seeds.map((s, index) => ({
-      index,
-      videoId: s.videoId,
-      sourceThumbnailUrl: s.sourceThumbnailUrl,
-      expression: s.expression,
-      status: "queued",
-      stepLabel: "Queued",
-      percent: 0,
-    })),
+    variants: seeds.map((s, index) => {
+      const providers = s.providers && s.providers.length > 0 ? s.providers : [{ provider: "", label: "" }];
+      return {
+        index,
+        videoId: s.videoId,
+        sourceThumbnailUrl: s.sourceThumbnailUrl,
+        expression: s.expression,
+        results: providers.map((p) => ({
+          provider: p.provider,
+          label: p.label,
+          status: "queued" as VariantStatus,
+          stepLabel: "Queued",
+          percent: 0,
+        })),
+        status: "queued" as VariantStatus,
+        stepLabel: "Queued",
+        percent: 0,
+      };
+    }),
     createdAt: now,
     updatedAt: now,
   };
@@ -171,8 +224,88 @@ function recomputeOverall(job: ThumbnailJob): void {
 }
 
 /**
- * Update one variant's live progress. `percent` is clamped to [0,100] and never
- * allowed to decrease (monotonic per variant). Recomputes the overall bar.
+ * Re-derive a variant's aggregate from its provider sub-runs:
+ *   percent  — monotonic MEAN of the sub-run percents (so the variant bar tracks
+ *              the average of the side-by-side runs and never goes backwards).
+ *   status   — "running" while any sub-run is queued/running; once all are
+ *              terminal it's "done" if ANY succeeded, else "error".
+ *   stepLabel— the step of the furthest-behind still-running sub-run (else a
+ *              terminal summary), so the single summary line is meaningful.
+ *   outputUrl— the FIRST successful sub-run's URL (a one-glance summary).
+ *   error    — only set when EVERY sub-run errored (per-provider failures live on
+ *              the results themselves, so one failure never erases the other's URL).
+ */
+function recomputeVariant(v: JobVariant): void {
+  const rs = v.results;
+  const mean = rs.length ? rs.reduce((s, r) => s + r.percent, 0) / rs.length : 0;
+  v.percent = Math.max(v.percent, Math.round(mean));
+  const anyActive = rs.some((r) => r.status === "queued" || r.status === "running");
+  const anyDone = rs.some((r) => r.status === "done");
+  if (anyActive) {
+    v.status = "running";
+    const running = rs.filter((r) => r.status === "queued" || r.status === "running");
+    const behind = running.reduce((a, b) => (b.percent < a.percent ? b : a), running[0]);
+    v.stepLabel = behind?.stepLabel ?? v.stepLabel;
+  } else {
+    v.status = anyDone ? "done" : "error";
+    v.stepLabel = anyDone ? "Done" : "Failed";
+  }
+  v.outputUrl = rs.find((r) => r.status === "done" && r.outputUrl)?.outputUrl;
+  v.error = anyDone ? undefined : rs.find((r) => r.error)?.error;
+}
+
+/** Locate a sub-run within a variant by provider id (or index for the lone run). */
+function findResult(v: JobVariant, provider: string): ProviderResult | undefined {
+  if (v.results.length === 1) return v.results[0];
+  return v.results.find((r) => r.provider === provider);
+}
+
+/**
+ * Update ONE provider sub-run's live progress. `percent` is clamped to [0,100]
+ * and never allowed to decrease (monotonic per sub-run). Re-derives the variant
+ * aggregate + the overall bar.
+ */
+export function updateResult(
+  job: ThumbnailJob,
+  variantIndex: number,
+  provider: string,
+  patch: Partial<Pick<ProviderResult, "status" | "stepLabel" | "percent" | "outputUrl" | "error">>,
+): void {
+  const v = job.variants[variantIndex];
+  if (!v) return;
+  const r = findResult(v, provider);
+  if (!r) return;
+  if (patch.status !== undefined) r.status = patch.status;
+  if (patch.stepLabel !== undefined) r.stepLabel = patch.stepLabel;
+  if (patch.percent !== undefined) {
+    r.percent = Math.max(r.percent, Math.max(0, Math.min(100, Math.round(patch.percent))));
+  }
+  if (patch.outputUrl !== undefined) r.outputUrl = patch.outputUrl;
+  if (patch.error !== undefined) r.error = patch.error;
+  recomputeVariant(v);
+  job.updatedAt = Date.now();
+  recomputeOverall(job);
+}
+
+/** Mark ONE provider sub-run terminal (done with a URL, or errored). */
+export function finishResult(
+  job: ThumbnailJob,
+  variantIndex: number,
+  provider: string,
+  result: { outputUrl: string } | { error: string },
+): void {
+  if ("outputUrl" in result) {
+    updateResult(job, variantIndex, provider, { status: "done", stepLabel: "Done", percent: 100, outputUrl: result.outputUrl });
+  } else {
+    updateResult(job, variantIndex, provider, { status: "error", stepLabel: "Failed", percent: 100, error: result.error });
+  }
+  maybeFinish(job);
+}
+
+/**
+ * Update a variant's live progress by fanning the patch across ALL its sub-runs.
+ * Used for variant-wide transitions (e.g. the shared fetch phase) and kept for
+ * back-compat with callers/tests that drive a single-sub-run variant directly.
  */
 export function updateVariant(
   job: ThumbnailJob,
@@ -181,21 +314,24 @@ export function updateVariant(
 ): void {
   const v = job.variants[index];
   if (!v) return;
-  if (patch.status !== undefined) v.status = patch.status;
-  if (patch.stepLabel !== undefined) v.stepLabel = patch.stepLabel;
-  if (patch.percent !== undefined) {
-    v.percent = Math.max(v.percent, Math.max(0, Math.min(100, Math.round(patch.percent))));
+  for (const r of v.results) {
+    if (patch.status !== undefined) r.status = patch.status;
+    if (patch.stepLabel !== undefined) r.stepLabel = patch.stepLabel;
+    if (patch.percent !== undefined) {
+      r.percent = Math.max(r.percent, Math.max(0, Math.min(100, Math.round(patch.percent))));
+    }
+    if (patch.outputUrl !== undefined) r.outputUrl = patch.outputUrl;
+    if (patch.error !== undefined) r.error = patch.error;
   }
-  if (patch.outputUrl !== undefined) v.outputUrl = patch.outputUrl;
-  if (patch.error !== undefined) v.error = patch.error;
+  recomputeVariant(v);
   job.updatedAt = Date.now();
   recomputeOverall(job);
 }
 
 /**
- * Mark a variant terminal: done (with outputUrl) or error (with message). Either
- * way the variant's bar snaps to 100 so the overall bar can reach 100 when every
- * variant is terminal.
+ * Mark a WHOLE variant terminal across every sub-run: done (with one outputUrl)
+ * or error (with a message). Used in single-provider mode and for variant-wide
+ * failures (e.g. the source download threw before any sub-run started).
  */
 export function finishVariant(
   job: ThumbnailJob,
@@ -203,19 +339,9 @@ export function finishVariant(
   result: { outputUrl: string } | { error: string },
 ): void {
   if ("outputUrl" in result) {
-    updateVariant(job, index, {
-      status: "done",
-      stepLabel: "Done",
-      percent: 100,
-      outputUrl: result.outputUrl,
-    });
+    updateVariant(job, index, { status: "done", stepLabel: "Done", percent: 100, outputUrl: result.outputUrl });
   } else {
-    updateVariant(job, index, {
-      status: "error",
-      stepLabel: "Failed",
-      percent: 100,
-      error: result.error,
-    });
+    updateVariant(job, index, { status: "error", stepLabel: "Failed", percent: 100, error: result.error });
   }
   maybeFinish(job);
 }
@@ -242,8 +368,9 @@ export function snapshot(job: ThumbnailJob): ThumbnailJobSnapshot {
     percent: job.percent,
     done: job.done,
     error: job.error ?? null,
-    // Copy each variant so a poll response can't be mutated by later progress ticks.
-    variants: job.variants.map((v) => ({ ...v })),
+    // Deep-copy each variant (incl. its sub-runs) so a poll response can't be
+    // mutated by later progress ticks.
+    variants: job.variants.map((v) => ({ ...v, results: v.results.map((r) => ({ ...r })) })),
   };
 }
 

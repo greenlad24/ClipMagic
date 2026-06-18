@@ -8,11 +8,19 @@ import { hqThumbnailUrl, maxresThumbnailUrl, mqThumbnailUrl } from "./youtube.js
 import { readCharacterImage, uploadedExpressions, type Expression } from "./characters.js";
 import { expressionsForVariants, type VideoType } from "./videoType.js";
 import { recreateThumbnail, type ChainStep, type RecreateDeps } from "./recreate.js";
-import type { ImageProvider } from "./imageProviders.js";
+import {
+  providersForMode,
+  DEFAULT_GENERATION_MODE,
+  DEFAULT_IMAGE_PROVIDER,
+  type ImageProvider,
+  type GenerationMode,
+} from "./imageProviders.js";
 import {
   createJob,
   updateVariant,
+  updateResult,
   finishVariant,
+  finishResult,
   completeJob,
   phasePercent,
   PHASE_LABEL,
@@ -69,8 +77,20 @@ export interface GenerateInput {
   videoType: VideoType;
   /** Picked video ids — any subset of the search results (no fixed cap). */
   picks: string[];
-  /** Image-edit provider for the recreation chain (defaults to Nano Banana Pro). */
+  /**
+   * Generation mode. DEFAULT "compare" → every pick runs through BOTH top
+   * providers (Nano Banana Pro @ 4K + OpenAI @ its max) side by side; a single
+   * provider id → one sub-run on that provider. Falls back to the legacy
+   * `provider` field, then to the compare default.
+   */
+  mode?: GenerationMode;
+  /** @deprecated Back-compat single-provider selector; prefer `mode`. */
   provider?: ImageProvider;
+}
+
+/** Resolve the effective mode from the input (mode → provider → compare). */
+function effectiveMode(input: GenerateInput): GenerationMode {
+  return input.mode ?? input.provider ?? DEFAULT_GENERATION_MODE;
 }
 
 /**
@@ -97,6 +117,9 @@ export async function generateThumbnailVariants(
       if (!characterBytes) throw new Error(`Character image for "${expression}" is missing.`);
 
       const src = await downloadSourceThumbnail(videoId, download);
+      // The legacy (non-job) path returns ONE outputUrl per pick, so it runs a
+      // single provider: the mode's first sub-run (compare → Nano Banana Pro @ 4K).
+      const run = providersForMode(effectiveMode(input))[0];
       const result = await recreateThumbnail({
         sourceBytes: src.bytes,
         sourceMime: src.mime,
@@ -104,7 +127,8 @@ export async function generateThumbnailVariants(
         keyword: input.keyword,
         videoType: input.videoType,
         expression,
-        provider: input.provider,
+        provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
+        imageSize: run?.imageSize,
       });
       variants.push({
         videoId,
@@ -143,14 +167,18 @@ export function startThumbnailJob(
 ): ThumbnailJob {
   const available = uploadedExpressions();
   const expressions = expressionsForVariants(input.videoType, input.picks.length, available);
-  // Seed one queued variant per pick. The source URL starts as the always-exists
-  // hqdefault so the UI shows the original immediately; it's upgraded to the
-  // actual downloaded URL (maxres when available) once the fetch phase runs.
+  // The provider sub-runs each pick fans out to (1 in single mode, 2 in compare).
+  const runs = providersForMode(effectiveMode(input));
+  // Seed one queued variant per pick, each carrying its side-by-side provider
+  // columns. The source URL starts as the always-exists hqdefault so the UI shows
+  // the original immediately; it's upgraded to the actual downloaded URL (maxres
+  // when available) once the fetch phase runs.
   const job = createJob(
     input.picks.map((videoId, i) => ({
       videoId,
       sourceThumbnailUrl: hqThumbnailUrl(videoId),
       expression: expressions[i] ?? (available[0] as string) ?? "smile",
+      providers: runs.map((r) => ({ provider: r.provider, label: r.label })),
     })),
   );
   // Fire-and-forget. runThumbnailJob never throws (it records onto the job).
@@ -159,9 +187,11 @@ export function startThumbnailJob(
 }
 
 /**
- * Drive a generation job to completion. Sequential (one pick at a time) for
- * clear, coherent progress; per-pick try/catch so one failure becomes that
- * variant's error and the rest still finish. Never throws.
+ * Drive a generation job to completion. Sequential (one pick at a time, and one
+ * provider sub-run at a time within a pick) for clear, coherent progress.
+ * Per-pick AND per-provider try/catch: one pick's failure leaves an error variant
+ * and the rest still finish; one provider's failure within a pick leaves an error
+ * column and the SIBLING provider still produces its result. Never throws.
  */
 export async function runThumbnailJob(
   job: ThumbnailJob,
@@ -171,10 +201,12 @@ export async function runThumbnailJob(
   download: DownloadFn = defaultDownload,
   recreateDeps?: RecreateDeps,
 ): Promise<void> {
+  const runs = providersForMode(effectiveMode(input));
   try {
     for (let i = 0; i < input.picks.length; i++) {
       const videoId = input.picks[i];
       const expression = expressions[i];
+      // Shared fetch phase: move every sub-run column into "running" together.
       updateVariant(job, i, { status: "running", stepLabel: PHASE_LABEL.fetch, percent: phasePercent("fetch", 0) });
       try {
         if (!expression) throw new Error("No character expression available — upload at least one in the library.");
@@ -183,28 +215,36 @@ export async function runThumbnailJob(
 
         const src = await downloadSourceThumbnail(videoId, download);
         // Upgrade to the real source URL (maxres when it existed) + close the fetch band.
-        updateVariant(job, i, {
-          stepLabel: PHASE_LABEL.replaceCharacter,
-          percent: phasePercent("fetch", 1),
-        });
+        updateVariant(job, i, { stepLabel: PHASE_LABEL.outfit, percent: phasePercent("fetch", 1) });
         job.variants[i].sourceThumbnailUrl = src.url;
 
-        const result = await recreateThumbnail(
-          {
-            sourceBytes: src.bytes,
-            sourceMime: src.mime,
-            characterBytes,
-            keyword: input.keyword,
-            videoType: input.videoType,
-            expression,
-            provider: input.provider,
-            onProgress: ({ stepLabel, percent }) => updateVariant(job, i, { stepLabel, percent }),
-          },
-          recreateDeps,
-        );
-        // Surface the output the MOMENT this variant finishes.
-        finishVariant(job, i, { outputUrl: result.outputUrl });
+        // Run each provider sub-run, isolated. A throw here only fails THIS column.
+        for (const run of runs) {
+          try {
+            const result = await recreateThumbnail(
+              {
+                sourceBytes: src.bytes,
+                sourceMime: src.mime,
+                characterBytes,
+                keyword: input.keyword,
+                videoType: input.videoType,
+                expression,
+                provider: run.provider,
+                imageSize: run.imageSize,
+                onProgress: ({ stepLabel, percent }) =>
+                  updateResult(job, i, run.provider, { status: "running", stepLabel, percent }),
+              },
+              recreateDeps,
+            );
+            // Surface this column's output the MOMENT its sub-run finishes.
+            finishResult(job, i, run.provider, { outputUrl: result.outputUrl });
+          } catch (e) {
+            // One provider failing leaves an error column; the sibling keeps going.
+            finishResult(job, i, run.provider, { error: e instanceof Error ? e.message : String(e) });
+          }
+        }
       } catch (e) {
+        // A pre-render failure (missing char / download) fails the whole variant.
         finishVariant(job, i, { error: e instanceof Error ? e.message : String(e) });
       }
     }

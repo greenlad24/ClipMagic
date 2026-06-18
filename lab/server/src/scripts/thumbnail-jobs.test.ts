@@ -59,10 +59,11 @@ async function main() {
   // ── progress model (pure) ───────────────────────────────────────────────────
   await check("PHASE_WEIGHTS sum to 100 and PHASE_START is cumulative", () => {
     const w = jobs.PHASE_WEIGHTS;
-    const sum = w.fetch + w.replaceCharacter + w.outfit + w.edits + w.finalize;
+    const sum = w.fetch + w.outfit + w.edits + w.swap + w.finalize;
     assert.equal(sum, 100);
     assert.equal(jobs.PHASE_START.fetch, 0);
-    assert.equal(jobs.PHASE_START.replaceCharacter, w.fetch);
+    assert.equal(jobs.PHASE_START.outfit, w.fetch);
+    assert.equal(jobs.PHASE_START.swap, w.fetch + w.outfit + w.edits, "swap is the heavy band before finalize");
     assert.equal(jobs.PHASE_START.finalize, 100 - w.finalize, "finalize starts at 85");
   });
 
@@ -70,12 +71,13 @@ async function main() {
     const seq = [
       jobs.phasePercent("fetch", 0),
       jobs.phasePercent("fetch", 1),
-      jobs.phasePercent("replaceCharacter", 0),
-      jobs.phasePercent("replaceCharacter", 1),
+      jobs.phasePercent("outfit", 0),
       jobs.phasePercent("outfit", 1),
       jobs.phasePercent("edits", 0),
       jobs.phasePercent("edits", 0.5),
       jobs.phasePercent("edits", 1),
+      jobs.phasePercent("swap", 0),
+      jobs.phasePercent("swap", 1),
       jobs.phasePercent("finalize", 0),
       jobs.phasePercent("finalize", 1),
     ];
@@ -140,13 +142,14 @@ async function main() {
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
     const t0 = Date.now();
     const job = orchestrate.startThumbnailJob(
-      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"] },
+      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"], mode: "gemini-pro" }, // single-provider
       fakeDownload,
       makeDeps(),
     );
     const elapsed = Date.now() - t0;
     assert.ok(job.id, "returns a job with an id");
     assert.equal(job.variants.length, 2);
+    assert.ok(job.variants.every((v) => v.results.length === 1), "single mode → exactly one sub-run per variant");
     assert.ok(elapsed < 100, `start should return fast (was ${elapsed}ms)`);
     // The seeded variants START queued — the work runs in the background.
     assert.ok(job.variants.every((v) => v.status === "queued" || v.status === "running"));
@@ -162,7 +165,7 @@ async function main() {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
     const job = orchestrate.startThumbnailJob(
-      { keyword: "k", videoType: "Viral", picks: ["A", "BOOM", "C"] }, // middle pick's download throws
+      { keyword: "k", videoType: "Viral", picks: ["A", "BOOM", "C"], mode: "gemini-pro" }, // middle pick's download throws
       fakeDownload,
       makeDeps({ edits: 2 }),
     );
@@ -194,7 +197,7 @@ async function main() {
       },
     };
     const job = orchestrate.startThumbnailJob(
-      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"] },
+      { keyword: "k", videoType: "Tutorial", picks: ["A", "B"], mode: "gemini-pro" }, // single sub-run per pick
       fakeDownload,
       deps,
     );
@@ -206,6 +209,99 @@ async function main() {
     releaseSecond();
     await waitUntil(() => job.done);
     assert.ok(job.variants[1].outputUrl);
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  // ── compare mode: TWO sub-runs per pick, side by side, per-provider isolation ─
+  await check("compare mode (default) runs the chain ONCE PER PROVIDER and exposes BOTH results per pick", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    // Count how many times the chain's finalize runs — compare ⇒ 2 per pick.
+    let chainRuns = 0;
+    const deps = {
+      ...makeDeps(),
+      finalize: async (_c: any, steps: any) => {
+        chainRuns++;
+        return { outputUrl: `/api/outputs/thumbnails/run${chainRuns}.png`, file: "/x", steps };
+      },
+    };
+    // No mode passed → the compare DEFAULT.
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A"] },
+      fakeDownload,
+      deps,
+    );
+    // Seeded with the two side-by-side provider columns.
+    assert.equal(job.variants[0].results.length, 2, "compare seeds two provider columns");
+    assert.deepEqual(job.variants[0].results.map((r) => r.provider), ["gemini-pro", "openai"]);
+    assert.match(job.variants[0].results[0].label, /Nano Banana Pro · 4K/);
+    assert.match(job.variants[0].results[1].label, /OpenAI · 1536×1024/);
+    await waitUntil(() => job.done);
+    assert.equal(chainRuns, 2, "the full chain ran once per provider (2 sub-runs for 1 pick)");
+    // BOTH provider results are present, each with its own outputUrl.
+    const rs = job.variants[0].results;
+    assert.ok(rs.every((r) => r.status === "done" && r.outputUrl), "both providers produced a result");
+    assert.notEqual(rs[0].outputUrl, rs[1].outputUrl, "each sub-run has its own image");
+    assert.equal(job.percent, 100, "the job completes");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("compare mode: one provider failing still shows the OTHER provider's result; job completes", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    // Fail the FIRST sub-run (gemini-pro) only; the second (openai) succeeds.
+    let run = 0;
+    const deps = {
+      ...makeDeps(),
+      finalize: async (_c: any, steps: any) => {
+        run++;
+        if (run === 1) throw new Error("provider-A blew up");
+        return { outputUrl: "/api/outputs/thumbnails/b.png", file: "/x", steps };
+      },
+    };
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A"] }, // compare default
+      fakeDownload,
+      deps,
+    );
+    await waitUntil(() => job.done);
+    const rs = job.variants[0].results;
+    assert.equal(rs[0].provider, "gemini-pro");
+    assert.equal(rs[0].status, "error", "the failed provider's column is an error");
+    assert.match(rs[0].error ?? "", /provider-A blew up/);
+    assert.equal(rs[0].outputUrl, undefined, "the failed column has no image");
+    assert.equal(rs[1].provider, "openai");
+    assert.equal(rs[1].status, "done", "the sibling provider still produced a result");
+    assert.ok(rs[1].outputUrl, "the surviving column has its own download");
+    // Variant aggregate: at least one succeeded → variant is "done" (not error),
+    // its summary outputUrl is the surviving one, and the job completes.
+    assert.equal(job.variants[0].status, "done", "a variant with one good result reads as done");
+    assert.equal(job.variants[0].outputUrl, rs[1].outputUrl);
+    assert.equal(job.variants[0].error, undefined, "one good result clears the variant-level error");
+    assert.equal(job.percent, 100, "the job still reaches 100");
+    for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
+  });
+
+  await check("compare mode: BOTH providers failing marks the variant errored but the job still completes", async () => {
+    jobs._resetJobsForTest();
+    for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
+    const deps = {
+      ...makeDeps(),
+      finalize: async () => {
+        throw new Error("both providers down");
+      },
+    };
+    const job = orchestrate.startThumbnailJob(
+      { keyword: "k", videoType: "Tutorial", picks: ["A"] },
+      fakeDownload,
+      deps,
+    );
+    await waitUntil(() => job.done);
+    const rs = job.variants[0].results;
+    assert.ok(rs.every((r) => r.status === "error"), "both columns errored");
+    assert.equal(job.variants[0].status, "error", "the variant reads as error when every sub-run failed");
+    assert.match(job.variants[0].error ?? "", /both providers down/);
+    assert.equal(job.percent, 100, "an all-errored job still completes at 100");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
   });
 

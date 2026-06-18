@@ -48,6 +48,24 @@ export function coerceProvider(x: unknown): ImageProvider {
   return x === "gemini-pro" || x === "gemini-flash" || x === "openai" ? x : DEFAULT_IMAGE_PROVIDER;
 }
 
+/**
+ * Generation mode. The DEFAULT is "compare": every pick is generated through BOTH
+ * top providers (Nano Banana Pro @ 4K + OpenAI @ its max) and shown side by side
+ * so the user picks the better one. The single-provider modes equal the three
+ * ImageProvider ids — for when the user doesn't want the comparison/cost.
+ */
+export type GenerationMode = "compare" | ImageProvider;
+
+/** Default mode: dual-generate (Pro 4K + OpenAI) side by side. */
+export const DEFAULT_GENERATION_MODE: GenerationMode = "compare";
+
+/** Coerce arbitrary input to a known mode (defaults to "compare"). */
+export function coerceMode(x: unknown): GenerationMode {
+  return x === "compare" || x === "gemini-pro" || x === "gemini-flash" || x === "openai"
+    ? x
+    : DEFAULT_GENERATION_MODE;
+}
+
 // ── Gemini Pro (Nano Banana Pro) constants ───────────────────────────────────
 /**
  * Nano Banana Pro image model id. Google's preview id for Gemini 3 Pro Image is
@@ -70,6 +88,17 @@ export const NANO_BANANA_PRO_MODEL = process.env.NANO_BANANA_PRO_MODEL || "gemin
  */
 export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "2K";
 
+/**
+ * Highest resolution we drive the pro model at — used by the "compare" default,
+ * which generates each pick at the BEST quality each provider offers so the user
+ * can choose the better one. Gemini 3 Pro Image accepts "1K" | "2K" | "4K"
+ * (long-edge, per ai.google.dev/gemini-api/docs/gemini-3). The single-provider
+ * gemini-pro path stays at NANO_BANANA_PRO_IMAGE_SIZE (2K, the env default) for
+ * cost; compare upgrades to 4K. Per-call overridable (see editImageWith's
+ * `imageSize` option); finalize still guarantees a crisp 1920×1080.
+ */
+export const NANO_BANANA_PRO_IMAGE_SIZE_MAX = process.env.NANO_BANANA_PRO_IMAGE_SIZE_MAX || "4K";
+
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 
 // ── OpenAI gpt-image-1 (image edits) constants ───────────────────────────────
@@ -88,6 +117,19 @@ export const OPENAI_EDITS_PATH = "/v1/images/edits";
  * sizes: 1024x1024 | 1536x1024 | 1024x1536 (+ "auto"). Isolated + env-overridable.
  */
 export const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1536x1024";
+/**
+ * Highest-resolution LANDSCAPE size we ask gpt-image-1 for — used by the
+ * "compare" default. For gpt-image-1 the largest landscape option IS 1536×1024:
+ * the edits API only accepts 1024x1024 | 1536x1024 | 1024x1536 (+ "auto"),
+ * verified against developers.openai.com/api/reference (Create image edit),
+ * Jun 2026. So OPENAI_IMAGE_SIZE_MAX == OPENAI_IMAGE_SIZE today; it's isolated
+ * behind its own constant so the compare path documents intent ("the highest
+ * size this model supports") and a future model bump is a one-line change.
+ * TODO: gpt-image-2 / a renamed gpt-image-1.5 supports arbitrary WIDTHxHEIGHT up
+ * to 3840×2160 (≈16:9 natively) — when OPENAI_IMAGE_MODEL is bumped to it, set
+ * OPENAI_IMAGE_SIZE_MAX to e.g. "1920x1080" (or higher) via the env override.
+ */
+export const OPENAI_IMAGE_SIZE_MAX = process.env.OPENAI_IMAGE_SIZE_MAX || "1536x1024";
 /**
  * input_fidelity=high tells gpt-image-1 to PRESERVE the faces/details of the input
  * images closely — essential so the swapped-in person's likeness survives the
@@ -124,10 +166,16 @@ export type GeminiFetchFn = (
 /**
  * Build the Gemini generateContent request body for a PRO edit: the same shape as
  * the flash client (instruction first, then inline_data parts), with the pro
- * model's resolution hint added to `generationConfig.imageConfig`. Pure + exported
+ * model's resolution hint added to `generationConfig.imageConfig`. The resolution
+ * defaults to NANO_BANANA_PRO_IMAGE_SIZE (2K) but is overridable per call (the
+ * "compare" default requests NANO_BANANA_PRO_IMAGE_SIZE_MAX = 4K). Pure + exported
  * so the request shape is unit-testable.
  */
-export function buildProEditRequestBody(instruction: string, images: EditImage[]): {
+export function buildProEditRequestBody(
+  instruction: string,
+  images: EditImage[],
+  imageSize: string = NANO_BANANA_PRO_IMAGE_SIZE,
+): {
   contents: Array<{ parts: Array<Record<string, unknown>> }>;
   generationConfig: { imageConfig: { aspectRatio: string; imageSize: string } };
 } {
@@ -135,16 +183,20 @@ export function buildProEditRequestBody(instruction: string, images: EditImage[]
   return {
     contents: base.contents,
     generationConfig: {
-      imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO, imageSize: NANO_BANANA_PRO_IMAGE_SIZE },
+      imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO, imageSize },
     },
   };
 }
 
-/** Run one Gemini edit on the given model. `pro` swaps in the 2K imageConfig. */
+/**
+ * Run one Gemini edit on the given model. `pro` swaps in the imageConfig; for the
+ * pro path `imageSize` overrides the requested long-edge (defaults to 2K; the
+ * compare default passes 4K).
+ */
 async function editWithGemini(
   model: string,
   pro: boolean,
-  opts: { instruction: string; images: EditImage[] },
+  opts: { instruction: string; images: EditImage[]; imageSize?: string },
   fetchImpl?: GeminiFetchFn,
 ): Promise<EditResult> {
   const key = getGeminiApiKey();
@@ -155,7 +207,9 @@ async function editWithGemini(
 
   const url = `${GEMINI_BASE}/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
   const body = JSON.stringify(
-    pro ? buildProEditRequestBody(opts.instruction, opts.images) : buildEditRequestBody(opts.instruction, opts.images),
+    pro
+      ? buildProEditRequestBody(opts.instruction, opts.images, opts.imageSize ?? NANO_BANANA_PRO_IMAGE_SIZE)
+      : buildEditRequestBody(opts.instruction, opts.images),
   );
 
   const doFetch: GeminiFetchFn =
@@ -197,16 +251,22 @@ export type OpenAiFetchFn = (
 
 /**
  * Build the multipart FormData for a gpt-image-1 edit. EXACT field contract:
- *   model=gpt-image-1, prompt=<instruction>, size=1536x1024, input_fidelity=high,
+ *   model=gpt-image-1, prompt=<instruction>, size=<size>, input_fidelity=high,
  *   n=1, and EACH input image appended under the `image[]` field (the array form
- *   gpt-image-1 accepts for multi-image edits). Pure-ish (builds a FormData) +
- *   exported so a test can assert the exact fields without a network call.
+ *   gpt-image-1 accepts for multi-image edits). `size` defaults to OPENAI_IMAGE_SIZE
+ *   but is overridable per call (the "compare" default passes OPENAI_IMAGE_SIZE_MAX).
+ *   Pure-ish (builds a FormData) + exported so a test can assert the exact fields
+ *   without a network call.
  */
-export function buildOpenAiEditForm(instruction: string, images: EditImage[]): FormData {
+export function buildOpenAiEditForm(
+  instruction: string,
+  images: EditImage[],
+  size: string = OPENAI_IMAGE_SIZE,
+): FormData {
   const form = new FormData();
   form.append("model", OPENAI_IMAGE_MODEL);
   form.append("prompt", instruction);
-  form.append("size", OPENAI_IMAGE_SIZE);
+  form.append("size", size);
   form.append("input_fidelity", OPENAI_INPUT_FIDELITY);
   form.append("n", "1");
   for (let i = 0; i < images.length; i++) {
@@ -229,7 +289,7 @@ export function extractOpenAiImage(json: any): { data: Buffer; mimeType: string 
 }
 
 async function editWithOpenAi(
-  opts: { instruction: string; images: EditImage[] },
+  opts: { instruction: string; images: EditImage[]; size?: string },
   fetchImpl?: OpenAiFetchFn,
 ): Promise<EditResult> {
   const key = getOpenAiApiKey();
@@ -239,7 +299,7 @@ async function editWithOpenAi(
   if (!opts.images.length) throw new Error("Image edit needs at least one input image.");
 
   const url = `${OPENAI_BASE}${OPENAI_EDITS_PATH}`;
-  const body = buildOpenAiEditForm(opts.instruction, opts.images);
+  const body = buildOpenAiEditForm(opts.instruction, opts.images, opts.size ?? OPENAI_IMAGE_SIZE);
 
   const doFetch: OpenAiFetchFn =
     fetchImpl ??
@@ -273,17 +333,25 @@ export interface EditImageDeps {
 /**
  * Route ONE edit to the chosen provider, returning the SAME EditResult shape for
  * all three. HTTP is injectable per back-end so tests run with no network/keys.
+ *
+ * The optional `imageSize` is a uniform, provider-agnostic resolution hint the
+ * recreation chain threads through so the "compare" default can drive each sub-run
+ * at the BEST size that provider offers (gemini-pro 4K, openai 1536×1024):
+ *   • gemini-pro → generationConfig.imageConfig.imageSize ("1K"|"2K"|"4K")
+ *   • openai     → the multipart `size` field (1024x1024|1536x1024|1024x1536)
+ *   • gemini-flash → ignored (flash exposes no resolution knob)
+ * Omitting it keeps each provider's default (gemini-pro 2K, openai 1536×1024).
  */
 export function editImageWith(
   provider: ImageProvider,
-  opts: { instruction: string; images: EditImage[] },
+  opts: { instruction: string; images: EditImage[]; imageSize?: string },
   deps: EditImageDeps = {},
 ): Promise<EditResult> {
   switch (provider) {
     case "gemini-pro":
       return editWithGemini(NANO_BANANA_PRO_MODEL, true, opts, deps.geminiFetch);
     case "openai":
-      return editWithOpenAi(opts, deps.openaiFetch);
+      return editWithOpenAi({ ...opts, size: opts.imageSize }, deps.openaiFetch);
     case "gemini-flash":
     default:
       return editWithGemini(NANO_BANANA_MODEL, false, opts, deps.geminiFetch);
@@ -293,4 +361,42 @@ export function editImageWith(
 /** Whether the OpenAI provider is usable (key configured). For the UI gate. */
 export function openAiConfigured(): boolean {
   return !!getOpenAiApiKey();
+}
+
+/** One provider sub-run's config: which provider, at what size, with what label. */
+export interface ProviderRun {
+  provider: ImageProvider;
+  /** Resolution hint threaded to editImageWith (undefined = the provider default). */
+  imageSize?: string;
+  /** UI column label ("Nano Banana Pro · 4K", "OpenAI · 1536×1024"). */
+  label: string;
+}
+
+/** Human-friendly column label for a provider at a given size. */
+function providerLabel(provider: ImageProvider, size?: string): string {
+  switch (provider) {
+    case "gemini-pro":
+      return `Nano Banana Pro · ${size ?? NANO_BANANA_PRO_IMAGE_SIZE}`;
+    case "gemini-flash":
+      return "Nano Banana (Flash)";
+    case "openai":
+      return `OpenAI · ${(size ?? OPENAI_IMAGE_SIZE).replace("x", "×")}`;
+  }
+}
+
+/**
+ * The provider sub-runs a mode expands to. "compare" → BOTH top providers at
+ * their best size (Nano Banana Pro @ 4K, OpenAI @ its max); a single-provider
+ * mode → exactly one sub-run at that provider's DEFAULT size (so single gemini-pro
+ * stays the cheaper 2K). Drives both the seeded UI columns and the runner.
+ */
+export function providersForMode(mode: GenerationMode): ProviderRun[] {
+  if (mode === "compare") {
+    return [
+      { provider: "gemini-pro", imageSize: NANO_BANANA_PRO_IMAGE_SIZE_MAX, label: providerLabel("gemini-pro", NANO_BANANA_PRO_IMAGE_SIZE_MAX) },
+      { provider: "openai", imageSize: OPENAI_IMAGE_SIZE_MAX, label: providerLabel("openai", OPENAI_IMAGE_SIZE_MAX) },
+    ];
+  }
+  // Single-provider mode: one sub-run at the provider's default size.
+  return [{ provider: mode, label: providerLabel(mode) }];
 }
