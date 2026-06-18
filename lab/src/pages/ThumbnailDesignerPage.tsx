@@ -1123,7 +1123,7 @@ function CopyReview({
         >
           {composite11
             ? 'Character: composited 1:1 from your uploaded image (no AI redraw).'
-            : `Character: AI fallback — the 1:1 composite is unavailable (${!composite.canvas ? 'canvas' : 'background-removal'} not loaded). Rebuild the image to enable it.`}
+            : `Character: AI fallback (the face WILL be redrawn) — the 1:1 composite can't load: ${composite.reason || (!composite.canvas ? 'canvas' : 'background-removal') + ' unavailable'}. Rebuild the image to enable it.`}
         </div>
       )}
 

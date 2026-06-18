@@ -452,15 +452,17 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
 
   // ── ONE-SHOT recreation (avoid multi-render degradation) ─────────────────────
   // We do everything in a SINGLE edit when either:
-  //   • the source is element-heavy (busy) — many re-renders would melt it, OR
   //   • the source has NO person to swap (swapCharacter:false, e.g. an icon/text
-  //     thumbnail) — re-rendering such a fragile layout several times destroys it.
-  // A single coherent pass keeps the layout intact and applies the text + element
-  // changes together. For a reviewed plan we use its exact text + element edits;
-  // for an un-reviewed busy source we ask the art-director for the text rewrites.
+  //     thumbnail) — re-rendering such a fragile layout several times destroys it, OR
+  //   • the source is element-heavy (busy) AND there's no reviewed plan — many
+  //     re-renders would melt it, so we collapse the auto recreation to one pass.
+  // BUT a REVIEWED plan with a person uses the multi-step chain so EACH approved
+  // edit (e.g. "replace the timeline screens") gets its OWN focused render and
+  // actually lands — bundling them into one mega-prompt makes the model drop the
+  // harder element edits.
   const swap = input.swapCharacter !== false;
   const fullPlan = input.plannedElements != null && input.textRewrites != null;
-  if (input.busy || !swap) {
+  if (!swap || (input.busy && !fullPlan)) {
     report(PHASE_LABEL.edits, phasePercent("edits", 0));
     let textChanges: string[] = [];
     let elementChanges: string[] = [];

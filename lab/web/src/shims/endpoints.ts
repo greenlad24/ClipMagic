@@ -262,7 +262,7 @@ export type ThumbnailStatusOutputType = {
   uploadedBackgrounds: string[];
   font: ThumbnailFontState;
   /** Whether the contrarian character is composited 1:1 from real pixels vs. AI. */
-  composite?: { canvas: boolean; removal: boolean };
+  composite?: { canvas: boolean; removal: boolean; reason?: string };
 };
 export type ThumbnailScriptAnalysisOutputType = {
   keyword: string;

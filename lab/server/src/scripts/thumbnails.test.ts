@@ -1384,6 +1384,36 @@ async function main() {
     assert.ok(sent.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)), "the reviewed text rewrite ran");
   });
 
+  await check("a BUSY reviewed plan (with a person) runs FOCUSED passes, not one bundled mega-prompt", async () => {
+    const sent: string[] = [];
+    await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("src"),
+        sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("char"),
+        keyword: "OpenClaw",
+        videoType: "Tutorial",
+        expression: "smile",
+        busy: true, // element-heavy source…
+        // …but the user reviewed it → each edit must get its OWN render.
+        plannedElements: [{ id: "device-screen", label: "Screens", instruction: "replace the timeline screens with a grid of AI prompts" }],
+        textRewrites: [{ old: "OLD", new: "NEW" }],
+      },
+      {
+        artDirect: async () => [],
+        editImage: async (o: any) => {
+          sent.push(o.instruction);
+          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+        },
+        finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
+      },
+    );
+    // NOT a single consolidated pass — the screen edit is its own focused render.
+    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "did not collapse to one mega-prompt");
+    assert.ok(sent.some((s) => /replace the timeline screens/.test(s)), "the element edit got a focused pass");
+    assert.ok(sent.some((s) => /change the text "OLD" to "NEW"/.test(s)), "the text rewrite ran");
+  });
+
   await check("composeContrarianThumbnail uses the programmatic composite (no AI when it returns bytes)", async () => {
     let aiCalled = false;
     const result = await recreate.composeContrarianThumbnail(

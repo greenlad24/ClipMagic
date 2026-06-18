@@ -132,12 +132,17 @@ export function computeCharacterPlacement(opts: {
   return { destX, destY, drawW, drawH, scale };
 }
 
+/** The reason a module failed to load (captured for the diagnostics badge). */
+let canvasError = "";
+let removalError = "";
+
 /** Lazy, optional @napi-rs/canvas loader (indirect specifier; null when absent). */
 async function loadCanvas(): Promise<any | null> {
   try {
     const spec = "@napi-rs/canvas";
     return await import(/* @vite-ignore */ spec);
-  } catch {
+  } catch (e) {
+    canvasError = e instanceof Error ? e.message : String(e);
     return null;
   }
 }
@@ -147,24 +152,39 @@ async function loadRemoval(): Promise<any | null> {
   try {
     const spec = "@imgly/background-removal-node";
     return await import(/* @vite-ignore */ spec);
-  } catch {
+  } catch (e) {
+    removalError = e instanceof Error ? e.message : String(e);
     return null;
   }
+}
+
+export interface CompositeProbe {
+  canvas: boolean;
+  removal: boolean;
+  /** Why the unavailable module failed to load (for the UI badge / debugging). */
+  reason?: string;
 }
 
 /**
  * Probe whether the PROGRAMMATIC 1:1 composite can actually run here: both the
  * canvas and the background-removal module must import. Surfaced in the UI so the
  * creator can confirm the character is composited from their real pixels (not the
- * AI fallback). Best-effort + cached (the import cost is paid once).
+ * AI fallback). Captures the load error so a failure is diagnosable without server
+ * logs. Best-effort + cached (the import cost is paid once).
  */
-let probeCache: { canvas: boolean; removal: boolean } | null = null;
-export async function probeCompositeAvailable(force = false): Promise<{ canvas: boolean; removal: boolean }> {
+let probeCache: CompositeProbe | null = null;
+export async function probeCompositeAvailable(force = false): Promise<CompositeProbe> {
   if (probeCache && !force) return probeCache;
+  canvasError = "";
+  removalError = "";
   const canvas = (await loadCanvas()) != null;
   const rm = await loadRemoval();
   const removal = !!(rm && (rm.removeBackground ?? rm.default?.removeBackground));
-  probeCache = { canvas, removal };
+  const reasons = [
+    !canvas ? `@napi-rs/canvas: ${canvasError || "not loaded"}` : "",
+    !removal ? `@imgly/background-removal-node: ${removalError || "loaded but no removeBackground export"}` : "",
+  ].filter(Boolean);
+  probeCache = { canvas, removal, reason: reasons.join("; ") || undefined };
   return probeCache;
 }
 
