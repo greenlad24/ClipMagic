@@ -1501,6 +1501,7 @@ async function main() {
     assert.ok(!sent.some((s) => /t-shirt/.test(s)), "no outfit step in composite mode");
     assert.ok(!sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "no AI face-swap");
     assert.ok(sent.some((s) => /Remove the on-camera person/.test(s)), "the AI removes the original person");
+    assert.ok(sent.some((s) => /Upscale this image/.test(s)), "AI-upscales the (person-removed) scene by default");
     assert.ok(res.steps.find((s) => s.id === "composite-character")?.applied, "character composited 1:1");
     assert.ok(res.recompose, "carries recompose info for the live handles");
     assert.equal(res.recompose?.expressionId, "smile");

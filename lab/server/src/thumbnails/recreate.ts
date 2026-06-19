@@ -151,6 +151,15 @@ export const STEP8_PROMPT =
 export const REMOVE_PERSON_PROMPT =
   "Remove the on-camera person (and any other people) from this image COMPLETELY, filling the space they occupied with a natural, seamless continuation of the background and scene behind them. Keep EVERYTHING ELSE exactly as it is — all text, logos, badges, props, devices, screens, the layout, the colours and the lighting must stay identical and sharp. The result is the SAME thumbnail scene but with NO person in it.";
 
+/**
+ * AI UPSCALE of the recreated SCENE: a generative super-resolution pass that adds
+ * crisp fine detail + sharpness to the (often soft, ~1K) AI render. Run on the
+ * person-removed scene so the composited real character is never touched. Strong
+ * keep-identical wording protects the text/logos/layout (only clarity improves).
+ */
+export const SCENE_ENHANCE_PROMPT =
+  "Upscale this image to a crisp, high-resolution, professional render: sharpen every edge and add fine, realistic detail and texture so it looks high quality (not soft or blurry). CRITICAL — keep EVERYTHING EXACTLY the same: every piece of text (same words, spelling, font, colour and position), every logo, icon, UI panel, badge, prop, the layout, the colours and the composition must be IDENTICAL and stay in the same place. Do NOT add, remove, move, restyle or rewrite anything — ONLY increase sharpness and detail.";
+
 /** Persist intermediate bytes to the outputs dir and return its served URL. */
 function saveIntermediate(bytes: Buffer, tag: string): string {
   const dir = thumbnailsDir();
@@ -363,6 +372,12 @@ export interface RecreateInput {
   charOffsetX?: number;
   charOffsetY?: number;
   charZoom?: number;
+  /**
+   * In composite mode, run a generative AI upscale on the person-removed scene
+   * (sharper, more detail) before pasting the character. Default on; set false to
+   * skip it (e.g. if it ever re-renders text imperfectly on a given source).
+   */
+  aiUpscale?: boolean;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -664,6 +679,11 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   if (compositeMode) {
     // 1. Remove the original on-camera person, keeping the recreated scene.
     await runStep("remove-person", "Remove original person", REMOVE_PERSON_PROMPT, [current]);
+    // 1b. AI-upscale the (soft, ~1K) scene for crisp detail — on the person-removed
+    //     scene, so the real character composited next is never touched. Default on.
+    if (input.aiUpscale !== false) {
+      await runStep("ai-upscale", "AI upscale scene", SCENE_ENHANCE_PROMPT, [current]);
+    }
     const sceneBytes = current.data;
     // 2. Composite the real character cut-out on top (exact pixels).
     try {
