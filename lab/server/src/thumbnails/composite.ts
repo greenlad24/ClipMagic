@@ -202,9 +202,8 @@ export async function probeCompositeAvailable(force = false): Promise<CompositeP
       cx.fillRect(0, 0, 48, 48);
       const testPng: Buffer = await c.encode("png");
       const run = (async () => {
-        const blob = await fn(testPng, { output: { format: "image/png" } });
-        const ab = await blob.arrayBuffer();
-        if (!ab || ab.byteLength === 0) throw new Error("removal returned no bytes");
+        const out = await runRemoval(fn as any, testPng);
+        if (!out || out.length === 0) throw new Error("removal returned no bytes");
       })();
       const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out loading the removal model")), 12000));
       await Promise.race([run, timeout]);
@@ -223,15 +222,47 @@ export async function probeCompositeAvailable(force = false): Promise<CompositeP
   return probeCache;
 }
 
+/** Sniff a sensible file extension from the image's magic bytes (default png). */
+function sniffExt(b: Buffer): string {
+  if (b.length > 2 && b[0] === 0xff && b[1] === 0xd8) return "jpg";
+  if (b.length > 11 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57) return "webp";
+  return "png";
+}
+
+/**
+ * Run the background-removal model on raw bytes. The node library detects the
+ * format from the SOURCE and rejects an in-memory Buffer ("Unsupported format: .");
+ * it wants a FILE PATH (format from the extension). So we write a temp file with
+ * the sniffed extension, pass the path, and clean up. Throws on failure.
+ */
+async function runRemoval(
+  fn: (src: string, cfg?: any) => Promise<{ arrayBuffer: () => Promise<ArrayBuffer> }>,
+  bytes: Buffer,
+): Promise<Buffer> {
+  fs.mkdirSync(config.tmpDir, { recursive: true });
+  const tmp = path.join(config.tmpDir, `cutsrc-${crypto.randomBytes(8).toString("hex")}.${sniffExt(bytes)}`);
+  fs.writeFileSync(tmp, bytes);
+  try {
+    const blob = await fn(tmp, { output: { format: "image/png" } });
+    const ab = await blob.arrayBuffer();
+    return Buffer.from(ab);
+  } finally {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* best-effort cleanup */
+    }
+  }
+}
+
 /** Best-effort background removal via @imgly/background-removal-node → PNG bytes. */
 async function removeBackground(bytes: Buffer): Promise<Buffer | null> {
   try {
     const mod: any = await loadRemoval();
     const fn = mod?.removeBackground ?? mod?.default?.removeBackground;
     if (typeof fn !== "function") return null;
-    const blob = await fn(bytes, { output: { format: "image/png" } });
-    const ab = await blob.arrayBuffer();
-    return Buffer.from(ab);
+    const out = await runRemoval(fn, bytes);
+    return out.length ? out : null;
   } catch {
     return null;
   }
