@@ -317,13 +317,12 @@ async function main() {
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
 
-  await check("coerceMode defaults to gemini-pro and accepts only the two Gemini providers (no compare/openai)", () => {
+  await check("coerceMode: selectable = Pro + 3.1 Flash; 2.5 flash + junk → Pro default", () => {
     assert.equal(providers.coerceMode(undefined), "gemini-pro", "default is single Nano Banana Pro");
     assert.equal(providers.coerceMode("nonsense"), "gemini-pro");
-    assert.equal(providers.coerceMode("compare"), "gemini-pro", "the removed compare mode falls back to the default");
-    assert.equal(providers.coerceMode("openai"), "gemini-pro", "the removed openai mode falls back to the default");
     assert.equal(providers.coerceMode("gemini-pro"), "gemini-pro");
-    assert.equal(providers.coerceMode("gemini-flash"), "gemini-flash");
+    assert.equal(providers.coerceMode("gemini-flash-31"), "gemini-flash-31");
+    assert.equal(providers.coerceMode("gemini-flash"), "gemini-pro", "2.5 flash is no longer selectable → Pro default");
   });
 
   await check("editImageWith('gemini-flash') hits the flash model (no imageSize) — the cheaper option", async () => {
@@ -348,11 +347,11 @@ async function main() {
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
 
-  await check("coerceProvider defaults to gemini-pro and accepts the two Gemini providers (no openai)", () => {
+  await check("coerceProvider: selectable = Pro + 3.1 Flash; 2.5 flash → Pro default", () => {
     assert.equal(providers.coerceProvider(undefined), "gemini-pro");
     assert.equal(providers.coerceProvider("nonsense"), "gemini-pro");
-    assert.equal(providers.coerceProvider("openai"), "gemini-pro", "the removed openai provider falls back to the default");
-    assert.equal(providers.coerceProvider("gemini-flash"), "gemini-flash");
+    assert.equal(providers.coerceProvider("gemini-flash-31"), "gemini-flash-31");
+    assert.equal(providers.coerceProvider("gemini-flash"), "gemini-pro", "2.5 flash is no longer selectable → Pro default");
     assert.equal(providers.coerceProvider("gemini-pro"), "gemini-pro");
   });
 

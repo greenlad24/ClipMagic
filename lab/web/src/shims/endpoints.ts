@@ -222,7 +222,7 @@ export type ThumbnailExpression = string;
 export const BUILTIN_THUMBNAIL_EXPRESSIONS = ['smile', 'surprise', 'secret', 'calm'] as const;
 export type ThumbnailVideoType = 'Tutorial' | 'Viral' | 'Secret' | 'Review';
 /** Image-edit provider that drives the recreation chain. */
-export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash' | 'gemini-flash-31';
+export type ThumbnailProvider = 'gemini-pro' | 'gemini-flash-31';
 /**
  * Generation mode = the single image provider. Default 'gemini-pro' (Nano Banana
  * Pro @ 4K, sharpest); 'gemini-flash' is the cheaper alternative.

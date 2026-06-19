@@ -43,9 +43,13 @@ export type ImageProvider = "gemini-pro" | "gemini-flash" | "gemini-flash-31";
 /** Default provider when none is chosen: the sharpest / best-likeness option. */
 export const DEFAULT_IMAGE_PROVIDER: ImageProvider = "gemini-pro";
 
-/** Coerce arbitrary input to a known provider (defaults when unknown/missing). */
+/**
+ * Coerce arbitrary input to a SELECTABLE provider. Only Nano Banana Pro and
+ * Nano Banana 3.1 Flash are offered — the old Gemini 2.5 Flash ("gemini-flash")
+ * is never generated from (it maps to the Pro default). Unknown/missing → default.
+ */
 export function coerceProvider(x: unknown): ImageProvider {
-  return x === "gemini-pro" || x === "gemini-flash" || x === "gemini-flash-31" ? x : DEFAULT_IMAGE_PROVIDER;
+  return x === "gemini-pro" || x === "gemini-flash-31" ? x : DEFAULT_IMAGE_PROVIDER;
 }
 
 /**
@@ -59,9 +63,9 @@ export type GenerationMode = ImageProvider;
 /** Default mode: a single Nano Banana Pro run (at 4K). */
 export const DEFAULT_GENERATION_MODE: GenerationMode = "gemini-pro";
 
-/** Coerce arbitrary input to a known mode (defaults to "gemini-pro"). */
+/** Coerce arbitrary input to a SELECTABLE mode (2.5 flash is never used → default). */
 export function coerceMode(x: unknown): GenerationMode {
-  return x === "gemini-pro" || x === "gemini-flash" || x === "gemini-flash-31" ? x : DEFAULT_GENERATION_MODE;
+  return x === "gemini-pro" || x === "gemini-flash-31" ? x : DEFAULT_GENERATION_MODE;
 }
 
 // ── Gemini Pro (Nano Banana Pro) constants ───────────────────────────────────

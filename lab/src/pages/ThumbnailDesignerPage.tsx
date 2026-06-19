@@ -85,8 +85,7 @@ const VIDEO_TYPES: ThumbnailVideoType[] = ['Tutorial', 'Viral', 'Secret', 'Revie
  */
 const MODE_OPTIONS: { value: ThumbnailMode; label: string; hint: string }[] = [
   { value: 'gemini-pro', label: 'Nano Banana Pro (sharpest, best likeness)', hint: 'Highest quality — strongest face match. ~$0.24/image, and the chain runs several edits per thumbnail.' },
-  { value: 'gemini-flash-31', label: 'Nano Banana 3.1 Flash (newer)', hint: 'The newer Gemini 3.1 Flash Image model — a strong, faster alternative to Pro.' },
-  { value: 'gemini-flash', label: 'Nano Banana 2.5 Flash (cheap)', hint: 'Fast and inexpensive — good for drafts and high volume.' },
+  { value: 'gemini-flash-31', label: 'Nano Banana 3.1 Flash (faster)', hint: 'The newer Gemini 3.1 Flash Image model — a strong, faster alternative to Pro.' },
 ];
 
 async function fileToBase64(file: File): Promise<string> {
