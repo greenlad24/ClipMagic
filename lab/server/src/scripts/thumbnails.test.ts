@@ -269,8 +269,8 @@ async function main() {
     assert.deepEqual(sentBody.contents[0].parts[0], { text: "edit" });
     assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
     assert.deepEqual(sentBody.generationConfig.responseModalities, ["IMAGE"], "asks the thinking model for an IMAGE response");
-    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "", "no imageSize by default (it broke the Pro model)");
-    assert.equal(sentBody.generationConfig.imageConfig.imageSize, undefined, "the default Pro request omits imageSize (same as the working 3.1 flash)");
+    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "4K", "Pro requests 4K (sharpest)");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, "4K", "the default Pro request asks for 4K");
     assert.equal(fs.readFileSync(res.file).toString(), "PROIMG");
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });

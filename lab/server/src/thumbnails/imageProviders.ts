@@ -87,15 +87,13 @@ export const NANO_BANANA_PRO_MODEL = process.env.NANO_BANANA_PRO_MODEL || "gemin
 export const NANO_BANANA_FLASH_31_MODEL = process.env.NANO_BANANA_FLASH_31_MODEL || "gemini-3.1-flash-image";
 
 /**
- * Requested output resolution for the pro model. DEFAULT IS EMPTY (no imageSize
- * sent): the Gemini 3 Pro Image model mishandled imageConfig.imageSize on
- * reference-edits and returned hazy/draft frames, while the otherwise-identical
- * 3.1 Flash request (no imageSize) rendered correctly. So we omit it and let the
- * model render at its default resolution; crop.ts still outputs a crisp 1920×1080.
- * Env-overridable: set NANO_BANANA_PRO_IMAGE_SIZE=2K (or 1K/4K) to try requesting
- * a size once Google fixes that path.
+ * Requested output resolution for the pro model. We request 4K (the sharpest —
+ * what the recreations used before they went soft). If the Gemini 3 Pro 2K/4K
+ * outage is active again (the model returns blank/near-black/corrupt frames at
+ * high res), set NANO_BANANA_PRO_IMAGE_SIZE="" (no size → the model's default
+ * resolution, which renders but is softer) or =2K. crop.ts keeps the native size.
  */
-export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "";
+export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "4K";
 
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 

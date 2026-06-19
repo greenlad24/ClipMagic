@@ -328,13 +328,14 @@ export async function compositeContrarian(opts: {
   const cut = await cutoutCharacter(opts.characterBytes);
   if (!cut) return null;
   try {
-    const W = opts.frameW ?? 1920;
-    const H = opts.frameH ?? 1080;
+    // Background, cover-fit to a clean 16:9. Default the canvas to the scene's
+    // NATIVE width (capped at 4K, floored at 1920) so a high-res scene keeps its
+    // resolution instead of being forced to 1080p. (Workflow 2 passes 1920×1080.)
+    const bg = await canvasMod.loadImage(opts.backgroundBytes);
+    const W = opts.frameW ?? Math.min(3840, Math.max(1920, Math.round(bg.width) || 1920));
+    const H = opts.frameH ?? Math.round((W * 9) / 16);
     const canvas = canvasMod.createCanvas(W, H);
     const ctx = canvas.getContext("2d");
-
-    // Background, cover-fit to a clean 16:9.
-    const bg = await canvasMod.loadImage(opts.backgroundBytes);
     drawCover(ctx, bg, W, H);
 
     // Cut-out → read its alpha → locate the head → size + place it.

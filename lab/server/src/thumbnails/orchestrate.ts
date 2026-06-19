@@ -439,6 +439,8 @@ export async function recompositeContrarian(input: {
     charOffsetX: input.charOffsetX,
     charOffsetY: input.charOffsetY,
     charZoom: input.charZoom,
+    frameW: 1920,
+    frameH: 1080,
     overlay: { template, text: input.text, emphasis: input.emphasis, sizeScale: input.textScale, offsetY: input.textOffsetY },
   });
   return { outputUrl: result.outputUrl, baseUrl: result.overlay?.baseUrl ?? result.outputUrl };
@@ -885,6 +887,8 @@ async function runContrarianJob(
             // (top-strike has text up top → drop the head lower).
             placement,
             headTopFrac: template.id === "top-strike" ? 0.2 : 0.05,
+            frameW: 1920,
+            frameH: 1080,
             overlay: { template, text: v.text, emphasis: v.emphasis, sizeScale: v.textScale, offsetY: v.textOffsetY },
             provider: run?.provider ?? DEFAULT_IMAGE_PROVIDER,
             imageSize: run?.imageSize,

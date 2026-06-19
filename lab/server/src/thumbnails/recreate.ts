@@ -766,6 +766,9 @@ export async function composeContrarianThumbnail(
     charOffsetX?: number;
     charOffsetY?: number;
     charZoom?: number;
+    /** Composite canvas size; omit to use the background's native res (capped 4K). */
+    frameW?: number;
+    frameH?: number;
     /** When set, the headline is drawn programmatically onto the finalized image. */
     overlay?: { template: ContrarianTemplate; text: string; emphasis: string; sizeScale?: number; offsetY?: number };
     provider?: ImageProvider;
@@ -810,6 +813,8 @@ export async function composeContrarianThumbnail(
       charOffsetX: input.charOffsetX,
       charOffsetY: input.charOffsetY,
       charZoom: input.charZoom,
+      frameW: input.frameW,
+      frameH: input.frameH,
     });
   } catch (e) {
     throw new Error(`1:1 character composite failed: ${e instanceof Error ? e.message : String(e)}`);
