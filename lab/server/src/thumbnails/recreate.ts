@@ -70,12 +70,11 @@ import type { ContrarianTemplate } from "./textOverlay.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
 
 /**
- * Soft cap on OPTIONAL chain edits (device-screen / font / bold-text /
- * text-rewrite / logo). Reviewed plans can carry many text rewrites, so this is
- * generous; the always-on outfit, background and final SWAP are MANDATORY and
- * bypass the cap entirely (see runStep), so the swap never gets dropped.
+ * Hard cap on chain length: 1 mandatory outfit edit + up to 5 optional
+ * (device-screen, font, bold-text, text-rewrite, logo) + 1 background edit +
+ * 1 final swap edit = 8, so the always-on final swap never gets capped.
  */
-export const MAX_STEPS = 20;
+export const MAX_STEPS = 8;
 
 /**
  * The STRONG FULL SWAP prompt, run LAST. Inputs are [current, characterRef]: it
@@ -432,11 +431,8 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     label: string,
     instruction: string,
     images: EditImage[],
-    mandatory = false,
   ): Promise<void> => {
-    // Mandatory steps (outfit, background, the final swap) ALWAYS run; only
-    // OPTIONAL edits are capped, so a plan with many edits can never starve the swap.
-    if (!mandatory && steps.filter((s) => s.applied).length + 1 > MAX_STEPS) {
+    if (steps.filter((s) => s.applied).length + 1 > MAX_STEPS) {
       steps.push({ id, label, instruction, applied: false, note: "step cap reached" });
       return;
     }
@@ -457,14 +453,15 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   };
 
   // ── ONE-SHOT recreation (avoid multi-render degradation) ─────────────────────
-  // We do everything in a SINGLE edit when:
+  // We do everything in a SINGLE edit when either:
   //   • the source has NO person to swap (swapCharacter:false, e.g. an icon/text
   //     thumbnail) — re-rendering such a fragile layout several times destroys it, OR
-  //   • the source is element-heavy (busy) AND there's no reviewed plan.
-  // A REVIEWED plan goes through the MULTI-STEP chain (each edit its own focused
-  // render): cramming a reviewed plan's many edits + the swap into ONE giant prompt
-  // makes Nano Banana return garbage. The final swap is MANDATORY (never capped),
-  // so it always lands even when a plan has many edits.
+  //   • the source is element-heavy (busy) AND there's no reviewed plan — many
+  //     re-renders would melt it, so we collapse the auto recreation to one pass.
+  // BUT a REVIEWED plan with a person uses the multi-step chain so EACH approved
+  // edit (e.g. "replace the timeline screens") gets its OWN focused render and
+  // actually lands — bundling them into one mega-prompt makes the model drop the
+  // harder element edits.
   const swap = input.swapCharacter !== false;
   const fullPlan = input.plannedElements != null && input.textRewrites != null;
   if (!swap || (input.busy && !fullPlan)) {
@@ -525,7 +522,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // No swap has happened yet, so this is the original on-camera person; no ref,
   // no face-lock.
   report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
-  await runStep("outfit", "Change outfit", STEP2_PROMPT, [current], true);
+  await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
   report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
 
   // ── Step 2 (VISION or REVIEWED PLAN): decide the optional edits ──────────────
@@ -581,33 +578,13 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   }
 
   // ── Optional edits (CONDITIONAL) + background (ALWAYS) + final swap (ALWAYS) ──
-  // CRUCIAL: every Nano Banana render slightly degrades the image, so we MINIMISE
-  // render count. All TEXT rewrites are applied in ONE combined pass (a reviewed
-  // plan can carry many), and the structured element edits (device/font/logo/
-  // custom) run as their own focused passes. So N text changes cost 1 render, not
-  // N — preventing the "image turns to mush after many edits" failure.
-  const allPlanned = directorSteps.filter((ds) => ds.apply && ds.instruction);
-  const textPlanned = allPlanned.filter((ds) => ds.id === "text-rewrite");
-  const elementPlanned = allPlanned.filter((ds) => ds.id !== "text-rewrite");
-  // One combined text edit covers every rewrite; element edits stay separate.
-  const editPasses = textPlanned.length
-    ? [
-        ...elementPlanned,
-        {
-          id: "text-rewrite",
-          label: textPlanned.length > 1 ? `Rewrite text (${textPlanned.length})` : "Rewrite text",
-          apply: true,
-          instruction:
-            textPlanned.length === 1
-              ? textPlanned[0].instruction
-              : "Apply ALL of these exact text changes in this ONE edit, keeping every other element, the layout and the people identical: " +
-                textPlanned.map((s) => s.instruction).join("; "),
-        } as ArtDirectorStep,
-      ]
-    : elementPlanned;
-  const totalEdits = editPasses.length + 1; // +1 background (the swap has its own band)
+  // The edits band covers the chosen optional edits PLUS the two guaranteed final
+  // edits (background, then the full character swap), spread evenly so the bar
+  // fills smoothly (always ≥1 optional-or-background edit, then the swap band).
+  const planned = directorSteps.filter((ds) => ds.apply && ds.instruction);
+  const totalEdits = planned.length + 1; // +1 background (the swap has its own band)
   let doneEdits = 0;
-  for (const ds of editPasses) {
+  for (const ds of planned) {
     await runStep(ds.id, ds.label, ds.instruction, [current]);
     doneEdits++;
     report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
@@ -616,9 +593,9 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // background-director picked one) or POP the existing one. Both keep every
   // foreground element in place.
   if (backgroundImg) {
-    await runStep("background", "Replace background", BG_REPLACE_PROMPT, [current, backgroundImg], true);
+    await runStep("background", "Replace background", BG_REPLACE_PROMPT, [current, backgroundImg]);
   } else {
-    await runStep("background", "Change background", STEP8_PROMPT, [current], true);
+    await runStep("background", "Change background", STEP8_PROMPT, [current]);
   }
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
@@ -652,7 +629,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // Inputs [current, character]: replace the on-camera person with the reference
   // man (the SECOND image). This is the very last image operation, so the face
   // lands fresh and cannot drift — nothing re-renders it afterwards.
-  await runStep("swap-character", "Swap in character", swapInstruction, [current, character], true);
+  await runStep("swap-character", "Swap in character", swapInstruction, [current, character]);
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
   // ── Crop to a clean, native-resolution 16:9 JPG (4K stays 4K) ───────────────

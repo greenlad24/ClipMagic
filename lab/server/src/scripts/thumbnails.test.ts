@@ -1384,7 +1384,7 @@ async function main() {
     assert.ok(sent.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)), "the reviewed text rewrite ran");
   });
 
-  await check("a reviewed plan with MANY edits runs multi-step + the SWAP is never capped", async () => {
+  await check("a reviewed plan runs the multi-step chain (each edit its OWN render, not one mega-prompt)", async () => {
     const sent: string[] = [];
     await recreate.recreateThumbnail(
       {
@@ -1394,9 +1394,8 @@ async function main() {
         keyword: "OpenClaw",
         videoType: "Tutorial",
         expression: "smile",
-        // 10 text rewrites — would have blown the old MAX_STEPS=8 and dropped the swap.
-        plannedElements: [],
-        textRewrites: Array.from({ length: 10 }, (_, i) => ({ old: `O${i}`, new: `N${i}` })),
+        plannedElements: [{ id: "logo", label: "Swap logo", instruction: "change the gear logo to a bell logo" }],
+        textRewrites: [{ old: "CLAWDBOT", new: "OpenClaw" }],
       },
       {
         artDirect: async () => [],
@@ -1407,20 +1406,11 @@ async function main() {
         finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
       },
     );
-    // Text rewrites are COMBINED into ONE render (not 10) so the image can't melt…
-    const textPass = sent.find((s) => /change the text "O0" to "N0"/.test(s));
-    assert.ok(textPass, "the text rewrites ran");
-    assert.equal(sent.filter((s) => /Apply ALL of these exact text changes/.test(s)).length, 1, "exactly one combined text pass");
-    assert.equal(
-      [...textPass!.matchAll(/change the text "O\d" to "N\d"/g)].length,
-      10,
-      "all 10 rewrites are in that single pass",
-    );
-    // …and the final SWAP still ran (mandatory, uncapped), and it's NOT one mega-prompt.
-    assert.ok(sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "the swap always runs");
-    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "did not collapse swap + text into one mega-prompt");
-    // Few renders total: outfit + 1 combined text + background + swap.
-    assert.ok(sent.length <= 5, `kept the render count low (got ${sent.length})`);
+    // Multi-step (pre-consolidation behaviour): each edit is its OWN focused render.
+    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "not one consolidated mega-prompt");
+    assert.ok(sent.some((s) => /change the gear logo to a bell logo/.test(s)), "the element edit ran as its own pass");
+    assert.ok(sent.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)), "the text rewrite ran as its own pass");
+    assert.ok(sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "the final swap ran last");
   });
 
   await check("computeCharacterPlacement applies the user's x/y nudge + zoom", () => {
