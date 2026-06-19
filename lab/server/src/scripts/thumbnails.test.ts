@@ -191,6 +191,25 @@ async function main() {
     assert.equal(nano.extractInlineImage({}), null);
   });
 
+  await check("extractInlineImage returns the FINAL image, skipping thinking-model 'thought' drafts", () => {
+    // Gemini 3 thinking models: interim thought images come FIRST, the final last.
+    const json = {
+      candidates: [
+        {
+          content: {
+            parts: [
+              { inlineData: { mimeType: "image/png", data: Buffer.from("THOUGHT-1").toString("base64") }, thought: true },
+              { inlineData: { mimeType: "image/png", data: Buffer.from("THOUGHT-2").toString("base64") }, thought: true },
+              { inlineData: { mimeType: "image/png", data: Buffer.from("FINAL").toString("base64") }, thought_signature: "sig" },
+            ],
+          },
+        },
+      ],
+    };
+    const img = nano.extractInlineImage(json);
+    assert.equal(img?.data.toString(), "FINAL", "must skip the interim thought drafts and return the final render");
+  });
+
   await check("editImage saves the returned image and returns an outputUrl (mocked fetch)", async () => {
     const secrets = await import("../settings/postizSecrets.js");
     secrets.updateSettings({ values: { GEMINI_API_KEY: "gem-test-key" } });
@@ -249,8 +268,8 @@ async function main() {
     // Same generateContent shape as flash, plus the pro resolution hint — 4K by default.
     assert.deepEqual(sentBody.contents[0].parts[0], { text: "edit" });
     assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
-    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "4K", "the single Pro default is 4K");
-    assert.equal(sentBody.generationConfig.imageConfig.imageSize, "4K", "the default request asks for 4K");
+    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "2K", "the single Pro default is 2K (4K degraded the model)");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, "2K", "the default request asks for 2K");
     assert.equal(fs.readFileSync(res.file).toString(), "PROIMG");
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
@@ -261,12 +280,40 @@ async function main() {
     assert.equal(singlePro.length, 1, "a mode is always a single provider");
     assert.equal(singlePro[0].provider, "gemini-pro");
     assert.equal(singlePro[0].imageSize, undefined, "single gemini-pro uses the provider default (4K)");
-    assert.match(singlePro[0].label, /Nano Banana Pro · 4K/);
+    assert.match(singlePro[0].label, /Nano Banana Pro · 2K/);
     // gemini-flash → one Flash sub-run.
     const singleFlash = providers.providersForMode("gemini-flash");
     assert.equal(singleFlash.length, 1);
     assert.equal(singleFlash[0].provider, "gemini-flash");
     assert.match(singleFlash[0].label, /Nano Banana \(Flash\)/);
+    // gemini-flash-31 → the newer Gemini 3.1 Flash Image model.
+    const single31 = providers.providersForMode("gemini-flash-31");
+    assert.equal(single31[0].provider, "gemini-flash-31");
+    assert.match(single31[0].label, /Nano Banana 3\.1 Flash/);
+    assert.equal(providers.NANO_BANANA_FLASH_31_MODEL, "gemini-3.1-flash-image");
+  });
+
+  await check("editImageWith routes gemini-flash-31 to the 3.1 flash model (no imageConfig)", async () => {
+    const secrets = await import("../settings/postizSecrets.js");
+    secrets.updateSettings({ values: { GEMINI_API_KEY: "gem-test-key" } });
+    let calledUrl = "";
+    let sentBody: any = null;
+    const geminiFetch = async (u: string, init: any) => {
+      calledUrl = u;
+      sentBody = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: Buffer.from("IMG31").toString("base64") } }] } }] }) };
+    };
+    await providers.editImageWith(
+      "gemini-flash-31",
+      { instruction: "edit", images: [{ data: Buffer.from("s"), mimeType: "image/jpeg" }] },
+      { geminiFetch },
+    );
+    assert.ok(calledUrl.includes("models/gemini-3.1-flash-image:generateContent"), `should hit the 3.1 flash model: ${calledUrl}`);
+    // Flash-style request: keeps the 16:9 aspect hint but sends NO imageSize — so
+    // it's never exposed to the 4K reference-edit issue that breaks Pro.
+    assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, undefined, "no imageSize hint on the flash path");
+    secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
 
   await check("coerceMode defaults to gemini-pro and accepts only the two Gemini providers (no compare/openai)", () => {

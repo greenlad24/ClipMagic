@@ -115,24 +115,36 @@ export function buildEditRequestBody(instruction: string, images: EditImage[]): 
 }
 
 /**
- * Extract the first inline image (base64) from a generateContent response.
+ * Extract the FINAL rendered image (base64) from a generateContent response.
  * Tolerates BOTH snake_case (inline_data/mime_type) and camelCase
- * (inlineData/mimeType) since the REST API and SDK differ. Returns null when no
- * image part is present (e.g. a safety block or a text-only response). Pure +
- * exported for unit testing.
+ * (inlineData/mimeType) since the REST API and SDK differ.
+ *
+ * CRITICAL — Gemini 3 image models (gemini-3-pro-image, gemini-3.1-flash-image)
+ * are "thinking" models: they emit up to two INTERIM "thought" images (rough
+ * composition drafts, flagged `thought: true`) BEFORE the final rendered image,
+ * which is the LAST inline image. Grabbing the FIRST inline image returns a
+ * thought draft — a dark/blurry near-empty frame. So we return the LAST
+ * NON-thought inline image (the real result), falling back to the last inline
+ * image, then the first. Non-thinking models (2.5 flash) return a single image,
+ * so this is a no-op for them. Returns null on a safety block / text-only
+ * response. Pure + exported for unit testing.
  */
 export function extractInlineImage(json: any): { data: Buffer; mimeType: string } | null {
   const parts: any[] = json?.candidates?.[0]?.content?.parts ?? [];
-  for (const p of parts) {
+  const toImg = (p: any): { data: Buffer; mimeType: string } | null => {
     const inline = p?.inline_data ?? p?.inlineData;
-    if (inline?.data) {
-      return {
-        data: Buffer.from(inline.data, "base64"),
-        mimeType: inline.mime_type ?? inline.mimeType ?? "image/png",
-      };
-    }
+    if (!inline?.data) return null;
+    return { data: Buffer.from(inline.data, "base64"), mimeType: inline.mime_type ?? inline.mimeType ?? "image/png" };
+  };
+  let finalImg: { data: Buffer; mimeType: string } | null = null;
+  let lastImg: { data: Buffer; mimeType: string } | null = null;
+  for (const p of parts) {
+    const img = toImg(p);
+    if (!img) continue;
+    lastImg = img;
+    if (p?.thought !== true) finalImg = img; // the final image is not a "thought"
   }
-  return null;
+  return finalImg ?? lastImg ?? null;
 }
 
 /** Map a returned mime type to a file extension for the saved file. */

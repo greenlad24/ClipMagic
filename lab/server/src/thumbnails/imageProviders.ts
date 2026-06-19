@@ -37,15 +37,15 @@ import {
   type EditResult,
 } from "./nanoBanana.js";
 
-/** The selectable image-edit providers (both Nano Banana / Gemini back-ends). */
-export type ImageProvider = "gemini-pro" | "gemini-flash";
+/** The selectable image-edit providers (Nano Banana / Gemini back-ends). */
+export type ImageProvider = "gemini-pro" | "gemini-flash" | "gemini-flash-31";
 
 /** Default provider when none is chosen: the sharpest / best-likeness option. */
 export const DEFAULT_IMAGE_PROVIDER: ImageProvider = "gemini-pro";
 
 /** Coerce arbitrary input to a known provider (defaults when unknown/missing). */
 export function coerceProvider(x: unknown): ImageProvider {
-  return x === "gemini-pro" || x === "gemini-flash" ? x : DEFAULT_IMAGE_PROVIDER;
+  return x === "gemini-pro" || x === "gemini-flash" || x === "gemini-flash-31" ? x : DEFAULT_IMAGE_PROVIDER;
 }
 
 /**
@@ -61,7 +61,7 @@ export const DEFAULT_GENERATION_MODE: GenerationMode = "gemini-pro";
 
 /** Coerce arbitrary input to a known mode (defaults to "gemini-pro"). */
 export function coerceMode(x: unknown): GenerationMode {
-  return x === "gemini-pro" || x === "gemini-flash" ? x : DEFAULT_GENERATION_MODE;
+  return x === "gemini-pro" || x === "gemini-flash" || x === "gemini-flash-31" ? x : DEFAULT_GENERATION_MODE;
 }
 
 // ── Gemini Pro (Nano Banana Pro) constants ───────────────────────────────────
@@ -76,15 +76,24 @@ export function coerceMode(x: unknown): GenerationMode {
 export const NANO_BANANA_PRO_MODEL = process.env.NANO_BANANA_PRO_MODEL || "gemini-3-pro-image";
 
 /**
+ * Newer flash image model (Gemini 3.1 Flash Image) — a selectable alternative.
+ * Routed like the 2.5 flash (no imageConfig hint), so it's not exposed to the
+ * 4K reference-edit issue. Env-overridable via NANO_BANANA_FLASH_31_MODEL.
+ */
+export const NANO_BANANA_FLASH_31_MODEL = process.env.NANO_BANANA_FLASH_31_MODEL || "gemini-3.1-flash-image";
+
+/**
  * Requested output resolution for the pro model — the DEFAULT for a normal single
  * run. Gemini 3 Pro Image accepts `generationConfig.imageConfig.imageSize` of
- * "1K" | "2K" | "4K" (long-edge), verified against ai.google.dev/gemini-api/docs/
- * gemini-3. We ask for 4K (highest quality); the crop.ts finalize downscales to a
- * crisp 1920×1080. Env-overridable: if the model ever returns degraded/near-black
- * frames for 4K reference-edits, set NANO_BANANA_PRO_IMAGE_SIZE=2K (or 1K) — the
- * final thumbnail is 1080p, so there's no quality loss.
+ * "1K" | "2K" | "4K" (long-edge). We ask for 2K, NOT 4K: the Pro models (both the
+ * preview AND the GA id) started returning near-black/blurry frames when asked for
+ * 4K on reference-image EDITS (the server began honouring + choking on the 4K hint,
+ * where it used to ignore it) — flash, which sends no imageConfig at all, is fine.
+ * The crop.ts finalize downscales to a crisp 1920×1080 either way, so 2K loses NO
+ * final quality. Env-overridable: NANO_BANANA_PRO_IMAGE_SIZE=1K if 2K still
+ * degrades, or =4K to try 4K again once Google fixes it.
  */
-export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "4K";
+export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "2K";
 
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 
@@ -209,6 +218,8 @@ export function editImageWith(
   switch (provider) {
     case "gemini-pro":
       return editWithGemini(NANO_BANANA_PRO_MODEL, true, opts, deps.geminiFetch);
+    case "gemini-flash-31":
+      return editWithGemini(NANO_BANANA_FLASH_31_MODEL, false, opts, deps.geminiFetch);
     case "gemini-flash":
     default:
       return editWithGemini(NANO_BANANA_MODEL, false, opts, deps.geminiFetch);
@@ -229,6 +240,8 @@ function providerLabel(provider: ImageProvider, size?: string): string {
   switch (provider) {
     case "gemini-pro":
       return `Nano Banana Pro · ${size ?? NANO_BANANA_PRO_IMAGE_SIZE}`;
+    case "gemini-flash-31":
+      return "Nano Banana 3.1 Flash";
     case "gemini-flash":
       return "Nano Banana (Flash)";
   }
