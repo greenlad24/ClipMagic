@@ -83,17 +83,15 @@ export const NANO_BANANA_PRO_MODEL = process.env.NANO_BANANA_PRO_MODEL || "gemin
 export const NANO_BANANA_FLASH_31_MODEL = process.env.NANO_BANANA_FLASH_31_MODEL || "gemini-3.1-flash-image";
 
 /**
- * Requested output resolution for the pro model — the DEFAULT for a normal single
- * run. Gemini 3 Pro Image accepts `generationConfig.imageConfig.imageSize` of
- * "1K" | "2K" | "4K" (long-edge). We ask for 2K, NOT 4K: the Pro models (both the
- * preview AND the GA id) started returning near-black/blurry frames when asked for
- * 4K on reference-image EDITS (the server began honouring + choking on the 4K hint,
- * where it used to ignore it) — flash, which sends no imageConfig at all, is fine.
- * The crop.ts finalize downscales to a crisp 1920×1080 either way, so 2K loses NO
- * final quality. Env-overridable: NANO_BANANA_PRO_IMAGE_SIZE=1K if 2K still
- * degrades, or =4K to try 4K again once Google fixes it.
+ * Requested output resolution for the pro model. DEFAULT IS EMPTY (no imageSize
+ * sent): the Gemini 3 Pro Image model mishandled imageConfig.imageSize on
+ * reference-edits and returned hazy/draft frames, while the otherwise-identical
+ * 3.1 Flash request (no imageSize) rendered correctly. So we omit it and let the
+ * model render at its default resolution; crop.ts still outputs a crisp 1920×1080.
+ * Env-overridable: set NANO_BANANA_PRO_IMAGE_SIZE=2K (or 1K/4K) to try requesting
+ * a size once Google fixes that path.
  */
-export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "2K";
+export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "";
 
 const GEMINI_BASE = process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 
@@ -135,15 +133,19 @@ export function buildProEditRequestBody(
   imageSize: string = NANO_BANANA_PRO_IMAGE_SIZE,
 ): {
   contents: Array<{ parts: Array<Record<string, unknown>> }>;
-  generationConfig: { responseModalities: string[]; imageConfig: { aspectRatio: string; imageSize: string } };
+  generationConfig: { responseModalities: string[]; imageConfig: { aspectRatio: string; imageSize?: string } };
 } {
   const base = buildEditRequestBody(instruction, images);
+  // ONLY send imageSize when explicitly requested (env). The Gemini 3 Pro Image
+  // model mishandles imageConfig.imageSize for reference-edits (it returned hazy/
+  // draft frames), while the 3.1 Flash request — identical but WITHOUT imageSize —
+  // renders correctly. So by default we omit it; the model renders at its default
+  // resolution and crop.ts outputs a crisp 1920×1080.
+  const imageConfig: { aspectRatio: string; imageSize?: string } = { aspectRatio: NANO_BANANA_ASPECT_RATIO };
+  if (imageSize) imageConfig.imageSize = imageSize;
   return {
     contents: base.contents,
-    generationConfig: {
-      responseModalities: ["IMAGE"],
-      imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO, imageSize },
-    },
+    generationConfig: { responseModalities: ["IMAGE"], imageConfig },
   };
 }
 
@@ -239,8 +241,10 @@ export interface ProviderRun {
 /** Human-friendly column label for a provider at a given size. */
 function providerLabel(provider: ImageProvider, size?: string): string {
   switch (provider) {
-    case "gemini-pro":
-      return `Nano Banana Pro · ${size ?? NANO_BANANA_PRO_IMAGE_SIZE}`;
+    case "gemini-pro": {
+      const s = size ?? NANO_BANANA_PRO_IMAGE_SIZE;
+      return s ? `Nano Banana Pro · ${s}` : "Nano Banana Pro";
+    }
     case "gemini-flash-31":
       return "Nano Banana 3.1 Flash";
     case "gemini-flash":

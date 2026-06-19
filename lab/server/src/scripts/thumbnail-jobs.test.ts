@@ -240,7 +240,7 @@ async function main() {
     // Seeded with exactly ONE provider result — Nano Banana Pro at 4K.
     assert.equal(job.variants[0].results.length, 1, "default seeds a single provider result");
     assert.equal(job.variants[0].results[0].provider, "gemini-pro");
-    assert.match(job.variants[0].results[0].label, /Nano Banana Pro · 2K/);
+    assert.match(job.variants[0].results[0].label, /Nano Banana Pro/);
     await waitUntil(() => job.done);
     assert.equal(chainRuns, 1, "the full chain ran once (single sub-run for 1 pick)");
     const rs = job.variants[0].results;

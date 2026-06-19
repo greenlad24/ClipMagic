@@ -269,8 +269,8 @@ async function main() {
     assert.deepEqual(sentBody.contents[0].parts[0], { text: "edit" });
     assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
     assert.deepEqual(sentBody.generationConfig.responseModalities, ["IMAGE"], "asks the thinking model for an IMAGE response");
-    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "2K", "the single Pro default is 2K (4K degraded the model)");
-    assert.equal(sentBody.generationConfig.imageConfig.imageSize, "2K", "the default request asks for 2K");
+    assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "", "no imageSize by default (it broke the Pro model)");
+    assert.equal(sentBody.generationConfig.imageConfig.imageSize, undefined, "the default Pro request omits imageSize (same as the working 3.1 flash)");
     assert.equal(fs.readFileSync(res.file).toString(), "PROIMG");
     secrets.updateSettings({ remove: ["GEMINI_API_KEY"] });
   });
@@ -281,7 +281,7 @@ async function main() {
     assert.equal(singlePro.length, 1, "a mode is always a single provider");
     assert.equal(singlePro[0].provider, "gemini-pro");
     assert.equal(singlePro[0].imageSize, undefined, "single gemini-pro uses the provider default (4K)");
-    assert.match(singlePro[0].label, /Nano Banana Pro · 2K/);
+    assert.match(singlePro[0].label, /Nano Banana Pro/);
     // gemini-flash → one Flash sub-run.
     const singleFlash = providers.providersForMode("gemini-flash");
     assert.equal(singleFlash.length, 1);
