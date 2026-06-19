@@ -183,12 +183,41 @@ export async function probeCompositeAvailable(force = false): Promise<CompositeP
   if (probeCache && !force) return probeCache;
   canvasError = "";
   removalError = "";
-  const canvas = (await loadCanvas()) != null;
+  const canvasMod = await loadCanvas();
+  const canvas = canvasMod != null;
   const rm = await loadRemoval();
-  const removal = !!(rm && (rm.removeBackground ?? rm.default?.removeBackground));
+  const fn = rm && (rm.removeBackground ?? rm.default?.removeBackground);
+  const removalImports = typeof fn === "function";
+
+  // Importing isn't enough — the model has to actually RUN (it can fail at runtime:
+  // missing libgomp1 for onnxruntime, a blocked model download, etc.). Do a real
+  // cut-out on a tiny image, with a timeout so the status call never hangs.
+  let removal = removalImports;
+  let runtimeError = "";
+  if (canvas && removalImports) {
+    try {
+      const c = canvasMod.createCanvas(48, 48);
+      const cx = c.getContext("2d");
+      cx.fillStyle = "#888888";
+      cx.fillRect(0, 0, 48, 48);
+      const testPng: Buffer = await c.encode("png");
+      const run = (async () => {
+        const blob = await fn(testPng, { output: { format: "image/png" } });
+        const ab = await blob.arrayBuffer();
+        if (!ab || ab.byteLength === 0) throw new Error("removal returned no bytes");
+      })();
+      const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timed out loading the removal model")), 12000));
+      await Promise.race([run, timeout]);
+    } catch (e) {
+      removal = false;
+      runtimeError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   const reasons = [
     !canvas ? `@napi-rs/canvas: ${canvasError || "not loaded"}` : "",
-    !removal ? `@imgly/background-removal-node: ${removalError || "loaded but no removeBackground export"}` : "",
+    !removalImports ? `@imgly/background-removal-node: ${removalError || "loaded but no removeBackground export"}` : "",
+    removalImports && runtimeError ? `background-removal runtime: ${runtimeError}` : "",
   ].filter(Boolean);
   probeCache = { canvas, removal, reason: reasons.join("; ") || undefined };
   return probeCache;

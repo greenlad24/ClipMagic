@@ -63,18 +63,19 @@ import {
   type TextRewrite,
 } from "./artDirector.js";
 import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
-import { compositeContrarian, type Placement } from "./composite.js";
+import { compositeContrarian, probeCompositeAvailable, type Placement } from "./composite.js";
 import type { Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
 import type { ContrarianTemplate } from "./textOverlay.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
 
 /**
- * Hard cap on chain length: 1 mandatory outfit edit + up to 5 optional
- * (device-screen, font, bold-text, text-rewrite, logo) + 1 background edit +
- * 1 final swap edit = 8, so the always-on final swap never gets capped.
+ * Soft cap on OPTIONAL chain edits (device-screen / font / bold-text /
+ * text-rewrite / logo). Reviewed plans can carry many text rewrites, so this is
+ * generous; the always-on outfit, background and final SWAP are MANDATORY and
+ * bypass the cap entirely (see runStep), so the swap never gets dropped.
  */
-export const MAX_STEPS = 8;
+export const MAX_STEPS = 20;
 
 /**
  * The STRONG FULL SWAP prompt, run LAST. Inputs are [current, characterRef]: it
@@ -338,6 +339,8 @@ export interface RecreateInput {
 export interface RecreateDeps {
   editImage?: EditFn;
   artDirect?: ArtDirectFn;
+  /** Programmatic contrarian composite (so contrarian job tests can run offline). */
+  composite?: typeof compositeContrarian;
   /**
    * Per-variant source analysis (expression + busy) and background choice. Both
    * are consumed by the ORCHESTRATOR (not the chain itself) — they live on this
@@ -429,8 +432,11 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     label: string,
     instruction: string,
     images: EditImage[],
+    mandatory = false,
   ): Promise<void> => {
-    if (steps.filter((s) => s.applied).length + 1 > MAX_STEPS) {
+    // Mandatory steps (outfit, background, the final swap) ALWAYS run; only
+    // OPTIONAL edits are capped, so a plan with many edits can never starve the swap.
+    if (!mandatory && steps.filter((s) => s.applied).length + 1 > MAX_STEPS) {
       steps.push({ id, label, instruction, applied: false, note: "step cap reached" });
       return;
     }
@@ -454,13 +460,14 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // We do everything in a SINGLE edit when:
   //   • the source has NO person to swap (swapCharacter:false, e.g. an icon/text
   //     thumbnail) — re-rendering such a fragile layout several times destroys it, OR
-  //   • the source is element-heavy (busy), OR
-  //   • the user supplied a reviewed plan — applying its (often many) edits as
-  //     separate renders blows the step cap (dropping the final SWAP) and blurs
-  //     fine detail (logos). One coherent pass guarantees the swap + keeps detail.
+  //   • the source is element-heavy (busy) AND there's no reviewed plan.
+  // A REVIEWED plan goes through the MULTI-STEP chain (each edit its own focused
+  // render): cramming a reviewed plan's many edits + the swap into ONE giant prompt
+  // makes Nano Banana return garbage. The final swap is MANDATORY (never capped),
+  // so it always lands even when a plan has many edits.
   const swap = input.swapCharacter !== false;
   const fullPlan = input.plannedElements != null && input.textRewrites != null;
-  if (!swap || input.busy || fullPlan) {
+  if (!swap || (input.busy && !fullPlan)) {
     report(PHASE_LABEL.edits, phasePercent("edits", 0));
     let textChanges: string[] = [];
     let elementChanges: string[] = [];
@@ -518,7 +525,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // No swap has happened yet, so this is the original on-camera person; no ref,
   // no face-lock.
   report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
-  await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
+  await runStep("outfit", "Change outfit", STEP2_PROMPT, [current], true);
   report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
 
   // ── Step 2 (VISION or REVIEWED PLAN): decide the optional edits ──────────────
@@ -589,9 +596,9 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // background-director picked one) or POP the existing one. Both keep every
   // foreground element in place.
   if (backgroundImg) {
-    await runStep("background", "Replace background", BG_REPLACE_PROMPT, [current, backgroundImg]);
+    await runStep("background", "Replace background", BG_REPLACE_PROMPT, [current, backgroundImg], true);
   } else {
-    await runStep("background", "Change background", STEP8_PROMPT, [current]);
+    await runStep("background", "Change background", STEP8_PROMPT, [current], true);
   }
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
@@ -625,7 +632,7 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   // Inputs [current, character]: replace the on-camera person with the reference
   // man (the SECOND image). This is the very last image operation, so the face
   // lands fresh and cannot drift — nothing re-renders it afterwards.
-  await runStep("swap-character", "Swap in character", swapInstruction, [current, character]);
+  await runStep("swap-character", "Swap in character", swapInstruction, [current, character], true);
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
   // ── Crop to a clean, native-resolution 16:9 JPG (4K stays 4K) ───────────────
@@ -664,18 +671,12 @@ export async function composeContrarianThumbnail(
     onProgress?: ProgressFn;
   },
   deps: {
-    editImage?: EditFn;
     /** Injectable programmatic composite (defaults to the real canvas one). */
     composite?: typeof compositeContrarian;
     finalize?: (current: EditImage, steps: ChainStep[]) => Promise<RecreateResult>;
     upscale?: UpscaleDeps;
   } = {},
 ): Promise<RecreateResult> {
-  const provider = input.provider ?? DEFAULT_IMAGE_PROVIDER;
-  const editImage =
-    deps.editImage ??
-    ((opts: { instruction: string; images: EditImage[] }) =>
-      editImageWith(provider, { ...opts, imageSize: input.imageSize }));
   const composite = deps.composite ?? compositeContrarian;
   const finalizeFn = deps.finalize ?? ((current, steps) => finalize(current, steps, deps.upscale));
   const report = (stepLabel: string, percent: number) => {
@@ -687,18 +688,16 @@ export async function composeContrarianThumbnail(
   };
 
   const steps: ChainStep[] = [];
-  const background: EditImage = { data: input.backgroundBytes, mimeType: input.backgroundMime || "image/png" };
-  const character: EditImage = { data: input.characterBytes, mimeType: "image/png" };
-  // Carry the composed image forward; start as the background so a failed render
-  // still finalizes into a (background-only) image rather than crashing.
-  let current: EditImage = background;
+  // Carry the composed image forward (overwritten by the programmatic composite below).
+  let current: EditImage = { data: input.backgroundBytes, mimeType: input.backgroundMime || "image/png" };
 
   report(PHASE_LABEL.swap, phasePercent("swap", 0));
-  // PRIMARY: composite the EXACT character pixels (cut out, head ≥70% of height)
-  // onto the background with code — no image model touches the character, so it
-  // can't be warped, regenerated or cut. FALLBACK: only if the programmatic path
-  // is unavailable (no canvas / background-removal), use the AI compose so a
-  // thumbnail still finishes.
+  // Composite the EXACT character pixels (cut out, head ≥70% of height) onto the
+  // background with code — NO image model ever touches a contrarian thumbnail, so
+  // the character can't be warped, regenerated or cut. There is NO Nano Banana
+  // fallback: if the programmatic composite can't run (canvas / background-removal
+  // unavailable), we THROW with the precise reason rather than emit a warped AI
+  // image — the caller surfaces it as a clear per-variant error.
   let composited: Buffer | null = null;
   try {
     composited = await composite({
@@ -710,33 +709,22 @@ export async function composeContrarianThumbnail(
       charOffsetY: input.charOffsetY,
       charZoom: input.charZoom,
     });
-  } catch {
-    composited = null;
+  } catch (e) {
+    throw new Error(`1:1 character composite failed: ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (composited) {
-    current = { data: composited, mimeType: "image/png" };
-    steps.push({
-      id: "compose",
-      label: "Compose original (1:1)",
-      instruction: `programmatic composite — exact character, head ≥70% height, ${input.placement ?? "center"}`,
-      applied: true,
-    });
-  } else {
-    const sent = withWidescreen(input.instruction);
-    try {
-      const res = await editImage({ instruction: sent, images: [background, character] });
-      current = { data: res.bytes, mimeType: res.mimeType };
-      steps.push({ id: "compose", label: "Compose original", instruction: sent, applied: true, note: "AI fallback (programmatic composite unavailable)" });
-    } catch (e) {
-      steps.push({
-        id: "compose",
-        label: "Compose original",
-        instruction: sent,
-        applied: false,
-        note: e instanceof Error ? e.message : String(e),
-      });
-    }
+  if (!composited) {
+    const probe = await probeCompositeAvailable();
+    throw new Error(
+      `The 1:1 character composite isn't available, so this thumbnail was NOT generated (no AI is used for the character). ${probe.reason || "canvas / background-removal could not load"}. Rebuild the image to enable it.`,
+    );
   }
+  current = { data: composited, mimeType: "image/png" };
+  steps.push({
+    id: "compose",
+    label: "Compose original (1:1)",
+    instruction: `programmatic composite — exact character, head ≥70% height, ${input.placement ?? "center"}`,
+    applied: true,
+  });
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
   report(PHASE_LABEL.finalize, phasePercent("finalize", 0));

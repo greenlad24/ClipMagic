@@ -1384,7 +1384,7 @@ async function main() {
     assert.ok(sent.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)), "the reviewed text rewrite ran");
   });
 
-  await check("a reviewed plan recreates in ONE consolidated pass (guarantees the swap, keeps detail)", async () => {
+  await check("a reviewed plan with MANY edits runs multi-step + the SWAP is never capped", async () => {
     const sent: string[] = [];
     await recreate.recreateThumbnail(
       {
@@ -1394,9 +1394,9 @@ async function main() {
         keyword: "OpenClaw",
         videoType: "Tutorial",
         expression: "smile",
-        // Many edits would blow the step cap + blur detail as separate renders.
-        plannedElements: [{ id: "device-screen", label: "Screens", instruction: "replace the timeline screens with a grid of AI prompts" }],
-        textRewrites: [{ old: "OLD", new: "NEW" }],
+        // 10 text rewrites — would have blown the old MAX_STEPS=8 and dropped the swap.
+        plannedElements: [],
+        textRewrites: Array.from({ length: 10 }, (_, i) => ({ old: `O${i}`, new: `N${i}` })),
       },
       {
         artDirect: async () => [],
@@ -1407,12 +1407,12 @@ async function main() {
         finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
       },
     );
-    // ONE consolidated render containing the swap + the text + the element edit.
-    assert.equal(sent.length, 1, "exactly one render (no multi-pass cap risk)");
-    assert.match(sent[0], /SINGLE edit/);
-    assert.match(sent[0], /Replace the on-camera person/, "the swap is included (never capped)");
-    assert.match(sent[0], /replace the timeline screens/, "the element edit is included");
-    assert.match(sent[0], /change the text "OLD" to "NEW"/, "the text rewrite is included");
+    // NOT one mega-prompt (which garbles Nano Banana) — each edit is its own render…
+    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "did not collapse to one mega-prompt");
+    // …and the final SWAP still ran despite the many edits (mandatory, uncapped).
+    assert.ok(sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "the swap always runs");
+    // All 10 text rewrites applied (MAX_STEPS is generous now).
+    assert.equal(sent.filter((s) => /change the text "O\d" to "N\d"/.test(s)).length, 10, "every text rewrite ran");
   });
 
   await check("computeCharacterPlacement applies the user's x/y nudge + zoom", () => {
@@ -1425,53 +1425,43 @@ async function main() {
     assert.ok(Math.abs(moved.destY - (base.destY - 200)) < 1e-6, "y nudge = -0.2·H");
   });
 
-  await check("composeContrarianThumbnail uses the programmatic composite (no AI when it returns bytes)", async () => {
-    let aiCalled = false;
+  await check("composeContrarianThumbnail composites programmatically — NO image model is ever used", async () => {
     const result = await recreate.composeContrarianThumbnail(
       {
         backgroundBytes: Buffer.from("bg"),
         backgroundMime: "image/png",
         characterBytes: Buffer.from("char"),
-        instruction: "(ai fallback prompt)",
+        instruction: "(unused — no AI)",
         placement: "right",
       },
       {
         composite: async () => Buffer.from("COMPOSITED-PNG"),
-        editImage: async () => {
-          aiCalled = true;
-          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("ai"), mimeType: "image/png" };
-        },
         finalize: async (cur: any, steps: any) => {
-          // The finalize receives the PROGRAMMATIC bytes, not an AI render.
-          assert.equal(cur.data.toString(), "COMPOSITED-PNG");
+          assert.equal(cur.data.toString(), "COMPOSITED-PNG", "finalize receives the PROGRAMMATIC bytes");
           return { outputUrl: "/api/outputs/thumbnails/c.jpg", file: "/x", steps };
         },
       },
     );
-    assert.equal(aiCalled, false, "the character never goes through the image model");
     assert.ok(result.steps.some((s) => s.id === "compose" && /1:1/.test(s.label) && s.applied));
   });
 
-  await check("composeContrarianThumbnail FALLS BACK to AI when the composite is unavailable", async () => {
-    let aiCalled = false;
-    await recreate.composeContrarianThumbnail(
-      {
-        backgroundBytes: Buffer.from("bg"),
-        backgroundMime: "image/png",
-        characterBytes: Buffer.from("char"),
-        instruction: "(ai fallback prompt)",
-        placement: "center",
-      },
-      {
-        composite: async () => null, // canvas/removal unavailable
-        editImage: async () => {
-          aiCalled = true;
-          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("ai"), mimeType: "image/png" };
+  await check("composeContrarianThumbnail THROWS (no Nano Banana) when the composite is unavailable", async () => {
+    await assert.rejects(
+      recreate.composeContrarianThumbnail(
+        {
+          backgroundBytes: Buffer.from("bg"),
+          backgroundMime: "image/png",
+          characterBytes: Buffer.from("char"),
+          instruction: "(unused)",
+          placement: "center",
         },
-        finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
-      },
+        {
+          composite: async () => null, // canvas/removal unavailable
+          finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
+        },
+      ),
+      /1:1 character composite isn't available|NOT generated/,
     );
-    assert.equal(aiCalled, true, "AI compose runs only as the fallback");
   });
 
   await check("toWords keeps natural order + flags the emphasis word(s) WHEREVER they are", () => {

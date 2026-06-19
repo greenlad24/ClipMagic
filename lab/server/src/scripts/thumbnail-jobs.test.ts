@@ -555,17 +555,21 @@ async function main() {
     jobs._resetJobsForTest();
     for (const e of chars.EXPRESSIONS) chars.saveCharacter(e, onePx);
     bgs.saveBackground("Studio", onePx);
-    const instructions: string[] = [];
-    const imageCounts: number[] = [];
+    let aiCalled = false;
+    let composites = 0;
     const recreateDeps = {
-      editImage: async (opts: any) => {
-        instructions.push(opts.instruction);
-        imageCounts.push(opts.images.length);
+      // No image model is ever used for the contrarian workflow.
+      editImage: async () => {
+        aiCalled = true;
         return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+      },
+      // The PROGRAMMATIC composite (canvas is absent in tests, so inject it).
+      composite: async () => {
+        composites++;
+        return Buffer.from("composited-png");
       },
       finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/c.png", file: "/x", steps }),
     };
-    // Inject a variation writer so no AI/network is touched.
     const writeVariations = async (_k: string, n: number) =>
       Array.from({ length: n }, (_, i) => ({
         text: `STOP DOING THIS ${i}`,
@@ -581,9 +585,8 @@ async function main() {
     await waitUntil(() => job.done);
     assert.equal(job.variants.length, 3, "always 3 originals");
     assert.ok(job.variants.every((v) => v.status === "done" && v.outputUrl), "each original lands");
-    assert.equal(instructions.length, 3, "one compose render per original");
-    assert.ok(imageCounts.every((c) => c === 2), "each compose is fed [background, character]");
-    assert.ok(instructions.every((s) => /SECOND image/i.test(s) && /full background/i.test(s)), "uses both inputs");
+    assert.equal(composites, 3, "one PROGRAMMATIC composite per original");
+    assert.equal(aiCalled, false, "Nano Banana is never used for the contrarian workflow");
     for (const e of chars.EXPRESSIONS) chars.deleteCharacter(e);
     bgs.deleteBackground("studio");
   });
@@ -607,8 +610,7 @@ async function main() {
     const overlays: any[] = [];
     let writerCalled = false;
     const deps = {
-      editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" }),
-      // capture the overlay text passed to the (best-effort) renderer via the chain
+      composite: async () => Buffer.from("composited-png"),
       finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
     };
     const job = orchestrate.startContrarianJob(
@@ -646,7 +648,7 @@ async function main() {
     const job = orchestrate.startContrarianJob(
       { keyword: "k", mode: "gemini-pro" },
       {
-        editImage: async () => ({ file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" }),
+        composite: async () => Buffer.from("composited-png"),
         finalize: async (_c: any, steps: any) => ({ outputUrl: "/api/outputs/thumbnails/o.png", file: "/x", steps }),
       } as any,
       writeVariations,
