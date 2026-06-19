@@ -1407,12 +1407,20 @@ async function main() {
         finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
       },
     );
-    // NOT one mega-prompt (which garbles Nano Banana) — each edit is its own render…
-    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "did not collapse to one mega-prompt");
-    // …and the final SWAP still ran despite the many edits (mandatory, uncapped).
+    // Text rewrites are COMBINED into ONE render (not 10) so the image can't melt…
+    const textPass = sent.find((s) => /change the text "O0" to "N0"/.test(s));
+    assert.ok(textPass, "the text rewrites ran");
+    assert.equal(sent.filter((s) => /Apply ALL of these exact text changes/.test(s)).length, 1, "exactly one combined text pass");
+    assert.equal(
+      [...textPass!.matchAll(/change the text "O\d" to "N\d"/g)].length,
+      10,
+      "all 10 rewrites are in that single pass",
+    );
+    // …and the final SWAP still ran (mandatory, uncapped), and it's NOT one mega-prompt.
     assert.ok(sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "the swap always runs");
-    // All 10 text rewrites applied (MAX_STEPS is generous now).
-    assert.equal(sent.filter((s) => /change the text "O\d" to "N\d"/.test(s)).length, 10, "every text rewrite ran");
+    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "did not collapse swap + text into one mega-prompt");
+    // Few renders total: outfit + 1 combined text + background + swap.
+    assert.ok(sent.length <= 5, `kept the render count low (got ${sent.length})`);
   });
 
   await check("computeCharacterPlacement applies the user's x/y nudge + zoom", () => {

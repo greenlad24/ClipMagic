@@ -581,13 +581,33 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   }
 
   // ── Optional edits (CONDITIONAL) + background (ALWAYS) + final swap (ALWAYS) ──
-  // The edits band covers the chosen optional edits PLUS the two guaranteed final
-  // edits (background, then the full character swap), spread evenly so the bar
-  // fills smoothly (always ≥1 optional-or-background edit, then the swap band).
-  const planned = directorSteps.filter((ds) => ds.apply && ds.instruction);
-  const totalEdits = planned.length + 1; // +1 background (the swap has its own band)
+  // CRUCIAL: every Nano Banana render slightly degrades the image, so we MINIMISE
+  // render count. All TEXT rewrites are applied in ONE combined pass (a reviewed
+  // plan can carry many), and the structured element edits (device/font/logo/
+  // custom) run as their own focused passes. So N text changes cost 1 render, not
+  // N — preventing the "image turns to mush after many edits" failure.
+  const allPlanned = directorSteps.filter((ds) => ds.apply && ds.instruction);
+  const textPlanned = allPlanned.filter((ds) => ds.id === "text-rewrite");
+  const elementPlanned = allPlanned.filter((ds) => ds.id !== "text-rewrite");
+  // One combined text edit covers every rewrite; element edits stay separate.
+  const editPasses = textPlanned.length
+    ? [
+        ...elementPlanned,
+        {
+          id: "text-rewrite",
+          label: textPlanned.length > 1 ? `Rewrite text (${textPlanned.length})` : "Rewrite text",
+          apply: true,
+          instruction:
+            textPlanned.length === 1
+              ? textPlanned[0].instruction
+              : "Apply ALL of these exact text changes in this ONE edit, keeping every other element, the layout and the people identical: " +
+                textPlanned.map((s) => s.instruction).join("; "),
+        } as ArtDirectorStep,
+      ]
+    : elementPlanned;
+  const totalEdits = editPasses.length + 1; // +1 background (the swap has its own band)
   let doneEdits = 0;
-  for (const ds of planned) {
+  for (const ds of editPasses) {
     await runStep(ds.id, ds.label, ds.instruction, [current]);
     doneEdits++;
     report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
