@@ -84,6 +84,7 @@ import {
   planContrarianVariations,
   planRecreations,
   planCustomEdit,
+  recompositeContrarian,
 } from "../thumbnails/orchestrate.js";
 import { generateTitles } from "../thumbnails/titles.js";
 import { probeCompositeAvailable } from "../thumbnails/composite.js";
@@ -2412,6 +2413,26 @@ const restyleContrarianText: Handler = async (input) => {
   });
 };
 
+/** Live character controls: re-composite a contrarian thumbnail (move/zoom/replace). */
+const recompositeContrarianThumbnail: Handler = async (input) => {
+  const backgroundId = String(input?.backgroundId ?? "").trim();
+  const expressionId = String(input?.expressionId ?? "").trim();
+  if (!backgroundId || !expressionId) throw new ZiteError({ code: "BAD_REQUEST", message: "background + character are required." });
+  return recompositeContrarian({
+    backgroundId,
+    expressionId,
+    templateId: String(input?.templateId ?? "bottom-bar"),
+    placement: ["left", "center", "right"].includes(String(input?.placement)) ? (String(input.placement) as any) : undefined,
+    charOffsetX: Number.isFinite(input?.charOffsetX) ? Math.min(0.45, Math.max(-0.45, Number(input.charOffsetX))) : 0,
+    charOffsetY: Number.isFinite(input?.charOffsetY) ? Math.min(0.45, Math.max(-0.45, Number(input.charOffsetY))) : 0,
+    charZoom: Number.isFinite(input?.charZoom) ? Math.min(2.2, Math.max(0.4, Number(input.charZoom))) : 1,
+    text: String(input?.text ?? ""),
+    emphasis: String(input?.emphasis ?? ""),
+    textScale: Number.isFinite(input?.textScale) ? Number(input.textScale) : 1,
+    textOffsetY: Number.isFinite(input?.textOffsetY) ? Number(input.textOffsetY) : 0,
+  });
+};
+
 /** Free-text → precise edit element(s) for ONE picked thumbnail (review step). */
 const planThumbnailCustomEdit: Handler = async (input) => {
   const videoId = String(input?.videoId ?? "").trim();
@@ -2687,6 +2708,7 @@ export const HANDLERS: Record<string, Handler> = {
   planThumbnailRecreations,
   planThumbnailCustomEdit,
   restyleContrarianText,
+  recompositeContrarianThumbnail,
   planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,

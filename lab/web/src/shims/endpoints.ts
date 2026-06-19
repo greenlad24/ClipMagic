@@ -316,6 +316,12 @@ export type ContrarianOverlay = {
   emphasis: string;
   textScale: number;
   textOffsetY: number;
+  backgroundId: string;
+  expressionId: string;
+  placement: 'left' | 'center' | 'right';
+  charOffsetX: number;
+  charOffsetY: number;
+  charZoom: number;
 };
 /** Live size/position sliders: re-render a contrarian headline on its base image. */
 export const restyleContrarianText =
@@ -323,6 +329,24 @@ export const restyleContrarianText =
     { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number; textOffsetY?: number },
     { outputUrl: string }
   >('restyleContrarianText');
+/** Live character controls: re-composite a contrarian thumbnail (move/zoom/replace). */
+export const recompositeContrarianThumbnail =
+  endpoint<
+    {
+      backgroundId: string;
+      expressionId: string;
+      templateId: string;
+      placement?: 'left' | 'center' | 'right';
+      charOffsetX?: number;
+      charOffsetY?: number;
+      charZoom?: number;
+      text: string;
+      emphasis: string;
+      textScale?: number;
+      textOffsetY?: number;
+    },
+    { outputUrl: string; baseUrl: string }
+  >('recompositeContrarianThumbnail');
 /**
  * One provider sub-run within a variant — a variant now has exactly ONE (the
  * single chosen provider).

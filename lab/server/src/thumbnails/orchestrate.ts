@@ -41,7 +41,7 @@ import {
   type ContrarianVariation,
   type ContrarianContext,
 } from "./contrarian.js";
-import { templateForIndex, type ContrarianTemplate } from "./textOverlay.js";
+import { templateForIndex, CONTRARIAN_TEMPLATES, type ContrarianTemplate } from "./textOverlay.js";
 import {
   providersForMode,
   DEFAULT_GENERATION_MODE,
@@ -400,6 +400,47 @@ export async function planCustomEdit(
   } catch {
     return [];
   }
+}
+
+/**
+ * RE-COMPOSITE a contrarian thumbnail from scratch (no image model) for the live
+ * character controls: load the saved background + character, place the character
+ * with the user's x/y/zoom, draw the headline at the given size/position. Returns
+ * the new output URL + the new pre-text base URL (so later text-only tweaks can
+ * re-render cheaply). Best-effort: throws on missing assets.
+ */
+export async function recompositeContrarian(input: {
+  backgroundId: string;
+  expressionId: string;
+  templateId: string;
+  placement?: "left" | "center" | "right";
+  charOffsetX?: number;
+  charOffsetY?: number;
+  charZoom?: number;
+  text: string;
+  emphasis: string;
+  textScale?: number;
+  textOffsetY?: number;
+}): Promise<{ outputUrl: string; baseUrl: string }> {
+  const bg = readBackgroundImage(input.backgroundId);
+  if (!bg) throw new Error("background not found");
+  const characterBytes = readCharacterImage(input.expressionId);
+  if (!characterBytes) throw new Error("character not found");
+  const template = CONTRARIAN_TEMPLATES.find((t) => t.id === input.templateId) ?? CONTRARIAN_TEMPLATES[0];
+  const placement = input.placement ?? template.charPlacement;
+  const result = await composeContrarianThumbnail({
+    backgroundBytes: bg,
+    backgroundMime: "image/png",
+    characterBytes,
+    instruction: "",
+    placement,
+    headTopFrac: template.id === "top-strike" ? 0.2 : 0.05,
+    charOffsetX: input.charOffsetX,
+    charOffsetY: input.charOffsetY,
+    charZoom: input.charZoom,
+    overlay: { template, text: input.text, emphasis: input.emphasis, sizeScale: input.textScale, offsetY: input.textOffsetY },
+  });
+  return { outputUrl: result.outputUrl, baseUrl: result.overlay?.baseUrl ?? result.outputUrl };
 }
 
 /** Resolve the effective mode from the input (mode → provider → default). */
@@ -847,8 +888,18 @@ async function runContrarianJob(
         );
         const prov = run?.provider ?? DEFAULT_IMAGE_PROVIDER;
         finishResult(job, i, prov, { outputUrl: result.outputUrl });
-        // Carry the re-render info so the UI can adjust the headline size live.
-        if (result.overlay) attachResultOverlay(job, i, prov, { ...result.overlay });
+        // Carry the re-render info so the UI can live-adjust the headline AND the
+        // character (move/zoom/replace) by re-compositing from the ids + placement.
+        if (result.overlay)
+          attachResultOverlay(job, i, prov, {
+            ...result.overlay,
+            backgroundId: bg.id,
+            expressionId: exprId,
+            placement,
+            charOffsetX: 0,
+            charOffsetY: 0,
+            charZoom: 1,
+          });
       } catch (e) {
         finishResult(job, i, run?.provider ?? DEFAULT_IMAGE_PROVIDER, { error: e instanceof Error ? e.message : String(e) });
       }

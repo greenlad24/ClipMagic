@@ -107,7 +107,12 @@ export interface ProviderResult {
   overlay?: ContrarianOverlay;
 }
 
-/** Everything needed to RE-RENDER a contrarian headline onto its base image. */
+/**
+ * Everything needed to RE-RENDER a contrarian thumbnail live: the saved base lets
+ * us re-draw the headline cheaply (text size/position), and the background +
+ * character ids + placement let us RE-COMPOSITE it (character x/y/zoom, different
+ * character) from scratch without the image model.
+ */
 export interface ContrarianOverlay {
   /** Served URL of the pre-text composite (the base to re-draw the headline on). */
   baseUrl: string;
@@ -118,6 +123,13 @@ export interface ContrarianOverlay {
   textScale: number;
   /** The vertical nudge currently rendered (fraction of frame height; 0 = centred). */
   textOffsetY: number;
+  /** Re-composite inputs (ids + placement) so the UI can move/zoom/replace the character. */
+  backgroundId: string;
+  expressionId: string;
+  placement: "left" | "center" | "right";
+  charOffsetX: number;
+  charOffsetY: number;
+  charZoom: number;
 }
 
 /**

@@ -451,18 +451,16 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   };
 
   // ── ONE-SHOT recreation (avoid multi-render degradation) ─────────────────────
-  // We do everything in a SINGLE edit when either:
+  // We do everything in a SINGLE edit when:
   //   • the source has NO person to swap (swapCharacter:false, e.g. an icon/text
   //     thumbnail) — re-rendering such a fragile layout several times destroys it, OR
-  //   • the source is element-heavy (busy) AND there's no reviewed plan — many
-  //     re-renders would melt it, so we collapse the auto recreation to one pass.
-  // BUT a REVIEWED plan with a person uses the multi-step chain so EACH approved
-  // edit (e.g. "replace the timeline screens") gets its OWN focused render and
-  // actually lands — bundling them into one mega-prompt makes the model drop the
-  // harder element edits.
+  //   • the source is element-heavy (busy), OR
+  //   • the user supplied a reviewed plan — applying its (often many) edits as
+  //     separate renders blows the step cap (dropping the final SWAP) and blurs
+  //     fine detail (logos). One coherent pass guarantees the swap + keeps detail.
   const swap = input.swapCharacter !== false;
   const fullPlan = input.plannedElements != null && input.textRewrites != null;
-  if (!swap || (input.busy && !fullPlan)) {
+  if (!swap || input.busy || fullPlan) {
     report(PHASE_LABEL.edits, phasePercent("edits", 0));
     let textChanges: string[] = [];
     let elementChanges: string[] = [];
@@ -655,6 +653,10 @@ export async function composeContrarianThumbnail(
     placement?: Placement;
     /** Head-top inset (frame-height fraction) so the headline strip stays clear. */
     headTopFrac?: number;
+    /** User character nudges (UI sliders): fractions of frame W/H + zoom multiplier. */
+    charOffsetX?: number;
+    charOffsetY?: number;
+    charZoom?: number;
     /** When set, the headline is drawn programmatically onto the finalized image. */
     overlay?: { template: ContrarianTemplate; text: string; emphasis: string; sizeScale?: number; offsetY?: number };
     provider?: ImageProvider;
@@ -704,6 +706,9 @@ export async function composeContrarianThumbnail(
       characterBytes: input.characterBytes,
       placement: input.placement ?? "center",
       headTopFrac: input.headTopFrac,
+      charOffsetX: input.charOffsetX,
+      charOffsetY: input.charOffsetY,
+      charZoom: input.charZoom,
     });
   } catch {
     composited = null;

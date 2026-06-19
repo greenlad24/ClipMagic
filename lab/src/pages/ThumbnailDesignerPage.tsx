@@ -11,6 +11,7 @@ import {
   planThumbnailRecreations,
   planThumbnailCustomEdit,
   restyleContrarianText,
+  recompositeContrarianThumbnail,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -605,6 +606,10 @@ export default function ThumbnailDesignerPage() {
                 job={contrarianJob}
                 title="Contrarian originals"
                 subtitle="3 original thumbnails built from your background + character + a bold contrarian statement (no money claims)."
+                contrarianControls={{
+                  compositeReady: !!status?.composite?.canvas && !!status?.composite?.removal,
+                  characters: (status?.characters ?? []).filter((c) => c.uploaded).map((c) => ({ id: c.id, label: c.label })),
+                }}
               />
             )}
           </>
@@ -1430,16 +1435,20 @@ function CustomEditField({ onSubmit }: { onSubmit: (request: string) => Promise<
   );
 }
 
+type ContrarianControls = { compositeReady: boolean; characters: { id: string; label: string }[] };
+
 function Results({
   generating,
   job,
   title = 'Results',
   subtitle = 'Your recreated 1920×1080 thumbnails — preview and download.',
+  contrarianControls,
 }: {
   generating: boolean;
   job: ThumbnailJobStatus | null;
   title?: string;
   subtitle?: string;
+  contrarianControls?: ContrarianControls;
 }) {
   const variants = job?.variants ?? [];
   const doneCount = variants.filter((v) => v.status === 'done' || v.status === 'error').length;
@@ -1481,7 +1490,7 @@ function Results({
       {variants.length > 0 && (
         <div className="space-y-4">
           {variants.map((v) => (
-            <VariantRow key={`${v.videoId}-${v.index}`} variant={v} />
+            <VariantRow key={`${v.videoId}-${v.index}`} variant={v} contrarianControls={contrarianControls} />
           ))}
         </div>
       )}
@@ -1489,7 +1498,7 @@ function Results({
   );
 }
 
-function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
+function VariantRow({ variant, contrarianControls }: { variant: ThumbnailJobVariant; contrarianControls?: ContrarianControls }) {
   const failed = variant.status === 'error';
   // Recreations show Original + generated (2-up); contrarian originals have no
   // source thumbnail, so the generated image stands alone.
@@ -1521,7 +1530,7 @@ function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
           </figure>
         )}
         {variant.results.map((r, i) => (
-          <ResultColumn key={`${r.provider}-${i}`} variantIndex={variant.index} result={r} />
+          <ResultColumn key={`${r.provider}-${i}`} variantIndex={variant.index} result={r} contrarianControls={contrarianControls} />
         ))}
       </div>
     </div>
@@ -1529,21 +1538,37 @@ function VariantRow({ variant }: { variant: ThumbnailJobVariant }) {
 }
 
 /** One provider sub-run's column: label, live progress, image / error, download. */
-function ResultColumn({ variantIndex, result }: { variantIndex: number; result: ThumbnailProviderResult }) {
+function ResultColumn({
+  variantIndex,
+  result,
+  contrarianControls,
+}: {
+  variantIndex: number;
+  result: ThumbnailProviderResult;
+  contrarianControls?: ContrarianControls;
+}) {
   const running = result.status === 'running' || result.status === 'queued';
   const failed = result.status === 'error';
   // Fall back to a generic caption when there's only a single (label-less) run.
   const caption = result.label || 'Generated';
 
-  // Contrarian only: live "text size" + "text position" sliders that re-render the
-  // headline on the saved base image (no full regen). Local overrides win over poll.
+  // Contrarian only: live controls. Text size/position re-render the headline on
+  // the saved base (cheap); character (choice + x/y/zoom) re-composites from the
+  // ids (needs the programmatic composite). Local overrides win over the poll.
   const overlay = result.overlay;
   const [scale, setScale] = useState(overlay?.textScale ?? 1);
   const [offsetY, setOffsetY] = useState(overlay?.textOffsetY ?? 0);
+  const [expressionId, setExpressionId] = useState(overlay?.expressionId ?? '');
+  const [charX, setCharX] = useState(overlay?.charOffsetX ?? 0);
+  const [charY, setCharY] = useState(overlay?.charOffsetY ?? 0);
+  const [charZoom, setCharZoom] = useState(overlay?.charZoom ?? 1);
+  const [baseUrl, setBaseUrl] = useState(overlay?.baseUrl ?? '');
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [restyling, setRestyling] = useState(false);
   const restyleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Debounced re-render using the latest size + position (either slider triggers it).
+  const canMoveChar = !!overlay && !!contrarianControls?.compositeReady;
+
+  // Text-only change → cheap re-render on the current base.
   const applyRestyle = (nextScale: number, nextOffset: number) => {
     if (!overlay) return;
     if (restyleTimer.current) clearTimeout(restyleTimer.current);
@@ -1551,7 +1576,7 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
       setRestyling(true);
       try {
         const { outputUrl } = await restyleContrarianText({
-          baseUrl: overlay.baseUrl,
+          baseUrl,
           templateId: overlay.templateId,
           text: overlay.text,
           emphasis: overlay.emphasis,
@@ -1561,6 +1586,35 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
         setLocalUrl(outputUrl);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not restyle the headline');
+      } finally {
+        setRestyling(false);
+      }
+    }, 350);
+  };
+  // Character change (move/zoom/replace) → re-composite from scratch (no AI).
+  const applyRecomposite = (next: { expressionId?: string; charX?: number; charY?: number; charZoom?: number }) => {
+    if (!overlay) return;
+    if (restyleTimer.current) clearTimeout(restyleTimer.current);
+    restyleTimer.current = setTimeout(async () => {
+      setRestyling(true);
+      try {
+        const { outputUrl, baseUrl: newBase } = await recompositeContrarianThumbnail({
+          backgroundId: overlay.backgroundId,
+          expressionId: next.expressionId ?? expressionId,
+          templateId: overlay.templateId,
+          placement: overlay.placement,
+          charOffsetX: next.charX ?? charX,
+          charOffsetY: next.charY ?? charY,
+          charZoom: next.charZoom ?? charZoom,
+          text: overlay.text,
+          emphasis: overlay.emphasis,
+          textScale: scale,
+          textOffsetY: offsetY,
+        });
+        setLocalUrl(outputUrl);
+        if (newBase) setBaseUrl(newBase); // later text tweaks re-use the new base
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not reposition the character');
       } finally {
         setRestyling(false);
       }
@@ -1644,6 +1698,49 @@ function ResultColumn({ variantIndex, result }: { variantIndex: number; result: 
             aria-label="Headline vertical position"
           />
         </div>
+      )}
+
+      {/* Live CHARACTER controls (contrarian only; needs the 1:1 composite). */}
+      {overlay && result.status === 'done' && (
+        canMoveChar ? (
+          <div className="space-y-1 rounded-md border border-border bg-muted/20 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-medium text-muted-foreground">Character {restyling ? '· updating…' : ''}</span>
+              <Select
+                value={expressionId}
+                onValueChange={(v) => {
+                  setExpressionId(v);
+                  applyRecomposite({ expressionId: v });
+                }}
+              >
+                <SelectTrigger className="h-7 w-40 text-[11px]">
+                  <SelectValue placeholder="Character" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(contrarianControls?.characters ?? []).map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="text-[10px] text-muted-foreground">Horizontal</label>
+            <input type="range" min={-0.4} max={0.4} step={0.02} value={charX}
+              onChange={(e) => { const n = Number(e.target.value); setCharX(n); applyRecomposite({ charX: n }); }}
+              className="w-full accent-primary" aria-label="Character horizontal position" />
+            <label className="text-[10px] text-muted-foreground">Vertical</label>
+            <input type="range" min={-0.4} max={0.4} step={0.02} value={charY}
+              onChange={(e) => { const n = Number(e.target.value); setCharY(n); applyRecomposite({ charY: n }); }}
+              className="w-full accent-primary" aria-label="Character vertical position" />
+            <label className="text-[10px] text-muted-foreground">Zoom · {Math.round(charZoom * 100)}%</label>
+            <input type="range" min={0.5} max={2} step={0.05} value={charZoom}
+              onChange={(e) => { const n = Number(e.target.value); setCharZoom(n); applyRecomposite({ charZoom: n }); }}
+              className="w-full accent-primary" aria-label="Character zoom" />
+          </div>
+        ) : (
+          <p className="text-[10px] text-amber-500">Character move/zoom needs the 1:1 composite (see the badge above).</p>
+        )
       )}
 
       {shownUrl && (

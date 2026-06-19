@@ -1384,7 +1384,7 @@ async function main() {
     assert.ok(sent.some((s) => /change the text "CLAWDBOT" to "OpenClaw"/.test(s)), "the reviewed text rewrite ran");
   });
 
-  await check("a BUSY reviewed plan (with a person) runs FOCUSED passes, not one bundled mega-prompt", async () => {
+  await check("a reviewed plan recreates in ONE consolidated pass (guarantees the swap, keeps detail)", async () => {
     const sent: string[] = [];
     await recreate.recreateThumbnail(
       {
@@ -1394,8 +1394,7 @@ async function main() {
         keyword: "OpenClaw",
         videoType: "Tutorial",
         expression: "smile",
-        busy: true, // element-heavy source…
-        // …but the user reviewed it → each edit must get its OWN render.
+        // Many edits would blow the step cap + blur detail as separate renders.
         plannedElements: [{ id: "device-screen", label: "Screens", instruction: "replace the timeline screens with a grid of AI prompts" }],
         textRewrites: [{ old: "OLD", new: "NEW" }],
       },
@@ -1408,10 +1407,22 @@ async function main() {
         finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
       },
     );
-    // NOT a single consolidated pass — the screen edit is its own focused render.
-    assert.ok(!sent.some((s) => /SINGLE edit/.test(s)), "did not collapse to one mega-prompt");
-    assert.ok(sent.some((s) => /replace the timeline screens/.test(s)), "the element edit got a focused pass");
-    assert.ok(sent.some((s) => /change the text "OLD" to "NEW"/.test(s)), "the text rewrite ran");
+    // ONE consolidated render containing the swap + the text + the element edit.
+    assert.equal(sent.length, 1, "exactly one render (no multi-pass cap risk)");
+    assert.match(sent[0], /SINGLE edit/);
+    assert.match(sent[0], /Replace the on-camera person/, "the swap is included (never capped)");
+    assert.match(sent[0], /replace the timeline screens/, "the element edit is included");
+    assert.match(sent[0], /change the text "OLD" to "NEW"/, "the text rewrite is included");
+  });
+
+  await check("computeCharacterPlacement applies the user's x/y nudge + zoom", () => {
+    const head = { headTopRow: 0, headBottomRow: 99, headCenterX: 50 };
+    const base = composite.computeCharacterPlacement({ head, cutoutW: 100, cutoutH: 200, frameW: 1000, frameH: 1000, placement: "center" });
+    const zoomed = composite.computeCharacterPlacement({ head, cutoutW: 100, cutoutH: 200, frameW: 1000, frameH: 1000, placement: "center", charZoom: 1.5 });
+    assert.ok(Math.abs(zoomed.scale - base.scale * 1.5) < 1e-6, "zoom multiplies the scale");
+    const moved = composite.computeCharacterPlacement({ head, cutoutW: 100, cutoutH: 200, frameW: 1000, frameH: 1000, placement: "center", charOffsetX: 0.1, charOffsetY: -0.2 });
+    assert.ok(Math.abs(moved.destX - (base.destX + 100)) < 1e-6, "x nudge = +0.1·W");
+    assert.ok(Math.abs(moved.destY - (base.destY - 200)) < 1e-6, "y nudge = -0.2·H");
   });
 
   await check("composeContrarianThumbnail uses the programmatic composite (no AI when it returns bytes)", async () => {

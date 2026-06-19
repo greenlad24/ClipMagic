@@ -118,17 +118,23 @@ export function computeCharacterPlacement(opts: {
   placement: Placement;
   faceFrac?: number;
   headTopFrac?: number;
+  /** User nudges (UI sliders): fractions of frame W/H, and a zoom multiplier. */
+  charOffsetX?: number;
+  charOffsetY?: number;
+  charZoom?: number;
 }): Placed {
   const faceFrac = opts.faceFrac ?? 0.72;
   const topMargin = (opts.headTopFrac ?? 0.05) * opts.frameH;
   const headH = Math.max(1, opts.head.headBottomRow - opts.head.headTopRow + 1);
-  const scale = (faceFrac * opts.frameH) / headH;
+  const zoom = Math.min(2.2, Math.max(0.4, opts.charZoom ?? 1));
+  const scale = ((faceFrac * opts.frameH) / headH) * zoom;
   const drawW = opts.cutoutW * scale;
   const drawH = opts.cutoutH * scale;
   const anchorX =
     opts.placement === "center" ? opts.frameW * 0.5 : opts.placement === "right" ? opts.frameW * 0.7 : opts.frameW * 0.3;
-  const destX = anchorX - opts.head.headCenterX * scale;
-  const destY = topMargin - opts.head.headTopRow * scale;
+  // Auto-anchor the head, then apply the user's X/Y nudge (fractions of the frame).
+  const destX = anchorX - opts.head.headCenterX * scale + (opts.charOffsetX ?? 0) * opts.frameW;
+  const destY = topMargin - opts.head.headTopRow * scale + (opts.charOffsetY ?? 0) * opts.frameH;
   return { destX, destY, drawW, drawH, scale };
 }
 
@@ -252,6 +258,10 @@ export async function compositeContrarian(opts: {
   headTopFrac?: number;
   frameW?: number;
   frameH?: number;
+  /** User character nudges (UI sliders): fractions of frame W/H + zoom multiplier. */
+  charOffsetX?: number;
+  charOffsetY?: number;
+  charZoom?: number;
 }): Promise<Buffer | null> {
   const canvasMod = await loadCanvas();
   if (!canvasMod) return null;
@@ -287,6 +297,9 @@ export async function compositeContrarian(opts: {
       frameH: H,
       placement: opts.placement,
       headTopFrac: opts.headTopFrac,
+      charOffsetX: opts.charOffsetX,
+      charOffsetY: opts.charOffsetY,
+      charZoom: opts.charZoom,
     });
     ctx.drawImage(cutImg, placed.destX, placed.destY, placed.drawW, placed.drawH);
 
