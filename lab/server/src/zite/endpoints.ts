@@ -88,7 +88,7 @@ import {
 } from "../thumbnails/orchestrate.js";
 import { generateTitles } from "../thumbnails/titles.js";
 import { probeCompositeAvailable } from "../thumbnails/composite.js";
-import { restyleContrarianText as restyleContrarian } from "../thumbnails/recreate.js";
+import { restyleContrarianText as restyleContrarian, recompositeRecreation } from "../thumbnails/recreate.js";
 import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
@@ -2433,6 +2433,21 @@ const recompositeContrarianThumbnail: Handler = async (input) => {
   });
 };
 
+/** Live character handles: re-composite a recreation's character onto its scene. */
+const recompositeRecreationThumbnail: Handler = async (input) => {
+  const sceneUrl = String(input?.sceneUrl ?? "").trim();
+  const expressionId = String(input?.expressionId ?? "").trim();
+  if (!sceneUrl || !expressionId) throw new ZiteError({ code: "BAD_REQUEST", message: "scene + character are required." });
+  return recompositeRecreation({
+    sceneUrl,
+    expressionId,
+    placement: ["left", "center", "right"].includes(String(input?.placement)) ? (String(input.placement) as any) : "right",
+    charOffsetX: Number.isFinite(input?.charOffsetX) ? Math.min(0.45, Math.max(-0.45, Number(input.charOffsetX))) : 0,
+    charOffsetY: Number.isFinite(input?.charOffsetY) ? Math.min(0.45, Math.max(-0.45, Number(input.charOffsetY))) : 0,
+    charZoom: Number.isFinite(input?.charZoom) ? Math.min(2.2, Math.max(0.4, Number(input.charZoom))) : 1,
+  });
+};
+
 /** Free-text → precise edit element(s) for ONE picked thumbnail (review step). */
 const planThumbnailCustomEdit: Handler = async (input) => {
   const videoId = String(input?.videoId ?? "").trim();
@@ -2709,6 +2724,7 @@ export const HANDLERS: Record<string, Handler> = {
   planThumbnailCustomEdit,
   restyleContrarianText,
   recompositeContrarianThumbnail,
+  recompositeRecreationThumbnail,
   planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,

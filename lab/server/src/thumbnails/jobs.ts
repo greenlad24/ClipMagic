@@ -105,6 +105,19 @@ export interface ProviderResult {
   error?: string;
   /** Contrarian only: lets the UI re-render the headline at a new size live. */
   overlay?: ContrarianOverlay;
+  /** Recreation (composite) only: lets the UI live-reposition the character. */
+  recompose?: RecomposeInfo;
+}
+
+/** Everything needed to RE-COMPOSITE a recreation's character onto its scene. */
+export interface RecomposeInfo {
+  /** Served URL of the person-removed AI scene (the background to paste onto). */
+  sceneUrl: string;
+  expressionId: string;
+  placement: "left" | "center" | "right";
+  charOffsetX: number;
+  charOffsetY: number;
+  charZoom: number;
 }
 
 /**
@@ -157,6 +170,8 @@ export interface JobVariant {
   error?: string;
   /** Contrarian only: re-render info for the first successful sub-run. */
   overlay?: ContrarianOverlay;
+  /** Recreation (composite) only: live-reposition info for the first sub-run. */
+  recompose?: RecomposeInfo;
 }
 
 export interface ThumbnailJob {
@@ -280,6 +295,7 @@ function recomputeVariant(v: JobVariant): void {
   const firstDone = rs.find((r) => r.status === "done" && r.outputUrl);
   v.outputUrl = firstDone?.outputUrl;
   v.overlay = firstDone?.overlay;
+  v.recompose = firstDone?.recompose;
   v.error = anyDone ? undefined : rs.find((r) => r.error)?.error;
 }
 
@@ -290,6 +306,17 @@ export function attachResultOverlay(job: ThumbnailJob, variantIndex: number, pro
   const r = findResult(v, provider);
   if (!r) return;
   r.overlay = overlay;
+  recomputeVariant(v);
+  job.updatedAt = Date.now();
+}
+
+/** Attach recreation re-composite info (live character handles) to a finished sub-run. */
+export function attachResultRecompose(job: ThumbnailJob, variantIndex: number, provider: string, recompose: RecomposeInfo): void {
+  const v = job.variants[variantIndex];
+  if (!v) return;
+  const r = findResult(v, provider);
+  if (!r) return;
+  r.recompose = recompose;
   recomputeVariant(v);
   job.updatedAt = Date.now();
 }

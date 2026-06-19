@@ -308,6 +308,8 @@ export type ThumbnailJobVariant = {
   error?: string;
   /** Contrarian only: re-render info for the live "text size" slider. */
   overlay?: ContrarianOverlay;
+  /** Recreation (composite) only: live character-reposition info. */
+  recompose?: RecomposeInfo;
 };
 export type ContrarianOverlay = {
   baseUrl: string;
@@ -329,6 +331,27 @@ export const restyleContrarianText =
     { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number; textOffsetY?: number },
     { outputUrl: string }
   >('restyleContrarianText');
+export type RecomposeInfo = {
+  sceneUrl: string;
+  expressionId: string;
+  placement: 'left' | 'center' | 'right';
+  charOffsetX: number;
+  charOffsetY: number;
+  charZoom: number;
+};
+/** Live character handles: re-composite a recreation's character onto its scene. */
+export const recompositeRecreationThumbnail =
+  endpoint<
+    {
+      sceneUrl: string;
+      expressionId: string;
+      placement?: 'left' | 'center' | 'right';
+      charOffsetX?: number;
+      charOffsetY?: number;
+      charZoom?: number;
+    },
+    { outputUrl: string }
+  >('recompositeRecreationThumbnail');
 /** Live character controls: re-composite a contrarian thumbnail (move/zoom/replace). */
 export const recompositeContrarianThumbnail =
   endpoint<

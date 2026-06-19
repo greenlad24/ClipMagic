@@ -1470,6 +1470,72 @@ async function main() {
     assert.ok(Math.abs(moved.destY - (base.destY - 200)) < 1e-6, "y nudge = -0.2·H");
   });
 
+  await check("composite mode: AI removes the person, character composited 1:1 (no AI face-swap) + recompose info", async () => {
+    const sent: string[] = [];
+    const res = await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("src"),
+        sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("char"),
+        keyword: "k",
+        videoType: "Tutorial",
+        expression: "smile",
+        compositeCharacter: true,
+        characterPlacement: "right",
+        plannedElements: [],
+        textRewrites: [{ old: "A", new: "B" }],
+      },
+      {
+        artDirect: async () => [],
+        composite: async () => Buffer.from("COMPOSITED"),
+        editImage: async (o: any) => {
+          sent.push(o.instruction);
+          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+        },
+        finalize: async (cur: any, steps: any) => {
+          assert.equal(cur.data.toString(), "COMPOSITED", "finalize gets the composited image");
+          return { outputUrl: "/api/outputs/thumbnails/o.jpg", file: "/x", steps };
+        },
+      },
+    );
+    assert.ok(!sent.some((s) => /t-shirt/.test(s)), "no outfit step in composite mode");
+    assert.ok(!sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "no AI face-swap");
+    assert.ok(sent.some((s) => /Remove the on-camera person/.test(s)), "the AI removes the original person");
+    assert.ok(res.steps.find((s) => s.id === "composite-character")?.applied, "character composited 1:1");
+    assert.ok(res.recompose, "carries recompose info for the live handles");
+    assert.equal(res.recompose?.expressionId, "smile");
+    assert.equal(res.recompose?.placement, "right");
+  });
+
+  await check("composite mode FALLS BACK to the AI swap when the cut-out can't be produced", async () => {
+    const sent: string[] = [];
+    const res = await recreate.recreateThumbnail(
+      {
+        sourceBytes: Buffer.from("src"),
+        sourceMime: "image/jpeg",
+        characterBytes: Buffer.from("char"),
+        keyword: "k",
+        videoType: "Tutorial",
+        expression: "smile",
+        compositeCharacter: true,
+        plannedElements: [],
+        textRewrites: [],
+      },
+      {
+        artDirect: async () => [],
+        composite: async () => null, // cut-out unavailable
+        analyzeForSwap: async () => ({ currentBuild: "natural average build", bodyVisible: true, framing: "chest-up" }),
+        editImage: async (o: any) => {
+          sent.push(o.instruction);
+          return { file: "/x", outputUrl: "/x", bytes: Buffer.from("e"), mimeType: "image/png" };
+        },
+        finalize: async (_c: any, steps: any) => ({ outputUrl: "/x.jpg", file: "/x", steps }),
+      },
+    );
+    assert.ok(sent.some((s) => /Take the man shown in the SECOND image/.test(s)), "fell back to the AI swap");
+    assert.ok(!res.recompose, "no recompose info when the composite path didn't run");
+  });
+
   await check("composeContrarianThumbnail composites programmatically — NO image model is ever used", async () => {
     const result = await recreate.composeContrarianThumbnail(
       {

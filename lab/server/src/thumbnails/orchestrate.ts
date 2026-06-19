@@ -56,6 +56,7 @@ import {
   finishVariant,
   finishResult,
   attachResultOverlay,
+  attachResultRecompose,
   completeJob,
   phasePercent,
   PHASE_LABEL,
@@ -668,6 +669,9 @@ export async function runThumbnailJob(
                 textRewrites,
                 plannedElements,
                 swapCharacter,
+                // Use the EXACT character pixels: AI removes the original person,
+                // we composite the real character on top (no face redraw).
+                compositeCharacter: true,
                 provider: run.provider,
                 imageSize: run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>
@@ -677,6 +681,9 @@ export async function runThumbnailJob(
             );
             // Surface this column's output the MOMENT its sub-run finishes.
             finishResult(job, i, run.provider, { outputUrl: result.outputUrl });
+            // Composite mode: carry the scene + character so the UI can live-
+            // reposition the character (x/y/zoom handles) without the image model.
+            if (result.recompose) attachResultRecompose(job, i, run.provider, result.recompose);
           } catch (e) {
             // One provider failing leaves an error column; the sibling keeps going.
             finishResult(job, i, run.provider, { error: e instanceof Error ? e.message : String(e) });

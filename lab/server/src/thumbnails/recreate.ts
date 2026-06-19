@@ -64,7 +64,7 @@ import {
 } from "./artDirector.js";
 import { upscaleToThumbnail, realesrganEnabled, type UpscaleDeps } from "./upscale.js";
 import { compositeContrarian, probeCompositeAvailable, type Placement } from "./composite.js";
-import type { Expression } from "./characters.js";
+import { readCharacterImage, type Expression } from "./characters.js";
 import type { VideoType } from "./videoType.js";
 import type { ContrarianTemplate } from "./textOverlay.js";
 import { phasePercent, PHASE_LABEL } from "./jobs.js";
@@ -142,6 +142,27 @@ export const BG_REPLACE_PROMPT =
 
 export const STEP8_PROMPT =
   "give the existing background a BOLD, clearly visible POP so the thumbnail obviously stands out MORE than the original: make its colors noticeably richer and more vibrant/saturated, and strongly boost the contrast and separation behind the subject so the subject reads as crisply popped off the background. The change must be easy to see at a glance. Keep it the SAME general style and scene as the original — this is a strong enhancement, NOT a redesign: do NOT add dramatic light rays, neon, new patterns, or wildly different colors. Keep the character, all text, logos, and the exact position of every element exactly the same";
+
+/**
+ * Remove the ORIGINAL on-camera person so we can composite the creator's EXACT
+ * character pixels on top afterwards (no AI redraw of the face). Run as the LAST
+ * AI step; everything else (text, logos, props, layout) must stay identical.
+ */
+export const REMOVE_PERSON_PROMPT =
+  "Remove the on-camera person (and any other people) from this image COMPLETELY, filling the space they occupied with a natural, seamless continuation of the background and scene behind them. Keep EVERYTHING ELSE exactly as it is — all text, logos, badges, props, devices, screens, the layout, the colours and the lighting must stay identical and sharp. The result is the SAME thumbnail scene but with NO person in it.";
+
+/** Persist intermediate bytes to the outputs dir and return its served URL. */
+function saveIntermediate(bytes: Buffer, tag: string): string {
+  const dir = thumbnailsDir();
+  const name = `${crypto.randomBytes(12).toString("hex")}.${tag}.jpg`;
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), bytes);
+  } catch {
+    /* best-effort: the live re-composite just won't be available */
+  }
+  return `/api/outputs/thumbnails/${name}`;
+}
 
 /**
  * Build the ONE-SHOT recreation instruction. Used for ELEMENT-HEAVY (busy)
@@ -330,6 +351,18 @@ export interface RecreateInput {
    * background in a single coherent pass, preserving the original layout.
    */
   swapCharacter?: boolean;
+  /**
+   * Put the character in by COMPOSITING the EXACT uploaded pixels: the AI removes
+   * the original person and we paste the real character cut-out on top — so the
+   * face is never redrawn. The orchestrator sets this true; it falls back to the
+   * AI face-swap automatically if the cut-out can't be produced. Default (unset) =
+   * the AI face-swap path (keeps the direct-call tests deterministic).
+   */
+  compositeCharacter?: boolean;
+  /** Character placement nudges for the composite (UI handles; fractions + zoom). */
+  charOffsetX?: number;
+  charOffsetY?: number;
+  charZoom?: number;
   /** Optional live progress sink (phase label + phase-weighted percent). */
   onProgress?: ProgressFn;
 }
@@ -377,6 +410,19 @@ export interface RecreateResult {
   steps: ChainStep[];
   /** Contrarian only: lets the UI re-render the headline at a new size/position live. */
   overlay?: { baseUrl: string; templateId: string; text: string; emphasis: string; textScale: number; textOffsetY: number };
+  /**
+   * Recreation (composite mode) only: the person-removed SCENE + the composited
+   * character, so the UI can live-reposition the character (x/y/zoom) by
+   * re-compositing it onto the saved scene — no image model needed.
+   */
+  recompose?: {
+    sceneUrl: string;
+    expressionId: string;
+    placement: Placement;
+    charOffsetX: number;
+    charOffsetY: number;
+    charZoom: number;
+  };
 }
 
 /**
@@ -518,12 +564,16 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
     return result;
   }
 
-  // ── Step 1 (ALWAYS): outfit → a t-shirt — a PLAIN edit on the ORIGINAL person ─
-  // No swap has happened yet, so this is the original on-camera person; no ref,
-  // no face-lock.
-  report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
-  await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
-  report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
+  // ── Step 1: outfit → a t-shirt — a PLAIN edit on the ORIGINAL person ─────────
+  // Skipped in COMPOSITE mode (the orchestrator opts in): the original person is
+  // removed and the real character pasted on top, so reshaping the original's
+  // outfit is wasted work (+ an extra degrading render). The AI-swap path keeps it.
+  const compositeMode = input.compositeCharacter === true;
+  if (!compositeMode) {
+    report(PHASE_LABEL.outfit, phasePercent("outfit", 0));
+    await runStep("outfit", "Change outfit", STEP2_PROMPT, [current]);
+    report(PHASE_LABEL.outfit, phasePercent("outfit", 1));
+  }
 
   // ── Step 2 (VISION or REVIEWED PLAN): decide the optional edits ──────────────
   // The director analyses `current` (the original person now in a t-shirt). Its
@@ -600,41 +650,76 @@ export async function recreateThumbnail(input: RecreateInput, deps: RecreateDeps
   doneEdits++;
   report(PHASE_LABEL.edits, phasePercent("edits", doneEdits / totalEdits));
 
-  // ── VISION (pre-swap): assess the CURRENT working image's BODY ───────────────
-  // Run on `current` (the original person, post-edits/background) — its build and
-  // framing are identity-independent. When the original has an oversized / bulky /
-  // mascot-costume body, the swap below gets an EXPLICIT "replace + resize the
-  // body" clause so the body follows the new face. Best-effort: any failure falls
-  // back to the static FINAL_SWAP_PROMPT (which already carries a medium body
-  // clause) — generation must never break.
+  // ── FINAL step: put the character in ─────────────────────────────────────────
+  // COMPOSITE (default): the AI removes the original person, then we paste the
+  // creator's EXACT character pixels on top (no AI redraw of the face) and save the
+  // person-removed SCENE so the UI can live-reposition the character (x/y/zoom).
+  // AI SWAP (fallback): the old full identity swap — used only when the cut-out
+  // can't be produced (background-removal/canvas unavailable).
   report(PHASE_LABEL.swap, phasePercent("swap", 0));
-  let swapInstruction = FINAL_SWAP_PROMPT + placementClause(input.characterPlacement);
-  try {
-    const assessment = await analyzeForSwap({
-      imageBytes: current.data,
-      imageMime: current.mimeType || "image/png",
-    });
-    swapInstruction = buildFinalSwapInstruction(assessment) + placementClause(input.characterPlacement);
-  } catch (e) {
-    steps.push({
-      id: "swap-director",
-      label: "Assess body for swap",
-      instruction: "(assess body/framing before swap)",
-      applied: false,
-      note: `swap-director skipped: ${e instanceof Error ? e.message : String(e)}`,
-    });
+  const composite = deps.composite ?? compositeContrarian;
+  const placement: Placement = input.characterPlacement ?? "right";
+  let recompose: RecreateResult["recompose"];
+  let composited: Buffer | null = null;
+  if (compositeMode) {
+    // 1. Remove the original on-camera person, keeping the recreated scene.
+    await runStep("remove-person", "Remove original person", REMOVE_PERSON_PROMPT, [current]);
+    const sceneBytes = current.data;
+    // 2. Composite the real character cut-out on top (exact pixels).
+    try {
+      composited = await composite({
+        backgroundBytes: sceneBytes,
+        characterBytes: input.characterBytes,
+        placement,
+        charOffsetX: input.charOffsetX,
+        charOffsetY: input.charOffsetY,
+        charZoom: input.charZoom,
+      });
+    } catch {
+      composited = null;
+    }
+    if (composited) {
+      const sceneUrl = saveIntermediate(sceneBytes, "scene"); // for the live handles
+      current = { data: composited, mimeType: "image/png" };
+      steps.push({
+        id: "composite-character",
+        label: "Composite character (1:1)",
+        instruction: `programmatic composite — exact character, ${placement}`,
+        applied: true,
+      });
+      recompose = {
+        sceneUrl,
+        expressionId: input.expression,
+        placement,
+        charOffsetX: input.charOffsetX ?? 0,
+        charOffsetY: input.charOffsetY ?? 0,
+        charZoom: input.charZoom ?? 1,
+      };
+    }
   }
-
-  // ── FINAL step (ALWAYS, genuinely LAST): the STRONG FULL SWAP ────────────────
-  // Inputs [current, character]: replace the on-camera person with the reference
-  // man (the SECOND image). This is the very last image operation, so the face
-  // lands fresh and cannot drift — nothing re-renders it afterwards.
-  await runStep("swap-character", "Swap in character", swapInstruction, [current, character]);
+  if (!composited) {
+    // AI SWAP fallback: assess the body, then the strong full identity swap.
+    let swapInstruction = FINAL_SWAP_PROMPT + placementClause(input.characterPlacement);
+    try {
+      const assessment = await analyzeForSwap({ imageBytes: current.data, imageMime: current.mimeType || "image/png" });
+      swapInstruction = buildFinalSwapInstruction(assessment) + placementClause(input.characterPlacement);
+    } catch (e) {
+      steps.push({
+        id: "swap-director",
+        label: "Assess body for swap",
+        instruction: "(assess body/framing before swap)",
+        applied: false,
+        note: `swap-director skipped: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    }
+    await runStep("swap-character", "Swap in character", swapInstruction, [current, character]);
+  }
   report(PHASE_LABEL.swap, phasePercent("swap", 1));
 
   // ── Crop to a clean, native-resolution 16:9 JPG (4K stays 4K) ───────────────
   report(PHASE_LABEL.finalize, phasePercent("finalize", 0));
   const result = await finalizeFn(current, steps);
+  if (recompose) result.recompose = recompose;
   report(PHASE_LABEL.finalize, phasePercent("finalize", 1));
   return result;
 }
@@ -808,6 +893,37 @@ export async function restyleContrarianText(input: {
   const name = `${crypto.randomBytes(12).toString("hex")}.jpg`;
   fs.writeFileSync(path.join(dir, name), withText);
   return { outputUrl: `/api/outputs/thumbnails/${name}` };
+}
+
+/**
+ * RE-COMPOSITE a recreation's character onto its saved person-removed SCENE at a
+ * new x/y/zoom — the live character handles. No image model is used: it just
+ * cuts out the character + pastes it onto the scene + finalizes. Returns the new
+ * served URL. Throws on a missing scene/character or when the composite can't run.
+ */
+export async function recompositeRecreation(input: {
+  sceneUrl: string;
+  expressionId: string;
+  placement: Placement;
+  charOffsetX?: number;
+  charOffsetY?: number;
+  charZoom?: number;
+}): Promise<{ outputUrl: string }> {
+  const base = path.basename(input.sceneUrl);
+  const sceneBytes = fs.readFileSync(path.join(thumbnailsDir(), base));
+  const characterBytes = readCharacterImage(input.expressionId);
+  if (!characterBytes) throw new Error("character not found");
+  const result = await composeContrarianThumbnail({
+    backgroundBytes: sceneBytes,
+    backgroundMime: "image/png",
+    characterBytes,
+    instruction: "",
+    placement: input.placement,
+    charOffsetX: input.charOffsetX,
+    charOffsetY: input.charOffsetY,
+    charZoom: input.charZoom,
+  });
+  return { outputUrl: result.outputUrl };
 }
 
 /**

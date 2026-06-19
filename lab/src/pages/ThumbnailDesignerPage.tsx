@@ -12,6 +12,7 @@ import {
   planThumbnailCustomEdit,
   restyleContrarianText,
   recompositeContrarianThumbnail,
+  recompositeRecreationThumbnail,
   thumbnailJobStatus,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
@@ -1563,10 +1564,39 @@ function ResultColumn({
   const [charY, setCharY] = useState(overlay?.charOffsetY ?? 0);
   const [charZoom, setCharZoom] = useState(overlay?.charZoom ?? 1);
   const [baseUrl, setBaseUrl] = useState(overlay?.baseUrl ?? '');
+  // Recreation (composite) only: live X/Y/zoom handles that re-composite the real
+  // character onto the saved person-removed scene (no image model).
+  const recompose = result.recompose;
+  const [recX, setRecX] = useState(recompose?.charOffsetX ?? 0);
+  const [recY, setRecY] = useState(recompose?.charOffsetY ?? 0);
+  const [recZoom, setRecZoom] = useState(recompose?.charZoom ?? 1);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [restyling, setRestyling] = useState(false);
   const restyleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canMoveChar = !!overlay && !!contrarianControls?.compositeReady;
+  // Character move/zoom on a RECREATION result → re-composite from the scene.
+  const applyRecompose = (next: { recX?: number; recY?: number; recZoom?: number }) => {
+    if (!recompose) return;
+    if (restyleTimer.current) clearTimeout(restyleTimer.current);
+    restyleTimer.current = setTimeout(async () => {
+      setRestyling(true);
+      try {
+        const { outputUrl } = await recompositeRecreationThumbnail({
+          sceneUrl: recompose.sceneUrl,
+          expressionId: recompose.expressionId,
+          placement: recompose.placement,
+          charOffsetX: next.recX ?? recX,
+          charOffsetY: next.recY ?? recY,
+          charZoom: next.recZoom ?? recZoom,
+        });
+        setLocalUrl(outputUrl);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Could not reposition the character');
+      } finally {
+        setRestyling(false);
+      }
+    }, 350);
+  };
 
   // Text-only change → cheap re-render on the current base.
   const applyRestyle = (nextScale: number, nextOffset: number) => {
@@ -1741,6 +1771,25 @@ function ResultColumn({
         ) : (
           <p className="text-[10px] text-amber-500">Character move/zoom needs the 1:1 composite (see the badge above).</p>
         )
+      )}
+
+      {/* Live CHARACTER handles for a RECREATION (composite) result — move/zoom. */}
+      {recompose && result.status === 'done' && (
+        <div className="space-y-1 rounded-md border border-border bg-muted/20 p-2">
+          <span className="text-[10px] font-medium text-muted-foreground">Character position {restyling ? '· updating…' : ''}</span>
+          <label className="text-[10px] text-muted-foreground">Horizontal</label>
+          <input type="range" min={-0.4} max={0.4} step={0.02} value={recX}
+            onChange={(e) => { const n = Number(e.target.value); setRecX(n); applyRecompose({ recX: n }); }}
+            className="w-full accent-primary" aria-label="Character horizontal position" />
+          <label className="text-[10px] text-muted-foreground">Vertical</label>
+          <input type="range" min={-0.4} max={0.4} step={0.02} value={recY}
+            onChange={(e) => { const n = Number(e.target.value); setRecY(n); applyRecompose({ recY: n }); }}
+            className="w-full accent-primary" aria-label="Character vertical position" />
+          <label className="text-[10px] text-muted-foreground">Zoom · {Math.round(recZoom * 100)}%</label>
+          <input type="range" min={0.5} max={2} step={0.05} value={recZoom}
+            onChange={(e) => { const n = Number(e.target.value); setRecZoom(n); applyRecompose({ recZoom: n }); }}
+            className="w-full accent-primary" aria-label="Character zoom" />
+        </div>
       )}
 
       {shownUrl && (
