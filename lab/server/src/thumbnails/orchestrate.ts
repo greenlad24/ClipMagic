@@ -248,6 +248,12 @@ export interface GenerateInput {
   /** @deprecated Back-compat single-provider selector; prefer `mode`. */
   provider?: ImageProvider;
   /**
+   * Pro render resolution chosen in the UI: "1K" | "2K" | "4K", or "" for the
+   * model default (no imageSize). Omit to use the server default. Threads to the
+   * Nano Banana Pro request's imageConfig.imageSize.
+   */
+  imageSize?: string;
+  /**
    * Optional REVIEWED per-pick plans (from the review step). When a plan matches a
    * pick (by videoId), its choices are used VERBATIM and the per-source vision
    * analysis is skipped: the chosen character expression, the busy flag, the
@@ -675,7 +681,7 @@ export async function runThumbnailJob(
                 // we composite the real character on top (no face redraw).
                 compositeCharacter: true,
                 provider: run.provider,
-                imageSize: run.imageSize,
+                imageSize: input.imageSize ?? run.imageSize,
                 onProgress: ({ stepLabel, percent }) =>
                   updateResult(job, i, run.provider, { status: "running", stepLabel, percent }),
               },

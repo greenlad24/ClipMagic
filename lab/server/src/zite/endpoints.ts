@@ -2475,6 +2475,15 @@ const planThumbnailRecreations: Handler = async (input) => {
   return { plans };
 };
 
+/** Coerce the UI's Pro render resolution: "1K"|"2K"|"4K", "" (model default), else env default. */
+function coerceImageSize(x: unknown): string | undefined {
+  if (x === undefined || x === null) return undefined;
+  const v = String(x).trim().toUpperCase();
+  if (v === "1K" || v === "2K" || v === "4K") return v;
+  if (v === "" || v === "AUTO" || v === "DEFAULT") return ""; // explicit no-size
+  return undefined;
+}
+
 const startThumbnailGeneration: Handler = async (input) => {
   const picks = coercePicks(input);
   if (picks.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one thumbnail to recreate." });
@@ -2485,6 +2494,8 @@ const startThumbnailGeneration: Handler = async (input) => {
     // `mode` selects the single image provider — default "gemini-pro" (Nano
     // Banana Pro @ 4K), or "gemini-flash". Falls back to the legacy `provider`.
     mode: coerceMode(input?.mode ?? input?.provider),
+    // The UI's render-resolution toggle (Pro only).
+    imageSize: coerceImageSize(input?.imageSize),
     // Reviewed/edited per-pick plans (character + background + text) when supplied.
     plans: coercePlans(input),
   });

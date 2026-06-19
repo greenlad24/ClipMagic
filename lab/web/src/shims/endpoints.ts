@@ -143,7 +143,7 @@ export const generateThumbnails =
   endpoint<{ keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode }, GenerateThumbnailsOutputType>("generateThumbnails");
 export const startThumbnailGeneration =
   endpoint<
-    { keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode; plans?: RecreationPlan[] },
+    { keyword: string; videoType: ThumbnailVideoType; picks: string[]; mode?: ThumbnailMode; imageSize?: string; plans?: RecreationPlan[] },
     { jobId: string }
   >("startThumbnailGeneration");
 /** PLAN every per-thumbnail decision (cast + background + text) for review/edit. */

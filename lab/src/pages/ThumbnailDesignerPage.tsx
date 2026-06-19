@@ -124,6 +124,8 @@ export default function ThumbnailDesignerPage() {
   const [results, setResults] = useState<ThumbnailSearchResult[] | null>(null);
   const [picks, setPicks] = useState<string[]>([]);
   const [mode, setMode] = useState<ThumbnailMode>('gemini-pro');
+  // Pro render resolution toggle ("4K" | "2K" | "1K" | "" = model default).
+  const [imageSize, setImageSize] = useState<string>('4K');
   const [generating, setGenerating] = useState(false);
   const [job, setJob] = useState<ThumbnailJobStatus | null>(null);
   // Contrarian originals run IN PARALLEL with the recreation job, polled separately.
@@ -350,6 +352,7 @@ export default function ThumbnailDesignerPage() {
         videoType,
         picks,
         mode,
+        imageSize,
         // Send the reviewed/edited choices when they match the current picks.
         plans:
           recreationPlans && recreationPlans.length === picks.length && recreationPlans.every((p) => picks.includes(p.videoId))
@@ -559,6 +562,27 @@ export default function ThumbnailDesignerPage() {
                         {MODE_OPTIONS.find((m) => m.value === mode)?.hint}
                       </p>
                     </div>
+                    {/* Render resolution (Nano Banana Pro). Try sizes to compare quality,
+                        or drop down if the Gemini 2K/4K outage returns blank frames. */}
+                    {mode === 'gemini-pro' && (
+                      <div className="space-y-1.5 sm:max-w-md">
+                        <label className="text-xs font-medium text-muted-foreground block">Render resolution</label>
+                        <Select value={imageSize} onValueChange={setImageSize}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="4K">4K — sharpest</SelectItem>
+                            <SelectItem value="2K">2K — high</SelectItem>
+                            <SelectItem value="1K">1K — ~1080p</SelectItem>
+                            <SelectItem value="default">Default — model default (most reliable)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[11px] text-muted-foreground">
+                          Higher = sharper. If 4K/2K come back blank or corrupt (a Gemini outage), pick a lower size or “Default”.
+                        </p>
+                      </div>
+                    )}
                     {/* Cost estimate — scales with how many thumbnails you pick. */}
                     {picks.length > 0 && (
                       <CostHint mode={mode} picks={picks.length} />
