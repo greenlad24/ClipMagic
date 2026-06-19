@@ -268,6 +268,7 @@ async function main() {
     // Same generateContent shape as flash, plus the pro resolution hint — 4K by default.
     assert.deepEqual(sentBody.contents[0].parts[0], { text: "edit" });
     assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");
+    assert.deepEqual(sentBody.generationConfig.responseModalities, ["IMAGE"], "asks the thinking model for an IMAGE response");
     assert.equal(providers.NANO_BANANA_PRO_IMAGE_SIZE, "2K", "the single Pro default is 2K (4K degraded the model)");
     assert.equal(sentBody.generationConfig.imageConfig.imageSize, "2K", "the default request asks for 2K");
     assert.equal(fs.readFileSync(res.file).toString(), "PROIMG");

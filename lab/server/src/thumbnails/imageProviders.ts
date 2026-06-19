@@ -135,12 +135,13 @@ export function buildProEditRequestBody(
   imageSize: string = NANO_BANANA_PRO_IMAGE_SIZE,
 ): {
   contents: Array<{ parts: Array<Record<string, unknown>> }>;
-  generationConfig: { imageConfig: { aspectRatio: string; imageSize: string } };
+  generationConfig: { responseModalities: string[]; imageConfig: { aspectRatio: string; imageSize: string } };
 } {
   const base = buildEditRequestBody(instruction, images);
   return {
     contents: base.contents,
     generationConfig: {
+      responseModalities: ["IMAGE"],
       imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO, imageSize },
     },
   };

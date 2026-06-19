@@ -100,17 +100,19 @@ export type FetchFn = (url: string, init: { method: string; headers: Record<stri
  */
 export function buildEditRequestBody(instruction: string, images: EditImage[]): {
   contents: Array<{ parts: Array<Record<string, unknown>> }>;
-  generationConfig: { imageConfig: { aspectRatio: string } };
+  generationConfig: { responseModalities: string[]; imageConfig: { aspectRatio: string } };
 } {
   const parts: Array<Record<string, unknown>> = [{ text: instruction }];
   for (const img of images) {
     parts.push({ inline_data: { mime_type: img.mimeType, data: img.data.toString("base64") } });
   }
-  // Hint the model to keep a true 16:9 frame. The crop.ts finalize remains the
-  // hard guarantee regardless of what the model actually returns.
+  // responseModalities:["IMAGE"] tells the model to return the rendered IMAGE (not
+  // a text/thinking response) — required for the Gemini 3 "thinking" image models
+  // to emit a clean final image. The 16:9 hint keeps the frame; crop.ts is the hard
+  // guarantee regardless of what the model returns.
   return {
     contents: [{ parts }],
-    generationConfig: { imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO } },
+    generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: NANO_BANANA_ASPECT_RATIO } },
   };
 }
 
