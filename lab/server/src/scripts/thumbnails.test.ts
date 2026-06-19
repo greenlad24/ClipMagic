@@ -245,7 +245,7 @@ async function main() {
       { geminiFetch },
     );
     assert.ok(calledUrl.includes(`models/${providers.NANO_BANANA_PRO_MODEL}:generateContent`), `should hit the pro model: ${calledUrl}`);
-    assert.equal(providers.NANO_BANANA_PRO_MODEL, "gemini-3-pro-image-preview");
+    assert.equal(providers.NANO_BANANA_PRO_MODEL, "gemini-3-pro-image");
     // Same generateContent shape as flash, plus the pro resolution hint — 4K by default.
     assert.deepEqual(sentBody.contents[0].parts[0], { text: "edit" });
     assert.equal(sentBody.generationConfig.imageConfig.aspectRatio, "16:9");

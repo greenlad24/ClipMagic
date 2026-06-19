@@ -66,24 +66,23 @@ export function coerceMode(x: unknown): GenerationMode {
 
 // ── Gemini Pro (Nano Banana Pro) constants ───────────────────────────────────
 /**
- * Nano Banana Pro image model id. Google's preview id for Gemini 3 Pro Image is
- * `gemini-3-pro-image-preview` (verified against ai.google.dev/gemini-api/docs/
- * gemini-3 + the model card, Nov 2025 preview). Isolated behind a single constant.
- * TODO: if Google promotes/renames the pro image model, override via
- * NANO_BANANA_PRO_MODEL (no rebuild) or update this constant.
+ * Nano Banana Pro image model id. The GA model is `gemini-3-pro-image` (Gemini 3
+ * Pro Image). We point at the GA id rather than the old `gemini-3-pro-image-preview`
+ * — the preview endpoint degraded (it started returning near-black/blurry frames),
+ * while the GA model is the stable, accurate one. Isolated behind a single constant.
+ * TODO: if Google renames the pro image model, override via NANO_BANANA_PRO_MODEL
+ * (no rebuild) or update this constant.
  */
-export const NANO_BANANA_PRO_MODEL = process.env.NANO_BANANA_PRO_MODEL || "gemini-3-pro-image-preview";
+export const NANO_BANANA_PRO_MODEL = process.env.NANO_BANANA_PRO_MODEL || "gemini-3-pro-image";
 
 /**
  * Requested output resolution for the pro model — the DEFAULT for a normal single
  * run. Gemini 3 Pro Image accepts `generationConfig.imageConfig.imageSize` of
  * "1K" | "2K" | "4K" (long-edge), verified against ai.google.dev/gemini-api/docs/
- * gemini-3. We ask for 4K — the user wants the highest quality as the default; the
- * crop.ts finalize still downscales to a crisp 1920×1080. Isolated behind a
- * constant + env override.
- * TODO: as of the preview, some reports note imageSize can be ignored for
- * reference-image EDITS (discuss.ai.google.dev). It's a soft hint — the crop.ts
- * finalize still guarantees a crisp 1920×1080 — so a 1K return doesn't break us.
+ * gemini-3. We ask for 4K (highest quality); the crop.ts finalize downscales to a
+ * crisp 1920×1080. Env-overridable: if the model ever returns degraded/near-black
+ * frames for 4K reference-edits, set NANO_BANANA_PRO_IMAGE_SIZE=2K (or 1K) — the
+ * final thumbnail is 1080p, so there's no quality loss.
  */
 export const NANO_BANANA_PRO_IMAGE_SIZE = process.env.NANO_BANANA_PRO_IMAGE_SIZE || "4K";
 
