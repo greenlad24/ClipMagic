@@ -134,8 +134,14 @@ const AREAS: AreaDef[] = [
   {
     key: "backgroundMusic", category: "uploads", group: "content", danger: true,
     icon: "Music", label: "Background music",
-    hint: "Music tracks in your library. Deleting one removes it from projects using it.",
+    hint: "Music tracks in your library (used as background music). Deleting one removes it from projects using it.",
     filter: (it) => it.kind === "music",
+  },
+  {
+    key: "separatedAudio", category: "uploads", group: "content", danger: true,
+    icon: "AudioLines", label: "Audio from videos",
+    hint: "Audio files that aren't in your music library — e.g. audio separated/extracted from videos, or standalone narration audio. Deleting one breaks any project that uses it.",
+    filter: (it) => it.kind === "audio",
   },
   {
     key: "promoVideos", category: "uploads", group: "content", danger: true,
@@ -218,7 +224,7 @@ export interface StorageItem {
   mtime: number;       // epoch ms
   url?: string;        // serve URL (for preview/download)
   /** Sub-role used to split a physical area into cards (see AREAS). */
-  kind?: "music" | "promo" | "narrator" | "render" | "screencast";
+  kind?: "music" | "audio" | "promo" | "narrator" | "render" | "screencast";
 }
 
 /**
@@ -408,11 +414,19 @@ export async function listStorage() {
         }
         return false;
       };
-      // Classify: explicit id/name reference wins; then audio→music; else narrator.
-      if (refs.music.ids.has(fid) || nameMatches(refs.music.names) || isAudioFile(f.original ?? f.name, f.mime)) {
+      // Classify by what actually references the file:
+      //   music    → a track in your library (z_music_tracks) — real background music
+      //   promo    → a promo-library video
+      //   audio    → any OTHER audio file (extracted/separated from a video, or
+      //              standalone narration audio) — NOT library music, so it's
+      //              grouped apart rather than swept in with your music tracks
+      //   narrator → everything else = a source narration video
+      if (refs.music.ids.has(fid) || nameMatches(refs.music.names)) {
         f.kind = "music";
       } else if (refs.promo.ids.has(fid) || nameMatches(refs.promo.names)) {
         f.kind = "promo";
+      } else if (isAudioFile(f.original ?? f.name, f.mime)) {
+        f.kind = "audio";
       } else {
         f.kind = "narrator";
       }

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, RefreshCw, Trash2, HardDrive, Loader2, AlertTriangle, Download, Eraser,
   // area icons (resolved by name from the server registry)
-  Video, Music, Film, Clapperboard, MonitorPlay, Image as ImageIcon, Type, Sticker,
+  Video, Music, AudioLines, Film, Clapperboard, MonitorPlay, Image as ImageIcon, Type, Sticker,
   Database, FolderClock, UserSquare, Palette, Scissors, Sparkles, Chrome,
   type LucideIcon,
 } from 'lucide-react';
@@ -51,7 +51,7 @@ interface StorageData {
 
 // lucide icon lookup by the name the server sends; HardDrive is the fallback.
 const ICONS: Record<string, LucideIcon> = {
-  Video, Music, Film, Clapperboard, MonitorPlay, Image: ImageIcon, Type, Sticker,
+  Video, Music, AudioLines, Film, Clapperboard, MonitorPlay, Image: ImageIcon, Type, Sticker,
   Database, FolderClock, UserSquare, Palette, Scissors, Sparkles, Chrome, HardDrive,
 };
 const iconOf = (name: string): LucideIcon => ICONS[name] ?? HardDrive;
