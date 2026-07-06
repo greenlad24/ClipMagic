@@ -1,16 +1,28 @@
 /**
- * Storage management — list and delete everything the server keeps on disk so
+ * Storage management — list and delete EVERYTHING the server keeps on disk so
  * the operator can free space and see, at a glance, whether the data volume is
  * full (the usual cause of upload/render failures).
  *
- * Areas under DATA_DIR:
- *   - uploads/                 → source media (narration videos, music, promos)
- *   - outputs/                 → finished renders (the big .mp4 files)
- *   - outputs/stickers/        → generated/fetched sticker image cache (regenerates)
- *   - tmp/                     → remote-download cache (always safe to delete)
- *   - tmp/chunked-uploads/     → in-progress resumable-upload temp (regenerates)
- *   - .remotion-chromium/      → Remotion's Chromium browser cache (regenerates)
- *   - db/                      → sqlite — NEVER offered for deletion
+ * Every disk-consuming area lives in one place: the AREAS registry below. Each
+ * area is either CONTENT (your media — deleted per-file) or CACHE (regenerates
+ * on demand — safe to wipe wholesale with "Clear"). Adding a new area = one
+ * registry entry; totals, counts, the breakdown and the UI all derive from it,
+ * so nothing can silently go uncounted again.
+ *
+ * Physical areas under DATA_DIR:
+ *   uploads/                  → source media (narration videos, music, promos)  [content]
+ *   outputs/                  → finished renders + screencast captures (.mp4)    [content]
+ *   outputs/thumbnails/       → edited thumbnail renders (Nano Banana Pro)       [content]
+ *   thumbnail-fonts/          → custom fonts you uploaded for thumbnails         [content]
+ *   outputs/stickers/         → generated/fetched sticker image cache            [cache]
+ *   tmp/                      → remote-download cache                            [cache]
+ *   tmp/chunked-uploads/      → in-progress resumable-upload temp               [cache]
+ *   thumbnail-characters/     → cut-out character cache for thumbnails           [cache]
+ *   thumbnail-backgrounds/    → generated background cache for thumbnails        [cache]
+ *   thumbnail-cutouts/        → composited cut-out cache for thumbnails          [cache]
+ *   motion-bundle/            → Remotion motion-graphics bundle cache            [cache]
+ *   .remotion-chromium/       → Remotion's Chromium browser cache               [cache]
+ *   db/                       → sqlite — NEVER offered for deletion
  *
  * Per-file deletes are path-traversal-safe (resolveSafe), and the pure-cache
  * areas can be wiped wholesale ("Clear") — they are recreated on demand.
@@ -21,38 +33,180 @@ import { config } from "../config.js";
 import { db } from "../db/index.js";
 
 /**
- * Deletable categories. The first three are the original flat-file dirs; the
- * rest are the cache/temp areas now surfaced so they can be reclaimed.
- *   - stickers          → outputs/stickers  (generated sticker images)
- *   - chunked           → tmp/chunked-uploads (resumable-upload temp)
- *   - remotionChromium  → .remotion-chromium  (Chromium browser cache)
+ * Every physical directory the manager can inspect/delete. A Category maps 1:1
+ * to a directory on disk (see DIRS). Display "cards" (AREAS) may sub-split one
+ * category — e.g. `uploads` shows as narrator/music/promo — but deletes always
+ * target the physical Category.
  */
-type Category =
+export type Category =
   | "uploads"
   | "outputs"
+  | "thumbnails"
+  | "thumbnailFonts"
   | "tmp"
   | "stickers"
   | "chunked"
-  | "remotionChromium";
-
-const STICKERS_DIR = path.join(config.outputsDir, "stickers");
-const CHUNKED_DIR = path.join(config.tmpDir, "chunked-uploads");
+  | "remotionChromium"
+  | "thumbnailCharacters"
+  | "thumbnailBackgrounds"
+  | "thumbnailCutouts"
+  | "motionBundle";
 
 const DIRS: Record<Category, string> = {
   uploads: config.uploadsDir,
   outputs: config.outputsDir,
+  thumbnails: path.join(config.outputsDir, "thumbnails"),
+  thumbnailFonts: path.join(config.dataDir, "thumbnail-fonts"),
   tmp: config.tmpDir,
-  stickers: STICKERS_DIR,
-  chunked: CHUNKED_DIR,
+  stickers: path.join(config.outputsDir, "stickers"),
+  chunked: path.join(config.tmpDir, "chunked-uploads"),
   remotionChromium: config.remotionBrowserCacheDir,
+  thumbnailCharacters: path.join(config.dataDir, "thumbnail-characters"),
+  thumbnailBackgrounds: path.join(config.dataDir, "thumbnail-backgrounds"),
+  thumbnailCutouts: path.join(config.dataDir, "thumbnail-cutouts"),
+  motionBundle: config.motionBundleDir,
 };
 
 /**
  * Pure-cache areas: every file regenerates on demand, so the whole area is safe
  * to wipe with one "Clear" action (deleteStorageArea). User content (uploads,
- * renders) is NOT here — those are deleted per-file only.
+ * renders, thumbnail renders, custom fonts) is NOT here — deleted per-file only.
  */
-const CACHE_CATEGORIES = new Set<Category>(["tmp", "stickers", "chunked", "remotionChromium"]);
+const CACHE_CATEGORIES = new Set<Category>([
+  "tmp",
+  "stickers",
+  "chunked",
+  "remotionChromium",
+  "thumbnailCharacters",
+  "thumbnailBackgrounds",
+  "thumbnailCutouts",
+  "motionBundle",
+]);
+
+/**
+ * Areas whose contents are nested subdirs / opaque bundles (a webpack bundle, a
+ * Chromium install, per-upload part folders). We don't list them file-by-file —
+ * we show a recursive size + count and a single "Clear all" (cache) button.
+ */
+const FOLDER_ONLY = new Set<Category>(["chunked", "remotionChromium", "motionBundle"]);
+
+/**
+ * Serve-URL prefix per category, so a listed file gets a preview/download link.
+ * Cache areas and folder-only areas have none.
+ */
+const URL_BASE: Partial<Record<Category, string>> = {
+  outputs: "/api/outputs/",
+  thumbnails: "/api/outputs/thumbnails/",
+  stickers: "/api/outputs/stickers/",
+  // uploads is special-cased (needs the files-table id) in listStorage.
+};
+
+/**
+ * The display registry: the ordered list of cards the UI renders. Each card is
+ * a "view" over one physical Category, optionally narrowed by `filter` to a
+ * sub-role (uploads → narrator/music/promo; outputs → render/screencast). The
+ * card's size/count derive from its (filtered) files, so the cards partition
+ * every byte exactly once → summing them gives the true grand total.
+ *
+ *   group  : content = your media (per-file delete); cache = regenerates (Clear)
+ *   danger : deleting this can break projects that reference it
+ *   icon   : lucide-react icon name resolved on the client
+ */
+export interface AreaDef {
+  key: string;
+  category: Category;
+  label: string;
+  hint: string;
+  icon: string;
+  group: "content" | "cache";
+  danger?: boolean;
+  filter?: (it: StorageItem) => boolean;
+}
+
+const AREAS: AreaDef[] = [
+  // ── Content: your media (deleted per file) ──────────────────────────────────
+  {
+    key: "narratorVideos", category: "uploads", group: "content", danger: true,
+    icon: "Video", label: "Narrator videos",
+    hint: "Source narration videos you uploaded (not music or promo). Deleting one breaks any project that uses it.",
+    filter: (it) => it.kind === "narrator",
+  },
+  {
+    key: "backgroundMusic", category: "uploads", group: "content", danger: true,
+    icon: "Music", label: "Background music",
+    hint: "Music tracks in your library. Deleting one removes it from projects using it.",
+    filter: (it) => it.kind === "music",
+  },
+  {
+    key: "promoVideos", category: "uploads", group: "content", danger: true,
+    icon: "Film", label: "Promo videos",
+    hint: "Promo-library videos. Deleting one removes it from the AI director's footage pool.",
+    filter: (it) => it.kind === "promo",
+  },
+  {
+    key: "renderOutputs", category: "outputs", group: "content",
+    icon: "Clapperboard", label: "Render outputs",
+    hint: "Finished export videos. Safe to delete — you can re-export.",
+    filter: (it) => it.kind !== "screencast",
+  },
+  {
+    key: "screencastCaptures", category: "outputs", group: "content",
+    icon: "MonitorPlay", label: "Screencast captures",
+    hint: "Recorded website screencasts used as B-roll. Re-captured on demand.",
+    filter: (it) => it.kind === "screencast",
+  },
+  {
+    key: "thumbnailRenders", category: "thumbnails", group: "content",
+    icon: "Image", label: "Thumbnail renders",
+    hint: "Finished thumbnail images you generated. Safe to delete — you can re-generate.",
+  },
+  {
+    key: "thumbnailFonts", category: "thumbnailFonts", group: "content", danger: true,
+    icon: "Type", label: "Custom thumbnail fonts",
+    hint: "Fonts you uploaded for thumbnails. Deleting one removes it from thumbnails that use it.",
+  },
+  // ── Cache: regenerates on demand (safe to Clear) ────────────────────────────
+  {
+    key: "stickerCache", category: "stickers", group: "cache",
+    icon: "Sticker", label: "Sticker image cache",
+    hint: "Generated / fetched sticker images. Pure cache — regenerated on demand.",
+  },
+  {
+    key: "downloadCache", category: "tmp", group: "cache",
+    icon: "Database", label: "Download cache",
+    hint: "Cached remote downloads. Always safe — re-fetched on demand.",
+  },
+  {
+    key: "chunkedTemp", category: "chunked", group: "cache",
+    icon: "FolderClock", label: "Chunked-upload temp",
+    hint: "In-progress / abandoned resumable-upload parts. Safe to clear once uploads finish.",
+  },
+  {
+    key: "thumbnailCharacterCache", category: "thumbnailCharacters", group: "cache",
+    icon: "UserSquare", label: "Thumbnail character cache",
+    hint: "Cut-out character images for thumbnails. Pure cache — regenerated on demand.",
+  },
+  {
+    key: "thumbnailBackgroundCache", category: "thumbnailBackgrounds", group: "cache",
+    icon: "Palette", label: "Thumbnail background cache",
+    hint: "Generated thumbnail backgrounds. Pure cache — regenerated on demand.",
+  },
+  {
+    key: "thumbnailCutoutCache", category: "thumbnailCutouts", group: "cache",
+    icon: "Scissors", label: "Thumbnail cutout cache",
+    hint: "Composited cut-outs for thumbnails. Pure cache — regenerated on demand.",
+  },
+  {
+    key: "motionBundle", category: "motionBundle", group: "cache",
+    icon: "Sparkles", label: "Motion-graphics bundle",
+    hint: "Compiled Remotion motion-graphics bundle. Pure cache — rebuilt on demand.",
+  },
+  {
+    key: "remotionChromium", category: "remotionChromium", group: "cache",
+    icon: "Chrome", label: "Remotion Chromium cache",
+    hint: "A Chromium browser Remotion may have downloaded. Not used in production (Chromium is pre-baked), so always safe to clear.",
+  },
+];
 
 export interface StorageItem {
   category: Category;
@@ -63,18 +217,28 @@ export interface StorageItem {
   size: number;        // bytes
   mtime: number;       // epoch ms
   url?: string;        // serve URL (for preview/download)
-  /** Upload role: which part of the app references this file. */
-  kind?: "music" | "promo" | "narrator";
+  /** Sub-role used to split a physical area into cards (see AREAS). */
+  kind?: "music" | "promo" | "narrator" | "render" | "screencast";
 }
 
-/** One disk-consuming area in the breakdown. */
+/**
+ * One card in the storage manager: a labelled, sized view over a physical area
+ * (possibly a sub-role of it). Everything the UI needs to render + delete is
+ * here — the client is fully data-driven off `areas`.
+ */
 export interface StorageArea {
-  category: Category;
+  key: string;
+  category: Category;          // physical dir (used for per-file delete)
   label: string;
-  size: number;        // total bytes (recursive)
-  count: number;       // file count (recursive)
-  /** Pure cache that regenerates — safe to wipe wholesale. */
-  cache: boolean;
+  hint: string;
+  icon: string;               // lucide-react icon name
+  group: "content" | "cache";
+  cache: boolean;             // clearable wholesale via deleteStorageArea
+  danger: boolean;            // deleting can break projects
+  folderOnly: boolean;        // no per-file list; Clear-all only
+  size: number;               // total bytes for this card
+  count: number;              // file count for this card
+  items: StorageItem[];       // listed files (empty for folder-only)
 }
 
 /** Extract the upload id/token from an /api/uploads/<id> (or bare) URL. */
@@ -202,15 +366,18 @@ function listDir(category: Category): StorageItem[] {
   return out;
 }
 
-/** List every stored file by category, with totals and disk usage. */
+/**
+ * List everything on disk as an ordered set of display cards (`areas`), with a
+ * grand total, reclaimable-cache total, and disk usage. The whole UI derives
+ * from `areas`, and because the cards partition every byte exactly once, the
+ * totals can never drift from what's actually shown.
+ */
 export async function listStorage() {
+  const bySize = (a: StorageItem, b: StorageItem) => b.size - a.size;
+
+  // ── Gather + classify the physical (listable) categories ────────────────────
   const uploads = listDir("uploads");
   const outputs = listDir("outputs");
-  const tmp = listDir("tmp");
-  // Sticker cache + chunked-upload temp are flat enough to list individually,
-  // letting the operator drop a single stale file rather than the whole area.
-  const stickers = listDir("stickers");
-  const chunked = listDir("chunked");
 
   // Enrich uploads from the files table (id / original name / mime) and tag the
   // role (music / promo / narrator) by cross-referencing the app's records —
@@ -254,85 +421,74 @@ export async function listStorage() {
   } catch {
     /* files table optional */
   }
-  for (const f of outputs) f.url = `/api/outputs/${encodeURIComponent(f.name)}`;
-  for (const f of stickers) f.url = `/api/outputs/stickers/${encodeURIComponent(f.name)}`;
-  // chunked-upload parts have no public serve URL — leave url undefined.
+  // Split outputs into screencast captures vs render exports (by filename), the
+  // same way uploads split by role — see AREAS.
+  for (const f of outputs) {
+    f.kind = f.name.startsWith("screencast_") ? "screencast" : "render";
+    f.url = `/api/outputs/${encodeURIComponent(f.name)}`;
+  }
 
-  // Split uploads into role-based groups for the UI.
-  const narratorUploads = uploads.filter((f) => f.kind === "narrator");
-  const musicUploads = uploads.filter((f) => f.kind === "music");
-  const promoUploads = uploads.filter((f) => f.kind === "promo");
+  // Build the file list for every listable physical category exactly once.
+  const filesByCategory: Partial<Record<Category, StorageItem[]>> = { uploads, outputs };
+  const LISTABLE: Category[] = [
+    "thumbnails", "thumbnailFonts", "tmp", "stickers",
+    "thumbnailCharacters", "thumbnailBackgrounds", "thumbnailCutouts",
+  ];
+  for (const cat of LISTABLE) {
+    const items = listDir(cat);
+    const base = URL_BASE[cat];
+    if (base) for (const f of items) f.url = `${base}${encodeURIComponent(f.name)}`;
+    filesByCategory[cat] = items;
+  }
 
-  // Biggest first — that's what the operator wants to clear.
-  const bySize = (a: StorageItem, b: StorageItem) => b.size - a.size;
-  [uploads, outputs, tmp, stickers, chunked, narratorUploads, musicUploads, promoUploads].forEach((a) =>
-    a.sort(bySize),
-  );
+  // Folder-only categories (nested bundles / part-dirs): recursive stats, no list.
+  const folderStats: Partial<Record<Category, { size: number; count: number }>> = {};
+  for (const cat of FOLDER_ONLY) folderStats[cat] = dirStats(DIRS[cat]);
 
-  const sum = (arr: StorageItem[]) => arr.reduce((s, f) => s + f.size, 0);
+  // ── Turn the registry into sized display cards ──────────────────────────────
+  const areas: StorageArea[] = AREAS.map((def) => {
+    const cache = CACHE_CATEGORIES.has(def.category);
+    const folderOnly = FOLDER_ONLY.has(def.category);
+    let items: StorageItem[] = [];
+    let size = 0;
+    let count = 0;
+    if (folderOnly) {
+      const st = folderStats[def.category] ?? dirStats(DIRS[def.category]);
+      size = st.size;
+      count = st.count;
+    } else {
+      const pool = filesByCategory[def.category] ?? [];
+      items = (def.filter ? pool.filter(def.filter) : pool).slice().sort(bySize);
+      size = items.reduce((s, f) => s + f.size, 0);
+      count = items.length;
+    }
+    return {
+      key: def.key,
+      category: def.category,
+      label: def.label,
+      hint: def.hint,
+      icon: def.icon,
+      group: def.group,
+      cache,
+      danger: !!def.danger,
+      folderOnly,
+      size,
+      count,
+      items,
+    };
+  });
 
-  // Recursive totals for areas that hold subdirs / are otherwise nested.
-  const stickerStats = dirStats(STICKERS_DIR);
-  const chunkedStats = dirStats(CHUNKED_DIR);
-  const chromiumStats = dirStats(config.remotionBrowserCacheDir);
-  // outputs total = flat renders only (stickers live in a subdir, counted apart).
-  // tmp total = flat download cache only (chunked temp counted apart).
-  const totals = {
-    uploads: sum(uploads),
-    narrator: sum(narratorUploads),
-    music: sum(musicUploads),
-    promo: sum(promoUploads),
-    outputs: sum(outputs),
-    tmp: sum(tmp),
-    stickers: stickerStats.size,
-    chunked: chunkedStats.size,
-    remotionChromium: chromiumStats.size,
-    all:
-      sum(uploads) +
-      sum(outputs) +
-      sum(tmp) +
-      stickerStats.size +
-      chunkedStats.size +
-      chromiumStats.size,
-  };
+  // Cards partition every byte once, so the grand total is just their sum; the
+  // reclaimable figure is the sum of the cache cards. The db is never a card.
+  const all = areas.reduce((s, a) => s + a.size, 0);
+  const cacheTotal = areas.reduce((s, a) => s + (a.cache ? a.size : 0), 0);
 
-  // A flat breakdown of every space consumer (for the UI's overview), biggest
-  // first. The db is deliberately absent — never deletable.
-  const breakdown: StorageArea[] = ([
-    { category: "uploads", label: "Uploads", size: totals.uploads, count: uploads.length, cache: false },
-    { category: "outputs", label: "Render outputs", size: totals.outputs, count: outputs.length, cache: false },
-    { category: "stickers", label: "Sticker image cache", size: totals.stickers, count: stickerStats.count, cache: true },
-    { category: "tmp", label: "Tmp / download cache", size: totals.tmp, count: tmp.length, cache: true },
-    { category: "chunked", label: "Chunked-upload temp", size: totals.chunked, count: chunkedStats.count, cache: true },
-    { category: "remotionChromium", label: "Remotion Chromium cache", size: totals.remotionChromium, count: chromiumStats.count, cache: true },
-  ] as StorageArea[]).sort((a, b) => b.size - a.size);
-
-  // Disk usage for the data volume (Node 18.15+ has statfsSync).
   const disk = readDiskUsage(config.dataDir);
 
   return {
-    uploads,                 // all uploads (kept for back-compat)
-    narratorUploads,         // narrator source videos only (not music/promo)
-    musicUploads,            // background-music tracks
-    promoUploads,            // promo-library videos
-    outputs,
-    tmp,
-    stickers,                // generated sticker image cache (flat files)
-    chunked,                 // chunked-upload temp parts (flat-listed)
-    breakdown,               // every area: label + recursive size + count + cache flag
-    totals,
     disk,
-    counts: {
-      uploads: uploads.length,
-      narrator: narratorUploads.length,
-      music: musicUploads.length,
-      promo: promoUploads.length,
-      outputs: outputs.length,
-      tmp: tmp.length,
-      stickers: stickerStats.count,
-      chunked: chunkedStats.count,
-      remotionChromium: chromiumStats.count,
-    },
+    totals: { all, cache: cacheTotal },
+    areas,
   };
 }
 

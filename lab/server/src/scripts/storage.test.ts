@@ -73,8 +73,12 @@ async function main() {
     assert.equal(s.size, 200, "symlinked bytes not counted");
   });
 
-  // ── resolveSafe: accepts new areas ──────────────────────────────────────────
-  for (const cat of ["uploads", "outputs", "tmp", "stickers", "chunked", "remotionChromium"]) {
+  // ── resolveSafe: accepts every area (original + newly-surfaced) ──────────────
+  for (const cat of [
+    "uploads", "outputs", "tmp", "stickers", "chunked", "remotionChromium",
+    "thumbnails", "thumbnailFonts",
+    "thumbnailCharacters", "thumbnailBackgrounds", "thumbnailCutouts", "motionBundle",
+  ]) {
     await check(`resolveSafe: accepts a direct child in "${cat}"`, () => {
       const r = resolveSafe(cat, "file.bin");
       assert.ok(typeof r === "string" && r, `expected a path for ${cat}`);
@@ -140,6 +144,35 @@ async function main() {
     const res = await deleteStorageArea({ category: "remotionChromium" });
     assert.equal(res.freed, 500);
     assert.ok(fs.existsSync(chromiumDir));
+  });
+
+  await check("deleteStorageArea: clears a newly-surfaced thumbnail cache area", async () => {
+    const charDir = path.join(dataDir, "thumbnail-characters");
+    write(path.join(charDir, "c1.png"), 42);
+    write(path.join(charDir, "c2.png"), 58);
+    const res = await deleteStorageArea({ category: "thumbnailCharacters" });
+    assert.equal(res.freed, 100);
+    assert.equal(res.deleted, 2);
+    assert.ok(fs.existsSync(charDir), "dir recreated so the app keeps working");
+    assert.deepEqual(dirStats(charDir), { size: 0, count: 0 });
+  });
+
+  await check("deleteStorageArea: clears the motion-graphics bundle (nested)", async () => {
+    const bundleDir = path.join(dataDir, "motion-bundle");
+    write(path.join(bundleDir, "bundle/index.js"), 300);
+    write(path.join(bundleDir, "bundle/assets/x.png"), 200);
+    const res = await deleteStorageArea({ category: "motionBundle" });
+    assert.equal(res.freed, 500);
+    assert.ok(fs.existsSync(bundleDir));
+  });
+
+  await check("deleteStorageArea: REFUSES thumbnail RENDERS (content, not cache)", async () => {
+    const thumbsDir = path.join(outputsDir, "thumbnails");
+    write(path.join(thumbsDir, "keep.png"), 88);
+    const r = await deleteStorageArea({ category: "thumbnails" });
+    assert.equal(r.freed, 0);
+    assert.equal(r.errors.length, 1);
+    assert.ok(fs.existsSync(path.join(thumbsDir, "keep.png")), "content untouched");
   });
 
   await check("deleteStorageArea: REFUSES non-cache areas (uploads/outputs)", async () => {
