@@ -415,13 +415,16 @@ export async function listStorage() {
         return false;
       };
       // Classify by what actually references the file:
-      //   music    → a track in your library (z_music_tracks) — real background music
-      //   promo    → a promo-library video
+      //   music    → a track that IS in your music library (z_music_tracks). We
+      //              match by upload id only: library membership is the whole
+      //              point of "actual background music", and a stray audio file
+      //              that merely shares a track's name is NOT in the library.
+      //   promo    → a promo-library video (id or fuzzy name — promos are often
+      //              bulk-imported without a URL back to the upload id)
       //   audio    → any OTHER audio file (extracted/separated from a video, or
-      //              standalone narration audio) — NOT library music, so it's
-      //              grouped apart rather than swept in with your music tracks
+      //              standalone narration audio) — grouped apart from music
       //   narrator → everything else = a source narration video
-      if (refs.music.ids.has(fid) || nameMatches(refs.music.names)) {
+      if (refs.music.ids.has(fid)) {
         f.kind = "music";
       } else if (refs.promo.ids.has(fid) || nameMatches(refs.promo.names)) {
         f.kind = "promo";
