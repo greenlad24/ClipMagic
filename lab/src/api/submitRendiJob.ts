@@ -262,7 +262,7 @@ export default createEndpoint({
       shots,
       subtitles,
       musicUrl,
-      musicVolume: project.musicVolume != null ? project.musicVolume / 100 : 0.08,
+      musicVolume: project.musicVolume != null ? project.musicVolume / 100 : 0.04,
       musicTrackName,
       musicBpm,
       animationMapJson: project.animationMapJson,
@@ -315,7 +315,7 @@ export default createEndpoint({
     const adaptResult = manifestToRendi(manifest, {
       renderJobId: jobId,
       outputFilename,
-      musicVolumeOverride: 0.08,
+      musicVolumeOverride: 0.04,
     });
 
     // ── 7b. Upload SRT to R2 if needed ───────────────────────────────────

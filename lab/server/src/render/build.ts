@@ -306,8 +306,8 @@ export async function buildArgsFromManifest(
   }
 
   if (musicIdx >= 0) {
-    // Quiet background bed — default 8%. (project.musicVolume is a 0–1 gain.)
-    const volume = typeof m.music!.volume === "number" ? m.music!.volume : 0.08;
+    // Quiet background bed — default 4%. (project.musicVolume is a 0–1 gain.)
+    const volume = typeof m.music!.volume === "number" ? m.music!.volume : 0.04;
     filters.push(
       `[${musicIdx}:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo,` +
         `volume=${volume}[music]`
