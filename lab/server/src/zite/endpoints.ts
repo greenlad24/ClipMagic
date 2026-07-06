@@ -904,6 +904,11 @@ const createBulkNarration: Handler = async (input, userId) => {
     : [];
   if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No narration files provided." });
 
+  // Batch-wide feature toggles (both default OFF). createProject persists `false`
+  // only when explicitly false, so pass the booleans straight through per video.
+  const motionGraphics = input?.motionGraphics === true;
+  const autoScreencast = input?.autoScreencast === true;
+
   // Create a project per narration through the SAME createProject handler the
   // single-video upload uses, with the same inputs (UploadZone sends exactly
   // these). This guarantees the project record — and therefore everything the
@@ -921,6 +926,8 @@ const createBulkNarration: Handler = async (input, userId) => {
         contextHint: undefined,
         accentColor: "#FFD60A",
         musicTrackId: undefined,
+        motionGraphics,
+        autoScreencast,
       },
       userId,
     )) as { projectId: string };

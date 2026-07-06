@@ -41,10 +41,10 @@ export default function CreatePage() {
   const [contextHint, setContextHint] = useState('');
   const [accentColor, setAccentColor] = useState('#FFD60A');
   const [selectedTrackId, setSelectedTrackId] = useState('auto');
-  // Motion graphics default ON; users can switch it off per video.
-  const [motionGraphics, setMotionGraphics] = useState(true);
-  // Auto-screencast default ON; captures real sites the script mentions.
-  const [autoScreencast, setAutoScreencast] = useState(true);
+  // Motion graphics default OFF; users can switch it on per video.
+  const [motionGraphics, setMotionGraphics] = useState(false);
+  // Auto-screencast default OFF; captures real sites the script mentions when on.
+  const [autoScreencast, setAutoScreencast] = useState(false);
 
   // Selection / delete state
   const [selectionMode, setSelectionMode] = useState(false);
@@ -180,7 +180,7 @@ export default function CreatePage() {
           </div>
         </div>
 
-        {/* Motion graphics toggle — default on, switchable per video. */}
+        {/* Motion graphics toggle — default off, switchable per video. */}
         <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/10 px-4 py-3">
           <div className="flex items-start gap-3 min-w-0">
             <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
@@ -209,7 +209,7 @@ export default function CreatePage() {
           </button>
         </div>
 
-        {/* Auto-screencast toggle — default on, switchable per video. */}
+        {/* Auto-screencast toggle — default off, switchable per video. */}
         <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/10 px-4 py-3">
           <div className="flex items-start gap-3 min-w-0">
             <MonitorPlay className="w-4 h-4 text-primary mt-0.5 shrink-0" />

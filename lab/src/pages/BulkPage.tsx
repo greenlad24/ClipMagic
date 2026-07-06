@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Film, Play, Eye, Sparkles, ChevronDown, HardDrive } from 'lucide-react';
+import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Film, Play, Eye, Sparkles, ChevronDown, HardDrive, MonitorPlay } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -52,6 +52,9 @@ export default function BulkPage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [reports, setReports] = useState<Record<string, OptimizationReport>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Batch-wide feature toggles — both default OFF, applied to every video in the run.
+  const [motionGraphics, setMotionGraphics] = useState(false);
+  const [autoScreencast, setAutoScreencast] = useState(false);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -153,7 +156,7 @@ export default function BulkPage() {
         items.push({ narrationUrl, audioUrl, title });
       }
       setUploadMsg('Starting bulk run…');
-      const res = await createBulkNarration({ items });
+      const res = await createBulkNarration({ items, motionGraphics, autoScreencast });
       if (res.started === false) toast.info(res.message ?? 'A bulk run is already in progress.');
       else toast.success(`Bulk run started for ${items.length} videos.`);
       setFiles([]);
@@ -210,6 +213,26 @@ export default function BulkPage() {
             onClick={() => setPickerOpen(true)}>
             <HardDrive className="w-3.5 h-3.5" /> Choose from storage
           </Button>
+        </div>
+
+        {/* Batch feature toggles — apply to every video in the run. Both default off. */}
+        <div className="grid sm:grid-cols-2 gap-3">
+          <BulkToggle
+            icon={<Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />}
+            title="Motion graphics"
+            desc="Tasteful AI-placed lower-thirds, stat call-outs & section cards — added only where the script earns them."
+            checked={motionGraphics}
+            onChange={() => setMotionGraphics((v) => !v)}
+            disabled={uploading}
+          />
+          <BulkToggle
+            icon={<MonitorPlay className="w-4 h-4 text-primary mt-0.5 shrink-0" />}
+            title="Auto screencast"
+            desc="Captures real recordings of the websites your script mentions and cuts them in where they earn it."
+            checked={autoScreencast}
+            onChange={() => setAutoScreencast((v) => !v)}
+            disabled={uploading}
+          />
         </div>
 
         {/* Queued files (pre-upload) */}
@@ -363,6 +386,52 @@ export default function BulkPage() {
         onSelect={addStored}
         description="Reuse narrations you already uploaded — pick as many as you like, no re-upload."
       />
+    </div>
+  );
+}
+
+/** A labelled switch for the batch-wide feature toggles (motion graphics / screencast). */
+function BulkToggle({
+  icon,
+  title,
+  desc,
+  checked,
+  onChange,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/10 px-4 py-3">
+      <div className="flex items-start gap-3 min-w-0">
+        {icon}
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">{title}</p>
+          <p className="text-xs text-muted-foreground">{desc}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={`Toggle ${title.toLowerCase()}`}
+        disabled={disabled}
+        onClick={onChange}
+        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50 ${
+          checked ? 'bg-primary' : 'bg-muted'
+        }`}
+      >
+        <span
+          className={`inline-block h-4 w-4 transform rounded-full bg-background shadow transition-transform ${
+            checked ? 'translate-x-6' : 'translate-x-1'
+          }`}
+        />
+      </button>
     </div>
   );
 }
