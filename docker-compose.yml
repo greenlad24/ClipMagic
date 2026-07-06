@@ -8,8 +8,12 @@
 # then open http://<droplet-ip>:8080
 services:
   clipmagic:
+    # Both public ports now run the LAB codebase (lab/ is the real product).
+    # :8080 builds from lab/ just like :9090 does, but keeps its OWN production
+    # data volume (clipmagic-data) below and stays on port 8080. The original
+    # root app (./src, ./web, ./server) is no longer built/served — edit lab/.
     build:
-      context: .
+      context: ./lab
       dockerfile: Dockerfile
     image: clipmagic:latest
     restart: unless-stopped
