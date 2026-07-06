@@ -268,11 +268,17 @@ export default createEndpoint({
     let trackId = Array.isArray(project.musicTrack) ? project.musicTrack[0] : project.musicTrack;
 
     if (!trackId) {
+      // Any track with an audioUrl is a usable music bed — analysisStatus only
+      // reflects BPM detection, so requiring 'Ready' wrongly excluded every
+      // track (they're imported with analysisStatus undefined) and left videos
+      // with NO background music. Prefer an analyzed track, else any playable one.
       const { records: userTracks } = await MusicTracks.findAll({
-        filters: { user: context.user.id, analysisStatus: 'Ready' },
-        limit: 5,
+        filters: { user: context.user.id },
+        limit: 10,
       });
-      if (userTracks.length) trackId = userTracks[0].id;
+      const playable = userTracks.filter((t: any) => t.audioUrl);
+      const ready = playable.filter((t: any) => t.analysisStatus === 'Ready');
+      trackId = (ready[0] ?? playable[0])?.id;
     }
     if (trackId) {
       const track = await MusicTracks.findOne({ id: trackId });
