@@ -157,9 +157,22 @@ export default createEndpoint({
               captured++;
               mediaGenerated++;
             } else {
-              console.warn(`${tag} Screencast: no pre-assigned promo — marking as Error`);
-              await Shots.update({ id: shot.id, record: { captureStatus: 'Error' } });
-              failed++;
+              // No confident promo matched (off-message pool, or retrieval
+              // declined rather than force an unrelated/collage clip on screen).
+              // Fall back to Talking Head rather than erroring — showing a wrong
+              // promo is worse than not showing one (mirrors the weak-gate above).
+              console.warn(`${tag} Screencast: no confident promo match — converting to Talking Head (avoids off-message footage)`);
+              let existingLabels: Record<string, any> = {};
+              try { if (shot.uiLabelsJson) existingLabels = JSON.parse(shot.uiLabelsJson); } catch {}
+              await Shots.update({
+                id: shot.id,
+                record: {
+                  shotType: 'Talking Head',
+                  captureStatus: 'Done',
+                  uiLabelsJson: JSON.stringify({ ...existingLabels, convertedFrom: 'Screencast', conversionReason: 'No confident/on-topic promo match' }),
+                },
+              });
+              captured++;
             }
             return;
           }

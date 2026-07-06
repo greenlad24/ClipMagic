@@ -119,6 +119,29 @@ export async function buildArgsFromManifest(
   const narrationInfo = await probe(narrationPath);
   const narrationHasAudio = narrationInfo.hasAudio;
 
+  // ── Coalesce sub-threshold talking-head slivers between overlays ───────────
+  // A brief narrator cut wedged between two visuals (from overlay delay/return
+  // leads or upstream shot re-conversions) flashes a third visual for a few
+  // frames and reads as a choppy cut. Merge any <1.5s talking-head scene that
+  // sits between two overlay scenes into the preceding scene so that visual
+  // holds across the gap. Opening/closing narrator scenes (first/last) are
+  // always preserved. Runs here — the one code path every render goes through.
+  const MIN_INTERIOR_TH = 1.5;
+  const isOverlayScene = (s: Scene) => s.type !== "talking-head" && !!s.overlay;
+  let coalesced = 0;
+  for (let i = m.scenes.length - 2; i >= 1; i--) {
+    const s = m.scenes[i];
+    if (s.type !== "talking-head") continue;
+    if (s.endTime - s.startTime >= MIN_INTERIOR_TH) continue;
+    if (!isOverlayScene(m.scenes[i - 1]) || !isOverlayScene(m.scenes[i + 1])) continue;
+    m.scenes[i - 1].endTime = s.endTime; // stretch the previous visual over the sliver
+    m.scenes.splice(i, 1);
+    coalesced++;
+  }
+  if (coalesced > 0) {
+    console.log(`[build] coalesced ${coalesced} sub-${MIN_INTERIOR_TH}s talking-head sliver(s) → ${m.scenes.length} scenes (no choppy inter-overlay flashes)`);
+  }
+
   const overlays: { idx: number; scene: Scene; isImg: boolean; clipStart: number }[] = [];
   for (const scene of m.scenes) {
     if (scene.overlay && scene.overlay.clipUrl) {
@@ -242,10 +265,8 @@ export async function buildArgsFromManifest(
   // bare stream specifier as a filter label (e.g. "[0:a]") is what previously
   // broke renders that had no music.
   if (narrationHasAudio) {
-    // Narration at full level + a small +1 dB lift so the voice sits clearly
-    // above the music bed.
     filters.push(
-      `[0:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo,volume=1dB[narr_a]`
+      `[0:a]aresample=${AUDIO_SR},aformat=sample_fmts=fltp:channel_layouts=stereo[narr_a]`
     );
   } else {
     // Synthesize silence for the full duration so the output always has audio.
@@ -265,11 +286,16 @@ export async function buildArgsFromManifest(
     // normalize=0 so amix does NOT halve each input — narration keeps its level
     // and the music stays at the gain we set above (default 5%).
     filters.push(
-      `[narr_a][music]amix=inputs=2:duration=first:normalize=0:dropout_transition=2[aout]`
+      `[narr_a][music]amix=inputs=2:duration=first:normalize=0:dropout_transition=2[amixed]`
     );
   } else {
-    filters.push(`[narr_a]anull[aout]`);
+    filters.push(`[narr_a]anull[amixed]`);
   }
+  // Normalize perceived loudness to ~-14 LUFS with a -1 dBTP true-peak ceiling
+  // so the mix is consistent across videos and never hard-clips at 0 dBFS.
+  filters.push(
+    `[amixed]loudnorm=I=-14:TP=-1.0:LRA=11[aout]`
+  );
   const audioLabel = "aout";
 
   // ── argv ───────────────────────────────────────────────────────────────────

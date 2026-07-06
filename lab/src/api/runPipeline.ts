@@ -968,6 +968,28 @@ Also generate an intensity_map for EVERY integer second 0 through ${Math.floor(d
       }
     }
 
+    // ── Absorb sub-threshold talking-head slivers wedged between overlays ─────
+    // The machine-gun pass above only collapses runs of OVERLAYS. A short
+    // talking_head beat sitting BETWEEN two overlays still renders as a <1.5s
+    // flash (and, for an audio-only narration with no narrator face, a blank
+    // base) — the classic choppy "cut back to nothing for a beat" artifact.
+    // Merge each such sliver into the preceding overlay so that visual simply
+    // holds longer. Intentional hook-open / CTA-close talking-head beats (the
+    // first and last beats) are left untouched.
+    const MIN_INTERIOR_TH = 1.5;
+    semanticBeats.sort((a, b) => a.start - b.start);
+    for (let i = semanticBeats.length - 2; i >= 1; i--) {
+      const b = semanticBeats[i];
+      if (b.visualIntent !== 'talking_head') continue;
+      if (b.end - b.start >= MIN_INTERIOR_TH) continue;
+      const prev = semanticBeats[i - 1];
+      const next = semanticBeats[i + 1];
+      if (!isOverlay(prev) || !isOverlay(next)) continue; // only true between-visuals slivers
+      prev.end = b.end; // stretch the previous visual over the sliver
+      semanticBeats.splice(i, 1);
+      console.log(`[runPipeline] 🧹 Absorbed a ${(b.end - b.start).toFixed(1)}s talking-head sliver at ${b.start.toFixed(1)}s into the previous ${prev.visualIntent} (no choppy flash between overlays)`);
+    }
+
     // ── Minimum visible-overlay guardrail ────────────────────────────────────
     // An overlay is only visible from (start + overlayDelaySeconds) to end.
     // Targets / floors:

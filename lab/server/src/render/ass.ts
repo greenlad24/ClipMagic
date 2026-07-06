@@ -254,8 +254,18 @@ export async function buildAss(subtitles: SubtitleEvent[], opts: AssOptions): Pr
     // word being a heavier face (slightly wider).
     let fs = fontSize;
     const measured = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache, measureStats);
-    if (measured.w > maxTextWidth) {
-      fs = Math.max(40, Math.floor(fs * (maxTextWidth / measured.w)));
+    // The active word is enlarged by popScale at render time (line ~329), which
+    // widens the centered line. Fit against that worst case (widest word popped)
+    // so a popped emphasis word never overflows the frame and gets clipped into
+    // orphaned letters at the edges.
+    let effectiveW = measured.w;
+    if (style.highlightWord && style.popScale && style.popScale > 1 && rendered.length > 0) {
+      const longest = rendered.reduce((a, b) => (b.length > a.length ? b : a), "");
+      const longestW = (await measureText(longest, emphFont, fs, !!style.italic, ls, fontsDir, measureCache, measureStats)).w;
+      effectiveW = measured.w + longestW * (style.popScale - 1);
+    }
+    if (effectiveW > maxTextWidth) {
+      fs = Math.max(40, Math.floor(fs * (maxTextWidth / effectiveW)));
     }
     // Re-measure ink height at the fitted size for accurate box sizing.
     const ink = await measureText(phrase, emphFont, fs, !!style.italic, ls, fontsDir, measureCache, measureStats);

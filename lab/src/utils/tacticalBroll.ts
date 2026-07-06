@@ -445,7 +445,9 @@ export async function retrieveScreencast(
     if (buf > 0) { segStart = parseFloat((segStart + buf).toFixed(2)); segEnd = parseFloat(Math.min(Number.isFinite(clipDuration) ? clipDuration : segEnd + buf, segStart + MIN_PROMO_CLIP).toFixed(2)); }
   }
 
-  let confidence = segResult?.confidence ?? 0.5; // file-level only = 0.5 confidence
+  // File-level-only match confidence = the matcher's own relevance rating (it
+  // cleared the RELEVANCE_FLOOR to get here), falling back to 0.5 if unrated.
+  let confidence = segResult?.confidence ?? fileMatch.fileConfidence ?? 0.5;
   const reason = segResult?.reason ?? `File-level match: ${fileMatch.label}`;
 
   // ── Post-tactical confidence boost ────────────────────────────────────────
@@ -653,29 +655,60 @@ SCORING (ranked by importance):
 4. SEMANTIC RELEVANCE: pick the clip whose content best illustrates what the narrator is talking about.
 5. URL DOMAIN MATCH: product URL domain matches a promo video's known product → strong signal.
 
-Always pick the BEST index — never refuse.
+CRITICAL — REFUSE WHEN NOTHING FITS: an off-topic, off-brand, or multi-brand
+collage clip on screen while the narrator describes a SPECIFIC product is worse
+than showing no promo at all (the caller will fall back to on-topic stock
+footage). If NO video in the pool clearly shows THIS product / feature /
+keywords, set "match": -1. Do not stretch for a tenuous connection.
+
+Also rate your confidence in the chosen clip's relevance from 0.0 (unrelated) to
+1.0 (clearly the right product/feature). Be honest — reserve >0.7 for a genuine
+product/name match.
 
 Pool (0-indexed):
 ${poolList}
 
-Respond ONLY with valid JSON: {"match": 5, "reason": "brief reason"}`,
+Respond ONLY with valid JSON: {"match": 5, "relevance": 0.9, "reason": "brief reason"}  (use "match": -1 when nothing genuinely fits)`,
         },
         { role: 'user', content: userLines.join('\n') },
       ],
       temperature: 0,
-      max_tokens: 60,
+      // Enough headroom for {"match":N,"relevance":0.0,"reason":"…"} — 60 was
+      // truncating the JSON mid-"reason" once the relevance field was added,
+      // which threw in JSON.parse and forced EVERY match to defer to stock.
+      max_tokens: 160,
     });
     const raw = res.choices[0]?.message?.content?.trim() ?? '{}';
     console.log(`${tag} Match response: ${raw}`);
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.match === 'number') {
+    // Tolerate a truncated/decorated reason: pull the JSON object substring.
+    const jsonSlice = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+    let parsed: any;
+    try {
+      parsed = JSON.parse(jsonSlice || raw);
+    } catch {
+      // Last resort: regex out match + relevance so a cut-off reason can't sink us.
+      const m = raw.match(/"match"\s*:\s*(-?\d+)/);
+      const r = raw.match(/"relevance"\s*:\s*([0-9.]+)/);
+      parsed = m ? { match: Number(m[1]), relevance: r ? Number(r[1]) : 0.5 } : {};
+    }
+    // Relevance floor: below this we'd rather show on-topic stock than an
+    // off-message promo, so signal "no confident match" to the caller.
+    const RELEVANCE_FLOOR = 0.45;
+    if (typeof parsed.match === 'number' && parsed.match >= 0) {
+      const relevance = typeof parsed.relevance === 'number' ? parsed.relevance : 0.5;
       const video = pool[parsed.match as number];
+      if (video && relevance >= RELEVANCE_FLOOR) {
+        console.log(`${tag} Matched: "${video.label}" relevance=${relevance.toFixed(2)} reason="${parsed.reason}" → ${video.url}`);
+        return { url: video.url, label: video.label, fileConfidence: relevance };
+      }
       if (video) {
-        console.log(`${tag} Matched: "${video.label}" reason="${parsed.reason}" → ${video.url}`);
-        return { url: video.url, label: video.label };
+        console.warn(`${tag} Rejected "${video.label}" — relevance ${relevance.toFixed(2)} < ${RELEVANCE_FLOOR} (off-message); deferring to stock/b-roll`);
+        return null;
       }
     }
+    console.warn(`${tag} No confident promo match (match=${parsed.match}) — deferring to stock/b-roll`);
+    return null;
   } catch (e: any) { console.warn(`${tag} Match error: ${e?.message}`); }
-  console.warn(`${tag} Match parse failed — falling back to pool[0]`);
-  return { url: pool[0].url, label: pool[0].label };
+  console.warn(`${tag} Match parse failed — deferring to stock/b-roll (no off-message pool[0] fallback)`);
+  return null;
 }
