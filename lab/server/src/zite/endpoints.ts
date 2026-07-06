@@ -89,7 +89,12 @@ import {
 import { generateTitles } from "../thumbnails/titles.js";
 import { probeCompositeAvailable } from "../thumbnails/composite.js";
 import { restyleContrarianText as restyleContrarian, recompositeRecreation } from "../thumbnails/recreate.js";
-import { getJob as getThumbnailJob, snapshot as thumbnailJobSnapshot } from "../thumbnails/jobs.js";
+import {
+  getJob as getThumbnailJob,
+  snapshot as thumbnailJobSnapshot,
+  cancelJob as cancelThumbnailJobById,
+  cancelAllJobs as cancelAllThumbnailJobs,
+} from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
 
@@ -2578,6 +2583,21 @@ const thumbnailJobStatus: Handler = async (input) => {
   return thumbnailJobSnapshot(job);
 };
 
+/** Cancel ONE running generation job (stops between steps; marks it terminal). */
+const cancelThumbnailJob: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const cancelled = cancelThumbnailJobById(jobId);
+  const job = getThumbnailJob(jobId);
+  return { cancelled, job: job ? thumbnailJobSnapshot(job) : null };
+};
+
+/** Cancel EVERY running generation job in the queue. Returns how many were cancelled. */
+const cancelAllThumbnailJobsEndpoint: Handler = async () => {
+  const count = cancelAllThumbnailJobs();
+  return { cancelled: count };
+};
+
 /**
  * Synchronous wrapper kept for back-compat (the original blocking contract).
  * The UI now uses the start→poll pair above; this returns all variants at once.
@@ -2739,6 +2759,8 @@ export const HANDLERS: Record<string, Handler> = {
   planThumbnailContrarian,
   startContrarianGeneration,
   thumbnailJobStatus,
+  cancelThumbnailJob,
+  cancelAllThumbnailJobs: cancelAllThumbnailJobsEndpoint,
   generateThumbnails,
   listThumbnailCharacters,
   uploadThumbnailCharacter,

@@ -186,6 +186,8 @@ export interface ThumbnailJob {
   variants: JobVariant[];
   createdAt: number;
   updatedAt: number;
+  /** Set by cancelJob — the background runner checks it and stops between steps. */
+  cancelled?: boolean;
 }
 
 /** A poll-friendly snapshot (a structural copy so callers can't mutate state). */
@@ -194,6 +196,7 @@ export interface ThumbnailJobSnapshot {
   percent: number;
   done: boolean;
   error: string | null;
+  cancelled: boolean;
   variants: JobVariant[];
 }
 
@@ -435,10 +438,61 @@ export function snapshot(job: ThumbnailJob): ThumbnailJobSnapshot {
     percent: job.percent,
     done: job.done,
     error: job.error ?? null,
+    cancelled: !!job.cancelled,
     // Deep-copy each variant (incl. its sub-runs) so a poll response can't be
     // mutated by later progress ticks.
     variants: job.variants.map((v) => ({ ...v, results: v.results.map((r) => ({ ...r })) })),
   };
+}
+
+/**
+ * Request cancellation of ONE job. The background runner checks `job.cancelled`
+ * between steps and stops ASAP, marking any queued/running variants as terminal.
+ * Any still-unfinished variants/sub-runs are marked cancelled here immediately so
+ * the UI reflects it without waiting for the next step boundary. Returns false
+ * when the job is unknown or already finished.
+ */
+export function cancelJob(id: string): boolean {
+  const job = jobs.get(id);
+  if (!job || job.done) return false;
+  job.cancelled = true;
+  markUnfinishedCancelled(job);
+  job.updatedAt = Date.now();
+  return true;
+}
+
+/** Cancel ALL still-running jobs. Returns how many were cancelled. */
+export function cancelAllJobs(): number {
+  let n = 0;
+  for (const job of jobs.values()) {
+    if (!job.done && !job.cancelled) {
+      job.cancelled = true;
+      markUnfinishedCancelled(job);
+      job.updatedAt = Date.now();
+      n++;
+    }
+  }
+  return n;
+}
+
+/** Mark every queued/running sub-run + variant as a terminal "Cancelled" state. */
+function markUnfinishedCancelled(job: ThumbnailJob): void {
+  for (const v of job.variants) {
+    for (const r of v.results) {
+      if (r.status === "queued" || r.status === "running") {
+        r.status = "error";
+        r.stepLabel = "Cancelled";
+        r.error = r.error ?? "Cancelled";
+      }
+    }
+    recomputeVariant(v);
+  }
+  recomputeOverall(job);
+}
+
+/** The runner calls this between steps; when true it should stop the job. */
+export function jobCancelled(job: ThumbnailJob): boolean {
+  return !!job.cancelled;
 }
 
 /** GC finished jobs past their TTL, then evict oldest if still over the cap. */

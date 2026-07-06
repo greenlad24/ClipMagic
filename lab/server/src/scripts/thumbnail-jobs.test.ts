@@ -717,6 +717,49 @@ async function main() {
     assert.ok(jobs.getJob(ids[ids.length - 1]), "newest job should still be present");
   });
 
+  // ── cancellation ──────────────────────────────────────────────────────────────
+  await check("cancelJob marks a running job cancelled + terminates its variants", () => {
+    jobs._resetJobsForTest();
+    const job = jobs.createJob([
+      { videoId: "A", sourceThumbnailUrl: "u", expression: "smile" },
+      { videoId: "B", sourceThumbnailUrl: "u", expression: "smile" },
+    ]);
+    // Simulate one variant already mid-run.
+    jobs.updateVariant(job, 0, { status: "running", percent: 40 });
+    assert.ok(!job.done, "job is live before cancel");
+    const ok = jobs.cancelJob(job.id);
+    assert.ok(ok, "cancelJob returns true for a live job");
+    assert.ok(jobs.jobCancelled(job), "jobCancelled() is true after cancel");
+    const snap = jobs.snapshot(job);
+    assert.equal(snap.cancelled, true, "snapshot reports cancelled");
+    // Every unfinished sub-run flips to a terminal 'Cancelled' error.
+    for (const v of job.variants) {
+      for (const r of v.results) {
+        assert.equal(r.status, "error");
+        assert.equal(r.stepLabel, "Cancelled");
+      }
+    }
+  });
+
+  await check("cancelJob returns false for unknown/finished jobs", () => {
+    jobs._resetJobsForTest();
+    assert.equal(jobs.cancelJob("nope"), false, "unknown id → false");
+    const done = jobs.createJob([]); // empty → done immediately
+    assert.ok(done.done);
+    assert.equal(jobs.cancelJob(done.id), false, "finished job → false");
+  });
+
+  await check("cancelAllJobs cancels every live job and returns the count", () => {
+    jobs._resetJobsForTest();
+    const a = jobs.createJob([{ videoId: "A", sourceThumbnailUrl: "u", expression: "smile" }]);
+    const b = jobs.createJob([{ videoId: "B", sourceThumbnailUrl: "u", expression: "smile" }]);
+    const n = jobs.cancelAllJobs();
+    assert.equal(n, 2, "both live jobs cancelled");
+    assert.ok(jobs.jobCancelled(a) && jobs.jobCancelled(b));
+    // Idempotent: a second sweep finds nothing new to cancel.
+    assert.equal(jobs.cancelAllJobs(), 0, "already-cancelled jobs aren't re-counted");
+  });
+
   // cleanup
   fs.rmSync(root, { recursive: true, force: true });
   fs.rmSync(configDir, { recursive: true, force: true });

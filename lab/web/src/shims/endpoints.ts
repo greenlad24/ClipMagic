@@ -194,6 +194,10 @@ export type PlannedContrarian = {
 };
 export const thumbnailJobStatus =
   endpoint<{ jobId: string }, ThumbnailJobStatus>("thumbnailJobStatus");
+export const cancelThumbnailJob =
+  endpoint<{ jobId: string }, { cancelled: boolean; job: ThumbnailJobStatus | null }>("cancelThumbnailJob");
+export const cancelAllThumbnailJobs =
+  endpoint<Record<string, never>, { cancelled: number }>("cancelAllThumbnailJobs");
 export const listThumbnailCharacters =
   endpoint<Record<string, never>, { characters: ThumbnailCharacterState[] }>("listThumbnailCharacters");
 export const uploadThumbnailCharacter =
@@ -391,6 +395,8 @@ export type ThumbnailJobStatus = {
   percent: number;
   done: boolean;
   error: string | null;
+  /** True once the job was cancelled by the user. */
+  cancelled?: boolean;
   variants: ThumbnailJobVariant[];
 };
 export type ThumbnailCharacterMutationOutputType = {

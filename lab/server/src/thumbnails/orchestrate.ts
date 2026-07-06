@@ -58,6 +58,7 @@ import {
   attachResultOverlay,
   attachResultRecompose,
   completeJob,
+  jobCancelled,
   phasePercent,
   PHASE_LABEL,
   type ThumbnailJob,
@@ -594,6 +595,7 @@ export async function runThumbnailJob(
   const bgCandidates = loadBackgroundCandidates();
   try {
     for (let i = 0; i < input.picks.length; i++) {
+      if (jobCancelled(job)) break; // stop starting new picks once cancelled
       const videoId = input.picks[i];
       // The video-type default; upgraded below by the per-source analysis.
       let expression = expressions[i];
@@ -871,6 +873,7 @@ async function runContrarianJob(
     const chosenBgIds = chooseContrarianBackgrounds(bgCandidates.map((c) => c.id), job.variants.length);
 
     for (let i = 0; i < job.variants.length; i++) {
+      if (jobCancelled(job)) break; // stop once cancelled
       const v = variations[i];
       const template = templateForIndex(i);
       // Each template pins a NAMED background (e.g. "Black"); fall back to the

@@ -14,6 +14,8 @@ import {
   recompositeContrarianThumbnail,
   recompositeRecreationThumbnail,
   thumbnailJobStatus,
+  cancelThumbnailJob,
+  cancelAllThumbnailJobs,
   uploadThumbnailCharacter,
   deleteThumbnailCharacter,
   uploadThumbnailBackground,
@@ -65,6 +67,7 @@ import {
   Wand2,
   FileText,
   Type,
+  XCircle,
 } from 'lucide-react';
 
 /**
@@ -173,6 +176,42 @@ export default function ThumbnailDesignerPage() {
     ref.current = setInterval(() => void tick(), 1200);
     void tick();
   };
+
+  /** Cancel ONE running job — stops its poll, applies the terminal snapshot. */
+  const cancelOneJob = async (jobId: string) => {
+    try {
+      const { job: snap } = await cancelThumbnailJob({ jobId });
+      if (job?.jobId === jobId) {
+        if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+        setGenerating(false);
+        if (snap) setJob(snap);
+      }
+      if (contrarianJob?.jobId === jobId) {
+        if (contrarianPollRef.current) { clearInterval(contrarianPollRef.current); contrarianPollRef.current = null; }
+        if (snap) setContrarianJob(snap);
+      }
+      toast.success('Job cancelled.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to cancel job');
+    }
+  };
+
+  /** Cancel ALL running jobs in the queue (bulk). */
+  const cancelAllJobs = async () => {
+    try {
+      const { cancelled } = await cancelAllThumbnailJobs();
+      stopPolling();
+      setGenerating(false);
+      // Reflect the terminal state immediately with one final poll of each.
+      if (job?.jobId) thumbnailJobStatus({ jobId: job.jobId }).then(setJob).catch(() => {});
+      if (contrarianJob?.jobId) thumbnailJobStatus({ jobId: contrarianJob.jobId }).then(setContrarianJob).catch(() => {});
+      toast.success(cancelled > 0 ? `Cancelled ${cancelled} job${cancelled === 1 ? '' : 's'}.` : 'No running jobs to cancel.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to cancel jobs');
+    }
+  };
+
+  const anyJobRunning = (!!job && !job.done) || (!!contrarianJob && !contrarianJob.done) || generating;
 
   const loadStatus = () =>
     thumbnailStatus({})
@@ -605,6 +644,12 @@ export default function ThumbnailDesignerPage() {
                         {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                         Generate {picks.length > 0 ? `${picks.length} ` : ''}thumbnail{picks.length === 1 ? '' : 's'}
                       </Button>
+                      {anyJobRunning && (
+                        <Button onClick={() => void cancelAllJobs()} variant="destructive" className="w-full sm:w-auto">
+                          <XCircle className="w-4 h-4" />
+                          Cancel all jobs
+                        </Button>
+                      )}
                     </div>
                   </div>
                 )}
@@ -622,13 +667,14 @@ export default function ThumbnailDesignerPage() {
             )}
 
             {/* Results — live progress while generating, then the finished grid */}
-            {(generating || job) && <Results generating={generating} job={job} />}
+            {(generating || job) && <Results generating={generating} job={job} onCancel={cancelOneJob} />}
 
             {/* Contrarian originals — the parallel workflow's 3 from-scratch thumbnails */}
             {contrarianJob && (
               <Results
                 generating={!contrarianJob.done}
                 job={contrarianJob}
+                onCancel={cancelOneJob}
                 title="Contrarian originals"
                 subtitle="3 original thumbnails built from your background + character + a bold contrarian statement (no money claims)."
                 contrarianControls={{
@@ -1468,17 +1514,20 @@ function Results({
   title = 'Results',
   subtitle = 'Your recreated 1920×1080 thumbnails — preview and download.',
   contrarianControls,
+  onCancel,
 }: {
   generating: boolean;
   job: ThumbnailJobStatus | null;
   title?: string;
   subtitle?: string;
   contrarianControls?: ContrarianControls;
+  onCancel?: (jobId: string) => void | Promise<void>;
 }) {
   const variants = job?.variants ?? [];
   const doneCount = variants.filter((v) => v.status === 'done' || v.status === 'error').length;
   const overall = job?.percent ?? 0;
   const active = generating || (job ? !job.done : false);
+  const cancelled = !!job?.cancelled;
 
   return (
     <section className="rounded-xl border border-border bg-card p-5 space-y-5">
@@ -1487,14 +1536,33 @@ function Results({
       {/* Overall progress bar — always shown once a job exists, with the % number. */}
       {(active || job) && (
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center justify-between text-xs gap-2">
             <span className="font-medium text-foreground flex items-center gap-1.5">
-              {active ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" /> : <CheckCircle2 className="w-3.5 h-3.5 text-primary" />}
-              {active ? 'Generating thumbnails…' : 'Generation complete'}
+              {cancelled ? (
+                <XCircle className="w-3.5 h-3.5 text-destructive" />
+              ) : active ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : (
+                <CheckCircle2 className="w-3.5 h-3.5 text-primary" />
+              )}
+              {cancelled ? 'Cancelled' : active ? 'Generating thumbnails…' : 'Generation complete'}
             </span>
-            <span className="text-muted-foreground tabular-nums">
-              {variants.length > 0 && <span className="mr-2">{doneCount}/{variants.length} done</span>}
-              <span className="font-medium text-foreground">{Math.round(overall)}%</span>
+            <span className="flex items-center gap-3">
+              <span className="text-muted-foreground tabular-nums">
+                {variants.length > 0 && <span className="mr-2">{doneCount}/{variants.length} done</span>}
+                <span className="font-medium text-foreground">{Math.round(overall)}%</span>
+              </span>
+              {active && onCancel && job?.jobId && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-destructive hover:text-destructive"
+                  onClick={() => void onCancel(job.jobId)}
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                  Cancel
+                </Button>
+              )}
             </span>
           </div>
           <Progress
