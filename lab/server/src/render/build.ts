@@ -142,6 +142,35 @@ export async function buildArgsFromManifest(
     console.log(`[build] coalesced ${coalesced} sub-${MIN_INTERIOR_TH}s talking-head sliver(s) → ${m.scenes.length} scenes (no choppy inter-overlay flashes)`);
   }
 
+  // ── Don't bounce back to the narrator between consecutive overlays ─────────
+  // Each overlay carries an overlayDelaySeconds "narrator lead" (~1s of the
+  // narrator before the footage enters) and an optional narrator-return before
+  // it ends. Between two back-to-back overlays these leads/returns make the
+  // edit flip narrator↔footage every ~1.5s — it reads as frantic. When the
+  // previous scene is already an overlay there's no talking-head moment to
+  // ground, so cut straight overlay→overlay: drop the incoming lead and the
+  // outgoing return so each visual actually holds. (Leads coming OUT of a real
+  // talking-head beat are preserved — that transition still wants grounding.)
+  let deChurned = 0;
+  for (let i = 1; i < m.scenes.length; i++) {
+    const prev = m.scenes[i - 1];
+    const cur = m.scenes[i];
+    if (!isOverlayScene(prev) || !isOverlayScene(cur)) continue;
+    if (cur.overlay && (cur.overlay.overlayDelaySeconds || cur.overlay.showNarratorFirst)) {
+      cur.overlay.overlayDelaySeconds = 0;
+      cur.overlay.showNarratorFirst = false;
+      deChurned++;
+    }
+    if (prev.overlay && prev.overlay.returnToNarrator) {
+      prev.overlay.returnToNarrator = false;
+      prev.overlay.narratorReturnLeadSeconds = 0;
+      deChurned++;
+    }
+  }
+  if (deChurned > 0) {
+    console.log(`[build] removed ${deChurned} narrator lead/return flash(es) between consecutive overlays (calmer pacing)`);
+  }
+
   const overlays: { idx: number; scene: Scene; isImg: boolean; clipStart: number }[] = [];
   for (const scene of m.scenes) {
     if (scene.overlay && scene.overlay.clipUrl) {

@@ -871,7 +871,14 @@ function RendersTab({
   const [renders, setRenders] = useState<Array<{ name: string; url?: string }> | null>(null);
   useEffect(() => {
     listStorage({})
-      .then((res: any) => setRenders((res.outputs ?? []).filter((o: any) => /\.mp4$/i.test(o.name))))
+      .then((res: any) => {
+        // Rendered videos now live in the "renderOutputs" storage area
+        // (registry-driven areas replaced the old flat `outputs` list).
+        const area = Array.isArray(res?.areas)
+          ? res.areas.find((a: any) => a?.key === 'renderOutputs')
+          : null;
+        setRenders((area?.items ?? []).filter((o: any) => /\.mp4$/i.test(o.name)));
+      })
       .catch(() => setRenders([]));
   }, []);
 

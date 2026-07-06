@@ -68,8 +68,13 @@ export default function StoragePickerDialog({
     setError(null);
     try {
       const res: any = await listStorage({});
-      // narratorUploads = source narration videos only (not music / promo).
-      const list: StoredFile[] = (res?.narratorUploads ?? []).filter((f: StoredFile) => f.url);
+      // The storage manager now returns registry-driven `areas` (not a flat
+      // `narratorUploads` list). Source narration videos — not music / promo —
+      // live in the "narratorVideos" area's items.
+      const area = Array.isArray(res?.areas)
+        ? res.areas.find((a: any) => a?.key === 'narratorVideos')
+        : null;
+      const list: StoredFile[] = (area?.items ?? []).filter((f: StoredFile) => f.url);
       setItems(list);
     } catch (e: any) {
       setError(e?.message ?? 'Could not load your storage.');
