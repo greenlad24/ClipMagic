@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { createEndpoint, Projects, MusicTracks, Shots, ZiteError } from 'zite-integrations-backend-sdk';
 import OpenAI, { toFile } from 'openai';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -121,9 +128,37 @@ export default createEndpoint({
 
     const buffer = Buffer.from(await audioRes.arrayBuffer());
     const isWav = !!project.audioUrl;
-    const audioExt = isWav ? 'wav' : 'mp4';
-    const audioMime = isWav ? 'audio/wav' : 'video/mp4';
-    const audioFile = await toFile(buffer, `narration.${audioExt}`, { type: audioMime });
+
+    // Prepare the file we hand to the transcription API. When the narration is a
+    // pre-extracted WAV we send it as-is. When it's a VIDEO (e.g. one picked via
+    // "Choose from storage" that has no separate audio track attached), extract
+    // a small 16 kHz mono audio track with ffmpeg first — otherwise we'd upload
+    // the whole video (often >25 MB) and the transcription API rejects it with
+    // HTTP 413 ("Request Entity Too Large"). This adds the audio automatically.
+    let audioFile;
+    if (isWav) {
+      audioFile = await toFile(buffer, 'narration.wav', { type: 'audio/wav' });
+    } else {
+      const tmpDir = os.tmpdir();
+      const vPath = path.join(tmpDir, `narr_${projectId}.mp4`);
+      const aPath = path.join(tmpDir, `narr_${projectId}.m4a`);
+      try {
+        fs.writeFileSync(vPath, buffer);
+        await execFileAsync(
+          'ffmpeg',
+          ['-y', '-i', vPath, '-vn', '-ac', '1', '-ar', '16000', '-b:a', '64k', aPath],
+          { maxBuffer: 64 * 1024 * 1024 },
+        );
+        const audioBuf = fs.readFileSync(aPath);
+        audioFile = await toFile(audioBuf, 'narration.m4a', { type: 'audio/mp4' });
+      } catch (e: any) {
+        await Projects.update({ id: projectId, record: { status: 'Error', validationErrors: 'Could not extract audio from the narration video: ' + (e?.message ?? String(e)) } });
+        throw new ZiteError({ code: 'INTERNAL_ERROR', message: 'Could not extract audio from narration video: ' + (e?.message ?? String(e)) });
+      } finally {
+        try { fs.unlinkSync(vPath); } catch { /* */ }
+        try { fs.unlinkSync(aPath); } catch { /* */ }
+      }
+    }
 
     let transcription: any;
     try {
