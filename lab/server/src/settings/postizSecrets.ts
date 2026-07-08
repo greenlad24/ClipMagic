@@ -79,6 +79,9 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "GEMINI_API_KEY", label: "Gemini API key", group: "Thumbnail Designer", connects: "Powers the Thumbnail Designer's Nano Banana editing chain (Gemini 2.5 Flash Image AND Nano Banana Pro / Gemini 3 Pro Image) that recreates a top thumbnail with your character. Create a key in Google AI Studio (aistudio.google.com/apikey), then paste it here. Used only by this lab server — never sent to the browser." },
   { key: "YOUTUBE_DATA_API_KEY", label: "YouTube Data API key", group: "Thumbnail Designer", connects: "Lets the Thumbnail Designer search YouTube for the top-performing thumbnails for a keyword. Create an API key in Google Cloud Console (enable the YouTube Data API v3), then paste it here. Used only for search — server-only; never sent to the browser." },
 
+  { key: "DATAFORSEO_LOGIN", label: "DataForSEO login (optional)", group: "Keyword Research", connects: "OPTIONAL. The Keyword Research tool works out of the box on free signals (YouTube autocomplete + Data API + Google Trends). Add your DataForSEO API login (the email you sign in with at dataforseo.com) here — together with the password — for exact monthly Google search volume, CPC and extra keyword ideas. Server-only; never sent to the browser." },
+  { key: "DATAFORSEO_PASSWORD", label: "DataForSEO password (optional)", group: "Keyword Research", connects: "OPTIONAL. The API password from your DataForSEO dashboard (API Access), paired with the login above. Used server-side for HTTP Basic auth to DataForSEO; never sent to the browser." },
+
   // ── Per-platform OAuth app credentials ──────────────────────────────────────
   { key: "X_API_KEY", label: "X API key", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
   { key: "X_API_SECRET", label: "X API secret", group: "X (Twitter)", connects: "Connects X (Twitter) accounts for posting." },
@@ -137,6 +140,9 @@ const LAB_ONLY_KEYS = new Set([
   // Thumbnail Designer (used by the lab server, never by Postiz).
   "GEMINI_API_KEY",
   "YOUTUBE_DATA_API_KEY",
+  // Keyword Research (optional DataForSEO volume provider), used by the lab server.
+  "DATAFORSEO_LOGIN",
+  "DATAFORSEO_PASSWORD",
 ]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -385,6 +391,19 @@ export function getYoutubeDataApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.YOUTUBE_DATA_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the OPTIONAL DataForSEO credentials used by
+ * the Keyword Research tool for exact search volume + keyword ideas. Returns null
+ * unless BOTH login and password are set (mirrors the Dropbox credential getter).
+ * Env vars take precedence. Must NEVER be wired into an HTTP response.
+ */
+export function getDataForSeoCreds(): { login: string; password: string } | null {
+  const login = (process.env.DATAFORSEO_LOGIN || "").trim() || readStore().DATAFORSEO_LOGIN || "";
+  const password = (process.env.DATAFORSEO_PASSWORD || "").trim() || readStore().DATAFORSEO_PASSWORD || "";
+  if (!login || !password) return null;
+  return { login, password };
 }
 
 function canWriteConfigDir(): boolean {

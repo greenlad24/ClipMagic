@@ -155,6 +155,143 @@ export const generateChatImage = endpoint<
     modelLabel: string;
   }
 >("generateChatImage");
+// ── YouTube Keyword Research (LAB tool) ──────────────────────────────────────
+// Local mirrors of server/src/keyword/types.ts (the frontend can't import server
+// types — these are kept structurally identical so the page type-checks alone).
+export type ResearchMode = "seeds" | "topic" | "competitors" | "ai";
+export type ResearchRunStatus = "running" | "completed" | "failed";
+
+export interface KeywordGapFlags {
+  demandVsCompetition: boolean;
+  smallChannelOutlier: boolean;
+  underservedSubtopic: boolean;
+  freshnessGap: boolean;
+}
+export interface KeywordCompetitorRef {
+  channelId: string;
+  channelTitle: string;
+  subscriberCount: number | null;
+  rank: number;
+  videoId: string;
+  videoTitle: string;
+  videoViews: number;
+  videoPublishedAt: string | null;
+}
+export interface KeywordMetrics {
+  keyword: string;
+  demandScore: number;
+  competitionScore: number;
+  opportunityScore: number;
+  trendsScore: number | null;
+  autocompleteScore: number;
+  searchVolume: number | null;
+  cpc: number | null;
+  paidCompetition: number | null;
+  ytResultCount: number | null;
+  topViewMedian: number | null;
+  topViewMax: number | null;
+  avgChannelSubs: number | null;
+  topVideoAgeDays: number | null;
+  gapFlags: KeywordGapFlags;
+  cluster: string | null;
+  sources: string[];
+  topCompetitors: KeywordCompetitorRef[];
+  lastFetchedAt: number;
+}
+export interface KeywordCluster {
+  name: string;
+  keywords: string[];
+  rationale?: string;
+}
+export interface KeywordMarketAnalysis {
+  overview: string;
+  audience: string;
+  topCompetitors: { name: string; note: string }[];
+  contentAngles: string[];
+}
+export interface KeywordResearchSummary {
+  totalKeywords: number;
+  topOpportunities: string[];
+  avgDemand: number;
+  avgCompetition: number;
+  gapCount: number;
+}
+export interface InsightsReport {
+  summary: string;
+  topOpportunities: { keyword: string; why: string }[];
+  contentIdeas: { title: string; keyword: string; angle: string }[];
+  avoid: { keyword: string; why: string }[];
+  seriesStrategy: string;
+}
+export interface ResearchRunResult {
+  runId: string;
+  niche: string;
+  mode: ResearchMode;
+  keywords: KeywordMetrics[];
+  clusters: KeywordCluster[];
+  market: KeywordMarketAnalysis | null;
+  summary: KeywordResearchSummary;
+  insights: InsightsReport | null;
+  status: ResearchRunStatus;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface ResearchRunListItem {
+  id: string;
+  niche: string;
+  mode: ResearchMode;
+  totalKeywords: number;
+  gapCount: number;
+  status: ResearchRunStatus;
+  pinned: boolean;
+  createdAt: number;
+}
+export interface ResearchJobSnapshot {
+  jobId: string;
+  runId: string;
+  status: ResearchRunStatus;
+  phase: string;
+  percent: number;
+  keywordsFound: number;
+  keywordsScored: number;
+  error: string | null;
+}
+export interface KeywordResearchStatusOutput {
+  youtubeConfigured: boolean;
+  trendsAvailable: boolean;
+  keywordApiConfigured: boolean;
+  promptOptimizerConfigured: boolean;
+}
+export interface StartKeywordResearchInput {
+  mode: ResearchMode;
+  niche?: string;
+  seeds?: string[];
+  topic?: string;
+  competitors?: string[];
+  freeText?: string;
+  maxKeywords?: number;
+  refresh?: boolean;
+}
+export const keywordResearchStatus =
+  endpoint<Record<string, never>, KeywordResearchStatusOutput>("keywordResearchStatus");
+export const startKeywordResearch =
+  endpoint<StartKeywordResearchInput, { jobId: string; runId: string }>("startKeywordResearch");
+export const keywordResearchJobStatus =
+  endpoint<{ jobId: string }, ResearchJobSnapshot>("keywordResearchJobStatus");
+export const listResearchRuns =
+  endpoint<Record<string, never>, { runs: ResearchRunListItem[] }>("listResearchRuns");
+export const getResearchRun =
+  endpoint<{ runId: string }, ResearchRunResult>("getResearchRun");
+export const refreshVolume =
+  endpoint<{ runId: string }, ResearchRunResult>("refreshVolume");
+export const deleteResearchRun =
+  endpoint<{ runId: string }, { ok: true }>("deleteResearchRun");
+export const renameResearchRun =
+  endpoint<{ runId: string; niche: string }, { ok: true }>("renameResearchRun");
+export const pinResearchRun =
+  endpoint<{ runId: string; pinned: boolean }, { ok: true }>("pinResearchRun");
+
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
 export const analyzeThumbnailScript =

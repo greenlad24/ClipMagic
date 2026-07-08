@@ -80,7 +80,18 @@ export type CallPurpose =
   | "thumbnail-contrarian-writer"
   // Thumbnail Designer: turns the pasted script into viral + SEO titles that
   // ground the on-thumbnail copy for both workflows.
-  | "thumbnail-titles";
+  | "thumbnail-titles"
+  // Keyword Research: expand a topic/free-text into seed keywords (fast tier).
+  | "keyword-expand"
+  // Keyword Research: infer the market (niche, audience, competitors, angles,
+  // seeds) from free text (research tier).
+  | "keyword-market"
+  // Keyword Research: group the scored keywords into named topic clusters
+  // (research tier).
+  | "keyword-cluster"
+  // Keyword Research: synthesize actionable insights/recommendations from the
+  // scored results (research tier).
+  | "keyword-insights";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

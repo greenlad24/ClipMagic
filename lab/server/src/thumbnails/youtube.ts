@@ -169,10 +169,31 @@ function resolveFetch(fetchImpl?: FetchFn): FetchFn {
   );
 }
 
+/**
+ * Thrown when the YouTube Data API reports the daily quota is exhausted. Callers
+ * (e.g. the Keyword Research runner) catch this to STOP hammering the API and
+ * keep whatever was already scored, rather than failing the whole run.
+ */
+export class YoutubeQuotaError extends Error {
+  constructor(message = "YouTube Data API quota exceeded.") {
+    super(message);
+    this.name = "YoutubeQuotaError";
+  }
+}
+
+/** True when a YouTube API error payload/status indicates quota exhaustion. */
+function isQuotaError(status: number, json: any): boolean {
+  const reason = json?.error?.errors?.[0]?.reason || json?.error?.status;
+  return reason === "quotaExceeded" || reason === "rateLimitExceeded" || reason === "dailyLimitExceeded";
+}
+
 /** Surface a YouTube API error (search or videos.list) with an actionable message. */
 function youtubeError(status: number, json: any): Error {
   const reason = json?.error?.errors?.[0]?.reason || json?.error?.status;
   const msg = json?.error?.message || `YouTube API HTTP ${status}`;
+  if (isQuotaError(status, json)) {
+    return new YoutubeQuotaError(`YouTube API quota exceeded: ${msg}`);
+  }
   if (reason === "quotaExceeded" || status === 403) {
     return new Error(`YouTube search failed: ${msg} (check the key has YouTube Data API v3 enabled and quota remaining).`);
   }
@@ -250,4 +271,197 @@ export async function searchTopThumbnails(
     doFetch,
   );
   return selectLongForm(candidates, durations, maxResults);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keyword Research helpers (competition signals). These share the injectable
+// FetchFn + the server-only key getter, and surface a YoutubeQuotaError so the
+// research runner can stop making quota-priced calls (search.list = 100 units,
+// videos.list / channels.list = 1 unit each) and keep what it already scored.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One raw search hit for a keyword (before stats are joined on). */
+export interface KeywordSearchHit {
+  videoId: string;
+  title: string;
+  channelId: string;
+  channelTitle: string;
+}
+
+export interface KeywordSearchResult {
+  hits: KeywordSearchHit[];
+  /** pageInfo.totalResults when present (an approximate corpus size), else null. */
+  resultCount: number | null;
+}
+
+/**
+ * Parse a search.list (part=snippet) response into keyword search hits + the
+ * reported total-results count. Pure + exported for unit testing against a
+ * captured response.
+ */
+export function parseKeywordSearch(json: any): KeywordSearchResult {
+  const items: any[] = Array.isArray(json?.items) ? json.items : [];
+  const hits: KeywordSearchHit[] = [];
+  for (const it of items) {
+    const videoId = it?.id?.videoId;
+    if (typeof videoId !== "string" || !videoId) continue;
+    hits.push({
+      videoId,
+      title: typeof it?.snippet?.title === "string" ? it.snippet.title : "(untitled)",
+      channelId: typeof it?.snippet?.channelId === "string" ? it.snippet.channelId : "",
+      channelTitle: typeof it?.snippet?.channelTitle === "string" ? it.snippet.channelTitle : "",
+    });
+  }
+  const total = json?.pageInfo?.totalResults;
+  const resultCount = typeof total === "number" && Number.isFinite(total) ? total : null;
+  return { hits, resultCount };
+}
+
+/**
+ * Run ONE search.list (100 quota units) for a keyword — the most-viewed videos,
+ * US/English-targeted — and return the top `maxResults` hits + total-results.
+ * Throws YoutubeQuotaError on quota exhaustion so the runner can stop.
+ */
+export async function searchKeywordVideos(
+  keyword: string,
+  maxResults = 10,
+  fetchImpl?: FetchFn,
+): Promise<KeywordSearchResult> {
+  const key = getYoutubeDataApiKey();
+  if (!key) throw new Error("YouTube Data API key not configured.");
+  const q = keyword.trim();
+  if (!q) return { hits: [], resultCount: null };
+
+  const params = new URLSearchParams({
+    part: "snippet",
+    type: "video",
+    order: "viewCount",
+    maxResults: String(Math.max(1, Math.min(50, maxResults))),
+    regionCode: REGION_CODE,
+    relevanceLanguage: RELEVANCE_LANGUAGE,
+    q,
+    key,
+  });
+  const url = `${YT_BASE}/youtube/v3/search?${params.toString()}`;
+  const doFetch = resolveFetch(fetchImpl);
+  let res: { ok: boolean; status: number; json: () => Promise<any> };
+  try {
+    res = await doFetch(url);
+  } catch (e) {
+    throw new Error(`Could not reach the YouTube Data API: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw youtubeError(res.status, json);
+  return parseKeywordSearch(json);
+}
+
+/** Video stats joined onto a keyword hit (from videos.list). */
+export interface VideoStats {
+  views: number;
+  publishedAt: string | null;
+}
+
+/**
+ * Parse a videos.list (part=statistics,snippet) response into videoId → stats.
+ * Pure + exported for unit testing.
+ */
+export function parseVideoStats(json: any): Map<string, VideoStats> {
+  const out = new Map<string, VideoStats>();
+  const items: any[] = Array.isArray(json?.items) ? json.items : [];
+  for (const it of items) {
+    const id = it?.id;
+    if (typeof id !== "string" || !id) continue;
+    const views = Number(it?.statistics?.viewCount);
+    const publishedAt = typeof it?.snippet?.publishedAt === "string" ? it.snippet.publishedAt : null;
+    out.set(id, { views: Number.isFinite(views) ? views : 0, publishedAt });
+  }
+  return out;
+}
+
+/**
+ * Batched videos.list (1 quota unit; up to 50 ids/call) for view counts +
+ * publish dates. Throws YoutubeQuotaError on quota exhaustion.
+ */
+export async function fetchVideoStats(ids: string[], fetchImpl?: FetchFn): Promise<Map<string, VideoStats>> {
+  if (ids.length === 0) return new Map();
+  const key = getYoutubeDataApiKey();
+  if (!key) throw new Error("YouTube Data API key not configured.");
+  const doFetch = resolveFetch(fetchImpl);
+  const out = new Map<string, VideoStats>();
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const params = new URLSearchParams({ part: "statistics,snippet", id: batch.join(","), key });
+    const url = `${YT_BASE}/youtube/v3/videos?${params.toString()}`;
+    let res: { ok: boolean; status: number; json: () => Promise<any> };
+    try {
+      res = await doFetch(url);
+    } catch (e) {
+      throw new Error(`Could not reach the YouTube Data API: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw youtubeError(res.status, json);
+    for (const [k, v] of parseVideoStats(json)) out.set(k, v);
+  }
+  return out;
+}
+
+/** Channel stats (from channels.list). */
+export interface ChannelStats {
+  subscriberCount: number | null;
+  videoCount: number | null;
+  viewCount: number | null;
+  title: string;
+}
+
+/**
+ * Parse a channels.list (part=statistics,snippet) response into channelId →
+ * stats. subscriberCount is null when the channel hides it. Pure + exported.
+ */
+export function parseChannelStats(json: any): Map<string, ChannelStats> {
+  const out = new Map<string, ChannelStats>();
+  const items: any[] = Array.isArray(json?.items) ? json.items : [];
+  for (const it of items) {
+    const id = it?.id;
+    if (typeof id !== "string" || !id) continue;
+    const s = it?.statistics ?? {};
+    const hidden = s?.hiddenSubscriberCount === true;
+    const subs = Number(s?.subscriberCount);
+    const vids = Number(s?.videoCount);
+    const views = Number(s?.viewCount);
+    out.set(id, {
+      subscriberCount: hidden || !Number.isFinite(subs) ? null : subs,
+      videoCount: Number.isFinite(vids) ? vids : null,
+      viewCount: Number.isFinite(views) ? views : null,
+      title: typeof it?.snippet?.title === "string" ? it.snippet.title : "",
+    });
+  }
+  return out;
+}
+
+/**
+ * Batched channels.list (1 quota unit; up to 50 ids/call) for subscriber counts.
+ * Throws YoutubeQuotaError on quota exhaustion.
+ */
+export async function fetchChannelStats(ids: string[], fetchImpl?: FetchFn): Promise<Map<string, ChannelStats>> {
+  const uniq = [...new Set(ids.filter((id) => id))];
+  if (uniq.length === 0) return new Map();
+  const key = getYoutubeDataApiKey();
+  if (!key) throw new Error("YouTube Data API key not configured.");
+  const doFetch = resolveFetch(fetchImpl);
+  const out = new Map<string, ChannelStats>();
+  for (let i = 0; i < uniq.length; i += 50) {
+    const batch = uniq.slice(i, i + 50);
+    const params = new URLSearchParams({ part: "statistics,snippet", id: batch.join(","), key });
+    const url = `${YT_BASE}/youtube/v3/channels?${params.toString()}`;
+    let res: { ok: boolean; status: number; json: () => Promise<any> };
+    try {
+      res = await doFetch(url);
+    } catch (e) {
+      throw new Error(`Could not reach the YouTube Data API: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw youtubeError(res.status, json);
+    for (const [k, v] of parseChannelStats(json)) out.set(k, v);
+  }
+  return out;
 }

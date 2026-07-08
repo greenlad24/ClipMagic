@@ -9,6 +9,7 @@ import {
   CalendarClock,
   Image as ImageIcon,
   Sparkles,
+  TrendingUp,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -161,6 +162,19 @@ export const TOOLS: ToolDefinition[] = [
     accent: 'blue',
     detail: 'Nano Banana chat',
     // Reuses the same Gemini key as the Thumbnail Designer.
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'keyword-research',
+    title: 'Keyword Research',
+    description:
+      'Find high-volume YouTube keywords and untapped market gaps in your niche — demand vs competition scoring, related keywords, clusters and who dominates each.',
+    icon: TrendingUp,
+    route: '/keyword-research',
+    status: 'live',
+    accent: 'green',
+    detail: 'YouTube SEO',
+    // Needs the YouTube Data API key (set in the same write-only Postiz settings).
     configureRoute: '/settings/postiz',
   },
   {

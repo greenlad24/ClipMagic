@@ -143,3 +143,102 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
 }
 
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
+
+/**
+ * YouTube Keyword Research tool. A PERSISTENT cache of keyword metrics,
+ * competitors and per-keyword dominance so runs update information over time
+ * instead of refetching from scratch. `kw_keywords` is keyed by the normalized
+ * keyword text (global cache, refreshed on a TTL); `kw_runs` records each
+ * research run + its ordered keyword list for the saved-runs history.
+ */
+db.exec(`
+CREATE TABLE IF NOT EXISTS kw_keywords (
+  keyword            TEXT PRIMARY KEY,      -- normalized (lowercase, single-spaced)
+  display            TEXT NOT NULL,         -- original casing to show
+  demand_score       REAL,
+  competition_score  REAL,
+  opportunity_score  REAL,
+  trends_score       REAL,
+  autocomplete_score REAL,
+  yt_result_count    INTEGER,
+  top_view_median    INTEGER,
+  top_view_max       INTEGER,
+  avg_channel_subs   INTEGER,
+  top_video_age_days INTEGER,
+  gap_flags_json     TEXT,                  -- GapFlags
+  sources_json       TEXT,                  -- string[]
+  last_fetched_at    INTEGER
+);
+
+-- YouTube channels that rank for keywords (cached channel stats).
+CREATE TABLE IF NOT EXISTS kw_competitors (
+  channel_id        TEXT PRIMARY KEY,
+  title             TEXT NOT NULL,
+  subscriber_count  INTEGER,
+  video_count       INTEGER,
+  view_count        INTEGER,
+  last_fetched_at   INTEGER
+);
+
+-- Who dominates each keyword: one row per (keyword, rank).
+CREATE TABLE IF NOT EXISTS kw_dominance (
+  keyword            TEXT NOT NULL,
+  rank               INTEGER NOT NULL,      -- 1 = top result
+  channel_id         TEXT,
+  channel_title      TEXT,
+  subscriber_count   INTEGER,
+  video_id           TEXT,
+  video_title        TEXT,
+  video_views        INTEGER,
+  video_published_at TEXT,
+  updated_at         INTEGER NOT NULL,
+  PRIMARY KEY (keyword, rank)
+);
+
+-- One research run (the saved-runs history).
+CREATE TABLE IF NOT EXISTS kw_runs (
+  id                TEXT PRIMARY KEY,
+  niche             TEXT NOT NULL DEFAULT '',
+  mode              TEXT NOT NULL,          -- seeds | topic | competitors | ai
+  input_json        TEXT NOT NULL,          -- ResearchInput
+  status            TEXT NOT NULL,          -- running | completed | failed
+  keyword_list_json TEXT,                   -- ordered normalized keyword strings
+  clusters_json     TEXT,                   -- KeywordCluster[]
+  market_json       TEXT,                   -- MarketAnalysis | null
+  summary_json      TEXT,                   -- ResearchRunSummary
+  error             TEXT,
+  created_at        INTEGER NOT NULL,
+  updated_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_kw_runs_created ON kw_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_kw_dom_keyword  ON kw_dominance(keyword);
+CREATE INDEX IF NOT EXISTS idx_kw_kw_fetched   ON kw_keywords(last_fetched_at);
+`);
+
+/**
+ * Additive migration: real search-volume columns on the keyword cache, populated
+ * by the optional DataForSEO provider (monthly Google search volume + CPC + paid
+ * competition index). Nullable so existing rows and free-signal-only runs are
+ * unaffected.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(kw_keywords)").all() as Array<{ name: string }>;
+  const add = (name: string, decl: string) => {
+    if (!cols.some((c) => c.name === name)) db.exec(`ALTER TABLE kw_keywords ADD COLUMN ${name} ${decl}`);
+  };
+  add("search_volume", "INTEGER");
+  add("cpc", "REAL");
+  add("paid_competition", "REAL");
+}
+
+/**
+ * Additive migrations on kw_runs: the AI insights report (JSON) and a `pinned`
+ * flag so favorite runs sort to the top of the history sidebar.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(kw_runs)").all() as Array<{ name: string }>;
+  const has = (name: string) => cols.some((c) => c.name === name);
+  if (!has("insights_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN insights_json TEXT");
+  if (!has("pinned")) db.exec("ALTER TABLE kw_runs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+}

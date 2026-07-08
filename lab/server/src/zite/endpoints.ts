@@ -44,6 +44,7 @@ import {
   updateSettings as updatePostizSettingsStore,
   restartPostiz as restartPostizContainer,
   dockerSocketAvailable,
+  getDataForSeoCreds,
 } from "../settings/postizSecrets.js";
 import {
   getStatus as bulkSchedulerStatus,
@@ -106,6 +107,15 @@ import {
 } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
+import { startResearch, getResearchSnapshot, refreshRunVolume } from "../keyword/run.js";
+import {
+  listRuns as listKeywordRuns,
+  hydrateRun,
+  deleteRun as deleteKeywordRun,
+  updateRun as updateKeywordRun,
+  setRunPinned,
+} from "../db/keywordResearch.js";
+import type { ResearchInput, ResearchMode } from "../keyword/types.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -2756,6 +2766,98 @@ const generateChatImage: Handler = async (input) => {
   };
 };
 
+// ── Keyword Research (LAB tool) ──────────────────────────────────────────────
+
+/** Gate the UI: which signals are available for keyword research. */
+const keywordResearchStatus: Handler = async () => ({
+  youtubeConfigured: youtubeConfigured(),
+  trendsAvailable: true, // best-effort; the runner tolerates Trends being blocked.
+  keywordApiConfigured: !!getDataForSeoCreds(),
+  promptOptimizerConfigured: anthropicConfigured(),
+});
+
+const RESEARCH_MODES: ReadonlySet<string> = new Set(["seeds", "topic", "competitors", "ai"]);
+
+/** Coerce the raw request body into a validated ResearchInput. */
+function coerceResearchInput(input: any): ResearchInput {
+  const mode = String(input?.mode ?? "");
+  if (!RESEARCH_MODES.has(mode)) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "mode must be one of seeds | topic | competitors | ai." });
+  }
+  const strArray = (v: unknown): string[] | undefined =>
+    Array.isArray(v) ? v.map((x) => String(x)).map((s) => s.trim()).filter(Boolean) : undefined;
+  const maxRaw = Number(input?.maxKeywords);
+  return {
+    mode: mode as ResearchMode,
+    niche: typeof input?.niche === "string" ? input.niche : undefined,
+    seeds: strArray(input?.seeds),
+    topic: typeof input?.topic === "string" ? input.topic : undefined,
+    competitors: strArray(input?.competitors),
+    freeText: typeof input?.freeText === "string" ? input.freeText : undefined,
+    maxKeywords: Number.isFinite(maxRaw) && maxRaw > 0 ? Math.floor(maxRaw) : undefined,
+    refresh: input?.refresh === true,
+  };
+}
+
+/** Start a research run in the background; returns { jobId, runId } immediately. */
+const startKeywordResearch: Handler = async (input) => startResearch(coerceResearchInput(input));
+
+/** Live snapshot the UI polls while a run is in flight. */
+const keywordResearchJobStatus: Handler = async (input) => {
+  const jobId: string = input?.jobId;
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  const snap = getResearchSnapshot(jobId);
+  if (!snap) throw new ZiteError({ code: "NOT_FOUND", message: "Research job not found (it may have expired)." });
+  return snap;
+};
+
+/** Saved-runs history (newest first). */
+const listResearchRuns: Handler = async () => ({ runs: listKeywordRuns() });
+
+/** The full, hydrated result of a saved run. */
+const getResearchRun: Handler = async (input) => {
+  const runId: string = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  const run = hydrateRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Research run not found." });
+  return run;
+};
+
+/** Delete a saved run from the history. */
+const deleteResearchRun: Handler = async (input) => {
+  const runId: string = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  deleteKeywordRun(runId);
+  return { ok: true };
+};
+
+/** Rename a saved run (the niche/label shown in the history sidebar). */
+const renameResearchRun: Handler = async (input) => {
+  const runId: string = input?.runId;
+  const niche = String(input?.niche ?? "").trim();
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  if (!niche) throw new ZiteError({ code: "BAD_REQUEST", message: "A name is required." });
+  if (!hydrateRun(runId)) throw new ZiteError({ code: "NOT_FOUND", message: "Research run not found." });
+  updateKeywordRun(runId, { niche });
+  return { ok: true };
+};
+
+/** Pin / unpin a saved run (pinned runs sort to the top of the sidebar). */
+const pinResearchRun: Handler = async (input) => {
+  const runId: string = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  if (!hydrateRun(runId)) throw new ZiteError({ code: "NOT_FOUND", message: "Research run not found." });
+  setRunPinned(runId, !!input?.pinned);
+  return { ok: true };
+};
+
+/** Backfill DataForSEO search volume onto an existing run (needs credentials). */
+const refreshVolume: Handler = async (input) => {
+  const runId: string = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return refreshRunVolume(runId);
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -2860,6 +2962,16 @@ export const HANDLERS: Record<string, Handler> = {
   // AI Image Generator (LAB tool)
   imageGeneratorStatus,
   generateChatImage,
+  // Keyword Research (LAB tool)
+  keywordResearchStatus,
+  startKeywordResearch,
+  keywordResearchJobStatus,
+  refreshVolume,
+  renameResearchRun,
+  pinResearchRun,
+  listResearchRuns,
+  getResearchRun,
+  deleteResearchRun,
 };
 
 void config;

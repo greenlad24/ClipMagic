@@ -15,6 +15,7 @@ import PostizSettingsPage from './pages/PostizSettingsPage';
 import BulkSchedulerPage from './pages/BulkSchedulerPage';
 import ThumbnailDesignerPage from './pages/ThumbnailDesignerPage';
 import ImageGeneratorPage from './pages/ImageGeneratorPage';
+import KeywordResearchPage from './pages/KeywordResearchPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/bulk-scheduler" element={<BulkSchedulerPage />} />
         <Route path="/thumbnail-designer" element={<ThumbnailDesignerPage />} />
         <Route path="/image-generator" element={<ImageGeneratorPage />} />
+        <Route path="/keyword-research" element={<KeywordResearchPage />} />
       </Routes>
       <BackgroundJobs />
       <Toaster theme="dark" />
