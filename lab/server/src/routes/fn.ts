@@ -21,7 +21,9 @@ const LOCAL_USER = "local";
  */
 // `uploadThumbnailCharacter` carries a large base64 image (no secret), but
 // logging it would flood the logs — redact its body too.
-const REDACT_INPUT = new Set(["updatePostizSettings", "uploadThumbnailCharacter"]);
+// `generateChatImage` carries base64 reference images (no secret) that would
+// otherwise flood the logs on every send — redact its body too.
+const REDACT_INPUT = new Set(["updatePostizSettings", "uploadThumbnailCharacter", "generateChatImage"]);
 
 /** Compact one-line preview of an object for logs (no huge blobs). */
 function preview(obj: unknown, max = 300): string {

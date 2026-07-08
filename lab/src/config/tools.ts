@@ -8,6 +8,7 @@ import {
   Sticker,
   CalendarClock,
   Image as ImageIcon,
+  Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -148,6 +149,18 @@ export const TOOLS: ToolDefinition[] = [
     accent: 'purple',
     detail: 'AI thumbnails',
     // Needs the Gemini + YouTube keys (set in the same write-only Postiz settings).
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'image-generator',
+    title: 'AI Image Generator',
+    description: 'Chat to generate or edit images with Nano Banana — describe what you want, upload images to restyle or combine. Nothing is saved.',
+    icon: Sparkles,
+    route: '/image-generator',
+    status: 'live',
+    accent: 'blue',
+    detail: 'Nano Banana chat',
+    // Reuses the same Gemini key as the Thumbnail Designer.
     configureRoute: '/settings/postiz',
   },
   {

@@ -60,6 +60,15 @@ import {
 import { chromiumAvailable } from "../capture/chromium.js";
 import { nanoBananaConfigured } from "../thumbnails/nanoBanana.js";
 import { coerceMode } from "../thumbnails/imageProviders.js";
+import {
+  imageChatConfigured,
+  optimizeImagePrompt,
+  generateChatImage as runChatImage,
+  coerceChatModel,
+  coerceAspect,
+  chatModelLabel,
+} from "../imagechat/imageChat.js";
+import { anthropicConfigured } from "../ai/claude.js";
 import { searchTopThumbnails, youtubeConfigured } from "../thumbnails/youtube.js";
 import {
   listCharacters,
@@ -2676,6 +2685,77 @@ const uploadThumbnailFont: Handler = async (input) => {
 
 const deleteThumbnailFont: Handler = async () => ({ font: deleteFont() });
 
+// ── AI Image Generator (LAB tool) ─────────────────────────────────────────────
+// A nano-banana-style chatbot. Ephemeral by design: images travel as base64 in
+// the request/response and NOTHING is written to disk or the DB — "no memory of
+// past chats should be saved". Reuses the SAME Gemini key as the Thumbnail
+// Designer (configured at /settings/postiz).
+
+/** Whether the image generator can run (Gemini key) + whether prompt optimization is on (Anthropic). */
+const imageGeneratorStatus: Handler = async () => ({
+  geminiConfigured: imageChatConfigured(),
+  promptOptimizerConfigured: anthropicConfigured(),
+});
+
+/** Coerce the incoming reference images ([{ base64, mimeType }]) to EditImage buffers. */
+function coerceChatImages(input: any): { data: Buffer; mimeType: string }[] {
+  const arr = Array.isArray(input?.images) ? input.images : [];
+  const out: { data: Buffer; mimeType: string }[] = [];
+  for (const img of arr) {
+    // Accept either a raw base64 string or an object { base64|data, mimeType }.
+    let b64 = "";
+    let mime = "image/png";
+    if (typeof img === "string") {
+      b64 = img;
+    } else if (img && typeof img === "object") {
+      b64 = String(img.base64 ?? img.data ?? "");
+      if (typeof img.mimeType === "string" && img.mimeType) mime = img.mimeType;
+    }
+    // Tolerate a full data URL ("data:image/png;base64,....").
+    const m = /^data:([^;]+);base64,(.*)$/s.exec(b64);
+    if (m) {
+      mime = m[1];
+      b64 = m[2];
+    }
+    b64 = b64.trim();
+    if (!b64) continue;
+    out.push({ data: Buffer.from(b64, "base64"), mimeType: mime });
+  }
+  // Cap the number of reference images sent to the model to keep requests sane.
+  return out.slice(0, 6);
+}
+
+/**
+ * Optimize the user's words into a strong image prompt, then generate (or edit,
+ * when reference images are supplied) with Nano Banana. Returns the image as
+ * base64 plus the prompt actually sent, so the UI can show what it optimized to.
+ */
+const generateChatImage: Handler = async (input) => {
+  const userPrompt = String(input?.prompt ?? "").trim();
+  if (!userPrompt) throw new ZiteError({ code: "BAD_REQUEST", message: "Type a prompt to generate an image." });
+  if (!imageChatConfigured()) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Gemini API key not configured — add it in Settings → Thumbnail Designer first.",
+    });
+  }
+  const images = coerceChatImages(input);
+  const model = coerceChatModel(input?.model);
+  const aspect = coerceAspect(input?.aspect);
+  // Optimize by default; the UI can opt out (optimize:false) to send verbatim.
+  const wantOptimize = input?.optimize !== false;
+  const finalPrompt = wantOptimize ? await optimizeImagePrompt(userPrompt, images.length > 0) : userPrompt;
+
+  const image = await runChatImage({ instruction: finalPrompt, images, model, aspect });
+  return {
+    image, // { base64, mimeType }
+    prompt: finalPrompt,
+    optimized: wantOptimize && finalPrompt !== userPrompt,
+    model,
+    modelLabel: chatModelLabel(model),
+  };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -2777,6 +2857,9 @@ export const HANDLERS: Record<string, Handler> = {
   deleteThumbnailBackground,
   uploadThumbnailFont,
   deleteThumbnailFont,
+  // AI Image Generator (LAB tool)
+  imageGeneratorStatus,
+  generateChatImage,
 };
 
 void config;

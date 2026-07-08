@@ -134,6 +134,27 @@ export const listStorage = endpoint("listStorage");
 export const deleteStorageFiles = endpoint("deleteStorageFiles");
 export const deleteStorageArea = endpoint("deleteStorageArea");
 export const reviewEdit = endpoint("reviewEdit");
+// AI Image Generator (LAB tool) — ephemeral Nano Banana chat.
+export const imageGeneratorStatus =
+  endpoint<Record<string, never>, { geminiConfigured: boolean; promptOptimizerConfigured: boolean }>(
+    "imageGeneratorStatus",
+  );
+export const generateChatImage = endpoint<
+  {
+    prompt: string;
+    images?: { base64: string; mimeType: string }[];
+    model?: string;
+    aspect?: string;
+    optimize?: boolean;
+  },
+  {
+    image: { base64: string; mimeType: string };
+    prompt: string;
+    optimized: boolean;
+    model: string;
+    modelLabel: string;
+  }
+>("generateChatImage");
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
 export const analyzeThumbnailScript =
