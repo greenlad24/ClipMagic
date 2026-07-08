@@ -91,7 +91,10 @@ export type CallPurpose =
   | "keyword-cluster"
   // Keyword Research: synthesize actionable insights/recommendations from the
   // scored results (research tier).
-  | "keyword-insights";
+  | "keyword-insights"
+  // Keyword Research favorites: extract searchable keyword phrases from saved
+  // YouTube titles (fast tier).
+  | "keyword-extract";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

@@ -15,6 +15,7 @@ import { db } from "./index.js";
 import {
   normalizeKeyword,
   type CompetitorRef,
+  type ChannelProfile,
   type GapFlags,
   type InsightsReport,
   type KeywordCluster,
@@ -44,6 +45,7 @@ interface KeywordRow {
   search_volume: number | null;
   cpc: number | null;
   paid_competition: number | null;
+  competition_fetched: number | null;
   yt_result_count: number | null;
   top_view_median: number | null;
   top_view_max: number | null;
@@ -102,6 +104,8 @@ function rowToMetrics(row: KeywordRow): KeywordMetrics {
     searchVolume: row.search_volume,
     cpc: row.cpc,
     paidCompetition: row.paid_competition,
+    competitionFetched: !!row.competition_fetched,
+    alreadyCovered: false, // per-run; hydrateRun overrides from the run's covered set
     ytResultCount: row.yt_result_count,
     topViewMedian: row.top_view_median,
     topViewMax: row.top_view_max,
@@ -122,9 +126,10 @@ export function upsertKeyword(m: KeywordMetrics): void {
     `INSERT OR REPLACE INTO kw_keywords
        (keyword, display, demand_score, competition_score, opportunity_score,
         trends_score, autocomplete_score, search_volume, cpc, paid_competition,
-        yt_result_count, top_view_median, top_view_max, avg_channel_subs,
-        top_video_age_days, gap_flags_json, sources_json, last_fetched_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        competition_fetched, yt_result_count, top_view_median, top_view_max,
+        avg_channel_subs, top_video_age_days, gap_flags_json, sources_json,
+        last_fetched_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
   ).run(
     normalized,
     m.keyword,
@@ -136,6 +141,7 @@ export function upsertKeyword(m: KeywordMetrics): void {
     m.searchVolume,
     m.cpc,
     m.paidCompetition,
+    m.competitionFetched ? 1 : 0,
     m.ytResultCount,
     m.topViewMedian,
     m.topViewMax,
@@ -259,6 +265,8 @@ export interface RunRow {
   clusters_json: string | null;
   market_json: string | null;
   insights_json: string | null;
+  channel_json: string | null;
+  covered_json: string | null;
   summary_json: string | null;
   error: string | null;
   pinned: number;
@@ -287,6 +295,8 @@ export function updateRun(
     clusters?: KeywordCluster[];
     market?: MarketAnalysis | null;
     insights?: InsightsReport | null;
+    channel?: ChannelProfile | null;
+    covered?: string[];
     summary?: ResearchRunSummary;
     error?: string | null;
     niche?: string;
@@ -313,6 +323,14 @@ export function updateRun(
   if (patch.insights !== undefined) {
     sets.push("insights_json = ?");
     vals.push(patch.insights === null ? null : JSON.stringify(patch.insights));
+  }
+  if (patch.channel !== undefined) {
+    sets.push("channel_json = ?");
+    vals.push(patch.channel === null ? null : JSON.stringify(patch.channel));
+  }
+  if (patch.covered !== undefined) {
+    sets.push("covered_json = ?");
+    vals.push(JSON.stringify(patch.covered));
   }
   if (patch.summary !== undefined) {
     sets.push("summary_json = ?");
@@ -380,6 +398,8 @@ export function hydrateRun(id: string): ResearchRunResult | null {
   const clusters = safeParse<KeywordCluster[]>(row.clusters_json) ?? [];
   const market = safeParse<MarketAnalysis>(row.market_json) ?? null;
   const insights = safeParse<InsightsReport>(row.insights_json) ?? null;
+  const channel = safeParse<ChannelProfile>(row.channel_json) ?? null;
+  const coveredSet = new Set((safeParse<string[]>(row.covered_json) ?? []).map((k) => normalizeKeyword(k)));
 
   // keyword (normalized) → cluster name, so each hydrated keyword gets tagged.
   const clusterOf = new Map<string, string>();
@@ -392,6 +412,7 @@ export function hydrateRun(id: string): ResearchRunResult | null {
     const m = getKeyword(norm);
     if (!m) continue;
     m.cluster = clusterOf.get(normalizeKeyword(norm)) ?? null;
+    m.alreadyCovered = coveredSet.has(normalizeKeyword(norm));
     keywords.push(m);
   }
 
@@ -407,6 +428,7 @@ export function hydrateRun(id: string): ResearchRunResult | null {
     clusters,
     market,
     insights,
+    channel,
     summary,
     status: row.status,
     error: row.error,

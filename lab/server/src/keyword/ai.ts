@@ -8,6 +8,7 @@
 import { anthropicConfigured, claudeJSONForPurpose } from "../ai/claude.js";
 import {
   normalizeKeyword,
+  type ChannelProfile,
   type InsightsReport,
   type KeywordCluster,
   type KeywordMetrics,
@@ -158,6 +159,76 @@ function fallbackClusters(list: string[]): KeywordCluster[] {
   return [{ name: "All keywords", keywords: list }];
 }
 
+/** Common English filler words to strip from the heuristic keyword fallback. */
+const STOPWORDS = new Set([
+  "a", "an", "the", "and", "or", "but", "of", "to", "in", "on", "for", "with",
+  "at", "by", "from", "as", "is", "are", "was", "were", "be", "been", "being",
+  "how", "what", "why", "when", "where", "who", "which", "this", "that", "these",
+  "those", "it", "its", "you", "your", "i", "me", "my", "we", "our", "he", "she",
+  "they", "them", "his", "her", "do", "does", "did", "can", "will", "would",
+  "should", "could", "if", "then", "than", "so", "up", "out", "about", "into",
+  "over", "after", "before", "vs", "get", "got", "not", "no", "yes",
+]);
+
+/**
+ * Heuristic keyword extraction used when AI is off: strip punctuation + stopwords
+ * from each title, then keep the meaningful token run(s) as a phrase. Cheap and
+ * deterministic — a couple of phrases per title, deduped + lowercased.
+ */
+function heuristicExtract(titles: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const title of titles) {
+    const words = title
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 2 && !STOPWORDS.has(w));
+    if (words.length === 0) continue;
+    // Whole meaningful phrase + the leading 2–3 words as a tighter head term.
+    const phrases = [words.join(" "), words.slice(0, 3).join(" ")];
+    for (const p of phrases) {
+      const norm = normalizeKeyword(p);
+      if (norm && !seen.has(norm)) {
+        seen.add(norm);
+        out.push(norm);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Extract the core SEARCHABLE keyword phrases a viewer would actually type from a
+ * set of YouTube titles (2–4 per title, deduped, lowercased-ish, no filler).
+ * Fast (Haiku) tier. Falls back to a punctuation/stopword heuristic when AI is
+ * off. NEVER throws — returns [] on any failure.
+ */
+export async function extractKeywordsFromTitles(titles: string[]): Promise<string[]> {
+  const clean = [...new Set(titles.map((t) => t.trim()).filter(Boolean))];
+  if (clean.length === 0) return [];
+  if (!anthropicConfigured()) return heuristicExtract(clean);
+  try {
+    const raw = await claudeJSONForPurpose({
+      tier: "fast",
+      purpose: "keyword-extract",
+      system:
+        "You extract the core SEARCHABLE keyword phrases from YouTube video titles — the short phrases a " +
+        "real viewer would TYPE into YouTube search to find that video. For each title, pull 2–4 concise " +
+        "phrases: strip clickbait filler, punctuation, emojis and stopwords; keep the topic/intent. Lowercase " +
+        'them, dedupe across all titles. Respond as STRICT JSON: {"keywords": ["...", "..."]}.',
+      messages: [{ role: "user", content: `Titles:\n${clean.join("\n")}` }],
+    });
+    const parsed = asStringArray((JSON.parse(raw) as { keywords?: unknown }).keywords).map((k) =>
+      normalizeKeyword(k),
+    );
+    const deduped = [...new Set(parsed.filter(Boolean))];
+    return deduped.length ? deduped : heuristicExtract(clean);
+  } catch {
+    return heuristicExtract(clean);
+  }
+}
+
 /**
  * Turn the scored results into an actionable insights report: the opportunity
  * landscape, the best keywords to target (with WHY), concrete video ideas,
@@ -170,9 +241,16 @@ export async function generateInsights(input: {
   keywords: KeywordMetrics[];
   clusters: KeywordCluster[];
   market: MarketAnalysis | null;
+  /** The user's own channel, when supplied — drives the "new avenues" section. */
+  channel?: ChannelProfile | null;
 }): Promise<InsightsReport | null> {
   if (!anthropicConfigured()) return null;
   if (input.keywords.length === 0) return null;
+
+  // When we know the user's channel, feed a sample of their existing video titles
+  // so the model can recommend GROWTH TOPICS with demand they haven't covered yet.
+  const channel = input.channel ?? null;
+  const channelTitles = channel ? channel.videos.slice(0, 40).map((v) => v.title).filter(Boolean) : [];
 
   // Feed a compact, ranked digest (top 30) so the model reasons over real numbers
   // without a huge prompt. Gap flags are spelled out — they're the "why".
@@ -206,9 +284,15 @@ export async function generateInsights(input: {
         '"topOpportunities": [{"keyword": string, "why": string}], ' +
         '"contentIdeas": [{"title": string, "keyword": string, "angle": string}], ' +
         '"avoid": [{"keyword": string, "why": string}], ' +
+        '"newAvenues": [{"topic": string, "why": string}], ' +
         '"seriesStrategy": string' +
         "}. 4–6 items in topOpportunities and contentIdeas, up to 4 in avoid. Titles should be real, clickable " +
-        "YouTube titles. Keep each string concise.",
+        "YouTube titles. Keep each string concise." +
+        (channel
+          ? " The user's OWN channel is provided (title + a sample of their existing video titles). Fill " +
+            '"newAvenues" with 3–5 GROWTH TOPICS that have demand in this data but that the channel HASN\'T ' +
+            "covered yet — each `why` should reference how it differs from / extends their existing content."
+          : ' Leave "newAvenues" as an empty array.'),
       messages: [
         {
           role: "user",
@@ -217,6 +301,7 @@ export async function generateInsights(input: {
             market: input.market,
             clusters: input.clusters.map((c) => ({ name: c.name, size: c.keywords.length })),
             keywords: digest,
+            channel: channel ? { title: channel.title, videoTitles: channelTitles } : null,
           }),
         },
       ],
@@ -241,6 +326,8 @@ export async function generateInsights(input: {
             .filter((x) => x.title)
         : [],
       avoid: pairs(p.avoid, ["keyword", "why"]),
+      // New avenues are only meaningful when a channel was supplied.
+      newAvenues: channel ? pairs(p.newAvenues, ["topic", "why"]) : [],
       seriesStrategy: typeof p.seriesStrategy === "string" ? p.seriesStrategy.trim() : "",
     };
     // Only return if we got something usable.

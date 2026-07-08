@@ -107,7 +107,7 @@ import {
 } from "../thumbnails/jobs.js";
 import { analyzeScript } from "../thumbnails/scriptAnalysis.js";
 import { isVideoType, type VideoType } from "../thumbnails/videoType.js";
-import { startResearch, getResearchSnapshot, refreshRunVolume } from "../keyword/run.js";
+import { startResearch, getResearchSnapshot, refreshRunVolume, fetchKeywordCompetitors } from "../keyword/run.js";
 import {
   listRuns as listKeywordRuns,
   hydrateRun,
@@ -115,6 +115,23 @@ import {
   updateRun as updateKeywordRun,
   setRunPinned,
 } from "../db/keywordResearch.js";
+import {
+  listFolders as listFavFoldersDb,
+  createFolder as createFavFolderDb,
+  renameFolder as renameFavFolderDb,
+  deleteFolder as deleteFavFolderDb,
+  getFolder as getFavFolderDb,
+  getFavoritesView,
+  addTitle as addFavTitleDb,
+  removeTitle as removeFavTitleDb,
+  updateTitle as updateFavTitleDb,
+  getTitle as getFavTitleDb,
+  addKeyword as addFavKeywordDb,
+  removeKeyword as removeFavKeywordDb,
+  updateKeyword as updateFavKeywordDb,
+} from "../db/favorites.js";
+import { extractKeywordsFromTitles as aiExtractKeywordsFromTitles } from "../keyword/ai.js";
+import type { FavKeyword, FavKeywordSource } from "../keyword/favorites.js";
 import type { ResearchInput, ResearchMode } from "../keyword/types.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
@@ -2794,6 +2811,7 @@ function coerceResearchInput(input: any): ResearchInput {
     topic: typeof input?.topic === "string" ? input.topic : undefined,
     competitors: strArray(input?.competitors),
     freeText: typeof input?.freeText === "string" ? input.freeText : undefined,
+    channelUrl: typeof input?.channelUrl === "string" ? input.channelUrl : undefined,
     maxKeywords: Number.isFinite(maxRaw) && maxRaw > 0 ? Math.floor(maxRaw) : undefined,
     refresh: input?.refresh === true,
   };
@@ -2856,6 +2874,164 @@ const refreshVolume: Handler = async (input) => {
   const runId: string = input?.runId;
   if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
   return refreshRunVolume(runId);
+};
+
+/** On-demand YouTube competition fetch for one keyword (beyond the upfront budget). */
+const fetchKeywordCompetitorsHandler: Handler = async (input) => {
+  const runId: string = input?.runId;
+  const keyword = String(input?.keyword ?? "").trim();
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  if (!keyword) throw new ZiteError({ code: "BAD_REQUEST", message: "keyword is required." });
+  return fetchKeywordCompetitors(runId, keyword);
+};
+
+// ── Keyword Research FAVORITES (folders / titles / keywords) ─────────────────
+const FAV_KEYWORD_SOURCES: ReadonlySet<string> = new Set(["extracted", "table", "manual"]);
+
+/** All favorite folders (newest first) with live title/keyword counts. */
+const listFavFolders: Handler = async () => ({ folders: listFavFoldersDb() });
+
+const createFavFolder: Handler = async (input) => {
+  const name = String(input?.name ?? "").trim();
+  if (!name) throw new ZiteError({ code: "BAD_REQUEST", message: "A folder name is required." });
+  return { folder: createFavFolderDb(name) };
+};
+
+const renameFavFolder: Handler = async (input) => {
+  const folderId = String(input?.folderId ?? "");
+  const name = String(input?.name ?? "").trim();
+  if (!folderId) throw new ZiteError({ code: "BAD_REQUEST", message: "folderId is required." });
+  if (!name) throw new ZiteError({ code: "BAD_REQUEST", message: "A folder name is required." });
+  if (!getFavFolderDb(folderId)) throw new ZiteError({ code: "NOT_FOUND", message: "Folder not found." });
+  renameFavFolderDb(folderId, name);
+  return { ok: true };
+};
+
+const deleteFavFolder: Handler = async (input) => {
+  const folderId = String(input?.folderId ?? "");
+  if (!folderId) throw new ZiteError({ code: "BAD_REQUEST", message: "folderId is required." });
+  deleteFavFolderDb(folderId);
+  return { ok: true };
+};
+
+/** The full contents of one folder (folder + titles + keywords). */
+const getFavorites: Handler = async (input) => {
+  const folderId = String(input?.folderId ?? "");
+  if (!folderId) throw new ZiteError({ code: "BAD_REQUEST", message: "folderId is required." });
+  const view = getFavoritesView(folderId);
+  if (!view) throw new ZiteError({ code: "NOT_FOUND", message: "Folder not found." });
+  return view;
+};
+
+const addFavTitle: Handler = async (input) => {
+  const folderId = String(input?.folderId ?? "");
+  const title = String(input?.title ?? "").trim();
+  if (!folderId) throw new ZiteError({ code: "BAD_REQUEST", message: "folderId is required." });
+  if (!title) throw new ZiteError({ code: "BAD_REQUEST", message: "A title is required." });
+  if (!getFavFolderDb(folderId)) throw new ZiteError({ code: "NOT_FOUND", message: "Folder not found." });
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const savedTitle = addFavTitleDb({
+    folderId,
+    title,
+    videoId: str(input?.videoId),
+    channelTitle: str(input?.channelTitle),
+    views: num(input?.views),
+    subscriberCount: num(input?.subscriberCount),
+    publishedAt: str(input?.publishedAt),
+    sourceKeyword: str(input?.sourceKeyword),
+  });
+  return { title: savedTitle };
+};
+
+const removeFavTitle: Handler = async (input) => {
+  const id = String(input?.id ?? "");
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  removeFavTitleDb(id);
+  return { ok: true };
+};
+
+const updateFavTitle: Handler = async (input) => {
+  const id = String(input?.id ?? "");
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  updateFavTitleDb(id, {
+    note: typeof input?.note === "string" ? input.note : undefined,
+    tags: Array.isArray(input?.tags) ? input.tags : undefined,
+  });
+  return { ok: true };
+};
+
+const addFavKeyword: Handler = async (input) => {
+  const folderId = String(input?.folderId ?? "");
+  const keyword = String(input?.keyword ?? "").trim();
+  if (!folderId) throw new ZiteError({ code: "BAD_REQUEST", message: "folderId is required." });
+  if (!keyword) throw new ZiteError({ code: "BAD_REQUEST", message: "A keyword is required." });
+  if (!getFavFolderDb(folderId)) throw new ZiteError({ code: "NOT_FOUND", message: "Folder not found." });
+  const rawSource = String(input?.source ?? "manual");
+  const source: FavKeywordSource = FAV_KEYWORD_SOURCES.has(rawSource)
+    ? (rawSource as FavKeywordSource)
+    : "manual";
+  const saved = addFavKeywordDb({
+    folderId,
+    keyword,
+    source,
+    sourceTitleId: typeof input?.sourceTitleId === "string" ? input.sourceTitleId : null,
+    note: typeof input?.note === "string" ? input.note : null,
+    tags: Array.isArray(input?.tags) ? input.tags : undefined,
+  });
+  return { keyword: saved };
+};
+
+const removeFavKeyword: Handler = async (input) => {
+  const id = String(input?.id ?? "");
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  removeFavKeywordDb(id);
+  return { ok: true };
+};
+
+const updateFavKeyword: Handler = async (input) => {
+  const id = String(input?.id ?? "");
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  updateFavKeywordDb(id, {
+    note: typeof input?.note === "string" ? input.note : undefined,
+    tags: Array.isArray(input?.tags) ? input.tags : undefined,
+  });
+  return { ok: true };
+};
+
+/**
+ * AI-extract searchable keywords from a folder's saved titles and add them to the
+ * folder's keyword database (source "extracted"). The titles must belong to the
+ * folder. When exactly one title is given, each new keyword is linked back to it
+ * (sourceTitleId); for a multi-title batch there's no single source, so it's null.
+ * Deduped via addKeyword (returns the existing/merged row for repeats).
+ */
+const extractKeywordsFromTitles: Handler = async (input) => {
+  const folderId = String(input?.folderId ?? "");
+  const titleIds: string[] = Array.isArray(input?.titleIds)
+    ? input.titleIds.map((x: unknown) => String(x)).filter(Boolean)
+    : [];
+  if (!folderId) throw new ZiteError({ code: "BAD_REQUEST", message: "folderId is required." });
+  if (!getFavFolderDb(folderId)) throw new ZiteError({ code: "NOT_FOUND", message: "Folder not found." });
+  if (titleIds.length === 0) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "At least one titleId is required." });
+  }
+
+  // Load the requested titles; every one must exist AND belong to this folder.
+  const titles = titleIds.map((id) => {
+    const t = getFavTitleDb(id);
+    if (!t || t.folderId !== folderId) {
+      throw new ZiteError({ code: "NOT_FOUND", message: `Title not found in folder: ${id}` });
+    }
+    return t;
+  });
+
+  const phrases = await aiExtractKeywordsFromTitles(titles.map((t) => t.title));
+  const sourceTitleId = titleIds.length === 1 ? titleIds[0] : null;
+  const added: FavKeyword[] = phrases.map((keyword) =>
+    addFavKeywordDb({ folderId, keyword, source: "extracted", sourceTitleId }),
+  );
+  return { added };
 };
 
 export const HANDLERS: Record<string, Handler> = {
@@ -2966,12 +3142,26 @@ export const HANDLERS: Record<string, Handler> = {
   keywordResearchStatus,
   startKeywordResearch,
   keywordResearchJobStatus,
+  fetchKeywordCompetitors: fetchKeywordCompetitorsHandler,
   refreshVolume,
   renameResearchRun,
   pinResearchRun,
   listResearchRuns,
   getResearchRun,
   deleteResearchRun,
+  // Keyword Research favorites
+  listFavFolders,
+  createFavFolder,
+  renameFavFolder,
+  deleteFavFolder,
+  getFavorites,
+  addFavTitle,
+  removeFavTitle,
+  updateFavTitle,
+  addFavKeyword,
+  removeFavKeyword,
+  updateFavKeyword,
+  extractKeywordsFromTitles,
 };
 
 void config;

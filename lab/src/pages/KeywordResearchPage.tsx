@@ -11,14 +11,33 @@ import {
   deleteResearchRun,
   renameResearchRun,
   pinResearchRun,
+  fetchKeywordCompetitors,
+  listFavFolders,
+  createFavFolder,
+  renameFavFolder,
+  deleteFavFolder,
+  getFavorites,
+  addFavTitle,
+  removeFavTitle,
+  updateFavTitle,
+  addFavKeyword,
+  removeFavKeyword,
+  updateFavKeyword,
+  extractKeywordsFromTitles,
   type ResearchMode,
   type StartKeywordResearchInput,
   type ResearchJobSnapshot,
   type ResearchRunResult,
   type ResearchRunListItem,
   type KeywordMetrics,
+  type ChannelProfile,
   type InsightsReport,
   type KeywordResearchStatusOutput,
+  type FavFolder,
+  type FavTitle,
+  type FavKeyword,
+  type FavoritesView,
+  type FavKeywordSource,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -36,6 +55,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import {
   Search,
@@ -65,6 +101,16 @@ import {
   History,
   X,
   Check,
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  Rocket,
+  Eye,
+  Star,
+  Bookmark,
+  FolderPlus,
+  Wand2,
+  Tag,
 } from 'lucide-react';
 
 /**
@@ -115,6 +161,19 @@ function relTime(ms: number): string {
   if (d < 30) return `${d}d ago`;
   return new Date(ms).toLocaleDateString();
 }
+/** views ÷ subscribers, or null when subs is missing/zero (can't divide). */
+function viewsSubsRatio(views: number, subs: number | null | undefined): number | null {
+  if (subs == null || subs <= 0) return null;
+  return views / subs;
+}
+/** A small channel (≤50k subs) whose video massively outperforms its base is an "outlier". */
+const OUTLIER_SUB_CEILING = 50_000;
+const OUTLIER_RATIO_FLOOR = 3;
+function isRatioOutlier(views: number, subs: number | null | undefined): boolean {
+  const r = viewsSubsRatio(views, subs);
+  return r != null && subs != null && subs <= OUTLIER_SUB_CEILING && r >= OUTLIER_RATIO_FLOOR;
+}
+
 const MODE_LABEL: Record<ResearchMode, string> = {
   seeds: 'Seeds',
   topic: 'Topic',
@@ -488,6 +547,23 @@ function InsightsPanel({ insights }: { insights: InsightsReport }) {
         </div>
       )}
 
+      {insights.newAvenues.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
+            <Rocket className="h-3.5 w-3.5 text-[hsl(var(--chart-3))]" />
+            New avenues for scale
+          </p>
+          <ul className="space-y-1">
+            {insights.newAvenues.map((a, i) => (
+              <li key={i} className="text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">{a.topic}</span>
+                {a.why ? ` — ${a.why}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {insights.seriesStrategy && (
         <div className="mt-4">
           <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-foreground">
@@ -500,6 +576,281 @@ function InsightsPanel({ insights }: { insights: InsightsReport }) {
     </section>
   );
 }
+
+// ── Your-channel summary card ────────────────────────────────────────────────
+function ChannelCard({ channel }: { channel: ChannelProfile }) {
+  return (
+    <section className="rounded-xl border border-border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            <Users className="h-3.5 w-3.5 text-[hsl(var(--chart-4))]" />
+            Your channel
+          </p>
+          <a
+            href={channel.url}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-0.5 inline-flex items-center gap-1 text-sm font-semibold text-foreground hover:underline"
+          >
+            {channel.title}
+            <ExternalLink className="h-3 w-3 opacity-60" />
+          </a>
+          {channel.handle && (
+            <span className="ml-1.5 text-xs text-muted-foreground">{channel.handle}</span>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          <span>
+            <span className="font-semibold text-foreground">{fmtNum(channel.subscriberCount)}</span> subs
+          </span>
+          <span>
+            <span className="font-semibold text-foreground">{fmtNum(channel.videoCount)}</span> videos
+          </span>
+          <span>
+            <span className="font-semibold text-foreground">{fmtNum(channel.viewCount)}</span> views
+          </span>
+        </div>
+      </div>
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        Analyzed {channel.videos.length} of your videos to flag what you've already covered.
+      </p>
+    </section>
+  );
+}
+
+// ── Competitor detail panel (expanded keyword row) ───────────────────────────
+type CompetitorRef = KeywordMetrics['topCompetitors'][number];
+function CompetitorRow({
+  c,
+  maxRatio,
+  onSave,
+  saved,
+}: {
+  c: CompetitorRef;
+  maxRatio: number;
+  onSave?: () => void;
+  saved?: boolean;
+}) {
+  const ratio = viewsSubsRatio(c.videoViews, c.subscriberCount);
+  const outlier = isRatioOutlier(c.videoViews, c.subscriberCount);
+  const barPct = ratio == null ? 0 : Math.max(4, Math.min(100, (ratio / maxRatio) * 100));
+  const published = c.videoPublishedAt ? new Date(c.videoPublishedAt) : null;
+  return (
+    <li className="flex items-start gap-3 rounded-lg border border-border bg-background/40 px-3 py-2.5">
+      <span className="mt-0.5 w-5 shrink-0 text-right text-xs font-semibold tabular-nums text-muted-foreground">
+        {c.rank}
+      </span>
+      <div className="min-w-0 flex-1">
+        <a
+          href={`https://youtube.com/watch?v=${c.videoId}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-start gap-1 text-sm font-medium text-foreground hover:underline"
+        >
+          <span className="line-clamp-2">{c.videoTitle}</span>
+          <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 opacity-60" />
+        </a>
+        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{c.channelTitle}</p>
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <Eye className="h-3 w-3" />
+            {fmtNum(c.videoViews)}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <Users className="h-3 w-3" />
+            {fmtNum(c.subscriberCount)}
+          </span>
+          {published && (
+            <span title={published.toLocaleDateString()}>
+              {published.toLocaleDateString()} · {relTime(published.getTime())}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="w-28 shrink-0 text-right">
+        <div className="flex items-center justify-end gap-1.5">
+          <span
+            className={cn(
+              'text-sm font-bold tabular-nums',
+              outlier ? 'text-[hsl(var(--chart-3))]' : 'text-foreground',
+            )}
+          >
+            {ratio == null ? '—' : `${ratio.toFixed(1)}×`}
+          </span>
+          {outlier && (
+            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', HUE_TINT[3])}>
+              Outlier
+            </span>
+          )}
+        </div>
+        <span className="sr-only">
+          {ratio == null
+            ? 'Views to subscribers ratio unavailable'
+            : `${ratio.toFixed(1)} views per subscriber`}
+        </span>
+        <div
+          className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted"
+          aria-hidden="true"
+        >
+          <div
+            className={cn(
+              'h-full rounded-full',
+              outlier ? 'bg-[hsl(var(--chart-3))]' : 'bg-[hsl(var(--chart-2))]',
+            )}
+            style={{ width: `${barPct}%` }}
+          />
+        </div>
+        <p className="mt-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">views/sub</p>
+      </div>
+      {onSave && (
+        <button
+          type="button"
+          onClick={onSave}
+          title={saved ? 'Saved to favorites' : 'Save title to favorites'}
+          aria-label={saved ? 'Saved to favorites' : 'Save title to favorites'}
+          aria-pressed={saved}
+          className={cn(
+            'mt-0.5 shrink-0 rounded p-1 transition-colors',
+            saved
+              ? 'text-[hsl(var(--chart-4))]'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+          )}
+        >
+          <Star className={cn('h-4 w-4', saved && 'fill-current')} />
+        </button>
+      )}
+    </li>
+  );
+}
+
+function CompetitorPanel({
+  k,
+  loading,
+  onLoad,
+  onSaveTitle,
+  savedVideoIds,
+}: {
+  k: KeywordMetrics;
+  loading: boolean;
+  onLoad: () => void;
+  onSaveTitle?: (c: CompetitorRef) => void;
+  savedVideoIds?: Set<string>;
+}) {
+  if (k.topCompetitors.length === 0) {
+    if (!k.competitionFetched) {
+      return (
+        <div className="flex flex-col items-start gap-2 px-4 py-4">
+          <p className="text-xs text-muted-foreground">
+            Competitor data hasn't been fetched for this keyword yet.
+          </p>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={onLoad} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Users className="h-4 w-4" />}
+            Load competitor data
+          </Button>
+        </div>
+      );
+    }
+    return (
+      <p className="px-4 py-4 text-xs text-muted-foreground">
+        No competitor videos found for this keyword.
+      </p>
+    );
+  }
+
+  const sorted = [...k.topCompetitors].sort((a, b) => a.rank - b.rank);
+  const maxRatio = Math.max(
+    1,
+    ...sorted.map((c) => viewsSubsRatio(c.videoViews, c.subscriberCount) ?? 0),
+  );
+  return (
+    <div className="px-4 py-3">
+      <p className="mb-2 flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <Target className="h-3.5 w-3.5 text-[hsl(var(--chart-3))]" />
+        Top ranking videos for “{k.keyword}”
+      </p>
+      <ul className="space-y-1.5">
+        {sorted.map((c) => (
+          <CompetitorRow
+            key={`${c.videoId}-${c.rank}`}
+            c={c}
+            maxRatio={maxRatio}
+            onSave={onSaveTitle ? () => onSaveTitle(c) : undefined}
+            saved={!!c.videoId && savedVideoIds?.has(c.videoId)}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// ── Favorites: inline note + tags editor (shared by titles & keywords) ───────
+function parseTags(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+function sameTags(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+function NoteTagsEditor({
+  note,
+  tags,
+  onSave,
+}: {
+  note: string | null;
+  tags: string[];
+  onSave: (note: string, tags: string[]) => void;
+}) {
+  const [n, setN] = useState(note ?? '');
+  const [t, setT] = useState(tags.join(', '));
+  useEffect(() => {
+    setN(note ?? '');
+  }, [note]);
+  useEffect(() => {
+    setT(tags.join(', '));
+  }, [tags]);
+  const commit = () => {
+    const nextNote = n.trim();
+    const nextTags = parseTags(t);
+    if (nextNote === (note ?? '').trim() && sameTags(nextTags, tags)) return;
+    onSave(nextNote, nextTags);
+  };
+  return (
+    <div className="mt-1.5 flex flex-col gap-1.5 sm:flex-row">
+      <Input
+        value={n}
+        onChange={(e) => setN(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+        }}
+        placeholder="Add a note…"
+        className="h-7 flex-1 text-xs"
+      />
+      <div className="relative sm:w-52">
+        <Tag className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={t}
+          onChange={(e) => setT(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+          }}
+          placeholder="tags, comma-separated"
+          className="h-7 pl-7 text-xs"
+        />
+      </div>
+    </div>
+  );
+}
+
+const FAV_SOURCE_META: Record<FavKeywordSource, { label: string; hue: number }> = {
+  extracted: { label: 'extracted', hue: 4 },
+  table: { label: 'table', hue: 2 },
+  manual: { label: 'manual', hue: 5 },
+};
 
 export default function KeywordResearchPage() {
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -516,6 +867,7 @@ export default function KeywordResearchPage() {
   const [freeTextInput, setFreeTextInput] = useState('');
   const [niche, setNiche] = useState('');
   const [maxKeywords, setMaxKeywords] = useState('');
+  const [channelUrl, setChannelUrl] = useState('');
 
   // Run / job state.
   const [starting, setStarting] = useState(false);
@@ -537,6 +889,25 @@ export default function KeywordResearchPage() {
   // Results view state.
   const [sort, setSort] = useState<SortState>({ key: 'opportunityScore', dir: 'desc' });
   const [clusterFilter, setClusterFilter] = useState<string>('all');
+  const [hideCovered, setHideCovered] = useState(false);
+  const [expandedKeyword, setExpandedKeyword] = useState<string | null>(null);
+  const [loadingCompetitorsFor, setLoadingCompetitorsFor] = useState<string | null>(null);
+
+  // Favorites (saved titles + keyword DB, organized in folders).
+  const [favFolders, setFavFolders] = useState<FavFolder[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [favView, setFavView] = useState<FavoritesView | null>(null);
+  const [favOpen, setFavOpen] = useState(false);
+  const [favLoading, setFavLoading] = useState(false);
+  const [savedVideoIds, setSavedVideoIds] = useState<Set<string>>(new Set());
+  const [savedKeywords, setSavedKeywords] = useState<Set<string>>(new Set());
+  const [selectedTitleIds, setSelectedTitleIds] = useState<Set<string>>(new Set());
+  const [extracting, setExtracting] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newKeyword, setNewKeyword] = useState('');
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [folderRenameValue, setFolderRenameValue] = useState('');
+  const [deletingFolderId, setDeletingFolderId] = useState<string | null>(null);
 
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
   const savingRenameRef = useRef(false);
@@ -548,6 +919,44 @@ export default function KeywordResearchPage() {
         /* history is non-critical */
       });
   }, []);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('kw.channelUrl');
+      if (saved) setChannelUrl(saved);
+    } catch {
+      /* localStorage unavailable — ignore */
+    }
+  }, []);
+
+  // Load favorite folders once; restore the last-used folder from localStorage.
+  useEffect(() => {
+    let savedFolderId: string | null = null;
+    try {
+      savedFolderId = localStorage.getItem('kw.favFolderId');
+    } catch {
+      /* localStorage unavailable — ignore */
+    }
+    listFavFolders({})
+      .then(({ folders }) => {
+        setFavFolders(folders);
+        const pick = folders.find((f) => f.id === savedFolderId) ?? folders[0] ?? null;
+        if (pick) setCurrentFolderId(pick.id);
+      })
+      .catch(() => {
+        /* favorites are non-critical */
+      });
+  }, []);
+
+  // Persist the current folder selection.
+  useEffect(() => {
+    if (!currentFolderId) return;
+    try {
+      localStorage.setItem('kw.favFolderId', currentFolderId);
+    } catch {
+      /* localStorage unavailable — ignore */
+    }
+  }, [currentFolderId]);
 
   useEffect(() => {
     keywordResearchStatus({})
@@ -612,6 +1021,15 @@ export default function KeywordResearchPage() {
     if (niche.trim()) input.niche = niche.trim();
     const max = parseInt(maxKeywords, 10);
     if (!Number.isNaN(max) && max > 0) input.maxKeywords = max;
+    const channel = channelUrl.trim();
+    if (channel) {
+      input.channelUrl = channel;
+      try {
+        localStorage.setItem('kw.channelUrl', channel);
+      } catch {
+        /* localStorage unavailable — ignore */
+      }
+    }
 
     if (mode === 'seeds') {
       const seeds = parseList(seedsInput);
@@ -644,6 +1062,7 @@ export default function KeywordResearchPage() {
     setStarting(true);
     setRun(null);
     setJob(null);
+    setExpandedKeyword(null);
     try {
       const { jobId } = await startKeywordResearch(input);
       startPolling(jobId);
@@ -662,6 +1081,7 @@ export default function KeywordResearchPage() {
       setJob(null);
       setClusterFilter('all');
       setSort({ key: 'opportunityScore', dir: 'desc' });
+      setExpandedKeyword(null);
       setHistoryOpen(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not load run');
@@ -749,6 +1169,261 @@ export default function KeywordResearchPage() {
     }
   };
 
+  const loadCompetitors = async (keyword: string) => {
+    if (!run || loadingCompetitorsFor) return;
+    setLoadingCompetitorsFor(keyword);
+    try {
+      const updated = await fetchKeywordCompetitors({ runId: run.runId, keyword });
+      setRun((prev) =>
+        prev
+          ? { ...prev, keywords: prev.keywords.map((k) => (k.keyword === keyword ? updated : k)) }
+          : prev,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load competitor data');
+    } finally {
+      setLoadingCompetitorsFor(null);
+    }
+  };
+
+  // ── Favorites: folders, saving, and the library panel ──────────────────────
+  const refreshFolders = useCallback(async () => {
+    try {
+      const { folders } = await listFavFolders({});
+      setFavFolders(folders);
+    } catch {
+      /* non-critical */
+    }
+  }, []);
+
+  const loadFavorites = useCallback(async (folderId: string) => {
+    setFavLoading(true);
+    try {
+      const view = await getFavorites({ folderId });
+      setFavView(view);
+      setSavedVideoIds(
+        new Set(view.titles.map((t) => t.videoId).filter((v): v is string => !!v)),
+      );
+      setSavedKeywords(new Set(view.keywords.map((k) => k.keyword.toLowerCase())));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not load favorites');
+    } finally {
+      setFavLoading(false);
+    }
+  }, []);
+
+  // Resolve the folder to save into, creating one lazily if none exists yet.
+  const ensureFolder = useCallback(async (): Promise<{ id: string; name: string }> => {
+    if (currentFolderId) {
+      const existing = favFolders.find((f) => f.id === currentFolderId);
+      if (existing) return { id: existing.id, name: existing.name };
+      return { id: currentFolderId, name: 'favorites' };
+    }
+    const name = (run?.niche || niche || 'My favorites').trim() || 'My favorites';
+    const { folder } = await createFavFolder({ name });
+    setFavFolders((prev) => [...prev, folder]);
+    setCurrentFolderId(folder.id);
+    return { id: folder.id, name: folder.name };
+  }, [currentFolderId, favFolders, run, niche]);
+
+  const saveCompetitorTitle = async (c: CompetitorRef, sourceKeyword: string) => {
+    try {
+      const { id, name } = await ensureFolder();
+      await addFavTitle({
+        folderId: id,
+        title: c.videoTitle,
+        videoId: c.videoId,
+        channelTitle: c.channelTitle,
+        views: c.videoViews,
+        subscriberCount: c.subscriberCount,
+        publishedAt: c.videoPublishedAt,
+        sourceKeyword,
+      });
+      setSavedVideoIds((prev) => new Set(prev).add(c.videoId));
+      toast.success(`Saved to ${name}`);
+      void refreshFolders();
+      if (favView?.folder.id === id) void loadFavorites(id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save title');
+    }
+  };
+
+  const saveKeyword = async (keyword: string, source: FavKeywordSource = 'table') => {
+    try {
+      const { id, name } = await ensureFolder();
+      await addFavKeyword({ folderId: id, keyword, source });
+      setSavedKeywords((prev) => new Set(prev).add(keyword.toLowerCase()));
+      toast.success(`Saved to ${name}`);
+      void refreshFolders();
+      if (favView?.folder.id === id) void loadFavorites(id);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save keyword');
+    }
+  };
+
+  const openFavorites = async () => {
+    setFavOpen(true);
+    await refreshFolders();
+    if (currentFolderId) void loadFavorites(currentFolderId);
+  };
+
+  const selectFolder = (folderId: string) => {
+    setCurrentFolderId(folderId);
+    setSelectedTitleIds(new Set());
+    void loadFavorites(folderId);
+  };
+
+  const createFolder = async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    try {
+      const { folder } = await createFavFolder({ name });
+      setNewFolderName('');
+      await refreshFolders();
+      setCurrentFolderId(folder.id);
+      setSelectedTitleIds(new Set());
+      void loadFavorites(folder.id);
+      toast.success(`Created ${folder.name}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not create folder');
+    }
+  };
+
+  const submitFolderRename = async (folderId: string) => {
+    const name = folderRenameValue.trim();
+    setRenamingFolderId(null);
+    setFolderRenameValue('');
+    if (!name) return;
+    try {
+      await renameFavFolder({ folderId, name });
+      await refreshFolders();
+      if (favView?.folder.id === folderId) void loadFavorites(folderId);
+      toast.success('Folder renamed');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not rename folder');
+    }
+  };
+
+  const confirmDeleteFolder = async (folderId: string) => {
+    setDeletingFolderId(null);
+    try {
+      await deleteFavFolder({ folderId });
+      const remaining = favFolders.filter((f) => f.id !== folderId);
+      setFavFolders(remaining);
+      if (currentFolderId === folderId) {
+        const next = remaining[0]?.id ?? null;
+        setCurrentFolderId(next);
+        setSelectedTitleIds(new Set());
+        if (next) {
+          void loadFavorites(next);
+        } else {
+          setFavView(null);
+          setSavedVideoIds(new Set());
+          setSavedKeywords(new Set());
+        }
+      }
+      toast.success('Folder deleted');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not delete folder');
+    }
+  };
+
+  const removeTitle = async (id: string) => {
+    if (!favView) return;
+    const folderId = favView.folder.id;
+    try {
+      await removeFavTitle({ id });
+      setSelectedTitleIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      await loadFavorites(folderId);
+      void refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not remove title');
+    }
+  };
+
+  const saveTitleMeta = async (id: string, note: string, tags: string[]) => {
+    if (!favView) return;
+    const folderId = favView.folder.id;
+    try {
+      await updateFavTitle({ id, note, tags });
+      await loadFavorites(folderId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update title');
+    }
+  };
+
+  const removeKeyword = async (id: string) => {
+    if (!favView) return;
+    const folderId = favView.folder.id;
+    try {
+      await removeFavKeyword({ id });
+      await loadFavorites(folderId);
+      void refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not remove keyword');
+    }
+  };
+
+  const saveKeywordMeta = async (id: string, note: string, tags: string[]) => {
+    if (!favView) return;
+    const folderId = favView.folder.id;
+    try {
+      await updateFavKeyword({ id, note, tags });
+      await loadFavorites(folderId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not update keyword');
+    }
+  };
+
+  const addManualKeyword = async () => {
+    const kw = newKeyword.trim();
+    if (!kw) return;
+    try {
+      const { id } = await ensureFolder();
+      await addFavKeyword({ folderId: id, keyword: kw, source: 'manual' });
+      setNewKeyword('');
+      setSavedKeywords((prev) => new Set(prev).add(kw.toLowerCase()));
+      await loadFavorites(id);
+      void refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add keyword');
+    }
+  };
+
+  const runExtractKeywords = async () => {
+    if (!favView) return;
+    const folderId = favView.folder.id;
+    const ids =
+      selectedTitleIds.size > 0
+        ? favView.titles.filter((t) => selectedTitleIds.has(t.id)).map((t) => t.id)
+        : favView.titles.map((t) => t.id);
+    if (ids.length === 0) {
+      toast.error('No titles to extract from');
+      return;
+    }
+    setExtracting(true);
+    try {
+      const { added } = await extractKeywordsFromTitles({ folderId, titleIds: ids });
+      toast.success(`Added ${added.length} keyword${added.length === 1 ? '' : 's'}`);
+      setSelectedTitleIds(new Set());
+      await loadFavorites(folderId);
+      void refreshFolders();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not extract keywords');
+    } finally {
+      setExtracting(false);
+    }
+  };
+
+  const favTotal = useMemo(
+    () => favFolders.reduce((n, f) => n + f.titleCount + f.keywordCount, 0),
+    [favFolders],
+  );
+
   // ── Derived: clusters, colors, filtered + sorted keywords ──────────────────
   const keywords = run?.keywords ?? [];
 
@@ -771,14 +1446,26 @@ export default function KeywordResearchPage() {
   );
 
   const visibleKeywords = useMemo(() => {
-    const filtered =
-      clusterFilter === 'all' ? keywords : keywords.filter((k) => clusterOf(k) === clusterFilter);
+    const filtered = keywords.filter((k) => {
+      if (clusterFilter !== 'all' && clusterOf(k) !== clusterFilter) return false;
+      if (hideCovered && k.alreadyCovered) return false;
+      return true;
+    });
     const dir = sort.dir === 'asc' ? 1 : -1;
     return [...filtered].sort((a, b) => {
       if (sort.key === 'keyword') return a.keyword.localeCompare(b.keyword) * dir;
       return ((a[sort.key] ?? 0) - (b[sort.key] ?? 0)) * dir;
     });
-  }, [keywords, clusterFilter, sort]);
+  }, [keywords, clusterFilter, hideCovered, sort]);
+
+  const coveredCount = useMemo(() => keywords.filter((k) => k.alreadyCovered).length, [keywords]);
+
+  // Freshness: newest of run.updatedAt and any keyword's lastFetchedAt.
+  const dataAsOf = useMemo(() => {
+    let ms = run?.updatedAt ?? 0;
+    for (const k of keywords) if (k.lastFetchedAt > ms) ms = k.lastFetchedAt;
+    return ms;
+  }, [run, keywords]);
 
   function toggleSort(key: SortKey) {
     setSort((prev) =>
@@ -1055,6 +1742,16 @@ export default function KeywordResearchPage() {
               Find high-demand, low-competition keywords and the untapped gaps in your niche.
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto gap-1.5"
+            onClick={() => void openFavorites()}
+          >
+            <Bookmark className="h-4 w-4" />
+            Favorites
+            {favTotal > 0 && <span className="text-muted-foreground">({favTotal})</span>}
+          </Button>
         </header>
 
         {loadingStatus ? (
@@ -1188,6 +1885,20 @@ export default function KeywordResearchPage() {
               <div className="min-w-0 flex-1 space-y-6">
               {/* Input */}
               <section className="rounded-xl border border-border bg-card p-4">
+                <div className="mb-3 space-y-1.5">
+                  <Label htmlFor="kr-channel">Your channel URL (optional)</Label>
+                  <Input
+                    id="kr-channel"
+                    value={channelUrl}
+                    onChange={(e) => setChannelUrl(e.target.value)}
+                    placeholder="https://youtube.com/@yourchannel"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Paste your channel URL/@handle — the report flags what you've already covered and
+                    suggests new avenues.
+                  </p>
+                </div>
+
                 <Tabs value={mode} onValueChange={(v) => setMode(v as ResearchMode)}>
                   <TabsList className="grid w-full grid-cols-4">
                     <TabsTrigger value="seeds">Seeds</TabsTrigger>
@@ -1324,6 +2035,9 @@ export default function KeywordResearchPage() {
                       <h2 className="text-lg font-semibold text-foreground">{run.niche || 'Untitled run'}</h2>
                       <p className="text-xs text-muted-foreground">
                         {MODE_LABEL[run.mode]} · {run.summary.totalKeywords} keywords · {relTime(run.createdAt)}
+                        {dataAsOf > 0 && (
+                          <span className="ml-1.5 text-muted-foreground/80">· Data as of {relTime(dataAsOf)}</span>
+                        )}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1364,6 +2078,9 @@ export default function KeywordResearchPage() {
                     <StatTile icon={<TrendingUp className="h-4 w-4" />} label="Avg demand" value={fmtScore(run.summary.avgDemand)} hue={1} />
                     <StatTile icon={<Users className="h-4 w-4" />} label="Avg competition" value={fmtScore(run.summary.avgCompetition)} hue={5} />
                   </div>
+
+                  {/* Your channel */}
+                  {run.channel && <ChannelCard channel={run.channel} />}
 
                   {/* Market analysis */}
                   {run.market && (
@@ -1453,17 +2170,36 @@ export default function KeywordResearchPage() {
                   {/* Ranked table */}
                   {keywords.length > 0 && (
                     <section className="rounded-xl border border-border bg-card">
-                      <div className="flex items-center justify-between px-4 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
                         <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
                           <Layers className="h-4 w-4 text-[hsl(var(--chart-2))]" />
                           Ranked keywords
                           <span className="text-xs font-normal text-muted-foreground">({visibleKeywords.length})</span>
                         </h3>
+                        {coveredCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setHideCovered((v) => !v)}
+                            className={cn(
+                              'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors',
+                              hideCovered
+                                ? 'border-transparent bg-primary text-primary-foreground'
+                                : 'border-border text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            Hide covered
+                            <span className={cn(hideCovered ? 'opacity-80' : 'opacity-60')}>
+                              ({coveredCount})
+                            </span>
+                          </button>
+                        )}
                       </div>
                       <div className="overflow-x-auto">
-                        <div className="min-w-[860px]">
+                        <div className="min-w-[888px]">
                           {/* Header */}
-                          <div className="grid grid-cols-[minmax(160px,2.4fr)_92px_72px_88px_84px_minmax(150px,1.6fr)_minmax(140px,1.6fr)] gap-2 border-y border-border px-4 py-2">
+                          <div className="grid grid-cols-[28px_minmax(160px,2.4fr)_92px_72px_88px_84px_minmax(150px,1.6fr)_minmax(140px,1.6fr)] gap-2 border-y border-border px-4 py-2">
+                            <span aria-hidden="true" />
                             <SortHeader label="Keyword" k="keyword" className="justify-self-start" />
                             <SortHeader label="Vol/mo" k="searchVolume" />
                             <SortHeader label="Demand" k="demandScore" />
@@ -1476,41 +2212,119 @@ export default function KeywordResearchPage() {
                           <div className="divide-y divide-border">
                             {visibleKeywords.map((k) => {
                               const top = k.topCompetitors.find((c) => c.rank === 1) ?? k.topCompetitors[0];
+                              const expanded = expandedKeyword === k.keyword;
+                              const toggle = () =>
+                                setExpandedKeyword((prev) => (prev === k.keyword ? null : k.keyword));
                               return (
-                                <div
-                                  key={k.keyword}
-                                  className="grid grid-cols-[minmax(160px,2.4fr)_92px_72px_88px_84px_minmax(150px,1.6fr)_minmax(140px,1.6fr)] items-center gap-2 px-4 py-2.5 hover:bg-muted/30"
-                                >
-                                  <div className="min-w-0">
-                                    <p className="truncate text-sm font-medium text-foreground">{k.keyword}</p>
-                                    {k.cluster && (
-                                      <p className="truncate text-[10px] text-muted-foreground">{k.cluster}</p>
+                                <div key={k.keyword}>
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-expanded={expanded}
+                                    onClick={toggle}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        toggle();
+                                      }
+                                    }}
+                                    className={cn(
+                                      'grid cursor-pointer grid-cols-[28px_minmax(160px,2.4fr)_92px_72px_88px_84px_minmax(150px,1.6fr)_minmax(140px,1.6fr)] items-center gap-2 px-4 py-2.5 hover:bg-muted/30',
+                                      expanded && 'bg-muted/30',
                                     )}
-                                  </div>
-                                  <span
-                                    className="text-sm text-foreground"
-                                    title={k.searchVolume == null ? 'No DataForSEO volume' : 'Monthly Google searches (DataForSEO)'}
                                   >
-                                    {k.searchVolume == null ? '—' : fmtNum(k.searchVolume)}
-                                  </span>
-                                  <span className="text-sm text-foreground">{fmtScore(k.demandScore)}</span>
-                                  <span className="text-sm text-foreground">{fmtScore(k.competitionScore)}</span>
-                                  <span className={cn('text-sm font-semibold', oppColorClass(k.opportunityScore))}>
-                                    {fmtScore(k.opportunityScore)}
-                                  </span>
-                                  <GapBadges k={k} />
-                                  <div className="min-w-0">
-                                    {top ? (
-                                      <>
-                                        <p className="truncate text-xs text-foreground">{top.channelTitle}</p>
-                                        <p className="truncate text-[10px] text-muted-foreground">
-                                          {fmtNum(top.subscriberCount)} subs · {fmtNum(top.videoViews)} views
-                                        </p>
-                                      </>
-                                    ) : (
-                                      <span className="text-xs text-muted-foreground">—</span>
-                                    )}
+                                    <span className="text-muted-foreground">
+                                      {expanded ? (
+                                        <ChevronDown className="h-4 w-4" />
+                                      ) : (
+                                        <ChevronRight className="h-4 w-4" />
+                                      )}
+                                    </span>
+                                    <div className="flex min-w-0 items-center gap-1">
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium text-foreground">{k.keyword}</p>
+                                        <div className="flex items-center gap-1.5">
+                                          {k.cluster && (
+                                            <span className="truncate text-[10px] text-muted-foreground">{k.cluster}</span>
+                                          )}
+                                          {k.alreadyCovered && (
+                                            <span className="inline-flex shrink-0 items-center rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                              You've made this
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      {(() => {
+                                        const isSaved = savedKeywords.has(k.keyword.toLowerCase());
+                                        return (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              void saveKeyword(k.keyword, 'table');
+                                            }}
+                                            title={isSaved ? 'Saved to favorites' : 'Save keyword to favorites'}
+                                            aria-label={isSaved ? 'Saved to favorites' : 'Save keyword to favorites'}
+                                            aria-pressed={isSaved}
+                                            className={cn(
+                                              'shrink-0 rounded p-1 transition-colors',
+                                              isSaved
+                                                ? 'text-[hsl(var(--chart-4))]'
+                                                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                                            )}
+                                          >
+                                            <Star className={cn('h-3.5 w-3.5', isSaved && 'fill-current')} />
+                                          </button>
+                                        );
+                                      })()}
+                                    </div>
+                                    <span
+                                      className="text-sm text-foreground"
+                                      title={k.searchVolume == null ? 'No DataForSEO volume' : 'Monthly Google searches (DataForSEO)'}
+                                    >
+                                      {k.searchVolume == null ? '—' : fmtNum(k.searchVolume)}
+                                    </span>
+                                    <span className="text-sm text-foreground">{fmtScore(k.demandScore)}</span>
+                                    <span className="text-sm text-foreground">
+                                      {k.competitionFetched ? fmtScore(k.competitionScore) : '—'}
+                                    </span>
+                                    <span
+                                      className={cn(
+                                        'text-sm font-semibold',
+                                        k.competitionFetched ? oppColorClass(k.opportunityScore) : 'text-muted-foreground',
+                                      )}
+                                    >
+                                      {k.competitionFetched ? fmtScore(k.opportunityScore) : '—'}
+                                    </span>
+                                    <GapBadges k={k} />
+                                    <div className="min-w-0">
+                                      {!k.competitionFetched ? (
+                                        <span className="text-[10px] italic text-muted-foreground/70">
+                                          Loads on click
+                                        </span>
+                                      ) : top ? (
+                                        <>
+                                          <p className="truncate text-xs text-foreground">{top.channelTitle}</p>
+                                          <p className="truncate text-[10px] text-muted-foreground">
+                                            {fmtNum(top.subscriberCount)} subs · {fmtNum(top.videoViews)} views
+                                          </p>
+                                        </>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">—</span>
+                                      )}
+                                    </div>
                                   </div>
+                                  {expanded && (
+                                    <div className="bg-muted/10">
+                                      <CompetitorPanel
+                                        k={k}
+                                        loading={loadingCompetitorsFor === k.keyword}
+                                        onLoad={() => void loadCompetitors(k.keyword)}
+                                        onSaveTitle={(c) => void saveCompetitorTitle(c, k.keyword)}
+                                        savedVideoIds={savedVideoIds}
+                                      />
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
@@ -1535,6 +2349,343 @@ export default function KeywordResearchPage() {
           </>
         )}
       </div>
+
+      {/* ── Favorites panel (the library) ─────────────────────────────────── */}
+      <Dialog open={favOpen} onOpenChange={setFavOpen}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Bookmark className="h-5 w-5 text-[hsl(var(--chart-4))]" />
+              Favorites
+            </DialogTitle>
+            <DialogDescription>
+              Saved titles and your personal keyword library, organized in folders.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Folder bar */}
+          <div className="flex flex-wrap items-center gap-2">
+            {favFolders.map((f) => {
+              const active = f.id === currentFolderId;
+              const renaming = renamingFolderId === f.id;
+              if (renaming) {
+                return (
+                  <Input
+                    key={f.id}
+                    autoFocus
+                    value={folderRenameValue}
+                    onChange={(e) => setFolderRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void submitFolderRename(f.id);
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setRenamingFolderId(null);
+                        setFolderRenameValue('');
+                      }
+                    }}
+                    onBlur={() => void submitFolderRename(f.id)}
+                    className="h-7 w-40 text-xs"
+                  />
+                );
+              }
+              return (
+                <div
+                  key={f.id}
+                  className={cn(
+                    'flex items-center gap-0.5 rounded-full border py-0.5 pl-2.5 pr-1 text-xs',
+                    active
+                      ? 'border-transparent bg-primary text-primary-foreground'
+                      : 'border-border',
+                  )}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectFolder(f.id)}
+                    className="font-medium"
+                  >
+                    {f.name}
+                    <span
+                      className={cn('ml-1.5 font-normal', active ? 'opacity-80' : 'text-muted-foreground')}
+                    >
+                      {f.titleCount} titles · {f.keywordCount} kw
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRenamingFolderId(f.id);
+                      setFolderRenameValue(f.name);
+                    }}
+                    title="Rename folder"
+                    className={cn(
+                      'rounded p-0.5 transition-opacity hover:opacity-100',
+                      active ? 'opacity-80' : 'text-muted-foreground opacity-70',
+                    )}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeletingFolderId(f.id)}
+                    title="Delete folder"
+                    className={cn(
+                      'rounded p-0.5 transition-opacity hover:opacity-100',
+                      active ? 'opacity-80' : 'text-muted-foreground opacity-70',
+                    )}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void createFolder();
+              }}
+              className="flex items-center gap-1"
+            >
+              <Input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="New folder"
+                className="h-7 w-32 text-xs"
+              />
+              <Button
+                type="submit"
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1 px-2 text-xs"
+                disabled={!newFolderName.trim()}
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+                Add
+              </Button>
+            </form>
+          </div>
+
+          {/* Body */}
+          {!currentFolderId ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Create a folder to start saving titles and keywords.
+            </p>
+          ) : favLoading && !favView ? (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          ) : favView ? (
+            <div className="space-y-6">
+              {/* Titles */}
+              <section>
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Star className="h-4 w-4 text-[hsl(var(--chart-4))]" />
+                    Saved titles
+                    <span className="text-xs font-normal text-muted-foreground">
+                      ({favView.titles.length})
+                    </span>
+                  </h3>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5"
+                    onClick={() => void runExtractKeywords()}
+                    disabled={extracting || favView.titles.length === 0}
+                  >
+                    {extracting ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Wand2 className="h-4 w-4" />
+                    )}
+                    Extract keywords
+                    {selectedTitleIds.size > 0 && (
+                      <span className="text-muted-foreground">({selectedTitleIds.size})</span>
+                    )}
+                  </Button>
+                </div>
+                {favView.titles.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-border py-8 text-center text-xs text-muted-foreground">
+                    Star titles from a keyword's competitor list to collect them here.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {favView.titles.map((t: FavTitle) => {
+                      const published = t.publishedAt ? new Date(t.publishedAt) : null;
+                      return (
+                        <li key={t.id} className="rounded-xl border border-border bg-card p-3">
+                          <div className="flex items-start gap-2.5">
+                            <input
+                              type="checkbox"
+                              checked={selectedTitleIds.has(t.id)}
+                              onChange={(e) =>
+                                setSelectedTitleIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(t.id);
+                                  else next.delete(t.id);
+                                  return next;
+                                })
+                              }
+                              aria-label="Select title"
+                              className="mt-1 h-4 w-4 shrink-0 accent-[hsl(var(--primary))]"
+                            />
+                            <div className="min-w-0 flex-1">
+                              {t.videoId ? (
+                                <a
+                                  href={`https://youtube.com/watch?v=${t.videoId}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-start gap-1 text-sm font-medium text-foreground hover:underline"
+                                >
+                                  <span className="line-clamp-2">{t.title}</span>
+                                  <ExternalLink className="mt-0.5 h-3 w-3 shrink-0 opacity-60" />
+                                </a>
+                              ) : (
+                                <p className="text-sm font-medium text-foreground">{t.title}</p>
+                              )}
+                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                                {t.channelTitle && <span>{t.channelTitle}</span>}
+                                {t.views != null && <span>· {fmtNum(t.views)} views</span>}
+                                {t.subscriberCount != null && <span>· {fmtNum(t.subscriberCount)} subs</span>}
+                                {published && <span>· {published.toLocaleDateString()}</span>}
+                                {t.sourceKeyword && (
+                                  <span className="italic opacity-80">· from “{t.sourceKeyword}”</span>
+                                )}
+                              </div>
+                              <NoteTagsEditor
+                                note={t.note}
+                                tags={t.tags}
+                                onSave={(note, tags) => void saveTitleMeta(t.id, note, tags)}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void removeTitle(t.id)}
+                              title="Remove"
+                              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+
+              {/* Keywords */}
+              <section>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <KeyRound className="h-4 w-4 text-[hsl(var(--chart-2))]" />
+                    Keywords
+                    <span className="text-xs font-normal text-muted-foreground">
+                      ({favView.keywords.length})
+                    </span>
+                  </h3>
+                </div>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void addManualKeyword();
+                  }}
+                  className="mb-2 flex items-center gap-2"
+                >
+                  <Input
+                    value={newKeyword}
+                    onChange={(e) => setNewKeyword(e.target.value)}
+                    placeholder="Add a keyword…"
+                    className="h-8 text-sm"
+                  />
+                  <Button
+                    type="submit"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1"
+                    disabled={!newKeyword.trim()}
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add
+                  </Button>
+                </form>
+                {favView.keywords.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-border py-8 text-center text-xs text-muted-foreground">
+                    Star keywords from the results table, add them above, or extract from saved titles.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {favView.keywords.map((k: FavKeyword) => {
+                      const meta = FAV_SOURCE_META[k.source];
+                      return (
+                        <li key={k.id} className="rounded-xl border border-border bg-card p-3">
+                          <div className="flex items-start gap-2.5">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-sm font-medium text-foreground">{k.keyword}</span>
+                                <span
+                                  className={cn(
+                                    'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
+                                    HUE_TINT[meta.hue],
+                                  )}
+                                >
+                                  {meta.label}
+                                </span>
+                              </div>
+                              <NoteTagsEditor
+                                note={k.note}
+                                tags={k.tags}
+                                onSave={(note, tags) => void saveKeywordMeta(k.id, note, tags)}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void removeKeyword(k.id)}
+                              title="Remove"
+                              className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </section>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete-folder confirmation */}
+      <AlertDialog
+        open={!!deletingFolderId}
+        onOpenChange={(open) => {
+          if (!open) setDeletingFolderId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete folder?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently deletes the folder and every title and keyword saved in it. This can't
+              be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deletingFolderId && void confirmDeleteFolder(deletingFolderId)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

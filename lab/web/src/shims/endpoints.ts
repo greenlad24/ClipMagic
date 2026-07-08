@@ -196,6 +196,8 @@ export interface KeywordMetrics {
   cluster: string | null;
   sources: string[];
   topCompetitors: KeywordCompetitorRef[];
+  competitionFetched: boolean;
+  alreadyCovered: boolean;
   lastFetchedAt: number;
 }
 export interface KeywordCluster {
@@ -221,7 +223,25 @@ export interface InsightsReport {
   topOpportunities: { keyword: string; why: string }[];
   contentIdeas: { title: string; keyword: string; angle: string }[];
   avoid: { keyword: string; why: string }[];
+  newAvenues: { topic: string; why: string }[];
   seriesStrategy: string;
+}
+export interface ChannelVideo {
+  videoId: string;
+  title: string;
+  views: number;
+  publishedAt: string | null;
+}
+export interface ChannelProfile {
+  channelId: string;
+  title: string;
+  handle: string | null;
+  url: string;
+  subscriberCount: number | null;
+  videoCount: number | null;
+  viewCount: number | null;
+  videos: ChannelVideo[];
+  fetchedAt: number;
 }
 export interface ResearchRunResult {
   runId: string;
@@ -232,6 +252,7 @@ export interface ResearchRunResult {
   market: KeywordMarketAnalysis | null;
   summary: KeywordResearchSummary;
   insights: InsightsReport | null;
+  channel: ChannelProfile | null;
   status: ResearchRunStatus;
   error: string | null;
   createdAt: number;
@@ -272,6 +293,7 @@ export interface StartKeywordResearchInput {
   freeText?: string;
   maxKeywords?: number;
   refresh?: boolean;
+  channelUrl?: string;
 }
 export const keywordResearchStatus =
   endpoint<Record<string, never>, KeywordResearchStatusOutput>("keywordResearchStatus");
@@ -291,6 +313,78 @@ export const renameResearchRun =
   endpoint<{ runId: string; niche: string }, { ok: true }>("renameResearchRun");
 export const pinResearchRun =
   endpoint<{ runId: string; pinned: boolean }, { ok: true }>("pinResearchRun");
+export const fetchKeywordCompetitors =
+  endpoint<{ runId: string; keyword: string }, KeywordMetrics>("fetchKeywordCompetitors");
+
+// ── Favorites (saved titles + personal keyword DB, organized in folders) ──────
+export interface FavFolder {
+  id: string;
+  name: string;
+  titleCount: number;
+  keywordCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface FavTitle {
+  id: string;
+  folderId: string;
+  title: string;
+  videoId: string | null;
+  channelTitle: string | null;
+  views: number | null;
+  subscriberCount: number | null;
+  publishedAt: string | null;
+  sourceKeyword: string | null;
+  note: string | null;
+  tags: string[];
+  createdAt: number;
+}
+export type FavKeywordSource = "extracted" | "table" | "manual";
+export interface FavKeyword {
+  id: string;
+  folderId: string;
+  keyword: string;
+  source: FavKeywordSource;
+  sourceTitleId: string | null;
+  note: string | null;
+  tags: string[];
+  createdAt: number;
+}
+export interface FavoritesView {
+  folder: FavFolder;
+  titles: FavTitle[];
+  keywords: FavKeyword[];
+}
+export const listFavFolders = endpoint<Record<string, never>, { folders: FavFolder[] }>("listFavFolders");
+export const createFavFolder = endpoint<{ name: string }, { folder: FavFolder }>("createFavFolder");
+export const renameFavFolder = endpoint<{ folderId: string; name: string }, { ok: true }>("renameFavFolder");
+export const deleteFavFolder = endpoint<{ folderId: string }, { ok: true }>("deleteFavFolder");
+export const getFavorites = endpoint<{ folderId: string }, FavoritesView>("getFavorites");
+export const addFavTitle = endpoint<
+  {
+    folderId: string;
+    title: string;
+    videoId?: string | null;
+    channelTitle?: string | null;
+    views?: number | null;
+    subscriberCount?: number | null;
+    publishedAt?: string | null;
+    sourceKeyword?: string | null;
+  },
+  { title: FavTitle }
+>("addFavTitle");
+export const removeFavTitle = endpoint<{ id: string }, { ok: true }>("removeFavTitle");
+export const updateFavTitle =
+  endpoint<{ id: string; note?: string; tags?: string[] }, { ok: true }>("updateFavTitle");
+export const addFavKeyword = endpoint<
+  { folderId: string; keyword: string; source?: FavKeywordSource; sourceTitleId?: string | null; note?: string; tags?: string[] },
+  { keyword: FavKeyword }
+>("addFavKeyword");
+export const removeFavKeyword = endpoint<{ id: string }, { ok: true }>("removeFavKeyword");
+export const updateFavKeyword =
+  endpoint<{ id: string; note?: string; tags?: string[] }, { ok: true }>("updateFavKeyword");
+export const extractKeywordsFromTitles =
+  endpoint<{ folderId: string; titleIds: string[] }, { added: FavKeyword[] }>("extractKeywordsFromTitles");
 
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");

@@ -21,10 +21,18 @@ import {
   fetchVideoStats,
   fetchChannelStats,
   YoutubeQuotaError,
+  SHORTS_MAX_SECONDS,
   type FetchFn,
   type VideoStats,
   type ChannelStats,
 } from "../thumbnails/youtube.js";
+
+/** How many top-by-views long-form US videos to return per keyword. */
+const COMPETITION_RESULTS = 10;
+/** RFC3339 timestamp one year ago (competitor videos must be from the last year). */
+function oneYearAgoIso(): string {
+  return new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+}
 
 /** The web-fetch shape these free sources need (subset of the global fetch). */
 export type WebFetch = (
@@ -248,31 +256,46 @@ export async function youtubeCompetition(keyword: string, fetchImpl?: FetchFn): 
   const q = keyword.trim();
   if (!q) return { resultCount: null, videos: [] };
 
+  // Oversample (search.list is 100 units regardless of maxResults) — US, by view
+  // count, from the last year — so we still have ≥10 after dropping Shorts.
   let search;
   try {
-    search = await searchKeywordVideos(q, 10, fetchImpl);
+    search = await searchKeywordVideos(q, 50, fetchImpl, { publishedAfter: oneYearAgoIso() });
   } catch (e) {
     if (e instanceof YoutubeQuotaError) throw e;
     return { resultCount: null, videos: [] };
   }
   if (search.hits.length === 0) return { resultCount: search.resultCount, videos: [] };
 
-  const videoIds = search.hits.map((h) => h.videoId);
-  const channelIds = search.hits.map((h) => h.channelId).filter((id) => id);
-
+  // Get views + duration for every candidate first, so we can drop Shorts and
+  // rank by real view count before spending a channels.list call.
   let videoStats: Map<string, VideoStats> = new Map();
-  let channelStats: Map<string, ChannelStats> = new Map();
   try {
-    [videoStats, channelStats] = await Promise.all([
-      fetchVideoStats(videoIds, fetchImpl),
-      fetchChannelStats(channelIds, fetchImpl),
-    ]);
+    videoStats = await fetchVideoStats(search.hits.map((h) => h.videoId), fetchImpl);
   } catch (e) {
     if (e instanceof YoutubeQuotaError) throw e;
   }
 
-  const videos: CompetitionVideoRow[] = search.hits.map((h) => {
-    const vs = videoStats.get(h.videoId);
+  const longForm = search.hits
+    .map((h) => ({ h, vs: videoStats.get(h.videoId) }))
+    // Long-form only: duration must exceed the Shorts ceiling (drops Shorts and
+    // anything whose duration we couldn't read).
+    .filter((x) => x.vs !== undefined && x.vs.durationSeconds > SHORTS_MAX_SECONDS)
+    .sort((a, b) => (b.vs!.views ?? 0) - (a.vs!.views ?? 0))
+    .slice(0, COMPETITION_RESULTS);
+
+  // Subscriber counts only for the surviving top-10 channels.
+  let channelStats: Map<string, ChannelStats> = new Map();
+  try {
+    channelStats = await fetchChannelStats(
+      longForm.map((x) => x.h.channelId).filter((id) => id),
+      fetchImpl,
+    );
+  } catch (e) {
+    if (e instanceof YoutubeQuotaError) throw e;
+  }
+
+  const videos: CompetitionVideoRow[] = longForm.map(({ h, vs }) => {
     const cs = channelStats.get(h.channelId);
     return {
       videoId: h.videoId,

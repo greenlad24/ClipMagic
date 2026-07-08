@@ -214,6 +214,44 @@ CREATE TABLE IF NOT EXISTS kw_runs (
 CREATE INDEX IF NOT EXISTS idx_kw_runs_created ON kw_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_kw_dom_keyword  ON kw_dominance(keyword);
 CREATE INDEX IF NOT EXISTS idx_kw_kw_fetched   ON kw_keywords(last_fetched_at);
+
+-- Keyword Research FAVORITES: folders (one per project/report) holding saved
+-- winning titles + a personal favorite-keywords database. Titles/keywords carry
+-- an optional note + tags.
+CREATE TABLE IF NOT EXISTS kw_fav_folders (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kw_fav_titles (
+  id               TEXT PRIMARY KEY,
+  folder_id        TEXT NOT NULL REFERENCES kw_fav_folders(id) ON DELETE CASCADE,
+  title            TEXT NOT NULL,
+  video_id         TEXT,
+  channel_title    TEXT,
+  views            INTEGER,
+  subscriber_count INTEGER,
+  published_at     TEXT,
+  source_keyword   TEXT,
+  note             TEXT,
+  tags_json        TEXT,
+  created_at       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS kw_fav_keywords (
+  id              TEXT PRIMARY KEY,
+  folder_id       TEXT NOT NULL REFERENCES kw_fav_folders(id) ON DELETE CASCADE,
+  keyword         TEXT NOT NULL,       -- normalized (lowercase, single-spaced)
+  display         TEXT NOT NULL,       -- original casing
+  source          TEXT NOT NULL,       -- extracted | table | manual
+  source_title_id TEXT,
+  note            TEXT,
+  tags_json       TEXT,
+  created_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_favtitles_folder ON kw_fav_titles(folder_id);
+CREATE INDEX IF NOT EXISTS idx_favkw_folder     ON kw_fav_keywords(folder_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_favkw_uniq ON kw_fav_keywords(folder_id, keyword);
 `);
 
 /**
@@ -230,6 +268,8 @@ CREATE INDEX IF NOT EXISTS idx_kw_kw_fetched   ON kw_keywords(last_fetched_at);
   add("search_volume", "INTEGER");
   add("cpc", "REAL");
   add("paid_competition", "REAL");
+  // Whether YouTube competitor data has been fetched (top-N upfront vs on-click).
+  add("competition_fetched", "INTEGER");
 }
 
 /**
@@ -241,4 +281,7 @@ CREATE INDEX IF NOT EXISTS idx_kw_kw_fetched   ON kw_keywords(last_fetched_at);
   const has = (name: string) => cols.some((c) => c.name === name);
   if (!has("insights_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN insights_json TEXT");
   if (!has("pinned")) db.exec("ALTER TABLE kw_runs ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+  // The user's own channel profile + the set of keywords they've already covered.
+  if (!has("channel_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN channel_json TEXT");
+  if (!has("covered_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN covered_json TEXT");
 }

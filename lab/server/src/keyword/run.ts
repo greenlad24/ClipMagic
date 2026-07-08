@@ -19,7 +19,9 @@ import { ZiteError } from "../zite/store.js";
 import {
   normalizeKeyword,
   SCORING,
+  type ChannelProfile,
   type CompetitorRef,
+  type GapFlags,
   type KeywordMetrics,
   type MarketAnalysis,
   type ResearchInput,
@@ -46,12 +48,19 @@ import {
   volumeScore,
 } from "./scoring.js";
 import { clusterKeywords, expandSeedsFromTopic, generateInsights, inferMarket } from "./ai.js";
-import { youtubeConfigured, searchKeywordVideos, YoutubeQuotaError } from "../thumbnails/youtube.js";
+import {
+  youtubeConfigured,
+  searchKeywordVideos,
+  resolveChannelId,
+  fetchChannelProfile,
+  YoutubeQuotaError,
+} from "../thumbnails/youtube.js";
 import { getDataForSeoCreds } from "../settings/postizSecrets.js";
 import {
   createRun,
   updateRun,
   upsertKeyword,
+  getKeyword,
   getFreshKeyword,
   replaceDominance,
   upsertCompetitor,
@@ -194,18 +203,109 @@ export async function refreshRunVolume(runId: string): Promise<ResearchRunResult
   });
 
   const sorted = [...updated].sort((a, b) => b.opportunityScore - a.opportunityScore);
-  const summary = summarize(sorted);
+  const summary = summarize(sorted, sorted.filter((k) => k.competitionFetched));
   const insights = await generateInsights({
     niche: current.niche,
     keywords: sorted,
     clusters: current.clusters,
     market: current.market,
+    channel: current.channel,
   });
   updateRun(runId, { keywordList: sorted.map((r) => normalizeKeyword(r.keyword)), summary, insights });
 
   const result = hydrateRun(runId);
   if (!result) throw new ZiteError({ code: "NOT_FOUND", message: "Research run not found." });
   return result;
+}
+
+/**
+ * Fetch YouTube competition for ONE keyword on demand (the UI calls this when the
+ * user opens a keyword that was beyond the upfront competition budget). Recomputes
+ * competition/gaps/opportunity + demand from the freshly-fetched competitors,
+ * reusing the keyword's stored free signals (autocomplete/trends/volume), persists
+ * it (competitionFetched=true + dominance), and returns the updated metrics.
+ * Throws ZiteError when YouTube isn't configured or its quota is reached.
+ */
+export async function fetchKeywordCompetitors(runId: string, keyword: string): Promise<KeywordMetrics> {
+  if (!youtubeConfigured()) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "YouTube isn't configured — add YOUTUBE_DATA_API_KEY in Settings → Thumbnail Designer.",
+    });
+  }
+  const normalized = normalizeKeyword(keyword);
+  const existing = getKeyword(normalized);
+  if (!existing) throw new ZiteError({ code: "NOT_FOUND", message: "Keyword not found." });
+
+  let comp: { resultCount: number | null; videos: CompetitionVideoRow[] };
+  try {
+    comp = await youtubeCompetition(existing.keyword);
+  } catch (e) {
+    if (e instanceof YoutubeQuotaError) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "YouTube quota reached — try again later." });
+    }
+    throw e;
+  }
+
+  const videos = comp.videos;
+  const views = videos.map((v) => v.views);
+  const subsVals = videos.map((v) => v.subscriberCount).filter((s): s is number => typeof s === "number");
+  const ytVolume = comp.resultCount && comp.resultCount > 0 ? logScore(comp.resultCount, 1_000_000) : 0;
+  const volScore = existing.searchVolume !== null ? volumeScore(existing.searchVolume) : null;
+  const demand = demandScore({
+    autocomplete: existing.autocompleteScore,
+    trends: existing.trendsScore,
+    ytVolume,
+    volumeScore: volScore,
+  });
+  const competition = competitionScore(
+    videos.map((v) => ({ views: v.views, subscriberCount: v.subscriberCount })),
+    comp.resultCount,
+  );
+  const topVideoAgeDays = ageDays(videos[0]?.publishedAt ?? null);
+  const gapFlags = computeGapFlags({
+    demand,
+    competition,
+    videos: videos.map((v) => ({ views: v.views, subscriberCount: v.subscriberCount })),
+    autocompleteChildCount: 0, // per-keyword child count isn't stored; underserved gap can't be recomputed here.
+    topVideoAgeDays,
+  });
+  const opportunity = opportunityScore(demand, competition, gapFlags);
+  const topCompetitors: CompetitorRef[] = videos.slice(0, SCORING.competitorsPerKeyword).map((v, idx) => ({
+    channelId: v.channelId,
+    channelTitle: v.channelTitle,
+    subscriberCount: v.subscriberCount,
+    rank: idx + 1,
+    videoId: v.videoId,
+    videoTitle: v.title,
+    videoViews: v.views,
+    videoPublishedAt: v.publishedAt,
+  }));
+  const sources = videos.length > 0 && !existing.sources.includes("youtube") ? [...existing.sources, "youtube"] : existing.sources;
+
+  // alreadyCovered is a per-run flag — read it from the run's covered set.
+  const run = hydrateRun(runId);
+  const alreadyCovered = run?.keywords.find((k) => normalizeKeyword(k.keyword) === normalized)?.alreadyCovered ?? false;
+
+  const updated: KeywordMetrics = {
+    ...existing,
+    demandScore: demand,
+    competitionScore: competition,
+    opportunityScore: opportunity,
+    ytResultCount: comp.resultCount,
+    topViewMedian: views.length ? Math.round(median(views)) : null,
+    topViewMax: views.length ? Math.max(...views) : null,
+    avgChannelSubs: subsVals.length ? Math.round(subsVals.reduce((s, n) => s + n, 0) / subsVals.length) : null,
+    topVideoAgeDays,
+    gapFlags,
+    sources,
+    topCompetitors,
+    competitionFetched: true,
+    alreadyCovered,
+    lastFetchedAt: Date.now(),
+  };
+  persistKeyword(updated, videos);
+  return updated;
 }
 
 function validateInput(input: ResearchInput): void {
@@ -239,8 +339,18 @@ async function runResearch(job: ResearchJob, runId: string, input: ResearchInput
     // normalized keyword → real demand data (from ideas + search-volume calls).
     const volumeByKeyword = new Map<string, DfsVolume>();
 
-    // Phase 1 — resolve seeds by mode.
+    // Phase 1 — the user's OWN channel (optional). Best-effort: a channel failure
+    // (bad URL, quota, lookup error) must NOT fail the run — we log + continue with
+    // channel=null. `covered` flags keywords the channel has already published.
     setPhase(job, "Resolving seeds…", 3);
+    let channel: ChannelProfile | null = null;
+    if (input.channelUrl?.trim()) {
+      channel = await resolveOwnChannel(input.channelUrl.trim());
+      if (channel) updateRun(runId, { channel });
+    }
+    const covered = buildCoveredMatcher(channel);
+
+    // Phase 2 — resolve seeds by mode.
     let seeds: string[] = [];
     if (input.mode === "seeds") {
       seeds = (input.seeds ?? []).map((s) => s.trim()).filter(Boolean);
@@ -254,10 +364,12 @@ async function runResearch(job: ResearchJob, runId: string, input: ResearchInput
       seeds = [...inferred.seeds, ...inferred.competitors];
       updateRun(runId, { market });
     }
+    // A resolved channel also seeds research: its most-viewed video titles.
+    if (channel) seeds = [...seeds, ...channelSeeds(channel, 5)];
     seeds = dedupeStrings(seeds);
     if (seeds.length === 0) throw new Error("No seed keywords could be resolved for this run.");
 
-    // Phase 1b — DataForSEO keyword ideas (extra discovery beyond autocomplete).
+    // Phase 2b — DataForSEO keyword ideas (extra discovery beyond autocomplete).
     const ideaKeywords: string[] = [];
     if (dfsCreds) {
       setPhase(job, "Fetching DataForSEO keyword ideas…", 8);
@@ -274,13 +386,13 @@ async function runResearch(job: ResearchJob, runId: string, input: ResearchInput
       }
     }
 
-    // Phase 2 — expand each seed via autocomplete; fold in the DataForSEO ideas.
+    // Phase 3 — expand each seed via autocomplete; fold in the DataForSEO ideas.
     setPhase(job, "Expanding keywords…", 12);
     const candidates = await buildCandidates(seeds, input.maxKeywords ?? SCORING.defaultMaxKeywords, ideaKeywords);
     job.keywordsFound = candidates.length;
     setPhase(job, `Expanded to ${candidates.length} keywords`, 22);
 
-    // Phase 2b — exact search volume for the whole candidate set (one batched call).
+    // Phase 3b — exact search volume for the whole candidate set (one batched call).
     if (dfsCreds) {
       setPhase(job, "Fetching search volume (DataForSEO)…", 24);
       const vols = await dataForSeoSearchVolume(candidates.map((c) => c.display), dfsCreds);
@@ -290,75 +402,117 @@ async function runResearch(job: ResearchJob, runId: string, input: ResearchInput
     // Feeds the autocomplete breadth score + the underserved-subtopic gap.
     const childCounts = computeChildCounts(candidates);
 
-    // Phase 3 — best-effort Google Trends over the candidates.
-    setPhase(job, "Reading Google Trends…", 25);
-    const trends = await googleTrends(candidates.map((c) => c.display));
+    // Phase 4 — preliminary demand for ALL candidates (free autocomplete + real
+    // volume only; no competition yet). This ranks which keywords earn the
+    // quota-priced YouTube competition fetch. Keyed by normalized keyword.
+    const scoredByNorm = new Map<string, KeywordMetrics>();
+    for (const c of candidates) {
+      scoredByNorm.set(c.normalized, preliminaryMetrics(c, childCounts.get(c.normalized) ?? 0, volumeByKeyword.get(c.normalized) ?? null, covered(c.display)));
+    }
 
-    // Phase 4 — per-keyword competition + scoring (quota-aware).
+    // Phase 5 — pick the top-by-demand competition set (the rest are fetched on
+    // click). Trends is read over this smaller set only — it's too slow for all.
+    const competitionSet = [...candidates]
+      .sort((a, b) => (scoredByNorm.get(b.normalized)?.demandScore ?? 0) - (scoredByNorm.get(a.normalized)?.demandScore ?? 0))
+      .slice(0, SCORING.competitionUpfront);
+    const competitionNorms = new Set(competitionSet.map((c) => c.normalized));
+
+    setPhase(job, "Reading Google Trends…", 26);
+    const trends = await googleTrends(competitionSet.map((c) => c.display));
+
+    // Phase 6 — per-keyword competition + final scoring for the competition set
+    // (quota-aware: a YoutubeQuotaError stops further Data-API calls; already
+    // fetched keywords are kept and the rest keep their preliminary demand).
     const ytOn = youtubeConfigured();
     let quotaHit = false;
-    const results: KeywordMetrics[] = [];
-    for (let i = 0; i < candidates.length; i++) {
-      const c = candidates[i];
+    for (let i = 0; i < competitionSet.length; i++) {
+      const c = competitionSet[i];
       const scored = i + 1;
-      const pct = 25 + Math.round((scored / candidates.length) * 63); // 25 → 88
-      setPhase(job, `Scoring competition ${scored}/${candidates.length}${quotaHit ? " (quota reached)" : ""}`, pct);
+      const pct = 30 + Math.round((scored / competitionSet.length) * 55); // 30 → 85
+      setPhase(job, `Scoring competition ${scored}/${competitionSet.length}${quotaHit ? " (quota reached)" : ""}`, pct);
+      const trend = trends.get(c.display) ?? null;
+      const vol = volumeByKeyword.get(c.normalized) ?? null;
 
-      // Reuse a fresh cache hit unless a refresh was requested.
+      // Reuse a fresh cache hit unless a refresh was requested. When we have real
+      // volume the cached row lacks, overlay it + recompute demand/opportunity
+      // (the cached-volume fix); competitionFetched is kept from the cache.
       if (!input.refresh) {
         const cached = getFreshKeyword(c.normalized, SCORING.cacheTtlMs);
         if (cached) {
-          results.push(cached);
+          const merged = overlayCachedVolume(cached, vol);
+          merged.alreadyCovered = covered(merged.keyword);
+          scoredByNorm.set(c.normalized, merged);
           job.keywordsScored = scored;
           continue;
         }
       }
 
-      // Competition via the Data API (skipped when off or after a quota stop).
-      let comp: { resultCount: number | null; videos: CompetitionVideoRow[] } = { resultCount: null, videos: [] };
-      if (ytOn && !quotaHit) {
-        try {
-          comp = await youtubeCompetition(c.display);
-        } catch (e) {
-          if (e instanceof YoutubeQuotaError) {
-            quotaHit = true; // stop hammering quota; keep scoring on free signals.
-          } else {
-            comp = { resultCount: null, videos: [] };
-          }
-        }
+      // Competition via the Data API (skipped when off or after a quota stop). A
+      // keyword we can't fetch keeps its preliminary demand (now folding trends
+      // in) and stays competitionFetched=false — the UI fetches it on click.
+      if (!ytOn || quotaHit) {
+        const folded = foldTrends(scoredByNorm.get(c.normalized)!, trend, vol);
+        upsertKeyword(folded); // persist so the keyword survives hydrateRun (no dominance).
+        scoredByNorm.set(c.normalized, folded);
+        job.keywordsScored = scored;
+        continue;
       }
-
-      const metrics = scoreKeyword(
-        c,
-        childCounts.get(c.normalized) ?? 0,
-        trends.get(c.display) ?? null,
-        comp,
-        volumeByKeyword.get(c.normalized) ?? null,
-      );
+      let comp: { resultCount: number | null; videos: CompetitionVideoRow[] };
+      try {
+        comp = await youtubeCompetition(c.display);
+      } catch (e) {
+        if (e instanceof YoutubeQuotaError) quotaHit = true; // stop hammering quota.
+        const folded = foldTrends(scoredByNorm.get(c.normalized)!, trend, vol);
+        upsertKeyword(folded);
+        scoredByNorm.set(c.normalized, folded);
+        job.keywordsScored = scored;
+        continue;
+      }
+      const metrics = scoreKeyword(c, childCounts.get(c.normalized) ?? 0, trend, comp, vol, covered(c.display));
       persistKeyword(metrics, comp.videos);
-      results.push(metrics);
+      scoredByNorm.set(c.normalized, metrics);
       job.keywordsScored = scored;
     }
 
-    // Phase 5 — cluster the final list and tag each keyword.
+    // Phase 7 — persist the non-competition candidates (preliminary demand only,
+    // competitionFetched=false, no dominance) so the table shows every keyword.
+    setPhase(job, "Saving keywords…", 87);
+    for (const c of candidates) {
+      if (competitionNorms.has(c.normalized)) continue;
+      upsertKeyword(scoredByNorm.get(c.normalized)!);
+    }
+
+    // The full keyword list, best first: competition set by opportunity, then the
+    // remaining candidates by (preliminary) demand.
+    const competitionResults = competitionSet.map((c) => scoredByNorm.get(c.normalized)!);
+    const restResults = candidates.filter((c) => !competitionNorms.has(c.normalized)).map((c) => scoredByNorm.get(c.normalized)!);
+    competitionResults.sort((a, b) => b.opportunityScore - a.opportunityScore);
+    restResults.sort((a, b) => b.demandScore - a.demandScore);
+    const ordered = [...competitionResults, ...restResults];
+    updateRun(runId, {
+      keywordList: ordered.map((r) => normalizeKeyword(r.keyword)),
+      covered: ordered.filter((r) => r.alreadyCovered).map((r) => normalizeKeyword(r.keyword)),
+    });
+
+    // Phase 8 — cluster the full list and tag each keyword (for the insights digest).
     setPhase(job, "Clustering keywords…", 90);
-    const clusters = await clusterKeywords(results.map((r) => r.keyword));
+    const clusters = await clusterKeywords(ordered.map((r) => r.keyword));
     const clusterOf = new Map<string, string>();
     for (const cl of clusters) for (const k of cl.keywords) clusterOf.set(normalizeKeyword(k), cl.name);
-    for (const r of results) r.cluster = clusterOf.get(normalizeKeyword(r.keyword)) ?? null;
+    for (const r of ordered) r.cluster = clusterOf.get(normalizeKeyword(r.keyword)) ?? null;
 
-    // Phase 6 — AI insights/recommendations over the scored results (all modes).
+    // Phase 9 — AI insights over ALL scored keywords (all modes). When a channel
+    // was supplied, generateInsights also fills "new avenues" it hasn't covered.
     setPhase(job, "Generating insights…", 93);
     const niche = input.niche?.trim() || deriveNiche(input, seeds);
-    const sorted = [...results].sort((a, b) => b.opportunityScore - a.opportunityScore);
-    const insights = await generateInsights({ niche, keywords: sorted, clusters, market });
+    const insights = await generateInsights({ niche, keywords: ordered, clusters, market, channel });
 
-    // Phase 7 — summarize + persist the completed run.
+    // Phase 10 — summarize (over all keywords; avgCompetition over the fetched
+    // competition set only) + persist the completed run.
     setPhase(job, "Summarizing…", 97);
-    const summary = summarize(sorted);
+    const summary = summarize(ordered, competitionResults);
     updateRun(runId, {
       status: "completed",
-      keywordList: sorted.map((r) => normalizeKeyword(r.keyword)),
       clusters,
       market,
       insights,
@@ -457,6 +611,7 @@ function scoreKeyword(
   trends: number | null,
   comp: { resultCount: number | null; videos: CompetitionVideoRow[] },
   vol: DfsVolume | null,
+  alreadyCovered: boolean,
 ): KeywordMetrics {
   const acScore = autocompleteScore(c.rank, childCount);
 
@@ -516,7 +671,162 @@ function scoreKeyword(
     cluster: null,
     sources,
     topCompetitors,
+    competitionFetched: true,
+    alreadyCovered,
     lastFetchedAt: Date.now(),
+  };
+}
+
+/** Default (all-false) gap flags for keywords without fetched competition data. */
+const NO_GAP_FLAGS: GapFlags = {
+  demandVsCompetition: false,
+  smallChannelOutlier: false,
+  underservedSubtopic: false,
+  freshnessGap: false,
+};
+
+/**
+ * Preliminary metrics for a candidate BEFORE any competition fetch: demand from
+ * autocomplete + real volume only (no trends/ytVolume yet), competition/opportunity
+ * zeroed, competitionFetched=false. Used to rank candidates for the competition
+ * budget and to persist the keywords beyond it.
+ */
+function preliminaryMetrics(c: Candidate, childCount: number, vol: DfsVolume | null, alreadyCovered: boolean): KeywordMetrics {
+  const acScore = autocompleteScore(c.rank, childCount);
+  const volScore = vol && vol.volume !== null ? volumeScore(vol.volume) : null;
+  const demand = demandScore({ autocomplete: acScore, trends: null, ytVolume: 0, volumeScore: volScore });
+  const sources = ["autocomplete"];
+  if (vol && vol.volume !== null) sources.push("dataforseo");
+  return {
+    keyword: c.display,
+    demandScore: demand,
+    competitionScore: 0,
+    opportunityScore: 0,
+    trendsScore: null,
+    autocompleteScore: acScore,
+    searchVolume: vol ? vol.volume : null,
+    cpc: vol ? vol.cpc : null,
+    paidCompetition: vol ? vol.competitionIndex : null,
+    ytResultCount: null,
+    topViewMedian: null,
+    topViewMax: null,
+    avgChannelSubs: null,
+    topVideoAgeDays: null,
+    gapFlags: { ...NO_GAP_FLAGS },
+    cluster: null,
+    sources,
+    topCompetitors: [],
+    competitionFetched: false,
+    alreadyCovered,
+    lastFetchedAt: Date.now(),
+  };
+}
+
+/**
+ * Fold the (competition-set) trends signal into a not-yet-fetched keyword's demand
+ * — used when the Data API is off or quota was reached, so these keywords still
+ * benefit from trends while staying competitionFetched=false.
+ */
+function foldTrends(m: KeywordMetrics, trends: number | null, vol: DfsVolume | null): KeywordMetrics {
+  const volScore = vol && vol.volume !== null ? volumeScore(vol.volume) : null;
+  const demand = demandScore({ autocomplete: m.autocompleteScore, trends, ytVolume: 0, volumeScore: volScore });
+  const sources = trends !== null && !m.sources.includes("trends") ? [...m.sources, "trends"] : m.sources;
+  return { ...m, trendsScore: trends, demandScore: demand, sources, lastFetchedAt: Date.now() };
+}
+
+/**
+ * The cached-volume fix: when a fresh cached keyword lacks real search volume we
+ * now have (or has a different one), overlay searchVolume/cpc/paidCompetition and
+ * recompute demand + opportunity, then upsert. competitionFetched (and all
+ * competition data) is preserved from the cache.
+ */
+function overlayCachedVolume(cached: KeywordMetrics, vol: DfsVolume | null): KeywordMetrics {
+  if (!vol || vol.volume === null || cached.searchVolume === vol.volume) return cached;
+  const ytVolume = cached.ytResultCount && cached.ytResultCount > 0 ? logScore(cached.ytResultCount, 1_000_000) : 0;
+  const demand = demandScore({
+    autocomplete: cached.autocompleteScore,
+    trends: cached.trendsScore,
+    ytVolume,
+    volumeScore: volumeScore(vol.volume),
+  });
+  const opportunity = opportunityScore(demand, cached.competitionScore, cached.gapFlags);
+  const sources = cached.sources.includes("dataforseo") ? cached.sources : [...cached.sources, "dataforseo"];
+  const updated: KeywordMetrics = {
+    ...cached,
+    searchVolume: vol.volume,
+    cpc: vol.cpc,
+    paidCompetition: vol.competitionIndex,
+    demandScore: demand,
+    opportunityScore: opportunity,
+    sources,
+    lastFetchedAt: Date.now(),
+  };
+  upsertKeyword(updated); // dominance/competition rows are untouched.
+  return updated;
+}
+
+// ── Channel analysis (the user's OWN channel) ────────────────────────────────
+
+/**
+ * Resolve + fetch the user's channel into a ChannelProfile. Requires YouTube to
+ * be configured; returns null (never throws) on any failure so a channel problem
+ * can't take the run down.
+ */
+async function resolveOwnChannel(url: string): Promise<ChannelProfile | null> {
+  if (!youtubeConfigured()) return null;
+  try {
+    const resolved = await resolveChannelId(url);
+    if (!resolved) return null;
+    const data = await fetchChannelProfile(resolved.channelId, SCORING.channelVideoSample);
+    if (!data) return null;
+    return {
+      channelId: data.channelId,
+      title: data.title,
+      handle: data.handle ?? resolved.handle ?? null,
+      url,
+      subscriberCount: data.subscriberCount,
+      videoCount: data.videoCount,
+      viewCount: data.viewCount,
+      videos: data.uploads.map((u) => ({
+        videoId: u.videoId,
+        title: u.title,
+        views: u.views,
+        publishedAt: u.publishedAt,
+      })),
+      fetchedAt: Date.now(),
+    };
+  } catch (e) {
+    console.warn(`[keyword] channel analysis failed: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
+/** The channel's most-viewed video titles, used as extra research seeds. */
+function channelSeeds(channel: ChannelProfile, limit: number): string[] {
+  return [...channel.videos]
+    .sort((a, b) => b.views - a.views)
+    .slice(0, limit)
+    .map((v) => v.title)
+    .filter(Boolean);
+}
+
+/**
+ * Build the "already covered" matcher from a channel's video titles: a keyword is
+ * covered when its normalized form is a substring of any normalized title, OR ≥60%
+ * of its word tokens appear together in a single title. Returns a never-covered
+ * matcher when there's no channel.
+ */
+function buildCoveredMatcher(channel: ChannelProfile | null): (keyword: string) => boolean {
+  if (!channel || channel.videos.length === 0) return () => false;
+  const titles = channel.videos.map((v) => normalizeKeyword(v.title)).filter(Boolean);
+  const titleTokens = titles.map((t) => new Set(t.split(" ").filter(Boolean)));
+  return (keyword: string): boolean => {
+    const norm = normalizeKeyword(keyword);
+    if (!norm) return false;
+    if (titles.some((t) => t.includes(norm))) return true;
+    const tokens = norm.split(" ").filter(Boolean);
+    if (tokens.length === 0) return false;
+    return titleTokens.some((set) => tokens.filter((tok) => set.has(tok)).length / tokens.length >= 0.6);
   };
 }
 
@@ -536,18 +846,22 @@ function persistKeyword(m: KeywordMetrics, videos: CompetitionVideoRow[]): void 
   }
 }
 
-function summarize(sortedByOpportunity: KeywordMetrics[]): ResearchRunSummary {
-  const total = sortedByOpportunity.length;
-  const avg = (sel: (m: KeywordMetrics) => number) =>
-    total ? Math.round(sortedByOpportunity.reduce((s, m) => s + sel(m), 0) / total) : 0;
-  const gapCount = sortedByOpportunity.filter((m) => Object.values(m.gapFlags).some(Boolean)).length;
-  return {
-    totalKeywords: total,
-    topOpportunities: sortedByOpportunity.slice(0, 10).map((m) => m.keyword),
-    avgDemand: avg((m) => m.demandScore),
-    avgCompetition: avg((m) => m.competitionScore),
-    gapCount,
-  };
+/**
+ * Summarize a run. Totals/demand/gaps span ALL keywords; avgCompetition is over
+ * the fetched competition set only (the rest have no competition data yet).
+ */
+function summarize(all: KeywordMetrics[], competitionOnly: KeywordMetrics[]): ResearchRunSummary {
+  const total = all.length;
+  const avgDemand = total ? Math.round(all.reduce((s, m) => s + m.demandScore, 0) / total) : 0;
+  const avgCompetition = competitionOnly.length
+    ? Math.round(competitionOnly.reduce((s, m) => s + m.competitionScore, 0) / competitionOnly.length)
+    : 0;
+  const gapCount = all.filter((m) => Object.values(m.gapFlags).some(Boolean)).length;
+  const topOpportunities = [...all]
+    .sort((a, b) => b.opportunityScore - a.opportunityScore)
+    .slice(0, 10)
+    .map((m) => m.keyword);
+  return { totalKeywords: total, topOpportunities, avgDemand, avgCompetition, gapCount };
 }
 
 function deriveNiche(input: ResearchInput, seeds: string[]): string {
