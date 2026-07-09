@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Sparkles,
   TrendingUp,
+  PenLine,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -175,6 +176,19 @@ export const TOOLS: ToolDefinition[] = [
     accent: 'green',
     detail: 'YouTube SEO',
     // Needs the YouTube Data API key (set in the same write-only Postiz settings).
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'script-generator',
+    title: 'Script Generator',
+    description:
+      'Turn a video idea into a full Jake Dawson YouTube script — research, outline, all four hook formulas, and a section-by-section script, written on Opus 4.8.',
+    icon: PenLine,
+    route: '/script-generator',
+    status: 'live',
+    accent: 'primary',
+    detail: 'Opus 4.8 scripts',
+    // Needs the Anthropic key (set in the same write-only Postiz settings).
     configureRoute: '/settings/postiz',
   },
   {

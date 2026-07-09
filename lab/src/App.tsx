@@ -16,6 +16,7 @@ import BulkSchedulerPage from './pages/BulkSchedulerPage';
 import ThumbnailDesignerPage from './pages/ThumbnailDesignerPage';
 import ImageGeneratorPage from './pages/ImageGeneratorPage';
 import KeywordResearchPage from './pages/KeywordResearchPage';
+import ScriptGeneratorPage from './pages/ScriptGeneratorPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/thumbnail-designer" element={<ThumbnailDesignerPage />} />
         <Route path="/image-generator" element={<ImageGeneratorPage />} />
         <Route path="/keyword-research" element={<KeywordResearchPage />} />
+        <Route path="/script-generator" element={<ScriptGeneratorPage />} />
       </Routes>
       <BackgroundJobs />
       <Toaster theme="dark" />

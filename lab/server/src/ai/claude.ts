@@ -177,6 +177,50 @@ async function callClaude(opts: {
     .join("");
 }
 
+/**
+ * Opus chat for the Jake Dawson Script Generator — always the latest Opus
+ * (claude-opus-4-8 via the "director" tier), with an optional Anthropic
+ * server-side web_search tool for the live-research stage. Larger default
+ * max_tokens (script stages are long-form). Returns the concatenated text
+ * blocks (server tool-use / search-result blocks are ignored).
+ */
+export async function opusScriptChat(opts: {
+  system: string;
+  messages: Turn[];
+  maxTokens?: number;
+  /** Enable Anthropic's server-side web search (used by Stage 1 research). */
+  webSearch?: boolean;
+  purpose?: CallPurpose;
+}): Promise<string> {
+  if (!anthropicConfigured()) {
+    throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY to use the Script Generator.");
+  }
+  const model = aiConfig.models.director; // latest Opus (claude-opus-4-8)
+  const systemBlocks = opts.system
+    ? [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }]
+    : undefined;
+  const body: Record<string, unknown> = {
+    model,
+    max_tokens: opts.maxTokens ?? 16000,
+    ...(systemBlocks ? { system: systemBlocks } : {}),
+    messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+  };
+  if (opts.webSearch) {
+    // Anthropic's server-executed web search tool (GA). The model runs searches
+    // during generation and returns the final answer with the results folded in.
+    body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }];
+  }
+  const t0 = Date.now();
+  const json = await anthropicRequest(body, "Claude (scriptgen) API error");
+  if (opts.purpose) {
+    recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+  }
+  return (json.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text || "")
+    .join("");
+}
+
 /** Plain text chat completion. */
 export async function claudeChat(opts: {
   model: string;

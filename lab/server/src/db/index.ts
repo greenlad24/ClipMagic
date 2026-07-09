@@ -252,6 +252,25 @@ CREATE TABLE IF NOT EXISTS kw_fav_keywords (
 CREATE INDEX IF NOT EXISTS idx_favtitles_folder ON kw_fav_titles(folder_id);
 CREATE INDEX IF NOT EXISTS idx_favkw_folder     ON kw_fav_keywords(folder_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_favkw_uniq ON kw_fav_keywords(folder_id, keyword);
+
+-- Jake Dawson Script Generator: one row per generated script (saved-scripts
+-- history). The stage outputs (research/outline/hooks/sections/outro) are large
+-- text, stored as JSON docs. status drives the Stage-0 checkpoint flow.
+CREATE TABLE IF NOT EXISTS script_runs (
+  id             TEXT PRIMARY KEY,
+  title          TEXT NOT NULL DEFAULT '',
+  video_type     TEXT,
+  status         TEXT NOT NULL,        -- classifying | awaiting_confirmation | running | completed | failed
+  input_json     TEXT NOT NULL,        -- ScriptInput
+  setup_json     TEXT,                 -- ScriptSetup (after checkpoint)
+  stage0_json    TEXT,                 -- Stage0Result
+  stages_json    TEXT,                 -- ScriptStages
+  final_document TEXT,
+  error          TEXT,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_script_runs_created ON script_runs(created_at);
 `);
 
 /**

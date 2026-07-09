@@ -386,6 +386,94 @@ export const updateFavKeyword =
 export const extractKeywordsFromTitles =
   endpoint<{ folderId: string; titleIds: string[] }, { added: FavKeyword[] }>("extractKeywordsFromTitles");
 
+// ── Jake Dawson Script Generator (LAB tool) ──────────────────────────────────
+export type SponsorshipMode = "organic" | "whole-video" | "mid-roll";
+export interface Sponsorship {
+  mode: SponsorshipMode;
+  sponsorName: string | null;
+}
+export interface ScriptInput {
+  idea: string;
+  brief?: string;
+  sponsorship?: Sponsorship;
+  targetLength?: string;
+}
+export type ScriptVideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
+export interface Stage0Result {
+  videoTypeDetailed: string;
+  videoType: ScriptVideoType;
+  titleOptions: string[];
+  recommendedTitle: string;
+  coreTopic: string;
+  specificFocus: string;
+}
+export interface ScriptSetup {
+  videoType: ScriptVideoType;
+  title: string;
+  coreTopic: string;
+  specificFocus: string;
+  sponsorship: Sponsorship;
+  targetLength: string;
+}
+export interface ScriptSection {
+  name: string;
+  draft: string;
+  final: string;
+}
+export interface ScriptStages {
+  research: string | null;
+  outline: string | null;
+  hooks: string | null;
+  sponsorSegment: string | null;
+  sections: ScriptSection[];
+  outro: string | null;
+  reviewNotes: string[];
+}
+export type ScriptRunStatus = "classifying" | "awaiting_confirmation" | "running" | "completed" | "failed";
+export interface ScriptRunResult {
+  runId: string;
+  title: string;
+  input: ScriptInput;
+  setup: ScriptSetup | null;
+  stage0: Stage0Result | null;
+  stages: ScriptStages;
+  finalDocument: string | null;
+  status: ScriptRunStatus;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+export interface ScriptRunListItem {
+  id: string;
+  title: string;
+  videoType: ScriptVideoType | null;
+  status: ScriptRunStatus;
+  createdAt: number;
+}
+export interface ScriptJobSnapshot {
+  jobId: string;
+  runId: string;
+  status: ScriptRunStatus;
+  phase: string;
+  percent: number;
+  error: string | null;
+}
+export interface ScriptGenStatusOutput {
+  anthropicConfigured: boolean;
+  model: string;
+}
+export const scriptGenStatus =
+  endpoint<Record<string, never>, ScriptGenStatusOutput>("scriptGenStatus");
+/** Stage 0: classify + propose titles; creates the run (status awaiting_confirmation). */
+export const startScript = endpoint<ScriptInput, { runId: string; stage0: Stage0Result }>("startScript");
+/** Confirm the type/title checkpoint and kick off Stages 1–7 as a background job. */
+export const continueScript =
+  endpoint<{ runId: string; setup: ScriptSetup }, { jobId: string; runId: string }>("continueScript");
+export const scriptJobStatus = endpoint<{ jobId: string }, ScriptJobSnapshot>("scriptJobStatus");
+export const getScriptRun = endpoint<{ runId: string }, ScriptRunResult>("getScriptRun");
+export const listScriptRuns = endpoint<Record<string, never>, { runs: ScriptRunListItem[] }>("listScriptRuns");
+export const deleteScriptRun = endpoint<{ runId: string }, { ok: true }>("deleteScriptRun");
+
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
 export const analyzeThumbnailScript =

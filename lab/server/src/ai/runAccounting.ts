@@ -94,7 +94,10 @@ export type CallPurpose =
   | "keyword-insights"
   // Keyword Research favorites: extract searchable keyword phrases from saved
   // YouTube titles (fast tier).
-  | "keyword-extract";
+  | "keyword-extract"
+  // Jake Dawson Script Generator: every stage (classify/research/outline/hooks/
+  // sponsor/section/review/outro) runs on Opus (director tier).
+  | "scriptgen";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

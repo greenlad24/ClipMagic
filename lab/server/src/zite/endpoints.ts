@@ -133,6 +133,18 @@ import {
 import { extractKeywordsFromTitles as aiExtractKeywordsFromTitles } from "../keyword/ai.js";
 import type { FavKeyword, FavKeywordSource } from "../keyword/favorites.js";
 import type { ResearchInput, ResearchMode } from "../keyword/types.js";
+import { aiConfig } from "../ai/config.js";
+import {
+  startScript as runStartScript,
+  continueScript as runContinueScript,
+  getScriptSnapshot,
+} from "../scriptgen/run.js";
+import {
+  getRun as getScriptRunDb,
+  listRuns as listScriptRunsDb,
+  deleteRun as deleteScriptRunDb,
+} from "../db/scriptRuns.js";
+import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -3034,6 +3046,44 @@ const extractKeywordsFromTitles: Handler = async (input) => {
   return { added };
 };
 
+// ── Jake Dawson Script Generator (LAB tool) ──────────────────────────────────
+// 7-stage YouTube-scripting methodology on Opus 4.8: Stage 0 classify (sync,
+// with a type/title checkpoint), then Stages 1–7 as a polled background job.
+const scriptGenStatus: Handler = async () => ({
+  anthropicConfigured: anthropicConfigured(),
+  model: aiConfig.models.director,
+});
+
+const startScript: Handler = async (input) => runStartScript(input as ScriptInput);
+
+const continueScript: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  const setup: ScriptSetup | undefined = input?.setup;
+  if (!runId || !setup) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "runId and setup are required to continue a script." });
+  }
+  return runContinueScript(runId, setup);
+};
+
+const scriptJobStatus: Handler = async (input) => {
+  const snap = getScriptSnapshot(input?.jobId);
+  if (!snap) throw new ZiteError({ code: "NOT_FOUND", message: "Script job not found." });
+  return snap;
+};
+
+const getScriptRun: Handler = async (input) => {
+  const run = getScriptRunDb(input?.runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  return run;
+};
+
+const listScriptRuns: Handler = async () => ({ runs: listScriptRunsDb() });
+
+const deleteScriptRun: Handler = async (input) => {
+  deleteScriptRunDb(input?.runId);
+  return { ok: true };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -3162,6 +3212,14 @@ export const HANDLERS: Record<string, Handler> = {
   removeFavKeyword,
   updateFavKeyword,
   extractKeywordsFromTitles,
+  // Jake Dawson Script Generator (LAB tool)
+  scriptGenStatus,
+  startScript,
+  continueScript,
+  scriptJobStatus,
+  getScriptRun,
+  listScriptRuns,
+  deleteScriptRun,
 };
 
 void config;
