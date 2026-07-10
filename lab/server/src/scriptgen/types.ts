@@ -119,6 +119,8 @@ export interface ClaimAudit {
   experienceClaims: string[];
   /** Sponsor plugs beyond the two allowed (one early, one at the close). */
   excessSponsorPlugs: string[];
+  /** Banned words that survived into the finished script. */
+  bannedWords: string[];
   numbersChecked: number;
 }
 

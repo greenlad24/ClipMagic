@@ -625,6 +625,8 @@ function reviewGuardBlock(ledger: ContinuityLedger, hasFactSheet: boolean): stri
   lines.push(
     "Do not shorten sentences to hit the reading level. Reading level is about VOCABULARY — everyday words, no jargon. It is not about sentence length. Long, winding, spoken-sounding sentences are correct and should survive your edit.",
     "",
+    "Banned words — rewrite any of these out of this section: \"caveat\" (say \"the catch is\"), \"clever\" (say what it does), \"which\" (split the sentence or use \"that\"), \"whether\" (say \"if\"). Say \"Imagine …\" never \"Picture …\". And never a bare clipped question like \"No door?\" — lead with the little word a person would say: \"And if there's no door?\"",
+    "",
     "Vary sentence length hard: three words, then thirty, then a fragment. Uniform sentence length is what makes a script sound machine-read.",
     "",
   );
@@ -1152,13 +1154,15 @@ async function runScript(
       stages.claimAudit.unsupportedNumbers.length ||
       stages.claimAudit.fencedTopicsMentioned.length ||
       stages.claimAudit.experienceClaims.length ||
-      stages.claimAudit.excessSponsorPlugs.length
+      stages.claimAudit.excessSponsorPlugs.length ||
+      stages.claimAudit.bannedWords.length
     ) {
       console.warn(
         `[scriptgen:claims] unsupported=${JSON.stringify(stages.claimAudit.unsupportedNumbers)} ` +
           `fenced=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)} ` +
           `experience=${JSON.stringify(stages.claimAudit.experienceClaims)} ` +
-          `excessPlugs=${stages.claimAudit.excessSponsorPlugs.length}`,
+          `excessPlugs=${stages.claimAudit.excessSponsorPlugs.length} ` +
+          `banned=${JSON.stringify(stages.claimAudit.bannedWords.slice(0, 6))}`,
       );
     }
 

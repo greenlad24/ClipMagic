@@ -335,6 +335,8 @@ export interface ClaimAudit {
   experienceClaims: string[];
   /** Sponsor plugs beyond the two allowed (one early, one at the close). */
   excessSponsorPlugs: string[];
+  /** Banned words / phrasings that survived into the finished script. */
+  bannedWords: string[];
   /** Numbers checked, for context on how meaningful the above is. */
   numbersChecked: number;
 }
@@ -460,6 +462,39 @@ export function findExperienceClaims(script: string, support: string): string[] 
  *   production notes that are not claims, yet its opening beats are exactly
  *   where "I ran this for a full 30 days" tends to land.
  */
+/** Words Jake never wants in a script. Whole-word, case-insensitive. */
+export const BANNED_WORDS = ["caveat", "clever", "which", "whether", "genuinely", "real deal"];
+
+/**
+ * Banned words and phrasings in the finished script, with a little context so
+ * they can be found and rewritten. Enforced in code because a prompt instruction
+ * to "never use X" does not reliably hold — the model reaches for these anyway.
+ *
+ * Also flags "Picture …" as a sentence opener (Jake says "Imagine …") and bare
+ * clipped question fragments ("No door?") that should lead with a connective
+ * ("And if there's no door?").
+ */
+export function findBannedWords(text: string): string[] {
+  const out: string[] = [];
+  const sentences = splitSentences(text);
+  const bannedRe = new RegExp(`\\b(${BANNED_WORDS.join("|")})\\b`, "gi");
+  for (const s of sentences) {
+    for (const m of s.matchAll(bannedRe)) {
+      const at = m.index ?? 0;
+      const snippet = s.slice(Math.max(0, at - 24), at + m[0].length + 24).trim();
+      out.push(`"${m[1].toLowerCase()}" — …${snippet}…`);
+    }
+    if (/^picture\b/i.test(s)) out.push(`"Picture …" opener (use "Imagine …") — ${s.slice(0, 46)}…`);
+    // A 1–3 word sentence ending in "?" reads as a clipped fragment.
+    const w = wordsOf(s);
+    if (s.endsWith("?") && w.length >= 1 && w.length <= 3 && !/^(and|so|but|or|now|what|why|how|who|where)\b/i.test(s)) {
+      out.push(`clipped question "${s}" — lead with a connective ("And if …?")`);
+    }
+  }
+  // Dedupe, cap.
+  return [...new Set(out)].slice(0, 40);
+}
+
 /**
  * Sentences that push the sponsor's offer or link — "free to start, no card",
  * "link's in the description", the sponsor domain used as a call to action.
@@ -513,12 +548,14 @@ export function auditClaims(
     `${brief}\n${factSheet}`,
   );
   const excess = sponsorName ? excessSponsorPlugs(script, sponsorName) : [];
+  const bannedWords = findBannedWords(script);
   if (!factSheet.trim()) {
     return {
       unsupportedNumbers: [],
       fencedTopicsMentioned: [],
       experienceClaims,
       excessSponsorPlugs: excess,
+      bannedWords,
       numbersChecked: 0,
     };
   }
@@ -559,6 +596,7 @@ export function auditClaims(
     fencedTopicsMentioned: mentioned.slice(0, 25),
     experienceClaims,
     excessSponsorPlugs: excess,
+    bannedWords,
     numbersChecked: scriptNumbers.length,
   };
 }
