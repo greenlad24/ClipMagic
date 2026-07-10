@@ -45,6 +45,11 @@ export interface Stage0Result {
   recommendedTitle: string;
   coreTopic: string;
   specificFocus: string;
+  /**
+   * How many items/use cases the video should cover, judged from the idea and
+   * brief. Null when the video isn't item-based. Never derived from the title.
+   */
+  itemCount: number | null;
 }
 
 /** The user-confirmed setup after the Stage 0 checkpoint (drives Stages 1–7). */
@@ -110,6 +115,8 @@ export interface ClaimAudit {
   unsupportedNumbers: string[];
   /** Fenced topics the script mentions — may be a rebuttal, so check rather than assume. */
   fencedTopicsMentioned: string[];
+  /** First-person "I tested it for 30 days" claims with nothing behind them. */
+  experienceClaims: string[];
   numbersChecked: number;
 }
 

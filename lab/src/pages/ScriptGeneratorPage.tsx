@@ -967,7 +967,8 @@ export default function ScriptGeneratorPage() {
                           hint={`${run.stages.claimAudit.numbersChecked} numbers checked`}
                         >
                           {run.stages.claimAudit.unsupportedNumbers.length === 0 &&
-                          run.stages.claimAudit.fencedTopicsMentioned.length === 0 ? (
+                          run.stages.claimAudit.fencedTopicsMentioned.length === 0 &&
+                          run.stages.claimAudit.experienceClaims.length === 0 ? (
                             <p className="text-sm text-muted-foreground">
                               Every number in the script traces back to the fact sheet.
                             </p>
@@ -981,6 +982,18 @@ export default function ScriptGeneratorPage() {
                                   <p className="text-sm text-foreground">
                                     {run.stages.claimAudit.unsupportedNumbers.join(", ")}
                                   </p>
+                                </div>
+                              )}
+                              {run.stages.claimAudit.experienceClaims.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Claims Jake never made — invented experience
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {run.stages.claimAudit.experienceClaims.map((c, i) => (
+                                      <li key={i} className="text-sm text-foreground">“{c}”</li>
+                                    ))}
+                                  </ul>
                                 </div>
                               )}
                               {run.stages.claimAudit.fencedTopicsMentioned.length > 0 && (

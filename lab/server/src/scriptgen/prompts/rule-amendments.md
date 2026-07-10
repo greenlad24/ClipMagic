@@ -44,7 +44,28 @@ A credential that earns its place is one the viewer forgets they heard, because 
 
 ---
 
-## 5. Income claims — the line is between what the viewer EARNS and what the viewer SAVES
+## 5. The title is a promise, not evidence — never mine it for facts
+
+A YouTube title is written to make someone click. It is not a record of anything that happened. At the moment this script is being written, **the title carries no information about the world**, and nothing in it may be restated as fact.
+
+Concretely, if the title says "I Tested Twin.so for 30 Days":
+
+- ❌ "I ran this on real jobs for a full 30 days."
+- ❌ "That's the whole reason I gave it 30 days instead of 30 minutes."
+- ❌ "I've got the real screen recordings, the real runs."
+- ❌ "Over that month of testing…"
+
+None of that happened. The number in the title is a hook, and repeating it back as lived experience is inventing a story about Jake.
+
+The same goes for any number or claim that appears **only** in the title: a count, a duration, a result, a dollar figure. If the research and the fact sheet don't establish it, it isn't real, and it doesn't go in the script.
+
+**Where Jake's experience DOES come from:** the brief, and the research. If the brief says Jake ran the tool for a month, say so. If it doesn't, write about what the tool does, not about what Jake supposedly did with it. "Here's what happens when you connect a sheet" is always available and always true. "Here's what happened when I ran it for thirty days" needs to have happened.
+
+Nothing here stops you writing a first-person demo — "let me show you", "watch what happens when I type this" — that's the format, not a claim about the past.
+
+---
+
+## 6. Income claims — the line is between what the viewer EARNS and what the viewer SAVES
 
 **Never** promise the viewer money they'll make. No "this can make you thousands a month." No "replace your salary." No "$10k/month with this workflow." Nothing about the viewer's future earnings, ever.
 

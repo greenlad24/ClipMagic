@@ -28,7 +28,6 @@ import {
   scriptQuality,
   auditClaims,
   wordBudget,
-  itemCountFromTitle,
   toCleanProse,
   extractPrompts,
 } from "./edits.js";
@@ -137,6 +136,10 @@ export async function runStage0(input: ScriptInput): Promise<Stage0Result> {
     recommendedTitle,
     coreTopic: str(parsed.coreTopic, idea),
     specificFocus: str(parsed.specificFocus, brief),
+    itemCount:
+      typeof parsed.itemCount === "number" && Number.isFinite(parsed.itemCount) && parsed.itemCount >= 3
+        ? Math.round(parsed.itemCount)
+        : null,
   };
 }
 
@@ -255,7 +258,7 @@ export function continueScript(runId: string, setup: ScriptSetup): { jobId: stri
   }
   updateRun(runId, { setup, title: setup.title, videoType: setup.videoType, status: "running" });
   const job = createJob(runId);
-  void runScript(job.id, runId, setup, run.input);
+  void runScript(job.id, runId, setup, run.input, run.stage0);
   return { jobId: job.id, runId };
 }
 
@@ -691,6 +694,7 @@ async function runScript(
   runId: string,
   setup: ScriptSetup,
   input: ScriptInput,
+  stage0: Stage0Result | null,
 ): Promise<void> {
   const job = jobs.get(jobId);
   if (!job) return;
@@ -728,8 +732,9 @@ async function runScript(
     // tutorial ~1,800. A list is sized by how many good items it has, not by a
     // runtime. "12 minutes minimum" was being read as a floor with no ceiling —
     // that is how a review reached 5,673 words.
-    const items = itemCountFromTitle(title);
-    const budget = wordBudget(videoType, targetLength, items);
+    // The item count is Stage 0's judgement on the idea and brief. It is never
+    // read off the title — a title is written to be clicked, not to be true.
+    const budget = wordBudget(videoType, targetLength, stage0?.itemCount ?? null);
 
     const today = todayLabel();
 
@@ -1043,11 +1048,21 @@ async function runScript(
 
     // Deterministic fact check: does the script assert a number the research never
     // established, or touch a topic the fact sheet fenced off? No model call.
-    stages.claimAudit = auditClaims(auditedBody, stages.factSheet ?? "");
-    if (stages.claimAudit.unsupportedNumbers.length || stages.claimAudit.fencedTopicsMentioned.length) {
+    stages.claimAudit = auditClaims(
+      auditedBody,
+      stages.factSheet ?? "",
+      input.brief ?? "",
+      stages.hooksWithCta ?? stages.hooks ?? "",
+    );
+    if (
+      stages.claimAudit.unsupportedNumbers.length ||
+      stages.claimAudit.fencedTopicsMentioned.length ||
+      stages.claimAudit.experienceClaims.length
+    ) {
       console.warn(
         `[scriptgen:claims] unsupported=${JSON.stringify(stages.claimAudit.unsupportedNumbers)} ` +
-          `forbidden=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)}`,
+          `fenced=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)} ` +
+          `experience=${JSON.stringify(stages.claimAudit.experienceClaims)}`,
       );
     }
 

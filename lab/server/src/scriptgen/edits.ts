@@ -124,44 +124,18 @@ export function parseTargetMinutes(targetLength: string): number | null {
 /** Words a single list item gets: measured from the 25-item gold (5,761 / 25). */
 export const WORDS_PER_LIST_ITEM = 230;
 
-/** Nouns that mean "this title is counting items". */
-const LIST_NOUNS =
-  "tricks?|tips?|ways?|use ?cases?|tools?|features?|things?|hacks?|prompts?|examples?|" +
-  "reasons?|steps?|mistakes?|ideas?|apps?|plugins?|workflows?|automations?|secrets?|" +
-  "lessons?|strategies|templates?|shortcuts?|commands?|settings?";
-
-/** Units that mean the number is NOT an item count. */
-const NOT_ITEMS = "days?|weeks?|months?|years?|hours?|minutes?|seconds?|dollars?|%|percent|x|k|m";
-
-/**
- * Pull the item count out of a title: "7 Claude + Higgsfield MCP insane use
- * cases" → 7, "25 insanely powerful ChatGPT tricks" → 25.
- *
- * The number only counts when a list noun follows it within a few words. Without
- * that guard, "I Tested Twin.so for 30 Days" reads as a thirty-item list and
- * budgets 6,900 words for a review that should run 1,800. Version numbers, years,
- * durations, and prices are all numbers in titles, and none of them are items.
- */
-export function itemCountFromTitle(title: string): number | null {
-  const re = new RegExp(
-    String.raw`\b(\d{1,3})\b(?!\s*(?:${NOT_ITEMS})\b)((?:\s+[\w'+.-]+){0,6}?)\s+(?:${LIST_NOUNS})\b`,
-    "i",
-  );
-  const m = title.match(re);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (n < 3 || n > 100) return null;
-  if (n >= 1900 && n <= 2100) return null;
-  return n;
-}
-
 /**
  * How many words the spoken script should run to.
  *
  * A list is sized by its items, not by a runtime — and the item count is a
- * QUALITY decision made upstream. Five genuinely good use cases beat twenty-five
- * padded ones, so this never inflates a list to hit a length; it just gives each
- * item the room the approved 25-item script gave its items.
+ * QUALITY decision made upstream, by Stage 0, from the IDEA and the BRIEF. Five
+ * genuinely good use cases beat twenty-five padded ones, so this never inflates
+ * a list to hit a length; it just gives each item the room the approved 25-item
+ * script gave its items.
+ *
+ * The count never comes from the title. A title is written to be clicked, not to
+ * be true: "I Tested Twin.so for 30 Days" is not a thirty-item list, and it is
+ * not evidence that anyone tested anything for thirty days.
  *
  * Everything else derives from the run's stated target length at Jake's speaking
  * rate. "12 minutes minimum" was being read as a floor with no ceiling, which is
@@ -350,6 +324,13 @@ export interface ClaimAudit {
    * never treated as failures.
    */
   fencedTopicsMentioned: string[];
+  /**
+   * First-person claims about testing the tool over a period of time. These come
+   * from the title far more often than from anything that happened — "I Tested
+   * Twin.so for 30 Days" produced "I ran this on real jobs for a full 30 days"
+   * in a script where nobody ran anything. Flagged unless the brief backs them.
+   */
+  experienceClaims: string[];
   /** Numbers checked, for context on how meaningful the above is. */
   numbersChecked: number;
 }
@@ -438,8 +419,56 @@ function forbiddenTerms(line: string): string[] {
  * Small integers (years, counts like "three things", step numbers) are ignored:
  * they're prose, not claims, and flagging them would bury the real findings.
  */
-export function auditClaims(script: string, factSheet: string): ClaimAudit {
-  if (!factSheet.trim()) return { unsupportedNumbers: [], fencedTopicsMentioned: [], numbersChecked: 0 };
+/**
+ * "I ran it for a full 30 days", "over the last few weeks I've been testing…" —
+ * first-person claims that a period of use actually happened. `support` is the
+ * brief plus the fact sheet: if neither says Jake used the tool for that long,
+ * the claim was invented, and it almost always came from the title.
+ */
+export function findExperienceClaims(script: string, support: string): string[] {
+  const DURATION = String.raw`(?:\d{1,3}|a|an|one|two|three|four|five|six|several|a few|a couple of|the last|the past)\s+(?:full\s+)?(?:day|days|week|weeks|month|months|year|years)`;
+  const VERB = "tested|ran|used|spent|been (?:testing|running|using)|put";
+  const re = new RegExp(
+    String.raw`\bI(?:'ve)?\s+(?:${VERB})\b[^.!?]{0,90}?\b${DURATION}\b|\bfor\s+(?:a\s+full\s+)?${DURATION}\b[^.!?]{0,40}?\b(?:testing|of testing|using it)\b`,
+    "gi",
+  );
+
+  const supportLower = support.toLowerCase();
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of script.matchAll(re)) {
+    const claim = m[0].replace(/\s+/g, " ").trim();
+    const key = claim.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Supported if the brief/fact sheet independently says so.
+    const duration = claim.match(new RegExp(DURATION, "i"))?.[0]?.toLowerCase();
+    if (duration && supportLower.includes(duration)) continue;
+    out.push(claim);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+/**
+ * @param alsoScanForExperience extra text (the hooks) checked for invented
+ *   experience but NOT for numbers — hook boilerplate carries timestamps and
+ *   production notes that are not claims, yet its opening beats are exactly
+ *   where "I ran this for a full 30 days" tends to land.
+ */
+export function auditClaims(
+  script: string,
+  factSheet: string,
+  brief = "",
+  alsoScanForExperience = "",
+): ClaimAudit {
+  const experienceClaims = findExperienceClaims(
+    `${alsoScanForExperience}\n${script}`,
+    `${brief}\n${factSheet}`,
+  );
+  if (!factSheet.trim()) {
+    return { unsupportedNumbers: [], fencedTopicsMentioned: [], experienceClaims, numbersChecked: 0 };
+  }
 
   // Timestamps are production markers, not claims. "Beat 4 (1:10–1:35)" would
   // otherwise contribute 1, 10, 1 and 35 to the audit and drown the real findings.
@@ -475,6 +504,7 @@ export function auditClaims(script: string, factSheet: string): ClaimAudit {
   return {
     unsupportedNumbers: unsupported.sort((a, b) => a - b).map(String).slice(0, 25),
     fencedTopicsMentioned: mentioned.slice(0, 25),
+    experienceClaims,
     numbersChecked: scriptNumbers.length,
   };
 }

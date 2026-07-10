@@ -18,6 +18,7 @@ Do TWO things:
    - Propose 3–5 candidate titles. Lean on Jake's proven formats: "X WILD Things [Tool] Can Do (Exact Prompts)", "How I'd [Do X] in 2026", "25 Things [Tool] Could Do", head-to-head comparisons, and "I tested [X] for [time]". Outcome-led and listicle framings perform best. No income claims. No competitor bashing.
    - Extract the CORE TOPIC/TOOL to research (tool name, concept, or strategy).
    - Extract the SPECIFIC FOCUS — any particular angles or questions the research should answer, drawn from the idea + brief.
+   - Decide the ITEM COUNT: if this video is built out of a countable set of things — use cases, tricks, tools, tips, prompts — how many should it actually cover? Judge that from the IDEA and the BRIEF, never from a title. Fewer good items beat more padded ones: five strong use cases is a better video than twenty-five thin ones. If the video isn't item-based (a review, a single walkthrough, an opinion), return null.
 
 Respond as STRICT JSON only (no markdown, no commentary):
 {
@@ -26,5 +27,6 @@ Respond as STRICT JSON only (no markdown, no commentary):
   "titleOptions": [string],           // 3-5 candidate titles
   "recommendedTitle": string,         // your single best pick from titleOptions
   "coreTopic": string,                // what specifically to research (tool/concept/strategy)
-  "specificFocus": string             // angles/questions the research should answer
+  "specificFocus": string,            // angles/questions the research should answer
+  "itemCount": number | null          // how many items/use cases, from the IDEA+BRIEF; null if not item-based
 }
