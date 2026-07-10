@@ -30,6 +30,7 @@ import {
   wordBudget,
   toCleanProse,
   extractPrompts,
+  ensureCanonicalOutro,
 } from "./edits.js";
 import type { ContinuityLedger } from "./edits.js";
 import type {
@@ -462,10 +463,10 @@ function outroNoVerdictBlock(videoType: VideoType, sponsored: boolean, sponsorNa
     "2. **Social** — follow on TikTok and Instagram, because Jake posts short clips there he doesn't put on YouTube. Links in the description.",
     "3. **The bell** — click the notification bell so they catch the next one the second it goes up.",
     "4. **The comment prompt** — a real question about THIS video's topic, the kind Jake would actually want answered. \"Which of these would you build first?\" He reads every one.",
-    "5. **The next video** — tease what's coming, and point at it: \"click the video to my left and you'll see exactly what I mean.\"",
-    "6. **Sign off** — thank them for hanging out, and say you'll see them in the next one.",
     "",
-    "Keep the whole thing under about 200 words. Warm, quick, no lingering.",
+    "STOP THERE. Do NOT write a sign-off, do NOT tease the next video, do NOT say what's coming up, do NOT say \"thanks for watching\" or \"see you\". A fixed closing line is added automatically after your outro — anything you write along those lines will be deleted. End on the comment prompt.",
+    "",
+    "Keep the whole thing under about 160 words. Warm, quick, no lingering.",
   ].join("\n");
 }
 
@@ -486,6 +487,7 @@ function reviewStructureGuard(videoType: VideoType): string {
     "This script is built as three use-case stories, then pricing, then a very short honest-thoughts beat. That is the intended shape. When the checklist above asks whether honest thoughts are included, the short honest-thoughts beat satisfies it — as do the caveats woven inside the stories.",
     "",
     "Do not add a pros-and-cons section. Do not add a cons section. Do not add a final verdict, a scorecard, or a 'who should buy this'. Do not expand the honest-thoughts beat beyond about thirty seconds, and do not turn it into a balanced weighing of good against bad. Do not reorganise the stories into a feature list.",
+    "The script ends with a fixed closing line (\"Thanks so much for hanging out… See you there.\"). Leave it exactly as it is. Do not tease the next video's topic, do not add or change the sign-off.",
     "",
     "Fix voice, clarity, accuracy, and reading level. Leave the architecture alone.",
   ].join("\n");
@@ -1125,7 +1127,7 @@ async function runScript(
     // Deliverable: Jake reads continuous prose. Strip the headers, beat markers,
     // and timestamps that made the artifact look like a spec — and that were
     // feeding phantom numbers into the claim audit.
-    const spokenBody = toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody);
+    const spokenBody = ensureCanonicalOutro(toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody));
     const prompts = extractPrompts(spokenBody);
     const promptAppendix =
       prompts.length > 0

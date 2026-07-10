@@ -243,6 +243,61 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
   return out;
 }
 
+// ── Canonical outro ───────────────────────────────────────────────────────────
+
+/**
+ * Jake's fixed closing, word for word. Every script ends exactly this way — no
+ * teasing what the next video is about, because YouTube picks it. Applied in
+ * code so it's verbatim, not approximated by the model.
+ */
+export const CANONICAL_OUTRO =
+  "Thanks so much for hanging out with me today. Before you click away, here's a video you'll probably want to watch next — YouTube's pretty good at this, it'll line up the one video it thinks you'll love next. Just click the video to my left and you'll see exactly what I'm talking about. See you there.";
+
+/** The phrases that mark where the model's own sign-off / next-video tease begins. */
+const SIGN_OFF_TRIGGERS = [
+  /\bnext up\b/i,
+  /\bnext week\b/i,
+  /\bin the next (?:video|one)\b/i,
+  /\bhere'?s a video you/i,
+  /\bclick the video to my left\b/i,
+  /\bthanks (?:so much |a lot )?for (?:hanging|watching|sticking)/i,
+  /\bcatch you (?:in|on|next|later)\b/i,
+  /\b(?:i'?ll )?see you (?:in|next|there|soon)\b/i,
+  /\bthat'?s (?:it|all) for (?:today|this one)\b/i,
+];
+
+/**
+ * Replace whatever sign-off the model wrote with the canonical one.
+ *
+ * Keeps everything up to the sign-off (the Skool plug, socials, bell, and the
+ * comment prompt all live before it), strips the model's own "thanks / next up /
+ * see you" tail, and appends CANONICAL_OUTRO verbatim. Only the last stretch of
+ * the script is searched, so a "see you" earlier in the body can't trip it.
+ */
+export function ensureCanonicalOutro(body: string): string {
+  const trimmed = body.replace(/\s+$/, "");
+  const WINDOW = 900;
+  const tailStart = Math.max(0, trimmed.length - WINDOW);
+  const head = trimmed.slice(0, tailStart);
+  const tail = trimmed.slice(tailStart);
+
+  let cut = -1;
+  for (const re of SIGN_OFF_TRIGGERS) {
+    const m = re.exec(tail);
+    if (m && (cut === -1 || m.index < cut)) cut = m.index;
+  }
+  if (cut === -1) {
+    // No sign-off found — append onto the end.
+    return `${trimmed}\n\n${CANONICAL_OUTRO}`;
+  }
+  // Back up to the start of the sentence the trigger sits in.
+  const beforeTrigger = tail.slice(0, cut);
+  const lastStop = Math.max(beforeTrigger.lastIndexOf(". "), beforeTrigger.lastIndexOf("! "), beforeTrigger.lastIndexOf("? "));
+  const keepTail = lastStop >= 0 ? beforeTrigger.slice(0, lastStop + 1) : "";
+  const kept = `${head}${keepTail}`.replace(/\s+$/, "");
+  return `${kept}\n\n${CANONICAL_OUTRO}`;
+}
+
 // ── Script quality metrics ────────────────────────────────────────────────────
 
 export interface ScriptQuality {
