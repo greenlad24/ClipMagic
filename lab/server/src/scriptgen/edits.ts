@@ -146,14 +146,16 @@ export const WORDS_PER_LIST_ITEM = 230;
 export function wordBudget(videoType: string, targetLength: string, itemCount?: number | null): number {
   const minutes = parseTargetMinutes(targetLength);
   const fromRuntime = minutes ? minutes * WORDS_PER_SPOKEN_MINUTE : null;
+  const itemBased = /list|round/i.test(videoType);
 
-  // An item count wins over a runtime for any video built out of items — a
-  // seven-use-case video and a twenty-five-trick video are not the same length,
-  // however many minutes the brief asked for.
-  if (itemCount && itemCount > 0) {
+  // An item count only sizes a video that IS a list. Stage 0 will happily report
+  // "5 use cases" for a Tool Review whose brief lists five examples — but a
+  // review is three builds and a runtime, not five items, and honouring the
+  // count there budgets 1,150 words for a twelve-minute video.
+  if (itemBased && itemCount && itemCount > 0) {
     return Math.max(1500, itemCount * WORDS_PER_LIST_ITEM);
   }
-  if (/list|round/i.test(videoType)) return fromRuntime ?? 5800;
+  if (itemBased) return fromRuntime ?? 5800;
   if (/review/i.test(videoType)) return fromRuntime ?? 2200;
   if (/tutorial/i.test(videoType)) return fromRuntime ?? 2000;
   return fromRuntime ?? 2200;
