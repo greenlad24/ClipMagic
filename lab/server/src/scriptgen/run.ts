@@ -255,7 +255,9 @@ export function continueScript(runId: string, setup: ScriptSetup): { jobId: stri
   if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
   // Without this, calling continue twice launches two background jobs writing to
   // the same row — the second silently overwrites the first, and both bill Opus.
-  if (run.status !== "awaiting_confirmation") {
+  // A failed run may be resumed: every stage it already paid for is persisted,
+  // and runScript skips whatever is present. A completed or running one may not.
+  if (run.status !== "awaiting_confirmation" && run.status !== "failed") {
     throw new ZiteError({
       code: "BAD_REQUEST",
       message: `This script is already ${run.status}; it cannot be started again.`,
@@ -704,6 +706,11 @@ async function runScript(
   const job = jobs.get(jobId);
   if (!job) return;
 
+  // Resume: every stage already persisted was already paid for. Never buy it
+  // twice. A prompt runs once per run row, and a failure costs only the stages
+  // that hadn't landed yet.
+  const priorRun = getRun(runId);
+  const prior = priorRun?.stages;
   const stages: ScriptStages = {
     research: null,
     sources: [],
@@ -722,6 +729,26 @@ async function runScript(
     quality: null,
     claimAudit: null,
   };
+  if (prior) {
+    stages.research = prior.research;
+    stages.sources = prior.sources ?? [];
+    stages.factSheet = prior.factSheet;
+    stages.outline = prior.outline;
+    stages.hooks = prior.hooks;
+    stages.sponsorSegment = prior.sponsorSegment;
+    stages.sections = Array.isArray(prior.sections) ? [...prior.sections] : [];
+    stages.outro = prior.outro;
+    const done = [
+      prior.research && "research",
+      prior.factSheet && "fact sheet",
+      prior.outline && "outline",
+      prior.hooks && "hooks",
+      prior.sections?.length ? `${prior.sections.length} section(s)` : null,
+      prior.outro && "outro",
+    ].filter(Boolean);
+    if (done.length) console.log(`[scriptgen] resuming run ${runId}; already paid for: ${done.join(", ")}`);
+  }
+
   const persist = () => updateRun(runId, { stages });
   // The spend cap is per run, not per process.
   resetScriptgenUsage();
@@ -750,15 +777,6 @@ async function runScript(
     // in the pipeline (web search + adaptive thinking), and it is already
     // persisted after it completes. If a later stage failed and this run is being
     // started again, reuse what was bought rather than buying it twice.
-    const prior = getRun(runId);
-    if (prior?.stages.research) {
-      stages.research = prior.stages.research;
-      stages.sources = prior.stages.sources ?? [];
-      stages.factSheet = prior.stages.factSheet ?? null;
-      console.log(`[scriptgen] reusing research already paid for on run ${runId} (${stages.research.length} chars)`);
-      progress(job, "Reusing existing research…", 22);
-    }
-
     if (!stages.research) {
     progress(job, "Researching the web…", 10);
     const s1 = fill(loadPrompt("stage1-research"), {
@@ -805,6 +823,7 @@ async function runScript(
     }
 
     // ── Stage 2 — OUTLINE ──
+    if (!stages.outline) {
     progress(job, "Building the outline…", 30);
     const s2 = fill(loadPrompt("stage2-outline"), {
       "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
@@ -828,8 +847,10 @@ async function runScript(
       purpose: "scriptgen",
     });
     persist();
+    }
 
     // ── Stage 3 — ALL FOUR HOOKS ──
+    if (!stages.hooks) {
     progress(job, "Writing all four hooks…", 45);
     const s3 = fill(loadPrompt("stage3-hooks"), {
       "[Tutorial / Tool Review / Business Guide / Opinion / Listicle / Roundup]": videoType,
@@ -846,9 +867,10 @@ async function runScript(
       purpose: "scriptgen",
     });
     persist();
+    }
 
     // ── Stage 4 — SPONSOR SEGMENT (mid-roll only) ──
-    if (setup.sponsorship?.mode === "mid-roll") {
+    if (setup.sponsorship?.mode === "mid-roll" && !stages.sponsorSegment) {
       progress(job, "Writing the sponsor segment…", 50);
       const s4 = fill(loadPrompt("stage4-sponsor"), {
         "[INSERT SPONSOR]": (setup.sponsorship.sponsorName || "the sponsor").trim() || "the sponsor",
@@ -866,7 +888,11 @@ async function runScript(
     // ── Stage 5 — SECTIONS (draft + 14-year-old review pass) ──
     const sectionOutlines = parseOutlineSections(stages.outline ?? "");
     const total = sectionOutlines.length;
-    for (let i = 0; i < total; i++) {
+    const alreadyDrafted = stages.sections.length;
+    if (alreadyDrafted > 0) {
+      console.log(`[scriptgen] ${alreadyDrafted}/${total} sections already written — skipping those`);
+    }
+    for (let i = alreadyDrafted; i < total; i++) {
       const sec = sectionOutlines[i];
       progress(job, `Writing section ${i + 1}/${total}…`, sectionStartPercent(i, total));
 
@@ -909,6 +935,7 @@ async function runScript(
     }
 
     // ── Stage 6 — OUTRO ──
+    if (!stages.outro) {
     progress(job, "Writing the outro…", 88);
     const s6 = fill(loadPrompt("stage6-outro"), {
       "[INSERT TYPE]": videoType,
@@ -927,6 +954,7 @@ async function runScript(
       purpose: "scriptgen",
     });
     persist();
+    }
 
     // ── Stage 5.5 — CTA PLACEMENT ──
     // Numbered 5.5 but runs AFTER the outro: Rule 4 strips the outro's trailing

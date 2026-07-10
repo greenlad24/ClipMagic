@@ -88,8 +88,20 @@ function resolvePurpose(tier: "director" | "research" | "fast", system: string):
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** A request that ran this long was probably going to finish. Don't duplicate it. */
-const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.CLAUDE_TIMEOUT_MS || "900000", 10); // 15 min
+/**
+ * How long to wait for a response. 0 = wait forever, which is the default for
+ * scriptgen: a slow call is not a failed call, and giving up on one only means
+ * paying for it again. Set CLAUDE_TIMEOUT_MS to a positive number to re-enable.
+ */
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.CLAUDE_TIMEOUT_MS || "0", 10);
+
+/** Attach an abort signal only when a timeout is actually configured. */
+function withTimeout(): { signal?: AbortSignal; done: () => void } {
+  if (!(REQUEST_TIMEOUT_MS > 0)) return { done: () => {} };
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+  return { signal: ac.signal, done: () => clearTimeout(timer) };
+}
 
 /**
  * True when a thrown fetch error means "the client gave up waiting", not "the
@@ -116,27 +128,30 @@ function isTimeout(e: unknown): boolean {
  *
  * Every retry now logs. Silence was the expensive part.
  */
-async function anthropicRequest(body: unknown, label: string): Promise<AnthropicResponse> {
-  const maxAttempts = Number.parseInt(process.env.CLAUDE_MAX_RETRIES || "5", 10);
+async function anthropicRequest(
+  body: unknown,
+  label: string,
+  attempts?: number,
+): Promise<AnthropicResponse> {
+  const maxAttempts = attempts ?? Number.parseInt(process.env.CLAUDE_MAX_RETRIES || "5", 10);
   let lastErr = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let res: Response;
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+    const t = withTimeout();
     try {
       res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
         method: "POST",
         headers: anthropicHeaders(),
         body: JSON.stringify(body),
-        signal: ac.signal,
+        signal: t.signal,
       });
     } catch (e) {
       lastErr = e instanceof Error ? e.message : String(e);
       if (isTimeout(e)) {
-        // Do NOT retry. The request may well be completing server-side, and a
+        // Never retry. The request may well be completing server-side, and a
         // second attempt bills the whole call again.
         throw new Error(
-          `${label} timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s — not retried (a retry would bill the call twice): ${lastErr}`,
+          `${label} timed out — not retried (a retry would bill the call twice): ${lastErr}`,
         );
       }
       console.warn(`${label} network error (attempt ${attempt}/${maxAttempts}): ${lastErr}`);
@@ -146,14 +161,15 @@ async function anthropicRequest(body: unknown, label: string): Promise<Anthropic
       }
       throw new Error(`${label} network error after ${attempt} attempts: ${lastErr}`);
     } finally {
-      clearTimeout(timer);
+      t.done();
     }
 
     if (res.ok) return (await res.json()) as AnthropicResponse;
 
     const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
     lastErr = `${res.status}: ${json?.error?.message || JSON.stringify(json)}`;
-    const retryable = res.status === 529 || res.status === 429 || (res.status >= 500 && res.status < 600);
+    const retryable =
+      maxAttempts > 1 && (res.status === 529 || res.status === 429 || (res.status >= 500 && res.status < 600));
     if (retryable && attempt < maxAttempts) {
       // Honor Retry-After when present, else exponential backoff + jitter.
       const ra = Number.parseInt(res.headers.get("retry-after") || "", 10);
@@ -177,24 +193,23 @@ async function anthropicRequest(body: unknown, label: string): Promise<Anthropic
  * whatever was generated.
  */
 async function anthropicStreamRequest(body: Record<string, unknown>, label: string): Promise<AnthropicResponse> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+  const t = withTimeout();
   let res: Response;
   try {
     res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
       method: "POST",
       headers: anthropicHeaders(),
       body: JSON.stringify({ ...body, stream: true }),
-      signal: ac.signal,
+      signal: t.signal,
     });
   } catch (e) {
-    clearTimeout(timer);
+    t.done();
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`${label} stream failed (not retried — partial output is already billed): ${msg}`);
   }
 
   if (!res.ok || !res.body) {
-    clearTimeout(timer);
+    t.done();
     const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
     throw new Error(`${label} (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
   }
@@ -250,7 +265,7 @@ async function anthropicStreamRequest(body: Record<string, unknown>, label: stri
       }
     }
   } finally {
-    clearTimeout(timer);
+    t.done();
   }
 
   return { content: blocks.filter(Boolean) as AnthropicResponse["content"], usage, stop_reason: stopReason };
@@ -393,9 +408,13 @@ export async function opusScriptChat(opts: {
   // pipeline; it runs once, or it fails loudly. Large generations stream too, so
   // a slow-but-healthy request can't trip undici's 300s timeout.
   const useStream = Boolean(opts.webSearch) || (opts.maxTokens ?? 16000) > 8000;
+  // ONE ATTEMPT. Never a second. Not on a timeout, not on a 429, not on a 500.
+  // Every retry is a second full bill for a prompt that was supposed to run once,
+  // and the pipeline persists each stage as it lands — so a failure is resumable
+  // for free, while a retry is not.
   const json = useStream
     ? await anthropicStreamRequest(body, "Claude (scriptgen) API error")
-    : await anthropicRequest(body, "Claude (scriptgen) API error");
+    : await anthropicRequest(body, "Claude (scriptgen) API error", 1);
   const ms = Date.now() - t0;
   if (opts.purpose) {
     recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms });
