@@ -479,6 +479,7 @@ export default function ScriptGeneratorPage() {
   const isRunning = status === 'running' || status === 'classifying';
   const phase = job?.phase || (status === 'classifying' ? 'Classifying the idea' : 'Working…');
   const percent = job?.percent ?? null;
+  const costUsd = job?.costUsd ?? null;
 
   return (
     <Layout breadcrumb="Script Generator">
@@ -861,8 +862,21 @@ export default function ScriptGeneratorPage() {
                         </h2>
                         <p className="text-xs text-muted-foreground">{phase}</p>
                       </div>
+                      {costUsd != null && costUsd > 0 && (
+                        <span
+                          className="ml-auto text-xs font-medium tabular-nums text-muted-foreground"
+                          title="Spend so far on this run"
+                        >
+                          ${costUsd.toFixed(2)}
+                        </span>
+                      )}
                       {percent != null && (
-                        <span className="ml-auto text-sm font-semibold tabular-nums text-foreground">
+                        <span
+                          className={cn(
+                            'text-sm font-semibold tabular-nums text-foreground',
+                            costUsd == null || costUsd === 0 ? 'ml-auto' : 'ml-3',
+                          )}
+                        >
                           {Math.round(percent)}%
                         </span>
                       )}

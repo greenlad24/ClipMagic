@@ -208,6 +208,8 @@ export interface ScriptJobSnapshot {
   phase: string;
   percent: number;
   error: string | null;
+  /** Live spend for this run, in USD, so cost is watched while it happens. */
+  costUsd: number;
 }
 
 export interface ScriptGenStatus {

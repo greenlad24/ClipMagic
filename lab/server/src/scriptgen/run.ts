@@ -17,7 +17,7 @@
  * tokens each stage exposes (see prompts.ts fill()) and keep the rest verbatim.
  */
 import { nanoid } from "nanoid";
-import { opusScriptChat, extractJson, scriptgenUsageTotal } from "../ai/claude.js";
+import { opusScriptChat, extractJson, scriptgenUsageTotal, resetScriptgenUsage } from "../ai/claude.js";
 import { ZiteError } from "../zite/store.js";
 import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
@@ -179,6 +179,8 @@ interface ScriptJob {
   phase: string;
   percent: number;
   error: string | null;
+  /** Live spend, so the cost is watched while it happens rather than afterwards. */
+  costUsd: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -214,6 +216,7 @@ function createJob(runId: string): ScriptJob {
     phase: "Starting…",
     percent: 0,
     error: null,
+    costUsd: 0,
     createdAt: t,
     updatedAt: t,
   };
@@ -225,6 +228,7 @@ function createJob(runId: string): ScriptJob {
 function progress(job: ScriptJob, phase: string, percent: number): void {
   job.phase = phase;
   job.percent = Math.max(job.percent, Math.min(100, Math.round(percent)));
+  job.costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
   job.updatedAt = Date.now();
 }
 
@@ -238,6 +242,7 @@ export function getScriptSnapshot(jobId: string): ScriptJobSnapshot | null {
     phase: job.phase,
     percent: job.percent,
     error: job.error,
+    costUsd: job.costUsd,
   };
 }
 
@@ -718,6 +723,8 @@ async function runScript(
     claimAudit: null,
   };
   const persist = () => updateRun(runId, { stages });
+  // The spend cap is per run, not per process.
+  resetScriptgenUsage();
 
   try {
     const videoType = setup.videoType;
@@ -739,6 +746,20 @@ async function runScript(
     const today = todayLabel();
 
     // ── Stage 1 — RESEARCH (live web) ──
+    // Research runs ONCE per run row, ever. It is the single most expensive call
+    // in the pipeline (web search + adaptive thinking), and it is already
+    // persisted after it completes. If a later stage failed and this run is being
+    // started again, reuse what was bought rather than buying it twice.
+    const prior = getRun(runId);
+    if (prior?.stages.research) {
+      stages.research = prior.stages.research;
+      stages.sources = prior.stages.sources ?? [];
+      stages.factSheet = prior.stages.factSheet ?? null;
+      console.log(`[scriptgen] reusing research already paid for on run ${runId} (${stages.research.length} chars)`);
+      progress(job, "Reusing existing research…", 22);
+    }
+
+    if (!stages.research) {
     progress(job, "Researching the web…", 10);
     const s1 = fill(loadPrompt("stage1-research"), {
       "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
@@ -759,11 +780,13 @@ async function runScript(
       purpose: "scriptgen",
     });
     persist();
+    }
 
     // ── Stage 1.5 — FACT SHEET ──
     // The outline compresses; the section writer is told to use the outline only.
     // Anything checkable that the outline drops has to survive somewhere, or the
     // writer fills the hole from memory. This is that somewhere.
+    if (!stages.factSheet) {
     progress(job, "Pulling out the checkable facts…", 22);
     const s15 = fill(loadPrompt("stage1.5-factsheet"), {
       "[TODAY'S DATE]": today,
@@ -779,6 +802,7 @@ async function runScript(
       purpose: "scriptgen",
     });
     persist();
+    }
 
     // ── Stage 2 — OUTLINE ──
     progress(job, "Building the outline…", 30);
@@ -1078,19 +1102,22 @@ async function runScript(
     // ── Done ──
     const spend = scriptgenUsageTotal();
     console.log(
-      `[scriptgen:usage] TOTAL(process) calls=${spend.calls} in=${spend.input} out=${spend.output} ` +
+      `[scriptgen:usage] TOTAL(run) calls=${spend.calls} in=${spend.input} out=${spend.output} ` +
         `cache_read=${spend.cacheRead} cache_write=${spend.cacheWrite} $${spend.costUsd.toFixed(2)} ` +
         `${(spend.ms / 1000).toFixed(0)}s`,
     );
     progress(job, "Done", 100);
     job.status = "completed";
+    job.costUsd = Number(spend.costUsd.toFixed(4));
     job.updatedAt = Date.now();
     updateRun(runId, { status: "completed" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     job.status = "failed";
     job.error = msg;
+    job.costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
     job.updatedAt = Date.now();
+    console.warn(`[scriptgen] run ${runId} failed after spending $${job.costUsd.toFixed(2)}: ${msg}`);
     updateRun(runId, { status: "failed", error: msg });
   }
 }

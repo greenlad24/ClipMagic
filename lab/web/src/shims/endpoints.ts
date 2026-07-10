@@ -495,6 +495,7 @@ export interface ScriptJobSnapshot {
   phase: string;
   percent: number;
   error: string | null;
+  costUsd: number;
 }
 export interface ScriptGenStatusOutput {
   anthropicConfigured: boolean;

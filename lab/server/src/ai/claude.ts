@@ -88,27 +88,65 @@ function resolvePurpose(tier: "director" | "research" | "fast", system: string):
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** A request that ran this long was probably going to finish. Don't duplicate it. */
+const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.CLAUDE_TIMEOUT_MS || "900000", 10); // 15 min
+
+/**
+ * True when a thrown fetch error means "the client gave up waiting", not "the
+ * connection failed". Node's global fetch (undici) enforces a 300s headers
+ * timeout by default, so a slow-but-healthy request surfaces here.
+ */
+function isTimeout(e: unknown): boolean {
+  const s = e instanceof Error ? `${e.name} ${e.message} ${(e as { cause?: unknown }).cause ?? ""}` : String(e);
+  return /abort|timeout|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|ETIMEDOUT/i.test(s);
+}
+
 /**
  * POST to the Anthropic Messages API with retry/backoff on transient errors.
  * 529 (Overloaded), 429 (rate limit), and 5xx are retried with exponential
  * backoff + jitter; everything else (and the final attempt) throws.
+ *
+ * A TIMEOUT IS NEVER RETRIED. This function used to catch every fetch exception,
+ * call it a "network blip", and silently re-issue the request up to five times.
+ * Node's fetch times out at 300s by default, and the Stage 1 research call —
+ * twenty web searches plus adaptive thinking — runs right at that boundary. So a
+ * slow research call was being re-run up to five times, each attempt fully
+ * billed, with nothing in the log to say so. The server keeps working on the
+ * original request either way; retrying only pays for it twice.
+ *
+ * Every retry now logs. Silence was the expensive part.
  */
 async function anthropicRequest(body: unknown, label: string): Promise<AnthropicResponse> {
   const maxAttempts = Number.parseInt(process.env.CLAUDE_MAX_RETRIES || "5", 10);
   let lastErr = "";
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     let res: Response;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
     try {
       res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
         method: "POST",
         headers: anthropicHeaders(),
         body: JSON.stringify(body),
+        signal: ac.signal,
       });
     } catch (e) {
-      // Network blip — treat as retryable.
       lastErr = e instanceof Error ? e.message : String(e);
-      if (attempt < maxAttempts) { await sleep(backoff(attempt)); continue; }
+      if (isTimeout(e)) {
+        // Do NOT retry. The request may well be completing server-side, and a
+        // second attempt bills the whole call again.
+        throw new Error(
+          `${label} timed out after ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s — not retried (a retry would bill the call twice): ${lastErr}`,
+        );
+      }
+      console.warn(`${label} network error (attempt ${attempt}/${maxAttempts}): ${lastErr}`);
+      if (attempt < maxAttempts) {
+        await sleep(backoff(attempt));
+        continue;
+      }
       throw new Error(`${label} network error after ${attempt} attempts: ${lastErr}`);
+    } finally {
+      clearTimeout(timer);
     }
 
     if (res.ok) return (await res.json()) as AnthropicResponse;
@@ -127,6 +165,95 @@ async function anthropicRequest(body: unknown, label: string): Promise<Anthropic
     throw new Error(`${label} (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
   }
   throw new Error(`${label} failed after ${maxAttempts} attempts: ${lastErr}`);
+}
+
+/**
+ * Streamed variant. Headers arrive immediately and SSE events keep the socket
+ * warm, so a long call never trips undici's headers/body timeouts — which is
+ * exactly why Anthropic recommends streaming for long requests and large
+ * max_tokens. Accumulates the same shape `anthropicRequest` returns.
+ *
+ * Never retried: by the time a stream fails we have already been billed for
+ * whatever was generated.
+ */
+async function anthropicStreamRequest(body: Record<string, unknown>, label: string): Promise<AnthropicResponse> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
+      method: "POST",
+      headers: anthropicHeaders(),
+      body: JSON.stringify({ ...body, stream: true }),
+      signal: ac.signal,
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`${label} stream failed (not retried — partial output is already billed): ${msg}`);
+  }
+
+  if (!res.ok || !res.body) {
+    clearTimeout(timer);
+    const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
+    throw new Error(`${label} (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
+  }
+
+  const blocks: Array<Record<string, unknown>> = [];
+  let usage: AnthropicUsage = {};
+  let stopReason: string | undefined;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let ev: Record<string, any>;
+        try {
+          ev = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        switch (ev.type) {
+          case "message_start":
+            usage = { ...usage, ...(ev.message?.usage ?? {}) };
+            break;
+          case "content_block_start": {
+            const b = { ...(ev.content_block ?? {}) };
+            if (b.type === "text" && typeof b.text !== "string") b.text = "";
+            blocks[ev.index] = b;
+            break;
+          }
+          case "content_block_delta": {
+            const b = blocks[ev.index];
+            if (!b) break;
+            if (ev.delta?.type === "text_delta") b.text = `${b.text ?? ""}${ev.delta.text ?? ""}`;
+            else if (ev.delta?.type === "citations_delta" && ev.delta.citation) {
+              (b.citations as unknown[]) = [...((b.citations as unknown[]) ?? []), ev.delta.citation];
+            }
+            break;
+          }
+          case "message_delta":
+            usage = { ...usage, ...(ev.usage ?? {}) };
+            stopReason = ev.delta?.stop_reason ?? stopReason;
+            break;
+        }
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return { content: blocks.filter(Boolean) as AnthropicResponse["content"], usage, stop_reason: stopReason };
 }
 
 /** Exponential backoff with jitter: ~1s, 2s, 4s, 8s … capped at 20s. */
@@ -248,10 +375,27 @@ export async function opusScriptChat(opts: {
     // dynamic filtering — the model filters results before they reach the
     // context window, which matters when we're hunting exact prices and click
     // paths. max_uses is generous: a tool review has to check every tier.
-    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 20 }];
+    // max_uses was briefly 20. Combined with adaptive thinking that pushed the
+    // research call past five minutes — straight into undici's 300s fetch
+    // timeout, which the old retry path then treated as a network blip and
+    // re-issued, billing the whole search-heavy call again. Eight is what the
+    // pipeline shipped with and what it was measured on.
+    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }];
   }
+  assertScriptgenBudget(opts.label ?? "scriptgen");
+
   const t0 = Date.now();
-  const json = await anthropicRequest(body, "Claude (scriptgen) API error");
+  // Stream anything slow: a web-search call, or a big generation. Headers land
+  // immediately and SSE events keep the socket warm, so undici's 300s timeout
+  // can't fire on a healthy request.
+  // Web-search calls ALWAYS stream, and the streaming path issues exactly one
+  // HTTP request and never retries. Research is the most expensive call in the
+  // pipeline; it runs once, or it fails loudly. Large generations stream too, so
+  // a slow-but-healthy request can't trip undici's 300s timeout.
+  const useStream = Boolean(opts.webSearch) || (opts.maxTokens ?? 16000) > 8000;
+  const json = useStream
+    ? await anthropicStreamRequest(body, "Claude (scriptgen) API error")
+    : await anthropicRequest(body, "Claude (scriptgen) API error");
   const ms = Date.now() - t0;
   if (opts.purpose) {
     recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms });
@@ -329,13 +473,42 @@ function logScriptgenUsage(
   scriptgenTally.cacheWrite += cacheWrite;
   scriptgenTally.ms += ms;
 
+  const runningTotal = scriptgenUsageTotal().costUsd;
   console.log(
     `[scriptgen:usage] ${label} in=${input} out=${output} cache_read=${cacheRead} cache_write=${cacheWrite} ` +
-      `$${cost.toFixed(4)} ${(ms / 1000).toFixed(1)}s`,
+      `$${cost.toFixed(4)} ${(ms / 1000).toFixed(1)}s | run total $${runningTotal.toFixed(2)} of $${SCRIPTGEN_MAX_USD.toFixed(2)}`,
   );
 }
 
-/** Total spend since process start, for the end-of-run summary line. */
+/**
+ * Hard ceiling for one script run. The tally is checked BEFORE each call, so a
+ * runaway pipeline stops instead of being discovered on a billing page. Set
+ * SCRIPTGEN_MAX_USD=0 to disable.
+ */
+const SCRIPTGEN_MAX_USD = Number.parseFloat(process.env.SCRIPTGEN_MAX_USD || "4");
+
+/** Throw before spending another dollar if this run has already blown its budget. */
+function assertScriptgenBudget(label: string): void {
+  if (!(SCRIPTGEN_MAX_USD > 0)) return;
+  const spent = scriptgenUsageTotal().costUsd;
+  if (spent >= SCRIPTGEN_MAX_USD) {
+    throw new Error(
+      `Script run stopped at $${spent.toFixed(2)}: it hit the SCRIPTGEN_MAX_USD ceiling of $${SCRIPTGEN_MAX_USD.toFixed(2)} before "${label}". Raise the limit or shorten the script.`,
+    );
+  }
+}
+
+/** Zero the tally at the start of a run, so the cap is per-run and not per-process. */
+export function resetScriptgenUsage(): void {
+  scriptgenTally.calls = 0;
+  scriptgenTally.input = 0;
+  scriptgenTally.output = 0;
+  scriptgenTally.cacheRead = 0;
+  scriptgenTally.cacheWrite = 0;
+  scriptgenTally.ms = 0;
+}
+
+/** Total spend since the last reset, for the end-of-run summary line. */
 export function scriptgenUsageTotal(): { calls: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ms: number } {
   const t = scriptgenTally;
   const costUsd =
