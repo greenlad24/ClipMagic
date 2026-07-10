@@ -3,11 +3,20 @@
  *
  * A run takes a plain-text video idea (+ optional brief), classifies it
  * (Stage 0) and PAUSES for the user to confirm/edit the detected video type +
- * title, then runs the 7-stage methodology verbatim and in sequence on Opus 4.8
+ * title, then runs the methodology verbatim and in sequence on Opus 4.8
  * (research → outline → all-4 hooks → optional sponsor segment → section-by-
- * section with a review pass → outro → final review), and assembles the full
- * document (all four hook formulas + meat + outro). Prompts live as files in
- * scriptgen/prompts/; SOUL.md + story-shrapnel-bank.md in scriptgen/reference/.
+ * section with a review pass → outro → CTA placement → brief adherence → final
+ * review), and assembles the full document (all four hook formulas + meat + outro).
+ *
+ * Stage 5.5 (CTA placement) runs AFTER the outro even though it's numbered 5.5:
+ * it has to see the end of the video to strip the outro's trailing comment
+ * prompt, and it needs the Stage 3 hooks to place the subscribe clause.
+ *
+ * Stage 6.5 (brief adherence) runs only when the input carried a brief, and sits
+ * before Stage 7 so the final voice review covers any sentence it inserted.
+ *
+ * Prompts live as files in scriptgen/prompts/; SOUL.md + story-shrapnel-bank.md
+ * in scriptgen/reference/.
  */
 
 export type SponsorshipMode = "organic" | "whole-video" | "mid-roll";
@@ -56,8 +65,77 @@ export interface ScriptSection {
   final: string;
 }
 
+/**
+ * Stage 6.5 — how well the finished script delivers the user's brief, and what
+ * the pass did about it. Only produced when the run's input carried a brief.
+ *
+ * The pass prescribes sentence-level edits ({mode, find, text}); the orchestrator
+ * applies them itself, discarding any whose `find` text isn't uniquely present.
+ * That's what keeps this a targeted fix rather than a whole-script rewrite —
+ * it's enforced in code, not merely requested in the prompt.
+ */
+export interface BriefCheck {
+  /** 0–100 coverage of the brief (voice/pacing are Stage 7's job, not scored here). */
+  score: number;
+  verdict: string;
+  /** Brief requests deliberately NOT fixed (voice conflict, too big for a sentence edit). */
+  gaps: string[];
+  /** One line per edit actually applied to the script. */
+  editsApplied: string[];
+  /** One line per edit discarded, with why (find text missing, ambiguous, or too long). */
+  editsSkipped: string[];
+}
+
+/** A page the Stage 1 web research actually rested on. */
+export interface ScriptSource {
+  url: string;
+  title: string;
+}
+
+/** Stage 7's per-item pass/fail. The model already returns this; we now keep it. */
+export interface ReviewChecklist {
+  shortHook: boolean;
+  largeMeat: boolean;
+  fourteenYearOld: boolean;
+  noPunchSideways: boolean;
+  noPunchDown: boolean;
+  welcomeAtHookEnd: boolean;
+  noIncomeClaims: boolean;
+  demosNotDescribes: boolean;
+}
+
+/** Deterministic fact check of the finished script against the Stage 1.5 fact sheet. */
+export interface ClaimAudit {
+  /** Numbers the script asserts that the fact sheet never established. */
+  unsupportedNumbers: string[];
+  /** Fenced topics the script mentions — may be a rebuttal, so check rather than assume. */
+  fencedTopicsMentioned: string[];
+  numbersChecked: number;
+}
+
+/** Computed, not modelled: is the finished script repetitive, does it sound spoken. */
+export interface ScriptQuality {
+  words: number;
+  sentences: number;
+  meanSentenceWords: number;
+  burstiness: number;
+  repeatedPhraseCount: number;
+  worstPhraseRepeats: number;
+  worstPhrase: string | null;
+  discourseMarkerOpenings: number;
+}
+
 export interface ScriptStages {
   research: string | null;
+  /** Stage 1 — the sources the research rested on, so a price claim can be traced. */
+  sources: ScriptSource[];
+  /**
+   * Stage 1.5 — the falsifiable details distilled out of the research: exact
+   * prices, exact click paths, versions, links, and the date each was verified.
+   * Handed to every Stage 5 section draft so the writer never has to invent a
+   * number or a button name that the outline happened to compress away.
+   */
+  factSheet: string | null;
   outline: string | null;
   /** All four hook formulas (Stage 3). */
   hooks: string | null;
@@ -65,8 +143,22 @@ export interface ScriptStages {
   sponsorSegment: string | null;
   sections: ScriptSection[];
   outro: string | null;
+  /** Stage 5.5 — the four hooks with the subscribe clause tagged onto each welcome beat. */
+  hooksWithCta: string | null;
+  /** Stage 5.5 — sections + outro with the like/comment CTAs placed and the end comment prompt removed. */
+  ctaScript: string | null;
+  /** Stage 5.5 — what the CTA pass placed and removed. */
+  ctaNotes: string[];
+  /** Stage 6.5 — brief adherence score + applied edits. Null when the run had no brief. */
+  briefCheck: BriefCheck | null;
   /** Stage 7 final-review change notes. */
   reviewNotes: string[];
+  /** Stage 7's checklist. The model returns it on every run; it used to be discarded. */
+  reviewChecklist: ReviewChecklist | null;
+  /** Computed from the finished document — repetition + spoken-ness. */
+  quality: ScriptQuality | null;
+  /** Computed from the finished document — unsupported numbers + fenced topics. */
+  claimAudit: ClaimAudit | null;
 }
 
 export type ScriptRunStatus =

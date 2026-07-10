@@ -183,42 +183,164 @@ async function callClaude(opts: {
  * server-side web_search tool for the live-research stage. Larger default
  * max_tokens (script stages are long-form). Returns the concatenated text
  * blocks (server tool-use / search-result blocks are ignored).
+ *
+ * Adaptive thinking is set explicitly: on Opus 4.8 an omitted `thinking` field
+ * means the model runs with NO thinking at all. Every scriptgen stage is a
+ * judgement call (does this line punch down? does this outline carry the
+ * research?), so the thinking is worth its latency. `budget_tokens` and
+ * temperature/top_p/top_k are rejected with a 400 on this model — adaptive
+ * thinking plus `effort` is the only way to steer depth.
  */
 export async function opusScriptChat(opts: {
   system: string;
+  /**
+   * Extra system blocks appended after `system`. Use for content that is stable
+   * across a batch of calls (the section-writing rules, the fact sheet) so the
+   * cached prefix clears Opus 4.8's 4096-token minimum — below that threshold
+   * cache_control silently does nothing. Volatile content belongs in `messages`.
+   */
+  systemExtra?: string[];
   messages: Turn[];
   maxTokens?: number;
   /** Enable Anthropic's server-side web search (used by Stage 1 research). */
   webSearch?: boolean;
+  /**
+   * Adaptive thinking. On by default — most stages are judgement calls. Pass
+   * false for mechanical stages (classify, reformat, extract): thinking bills as
+   * OUTPUT at 5x the input rate, so it is the most expensive thing to waste.
+   */
+  thinking?: boolean;
+  /** Shows up in the [scriptgen:usage] log line. */
+  label?: string;
+  /**
+   * If provided, web-search sources are appended here (deduped by URL). The
+   * server-side search returns its results in `web_search_tool_result` blocks
+   * and attaches `citations` to the text blocks — we filter to text blocks for
+   * the answer, so without this sink every source the research rested on is
+   * discarded and no price claim can ever be traced back.
+   */
+  sinkSources?: ScriptSource[];
   purpose?: CallPurpose;
 }): Promise<string> {
   if (!anthropicConfigured()) {
     throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY to use the Script Generator.");
   }
   const model = aiConfig.models.director; // latest Opus (claude-opus-4-8)
-  const systemBlocks = opts.system
-    ? [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }]
+  // One cache breakpoint, on the LAST system block: the whole system prefix is
+  // cached together. Everything before it must be byte-stable across the batch.
+  const texts = [opts.system, ...(opts.systemExtra ?? [])].filter((t) => t && t.trim());
+  const systemBlocks = texts.length
+    ? texts.map((text, i) => ({
+        type: "text",
+        text,
+        ...(i === texts.length - 1 ? { cache_control: { type: "ephemeral" } } : {}),
+      }))
     : undefined;
   const body: Record<string, unknown> = {
     model,
     max_tokens: opts.maxTokens ?? 16000,
+    ...(opts.thinking === false ? {} : { thinking: { type: "adaptive" } }),
     ...(systemBlocks ? { system: systemBlocks } : {}),
     messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
   };
   if (opts.webSearch) {
-    // Anthropic's server-executed web search tool (GA). The model runs searches
-    // during generation and returns the final answer with the results folded in.
-    body.tools = [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }];
+    // Anthropic's server-executed web search tool. The _20260209 variant adds
+    // dynamic filtering — the model filters results before they reach the
+    // context window, which matters when we're hunting exact prices and click
+    // paths. max_uses is generous: a tool review has to check every tier.
+    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 20 }];
   }
   const t0 = Date.now();
   const json = await anthropicRequest(body, "Claude (scriptgen) API error");
+  const ms = Date.now() - t0;
   if (opts.purpose) {
-    recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+    recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms });
   }
+  // recordAnthropicUsage no-ops outside a pipeline run (scriptgen has no active
+  // run context), so the provider's own token counts were being dropped on the
+  // floor. Log them: a script is ~28 Opus calls and the bill is worth seeing.
+  logScriptgenUsage(opts.label ?? "scriptgen", json.usage, ms);
+  if (opts.sinkSources) collectSources(json.content, opts.sinkSources);
   return (json.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
     .join("");
+}
+
+/** A web page the research actually rested on. */
+export interface ScriptSource {
+  url: string;
+  title: string;
+}
+
+/**
+ * Pull sources out of a response's content blocks, deduped by URL, appending to
+ * `sink`. Two places carry them: `web_search_tool_result` blocks (the raw hits)
+ * and `citations` arrays hanging off the text blocks (what the model actually
+ * leaned on). Both are dropped by the text-only filter above.
+ */
+function collectSources(content: unknown, sink: ScriptSource[]): void {
+  if (!Array.isArray(content)) return;
+  const seen = new Set(sink.map((s) => s.url));
+  const add = (url: unknown, title: unknown): void => {
+    if (typeof url !== "string" || !url.trim() || seen.has(url)) return;
+    seen.add(url);
+    sink.push({ url, title: typeof title === "string" && title.trim() ? title.trim() : url });
+  };
+  for (const raw of content) {
+    const b = (raw ?? {}) as Record<string, unknown>;
+    if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
+      for (const r of b.content as Array<Record<string, unknown>>) {
+        if (r?.type === "web_search_result") add(r.url, r.title);
+      }
+    }
+    if (b.type === "text" && Array.isArray(b.citations)) {
+      for (const c of b.citations as Array<Record<string, unknown>>) {
+        add(c?.url, c?.title ?? c?.cited_text);
+      }
+    }
+  }
+}
+
+/** Running per-process tally so a finished script can report what it actually cost. */
+const scriptgenTally = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ms: 0 };
+
+/** Opus 4.8 list price, $/token. Output is 5x input — thinking bills as output. */
+const OPUS_IN = 5 / 1_000_000;
+const OPUS_OUT = 25 / 1_000_000;
+
+function logScriptgenUsage(
+  label: string,
+  usage: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } | undefined,
+  ms: number,
+): void {
+  const u = usage ?? {};
+  const input = u.input_tokens ?? 0;
+  const output = u.output_tokens ?? 0;
+  const cacheRead = u.cache_read_input_tokens ?? 0;
+  const cacheWrite = u.cache_creation_input_tokens ?? 0;
+  // Cache reads bill at ~0.1x input, writes at ~1.25x.
+  const cost = input * OPUS_IN + output * OPUS_OUT + cacheRead * OPUS_IN * 0.1 + cacheWrite * OPUS_IN * 1.25;
+
+  scriptgenTally.calls++;
+  scriptgenTally.input += input;
+  scriptgenTally.output += output;
+  scriptgenTally.cacheRead += cacheRead;
+  scriptgenTally.cacheWrite += cacheWrite;
+  scriptgenTally.ms += ms;
+
+  console.log(
+    `[scriptgen:usage] ${label} in=${input} out=${output} cache_read=${cacheRead} cache_write=${cacheWrite} ` +
+      `$${cost.toFixed(4)} ${(ms / 1000).toFixed(1)}s`,
+  );
+}
+
+/** Total spend since process start, for the end-of-run summary line. */
+export function scriptgenUsageTotal(): { calls: number; input: number; output: number; cacheRead: number; cacheWrite: number; costUsd: number; ms: number } {
+  const t = scriptgenTally;
+  const costUsd =
+    t.input * OPUS_IN + t.output * OPUS_OUT + t.cacheRead * OPUS_IN * 0.1 + t.cacheWrite * OPUS_IN * 1.25;
+  return { ...t, costUsd };
 }
 
 /** Plain text chat completion. */

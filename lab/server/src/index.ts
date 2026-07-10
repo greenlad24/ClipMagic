@@ -7,6 +7,7 @@ import { auth } from "./middleware.js";
 import { startWorker } from "./render/worker.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
+import { failOrphanedRuns } from "./db/scriptRuns.js";
 import uploadsRouter from "./routes/uploads.js";
 import renderRouter, { rendiRouter } from "./routes/render.js";
 import projectsRouter from "./routes/projects.js";
@@ -110,6 +111,10 @@ app.use(
 app.listen(config.port, config.host, () => {
   console.log(`[server] listening on http://${config.host}:${config.port}`);
   console.log(`[server] data dir: ${config.dataDir}`);
+  // Script-generator jobs live in memory; a restart strands any run that was
+  // mid-flight as 'running' forever. Mark them failed so they read as dead.
+  const orphaned = failOrphanedRuns();
+  if (orphaned > 0) console.log(`[server] marked ${orphaned} interrupted script run(s) as failed`);
   // Surface which AI providers are configured so a missing/unpropagated key is
   // obvious in the logs at boot (values are never printed — only presence).
   const yn = (v: unknown) => (v ? "yes" : "NO");

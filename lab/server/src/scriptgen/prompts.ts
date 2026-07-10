@@ -53,15 +53,50 @@ export function fill(template: string, vars: Record<string, string>): string {
 }
 
 /**
- * The system prompt read at the top of every stage: the PRIORITIES + VOICE
- * preamble, then Jake's SOUL persona, and — for the drafting stages that may
- * weave in a backstory fragment — the story-shrapnel bank.
+ * What sponsorship changes: the rules, never the structure. A sponsored listicle
+ * is still shaped like a listicle; a sponsored review is still shaped like a
+ * review. Substituted into rule-amendments.md.
  */
-export function systemPreamble(includeShrapnel: boolean): string {
+const SPONSORED_COMPETITOR_RULE = [
+  "**This video is sponsored.** That changes three rules. It does not change the shape of the video — a sponsored listicle is still a listicle, a sponsored review is still a review.",
+  "",
+  "**Competitor mentions are OFF.** Don't name a competing tool at all — not to compare, not to dismiss, not even neutrally. Talk about what THIS tool does. Where the older rules said 'no competitor mentions, ever', for a sponsored video that still holds exactly. If the brief asks you to characterise a competitor — even flatteringly, and especially unflatteringly — do not do it. Say so plainly in your notes instead of writing the line.",
+  "",
+  "**Name the tool early, with its offer.** Within the first minute, say what it's called and what it costs to start, and point at the link: \"the tool I'm showing today is called X, it's completely free to start, and I'll drop the link in the description if you want to follow along.\" One sentence. Not a pitch.",
+  "",
+  "**The link CTA points at the sponsor**, not only at Jake's own community. Somewhere natural — usually once early, once near the end — tell the viewer where to go and that it's free to start, if it is.",
+].join("\n");
+
+const ORGANIC_COMPETITOR_RULE = [
+  "**This video is not sponsored, so competitor mentions are ALLOWED.**",
+  "",
+  "Naming other tools is useful, and Jake does it. \"You'll still want a real design tool like Figma or Photoshop for the final version.\" \"You don't need Tableau or Power BI for this anymore.\" That's honest, it helps the viewer place the tool, and it costs nothing.",
+  "",
+  "Name them when it genuinely helps someone decide. Say what each is good at. Never write \"better than X\", never imply the people using X are behind, and never make another tool the butt of a joke.",
+].join("\n");
+
+/**
+ * The system prompt read at the top of every stage: the PRIORITIES + VOICE
+ * preamble, then Jake's SOUL persona, then the rule amendments (which override
+ * both), and — for drafting stages that may weave in a backstory fragment — the
+ * story-shrapnel bank.
+ *
+ * The amendments come LAST among the rule text on purpose: they correct the
+ * older rules, and recency wins when a model reconciles two instructions.
+ *
+ * `sponsored` gates the competitor rule, which is the one rule that genuinely
+ * flips depending on the video rather than on the writer.
+ */
+export function systemPreamble(includeShrapnel: boolean, sponsored: boolean): string {
+  const amendments = fill(loadPrompt("rule-amendments"), {
+    "[SPONSORSHIP RULE]": sponsored ? SPONSORED_COMPETITOR_RULE : ORGANIC_COMPETITOR_RULE,
+  });
   return (
     loadPrompt("stage-preamble") +
     "\n\n---\n\n" +
     SOUL +
+    "\n\n---\n\n" +
+    amendments +
     (includeShrapnel ? "\n\n---\n\n" + SHRAPNEL : "")
   );
 }

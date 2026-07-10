@@ -1,0 +1,597 @@
+/**
+ * Pure text helpers for the script stages. No imports, no side effects — run.ts
+ * owns the model calls and the persistence; this module only decides what the
+ * text becomes (Stage 5.5 CTA parsing, Stage 6.5 edit surgery) and what the
+ * writer is told it has already said (the Stage 5 continuity ledger).
+ */
+
+// ── Stage 5 continuity ledger ─────────────────────────────────────────────────
+
+export interface ContinuityLedger {
+  /**
+   * Phrases used THREE OR MORE times already. Not two — Jake's approved scripts
+   * say "let me show you" eight times in a tutorial and "if you want to" eight
+   * times in a listicle, because that's the beat that resets a viewer's
+   * attention before each demo. Repetition is the teaching cadence, not a defect.
+   * Only genuine over-use gets flagged, and only in the sections that follow.
+   */
+  overusedPhrases: string[];
+}
+
+const LEDGER_CAP = 24;
+/** A phrase has to be spent this many times before it counts as over-used. */
+const OVERUSE_THRESHOLD = 3;
+
+/**
+ * Discourse markers. These are the connective tissue of speech — "Now,", "So,",
+ * "Alright," — and Jake reuses them on purpose; a script without them reads like
+ * an essay. They are NEVER flagged as repetition. What we flag is whatever
+ * follows one: "Now, here's the thing" six times is a stock phrase; "Now," six
+ * times is just a person talking.
+ */
+const DISCOURSE_MARKERS = new Set([
+  "now", "so", "alright", "ok", "okay", "and", "but", "look", "anyway",
+  "honestly", "well", "right", "oh", "actually", "listen", "see", "yeah",
+]);
+
+/** Drop up to two leading discourse markers ("Now, so…" → …). */
+function stripMarkers(words: string[]): string[] {
+  let i = 0;
+  while (i < words.length && i < 2 && DISCOURSE_MARKERS.has(words[i])) i++;
+  return words.slice(i);
+}
+
+/** Split prose into sentences, dropping markdown headers and [stage directions]. */
+function splitSentences(text: string): string[] {
+  const cleaned = text
+    .replace(/^#{1,6}.*$/gm, " ")
+    .replace(/\[[^\]]*\]/g, " ")
+    .replace(/\s+/g, " ");
+  return cleaned
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function wordsOf(s: string): string[] {
+  return s.toLowerCase().match(/[a-z0-9']+/g) ?? [];
+}
+
+/** Rank by descending count, then drop the counts. */
+function topBy(counts: Map<string, number>, min: number, cap: number): string[] {
+  return [...counts.entries()]
+    .filter(([, n]) => n >= min)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, cap)
+    .map(([k]) => k);
+}
+
+/**
+ * Build the "you've leaned on this too hard" ledger from the sections drafted so far.
+ *
+ * Stage 5 drafts each section in its own API call, so the model cannot see the
+ * rest of the video. An earlier version of this flagged a phrase after ONE use,
+ * and an opener after one use, and every short reaction. Measured against Jake's
+ * approved scripts that was plainly wrong: they repeat freely, and the version
+ * that suppressed repetition also flattened the sentence rhythm (burstiness
+ * 0.655 → 0.582) — which is the one thing every approved script beats us on.
+ *
+ * So this now flags only genuine over-use: a phrase spent three or more times.
+ * Openers and short reactions are not tracked at all.
+ */
+export function buildContinuityLedger(previousFinals: string[]): ContinuityLedger {
+  const text = previousFinals.join("\n\n");
+  if (!text.trim()) return { overusedPhrases: [] };
+
+  const tokens = wordsOf(text);
+  const phraseCounts = new Map<string, number>();
+  for (const n of [4, 5]) {
+    for (let i = 0; i + n <= tokens.length; i++) {
+      const gram = tokens.slice(i, i + n).join(" ");
+      phraseCounts.set(gram, (phraseCounts.get(gram) ?? 0) + 1);
+    }
+  }
+
+  // A 5-gram that repeats also makes its 4-gram halves repeat; keep the longest
+  // form. Strip any leading discourse marker so the flagged phrase is the stock
+  // phrase itself ("here's the thing"), not the marker that introduced it.
+  const overused = topBy(phraseCounts, OVERUSE_THRESHOLD, LEDGER_CAP * 2)
+    .map((g) => stripMarkers(g.split(" ")).join(" "))
+    .filter((g) => g.split(" ").length >= 3);
+  const deduped = [...new Set(overused)];
+  const overusedPhrases = deduped
+    .filter((g) => !deduped.some((other) => other !== g && other.length > g.length && other.includes(g)))
+    .slice(0, LEDGER_CAP);
+
+  return { overusedPhrases };
+}
+
+// ── Word budget ───────────────────────────────────────────────────────────────
+
+/** Jake speaks at roughly this rate, so runtime and word count are interchangeable. */
+export const WORDS_PER_SPOKEN_MINUTE = 150;
+
+/**
+ * Parse "12 minutes minimum", "10–12 minutes", "15 min" → the number of minutes.
+ * Takes the LAST number in a range, since "10–12" means aim for 12.
+ */
+export function parseTargetMinutes(targetLength: string): number | null {
+  const nums = [...targetLength.matchAll(/\d+/g)].map((m) => Number(m[0])).filter((n) => n > 0 && n < 180);
+  if (nums.length === 0) return null;
+  return nums[nums.length - 1];
+}
+
+/** Words a single list item gets: measured from the 25-item gold (5,761 / 25). */
+export const WORDS_PER_LIST_ITEM = 230;
+
+/** Nouns that mean "this title is counting items". */
+const LIST_NOUNS =
+  "tricks?|tips?|ways?|use ?cases?|tools?|features?|things?|hacks?|prompts?|examples?|" +
+  "reasons?|steps?|mistakes?|ideas?|apps?|plugins?|workflows?|automations?|secrets?|" +
+  "lessons?|strategies|templates?|shortcuts?|commands?|settings?";
+
+/** Units that mean the number is NOT an item count. */
+const NOT_ITEMS = "days?|weeks?|months?|years?|hours?|minutes?|seconds?|dollars?|%|percent|x|k|m";
+
+/**
+ * Pull the item count out of a title: "7 Claude + Higgsfield MCP insane use
+ * cases" → 7, "25 insanely powerful ChatGPT tricks" → 25.
+ *
+ * The number only counts when a list noun follows it within a few words. Without
+ * that guard, "I Tested Twin.so for 30 Days" reads as a thirty-item list and
+ * budgets 6,900 words for a review that should run 1,800. Version numbers, years,
+ * durations, and prices are all numbers in titles, and none of them are items.
+ */
+export function itemCountFromTitle(title: string): number | null {
+  const re = new RegExp(
+    String.raw`\b(\d{1,3})\b(?!\s*(?:${NOT_ITEMS})\b)((?:\s+[\w'+.-]+){0,6}?)\s+(?:${LIST_NOUNS})\b`,
+    "i",
+  );
+  const m = title.match(re);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (n < 3 || n > 100) return null;
+  if (n >= 1900 && n <= 2100) return null;
+  return n;
+}
+
+/**
+ * How many words the spoken script should run to.
+ *
+ * A list is sized by its items, not by a runtime — and the item count is a
+ * QUALITY decision made upstream. Five genuinely good use cases beat twenty-five
+ * padded ones, so this never inflates a list to hit a length; it just gives each
+ * item the room the approved 25-item script gave its items.
+ *
+ * Everything else derives from the run's stated target length at Jake's speaking
+ * rate. "12 minutes minimum" was being read as a floor with no ceiling, which is
+ * how a Tool Review ended up at 5,673 words — thirty-eight minutes of talking.
+ * Where no runtime is given, fall back to the approved scripts: a review lands
+ * at 2,231 words, a tutorial at 1,836.
+ */
+export function wordBudget(videoType: string, targetLength: string, itemCount?: number | null): number {
+  const minutes = parseTargetMinutes(targetLength);
+  const fromRuntime = minutes ? minutes * WORDS_PER_SPOKEN_MINUTE : null;
+
+  // An item count wins over a runtime for any video built out of items — a
+  // seven-use-case video and a twenty-five-trick video are not the same length,
+  // however many minutes the brief asked for.
+  if (itemCount && itemCount > 0) {
+    return Math.max(1500, itemCount * WORDS_PER_LIST_ITEM);
+  }
+  if (/list|round/i.test(videoType)) return fromRuntime ?? 5800;
+  if (/review/i.test(videoType)) return fromRuntime ?? 2200;
+  if (/tutorial/i.test(videoType)) return fromRuntime ?? 2000;
+  return fromRuntime ?? 2200;
+}
+
+// ── Deliverable shaping ───────────────────────────────────────────────────────
+
+/**
+ * Turn a drafted script body into the continuous prose Jake actually reads.
+ *
+ * His approved scripts have no markdown headers, no "**Beat 4 (1:10–1:35):**"
+ * markers, and no bracketed stage directions. Ours had all three, which made the
+ * artifact look like a spec rather than a script — and polluted the claim audit,
+ * because "Beat 4 (1:10–1:35)" contributes the numbers 1, 10, 1 and 35.
+ *
+ * Paragraph breaks survive. Nothing else structural does.
+ */
+export function toCleanProse(text: string): string {
+  return text
+    .replace(/^#{1,6}\s.*$/gm, "") // markdown headers
+    .replace(/^\s*\*\*Beat\s+\d+[^*]*\*\*\s*:?\s*$/gim, "") // beat markers on their own line
+    .replace(/\*\*Beat\s+\d+\s*\([^)]*\)\s*:?\*\*\s*/gi, "") // inline beat markers
+    .replace(/^\s*\(?\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2}\)?\s*$/gm, "") // bare timestamp lines
+    .replace(/\[[^\]\n]{0,120}\]/g, "") // [stage directions]
+    .replace(/\*\*(.+?)\*\*/g, "$1") // bold emphasis — Jake reads words, not asterisks
+    .replace(/[ \t]+/g, " ")
+    .replace(/ +\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/** One copy-pasteable prompt lifted out of a script. */
+export interface ExtractedPrompt {
+  /** A short label derived from the sentence that introduced it, when there is one. */
+  label: string;
+  text: string;
+}
+
+/** Verbs that open an actual prompt rather than an ordinary quoted phrase. */
+const PROMPT_VERBS =
+  "create|design|write|make|generate|build|draw|translate|summarize|summarise|analyze|analyse|" +
+  "explain|rewrite|edit|plot|compare|outline|suggest|give me|act as|help me|show|remove|change|add";
+
+/**
+ * Pull the exact prompts a script tells the viewer to copy.
+ *
+ * The preamble's content rules already demand the "exact prompts format — show
+ * the literal prompt, not just the concept", and the approved tutorial ships a
+ * PROMPT SUMMARY appendix of them for the description. This finds them so the
+ * appendix can be assembled without a model call.
+ *
+ * A prompt is a quoted span that opens with an instruction verb and is long
+ * enough to be worth copying. Short quotes ("done", "in progress") are dialogue.
+ */
+export function extractPrompts(script: string): ExtractedPrompt[] {
+  const clean = script.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+  const out: ExtractedPrompt[] = [];
+  const seen = new Set<string>();
+  const verb = new RegExp(`^\\s*(?:${PROMPT_VERBS})\\b`, "i");
+
+  // Pair the quotes BY POSITION. A regex that searches for "…" will let a short,
+  // rejected quote ("a dog in a field") swallow the opening quote of the real
+  // prompt that follows it, and the whole appendix silently comes back empty.
+  const parts = clean.split('"');
+  for (let i = 1; i < parts.length; i += 2) {
+    const text = parts[i].trim();
+    if (text.length < 30 || text.length > 900) continue;
+    if (!verb.test(text)) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // Label from the sentence just before the quote ("Here's a prompt for a poster.")
+    const before = parts[i - 1];
+    const lastSentence = before.split(/(?<=[.!?])\s+/).filter(Boolean).pop() ?? "";
+    const label = lastSentence
+      .replace(/^(?:so|and|now|alright|okay|ok|then)\b[,\s]*/i, "")
+      .replace(/\bI(?:'ll)?\s+type\b[:\s]*$/i, "")
+      .replace(/\byou can say\b[:\s]*$/i, "")
+      .replace(/[:\-–—\s]+$/, "")
+      .trim();
+
+    out.push({ label: label.length >= 4 && label.length <= 80 ? label : "Prompt", text });
+  }
+  return out;
+}
+
+// ── Script quality metrics ────────────────────────────────────────────────────
+
+export interface ScriptQuality {
+  words: number;
+  sentences: number;
+  meanSentenceWords: number;
+  /** sd/mean of sentence length. Humans are bursty; a teleprompter is uniform. */
+  burstiness: number;
+  /** Distinct 4-word phrases used more than once. */
+  repeatedPhraseCount: number;
+  /** Times the worst offender repeats. */
+  worstPhraseRepeats: number;
+  worstPhrase: string | null;
+  /** Sentences opening with a discourse marker — reported, never penalized. */
+  discourseMarkerOpenings: number;
+}
+
+/**
+ * Measure the two things a script can be bad at without being wrong: saying the
+ * same thing twice, and sounding like a machine. Computed in code so a prompt
+ * change can be judged against a number instead of a vibe.
+ *
+ * Caveat for whoever compares two runs: repeated-phrase counts grow
+ * superlinearly with length (more text, more chances for any phrase to recur),
+ * so only compare scripts of similar size. `worstPhraseRepeats` and `burstiness`
+ * are length-stable and safe to compare directly.
+ */
+export function scriptQuality(text: string): ScriptQuality {
+  const sentences = splitSentences(text);
+  const tokens = wordsOf(text);
+  const lens = sentences.map((s) => wordsOf(s).length).filter((n) => n > 0);
+
+  const mean = lens.length ? lens.reduce((a, b) => a + b, 0) / lens.length : 0;
+  const variance = lens.length ? lens.reduce((a, l) => a + (l - mean) ** 2, 0) / lens.length : 0;
+  const burstiness = mean ? Math.sqrt(variance) / mean : 0;
+
+  const counts = new Map<string, number>();
+  for (let i = 0; i + 4 <= tokens.length; i++) {
+    const g = tokens.slice(i, i + 4).join(" ");
+    counts.set(g, (counts.get(g) ?? 0) + 1);
+  }
+  let worstPhrase: string | null = null;
+  let worstPhraseRepeats = 0;
+  let repeatedPhraseCount = 0;
+  for (const [g, n] of counts) {
+    if (n < 2) continue;
+    repeatedPhraseCount++;
+    if (n > worstPhraseRepeats) {
+      worstPhraseRepeats = n;
+      worstPhrase = g;
+    }
+  }
+
+  const discourseMarkerOpenings = sentences.filter((s) => {
+    const w = wordsOf(s);
+    return w.length > 0 && DISCOURSE_MARKERS.has(w[0]);
+  }).length;
+
+  return {
+    words: tokens.length,
+    sentences: sentences.length,
+    meanSentenceWords: Number(mean.toFixed(2)),
+    burstiness: Number(burstiness.toFixed(3)),
+    repeatedPhraseCount,
+    worstPhraseRepeats,
+    worstPhrase,
+    discourseMarkerOpenings,
+  };
+}
+
+// ── Claim audit (deterministic — no model call) ───────────────────────────────
+
+export interface ClaimAudit {
+  /** Numbers asserted in the script that appear nowhere in the fact sheet. */
+  unsupportedNumbers: string[];
+  /**
+   * Fenced topics the script MENTIONS. Not necessarily violations — a good script
+   * often names a fenced claim in order to knock it down ("there's a line going
+   * around that this has zero learning curve. That's marketing."). Presence
+   * testing can't tell assertion from rebuttal, so these are flagged for a human,
+   * never treated as failures.
+   */
+  fencedTopicsMentioned: string[];
+  /** Numbers checked, for context on how meaningful the above is. */
+  numbersChecked: number;
+}
+
+const NUMBER_WORDS: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+  sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30,
+  forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const SCALES: Record<string, number> = { hundred: 100, thousand: 1000, million: 1_000_000 };
+
+/**
+ * Pull every number a script asserts, as digits — including the spelled-out ones.
+ * A spoken script says "twenty euros a month" and "a thousand credits", never
+ * "€20". An audit that only matches digits is an audit that finds nothing.
+ */
+export function extractNumbers(text: string): Set<number> {
+  const found = new Set<number>();
+  const lower = text.toLowerCase();
+
+  for (const m of lower.matchAll(/\b\d[\d,]*(?:\.\d+)?\b/g)) {
+    const n = Number(m[0].replace(/,/g, ""));
+    if (Number.isFinite(n)) found.add(n);
+  }
+
+  // Walk word-numbers: "three thousand six hundred", "twenty", "fourteen".
+  const words = lower.match(/[a-z]+/g) ?? [];
+  let current = 0;
+  let running = 0;
+  let active = false;
+  const flush = () => {
+    if (active && running + current > 0) found.add(running + current);
+    current = 0;
+    running = 0;
+    active = false;
+  };
+  for (const w of words) {
+    if (w in NUMBER_WORDS) {
+      current += NUMBER_WORDS[w];
+      active = true;
+    } else if (w in SCALES) {
+      current = (current || 1) * SCALES[w];
+      if (SCALES[w] >= 1000) {
+        running += current;
+        current = 0;
+      }
+      active = true;
+    } else if (w === "a") {
+      // "a thousand" — a bare article can precede a scale.
+      continue;
+    } else if (w === "and" && (running > 0 || current >= 100)) {
+      // "three hundred and five" continues; "between three and ten" does NOT —
+      // without this, a range reads as a sum and invents the number thirteen.
+      continue;
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return found;
+}
+
+/**
+ * Distinctive terms from a DO NOT CLAIM bullet, for presence-testing in the script.
+ * A bullet like "**SOC 2 / ISO / GDPR compliance status**" is really three claims;
+ * split on the slashes so each can be matched on its own, or none of them match.
+ */
+function forbiddenTerms(line: string): string[] {
+  const bolded = [...line.matchAll(/\*\*(.+?)\*\*/g)].map((m) => m[1]);
+  const quoted = [...line.matchAll(/["“”']([^"“”']{4,60})["“”']/g)].map((m) => m[1]);
+  return [...bolded, ...quoted]
+    .flatMap((t) => t.split(/\s*\/\s*|\s+\band\b\s+/))
+    .map((t) => t.replace(/[.,;:]$/, "").trim())
+    .filter((t) => t.length >= 4 && t.split(/\s+/).length <= 6);
+}
+
+/**
+ * Check the finished script against the Stage 1.5 fact sheet, in code.
+ *
+ * Two questions, both answerable without a model: does the script state a number
+ * the research never established, and does it touch a topic the fact sheet
+ * explicitly fenced off? Cheap enough to run on every script, and it catches the
+ * exact failure the fact sheet exists to prevent — a confident invented figure.
+ *
+ * Small integers (years, counts like "three things", step numbers) are ignored:
+ * they're prose, not claims, and flagging them would bury the real findings.
+ */
+export function auditClaims(script: string, factSheet: string): ClaimAudit {
+  if (!factSheet.trim()) return { unsupportedNumbers: [], fencedTopicsMentioned: [], numbersChecked: 0 };
+
+  // Timestamps are production markers, not claims. "Beat 4 (1:10–1:35)" would
+  // otherwise contribute 1, 10, 1 and 35 to the audit and drown the real findings.
+  const prose = script
+    .replace(/\(?\b\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2}\)?/g, " ")
+    .replace(/\b\d{1,2}:\d{2}\b/g, " ");
+
+  const sheetNumbers = [...extractNumbers(factSheet)];
+  const sheetSet = new Set(sheetNumbers);
+  // Below 10 the numbers are prose ("three things", "step two"), not claims.
+  const scriptNumbers = [...extractNumbers(prose)].filter((n) => n >= 10);
+
+  /** Spoken scripts round: "almost twelve percent" for a sheet's 11.8%. */
+  const supported = (n: number): boolean => {
+    if (n >= 1900 && n <= 2100) return true; // years, not claims
+    if (sheetSet.has(n)) return true;
+    if (sheetSet.has(n / 100) || sheetSet.has(n * 100)) return true; // scale shift
+    return sheetNumbers.some((s) => s > 0 && Math.abs(s - n) / s <= 0.05);
+  };
+
+  const unsupported = scriptNumbers.filter((n) => !supported(n));
+
+  const doNotClaim = factSheet.split(/##\s*DO NOT CLAIM/i)[1] ?? "";
+  const lowerScript = prose.toLowerCase();
+  const mentioned: string[] = [];
+  for (const line of doNotClaim.split("\n")) {
+    if (!line.trim().startsWith("-")) continue;
+    for (const term of forbiddenTerms(line)) {
+      if (lowerScript.includes(term.toLowerCase()) && !mentioned.includes(term)) mentioned.push(term);
+    }
+  }
+
+  return {
+    unsupportedNumbers: unsupported.sort((a, b) => a - b).map(String).slice(0, 25),
+    fencedTopicsMentioned: mentioned.slice(0, 25),
+    numbersChecked: scriptNumbers.length,
+  };
+}
+
+// ── Stage 5.5 — CTA pass parsing ──────────────────────────────────────────────
+
+export interface CtaPass {
+  hooks: string;
+  script: string;
+  notes: string[];
+}
+
+/**
+ * Split the Stage 5.5 response into its three delimited blocks. The prompt asks
+ * for ===HOOKS=== / ===SCRIPT=== / ===NOTES=== each on its own line — a
+ * delimiter rather than JSON, because the pass re-emits the entire hooks doc
+ * plus the entire script and JSON-escaping that is needless truncation risk.
+ * Returns null if the shape isn't there, so the caller can keep the pre-CTA text.
+ */
+export function parseCtaPass(raw: string): CtaPass | null {
+  const m = raw.match(/^===HOOKS===[ \t]*$([\s\S]*?)^===SCRIPT===[ \t]*$([\s\S]*?)^===NOTES===[ \t]*$([\s\S]*)/m);
+  if (!m) return null;
+  const hooks = m[1].trim();
+  const script = m[2].trim();
+  if (!hooks || !script) return null;
+  const notes = m[3]
+    .split("\n")
+    .map((l) => l.replace(/^\s*[-*•]\s*/, "").trim())
+    .filter(Boolean);
+  return { hooks, script, notes };
+}
+
+// ── Stage 6.5 — brief-adherence edits ─────────────────────────────────────────
+
+/** The longest sentence we'll accept as a single surgical edit. Beyond this it's a rewrite. */
+export const MAX_EDIT_CHARS = 1200;
+/** An anchor is a sentence or two. A longer `find` would let one edit swallow whole sections. */
+export const MAX_FIND_CHARS = 600;
+/** Matches the prompt's own cap, enforced here so a runaway response can't shred the script. */
+export const MAX_EDITS = 8;
+/** Even 8 legal edits shouldn't reshape the script: bound total growth and shrink. */
+export const MAX_GROWTH = 1.25;
+export const MIN_SHRINK = 0.9;
+
+/** A truncated quote for the applied/skipped audit lines. */
+function snippet(s: string): string {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length <= 60 ? one : `${one.slice(0, 57)}…`;
+}
+
+/**
+ * Apply the Stage 6.5 edits to the script by exact string surgery.
+ *
+ * An edit only lands if its `find` text occurs EXACTLY ONCE in the script as it
+ * stands at that moment. Zero matches means the model paraphrased instead of
+ * quoting; multiple matches means the target is ambiguous. Both are discarded.
+ * This is what makes the pass structurally incapable of rewriting the script:
+ * the model never returns script text, only anchors and one-sentence patches.
+ *
+ * Three further bounds close the gaps a determined model could still walk
+ * through: `find` is length-capped (else one edit anchors on the whole script
+ * and swaps it for a line), and the running total is held inside a growth
+ * ceiling and a shrink floor (else eight legal edits stacked on one anchor add
+ * up to a rewrite anyway).
+ */
+export function applyBriefEdits(
+  script: string,
+  rawEdits: unknown,
+): { script: string; applied: string[]; skipped: string[] } {
+  const applied: string[] = [];
+  const skipped: string[] = [];
+  let out = script;
+  const list = Array.isArray(rawEdits) ? rawEdits : [];
+  const ceiling = Math.ceil(script.length * MAX_GROWTH);
+  const floor = Math.floor(script.length * MIN_SHRINK);
+
+  for (const raw of list.slice(0, MAX_EDITS)) {
+    const e = (raw ?? {}) as Record<string, unknown>;
+    const find = typeof e.find === "string" ? e.find.trim() : "";
+    const text = typeof e.text === "string" ? e.text.trim() : "";
+    const mode = e.mode === "replace" ? "replace" : e.mode === "insert_after" ? "insert_after" : null;
+    const reason = typeof e.reason === "string" && e.reason.trim() ? e.reason.trim() : "brief adherence";
+
+    if (!mode || !find || !text) {
+      skipped.push(`Malformed edit discarded (${snippet(find || String(e.mode ?? "?"))}).`);
+      continue;
+    }
+    if (text.length > MAX_EDIT_CHARS) {
+      skipped.push(`Edit too long to be a sentence-level fix, discarded: ${snippet(text)}`);
+      continue;
+    }
+    if (find.length > MAX_FIND_CHARS) {
+      skipped.push(`Anchor too long to be a sentence-level target, discarded: "${snippet(find)}"`);
+      continue;
+    }
+    const occurrences = out.split(find).length - 1;
+    if (occurrences === 0) {
+      skipped.push(`Anchor sentence not found verbatim, discarded: "${snippet(find)}"`);
+      continue;
+    }
+    if (occurrences > 1) {
+      skipped.push(`Anchor sentence appears ${occurrences}× (ambiguous), discarded: "${snippet(find)}"`);
+      continue;
+    }
+
+    const next = out.split(find).join(mode === "replace" ? text : `${find} ${text}`);
+    if (next.length > ceiling || next.length < floor) {
+      skipped.push(`Edit would reshape the script rather than patch it, discarded: "${snippet(find)}"`);
+      continue;
+    }
+
+    out = next;
+    applied.push(`${mode === "replace" ? "Replaced" : "Inserted after"} "${snippet(find)}" — ${reason}`);
+  }
+
+  if (list.length > MAX_EDITS) {
+    skipped.push(`${list.length - MAX_EDITS} further edits ignored (cap is ${MAX_EDITS}).`);
+  }
+  return { script: out, applied, skipped };
+}

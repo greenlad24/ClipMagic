@@ -961,6 +961,111 @@ export default function ScriptGeneratorPage() {
                           <TextBlock text={run.stages.hooks} />
                         </StagePanel>
                       )}
+                      {run.stages.claimAudit && (
+                        <StagePanel
+                          title="Claim audit"
+                          hint={`${run.stages.claimAudit.numbersChecked} numbers checked`}
+                        >
+                          {run.stages.claimAudit.unsupportedNumbers.length === 0 &&
+                          run.stages.claimAudit.fencedTopicsMentioned.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              Every number in the script traces back to the fact sheet.
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {run.stages.claimAudit.unsupportedNumbers.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Numbers with no source
+                                  </p>
+                                  <p className="text-sm text-foreground">
+                                    {run.stages.claimAudit.unsupportedNumbers.join(", ")}
+                                  </p>
+                                </div>
+                              )}
+                              {run.stages.claimAudit.fencedTopicsMentioned.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    Fenced topics mentioned — check, may be a rebuttal
+                                  </p>
+                                  <p className="text-sm text-foreground">
+                                    {run.stages.claimAudit.fencedTopicsMentioned.join(", ")}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </StagePanel>
+                      )}
+
+                      {run.stages.quality && (
+                        <StagePanel title="Script quality" hint={`${run.stages.quality.words} words`}>
+                          <ul className="space-y-1.5 text-sm text-foreground">
+                            <li>
+                              Sentence rhythm: {run.stages.quality.meanSentenceWords} words on average, burstiness{" "}
+                              {run.stages.quality.burstiness}{" "}
+                              <span className="text-muted-foreground">(higher is more human; ~0.65 reads as speech)</span>
+                            </li>
+                            <li>
+                              Repeated phrases: {run.stages.quality.repeatedPhraseCount}
+                              {run.stages.quality.worstPhrase && (
+                                <>
+                                  {" "}— worst is “{run.stages.quality.worstPhrase}” ×{run.stages.quality.worstPhraseRepeats}
+                                </>
+                              )}
+                            </li>
+                            <li className="text-muted-foreground">
+                              {run.stages.quality.discourseMarkerOpenings} sentences open with “Now/So/Alright” — natural
+                              speech, not a defect
+                            </li>
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.reviewChecklist && (
+                        <StagePanel
+                          title="Voice checklist"
+                          hint={`${Object.values(run.stages.reviewChecklist).filter(Boolean).length}/8`}
+                        >
+                          <ul className="grid grid-cols-2 gap-1.5">
+                            {Object.entries(run.stages.reviewChecklist).map(([k, ok]) => (
+                              <li key={k} className="flex items-center gap-2 text-sm">
+                                <span className={ok ? "text-[hsl(var(--chart-2))]" : "text-destructive"}>
+                                  {ok ? "✓" : "✗"}
+                                </span>
+                                <span className={ok ? "text-muted-foreground" : "text-foreground"}>
+                                  {k.replace(/([A-Z])/g, " $1").toLowerCase()}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.sources.length > 0 && (
+                        <StagePanel title="Sources" hint={`${run.stages.sources.length}`}>
+                          <ul className="space-y-1.5">
+                            {run.stages.sources.map((s, i) => (
+                              <li key={i} className="text-sm">
+                                <a
+                                  href={s.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[hsl(var(--chart-4))] hover:underline"
+                                >
+                                  {s.title}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.factSheet && (
+                        <StagePanel title="Fact sheet" hint="checkable details">
+                          <TextBlock text={run.stages.factSheet} />
+                        </StagePanel>
+                      )}
                       {run.stages.research && (
                         <StagePanel title="Research">
                           <TextBlock text={run.stages.research} />
@@ -993,6 +1098,46 @@ export default function ScriptGeneratorPage() {
                       {run.stages.outro && (
                         <StagePanel title="Outro">
                           <TextBlock text={run.stages.outro} />
+                        </StagePanel>
+                      )}
+
+                      {run.stages.ctaNotes.length > 0 && (
+                        <StagePanel title="CTA placement" hint={`${run.stages.ctaNotes.length}`}>
+                          <ul className="space-y-1.5">
+                            {run.stages.ctaNotes.map((note, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                                <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-4))]" />
+                                <span>{note}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.briefCheck && (
+                        <StagePanel title="Brief adherence" hint={`${run.stages.briefCheck.score}/100`}>
+                          <p className="mb-3 text-sm text-foreground">{run.stages.briefCheck.verdict}</p>
+                          {[
+                            { label: 'Fixed', items: run.stages.briefCheck.editsApplied },
+                            { label: 'Not fixed', items: run.stages.briefCheck.gaps },
+                            { label: 'Discarded', items: run.stages.briefCheck.editsSkipped },
+                          ]
+                            .filter((g) => g.items.length > 0)
+                            .map((g) => (
+                              <div key={g.label} className="mb-3 last:mb-0">
+                                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {g.label}
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {g.items.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                                      <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-4))]" />
+                                      <span>{item}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
                         </StagePanel>
                       )}
 

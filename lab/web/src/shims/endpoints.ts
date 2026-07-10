@@ -420,14 +420,51 @@ export interface ScriptSection {
   draft: string;
   final: string;
 }
+export interface BriefCheck {
+  /** 0–100 coverage of the brief. */
+  score: number;
+  verdict: string;
+  gaps: string[];
+  editsApplied: string[];
+  editsSkipped: string[];
+}
+export interface ScriptSource { url: string; title: string }
+export interface ReviewChecklist {
+  shortHook: boolean; largeMeat: boolean; fourteenYearOld: boolean;
+  noPunchSideways: boolean; noPunchDown: boolean; welcomeAtHookEnd: boolean;
+  noIncomeClaims: boolean; demosNotDescribes: boolean;
+}
+export interface ClaimAudit {
+  unsupportedNumbers: string[]; fencedTopicsMentioned: string[]; numbersChecked: number;
+}
+export interface ScriptQuality {
+  words: number; sentences: number; meanSentenceWords: number; burstiness: number;
+  repeatedPhraseCount: number; worstPhraseRepeats: number; worstPhrase: string | null;
+  discourseMarkerOpenings: number;
+}
 export interface ScriptStages {
   research: string | null;
+  /** Stage 1 — the pages the research rested on. */
+  sources: ScriptSource[];
+  /** Stage 1.5 — checkable facts distilled from the research, with verification dates. */
+  factSheet: string | null;
   outline: string | null;
   hooks: string | null;
   sponsorSegment: string | null;
   sections: ScriptSection[];
   outro: string | null;
+  /** Stage 5.5 — the four hooks with the subscribe clause tagged onto each welcome beat. */
+  hooksWithCta: string | null;
+  /** Stage 5.5 — sections + outro with the like/comment CTAs placed. */
+  ctaScript: string | null;
+  /** Stage 5.5 — what the CTA pass placed and removed. */
+  ctaNotes: string[];
+  /** Stage 6.5 — brief adherence score + applied edits. Null when the run had no brief. */
+  briefCheck: BriefCheck | null;
   reviewNotes: string[];
+  reviewChecklist: ReviewChecklist | null;
+  quality: ScriptQuality | null;
+  claimAudit: ClaimAudit | null;
 }
 export type ScriptRunStatus = "classifying" | "awaiting_confirmation" | "running" | "completed" | "failed";
 export interface ScriptRunResult {
