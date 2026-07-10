@@ -304,3 +304,17 @@ CREATE INDEX IF NOT EXISTS idx_script_runs_created ON script_runs(created_at);
   if (!has("channel_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN channel_json TEXT");
   if (!has("covered_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN covered_json TEXT");
 }
+
+/**
+ * Additive migration on script_runs: wall-clock generation time (Stages 1–7),
+ * so the saved-scripts history can show how long each script took. A separate
+ * column, not the stages blob, so the history list query can read it directly.
+ * Accumulates across a resume — the time to finish a failed run adds to the time
+ * already spent on it.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(script_runs)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "generation_ms")) {
+    db.exec("ALTER TABLE script_runs ADD COLUMN generation_ms INTEGER NOT NULL DEFAULT 0");
+  }
+}

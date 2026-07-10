@@ -58,6 +58,7 @@ interface ScriptRunRow {
   error: string | null;
   created_at: number;
   updated_at: number;
+  generation_ms: number;
 }
 
 function safeParse<T>(json: string | null): T | null {
@@ -132,6 +133,7 @@ export function updateRun(
     stages?: ScriptStages;
     finalDocument?: string | null;
     error?: string | null;
+    generationMs?: number;
   },
 ): void {
   const sets: string[] = [];
@@ -168,6 +170,10 @@ export function updateRun(
     sets.push("error = ?");
     vals.push(patch.error);
   }
+  if (patch.generationMs !== undefined) {
+    sets.push("generation_ms = ?");
+    vals.push(patch.generationMs);
+  }
   if (sets.length === 0) return;
   sets.push("updated_at = ?");
   vals.push(now());
@@ -189,6 +195,7 @@ function rowToResult(row: ScriptRunRow): ScriptRunResult {
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    generationMs: row.generation_ms ?? 0,
   };
 }
 
@@ -201,14 +208,15 @@ export function getRun(id: string): ScriptRunResult | null {
 /** Saved-scripts history rows, newest first. */
 export function listRuns(): ScriptRunListItem[] {
   const rows = db
-    .prepare("SELECT id, title, video_type, status, created_at FROM script_runs ORDER BY created_at DESC")
-    .all() as Array<Pick<ScriptRunRow, "id" | "title" | "video_type" | "status" | "created_at">>;
+    .prepare("SELECT id, title, video_type, status, created_at, generation_ms FROM script_runs ORDER BY created_at DESC")
+    .all() as Array<Pick<ScriptRunRow, "id" | "title" | "video_type" | "status" | "created_at" | "generation_ms">>;
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
     videoType: (r.video_type as VideoType | null) ?? null,
     status: r.status as ScriptRunStatus,
     createdAt: r.created_at,
+    generationMs: r.generation_ms ?? 0,
   }));
 }
 

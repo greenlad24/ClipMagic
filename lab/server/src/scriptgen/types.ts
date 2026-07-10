@@ -188,6 +188,8 @@ export interface ScriptRunResult {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  /** Wall-clock time spent generating Stages 1–7, in ms. Accumulates across resume. */
+  generationMs: number;
 }
 
 /** Compact row for the saved-scripts history. */
@@ -197,6 +199,8 @@ export interface ScriptRunListItem {
   videoType: VideoType | null;
   status: ScriptRunStatus;
   createdAt: number;
+  /** Wall-clock generation time in ms, for the history row. */
+  generationMs: number;
 }
 
 /** Live snapshot the frontend polls while a run is in flight. */

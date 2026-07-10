@@ -480,6 +480,7 @@ export interface ScriptRunResult {
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  generationMs: number;
 }
 export interface ScriptRunListItem {
   id: string;
@@ -487,6 +488,7 @@ export interface ScriptRunListItem {
   videoType: ScriptVideoType | null;
   status: ScriptRunStatus;
   createdAt: number;
+  generationMs: number;
 }
 export interface ScriptJobSnapshot {
   jobId: string;

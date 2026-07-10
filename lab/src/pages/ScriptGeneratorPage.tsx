@@ -67,6 +67,15 @@ import {
  */
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+/** "1m 42s" / "45s" — generation duration for the history + detail views. */
+function fmtDuration(ms: number): string {
+  if (!ms || ms <= 0) return '';
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return m > 0 ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`;
+}
+
 function relTime(ms: number): string {
   const diff = Date.now() - ms;
   if (diff < 0) return 'just now';
@@ -78,6 +87,41 @@ function relTime(ms: number): string {
   const d = Math.round(h / 24);
   if (d < 30) return `${d}d ago`;
   return new Date(ms).toLocaleDateString();
+}
+
+/**
+ * Copy text to the clipboard, working outside a secure context too.
+ *
+ * `navigator.clipboard` only exists on HTTPS or localhost. The lab is usually
+ * opened at http://<host>:9090, where it's `undefined` — so the Copy button
+ * threw and reported failure. Fall back to a hidden textarea + execCommand,
+ * which works over plain http. Returns whether the copy succeeded.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Trigger a client-side download of `text` as a file (no server round-trip). */
@@ -461,10 +505,9 @@ export default function ScriptGeneratorPage() {
 
   const copyDocument = async () => {
     if (!run?.finalDocument) return;
-    try {
-      await navigator.clipboard.writeText(run.finalDocument);
+    if (await copyText(run.finalDocument)) {
       toast.success('Script copied to clipboard');
-    } catch {
+    } else {
       toast.error('Could not copy — select and copy manually');
     }
   };
@@ -613,6 +656,9 @@ export default function ScriptGeneratorPage() {
                                 </span>
                                 {r.videoType && <span>{r.videoType}</span>}
                                 <span>· {relTime(r.createdAt)}</span>
+                                {r.generationMs > 0 && (
+                                  <span title="Time to generate">· ⏱ {fmtDuration(r.generationMs)}</span>
+                                )}
                               </span>
                             </button>
                             <button
@@ -927,6 +973,9 @@ export default function ScriptGeneratorPage() {
                               </span>
                             )}
                             <span>Updated {relTime(run.updatedAt)}</span>
+                            {run.generationMs > 0 && (
+                              <span title="Time to generate this script">· ⏱ generated in {fmtDuration(run.generationMs)}</span>
+                            )}
                           </div>
                         </div>
                         <div className="ml-auto flex items-center gap-2">

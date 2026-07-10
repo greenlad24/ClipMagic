@@ -347,6 +347,14 @@ function sectionStartPercent(i: number, total: number): number {
   return 55 + Math.round((i / total) * 30);
 }
 
+/** "1m 42s" / "12m 03s" — human-readable wall-clock duration. */
+function fmtDuration(ms: number): string {
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return m > 0 ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
+}
+
 // ── Injected context blocks ───────────────────────────────────────────────────
 // These are appended/prepended to the stage prompts at call time rather than
 // edited into the .md files. The prompts are proven; these carry the one thing
@@ -729,6 +737,8 @@ async function runScript(
     quality: null,
     claimAudit: null,
   };
+  const runStartedAt = Date.now();
+  const priorGenerationMs = priorRun?.generationMs ?? 0;
   if (prior) {
     stages.research = prior.research;
     stages.sources = prior.sources ?? [];
@@ -1128,24 +1138,29 @@ async function runScript(
     updateRun(runId, { stages, finalDocument });
 
     // ── Done ──
+    const generationMs = priorGenerationMs + (Date.now() - runStartedAt);
     const spend = scriptgenUsageTotal();
     console.log(
       `[scriptgen:usage] TOTAL(run) calls=${spend.calls} in=${spend.input} out=${spend.output} ` +
         `cache_read=${spend.cacheRead} cache_write=${spend.cacheWrite} $${spend.costUsd.toFixed(2)} ` +
-        `${(spend.ms / 1000).toFixed(0)}s`,
+        `${(spend.ms / 1000).toFixed(0)}s api | ${fmtDuration(generationMs)} wall`,
     );
+    console.log(`[scriptgen:time] run ${runId} completed in ${fmtDuration(generationMs)} (${generationMs} ms wall clock)`);
     progress(job, "Done", 100);
     job.status = "completed";
     job.costUsd = Number(spend.costUsd.toFixed(4));
     job.updatedAt = Date.now();
-    updateRun(runId, { status: "completed" });
+    updateRun(runId, { status: "completed", generationMs });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const generationMs = priorGenerationMs + (Date.now() - runStartedAt);
     job.status = "failed";
     job.error = msg;
     job.costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
     job.updatedAt = Date.now();
-    console.warn(`[scriptgen] run ${runId} failed after spending $${job.costUsd.toFixed(2)}: ${msg}`);
-    updateRun(runId, { status: "failed", error: msg });
+    console.warn(
+      `[scriptgen] run ${runId} failed after ${fmtDuration(generationMs)} and $${job.costUsd.toFixed(2)}: ${msg}`,
+    );
+    updateRun(runId, { status: "failed", error: msg, generationMs });
   }
 }
