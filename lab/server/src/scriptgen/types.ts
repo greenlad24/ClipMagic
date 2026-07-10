@@ -117,6 +117,8 @@ export interface ClaimAudit {
   fencedTopicsMentioned: string[];
   /** First-person "I tested it for 30 days" claims with nothing behind them. */
   experienceClaims: string[];
+  /** Sponsor plugs beyond the two allowed (one early, one at the close). */
+  excessSponsorPlugs: string[];
   numbersChecked: number;
 }
 

@@ -436,7 +436,8 @@ export interface ReviewChecklist {
 }
 export interface ClaimAudit {
   unsupportedNumbers: string[]; fencedTopicsMentioned: string[];
-  experienceClaims: string[]; numbersChecked: number;
+  experienceClaims: string[];
+  excessSponsorPlugs: string[]; numbersChecked: number;
 }
 export interface ScriptQuality {
   words: number; sentences: number; meanSentenceWords: number; burstiness: number;

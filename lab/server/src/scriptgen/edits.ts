@@ -333,6 +333,8 @@ export interface ClaimAudit {
    * in a script where nobody ran anything. Flagged unless the brief backs them.
    */
   experienceClaims: string[];
+  /** Sponsor plugs beyond the two allowed (one early, one at the close). */
+  excessSponsorPlugs: string[];
   /** Numbers checked, for context on how meaningful the above is. */
   numbersChecked: number;
 }
@@ -458,18 +460,67 @@ export function findExperienceClaims(script: string, support: string): string[] 
  *   production notes that are not claims, yet its opening beats are exactly
  *   where "I ran this for a full 30 days" tends to land.
  */
+/**
+ * Sentences that push the sponsor's offer or link — "free to start, no card",
+ * "link's in the description", the sponsor domain used as a call to action.
+ * Two are welcome in a sponsored video (one early, one at the close); more reads
+ * as an ad, not a recommendation. Returns every promotional sentence found, in
+ * order, so the caller can tell the two keepers from the excess.
+ */
+export function findSponsorPlugs(body: string, sponsorName = ""): string[] {
+  // "free to start / no card" only ever describes the sponsor — Jake's own Skool
+  // and socials are not free trials — so the offer alone is a plug.
+  const OFFER = /\bfree to (?:start|try)\b|\bno (?:credit )?card\b|\bstart(?:s)? (?:free|for free)\b|\bcredit card (?:needed|required)\b/i;
+  // A bare "link's in the description" is used for the sponsor, for Skool, AND
+  // for TikTok/Instagram — so it only counts as a SPONSOR plug when the sponsor
+  // is named in the same sentence. Otherwise the outro's social/Skool CTAs would
+  // be miscounted as sponsor over-promotion.
+  const LINK =
+    /\blink('?s)?\s+(?:in|below|down|is|sitting|right)\b|\bdrop(?:ping)?\s+(?:the|a)\s+link\b|\blink'?s (?:there|below|down)\b/i;
+  // Strip a ".so"/".com" style TLD so "Twin.so" and "Twin" both match on "Twin".
+  const bareName = sponsorName.replace(/\.(so|com|io|ai|co|app|dev)\b.*$/i, "").trim();
+  const domain =
+    bareName.length >= 2
+      ? new RegExp(`\\b${bareName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s*")}`, "i")
+      : null;
+  const namesSponsor = (s: string): boolean => Boolean(domain && domain.test(s));
+  const promotional = (s: string): boolean => {
+    if (OFFER.test(s)) return true;
+    if (LINK.test(s) && namesSponsor(s)) return true;
+    // Sponsor named with a go-there verb ("go try Twin", "sign up at twin.so").
+    return namesSponsor(s) && /\b(?:go|visit|head|try|sign\s*up|check (?:it|them) out|grab)\b/i.test(s);
+  };
+  return splitSentences(body).filter(promotional);
+}
+
+/** The promotional sentences BEYOND the two allowed (first + last). */
+export function excessSponsorPlugs(body: string, sponsorName = ""): string[] {
+  const plugs = findSponsorPlugs(body, sponsorName);
+  if (plugs.length <= 2) return [];
+  // Keep the first and the last; everything between them is excess.
+  return plugs.slice(1, -1);
+}
+
 export function auditClaims(
   script: string,
   factSheet: string,
   brief = "",
   alsoScanForExperience = "",
+  sponsorName = "",
 ): ClaimAudit {
   const experienceClaims = findExperienceClaims(
     `${alsoScanForExperience}\n${script}`,
     `${brief}\n${factSheet}`,
   );
+  const excess = sponsorName ? excessSponsorPlugs(script, sponsorName) : [];
   if (!factSheet.trim()) {
-    return { unsupportedNumbers: [], fencedTopicsMentioned: [], experienceClaims, numbersChecked: 0 };
+    return {
+      unsupportedNumbers: [],
+      fencedTopicsMentioned: [],
+      experienceClaims,
+      excessSponsorPlugs: excess,
+      numbersChecked: 0,
+    };
   }
 
   // Timestamps are production markers, not claims. "Beat 4 (1:10–1:35)" would
@@ -507,6 +558,7 @@ export function auditClaims(
     unsupportedNumbers: unsupported.sort((a, b) => a - b).map(String).slice(0, 25),
     fencedTopicsMentioned: mentioned.slice(0, 25),
     experienceClaims,
+    excessSponsorPlugs: excess,
     numbersChecked: scriptNumbers.length,
   };
 }

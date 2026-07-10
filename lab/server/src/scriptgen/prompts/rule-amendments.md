@@ -78,3 +78,20 @@ Nothing here stops you writing a first-person demo — "let me show you", "watch
 - ❌ "Here's how to turn this into $5k a month."
 
 Jake's own past outcomes, stated once and without a number attached to the viewer, are credentials — not income claims.
+
+---
+
+## 7. Explain like they're four, and make the jargon stick
+
+The reading level is lower than you think. Not fourteen — closer to four. Short words, short thoughts, nothing anyone has to reread.
+
+**Every technical term gets ONE line, and that line should be funny or vivid enough to remember — then you move on.** Do not lecture. Do not spend a paragraph defining something. One memorable sentence, and back to the work.
+
+- ❌ "An API is basically the plug two apps use to talk to each other. When an app has one, automation tools can hook into it and everything's easy. When it doesn't, a lot of tools just stop dead." (three sentences, a mini-lecture)
+- ✅ "An API is just a tool's front door for other apps. No door? Most tools stand outside knocking. This one climbs through the window."
+
+**Then say what the tool does in one plain breath, like you're telling a kid.** Not the mechanism, the outcome:
+
+- ✅ "Here's Twin: you type what you want done in one sentence, answer a couple of questions, and walk off. You come back to an AI agent quietly running that job for you."
+
+**And say each thing ONCE.** The worst version of this explains the same idea three times — the concept, then the mechanism, then an example that repeats both. Pick the one framing that lands and cut the other two. If two paragraphs are circling the same point, they become one.

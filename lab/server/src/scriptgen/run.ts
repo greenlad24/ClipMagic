@@ -504,6 +504,30 @@ function outlineFidelityBlock(today: string, budget: number): string {
   ].join("\n");
 }
 
+/**
+ * Appended to the CTA pass for sponsored videos. The sponsor's offer/link belongs
+ * in exactly two places — once early, once at the close — and nowhere else. The
+ * rules alone weren't enough: one run said "free to start, no card" five times in
+ * the body, which reads as an ad rather than a recommendation.
+ */
+function sponsorCapBlock(sponsored: boolean, sponsorName: string): string {
+  if (!sponsored) return "";
+  return [
+    "",
+    "---",
+    "",
+    `## SPONSOR PROMOTION — HARD CAP (this is a sponsored video for ${sponsorName})`,
+    "",
+    `The ${sponsorName} offer and link ("free to start", "no card", "link's in the description", "sign up") may appear EXACTLY TWICE in the SCRIPT body: once in the first minute, and once at the very end. That's it.`,
+    "",
+    "Find every other place the offer or link is repeated in between and CUT it — delete the promotional clause and stitch the sentence back together so the surrounding content still flows. The value of the tool should carry the video; the plug is a light touch at each end, not a drumbeat.",
+    "",
+    "This does NOT touch Jake's own asks — the like, the comment, the Skool link, the TikTok/Instagram follow, the notification bell all stay. Only the SPONSOR's repeated offer/link gets trimmed to two.",
+    "",
+    "In the NOTES block, say how many sponsor plugs you removed.",
+  ].join("\n");
+}
+
 /** Appended to every Stage 5 draft. Overrides "ONLY use information from the outline". */
 function factSheetBlock(factSheet: string): string {
   return [
@@ -639,7 +663,10 @@ function reviewRuleGuard(sponsored: boolean): string {
     "**Credentials.** One sentence of Jake's background, stated once and moved past, is allowed — even in the hook. Only remove it if it runs on, or if it comes back a second time.",
     "",
     "**Punching down still fails, always.** Any line that positions the viewer, or people like them, as the ones doing it wrong — cut it and mark noPunchDown false.",
-  ].join("\n");
+    sponsored
+      ? "**Sponsor plug cap.** The sponsor's offer/link (\"free to start\", \"no card\", \"link in the description\") may appear at most TWICE — once early, once at the close. If you see it more often, remove the extra ones; do NOT add any, even if the brief asked for several CTAs. Two is the ceiling."
+      : "",
+  ].filter(Boolean).join("\n");
 }
 
 /**
@@ -982,7 +1009,7 @@ async function runScript(
     });
     const raw55 = await opusScriptChat({
       system: preamble(false),
-      messages: [{ role: "user", content: s55 }],
+      messages: [{ role: "user", content: s55 + sponsorCapBlock(sponsored, setup.sponsorship?.sponsorName || "the tool") }],
       maxTokens: 16000,
       label: "stage5.5-cta",
       purpose: "scriptgen",
@@ -1012,11 +1039,15 @@ async function runScript(
     const briefText = (input.brief || "").trim();
     if (briefText) {
       progress(job, "Checking the script against the brief…", 91);
-      const s65 = fill(loadPrompt("stage6.5-brief"), {
-        "[INSERT TITLE]": title,
-        "[PASTE THE BRIEF]": briefText,
-        "[PASTE THE FULL SCRIPT]": scriptBody,
-      });
+      const s65 =
+        fill(loadPrompt("stage6.5-brief"), {
+          "[INSERT TITLE]": title,
+          "[PASTE THE BRIEF]": briefText,
+          "[PASTE THE FULL SCRIPT]": scriptBody,
+        }) +
+        (sponsored
+          ? `\n\n---\n\nSPONSOR PLUG CEILING: this brief may ask for "2–3 CTAs" pointing at the sponsor link. The ceiling is TWO sponsor-offer/link mentions in the spoken body — one early, one at the close — because more reads as an ad. Do not add sponsor plugs to satisfy the brief; if the brief's CTA count conflicts with this, record it as a gap. Jake's own like/comment/subscribe/Skool/social asks are separate and unaffected.`
+          : "");
       const raw65 = await opusScriptChat({
         system: preamble(false),
         messages: [{ role: "user", content: s65 }],
@@ -1115,16 +1146,19 @@ async function runScript(
       stages.factSheet ?? "",
       input.brief ?? "",
       stages.hooksWithCta ?? stages.hooks ?? "",
+      sponsored ? setup.sponsorship?.sponsorName || "the sponsor" : "",
     );
     if (
       stages.claimAudit.unsupportedNumbers.length ||
       stages.claimAudit.fencedTopicsMentioned.length ||
-      stages.claimAudit.experienceClaims.length
+      stages.claimAudit.experienceClaims.length ||
+      stages.claimAudit.excessSponsorPlugs.length
     ) {
       console.warn(
         `[scriptgen:claims] unsupported=${JSON.stringify(stages.claimAudit.unsupportedNumbers)} ` +
           `fenced=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)} ` +
-          `experience=${JSON.stringify(stages.claimAudit.experienceClaims)}`,
+          `experience=${JSON.stringify(stages.claimAudit.experienceClaims)} ` +
+          `excessPlugs=${stages.claimAudit.excessSponsorPlugs.length}`,
       );
     }
 
