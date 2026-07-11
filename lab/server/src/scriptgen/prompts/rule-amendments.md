@@ -1,6 +1,6 @@
 # RULE AMENDMENTS — these override anything above that contradicts them
 
-The voice rules above were written a while ago. Jake has since reviewed real, approved scripts and corrected five of them. Where this section and anything above disagree, **this section wins**.
+The voice rules above were written a while ago. Jake has since reviewed real, approved scripts — including full generated drafts he then edited by hand — and corrected the rules below. Where this section and anything above disagree, **this section wins**.
 
 ---
 
@@ -118,4 +118,35 @@ The reading level is lower than you think. Not fourteen — closer to four. Shor
 - ❌ "The result?"  → ✅ "So what do you end up with?"
 - ❌ "The catch?"  → ✅ "Here's the one thing to watch."
 
+**Once the tool has a name, use it — stop falling back to "this thing" or "the thing."** Naming a not-yet-named tool once, deliberately, in the hook is fine — "that's exactly the work this thing can take off your plate" is a tease, and the vagueness is the point. But the moment you've said what it's called, keep saying it. And don't reach for "the thing" when a plain concrete noun is right there.
+
+- ❌ "This thing will go and work on a tool that has none of that. It just opens the thing and clicks through it." → ✅ "Twin will go and work on a tool that has none of that. It just opens the website and clicks through it."
+
 These are conversation, not copywriting. If a line could be a headline on a landing page, rewrite it as something you'd say out loud to one person.
+
+---
+
+## 9. The open after the hook is NOT a second hook — don't re-run it
+
+By the time the hook ends, the viewer already knows who Jake is, what's being built, and why they should care. The section right after the hook must not say any of that again. Its only job is to drop the viewer into the first real thing. This is the single most over-written stretch of the script — it consistently comes out two to three times longer than it should, and every extra beat gets cut. Write it short the first time.
+
+Three moves the open keeps making, and all three must go:
+
+- **No roadmap of the video.** The hook already promised what's coming. Don't preview it a second time. ❌ "Here's what I've got for you. I'm going to show you what it actually does, the spots where it surprised me, and the one thing I couldn't fully check." The viewer didn't ask for a table of contents — just start the first thing.
+- **No second welcome, no second credential.** The hook ended on "I'm Jake Dawson, I help…" — that line is spent. Don't reintroduce him, and don't re-run the "for the past couple of years…" credential in the next breath. It got its one sentence in the hook, and that was the whole allowance (see rule 4).
+- **No separate "who this is for" list.** If the hook already named the audience — "solopreneurs, small business owners, people drowning in tabs" — do not restage it as its own paragraph with a calendar-over-here, a CRM-over-there, a form-tool-that-emails-you. Pick the one vivid line that sets up the first build, and move.
+
+**And say the tool's job ONCE.** The worst opens explain what the tool does three times over — the concept, then "the one shift in how you think about it," then a box-A-to-box-B diagram that repeats both. Give it one plain framing — "you type what you want in one sentence, answer a couple of questions, and walk away" — and go straight into the demo. This is rule 7 aimed at the open specifically, because the open is where the piling-on happens most.
+
+The test: if a viewer could skip the entire stretch between the hook and the first build and miss nothing, it shouldn't have been written. A good open is short enough that cutting it would cost you something real.
+
+---
+
+## 10. Don't announce the part you're about to do, and don't narrate your own honesty
+
+Two tics that read as filler and always get cut:
+
+- **Don't announce a section before you deliver it — just deliver it.** ❌ "Alright, let's talk money. Because this is the part everyone actually wants to know about." → ✅ Go straight in: "Here's how the trial works. You get fourteen days…" The content itself is the signal that the topic turned; you don't need a sentence whose only job is to say one is coming. Same with over-signposting the turn — "and that brings us neatly to pricing" loses "neatly," and often loses the whole line.
+- **Don't narrate that you're being honest.** Saying "my real take, said once" or "honest thoughts, for real this time" doesn't make a take honest — it spends a sentence claiming to. Cut the label and say the honest thing. ❌ "So — honest thoughts. My real take, said once. The part that got me is…" → ✅ "The part that actually got me is the browser side."
+
+If a sentence's only job is to describe the sentence coming after it, delete it and keep the one that carries the weight.

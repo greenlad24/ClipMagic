@@ -1127,7 +1127,7 @@ export default function ScriptGeneratorPage() {
                       {run.stages.reviewChecklist && (
                         <StagePanel
                           title="Voice checklist"
-                          hint={`${Object.values(run.stages.reviewChecklist).filter(Boolean).length}/8`}
+                          hint={`${Object.values(run.stages.reviewChecklist).filter(Boolean).length}/${Object.keys(run.stages.reviewChecklist).length}`}
                         >
                           <ul className="grid grid-cols-2 gap-1.5">
                             {Object.entries(run.stages.reviewChecklist).map(([k, ok]) => (

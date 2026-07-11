@@ -691,6 +691,9 @@ function coerceChecklist(raw: unknown): ReviewChecklist | null {
     welcomeAtHookEnd: b("welcomeAtHookEnd"),
     noIncomeClaims: b("noIncomeClaims"),
     demosNotDescribes: b("demosNotDescribes"),
+    leanOpen: b("leanOpen"),
+    noSectionAnnouncement: b("noSectionAnnouncement"),
+    toolNamedNotVague: b("toolNamedNotVague"),
   };
 }
 

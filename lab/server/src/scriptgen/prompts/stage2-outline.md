@@ -88,29 +88,30 @@ The outline MUST incorporate these findings prominently and structure the video 
 
 ---
 
-#### ⏱️ QUICK INTRO (0:30-1:00)
+#### ⏱️ QUICK INTRO (0:30-1:00) — keep it LEAN; do NOT re-run the hook (see Rule 9)
+
+The hook already introduced Jake, named the audience, and promised what's coming. Do not repeat any of it here. No second "I'm Jake Dawson", no roadmap of the video, no restated "who this is for" list. This section's only job is to bridge the hook into the first real thing — one or two lines per element, then move.
 
 **Elements:**
-- One-line intro: "I'm Jake Dawson, I help business owners automate [specific area]"
-- Why this automation matters: [USE MY RESEARCH: What problem this solved for me]
-- What we're building: Specific name/description
-- Prerequisites: What tools they need (free/paid)
+- The problem in one vivid line: [USE MY RESEARCH: the specific pain this removes]
+- What we're building, named once: Specific name/description
+- Prerequisites, if any: what tools they need (free/paid) — a single line
 
 **From My Research:**
 [REFERENCE WHAT I DISCOVERED ABOUT WHY THIS MATTERS]
 
 ---
 
-#### ⏱️ OVERVIEW (1:00-2:00)
+#### ⏱️ OVERVIEW (1:00-2:00) — OPTIONAL; fold into the intro if it would just re-explain
 
-**The Big Picture:**
-- Visual diagram of the workflow (describe what to show)
-- 3-5 main components
-- How they connect together
-- End result expectation
+Give the tool's job ONE plain framing, then go straight to the first build. Do not diagram every component or walk box-A-to-box-B-to-box-C — that's the piling-on Rules 7 and 9 forbid. If the intro above already made the tool's job clear, skip this section entirely.
+
+**The Big Picture (one breath):**
+- What the tool does, said ONCE, like you're telling a kid ("you type what you want in one sentence, answer a couple of questions, and walk away")
+- The end result the viewer can expect
 
 **Based on My Testing:**
-[USE MY RESEARCH: How I designed this workflow, what iterations I went through]
+[USE MY RESEARCH: How I designed this workflow]
 
 ---
 

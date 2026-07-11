@@ -107,6 +107,9 @@ export interface ReviewChecklist {
   welcomeAtHookEnd: boolean;
   noIncomeClaims: boolean;
   demosNotDescribes: boolean;
+  leanOpen: boolean;
+  noSectionAnnouncement: boolean;
+  toolNamedNotVague: boolean;
 }
 
 /** Deterministic fact check of the finished script against the Stage 1.5 fact sheet. */
