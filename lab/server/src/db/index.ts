@@ -318,3 +318,16 @@ CREATE INDEX IF NOT EXISTS idx_script_runs_created ON script_runs(created_at);
     db.exec("ALTER TABLE script_runs ADD COLUMN generation_ms INTEGER NOT NULL DEFAULT 0");
   }
 }
+
+/**
+ * Additive migration on script_runs: the post-generation paragraph-refinement
+ * chat (JSON array of RefineMessage). Nullable so existing rows hydrate to an
+ * empty thread. Lives on the run row, not the stages blob, because it's edited
+ * long after Stages 1–7 have finished writing that blob.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(script_runs)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "refine_chat_json")) {
+    db.exec("ALTER TABLE script_runs ADD COLUMN refine_chat_json TEXT");
+  }
+}

@@ -18,6 +18,7 @@ import type {
   ScriptRunResult,
   ScriptRunListItem,
   ScriptRunStatus,
+  RefineMessage,
   VideoType,
 } from "../scriptgen/types.js";
 
@@ -59,6 +60,20 @@ interface ScriptRunRow {
   created_at: number;
   updated_at: number;
   generation_ms: number;
+  refine_chat_json: string | null;
+}
+
+/** Parse the persisted refine thread, dropping anything malformed. */
+function hydrateRefineChat(json: string | null): RefineMessage[] {
+  const parsed = safeParse<unknown>(json);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (m): m is RefineMessage =>
+      !!m &&
+      typeof m === "object" &&
+      ((m as RefineMessage).role === "user" || (m as RefineMessage).role === "assistant") &&
+      typeof (m as RefineMessage).content === "string",
+  );
 }
 
 function safeParse<T>(json: string | null): T | null {
@@ -134,6 +149,7 @@ export function updateRun(
     finalDocument?: string | null;
     error?: string | null;
     generationMs?: number;
+    refineChat?: RefineMessage[];
   },
 ): void {
   const sets: string[] = [];
@@ -174,6 +190,10 @@ export function updateRun(
     sets.push("generation_ms = ?");
     vals.push(patch.generationMs);
   }
+  if (patch.refineChat !== undefined) {
+    sets.push("refine_chat_json = ?");
+    vals.push(JSON.stringify(patch.refineChat));
+  }
   if (sets.length === 0) return;
   sets.push("updated_at = ?");
   vals.push(now());
@@ -191,6 +211,7 @@ function rowToResult(row: ScriptRunRow): ScriptRunResult {
     stage0: safeParse<Stage0Result>(row.stage0_json),
     stages: hydrateStages(safeParse<Partial<ScriptStages>>(row.stages_json)),
     finalDocument: row.final_document,
+    refineChat: hydrateRefineChat(row.refine_chat_json),
     status: row.status as ScriptRunStatus,
     error: row.error,
     createdAt: row.created_at,

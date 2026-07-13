@@ -138,6 +138,7 @@ import {
   startScript as runStartScript,
   continueScript as runContinueScript,
   getScriptSnapshot,
+  refineParagraph as runRefineParagraph,
 } from "../scriptgen/run.js";
 import {
   getRun as getScriptRunDb,
@@ -3084,6 +3085,17 @@ const deleteScriptRun: Handler = async (input) => {
   return { ok: true };
 };
 
+// Post-generation paragraph refinement: rewrite ONE pasted paragraph per Jake's
+// instruction, grounded in the run's own research + fact sheet. Returns the full
+// updated (persisted) chat thread plus the cost of this one call.
+const refineScriptParagraph: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required to refine a paragraph." });
+  }
+  return runRefineParagraph(runId, String(input?.paragraph ?? ""), String(input?.instruction ?? ""));
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -3220,6 +3232,7 @@ export const HANDLERS: Record<string, Handler> = {
   getScriptRun,
   listScriptRuns,
   deleteScriptRun,
+  refineScriptParagraph,
 };
 
 void config;

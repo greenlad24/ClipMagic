@@ -43,8 +43,10 @@ import type {
   ReviewChecklist,
   ScriptSource,
   ScriptStages,
+  ScriptRunResult,
   ScriptJobSnapshot,
   ScriptRunStatus,
+  RefineMessage,
   VideoType,
 } from "./types.js";
 
@@ -546,6 +548,72 @@ function factSheetBlock(factSheet: string): string {
     "",
     factSheet,
   ].join("\n");
+}
+
+/**
+ * The refine chat's context: the finished script plus every review that ran over
+ * it. A hand-edit has to stay consistent with the rest of the video and must not
+ * undo a decision a review already made, so the whole script and the review
+ * artifacts (Stage 7 notes, the claim audit, the brief check) go into the
+ * system prefix. Byte-stable across a thread, so it caches.
+ */
+function scriptAndReviewsBlock(run: ScriptRunResult): string {
+  const s = run.stages;
+  const lines: string[] = [
+    "",
+    "---",
+    "",
+    "## THE FINISHED SCRIPT",
+    "",
+    "This is the whole video as it was generated and reviewed. The paragraph Jake pastes is lifted from here. Rewrite it so it still fits this script — don't repeat a point another paragraph already makes, keep the running voice and threads, and match the surrounding pace.",
+    "",
+    run.finalDocument ?? "(no assembled document)",
+  ];
+
+  const reviewParts: string[] = [];
+  if (s.reviewNotes.length) {
+    reviewParts.push(
+      "### Final voice/craft review — what the review pass already changed, and why\n" +
+        s.reviewNotes.map((n) => `- ${n}`).join("\n"),
+    );
+  }
+  if (s.claimAudit) {
+    const a = s.claimAudit;
+    const auditLines: string[] = [];
+    if (a.unsupportedNumbers.length) auditLines.push(`Numbers with no source: ${a.unsupportedNumbers.join(", ")}`);
+    if (a.bannedWords.length) auditLines.push(`Banned words/phrasings flagged: ${a.bannedWords.join("; ")}`);
+    if (a.experienceClaims.length) auditLines.push(`Invented first-person experience flagged: ${a.experienceClaims.join("; ")}`);
+    if (a.excessSponsorPlugs.length) auditLines.push(`Over-promotion flagged (2 plugs allowed): ${a.excessSponsorPlugs.join("; ")}`);
+    if (a.fencedTopicsMentioned.length) auditLines.push(`Fenced topics mentioned: ${a.fencedTopicsMentioned.join(", ")}`);
+    if (auditLines.length) {
+      reviewParts.push(
+        "### Claim audit — issues the fact-check raised\n" +
+          auditLines.map((l) => `- ${l}`).join("\n") +
+          "\nDon't reintroduce any of these when you rewrite.",
+      );
+    }
+  }
+  if (s.briefCheck) {
+    const b = s.briefCheck;
+    const bl = [`Brief coverage scored ${b.score}/100 — ${b.verdict}`];
+    if (b.gaps.length) bl.push(`Deliberately left out (don't force back in): ${b.gaps.join("; ")}`);
+    reviewParts.push("### Brief adherence review\n" + bl.map((l) => `- ${l}`).join("\n"));
+  }
+
+  if (reviewParts.length) {
+    lines.push(
+      "",
+      "---",
+      "",
+      "## THE REVIEWS MADE ON THIS SCRIPT",
+      "",
+      "These passes already ran over the finished script. Honor their decisions — your rewrite must not undo a fix or bring back something a review removed.",
+      "",
+      reviewParts.join("\n\n"),
+    );
+  }
+
+  return lines.join("\n");
 }
 
 /**
@@ -1206,4 +1274,92 @@ async function runScript(
     );
     updateRun(runId, { status: "failed", error: msg, generationMs });
   }
+}
+
+// ── Paragraph refinement (post-generation chat) ───────────────────────────────
+// After the script is done and copied into a doc, Jake edits by hand. When a
+// paragraph needs work he pastes it here with what to change; we rewrite ONLY
+// that paragraph, grounded in this run's own research + fact sheet and its voice
+// system. Stateless per call: the stored thread is loaded, the new turn is
+// appended, one Opus call runs, and the whole updated thread is persisted and
+// returned. No web search — the answer is grounded strictly in what the run
+// already researched.
+
+/** Cap the stored/replayed thread so a long editing session can't grow unbounded. */
+const MAX_REFINE_MESSAGES = 40;
+
+export async function refineParagraph(
+  runId: string,
+  paragraph: string,
+  instruction: string,
+): Promise<{ messages: RefineMessage[]; costUsd: number }> {
+  const instr = (instruction || "").trim();
+  if (!instr) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Tell me what to change about the paragraph." });
+  }
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  if (!run.setup) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This script hasn't been set up yet." });
+  }
+  if (!run.finalDocument) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This script hasn't finished generating yet." });
+  }
+
+  const thread = run.refineChat ?? [];
+  const para = (paragraph || "").trim();
+  if (thread.length === 0 && !para) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Paste the paragraph you want rewritten to start." });
+  }
+
+  // A fresh paragraph resets what "this paragraph" refers to; a bare instruction
+  // keeps refining the one from the previous turn (the model has it in context).
+  const userContent = para
+    ? `PARAGRAPH TO REWRITE:\n"""\n${para}\n"""\n\nWHAT TO CHANGE:\n${instr}`
+    : `WHAT TO CHANGE:\n${instr}`;
+
+  const sponsored = (run.setup.sponsorship?.mode ?? "organic") !== "organic";
+  const instructions = fill(loadPrompt("refine-paragraph"), {
+    "[VIDEO TITLE]": run.setup.title,
+    "[VIDEO TYPE]": run.setup.videoType,
+    "[SPONSORSHIP]": sponsorshipLabel(run.setup.sponsorship),
+  });
+
+  // The finished script + its reviews + the fact sheet are byte-stable across a
+  // thread, so they ride the cached system prefix (breakpoint on the last block)
+  // instead of being resent at full price on every follow-up.
+  const systemExtra = [
+    scriptAndReviewsBlock(run),
+    ...(run.stages.factSheet ? [factSheetBlock(run.stages.factSheet)] : []),
+    instructions,
+  ];
+
+  const modelMessages = [...thread, { role: "user" as const, content: userContent, ts: 0 }].map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+
+  // A refine call is independent of any generation run's budget, so zero the
+  // per-run tally first — otherwise a finished run's ~$2 spend could trip the
+  // SCRIPTGEN_MAX_USD ceiling before this tiny call ever runs.
+  resetScriptgenUsage();
+  const reply = await opusScriptChat({
+    system: systemPreamble(true, sponsored),
+    systemExtra,
+    messages: modelMessages,
+    maxTokens: 6000,
+    label: "refine-paragraph",
+    purpose: "scriptgen",
+  });
+  const costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
+
+  const ts = Date.now();
+  const appended: RefineMessage[] = [
+    ...thread,
+    { role: "user", content: userContent, ts },
+    { role: "assistant", content: reply.trim(), ts },
+  ];
+  const updated = appended.slice(-MAX_REFINE_MESSAGES);
+  updateRun(runId, { refineChat: updated });
+  return { messages: updated, costUsd };
 }

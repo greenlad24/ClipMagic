@@ -469,6 +469,12 @@ export interface ScriptStages {
   claimAudit: ClaimAudit | null;
 }
 export type ScriptRunStatus = "classifying" | "awaiting_confirmation" | "running" | "completed" | "failed";
+/** One turn of the post-generation paragraph-refinement chat. */
+export interface RefineMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+}
 export interface ScriptRunResult {
   runId: string;
   title: string;
@@ -477,6 +483,8 @@ export interface ScriptRunResult {
   stage0: Stage0Result | null;
   stages: ScriptStages;
   finalDocument: string | null;
+  /** Post-generation paragraph-refinement chat, oldest first. */
+  refineChat: RefineMessage[];
   status: ScriptRunStatus;
   error: string | null;
   createdAt: number;
@@ -515,6 +523,11 @@ export const scriptJobStatus = endpoint<{ jobId: string }, ScriptJobSnapshot>("s
 export const getScriptRun = endpoint<{ runId: string }, ScriptRunResult>("getScriptRun");
 export const listScriptRuns = endpoint<Record<string, never>, { runs: ScriptRunListItem[] }>("listScriptRuns");
 export const deleteScriptRun = endpoint<{ runId: string }, { ok: true }>("deleteScriptRun");
+/** Rewrite ONE pasted paragraph per an instruction, grounded in the run's research + fact sheet. */
+export const refineScriptParagraph =
+  endpoint<{ runId: string; paragraph?: string; instruction: string }, { messages: RefineMessage[]; costUsd: number }>(
+    "refineScriptParagraph",
+  );
 
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");

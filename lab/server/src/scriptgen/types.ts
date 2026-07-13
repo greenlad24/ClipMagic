@@ -175,6 +175,23 @@ export interface ScriptStages {
   claimAudit: ClaimAudit | null;
 }
 
+/**
+ * One turn of the post-generation paragraph-refinement chat. Jake pastes a
+ * paragraph from the finished script plus what he wants changed; the model
+ * rewrites only that paragraph, grounded in this run's own research + fact
+ * sheet. The thread is persisted with the run so it survives a reload.
+ *
+ * `content` is exactly what was sent to / returned by the model — for a user
+ * turn that's the composed "PARAGRAPH… / WHAT TO CHANGE…" block, for an
+ * assistant turn it's the rewritten paragraph (or a one-line "can't ground
+ * that" reply).
+ */
+export interface RefineMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+}
+
 export type ScriptRunStatus =
   | "classifying"
   | "awaiting_confirmation"
@@ -191,6 +208,8 @@ export interface ScriptRunResult {
   stages: ScriptStages;
   /** Assembled document: all-4-hooks + [sponsor segment] + meat + outro. */
   finalDocument: string | null;
+  /** Post-generation paragraph-refinement chat, oldest first. Empty until used. */
+  refineChat: RefineMessage[];
   status: ScriptRunStatus;
   error: string | null;
   createdAt: number;
