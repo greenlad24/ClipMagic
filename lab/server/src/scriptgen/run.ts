@@ -1347,17 +1347,33 @@ export async function refineParagraph(
     system: systemPreamble(true, sponsored),
     systemExtra,
     messages: modelMessages,
-    maxTokens: 6000,
+    // Adaptive thinking bills as output and counts toward this cap, and a big
+    // instruction ("fold this whole tutorial in") can burn the whole budget on
+    // reasoning before a word of answer lands. 6000 was low enough to truncate
+    // to an empty text block; give thinking real headroom over the paragraph.
+    maxTokens: 16000,
     label: "refine-paragraph",
     purpose: "scriptgen",
   });
   const costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
 
+  // An empty reply means the model hit the token ceiling on thinking and never
+  // emitted text. Don't persist a blank assistant turn (it reads as "no answer"
+  // and corrupts the thread) — fail loudly so the caller can retry smaller.
+  const answer = reply.trim();
+  if (!answer) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message:
+        "The rewrite ran out of room before it produced an answer — the change you asked for may be too big for one paragraph. Try a shorter instruction, or paste just the paragraph you want changed.",
+    });
+  }
+
   const ts = Date.now();
   const appended: RefineMessage[] = [
     ...thread,
     { role: "user", content: userContent, ts },
-    { role: "assistant", content: reply.trim(), ts },
+    { role: "assistant", content: answer, ts },
   ];
   const updated = appended.slice(-MAX_REFINE_MESSAGES);
   updateRun(runId, { refineChat: updated });
