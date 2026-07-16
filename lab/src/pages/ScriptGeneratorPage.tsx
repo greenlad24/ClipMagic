@@ -9,6 +9,7 @@ import {
   getScriptRun,
   listScriptRuns,
   deleteScriptRun,
+  refineScriptParagraph,
   type ScriptInput,
   type ScriptSetup,
   type ScriptRunResult,
@@ -18,6 +19,7 @@ import {
   type ScriptSection,
   type SponsorshipMode,
   type Sponsorship,
+  type RefineMessage,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -53,6 +55,7 @@ import {
   ListChecks,
   FlaskConical,
   Megaphone,
+  Wand2,
 } from 'lucide-react';
 
 /**
@@ -67,6 +70,15 @@ import {
  */
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+/** "1m 42s" / "45s" — generation duration for the history + detail views. */
+function fmtDuration(ms: number): string {
+  if (!ms || ms <= 0) return '';
+  const total = Math.round(ms / 1000);
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return m > 0 ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`;
+}
+
 function relTime(ms: number): string {
   const diff = Date.now() - ms;
   if (diff < 0) return 'just now';
@@ -78,6 +90,41 @@ function relTime(ms: number): string {
   const d = Math.round(h / 24);
   if (d < 30) return `${d}d ago`;
   return new Date(ms).toLocaleDateString();
+}
+
+/**
+ * Copy text to the clipboard, working outside a secure context too.
+ *
+ * `navigator.clipboard` only exists on HTTPS or localhost. The lab is usually
+ * opened at http://<host>:9090, where it's `undefined` — so the Copy button
+ * threw and reported failure. Fall back to a hidden textarea + execCommand,
+ * which works over plain http. Returns whether the copy succeeded.
+ */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 /** Trigger a client-side download of `text` as a file (no server round-trip). */
@@ -221,6 +268,168 @@ function SectionPanel({ section, index }: { section: ScriptSection; index: numbe
       )}
       <TextBlock text={body || '—'} />
     </StagePanel>
+  );
+}
+
+// ── Paragraph refinement chat ─────────────────────────────────────────────────
+/** Split a stored user turn back into its paragraph + instruction for display. */
+function parseUserTurn(content: string): { paragraph: string | null; instruction: string } {
+  const withPara = content.match(/^PARAGRAPH TO REWRITE:\n"""\n([\s\S]*?)\n"""\n\nWHAT TO CHANGE:\n([\s\S]*)$/);
+  if (withPara) return { paragraph: withPara[1], instruction: withPara[2] };
+  const bare = content.match(/^WHAT TO CHANGE:\n([\s\S]*)$/);
+  if (bare) return { paragraph: null, instruction: bare[1] };
+  return { paragraph: null, instruction: content };
+}
+
+/**
+ * Post-generation chat: paste a paragraph from the finished script + what needs
+ * changing, get back a rewrite grounded in this run's own research + fact sheet
+ * and voice. The thread is persisted server-side (keyed on runId), so the parent
+ * seeds it from run.refineChat and remounts per run.
+ */
+function RefineChat({ runId, initialMessages }: { runId: string; initialMessages: RefineMessage[] }) {
+  const [messages, setMessages] = useState<RefineMessage[]>(initialMessages);
+  const [paragraph, setParagraph] = useState('');
+  const [instruction, setInstruction] = useState('');
+  const [sending, setSending] = useState(false);
+  const [copiedAt, setCopiedAt] = useState<number | null>(null);
+  const threadRef = useRef<HTMLDivElement>(null);
+
+  const started = messages.length > 0;
+
+  useEffect(() => {
+    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight });
+  }, [messages, sending]);
+
+  const send = async () => {
+    const instr = instruction.trim();
+    if (!instr) {
+      toast.error('Say what you want changed');
+      return;
+    }
+    if (!started && !paragraph.trim()) {
+      toast.error('Paste the paragraph you want rewritten');
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await refineScriptParagraph({
+        runId,
+        paragraph: paragraph.trim() || undefined,
+        instruction: instr,
+      });
+      setMessages(res.messages);
+      setParagraph('');
+      setInstruction('');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not rewrite the paragraph');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const copyRewrite = async (text: string, ts: number) => {
+    if (await copyText(text)) {
+      setCopiedAt(ts);
+      window.setTimeout(() => setCopiedAt((c) => (c === ts ? null : c)), 1500);
+    } else {
+      toast.error('Could not copy — select and copy manually');
+    }
+  };
+
+  return (
+    <section className="rounded-xl border border-border bg-card">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <div className="rounded-md bg-primary/10 p-1.5 text-primary">
+          <Wand2 className="h-4 w-4" />
+        </div>
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-foreground">Refine a paragraph</h2>
+          <p className="text-[11px] text-muted-foreground">
+            Paste a paragraph and say what to change — it rewrites only that one, from this script&apos;s own research.
+          </p>
+        </div>
+      </div>
+
+      {started && (
+        <div ref={threadRef} className="max-h-[46vh] space-y-3 overflow-y-auto px-4 py-4">
+          {messages.map((m, i) =>
+            m.role === 'user' ? (
+              (() => {
+                const { paragraph: p, instruction: instr } = parseUserTurn(m.content);
+                return (
+                  <div key={i} className="flex flex-col items-end gap-1">
+                    {p && (
+                      <div className="max-w-[85%] rounded-lg border border-border bg-muted/40 px-3 py-2 text-[12px] italic leading-relaxed text-muted-foreground">
+                        <span className="mb-0.5 block text-[10px] font-medium uppercase not-italic tracking-wide text-muted-foreground/70">
+                          Paragraph
+                        </span>
+                        {p}
+                      </div>
+                    )}
+                    <div className="max-w-[85%] rounded-lg bg-primary px-3 py-2 text-[13px] leading-relaxed text-primary-foreground">
+                      {instr}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div key={i} className="flex flex-col items-start gap-1">
+                <div className="w-full rounded-lg border border-border bg-background px-3 py-2">
+                  <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-foreground">
+                    {m.content}
+                  </pre>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+                  onClick={() => void copyRewrite(m.content, m.ts)}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                  {copiedAt === m.ts ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            ),
+          )}
+        </div>
+      )}
+
+      <div className="space-y-2 border-t border-border px-4 py-3">
+        <Textarea
+          value={paragraph}
+          onChange={(e) => setParagraph(e.target.value)}
+          rows={started ? 2 : 3}
+          placeholder={
+            started
+              ? 'Paste a new paragraph — or leave blank to keep editing the last one'
+              : 'Paste the paragraph you want rewritten'
+          }
+          className="resize-y font-mono text-[13px]"
+          disabled={sending}
+        />
+        <div className="flex items-end gap-2">
+          <Textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                e.preventDefault();
+                void send();
+              }
+            }}
+            rows={2}
+            placeholder="What needs changing? (⌘/Ctrl+Enter to send)"
+            className="flex-1 resize-y text-[13px]"
+            disabled={sending}
+          />
+          <Button onClick={() => void send()} disabled={sending} className="gap-1.5">
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            {sending ? 'Rewriting' : 'Rewrite'}
+          </Button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -461,10 +670,9 @@ export default function ScriptGeneratorPage() {
 
   const copyDocument = async () => {
     if (!run?.finalDocument) return;
-    try {
-      await navigator.clipboard.writeText(run.finalDocument);
+    if (await copyText(run.finalDocument)) {
       toast.success('Script copied to clipboard');
-    } catch {
+    } else {
       toast.error('Could not copy — select and copy manually');
     }
   };
@@ -479,6 +687,7 @@ export default function ScriptGeneratorPage() {
   const isRunning = status === 'running' || status === 'classifying';
   const phase = job?.phase || (status === 'classifying' ? 'Classifying the idea' : 'Working…');
   const percent = job?.percent ?? null;
+  const costUsd = job?.costUsd ?? null;
 
   return (
     <Layout breadcrumb="Script Generator">
@@ -612,6 +821,9 @@ export default function ScriptGeneratorPage() {
                                 </span>
                                 {r.videoType && <span>{r.videoType}</span>}
                                 <span>· {relTime(r.createdAt)}</span>
+                                {r.generationMs > 0 && (
+                                  <span title="Time to generate">· ⏱ {fmtDuration(r.generationMs)}</span>
+                                )}
                               </span>
                             </button>
                             <button
@@ -861,8 +1073,21 @@ export default function ScriptGeneratorPage() {
                         </h2>
                         <p className="text-xs text-muted-foreground">{phase}</p>
                       </div>
+                      {costUsd != null && costUsd > 0 && (
+                        <span
+                          className="ml-auto text-xs font-medium tabular-nums text-muted-foreground"
+                          title="Spend so far on this run"
+                        >
+                          ${costUsd.toFixed(2)}
+                        </span>
+                      )}
                       {percent != null && (
-                        <span className="ml-auto text-sm font-semibold tabular-nums text-foreground">
+                        <span
+                          className={cn(
+                            'text-sm font-semibold tabular-nums text-foreground',
+                            costUsd == null || costUsd === 0 ? 'ml-auto' : 'ml-3',
+                          )}
+                        >
                           {Math.round(percent)}%
                         </span>
                       )}
@@ -913,6 +1138,9 @@ export default function ScriptGeneratorPage() {
                               </span>
                             )}
                             <span>Updated {relTime(run.updatedAt)}</span>
+                            {run.generationMs > 0 && (
+                              <span title="Time to generate this script">· ⏱ generated in {fmtDuration(run.generationMs)}</span>
+                            )}
                           </div>
                         </div>
                         <div className="ml-auto flex items-center gap-2">
@@ -949,6 +1177,11 @@ export default function ScriptGeneratorPage() {
                       </div>
                     </section>
 
+                    {/* Refine a paragraph — post-generation edit chat */}
+                    {run.finalDocument && (
+                      <RefineChat key={run.runId} runId={run.runId} initialMessages={run.refineChat ?? []} />
+                    )}
+
                     {/* Stage-by-stage breakdown */}
                     <div className="space-y-2">
                       <p className="flex items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -959,6 +1192,150 @@ export default function ScriptGeneratorPage() {
                       {run.stages.hooks && (
                         <StagePanel title="Hooks — all four formulas" defaultOpen>
                           <TextBlock text={run.stages.hooks} />
+                        </StagePanel>
+                      )}
+                      {run.stages.claimAudit && (
+                        <StagePanel
+                          title="Claim audit"
+                          hint={`${run.stages.claimAudit.numbersChecked} numbers checked`}
+                        >
+                          {run.stages.claimAudit.unsupportedNumbers.length === 0 &&
+                          run.stages.claimAudit.fencedTopicsMentioned.length === 0 &&
+                          run.stages.claimAudit.experienceClaims.length === 0 &&
+                          run.stages.claimAudit.excessSponsorPlugs.length === 0 &&
+                          run.stages.claimAudit.bannedWords.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              Every number in the script traces back to the fact sheet.
+                            </p>
+                          ) : (
+                            <div className="space-y-3">
+                              {run.stages.claimAudit.unsupportedNumbers.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Numbers with no source
+                                  </p>
+                                  <p className="text-sm text-foreground">
+                                    {run.stages.claimAudit.unsupportedNumbers.join(", ")}
+                                  </p>
+                                </div>
+                              )}
+                              {run.stages.claimAudit.bannedWords.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Banned words / phrasings that slipped through
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {run.stages.claimAudit.bannedWords.map((c, i) => (
+                                      <li key={i} className="text-sm text-foreground">{c}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {run.stages.claimAudit.excessSponsorPlugs.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Over-promotion — sponsor plug repeated too often (2 allowed)
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {run.stages.claimAudit.excessSponsorPlugs.map((c, i) => (
+                                      <li key={i} className="text-sm text-foreground">“{c}”</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {run.stages.claimAudit.experienceClaims.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Claims Jake never made — invented experience
+                                  </p>
+                                  <ul className="space-y-1">
+                                    {run.stages.claimAudit.experienceClaims.map((c, i) => (
+                                      <li key={i} className="text-sm text-foreground">“{c}”</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              {run.stages.claimAudit.fencedTopicsMentioned.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    Fenced topics mentioned — check, may be a rebuttal
+                                  </p>
+                                  <p className="text-sm text-foreground">
+                                    {run.stages.claimAudit.fencedTopicsMentioned.join(", ")}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </StagePanel>
+                      )}
+
+                      {run.stages.quality && (
+                        <StagePanel title="Script quality" hint={`${run.stages.quality.words} words`}>
+                          <ul className="space-y-1.5 text-sm text-foreground">
+                            <li>
+                              Sentence rhythm: {run.stages.quality.meanSentenceWords} words on average, burstiness{" "}
+                              {run.stages.quality.burstiness}{" "}
+                              <span className="text-muted-foreground">(higher is more human; ~0.65 reads as speech)</span>
+                            </li>
+                            <li>
+                              Repeated phrases: {run.stages.quality.repeatedPhraseCount}
+                              {run.stages.quality.worstPhrase && (
+                                <>
+                                  {" "}— worst is “{run.stages.quality.worstPhrase}” ×{run.stages.quality.worstPhraseRepeats}
+                                </>
+                              )}
+                            </li>
+                            <li className="text-muted-foreground">
+                              {run.stages.quality.discourseMarkerOpenings} sentences open with “Now/So/Alright” — natural
+                              speech, not a defect
+                            </li>
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.reviewChecklist && (
+                        <StagePanel
+                          title="Voice checklist"
+                          hint={`${Object.values(run.stages.reviewChecklist).filter(Boolean).length}/${Object.keys(run.stages.reviewChecklist).length}`}
+                        >
+                          <ul className="grid grid-cols-2 gap-1.5">
+                            {Object.entries(run.stages.reviewChecklist).map(([k, ok]) => (
+                              <li key={k} className="flex items-center gap-2 text-sm">
+                                <span className={ok ? "text-[hsl(var(--chart-2))]" : "text-destructive"}>
+                                  {ok ? "✓" : "✗"}
+                                </span>
+                                <span className={ok ? "text-muted-foreground" : "text-foreground"}>
+                                  {k.replace(/([A-Z])/g, " $1").toLowerCase()}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.sources.length > 0 && (
+                        <StagePanel title="Sources" hint={`${run.stages.sources.length}`}>
+                          <ul className="space-y-1.5">
+                            {run.stages.sources.map((s, i) => (
+                              <li key={i} className="text-sm">
+                                <a
+                                  href={s.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[hsl(var(--chart-4))] hover:underline"
+                                >
+                                  {s.title}
+                                </a>
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.factSheet && (
+                        <StagePanel title="Fact sheet" hint="checkable details">
+                          <TextBlock text={run.stages.factSheet} />
                         </StagePanel>
                       )}
                       {run.stages.research && (
@@ -993,6 +1370,93 @@ export default function ScriptGeneratorPage() {
                       {run.stages.outro && (
                         <StagePanel title="Outro">
                           <TextBlock text={run.stages.outro} />
+                        </StagePanel>
+                      )}
+
+                      {run.stages.ctaNotes.length > 0 && (
+                        <StagePanel title="CTA placement" hint={`${run.stages.ctaNotes.length}`}>
+                          <ul className="space-y-1.5">
+                            {run.stages.ctaNotes.map((note, i) => (
+                              <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                                <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-4))]" />
+                                <span>{note}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.briefCoverage && (
+                        <StagePanel
+                          title="Brief coverage (outline)"
+                          hint={`${run.stages.briefCoverage.score}/100${
+                            run.stages.briefCoverage.outlineRevised ? ' · outline revised' : ''
+                          }`}
+                        >
+                          <p className="mb-3 text-sm text-foreground">{run.stages.briefCoverage.verdict}</p>
+                          {(['added', 'gap', 'covered'] as const)
+                            .map((status) => ({
+                              status,
+                              label:
+                                status === 'added'
+                                  ? 'Given a section'
+                                  : status === 'gap'
+                                    ? 'Deliberately left out'
+                                    : 'Already covered',
+                              items: run.stages.briefCoverage!.items.filter((i) => i.status === status),
+                            }))
+                            .filter((g) => g.items.length > 0)
+                            .map((g) => (
+                              <div key={g.status} className="mb-3 last:mb-0">
+                                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {g.label}
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {g.items.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                                      <ListChecks
+                                        className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                                          g.status === 'gap'
+                                            ? 'text-[hsl(var(--chart-5))]'
+                                            : 'text-[hsl(var(--chart-4))]'
+                                        }`}
+                                      />
+                                      <span>
+                                        {item.item}
+                                        <span className="text-muted-foreground"> — {item.where}</span>
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                        </StagePanel>
+                      )}
+
+                      {run.stages.briefCheck && (
+                        <StagePanel title="Brief adherence (final script)" hint={`${run.stages.briefCheck.score}/100`}>
+                          <p className="mb-3 text-sm text-foreground">{run.stages.briefCheck.verdict}</p>
+                          {[
+                            { label: 'Fixed', items: run.stages.briefCheck.editsApplied },
+                            { label: 'Not fixed', items: run.stages.briefCheck.gaps },
+                            { label: 'Discarded', items: run.stages.briefCheck.editsSkipped },
+                          ]
+                            .filter((g) => g.items.length > 0)
+                            .map((g) => (
+                              <div key={g.label} className="mb-3 last:mb-0">
+                                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {g.label}
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {g.items.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                                      <ListChecks className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[hsl(var(--chart-4))]" />
+                                      <span>{item}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
                         </StagePanel>
                       )}
 

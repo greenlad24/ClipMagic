@@ -18,6 +18,7 @@ import type {
   ScriptRunResult,
   ScriptRunListItem,
   ScriptRunStatus,
+  RefineMessage,
   VideoType,
 } from "../scriptgen/types.js";
 
@@ -27,12 +28,22 @@ const now = () => Date.now();
 export function emptyStages(): ScriptStages {
   return {
     research: null,
+    sources: [],
+    factSheet: null,
     outline: null,
+    briefCoverage: null,
     hooks: null,
     sponsorSegment: null,
     sections: [],
     outro: null,
+    hooksWithCta: null,
+    ctaScript: null,
+    ctaNotes: [],
+    briefCheck: null,
     reviewNotes: [],
+    reviewChecklist: null,
+    quality: null,
+    claimAudit: null,
   };
 }
 
@@ -49,6 +60,21 @@ interface ScriptRunRow {
   error: string | null;
   created_at: number;
   updated_at: number;
+  generation_ms: number;
+  refine_chat_json: string | null;
+}
+
+/** Parse the persisted refine thread, dropping anything malformed. */
+function hydrateRefineChat(json: string | null): RefineMessage[] {
+  const parsed = safeParse<unknown>(json);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (m): m is RefineMessage =>
+      !!m &&
+      typeof m === "object" &&
+      ((m as RefineMessage).role === "user" || (m as RefineMessage).role === "assistant") &&
+      typeof (m as RefineMessage).content === "string",
+  );
 }
 
 function safeParse<T>(json: string | null): T | null {
@@ -66,13 +92,41 @@ function hydrateStages(parsed: Partial<ScriptStages> | null): ScriptStages {
   if (!parsed) return base;
   return {
     research: parsed.research ?? null,
+    sources: Array.isArray(parsed.sources) ? parsed.sources : [],
+    factSheet: parsed.factSheet ?? null,
     outline: parsed.outline ?? null,
+    // Runs that predate the outline-time coverage pass simply have none; the
+    // stages blob is a JSON column, so an added field needs no migration.
+    briefCoverage: parsed.briefCoverage ?? null,
     hooks: parsed.hooks ?? null,
     sponsorSegment: parsed.sponsorSegment ?? null,
     sections: Array.isArray(parsed.sections) ? parsed.sections : [],
     outro: parsed.outro ?? null,
+    hooksWithCta: parsed.hooksWithCta ?? null,
+    ctaScript: parsed.ctaScript ?? null,
+    ctaNotes: Array.isArray(parsed.ctaNotes) ? parsed.ctaNotes : [],
+    briefCheck: parsed.briefCheck ?? null,
     reviewNotes: Array.isArray(parsed.reviewNotes) ? parsed.reviewNotes : [],
+    reviewChecklist: parsed.reviewChecklist ?? null,
+    quality: parsed.quality ?? null,
+    claimAudit: parsed.claimAudit ?? null,
   };
+}
+
+/**
+ * The job registry lives in memory, so a restart orphans any run that was
+ * mid-flight: the row stays 'running' forever and the frontend's polled jobId
+ * 404s with no explanation. Called once at boot — mark them failed so they're
+ * visibly dead rather than eternally in progress.
+ */
+export function failOrphanedRuns(): number {
+  const res = db
+    .prepare(
+      `UPDATE script_runs SET status = 'failed', error = ?, updated_at = ?
+       WHERE status IN ('running','classifying')`,
+    )
+    .run("Server restarted while this script was generating.", now());
+  return res.changes;
 }
 
 /** Create a run row in the 'classifying' state and return its id. */
@@ -98,6 +152,8 @@ export function updateRun(
     stages?: ScriptStages;
     finalDocument?: string | null;
     error?: string | null;
+    generationMs?: number;
+    refineChat?: RefineMessage[];
   },
 ): void {
   const sets: string[] = [];
@@ -134,6 +190,14 @@ export function updateRun(
     sets.push("error = ?");
     vals.push(patch.error);
   }
+  if (patch.generationMs !== undefined) {
+    sets.push("generation_ms = ?");
+    vals.push(patch.generationMs);
+  }
+  if (patch.refineChat !== undefined) {
+    sets.push("refine_chat_json = ?");
+    vals.push(JSON.stringify(patch.refineChat));
+  }
   if (sets.length === 0) return;
   sets.push("updated_at = ?");
   vals.push(now());
@@ -151,10 +215,12 @@ function rowToResult(row: ScriptRunRow): ScriptRunResult {
     stage0: safeParse<Stage0Result>(row.stage0_json),
     stages: hydrateStages(safeParse<Partial<ScriptStages>>(row.stages_json)),
     finalDocument: row.final_document,
+    refineChat: hydrateRefineChat(row.refine_chat_json),
     status: row.status as ScriptRunStatus,
     error: row.error,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    generationMs: row.generation_ms ?? 0,
   };
 }
 
@@ -167,14 +233,15 @@ export function getRun(id: string): ScriptRunResult | null {
 /** Saved-scripts history rows, newest first. */
 export function listRuns(): ScriptRunListItem[] {
   const rows = db
-    .prepare("SELECT id, title, video_type, status, created_at FROM script_runs ORDER BY created_at DESC")
-    .all() as Array<Pick<ScriptRunRow, "id" | "title" | "video_type" | "status" | "created_at">>;
+    .prepare("SELECT id, title, video_type, status, created_at, generation_ms FROM script_runs ORDER BY created_at DESC")
+    .all() as Array<Pick<ScriptRunRow, "id" | "title" | "video_type" | "status" | "created_at" | "generation_ms">>;
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
     videoType: (r.video_type as VideoType | null) ?? null,
     status: r.status as ScriptRunStatus,
     createdAt: r.created_at,
+    generationMs: r.generation_ms ?? 0,
   }));
 }
 

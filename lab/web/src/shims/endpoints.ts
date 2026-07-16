@@ -420,16 +420,76 @@ export interface ScriptSection {
   draft: string;
   final: string;
 }
+export interface BriefCheck {
+  /** 0–100 coverage of the brief. */
+  score: number;
+  verdict: string;
+  gaps: string[];
+  editsApplied: string[];
+  editsSkipped: string[];
+}
+/** One brief request, and what the outline did with it (Stage 2.5). */
+export interface CoverageItem {
+  item: string;
+  status: 'covered' | 'added' | 'gap';
+  where: string;
+}
+/** Stage 2.5 — brief coverage judged while a dropped request can still get its own section. */
+export interface BriefCoverage {
+  score: number;
+  verdict: string;
+  items: CoverageItem[];
+  outlineRevised: boolean;
+}
+export interface ScriptSource { url: string; title: string }
+export interface ReviewChecklist {
+  shortHook: boolean; largeMeat: boolean; fourteenYearOld: boolean;
+  noPunchSideways: boolean; noPunchDown: boolean; welcomeAtHookEnd: boolean;
+  noIncomeClaims: boolean; demosNotDescribes: boolean;
+}
+export interface ClaimAudit {
+  unsupportedNumbers: string[]; fencedTopicsMentioned: string[];
+  experienceClaims: string[];
+  excessSponsorPlugs: string[]; bannedWords: string[]; numbersChecked: number;
+}
+export interface ScriptQuality {
+  words: number; sentences: number; meanSentenceWords: number; burstiness: number;
+  repeatedPhraseCount: number; worstPhraseRepeats: number; worstPhrase: string | null;
+  discourseMarkerOpenings: number;
+}
 export interface ScriptStages {
   research: string | null;
+  /** Stage 1 — the pages the research rested on. */
+  sources: ScriptSource[];
+  /** Stage 1.5 — checkable facts distilled from the research, with verification dates. */
+  factSheet: string | null;
   outline: string | null;
+  /** Stage 2.5 — brief coverage judged at outline-time. Null when the run had no brief. */
+  briefCoverage: BriefCoverage | null;
   hooks: string | null;
   sponsorSegment: string | null;
   sections: ScriptSection[];
   outro: string | null;
+  /** Stage 5.5 — the four hooks with the subscribe clause tagged onto each welcome beat. */
+  hooksWithCta: string | null;
+  /** Stage 5.5 — sections + outro with the like/comment CTAs placed. */
+  ctaScript: string | null;
+  /** Stage 5.5 — what the CTA pass placed and removed. */
+  ctaNotes: string[];
+  /** Stage 6.5 — brief adherence score + applied edits. Null when the run had no brief. */
+  briefCheck: BriefCheck | null;
   reviewNotes: string[];
+  reviewChecklist: ReviewChecklist | null;
+  quality: ScriptQuality | null;
+  claimAudit: ClaimAudit | null;
 }
 export type ScriptRunStatus = "classifying" | "awaiting_confirmation" | "running" | "completed" | "failed";
+/** One turn of the post-generation paragraph-refinement chat. */
+export interface RefineMessage {
+  role: "user" | "assistant";
+  content: string;
+  ts: number;
+}
 export interface ScriptRunResult {
   runId: string;
   title: string;
@@ -438,10 +498,13 @@ export interface ScriptRunResult {
   stage0: Stage0Result | null;
   stages: ScriptStages;
   finalDocument: string | null;
+  /** Post-generation paragraph-refinement chat, oldest first. */
+  refineChat: RefineMessage[];
   status: ScriptRunStatus;
   error: string | null;
   createdAt: number;
   updatedAt: number;
+  generationMs: number;
 }
 export interface ScriptRunListItem {
   id: string;
@@ -449,6 +512,7 @@ export interface ScriptRunListItem {
   videoType: ScriptVideoType | null;
   status: ScriptRunStatus;
   createdAt: number;
+  generationMs: number;
 }
 export interface ScriptJobSnapshot {
   jobId: string;
@@ -457,6 +521,7 @@ export interface ScriptJobSnapshot {
   phase: string;
   percent: number;
   error: string | null;
+  costUsd: number;
 }
 export interface ScriptGenStatusOutput {
   anthropicConfigured: boolean;
@@ -473,6 +538,11 @@ export const scriptJobStatus = endpoint<{ jobId: string }, ScriptJobSnapshot>("s
 export const getScriptRun = endpoint<{ runId: string }, ScriptRunResult>("getScriptRun");
 export const listScriptRuns = endpoint<Record<string, never>, { runs: ScriptRunListItem[] }>("listScriptRuns");
 export const deleteScriptRun = endpoint<{ runId: string }, { ok: true }>("deleteScriptRun");
+/** Rewrite ONE pasted paragraph per an instruction, grounded in the run's research + fact sheet. */
+export const refineScriptParagraph =
+  endpoint<{ runId: string; paragraph?: string; instruction: string }, { messages: RefineMessage[]; costUsd: number }>(
+    "refineScriptParagraph",
+  );
 
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
