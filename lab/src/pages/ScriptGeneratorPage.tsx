@@ -1386,8 +1386,55 @@ export default function ScriptGeneratorPage() {
                         </StagePanel>
                       )}
 
+                      {run.stages.briefCoverage && (
+                        <StagePanel
+                          title="Brief coverage (outline)"
+                          hint={`${run.stages.briefCoverage.score}/100${
+                            run.stages.briefCoverage.outlineRevised ? ' · outline revised' : ''
+                          }`}
+                        >
+                          <p className="mb-3 text-sm text-foreground">{run.stages.briefCoverage.verdict}</p>
+                          {(['added', 'gap', 'covered'] as const)
+                            .map((status) => ({
+                              status,
+                              label:
+                                status === 'added'
+                                  ? 'Given a section'
+                                  : status === 'gap'
+                                    ? 'Deliberately left out'
+                                    : 'Already covered',
+                              items: run.stages.briefCoverage!.items.filter((i) => i.status === status),
+                            }))
+                            .filter((g) => g.items.length > 0)
+                            .map((g) => (
+                              <div key={g.status} className="mb-3 last:mb-0">
+                                <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                  {g.label}
+                                </p>
+                                <ul className="space-y-1.5">
+                                  {g.items.map((item, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                                      <ListChecks
+                                        className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
+                                          g.status === 'gap'
+                                            ? 'text-[hsl(var(--chart-5))]'
+                                            : 'text-[hsl(var(--chart-4))]'
+                                        }`}
+                                      />
+                                      <span>
+                                        {item.item}
+                                        <span className="text-muted-foreground"> — {item.where}</span>
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ))}
+                        </StagePanel>
+                      )}
+
                       {run.stages.briefCheck && (
-                        <StagePanel title="Brief adherence" hint={`${run.stages.briefCheck.score}/100`}>
+                        <StagePanel title="Brief adherence (final script)" hint={`${run.stages.briefCheck.score}/100`}>
                           <p className="mb-3 text-sm text-foreground">{run.stages.briefCheck.verdict}</p>
                           {[
                             { label: 'Fixed', items: run.stages.briefCheck.editsApplied },

@@ -23,12 +23,18 @@ import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
 import {
   parseCtaPass,
+  parseCoveragePass,
   applyBriefEdits,
   buildContinuityLedger,
   scriptQuality,
   auditClaims,
   wordBudget,
+  allocateSectionWords,
+  parseOutlineSections,
+  SECTION_BUDGET_SHARE,
+  MIN_SECTION_WORDS,
   toCleanProse,
+  stripVerifyMarkers,
   extractPrompts,
   ensureCanonicalOutro,
 } from "./edits.js";
@@ -39,6 +45,7 @@ import type {
   Sponsorship,
   Stage0Result,
   BriefCheck,
+  BriefCoverage,
   ClaimAudit,
   ReviewChecklist,
   ScriptSource,
@@ -272,78 +279,6 @@ export function continueScript(runId: string, setup: ScriptSetup): { jobId: stri
   return { jobId: job.id, runId };
 }
 
-// ── Outline section parsing ───────────────────────────────────────────────────
-
-interface OutlineSection {
-  name: string;
-  text: string;
-}
-
-/** Turn a "#### ⏱️ SECTION (timestamp)" header line into a short section name. */
-function cleanSectionName(header: string): string {
-  return (
-    header
-      .replace(/^#+/, "")
-      .replace(/⏱️/g, "")
-      .replace(/[️⏱]/g, "")
-      .replace(/\s*\([^)]*\)\s*$/, "")
-      .trim() || "Section"
-  );
-}
-
-/**
- * Split the Stage 2 outline into draftable sections by its "####" headers,
- * dropping the HOOK section (Stage 3 owns it) and any trailing WRAP-UP/CTA
- * section (Stage 6 owns it). If the outline has no headers, the whole thing
- * (minus a HOOK header block if present) is treated as one section.
- */
-function parseOutlineSections(outline: string): OutlineSection[] {
-  const text = outline.trim();
-  if (!text) return [];
-  const lines = text.split("\n");
-  const headerIdx: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    // Models emit section headers as level 2–4 markdown headers (##/###/####),
-    // not always ####. Split on any of them; noise headers are filtered below.
-    if (/^\s*#{2,4}\s/.test(lines[i])) headerIdx.push(i);
-  }
-  if (headerIdx.length === 0) {
-    return [{ name: "Main content", text }];
-  }
-
-  const raw: { name: string; text: string; bodyLen: number }[] = [];
-  for (let h = 0; h < headerIdx.length; h++) {
-    const start = headerIdx[h];
-    const end = h + 1 < headerIdx.length ? headerIdx[h + 1] : lines.length;
-    const block = lines.slice(start, end).join("\n").trim();
-    const bodyLen = lines.slice(start + 1, end).join("\n").trim().length;
-    raw.push({ name: cleanSectionName(lines[start]), text: block, bodyLen });
-  }
-
-  // Drop non-script headers: the outline title (starts with a quote), the
-  // hook (Stage 3), production/thumbnail/title-option notes, and near-empty
-  // container headers (e.g. a bare "STEP-BY-STEP BUILD" whose steps follow as
-  // their own sub-headers).
-  const droppable = (s: { name: string; bodyLen: number }): boolean =>
-    /hook/i.test(s.name) ||
-    /video outline|production notes?|thumbnail|title options?|📹/i.test(s.name) ||
-    s.name.startsWith('"') ||
-    s.bodyLen < 40;
-  const filtered = raw.filter((s) => !droppable(s));
-  // Drop trailing wrap-up / CTA / outro sections (Stage 6 owns the close).
-  while (filtered.length && /wrap.?up|cta|call to action|outro/i.test(filtered[filtered.length - 1].name)) {
-    filtered.pop();
-  }
-
-  if (filtered.length > 0) return filtered.map((s) => ({ name: s.name, text: s.text }));
-  // Everything got filtered — fall back to the whole outline minus any hook block.
-  const nonHook = raw.filter((s) => !/hook/i.test(s.name));
-  if (nonHook.length > 0) {
-    return [{ name: "Main content", text: nonHook.map((s) => s.text).join("\n\n") }];
-  }
-  return [{ name: "Main content", text }];
-}
-
 /** Cumulative percent at the START of section i (spread 55→85 across N sections). */
 function sectionStartPercent(i: number, total: number): number {
   if (total <= 0) return 55;
@@ -367,6 +302,81 @@ function fmtDuration(ms: number): string {
 /** "July 10, 2026" — the model has no clock, and every stage prompt asks for currency. */
 function todayLabel(): string {
   return new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+}
+
+/**
+ * The brief, handed to every stage that WRITES. Byte-stable across a run, so it
+ * rides the cached system prefix rather than being re-sent at full price.
+ *
+ * It used to reach only Stage 0 (which compressed it to a one-paragraph
+ * specificFocus and threw the rest away) and Stage 6.5 (which graded the finished
+ * script against it, far too late to act). Nothing that decided what the video
+ * SAID ever saw it. On the Expertise run that cost the client's headline request —
+ * the onboarding wow moment survived research and the fact sheet, then died at the
+ * outline, because nothing ever told the outline it was required. The brief is not
+ * a search hint. It is the spec.
+ */
+function briefBlock(brief: string): string {
+  return [
+    "",
+    "---",
+    "",
+    "## THE BRIEF — what this video has been commissioned to say",
+    "",
+    "This is what the client asked for, in their own words. It is the spec for the video: the research tells you what is TRUE, and this tells you what this video is FOR.",
+    "",
+    "**Every request in here needs a home.** Where the brief asks for something — a moment to show, a point to land, a contrast to draw, a specific example to use — it goes in, at the depth the brief implies. A request the brief spends a paragraph on is not satisfied by a passing clause. If you genuinely cannot carry one, say so plainly in your output rather than quietly dropping it; a flagged gap is a decision Jake gets to make, and a silent one is a decision taken away from him.",
+    "",
+    "**Where it does NOT get the last word:**",
+    "",
+    "- **Voice.** The brief never overrides Jake's rules. If a request can only be delivered by punching down, punching sideways, or over-promoting, write the honest version and flag the conflict. Read the rule before you claim it, though — a price the viewer PAYS is not an income claim.",
+    "- **Facts.** The brief is a client's account, not a verification. Where it flags its own detail as unconfirmed — \"get this in writing\", \"confirm before naming\" — honor that exactly and do not launder it into a claim.",
+    "- **\"What NOT to include\"** is as binding as the rest. A banned word stays banned even where it would be the natural one.",
+    "",
+    "Where the brief describes something Jake actually did, or that the client showed him, that IS his experience and he can speak to it (rule 5). Where it doesn't, he can't.",
+    "",
+    "---",
+    "",
+    brief.trim(),
+  ].join("\n");
+}
+
+/**
+ * Appended wherever steps get written. Read with factSheetBlock — this decides
+ * what happens when the research does not know the product's interface.
+ *
+ * The old rule was "describe the goal instead of naming a control that may not
+ * exist". It is a sound anti-hallucination instinct and it produced exactly the
+ * thing Jake hates: a tutorial that says "watch, I'll talk you through it as I
+ * go" and then talks through nothing. The web had 5KB on Expertise and no button
+ * names, so every step in the walkthrough dissolved into a shrug.
+ *
+ * The fix isn't to guess the buttons — a script that confidently names a control
+ * that doesn't exist is the worse failure, and it ships to a hundred thousand
+ * people. It's to separate the two things that were being conflated: the SHAPE of
+ * the walkthrough (which is knowable, and belongs in the script) from the exact
+ * LABEL of a control (which may not be, and gets flagged for Jake to read off the
+ * screen while he records).
+ */
+function stepScaffoldBlock(): string {
+  return [
+    "",
+    "---",
+    "",
+    "## STEPS — write the walkthrough, flag what you can't confirm",
+    "",
+    "Where this video shows someone how to do something, write the actual steps, in order, specific enough that a viewer can follow along with their own account open. Where you go, what you do there, what happens next, and what they should see. Never promise a walkthrough and then skip it — \"I'll talk you through it as I go\" followed by no steps is the single worst thing this script can do, because it spends the viewer's trust and gives nothing back.",
+    "",
+    "You will not always know the interface. That is normal, and it is not a reason to go vague:",
+    "",
+    "- **The sequence is yours to write.** The order of operations, what each step is for, and what the result looks like are all knowable from the brief and the research. Commit to them.",
+    "- **An unconfirmed control gets marked, not dodged.** Where you don't know a button's name, a menu's exact path, or what a screen is called, write the step anyway and mark the unknown inline: `[VERIFY ON SCREEN: exact name of the download control]`. Jake fills it in while he records, because he has the screen in front of him and you don't.",
+    "- **Mark the smallest thing.** The marker goes around the one detail you can't confirm — not the sentence, and never the whole step. \"Open Settings, then Skills, and hit `[VERIFY ON SCREEN: the button that starts a new skill]`\" is right. Marking the entire walkthrough is just the shrug again, with brackets.",
+    "- **Never invent a label.** Do not name a button, menu, tab, or screen that no source gave you. A confident wrong click path is worse than a flagged one — the viewer follows it, it isn't there, and the video is wrong on camera.",
+    "- **Where the brief or the fact sheet DOES give a path, it is confirmed.** Write it exactly as given, with no marker.",
+    "",
+    "A step is a place and an action: \"go to Settings, then Skills, and click Browse\". Not \"head into the settings area and find the skills bit\". Where a real prompt or a real value gets typed, write it out in full — that is the part people pause the video for.",
+  ].join("\n");
 }
 
 /** Prepended to Stage 1. The research prompt asks for "the last 6 months" — of what? */
@@ -502,9 +512,11 @@ function outlineFidelityBlock(today: string, budget: number): string {
     "",
     `TARGET LENGTH: about **${budget} words** of spoken script — roughly ${Math.round(budget / 150)} minutes. Build an outline that fits in that. Timestamps in the template below are illustrative; this word count is the real constraint.`,
     "",
-    "The section writer who works from this outline will see NOTHING ELSE except a fact sheet — not the research, not the sources. So every exact price, exact click path, exact setting, and exact number that belongs in the finished script has to be carried into this outline verbatim, with its verification date. Do not round them, do not summarize them into 'affordable' or 'a few clicks'. Copy them.",
+    "The section writer who works from this outline will see NOTHING ELSE except the brief and a fact sheet — not the research, not the sources. So every exact price, exact click path, exact setting, and exact number that belongs in the finished script has to be carried into this outline verbatim, with its verification date. Do not round them, do not summarize them into 'affordable' or 'a few clicks'. Copy them.",
     "",
-    "Where the research could not confirm something, leave it out of the outline rather than smoothing over the gap.",
+    "Where the research could not confirm a FACT — a price, a statistic, a claim about what the product does — leave it out rather than smoothing over the gap.",
+    "",
+    "A missing STEP is different, and the two were being conflated. Where this video shows someone how to do something, the outline carries the sequence: where to go, what to do there, in order. If a control's exact name was never confirmed, the step still goes in the outline with the unknown marked `[VERIFY ON SCREEN: …]` for Jake to read off the screen. What must never happen is a walkthrough that dissolves into 'talk them through the flow' — the section writer cannot invent what the outline didn't carry, so a vague outline is a vague video.",
   ].join("\n");
 }
 
@@ -542,7 +554,7 @@ function factSheetBlock(factSheet: string): string {
     "",
     "Everything above tells you HOW to write. This tells you WHAT IS TRUE. It overrides the last line of the instructions above: the outline and this fact sheet together are your sources.",
     "",
-    "Where the fact sheet gives an exact price, click path, version, or number, use it exactly as written, including its verification date where saying the date out loud sounds natural. Never invent a price, a menu name, a button label, or a statistic that appears in neither the outline nor the fact sheet. If a step you need isn't in either, describe the goal instead of naming a control that may not exist — say \"open the settings for that agent\", not \"click the gear icon in the top right\".",
+    "Where the fact sheet gives an exact price, click path, version, or number, use it exactly as written, including its verification date where saying the date out loud sounds natural. Never invent a price, a menu name, a button label, or a statistic that appears in neither the outline nor the fact sheet. If a step you need isn't in either, still write the step — mark the part you can't confirm as `[VERIFY ON SCREEN: …]` and carry on (see the STEPS rules). Don't dissolve the step into a goal: \"open the settings for that agent\" tells a viewer following along nothing they can act on.",
     "",
     "Anything under DO NOT CLAIM must not appear in the script in any form.",
     "",
@@ -735,6 +747,8 @@ function reviewRuleGuard(sponsored: boolean): string {
     "**Credentials.** One sentence of Jake's background, stated once and moved past, is allowed — even in the hook. Only remove it if it runs on, or if it comes back a second time.",
     "",
     "**Punching down still fails, always.** Any line that positions the viewer, or people like them, as the ones doing it wrong — cut it and mark noPunchDown false.",
+    "",
+    "**Leave every `[VERIFY ON SCREEN: …]` marker exactly where it is.** They are not stage directions and they are not sloppiness — each one is a control the research could not confirm, left for Jake to read off the screen while he records. Deleting one doesn't fix anything; it just hides that the script is guessing, and hands him a confident click path that may be wrong on camera. Do not remove them, do not answer them, and do not replace them with a plausible button name. Rewrite the prose around them freely.",
     sponsored
       ? "**Sponsor plug cap.** The sponsor's offer/link (\"free to start\", \"no card\", \"link in the description\") may appear at most TWICE — once early, once at the close. If you see it more often, remove the extra ones; do NOT add any, even if the brief asked for several CTAs. Two is the ceiling."
       : "",
@@ -826,6 +840,7 @@ async function runScript(
     sources: [],
     factSheet: null,
     outline: null,
+    briefCoverage: null,
     hooks: null,
     sponsorSegment: null,
     sections: [],
@@ -846,6 +861,9 @@ async function runScript(
     stages.sources = prior.sources ?? [];
     stages.factSheet = prior.factSheet;
     stages.outline = prior.outline;
+    // The persisted outline is the one the coverage pass already revised, so the
+    // pass must not run again — it would re-score its own output and re-bill for it.
+    stages.briefCoverage = prior.briefCoverage ?? null;
     stages.hooks = prior.hooks;
     stages.sponsorSegment = prior.sponsorSegment;
     stages.sections = Array.isArray(prior.sections) ? [...prior.sections] : [];
@@ -854,6 +872,7 @@ async function runScript(
       prior.research && "research",
       prior.factSheet && "fact sheet",
       prior.outline && "outline",
+      prior.briefCoverage && "brief coverage",
       prior.hooks && "hooks",
       prior.sections?.length ? `${prior.sections.length} section(s)` : null,
       prior.outro && "outro",
@@ -884,6 +903,12 @@ async function runScript(
 
     const today = todayLabel();
 
+    // The brief goes to every stage that WRITES, in the cached system prefix.
+    // Byte-stable across the run, so it costs full price once and cache-read
+    // thereafter — the reason it can be the whole brief rather than a summary.
+    const brief = (input.brief || "").trim();
+    const briefExtra = brief ? [briefBlock(brief)] : [];
+
     // ── Stage 1 — RESEARCH (live web) ──
     // Research runs ONCE per run row, ever. It is the single most expensive call
     // in the pipeline (web search + adaptive thinking), and it is already
@@ -902,6 +927,10 @@ async function runScript(
     });
     stages.research = await opusScriptChat({
       system: preamble(false),
+      // Without the brief, research only ever saw Stage 0's compressed
+      // specificFocus — which is how "live demos without signing in", a headline
+      // client request, was never searched for at all.
+      systemExtra: briefExtra,
       messages: [{ role: "user", content: `${researchDateBlock(today)}\n\n---\n\n${s1}` }],
       webSearch: true,
       maxTokens: 16000,
@@ -944,12 +973,17 @@ async function runScript(
     });
     stages.outline = await opusScriptChat({
       system: preamble(false),
+      // The outline is the only thing the section writers ever see. Whatever it
+      // drops, the video will not contain — so this is the stage that most needs
+      // the brief, and the one that never had it.
+      systemExtra: briefExtra,
       messages: [
         {
           role: "user",
           content: [
             ...(STORY_TYPES.has(videoType) ? [storyStructureBlock(budget)] : []),
             outlineFidelityBlock(today, budget),
+            stepScaffoldBlock(),
             s2,
           ].join("\n\n---\n\n"),
         },
@@ -959,6 +993,62 @@ async function runScript(
       purpose: "scriptgen",
     });
     persist();
+    }
+
+    // ── Stage 2.5 — BRIEF COVERAGE (only when the run carried a brief) ──
+    // Judges the OUTLINE against the brief, while a dropped request can still be
+    // given its own section. Stage 6.5 asks the same question of the finished
+    // script and can only reach for a scalpel — it scored the Expertise run
+    // 48/100, said three requests "need their own section", and shipped anyway.
+    if (brief && !stages.briefCoverage) {
+      progress(job, "Checking the outline against the brief…", 38);
+      const s25 = fill(loadPrompt("stage2.5-coverage"), {
+        "[INSERT TITLE]": title,
+        "[PASTE THE BRIEF]": brief,
+        "[PASTE THE OUTLINE]": stages.outline ?? "",
+      });
+      const raw25 = await opusScriptChat({
+        system: preamble(false),
+        messages: [{ role: "user", content: s25 }],
+        maxTokens: 32000,
+        label: "stage2.5-coverage",
+        purpose: "scriptgen",
+      });
+      const cov = parseCoveragePass(raw25);
+      // The pass re-emits the whole outline, so a truncated response looks like a
+      // short outline rather than an error. It should GROW (it adds sections) —
+      // any real shrink means the tail was cut, and shipping that would silently
+      // delete the sections after the cut. Keep the Stage 2 outline instead.
+      const original = stages.outline ?? "";
+      const intact = cov !== null && cov.outline.length >= original.length * 0.9;
+      if (cov && intact) {
+        const revised = cov.outline !== original;
+        stages.outline = cov.outline;
+        stages.briefCoverage = {
+          score: cov.score,
+          verdict: cov.verdict,
+          items: cov.items,
+          outlineRevised: revised,
+        };
+        const added = cov.items.filter((i) => i.status === "added").length;
+        const gaps = cov.items.filter((i) => i.status === "gap").length;
+        console.log(
+          `[scriptgen:coverage] outline scored ${cov.score}/100 against the brief; ` +
+            `${added} request(s) given a section, ${gaps} gap(s) flagged, outline ${revised ? "revised" : "unchanged"}`,
+        );
+      } else {
+        stages.briefCoverage = {
+          score: 0,
+          verdict:
+            cov === null
+              ? "Coverage pass could not be parsed; the outline was left as Stage 2 wrote it."
+              : `Coverage pass returned a truncated outline (${cov.outline.length} vs ${original.length} chars) — discarded; the outline was left as Stage 2 wrote it.`,
+          items: [],
+          outlineRevised: false,
+        };
+        console.warn(`[scriptgen:coverage] ${stages.briefCoverage.verdict}`);
+      }
+      persist();
     }
 
     // ── Stage 3 — ALL FOUR HOOKS ──
@@ -973,6 +1063,9 @@ async function runScript(
     });
     stages.hooks = await opusScriptChat({
       system: preamble(false),
+      // The brief usually says what the hook is FOR — which pain to open on, which
+      // moment is the wow. Stage 3 was guessing at it from the outline alone.
+      systemExtra: briefExtra,
       messages: [{ role: "user", content: s3 }],
       maxTokens: 16000,
       label: "stage3-hooks",
@@ -1000,10 +1093,41 @@ async function runScript(
     // ── Stage 5 — SECTIONS (draft + 14-year-old review pass) ──
     const sectionOutlines = parseOutlineSections(stages.outline ?? "");
     const total = sectionOutlines.length;
+    // The outline sizes its own sections ("PHASE 3 — Package it on Expertise
+    // (~350 words)"). Honour that shape rather than dividing the pot evenly: an
+    // even split gave a four-line bridge the same room as the walkthrough the
+    // whole video exists for, and pinned every section to the 150-word floor.
+    const sectionBudgets = allocateSectionWords(sectionOutlines, budget);
     const alreadyDrafted = stages.sections.length;
     if (alreadyDrafted > 0) {
       console.log(`[scriptgen] ${alreadyDrafted}/${total} sections already written — skipping those`);
     }
+    console.log(
+      `[scriptgen:budget] ${budget} words over ${total} section(s): ` +
+        sectionOutlines.map((s, i) => `${s.name}=${sectionBudgets[i]}`).join(", "),
+    );
+    // The runtime Jake asked for is the ceiling, so the allocator scales the
+    // outline's own targets down to fit. Say so when it bites: a brief that wants
+    // more than the target length funds is a real conflict, and the only honest
+    // fixes are a longer target or a smaller brief — not a silently thinner video.
+    const declaredSum = sectionOutlines.reduce((a, s) => a + (s.targetWords ?? 0), 0);
+    const pot = budget * SECTION_BUDGET_SHARE;
+    const atFloor = sectionBudgets.filter((w) => w === MIN_SECTION_WORDS).length;
+    if (declaredSum > pot * 1.05 || atFloor > 0) {
+      console.warn(
+        `[scriptgen:budget] the outline asks for ~${declaredSum} words but "${targetLength}" funds ~${Math.round(pot)}; ` +
+          `scaled to fit${atFloor ? `, and ${atFloor}/${total} section(s) landed on the ${MIN_SECTION_WORDS}-word floor` : ""}. ` +
+          `If the brief genuinely needs this much, raise the target length.`,
+      );
+    }
+    // Byte-stable across every section, so the cached prefix actually engages —
+    // which is what makes it affordable to carry the whole brief here rather than
+    // a summary of it.
+    const sectionExtra = [
+      ...briefExtra,
+      ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+      stepScaffoldBlock(),
+    ];
     for (let i = alreadyDrafted; i < total; i++) {
       const sec = sectionOutlines[i];
       progress(job, `Writing section ${i + 1}/${total}…`, sectionStartPercent(i, total));
@@ -1011,9 +1135,7 @@ async function runScript(
       // The two things the section writer is otherwise blind to: what's true
       // (the fact sheet), and what the rest of the video already said (the ledger).
       const ledger = buildContinuityLedger(stages.sections.map((s) => s.final));
-      // Spend the budget evenly across the drafted sections. The hook and outro
-      // are written by their own stages and aren't drawn from this pot.
-      const sectionWords = Math.max(150, Math.round((budget * 0.85) / total / 25) * 25);
+      const sectionWords = sectionBudgets[i];
       const draftPrompt =
         fill(loadPrompt("stage5-section"), {
           "[PASTE THE SECTION YOU'RE WORKING ON]": sec.text,
@@ -1021,8 +1143,7 @@ async function runScript(
 
       const draft = await opusScriptChat({
         system: preamble(true),
-        // Byte-stable across every section, so the cache prefix actually engages.
-        systemExtra: stages.factSheet ? [factSheetBlock(stages.factSheet)] : [],
+        systemExtra: sectionExtra,
         messages: [{ role: "user", content: draftPrompt }],
         maxTokens: 16000,
         label: `stage5-draft-${i + 1}`,
@@ -1035,7 +1156,7 @@ async function runScript(
         system: preamble(false),
         // Same cached prefix as the draft call, so the fact sheet the review now
         // checks against is read from cache rather than re-sent at full price.
-        systemExtra: stages.factSheet ? [factSheetBlock(stages.factSheet)] : [],
+        systemExtra: sectionExtra,
         messages: [{ role: "user", content: reviewPrompt }],
         maxTokens: 16000,
         thinking: false, // reading-level rewrite + de-duplication; no judgement call
@@ -1212,7 +1333,12 @@ async function runScript(
     // leads with four alternate hooks and their production notes ("listicles for
     // TV-friendly / 35+ audience"), which are neither spoken nor claims — counting
     // them inflates the repetition metric and invents audit findings.
-    const auditedBody = spokenBody;
+    //
+    // The verify markers come out too. They stay in the deliverable, but they are
+    // notes to Jake rather than things the video says: "[VERIFY ON SCREEN: is the
+    // trial 14 days?]" is a question, and an audit that reads it as the script
+    // claiming 14 would flag the one line that was honest about not knowing.
+    const auditedBody = stripVerifyMarkers(spokenBody);
 
     // Deterministic fact check: does the script assert a number the research never
     // established, or touch a topic the fact sheet fenced off? No model call.

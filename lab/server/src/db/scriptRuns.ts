@@ -31,6 +31,7 @@ export function emptyStages(): ScriptStages {
     sources: [],
     factSheet: null,
     outline: null,
+    briefCoverage: null,
     hooks: null,
     sponsorSegment: null,
     sections: [],
@@ -94,6 +95,9 @@ function hydrateStages(parsed: Partial<ScriptStages> | null): ScriptStages {
     sources: Array.isArray(parsed.sources) ? parsed.sources : [],
     factSheet: parsed.factSheet ?? null,
     outline: parsed.outline ?? null,
+    // Runs that predate the outline-time coverage pass simply have none; the
+    // stages blob is a JSON column, so an added field needs no migration.
+    briefCoverage: parsed.briefCoverage ?? null,
     hooks: parsed.hooks ?? null,
     sponsorSegment: parsed.sponsorSegment ?? null,
     sections: Array.isArray(parsed.sections) ? parsed.sections : [],

@@ -428,6 +428,19 @@ export interface BriefCheck {
   editsApplied: string[];
   editsSkipped: string[];
 }
+/** One brief request, and what the outline did with it (Stage 2.5). */
+export interface CoverageItem {
+  item: string;
+  status: 'covered' | 'added' | 'gap';
+  where: string;
+}
+/** Stage 2.5 — brief coverage judged while a dropped request can still get its own section. */
+export interface BriefCoverage {
+  score: number;
+  verdict: string;
+  items: CoverageItem[];
+  outlineRevised: boolean;
+}
 export interface ScriptSource { url: string; title: string }
 export interface ReviewChecklist {
   shortHook: boolean; largeMeat: boolean; fourteenYearOld: boolean;
@@ -451,6 +464,8 @@ export interface ScriptStages {
   /** Stage 1.5 — checkable facts distilled from the research, with verification dates. */
   factSheet: string | null;
   outline: string | null;
+  /** Stage 2.5 — brief coverage judged at outline-time. Null when the run had no brief. */
+  briefCoverage: BriefCoverage | null;
   hooks: string | null;
   sponsorSegment: string | null;
   sections: ScriptSection[];

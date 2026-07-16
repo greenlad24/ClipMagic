@@ -139,6 +139,30 @@ export interface ScriptQuality {
   discourseMarkerOpenings: number;
 }
 
+/** One brief request, and what the outline did with it (Stage 2.5). */
+export interface CoverageItem {
+  item: string;
+  status: "covered" | "added" | "gap";
+  where: string;
+}
+
+/**
+ * Stage 2.5 — how completely the OUTLINE carries the brief, checked while a
+ * missing item can still be given its own section.
+ *
+ * Stage 6.5 asks the same question of the finished script, but it runs at 91%
+ * and can only make sentence-level edits: on the Expertise run it scored 48/100,
+ * reported that three brief requests "need their own section", and shipped
+ * anyway, because by then there was no way to add one.
+ */
+export interface BriefCoverage {
+  score: number;
+  verdict: string;
+  items: CoverageItem[];
+  /** True when the pass rewrote the outline to cover something Stage 2 dropped. */
+  outlineRevised: boolean;
+}
+
 export interface ScriptStages {
   research: string | null;
   /** Stage 1 — the sources the research rested on, so a price claim can be traced. */
@@ -151,6 +175,8 @@ export interface ScriptStages {
    */
   factSheet: string | null;
   outline: string | null;
+  /** Stage 2.5 — brief coverage judged at outline-time. Null when the run had no brief. */
+  briefCoverage: BriefCoverage | null;
   /** All four hook formulas (Stage 3). */
   hooks: string | null;
   /** Only for mid-roll sponsorships (Stage 4). */

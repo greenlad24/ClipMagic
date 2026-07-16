@@ -161,7 +161,202 @@ export function wordBudget(videoType: string, targetLength: string, itemCount?: 
   return fromRuntime ?? 2200;
 }
 
+// ── Outline section parsing ───────────────────────────────────────────────────
+
+export interface OutlineSection {
+  name: string;
+  text: string;
+  /** The outline's own allocation ("PHASE 3 — … (~350 words)"), when it states one. */
+  targetWords: number | null;
+}
+
+/** Turn a "#### ⏱️ SECTION (timestamp)" header line into a short section name. */
+function cleanSectionName(header: string): string {
+  return (
+    header
+      .replace(/^#+/, "")
+      .replace(/⏱️/g, "")
+      .replace(/[️⏱]/g, "")
+      .replace(/\s*\([^)]*\)\s*$/, "")
+      .trim() || "Section"
+  );
+}
+
+/**
+ * The word count an outline header allocates to its own section: "(~350 words)",
+ * "— ~1200 words". Stage 2 writes these and they encode its judgement about where
+ * the video's weight belongs — which the even split then threw away.
+ */
+function headerTargetWords(header: string): number | null {
+  const m = header.match(/~\s*(\d{2,5})\s*words/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Headers that are apparatus for the writer, not sections of the video.
+ *
+ * The Expertise run drafted "⚠️ WRITER-CRITICAL FLAGS (read before writing a
+ * word)" and "FACT SHEET (carry verbatim into the section-writer's sheet)" as
+ * spoken script — 310 words of instructions-to-self read out to camera — and they
+ * each took a full share of the word budget on the way past.
+ */
+const APPARATUS_HEADER =
+  /writer.?critical|flags?\b|fact.?sheet|research (?:summary|notes)|sources?\b|video outline|production notes?|thumbnail|title options?|word count|budget|📹/i;
+
+/**
+ * Split the Stage 2 outline into draftable sections by its markdown headers,
+ * dropping the HOOK section (Stage 3 owns it), any trailing WRAP-UP/CTA section
+ * (Stage 6 owns it), and the writer-apparatus blocks. If the outline has no
+ * headers, the whole thing (minus a HOOK header block if present) is one section.
+ */
+export function parseOutlineSections(outline: string): OutlineSection[] {
+  const text = outline.trim();
+  if (!text) return [];
+  const lines = text.split("\n");
+  const headerIdx: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    // Models emit section headers as level 2–4 markdown headers (##/###/####),
+    // not always ####. Split on any of them; noise headers are filtered below.
+    if (/^\s*#{2,4}\s/.test(lines[i])) headerIdx.push(i);
+  }
+  if (headerIdx.length === 0) {
+    return [{ name: "Main content", text, targetWords: null }];
+  }
+
+  const raw: { name: string; text: string; bodyLen: number; depth: number; targetWords: number | null }[] = [];
+  for (let h = 0; h < headerIdx.length; h++) {
+    const start = headerIdx[h];
+    const end = h + 1 < headerIdx.length ? headerIdx[h + 1] : lines.length;
+    const block = lines.slice(start, end).join("\n").trim();
+    const bodyLen = lines.slice(start + 1, end).join("\n").trim().length;
+    const depth = (lines[start].match(/^\s*(#+)/)?.[1] ?? "##").length;
+    raw.push({
+      name: cleanSectionName(lines[start]),
+      text: block,
+      bodyLen,
+      depth,
+      targetWords: headerTargetWords(lines[start]),
+    });
+  }
+
+  /**
+   * A header whose children carry the content — "## THE ROADMAP" over four
+   * "### PHASE n" sections. Drafting it as well as its children says the same
+   * thing twice and spends a section's budget on a table of contents. It's a
+   * container when the next header is DEEPER than this one and this one says
+   * little itself; a section with a real body and sub-headers is still a section.
+   */
+  const isContainer = (i: number): boolean => {
+    const next = raw[i + 1];
+    return next !== undefined && next.depth > raw[i].depth && raw[i].bodyLen < 200;
+  };
+
+  // Drop non-script headers: the outline title (starts with a quote), the hook
+  // (Stage 3), writer apparatus, containers whose children follow, and near-empty
+  // headers.
+  const droppable = (s: (typeof raw)[number], i: number): boolean =>
+    /hook/i.test(s.name) ||
+    APPARATUS_HEADER.test(s.name) ||
+    s.name.startsWith('"') ||
+    s.bodyLen < 40 ||
+    isContainer(i);
+  const filtered = raw.filter((s, i) => !droppable(s, i));
+  // Drop trailing wrap-up / CTA / outro sections (Stage 6 owns the close).
+  while (filtered.length && /wrap.?up|cta|call to action|outro/i.test(filtered[filtered.length - 1].name)) {
+    filtered.pop();
+  }
+
+  if (filtered.length > 0) {
+    return filtered.map((s) => ({ name: s.name, text: s.text, targetWords: s.targetWords }));
+  }
+  // Everything got filtered — fall back to the whole outline minus any hook block.
+  const nonHook = raw.filter((s) => !/hook/i.test(s.name));
+  if (nonHook.length > 0) {
+    return [{ name: "Main content", text: nonHook.map((s) => s.text).join("\n\n"), targetWords: null }];
+  }
+  return [{ name: "Main content", text, targetWords: null }];
+}
+
+/** The least a drafted section can be asked for before it stops being a section. */
+export const MIN_SECTION_WORDS = 150;
+/** The hook and outro are written by their own stages, so they aren't drawn from this pot. */
+export const SECTION_BUDGET_SHARE = 0.85;
+
+/**
+ * Split the word budget across the drafted sections, honouring the weights the
+ * outline set for itself.
+ *
+ * This used to be `budget * 0.85 / total`, floored at 150 — an even split. On the
+ * Expertise run that gave all ten "sections" exactly 150 words each: the floor,
+ * for everything. The outline had asked for 300 / 250 / 350 / 300 across its four
+ * phases and ~100 for the bridge, and every one of those judgements was discarded.
+ * So the walkthrough the video existed for got the same room as a linking
+ * sentence, and "I'll talk you through it as I go" was all 150 words could buy.
+ *
+ * A section that states its own target keeps its RATIO against the others; the
+ * targets are then scaled to whatever budget the run actually has, so an outline
+ * that over- or under-allocates in absolute terms still lands on the runtime. A
+ * section that states no target is weighted at the mean of those that do, so it
+ * asks for an ordinary share rather than nothing.
+ */
+export function allocateSectionWords(sections: { targetWords: number | null }[], budget: number): number[] {
+  const total = sections.length;
+  if (total === 0) return [];
+  const pot = budget * SECTION_BUDGET_SHARE;
+
+  const declared = sections.map((s) => s.targetWords).filter((n): n is number => typeof n === "number" && n > 0);
+  // No section sized itself — nothing to honour, so fall back to an even split.
+  const fallbackWeight = declared.length > 0 ? declared.reduce((a, b) => a + b, 0) / declared.length : 1;
+  const weights = sections.map((s) => (s.targetWords && s.targetWords > 0 ? s.targetWords : fallbackWeight));
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  if (weightSum <= 0) {
+    return sections.map(() => Math.max(MIN_SECTION_WORDS, Math.round(pot / total / 25) * 25));
+  }
+  return weights.map((w) =>
+    Math.max(MIN_SECTION_WORDS, Math.round((pot * w) / weightSum / 25) * 25),
+  );
+}
+
 // ── Deliverable shaping ───────────────────────────────────────────────────────
+
+/**
+ * A control the writer could not confirm, left for Jake to fill from the screen.
+ *
+ * The generator cannot know the interface of a product the web has never
+ * documented — Expertise came back with 5KB of research and no button names. The
+ * old rule told the writer to describe the goal instead ("open the settings for
+ * that agent"), which is how a tutorial ends up promising a walkthrough and
+ * delivering a shrug. Now the writer commits to the real step sequence and marks
+ * only the control it can't verify, so the scaffold is right and the gap is
+ * visible rather than smoothed over.
+ */
+export const VERIFY_MARKER_RE = /\[VERIFY[^\]\n]{0,160}\]/gi;
+
+/**
+ * Private-use code points, used only inside toCleanProse to hold a marker's place
+ * while the bracket sweep runs. Nothing a model writes and nothing Jake reads can
+ * contain these, which is the whole requirement — see toCleanProse.
+ */
+const PARK_OPEN = "\uE000";
+const PARK_CLOSE = "\uE001";
+const PARK_RE = /\uE000(\d+)\uE001/g;
+
+/**
+ * Drop the verify markers. They are for Jake's eyes on the page, not part of what
+ * the script asserts: the claim audit would read "[VERIFY: is the trial 14 days?]"
+ * as the script claiming 14, and the quality metrics would count its words as
+ * spoken prose.
+ */
+export function stripVerifyMarkers(text: string): string {
+  return text
+    .replace(VERIFY_MARKER_RE, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ +([.,;!?])/g, "$1")
+    .replace(/ +\n/g, "\n")
+    .trim();
+}
 
 /**
  * Turn a drafted script body into the continuous prose Jake actually reads.
@@ -171,20 +366,35 @@ export function wordBudget(videoType: string, targetLength: string, itemCount?: 
  * artifact look like a spec rather than a script — and polluted the claim audit,
  * because "Beat 4 (1:10–1:35)" contributes the numbers 1, 10, 1 and 35.
  *
+ * [VERIFY ...] markers are the one bracket that survives: they are the whole
+ * point of the step scaffold, and stripping them here would silently delete every
+ * flag the writer raised — handing Jake a confident-sounding click path with no
+ * hint that a control in it was never confirmed. That is worse than no steps.
+ *
  * Paragraph breaks survive. Nothing else structural does.
  */
 export function toCleanProse(text: string): string {
-  return text
+  const markers: string[] = [];
+  // Park the markers behind a sentinel while the bracket sweep runs. It has to be
+  // something the prose can never legitimately contain: a bare digit placeholder
+  // would be indistinguishable from a real number, and restoring it would delete
+  // "50 images" as readily as a parked marker.
+  const parked = text.replace(VERIFY_MARKER_RE, (m) => {
+    markers.push(m);
+    return `${PARK_OPEN}${markers.length - 1}${PARK_CLOSE}`;
+  });
+  const cleaned = parked
     .replace(/^#{1,6}\s.*$/gm, "") // markdown headers
     .replace(/^\s*\*\*Beat\s+\d+[^*]*\*\*\s*:?\s*$/gim, "") // beat markers on their own line
     .replace(/\*\*Beat\s+\d+\s*\([^)]*\)\s*:?\*\*\s*/gi, "") // inline beat markers
-    .replace(/^\s*\(?\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2}\)?\s*$/gm, "") // bare timestamp lines
+    .replace(/^\s*\(?\d{1,2}:\d{2}\s*[\u2013\u2014-]\s*\d{1,2}:\d{2}\)?\s*$/gm, "") // bare timestamp lines
     .replace(/\[[^\]\n]{0,120}\]/g, "") // [stage directions]
     .replace(/\*\*(.+?)\*\*/g, "$1") // bold emphasis — Jake reads words, not asterisks
     .replace(/[ \t]+/g, " ")
     .replace(/ +\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  return cleaned.replace(PARK_RE, (_, i) => markers[Number(i)] ?? "");
 }
 
 /** One copy-pasteable prompt lifted out of a script. */
@@ -654,6 +864,61 @@ export function auditClaims(
     bannedWords,
     numbersChecked: scriptNumbers.length,
   };
+}
+
+// ── Stage 2.5 — brief-coverage pass parsing ───────────────────────────────────
+
+/** One "what TO include" item from the brief, and where the outline puts it. */
+export interface CoverageItem {
+  /** The brief's request, in the brief's own words. */
+  item: string;
+  /** 'covered' — already in the outline. 'added' — this pass gave it a home. 'gap' — deliberately not carried. */
+  status: "covered" | "added" | "gap";
+  /** Which outline section carries it, or why it was left out. */
+  where: string;
+}
+
+export interface CoveragePass {
+  /** The outline, with any missing brief item now given a real section. */
+  outline: string;
+  score: number;
+  verdict: string;
+  items: CoverageItem[];
+}
+
+/**
+ * Split the Stage 2.5 response into its coverage report and the revised outline.
+ *
+ * Delimited (===COVERAGE=== / ===OUTLINE===) rather than JSON, for the same
+ * reason as the CTA pass: the outline runs to 13KB and JSON-escaping a document
+ * that size is needless truncation risk. The coverage lines are
+ * `status | item | where`, which survives a model that drifts on whitespace.
+ *
+ * Returns null if the shape isn't there, so the caller keeps the Stage 2 outline.
+ */
+export function parseCoveragePass(raw: string): CoveragePass | null {
+  const m = raw.match(/^===COVERAGE===[ \t]*$([\s\S]*?)^===OUTLINE===[ \t]*$([\s\S]*)/m);
+  if (!m) return null;
+  const outline = m[2].trim();
+  if (!outline) return null;
+
+  const report = m[1];
+  const scoreMatch = report.match(/^\s*SCORE:\s*(\d{1,3})\s*$/m);
+  const score = scoreMatch ? Math.max(0, Math.min(100, Number(scoreMatch[1]))) : 0;
+  const verdictMatch = report.match(/^\s*VERDICT:\s*(.+)$/m);
+  const verdict = verdictMatch ? verdictMatch[1].trim() : "No verdict returned.";
+
+  const items: CoverageItem[] = [];
+  for (const line of report.split("\n")) {
+    const row = line.match(/^\s*(covered|added|gap)\s*\|\s*([^|]+?)\s*\|\s*(.+?)\s*$/i);
+    if (!row) continue;
+    items.push({
+      status: row[1].toLowerCase() as CoverageItem["status"],
+      item: row[2].trim(),
+      where: row[3].trim(),
+    });
+  }
+  return { outline, score, verdict, items };
 }
 
 // ── Stage 5.5 — CTA pass parsing ──────────────────────────────────────────────
