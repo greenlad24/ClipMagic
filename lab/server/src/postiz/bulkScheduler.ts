@@ -29,6 +29,7 @@ import {
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
 import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type CaptionPlatform } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput, type ChannelStartState } from "./scheduling.js";
+import { sequenceDrops, groupKeyForFilename, countLooks, type DropFile } from "./dropSequencing.js";
 import { getChannelState, recordScheduled, deriveChannelTimeline } from "./scheduleLedger.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
@@ -226,6 +227,22 @@ export interface PreviewInput {
   now?: string;
   /** Max posts per channel per day (default 2). Continuity tops up partial days. */
   maxPerDay?: number;
+  /**
+   * How many DROPS (distinct videos) to release per day — each drop goes to all
+   * selected accounts within the same 24h. Preferred over `maxPerDay`; when both
+   * are set, this wins. Default 2.
+   */
+  videosPerDay?: number;
+  /**
+   * Minimum whole days between two videos of the SAME visual "look" (grouped by
+   * filename). 0 = no spacing. Default 3 ("a look at most once every 3 days").
+   */
+  minGapDays?: number;
+  /**
+   * Shuffle seed for the look-mixing + minute jitter. Same seed → same plan; a new
+   * seed reshuffles. Default 1 (stable) so callers/tests are reproducible.
+   */
+  seed?: number;
 }
 
 export interface PreviewPostDto {
@@ -242,6 +259,8 @@ export interface PreviewPostDto {
   hashtags: string[];
   scheduledAt: string;
   reason: string;
+  /** The video's visual "look" group (from its filename); posts of one look are spaced apart. */
+  groupId: string;
   /** TikTok Direct-Post options (postpeer/tiktok only); defaults applied. */
   tiktok?: PostPeerTikTokOptions;
   /** Growth Guardrails: combined caption + pre-flight score + checklist. */
@@ -260,6 +279,10 @@ export interface PreviewFileDto {
    * then fell back to the brief/metadata.
    */
   transcript: string | null;
+  /** The video's visual "look" group key (derived from its filename). */
+  groupId: string;
+  /** Local day ("YYYY-MM-DD") this video drops on across all accounts; null if fully de-duped. */
+  dropDate: string | null;
 }
 
 /** One (file × channel) pair dropped from the plan because the ledger already has it. */
@@ -289,6 +312,10 @@ export interface PreviewOutput {
    * your queue from <date>"). Only channels that were actually pushed appear.
    */
   continuedFrom: Array<{ channelId: string; channelName: string; fromLocalDay: string }>;
+  /** The seed that produced this plan (echo it back to `preview` to reproduce; change it to reshuffle). */
+  seed: number;
+  /** How many distinct visual "looks" the selected videos span (UI hint). */
+  lookCount: number;
 }
 
 export async function preview(
@@ -313,10 +340,14 @@ export async function preview(
     targets.push({ channel: c, plat: c.platform ?? "generic" });
   }
 
+  // Each file's visual "look" is derived from its display name / filename, so
+  // batch renders named `<Look>_<n>.mp4` group by `<Look>`. This drives the mix.
   const files = input.files.map((f, i) => ({
     ...f,
     fileId: f.fileId || `${f.source.kind}:${f.source.ref}` || `file-${i}`,
+    groupId: groupKeyForFilename(f.label || f.source.ref) || `file-${i}`,
   }));
+  const groupByFile = new Map(files.map((f) => [f.fileId, f.groupId]));
 
   // 1) Transcribe each file FIRST (in parallel across files, cached per resolved
   // file so we never transcribe the same video twice). Transcription NEVER throws
@@ -357,12 +388,20 @@ export async function preview(
   // posts CONTINUE the channel's existing queue at ≤ maxPerDay/day rather than
   // restart from `now`. The ledger is read HERE (not in the pure engine).
   const timezone = input.timezone || "America/New_York";
-  const maxPerDay = Math.max(1, Math.floor(input.maxPerDay ?? 2));
+  // Cadence = how many DROPS (videos) release per day; each goes to every account.
+  // `videosPerDay` is preferred; `maxPerDay` kept for back-compat.
+  const cadence = Math.max(1, Math.floor(input.videosPerDay ?? input.maxPerDay ?? 2));
+  const minGapDays = Math.max(0, Math.floor(input.minGapDays ?? 3));
+  const seed = Number.isFinite(input.seed) ? (input.seed as number) >>> 0 : 1;
   const channelStates = new Map(targets.map((t) => [t.channel.id, getChannelState(t.channel.id)]));
 
   const todayLocalKey = localDayKeyInTz(now, timezone);
   const channelStartStates: Record<string, ChannelStartState> = {};
   const continuedFrom: PreviewOutput["continuedFrom"] = [];
+  // Furthest existing scheduled day across ALL selected channels — the new drops
+  // start the day AFTER it, so a drop's whole cohort lands on one empty day (no
+  // channel overlaps its own existing future queue).
+  let globalFurthestLocalDay: string | null = null;
   for (const { channel: c } of targets) {
     const state = channelStates.get(c.id)!;
     const { furthestLocalDay, countsByLocalDay } = deriveChannelTimeline(state.scheduledAt, timezone);
@@ -375,27 +414,70 @@ export async function preview(
     // pushes the new posts forward (furthest day is today or later).
     if (furthestLocalDay && furthestLocalDay >= todayLocalKey) {
       continuedFrom.push({ channelId: c.id, channelName: c.name, fromLocalDay: furthestLocalDay });
+      if (!globalFurthestLocalDay || furthestLocalDay > globalFurthestLocalDay) {
+        globalFurthestLocalDay = furthestLocalDay;
+      }
     }
   }
+  // Drops begin the day AFTER any existing queue, and never today: a drop pinned
+  // to today could split across today/tomorrow when some platforms' windows have
+  // already passed but others' haven't. Starting at tomorrow (offset ≥ 1) keeps a
+  // drop's whole cohort on one full future day (true same-24h across accounts).
+  const startDayOffset = Math.max(
+    1,
+    globalFurthestLocalDay ? daysBetweenLocalKeys(todayLocalKey, globalFurthestLocalDay) + 1 : 0,
+  );
 
-  // One scheduling ITEM per (file × channel), MINUS de-duplicates. Items carry the
-  // channelId so cap/continuity/collisions are keyed by channel; platform stays for
-  // window selection.
-  const items: ScheduleItemInput[] = [];
+  // DE-DUPE pass: which (file × channel) pairs are already in the ledger, and
+  // which files still have at least one LIVE channel to post to.
   const skippedPosts: SkippedPostDto[] = [];
+  const liveFileIds = new Set<string>();
   for (const f of files) {
     for (const t of targets) {
-      const already = channelStates.get(t.channel.id)!.fileIds.has(f.fileId);
-      if (already) {
+      if (channelStates.get(t.channel.id)!.fileIds.has(f.fileId)) {
         skippedPosts.push({
           fileId: f.fileId,
           channelId: t.channel.id,
           channelName: t.channel.name,
           reason: "Already scheduled to this channel",
         });
-        continue;
+      } else {
+        liveFileIds.add(f.fileId);
       }
-      items.push({ key: `${f.fileId}|${t.channel.id}`, platform: t.plat, channelId: t.channel.id });
+    }
+  }
+  const skippedKeys = new Set(skippedPosts.map((s) => `${s.fileId}|${s.channelId}`));
+
+  // DROP SEQUENCING: mix the looks and assign each LIVE video a local day so
+  // same-look videos are spaced ≥ minGapDays apart, at most `cadence` videos/day.
+  // Only live files consume day slots (fully de-duped files get no drop).
+  const dropFiles: DropFile[] = files
+    .filter((f) => liveFileIds.has(f.fileId))
+    .map((f) => ({ fileId: f.fileId, groupId: f.groupId }));
+  const assignments = sequenceDrops(dropFiles, {
+    videosPerDay: cadence,
+    minGapDays: minGapDays,
+    seed,
+    startDayOffset,
+  });
+  const dropDateByFile = new Map<string, string>(
+    assignments.map((a) => [a.fileId, addDaysToLocalKey(todayLocalKey, a.dayOffset)]),
+  );
+
+  // One scheduling ITEM per LIVE (file × channel). Each item is PINNED to its
+  // video's drop day so all accounts post that video within the same 24h; the
+  // engine still picks each platform's optimal HOUR on that day (collision-free).
+  const items: ScheduleItemInput[] = [];
+  for (const f of files) {
+    const pinnedLocalDay = dropDateByFile.get(f.fileId);
+    for (const t of targets) {
+      if (skippedKeys.has(`${f.fileId}|${t.channel.id}`)) continue;
+      items.push({
+        key: `${f.fileId}|${t.channel.id}`,
+        platform: t.plat,
+        channelId: t.channel.id,
+        pinnedLocalDay,
+      });
     }
   }
   const schedule = buildSchedule(items, {
@@ -403,11 +485,11 @@ export async function preview(
     timezone: input.timezone,
     intent: input.intent,
     startTomorrow: false,
-    maxPerChannelPerDay: maxPerDay,
+    maxPerChannelPerDay: cadence,
     channelStartStates,
+    seed,
   });
   const scheduleByKey = new Map(schedule.map((s) => [s.key, s]));
-  const skippedKeys = new Set(skippedPosts.map((s) => `${s.fileId}|${s.channelId}`));
 
   // 3) Assemble preview rows (skipping de-duplicated pairs).
   const posts: PreviewPostDto[] = [];
@@ -432,6 +514,7 @@ export async function preview(
         hashtags: cap?.hashtags ?? [],
         scheduledAt: sched.scheduledAt,
         reason: sched.reason,
+        groupId: f.groupId,
         growth,
         // Seed TikTok Direct-Post controls (PostPeer only) with sensible defaults
         // so the review UI can render the privacy/disclosure toggles.
@@ -447,10 +530,20 @@ export async function preview(
     return {
       fileId: f.fileId,
       transcript: t ? t.slice(0, MAX_TRANSCRIPT_PREVIEW_CHARS) : null,
+      groupId: f.groupId,
+      dropDate: dropDateByFile.get(f.fileId) ?? null,
     };
   });
 
-  return { posts, files: filesDto, skippedChannels, skippedPosts, continuedFrom };
+  return {
+    posts,
+    files: filesDto,
+    skippedChannels,
+    skippedPosts,
+    continuedFrom,
+    seed,
+    lookCount: countLooks(dropFiles),
+  };
 }
 
 /** Local "YYYY-MM-DD" for an instant in a zone (for the continuity hint). */
@@ -463,6 +556,22 @@ function localDayKeyInTz(date: Date, timeZone: string): string {
   }).formatToParts(date);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/** Whole days from one local "YYYY-MM-DD" key to another (≥0 when `to` ≥ `from`). */
+function daysBetweenLocalKeys(fromKey: string, toKey: string): number {
+  const [fy, fm, fd] = fromKey.split("-").map(Number);
+  const [ty, tm, td] = toKey.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86400000);
+}
+
+/** Add `n` calendar days to a local "YYYY-MM-DD" key, returning a new key. */
+function addDaysToLocalKey(key: string, n: number): string {
+  const [y, m, d] = key.split("-").map(Number);
+  const next = new Date(Date.UTC(y, m - 1, d) + n * 86400000);
+  const mo = String(next.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(next.getUTCDate()).padStart(2, "0");
+  return `${next.getUTCFullYear()}-${mo}-${day}`;
 }
 
 // ── schedule (actually post) ──────────────────────────────────────────────────

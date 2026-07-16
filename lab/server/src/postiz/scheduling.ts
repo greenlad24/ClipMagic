@@ -19,6 +19,7 @@
  * analytics; for v1 it's the identity function (documented TODO).
  */
 import type { ShortPlatform } from "./providerSettings.js";
+import { mulberry32 } from "./dropSequencing.js";
 
 // ── Optimal posting windows (US / America/New_York audience) ─────────────────
 // Local-time hour ranges, by platform, ranked best-first. These encode commonly
@@ -91,6 +92,14 @@ export interface ScheduleItemInput {
    * the old per-platform behavior + the existing unit tests).
    */
   channelId?: string;
+  /**
+   * PINNED local day ("YYYY-MM-DD", audience timezone) this item must schedule on
+   * — set by the drop sequencer so every channel of one video ("drop") lands on
+   * the SAME local day (same 24h across accounts). The engine starts its day-walk
+   * here (never before today) and only rolls forward if that day is genuinely
+   * full/ineligible. Omitted → the old "earliest eligible day" behavior.
+   */
+  pinnedLocalDay?: string;
 }
 
 export interface ScheduleResult {
@@ -134,6 +143,13 @@ export interface ScheduleOptions {
    * absent here simply start from `now` with an empty queue.
    */
   channelStartStates?: Record<string, ChannelStartState>;
+  /**
+   * When set, the exact posting MINUTE inside each window is jittered
+   * deterministically from this seed + the item key, so posts don't all sit at
+   * the window's :00. Omitted → the legacy behavior (window start, then +5min
+   * steps only to dodge collisions). The jitter never leaves the window.
+   */
+  seed?: number;
 }
 
 // Generic window for platforms we don't have tuned rules for.
@@ -273,6 +289,14 @@ export function buildSchedule(items: ScheduleItemInput[], options: ScheduleOptio
   const maxPerDay = Math.max(1, options.maxPerChannelPerDay ?? 2);
   const now = options.now;
   const startStates = options.channelStartStates ?? {};
+  const seed = options.seed;
+
+  // Deterministic minute-within-window offset for an item (0..1), stable no matter
+  // how many windows we try, so the jitter is reproducible from (seed, key).
+  const jitterFor = (key: string): number => {
+    if (seed === undefined) return 0;
+    return mulberry32((hashStr(key) ^ (seed >>> 0)) >>> 0)();
+  };
 
   // Per-CHANNEL state: the minute-slots already taken (as ISO strings) so we
   // never double-book the same minute, and how many posts land on each LOCAL day
@@ -319,12 +343,19 @@ export function buildSchedule(items: ScheduleItemInput[], options: ScheduleOptio
     const taken = takenByChannel.get(channelId) ?? new Set<string>();
     takenByChannel.set(channelId, taken);
 
-    // Continuity: start no earlier than the channel's furthest already-scheduled
-    // local day (so a partially-filled last day gets topped up first), and never
-    // before today/`now`. The day cap on a seeded last day is honored because
-    // placedByChannelDay was pre-seeded above.
+    // A PINNED day (from the drop sequencer) wins: every channel of one drop must
+    // land on that exact local day (same 24h across accounts), never before today.
+    // Otherwise fall back to continuity: start no earlier than the channel's
+    // furthest already-scheduled local day (top up a partial last day first).
     const furthest = startStates[channelId]?.furthestLocalDay ?? null;
-    const channelStartKey = furthest && furthest > todayKey ? furthest : todayKey;
+    const pinned = item.pinnedLocalDay ?? null;
+    const channelStartKey = pinned
+      ? pinned > todayKey
+        ? pinned
+        : todayKey
+      : furthest && furthest > todayKey
+        ? furthest
+        : todayKey;
     const startOffsetDays = baseStartOffset + daysBetweenLocal(todayKey, channelStartKey);
 
     let placed: ScheduleResult | null = null;
@@ -351,9 +382,15 @@ export function buildSchedule(items: ScheduleItemInput[], options: ScheduleOptio
       if (candidates.length === 0) continue;
 
       for (const w of candidates) {
-        // Place at the window start, nudging by minutes to avoid collisions and
-        // to spread same-channel posts (5-minute steps inside the window).
-        for (let minuteStep = 0; minuteStep <= (w.endHour - w.startHour) * 60 - 1; minuteStep += 5) {
+        // Place inside the window on a 5-minute grid. With a seed we START from a
+        // jittered slot (so posts aren't all at :00) and WRAP through the window;
+        // without one we start at the window's :00 (legacy). Either way we step
+        // through every slot to dodge collisions and spread same-channel posts.
+        const slots = Math.max(1, Math.floor(((w.endHour - w.startHour) * 60) / 5));
+        const base = Math.floor(jitterFor(item.key) * slots);
+        for (let k = 0; k < slots; k++) {
+          const slotIdx = (base + k) % slots;
+          const minuteStep = slotIdx * 5;
           const h = w.startHour + Math.floor(minuteStep / 60);
           const mi = minuteStep % 60;
           if (h >= w.endHour) break;
@@ -388,6 +425,16 @@ export function buildSchedule(items: ScheduleItemInput[], options: ScheduleOptio
   }
 
   return results;
+}
+
+/** Stable 32-bit FNV-1a hash of a string (for deterministic per-item jitter). */
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }
 
 function intentLabel(intent: Exclude<Intent, "none">): string {

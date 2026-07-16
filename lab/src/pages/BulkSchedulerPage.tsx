@@ -42,6 +42,7 @@ import {
   CheckCircle2,
   XCircle,
   RefreshCw,
+  Shuffle,
   Sparkles,
   ArrowLeft,
   ArrowRight,
@@ -73,6 +74,34 @@ import type { Growth, GrowthCheck } from 'zite-endpoints-sdk';
 
 // ── Local types mirroring the source bridge (server: postiz/fileSources.ts) ──
 type FileSource = { kind: 'render' | 'upload' | 'cloud'; ref: string };
+
+/**
+ * Client-side twin of the server's groupKeyForFilename (postiz/dropSequencing):
+ * derive a video's visual "look" from its filename by stripping the extension and
+ * a trailing numeric batch suffix, so the picker can badge looks before previewing.
+ * Keep in sync with the server so the badge matches the actual grouping.
+ */
+function lookKeyForName(name: string): string {
+  const raw = (name ?? '').trim();
+  if (!raw) return '';
+  const noExt = raw.replace(/\.[a-z0-9]{2,4}$/i, '');
+  const stripped = noExt.replace(/\s*\(\d+\)\s*$/, '').replace(/[\s._-]+\d+\s*$/, '');
+  return (stripped.trim() || noExt.trim() || raw).toLowerCase();
+}
+
+/** A stable, legible badge color for a look key (hashed hue). */
+function lookColor(key: string): { bg: string; fg: string } {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return { bg: `hsl(${hue} 70% 90%)`, fg: `hsl(${hue} 65% 30%)` };
+}
+
+/** Short, human label for a look key (title-cased-ish, capped). */
+function lookLabel(key: string): string {
+  if (!key) return 'ungrouped';
+  return key.length > 22 ? `${key.slice(0, 21)}…` : key;
+}
 interface SelectedFile {
   fileId: string;
   source: FileSource;
@@ -221,8 +250,12 @@ export default function BulkSchedulerPage() {
   const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [selectedChannelIds, setSelectedChannelIds] = useState<string[]>([]);
   const [intent, setIntent] = useState<'none' | 'commute' | 'lunch' | 'evening'>('none');
-  // Max posts per channel per day (continuity tops up partially-filled days first).
-  const [maxPerDay, setMaxPerDay] = useState(2);
+  // How many videos ("drops") release per day — each goes to every account in the
+  // same 24h. Same-look videos are spaced ≥ minGapDays apart; `seed` shuffles the
+  // mix (Reshuffle bumps it for a fresh arrangement).
+  const [videosPerDay, setVideosPerDay] = useState(2);
+  const [minGapDays, setMinGapDays] = useState(3);
+  const [seed, setSeed] = useState(1);
 
   // Step 2
   const [posts, setPosts] = useState<EditablePost[]>([]);
@@ -232,6 +265,9 @@ export default function BulkSchedulerPage() {
   const [skippedPosts, setSkippedPosts] = useState<PreviewBulkScheduleOutputType['skippedPosts']>([]);
   // Per-channel "continuing your queue from <day>" hints.
   const [continuedFrom, setContinuedFrom] = useState<PreviewBulkScheduleOutputType['continuedFrom']>([]);
+  // Per-file drop day ("YYYY-MM-DD") from the plan — drives the schedule map.
+  const [dropDateByFile, setDropDateByFile] = useState<Map<string, string | null>>(new Map());
+  const [lookCount, setLookCount] = useState(0);
   const [previewing, setPreviewing] = useState(false);
 
   // Step 3
@@ -294,7 +330,9 @@ export default function BulkSchedulerPage() {
   }
 
   // ── Step transitions ──────────────────────────────────────────────────────
-  const goPreview = async () => {
+  // `seedOverride` lets "Reshuffle" build a fresh mix without changing the other
+  // controls; it's persisted so scheduling posts the plan the user actually saw.
+  const goPreview = async (seedOverride?: number) => {
     if (selected.length === 0) {
       toast.info('Select at least one video first.');
       return;
@@ -303,16 +341,22 @@ export default function BulkSchedulerPage() {
       toast.info('Select at least one channel.');
       return;
     }
+    const useSeed = seedOverride ?? seed;
     setPreviewing(true);
     try {
       const res: PreviewBulkScheduleOutputType = await previewBulkSchedule({
         files: selected.map((f) => ({ source: f.source, brief: f.brief, fileId: f.fileId, label: f.label })),
         channelIds: selectedChannelIds,
         intent: intent === 'none' ? undefined : intent,
-        maxPerDay,
+        videosPerDay,
+        minGapDays,
+        seed: useSeed,
       });
+      if (typeof res.seed === 'number') setSeed(res.seed);
       setPosts(res.posts);
       setTranscriptByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.transcript])));
+      setDropDateByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.dropDate])));
+      setLookCount(res.lookCount ?? 0);
       setSkippedPosts(res.skippedPosts ?? []);
       setContinuedFrom(res.continuedFrom ?? []);
       if (res.skippedChannels.length) {
@@ -434,9 +478,11 @@ export default function BulkSchedulerPage() {
             setSelectedChannelIds={setSelectedChannelIds}
             intent={intent}
             setIntent={setIntent}
-            maxPerDay={maxPerDay}
-            setMaxPerDay={setMaxPerDay}
-            onNext={goPreview}
+            videosPerDay={videosPerDay}
+            setVideosPerDay={setVideosPerDay}
+            minGapDays={minGapDays}
+            setMinGapDays={setMinGapDays}
+            onNext={() => goPreview()}
             previewing={previewing}
           />
         )}
@@ -449,6 +495,10 @@ export default function BulkSchedulerPage() {
             transcriptByFile={transcriptByFile}
             skippedPosts={skippedPosts}
             continuedFrom={continuedFrom}
+            dropDateByFile={dropDateByFile}
+            lookCount={lookCount}
+            reshuffling={previewing}
+            onReshuffle={() => goPreview((seed % 1000000) + 7919)}
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}
           />
@@ -639,8 +689,10 @@ function StepSelect({
   setSelectedChannelIds,
   intent,
   setIntent,
-  maxPerDay,
-  setMaxPerDay,
+  videosPerDay,
+  setVideosPerDay,
+  minGapDays,
+  setMinGapDays,
   onNext,
   previewing,
 }: {
@@ -652,8 +704,10 @@ function StepSelect({
   setSelectedChannelIds: React.Dispatch<React.SetStateAction<string[]>>;
   intent: 'none' | 'commute' | 'lunch' | 'evening';
   setIntent: (v: 'none' | 'commute' | 'lunch' | 'evening') => void;
-  maxPerDay: number;
-  setMaxPerDay: (v: number) => void;
+  videosPerDay: number;
+  setVideosPerDay: (v: number) => void;
+  minGapDays: number;
+  setMinGapDays: (v: number) => void;
   onNext: () => void;
   previewing: boolean;
 }) {
@@ -740,6 +794,19 @@ function StepSelect({
                     <Badge variant="secondary" className="shrink-0 text-[10px]">
                       {f.source.kind}
                     </Badge>
+                    {(() => {
+                      const key = lookKeyForName(f.label);
+                      const c = lookColor(key);
+                      return (
+                        <span
+                          className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                          style={{ backgroundColor: c.bg, color: c.fg }}
+                          title={`Look: ${key || 'ungrouped'}`}
+                        >
+                          {lookLabel(key)}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <Textarea
                     value={f.brief}
@@ -805,7 +872,7 @@ function StepSelect({
           })}
         </div>
 
-        <div className="mt-5 grid max-w-xl gap-4 sm:grid-cols-2">
+        <div className="mt-5 grid max-w-2xl gap-5 sm:grid-cols-2">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Timing intent (optional)</label>
             <Select value={intent} onValueChange={(v) => setIntent(v as typeof intent)}>
@@ -821,25 +888,55 @@ function StepSelect({
             </Select>
           </div>
           <div>
-            <label htmlFor="max-per-day" className="text-xs font-medium text-muted-foreground">
-              Max posts per day (per channel)
+            <label htmlFor="videos-per-day" className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+              <span>Videos per day</span>
+              <span className="tabular-nums text-foreground">{videosPerDay}/day</span>
             </label>
-            <Input
-              id="max-per-day"
-              type="number"
+            <input
+              id="videos-per-day"
+              type="range"
               min={1}
-              max={24}
-              value={maxPerDay}
-              onChange={(e) => {
-                const n = Math.round(Number(e.target.value));
-                setMaxPerDay(Number.isFinite(n) ? Math.min(24, Math.max(1, n)) : 1);
-              }}
-              className="mt-1"
+              max={8}
+              step={1}
+              value={videosPerDay}
+              onChange={(e) => setVideosPerDay(Math.min(8, Math.max(1, Math.round(Number(e.target.value)))))}
+              className="mt-2 w-full accent-primary"
             />
             <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              Large batches spread across days. We continue after each channel&apos;s existing
-              queue and never schedule the same video to a channel twice.
+              How many videos drop each day. Each one posts to <em>all</em> selected accounts within the same 24h.
+              {selected.length > 0 && (
+                <> ~{Math.ceil(selected.length / Math.max(1, videosPerDay))} days to clear {selected.length} videos.</>
+              )}
             </p>
+          </div>
+          <div>
+            <label htmlFor="gap-days" className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+              <span>Min days between the same look</span>
+              <span className="tabular-nums text-foreground">{minGapDays === 0 ? 'off' : `${minGapDays}d`}</span>
+            </label>
+            <input
+              id="gap-days"
+              type="range"
+              min={0}
+              max={14}
+              step={1}
+              value={minGapDays}
+              onChange={(e) => setMinGapDays(Math.min(14, Math.max(0, Math.round(Number(e.target.value)))))}
+              className="mt-2 w-full accent-primary"
+            />
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              We detect each video&apos;s <em>look</em> from its filename and mix looks so two similar
+              clips never post back-to-back — a look repeats no sooner than this.
+            </p>
+          </div>
+          <div className="rounded-lg border border-dashed border-border bg-muted/30 p-3 text-[11px] leading-snug text-muted-foreground">
+            The plan is <strong>shuffled</strong> so looks are spread out and randomized. You can
+            <strong> Reshuffle</strong> for a fresh mix on the review step. We continue after each
+            channel&apos;s existing queue and never schedule the same video to a channel twice.
+            {selected.length > 0 && (() => {
+              const looks = new Set(selected.map((f) => lookKeyForName(f.label))).size;
+              return <div className="mt-1 text-foreground">{selected.length} videos · {looks} look{looks === 1 ? '' : 's'} detected</div>;
+            })()}
           </div>
         </div>
       </section>
@@ -1202,6 +1299,10 @@ function StepReview({
   transcriptByFile,
   skippedPosts,
   continuedFrom,
+  dropDateByFile,
+  lookCount,
+  reshuffling,
+  onReshuffle,
   onBack,
   onNext,
 }: {
@@ -1211,6 +1312,10 @@ function StepReview({
   transcriptByFile: Map<string, string | null>;
   skippedPosts: PreviewBulkScheduleOutputType['skippedPosts'];
   continuedFrom: PreviewBulkScheduleOutputType['continuedFrom'];
+  dropDateByFile: Map<string, string | null>;
+  lookCount: number;
+  reshuffling: boolean;
+  onReshuffle: () => void;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -1234,8 +1339,66 @@ function StepReview({
     [posts],
   );
 
+  // Schedule map: each drop day → the looks dropping that day (one entry per
+  // distinct video). Drives the "mix" preview so the user can see looks spread out.
+  const scheduleMap = useMemo(() => {
+    const groupByFile = new Map<string, string>();
+    for (const p of posts) if (!groupByFile.has(p.fileId)) groupByFile.set(p.fileId, p.groupId);
+    const byDay = new Map<string, Array<{ fileId: string; groupId: string; label: string }>>();
+    for (const [fileId, day] of dropDateByFile) {
+      if (!day) continue;
+      const groupId = groupByFile.get(fileId);
+      if (groupId === undefined) continue; // fully de-duped file (no live post)
+      const label = filesById.get(fileId)?.label ?? fileId;
+      const list = byDay.get(day) ?? [];
+      list.push({ fileId, groupId, label });
+      byDay.set(day, list);
+    }
+    return Array.from(byDay.entries()).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  }, [posts, dropDateByFile, filesById]);
+
   return (
     <div className="space-y-6">
+      {scheduleMap.length > 0 && (
+        <section className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Drop schedule</h3>
+              <p className="text-[11px] text-muted-foreground">
+                {scheduleMap.reduce((n, [, v]) => n + v.length, 0)} videos · {lookCount} look{lookCount === 1 ? '' : 's'} ·
+                {' '}{scheduleMap.length} day{scheduleMap.length === 1 ? '' : 's'} · {formatLocalDay(scheduleMap[0][0])} → {formatLocalDay(scheduleMap[scheduleMap.length - 1][0])}
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={onReshuffle} disabled={reshuffling}>
+              {reshuffling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shuffle className="h-4 w-4" />}
+              Reshuffle
+            </Button>
+          </div>
+          <div className="mt-3 max-h-56 space-y-1.5 overflow-y-auto pr-1">
+            {scheduleMap.map(([day, vids]) => (
+              <div key={day} className="flex items-start gap-3 text-xs">
+                <span className="w-24 shrink-0 pt-0.5 tabular-nums text-muted-foreground">{formatLocalDay(day)}</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {vids.map((v) => {
+                    const c = lookColor(v.groupId);
+                    return (
+                      <span
+                        key={v.fileId}
+                        className="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                        style={{ backgroundColor: c.bg, color: c.fg }}
+                        title={v.label}
+                      >
+                        {lookLabel(v.groupId)}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {blockedCount > 0 && (
         <div className="flex items-start gap-2.5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
