@@ -2373,6 +2373,9 @@ const previewBulkSchedule: Handler = async (input) =>
     timezone: input?.timezone,
     now: input?.now,
     maxPerDay: typeof input?.maxPerDay === "number" ? input.maxPerDay : undefined,
+    videosPerDay: typeof input?.videosPerDay === "number" ? input.videosPerDay : undefined,
+    minGapDays: typeof input?.minGapDays === "number" ? input.minGapDays : undefined,
+    seed: typeof input?.seed === "number" ? input.seed : undefined,
   });
 
 const runBulkSchedule: Handler = async (input) =>

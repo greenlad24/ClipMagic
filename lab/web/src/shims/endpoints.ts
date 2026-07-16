@@ -942,6 +942,8 @@ export type BulkPreviewPost = {
   hashtags: string[];
   scheduledAt: string;
   reason: string;
+  /** The video's visual "look" group (from its filename); same-look posts are spaced apart. */
+  groupId: string;
   tiktok?: TikTokOptions;
   /** Growth Guardrails score + checklist for this (file × channel) post. */
   growth: Growth;
@@ -955,6 +957,10 @@ export type BulkPreviewFile = {
    * fell back to the brief.
    */
   transcript: string | null;
+  /** The video's visual "look" group key (derived from its filename). */
+  groupId: string;
+  /** Local day ("YYYY-MM-DD") this video drops on across all accounts; null if fully de-duped. */
+  dropDate: string | null;
 };
 /** A (file × channel) post dropped as a de-duplicate (already in the ledger). */
 export type BulkSkippedPost = {
@@ -971,6 +977,10 @@ export type PreviewBulkScheduleOutputType = {
   skippedPosts: BulkSkippedPost[];
   /** Per-channel "continuing your queue from <local day>" hints. */
   continuedFrom: Array<{ channelId: string; channelName: string; fromLocalDay: string }>;
+  /** The seed that produced this plan — pass it back to reproduce, change it to reshuffle. */
+  seed: number;
+  /** How many distinct visual "looks" the selected videos span. */
+  lookCount: number;
 };
 export type BulkScheduleItemResult = {
   fileId: string;
