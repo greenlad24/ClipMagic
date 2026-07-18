@@ -136,7 +136,17 @@ services:
     entrypoint:
       - /bin/sh
       - -lc
-      - 'set -a; [ -f /config/postiz.env ] && . /config/postiz.env; set +a; exec sh -c "nginx && pnpm run pm2"'
+      # YouTube token hardening: strip the delete/edit-capable YouTube OAuth
+      # scopes (youtube, youtube.force-ssl, youtubepartner) from Postiz's provider
+      # at startup, so a RECONNECTED YouTube channel is granted an UPLOAD-ONLY
+      # token (youtube.upload + youtube.readonly + yt-analytics.readonly kept).
+      # This removes videos.delete / videos.update power from the token. The patch
+      # is idempotent and re-applied on every (re)start; it fails safe (Postiz
+      # still boots if the file path ever moves on a Postiz upgrade — watch the
+      # "[yt-scope-patch]" log line, which should read 2). Already-connected
+      # channels keep working (checkScopes is a subset check); reconnect each
+      # YouTube channel in Postiz to actually mint the reduced token.
+      - 'set -a; [ -f /config/postiz.env ] && . /config/postiz.env; set +a; for f in /app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js /app/apps/orchestrator/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js; do [ -f "$$f" ] && sed -i -e "\#googleapis.com/auth/youtube[^.p]#d" -e "\#googleapis.com/auth/youtube.force-ssl#d" -e "\#googleapis.com/auth/youtubepartner#d" "$$f"; done; echo "[yt-scope-patch] backend youtube-scope lines now: $$(grep -c googleapis.com/auth/youtube /app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js) (expect 2)"; exec sh -c "nginx && pnpm run pm2"'
     ports:
       # Host port → Postiz's internal port (the unified app image serves on
       # 5000). Override the host side with POSTIZ_PORT in .env; keep it in sync

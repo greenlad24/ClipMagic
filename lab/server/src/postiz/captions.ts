@@ -31,6 +31,22 @@ export interface PlatformCaption {
   hashtags: string[];
 }
 
+/**
+ * Optional off-platform "growth link" CTA. When set, captions for this platform
+ * carry ONE persuasive (never salesy), video-relevant CTA that drives to `link`,
+ * placed AFTER the SEO hook — never as the first line (the hook owns line 1). Only
+ * platforms that make caption links useful should set this: on TikTok/Instagram
+ * links aren't clickable AND suppress reach, so those rules deliberately omit it.
+ */
+export interface PlatformCta {
+  /** The URL to drive traffic to. */
+  link: string;
+  /** Prompt instruction telling the model how/where to write the CTA. */
+  guidance: string;
+  /** Deterministic fallback sentence if the model omits the link entirely. */
+  fallback: string;
+}
+
 /** Tunable per-platform best-practice guidance the prompt encodes. */
 export interface PlatformRule {
   platform: CaptionPlatform;
@@ -42,6 +58,8 @@ export interface PlatformRule {
   maxCaptionChars: number;
   /** The best-practice instruction injected into the prompt for this platform. */
   guidance: string;
+  /** Optional off-platform CTA link (only where links help — see PlatformCta). */
+  cta?: PlatformCta;
 }
 
 export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
@@ -83,6 +101,15 @@ export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
     maxCaptionChars: 2000,
     guidance:
       "Write an engaging general-audience caption for a vertical short-form clip. Strong first-line hook that front-loads the topic, then 1–2 sentences of value, ending with a comment-driving CTA. Light hashtag use (2–5). Outbound links are allowed (unlike IG). Conversational and shareable.",
+    // Facebook/general is link-friendly, so it carries the community CTA. The
+    // tuned short-form trio (TikTok/IG/YouTube) deliberately has NO cta: TikTok +
+    // IG punish outbound links, and YouTube's line-1 is the SEO title.
+    cta: {
+      link: "https://www.skool.com/ai-automations-for-sales",
+      guidance:
+        "After the opening hook and 1–2 sentences of value — NOT on the first line — add ONE short, persuasive but NOT salesy sentence that ties directly to THIS specific video's topic and naturally invites the reader to go deeper, then include the link https://www.skool.com/ai-automations-for-sales. Then still close on the comment-driving question, AFTER the link. Vary the CTA wording per video; do not use a canned template.",
+      fallback: "Want to go deeper on this? The full breakdown is inside our free community:",
+    },
   },
 };
 
@@ -241,6 +268,20 @@ export function scoreCaption(
     },
   ];
 
+  // growth-link (recommended/ADVISORY): platforms that carry a growth CTA should
+  // include the link. Advisory so a hand-edit that drops it dips the score + shows
+  // a hint but never blocks — assemblePlatformCaption already guarantees it on
+  // AI-written captions.
+  if (rule.cta) {
+    checks.push({
+      id: "growth-link",
+      label: "Growth link included",
+      pass: text.includes(rule.cta.link),
+      severity: "recommended",
+      hint: `Add a short, video-relevant CTA after the hook that links to ${rule.cta.link}.`,
+    });
+  }
+
   return { score: scoreChecks(checks), checks };
 }
 
@@ -284,6 +325,13 @@ function buildSystemPrompt(platforms: CaptionPlatform[], hasTranscript: boolean)
       return `- ${p} (${r.label}): ${r.guidance} Provide ${r.minTags}–${r.maxTags} hashtags. Caption ≤ ${r.maxCaptionChars} chars.`;
     })
     .join("\n");
+  // Only the platforms whose rule carries a `cta` get the growth-link CTA — the
+  // model must add NO link on any other platform (TikTok/IG suppress links).
+  const ctaPlatforms = platforms.filter((p) => PLATFORM_RULES[p].cta);
+  const ctaBlock = ctaPlatforms.length
+    ? "Growth-link CTA — apply ONLY to these platforms; add NO outbound link on any other platform:\n" +
+      ctaPlatforms.map((p) => `- ${p}: ${PLATFORM_RULES[p].cta!.guidance}`).join("\n")
+    : "";
   return [
     "You are a short-form social media SEO copywriter. You write DISTINCT, platform-native captions for the SAME video, optimized for each platform's search and discovery in 2026.",
     hasTranscript
@@ -300,6 +348,7 @@ function buildSystemPrompt(platforms: CaptionPlatform[], hasTranscript: boolean)
     "- END the caption with a QUESTION that ends in a '?' and invites the viewer to comment — this is REQUIRED. Never end on a statement (e.g. \"Learn more…\"); ask something they'll want to answer.",
     "- Hashtags: stay within the per-platform count above and MIX broad reach tags (short, e.g. fyp) with specific niche tags (longer, e.g. budgetmealprep).",
     "",
+    ctaBlock,
     "For EACH requested platform return: a keyword-rich firstLineHook, a full caption (whose first line IS that hook and which ENDS with the CTA/question), and a hashtags array (no leading '#', no spaces inside a tag).",
     "Make each platform's caption genuinely different in tone and structure — do NOT reuse the same text across platforms.",
     'Respond as JSON: { "platforms": { "<platform>": { "firstLineHook": string, "caption": string, "hashtags": string[] } } }',
@@ -377,6 +426,21 @@ export function assemblePlatformCaption(
   // caption ending on its comment-driving question.
   const stripped = stripTrailingHashtags(caption);
   caption = stripped.caption;
+  // GUARANTEE the growth-link CTA ships on platforms that carry one (generic /
+  // Facebook): if the model omitted the link, inject a fallback CTA line. It must
+  // land BEFORE the closing question so the caption still ENDS on that question
+  // (the comment-CTA is a required check) — never on the raw URL.
+  if (rule.cta && caption && !caption.includes(rule.cta.link)) {
+    const ctaLine = `${rule.cta.fallback} ${rule.cta.link}`;
+    const paras = caption.split(/\n{2,}/);
+    if (paras.length >= 2 && /\?\s*$/.test(caption)) {
+      const closing = paras.pop()!; // the closing question — keep it last
+      caption = [...paras, ctaLine, closing].join("\n\n");
+    } else {
+      caption = `${caption}\n\n${ctaLine}`;
+      if (!/\?\s*$/.test(caption)) caption = `${caption}\n\nWhat do you think?`;
+    }
+  }
   // GUARANTEE the required comment-CTA passes with zero manual intervention: if
   // the model ended on a statement (not a question/CTA), append a closing question.
   if (caption && !endsWithCta(caption)) {

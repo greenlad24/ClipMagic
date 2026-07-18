@@ -159,6 +159,65 @@ async function main() {
     assert.ok(score >= 80, `expected high generic score, got ${score}`);
   });
 
+  await check("generic: growth-link CTA is guaranteed even if the model omits it", () => {
+    const link = PLATFORM_RULES.generic.cta!.link;
+    const out = assemblePlatformCaption("generic", {
+      firstLineHook: "AI cold email that booked 12 calls",
+      caption: "AI cold email that booked 12 calls\n\nHere's the exact 3-step flow. Which step are you missing?",
+      hashtags: ["ai", "sales"],
+    });
+    assert.ok(out.caption.includes(link), "generic caption must carry the growth link");
+    assert.ok(/\?\s*$/.test(out.caption), "caption must still end on the question");
+    // the advisory growth-link check passes once the link is present.
+    const gl = scoreCaption(out.caption, out.hashtags, "generic").checks.find((c) => c.id === "growth-link")!;
+    assert.equal(gl.severity, "recommended");
+    assert.equal(gl.pass, true);
+  });
+
+  await check("generic: a model-supplied link is kept as-is (no duplicate injection)", () => {
+    const link = PLATFORM_RULES.generic.cta!.link;
+    const out = assemblePlatformCaption("generic", {
+      firstLineHook: "Automate your follow-ups",
+      caption: `Automate your follow-ups\n\nThis flow saves hours. Full walkthrough here: ${link}\n\nWhat would you automate first?`,
+      hashtags: ["ai", "automation"],
+    });
+    // exactly one occurrence of the link (not injected twice).
+    assert.equal(out.caption.split(link).length - 1, 1, out.caption);
+    assert.ok(/\?\s*$/.test(out.caption), "ends on the question");
+  });
+
+  await check("tuned trio carry NO growth link (TikTok/IG/YouTube omit the cta)", () => {
+    const link = PLATFORM_RULES.generic.cta!.link;
+    for (const p of ["tiktok", "instagram", "youtube"] as const) {
+      assert.equal(PLATFORM_RULES[p].cta, undefined, `${p} must have no cta rule`);
+      const out = assemblePlatformCaption(p, {
+        firstLineHook: "Keyword hook here",
+        caption: "Keyword hook here\n\nReal value. What do you think?",
+        hashtags: ["fyp", "specificnichetag"],
+      });
+      assert.ok(!out.caption.includes(link), `${p} caption must NOT get the growth link`);
+      // no growth-link check exists for these platforms.
+      assert.ok(!scoreCaption(out.caption, out.hashtags, p).checks.some((c) => c.id === "growth-link"));
+    }
+  });
+
+  await check("system prompt scopes the growth-link CTA to generic only", async () => {
+    const link = PLATFORM_RULES.generic.cta!.link;
+    let seenSystem = "";
+    const mock = async (system: string) => {
+      seenSystem = system;
+      return JSON.stringify({ platforms: { generic: { firstLineHook: "h", caption: "h\nb?", hashtags: ["a", "bb"] } } });
+    };
+    // generic present → CTA instruction + link appear in the system prompt.
+    await generateCaptions("brief", ["generic"], mock);
+    assert.match(seenSystem, /Growth-link CTA/);
+    assert.ok(seenSystem.includes(link), "system prompt must name the growth link for generic");
+    // tuned trio only → no CTA instruction, no link leaked into the prompt.
+    await generateCaptions("brief", ["tiktok", "instagram", "youtube"], mock);
+    assert.doesNotMatch(seenSystem, /Growth-link CTA/);
+    assert.ok(!seenSystem.includes(link), "no growth link for the tuned trio");
+  });
+
   await check("generateCaptions accepts 'generic' (not filtered out)", async () => {
     const mock = async () =>
       JSON.stringify({

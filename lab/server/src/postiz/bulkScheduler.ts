@@ -33,6 +33,7 @@ import { sequenceDrops, groupKeyForFilename, countLooks, type DropFile } from ".
 import { getChannelState, recordScheduled, deriveChannelTimeline } from "./scheduleLedger.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
+import { isYouTubePost, youtubeShortsGate } from "./youtubeGate.js";
 import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
 import { readFile } from "node:fs/promises";
 
@@ -636,7 +637,28 @@ export async function schedule(
 ): Promise<ScheduleOutput> {
   // Growth Guardrails are ADVISORY: the score guides the user in the review UI, but
   // it NEVER blocks scheduling (no override needed). We just post what was sent.
-  const allowed = Array.isArray(input.posts) ? input.posts : [];
+  const submitted = Array.isArray(input.posts) ? input.posts : [];
+
+  // YouTube Shorts-only HARD GATE (vertical only — duration NOT gated): a YouTube
+  // post is REJECTED before any upload unless its video is CONFIRMED vertical
+  // (9:16), so a landscape clip can never be published as a regular long-form
+  // video. We probe ONLY YouTube posts (same probe the pre-flight uses); cloud /
+  // unprobeable videos can't be confirmed vertical and are blocked too. Bypass
+  // with override:true. See postiz/youtubeGate.ts for the decision logic.
+  const blocked: ScheduleItemResult[] = [];
+  const allowed: SchedulePostInput[] = [];
+  for (const p of submitted) {
+    if (isYouTubePost(p) && !p.override) {
+      const pf = await preflightVideo(p.source, { probeFn: opts.probeFn });
+      const verticalPass = pf.checks.find((c) => c.id === "vertical")?.pass ?? null;
+      const block = youtubeShortsGate(p, verticalPass);
+      if (block) {
+        blocked.push({ fileId: p.fileId, channelId: p.channelId, ok: false, error: block.error, blockedChecks: [block.check] });
+        continue;
+      }
+    }
+    allowed.push(p);
+  }
 
   const postizPosts = allowed.filter((p) => (p.provider ?? "postiz") === "postiz");
   const postPeerPosts = allowed.filter((p) => p.provider === "postpeer");
@@ -665,6 +687,7 @@ export async function schedule(
   }
 
   const results: ScheduleItemResult[] = [
+    ...blocked,
     ...(await schedulePostiz(postizPosts, mediaByFile)),
     ...(await schedulePostPeer(postPeerPosts, mediaByFile)),
   ];

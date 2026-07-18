@@ -53,6 +53,7 @@
  * server.
  */
 import { getPostizApiKey } from "../settings/postizSecrets.js";
+import { assertPostizWriteAllowed } from "./postizGuard.js";
 
 /** A connected channel ("integration" in Postiz's API; "channel" in its UI). */
 export interface PostizIntegration {
@@ -149,6 +150,12 @@ async function request<T>(
   // lib is ES2022-only (no DOM `BodyInit`) — fetch/FormData come from @types/node.
   opts: { json?: unknown; body?: FormData; headers?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<T> {
+  // SECURITY CHOKEPOINT: refuse any write this backend must never make (all
+  // edit/delete; anything touching the protected @jake.dawson channel beyond a
+  // new post). Runs before the network call so nothing can bypass it. See
+  // postiz/postizGuard.ts. Long-form-upload blocking is separate (schedule gate).
+  assertPostizWriteAllowed(method, path, opts.json);
+
   const url = `${postizBaseUrl()}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
