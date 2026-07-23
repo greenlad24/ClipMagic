@@ -16,6 +16,9 @@ data/
 .env
 .env.local
 .env.*.local
+# On-box .env snapshots taken before a risky edit (.env.bak.pre-auth etc).
+# They hold LIVE secrets — never commit them.
+.env.bak*
 
 # OS
 .DS_Store
