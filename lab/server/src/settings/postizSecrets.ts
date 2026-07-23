@@ -98,6 +98,24 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "FACEBOOK_APP_ID", label: "Facebook app ID", group: "Facebook / Instagram", connects: "Connects Facebook Pages and Instagram business accounts." },
   { key: "FACEBOOK_APP_SECRET", label: "Facebook app secret", group: "Facebook / Instagram", connects: "Connects Facebook Pages and Instagram business accounts." },
 
+  // ── Engagement Manager — Meta (Instagram + Facebook) comment monitoring ──────
+  // Distinct from FACEBOOK_APP_ID/SECRET above (which are Postiz's OAuth app
+  // credentials). These are read by THIS lab server (engage/metaGraph.ts) to READ
+  // comments via the Graph API, so they're LAB_ONLY (never emitted into Postiz's
+  // env file) and read internally via getMetaCreds(). Same write-only guarantee as
+  // every other key: never returned through any HTTP response, never logged.
+  { key: "META_APP_ID", label: "Meta app ID", group: "Engagement (Meta)", connects: "App ID of the Meta app used to READ Instagram + Facebook comments in the Engagement Manager. Used with the app secret to exchange the pasted user token for a long-lived one. Server-only; never sent to the browser." },
+  { key: "META_APP_SECRET", label: "Meta app secret", group: "Engagement (Meta)", connects: "App secret of the Meta app, paired with the app ID to mint a long-lived user token for comment monitoring. Server-only; never sent to the browser." },
+  { key: "META_ACCESS_TOKEN", label: "Meta user access token", group: "Engagement (Meta)", connects: "A long-lived Meta USER access token (with pages_show_list, pages_read_engagement, instagram_basic + instagram_manage_comments) so the Engagement Manager can READ Facebook Page + Instagram business comments. Paste one generated in Graph API Explorer; the server exchanges it for a long-lived token. Server-only; never sent to the browser." },
+
+  // ── Engagement Manager — TikTok comment monitoring (Apify) ───────────────────
+  // Read by THIS lab server (engage/tiktok.ts) to READ a TikTok profile's video
+  // comments via the Apify `scrapeforge/tiktok-comments-extractor` actor. LAB_ONLY
+  // (never emitted into Postiz's env file) and read internally via getApifyToken().
+  // Polled on a SLOW cadence (default 6h) to conserve Apify credits. Same write-only
+  // guarantee as every other key: never returned through any HTTP response, never logged.
+  { key: "APIFY_TOKEN", label: "Apify API token", group: "Engagement (TikTok)", connects: "An Apify API token so the Engagement Manager can READ your connected TikTok profile's comments via the scrapeforge/tiktok-comments-extractor actor. Create one at apify.com (Settings → Integrations → API token). TikTok is polled on a slow cadence (~4 runs/day) to conserve Apify credits. Server-only; never sent to the browser." },
+
   { key: "YOUTUBE_CLIENT_ID", label: "YouTube client ID", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
   { key: "YOUTUBE_CLIENT_SECRET", label: "YouTube client secret", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
 
@@ -143,6 +161,12 @@ const LAB_ONLY_KEYS = new Set([
   // Keyword Research (optional DataForSEO volume provider), used by the lab server.
   "DATAFORSEO_LOGIN",
   "DATAFORSEO_PASSWORD",
+  // Engagement Manager — Meta (IG + FB) comment monitoring, used by the lab server.
+  "META_APP_ID",
+  "META_APP_SECRET",
+  "META_ACCESS_TOKEN",
+  // Engagement Manager — TikTok (Apify) comment monitoring, used by the lab server.
+  "APIFY_TOKEN",
 ]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -404,6 +428,55 @@ export function getDataForSeoCreds(): { login: string; password: string } | null
   const password = (process.env.DATAFORSEO_PASSWORD || "").trim() || readStore().DATAFORSEO_PASSWORD || "";
   if (!login || !password) return null;
   return { login, password };
+}
+
+/** Configured Meta (Instagram + Facebook) Graph credentials for comment monitoring. */
+export interface MetaCredentials {
+  /** May be empty — only needed to exchange for a long-lived token. */
+  appId: string;
+  /** May be empty — only needed to exchange for a long-lived token. */
+  appSecret: string;
+  /** The long-lived Meta USER access token (required). */
+  token: string;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Meta (IG + FB) monitoring credentials —
+ * used by engage/metaGraph.ts to READ comments via the Graph API. Returns null
+ * unless the USER TOKEN is present (app id/secret are optional — only used to
+ * exchange a short-lived token for a long-lived one). Env vars take precedence
+ * over the UI-managed store. Must NEVER be wired into an HTTP response or logged
+ * (write-only guarantee).
+ */
+export function getMetaCreds(): MetaCredentials | null {
+  const map = readStore();
+  const pick = (key: string) => (process.env[key] || "").trim() || map[key] || "";
+  const token = pick("META_ACCESS_TOKEN");
+  if (!token) return null;
+  return { appId: pick("META_APP_ID"), appSecret: pick("META_APP_SECRET"), token };
+}
+
+/** True when a Meta user access token is configured (IG/FB monitoring is inert until then). */
+export function metaConfigured(): boolean {
+  return getMetaCreds() != null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Apify API token — used by engage/tiktok.ts
+ * to READ a TikTok profile's comments via the scrapeforge/tiktok-comments-extractor
+ * actor. Must NEVER be wired into an HTTP response or logged (write-only guarantee).
+ * An env var (APIFY_TOKEN) takes precedence over the UI-managed store.
+ */
+export function getApifyToken(): string | null {
+  const fromEnv = (process.env.APIFY_TOKEN || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.APIFY_TOKEN || null;
+}
+
+/** True when an Apify token is configured (TikTok monitoring is inert until then). */
+export function apifyConfigured(): boolean {
+  return getApifyToken() != null;
 }
 
 function canWriteConfigDir(): boolean {

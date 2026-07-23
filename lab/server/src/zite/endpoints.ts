@@ -151,6 +151,36 @@ import {
   deleteRun as deleteScriptRunDb,
 } from "../db/scriptRuns.js";
 import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
+import {
+  listChannels as listEngageChannels,
+  setChannelMode as setEngageChannelMode,
+  listInbox as listEngageInbox,
+  listThreads as listEngageThreads,
+  getInboxItem as getEngageInboxItem,
+  getThread as getEngageThread,
+  getReplyForInbox as getEngageReplyForInbox,
+  getSettings as getEngageSettings,
+  setSettings as setEngageSettings,
+  countsByPlatform as engageCountsByPlatform,
+  totalCount as engageTotalCount,
+  newCount as engageNewCount,
+} from "../engage/db.js";
+import { youtubeConfigured as engageYoutubeConfigured } from "../engage/youtube.js";
+import { metaConfigured as engageMetaConfigured } from "../engage/metaGraph.js";
+import { tiktokConfigured as engageTiktokConfigured } from "../engage/tiktok.js";
+import { seedChannelsFromConnected } from "../engage/seed.js";
+import { pollOnce as engagePollOnce, refreshAllChannelStats as engageRefreshAllChannelStats } from "../engage/monitor.js";
+import { getRegistry as getEngageRegistry } from "../engage/registry.js";
+import type {
+  EngageStatus,
+  ListInboxInput,
+  ListThreadsInput,
+  ThreadSort,
+  ReplyMode,
+  InboxKind,
+  Platform as EngagePlatform,
+  ReplyState,
+} from "../engage/types.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
 
@@ -3147,6 +3177,170 @@ const refineScriptParagraph: Handler = async (input) => {
   return runRefineParagraph(runId, String(input?.paragraph ?? ""), String(input?.instruction ?? ""));
 };
 
+// ── Engagement Manager (LAB tool — Phase 1: MONITOR YouTube comments) ─────────
+
+const ENGAGE_PLATFORMS: ReadonlySet<string> = new Set(["youtube", "instagram", "facebook", "tiktok"]);
+const ENGAGE_KINDS: ReadonlySet<string> = new Set(["comment", "dm"]);
+const ENGAGE_REPLY_STATES: ReadonlySet<string> = new Set(["new", "queued", "replied", "skipped", "failed"]);
+const ENGAGE_THREAD_SORTS: ReadonlySet<string> = new Set(["newest", "oldest", "active", "replies"]);
+const ENGAGE_REPLY_MODES: ReadonlySet<string> = new Set(["off", "suggest", "auto"]);
+
+/** Live status card: config + channels + kill-switch + rolled-up counts + monitor state. */
+const engageStatus: Handler = async (): Promise<EngageStatus> => {
+  const settings = getEngageSettings();
+  const reg = getEngageRegistry();
+  return {
+    youtubeConfigured: engageYoutubeConfigured(),
+    channels: listEngageChannels(),
+    killSwitch: settings.killSwitch,
+    globalAutoreply: settings.globalAutoreply,
+    counts: {
+      total: engageTotalCount(),
+      new: engageNewCount(),
+      byPlatform: engageCountsByPlatform(),
+    },
+    lastPollAt: reg.lastPollAt,
+    polling: reg.polling,
+    lastError: reg.lastError,
+  };
+};
+
+/** Filtered, paginated inbox read. */
+const engageListInbox: Handler = async (input) => {
+  const filters: ListInboxInput = {};
+  if (input?.platform !== undefined) {
+    if (!ENGAGE_PLATFORMS.has(String(input.platform))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "Invalid platform filter." });
+    }
+    filters.platform = String(input.platform) as EngagePlatform;
+  }
+  if (input?.kind !== undefined) {
+    if (!ENGAGE_KINDS.has(String(input.kind))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "Invalid kind filter." });
+    }
+    filters.kind = String(input.kind) as InboxKind;
+  }
+  if (input?.replyState !== undefined) {
+    if (!ENGAGE_REPLY_STATES.has(String(input.replyState))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "Invalid replyState filter." });
+    }
+    filters.replyState = String(input.replyState) as ReplyState;
+  }
+  if (typeof input?.channelId === "string" && input.channelId) filters.channelId = input.channelId;
+  if (typeof input?.q === "string") filters.q = input.q;
+  const limit = Number(input?.limit);
+  if (Number.isFinite(limit) && limit > 0) filters.limit = Math.floor(limit);
+  const offset = Number(input?.offset);
+  if (Number.isFinite(offset) && offset >= 0) filters.offset = Math.floor(offset);
+  return listEngageInbox(filters);
+};
+
+/** Threaded, paginated inbox read — each top-level comment with its full reply tree. */
+const engageListThreads: Handler = async (input) => {
+  const filters: ListThreadsInput = {};
+  if (input?.platform !== undefined) {
+    if (!ENGAGE_PLATFORMS.has(String(input.platform))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "Invalid platform filter." });
+    }
+    filters.platform = String(input.platform) as EngagePlatform;
+  }
+  if (input?.kind !== undefined) {
+    if (!ENGAGE_KINDS.has(String(input.kind))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "Invalid kind filter." });
+    }
+    filters.kind = String(input.kind) as InboxKind;
+  }
+  if (typeof input?.channelId === "string" && input.channelId) filters.channelId = input.channelId;
+  if (typeof input?.q === "string") filters.q = input.q;
+  // Thread ordering — validate against the 4 allowed modes; anything else
+  // (missing or unknown) silently defaults to 'newest'.
+  filters.sort = ENGAGE_THREAD_SORTS.has(String(input?.sort)) ? (String(input.sort) as ThreadSort) : "newest";
+  const limit = Number(input?.limit);
+  if (Number.isFinite(limit) && limit > 0) filters.limit = Math.floor(limit);
+  const offset = Number(input?.offset);
+  if (Number.isFinite(offset) && offset >= 0) filters.offset = Math.floor(offset);
+  return listEngageThreads(filters);
+};
+
+/** One inbox item + its thread siblings (chronological) + any reply record. */
+const engageGetThread: Handler = async (input) => {
+  const inboxId = String(input?.inboxId ?? "").trim();
+  if (!inboxId) throw new ZiteError({ code: "BAD_REQUEST", message: "inboxId is required." });
+  const item = getEngageInboxItem(inboxId);
+  const thread = item?.threadId ? getEngageThread(item.threadId) : [];
+  const reply = getEngageReplyForInbox(inboxId);
+  return { item, thread, reply };
+};
+
+/** Toggle a channel's monitor (enabled) and/or reply mode. Returns the updated channel. */
+const engageSetChannelMode: Handler = async (input) => {
+  const channelId = String(input?.channelId ?? "").trim();
+  if (!channelId) throw new ZiteError({ code: "BAD_REQUEST", message: "channelId is required." });
+  const patch: { enabled?: boolean; replyMode?: ReplyMode } = {};
+  if (input?.enabled !== undefined) patch.enabled = !!input.enabled;
+  if (input?.replyMode !== undefined) {
+    if (!ENGAGE_REPLY_MODES.has(String(input.replyMode))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: "replyMode must be one of off | suggest | auto." });
+    }
+    patch.replyMode = String(input.replyMode) as ReplyMode;
+  }
+  const channel = setEngageChannelMode(channelId, patch);
+  if (!channel) throw new ZiteError({ code: "NOT_FOUND", message: "Channel not found." });
+  return channel;
+};
+
+/** Master safety switch (STARTS ON). Phase 1 monitor is read-only; this gates future auto-reply. */
+const engageKillSwitch: Handler = async (input) => {
+  if (typeof input?.killSwitch !== "boolean") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "killSwitch (boolean) is required." });
+  }
+  const settings = setEngageSettings({ killSwitch: input.killSwitch });
+  return { killSwitch: settings.killSwitch };
+};
+
+/**
+ * Whether Meta (Instagram + Facebook) comment monitoring is configured (a Meta
+ * user token is stored). Inert until then — mirrors the YouTube-key pattern.
+ * Reports configured-state only, never the token.
+ */
+const metaStatus: Handler = async () => {
+  return { configured: engageMetaConfigured() };
+};
+
+/**
+ * Whether TikTok comment monitoring is configured (an Apify token is stored). Inert
+ * until then — mirrors the YouTube-key / Meta-token pattern. Reports configured-state
+ * only, never the token.
+ */
+const tiktokStatus: Handler = async () => {
+  return { configured: engageTiktokConfigured() };
+};
+
+/** Re-seed the monitored channels from the connected YouTube + Meta + TikTok accounts, then return them. */
+const engageRefreshChannels: Handler = async () => {
+  await seedChannelsFromConnected();
+  return { channels: listEngageChannels() };
+};
+
+/** Kick a monitor cycle now (skipped when one is already in flight). */
+const engagePollNow: Handler = async () => {
+  const { started } = engagePollOnce();
+  return {
+    started,
+    message: started ? "Monitor cycle started." : "A monitor cycle is already running.",
+  };
+};
+
+/**
+ * Force-refresh every enabled channel's engagement stats now (bypasses the TTL —
+ * the manual "refresh stats" button). Returns the updated channels so the UI can
+ * re-render the per-channel subscriber/comment/like counts.
+ */
+const engageRefreshStats: Handler = async () => {
+  const { refreshed } = await engageRefreshAllChannelStats();
+  return { refreshed, channels: listEngageChannels() };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -3286,6 +3480,18 @@ export const HANDLERS: Record<string, Handler> = {
   listScriptRuns,
   deleteScriptRun,
   refineScriptParagraph,
+  // Engagement Manager (LAB tool — Phase 1: monitor)
+  engageStatus,
+  engageListInbox,
+  engageListThreads,
+  engageGetThread,
+  engageSetChannelMode,
+  engageKillSwitch,
+  engageRefreshChannels,
+  engagePollNow,
+  engageRefreshStats,
+  metaStatus,
+  tiktokStatus,
 };
 
 void config;

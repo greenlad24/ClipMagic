@@ -287,6 +287,165 @@ CREATE TABLE IF NOT EXISTS image_history (
 CREATE INDEX IF NOT EXISTS idx_image_history_created ON image_history(created_at);
 `);
 
+// ── Engagement Manager (monitor social comments/DMs; reply in later phases) ───
+db.exec(`
+-- Monitored social channels, seeded from the connected Postiz/PostPeer channels.
+CREATE TABLE IF NOT EXISTS engage_channels (
+  id            TEXT PRIMARY KEY,
+  platform      TEXT NOT NULL,              -- youtube | instagram | facebook | tiktok
+  external_id   TEXT NOT NULL,              -- YT channelId / IG user id / FB Page id / TikTok handle
+  handle        TEXT,
+  display_name  TEXT,
+  picture       TEXT,
+  enabled       INTEGER NOT NULL DEFAULT 1, -- per-channel monitor toggle
+  reply_mode    TEXT NOT NULL DEFAULT 'off',-- off | suggest | auto (Phase 1: off)
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  UNIQUE(platform, external_id)
+);
+
+-- Ingested comments + DMs (one row per inbound item; idempotent on dedup_key).
+CREATE TABLE IF NOT EXISTS engage_inbox (
+  id            TEXT PRIMARY KEY,
+  channel_id    TEXT NOT NULL,
+  platform      TEXT NOT NULL,
+  kind          TEXT NOT NULL,             -- comment | dm
+  dedup_key     TEXT NOT NULL,             -- platform-native id
+  thread_id     TEXT,
+  parent_id     TEXT,
+  target_ref    TEXT,                      -- videoId / postId / mediaId
+  target_title  TEXT,
+  author_name   TEXT,
+  author_handle TEXT,
+  author_id     TEXT,
+  text          TEXT NOT NULL,
+  permalink     TEXT,
+  posted_at     INTEGER,
+  ingested_at   INTEGER NOT NULL,
+  source        TEXT NOT NULL,             -- api | browser-scrape
+  reply_state   TEXT NOT NULL DEFAULT 'new',
+  UNIQUE(platform, dedup_key)
+);
+CREATE INDEX IF NOT EXISTS idx_engage_inbox_channel ON engage_inbox(channel_id, ingested_at);
+CREATE INDEX IF NOT EXISTS idx_engage_inbox_state   ON engage_inbox(reply_state);
+CREATE INDEX IF NOT EXISTS idx_engage_inbox_ingested ON engage_inbox(ingested_at);
+
+-- Reply records (populated by later phases; declared now to avoid a migration).
+CREATE TABLE IF NOT EXISTS engage_replies (
+  id            TEXT PRIMARY KEY,
+  inbox_id      TEXT NOT NULL,
+  channel_id    TEXT NOT NULL,
+  platform      TEXT NOT NULL,
+  status        TEXT NOT NULL,             -- pending | sent | failed | skipped
+  mechanism     TEXT,                      -- youtube-api | browser
+  generated_text TEXT,
+  decide_reason TEXT,
+  not_before    INTEGER NOT NULL,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  external_reply_id TEXT,
+  error         TEXT,
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  sent_at       INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_engage_replies_due ON engage_replies(status, not_before);
+
+-- Per-platform fixed-window rate counters (throttle in later phases).
+CREATE TABLE IF NOT EXISTS engage_rate_counters (
+  platform      TEXT NOT NULL,
+  window_kind   TEXT NOT NULL,             -- hour | day
+  window_start  INTEGER NOT NULL,
+  sent_count    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (platform, window_kind, window_start)
+);
+
+-- Singleton settings + kill-switch (id='singleton'). kill_switch DEFAULTS ON (1).
+CREATE TABLE IF NOT EXISTS engage_settings (
+  id               TEXT PRIMARY KEY DEFAULT 'singleton',
+  kill_switch      INTEGER NOT NULL DEFAULT 1,
+  global_autoreply INTEGER NOT NULL DEFAULT 0,
+  caps_json        TEXT,
+  pacing_json      TEXT,
+  reply_prompt_md  TEXT,
+  updated_at       INTEGER NOT NULL
+);
+`);
+
+/**
+ * Additive migration: cache the resolved YouTube uploads playlist id on each
+ * monitored channel, so the Engagement Manager's poll loop skips a channels.list
+ * lookup (1 quota unit/channel/cycle) once it's been resolved by the seeder.
+ * Nullable so a channel resolves it lazily on the first poll.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(engage_channels)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "uploads_playlist_id")) {
+    db.exec("ALTER TABLE engage_channels ADD COLUMN uploads_playlist_id TEXT");
+  }
+}
+
+/**
+ * Additive migration: per-channel engagement STATS snapshot (subscribers/
+ * followers · comments · likes) shown atop each channel column. Refreshed on a
+ * throttled cadence (ENGAGE_STATS_TTL_MS, default 1h) by the monitor; nullable so
+ * a channel reads `stats: null` until its first refresh (stats_updated_at is the
+ * "never fetched" sentinel).
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(engage_channels)").all() as Array<{ name: string }>;
+  const add = (name: string, decl: string) => {
+    if (!cols.some((c) => c.name === name)) db.exec(`ALTER TABLE engage_channels ADD COLUMN ${name} ${decl}`);
+  };
+  add("audience_count", "INTEGER");
+  add("comment_count", "INTEGER");
+  add("like_count", "INTEGER");
+  add("stats_updated_at", "INTEGER");
+}
+
+/**
+ * Additive migration: a per-channel access token, used by the Engagement Manager's
+ * Meta (Instagram + Facebook) monitoring to store each FB Page's PAGE access token
+ * (resolved from the operator's long-lived user token during seed) so the poll
+ * loop can READ that Page/IG account's comments. Nullable — only Meta channels set
+ * it; YouTube channels leave it null (they read via the shared Data API key). This
+ * is a server-only secret, never returned through any HTTP response.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(engage_channels)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "access_token")) {
+    db.exec("ALTER TABLE engage_channels ADD COLUMN access_token TEXT");
+  }
+}
+
+/**
+ * Additive migration: the FB Page id a Meta channel's conversations (DMs) live on.
+ * DM monitoring reads /{pageId}/conversations, so BOTH the facebook channel (where
+ * meta_page_id == external_id) and the linked instagram channel (whose external_id
+ * is the IG user id, NOT a page id) need the FB Page id stored here. Nullable —
+ * only Meta channels set it; YouTube channels leave it null.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(engage_channels)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "meta_page_id")) {
+    db.exec("ALTER TABLE engage_channels ADD COLUMN meta_page_id TEXT");
+  }
+}
+
+/**
+ * Additive migration: the last time a TikTok channel was polled via the Apify actor
+ * (epoch-ms). TikTok scraping costs Apify credits, so the monitor polls it on a
+ * SEPARATE SLOW cadence (ENGAGE_TIKTOK_POLL_INTERVAL_MS, default 6h) rather than
+ * every 10-min cycle — this column is the throttle timestamp. Nullable ("never
+ * polled" sentinel); only TikTok channels set it.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(engage_channels)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "tiktok_polled_at")) {
+    db.exec("ALTER TABLE engage_channels ADD COLUMN tiktok_polled_at INTEGER");
+  }
+}
+
 /**
  * Additive migration: real search-volume columns on the keyword cache, populated
  * by the optional DataForSEO provider (monthly Google search volume + CPC + paid

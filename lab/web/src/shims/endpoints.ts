@@ -1060,3 +1060,168 @@ export type PollRendiStatusOutputType = {
   errorMessage: string | null;
   pollIntervalMs: number;
 };
+
+// ── Engagement Manager (LAB tool) ────────────────────────────────────────────
+// Local mirrors of server/src/engage/types.ts (the frontend can't import server
+// types — these are kept structurally identical so the page type-checks alone).
+// Phase 1: MONITOR connected channels' comments/DMs into a single inbox.
+export type EngagePlatform = "youtube" | "instagram" | "facebook" | "tiktok";
+export type EngageInboxKind = "comment" | "dm";
+export type EngageIngestSource = "api" | "browser-scrape";
+/** Per-channel autonomy: off = don't reply, suggest = draft for approval, auto = send. */
+export type EngageReplyMode = "off" | "suggest" | "auto";
+/** Lifecycle of an inbound item's reply. */
+export type EngageReplyState = "new" | "queued" | "replied" | "skipped" | "failed";
+
+/** Rolled-up audience/engagement stats for a channel (populated by the backend poll). */
+export interface ChannelStats {
+  /** Subscribers (YouTube) / followers (everything else). */
+  audience: number | null;
+  comments: number | null;
+  likes: number | null;
+  updatedAt: number | null;
+}
+
+/** A monitored social channel (seeded from the connected Postiz/PostPeer channels). */
+export interface EngageChannel {
+  id: string;
+  platform: EngagePlatform;
+  externalId: string;
+  handle: string | null;
+  displayName: string | null;
+  picture: string | null;
+  enabled: boolean;
+  replyMode: EngageReplyMode;
+  /** Audience/engagement stats, or null until first fetched. */
+  stats: ChannelStats | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One inbound comment or DM we've seen. */
+export interface InboxItem {
+  id: string;
+  channelId: string;
+  platform: EngagePlatform;
+  kind: EngageInboxKind;
+  dedupKey: string;
+  threadId: string | null;
+  parentId: string | null;
+  targetRef: string | null;
+  targetTitle: string | null;
+  authorName: string | null;
+  authorHandle: string | null;
+  authorId: string | null;
+  text: string;
+  permalink: string | null;
+  /** When THEY posted it (platform timestamp, epoch-ms). */
+  postedAt: number | null;
+  /** When WE ingested it (epoch-ms). */
+  ingestedAt: number;
+  source: EngageIngestSource;
+  replyState: EngageReplyState;
+}
+
+/** A generated/sent reply record (populated by later phases). */
+export interface ReplyRecord {
+  id: string;
+  inboxId: string;
+  channelId: string;
+  platform: EngagePlatform;
+  status: "pending" | "sent" | "failed" | "skipped";
+  mechanism: "youtube-api" | "browser" | null;
+  generatedText: string | null;
+  decideReason: string | null;
+  notBefore: number;
+  attempts: number;
+  externalReplyId: string | null;
+  error: string | null;
+  costUsd: number;
+  createdAt: number;
+  updatedAt: number;
+  sentAt: number | null;
+}
+
+/** Live status for the UI (config + rolled-up counts). */
+export interface EngageStatus {
+  youtubeConfigured: boolean;
+  channels: EngageChannel[];
+  killSwitch: boolean;
+  globalAutoreply: boolean;
+  counts: {
+    total: number;
+    new: number;
+    byPlatform: Partial<Record<EngagePlatform, number>>;
+  };
+  lastPollAt: number | null;
+  polling: boolean;
+  lastError: string | null;
+}
+
+export interface EngageListInboxInput {
+  platform?: EngagePlatform;
+  kind?: EngageInboxKind;
+  replyState?: EngageReplyState;
+  channelId?: string;
+  q?: string;
+  limit?: number;
+  offset?: number;
+}
+export interface EngageListInboxOutput {
+  items: InboxItem[];
+  total: number;
+}
+/** A top-level comment/DM plus its full reply tree, chronologically ordered. */
+export interface InboxThread {
+  root: InboxItem;
+  replies: InboxItem[];
+  replyCount: number;
+  lastActivityAt: number | null;
+}
+/** Thread ordering: newest/oldest by the top-level comment's postedAt, most-active, or most-replied. */
+export type EngageThreadSort = "newest" | "oldest" | "active" | "replies";
+export interface EngageListThreadsInput {
+  channelId?: string;
+  platform?: EngagePlatform;
+  kind?: EngageInboxKind;
+  q?: string;
+  sort?: EngageThreadSort;
+  limit?: number;
+  offset?: number;
+}
+export interface EngageListThreadsOutput {
+  threads: InboxThread[];
+  total: number;
+}
+export interface EngageGetThreadOutput {
+  item: InboxItem | null;
+  thread: InboxItem[];
+  reply: ReplyRecord | null;
+}
+export interface EngageSetChannelModeInput {
+  channelId: string;
+  enabled?: boolean;
+  replyMode?: EngageReplyMode;
+}
+
+export const engageStatus = endpoint<Record<string, never>, EngageStatus>("engageStatus");
+export const engageListInbox =
+  endpoint<EngageListInboxInput, EngageListInboxOutput>("engageListInbox");
+export const engageListThreads =
+  endpoint<EngageListThreadsInput, EngageListThreadsOutput>("engageListThreads");
+export const engageGetThread =
+  endpoint<{ inboxId: string }, EngageGetThreadOutput>("engageGetThread");
+export const engageSetChannelMode =
+  endpoint<EngageSetChannelModeInput, EngageChannel>("engageSetChannelMode");
+export const engageKillSwitch =
+  endpoint<{ killSwitch: boolean }, { killSwitch: boolean }>("engageKillSwitch");
+export const engageRefreshChannels =
+  endpoint<Record<string, never>, { channels: EngageChannel[] }>("engageRefreshChannels");
+export const engagePollNow =
+  endpoint<Record<string, never>, { started: boolean; message?: string }>("engagePollNow");
+/**
+ * Optional: refresh per-channel audience/engagement stats. The backend handler
+ * may not exist yet — callers should treat a rejection as a graceful no-op.
+ */
+export const engageRefreshStats =
+  endpoint<Record<string, never>, { channels: EngageChannel[] }>("engageRefreshStats");

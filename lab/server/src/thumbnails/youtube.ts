@@ -362,6 +362,10 @@ export async function searchKeywordVideos(
 /** Video stats joined onto a keyword hit (from videos.list). */
 export interface VideoStats {
   views: number;
+  /** likeCount from statistics (0 when hidden/absent) — summed for engagement reads. */
+  likes: number;
+  /** commentCount from statistics (0 when disabled/absent) — summed for engagement reads. */
+  comments: number;
   publishedAt: string | null;
   /** Duration in seconds (from contentDetails) — used to drop Shorts. */
   durationSeconds: number;
@@ -369,7 +373,8 @@ export interface VideoStats {
 
 /**
  * Parse a videos.list (part=statistics,snippet,contentDetails) response into
- * videoId → stats (views, publish date, duration). Pure + exported for testing.
+ * videoId → stats (views, likes, comments, publish date, duration). Pure +
+ * exported for testing.
  */
 export function parseVideoStats(json: any): Map<string, VideoStats> {
   const out = new Map<string, VideoStats>();
@@ -378,9 +383,13 @@ export function parseVideoStats(json: any): Map<string, VideoStats> {
     const id = it?.id;
     if (typeof id !== "string" || !id) continue;
     const views = Number(it?.statistics?.viewCount);
+    const likes = Number(it?.statistics?.likeCount);
+    const comments = Number(it?.statistics?.commentCount);
     const publishedAt = typeof it?.snippet?.publishedAt === "string" ? it.snippet.publishedAt : null;
     out.set(id, {
       views: Number.isFinite(views) ? views : 0,
+      likes: Number.isFinite(likes) ? likes : 0,
+      comments: Number.isFinite(comments) ? comments : 0,
       publishedAt,
       durationSeconds: parseIsoDurationSeconds(it?.contentDetails?.duration),
     });

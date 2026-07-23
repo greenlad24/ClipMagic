@@ -11,6 +11,7 @@ import {
   Sparkles,
   TrendingUp,
   PenLine,
+  MessagesSquare,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -189,6 +190,19 @@ export const TOOLS: ToolDefinition[] = [
     accent: 'primary',
     detail: 'Opus 4.8 scripts',
     // Needs the Anthropic key (set in the same write-only Postiz settings).
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'engagement',
+    title: 'Engagement Manager',
+    description:
+      'Monitor comments & DMs across your connected channels in one inbox — starting with YouTube.',
+    icon: MessagesSquare,
+    route: '/engagement',
+    status: 'live',
+    accent: 'blue',
+    detail: 'Comment inbox',
+    // Needs the YouTube Data API key (set in the same write-only Postiz settings).
     configureRoute: '/settings/postiz',
   },
   {
