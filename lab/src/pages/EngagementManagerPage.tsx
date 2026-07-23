@@ -717,6 +717,14 @@ export default function EngagementManagerPage() {
               <RefreshCw className="h-[13px] w-[13px] opacity-70" />
               Synced {relTime(status?.lastPollAt ?? null)}
             </span>
+            {/* Replies live on their own page — this board stays a clean monitor. */}
+            <Link
+              to="/engagement/replies"
+              className="inline-flex items-center gap-1.5 rounded-[9px] border border-border bg-card px-3 py-[7px] text-[12.5px] font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <Bot className="h-[14px] w-[14px]" />
+              Replies
+            </Link>
             <button
               type="button"
               onClick={() => void toggleBot()}

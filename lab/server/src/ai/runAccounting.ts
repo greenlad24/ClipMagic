@@ -97,7 +97,12 @@ export type CallPurpose =
   | "keyword-extract"
   // Jake Dawson Script Generator: every stage (classify/research/outline/hooks/
   // sponsor/section/review/outro) runs on Opus (director tier).
-  | "scriptgen";
+  | "scriptgen"
+  // Engagement Manager: drafts one reply to one inbound comment/DM in Jake's
+  // voice (director tier). Runs OUTSIDE a render run, so this is booked via
+  // claudeJSONForPurposeWithUsage into the reply row's own cost_usd rather than
+  // into a run report.
+  | "engagement-reply";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

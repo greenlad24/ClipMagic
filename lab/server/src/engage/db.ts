@@ -731,3 +731,194 @@ export function totalCount(): number {
 export function newCount(): number {
   return (db.prepare("SELECT COUNT(*) AS n FROM engage_inbox WHERE reply_state = 'new'").get() as { n: number }).n;
 }
+
+// ── engage_replies (Phase 3: draft → queue → send) ────────────────────────────
+
+export interface CreateReplyInput {
+  inboxId: string;
+  channelId: string;
+  platform: Platform;
+  status: ReplyRecord["status"];
+  mechanism: ReplyRecord["mechanism"];
+  generatedText: string | null;
+  decideReason: string | null;
+  /** Earliest dispatch time (human pacing pushes this into the future). */
+  notBefore: number;
+  costUsd?: number;
+}
+
+/**
+ * Record a reply decision. One row per (inbox item, attempt-cycle): a 'skipped'
+ * row is written for items we deliberately don't answer, so the queue is an
+ * audit trail of every decision rather than only the replies that went out.
+ */
+export function createReply(input: CreateReplyInput): ReplyRecord {
+  const id = nanoid();
+  const t = now();
+  db.prepare(
+    `INSERT INTO engage_replies
+       (id, inbox_id, channel_id, platform, status, mechanism, generated_text, decide_reason,
+        not_before, attempts, external_reply_id, error, cost_usd, created_at, updated_at, sent_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, ?, ?, ?, NULL)`,
+  ).run(
+    id,
+    input.inboxId,
+    input.channelId,
+    input.platform,
+    input.status,
+    input.mechanism,
+    input.generatedText,
+    input.decideReason,
+    input.notBefore,
+    input.costUsd ?? 0,
+    t,
+    t,
+  );
+  return getReply(id)!;
+}
+
+export function getReply(id: string): ReplyRecord | null {
+  const row = db.prepare("SELECT * FROM engage_replies WHERE id = ?").get(id) as ReplyRow | undefined;
+  return row ? rowToReply(row) : null;
+}
+
+export interface UpdateReplyPatch {
+  status?: ReplyRecord["status"];
+  generatedText?: string | null;
+  decideReason?: string | null;
+  notBefore?: number;
+  attempts?: number;
+  externalReplyId?: string | null;
+  error?: string | null;
+  costUsd?: number;
+  sentAt?: number | null;
+}
+
+export function updateReply(id: string, patch: UpdateReplyPatch): ReplyRecord | null {
+  const sets: string[] = [];
+  const vals: any[] = [];
+  const put = (col: string, v: any) => {
+    sets.push(`${col} = ?`);
+    vals.push(v);
+  };
+  if (patch.status !== undefined) put("status", patch.status);
+  if (patch.generatedText !== undefined) put("generated_text", patch.generatedText);
+  if (patch.decideReason !== undefined) put("decide_reason", patch.decideReason);
+  if (patch.notBefore !== undefined) put("not_before", patch.notBefore);
+  if (patch.attempts !== undefined) put("attempts", patch.attempts);
+  if (patch.externalReplyId !== undefined) put("external_reply_id", patch.externalReplyId);
+  if (patch.error !== undefined) put("error", patch.error);
+  if (patch.costUsd !== undefined) put("cost_usd", patch.costUsd);
+  if (patch.sentAt !== undefined) put("sent_at", patch.sentAt);
+  if (sets.length === 0) return getReply(id);
+  put("updated_at", now());
+  db.prepare(`UPDATE engage_replies SET ${sets.join(", ")} WHERE id = ?`).run(...vals, id);
+  return getReply(id);
+}
+
+/** True when this inbox item already has a reply row (any status). */
+export function hasReply(inboxId: string): boolean {
+  const row = db.prepare("SELECT 1 AS n FROM engage_replies WHERE inbox_id = ? LIMIT 1").get(inboxId) as
+    | { n: number }
+    | undefined;
+  return !!row;
+}
+
+/**
+ * Replies that are due to be dispatched: pending, past their not_before, and
+ * not yet exhausted their retries. Oldest first so the queue drains in order.
+ */
+export function dueReplies(limit = 5, at: number = now(), maxAttempts = 3): ReplyRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT * FROM engage_replies
+        WHERE status = 'pending' AND not_before <= ? AND attempts < ?
+        ORDER BY not_before ASC LIMIT ?`,
+    )
+    .all(at, maxAttempts, limit) as ReplyRow[];
+  return rows.map(rowToReply);
+}
+
+export interface ListRepliesInput {
+  status?: ReplyRecord["status"];
+  platform?: Platform;
+  channelId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** The review queue: replies newest-first, with their inbox item joined in. */
+export function listReplies(filters: ListRepliesInput = {}): { replies: ReplyRecord[]; total: number } {
+  const where: string[] = [];
+  const vals: any[] = [];
+  if (filters.status) {
+    where.push("status = ?");
+    vals.push(filters.status);
+  }
+  if (filters.platform) {
+    where.push("platform = ?");
+    vals.push(filters.platform);
+  }
+  if (filters.channelId) {
+    where.push("channel_id = ?");
+    vals.push(filters.channelId);
+  }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM engage_replies ${clause}`).get(...vals) as { n: number }).n;
+  const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
+  const offset = Math.max(filters.offset ?? 0, 0);
+  const rows = db
+    .prepare(`SELECT * FROM engage_replies ${clause} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .all(...vals, limit, offset) as ReplyRow[];
+  return { replies: rows.map(rowToReply), total };
+}
+
+/** Move an inbox item through its reply lifecycle (new → queued → replied/skipped). */
+export function setInboxReplyState(inboxId: string, state: ReplyState): void {
+  db.prepare("UPDATE engage_inbox SET reply_state = ? WHERE id = ?").run(state, inboxId);
+}
+
+/**
+ * Inbox items eligible for a reply decision: never seen by the reply worker,
+ * on an enabled channel whose reply_mode is not 'off', and not authored by the
+ * channel owner themselves (never reply to your own comment).
+ */
+export function replyCandidates(platform: Platform, limit = 10): InboxItem[] {
+  const rows = db
+    .prepare(
+      `SELECT i.* FROM engage_inbox i
+         JOIN engage_channels c ON c.id = i.channel_id
+        WHERE i.platform = ?
+          AND i.reply_state = 'new'
+          AND c.enabled = 1
+          AND c.reply_mode != 'off'
+          AND NOT EXISTS (SELECT 1 FROM engage_replies r WHERE r.inbox_id = i.id)
+          AND (c.external_id IS NULL OR i.author_id IS NULL OR i.author_id != c.external_id)
+        ORDER BY i.posted_at DESC
+        LIMIT ?`,
+    )
+    .all(platform, limit) as any[];
+  return rows.map(rowToInbox);
+}
+
+// ── engage_rate_counters (fixed-window throttle) ──────────────────────────────
+
+/** Count of replies sent on a platform in the given window. */
+export function sentInWindow(platform: Platform, windowKind: "hour" | "day", windowStart: number): number {
+  const row = db
+    .prepare(
+      "SELECT sent_count AS n FROM engage_rate_counters WHERE platform = ? AND window_kind = ? AND window_start = ?",
+    )
+    .get(platform, windowKind, windowStart) as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
+/** Bump a window's counter by one (upsert). Called only after a real send. */
+export function bumpRateCounter(platform: Platform, windowKind: "hour" | "day", windowStart: number): void {
+  db.prepare(
+    `INSERT INTO engage_rate_counters (platform, window_kind, window_start, sent_count)
+     VALUES (?, ?, ?, 1)
+     ON CONFLICT(platform, window_kind, window_start)
+     DO UPDATE SET sent_count = sent_count + 1`,
+  ).run(platform, windowKind, windowStart);
+}

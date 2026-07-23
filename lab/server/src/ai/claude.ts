@@ -58,7 +58,7 @@ function resolveTier(openaiModel: string, system: string): "director" | "researc
   return "research";
 }
 
-interface AnthropicUsage {
+export interface AnthropicUsage {
   input_tokens?: number;
   output_tokens?: number;
   cache_creation_input_tokens?: number;
@@ -284,6 +284,14 @@ async function callClaude(opts: {
   jsonMode?: boolean;
   /** Purpose for per-run accounting (so the optimization report can attribute cost). */
   purpose?: CallPurpose;
+  /**
+   * Receives the provider's own `usage` block for THIS call. The run-scoped
+   * accounting above only records while a render run is active (`activeRun`),
+   * so callers that run outside a run — e.g. the Engagement Manager's autonomous
+   * reply generator, which spends money unattended — use this to price their own
+   * calls instead of estimating.
+   */
+  onUsage?: (usage: AnthropicUsage | undefined, ms: number) => void;
 }): Promise<string> {
   if (!anthropicConfigured()) {
     throw new Error(
@@ -309,10 +317,12 @@ async function callClaude(opts: {
 
   const t0 = Date.now();
   const json = await anthropicRequest(body, "Claude API error");
+  const ms = Date.now() - t0;
   // Record the REAL usage from Anthropic's response into the active run's report.
   if (opts.purpose) {
-    recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+    recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms });
   }
+  opts.onUsage?.(json.usage, ms);
   return (json.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
@@ -591,6 +601,38 @@ export async function claudeJSONForPurpose(opts: {
     purpose: opts.purpose,
   });
   return extractJson(raw);
+}
+
+/**
+ * JSON completion on an explicit tier that ALSO hands the caller the provider's
+ * own token usage for that single call.
+ *
+ * `recordAnthropicUsage` only books cost while a render run is active, so any
+ * caller running outside the pipeline gets nothing back from it. The Engagement
+ * Manager generates replies autonomously, on a timer, with no run in scope — it
+ * needs the real token counts to price each reply it stores rather than guess.
+ */
+export async function claudeJSONForPurposeWithUsage(opts: {
+  tier: "director" | "research" | "fast";
+  purpose: CallPurpose;
+  system: string;
+  messages: Turn[];
+}): Promise<{ json: string; usage: AnthropicUsage | undefined; model: string; ms: number }> {
+  const model = modelForTier(opts.tier);
+  let usage: AnthropicUsage | undefined;
+  let ms = 0;
+  const raw = await callClaude({
+    model,
+    system: opts.system,
+    messages: opts.messages,
+    jsonMode: true,
+    purpose: opts.purpose,
+    onUsage: (u, elapsed) => {
+      usage = u;
+      ms = elapsed;
+    },
+  });
+  return { json: extractJson(raw), usage, model, ms };
 }
 
 /**

@@ -83,13 +83,25 @@ export interface InboxItem {
   replyState: ReplyState;
 }
 
-/** A generated/sent reply record (populated by later phases). */
+/**
+ * Lifecycle of a generated reply:
+ *  - draft   — written for a 'suggest'-mode channel; waits for a human to
+ *              approve it. NEVER dispatched on its own.
+ *  - pending — approved (or drafted in 'auto' mode); queued for dispatch once
+ *              notBefore passes and the throttle allows it.
+ *  - sent    — posted to the platform.
+ *  - failed  — dispatch attempted and failed (attempts is exhausted).
+ *  - skipped — deliberately not answered; decideReason says why.
+ */
+export type ReplyStatus = "draft" | "pending" | "sent" | "failed" | "skipped";
+
+/** A generated/sent reply record. */
 export interface ReplyRecord {
   id: string;
   inboxId: string;
   channelId: string;
   platform: Platform;
-  status: "pending" | "sent" | "failed" | "skipped";
+  status: ReplyStatus;
   mechanism: "youtube-api" | "browser" | null;
   generatedText: string | null;
   decideReason: string | null;
@@ -231,4 +243,121 @@ export interface RefreshChannelsOutput {
 export interface PollNowOutput {
   started: boolean;
   message?: string;
+}
+
+// ── Handler I/O (Phase 3: replies + browser console) ─────────────────────────
+
+/** A reply row joined with the inbox item it answers — the review queue's unit. */
+export interface ReplyQueueEntry {
+  reply: ReplyRecord;
+  /** The comment/DM being answered. Null if the item was deleted since. */
+  item: InboxItem | null;
+}
+
+export interface ListRepliesInput {
+  status?: ReplyStatus;
+  platform?: Platform;
+  channelId?: string;
+  limit?: number;
+  offset?: number;
+}
+export interface ListRepliesOutput {
+  entries: ReplyQueueEntry[];
+  total: number;
+}
+
+/** Approve a drafted reply (optionally editing the text first) and queue it. */
+export interface ApproveReplyInput {
+  replyId: string;
+  /** Replaces the generated text when provided. */
+  text?: string;
+  /** Send immediately rather than after the usual human delay. */
+  now?: boolean;
+}
+
+/** Reject a drafted/queued reply — records it as skipped, never sends it. */
+export interface RejectReplyInput {
+  replyId: string;
+  reason?: string;
+}
+
+/** Draft a reply for one inbox item on demand (ignores reply_mode). */
+export interface DraftReplyInput {
+  inboxId: string;
+}
+
+/** Per-platform throttle usage for the UI. */
+export interface ThrottleUsage {
+  platform: Platform;
+  hour: { used: number; cap: number };
+  day: { used: number; cap: number };
+}
+
+/** Live state of one platform's login browser. */
+export interface BrowserStatusEntry {
+  platform: Platform;
+  available: boolean;
+  open: boolean;
+  loggedIn: boolean | null;
+  url: string | null;
+  error: string | null;
+  checkedAt: number | null;
+}
+
+/** Everything the reply half of the UI needs in one call. */
+export interface ReplyStatusOutput {
+  /** Master safety switch (true = autonomy paused). */
+  killSwitch: boolean;
+  /** Whether approved replies actually dispatch. */
+  globalAutoreply: boolean;
+  /** True when a voice prompt is stored (generation is inert without one). */
+  replyPromptSet: boolean;
+  /** True when Anthropic credentials are present. */
+  aiConfigured: boolean;
+  /** True when the sender stops short of posting (ENGAGE_REPLY_DRY_RUN). */
+  dryRun: boolean;
+  pacing: Pacing;
+  usage: ThrottleUsage[];
+  browsers: BrowserStatusEntry[];
+  counts: { draft: number; pending: number; sent: number; failed: number; skipped: number };
+}
+
+/** Update the operator-supplied settings (voice prompt, caps, pacing). */
+export interface UpdateEngageSettingsInput {
+  replyPromptMd?: string;
+  globalAutoreply?: boolean;
+  caps?: Partial<Record<Platform, RateCaps>>;
+  pacing?: Pacing;
+}
+
+// ── Browser login console I/O ────────────────────────────────────────────────
+
+export interface BrowserActionInput {
+  platform: Platform;
+}
+export interface BrowserClickInput extends BrowserActionInput {
+  /** Click position as a FRACTION of the rendered image (0..1), scaled server-side. */
+  xFrac: number;
+  yFrac: number;
+}
+export interface BrowserTypeInput extends BrowserActionInput {
+  text: string;
+}
+export interface BrowserKeyInput extends BrowserActionInput {
+  key: string;
+}
+export interface BrowserScrollInput extends BrowserActionInput {
+  dy: number;
+}
+export interface BrowserNavigateInput extends BrowserActionInput {
+  url: string;
+}
+export interface BrowserFrameOutput {
+  /** base64 JPEG of the viewport. */
+  image: string | null;
+  url: string | null;
+  error: string | null;
+  /** Viewport size the coordinates are scaled against. */
+  width: number;
+  height: number;
 }

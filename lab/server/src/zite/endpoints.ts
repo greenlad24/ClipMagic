@@ -164,6 +164,13 @@ import {
   countsByPlatform as engageCountsByPlatform,
   totalCount as engageTotalCount,
   newCount as engageNewCount,
+  getChannel as getEngageChannel,
+  createReply as createEngageReply,
+  getReply as getEngageReply,
+  updateReply as updateEngageReply,
+  listReplies as listEngageReplies,
+  hasReply as hasEngageReply,
+  setInboxReplyState as setEngageInboxReplyState,
 } from "../engage/db.js";
 import { youtubeConfigured as engageYoutubeConfigured } from "../engage/youtube.js";
 import { metaConfigured as engageMetaConfigured } from "../engage/metaGraph.js";
@@ -171,6 +178,13 @@ import { tiktokConfigured as engageTiktokConfigured } from "../engage/tiktok.js"
 import { seedChannelsFromConnected } from "../engage/seed.js";
 import { pollOnce as engagePollOnce, refreshAllChannelStats as engageRefreshAllChannelStats } from "../engage/monitor.js";
 import { getRegistry as getEngageRegistry } from "../engage/registry.js";
+import { replyCycleNow, replyWorkerState } from "../engage/replyWorker.js";
+import { dryRunEnabled as engageDryRun } from "../engage/senders.js";
+import { canSend as engageCanSend, scheduleAt as engageScheduleAt, usage as engageThrottleUsage } from "../engage/throttle.js";
+import { generateReply as engageGenerateReply, replyGenReady } from "../engage/replyGen.js";
+import { VIEWPORT as ENGAGE_VIEWPORT, BROWSER_PLATFORMS, isBrowserPlatform } from "../engage/browser.js";
+import * as engageConsole from "../engage/browserSession.js";
+import { anthropicConfigured as engageAiConfigured } from "../ai/claude.js";
 import type {
   EngageStatus,
   ListInboxInput,
@@ -180,6 +194,10 @@ import type {
   InboxKind,
   Platform as EngagePlatform,
   ReplyState,
+  ReplyStatus,
+  ReplyQueueEntry,
+  ReplyStatusOutput,
+  BrowserFrameOutput,
 } from "../engage/types.js";
 
 type Handler = (input: any, userId: string) => Promise<any>;
@@ -3341,6 +3359,304 @@ const engageRefreshStats: Handler = async () => {
   return { refreshed, channels: listEngageChannels() };
 };
 
+
+// ── Engagement Manager — replies (Phase 3: draft → approve → send) ───────────
+
+const ENGAGE_REPLY_STATUSES: ReadonlySet<string> = new Set(["draft", "pending", "sent", "failed", "skipped"]);
+
+/** Resolve + validate a browser-driven platform from untrusted input. */
+function engageBrowserPlatform(input: any): "instagram" | "facebook" | "tiktok" {
+  const platform = String(input?.platform ?? "");
+  if (!isBrowserPlatform(platform as EngagePlatform)) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `platform must be one of: ${BROWSER_PLATFORMS.join(", ")}.`,
+    });
+  }
+  return platform as "instagram" | "facebook" | "tiktok";
+}
+
+/**
+ * Everything the reply half of the UI needs: the three safety keys, whether a
+ * voice prompt is stored, throttle usage per platform, and the login state of
+ * each platform browser. Never returns the prompt text itself (see
+ * engageGetReplyPrompt) so the 2s status poll stays small.
+ */
+const engageReplyStatus: Handler = async (): Promise<ReplyStatusOutput> => {
+  const settings = getEngageSettings();
+  const browsers = await engageConsole.listSessions();
+  const counts = { draft: 0, pending: 0, sent: 0, failed: 0, skipped: 0 };
+  for (const status of Object.keys(counts) as Array<keyof typeof counts>) {
+    counts[status] = listEngageReplies({ status: status as ReplyStatus, limit: 1 }).total;
+  }
+  return {
+    killSwitch: settings.killSwitch,
+    globalAutoreply: settings.globalAutoreply,
+    replyPromptSet: !!settings.replyPromptMd && settings.replyPromptMd.trim().length > 0,
+    aiConfigured: engageAiConfigured(),
+    dryRun: engageDryRun(),
+    pacing: settings.pacing,
+    usage: BROWSER_PLATFORMS.map((platform) => ({
+      platform: platform as EngagePlatform,
+      ...engageThrottleUsage(settings, platform as EngagePlatform),
+    })),
+    browsers: browsers.map((b) => ({ ...b, platform: b.platform as EngagePlatform })),
+    counts,
+  };
+};
+
+/** The review queue: reply rows joined with the item each one answers. */
+const engageListReplies: Handler = async (input) => {
+  const status = input?.status;
+  if (status !== undefined && !ENGAGE_REPLY_STATUSES.has(String(status))) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Unknown reply status." });
+  }
+  const { replies, total } = listEngageReplies({
+    status: status as ReplyStatus | undefined,
+    platform: input?.platform as EngagePlatform | undefined,
+    channelId: input?.channelId ? String(input.channelId) : undefined,
+    limit: input?.limit,
+    offset: input?.offset,
+  });
+  const entries: ReplyQueueEntry[] = replies.map((reply) => ({
+    reply,
+    item: getEngageInboxItem(reply.inboxId),
+  }));
+  return { entries, total };
+};
+
+/** The operator's voice prompt, for editing. */
+const engageGetReplyPrompt: Handler = async () => {
+  const settings = getEngageSettings();
+  return { replyPromptMd: settings.replyPromptMd ?? "" };
+};
+
+/**
+ * Update the operator-supplied reply settings. The voice prompt lives here (in
+ * the DB, supplied through the UI) rather than in the repo or the image.
+ */
+const engageUpdateSettings: Handler = async (input) => {
+  const patch: Record<string, unknown> = {};
+  if (typeof input?.replyPromptMd === "string") patch.replyPromptMd = input.replyPromptMd;
+  if (typeof input?.globalAutoreply === "boolean") patch.globalAutoreply = input.globalAutoreply;
+  if (input?.caps && typeof input.caps === "object") patch.caps = input.caps;
+  if (input?.pacing && typeof input.pacing === "object") {
+    const p = input.pacing;
+    const hours = Array.isArray(p.activeHours) ? p.activeHours : [8, 23];
+    patch.pacing = {
+      minDelaySec: Math.max(0, Number(p.minDelaySec) || 45),
+      maxDelaySec: Math.max(0, Number(p.maxDelaySec) || 180),
+      activeHours: [Number(hours[0]) || 0, Number(hours[1]) || 0],
+    };
+  }
+  const settings = setEngageSettings(patch as any);
+  return {
+    globalAutoreply: settings.globalAutoreply,
+    pacing: settings.pacing,
+    caps: settings.caps,
+    replyPromptSet: !!settings.replyPromptMd,
+  };
+};
+
+/**
+ * Draft a reply for one item on demand — ignores the channel's reply_mode so a
+ * human can ask for a suggestion on anything, but still lands as a `draft` that
+ * needs approving. Refuses if the item already has a reply row.
+ */
+const engageDraftReply: Handler = async (input) => {
+  const inboxId = String(input?.inboxId ?? "");
+  if (!inboxId) throw new ZiteError({ code: "BAD_REQUEST", message: "inboxId is required." });
+  const item = getEngageInboxItem(inboxId);
+  if (!item) throw new ZiteError({ code: "NOT_FOUND", message: "Inbox item not found." });
+  if (hasEngageReply(inboxId)) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This item already has a reply decision." });
+  }
+  const settings = getEngageSettings();
+  if (!replyGenReady(settings.replyPromptMd)) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "No reply prompt is configured (or the Anthropic key is missing) — reply generation is inert.",
+    });
+  }
+  const channel = getEngageChannel(item.channelId);
+  // Never draft a reply to your own comment. The background worker filters
+  // these out in SQL; this path doesn't, and without the guard we'd pay Opus
+  // just to have it notice (which it does, reliably — but that's ~$0.006 a time).
+  if (channel && item.authorId && item.authorId === channel.externalId) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "That comment is your own — there's nothing to reply to." });
+  }
+  const thread = item.threadId ? getEngageThread(item.threadId) : [];
+  const draft = await engageGenerateReply({
+    item,
+    thread,
+    channelName: channel?.displayName ?? null,
+    replyPromptMd: settings.replyPromptMd ?? "",
+  });
+
+  const reply = createEngageReply({
+    inboxId: item.id,
+    channelId: item.channelId,
+    platform: item.platform,
+    status: draft.shouldReply && draft.text ? "draft" : "skipped",
+    mechanism: "browser",
+    generatedText: draft.text,
+    decideReason: draft.reason,
+    notBefore: Date.now(),
+    costUsd: draft.costUsd,
+  });
+  setEngageInboxReplyState(item.id, draft.shouldReply && draft.text ? "queued" : "skipped");
+  return { reply };
+};
+
+/**
+ * Approve a drafted reply (optionally with edited text) and queue it for
+ * dispatch. This is the human gate for 'suggest'-mode channels.
+ */
+const engageApproveReply: Handler = async (input) => {
+  const replyId = String(input?.replyId ?? "");
+  if (!replyId) throw new ZiteError({ code: "BAD_REQUEST", message: "replyId is required." });
+  const reply = getEngageReply(replyId);
+  if (!reply) throw new ZiteError({ code: "NOT_FOUND", message: "Reply not found." });
+  if (reply.status !== "draft" && reply.status !== "failed") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: `Only draft or failed replies can be approved (this one is ${reply.status}).` });
+  }
+  const text = typeof input?.text === "string" && input.text.trim() ? input.text.trim() : reply.generatedText;
+  if (!text) throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to send — the reply has no text." });
+
+  const settings = getEngageSettings();
+  const updated = updateEngageReply(replyId, {
+    status: "pending",
+    generatedText: text,
+    // Approving resets the retry budget — a human has looked at it.
+    attempts: 0,
+    error: null,
+    notBefore: input?.now === true ? Date.now() : engageScheduleAt(settings.pacing),
+  });
+  setEngageInboxReplyState(reply.inboxId, "queued");
+  // Tell the caller straight away if the throttle will hold it back, rather
+  // than leaving them wondering why an approved reply hasn't appeared.
+  const verdict = engageCanSend(settings, reply.platform, Date.now());
+  return { reply: updated, willSend: verdict.allowed, holdReason: verdict.allowed ? null : verdict.reason };
+};
+
+/** Reject a drafted/queued reply. Records it as skipped — it is never sent. */
+const engageRejectReply: Handler = async (input) => {
+  const replyId = String(input?.replyId ?? "");
+  if (!replyId) throw new ZiteError({ code: "BAD_REQUEST", message: "replyId is required." });
+  const reply = getEngageReply(replyId);
+  if (!reply) throw new ZiteError({ code: "NOT_FOUND", message: "Reply not found." });
+  if (reply.status === "sent") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "That reply has already been sent." });
+  }
+  const reason = typeof input?.reason === "string" && input.reason.trim() ? input.reason.trim() : "Rejected by operator.";
+  const updated = updateEngageReply(replyId, { status: "skipped", decideReason: reason, error: null });
+  setEngageInboxReplyState(reply.inboxId, "skipped");
+  return { reply: updated };
+};
+
+/** Run a reply cycle now (draft + dispatch), in addition to the background loop. */
+const engageReplyCycleNow: Handler = async () => {
+  const settings = getEngageSettings();
+  if (settings.killSwitch) {
+    return { started: false, message: "Kill-switch is armed — the reply worker is paused." };
+  }
+  const { started } = replyCycleNow();
+  const worker = replyWorkerState();
+  return { started, message: started ? undefined : "A reply cycle is already running.", lastError: worker.lastError };
+};
+
+// ── Engagement Manager — browser login console (Phase 3) ─────────────────────
+
+function engageFrame(out: { image: string | null; url: string | null; error: string | null }): BrowserFrameOutput {
+  return { ...out, width: ENGAGE_VIEWPORT.width, height: ENGAGE_VIEWPORT.height };
+}
+
+/** Login state of each platform browser. */
+const engageBrowserStatus: Handler = async () => {
+  const sessions = await engageConsole.listSessions();
+  return { sessions };
+};
+
+/** Launch (or re-check) a platform's browser and return the first frame. */
+const engageBrowserOpen: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const status = await engageConsole.openSession(platform);
+  const frame = await engageConsole.frame(platform);
+  return { status, frame: engageFrame(frame) };
+};
+
+/** Current frame — this is what the console polls while someone is logging in. */
+const engageBrowserFrame: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  return { frame: engageFrame(await engageConsole.frame(platform)) };
+};
+
+/**
+ * Click at a position given as a FRACTION of the rendered image, scaled here to
+ * the real viewport — so the console works at whatever size the browser renders
+ * it, and a bad coordinate can't be used to poke outside the page.
+ */
+const engageBrowserClick: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const xFrac = Math.min(Math.max(Number(input?.xFrac) || 0, 0), 1);
+  const yFrac = Math.min(Math.max(Number(input?.yFrac) || 0, 0), 1);
+  const frame = await engageConsole.click(
+    platform,
+    Math.round(xFrac * ENGAGE_VIEWPORT.width),
+    Math.round(yFrac * ENGAGE_VIEWPORT.height),
+  );
+  return { frame: engageFrame(frame) };
+};
+
+/** Type into whatever is focused in the console (e.g. the platform's login form). */
+const engageBrowserType: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const text = String(input?.text ?? "");
+  if (!text) throw new ZiteError({ code: "BAD_REQUEST", message: "text is required." });
+  if (text.length > 500) throw new ZiteError({ code: "BAD_REQUEST", message: "text is too long." });
+  const frame = await engageConsole.type(platform, text);
+  return { frame: engageFrame(frame) };
+};
+
+/** Press a single named key (Enter, Tab, Backspace…). */
+const engageBrowserKey: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const key = String(input?.key ?? "");
+  if (!/^[A-Za-z0-9]+$/.test(key)) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "key must be a simple key name (Enter, Tab, Backspace…)." });
+  }
+  const frame = await engageConsole.pressKey(platform, key);
+  return { frame: engageFrame(frame) };
+};
+
+/** Scroll the console page. */
+const engageBrowserScroll: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const dy = Math.min(Math.max(Number(input?.dy) || 0, -2000), 2000);
+  const frame = await engageConsole.scroll(platform, dy);
+  return { frame: engageFrame(frame) };
+};
+
+/** Navigate the console. Allow-listed to the platform's own domains. */
+const engageBrowserNavigate: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const frame = await engageConsole.navigate(platform, String(input?.url ?? ""));
+  return { frame: engageFrame(frame) };
+};
+
+/** Re-check whether the profile is still signed in (after finishing a login). */
+const engageBrowserVerify: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  return { status: await engageConsole.verifySession(platform) };
+};
+
+/** Close a platform's browser. The logged-in profile on disk survives. */
+const engageBrowserClose: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  await engageConsole.closeSession(platform);
+  return { ok: true };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -3492,6 +3808,25 @@ export const HANDLERS: Record<string, Handler> = {
   engageRefreshStats,
   metaStatus,
   tiktokStatus,
+  // Engagement Manager (LAB tool — Phase 3: replies + browser login console)
+  engageReplyStatus,
+  engageListReplies,
+  engageGetReplyPrompt,
+  engageUpdateSettings,
+  engageDraftReply,
+  engageApproveReply,
+  engageRejectReply,
+  engageReplyCycleNow,
+  engageBrowserStatus,
+  engageBrowserOpen,
+  engageBrowserFrame,
+  engageBrowserClick,
+  engageBrowserType,
+  engageBrowserKey,
+  engageBrowserScroll,
+  engageBrowserNavigate,
+  engageBrowserVerify,
+  engageBrowserClose,
 };
 
 void config;

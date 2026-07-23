@@ -11,6 +11,7 @@ import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
 import { startMonitor } from "./engage/monitor.js";
+import { startReplyWorker } from "./engage/replyWorker.js";
 import uploadsRouter from "./routes/uploads.js";
 import renderRouter, { rendiRouter } from "./routes/render.js";
 import projectsRouter from "./routes/projects.js";
@@ -176,6 +177,9 @@ app.listen(config.port, config.host, () => {
   // Engagement Manager: always-on read-only YouTube comment monitor. Resilient
   // (never throws), quota-bounded, 10-min interval. Durable data lives in SQLite.
   startMonitor();
+  // Engagement Manager: autonomous reply worker. Inert while the kill-switch is
+  // armed (its default), so this is a no-op until someone opts in.
+  startReplyWorker();
 });
 
 /**

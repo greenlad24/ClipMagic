@@ -1225,3 +1225,134 @@ export const engagePollNow =
  */
 export const engageRefreshStats =
   endpoint<Record<string, never>, { channels: EngageChannel[] }>("engageRefreshStats");
+
+// ── Engagement Manager — replies + browser console (LAB tool, Phase 3) ───────
+// Local mirrors of server/src/engage/types.ts (the frontend can't import server
+// types — kept structurally identical so the page type-checks alone).
+
+export type EngageReplyStatus = "draft" | "pending" | "sent" | "failed" | "skipped";
+
+export interface EngageReplyRecord {
+  id: string;
+  inboxId: string;
+  channelId: string;
+  platform: EngagePlatform;
+  status: EngageReplyStatus;
+  mechanism: "youtube-api" | "browser" | null;
+  generatedText: string | null;
+  decideReason: string | null;
+  notBefore: number;
+  attempts: number;
+  externalReplyId: string | null;
+  error: string | null;
+  costUsd: number;
+  createdAt: number;
+  updatedAt: number;
+  sentAt: number | null;
+}
+
+export interface EngageReplyQueueEntry {
+  reply: EngageReplyRecord;
+  item: InboxItem | null;
+}
+
+export interface EngagePacing {
+  minDelaySec: number;
+  maxDelaySec: number;
+  activeHours: [number, number];
+}
+
+export interface EngageThrottleUsage {
+  platform: EngagePlatform;
+  hour: { used: number; cap: number };
+  day: { used: number; cap: number };
+}
+
+export interface EngageBrowserStatusEntry {
+  platform: EngagePlatform;
+  available: boolean;
+  open: boolean;
+  loggedIn: boolean | null;
+  url: string | null;
+  error: string | null;
+  checkedAt: number | null;
+}
+
+export interface EngageReplyStatusOutput {
+  killSwitch: boolean;
+  globalAutoreply: boolean;
+  replyPromptSet: boolean;
+  aiConfigured: boolean;
+  dryRun: boolean;
+  pacing: EngagePacing;
+  usage: EngageThrottleUsage[];
+  browsers: EngageBrowserStatusEntry[];
+  counts: { draft: number; pending: number; sent: number; failed: number; skipped: number };
+}
+
+export interface EngageBrowserFrame {
+  image: string | null;
+  url: string | null;
+  error: string | null;
+  width: number;
+  height: number;
+}
+
+export const engageReplyStatus =
+  endpoint<Record<string, never>, EngageReplyStatusOutput>("engageReplyStatus");
+export const engageListReplies =
+  endpoint<
+    { status?: EngageReplyStatus; platform?: EngagePlatform; channelId?: string; limit?: number; offset?: number },
+    { entries: EngageReplyQueueEntry[]; total: number }
+  >("engageListReplies");
+export const engageGetReplyPrompt =
+  endpoint<Record<string, never>, { replyPromptMd: string }>("engageGetReplyPrompt");
+export const engageUpdateSettings =
+  endpoint<
+    {
+      replyPromptMd?: string;
+      globalAutoreply?: boolean;
+      caps?: Partial<Record<EngagePlatform, { hour: number; day: number }>>;
+      pacing?: EngagePacing;
+    },
+    { globalAutoreply: boolean; pacing: EngagePacing; caps: Record<string, { hour: number; day: number }>; replyPromptSet: boolean }
+  >("engageUpdateSettings");
+export const engageDraftReply =
+  endpoint<{ inboxId: string }, { reply: EngageReplyRecord }>("engageDraftReply");
+export const engageApproveReply =
+  endpoint<
+    { replyId: string; text?: string; now?: boolean },
+    { reply: EngageReplyRecord | null; willSend: boolean; holdReason: string | null }
+  >("engageApproveReply");
+export const engageRejectReply =
+  endpoint<{ replyId: string; reason?: string }, { reply: EngageReplyRecord | null }>("engageRejectReply");
+export const engageReplyCycleNow =
+  endpoint<Record<string, never>, { started: boolean; message?: string; lastError: string | null }>(
+    "engageReplyCycleNow",
+  );
+
+// Browser login console.
+export const engageBrowserStatus =
+  endpoint<Record<string, never>, { sessions: EngageBrowserStatusEntry[] }>("engageBrowserStatus");
+export const engageBrowserOpen =
+  endpoint<{ platform: EngagePlatform }, { status: EngageBrowserStatusEntry; frame: EngageBrowserFrame }>(
+    "engageBrowserOpen",
+  );
+export const engageBrowserFrame =
+  endpoint<{ platform: EngagePlatform }, { frame: EngageBrowserFrame }>("engageBrowserFrame");
+export const engageBrowserClick =
+  endpoint<{ platform: EngagePlatform; xFrac: number; yFrac: number }, { frame: EngageBrowserFrame }>(
+    "engageBrowserClick",
+  );
+export const engageBrowserType =
+  endpoint<{ platform: EngagePlatform; text: string }, { frame: EngageBrowserFrame }>("engageBrowserType");
+export const engageBrowserKey =
+  endpoint<{ platform: EngagePlatform; key: string }, { frame: EngageBrowserFrame }>("engageBrowserKey");
+export const engageBrowserScroll =
+  endpoint<{ platform: EngagePlatform; dy: number }, { frame: EngageBrowserFrame }>("engageBrowserScroll");
+export const engageBrowserNavigate =
+  endpoint<{ platform: EngagePlatform; url: string }, { frame: EngageBrowserFrame }>("engageBrowserNavigate");
+export const engageBrowserVerify =
+  endpoint<{ platform: EngagePlatform }, { status: EngageBrowserStatusEntry }>("engageBrowserVerify");
+export const engageBrowserClose =
+  endpoint<{ platform: EngagePlatform }, { ok: true }>("engageBrowserClose");

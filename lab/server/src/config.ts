@@ -55,6 +55,15 @@ export const config = {
   imageHistoryDir: process.env.IMAGE_HISTORY_DIR || path.join(DATA_DIR, "image-history"),
 
   /**
+   * Engagement Manager browser profiles. One persistent Chromium profile per
+   * platform (<dir>/instagram, /facebook, /tiktok) holding the logged-in
+   * cookies, localStorage and device fingerprint, so the once-only interactive
+   * login survives restarts and redeploys. Contains live session credentials —
+   * it lives on the /data volume and is never served over HTTP.
+   */
+  engageBrowserDir: process.env.ENGAGE_BROWSER_DIR || path.join(DATA_DIR, "engage-browser"),
+
+  /**
    * Where Remotion caches the Chromium it may download. In Docker this is
    * REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium. With a pre-baked
    * Chromium (remotionBrowserExecutable) it stays empty, but an old run may
@@ -226,6 +235,7 @@ export function ensureDirs(): void {
     config.outputsDir,
     config.tmpDir,
     config.imageHistoryDir,
+    config.engageBrowserDir,
     path.dirname(config.dbPath),
   ]) {
     fs.mkdirSync(dir, { recursive: true });
