@@ -5,15 +5,20 @@
  * profile (engage/browser.ts). One sender per platform, because each one's
  * comment composer is a different beast.
  *
- * ⚠️ SELECTOR CAVEAT — read before trusting this in production.
+ * ⚠️ SELECTOR STATUS — read before trusting this in production.
  * Instagram, Facebook and TikTok all ship obfuscated, frequently-churned DOM.
  * Every sender therefore matches on a LIST of candidate selectors, preferring
  * stable accessibility attributes (aria-label, role, contenteditable) over
- * class names, and gives up cleanly instead of clicking something random. Even
- * so, these selectors have NOT been verified against a live logged-in session:
- * all three of Jake's accounts are currently empty, so there is no real comment
- * to answer and no way to confirm the flow end-to-end. Expect one selector pass
- * against a real post before the first live reply.
+ * class names, and gives up cleanly instead of clicking something random.
+ *
+ * Verified 2026-07-23 against Jake's own logged-in accounts, read-only:
+ *   - instagram: composer FOUND on a real reel ("Add a comment…").
+ *   - facebook:  composer FOUND on his Page ("Comment as Jake Dawson").
+ *   - tiktok:    NOT verified — login is rejected from this box's IP, so there
+ *                is no logged-in session to check against.
+ * What is still unproven everywhere is the SUBMIT half: nobody has posted a
+ * reply through this yet, because there are no real comments to answer. Finding
+ * the box is not the same as the reply landing.
  *
  * That uncertainty is exactly why DRY RUN DEFAULTS ON (ENGAGE_REPLY_DRY_RUN):
  * the sender navigates, locates the composer and types the reply, then stops
@@ -55,8 +60,15 @@ const COMPOSER_SELECTORS: Record<BrowserPlatform, string[]> = {
     'div[contenteditable="true"][aria-label*="comment" i]',
   ],
   facebook: [
+    // Verified against Jake's own Page: the composer is labelled "Comment as
+    // <name>", NOT "Write a comment". That variant is kept below because it's
+    // what a non-Page post shows.
+    'div[contenteditable="true"][aria-label*="Comment as" i]',
     'div[contenteditable="true"][aria-label*="Write a comment" i]',
     'div[contenteditable="true"][aria-label*="comment" i]',
+    // Last resort ONLY: on a Facebook page the status composer ("What's on your
+    // mind?") is also a role=textbox, so this can grab the wrong box. It stays
+    // last so a labelled match always wins.
     'div[role="textbox"][contenteditable="true"]',
   ],
   tiktok: [
