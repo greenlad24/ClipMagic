@@ -18,7 +18,12 @@ import { listChannels as listConnectedChannels } from "../postiz/bulkScheduler.j
 import { resolveChannel, YoutubeQuotaError, youtubeConfigured } from "./youtube.js";
 import { resolveAccounts, exchangeLongLivedToken, metaConfigured, MetaGraphError, metaErrMsg } from "./metaGraph.js";
 import { tiktokConfigured } from "./tiktok.js";
-import { upsertChannel, setChannelAuth, setChannelMetaPageId } from "./db.js";
+import {
+  upsertChannel,
+  setChannelAuth,
+  setChannelMetaPageId,
+  purgeOrphanedInbox,
+} from "./db.js";
 import { getMetaCreds, updateSettings } from "../settings/postizSecrets.js";
 import type { EngageChannel } from "./types.js";
 
@@ -31,6 +36,13 @@ export async function seedChannelsFromConnected(): Promise<EngageChannel[]> {
   seeded.push(...(await seedYoutubeChannels()));
   seeded.push(...(await seedMetaChannels()));
   seeded.push(...(await seedTikTokChannels()));
+  // The channel list is authoritative: anything ingested for a channel that is
+  // no longer configured (e.g. filtered out by ENGAGE_META_CHANNEL_IDS) is
+  // another account's content and shouldn't linger in this database.
+  const purged = purgeOrphanedInbox();
+  if (purged.inbox > 0 || purged.replies > 0) {
+    console.log(`[engage] purged ${purged.inbox} orphaned inbox row(s) and ${purged.replies} reply row(s)`);
+  }
   return seeded;
 }
 

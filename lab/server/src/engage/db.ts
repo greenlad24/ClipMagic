@@ -31,6 +31,21 @@ import type {
 
 const now = () => Date.now();
 
+/**
+ * Only ever surface inbox rows that still belong to a CONFIGURED channel.
+ *
+ * Removing a channel (the ENGAGE_META_CHANNEL_IDS allow-list does exactly this)
+ * leaves its ingested comments behind, pointing at a channel id that no longer
+ * exists. Those rows then rendered in the UI and counted in the totals — which
+ * is how a comment from an unrelated Instagram account ended up displayed in
+ * Jake's column. `replyCandidates` already joined channels so the reply worker
+ * never saw them; the read paths didn't. Now they all agree.
+ */
+const LIVE_CHANNEL = "EXISTS (SELECT 1 FROM engage_channels ch WHERE ch.id = channel_id)";
+/** Same predicate, for queries that alias the inbox table. */
+const liveChannelFor = (alias: string) =>
+  `EXISTS (SELECT 1 FROM engage_channels ch WHERE ch.id = ${alias}.channel_id)`;
+
 // ── engage_channels ───────────────────────────────────────────────────────────
 
 interface ChannelRow {
@@ -383,7 +398,7 @@ export function insertInboxItem(
 
 /** Filtered, paginated inbox read + a total count for the same filter (no paging). */
 export function listInbox(filters: ListInboxInput): { items: InboxItem[]; total: number } {
-  const where: string[] = [];
+  const where: string[] = [LIVE_CHANNEL];
   const vals: any[] = [];
   if (filters.platform) {
     where.push("platform = ?");
@@ -425,14 +440,14 @@ function clampLimit(limit: number | undefined): number {
 }
 
 export function getInboxItem(id: string): InboxItem | null {
-  const row = db.prepare("SELECT * FROM engage_inbox WHERE id = ?").get(id) as InboxRow | undefined;
+  const row = db.prepare(`SELECT * FROM engage_inbox WHERE id = ? AND ${LIVE_CHANNEL}`).get(id) as InboxRow | undefined;
   return row ? rowToInbox(row) : null;
 }
 
 /** All items sharing a thread id (the top-level comment + its replies), chronological. */
 export function getThread(threadId: string): InboxItem[] {
   const rows = db
-    .prepare("SELECT * FROM engage_inbox WHERE thread_id = ? ORDER BY posted_at ASC, ingested_at ASC")
+    .prepare(`SELECT * FROM engage_inbox WHERE thread_id = ? AND ${LIVE_CHANNEL} ORDER BY posted_at ASC, ingested_at ASC`)
     .all(threadId) as InboxRow[];
   return rows.map(rowToInbox);
 }
@@ -449,7 +464,7 @@ export function getThread(threadId: string): InboxItem[] {
  * JS — no N+1. total = count of matching roots.
  */
 export function listThreads(filters: ListThreadsInput): { threads: InboxThread[]; total: number } {
-  const where: string[] = ["parent_id IS NULL"];
+  const where: string[] = [LIVE_CHANNEL, "parent_id IS NULL"];
   const vals: any[] = [];
   if (filters.platform) {
     where.push("platform = ?");
@@ -713,7 +728,7 @@ export function setSettings(patch: Partial<EngageSettings>): EngageSettings {
 
 /** Inbox counts grouped by platform. */
 export function countsByPlatform(): Partial<Record<Platform, number>> {
-  const rows = db.prepare("SELECT platform, COUNT(*) AS n FROM engage_inbox GROUP BY platform").all() as Array<{
+  const rows = db.prepare(`SELECT platform, COUNT(*) AS n FROM engage_inbox WHERE ${LIVE_CHANNEL} GROUP BY platform`).all() as Array<{
     platform: string;
     n: number;
   }>;
@@ -724,12 +739,12 @@ export function countsByPlatform(): Partial<Record<Platform, number>> {
 
 /** Total inbox rows. */
 export function totalCount(): number {
-  return (db.prepare("SELECT COUNT(*) AS n FROM engage_inbox").get() as { n: number }).n;
+  return (db.prepare(`SELECT COUNT(*) AS n FROM engage_inbox WHERE ${LIVE_CHANNEL}`).get() as { n: number }).n;
 }
 
 /** Count of items still in the 'new' reply state. */
 export function newCount(): number {
-  return (db.prepare("SELECT COUNT(*) AS n FROM engage_inbox WHERE reply_state = 'new'").get() as { n: number }).n;
+  return (db.prepare(`SELECT COUNT(*) AS n FROM engage_inbox WHERE reply_state = 'new' AND ${LIVE_CHANNEL}`).get() as { n: number }).n;
 }
 
 // ── engage_replies (Phase 3: draft → queue → send) ────────────────────────────
@@ -924,4 +939,29 @@ export function bumpRateCounter(platform: Platform, windowKind: "hour" | "day", 
      ON CONFLICT(platform, window_kind, window_start)
      DO UPDATE SET sent_count = sent_count + 1`,
   ).run(platform, windowKind, windowStart);
+}
+
+/**
+ * Delete inbox rows (and their replies) whose channel no longer exists.
+ *
+ * Removing a channel — which the ENGAGE_META_CHANNEL_IDS allow-list does when
+ * the operator's token spans businesses that aren't theirs — used to leave the
+ * ingested comments behind forever. The reads now hide them, but hidden isn't
+ * gone: this is another account's content sitting in the operator's database.
+ * Called after every re-seed so the data follows the channel list.
+ */
+export function purgeOrphanedInbox(): { inbox: number; replies: number } {
+  const replies = db
+    .prepare(
+      `DELETE FROM engage_replies
+        WHERE NOT EXISTS (SELECT 1 FROM engage_channels ch WHERE ch.id = engage_replies.channel_id)`,
+    )
+    .run().changes;
+  const inbox = db
+    .prepare(
+      `DELETE FROM engage_inbox
+        WHERE NOT EXISTS (SELECT 1 FROM engage_channels ch WHERE ch.id = engage_inbox.channel_id)`,
+    )
+    .run().changes;
+  return { inbox, replies };
 }
