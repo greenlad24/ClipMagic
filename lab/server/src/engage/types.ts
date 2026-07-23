@@ -95,6 +95,17 @@ export interface InboxItem {
  */
 export type ReplyStatus = "draft" | "pending" | "sent" | "failed" | "skipped";
 
+/**
+ * How a reply was delivered.
+ *  - meta-api    — Graph API, addressed by comment id. PREFERRED for IG/FB: no
+ *                  browser, no session, no selectors, no ToS grey area.
+ *  - browser     — typed into the real web UI by headless Chromium. The fallback
+ *                  when a Meta permission is missing, and the ONLY route for
+ *                  TikTok, which has no comment API.
+ *  - youtube-api — reserved; YouTube is monitor-only (make.com replies there).
+ */
+export type ReplyMechanism = "meta-api" | "browser" | "youtube-api";
+
 /** A generated/sent reply record. */
 export interface ReplyRecord {
   id: string;
@@ -102,7 +113,7 @@ export interface ReplyRecord {
   channelId: string;
   platform: Platform;
   status: ReplyStatus;
-  mechanism: "youtube-api" | "browser" | null;
+  mechanism: ReplyMechanism | null;
   generatedText: string | null;
   decideReason: string | null;
   /** Earliest dispatch time (human-pacing), epoch-ms. */

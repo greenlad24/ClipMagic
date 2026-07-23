@@ -1,9 +1,22 @@
 /**
- * Engagement Manager — per-platform reply senders (Phase 3).
+ * Engagement Manager — reply delivery (Phase 3).
  *
- * Posts a drafted reply by driving the real web UI in the logged-in headless
- * profile (engage/browser.ts). One sender per platform, because each one's
- * comment composer is a different beast.
+ * TWO PATHS, in order of preference:
+ *
+ *  1. META GRAPH API — addressed by the comment id the monitor already stored.
+ *     The token is the auth, so there's no session, no selectors, no captcha
+ *     and no ToS grey area. This is how Instagram and Facebook SHOULD reply,
+ *     and Instagram can today: the operator's token already carries
+ *     `instagram_manage_comments`. Facebook additionally needs
+ *     `pages_manage_engagement`, which it currently lacks.
+ *
+ *  2. HEADLESS BROWSER — typed into the real web UI in the logged-in profile
+ *     (engage/browser.ts). The fallback when the API says "not permitted", and
+ *     the only route for TikTok, which has no comment API at all.
+ *
+ * A permission error falls through to the browser. Any other API failure (bad
+ * id, deleted comment, dead token) is reported as-is — retrying a genuinely
+ * broken request in a browser just fails differently and hides the cause.
  *
  * ⚠️ SELECTOR STATUS — read before trusting this in production.
  * Instagram, Facebook and TikTok all ship obfuscated, frequently-churned DOM.
@@ -35,6 +48,15 @@ import {
   type BrowserPlatform,
 } from "./browser.js";
 import { navigationAllowed } from "./browserSession.js";
+import { getChannelAuth } from "./db.js";
+import { getMetaCreds } from "../settings/postizSecrets.js";
+import {
+  isPermissionError,
+  metaConfigured,
+  replyToFacebookComment,
+  replyToInstagramComment,
+} from "./metaGraph.js";
+import type { ReplyMechanism } from "./types.js";
 
 export interface SendResult {
   ok: boolean;
@@ -44,6 +66,63 @@ export interface SendResult {
   error: string | null;
   /** True when the sender stopped short of submitting (dry run). */
   dryRun: boolean;
+  /** How it went out (or would have). Recorded on the reply row. */
+  mechanism: ReplyMechanism;
+}
+
+/**
+ * Post a reply the proper way: Meta's Graph API, addressed by the comment id the
+ * monitor already stored. No browser, no session, no selectors — the token is
+ * the auth. This is the PREFERRED path for Instagram and Facebook; the browser
+ * is the fallback for when a permission is missing (Facebook needs
+ * `pages_manage_engagement`, which the current token lacks) and the only path
+ * for TikTok, which has no comment API at all.
+ *
+ * Returns null when the API can't be attempted, so the caller falls through to
+ * the browser rather than treating it as a failure.
+ */
+async function sendViaMetaApi(
+  platform: BrowserPlatform,
+  opts: { channelId: string; commentId: string | null; threadId: string | null; text: string },
+): Promise<SendResult | null> {
+  if (platform === "tiktok") return null;
+  if (!metaConfigured()) return null;
+
+  // The page token stored at seed time; falls back to the operator's user token.
+  const token = getChannelAuth(opts.channelId) || getMetaCreds()?.token || "";
+  if (!token) return null;
+
+  // Instagram only threads one level deep, so a reply must be addressed to the
+  // TOP-LEVEL comment. Facebook accepts a reply on the specific comment.
+  const targetId = platform === "instagram" ? opts.threadId || opts.commentId : opts.commentId || opts.threadId;
+  if (!targetId) return null;
+
+  if (dryRunEnabled()) {
+    return {
+      ok: false,
+      externalId: null,
+      dryRun: true,
+      mechanism: "meta-api",
+      error: `DRY RUN — would have replied via the Graph API on comment ${targetId}. Set ENGAGE_REPLY_DRY_RUN=false to post.`,
+    };
+  }
+
+  try {
+    const id =
+      platform === "instagram"
+        ? await replyToInstagramComment(targetId, opts.text, token)
+        : await replyToFacebookComment(targetId, opts.text, token);
+    return { ok: true, externalId: id, error: null, dryRun: false, mechanism: "meta-api" };
+  } catch (e) {
+    if (isPermissionError(e)) {
+      // Missing scope — this is exactly what the browser fallback is for.
+      console.warn(`[engage/reply] ${platform} API reply not permitted, falling back to the browser: ${errMsg(e)}`);
+      return null;
+    }
+    // A real failure (bad id, deleted comment, expired token). Don't paper over
+    // it by retrying in a browser — report it.
+    return { ok: false, externalId: null, dryRun: false, mechanism: "meta-api", error: errMsg(e) };
+  }
 }
 
 /** Dry run is ON unless explicitly disabled — see the caveat above. */
@@ -98,11 +177,37 @@ const SUBMIT_SELECTORS: Record<BrowserPlatform, string[]> = {
  */
 export async function sendReply(
   platform: BrowserPlatform,
-  opts: { permalink: string | null; text: string },
+  opts: {
+    permalink: string | null;
+    text: string;
+    /** The channel the reply goes out from (holds the Meta page token). */
+    channelId: string;
+    /** Platform-native id of the comment being answered (InboxItem.dedupKey). */
+    commentId: string | null;
+    /** Top-level comment id — what Instagram's API needs. */
+    threadId: string | null;
+  },
 ): Promise<SendResult> {
   const { permalink, text } = opts;
+
+  // API FIRST for Instagram and Facebook. Only when it can't be attempted —
+  // missing scope, no token, TikTok — do we drive a browser.
+  const viaApi = await sendViaMetaApi(platform, {
+    channelId: opts.channelId,
+    commentId: opts.commentId,
+    threadId: opts.threadId,
+    text,
+  });
+  if (viaApi) return viaApi;
+
   if (!permalink) {
-    return { ok: false, externalId: null, error: "No permalink on the item — nowhere to reply.", dryRun: false };
+    return {
+      ok: false,
+      externalId: null,
+      error: "No permalink on the item — nowhere for the browser to reply.",
+      dryRun: false,
+      mechanism: "browser",
+    };
   }
   if (!navigationAllowed(platform, permalink)) {
     // The permalink comes from the platform's own API/scrape, but it is still
@@ -113,17 +218,20 @@ export async function sendReply(
       externalId: null,
       error: `Refusing to navigate to an off-platform permalink: ${permalink}`,
       dryRun: false,
+      mechanism: "browser",
     };
   }
 
   const dry = dryRunEnabled();
 
-  const result = await withPage(platform, async (page) => {
+  // Annotated so the object literals keep their literal `mechanism` type
+  // rather than widening to `string`.
+  const result = await withPage<SendResult>(platform, async (page) => {
     // 1. Open the post the comment lives on.
     try {
       await page.goto(permalink, { waitUntil: "domcontentloaded", timeout: 60_000 });
     } catch (e) {
-      return { ok: false, externalId: null, error: `Navigation failed: ${errMsg(e)}`, dryRun: dry };
+      return { ok: false, externalId: null, error: `Navigation failed: ${errMsg(e)}`, dryRun: dry, mechanism: "browser" };
     }
     // Let the comment section hydrate; these are all heavy SPA pages.
     await sleep(randInt(2_500, 5_000));
@@ -136,6 +244,7 @@ export async function sendReply(
         externalId: null,
         error: "Could not find the comment composer (logged out, or the page layout changed).",
         dryRun: dry,
+        mechanism: "browser",
       };
     }
 
@@ -143,7 +252,7 @@ export async function sendReply(
     try {
       await page.click(composer);
     } catch (e) {
-      return { ok: false, externalId: null, error: `Could not focus the composer: ${errMsg(e)}`, dryRun: dry };
+      return { ok: false, externalId: null, error: `Could not focus the composer: ${errMsg(e)}`, dryRun: dry, mechanism: "browser" };
     }
     await sleep(randInt(400, 1_200));
     await typeHuman(page, text);
@@ -158,6 +267,7 @@ export async function sendReply(
         externalId: null,
         error: "DRY RUN — composed the reply but did not post it. Set ENGAGE_REPLY_DRY_RUN=false to post.",
         dryRun: true,
+        mechanism: "browser",
       };
     }
 
@@ -179,7 +289,7 @@ export async function sendReply(
         await page.keyboard.press("Enter");
         submitted = true;
       } catch (e) {
-        return { ok: false, externalId: null, error: `Could not submit: ${errMsg(e)}`, dryRun: false };
+        return { ok: false, externalId: null, error: `Could not submit: ${errMsg(e)}`, dryRun: false, mechanism: "browser" };
       }
     }
 
@@ -194,13 +304,14 @@ export async function sendReply(
         externalId: null,
         error: "Submitted but the composer still holds the text — the reply probably did not post.",
         dryRun: false,
+        mechanism: "browser",
       };
     }
-    return { ok: true, externalId: null, error: null, dryRun: false };
+    return { ok: true, externalId: null, error: null, dryRun: false, mechanism: "browser" };
   });
 
   if (!result) {
-    return { ok: false, externalId: null, error: "Browser unavailable.", dryRun: dry };
+    return { ok: false, externalId: null, error: "Browser unavailable.", dryRun: dry, mechanism: "browser" };
   }
   return result;
 }

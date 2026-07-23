@@ -47,8 +47,16 @@ export function youtubeConfigured(): boolean {
   return !!getYoutubeDataApiKey();
 }
 
-/** Injectable fetch — narrow shape so a test can supply a mock. */
-export type FetchFn = (url: string) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
+/**
+ * Injectable fetch — narrow shape so a test can supply a mock. `init` is
+ * optional and untyped: every reader here is a plain GET, but the Engagement
+ * Manager POSTs replies through the same injectable, and a mock that only
+ * declares (url) still satisfies this signature.
+ */
+export type FetchFn = (
+  url: string,
+  init?: unknown,
+) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
 
 /**
  * YouTube auto-generated thumbnail variants.

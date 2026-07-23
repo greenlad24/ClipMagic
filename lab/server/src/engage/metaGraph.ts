@@ -800,3 +800,91 @@ export async function fetchInstagramStats(
 export function metaErrMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+// ── replying (Phase 3: API-first, browser only as fallback) ──────────────────
+
+/**
+ * POST a form-encoded body to the Graph API. Mirrors graphGet's error handling:
+ * throws MetaGraphError with `code` set, so callers can tell a MISSING PERMISSION
+ * (which should fall back to the browser) from a bad request (which shouldn't).
+ * The token goes in the body, never the URL, so it can't leak via a redirect or
+ * an access log.
+ */
+async function graphPost(path: string, params: Record<string, string>, token: string, doFetch: FetchFn): Promise<any> {
+  const body = new URLSearchParams({ ...params, access_token: token });
+  let res: { ok: boolean; status: number; json: () => Promise<any> };
+  try {
+    res = await doFetch(`${GRAPH_BASE}/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    } as any);
+  } catch (e) {
+    throw new MetaGraphError(`Could not reach the Meta Graph API: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json?.error) {
+    const msg = json?.error?.message || `HTTP ${res.status}`;
+    const code = typeof json?.error?.code === "number" ? json.error.code : null;
+    throw new MetaGraphError(`Meta Graph API error: ${msg}`, {
+      status: res.status,
+      code,
+      isAuth: isAuthError(json, res.status),
+    });
+  }
+  return json;
+}
+
+/**
+ * Graph error codes that mean "this token isn't allowed to do that" rather than
+ * "that request was wrong". Only these are worth failing over to the browser
+ * for — retrying a malformed request in a browser just fails differently.
+ *   200 / 10  — permission denied (missing scope, e.g. pages_manage_engagement)
+ *   3         — capability not enabled for the app
+ *   * OAuthException with no code — treated as permission-ish, conservatively
+ */
+export function isPermissionError(e: unknown): boolean {
+  if (!(e instanceof MetaGraphError)) return false;
+  return e.code === 200 || e.code === 10 || e.code === 3;
+}
+
+/**
+ * Reply to an Instagram comment: POST /{ig-comment-id}/replies.
+ *
+ * IMPORTANT: Instagram only supports ONE level of threading, so a reply must be
+ * created on the TOP-LEVEL comment. Pass the thread's root id (InboxItem.threadId)
+ * — posting to a reply's own id fails.
+ *
+ * Needs the `instagram_manage_comments` scope, which the operator's token
+ * already carries. Returns the new comment's id.
+ */
+export async function replyToInstagramComment(
+  topLevelCommentId: string,
+  message: string,
+  token: string,
+  fetchImpl?: FetchFn,
+): Promise<string | null> {
+  const doFetch = resolveFetch(fetchImpl);
+  const json = await graphPost(`${topLevelCommentId}/replies`, { message }, token, doFetch);
+  return typeof json?.id === "string" ? json.id : null;
+}
+
+/**
+ * Reply to a Facebook comment: POST /{fb-comment-id}/comments. Unlike Instagram,
+ * Facebook accepts a reply on any comment, so the specific comment id is right.
+ *
+ * Needs `pages_manage_engagement` on the PAGE token. The operator's token does
+ * NOT currently carry it, so this is expected to fail with a permission error
+ * until the token is re-authorized — at which point the caller falls back to
+ * the browser rather than dropping the reply.
+ */
+export async function replyToFacebookComment(
+  commentId: string,
+  message: string,
+  pageToken: string,
+  fetchImpl?: FetchFn,
+): Promise<string | null> {
+  const doFetch = resolveFetch(fetchImpl);
+  const json = await graphPost(`${commentId}/comments`, { message }, pageToken, doFetch);
+  return typeof json?.id === "string" ? json.id : null;
+}

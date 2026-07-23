@@ -8,7 +8,8 @@
  *              'suggest' mode the row lands as a `draft` awaiting a human; in
  *              'auto' mode it lands as `pending` with a randomized send time.
  *   DISPATCH — take replies that are due, re-check the throttle AT SEND TIME,
- *              and post them through the browser (engage/senders.ts).
+ *              and deliver them (engage/senders.ts): Meta's Graph API first,
+ *              headless browser only as a fallback, TikTok browser-only.
  *
  * THREE INDEPENDENT SAFETY KEYS, all of which must be turned before a single
  * reply reaches a platform:
@@ -177,7 +178,7 @@ async function draftOne(item: InboxItem, settings: EngageSettings): Promise<bool
       channelId: item.channelId,
       platform: item.platform,
       status: "skipped",
-      mechanism: "browser",
+      mechanism: null,
       generatedText: null,
       decideReason: draft.reason,
       notBefore: Date.now(),
@@ -197,7 +198,9 @@ async function draftOne(item: InboxItem, settings: EngageSettings): Promise<bool
     channelId: item.channelId,
     platform: item.platform,
     status: auto ? "pending" : "draft",
-    mechanism: "browser",
+    // Unknown until dispatch: the API is tried first and the browser is only
+    // used if it isn't permitted, so the mechanism is recorded when it's sent.
+    mechanism: null,
     generatedText: draft.text,
     decideReason: draft.reason,
     notBefore: auto ? scheduleAt(settings.pacing) : Date.now(),
@@ -244,12 +247,16 @@ async function dispatchDue(settings: EngageSettings): Promise<number> {
     const result = await sendReply(reply.platform as BrowserPlatform, {
       permalink: item.permalink,
       text: reply.generatedText,
+      channelId: reply.channelId,
+      commentId: item.dedupKey,
+      threadId: item.threadId,
     });
 
     if (result.ok) {
       updateReply(reply.id, {
         status: "sent",
         attempts,
+        mechanism: result.mechanism,
         externalReplyId: result.externalId,
         error: null,
         sentAt: Date.now(),
@@ -257,7 +264,9 @@ async function dispatchDue(settings: EngageSettings): Promise<number> {
       setInboxReplyState(reply.inboxId, "replied");
       recordSend(reply.platform);
       sent++;
-      console.log(`[engage/reply] sent ${reply.platform} reply to ${item.authorName ?? "someone"}`);
+      console.log(
+        `[engage/reply] sent ${reply.platform} reply to ${item.authorName ?? "someone"} via ${result.mechanism}`,
+      );
       continue;
     }
 

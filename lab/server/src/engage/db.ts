@@ -784,6 +784,8 @@ export function getReply(id: string): ReplyRecord | null {
 
 export interface UpdateReplyPatch {
   status?: ReplyRecord["status"];
+  /** Set at dispatch: which path actually delivered it (API vs browser). */
+  mechanism?: ReplyRecord["mechanism"];
   generatedText?: string | null;
   decideReason?: string | null;
   notBefore?: number;
@@ -802,6 +804,7 @@ export function updateReply(id: string, patch: UpdateReplyPatch): ReplyRecord | 
     vals.push(v);
   };
   if (patch.status !== undefined) put("status", patch.status);
+  if (patch.mechanism !== undefined) put("mechanism", patch.mechanism);
   if (patch.generatedText !== undefined) put("generated_text", patch.generatedText);
   if (patch.decideReason !== undefined) put("decide_reason", patch.decideReason);
   if (patch.notBefore !== undefined) put("not_before", patch.notBefore);
