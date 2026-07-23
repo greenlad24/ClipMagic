@@ -70,6 +70,11 @@ import {
   chatModelLabel,
 } from "../imagechat/imageChat.js";
 import { anthropicConfigured } from "../ai/claude.js";
+import {
+  persistImage,
+  listImages as listImageHistoryItems,
+  deleteImage as deleteImageHistoryRow,
+} from "../db/imageHistory.js";
 import { searchTopThumbnails, youtubeConfigured } from "../thumbnails/youtube.js";
 import {
   listCharacters,
@@ -2790,13 +2795,56 @@ const generateChatImage: Handler = async (input) => {
   const finalPrompt = wantOptimize ? await optimizeImagePrompt(userPrompt, images.length > 0) : userPrompt;
 
   const image = await runChatImage({ instruction: finalPrompt, images, model, aspect });
+
+  // Persist the result to disk + the image_history table so it shows up in the
+  // History panel. Best-effort: a persistence hiccup must never fail a
+  // successful generation, so we still return the base64 the UI shows inline.
+  let historyId: string | null = null;
+  let historyUrl: string | null = null;
+  try {
+    const item = persistImage({
+      prompt: finalPrompt,
+      base64: image.base64,
+      mime: image.mimeType,
+      kind: images.length > 0 ? "edit" : "generate",
+      model: chatModelLabel(model),
+    });
+    historyId = item.id;
+    historyUrl = item.url;
+  } catch (e) {
+    console.error("[imagechat] could not persist to history:", e instanceof Error ? e.message : e);
+  }
+
   return {
     image, // { base64, mimeType }
     prompt: finalPrompt,
     optimized: wantOptimize && finalPrompt !== userPrompt,
     model,
     modelLabel: chatModelLabel(model),
+    historyId, // history row id (null if persistence failed)
+    historyUrl, // relative /api/image-history/<id>.<ext> URL (null if failed)
   };
+};
+
+/** History (newest first) for the image generator's left panel. */
+const listImageHistory: Handler = async () => ({
+  items: listImageHistoryItems().map((it) => ({
+    id: it.id,
+    prompt: it.prompt,
+    url: it.url,
+    mime: it.mime,
+    kind: it.kind,
+    model: it.model,
+    ts: it.createdAt,
+  })),
+});
+
+/** Delete one saved image (row + file on disk). Idempotent. */
+const deleteImageHistoryItem: Handler = async (input) => {
+  const id = String(input?.id ?? "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "An image id is required." });
+  deleteImageHistoryRow(id);
+  return { ok: true } as const;
 };
 
 // ── Keyword Research (LAB tool) ──────────────────────────────────────────────
@@ -3203,6 +3251,8 @@ export const HANDLERS: Record<string, Handler> = {
   // AI Image Generator (LAB tool)
   imageGeneratorStatus,
   generateChatImage,
+  listImageHistory,
+  deleteImageHistoryItem,
   // Keyword Research (LAB tool)
   keywordResearchStatus,
   startKeywordResearch,

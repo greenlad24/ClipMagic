@@ -160,8 +160,26 @@ export const generateChatImage = endpoint<
     optimized: boolean;
     model: string;
     modelLabel: string;
+    /** History row id + relative serve URL for the just-persisted image (null if persistence failed). */
+    historyId: string | null;
+    historyUrl: string | null;
   }
 >("generateChatImage");
+
+/** One saved image in the generator's History panel. `url` is same-origin & cookie-authed. */
+export interface ImageHistoryItem {
+  id: string;
+  prompt: string;
+  url: string;
+  mime: string;
+  kind: 'generate' | 'edit';
+  model: string | null;
+  ts: number;
+}
+export const listImageHistory =
+  endpoint<Record<string, never>, { items: ImageHistoryItem[] }>("listImageHistory");
+export const deleteImageHistoryItem =
+  endpoint<{ id: string }, { ok: true }>("deleteImageHistoryItem");
 // ── YouTube Keyword Research (LAB tool) ──────────────────────────────────────
 // Local mirrors of server/src/keyword/types.ts (the frontend can't import server
 // types — these are kept structurally identical so the page type-checks alone).

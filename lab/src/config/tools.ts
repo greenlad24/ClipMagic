@@ -156,7 +156,7 @@ export const TOOLS: ToolDefinition[] = [
   {
     id: 'image-generator',
     title: 'AI Image Generator',
-    description: 'Chat to generate or edit images with Nano Banana — describe what you want, upload images to restyle or combine. Nothing is saved.',
+    description: 'Chat to generate or edit images with Nano Banana — describe what you want, upload images to restyle or combine. Every generation is saved to your History.',
     icon: Sparkles,
     route: '/image-generator',
     status: 'live',

@@ -78,6 +78,15 @@ app.use(
   express.static(path.join(config.dataDir, "thumbnail-backgrounds"))
 );
 
+// AI Image Generator history — read-only images the generator saved under
+// DATA_DIR/image-history (config.imageHistoryDir). Behind `auth` exactly like the
+// thumbnail libraries so they load same-origin with the session cookie.
+app.use(
+  "/api/image-history",
+  auth,
+  express.static(config.imageHistoryDir)
+);
+
 // API
 app.use("/api/uploads", auth, uploadsRouter);
 app.use("/api/render", auth, renderRouter);

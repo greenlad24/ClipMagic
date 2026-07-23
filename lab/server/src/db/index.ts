@@ -271,6 +271,20 @@ CREATE TABLE IF NOT EXISTS script_runs (
   updated_at     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_script_runs_created ON script_runs(created_at);
+
+-- AI Image Generator: one row per generated (or edited) image. The bytes live on
+-- disk under config.imageHistoryDir as <id>.<ext>; this table is the metadata +
+-- history index. kind distinguishes a from-scratch generation from an edit.
+CREATE TABLE IF NOT EXISTS image_history (
+  id          TEXT PRIMARY KEY,
+  prompt      TEXT NOT NULL DEFAULT '',
+  file_path   TEXT NOT NULL,        -- absolute path to the stored image on disk
+  mime        TEXT NOT NULL,        -- e.g. image/png
+  kind        TEXT NOT NULL DEFAULT 'generate',  -- generate | edit
+  model       TEXT,                 -- model label used (e.g. Nano Banana)
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_image_history_created ON image_history(created_at);
 `);
 
 /**

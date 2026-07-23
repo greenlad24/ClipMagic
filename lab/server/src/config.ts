@@ -47,6 +47,14 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(DATA_DIR, "db", "clipmagic.db"),
 
   /**
+   * AI Image Generator history. Each generated image is written here as
+   * <id>.<ext> and served read-only at /api/image-history/<id>.<ext> (behind the
+   * auth gate, like the thumbnail libraries). Metadata lives in the image_history
+   * DB table.
+   */
+  imageHistoryDir: process.env.IMAGE_HISTORY_DIR || path.join(DATA_DIR, "image-history"),
+
+  /**
    * Where Remotion caches the Chromium it may download. In Docker this is
    * REMOTION_BROWSER_CACHE_DIR=/data/.remotion-chromium. With a pre-baked
    * Chromium (remotionBrowserExecutable) it stays empty, but an old run may
@@ -217,6 +225,7 @@ export function ensureDirs(): void {
     config.uploadsDir,
     config.outputsDir,
     config.tmpDir,
+    config.imageHistoryDir,
     path.dirname(config.dbPath),
   ]) {
     fs.mkdirSync(dir, { recursive: true });

@@ -1,12 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   imageGeneratorStatus,
   generateChatImage,
+  listImageHistory,
+  deleteImageHistoryItem,
+  type ImageHistoryItem,
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -17,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import {
   Sparkles,
   Send,
@@ -29,6 +34,9 @@ import {
   ImagePlus,
   X,
   Wand2,
+  History,
+  Trash2,
+  Search,
 } from 'lucide-react';
 
 /**
@@ -38,9 +46,13 @@ import {
  * instruction and generate an image. Attach reference images (or "Edit" a
  * result) to restyle / combine them instead of generating from scratch.
  *
- * EPHEMERAL BY DESIGN: images live only in React state (as data URLs) — nothing
- * is uploaded, saved to disk or written to a DB. Reloading the page clears the
- * whole conversation. Uses the same Gemini key as the Thumbnail Designer.
+ * PERSISTENT HISTORY: every generation is saved server-side (bytes on disk +
+ * an image_history DB row) and listed in the left-hand History panel. The
+ * current chat still lives in React state for the immediate reply, but the
+ * History survives a reload — click a past image to view it and reuse its
+ * prompt. Images load from the relative /api/image-history/<id>.<ext> URL
+ * (same-origin, session cookie). Uses the same Gemini key as the Thumbnail
+ * Designer.
  */
 
 type ChatModel = 'flash' | 'pro' | 'flash-31';
@@ -76,12 +88,28 @@ interface AssistantMessage {
   optimized?: boolean;
   modelLabel?: string;
   error?: string;
+  /** Set when this bubble is an image opened from the History panel. */
+  fromHistory?: boolean;
 }
 
 type ChatMessage = UserMessage | AssistantMessage;
 
 function toDataUrl(mimeType: string, base64: string): string {
   return `data:${mimeType};base64,${base64}`;
+}
+
+/** Compact relative time for the History list ("just now", "3m ago", …). */
+function relTime(ms: number): string {
+  const diff = Date.now() - ms;
+  if (diff < 0) return 'just now';
+  const m = Math.round(diff / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  if (d < 30) return `${d}d ago`;
+  return new Date(ms).toLocaleDateString();
 }
 
 /** Read a File into { base64, mimeType, dataUrl } without uploading anything. */
@@ -115,8 +143,22 @@ export default function ImageGeneratorPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // History (persisted server-side, newest first).
+  const [history, setHistory] = useState<ImageHistoryItem[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false); // mobile drawer
+  const [historySearch, setHistorySearch] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const refreshHistory = useCallback(() => {
+    listImageHistory({})
+      .then((r) => setHistory(r.items ?? []))
+      .catch(() => {
+        /* history is non-critical */
+      });
+  }, []);
 
   useEffect(() => {
     imageGeneratorStatus({})
@@ -129,7 +171,8 @@ export default function ImageGeneratorPage() {
         setOptimizerConfigured(false);
       })
       .finally(() => setLoadingStatus(false));
-  }, []);
+    refreshHistory();
+  }, [refreshHistory]);
 
   // Keep the newest message in view as the conversation grows.
   useEffect(() => {
@@ -157,6 +200,40 @@ export default function ImageGeneratorPage() {
     setRefs([{ base64: m.base64, mimeType: m.mimeType, dataUrl: m.dataUrl }]);
     toast.success('Loaded as a reference — describe the change you want.');
   }
+
+  /** Open a saved image from History: show it in the chat and reuse its prompt. */
+  function openHistoryItem(item: ImageHistoryItem) {
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: 'assistant',
+        dataUrl: item.url, // same-origin /api/image-history/<id>.<ext>
+        mimeType: item.mime,
+        promptUsed: item.prompt,
+        modelLabel: item.model ?? undefined,
+        fromHistory: true,
+      },
+    ]);
+    setPrompt(item.prompt);
+    setHistoryOpen(false);
+  }
+
+  /** Delete a saved image (row + file) and drop it from the panel. */
+  async function removeHistoryItem(id: string) {
+    setDeletingId(id);
+    try {
+      await deleteImageHistoryItem({ id });
+      setHistory((prev) => prev.filter((h) => h.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not delete image');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  const visibleHistory = history.filter((h) =>
+    historySearch.trim() ? h.prompt.toLowerCase().includes(historySearch.trim().toLowerCase()) : true,
+  );
 
   async function send() {
     const text = prompt.trim();
@@ -189,6 +266,8 @@ export default function ImageGeneratorPage() {
           modelLabel: res.modelLabel,
         },
       ]);
+      // The image was persisted server-side — pull it into the History panel.
+      refreshHistory();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Image generation failed';
       setMessages((prev) => [...prev, { role: 'assistant', error: message }]);
@@ -209,7 +288,7 @@ export default function ImageGeneratorPage() {
 
   return (
     <Layout breadcrumb="AI Image Generator">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-6 flex flex-col" style={{ minHeight: 'calc(100vh - 57px)' }}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col" style={{ minHeight: 'calc(100vh - 57px)' }}>
         <header className="mb-4">
           <div className="flex items-center gap-2">
             <div className="rounded-md bg-[hsl(var(--chart-2))]/10 p-2 text-[hsl(var(--chart-2))]">
@@ -218,7 +297,7 @@ export default function ImageGeneratorPage() {
             <div>
               <h1 className="text-xl font-bold tracking-tight text-foreground">AI Image Generator</h1>
               <p className="text-xs text-muted-foreground">
-                Nano Banana chat — describe an image or attach photos to edit. Nothing is saved; reloading clears the chat.
+                Nano Banana chat — describe an image or attach photos to edit. Every generation is saved to your History.
               </p>
             </div>
           </div>
@@ -258,6 +337,108 @@ export default function ImageGeneratorPage() {
           </section>
         ) : (
           <>
+            {/* Mobile-only History toggle (sidebar is always visible on lg+). */}
+            <div className="mb-4 lg:hidden">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setHistoryOpen((o) => !o)}
+              >
+                <History className="h-4 w-4" />
+                History
+                <span className="text-muted-foreground">({history.length})</span>
+              </Button>
+            </div>
+
+            <div className="flex flex-1 flex-col gap-6 lg:flex-row lg:items-stretch">
+              {/* ── History sidebar ─────────────────────────────────────────── */}
+              <aside
+                className={cn('lg:block lg:w-72 lg:shrink-0', historyOpen ? 'block' : 'hidden')}
+              >
+                <div className="rounded-xl border border-border bg-card lg:sticky lg:top-6 lg:max-h-[calc(100vh-3rem)] lg:overflow-y-auto">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2.5">
+                    <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                      <History className="h-4 w-4 text-muted-foreground" />
+                      History
+                      <span className="text-xs font-normal text-muted-foreground">
+                        ({history.length})
+                      </span>
+                    </h3>
+                  </div>
+
+                  {/* Search */}
+                  <div className="border-b border-border px-3 py-2.5">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={historySearch}
+                        onChange={(e) => setHistorySearch(e.target.value)}
+                        placeholder="Search prompts…"
+                        className="h-8 pl-7 text-sm"
+                      />
+                    </div>
+                  </div>
+
+                  {/* List */}
+                  {history.length === 0 ? (
+                    <p className="px-3 py-8 text-center text-xs text-muted-foreground">
+                      No images yet — generate one to see it here.
+                    </p>
+                  ) : visibleHistory.length === 0 ? (
+                    <p className="px-3 py-8 text-center text-xs text-muted-foreground">No matches.</p>
+                  ) : (
+                    <ul className="p-2 space-y-1">
+                      {visibleHistory.map((item) => (
+                        <li key={item.id}>
+                          <div className="group flex items-start gap-2 rounded-lg px-1.5 py-1.5 hover:bg-muted/40">
+                            <button
+                              type="button"
+                              onClick={() => openHistoryItem(item)}
+                              className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                              title="Open this image and reuse its prompt"
+                            >
+                              <img
+                                src={item.url}
+                                alt="generated"
+                                loading="lazy"
+                                className="h-11 w-11 shrink-0 rounded-md border border-border object-cover"
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="line-clamp-2 text-xs text-foreground">
+                                  {item.prompt || 'Untitled'}
+                                </span>
+                                <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                  {relTime(item.ts)}
+                                  {item.kind === 'edit' && (
+                                    <Badge variant="secondary" className="h-4 px-1 text-[9px]">
+                                      edit
+                                    </Badge>
+                                  )}
+                                </span>
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeHistoryItem(item.id)}
+                              disabled={deletingId === item.id}
+                              title="Delete this image"
+                              aria-label="Delete this image"
+                              className="mt-0.5 shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-destructive group-hover:opacity-100 disabled:opacity-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </aside>
+
+              {/* ── Main column (chat + composer) ───────────────────────────── */}
+              <div className="flex min-w-0 flex-1 flex-col">
             {/* Conversation */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-4 pb-4">
               {messages.length === 0 && (
@@ -323,10 +504,12 @@ export default function ImageGeneratorPage() {
                                   Download
                                 </a>
                               </Button>
-                              <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => editImage(m)}>
-                                <Pencil className="w-3.5 h-3.5" />
-                                Edit this
-                              </Button>
+                              {m.base64 && (
+                                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => editImage(m)}>
+                                  <Pencil className="w-3.5 h-3.5" />
+                                  Edit this
+                                </Button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -448,6 +631,8 @@ export default function ImageGeneratorPage() {
                   Add an Anthropic key in Settings to auto-optimize your prompts.
                 </p>
               )}
+            </div>
+              </div>
             </div>
           </>
         )}
