@@ -55,26 +55,58 @@ export function replyGenReady(replyPromptMd: string | null): boolean {
 }
 
 /**
+ * Links the operator put in their OWN prompt, which are approved by definition —
+ * Jake's voice prompt tells the model to drop his Skool link for template asks
+ * and off-topic questions, and a blanket link ban would silently reject exactly
+ * those replies. Anything NOT in this list is still refused: the risk we're
+ * guarding against is the model inventing a URL, not the operator using theirs.
+ */
+export function allowedLinks(replyPromptMd: string): string[] {
+  const found = replyPromptMd.match(/https?:\/\/[^\s)"'<>]+/gi) ?? [];
+  // Trim trailing punctuation that belongs to the prose, not the URL.
+  return [...new Set(found.map((u) => u.replace(/[.,;:!?]+$/, "")))];
+}
+
+/** Does `text` contain a link or email beyond the operator's approved ones? */
+function hasUnapprovedLink(text: string, approved: string[]): boolean {
+  let remaining = text;
+  for (const link of approved) {
+    remaining = remaining.split(link).join(" ");
+  }
+  return /https?:\/\/|www\.|\b\S+@\S+\.\S+\b/i.test(remaining);
+}
+
+/**
  * The non-negotiable half of the system prompt. Jake's prompt supplies the
  * VOICE; this supplies the RULES, and it is appended after his so the operating
  * limits can't be talked out of the model by the voice prompt.
  */
-function guardrails(platform: Platform, maxChars: number): string {
+function guardrails(platform: Platform, maxChars: number, approvedLinks: string[]): string {
+  const linkRule = approvedLinks.length
+    ? `- The ONLY links you may ever include are the ones given in the style guide
+  above (${approvedLinks.join(", ")}), and only in the situations it describes.
+  Never write any other link, email address or phone number.`
+    : `- No links, no email addresses, no phone numbers, no @-mentions of other accounts.`;
   return `
 # Operating rules (these override any style guidance above)
 
 You are replying as the channel owner to a real comment on ${platform}. Your
 output is posted publicly, automatically, with nobody reviewing it first.
 
-- Write ONE reply. Plain text. No markdown, no quotes around it, no signature.
+The style guide above defines the VOICE and it wins on every question of tone,
+casing, punctuation, length and phrasing. The rules below are operating limits
+and they win where the two genuinely conflict.
+
+- Write ONE reply, exactly as it will be posted. No preamble, no quotes around
+  it, no signature, no markdown.
 - Hard limit: ${maxChars} characters. Shorter is almost always better.
 - Never invent facts: no dates, prices, specs, numbers, or features you were not
-  given in the thread. If a question needs information you don't have, reply
-  warmly without answering the specific and don't guess.
+  given in the thread. If a question needs information you don't have, say so
+  plainly in the voice rather than guessing.
 - Never promise anything on the channel owner's behalf — no "I'll send you...",
   no "DM me and I'll...", no commitments to review, refund, collaborate, or meet.
 - Never give financial, legal, medical, or safety advice.
-- No links, no email addresses, no phone numbers, no @-mentions of other accounts.
+${linkRule}
 - Never claim to be a human when asked directly whether this is automated;
   in that case set shouldReply=false and let a person answer.
 
@@ -127,7 +159,8 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
     };
   }
 
-  const system = `${replyPromptMd.trim()}\n\n${guardrails(item.platform, maxChars)}`;
+  const approved = allowedLinks(replyPromptMd);
+  const system = `${replyPromptMd.trim()}\n\n${guardrails(item.platform, maxChars, approved)}`;
   const context = [
     item.targetTitle ? `The post/video this is on: "${item.targetTitle}"` : null,
     item.kind === "dm" ? "This is a private direct message, not a public comment." : null,
@@ -205,8 +238,14 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
       model,
     };
   }
-  if (/https?:\/\/|www\.|\b\S+@\S+\.\S+\b/i.test(text)) {
-    return { text: null, shouldReply: false, reason: "Draft contained a link or email address.", costUsd, model };
+  if (hasUnapprovedLink(text, allowedLinks(replyPromptMd))) {
+    return {
+      text: null,
+      shouldReply: false,
+      reason: "Draft contained a link or email address that isn't in your reply prompt.",
+      costUsd,
+      model,
+    };
   }
 
   return { text, shouldReply: true, reason, costUsd, model };
