@@ -40,7 +40,7 @@ export default function HomePage() {
     <Layout>
       <div className="max-w-5xl mx-auto px-6 py-12 sm:py-16">
         <header className="mb-10 text-center sm:text-left">
-          <h1 className="text-3xl font-bold tracking-tight text-foreground">Your ClipMagic studio</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">The Lab</h1>
           <p className="mt-2 text-muted-foreground">
             Pick a tool to get started. Everything you need to script, cut and ship short-form video.
           </p>

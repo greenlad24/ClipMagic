@@ -68,7 +68,7 @@ export default function SetupPage() {
         <div className="mb-8">
           <h1 className="text-2xl font-bold text-foreground">Service Setup Guide</h1>
           <p className="text-muted-foreground mt-1">
-            Deploy the two Node.js microservices that power ShortStack's Playwright capture and FFmpeg render pipeline.
+            Deploy the two Node.js microservices that power The Lab's Playwright capture and FFmpeg render pipeline.
           </p>
         </div>
 
@@ -173,7 +173,7 @@ export default function SetupPage() {
             </div>
 
             <div className="p-5 bg-card border border-border rounded-xl space-y-3">
-              <h2 className="text-sm font-semibold text-foreground">Connect to ShortStack</h2>
+              <h2 className="text-sm font-semibold text-foreground">Connect to The Lab</h2>
               <p className="text-sm text-muted-foreground">After your services are running and publicly accessible, add these two secrets in the <strong>Zite Secrets panel</strong> (Settings → Secrets):</p>
               <div className="space-y-2 font-mono text-xs">
                 <div className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">

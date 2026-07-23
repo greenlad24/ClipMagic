@@ -17,7 +17,7 @@ export interface AuthUser {
 const LOCAL_USER: AuthUser = {
   id: "local",
   email: "you@clipmagic.local",
-  firstName: "ClipMagic",
+  firstName: "The Lab",
   lastName: "User",
 };
 

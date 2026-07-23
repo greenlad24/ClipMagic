@@ -217,7 +217,7 @@ export default function StoragePage() {
             {/* Per-area breakdown of ClipMagic's whole footprint */}
             <div className="space-y-1.5 pt-1">
               <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                <span>ClipMagic data: <span className="font-mono text-foreground">{fmtBytes(data.totals.all)}</span></span>
+                <span>The Lab data: <span className="font-mono text-foreground">{fmtBytes(data.totals.all)}</span></span>
                 <span>Reclaimable cache: <span className="font-mono">{fmtBytes(data.totals.cache)}</span></span>
               </div>
               {breakdown.map((a) => {
