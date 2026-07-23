@@ -8,10 +8,17 @@
  * no prompt stored, generation is INERT and every item is skipped, so the reply
  * path cannot invent a voice of its own.
  *
- * The model is also the first safety gate: it decides whether an item deserves
- * a reply at all. Spam, self-promotion, abuse, and anything asking for a
- * commitment Jake hasn't authorized come back as `shouldReply: false` with a
- * reason, and are recorded as skipped rather than answered.
+ * The operator's prompt is used VERBATIM and it is the authority: voice, length,
+ * and which comments get answered at all are its call, not ours. What we append
+ * is deliberately small — the JSON envelope the queue needs, the platform's own
+ * character cap, and three limits that exist because nobody reads these replies
+ * before they go out (don't state facts you weren't given, don't commit the
+ * operator to anything, don't use links the prompt didn't provide).
+ *
+ * An earlier version appended a second, competing style guide — its own list of
+ * what to skip and a blanket link ban — which overrode the operator's playbooks
+ * and silently binned any reply their rules made long. Resist re-adding rules
+ * here: if a behaviour belongs to the voice, it belongs in their prompt.
  */
 import { claudeJSONForPurposeWithUsage, anthropicConfigured } from "../ai/claude.js";
 import { ANTHROPIC_RATES, tokenCost, roundUsd } from "../ai/pricing.js";
@@ -32,6 +39,14 @@ export interface ReplyDraft {
   reason: string;
   /** Whether this item should get a reply at all. */
   shouldReply: boolean;
+  /**
+   * The draft broke one of the mechanical limits (too long for the platform, or
+   * it carried a link that isn't in the style guide). The text is KEPT and the
+   * reply is held for a human instead of being posted — silently binning a
+   * finished draft loses work and hides the problem, which is exactly what the
+   * old blanket rejection did to every reply over the character limit.
+   */
+  forceReview: boolean;
   /** Real cost of this generation in USD (0 when the model isn't priced). */
   costUsd: number;
   /** Model that produced it. */
@@ -77,51 +92,42 @@ function hasUnapprovedLink(text: string, approved: string[]): boolean {
 }
 
 /**
- * The non-negotiable half of the system prompt. Jake's prompt supplies the
- * VOICE; this supplies the RULES, and it is appended after his so the operating
- * limits can't be talked out of the model by the voice prompt.
+ * The mechanics appended after the operator's prompt. Keep this SHORT and keep
+ * it subordinate — it says so in the text, because the model will otherwise
+ * treat a long trailing block as the real instruction set and drift off the
+ * voice above it.
  */
 function guardrails(platform: Platform, maxChars: number, approvedLinks: string[]): string {
   const linkRule = approvedLinks.length
-    ? `- The ONLY links you may ever include are the ones given in the style guide
-  above (${approvedLinks.join(", ")}), and only in the situations it describes.
-  Never write any other link, email address or phone number.`
-    : `- No links, no email addresses, no phone numbers, no @-mentions of other accounts.`;
+    ? `- The only links that may appear are the ones in the style guide above
+  (${approvedLinks.join(", ")}), used where it says to use them. No other link,
+  email address or phone number.`
+    : `- No links, email addresses or phone numbers.`;
   return `
-# Operating rules (these override any style guidance above)
+# Mechanics
 
-You are replying as the channel owner to a real comment on ${platform}. Your
-output is posted publicly, automatically, with nobody reviewing it first.
+Everything above is the style guide. It governs the reply completely — the
+voice, the length, the punctuation, and which comments get answered at all.
+Nothing here changes any of that. This section only covers the mechanics of
+posting the reply automatically.
 
-The style guide above defines the VOICE and it wins on every question of tone,
-casing, punctuation, length and phrasing. The rules below are operating limits
-and they win where the two genuinely conflict.
-
-- Write ONE reply, exactly as it will be posted. No preamble, no quotes around
-  it, no signature, no markdown.
-- Hard limit: ${maxChars} characters. Shorter is almost always better.
-- Never invent facts: no dates, prices, specs, numbers, or features you were not
-  given in the thread. If a question needs information you don't have, say so
-  plainly in the voice rather than guessing.
-- Never promise anything on the channel owner's behalf — no "I'll send you...",
-  no "DM me and I'll...", no commitments to review, refund, collaborate, or meet.
-- Never give financial, legal, medical, or safety advice.
+- The reply is posted publicly on ${platform}, as you, with nobody reading it
+  first.
+- ${platform} accepts at most ${maxChars} characters in a comment.
+- Don't state facts you weren't given — prices, dates, specs, version numbers.
+  Where the style guide has no honest answer, answer in voice without the
+  specific rather than guessing at it.
+- Don't commit yourself to anything you'd have to do later: sending something,
+  reviewing something, refunding, meeting.
 ${linkRule}
-- Never claim to be a human when asked directly whether this is automated;
-  in that case set shouldReply=false and let a person answer.
-
-Set shouldReply=false (and leave reply empty) when the comment is:
-spam or self-promotion; abusive, hateful, or harassing; a complaint, refund
-request, or anything needing a real decision; a question you cannot answer
-without inventing something; sensitive (health, money, legal, personal crisis);
-in a language you cannot reply to naturally; already answered by the channel
-owner elsewhere in this thread; or simply not worth a reply (a bare emoji or
-a one-word "nice" doesn't need one every time).
 
 Respond with ONLY this JSON object:
 {"shouldReply": boolean, "reply": string, "reason": string}
-"reason" is one short sentence explaining the decision, for the human reviewing
-the queue. When shouldReply is false, "reply" must be an empty string.`.trim();
+
+Set shouldReply to false when the style guide above says to leave a comment
+alone (its spam rule, for example), or when answering would mean breaking one
+of the points in this section. "reason" is one short sentence for whoever
+reviews the queue. When shouldReply is false, "reply" must be an empty string.`.trim();
 }
 
 /** Render the thread as context, oldest first, marking the item being answered. */
@@ -153,6 +159,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
     return {
       text: null,
       shouldReply: false,
+      forceReview: false,
       reason: "No reply prompt configured (or no Anthropic credentials) — generation is inert.",
       costUsd: 0,
       model: null,
@@ -199,6 +206,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
     return {
       text: null,
       shouldReply: false,
+      forceReview: false,
       reason: `Generation failed: ${e instanceof Error ? e.message : String(e)}`,
       costUsd: 0,
       model: null,
@@ -212,6 +220,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
     return {
       text: null,
       shouldReply: false,
+      forceReview: false,
       reason: "Model returned unparseable JSON.",
       costUsd,
       model,
@@ -220,33 +229,42 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
 
   const reason = typeof parsed.reason === "string" && parsed.reason.trim() ? parsed.reason.trim() : "No reason given.";
   if (parsed.shouldReply !== true) {
-    return { text: null, shouldReply: false, reason, costUsd, model };
+    return { text: null, shouldReply: false, forceReview: false, reason, costUsd, model };
   }
 
   const text = typeof parsed.reply === "string" ? parsed.reply.trim() : "";
   // Belt-and-braces on the model's own rules: an empty or over-long reply, or
   // one that smuggled in a link, is treated as a skip rather than posted.
   if (!text) {
-    return { text: null, shouldReply: false, reason: "Model said reply but returned empty text.", costUsd, model };
-  }
-  if (text.length > maxChars) {
     return {
       text: null,
       shouldReply: false,
-      reason: `Draft exceeded the ${maxChars}-character limit for ${item.platform} (${text.length}).`,
+      forceReview: false,
+      reason: "Model said reply but returned empty text.",
       costUsd,
       model,
     };
   }
-  if (hasUnapprovedLink(text, allowedLinks(replyPromptMd))) {
+  if (text.length > maxChars) {
     return {
-      text: null,
-      shouldReply: false,
-      reason: "Draft contained a link or email address that isn't in your reply prompt.",
+      text,
+      shouldReply: true,
+      forceReview: true,
+      reason: `Too long for ${item.platform} — ${text.length} characters against a ${maxChars} limit. Held for you to trim.`,
+      costUsd,
+      model,
+    };
+  }
+  if (hasUnapprovedLink(text, approved)) {
+    return {
+      text,
+      shouldReply: true,
+      forceReview: true,
+      reason: "Contains a link or email address that isn't in your reply prompt. Held for you to check.",
       costUsd,
       model,
     };
   }
 
-  return { text, shouldReply: true, reason, costUsd, model };
+  return { text, shouldReply: true, forceReview: false, reason, costUsd, model };
 }

@@ -188,7 +188,10 @@ async function draftOne(item: InboxItem, settings: EngageSettings): Promise<bool
   }
 
   // 'auto' queues for dispatch; 'suggest' waits for a human to approve.
-  const auto = channel.replyMode === "auto";
+  // forceReview overrides 'auto': the draft is fine but it broke a mechanical
+  // limit (too long, or an unexpected link), so a person looks at it rather
+  // than it going out or being thrown away.
+  const auto = channel.replyMode === "auto" && !draft.forceReview;
   createReply({
     inboxId: item.id,
     channelId: item.channelId,
