@@ -89,6 +89,39 @@ export const config = {
    */
   apiToken: process.env.API_TOKEN || "",
 
+  // ── Google Sign-In auth gate (Engagement Manager + whole-app protection) ────
+  /**
+   * Google OAuth 2.0 "Web application" client used to LOG IN to the whole lab.
+   * When BOTH the client id/secret AND a session secret are set, a global
+   * middleware requires a valid Google session whose verified email is in
+   * `authAllowedEmails`; every other request is redirected to sign-in (documents)
+   * or 401'd (XHR). When unset the gate is a PASS-THROUGH (loudly logged at boot)
+   * so the existing open deployment is never broken before creds are provisioned
+   * — mirrors the `apiToken`-empty-is-open convention above.
+   */
+  googleClientId: process.env.GOOGLE_CLIENT_ID || "",
+  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+  /** HMAC key that signs the session cookie. Any long random string. */
+  sessionSecret: process.env.SESSION_SECRET || "",
+  /**
+   * Exact redirect URI registered on the Google OAuth client, e.g.
+   * `https://<LAB_DOMAIN>/auth/callback`. If empty it is derived from
+   * PUBLIC_BASE_URL + "/auth/callback".
+   */
+  oauthRedirectUrl: process.env.OAUTH_REDIRECT_URL || "",
+  /**
+   * Comma-separated allow-list of Google emails permitted into the app. Anyone
+   * else — even with a valid Google login — gets a hard 403. Defaults to the two
+   * authorized operators.
+   */
+  authAllowedEmails: (process.env.ALLOWED_EMAILS ||
+    "jakedawsonbusiness@gmail.com,keith.graham244@gmail.com")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean),
+  /** Session cookie lifetime (days). */
+  sessionTtlDays: envInt("SESSION_TTL_DAYS", 7),
+
   /** Public base URL used to build absolute links to outputs/uploads. */
   publicBaseUrl: process.env.PUBLIC_BASE_URL || "",
 
@@ -161,6 +194,22 @@ export const config = {
     process.env.MOTION_ENTRY_POINT ||
     path.resolve(SERVER_ROOT, "..", "remotion", "src", "index.ts"),
 };
+
+/**
+ * The Google Sign-In gate is ACTIVE only when the OAuth client and a session
+ * secret are all present. Otherwise the app stays open (legacy behavior) and the
+ * middleware is a pass-through — logged loudly at boot.
+ */
+export function authConfigured(): boolean {
+  return Boolean(config.googleClientId && config.googleClientSecret && config.sessionSecret);
+}
+
+/** The redirect URI registered on the Google client (explicit or derived). */
+export function oauthRedirectUri(): string {
+  if (config.oauthRedirectUrl) return config.oauthRedirectUrl;
+  if (config.publicBaseUrl) return config.publicBaseUrl.replace(/\/+$/, "") + "/auth/callback";
+  return "";
+}
 
 export function ensureDirs(): void {
   for (const dir of [

@@ -8,6 +8,13 @@
 # then open http://<droplet-ip>:8080
 services:
   clipmagic:
+    # RETIRED 2026-07-22. This :8080 service ran the lab codebase WITHOUT the
+    # Google Sign-In auth gate and was published open to the internet — a back
+    # door around lab.jakedaw.com. Now gated behind the `legacy-8080` profile so
+    # a plain `docker compose up` never starts it. The data volume (clipmagic-data)
+    # is kept for rollback; delete it only when you're sure. To temporarily revive:
+    #   docker compose --profile legacy-8080 up -d clipmagic
+    profiles: ["legacy-8080"]
     # Both public ports now run the LAB codebase (lab/ is the real product).
     # :8080 builds from lab/ just like :9090 does, but keeps its OWN production
     # data volume (clipmagic-data) below and stays on port 8080. The original
@@ -69,7 +76,11 @@ services:
     image: clipmagic-lab:latest
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      # Bound to localhost ONLY — the app is reached exclusively via Caddy HTTPS
+      # (lab.jakedaw.com). Caddy talks to the container over the Docker network
+      # (clipmagic-lab:9090), which is independent of this host publish, so this
+      # does not affect the proxy. Removes the plaintext internet-facing port.
+      - "127.0.0.1:9090:9090"
     # Same keys as the main app — single source of truth, no duplication.
     env_file:
       - .env
@@ -151,7 +162,12 @@ services:
       # Host port → Postiz's internal port (the unified app image serves on
       # 5000). Override the host side with POSTIZ_PORT in .env; keep it in sync
       # with the URLs below.
-      - "${POSTIZ_PORT:-5000}:5000"
+      # Bound to LOCALHOST only — the internet reaches Postiz solely via Caddy
+      # HTTPS (advancedtools.jakedaw.com → postiz:5000 over the Docker network,
+      # independent of this host publish). Removes the plaintext internet-facing
+      # :5000 port that exposed Postiz's whole surface (it holds social OAuth
+      # tokens). Localhost publish kept for on-box debugging via SSH tunnel.
+      - "127.0.0.1:${POSTIZ_PORT:-5000}:5000"
     environment:
       # Public-facing origin (where the browser reaches Postiz). For a bare IP
       # box the default works; behind a domain/proxy set POSTIZ_URL in .env.

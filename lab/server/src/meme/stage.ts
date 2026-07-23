@@ -38,15 +38,19 @@ export type StageProgressFn = (fraction: number, label: string) => void;
 /**
  * Resolve a sticker's image to an ABSOLUTE http URL the headless Chromium can
  * fetch. Remotion's <Img> cannot load file:// (the sandbox blocks it) — verified
- * on this box — so we point it at the lab server's own /api/outputs origin. A
- * relative `/api/outputs/...` URL has no origin inside the bundle, so we prefix
- * the loopback base. PUBLIC_BASE_URL wins if set; otherwise 127.0.0.1:<port>.
+ * on this box — so we point it at the lab server's own /api/outputs origin.
+ *
+ * ALWAYS use the LOOPBACK origin (127.0.0.1:<port>), never PUBLIC_BASE_URL: this
+ * request is made by the in-container render process, and the Google auth gate
+ * now fronts /api/outputs. requireSession exempts a genuine loopback peer for the
+ * media routes (see auth/middleware.ts), so a loopback fetch succeeds — whereas a
+ * PUBLIC_BASE_URL (https://lab.jakedaw.com) fetch would leave the box through
+ * Caddy carrying no session cookie and get 401'd, silently dropping every sticker
+ * back to a captions-only render.
  */
 function stickerHttpUrl(imageUrl: string): string {
   if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
-  const base =
-    (config.publicBaseUrl && config.publicBaseUrl.replace(/\/$/, "")) ||
-    `http://127.0.0.1:${config.port}`;
+  const base = `http://127.0.0.1:${config.port}`;
   return `${base}${imageUrl.startsWith("/") ? "" : "/"}${imageUrl}`;
 }
 

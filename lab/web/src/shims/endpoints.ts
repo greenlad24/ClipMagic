@@ -35,10 +35,17 @@ async function callFn<T = any>(name: string, input: unknown): Promise<T> {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input ?? {}),
+      // Send the session cookie (same-origin sends it anyway; explicit for clarity).
+      credentials: "include",
     });
   } catch (networkErr) {
     console.error(`[The Lab] ✗ #${id} ${name} — network error`, networkErr);
     throw new Error(`${name}: network error (is the server reachable?)`);
+  }
+  // Session expired / not signed in → bounce to Google sign-in.
+  if (res.status === 401) {
+    window.location.href = "/auth/google";
+    throw new Error(`${name}: sign-in required`);
   }
   const ms = Math.round((typeof performance !== "undefined" ? performance.now() : Date.now()) - t0);
   const text = await res.text();

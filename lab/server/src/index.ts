@@ -2,8 +2,10 @@ import express from "express";
 import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
-import { config, ensureDirs } from "./config.js";
+import { config, ensureDirs, authConfigured, oauthRedirectUri } from "./config.js";
 import { auth } from "./middleware.js";
+import authRouter from "./auth/routes.js";
+import { requireSession } from "./auth/middleware.js";
 import { startWorker } from "./render/worker.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
@@ -24,8 +26,28 @@ ensureDirs();
 
 const app = express();
 app.use(cors());
+
+// Baseline security headers on every response (no dependency; deliberately NOT
+// helmet's default CSP, which breaks the SPA). HSTS is honored only over the
+// HTTPS the app is actually served on (Caddy → lab.jakedaw.com).
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000");
+  next();
+});
+
 // Large JSON bodies: manifests for a 300-item batch can be sizeable.
 app.use(express.json({ limit: "256mb" }));
+
+// ── Google Sign-In auth gate ────────────────────────────────────────────────
+// The sign-in routes must be reachable BEFORE the gate; the gate then covers
+// everything mounted after it (all /api/*, /v1, the static SPA and the `*`
+// fallback) in one place. When Google creds aren't set, requireSession is a
+// pass-through and the app stays open (legacy behavior).
+app.use(authRouter);
+app.use(requireSession);
 
 // Health / readiness — no auth, handy for load balancers and uptime checks.
 app.get("/health", (_req, res) => {
@@ -115,6 +137,19 @@ app.listen(config.port, config.host, () => {
   // mid-flight as 'running' forever. Mark them failed so they read as dead.
   const orphaned = failOrphanedRuns();
   if (orphaned > 0) console.log(`[server] marked ${orphaned} interrupted script run(s) as failed`);
+  // Auth gate status — a missing config means the app is OPEN, which must be
+  // impossible to miss in the logs.
+  if (authConfigured()) {
+    console.log(
+      `[auth] Google Sign-In ENABLED — allow-list: ${config.authAllowedEmails.join(", ")} · ` +
+        `redirect_uri=${oauthRedirectUri() || "(unset!)"}`
+    );
+  } else {
+    console.warn(
+      "[auth] Google Sign-In DISABLED — app is OPEN (no GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / SESSION_SECRET). " +
+        "Set them to lock the app to the allow-list."
+    );
+  }
   // Surface which AI providers are configured so a missing/unpropagated key is
   // obvious in the logs at boot (values are never printed — only presence).
   const yn = (v: unknown) => (v ? "yes" : "NO");

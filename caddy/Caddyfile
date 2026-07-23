@@ -19,7 +19,7 @@
 # Only needed later if you want real Dropbox/Google Drive OAuth pickers (their
 # callbacks return to the lab). Set LAB_DOMAIN in .env and uncomment:
 #
-# {$LAB_DOMAIN} {
-# 	encode zstd gzip
-# 	reverse_proxy clipmagic-lab:9090
-# }
+{$LAB_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy clipmagic-lab:9090
+}
