@@ -216,6 +216,47 @@ export async function pressKey(platform: BrowserPlatform, key: string): Promise<
   return frame(platform);
 }
 
+/**
+ * Press, move, release — a real mouse drag. TikTok (and Instagram on a new
+ * device) gates login behind a slider/puzzle captcha that CANNOT be solved with
+ * clicks alone, so without this the console can get you to the login form and
+ * no further.
+ *
+ * The movement is deliberately not a straight teleport: it steps across with a
+ * slight arc and a pause before release, because these captchas score the
+ * pointer path, and a single instantaneous jump reads as automation and fails.
+ */
+export async function drag(
+  platform: BrowserPlatform,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+): Promise<FrameResult> {
+  await withPage(platform, async (page) => {
+    await page.mouse.move(from.x, from.y, { steps: 6 });
+    await sleep(180);
+    await page.mouse.down();
+    await sleep(140);
+
+    const steps = 28;
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const x = from.x + (to.x - from.x) * t;
+      // Small vertical arc — a human hand doesn't track a perfect straight line.
+      const arc = Math.sin(t * Math.PI) * 4;
+      const y = from.y + (to.y - from.y) * t + arc;
+      await page.mouse.move(x, y);
+      await sleep(12 + Math.floor(Math.random() * 22));
+    }
+
+    // Settle on the target before releasing.
+    await sleep(220);
+    await page.mouse.move(to.x, to.y);
+    await page.mouse.up();
+    await sleep(1_200);
+  });
+  return frame(platform);
+}
+
 /** Scroll the page by a pixel delta. */
 export async function scroll(platform: BrowserPlatform, dy: number): Promise<FrameResult> {
   await withPage(platform, async (page) => {

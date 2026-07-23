@@ -1350,6 +1350,11 @@ export const engageBrowserKey =
   endpoint<{ platform: EngagePlatform; key: string }, { frame: EngageBrowserFrame }>("engageBrowserKey");
 export const engageBrowserScroll =
   endpoint<{ platform: EngagePlatform; dy: number }, { frame: EngageBrowserFrame }>("engageBrowserScroll");
+export const engageBrowserDrag =
+  endpoint<
+    { platform: EngagePlatform; fromXFrac: number; fromYFrac: number; toXFrac: number; toYFrac: number },
+    { frame: EngageBrowserFrame }
+  >("engageBrowserDrag");
 export const engageBrowserNavigate =
   endpoint<{ platform: EngagePlatform; url: string }, { frame: EngageBrowserFrame }>("engageBrowserNavigate");
 export const engageBrowserVerify =

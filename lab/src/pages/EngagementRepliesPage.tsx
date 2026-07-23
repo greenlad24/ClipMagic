@@ -15,6 +15,7 @@ import {
   engageBrowserType,
   engageBrowserKey,
   engageBrowserScroll,
+  engageBrowserDrag,
   engageBrowserNavigate,
   engageBrowserVerify,
   engageBrowserClose,
@@ -52,6 +53,13 @@ const PLATFORM_META: Record<string, { label: string; Icon: typeof Instagram; col
   instagram: { label: 'Instagram', Icon: Instagram, color: '#E1306C' },
   facebook: { label: 'Facebook', Icon: Facebook, color: '#1877F2' },
   tiktok: { label: 'TikTok', Icon: Music2, color: '#111827' },
+};
+
+/** Each platform's dedicated login page, for the console's shortcut button. */
+const LOGIN_URL: Record<string, string> = {
+  instagram: 'https://www.instagram.com/accounts/login/',
+  facebook: 'https://www.facebook.com/login/',
+  tiktok: 'https://www.tiktok.com/login/phone-or-email/email',
 };
 
 const STATUS_TABS: Array<{ key: EngageReplyStatus; label: string }> = [
@@ -539,6 +547,7 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
   const [busy, setBusy] = useState(true);
   const [typing, setTyping] = useState('');
   const imgRef = useRef<HTMLImageElement | null>(null);
+  const dragStart = useRef<{ xFrac: number; yFrac: number } | null>(null);
   const meta = PLATFORM_META[platform] ?? PLATFORM_META.instagram;
 
   const poll = useCallback(async () => {
@@ -580,17 +589,39 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
     }
   };
 
-  const onImageClick = (e: React.MouseEvent<HTMLImageElement>) => {
-    const img = imgRef.current;
-    if (!img) return;
-    const rect = img.getBoundingClientRect();
-    // Send the position as a fraction so the server scales it to the real
-    // viewport — the image is rendered at whatever size the layout gives it.
+  // Positions travel as a FRACTION of the rendered image so the server can scale
+  // them to the real viewport — the image is shown at whatever size fits.
+  const posOf = (e: React.MouseEvent<HTMLImageElement>) => {
+    const rect = imgRef.current!.getBoundingClientRect();
+    return { xFrac: (e.clientX - rect.left) / rect.width, yFrac: (e.clientY - rect.top) / rect.height };
+  };
+
+  // Press-move-release is a DRAG (TikTok's slider captcha needs one); a press
+  // and release in roughly the same spot is just a click.
+  const onMouseDown = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!imgRef.current) return;
+    dragStart.current = posOf(e);
+  };
+
+  const onMouseUp = (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!imgRef.current) return;
+    const start = dragStart.current;
+    dragStart.current = null;
+    const end = posOf(e);
+    if (!start) return;
+    const moved = Math.hypot(end.xFrac - start.xFrac, end.yFrac - start.yFrac);
+    // ~1.5% of the image — below that it's a click, above it's a deliberate drag.
+    if (moved < 0.015) {
+      void act(() => engageBrowserClick({ platform, ...end }));
+      return;
+    }
     void act(() =>
-      engageBrowserClick({
+      engageBrowserDrag({
         platform,
-        xFrac: (e.clientX - rect.left) / rect.width,
-        yFrac: (e.clientY - rect.top) / rect.height,
+        fromXFrac: start.xFrac,
+        fromYFrac: start.yFrac,
+        toXFrac: end.xFrac,
+        toYFrac: end.yFrac,
       }),
     );
   };
@@ -634,9 +665,11 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
             <img
               ref={imgRef}
               src={`data:image/jpeg;base64,${frame.image}`}
-              onClick={onImageClick}
+              onMouseDown={onMouseDown}
+              onMouseUp={onMouseUp}
+              onDragStart={(e) => e.preventDefault()}
               alt="Remote browser"
-              className="mx-auto max-w-full cursor-crosshair rounded-md"
+              className="mx-auto max-w-full cursor-crosshair select-none rounded-md"
             />
           ) : (
             <div className="grid h-64 place-items-center text-sm text-muted-foreground">
@@ -687,10 +720,17 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
           >
             Home
           </button>
+          <button
+            onClick={() => void act(() => engageBrowserNavigate({ platform, url: LOGIN_URL[platform] }))}
+            className="rounded-lg border border-border px-3 py-2 text-xs hover:bg-muted"
+          >
+            Login page
+          </button>
         </div>
         <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
-          Your password is typed into {meta.label}'s own login form inside this browser. The Lab never sees
-          or stores it — only the resulting session cookie, kept on this server.
+          Click the picture to click the page. <b>Drag</b> on it to drag — that's how you solve a slider
+          captcha. Your password is typed into {meta.label}'s own login form inside this browser; The Lab
+          never sees or stores it, only the resulting session cookie.
         </p>
       </div>
     </div>

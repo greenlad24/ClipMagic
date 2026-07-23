@@ -3629,6 +3629,21 @@ const engageBrowserKey: Handler = async (input) => {
   return { frame: engageFrame(frame) };
 };
 
+/**
+ * Drag inside the console: press at one point, move, release at another. This
+ * is what makes TikTok's slider captcha solvable — clicks alone can't do it.
+ */
+const engageBrowserDrag: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const frac = (v: unknown) => Math.min(Math.max(Number(v) || 0, 0), 1);
+  const frame = await engageConsole.drag(
+    platform,
+    { x: Math.round(frac(input?.fromXFrac) * ENGAGE_VIEWPORT.width), y: Math.round(frac(input?.fromYFrac) * ENGAGE_VIEWPORT.height) },
+    { x: Math.round(frac(input?.toXFrac) * ENGAGE_VIEWPORT.width), y: Math.round(frac(input?.toYFrac) * ENGAGE_VIEWPORT.height) },
+  );
+  return { frame: engageFrame(frame) };
+};
+
 /** Scroll the console page. */
 const engageBrowserScroll: Handler = async (input) => {
   const platform = engageBrowserPlatform(input);
@@ -3824,6 +3839,7 @@ export const HANDLERS: Record<string, Handler> = {
   engageBrowserType,
   engageBrowserKey,
   engageBrowserScroll,
+  engageBrowserDrag,
   engageBrowserNavigate,
   engageBrowserVerify,
   engageBrowserClose,
