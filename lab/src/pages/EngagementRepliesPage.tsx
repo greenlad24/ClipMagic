@@ -18,6 +18,7 @@ import {
   engageBrowserDrag,
   engageBrowserNavigate,
   engageBrowserVerify,
+  engageBrowserImportCookies,
   engageBrowserClose,
   type EngagePlatform,
   type EngageReplyStatus,
@@ -546,6 +547,9 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
   const [frame, setFrame] = useState<EngageBrowserFrame | null>(null);
   const [busy, setBusy] = useState(true);
   const [typing, setTyping] = useState('');
+  const [showCookies, setShowCookies] = useState(false);
+  const [cookieText, setCookieText] = useState('');
+  const [importing, setImporting] = useState(false);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const dragStart = useRef<{ xFrac: number; yFrac: number } | null>(null);
   const meta = PLATFORM_META[platform] ?? PLATFORM_META.instagram;
@@ -586,6 +590,32 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
       toast.error(e?.message ?? 'That action failed.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  // Cookie import: carry a session minted on Jake's own device onto the box,
+  // instead of trying to pass a login from the datacenter IP (TikTok refuses it).
+  const importCookies = async () => {
+    if (!cookieText.trim() || importing) return;
+    setImporting(true);
+    try {
+      const out = await engageBrowserImportCookies({ platform, cookies: cookieText });
+      const skipped = out.skipped > 0 ? ` (skipped ${out.skipped} for other sites)` : '';
+      if (out.status.loggedIn) {
+        toast.success(`Imported ${out.imported} cookies${skipped} — signed in.`);
+        setCookieText('');
+        setShowCookies(false);
+      } else {
+        toast.warning(
+          `Imported ${out.imported} cookies${skipped}, but ${meta.label} still shows signed out. ` +
+            'Re-export them while logged in and make sure you grabbed the whole list.',
+        );
+      }
+      await poll();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Could not import those cookies.');
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -726,7 +756,51 @@ function BrowserConsole({ platform, onClose }: { platform: EngagePlatform; onClo
           >
             Login page
           </button>
+          <button
+            onClick={() => setShowCookies((v) => !v)}
+            className={`ml-auto rounded-lg border px-3 py-2 text-xs hover:bg-muted ${
+              showCookies ? 'border-primary text-primary' : 'border-border'
+            }`}
+          >
+            Paste cookies
+          </button>
         </div>
+
+        {showCookies && (
+          <div className="space-y-2 border-t border-border bg-muted/30 px-4 py-3">
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              Can't log in here (TikTok blocks logins from this server)? Sign in to {meta.label} in a browser
+              on your own phone or laptop, use a cookie-export extension like{' '}
+              <b>Cookie-Editor</b> to <b>Export</b> the cookies (JSON), and paste them below. The Lab keeps
+              only {meta.label}'s cookies and ignores everything else.
+            </p>
+            <textarea
+              value={cookieText}
+              onChange={(e) => setCookieText(e.target.value)}
+              placeholder={`Paste the exported ${meta.label} cookies here (JSON, cookies.txt, or a raw Cookie header)…`}
+              rows={4}
+              className="w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-[11px] outline-none focus:border-primary"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void importCookies()}
+                disabled={importing || !cookieText.trim()}
+                className="rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"
+              >
+                {importing ? 'Importing…' : 'Import cookies'}
+              </button>
+              {cookieText && (
+                <button
+                  onClick={() => setCookieText('')}
+                  className="rounded-lg border border-border px-3 py-2 text-xs hover:bg-muted"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         <p className="border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
           Click the picture to click the page. <b>Drag</b> on it to drag — that's how you solve a slider
           captcha. Your password is typed into {meta.label}'s own login form inside this browser; The Lab

@@ -184,6 +184,7 @@ import { canSend as engageCanSend, scheduleAt as engageScheduleAt, usage as enga
 import { generateReply as engageGenerateReply, replyGenReady } from "../engage/replyGen.js";
 import { VIEWPORT as ENGAGE_VIEWPORT, BROWSER_PLATFORMS, isBrowserPlatform } from "../engage/browser.js";
 import * as engageConsole from "../engage/browserSession.js";
+import { parseCookies } from "../engage/cookies.js";
 import { anthropicConfigured as engageAiConfigured } from "../ai/claude.js";
 import type {
   EngageStatus,
@@ -3665,6 +3666,29 @@ const engageBrowserVerify: Handler = async (input) => {
   return { status: await engageConsole.verifySession(platform) };
 };
 
+/**
+ * Import session cookies exported from a browser that's already logged in on the
+ * operator's own device — TikTok's login fallback, since it refuses a fresh
+ * login from the droplet. Accepts an extension JSON export, a Netscape
+ * cookies.txt, or a raw Cookie header; parseCookies drops anything not on the
+ * platform's own domains before it can reach the profile.
+ */
+const engageBrowserImportCookies: Handler = async (input) => {
+  const platform = engageBrowserPlatform(input);
+  const raw = String(input?.cookies ?? "");
+  if (!raw.trim()) throw new ZiteError({ code: "BAD_REQUEST", message: "Paste your exported cookies first." });
+  if (raw.length > 500_000) throw new ZiteError({ code: "BAD_REQUEST", message: "That cookie export is too large." });
+  const parsed = parseCookies(raw, platform);
+  if (parsed.cookies.length === 0) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `No ${platform} cookies found in what you pasted. Export cookies while logged in to ${platform}, then paste them here.`,
+    });
+  }
+  const status = await engageConsole.importCookies(platform, parsed.cookies);
+  return { status, imported: parsed.cookies.length, skipped: parsed.total - parsed.cookies.length };
+};
+
 /** Close a platform's browser. The logged-in profile on disk survives. */
 const engageBrowserClose: Handler = async (input) => {
   const platform = engageBrowserPlatform(input);
@@ -3842,6 +3866,7 @@ export const HANDLERS: Record<string, Handler> = {
   engageBrowserDrag,
   engageBrowserNavigate,
   engageBrowserVerify,
+  engageBrowserImportCookies,
   engageBrowserClose,
 };
 

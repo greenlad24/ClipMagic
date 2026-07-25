@@ -32,6 +32,7 @@ import path from "node:path";
 import { config } from "../config.js";
 import { chromiumAvailable, chromiumCandidates } from "../capture/chromium.js";
 import type { Platform } from "./types.js";
+import type { EngageCookie } from "./cookies.js";
 
 /** Platforms we drive a browser for. YouTube is monitor-only (make.com replies). */
 export type BrowserPlatform = Exclude<Platform, "youtube">;
@@ -438,6 +439,34 @@ export async function checkLogin(platform: BrowserPlatform): Promise<LoginState>
     return { platform, loggedIn: false, url: null, error: "Browser unavailable" };
   }
   return { platform, loggedIn: result.loggedIn, url: result.url, error: null };
+}
+
+/**
+ * Load exported session cookies into the persistent profile, then re-check the
+ * login state. This is TikTok's fallback (see engage/cookies.ts): the session
+ * was minted on Jake's own trusted device and we carry it over, rather than
+ * trying to pass a fresh login from the datacenter IP that TikTok rejects.
+ *
+ * Cookies are set BEFORE the verify navigation, so the first authenticated load
+ * happens with them in place; and because the profile is persistent, Chromium
+ * writes them to disk and every later reply reuses them — no re-import per run.
+ */
+export async function importCookies(
+  platform: BrowserPlatform,
+  cookies: EngageCookie[],
+): Promise<LoginState> {
+  if (cookies.length === 0) {
+    return { platform, loggedIn: false, url: null, error: "No cookies to import." };
+  }
+  const set = await withPage(platform, async (page) => {
+    // page.setCookie writes via CDP Network.setCookie, which honours each
+    // cookie's own domain/path regardless of the page's current URL — so we can
+    // seed them without first navigating to the platform.
+    await page.setCookie(...cookies);
+    return true;
+  });
+  if (!set) return { platform, loggedIn: false, url: null, error: "Browser unavailable" };
+  return checkLogin(platform);
 }
 
 // ── human-ish interaction helpers ─────────────────────────────────────────────

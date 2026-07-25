@@ -1359,5 +1359,10 @@ export const engageBrowserNavigate =
   endpoint<{ platform: EngagePlatform; url: string }, { frame: EngageBrowserFrame }>("engageBrowserNavigate");
 export const engageBrowserVerify =
   endpoint<{ platform: EngagePlatform }, { status: EngageBrowserStatusEntry }>("engageBrowserVerify");
+export const engageBrowserImportCookies =
+  endpoint<
+    { platform: EngagePlatform; cookies: string },
+    { status: EngageBrowserStatusEntry; imported: number; skipped: number }
+  >("engageBrowserImportCookies");
 export const engageBrowserClose =
   endpoint<{ platform: EngagePlatform }, { ok: true }>("engageBrowserClose");

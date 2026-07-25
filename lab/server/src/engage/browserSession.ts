@@ -29,6 +29,7 @@ import {
   checkLogin,
   errMsg,
   hardClose,
+  importCookies as browserImportCookies,
   isOpen,
   screenshotBase64,
   sleep,
@@ -36,6 +37,7 @@ import {
   withPage,
   type BrowserPlatform,
 } from "./browser.js";
+import type { EngageCookie } from "./cookies.js";
 
 /** Per-platform live console state for the UI. */
 export interface BrowserSessionStatus {
@@ -154,6 +156,34 @@ export async function openSession(platform: BrowserPlatform): Promise<BrowserSes
 /** Re-verify the login state (used after Jake finishes a login flow). */
 export async function verifySession(platform: BrowserPlatform): Promise<BrowserSessionStatus> {
   return openSession(platform);
+}
+
+/**
+ * Load pasted session cookies into the profile (TikTok's login fallback), then
+ * refresh the cached login verdict exactly as a manual login would. The parsing
+ * + domain-filtering happened in engage/cookies.ts; by here `cookies` is already
+ * scoped to this platform's own domains.
+ */
+export async function importCookies(
+  platform: BrowserPlatform,
+  cookies: EngageCookie[],
+): Promise<BrowserSessionStatus> {
+  const state = await browserImportCookies(platform, cookies);
+  const c = cached(platform);
+  c.loggedIn = state.error ? null : state.loggedIn;
+  c.url = state.url;
+  c.error = state.error;
+  c.checkedAt = Date.now();
+  const available = await browserAvailable();
+  return {
+    platform,
+    available,
+    open: isOpen(platform),
+    loggedIn: c.loggedIn,
+    url: c.url,
+    error: c.error,
+    checkedAt: c.checkedAt,
+  };
 }
 
 /** Close a platform's browser. The profile (and its cookies) survives. */
