@@ -27,11 +27,21 @@
  * Verified 2026-07-23 against Jake's own logged-in accounts, read-only:
  *   - instagram: composer FOUND on a real reel ("Add a comment…").
  *   - facebook:  composer FOUND on his Page ("Comment as Jake Dawson").
- *   - tiktok:    NOT verified — login is rejected from this box's IP, so there
- *                is no logged-in session to check against.
+ * Verified 2026-07-25 against a real logged-in TikTok video, read-only (session
+ * carried over via cookie import):
+ *   - tiktok:    the composer is a bare `div[contenteditable][role="textbox"]`
+ *                with NO comment-specific aria-label/data-e2e, wrapped in
+ *                `[data-e2e="comment-input"]`; the Post button is
+ *                `button[data-e2e="comment-post"]`. CRUCIALLY it is not in the
+ *                DOM at all until the comment panel is opened by clicking
+ *                `[data-e2e="comment-icon"]` — a video permalink lands with
+ *                comments collapsed. openTikTokComments() below does that.
  * What is still unproven everywhere is the SUBMIT half: nobody has posted a
- * reply through this yet, because there are no real comments to answer. Finding
- * the box is not the same as the reply landing.
+ * reply through this yet, because there are no real comments to answer (all
+ * three accounts are pre-launch/empty). Finding the box is not the same as the
+ * reply landing. TikTok additionally serves an intermittent slider captcha from
+ * this datacenter IP (observed on some navigations, not all) that an unattended
+ * worker cannot solve — so TikTok browser replies are best-effort at best.
  *
  * That uncertainty is exactly why DRY RUN DEFAULTS ON (ENGAGE_REPLY_DRY_RUN):
  * the sender navigates, locates the composer and types the reply, then stops
@@ -151,9 +161,12 @@ const COMPOSER_SELECTORS: Record<BrowserPlatform, string[]> = {
     'div[role="textbox"][contenteditable="true"]',
   ],
   tiktok: [
-    'div[contenteditable="true"][aria-label*="comment" i]',
-    'div[contenteditable="true"][data-e2e*="comment" i]',
+    // Verified 2026-07-25: the composer carries no comment-specific attribute of
+    // its own, so anchor via the wrapper first, then fall back to the plain
+    // role=textbox contenteditable (there is exactly one on an open comment panel).
     'div[data-e2e="comment-input"] div[contenteditable="true"]',
+    'div[data-e2e="comment-input"] [contenteditable="true"]',
+    'div[contenteditable="true"][role="textbox"]',
     'div[role="textbox"][contenteditable="true"]',
   ],
 };
@@ -166,10 +179,29 @@ const SUBMIT_SELECTORS: Record<BrowserPlatform, string[]> = {
   instagram: ['form div[role="button"]:not([aria-disabled="true"])', 'button[type="submit"]:not([disabled])'],
   facebook: [],
   tiktok: [
+    // Verified 2026-07-25: <button data-e2e="comment-post" aria-label="Post">.
+    'button[data-e2e="comment-post"]:not([disabled]):not([aria-disabled="true"])',
     'div[data-e2e="comment-post"]:not([aria-disabled="true"])',
-    'button[data-e2e="comment-post"]:not([disabled])',
+    'button[aria-label="Post" i][data-e2e="comment-post"]',
   ],
 };
+
+/**
+ * TikTok video permalinks load with the comment panel COLLAPSED — the composer
+ * isn't in the DOM until the comment icon is clicked (verified 2026-07-25). Open
+ * it, but only if the composer isn't already present: clicking the icon while
+ * the panel is open would toggle it shut. Best-effort — never throws.
+ */
+async function openTikTokComments(page: any): Promise<void> {
+  const already = await waitForAny(page, COMPOSER_SELECTORS.tiktok, 4_000);
+  if (already) return;
+  try {
+    await page.click('[data-e2e="comment-icon"]');
+    await sleep(randInt(2_000, 3_500));
+  } catch {
+    // The composer search below reports cleanly if it's still not there.
+  }
+}
 
 /**
  * Post a reply on a platform. NEVER throws — every failure path returns a
@@ -235,6 +267,10 @@ export async function sendReply(
     }
     // Let the comment section hydrate; these are all heavy SPA pages.
     await sleep(randInt(2_500, 5_000));
+
+    // 1b. TikTok lands with comments collapsed — open the panel or there is no
+    //     composer to find. (Instagram/Facebook show theirs by default.)
+    if (platform === "tiktok") await openTikTokComments(page);
 
     // 2. Find the composer.
     const composer = await waitForAny(page, COMPOSER_SELECTORS[platform], 20_000);
