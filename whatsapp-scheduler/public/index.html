@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Served under /wa/ behind The Lab's auth gate via a reverse proxy, so all
+         asset + API paths are RELATIVE and resolve against this base. -->
+    <base href="/wa/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>WhatsApp Scheduler — Status</title>
+    <meta name="description" content="Link your device and watch your scheduled WhatsApp messages." />
+    <meta name="theme-color" content="#00a884" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon48.png" sizes="48x48" type="image/png" />
+    <link rel="apple-touch-icon" href="icons/icon128.png" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <span class="logo" aria-hidden="true">💬</span>
+        <h1>WhatsApp Scheduler</h1>
+        <span id="provider-badge" class="provider-badge" hidden></span>
+      </div>
+    </header>
+
+    <main class="container">
+      <!-- Loading -->
+      <section id="screen-loading" class="screen">
+        <div class="card center">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Connecting…</p>
+        </div>
+      </section>
+
+      <!-- Token prompt -->
+      <section id="screen-token" class="screen" hidden>
+        <div class="card">
+          <h2>API token required</h2>
+          <p class="muted">This server is protected. Enter your API token to continue. It is stored only in this browser.</p>
+          <form id="token-form">
+            <label for="token-input">API token</label>
+            <input id="token-input" type="password" autocomplete="off" placeholder="Bearer token" required />
+            <div id="token-error" class="error" hidden></div>
+            <button type="submit" class="btn btn-primary">Continue</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- QR link (personal provider, not connected) -->
+      <section id="screen-qr" class="screen" hidden>
+        <div class="card center">
+          <h2>Link your WhatsApp</h2>
+          <p class="muted">Open WhatsApp on your phone → <strong>Settings → Linked devices → Link a device</strong>, then scan this code.</p>
+          <div id="qr-wrap" class="qr-wrap">
+            <img id="qr-img" alt="WhatsApp QR code" hidden />
+            <p id="qr-waiting" class="muted small">Waiting for a QR code…</p>
+          </div>
+          <p class="muted small">This screen updates automatically once linked.</p>
+        </div>
+      </section>
+
+      <!-- Connected: how-to + read-only list -->
+      <section id="screen-app" class="screen" hidden>
+        <div class="card">
+          <div class="connected-head">
+            <span class="dot" aria-hidden="true"></span>
+            <h2 id="connected-title">Connected</h2>
+          </div>
+          <p class="muted">Schedule messages from inside any WhatsApp chat by sending yourself a command. The linked device does the rest.</p>
+
+          <h3 class="howto-title">How to schedule</h3>
+          <p class="muted small">Type one of these in a chat (case-insensitive triggers: <code>/schedule</code>, <code>/sched</code>, <code>/s</code>):</p>
+          <ul class="howto">
+            <li><code>/schedule tomorrow 9am : Standup reminder</code></li>
+            <li><code>/schedule in 2h : Call the plumber</code></li>
+            <li><code>/schedule monday 9am to +44 7911 123456 : Invoice is due</code></li>
+            <li><code>/s 2026-08-01 18:30 : Happy birthday!</code></li>
+          </ul>
+          <p class="muted small">Grammar: <code>&lt;trigger&gt; &lt;when…&gt; [to &lt;number&gt;] : &lt;message&gt;</code>. Without <code>to</code>, it sends into the chat you typed it in. Weekend times get a Monday nudge in the reply.</p>
+        </div>
+
+        <div class="card">
+          <div class="list-head">
+            <h2>Scheduled</h2>
+            <span id="list-count" class="muted small"></span>
+          </div>
+          <ul id="messages" class="messages"></ul>
+          <p id="empty-state" class="muted center" hidden>Nothing scheduled yet.</p>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -99,6 +99,11 @@ services:
       # source is Giphy + Tenor static reaction stickers + an AI fit-review.
       GIPHY_API_KEY: ${GIPHY_API_KEY:-}
       TENOR_API_KEY: ${TENOR_API_KEY:-}
+      # WhatsApp Scheduler sidecar: the Lab reverse-proxies it at /wa behind the
+      # auth gate. URL defaults to the Docker-network service; token is the shared
+      # secret injected as a Bearer header (matches the sidecar's API_TOKEN).
+      WHATSAPP_URL: ${WHATSAPP_URL:-http://whatsapp-scheduler:3000}
+      WHATSAPP_API_TOKEN: ${WA_API_TOKEN:-}
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data
@@ -115,6 +120,35 @@ services:
       # restart Postiz. Remove this mount to disable auto-restart (keys still
       # persist; restart Postiz manually on the server instead).
       - /var/run/docker.sock:/var/run/docker.sock
+
+  # ── WHATSAPP SCHEDULER: schedule WhatsApp messages via in-chat /s commands ──
+  # A self-contained sidecar (its own container + persistent WhatsApp Web session
+  # via whatsapp-web.js). It has NO public port: the Lab reverse-proxies it at
+  # lab.jakedaw.com/wa AFTER the Google Sign-In gate (lab whatsappProxy.ts), so
+  # it's reachable only by a signed-in user. Gated behind the `lab` profile so it
+  # starts alongside the Lab. NOTE: automating a PERSONAL WhatsApp number is
+  # against WhatsApp's ToS and can get it banned — use a dedicated/secondary number.
+  whatsapp-scheduler:
+    profiles: ["lab"]
+    build:
+      context: ./whatsapp-scheduler
+    image: clipmagic-whatsapp:latest
+    restart: unless-stopped
+    # No `ports:` — reachable only over the Docker network as whatsapp-scheduler:3000.
+    environment:
+      WA_PROVIDER: personal
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /app/data
+      # All wall-clock scheduling ("monday 9am") is interpreted in this TZ.
+      TZ: ${WA_TZ:-Europe/London}
+      # Shared secret: the Lab proxy injects this as a Bearer token and the sidecar
+      # requires it on /api/*, so even the internal port refuses an un-tokened call.
+      API_TOKEN: ${WA_API_TOKEN:-}
+      WA_CHROME_PATH: /usr/bin/chromium
+    volumes:
+      # Persistent: WhatsApp Web session (wwebjs_auth) + scheduled messages.json.
+      - whatsapp-data:/app/data
 
   # ── POSTIZ: self-hosted social-media scheduler (opt-in) ───────────────────
   # The open-source social poster (gitroomhq/postiz-app) that the hub's "Social
@@ -382,6 +416,7 @@ services:
 volumes:
   clipmagic-data:
   clipmagic-lab-data:
+  whatsapp-data:
   postiz-uploads:
   postiz-config:
   postiz-postgres-data:

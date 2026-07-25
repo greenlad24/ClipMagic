@@ -80,6 +80,16 @@ export const config = {
   frontendDir: process.env.FRONTEND_DIR || path.resolve(SERVER_ROOT, "..", "web", "dist"),
 
   /**
+   * WhatsApp Scheduler sidecar (a separate container). The Lab reverse-proxies it
+   * under /wa AFTER the auth gate, so it's reachable only by a signed-in user and
+   * never gets its own public port. Blank → the /wa proxy replies 503 (feature
+   * off). `whatsappToken` is a shared secret injected as a Bearer header so the
+   * sidecar's own API auth also passes (defense in depth).
+   */
+  whatsappUrl: process.env.WHATSAPP_URL || "",
+  whatsappToken: process.env.WHATSAPP_API_TOKEN || "",
+
+  /**
    * How many FFmpeg renders run in parallel. Defaults to the CPU count: FFmpeg
    * is already multi-threaded per job, so going much above vCPUs hurts overall
    * throughput. This is the knob that lets a droplet chew through 300+ jobs.

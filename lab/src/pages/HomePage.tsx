@@ -26,12 +26,16 @@ export default function HomePage() {
   const tools = useMemo<ToolDefinition[]>(
     () =>
       TOOLS.map((tool) => {
-        if (!tool.external) return tool;
-        // External tools go live only when their URL resolves; otherwise they
-        // stay "coming soon".
-        return postizUrl
-          ? { ...tool, href: postizUrl, status: 'live' as const }
-          : { ...tool, href: undefined, status: 'coming-soon' as const };
+        // Postiz is the one external tool whose URL is resolved at runtime from
+        // the server; it stays "coming soon" until self-hosted + configured.
+        if (tool.id === 'postiz') {
+          return postizUrl
+            ? { ...tool, href: postizUrl, status: 'live' as const }
+            : { ...tool, href: undefined, status: 'coming-soon' as const };
+        }
+        // Other external tools (e.g. WhatsApp Scheduler at /wa) carry a static
+        // href and are left as declared.
+        return tool;
       }),
     [postizUrl],
   );

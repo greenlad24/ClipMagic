@@ -1,0 +1,22 @@
+{
+  "name": "whatsapp-scheduler-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Self-hosted service to schedule WhatsApp messages via a PWA web app or in-chat /schedule commands.",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4",
+    "whatsapp-web.js": "^1",
+    "qrcode": "^1",
+    "qrcode-terminal": "^0.12"
+  }
+}

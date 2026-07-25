@@ -12,6 +12,7 @@ import {
   TrendingUp,
   PenLine,
   MessagesSquare,
+  MessageCircle,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -129,6 +130,20 @@ export const TOOLS: ToolDefinition[] = [
     // Manage the Postiz container's keys (core config + per-platform OAuth) from
     // the suite, write-only, with a one-click restart to apply them.
     configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'whatsapp',
+    title: 'WhatsApp Scheduler',
+    description: 'Schedule WhatsApp messages by typing /s in any chat — the linked device sends them later, even while your phone sleeps.',
+    icon: MessageCircle,
+    // Served INSIDE the Lab at /wa, behind the auth gate — the server reverse-
+    // proxies it to the sidecar container. `external` (not `route`) because /wa is
+    // a full-page load handled server-side, not an in-app React route.
+    external: true,
+    href: '/wa',
+    status: 'live',
+    accent: 'green',
+    detail: 'Self-hosted',
   },
   {
     id: 'bulk-scheduler',

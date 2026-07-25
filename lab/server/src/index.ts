@@ -6,6 +6,7 @@ import { config, ensureDirs, authConfigured, oauthRedirectUri } from "./config.j
 import { auth } from "./middleware.js";
 import authRouter from "./auth/routes.js";
 import { requireSession } from "./auth/middleware.js";
+import { whatsappProxy } from "./whatsappProxy.js";
 import { startWorker } from "./render/worker.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
@@ -100,6 +101,12 @@ app.use("/api/fn", auth, fnRouter);
 
 // Rendi-compatible shim (drop-in replacement for api.rendi.dev/v1).
 app.use("/v1", auth, rendiRouter);
+
+// WhatsApp Scheduler sidecar, reverse-proxied here so it lives INSIDE
+// lab.jakedaw.com behind the Google Sign-In gate (requireSession, above) rather
+// than on a public subdomain. Mounted before the SPA so /wa isn't swallowed by
+// the `*` fallback; inert (503) until WHATSAPP_URL is set. See whatsappProxy.ts.
+app.use("/wa", whatsappProxy());
 
 // Serve a frontend. Preference order:
 //   1. A built Vite app at FRONTEND_DIR (the full ClipMagic UI), if present.
