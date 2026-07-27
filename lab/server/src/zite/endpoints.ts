@@ -151,6 +151,13 @@ import {
   deleteRun as deleteScriptRunDb,
 } from "../db/scriptRuns.js";
 import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
+import { startPlan as runStartPlan, planJobStatus as getPlanSnapshot } from "../planner/run.js";
+import {
+  getRun as getPlanRunDb,
+  listRuns as listPlanRunsDb,
+  deleteRun as deletePlanRunDb,
+} from "../db/planRuns.js";
+import type { PlanInput } from "../planner/types.js";
 import {
   listChannels as listEngageChannels,
   setChannelMode as setEngageChannelMode,
@@ -3185,6 +3192,57 @@ const deleteScriptRun: Handler = async (input) => {
   return { ok: true };
 };
 
+// ── Video Planner (LAB tool) ────────────────────────────────────────────────
+// Edited narration in, a timestamped visual plan out. Separate from the
+// long-form editor: this is the planning step, and the editor builds on it.
+
+const plannerStatus: Handler = async () => ({
+  anthropicConfigured: Boolean((aiConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "").trim()),
+  groqConfigured: Boolean(aiConfig.groqApiKey),
+  model: "claude-opus-5",
+});
+
+const startPlan: Handler = async (input) => {
+  const source: string | undefined = input?.source;
+  if (!source) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "A Descript share link or an uploaded file is required." });
+  }
+  const sourceKind = input?.sourceKind === "upload" ? "upload" : "descript";
+  if (sourceKind === "descript" && !/^https?:\/\/share\.descript\.com\//i.test(source)) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "That does not look like a Descript share link (expected https://share.descript.com/view/...).",
+    });
+  }
+  const plan: PlanInput = {
+    source,
+    sourceKind,
+    productUrls: Array.isArray(input?.productUrls) ? input.productUrls.filter(Boolean) : [],
+    skipResearch: Boolean(input?.skipResearch),
+    title: input?.title,
+  };
+  return runStartPlan(plan);
+};
+
+const planJobStatus: Handler = async (input) => {
+  const snap = getPlanSnapshot(input?.runId);
+  if (!snap) throw new ZiteError({ code: "NOT_FOUND", message: "Plan run not found." });
+  return snap;
+};
+
+const getPlanRun: Handler = async (input) => {
+  const run = getPlanRunDb(input?.runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Plan run not found." });
+  return run;
+};
+
+const listPlanRuns: Handler = async () => ({ runs: listPlanRunsDb() });
+
+const deletePlanRun: Handler = async (input) => {
+  deletePlanRunDb(input?.runId);
+  return { ok: true };
+};
+
 // Post-generation paragraph refinement: rewrite ONE pasted paragraph per Jake's
 // instruction, grounded in the run's own research + fact sheet. Returns the full
 // updated (persisted) chat thread plus the cost of this one call.
@@ -3835,6 +3893,13 @@ export const HANDLERS: Record<string, Handler> = {
   listScriptRuns,
   deleteScriptRun,
   refineScriptParagraph,
+  // Video Planner (LAB tool — infrastructure for the future long-form editor)
+  plannerStatus,
+  startPlan,
+  planJobStatus,
+  getPlanRun,
+  listPlanRuns,
+  deletePlanRun,
   // Engagement Manager (LAB tool — Phase 1: monitor)
   engageStatus,
   engageListInbox,

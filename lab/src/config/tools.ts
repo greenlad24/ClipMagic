@@ -13,6 +13,7 @@ import {
   PenLine,
   MessagesSquare,
   MessageCircle,
+  Clapperboard,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -221,9 +222,24 @@ export const TOOLS: ToolDefinition[] = [
     configureRoute: '/settings/postiz',
   },
   {
+    id: 'video-planner',
+    title: 'Video Planner',
+    description:
+      'Drop an edited narration and get the second-by-second visual plan — which screencast, which title, which stock shot, and exactly when.',
+    icon: Clapperboard,
+    route: '/video-planner',
+    status: 'live',
+    accent: 'blue',
+    detail: 'Long-form planning',
+    // Needs the Anthropic key (planning) and Groq (transcription fallback),
+    // both set in the same write-only Postiz settings.
+    configureRoute: '/settings/postiz',
+  },
+  {
     id: 'longform',
     title: 'Long-form editor',
-    description: 'Edit full-length, horizontal videos with the same AI-directed workflow.',
+    description:
+      'Execute a plan end to end — capture the screencasts, cut the timeline, render the finished 16:9 video. Builds on the Video Planner.',
     icon: FileText,
     status: 'coming-soon',
     accent: 'blue',

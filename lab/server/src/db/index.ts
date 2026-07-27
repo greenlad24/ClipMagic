@@ -272,6 +272,28 @@ CREATE TABLE IF NOT EXISTS script_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_script_runs_created ON script_runs(created_at);
 
+-- Video Planner: an edited narration in, a timestamped visual plan out.
+-- Deliberately separate from the long-form editor — this is the planning step,
+-- and the future editor builds on it.
+CREATE TABLE IF NOT EXISTS plan_runs (
+  id            TEXT PRIMARY KEY,
+  title         TEXT NOT NULL DEFAULT '',
+  status        TEXT NOT NULL,        -- ingesting | transcribing | researching | planning | completed | failed
+  input_json    TEXT NOT NULL,        -- PlanInput
+  duration_sec  REAL,
+  plan          TEXT,                 -- the deliverable, in "[M:SS to M:SS] - ..." form
+  parsed_json   TEXT,                 -- PlanLine[]
+  measure_json  TEXT,                 -- PlanMeasure of the winning round
+  rounds_json   TEXT,                 -- per-round measurements from the repair loop
+  beats_json    TEXT,                 -- Beat[] (pauses + emphasis)
+  research      TEXT,                 -- verified UI fact sheet
+  cost_usd      REAL NOT NULL DEFAULT 0,
+  error         TEXT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_plan_runs_created ON plan_runs(created_at);
+
 -- AI Image Generator: one row per generated (or edited) image. The bytes live on
 -- disk under config.imageHistoryDir as <id>.<ext>; this table is the metadata +
 -- history index. kind distinguishes a from-scratch generation from an edit.

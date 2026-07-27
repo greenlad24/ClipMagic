@@ -18,6 +18,7 @@ import ImageGeneratorPage from './pages/ImageGeneratorPage';
 import KeywordResearchPage from './pages/KeywordResearchPage';
 import ScriptGeneratorPage from './pages/ScriptGeneratorPage';
 import EngagementManagerPage from './pages/EngagementManagerPage';
+import VideoPlannerPage from './pages/VideoPlannerPage';
 import EngagementRepliesPage from './pages/EngagementRepliesPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="/image-generator" element={<ImageGeneratorPage />} />
         <Route path="/keyword-research" element={<KeywordResearchPage />} />
         <Route path="/script-generator" element={<ScriptGeneratorPage />} />
+        <Route path="/video-planner" element={<VideoPlannerPage />} />
         <Route path="/engagement" element={<EngagementManagerPage />} />
         <Route path="/engagement/replies" element={<EngagementRepliesPage />} />
       </Routes>

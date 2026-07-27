@@ -569,6 +569,49 @@ export const refineScriptParagraph =
     "refineScriptParagraph",
   );
 
+// Video Planner (LAB tool — infrastructure for the future long-form editor)
+export type PlanRunStatus =
+  | "ingesting" | "transcribing" | "researching" | "planning" | "completed" | "failed";
+export interface PlanLine { start: number; end: number; kind: string; instruction: string }
+export interface PlanMeasure {
+  lines: number; coverStart: number | null; coverEnd: number | null; duration: number;
+  gaps: { at: number; len: number }[]; overlaps: { at: number; len: number }[]; unknown: number;
+  screencastPct: number; talkingHeadPct: number; stockPct: number;
+  screencastHold: number; talkingHeadHold: number;
+  titles: number; titlesPerMin: number; altPct: number; maxScreencastRun: number;
+  longGradient: string[]; gradientFullStop: number;
+}
+export interface PlanBeat {
+  i: number; start: number; end: number; dur: number; gapAfter: number; text: string; emphasis: string[];
+}
+export interface PlanInput {
+  source: string; sourceKind: "descript" | "upload";
+  productUrls?: string[]; skipResearch?: boolean; title?: string;
+}
+export interface PlanRunResult {
+  runId: string; status: PlanRunStatus; title: string; input: PlanInput;
+  durationSec: number | null; plan: string | null; parsed: PlanLine[];
+  measure: PlanMeasure | null;
+  rounds: { round: number; penalty: number; measure: PlanMeasure; deviations: string[] }[];
+  beats: PlanBeat[]; research: string | null; costUsd: number; error: string | null;
+  createdAt: number; updatedAt: number;
+}
+export interface PlanRunListItem {
+  runId: string; title: string; status: PlanRunStatus;
+  durationSec: number | null; lines: number; createdAt: number; updatedAt: number;
+}
+export interface PlanJobSnapshot {
+  runId: string; status: PlanRunStatus; stage: string; progress: number; error: string | null;
+}
+export const plannerStatus =
+  endpoint<Record<string, never>, { anthropicConfigured: boolean; groqConfigured: boolean; model: string }>("plannerStatus");
+/** Kick off a run; the work continues in the background. Poll planJobStatus. */
+export const startPlan = endpoint<PlanInput, { runId: string }>("startPlan");
+export const planJobStatus = endpoint<{ runId: string }, PlanJobSnapshot>("planJobStatus");
+export const getPlanRun = endpoint<{ runId: string }, PlanRunResult>("getPlanRun");
+export const listPlanRuns = endpoint<Record<string, never>, { runs: PlanRunListItem[] }>("listPlanRuns");
+export const deletePlanRun = endpoint<{ runId: string }, { ok: true }>("deletePlanRun");
+
 // Thumbnail Designer (LAB tool)
 export const thumbnailStatus = endpoint<Record<string, never>, ThumbnailStatusOutputType>("thumbnailStatus");
 export const analyzeThumbnailScript =
