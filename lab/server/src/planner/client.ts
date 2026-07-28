@@ -15,7 +15,7 @@ import { aiConfig } from "../ai/config.js";
 const API = "https://api.anthropic.com/v1/messages";
 const VERSION = "2023-06-01";
 
-/** Claude Opus 5 list pricing, USD per million tokens. */
+/** Claude Opus 4.8 list pricing, USD per million tokens (same rates as Opus 5). */
 const PRICE_IN = 5 / 1_000_000;
 const PRICE_OUT = 25 / 1_000_000;
 const PRICE_CACHE_WRITE = 6.25 / 1_000_000;

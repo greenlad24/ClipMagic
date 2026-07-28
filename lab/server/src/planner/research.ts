@@ -79,7 +79,7 @@ Research the products discussed and produce the UI fact sheet.`;
   for (let guard = 0; guard < 7; guard++) {
     const res = await anthropicRequest({
       body: {
-        model: "claude-opus-5",
+        model: "claude-opus-4-8",
         max_tokens: 32000,
         thinking: { type: "adaptive" },
         output_config: { effort: "high" },

@@ -102,7 +102,7 @@ export function startPlan(input: PlanInput): { runId: string } {
 
         const res = await anthropicStream({
           body: {
-            model: "claude-opus-5",
+            model: "claude-opus-4-8",
             // Thinking is billed as output and spent before any text — a 32000
             // budget once went entirely on thinking and truncated the plan.
             max_tokens: 96000,
