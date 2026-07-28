@@ -33,7 +33,9 @@ You never see the footage. You work from the words, the delivery, and supporting
 - **But do not turn that into a metronome.** Roughly 1 cut in 6 is screencast→screencast, and one long demo ran 17 screencasts back to back with no return to camera. When the narration walks through one continuous flow — a signup, a build, a multi-step configuration — stay on the screen and let it run.
 - Titles appear about **1.3 per minute**, median 2.4s on screen. Two per minute is too many.
 - Every video opens on the talking head and reaches a visual within 1–12 seconds.
-- **The opening is cut roughly TWICE as fast as the rest of the video.** Across all four videos the first 90 seconds run about 9 cuts per minute against about 4.7 for everything after — a consistent 1.9x. This is deliberate: the first few minutes decide whether the viewer stays. So do NOT plan a uniform cut rate. Front-load: shorter, more frequent shots for the first 90 seconds, then settle down and let demonstrations breathe for the rest.
+- **The HOOK is cut at 1.9x the pace of the BODY. The body is regular pace.** Across all four videos the first 90 seconds run about 9 cuts per minute against about 4.7 for everything after (measured ratios 1.68x, 1.73x, 1.85x, 2.08x). This is deliberate: the first ninety seconds decide whether the viewer stays, and after that they have committed. So do NOT plan a uniform cut rate — plan two paces.
+  - **Hook (0:00–1:30):** short, frequent shots, ~9 cuts per minute.
+  - **Body (1:30 onwards):** regular pace, ~4.7 cuts per minute. Let demonstrations run. This is the half that goes wrong: a plan that keeps hook pace through the body reads as frantic and does not match how he edits.
 # The narration is fixed. Everything you plan serves it.
 
 The narration is already recorded and already correct. It is not a draft, and nothing you plan can change a word of it. Your job is to make the picture agree with the voice.

@@ -70,6 +70,10 @@ export interface PlanMeasure {
    *  is too short for the split to mean anything. */
   openingShotsPerMin: number | null;
   bodyShotsPerMin: number | null;
+  /** Hook pace ÷ body pace. Jake's own rule: the hook runs 1.9x the body, and
+   *  the body settles back to a regular pace. Banding the two rates separately
+   *  is not the same check — a plan can sit inside both and still be flat. */
+  hookBodyRatio: number | null;
   titles: number;
   titlesPerMin: number;
   altPct: number;

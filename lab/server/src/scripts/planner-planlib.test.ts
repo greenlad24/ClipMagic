@@ -177,6 +177,56 @@ check("whiteboard titles may end in a full stop", () => {
   assert.equal(m.gradientFullStop, 0);
 });
 
+// ── hook vs body pace ──────────────────────────────────────────────────────
+
+/** One pace throughout: ~6.9 cuts/min in the hook, ~6.4 in the body. */
+function flatPlan(durationSec: number): string {
+  const cycle: [string, number][] = [
+    ["sc", 10],
+    ["sc", 10],
+    ["th", 8],
+  ];
+  const lines: string[] = [];
+  let t = 0;
+  let i = 0;
+  while (t < durationSec) {
+    const [kind, len] = cycle[i++ % cycle.length];
+    const end = Math.min(t + len, durationSec);
+    lines.push(`[${mmss(t)} to ${mmss(end)}] - ${kind === "sc" ? "Screencast: x" : "Talking head"}`);
+    t = end;
+  }
+  return lines.join("\n");
+}
+
+check("a corpus-shaped plan lands near Jake's 1.9x hook-to-body ratio", () => {
+  const m = measured(corpusPlan(600), 600);
+  assert.ok(m.hookBodyRatio !== null, "the ratio is measured");
+  assert.ok(m.hookBodyRatio! >= 1.5 && m.hookBodyRatio! <= 2.4, `got ${m.hookBodyRatio}x`);
+});
+
+check("a FLAT plan is flagged even when both cut rates sit inside their bands", () => {
+  // This is the whole point of the ratio: the hook and body rates can each be
+  // individually acceptable while the plan has no change of pace at all.
+  const m = measured(flatPlan(600), 600);
+  const devs = planDeviations(m);
+  assert.equal(
+    devs.filter((d) => d.includes("in the OPENING") || d.includes("AFTER the first")).length,
+    0,
+    `both rate bands should pass on their own, got: ${devs.join(" | ")}`
+  );
+  const flat = devs.find((d) => d.includes("Hook pace"));
+  assert.ok(flat, `expected the ratio to be flagged, got: ${devs.join(" | ")}`);
+  assert.match(flat!, /too FLAT/);
+  // The fix must be to slow the body, not to chop the hook finer.
+  assert.match(flat!, /SLOWING THE BODY/);
+});
+
+check("the ratio is not reported for a video too short to have a body", () => {
+  const m = measured(corpusPlan(120), 120);
+  assert.equal(m.hookBodyRatio, null);
+  assert.equal(planDeviations(m).filter((d) => d.includes("Hook pace")).length, 0);
+});
+
 // ── the Slack character budget ─────────────────────────────────────────────
 
 check("chars measures the raw text when it is supplied", () => {

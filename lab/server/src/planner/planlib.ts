@@ -29,6 +29,12 @@ export const CORPUS = {
   // the whole video is a real mismatch with how he actually edits.
   openingShotsPerMin: [6.0, 14.0, 9.0] as const,
   bodyShotsPerMin: [3.5, 6.5, 4.7] as const,
+  // Jake's rule stated as a ratio, which is how he thinks about it: the hook
+  // runs ~1.9x the body's pace and the body is regular pace. Per-video the
+  // measured ratio is ref1 2.08, ref2 1.73, ref3 1.68, ref4 1.85 — so the band
+  // sits just outside that range. This catches what the two rate bands cannot:
+  // a plan can sit inside both and still be flat (hook 9.3 / body 6.4 = 1.45x).
+  hookBodyRatio: [1.5, 2.4, 1.9] as const,
   screencastHold: [7.0, 15.0, 10.3] as const, // p25 5.0, median 10.3, p75 20.2
   talkingHeadHold: [3.0, 9.0, 5.5] as const, // p25 3.2, median 5.5, p75 11.5
 };
@@ -131,6 +137,9 @@ export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: s
   }
   if (cur) runs.push(cur);
 
+  const hookRate = (base.filter((r) => r.start < OPENING_SEC).length / OPENING_SEC) * 60;
+  const bodyRate = (base.filter((r) => r.start >= OPENING_SEC).length / (durationSec - OPENING_SEC)) * 60;
+
   const quoted = (r: PlanLine) => (r.instruction.match(/"([^"]+)"/) || [])[1] || "";
 
   return {
@@ -150,6 +159,7 @@ export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: s
     shotsPerMin: +(base.length / (durationSec / 60)).toFixed(2),
     openingShotsPerMin: splitOk ? +(base.filter((r) => r.start < OPENING_SEC).length / (OPENING_SEC / 60)).toFixed(2) : null,
     bodyShotsPerMin: splitOk ? +(base.filter((r) => r.start >= OPENING_SEC).length / ((durationSec - OPENING_SEC) / 60)).toFixed(2) : null,
+    hookBodyRatio: splitOk && bodyRate > 0 ? +(hookRate / bodyRate).toFixed(2) : null,
     titles: titles.length,
     titlesPerMin: +(titles.length / (durationSec / 60)).toFixed(2),
     altPct: +altPct.toFixed(0),
@@ -258,6 +268,16 @@ export function planDeviations(m: PlanMeasure): string[] {
       "The body is over-cut. After the opening, Jake slows down and lets demonstrations run — merge adjacent shots covering one continuous flow."
     );
   }
+  if (m.hookBodyRatio !== null) {
+    band(
+      m.hookBodyRatio,
+      CORPUS.hookBodyRatio,
+      `Hook pace ÷ body pace (hook = first ${OPENING_SEC}s)`,
+      `The plan is too FLAT — the hook is only ${m.hookBodyRatio}x the body's pace. Jake cuts the hook about 1.9x faster and then lets the body run at a regular pace. Fix this by SLOWING THE BODY, not by adding cuts to the hook: merge adjacent shots after the first ${OPENING_SEC}s, especially consecutive screencasts covering one continuous flow.`,
+      `The hook is ${m.hookBodyRatio}x the body's pace — too steep. Either the hook is chopped too fine or the body has gone static. Aim for about 1.9x.`
+    );
+  }
+
   band(
     m.screencastHold,
     CORPUS.screencastHold,
@@ -305,6 +325,8 @@ export function planPenalty(m: PlanMeasure): number {
     out(m.shotsPerMin, CORPUS.shotsPerMin) * 6.0 +
     (m.openingShotsPerMin !== null ? out(m.openingShotsPerMin, CORPUS.openingShotsPerMin) * 2.0 : 0) +
     (m.bodyShotsPerMin !== null ? out(m.bodyShotsPerMin, CORPUS.bodyShotsPerMin) * 4.0 : 0) +
+    // Weighted per 0.1x of ratio, so a plan half a turn too flat costs ~10.
+    (m.hookBodyRatio !== null ? out(m.hookBodyRatio, CORPUS.hookBodyRatio) * 20.0 : 0) +
     out(m.screencastHold, CORPUS.screencastHold) * 2.0 +
     out(m.talkingHeadHold, CORPUS.talkingHeadHold) * 2.0 +
     (m.gaps.length + m.overlaps.length) * 25 +

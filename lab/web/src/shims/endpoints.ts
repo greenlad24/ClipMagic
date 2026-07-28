@@ -578,8 +578,10 @@ export interface PlanMeasure {
   gaps: { at: number; len: number }[]; overlaps: { at: number; len: number }[]; unknown: number;
   screencastPct: number; talkingHeadPct: number; stockPct: number;
   screencastHold: number; talkingHeadHold: number;
+  shots: number; shotsPerMin: number;
+  openingShotsPerMin: number | null; bodyShotsPerMin: number | null; hookBodyRatio: number | null;
   titles: number; titlesPerMin: number; altPct: number; maxScreencastRun: number;
-  longGradient: string[]; gradientFullStop: number;
+  longGradient: string[]; gradientFullStop: number; chars: number;
 }
 export interface PlanBeat {
   i: number; start: number; end: number; dur: number; gapAfter: number; text: string; emphasis: string[];

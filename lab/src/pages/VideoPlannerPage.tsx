@@ -235,6 +235,28 @@ export default function VideoPlannerPage() {
                       <Stat label="Titles/min" value={String(m.titlesPerMin)} target="1.3" />
                       <Stat label="Alternation" value={`${m.altPct}%`} target="77%" />
                     </div>
+                    <div className="mt-4 border-t pt-4">
+                      <div className="mb-2 text-xs font-medium text-muted-foreground">
+                        Cutting pace — the hook runs faster, the body settles
+                      </div>
+                      <div className="grid grid-cols-3 gap-3 text-sm">
+                        <Stat
+                          label="Hook (first 1:30)"
+                          value={m.openingShotsPerMin === null ? "—" : `${m.openingShotsPerMin}/min`}
+                          target="9.0/min"
+                        />
+                        <Stat
+                          label="Body (rest)"
+                          value={m.bodyShotsPerMin === null ? "—" : `${m.bodyShotsPerMin}/min`}
+                          target="4.7/min"
+                        />
+                        <Stat
+                          label="Hook ÷ body"
+                          value={m.hookBodyRatio === null ? "—" : `${m.hookBodyRatio}x`}
+                          target="1.9x"
+                        />
+                      </div>
+                    </div>
                     {(m.gaps.length > 0 || m.overlaps.length > 0) && (
                       <p className="mt-3 text-xs text-destructive">
                         {m.gaps.length} gap(s), {m.overlaps.length} overlap(s) — the plan does not fully tile.
