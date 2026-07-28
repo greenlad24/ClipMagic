@@ -79,7 +79,21 @@ const median = (xs: number[]): number => {
 /** The retention-critical window Jake cuts faster. */
 const OPENING_SEC = 90;
 
-export function measurePlan(parsed: ParsedPlan, durationSec: number): PlanMeasure {
+/**
+ * The plan is delivered by pasting it into Slack, which truncates a message at
+ * 40,000 characters. We grade against a slightly lower ceiling so a plan that
+ * passes here still has room for whatever the operator types around it.
+ */
+export const SLACK_MESSAGE_LIMIT = 40_000;
+export const PLAN_CHAR_BUDGET = 38_000;
+
+/** The plan exactly as it will be pasted — used when the raw text isn't to hand. */
+function renderPlan(parsed: ParsedPlan): string {
+  const stamp = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  return parsed.all.map((r) => `[${stamp(r.start)} to ${stamp(r.end)}] - ${r.instruction}`).join("\n");
+}
+
+export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: string): PlanMeasure {
   const { base, titles, unknown } = parsed;
   // Below ~3 minutes the split has too few shots on either side to mean anything.
   const splitOk = durationSec > 180;
@@ -144,6 +158,7 @@ export function measurePlan(parsed: ParsedPlan, durationSec: number): PlanMeasur
     gradientFullStop: titles.filter(
       (r) => r.kind === "text_gradient" && /["'][^"']*\.\s*["']/.test(r.instruction)
     ).length,
+    chars: (rawText ?? renderPlan(parsed)).trim().length,
   };
 }
 
@@ -269,6 +284,11 @@ export function planDeviations(m: PlanMeasure): string[] {
         .join(", ")}. Keep them under ~40 characters.`
     );
 
+  if (m.chars > PLAN_CHAR_BUDGET)
+    d.push(
+      `The plan is ${m.chars} characters — too LONG. It has to paste into a single Slack message, which cuts off at ${SLACK_MESSAGE_LIMIT}; the budget is ${PLAN_CHAR_BUDGET}, so cut about ${m.chars - PLAN_CHAR_BUDGET} characters. Take them out of the WORDING, never the coverage: drop trigger quotes, drop any explanation of why a shot is there, and shorten screencast instructions to the screen and the action. Do not delete lines, merge shots, or leave any second uncovered.`
+    );
+
   return d;
 }
 
@@ -290,6 +310,9 @@ export function planPenalty(m: PlanMeasure): number {
     (m.gaps.length + m.overlaps.length) * 25 +
     m.unknown * 5 +
     m.gradientFullStop * 3 +
-    m.longGradient.length * 2
+    m.longGradient.length * 2 +
+    // Over the Slack limit the plan cannot be delivered at all, so this is
+    // weighted to dominate any stylistic gain a longer plan might buy.
+    Math.max(0, m.chars - PLAN_CHAR_BUDGET) * 0.01
   ).toFixed(1);
 }

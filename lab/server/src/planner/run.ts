@@ -115,7 +115,7 @@ export function startPlan(input: PlanInput): { runId: string } {
         costUsd += res.costUsd;
 
         const parsed = parsePlan(res.text);
-        const measure = measurePlan(parsed, ing.durationSec);
+        const measure = measurePlan(parsed, ing.durationSec, res.text);
         const deviations = planDeviations(measure);
         const penalty = planPenalty(measure);
         rounds.push({ round, penalty, measure, deviations });

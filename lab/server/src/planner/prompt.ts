@@ -86,6 +86,7 @@ Rules for the output:
 - The base visual (screencast / talking head / stock) must tile the WHOLE video with no gaps and no overlaps.
 - Titles are ADDITIONAL lines overlaying whatever base visual is running — they do not interrupt the tiling.
 - Be concrete but brief: name the product, the screen, the action. "Show the product" is useless to the operator; a paragraph is worse.
+- **The whole plan must come in under 38,000 characters.** It gets pasted into a single Slack message, and Slack cuts a message off at 40,000 — a plan that runs over arrives truncated and unusable. If you are near the limit, take the characters out of the WORDING: drop trigger quotes, drop any explanation of why a shot is there. Never buy room by dropping lines, merging shots or leaving a second uncovered.
 - Output the list and nothing else. No preamble, no summary.`;
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -154,5 +155,5 @@ export function buildRepairUser(deviations: string[], durationSec: number): stri
 
 ${deviations.map((d) => `- ${d}`).join("\n")}
 
-Rewrite the COMPLETE plan correcting them. Keep everything that was already right — the screencast subjects, the trigger quotes, the titles that work. Do not shorten the plan or drop coverage: it must still tile the full ${Math.round(durationSec)}s with no gaps. Output only the plan lines.`;
+Rewrite the COMPLETE plan correcting them. Keep everything that was already right — the screencast subjects, the titles that work. Do not drop coverage: it must still tile the full ${Math.round(durationSec)}s with no gaps. Output only the plan lines.`;
 }

@@ -76,6 +76,9 @@ export interface PlanMeasure {
   maxScreencastRun: number;
   longGradient: string[];
   gradientFullStop: number;
+  /** Length of the delivered plan. It has to paste into a single Slack
+   *  message, which caps at 40,000 characters. */
+  chars: number;
 }
 
 export interface PlanInput {
