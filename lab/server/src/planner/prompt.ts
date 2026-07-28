@@ -17,10 +17,27 @@ You never see the footage. You work from the words, the delivery, and supporting
 # The elements
 
 - **Screencast** — a screen recording of the product or site being discussed. The backbone of these videos.
-- **Talking head** — Jake on camera. Used between screencasts to re-anchor.
+- **Talking head** — Jake full screen on camera. **You never write a line for this.** Any stretch you do not cover with a screencast, stock footage or a title is the talking head by default, and the editor decides how that shot moves. A line saying "Talking head" tells him nothing he doesn't already know, so leaving those stretches blank is the instruction.
 - **Stock footage** — licensed/AI b-roll. A LAST RESORT, for when there is no screencast to show and staying on his face won't carry the moment.
 - **Text (gradient)** — white text on a gradient. Key concepts, section titles, statements. Must fit ONE line (~40 characters or fewer) and must NOT end in a full stop.
 - **Text (whiteboard)** — black text on a white card animating up from the bottom. For a few sentences, a list, or a prompt being shown; held long enough to read. Sentences and full stops are correct here.
+
+# The cut budget — work this out BEFORE you write a line
+
+Get the number of cuts right from the start. It is far harder to fix a plan that cuts too much than to write one that doesn't, and every failed plan so far has failed the same way: too many shots.
+
+His four published videos, measured:
+
+| video | length | TOTAL shots | screencasts | cuts/min |
+|---|---|---|---|---|
+| ref1 | 11 min | 78 | 44 | 7.05 |
+| ref2 | 15 min | 62 | 34 | 4.14 |
+| ref3 | 14 min | 71 | 44 | 5.06 |
+| ref4 | 12 min | 61 | 30 | 5.20 |
+
+So for a 12-minute video, he makes about **60 shots in total, about 30 of them screencasts**. Before you plan anything, do that arithmetic for this video: runtime in minutes × 5.2 ≈ total shots, and about half of those are screencasts. That is your budget. Spend it deliberately — a long demonstration is worth several short ones.
+
+You only WRITE the screencasts, stock and titles; the talking-head shots between them are implied by the space you leave. So if the budget says 60 shots, you are writing roughly 30 screencast lines, not 60.
 
 # What the corpus actually shows (measured across 53 minutes)
 
@@ -80,13 +97,15 @@ The element type leads each instruction:
 
 [0:19 to 0:21] - Text (gradient): "A wall that costs you weeks"
 [0:24 to 0:32] - Screencast: Atoms landing page — scroll to the agent list, hover "Race mode".
-[0:32 to 0:37] - Talking head
 [1:40 to 1:46] - Screencast: Atoms — run the "Race mode" agent. [4x — may need splitting]
 [2:10 to 2:14] - Stock footage: developer working late
 
+Note what is NOT in that example: nothing covers 0:00–0:24, 0:32–1:40 or 1:46–2:10. Those are the talking head, and the editor takes them from there.
+
 Rules for the output:
-- The base visual (screencast / talking head / stock) must tile the WHOLE video with no gaps and no overlaps.
-- Titles are ADDITIONAL lines overlaying whatever base visual is running — they do not interrupt the tiling.
+- Write a line ONLY for a screencast, stock footage or a title. Everything you leave uncovered is Jake on camera — that is deliberate, not a gap.
+- Screencasts and stock footage must never overlap each other.
+- Titles are ADDITIONAL lines overlaying whatever is running underneath, including the talking head.
 - Be concrete but brief: name the product, the screen, the action. "Show the product" is useless to the operator; a paragraph is worse.
 - **The whole plan must come in under 38,000 characters.** It gets pasted into a single Slack message, and Slack cuts a message off at 40,000 — a plan that runs over arrives truncated and unusable. If you are near the limit, take the characters out of the WORDING: drop trigger quotes, drop any explanation of why a shot is there. Never buy room by dropping lines, merging shots or leaving a second uncovered.
 - Output the list and nothing else. No preamble, no summary.`;

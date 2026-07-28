@@ -61,11 +61,9 @@ function corpusPlan(durationSec: number, instruction = "GoodTaco — open the da
     const cycle = t < 90 ? OPENING_CYCLE : BODY_CYCLE;
     const [kind, len] = cycle[i++ % cycle.length];
     const end = Math.min(t + len, durationSec);
-    lines.push(
-      kind === "sc"
-        ? `[${mmss(t)} to ${mmss(end)}] - Screencast: ${instruction}`
-        : `[${mmss(t)} to ${mmss(end)}] - Talking head`
-    );
+    // Only screencasts are written; the "th" slots are left uncovered on
+    // purpose — that gap IS the talking-head shot.
+    if (kind === "sc") lines.push(`[${mmss(t)} to ${mmss(end)}] - Screencast: ${instruction}`);
     t = end;
   }
   // ~1.3 titles per minute, overlaying the base visuals.
@@ -84,17 +82,16 @@ const measured = (raw: string, dur: number) => measurePlan(parsePlan(raw), dur, 
 check("classifies every element type by its leading word", () => {
   const p = parsePlan(
     [
-      `[0:00 to 0:05] - Talking head`,
       `[0:05 to 0:15] - Screencast: Sheets — edit a cell.`,
       `[0:15 to 0:19] - Stock footage: developer at night`,
       `[0:06 to 0:08] - Text (gradient): "One line"`,
       `[0:10 to 0:16] - Text (whiteboard): "A sentence. And another."`,
     ].join("\n")
   );
-  assert.equal(p.base.length, 3, "three base shots tile the video");
+  assert.equal(p.base.length, 2, "only written visuals are base shots");
   assert.equal(p.titles.length, 2, "titles are held out of the tiling");
   assert.equal(p.unknown.length, 0, "nothing unrecognised");
-  assert.equal(p.base[0].kind, "talking_head");
+  assert.equal(p.base[0].kind, "screencast");
 });
 
 check("a bare 'Talking head' line with no colon still parses", () => {
@@ -113,18 +110,37 @@ check("an unrecognised element is counted, not silently dropped", () => {
 
 // ── coverage ───────────────────────────────────────────────────────────────
 
-check("gaps and overlaps in the tiling are both reported", () => {
-  const gap = measured([`[0:00 to 0:05] - Talking head`, `[0:07 to 0:12] - Screencast: x`].join("\n"), 12);
-  assert.equal(gap.gaps.length, 1, "the 2s hole is found");
-  assert.equal(gap.overlaps.length, 0);
-
-  const over = measured([`[0:00 to 0:10] - Talking head`, `[0:08 to 0:12] - Screencast: x`].join("\n"), 12);
-  assert.equal(over.overlaps.length, 1, "the 2s overlap is found");
+check("an uncovered stretch becomes a talking-head shot, not an error", () => {
+  const m = measured([`[0:00 to 0:05] - Screencast: x`, `[0:12 to 0:20] - Screencast: y`].join("\n"), 20);
+  assert.equal(m.gaps.length, 0, "a hole in the written plan is not a gap");
+  assert.equal(m.shots, 3, "the 7s hole is reconstructed as a talking-head shot");
+  assert.ok(m.talkingHeadPct > 30, `the hole counts as talking-head runtime, got ${m.talkingHeadPct}%`);
+  assert.deepEqual(
+    planDeviations(m).filter((d) => d.includes("GAP")),
+    [],
+    "an uncovered stretch is never reported as a gap"
+  );
 });
 
-check("a plan that stops short of the runtime is flagged", () => {
+check("two visuals on the same second is still an error", () => {
+  const m = measured([`[0:00 to 0:10] - Screencast: x`, `[0:08 to 0:12] - Stock footage: y`].join("\n"), 12);
+  assert.equal(m.overlaps.length, 1, "the 2s overlap is found");
+  assert.match(planDeviations(m).join(" "), /OVERLAP/);
+});
+
+check("a plan that stops minutes short of the runtime is flagged as truncated", () => {
   const m = measured(corpusPlan(300), 600);
-  assert.match(planDeviations(m).join(" "), /but the video is 600s/);
+  assert.match(planDeviations(m).join(" "), /with nothing planned/);
+});
+
+check("a short talking-head tail at the end is NOT flagged", () => {
+  // The plan legitimately stops before the video does — the last stretch is
+  // Jake on camera and needs no line. Only a multi-minute hole is truncation.
+  const m = measured(corpusPlan(560), 600);
+  assert.deepEqual(
+    planDeviations(m).filter((d) => d.includes("nothing planned")),
+    []
+  );
 });
 
 // ── the corpus bands ───────────────────────────────────────────────────────
@@ -143,7 +159,7 @@ check("over-cutting is caught even when the element mix is right", () => {
   let sc = true;
   while (t < 600) {
     const end = Math.min(t + (sc ? 4 : 2), 600);
-    lines.push(`[${mmss(t)} to ${mmss(end)}] - ${sc ? "Screencast: x" : "Talking head"}`);
+    if (sc) lines.push(`[${mmss(t)} to ${mmss(end)}] - Screencast: x`);
     t = end;
     sc = !sc;
   }
@@ -157,7 +173,6 @@ check("over-cutting is caught even when the element mix is right", () => {
 check("gradient titles are held to one line with no full stop", () => {
   const m = measured(
     [
-      `[0:00 to 0:10] - Talking head`,
       `[0:01 to 0:03] - Text (gradient): "This one runs well past the forty character ceiling for a single line"`,
       `[0:05 to 0:07] - Text (gradient): "Ends in a stop."`,
     ].join("\n"),
@@ -171,7 +186,7 @@ check("whiteboard titles may end in a full stop", () => {
   // A gradient-only rule. The checker got this wrong once and flagged correct
   // whiteboard titles — verify which side is wrong before "fixing" it again.
   const m = measured(
-    [`[0:00 to 0:10] - Talking head`, `[0:01 to 0:06] - Text (whiteboard): "Step one. Step two."`].join("\n"),
+    [`[0:01 to 0:06] - Text (whiteboard): "Step one. Step two."`].join("\n"),
     10
   );
   assert.equal(m.gradientFullStop, 0);
@@ -179,20 +194,28 @@ check("whiteboard titles may end in a full stop", () => {
 
 // ── hook vs body pace ──────────────────────────────────────────────────────
 
-/** One pace throughout: ~6.9 cuts/min in the hook, ~6.4 in the body. */
+/**
+ * Barely any change of pace: hook ~7.1 cuts/min, body ~5.0. Both rates sit
+ * inside their own bands; only the 1.4x ratio is wrong. This mirrors the real
+ * failure — a generated plan came in at 1.45x with both rates individually fine.
+ */
 function flatPlan(durationSec: number): string {
-  const cycle: [string, number][] = [
-    ["sc", 10],
-    ["sc", 10],
-    ["th", 8],
+  const hook: [string, number][] = [
+    ["sc", 12],
+    ["th", 5],
+  ];
+  const body: [string, number][] = [
+    ["sc", 17],
+    ["th", 7],
   ];
   const lines: string[] = [];
   let t = 0;
   let i = 0;
   while (t < durationSec) {
+    const cycle = t < 90 ? hook : body;
     const [kind, len] = cycle[i++ % cycle.length];
     const end = Math.min(t + len, durationSec);
-    lines.push(`[${mmss(t)} to ${mmss(end)}] - ${kind === "sc" ? "Screencast: x" : "Talking head"}`);
+    if (kind === "sc") lines.push(`[${mmss(t)} to ${mmss(end)}] - Screencast: x`);
     t = end;
   }
   return lines.join("\n");
@@ -269,6 +292,31 @@ check("length penalty dominates, so a long plan never wins on style", () => {
   const fat = measured(corpusPlan(600, "x".repeat(1500)), 600);
   assert.equal(planPenalty(clean), 0);
   assert.ok(planPenalty(fat) > 50, `expected a heavy penalty, got ${planPenalty(fat)}`);
+});
+
+check("no deviation ever renders a placeholder instead of guidance", () => {
+  // A deviation whose advice comes out as "undefined" still fails the plan but
+  // tells the model nothing about how to fix it, so the repair round guesses —
+  // and it guesses wrong. This happened for real: a band() call built with the
+  // wrong argument shape silently dropped its guidance, and the repair
+  // satisfied the hook/body ratio by chopping the hook finer instead of
+  // slowing the body, which is the opposite of the intended fix.
+  const broken = [
+    flatPlan(600), // ratio too flat
+    corpusPlan(600, "x".repeat(1500)), // over the character budget
+    corpusPlan(300), // stops short of the runtime
+    [`[0:00 to 0:05] - B-roll: something`].join("\n"), // unknown element
+    [
+      `[0:01 to 0:03] - Text (gradient): "Well past the forty character ceiling for a single line of text"`,
+      `[0:04 to 0:06] - Text (gradient): "Ends in a stop."`,
+    ].join("\n"),
+  ];
+  for (const raw of broken) {
+    for (const d of planDeviations(measured(raw, 600))) {
+      assert.doesNotMatch(d, /undefined|\[object Object\]|NaN/, `unrendered value in: ${d}`);
+      assert.ok(d.length > 60, `deviation carries no guidance: ${d}`);
+    }
+  }
 });
 
 check("the budget leaves headroom under Slack's real limit", () => {

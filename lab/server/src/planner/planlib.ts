@@ -23,12 +23,22 @@ export const CORPUS = {
   // exactly yet still over-cut badly: 100 cuts where the editor made 60, and 62
   // screencast shots where he used 30. Mix alone does not catch that — a plan
   // can hit 70/30 while chopping every demonstration in half.
-  shotsPerMin: [4.0, 7.5, 5.2] as const, // per-video corpus range 4.1–7.0
+  // Ceilings are the corpus MAXIMUM, not a round number above it. They were
+  // [7.5] and [6.5]; every generated plan parked just under those bars and
+  // stopped — the planner optimises to the ceiling, so a ceiling looser than
+  // anything Jake has made licences an edit he would never cut.
+  //
+  // Re-derived once the plan stopped writing talking-head lines, since these
+  // are measured on the RECONSTRUCTED timeline: total 4.14 / 5.06 / 5.20 /
+  // 6.66, body 3.86 / 4.69 / 4.76 / 5.76. (ref1 measures 6.66 rather than its
+  // true 7.05 because a cut between two consecutive talking-head shots cannot
+  // be expressed in this format — see withImpliedNarrator.)
+  shotsPerMin: [4.0, 6.7, 5.2] as const,
   // Jake cuts the retention-critical opening ~1.9x faster than the body, in all
   // four videos (opening 6.7–12.7/min, body 3.9–6.1/min). A uniform rate across
   // the whole video is a real mismatch with how he actually edits.
   openingShotsPerMin: [6.0, 14.0, 9.0] as const,
-  bodyShotsPerMin: [3.5, 6.5, 4.7] as const,
+  bodyShotsPerMin: [3.5, 5.8, 4.7] as const,
   // Jake's rule stated as a ratio, which is how he thinks about it: the hook
   // runs ~1.9x the body's pace and the body is regular pace. Per-video the
   // measured ratio is ref1 2.08, ref2 1.73, ref3 1.68, ref4 1.85 — so the band
@@ -99,19 +109,54 @@ function renderPlan(parsed: ParsedPlan): string {
   return parsed.all.map((r) => `[${stamp(r.start)} to ${stamp(r.end)}] - ${r.instruction}`).join("\n");
 }
 
+/**
+ * Anything shorter than this between two written shots is rounding, not a
+ * deliberate return to camera.
+ */
+const MIN_NARRATOR_GAP = 1.0;
+
+/**
+ * The plan only writes screencasts, stock and titles — every uncovered stretch
+ * is Jake full screen, and the editor takes it from there. To grade the edit we
+ * have to put those implied shots back, because they are real shots in the
+ * finished video and every band (cut rate, holds, alternation, hook pace) is
+ * measured against a complete timeline.
+ */
+export function withImpliedNarrator(base: PlanLine[], durationSec: number): PlanLine[] {
+  const out: PlanLine[] = [];
+  let t = 0;
+  for (const s of base) {
+    if (s.start - t >= MIN_NARRATOR_GAP)
+      out.push({ start: t, end: s.start, kind: "talking_head", instruction: "(talking head — editor's shot)" });
+    out.push(s);
+    t = Math.max(t, s.end);
+  }
+  if (durationSec - t >= MIN_NARRATOR_GAP)
+    out.push({ start: t, end: durationSec, kind: "talking_head", instruction: "(talking head — editor's shot)" });
+  return out;
+}
+
 export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: string): PlanMeasure {
-  const { base, titles, unknown } = parsed;
+  const { titles, unknown } = parsed;
+  const written = parsed.base;
+  const base = withImpliedNarrator(written, durationSec);
   // Below ~3 minutes the split has too few shots on either side to mean anything.
   const splitOk = durationSec > 180;
   const span = (rs: PlanLine[]) => rs.reduce((a, r) => a + (r.end - r.start), 0);
-  const total = span(base) || 1;
+  const total = durationSec || 1;
 
+  // A hole in the WRITTEN plan is a talking-head shot, not an error, so `gaps`
+  // is only ever non-empty if the reconstruction failed. Overlaps are still
+  // errors: two visuals cannot occupy the same second.
   const gaps: { at: number; len: number }[] = [];
   const overlaps: { at: number; len: number }[] = [];
   for (let i = 1; i < base.length; i++) {
     const d = +(base[i].start - base[i - 1].end).toFixed(2);
     if (d > 0.05) gaps.push({ at: base[i - 1].end, len: d });
-    if (d < -0.05) overlaps.push({ at: base[i].start, len: -d });
+  }
+  for (let i = 1; i < written.length; i++) {
+    const d = +(written[i].start - written[i - 1].end).toFixed(2);
+    if (d < -0.05) overlaps.push({ at: written[i].start, len: -d });
   }
 
   const share = (k: PlanElement) => (span(base.filter((r) => r.kind === k)) / total) * 100;
@@ -144,8 +189,8 @@ export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: s
 
   return {
     lines: parsed.all.length,
-    coverStart: base[0]?.start ?? null,
-    coverEnd: base[base.length - 1]?.end ?? null,
+    coverStart: written[0]?.start ?? null,
+    coverEnd: written[written.length - 1]?.end ?? null,
     duration: durationSec,
     gaps,
     overlaps,
@@ -192,19 +237,20 @@ export function planDeviations(m: PlanMeasure): string[] {
     else if (v > hi) d.push(`${label} is ${v} — too HIGH. Target ~${tgt} (acceptable ${lo}–${hi}). ${down}`);
   };
 
-  if (m.gaps.length)
-    d.push(
-      `The base visual has ${m.gaps.length} GAP(S) — every second must be covered. First: ${m.gaps[0].len}s at ${m.gaps[0].at}s.`
-    );
+
   if (m.overlaps.length)
     d.push(
-      `The base visual has ${m.overlaps.length} OVERLAP(S) — shots must not overlap. First: ${m.overlaps[0].len}s at ${m.overlaps[0].at}s.`
+      `${m.overlaps.length} OVERLAP(S) — two visuals cannot occupy the same second. First: ${m.overlaps[0].len}s at ${m.overlaps[0].at}s.`
     );
-  if (m.coverEnd !== null && Math.abs(m.coverEnd - m.duration) > 2)
-    d.push(`The plan ends at ${m.coverEnd}s but the video is ${Math.round(m.duration)}s. Cover the whole runtime.`);
+  // The plan may legitimately stop before the video does — a trailing talking
+  // head needs no line. But a plan that stops MINUTES early was truncated.
+  if (m.coverEnd !== null && m.duration - m.coverEnd > 90)
+    d.push(
+      `Your last visual is at ${Math.round(m.coverEnd)}s but the video runs to ${Math.round(m.duration)}s — ${Math.round(m.duration - m.coverEnd)}s with nothing planned. A short talking-head tail is fine; this is too long to be one. Plan the rest of the video.`
+    );
   if (m.unknown)
     d.push(
-      `${m.unknown} line(s) do not start with a recognised element. Each must begin with "Screencast:", "Talking head:", "Stock footage:", "Text (gradient):" or "Text (whiteboard):".`
+      `${m.unknown} line(s) do not start with a recognised element. Each must begin with "Screencast:", "Stock footage:", "Text (gradient):" or "Text (whiteboard):". Do not write lines for the talking head — leave those stretches uncovered.`
     );
 
   band(
@@ -329,7 +375,8 @@ export function planPenalty(m: PlanMeasure): number {
     (m.hookBodyRatio !== null ? out(m.hookBodyRatio, CORPUS.hookBodyRatio) * 20.0 : 0) +
     out(m.screencastHold, CORPUS.screencastHold) * 2.0 +
     out(m.talkingHeadHold, CORPUS.talkingHeadHold) * 2.0 +
-    (m.gaps.length + m.overlaps.length) * 25 +
+    // Gaps are talking-head shots now, not errors; only overlaps are wrong.
+    m.overlaps.length * 25 +
     m.unknown * 5 +
     m.gradientFullStop * 3 +
     m.longGradient.length * 2 +
