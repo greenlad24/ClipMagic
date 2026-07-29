@@ -289,3 +289,106 @@ test('parseChatCommand error paths', () => {
   const badNum = parseChatCommand('/schedule in 2h to 12 : hi', WED, {});
   assert.strictEqual(badNum.ok, false);
 });
+
+// A chat the command was typed in is addressed by its real id. WhatsApp hands
+// us LIDs ("136567125496059@lid") as often as phone numbers, and a LID has
+// enough digits to pass normalizePhone — so without verbatim handling it would
+// become a plausible-looking phone number belonging to nobody.
+test('parseChatCommand: defaultChatId is kept verbatim (LID regression)', () => {
+  const WED = new Date('2026-07-22T10:00:00Z');
+
+  const lid = parseChatCommand('/s in 2h : testing', WED, {
+    defaultChatId: '136567125496059@lid',
+    defaultChatLabel: 'Greg',
+  });
+  assert.strictEqual(lid.ok, true);
+  assert.strictEqual(lid.to, '136567125496059@lid', 'LID must survive intact');
+  assert.strictEqual(lid.toDisplay, 'Greg', 'label is used for the confirmation');
+
+  // A normal @c.us chat id is equally preserved.
+  const cus = parseChatCommand('/s in 2h : testing', WED, {
+    defaultChatId: '447911123456@c.us',
+  });
+  assert.strictEqual(cus.to, '447911123456@c.us');
+
+  // An explicit "to <number>" still normalizes to bare digits.
+  const explicit = parseChatCommand('/s in 2h to +44 7911 123456 : hi', WED, {
+    defaultChatId: '136567125496059@lid',
+  });
+  assert.strictEqual(explicit.to, '447911123456');
+
+  // defaultChatId wins over defaultChatNumber when both are supplied.
+  const both = parseChatCommand('/s in 2h : hi', WED, {
+    defaultChatId: '136567125496059@lid',
+    defaultChatNumber: '136567125496059',
+  });
+  assert.strictEqual(both.to, '136567125496059@lid');
+});
+
+// The web composer submits a real chat id, not a phone number. validateSchedule
+// must accept ids verbatim — routing them through normalizePhone is exactly the
+// bug that turned LIDs into bogus phone numbers.
+test('validateSchedule: accepts chat ids from the web composer', () => {
+  const now = Date.now();
+  const soon = now + 60 * 60 * 1000;
+
+  for (const id of ['136567125496059@lid', '447911123456@c.us', '120363012-1699@g.us']) {
+    const r = validateSchedule({ to: id, text: 'hi', when: soon }, now);
+    assert.strictEqual(r.ok, true, id + ' should validate: ' + r.errors.join(';'));
+  }
+
+  // Still rejects nonsense ids and bad numbers.
+  assert.strictEqual(validateSchedule({ to: 'nope@evil.com', text: 'hi', when: soon }, now).ok, false);
+  assert.strictEqual(validateSchedule({ to: '12', text: 'hi', when: soon }, now).ok, false);
+  // Plain numbers keep working.
+  assert.strictEqual(validateSchedule({ to: '447911123456', text: 'hi', when: soon }, now).ok, true);
+});
+
+// Natural phrasing the composer encourages ("Monday morning") must resolve, not
+// just the clock-time forms the /s grammar originally accepted.
+test('parseWhen: named times of day', () => {
+  // Wed 22 Jul 2026, 10:00 local.
+  const WED = new Date(2026, 6, 22, 10, 0, 0, 0);
+  const at = (d) => [d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()];
+
+  assert.deepStrictEqual(at(parseWhen('monday morning', WED)), [2026, 6, 27, 9, 0]);
+  assert.deepStrictEqual(at(parseWhen('tomorrow evening', WED)), [2026, 6, 23, 19, 0]);
+  assert.deepStrictEqual(at(parseWhen('friday afternoon', WED)), [2026, 6, 24, 14, 0]);
+  assert.deepStrictEqual(at(parseWhen('today noon', WED)), [2026, 6, 22, 12, 0]);
+  assert.deepStrictEqual(at(parseWhen('next monday', WED)), [2026, 6, 27, 9, 0]);
+  // A bare time of day still ahead today stays today...
+  assert.deepStrictEqual(at(parseWhen('tonight', WED)), [2026, 6, 22, 20, 0]);
+  // ...and rolls to tomorrow once it has passed.
+  const LATE = new Date(2026, 6, 22, 23, 0, 0, 0);
+  assert.deepStrictEqual(at(parseWhen('evening', LATE)), [2026, 6, 23, 19, 0]);
+  assert.strictEqual(parseWhen('someday', WED), null);
+});
+
+// Every preset chip in the composer must resolve — a chip that produces
+// "couldn't understand" would be a dead button.
+test('parseWhen: all composer presets resolve', () => {
+  // Wed 22 Jul 2026, 10:00 local.
+  const WED = new Date(2026, 6, 22, 10, 0, 0, 0);
+  const PRESETS = [
+    'in 30 minutes', 'in 1 hour', 'in 3 hours',
+    'this afternoon', 'this evening', 'end of day',
+    'tomorrow morning', 'tomorrow afternoon', 'tomorrow evening',
+    'monday morning', 'weekend', 'next week', 'in 1 week',
+  ];
+  for (const p of PRESETS) {
+    const d = parseWhen(p, WED);
+    assert.ok(d instanceof Date && !isNaN(d.getTime()), `"${p}" should parse`);
+    assert.ok(d.getTime() > WED.getTime(), `"${p}" should be in the future`);
+  }
+
+  const at = (d) => [d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()];
+  // next week = Monday of the coming week, 09:00
+  assert.deepStrictEqual(at(parseWhen('next week', WED)), [6, 27, 9, 0]);
+  // weekend = the coming Saturday, 09:00
+  assert.deepStrictEqual(at(parseWhen('weekend', WED)), [6, 25, 9, 0]);
+  // end of day = 17:00 today
+  assert.deepStrictEqual(at(parseWhen('end of day', WED)), [6, 22, 17, 0]);
+  // "in an hour" / "in a week" word-quantities
+  assert.deepStrictEqual(at(parseWhen('in an hour', WED)), [6, 22, 11, 0]);
+  assert.deepStrictEqual(at(parseWhen('in a week', WED)), [6, 29, 10, 0]);
+});

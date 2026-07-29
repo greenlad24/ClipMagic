@@ -1,19 +1,26 @@
 'use strict';
 
 /*
- * WhatsApp Cloud Scheduler — status / QR / read-only list page.
- * The product itself is the in-chat `/schedule` command; this page only:
+ * WhatsApp Cloud Scheduler — link, compose, and review scheduled messages.
  *   (a) shows the QR to link a personal device (polls /api/status every 3s),
- *   (b) confirms "Connected as <me>" + shows the command how-to, and
- *   (c) lists pending scheduled messages with a Cancel action.
- * Talks to /api/status, /api/messages, POST /api/messages/:id/cancel,
- * DELETE /api/messages/:id.
+ *   (b) composes a scheduled message: pick an existing chat, say when in plain
+ *       language ("Monday morning"), write the text, and
+ *   (c) lists pending messages with a Cancel action.
+ * Recipients are opaque refs throughout — the browser is never handed a chat
+ * id or phone number, and the server persists neither.
+ * Talks to /api/status, /api/chats, /api/parse-when, /api/messages,
+ * POST /api/messages/:id/cancel, DELETE /api/messages/:id.
  */
 
 // ---------------------------------------------------------------------------
 // API helper
 // ---------------------------------------------------------------------------
 const TOKEN_KEY = 'wa_token';
+
+// Set by index.html when this page is served behind The Lab's /wa proxy, which
+// gates on Google Sign-In and injects the sidecar's Bearer token server-side.
+// In that mode the browser holds no token and the token prompt is a dead end.
+const PROXIED = window.WA_PROXIED === true;
 
 const API = {
   token: localStorage.getItem(TOKEN_KEY) || '',
@@ -34,8 +41,25 @@ const API = {
     const url = String(path).replace(/^\/+/, '');
     const res = await fetch(url, Object.assign({}, opts, { headers }));
     if (res.status === 401) {
-      API.setToken('');
-      showScreen('screen-token');
+      let body = {};
+      try {
+        body = await res.json();
+      } catch (_e) {
+        body = {};
+      }
+      // The proxy could not tell the scheduler who we are — a signed-out or
+      // expired session. Retrying cannot fix that, so say so instead of
+      // spinning on "Connecting…".
+      if (body.signInRequired) {
+        stopStatusPoll();
+        showSignInRequired(body.error);
+        throw new Error('Sign-in required');
+      }
+      // Proxied: the injected token is the server's to fix, not the visitor's.
+      if (!PROXIED) {
+        API.setToken('');
+        showScreen('screen-token');
+      }
       throw new Error('Unauthorized');
     }
     let data = {};
@@ -59,6 +83,23 @@ function showScreen(id) {
     const el = document.getElementById(s);
     if (el) el.hidden = s !== id;
   }
+}
+
+/** Terminal state: we are not signed in, and only a fresh sign-in fixes it. */
+function showSignInRequired(message) {
+  const card = document.querySelector('#screen-loading .card');
+  if (card) {
+    card.innerHTML = '';
+    const p = document.createElement('p');
+    p.textContent = message || 'Sign in to The Lab to use the WhatsApp Scheduler.';
+    card.appendChild(p);
+    const a = document.createElement('a');
+    a.className = 'btn btn-primary';
+    a.href = '/';
+    a.textContent = 'Go to The Lab';
+    card.appendChild(a);
+  }
+  showScreen('screen-loading');
 }
 
 // ---------------------------------------------------------------------------
@@ -93,12 +134,16 @@ async function startStatusFlow() {
   try {
     status = await API.call('/api/status');
   } catch (_e) {
-    return; // 401 already routed to token screen
+    // Proxied: a failure here is a server/config problem the visitor cannot fix
+    // by typing a token, so keep retrying rather than dead-ending on "Connecting…".
+    if (PROXIED) startStatusPoll();
+    return; // otherwise the 401 already routed to the token screen
   }
 
   updateProviderBadge(status);
+  updateAccountBadge(status);
 
-  if (status.authRequired && !API.token) {
+  if (status.authRequired && !API.token && !PROXIED) {
     stopStatusPoll();
     showScreen('screen-token');
     return;
@@ -124,6 +169,25 @@ function updateProviderBadge(status) {
   badge.hidden = false;
   badge.textContent = status.provider;
   badge.classList.toggle('connected', !!status.connected);
+}
+
+/**
+ * Show which lab account this page is acting as. Sessions are per signed-in
+ * email, so this is the difference between "my WhatsApp" and someone else's.
+ */
+function updateAccountBadge(status) {
+  const badge = document.getElementById('account-badge');
+  if (badge) {
+    badge.hidden = !status.user;
+    badge.textContent = status.user || '';
+  }
+  const qrAccount = document.getElementById('qr-account');
+  if (qrAccount) {
+    qrAccount.hidden = !status.user;
+    qrAccount.textContent = status.user
+      ? 'Linking a device for ' + status.user
+      : '';
+  }
 }
 
 function setConnectedTitle(status) {
@@ -170,6 +234,219 @@ async function initApp() {
   appInitialized = true;
   await loadMessages();
   startListPoll();
+  initComposer();
+}
+
+// ---------------------------------------------------------------------------
+// Composer — schedule from the web UI.
+// ---------------------------------------------------------------------------
+
+/** datetime-local wants "YYYY-MM-DDTHH:mm" in LOCAL time, not an ISO string. */
+function toLocalInputValue(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) +
+    'T' + pad(date.getHours()) + ':' + pad(date.getMinutes())
+  );
+}
+
+async function initComposer() {
+  const form = document.getElementById('compose-form');
+  if (!form || form.dataset.ready) return;
+  form.dataset.ready = '1';
+
+  // The exact-time picker is revealed only by the "Custom" option.
+  const exact = document.getElementById('compose-when');
+  const soon = new Date(Date.now() + 60 * 60 * 1000);
+  soon.setSeconds(0, 0);
+  exact.value = toLocalInputValue(soon);
+  exact.min = toLocalInputValue(new Date());
+  exact.addEventListener('change', () => previewWhen());
+
+  await loadChats();
+
+  const filter = document.getElementById('compose-filter');
+  if (filter) filter.addEventListener('input', () => renderChatOptions(filter.value));
+
+  const whenSel = document.getElementById('compose-when-select');
+  whenSel.addEventListener('change', () => {
+    exact.hidden = whenSel.value !== CUSTOM_WHEN;
+    previewWhen();
+  });
+
+  form.addEventListener('submit', submitCompose);
+  previewWhen();
+}
+
+// --- "when" resolution ------------------------------------------------------
+
+const CUSTOM_WHEN = '__custom__';
+let whenPreviewTimer = null;
+// Last resolved selection, so submit never re-parses a stale phrase.
+let resolvedWhen = { key: '', ms: null };
+
+/** The exact-time input, in epoch ms, or null when unusable. */
+function exactWhenMs() {
+  const el = document.getElementById('compose-when');
+  if (!el || !el.value) return null;
+  const ms = new Date(el.value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function previewWhen() {
+  if (whenPreviewTimer) clearTimeout(whenPreviewTimer);
+  whenPreviewTimer = setTimeout(resolveWhen, 120);
+}
+
+async function resolveWhen() {
+  const out = document.getElementById('compose-when-preview');
+  const sel = document.getElementById('compose-when-select');
+  if (!out || !sel) return;
+  const choice = sel.value;
+
+  if (choice === CUSTOM_WHEN) {
+    const ms = exactWhenMs();
+    resolvedWhen = { key: CUSTOM_WHEN, ms };
+    if (!ms) {
+      out.textContent = 'Choose a date and time.';
+    } else if (ms <= Date.now()) {
+      resolvedWhen.ms = null;
+      out.textContent = 'That time has already passed.';
+    } else {
+      out.innerHTML =
+        '→ <span class="when-ok">' +
+        escapeHtml(new Date(ms).toLocaleString()) +
+        '</span>';
+    }
+    return;
+  }
+
+  resolvedWhen = { key: choice, ms: null };
+  let data;
+  try {
+    data = await API.call('/api/parse-when?q=' + encodeURIComponent(choice));
+  } catch (_e) {
+    out.textContent = '';
+    return;
+  }
+  // A later change may have superseded this response.
+  if (document.getElementById('compose-when-select').value !== choice) return;
+  if (data.ok) {
+    resolvedWhen = { key: choice, ms: data.when };
+    out.innerHTML = '→ <span class="when-ok">' + escapeHtml(data.pretty) + '</span>';
+  } else {
+    out.textContent = data.error || 'Not a time we understand.';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Every chat we know about, kept client-side so filtering needs no round-trip.
+let allChats = [];
+
+async function loadChats() {
+  const sel = document.getElementById('compose-to');
+  if (!sel) return;
+  let data;
+  try {
+    data = await API.call('/api/chats');
+  } catch (_e) {
+    sel.innerHTML = '<option value="">Could not load chats</option>';
+    return;
+  }
+  allChats = data.chats || [];
+  renderChatOptions('');
+}
+
+function renderChatOptions(filter) {
+  const sel = document.getElementById('compose-to');
+  if (!sel) return;
+  const q = String(filter || '').trim().toLowerCase();
+  const matches = q
+    ? allChats.filter((c) => (c.name || '').toLowerCase().includes(q))
+    : allChats;
+
+  const previous = sel.value;
+  sel.innerHTML = '';
+
+  if (!allChats.length) {
+    sel.innerHTML = '<option value="">No chats available</option>';
+    return;
+  }
+
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = matches.length
+    ? '— pick a chat (' + matches.length + ') —'
+    : '— no chat matches that —';
+  sel.appendChild(blank);
+
+  // Cap the rendered list: there can be hundreds of chats, and the filter box
+  // is the way to reach the rest.
+  for (const c of matches.slice(0, 200)) {
+    const opt = document.createElement('option');
+    // An opaque ref — the browser is never given a chat id or phone number.
+    opt.value = c.ref;
+    opt.textContent = (c.isGroup ? '👥 ' : '') + c.name;
+    sel.appendChild(opt);
+  }
+  if (matches.length > 200) {
+    const more = document.createElement('option');
+    more.value = '';
+    more.disabled = true;
+    more.textContent = '…' + (matches.length - 200) + ' more — keep typing to narrow';
+    sel.appendChild(more);
+  }
+  // Keep the current pick if it survived the filter.
+  if (previous && matches.some((c) => c.ref === previous)) sel.value = previous;
+}
+
+async function submitCompose(e) {
+  e.preventDefault();
+  const sel = document.getElementById('compose-to');
+  const textEl = document.getElementById('compose-text');
+  const errEl = document.getElementById('compose-error');
+  const btn = document.getElementById('compose-submit');
+
+  const showError = (m) => {
+    errEl.textContent = m;
+    errEl.hidden = false;
+  };
+  errEl.hidden = true;
+
+  // Recipients are restricted to existing conversations by design: no free-text
+  // number field exists, so no arbitrary phone number is ever sent or stored.
+  const to = sel ? sel.value : '';
+  if (!to) return showError('Pick a chat to send to.');
+
+  const text = (textEl.value || '').trim();
+  if (!text) return showError('Message is empty.');
+
+  const sel2 = document.getElementById('compose-when-select');
+  if (resolvedWhen.key !== sel2.value || !resolvedWhen.ms) await resolveWhen();
+  const when = resolvedWhen.ms;
+  if (!when) return showError('Choose when to send it.');
+
+  if (!Number.isFinite(when)) return showError('That send time is not valid.');
+  if (when <= Date.now()) return showError('That time is in the past.');
+
+  btn.disabled = true;
+  try {
+    await API.call('/api/messages', {
+      method: 'POST',
+      body: JSON.stringify({ to, text, when }),
+    });
+    textEl.value = '';
+    toast('Scheduled ✅');
+    await loadMessages();
+  } catch (err) {
+    showError(String((err && err.message) || err));
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // ---------------------------------------------------------------------------

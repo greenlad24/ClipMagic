@@ -76,6 +76,19 @@ body {
 .provider-badge.connected {
   background: var(--wa-green);
 }
+/* The signed-in lab account. Sessions are per user, so this identifies whose
+   WhatsApp the page is showing — it must stay legible, hence no uppercasing and
+   an ellipsis rather than a wrap on a narrow screen. */
+.account-badge {
+  font-size: 0.7rem;
+  background: rgba(255, 255, 255, 0.12);
+  padding: 3px 8px;
+  border-radius: 999px;
+  max-width: 45vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Layout */
 .container {
@@ -85,6 +98,13 @@ body {
 }
 .screen {
   display: block;
+}
+/* MUST restate `hidden` here. The browser's built-in [hidden]{display:none} is a
+   UA rule, and ANY author rule setting display beats it — so the .screen rule
+   above silently defeats the hidden attribute and all four screens render
+   stacked (loading + token form + QR + app at once). */
+.screen[hidden] {
+  display: none;
 }
 .card {
   background: var(--surface);
@@ -120,7 +140,8 @@ label {
   margin: 12px 0 6px;
 }
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   padding: 11px 12px;
   border: 1px solid var(--border);
@@ -131,13 +152,27 @@ textarea {
   font-family: inherit;
 }
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
   border-color: var(--wa-green);
   box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.2);
 }
 textarea {
   resize: vertical;
+}
+
+/* Composer */
+#compose-filter {
+  margin-bottom: 6px;
+}
+#compose-when-preview {
+  margin: 6px 0 2px;
+  min-height: 1.2em;
+}
+.when-ok {
+  color: var(--wa-green);
+  font-weight: 600;
 }
 
 /* Buttons */
@@ -221,6 +256,12 @@ textarea {
 }
 .howto li {
   margin: 6px 0;
+}
+/* The onboarding steps are an <ol> and need their numbers back — .howto above
+   strips list styling for the <ul> of command examples. */
+ol.howto {
+  list-style: decimal;
+  padding-left: 1.3em;
 }
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

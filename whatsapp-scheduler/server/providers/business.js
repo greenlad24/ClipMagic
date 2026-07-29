@@ -70,6 +70,12 @@ function createBusinessProvider(env = process.env) {
       // stored/invoked; wire a webhook to enable inbound in a future version.
       void handler;
     },
+
+    // The Cloud API exposes no chat list — the composer falls back to letting
+    // you type a phone number by hand.
+    async listChats() {
+      return [];
+    },
   };
 }
 

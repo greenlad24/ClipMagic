@@ -80,10 +80,13 @@ For development with auto-restart on file changes: `npm run dev`.
 | `PORT` | `3000` | HTTP port |
 | `HOST` | `0.0.0.0` | Bind address (`127.0.0.1` for local-only) |
 | `TZ` | — | Timezone for all scheduling, e.g. `Europe/London` |
-| `DATA_DIR` | `./data` | Where messages + session are stored |
+| `DATA_DIR` | `./data` | Where messages + per-user sessions are stored |
 | `WA_PROVIDER` | `personal` | `personal` or `business` |
 | `WA_CHROME_PATH` | — | Path to Chromium (optional; set in Docker) |
 | `API_TOKEN` | — | Bearer token to protect the status page/API (set on public IPs) |
+| `WA_REF_SECRET` | falls back to `API_TOKEN` | HMAC key for opaque chat refs — must stay stable or pending messages are orphaned |
+| `WA_DEFAULT_USER` | — | Standalone fallback identity when no `X-Lab-User` header is present (leave unset behind the gate) |
+| `WA_ENABLE_CHAT_COMMANDS` | `false` | Re-enable in-chat `/schedule` commands (leaks the command to the recipient — see below) |
 | `WA_PHONE_NUMBER_ID` | — | *business* — sender Phone Number ID |
 | `WA_ACCESS_TOKEN` | — | *business* — access token |
 | `WA_API_VERSION` | `v21.0` | *business* — Graph API version |
@@ -219,13 +222,61 @@ best over HTTPS.
 
 ---
 
+## One session per user
+
+When this app is served behind an authenticating proxy (in ClipMagic: The Lab's
+Google Sign-In gate at `/wa`), **every signed-in account gets its own WhatsApp
+session** — its own linked device, its own chats, its own scheduled messages. One
+user can neither see nor send from another's WhatsApp.
+
+How it fits together:
+
+- The proxy sends the **verified** signed-in email as `X-Lab-User`, and **strips
+  any inbound copy** of that header. That is what makes the header trustworthy:
+  a browser cannot name itself, and the container publishes no port, so the proxy
+  is the only way in. A request with no identity is refused (`signInRequired`).
+- The email is hashed into an opaque **user key** (`u_…`). That key — never the
+  address — is what appears in directory names and in each record's `owner`.
+- Each user's WhatsApp profile lives at `DATA_DIR/users/<key>/wwebjs_auth`.
+- Chat refs are **salted per user**, so the same contact yields a different ref in
+  each account and a ref is meaningless outside the account that minted it.
+- Reads are filtered by `owner`; cancel/delete on someone else's id answer **404**
+  (not 403 — a distinguishable response would confirm the id exists).
+
+**Sessions start lazily.** A live session is a headless Chromium (~400–700MB), so
+one is launched only when a user opens the page, or at boot if they have a pending
+message that must go out. An account that never visits costs nothing. Once started
+a session stays up, because the scheduler needs the device online when a message
+comes due.
+
+**Standalone use.** With no proxy and no `X-Lab-User`, set `WA_DEFAULT_USER` to a
+fixed identity to get the old single-session behaviour.
+
+### Migrating an existing single-session install
+
+`scripts/migrate-per-user.js` moves the shared `wwebjs_auth` profile into one
+user's directory and stamps existing records with that `owner`, so the person who
+scanned the QR keeps their linked device and pending messages:
+
+```bash
+# Run with the service STOPPED, and dry-run it first.
+node scripts/migrate-per-user.js you@example.com --dry-run
+node scripts/migrate-per-user.js you@example.com
+```
+
+It is idempotent. Everyone else starts empty and gets their own QR.
+
+---
+
 ## Data storage & keeping the server running
 
 - Scheduled messages are stored as **JSON** (`messages.json`) under `DATA_DIR`
   (default `./data`). With Docker this is bind-mounted to `./data` on the host, so
-  it **stays on your server** and survives restarts.
-- The personal provider's WhatsApp session also lives under `DATA_DIR`
-  (`wwebjs_auth`), so you don't re-scan every time.
+  it **stays on your server** and survives restarts. Each record carries the
+  `owner` key of the account that scheduled it.
+- The personal provider's WhatsApp sessions live under
+  `DATA_DIR/users/<key>/wwebjs_auth` — **one profile per signed-in user** — so you
+  don't re-scan every time. See "One session per user" below.
 - **The server must stay running to send.** A scheduler loop wakes periodically
   and delivers any messages whose time has arrived. If the process is stopped when
   a message is due, it will send as soon as the server is running again and the

@@ -43,4 +43,10 @@ COPY . .
 
 EXPOSE 3000
 
+# Drops stale Chromium profile locks left by a previous container, then execs
+# the CMD. Without this, every `compose up` recreate crash-loops (see script).
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
 CMD ["node", "server/index.js"]

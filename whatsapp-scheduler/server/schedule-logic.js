@@ -86,12 +86,34 @@ function toChatId(digits) {
   return `${digits}@c.us`;
 }
 
-// Parse a time token: "9", "9am", "9:30am", "21:00", "0900".
+// Named times of day, so "monday morning" works as naturally as "monday 9am".
+// These are the conventional readings, not settings — the UI always shows the
+// resolved date/time before anything is scheduled, so a surprise is visible.
+const NAMED_TIMES = {
+  morning: { hour: 9, minute: 0 },
+  noon: { hour: 12, minute: 0 },
+  midday: { hour: 12, minute: 0 },
+  lunchtime: { hour: 12, minute: 30 },
+  afternoon: { hour: 14, minute: 0 },
+  evening: { hour: 19, minute: 0 },
+  tonight: { hour: 20, minute: 0 },
+  night: { hour: 21, minute: 0 },
+  midnight: { hour: 0, minute: 0 },
+};
+
+// Parse a time token: "9", "9am", "9:30am", "21:00", "0900", or a named time
+// of day ("morning", "evening", "in the afternoon").
 // Returns { hour, minute } or null.
 function parseTime(str) {
   if (str === null || str === undefined) return null;
-  const s = String(str).trim().toLowerCase();
+  let s = String(str).trim().toLowerCase();
   if (!s) return null;
+
+  // "this morning" / "in the evening" → "morning" / "evening"
+  s = s.replace(/^(?:this|in\s+the|the)\s+/, '').trim();
+  if (Object.prototype.hasOwnProperty.call(NAMED_TIMES, s)) {
+    return { ...NAMED_TIMES[s] };
+  }
 
   // 9am / 9:30am / 12pm
   let m = s.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/);
@@ -152,17 +174,72 @@ function parseWhen(input, now) {
   if (input === null || input === undefined) return null;
   const nowDate = toDate(now);
   if (isNaN(nowDate.getTime())) return null;
-  const s = String(input).trim().toLowerCase();
+  let s = String(input).trim().toLowerCase();
   if (!s) return null;
 
-  // Relative: "in <n> <unit>"
-  let m = s.match(/^in\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)$/);
+  // Phrases that must be matched BEFORE the "next " strip below, or they would
+  // be mangled into a bare word ("next week" → "week").
+  {
+    const atToday = (hour, minute, rollIfPast) => {
+      const d = new Date(
+        nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), hour, minute, 0, 0,
+      );
+      if (rollIfPast && d.getTime() <= nowDate.getTime()) d.setDate(d.getDate() + 1);
+      return d;
+    };
+    // "next week" → Monday morning of the coming week.
+    if (/^next\s+week$/.test(s)) {
+      const d = atToday(9, 0, false);
+      const add = ((1 - d.getDay() + 7) % 7) || 7;
+      d.setDate(d.getDate() + add);
+      return d;
+    }
+    // "the weekend" → Saturday morning.
+    if (/^(this\s+|next\s+|the\s+)?weekend$/.test(s)) {
+      const d = atToday(9, 0, false);
+      let add = (6 - d.getDay() + 7) % 7;
+      if (add === 0 && d.getTime() <= nowDate.getTime()) add = 7;
+      d.setDate(d.getDate() + add);
+      return d;
+    }
+    // "end of day" → 17:00.
+    if (/^(eod|end\s+of\s+(the\s+)?day)$/.test(s)) return atToday(17, 0, true);
+  }
+
+  // "next monday" reads the same as "monday" here: the next occurrence. The
+  // composer previews the resolved date, so the reading is never a guess.
+  s = s.replace(/^next\s+/, '');
+
+  // A bare time of day ("tonight", "this evening"): today if still ahead,
+  // otherwise the same time tomorrow.
+  {
+    const bare = parseTime(s);
+    if (bare) {
+      const d = new Date(
+        nowDate.getFullYear(),
+        nowDate.getMonth(),
+        nowDate.getDate(),
+        bare.hour,
+        bare.minute,
+        0,
+        0,
+      );
+      if (d.getTime() <= nowDate.getTime()) d.setDate(d.getDate() + 1);
+      return d;
+    }
+  }
+
+  // Relative: "in <n> <unit>" — also "in an hour" / "in a week".
+  let m = s.match(
+    /^in\s+(an?|\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|wk|wks|week|weeks)$/,
+  );
   if (m) {
-    const n = parseInt(m[1], 10);
+    const n = /^an?$/.test(m[1]) ? 1 : parseInt(m[1], 10);
     const unit = m[2][0];
     let ms;
     if (unit === 'm') ms = n * MS_MIN;
     else if (unit === 'h') ms = n * MS_HOUR;
+    else if (unit === 'w') ms = n * 7 * MS_DAY;
     else ms = n * MS_DAY;
     return new Date(nowDate.getTime() + ms);
   }
@@ -239,9 +316,19 @@ function validateSchedule({ to, text, when } = {}, now) {
   if (!text || !String(text).trim()) {
     errors.push('Message text is required');
   }
-  const np = normalizePhone(to);
-  if (!np.ok) {
-    errors.push(np.error || 'Invalid phone number');
+  // `to` is either a full chat id picked in the web composer ("…@c.us",
+  // "…@lid", or a "…@g.us" group) or a phone number typed by hand. Only the
+  // latter is a number; running an id through normalizePhone is what silently
+  // turned LIDs into bogus phone numbers.
+  if (String(to || '').includes('@')) {
+    if (!/^[0-9][0-9-]*@(c\.us|lid|g\.us)$/i.test(String(to))) {
+      errors.push('Invalid recipient chat id');
+    }
+  } else {
+    const np = normalizePhone(to);
+    if (!np.ok) {
+      errors.push(np.error || 'Invalid phone number');
+    }
   }
   const nowMs = now instanceof Date ? now.getTime() : Number(now);
   if (typeof when !== 'number' || !Number.isFinite(when)) {
@@ -296,10 +383,20 @@ function parseChatCommand(body, now, opts = {}) {
 
   // Extract a trailing "to <number>" clause from the schedule spec.
   let toDisplay;
+  // A full chat id ("…@c.us" / "…@lid") to address verbatim, when we have one.
+  let rawTarget = null;
   const toMatch = spec.match(/\bto\s+(\+?\d[\d\s\-()]*)$/i);
   if (toMatch) {
     toDisplay = toMatch[1].trim();
     spec = spec.slice(0, toMatch.index).trim();
+  } else if (opts.defaultChatId) {
+    // No explicit recipient: address the chat this was typed in, BY ID. Modern
+    // WhatsApp identifies many chats by LID ("136567125496059@lid") instead of a
+    // phone number, and a LID's digit count falls inside normalizePhone's 8–15
+    // range — so normalizing would silently turn it into a plausible-looking
+    // phone number that belongs to nobody, and the send would go nowhere.
+    rawTarget = String(opts.defaultChatId);
+    toDisplay = opts.defaultChatLabel ? String(opts.defaultChatLabel) : rawTarget;
   } else if (opts.defaultChatNumber !== null && opts.defaultChatNumber !== undefined) {
     toDisplay = String(opts.defaultChatNumber);
   }
@@ -310,9 +407,16 @@ function parseChatCommand(body, now, opts = {}) {
       error: "No recipient — add 'to <number>' or send this inside a chat",
     };
   }
-  const np = normalizePhone(toDisplay);
-  if (!np.ok) {
-    return { ok: false, error: 'Invalid recipient number: ' + (np.error || 'bad format') };
+
+  let target;
+  if (rawTarget) {
+    target = rawTarget;
+  } else {
+    const np = normalizePhone(toDisplay);
+    if (!np.ok) {
+      return { ok: false, error: 'Invalid recipient number: ' + (np.error || 'bad format') };
+    }
+    target = np.value;
   }
 
   if (!spec) {
@@ -331,7 +435,7 @@ function parseChatCommand(body, now, opts = {}) {
 
   return {
     ok: true,
-    to: np.value,
+    to: target,
     toDisplay,
     text,
     when: whenMs,

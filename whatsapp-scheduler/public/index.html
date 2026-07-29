@@ -9,7 +9,10 @@
     <title>WhatsApp Scheduler — Status</title>
     <meta name="description" content="Link your device and watch your scheduled WhatsApp messages." />
     <meta name="theme-color" content="#00a884" />
-    <link rel="manifest" href="manifest.webmanifest" />
+    <!-- use-credentials: manifest fetches are anonymous by default, so behind The
+         Lab's auth gate the request 302s to Google and dies on CORS. Sending the
+         session cookie makes it resolve like every other asset. -->
+    <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
     <link rel="icon" href="icons/icon48.png" sizes="48x48" type="image/png" />
     <link rel="apple-touch-icon" href="icons/icon128.png" />
     <link rel="stylesheet" href="styles.css" />
@@ -20,6 +23,10 @@
         <span class="logo" aria-hidden="true">💬</span>
         <h1>WhatsApp Scheduler</h1>
         <span id="provider-badge" class="provider-badge" hidden></span>
+        <!-- Which lab account this page is acting as. Each signed-in email has
+             its own WhatsApp session, so this is not decoration: it says whose
+             device is linked and whose messages are listed. -->
+        <span id="account-badge" class="account-badge" hidden></span>
       </div>
     </header>
 
@@ -50,12 +57,32 @@
       <section id="screen-qr" class="screen" hidden>
         <div class="card center">
           <h2>Link your WhatsApp</h2>
+          <p id="qr-account" class="muted small" hidden></p>
           <p class="muted">Open WhatsApp on your phone → <strong>Settings → Linked devices → Link a device</strong>, then scan this code.</p>
           <div id="qr-wrap" class="qr-wrap">
             <img id="qr-img" alt="WhatsApp QR code" hidden />
             <p id="qr-waiting" class="muted small">Waiting for a QR code…</p>
           </div>
           <p class="muted small">This screen updates automatically once linked.</p>
+        </div>
+
+        <!-- Onboarding: the command how-to otherwise only appears AFTER linking,
+             so before scanning there is nothing telling you what this tool does. -->
+        <div class="card">
+          <h3 class="howto-title">What happens after you link</h3>
+          <ol class="howto">
+            <li>Scan the code above with a <strong>dedicated / secondary</strong> number.
+              It links to <em>your</em> lab account only — each signed-in user has a
+              separate WhatsApp session, chats and schedule.</li>
+            <li>This page turns into a composer: pick one of your existing chats,
+              say when (“Monday morning”), and write the message.</li>
+            <li>It sends itself at that time — even while your phone is asleep. Nothing
+              reaches the recipient beforehand.</li>
+          </ol>
+          <p class="muted small">Times are read in <strong>Asia/Bangkok</strong>. Recipients can
+            only be chats you already have, and no phone numbers are stored on the server.</p>
+          <p class="muted small">⚠️ Automating a personal WhatsApp number is against WhatsApp's
+            terms and can get it banned — use a secondary number and keep volume low.</p>
         </div>
       </section>
 
@@ -66,17 +93,64 @@
             <span class="dot" aria-hidden="true"></span>
             <h2 id="connected-title">Connected</h2>
           </div>
-          <p class="muted">Schedule messages from inside any WhatsApp chat by sending yourself a command. The linked device does the rest.</p>
+          <p class="muted">Schedule a WhatsApp message for later. It is composed here and
+            sent by your linked device at the time you choose — nothing appears in the
+            recipient's chat until then.</p>
+          <p class="muted small">Times are read in <strong>Asia/Bangkok</strong>. Recipients come
+            from your existing conversations; no phone numbers are stored on the server.</p>
+        </div>
 
-          <h3 class="howto-title">How to schedule</h3>
-          <p class="muted small">Type one of these in a chat (case-insensitive triggers: <code>/schedule</code>, <code>/sched</code>, <code>/s</code>):</p>
-          <ul class="howto">
-            <li><code>/schedule tomorrow 9am : Standup reminder</code></li>
-            <li><code>/schedule in 2h : Call the plumber</code></li>
-            <li><code>/schedule monday 9am to +44 7911 123456 : Invoice is due</code></li>
-            <li><code>/s 2026-08-01 18:30 : Happy birthday!</code></li>
-          </ul>
-          <p class="muted small">Grammar: <code>&lt;trigger&gt; &lt;when…&gt; [to &lt;number&gt;] : &lt;message&gt;</code>. Without <code>to</code>, it sends into the chat you typed it in. Weekend times get a Monday nudge in the reply.</p>
+        <!-- Composer: the leak-free way to schedule. Picking a recipient here
+             never touches their chat until the message is actually due. -->
+        <div class="card">
+          <h2>Schedule a message</h2>
+          <form id="compose-form">
+            <label for="compose-to">To</label>
+            <input id="compose-filter" type="search" autocomplete="off"
+                   placeholder="Search your chats…" />
+            <select id="compose-to" required>
+              <option value="">Loading chats…</option>
+            </select>
+
+            <label for="compose-when-select">When</label>
+            <select id="compose-when-select">
+              <optgroup label="Soon">
+                <option value="in 30 minutes">In 30 minutes</option>
+                <option value="in 1 hour" selected>In 1 hour</option>
+                <option value="in 3 hours">In 3 hours</option>
+              </optgroup>
+              <optgroup label="Today">
+                <option value="this afternoon">This afternoon</option>
+                <option value="this evening">This evening</option>
+                <option value="end of day">End of day</option>
+              </optgroup>
+              <optgroup label="Tomorrow">
+                <option value="tomorrow morning">Tomorrow morning</option>
+                <option value="tomorrow afternoon">Tomorrow afternoon</option>
+                <option value="tomorrow evening">Tomorrow evening</option>
+              </optgroup>
+              <optgroup label="Later">
+                <option value="monday morning">Monday morning</option>
+                <option value="weekend">This weekend</option>
+                <option value="next week">Next week</option>
+                <option value="in 1 week">In a week</option>
+              </optgroup>
+              <optgroup label="Custom">
+                <option value="__custom__">Pick an exact date &amp; time…</option>
+              </optgroup>
+            </select>
+            <input id="compose-when" type="datetime-local" hidden />
+            <p id="compose-when-preview" class="muted small">&nbsp;</p>
+
+            <label for="compose-text">Message</label>
+            <textarea id="compose-text" rows="3" required
+                      placeholder="What should we send?"></textarea>
+
+            <div id="compose-error" class="error" hidden></div>
+            <div class="btn-row">
+              <button type="submit" class="btn btn-primary" id="compose-submit">Schedule</button>
+            </div>
+          </form>
         </div>
 
         <div class="card">
@@ -92,6 +166,13 @@
 
     <div id="toast" class="toast" hidden></div>
 
+    <!--
+      This copy is only ever served behind The Lab's /wa reverse proxy, which
+      authenticates via Google Sign-In and then injects the sidecar's own
+      Authorization: Bearer header server-side. The visitor therefore has no
+      API token and must never be asked for one.
+    -->
+    <script>window.WA_PROXIED = true;</script>
     <script src="app.js"></script>
   </body>
 </html>
