@@ -519,16 +519,62 @@ function renderItem(m) {
   li.appendChild(body);
   li.appendChild(when);
 
+  const actions = document.createElement('div');
+  actions.className = 'message-actions';
+
   if (m.status === 'pending') {
-    const actions = document.createElement('div');
-    actions.className = 'message-actions';
     actions.appendChild(
       actionBtn('Cancel', 'btn-ghost btn-danger', () => cancelMsg(m.id)),
     );
-    li.appendChild(actions);
+  } else if (m.status === 'failed' || m.status === 'canceled') {
+    // Deliberately NOT a one-click resend. This loads the message back into the
+    // composer so the send time is chosen again and confirmed — a failed
+    // message is usually hours or days old by the time anyone looks at it, and
+    // firing its original text off immediately is rarely what was wanted.
+    const btn = actionBtn('Reschedule', 'btn-ghost', () => reschedule(m));
+    if (!m.toRef) {
+      // The chat no longer resolves on this device, so there is nothing for the
+      // picker to select. Say why rather than offering a button that fails.
+      btn.disabled = true;
+      btn.title = 'That conversation is not available on this device any more';
+    }
+    actions.appendChild(btn);
   }
 
+  if (actions.childNodes.length) li.appendChild(actions);
+
   return li;
+}
+
+/**
+ * Load a past message into the composer: same recipient, same text, new time.
+ *
+ * The picker only renders the first 200 matches, so the chat has to be brought
+ * into view via the filter before its option exists to be selected.
+ */
+function reschedule(m) {
+  const filter = document.getElementById('compose-filter');
+  const sel = document.getElementById('compose-to');
+  const textEl = document.getElementById('compose-text');
+  if (!sel || !textEl) return;
+
+  if (filter && m.toDisplay) {
+    filter.value = m.toDisplay;
+    renderChatOptions(m.toDisplay);
+  }
+  sel.value = m.toRef || '';
+  if (!sel.value) {
+    toast('That conversation is not available any more');
+    return;
+  }
+  textEl.value = m.text || '';
+
+  const card = document.getElementById('compose-card') || sel.closest('.card');
+  if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Land on the time, since that is the one thing that must change.
+  const when = document.getElementById('compose-when-select');
+  if (when && when.focus) when.focus();
+  toast('Loaded — pick a new time');
 }
 
 function actionBtn(label, cls, handler) {

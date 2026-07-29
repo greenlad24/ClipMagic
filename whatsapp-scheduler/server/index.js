@@ -259,6 +259,12 @@ async function main() {
           ...r,
           toDisplay: chat ? chat.name || 'Unnamed chat' : 'Chat unavailable',
           isGroup: chat ? !!chat.isGroup : false,
+          // The ref this chat has TODAY, which is what the composer's picker
+          // offers. A record written before refs were salted per user still
+          // resolves above, but its stored ref matches no option — so hand back
+          // the current one and "reschedule" works for old records too. Still a
+          // ref: the browser never receives a chat id.
+          toRef: chat ? makeRef(chat.id, env, session.key) : null,
         };
       });
       res.json({ messages });
