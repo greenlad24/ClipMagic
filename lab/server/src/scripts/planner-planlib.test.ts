@@ -13,6 +13,7 @@ import {
   planPenalty,
   PLAN_CHAR_BUDGET,
   SLACK_MESSAGE_LIMIT,
+  CORPUS,
 } from "../planner/planlib.js";
 import assert from "node:assert/strict";
 
@@ -32,8 +33,9 @@ const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).
 
 /**
  * A plan shaped like the corpus: screencast ~70% of runtime, screencast holds
- * around 13s, face returns around 8s, one screencast→screencast run per cycle
- * so alternation isn't a metronome, and an opening cut ~2x faster than the body.
+ * around 11s with one long demonstration per cycle, face returns around 8s, one
+ * screencast→screencast run per cycle so alternation isn't a metronome, and an
+ * opening cut ~2x faster than the body.
  *
  * Lengths are whole seconds because the plan format is [M:SS] — a fractional
  * fixture measures as something other than what it looks like.
@@ -45,12 +47,17 @@ const OPENING_CYCLE: [string, number][] = [
   ["sc", 7],
   ["th", 4],
 ];
+// One cycle carries a 32s demonstration, because the real corpus does: a third
+// of every video sits in a few screencasts that run past 25s. Without one here,
+// a fixture can match the median hold and still be a shape Jake never cuts.
 const BODY_CYCLE: [string, number][] = [
-  ["sc", 14],
+  ["sc", 12],
   ["th", 8],
-  ["sc", 13],
-  ["sc", 13],
+  ["sc", 11],
+  ["sc", 10],
   ["th", 8],
+  ["sc", 32],
+  ["th", 7],
 ];
 
 function corpusPlan(durationSec: number, instruction = "GoodTaco — open the dashboard."): string {
@@ -168,6 +175,43 @@ check("over-cutting is caught even when the element mix is right", () => {
   const devs = planDeviations(m).join(" ");
   assert.match(devs, /Cuts per minute is .* too HIGH/);
   assert.match(devs, /Median screencast hold/);
+});
+
+check("a plan with the right median hold but no long demonstration is flagged", () => {
+  // The real defect, twice over: plan6 put 12% of its runtime into shots past
+  // 25s and the Claude Skills run 15.5%, against Jake's 26-49% — while both
+  // sat inside the median-hold band. Every shot the same medium length passes
+  // the median, the mix and the cut rate, and is still a shape he never cuts.
+  const lines: string[] = [];
+  let t = 0;
+  let sc = true;
+  while (t < 600) {
+    const end = Math.min(t + (sc ? 11 : 5), 600);
+    if (sc) lines.push(`[${mmss(t)} to ${mmss(end)}] - Screencast: x`);
+    t = end;
+    sc = !sc;
+  }
+  const m = measured(lines.join("\n"), 600);
+  assert.equal(m.longDemos, 0);
+  assert.ok(
+    m.screencastHold >= CORPUS.screencastHold[0] && m.screencastHold <= CORPUS.screencastHold[1],
+    `median hold should look fine, got ${m.screencastHold}s`
+  );
+  const dev = planDeviations(m).find((d) => d.includes("longer than 25s"));
+  assert.ok(dev, "the missing long demonstration is flagged");
+  // The fix must never be "add screencasts" — it already has too many.
+  assert.match(dev!, /Do NOT add screencasts/);
+  assert.match(dev!, /merge/i);
+});
+
+check("the four approved videos all sit inside the long-demonstration band", () => {
+  // The sanity rule that has caught every band error in this project: if a real
+  // finished video fails, the band is wrong, not the video. Measured from the
+  // timelines: ref1 29.3%, ref2 49.2%, ref3 26.1%, ref4 34.2%.
+  const [lo, hi] = CORPUS.longDemoPct;
+  for (const pct of [29.3, 49.2, 26.1, 34.2]) {
+    assert.ok(pct >= lo && pct <= hi, `${pct}% is a real Jake video and must pass ${lo}-${hi}`);
+  }
 });
 
 check("gradient titles are held to one line with no full stop", () => {

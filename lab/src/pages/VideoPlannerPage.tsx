@@ -257,6 +257,15 @@ export default function VideoPlannerPage() {
                         />
                       </div>
                     </div>
+                    <div className="mt-4 border-t pt-4">
+                      <div className="mb-2 text-xs font-medium text-muted-foreground">
+                        Room to breathe — a third of your runtime runs long
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <Stat label="Demos over 25s" value={String(m.longDemos)} target="5–9" />
+                        <Stat label="Runtime in them" value={`${m.longDemoPct}%`} target="34%" />
+                      </div>
+                    </div>
                     {(m.gaps.length > 0 || m.overlaps.length > 0) && (
                       <p className="mt-3 text-xs text-destructive">
                         {m.gaps.length} gap(s), {m.overlaps.length} overlap(s) — the plan does not fully tile.

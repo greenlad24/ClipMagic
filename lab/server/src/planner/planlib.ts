@@ -12,13 +12,32 @@ export const CORPUS = {
   screencastPct: [65, 76, 70.6] as const,
   talkingHeadPct: [22, 34, 28.6] as const,
   stockPct: [0, 2.5, 0.8] as const,
-  titlesPerMin: [0.8, 1.8, 1.3] as const,
+  // Per-video, not pooled: 0.97 / 1.77 / 1.48 / 1.11 confirmed titles per
+  // minute, so the floor is ref1's 0.97 exactly. It was 0.8 — BELOW every real
+  // video — so a plan could sink to 0.83/min and nothing flagged it, which is
+  // what happened. Same ceiling-versus-floor error as
+  // shotsPerMin, in the other direction: bound the band to the corpus extreme,
+  // never to a round number outside it. These counts are a LOWER bound, since
+  // the overlay detector cannot confirm text over bright screencasts (29 such
+  // events); including them the range is 1.70–2.22, so the ceiling stays at
+  // 1.8 rather than being raised — the planner has never over-titled.
+  titlesPerMin: [0.97, 1.8, 1.3] as const,
   // 77 is the POOLED figure across all four videos; per-video it ranges 47–90
   // (ref1 47, ref2 87, ref3 88, ref4 90). A [70,85] band flagged every real
   // video and pushed the planner to cut more to satisfy it — which is part of
   // what caused it to over-cut. Alternation genuinely varies by video, so this
   // is a weak constraint that only catches extremes.
   altPct: [45, 92, 77] as const,
+  // A third of every video sits in a few demonstrations he lets RUN: per video
+  // 5-9 screencasts past 25s carrying 29 / 49 / 26 / 34% of runtime. The first
+  // plan to match his pace still put only 12% into three, because it hit the
+  // median hold with many medium shots instead of a few long ones and a lot of
+  // short ones. Median hold cannot see this; nothing else here could either.
+  // Floor and ceiling are the corpus MIN and MAX exactly (ref3 26.1, ref2 49.2),
+  // not rounded outward: rounding the ceiling to 50 would licence a plan that
+  // parks a half-hour of screen time in two shots, and rounding the floor to 25
+  // would pass ref3 only by luck. Both approved extremes must sit inside.
+  longDemoPct: [26.1, 49.2, 34] as const,
   // Cut RATE and hold LENGTH, added after a plan matched the element mix almost
   // exactly yet still over-cut badly: 100 cuts where the editor made 60, and 62
   // screencast shots where he used 30. Mix alone does not catch that — a plan
@@ -94,6 +113,9 @@ const median = (xs: number[]): number => {
 
 /** The retention-critical window Jake cuts faster. */
 const OPENING_SEC = 90;
+
+/** Where a screencast stops being a shot and becomes a demonstration. */
+const LONG_DEMO_SEC = 25;
 
 /**
  * The plan is delivered by pasting it into Slack, which truncates a message at
@@ -182,6 +204,10 @@ export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: s
   }
   if (cur) runs.push(cur);
 
+  // Measured on the WRITTEN screencasts: a long demonstration is something the
+  // planner has to decide to write, not something the reconstruction implies.
+  const longDemo = written.filter((r) => r.kind === "screencast" && r.end - r.start >= LONG_DEMO_SEC);
+
   const hookRate = (base.filter((r) => r.start < OPENING_SEC).length / OPENING_SEC) * 60;
   const bodyRate = (base.filter((r) => r.start >= OPENING_SEC).length / (durationSec - OPENING_SEC)) * 60;
 
@@ -207,6 +233,8 @@ export function measurePlan(parsed: ParsedPlan, durationSec: number, rawText?: s
     hookBodyRatio: splitOk && bodyRate > 0 ? +(hookRate / bodyRate).toFixed(2) : null,
     titles: titles.length,
     titlesPerMin: +(titles.length / (durationSec / 60)).toFixed(2),
+    longDemos: longDemo.length,
+    longDemoPct: +((span(longDemo) / total) * 100).toFixed(1),
     altPct: +altPct.toFixed(0),
     maxScreencastRun: runs.length ? Math.max(...runs) : 0,
     longGradient: titles.filter((r) => r.kind === "text_gradient" && quoted(r).length > 42).map(quoted),
@@ -332,6 +360,13 @@ export function planDeviations(m: PlanMeasure): string[] {
     "Your screencasts run long. Break the longest ones where the narration moves on."
   );
   band(
+    m.longDemoPct,
+    CORPUS.longDemoPct,
+    `Runtime inside screencasts longer than ${LONG_DEMO_SEC}s (%)`,
+    `Only ${m.longDemos} screencast(s) run past ${LONG_DEMO_SEC}s. Jake gives about a THIRD of every video to five to nine demonstrations he lets run — one of them 50s — and the median hold cannot show you this: you can match his median with many medium shots and still never let a screen breathe. Do NOT add screencasts to fix this; you almost certainly have too many already. Pick the two or three most important flows (a build, a setup, an end-to-end walkthrough) and let each run as ONE shot: merge the consecutive screencasts covering it and delete the face return in the middle.`,
+    `Too much of the video sits in a few very long screencasts. Break the longest ones where the narration moves to a new idea.`
+  );
+  band(
     m.talkingHeadHold,
     CORPUS.talkingHeadHold,
     "Median talking-head hold (s)",
@@ -374,6 +409,7 @@ export function planPenalty(m: PlanMeasure): number {
     // Weighted per 0.1x of ratio, so a plan half a turn too flat costs ~10.
     (m.hookBodyRatio !== null ? out(m.hookBodyRatio, CORPUS.hookBodyRatio) * 20.0 : 0) +
     out(m.screencastHold, CORPUS.screencastHold) * 2.0 +
+    out(m.longDemoPct, CORPUS.longDemoPct) * 1.0 +
     out(m.talkingHeadHold, CORPUS.talkingHeadHold) * 2.0 +
     // Gaps are talking-head shots now, not errors; only overlaps are wrong.
     m.overlaps.length * 25 +

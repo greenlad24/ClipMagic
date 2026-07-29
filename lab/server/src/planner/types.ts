@@ -76,6 +76,12 @@ export interface PlanMeasure {
   hookBodyRatio: number | null;
   titles: number;
   titlesPerMin: number;
+  /** Jake gives roughly a third of every video to a handful of demonstrations
+   *  he lets run past 25 seconds (ref1-4: 5-9 of them, 26-49% of runtime).
+   *  Median hold does not catch their absence — a plan can match the median
+   *  with many medium shots and still never let one screen breathe. */
+  longDemos: number;
+  longDemoPct: number;
   altPct: number;
   maxScreencastRun: number;
   longGradient: string[];
