@@ -28,7 +28,7 @@ import {
   setYtAnalyticsRefreshToken,
   clearYtAnalyticsRefreshToken,
 } from "../settings/postizSecrets.js";
-import { YT_ANALYTICS_SCOPE } from "./analytics.js";
+import { YT_ANALYTICS_SCOPE, assertReadOnlyScope, ScopeViolationError } from "./analytics.js";
 import { readCookie, verifySession, SESSION_COOKIE } from "../auth/session.js";
 import { authConfigured } from "../config.js";
 
@@ -133,8 +133,22 @@ export function youtubeOAuthRouter(): Router {
         res.redirect(`/channel-audit?ytauth=norefresh`);
         return;
       }
+      // Refuse anything beyond read-only analytics BEFORE the token touches
+      // disk. A grant that could modify the channel must not be storable at
+      // all, not merely unused.
+      try {
+        assertReadOnlyScope(j.scope);
+      } catch (err) {
+        if (err instanceof ScopeViolationError) {
+          console.error("[audit/oauth] REFUSED an over-broad grant:", err.message);
+          res.redirect(`/channel-audit?ytauth=scope`);
+          return;
+        }
+        throw err;
+      }
+
       setYtAnalyticsRefreshToken(j.refresh_token);
-      console.log("[audit/oauth] YouTube Analytics connected");
+      console.log(`[audit/oauth] connected, read-only (${j.scope || YT_ANALYTICS_SCOPE})`);
       res.redirect(`/channel-audit?ytauth=connected`);
     } catch (err: any) {
       console.warn("[audit/oauth] token exchange failed:", err?.message || err);

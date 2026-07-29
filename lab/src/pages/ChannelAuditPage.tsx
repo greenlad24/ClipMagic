@@ -642,6 +642,11 @@ function PaidOrganicPanel({ config }: { config: any }) {
       {(flash === 'failed' || flash === 'norefresh') && (
         <p className="mb-2 text-destructive">That did not complete. Try connecting again.</p>
       )}
+      {flash === 'scope' && (
+        <p className="mb-2 text-destructive">
+          That grant carried more than read-only analytics, so nothing was saved. This tool only ever reads.
+        </p>
+      )}
 
       {config.analyticsConnected ? (
         <>
@@ -672,6 +677,13 @@ function PaidOrganicPanel({ config }: { config: any }) {
         </p>
       )}
 
+      <p className="mt-2 text-xs text-muted-foreground">
+        <span className="font-medium">Read-only, enforced.</span> The connection asks for one scope —
+        <code className="mx-1">yt-analytics.readonly</code>— and a grant carrying anything more is refused before
+        it is saved. The token is only ever sent to the analytics reports endpoint, by GET. This tool cannot
+        change a title, a description, a thumbnail or anything else on your channel; the renames it writes are
+        text on this page for you to apply yourself.
+      </p>
       <p className="mt-2 text-xs text-muted-foreground">
         This only ever works for the channel that grants consent. No public API exposes another channel&apos;s
         paid/organic split, so a teardown of someone else&apos;s channel uses the engagement signal below instead.

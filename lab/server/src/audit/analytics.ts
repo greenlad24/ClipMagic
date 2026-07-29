@@ -28,6 +28,65 @@ const REPORTS_ENDPOINT = "https://youtubeanalytics.googleapis.com/v2/reports";
 export const YT_ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
 
 /**
+ * THE ONLY SCOPES THIS TOOL WILL EVER HOLD.
+ *
+ * The audit reads. It must never be able to change a title, a description, a
+ * thumbnail, a playlist or anything else on a connected channel — the renames
+ * it proposes are text on a page for a human to act on, deliberately.
+ *
+ * This is enforced rather than promised: a grant carrying anything outside this
+ * set is REFUSED at the callback and never written to disk, and refused again
+ * on every token refresh in case the grant is widened later at Google's end.
+ * Adding a scope here should feel like a decision, because it is one.
+ */
+const ALLOWED_SCOPES = new Set([YT_ANALYTICS_SCOPE]);
+
+/**
+ * Every host+path the OAuth token may be sent to, and the only method allowed.
+ *
+ * A read-only scope already makes a write impossible at Google's end. This is
+ * the second lock: even a future edit that pointed the token at the Data API's
+ * `videos.update` would fail here, in this process, before a request left the
+ * box. Two independent barriers, because the cost of being wrong is someone's
+ * channel.
+ */
+const ALLOWED_ENDPOINTS = ["https://youtubeanalytics.googleapis.com/v2/reports"];
+
+export class ScopeViolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ScopeViolationError";
+  }
+}
+
+/**
+ * Reject a grant that carries more than read-only analytics.
+ *
+ * Google echoes the granted scopes in every token response, so this can be
+ * checked at the moment of connection and again at each refresh — the two
+ * points where a widened grant would otherwise slip in unnoticed.
+ */
+export function assertReadOnlyScope(granted: string | undefined | null): void {
+  const scopes = String(granted ?? "").trim().split(/\s+/).filter(Boolean);
+  if (!scopes.length) return; // Google omits it on some refreshes; the stored grant is unchanged
+  const extra = scopes.filter((s) => !ALLOWED_SCOPES.has(s));
+  if (extra.length) {
+    throw new ScopeViolationError(
+      `This connection was granted scopes the Channel Audit must never hold: ${extra.join(", ")}. ` +
+        `It reads analytics and nothing else. Nothing has been saved.`,
+    );
+  }
+}
+
+/** GET an allow-listed analytics URL with the OAuth token. The only use of that token. */
+async function analyticsGet(url: string, token: string): Promise<Response> {
+  if (!ALLOWED_ENDPOINTS.some((e) => url.startsWith(e))) {
+    throw new ScopeViolationError(`Refusing to send the channel token to ${url.split("?")[0]} — not an allowed read endpoint.`);
+  }
+  return fetch(url, { method: "GET", headers: { authorization: `Bearer ${token}` } });
+}
+
+/**
  * YouTube Analytics has no data before this, so it is the widest start date
  * worth asking for. A later channel simply returns nothing for the early years.
  */
@@ -70,6 +129,11 @@ async function accessToken(): Promise<string> {
     }),
   });
   const j: any = await r.json().catch(() => ({}));
+  if (r.ok && j?.access_token) {
+    // Checked again here, not just at connection: a grant widened at Google's
+    // end would otherwise arrive silently on the next refresh.
+    assertReadOnlyScope(j.scope);
+  }
   if (!r.ok || !j?.access_token) {
     // A revoked grant is the common case and deserves a message that says what
     // to do rather than echoing Google's error code.
@@ -102,9 +166,7 @@ export async function fetchPaidViews(
     maxResults: "200",
   });
 
-  const r = await fetch(`${REPORTS_ENDPOINT}?${params.toString()}`, {
-    headers: { authorization: `Bearer ${token}` },
-  });
+  const r = await analyticsGet(`${REPORTS_ENDPOINT}?${params.toString()}`, token);
   const j: any = await r.json().catch(() => ({}));
   if (!r.ok) {
     throw new Error(`YouTube Analytics error ${r.status}: ${j?.error?.message || "unknown"}`);
