@@ -68,11 +68,46 @@ export const CORPUS = {
   talkingHeadHold: [3.0, 9.0, 5.5] as const, // p25 3.2, median 5.5, p75 11.5
 };
 
-const LINE = /^\[(\d+:\d{2})\s+to\s+(\d+:\d{2})\]\s*[-–]\s*(.+)$/;
+/**
+ * A plan line, read leniently.
+ *
+ * The canonical form is `[0:04 to 0:12] - Screencast: …` and the prompt asks
+ * for exactly that. But a generation that comes back in a near-miss format is
+ * a total loss under a strict reader: one round of this model emitted 6,268
+ * characters that matched ZERO lines, so the whole round — thinking included,
+ * which is most of its cost — was paid for and thrown away.
+ *
+ * So each part is optional or alternated where a model plausibly varies it:
+ *   - a leading bullet or markdown bold/heading decoration
+ *   - the brackets themselves
+ *   - `to` written as an en/em dash or arrow
+ *   - the separator before the instruction written as a colon
+ *   - H:MM:SS timestamps, which the old reader rejected outright (it would
+ *     have failed every video over an hour)
+ *
+ * It stays anchored to the start of the line so prose that merely mentions a
+ * time is not mistaken for a shot.
+ */
+const TS = String.raw`\d{1,2}:\d{2}(?::\d{2})?`;
+const LINE = new RegExp(
+  String.raw`^(?:[-*+•]\s*)?(?:[*_#\s]*)?` + // optional bullet / markdown decoration
+    String.raw`\[?\s*(${TS})\s*(?:to|[-–—→]{1,2}|until)\s*(${TS})\s*\]?` + // the range
+    String.raw`[*_\s]*(?:[-–—:]\s*)+(.+)$`, // separator, then the instruction
+  "i"
+);
+
 const toSec = (s: string): number => {
-  const [m, sec] = s.split(":").map(Number);
-  return m * 60 + sec;
+  const parts = s.split(":").map(Number);
+  // H:MM:SS or M:SS — a plan for an hour-long video uses the former.
+  return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
 };
+
+/** Markdown a model wraps around the instruction, which is not part of it. */
+const stripMarkup = (s: string): string =>
+  s
+    .replace(/\*\*/g, "")
+    .replace(/^`+|`+$/g, "")
+    .trim();
 
 const isTitle = (k: PlanElement) => k === "text_gradient" || k === "text_whiteboard";
 
@@ -88,7 +123,7 @@ export function parsePlan(raw: string): ParsedPlan {
   for (const line of raw.split("\n")) {
     const m = LINE.exec(line.trim());
     if (!m) continue;
-    const instruction = m[3].trim();
+    const instruction = stripMarkup(m[3]);
     const h = instruction.toLowerCase();
     let kind: PlanElement = "unknown";
     if (/^text\s*\(gradient\)/.test(h)) kind = "text_gradient";
@@ -265,6 +300,21 @@ export function planDeviations(m: PlanMeasure): string[] {
     else if (v > hi) d.push(`${label} is ${v} — too HIGH. Target ~${tgt} (acceptable ${lo}–${hi}). ${down}`);
   };
 
+
+  // Nothing parsed at all. Every band below would then report on an empty plan
+  // ("screencast share is 0 — too LOW", "cuts per minute is 0.07") and send the
+  // model off fixing a distribution when the real problem is that it did not
+  // write the format. Say the one thing that matters instead.
+  if (m.lines === 0) {
+    return [
+      `NOTHING IN YOUR ANSWER WAS A PLAN LINE. Every line must start with a timestamp range and an element, exactly like this:\n` +
+        `[0:04 to 0:12] - Screencast: Google Sheet — scroll the tab bar.\n` +
+        `[0:13 to 0:15] - Text (gradient): "Where do I look?"\n` +
+        `[1:34 to 1:41] - Stock footage: developer working late\n` +
+        `Write the whole plan again in that form, one line per shot, and nothing else — no preamble, no headings, no commentary. ` +
+        `Do not write lines for the talking head: leave those stretches uncovered.`,
+    ];
+  }
 
   if (m.overlaps.length)
     d.push(

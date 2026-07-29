@@ -112,8 +112,18 @@ export interface PlanRunResult {
   plan: string | null;
   parsed: PlanLine[];
   measure: PlanMeasure | null;
-  /** Per-round measurements from the repair loop, oldest first. */
-  rounds: { round: number; penalty: number; measure: PlanMeasure; deviations: string[] }[];
+  /** Per-round measurements from the repair loop, oldest first. `raw` is the
+   *  model's answer verbatim — kept because a round that parses to nothing
+   *  otherwise leaves no evidence of what it actually wrote. */
+  rounds: {
+    round: number;
+    penalty: number;
+    measure: PlanMeasure;
+    deviations: string[];
+    raw?: string;
+  }[];
+  /** Tokens and price per API call, so a run's bill can be decomposed. */
+  calls: PlanCallUsage[];
   beats: Beat[];
   /** The verified UI fact sheet the screencast instructions were grounded in. */
   research: string | null;
@@ -140,4 +150,16 @@ export interface PlanJobSnapshot {
   stage: string;
   progress: number; // 0..1
   error: string | null;
+}
+
+/** What one Anthropic call cost, and why. */
+export interface PlanCallUsage {
+  /** Which step made the call, e.g. "research" or "plan round 2". */
+  label: string;
+  input: number;
+  output: number;
+  cacheWrite: number;
+  /** Zero across repair rounds means the context is being re-sent at full price. */
+  cacheRead: number;
+  costUsd: number;
 }

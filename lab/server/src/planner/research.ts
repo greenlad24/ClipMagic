@@ -15,7 +15,10 @@
  * there is no tool loop to run, but a long search turn can stop with
  * `pause_turn`, which we resume.
  */
+import { createHash } from "node:crypto";
 import { anthropicRequest, PLANNER_MODEL } from "./client.js";
+import { getCachedResearch, putCachedResearch } from "../db/planResearchCache.js";
+import type { PlanCallUsage } from "./types.js";
 
 const SYSTEM = `You research the software products discussed in a video narration so that a visual planner can write ACCURATE screencast instructions.
 
@@ -53,7 +56,7 @@ export async function researchProducts(opts: {
   narration: string;
   productUrls?: string[];
   signal?: AbortSignal;
-}): Promise<{ markdown: string; searches: number; costUsd: number }> {
+}): Promise<{ markdown: string; searches: number; costUsd: number; calls: PlanCallUsage[]; cached: boolean }> {
   // The narration alone identifies the products; cap it so research stays cheap
   // relative to planning.
   const excerpt = opts.narration.split("\n").slice(0, 400).join("\n");
@@ -71,7 +74,17 @@ ${excerpt}
 
 Research the products discussed and produce the UI fact sheet.`;
 
-  const messages: any[] = [{ role: "user", content: user }];
+  // The narration decides the fact sheet, so the same narration re-planned
+  // returns the same research for free. Re-running one video twice in a day
+  // used to pay to research the same products twice.
+  const hash = createHash("sha256").update(`${PLANNER_MODEL}\n${urls.join(",")}\n${excerpt}`).digest("hex");
+  const hit = getCachedResearch(hash);
+  if (hit) return { markdown: hit, searches: 0, costUsd: 0, calls: [], cached: true };
+
+  const messages: any[] = [
+    { role: "user", content: [{ type: "text", text: user, cache_control: { type: "ephemeral" } }] },
+  ];
+  const calls: PlanCallUsage[] = [];
   let markdown = "";
   let searches = 0;
   let costUsd = 0;
@@ -83,7 +96,8 @@ Research the products discussed and produce the UI fact sheet.`;
         max_tokens: 32000,
         thinking: { type: "adaptive" },
         output_config: { effort: "high" },
-        system: SYSTEM,
+        // Static across every call and every run — always worth caching.
+        system: [{ type: "text", text: SYSTEM, cache_control: { type: "ephemeral" } }],
         tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 24 }],
         messages,
       },
@@ -97,14 +111,33 @@ Research the products discussed and produce the UI fact sheet.`;
       .map((b) => b.text)
       .join("");
     costUsd += res.costUsd;
+    calls.push({
+      label: guard === 0 ? "research" : `research continuation ${guard}`,
+      input: res.usage?.input_tokens ?? 0,
+      output: res.usage?.output_tokens ?? 0,
+      cacheWrite: res.usage?.cache_creation_input_tokens ?? 0,
+      cacheRead: res.usage?.cache_read_input_tokens ?? 0,
+      costUsd: +res.costUsd.toFixed(4),
+    });
 
     // A long server-tool turn pauses rather than failing; re-send to continue.
     if (res.stop_reason === "pause_turn") {
+      // Search results accumulate here, and every continuation re-sends all of
+      // them. Marking the newest block moves the cache breakpoint forward so
+      // the next call reads the whole transcript back at a tenth of the price.
+      for (const msg of messages) {
+        if (msg.role === "assistant" && Array.isArray(msg.content)) {
+          for (const b of msg.content) delete b.cache_control;
+        }
+      }
+      const last = content[content.length - 1];
+      if (last && typeof last === "object") last.cache_control = { type: "ephemeral" };
       messages.push({ role: "assistant", content });
       continue;
     }
     break;
   }
 
-  return { markdown, searches, costUsd };
+  if (markdown.trim()) putCachedResearch(hash, markdown);
+  return { markdown, searches, costUsd, calls, cached: false };
 }

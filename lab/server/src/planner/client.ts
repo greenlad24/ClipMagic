@@ -109,7 +109,12 @@ export async function anthropicStream(opts: {
 
     let text = "";
     let stop: string | null = null;
-    let usage: any = null;
+    // `message_start` carries the INPUT and cache token counts; `message_delta`
+    // carries the output count. Reading only the latter — as this did — silently
+    // priced every streamed call as if its input were free, which understated
+    // the run cost and hid the fact that the big user block was never cached.
+    let startUsage: any = null;
+    let deltaUsage: any = null;
     let buf = "";
     const dec = new TextDecoder();
     for await (const chunk of r.body as any) {
@@ -124,14 +129,18 @@ export async function anthropicStream(opts: {
         } catch {
           continue;
         }
+        if (e.type === "message_start") startUsage = e.message?.usage ?? null;
         if (e.type === "content_block_delta" && e.delta?.type === "text_delta") text += e.delta.text;
         if (e.type === "message_delta") {
-          usage = e.usage;
+          deltaUsage = e.usage;
           stop = e.delta?.stop_reason ?? stop;
         }
         if (e.type === "error") throw new Error(`Anthropic stream error: ${JSON.stringify(e).slice(0, 200)}`);
       }
     }
+    // Delta last so its output count wins; the input and cache counts survive
+    // from message_start, which is the only place they appear.
+    const usage = { ...(startUsage || {}), ...(deltaUsage || {}) };
     return { text, stop_reason: stop, usage, costUsd: costOf(usage) };
   }
 }

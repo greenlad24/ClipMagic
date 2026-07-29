@@ -294,6 +294,14 @@ CREATE TABLE IF NOT EXISTS plan_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_runs_created ON plan_runs(created_at);
 
+-- Video Planner: the UI fact sheet keyed by the narration it was built from, so
+-- re-planning the same video does not pay to research the same products twice.
+CREATE TABLE IF NOT EXISTS plan_research_cache (
+  narration_hash TEXT PRIMARY KEY,
+  markdown       TEXT NOT NULL,
+  created_at     INTEGER NOT NULL
+);
+
 -- AI Image Generator: one row per generated (or edited) image. The bytes live on
 -- disk under config.imageHistoryDir as <id>.<ext>; this table is the metadata +
 -- history index. kind distinguishes a from-scratch generation from an edit.
@@ -498,6 +506,19 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   // The user's own channel profile + the set of keywords they've already covered.
   if (!has("channel_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN channel_json TEXT");
   if (!has("covered_json")) db.exec("ALTER TABLE kw_runs ADD COLUMN covered_json TEXT");
+}
+
+/**
+ * Additive migration on plan_runs: per-call token usage, so a run's bill can be
+ * decomposed into research, each planning round, and cache reads. Before this
+ * only the run total was stored, which left "where did the money go"
+ * unanswerable without re-running the whole thing.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(plan_runs)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "calls_json")) {
+    db.exec("ALTER TABLE plan_runs ADD COLUMN calls_json TEXT");
+  }
 }
 
 /**

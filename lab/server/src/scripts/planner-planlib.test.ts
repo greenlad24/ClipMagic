@@ -177,6 +177,56 @@ check("over-cutting is caught even when the element mix is right", () => {
   assert.match(devs, /Median screencast hold/);
 });
 
+check("near-miss line formats are read, not thrown away", () => {
+  // A round that emits 6,268 characters matching zero lines is a total loss —
+  // thinking included, which is most of what it cost. Each of these is a real
+  // way a model varies the format; none of them should cost a round.
+  const variants = [
+    `[0:04 to 0:12] - Screencast: canonical`,
+    `[0:04 – 0:12] - Screencast: en dash instead of "to"`,
+    `[0:04 to 0:12]: Screencast: colon instead of a dash`,
+    `0:04 to 0:12 - Screencast: no brackets`,
+    `- [0:04 to 0:12] - Screencast: bulleted`,
+    `**[0:04 to 0:12]** - Screencast: bold`,
+    `[0:04 to 0:12] - **Screencast:** bold element`,
+    `[1:02:04 to 1:02:12] - Screencast: an hour-long video`,
+  ];
+  for (const v of variants) {
+    const p = parsePlan(v);
+    assert.equal(p.all.length, 1, `not parsed: ${v}`);
+    assert.equal(p.all[0].kind, "screencast", `wrong kind: ${v}`);
+  }
+  // The hour-format timestamp must also be READ as an hour, not as 1 minute.
+  assert.equal(parsePlan(variants[7]).all[0].start, 3724);
+  // Markdown around the instruction is decoration, not part of it.
+  assert.equal(parsePlan(variants[6]).all[0].instruction, "Screencast: bold element");
+});
+
+check("prose that merely mentions a time is not read as a shot", () => {
+  const p = parsePlan(
+    [
+      `Here is the plan for the video. At 0:04 to 0:12 he introduces the product.`,
+      `The section from 2:00 onward is the demo.`,
+      `[0:04 to 0:12] - Screencast: the only real line`,
+    ].join("\n")
+  );
+  assert.equal(p.all.length, 1);
+  assert.equal(p.all[0].instruction, "Screencast: the only real line");
+});
+
+check("an answer with no plan lines is told the format, not its distribution", () => {
+  // The band deviations would otherwise report on an empty plan — "screencast
+  // share is 0 — too LOW", "cuts per minute is 0.07" — and send the repair off
+  // fixing a distribution when it never wrote the format at all.
+  const m = measured("Here is my plan.\n\nFirst he opens the app, then he shows the list.", 600);
+  assert.equal(m.lines, 0);
+  const d = planDeviations(m);
+  assert.equal(d.length, 1, "one instruction, not a pile of distribution advice");
+  assert.match(d[0], /NOTHING IN YOUR ANSWER WAS A PLAN LINE/);
+  assert.match(d[0], /\[0:04 to 0:12\] - Screencast:/);
+  assert.doesNotMatch(d[0], /too LOW/);
+});
+
 check("a plan with the right median hold but no long demonstration is flagged", () => {
   // The real defect, twice over: plan6 put 12% of its runtime into shots past
   // 25s and the Claude Skills run 15.5%, against Jake's 26-49% — while both

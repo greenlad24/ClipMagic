@@ -17,9 +17,31 @@ import { anthropicStream, PLANNER_MODEL } from "./client.js";
 import { PLANNER_SYSTEM, buildPlannerUser, buildRepairUser, renderBeats } from "./prompt.js";
 import { parsePlan, measurePlan, planDeviations, planPenalty } from "./planlib.js";
 import { createRun, updateRun, getRun } from "../db/planRuns.js";
-import type { PlanInput, PlanJobSnapshot, PlanRunResult } from "./types.js";
+import type { PlanCallUsage, PlanInput, PlanJobSnapshot, PlanRunResult } from "./types.js";
 
 const MAX_ROUNDS = 3;
+
+/**
+ * Record one API call's tokens and price, and print the same line to the log.
+ *
+ * `cacheRead` is the number worth watching: if it stays at zero across repair
+ * rounds, the context is being re-sent at ten times the price it should be.
+ */
+function logUsage(label: string, u: any, costUsd: number): PlanCallUsage {
+  const entry: PlanCallUsage = {
+    label,
+    input: u?.input_tokens ?? 0,
+    output: u?.output_tokens ?? 0,
+    cacheWrite: u?.cache_creation_input_tokens ?? 0,
+    cacheRead: u?.cache_read_input_tokens ?? 0,
+    costUsd: +costUsd.toFixed(4),
+  };
+  console.log(
+    `[planner] ${label}: in=${entry.input} out=${entry.output} ` +
+      `cache(write=${entry.cacheWrite} read=${entry.cacheRead}) $${entry.costUsd.toFixed(4)}`
+  );
+  return entry;
+}
 
 /** In-memory progress for runs currently in flight. */
 const live = new Map<string, PlanJobSnapshot>();
@@ -50,6 +72,11 @@ export function startPlan(input: PlanInput): { runId: string } {
 
   void (async () => {
     let costUsd = 0;
+    // One entry per API call, so a run's bill can be decomposed afterwards.
+    // Only the run TOTAL used to be recorded, which meant the obvious question
+    // — how much of this was thinking, and how much was context re-sent — had
+    // no answer without re-running the thing.
+    const calls: PlanCallUsage[] = [];
     try {
       // ── ingest ────────────────────────────────────────────────────────────
       const ing = await ingestNarration({
@@ -75,6 +102,8 @@ export function startPlan(input: PlanInput): { runId: string } {
           const r = await researchProducts({ narration, productUrls: input.productUrls });
           research = r.markdown || null;
           costUsd += r.costUsd;
+          calls.push(...r.calls);
+          if (r.cached) console.log(`[planner] research served from cache — $0 for ${runId}`);
           updateRun(runId, { research });
         } catch (err: any) {
           // Research failing should degrade the plan, not kill the run — the
@@ -93,7 +122,13 @@ export function startPlan(input: PlanInput): { runId: string } {
         hasBeats: true,
         research,
       });
-      const messages: any[] = [{ role: "user", content: user }];
+      // The user block carries the beat map and the research fact sheet — about
+      // 25,000 tokens, and every repair round re-sends all of it. Cached it is
+      // read at a tenth of the price. The model sees byte-identical input, so
+      // this cannot change what it writes.
+      const messages: any[] = [
+        { role: "user", content: [{ type: "text", text: user, cache_control: { type: "ephemeral" } }] },
+      ];
       let best: { text: string; penalty: number; round: number; measure: any } | null = null;
       const rounds: PlanRunResult["rounds"] = [];
 
@@ -113,35 +148,64 @@ export function startPlan(input: PlanInput): { runId: string } {
           },
         });
         costUsd += res.costUsd;
+        calls.push(logUsage(`plan round ${round}`, res.usage, res.costUsd));
 
         const parsed = parsePlan(res.text);
         const measure = measurePlan(parsed, ing.durationSec, res.text);
         const deviations = planDeviations(measure);
         const penalty = planPenalty(measure);
-        rounds.push({ round, penalty, measure, deviations });
+        // Keep the raw answer. A round that parsed to nothing used to leave no
+        // trace of WHAT it wrote, which made the failure impossible to diagnose
+        // after the fact — the only evidence was a character count.
+        rounds.push({ round, penalty, measure, deviations, raw: res.text });
 
         if (!best || penalty < best.penalty) best = { text: res.text, penalty, round, measure };
         if (!deviations.length) break;
         if (round === MAX_ROUNDS) break;
 
+        // Move the second breakpoint forward each round so the NEXT round reads
+        // everything said so far from cache instead of re-paying for it. The
+        // API allows four breakpoints; keeping only the newest repair marked
+        // holds us at three (system, the first user block, this one) however
+        // many rounds we run.
+        for (const msg of messages) {
+          if (msg.role === "user" && msg !== messages[0] && Array.isArray(msg.content)) {
+            for (const b of msg.content) delete b.cache_control;
+          }
+        }
         messages.push({ role: "assistant", content: res.text });
-        messages.push({ role: "user", content: buildRepairUser(deviations, ing.durationSec) });
+        messages.push({
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: buildRepairUser(deviations, ing.durationSec),
+              cache_control: { type: "ephemeral" },
+            },
+          ],
+        });
       }
 
       if (!best) throw new Error("planner produced no output");
 
+      const spend = calls.reduce((a, c) => a + c.costUsd, 0);
+      console.log(
+        `[planner] ${runId} done — $${costUsd.toFixed(4)} across ${calls.length} call(s); ` +
+          `cache reads ${calls.reduce((a, c) => a + c.cacheRead, 0)} tokens (itemised $${spend.toFixed(4)})`
+      );
       updateRun(runId, {
         status: "completed",
         plan: best.text,
         parsed: parsePlan(best.text).all,
         measure: best.measure,
         rounds,
+        calls,
         costUsd,
       });
       live.delete(runId);
     } catch (err: any) {
       const message = err?.message || String(err);
-      updateRun(runId, { status: "failed", error: message, costUsd });
+      updateRun(runId, { status: "failed", error: message, costUsd, calls });
       live.set(runId, { runId, status: "failed", stage: "Failed", progress: 1, error: message });
     }
   })();
