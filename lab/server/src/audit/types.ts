@@ -35,6 +35,14 @@ export interface AuditInput {
   /** Channel URL, @handle or raw channel id. */
   channel: string;
   mode: AuditMode;
+  /**
+   * The creator's own framing, given BEFORE the run: what the channel is about
+   * now, what they are trying to build. A catalogue is a history, so a channel
+   * that has changed direction will otherwise be analysed as the channel it
+   * used to be — and only its owner knows that. Feeds the market inference, the
+   * topic clustering, the report and the action plan.
+   */
+  angle?: string;
   /** Human label for the run; defaults to the channel title. */
   title?: string;
   /**
@@ -167,6 +175,24 @@ export interface AuditFindings {
   content: ContentFindings;
   position: MarketPosition;
   growth: GrowthArea[];
+  /**
+   * How to become the best channel in each category — the part someone acts on.
+   * Written last, over every measurement, and required to cite them: a plan
+   * that could have been written without the audit is worse than none.
+   */
+  actionPlan?: {
+    categories: {
+      name: string;
+      standing: string;
+      target: string;
+      titleFormulas: string[];
+      thumbnails: string[];
+      topics: string[];
+      firstThree: string[];
+    }[];
+    ninetyDays: string[];
+    stopDoing: string[];
+  } | null;
   /** Written last, over everything above. */
   summary: string;
 }
@@ -201,7 +227,23 @@ export interface ContentFindings {
    * three, so filtering to four topics kept twelve videos out of 127 and every
    * pattern table came back empty for want of a sample.
    */
-  topics: { topic: string; count: number; medianMultiple: number; examples: string[]; videoIds?: string[] }[];
+  topics: {
+    topic: string;
+    count: number;
+    medianMultiple: number;
+    examples: string[];
+    videoIds?: string[];
+    /**
+     * The same topic as the MARKET covers it. Without this there is no way to
+     * say where the channel owns a subject and where the market is winning one
+     * it barely touches — "where can I grow" needs a comparison, not just a
+     * ranking of the channel against itself.
+     */
+    marketCount?: number;
+    marketMedianViews?: number;
+    /** This channel's share of the videos on this topic, 0-1. */
+    share?: number;
+  }[];
   /** Topics the market rewards that this channel barely touches. */
   gaps: { topic: string; evidence: string; marketExamples: string[] }[];
   verdict: string;

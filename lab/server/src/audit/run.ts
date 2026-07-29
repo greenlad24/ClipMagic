@@ -19,7 +19,7 @@ import { ingestChannel, ingestCompetitors, ChannelNotFoundError } from "./ingest
 import { discoverCompetitors } from "./discover.js";
 import { fetchPaidViews, ytAnalyticsConnected } from "./analytics.js";
 import { fetchThumbnails } from "./images.js";
-import { proposeMarket, pickCompetitors, readThumbnails, clusterTopics, proposeRenames, writeReport, THUMBNAIL_BATCH } from "./ai.js";
+import { proposeMarket, pickCompetitors, readThumbnails, clusterTopics, proposeRenames, writeReport, writeActionPlan, THUMBNAIL_BATCH } from "./ai.js";
 import {
   titleFeatures,
   titlePatternPerformance,
@@ -100,7 +100,7 @@ export function startAudit(input: AuditInput): { runId: string } {
       // ── propose the market ────────────────────────────────────────────────
       setStage(runId, "proposing", "Working out the market", 0.12);
       updateRun(runId, { status: "proposing" });
-      const { market: proposal, searchQueries } = await proposeMarket(channel, withFeatures);
+      const { market: proposal, searchQueries } = await proposeMarket(channel, withFeatures, input.angle);
       updateRun(runId, { proposal });
 
       // Find the competitors by SEARCHING YouTube rather than by asking the
@@ -202,8 +202,9 @@ async function runRest(runId: string, market: MarketProposal) {
   const patterns = titlePatternPerformance(pool);
   const { winning, losing } = splitWinnersLosers(patterns);
 
-  const topics = await clusterTopics(subject, videosWithThumbs, marketWithThumbs, competitorNames);
+  const topics = await clusterTopics(subject, videosWithThumbs, marketWithThumbs, competitorNames, run.input.angle);
   const byId = new Map(videosWithThumbs.map((v) => [v.videoId, v]));
+  const marketById = new Map(marketWithThumbs.map((v) => [v.videoId, v]));
   const ranks = marketRanks(
     subject,
     videosWithThumbs,
@@ -221,6 +222,9 @@ async function runRest(runId: string, market: MarketProposal) {
       topics: topics.topics.map((t) => {
         const vids = t.videoIds.map((id) => byId.get(id)).filter((v): v is AuditVideo => !!v && v.judged);
         const mults = vids.map((v) => v.eraMultiple).sort((a, b) => a - b);
+        const mkt = (t.marketVideoIds ?? []).map((id) => marketById.get(id)).filter((v): v is AuditVideo => !!v);
+        const mktViews = mkt.map((v) => v.views).sort((a, b) => a - b);
+        const total = vids.length + mkt.length;
         return {
           topic: t.topic,
           count: vids.length,
@@ -229,6 +233,11 @@ async function runRest(runId: string, market: MarketProposal) {
           // The membership itself, not just three examples — a topic refocus is
           // built on this, and without it the filter can only see the examples.
           videoIds: vids.map((v) => v.videoId),
+          // The same topic as the market covers it, so ownership and growth are
+          // answerable rather than inferred.
+          marketCount: mkt.length,
+          marketMedianViews: mktViews.length ? mktViews[Math.floor(mktViews.length / 2)] : 0,
+          share: total ? Math.round((vids.length / total) * 100) / 100 : 0,
         };
       }),
       gaps: topics.gaps,
@@ -281,7 +290,14 @@ async function runRest(runId: string, market: MarketProposal) {
 
   // ── the write-up ────────────────────────────────────────────────────────
   setStage(runId, "analysing", "Writing the report", 0.92);
-  const written = await writeReport({ channel: subject, niche: market.niche, mode, computed });
+  const written = await writeReport({
+    channel: subject,
+    niche: market.niche,
+    mode,
+    computed,
+    videos: videosWithThumbs,
+    angle: run.input.angle,
+  });
 
   const findings: AuditFindings = {
     ...computed,
@@ -296,9 +312,36 @@ async function runRest(runId: string, market: MarketProposal) {
     },
     growth: written.growth,
     summary: written.summary,
+    actionPlan: null,
   };
 
-  updateRun(runId, { status: "completed", findings, videos: renamed, quotaUnits });
+  // The plan is written LAST, over the finished findings, because it has to
+  // cite them. It is also the part most likely to fail on a malformed answer,
+  // so a failure here leaves a complete report rather than losing the run.
+  setStage(runId, "analysing", "Writing the action plan", 0.96);
+  try {
+    findings.actionPlan = await writeActionPlan({
+      channel: subject,
+      niche: market.niche,
+      findings,
+      marketOutliers: marketWithThumbs
+        .slice()
+        .sort((a, b) => b.views - a.views)
+        .slice(0, 25)
+        .map((v) => ({ title: v.title, channelTitle: competitorNames.get(v.channelId) ?? "market", views: v.views })),
+      videos: videosWithThumbs,
+      angle: run.input.angle,
+    });
+  } catch (err: any) {
+    console.warn(`[audit] ${runId}: action plan failed:`, err?.message || err);
+  }
+
+  // The first-run analysis is recorded as the BASE at completion, not merely
+  // when someone first narrows it. Everything after this — a refocus from the
+  // chat, or anything later that rewrites findings — is a view ON this, and the
+  // original stays in the database. The first real refocus destroyed a full
+  // report because the original only existed in the column being overwritten.
+  updateRun(runId, { status: "completed", findings, baseFindings: findings, videos: renamed, quotaUnits });
   live.delete(runId);
   console.log(`[audit] ${runId} done — ${renamed.length} videos, ${competitors.length} competitors, ${quotaUnits} quota units`);
 }

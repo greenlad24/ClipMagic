@@ -32,6 +32,12 @@ import {
   auditChat,
   clearAuditFocus,
 } from '../../web/src/shims/endpoints';
+import {
+  VIZ_STYLE,
+  MarketPositionChart,
+  TopicPerformanceChart,
+  OpportunityChart,
+} from './auditCharts';
 
 type Mode = 'own' | 'teardown';
 
@@ -67,6 +73,7 @@ export default function ChannelAuditPage() {
   } | null>(null);
   const [channel, setChannel] = useState('');
   const [mode, setMode] = useState<Mode>('own');
+  const [angle, setAngle] = useState('');
   const [runId, setRunId] = useState<string | null>(null);
   const [job, setJob] = useState<any>(null);
   const [run, setRun] = useState<any>(null);
@@ -143,7 +150,7 @@ export default function ChannelAuditPage() {
     if (!channel.trim()) return setError('Paste a channel URL or @handle.');
     setBusy(true);
     try {
-      const { runId: id } = await startAudit({ channel: channel.trim(), mode });
+      const { runId: id } = await startAudit({ channel: channel.trim(), mode, angle: angle.trim() || undefined });
       localStorage.setItem('audit.onboarded', '1');
       setShowHelp(false);
       setRun(null);
@@ -209,6 +216,22 @@ export default function ChannelAuditPage() {
                 Audit
               </button>
             </div>
+
+            <label className="mt-4 mb-1 block text-sm font-medium">
+              What is this channel about now? <span className="font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <textarea
+              value={angle}
+              onChange={(e) => setAngle(e.target.value)}
+              rows={2}
+              placeholder="e.g. I used to make scraping tutorials; now it's AI tool reviews for solo operators."
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              A catalogue is a history. If the channel has changed direction, say so here and the whole audit is
+              angled to what you make now — the market it looks for, how it groups topics, the report and the plan.
+              Without it, an old catalogue gets analysed as the channel it used to be.
+            </p>
 
             <div className="mt-4 flex flex-wrap gap-2">
               {(
@@ -470,6 +493,21 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
         </div>
       </Card>
 
+      <style>{VIZ_STYLE}</style>
+
+      <Card title="The market, in pictures">
+        <div className="space-y-8">
+          <MarketPositionChart
+            subject={run.subject}
+            competitors={run.competitors || []}
+            videos={run.videos || []}
+            marketVideos={run.marketVideos || []}
+          />
+          <TopicPerformanceChart topics={f.content.topics} />
+          <OpportunityChart topics={f.content.topics} />
+        </div>
+      </Card>
+
       <ReachCard videos={run.videos} />
 
       <EngagementSignalCard videos={run.videos} />
@@ -559,6 +597,8 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
           </div>
         </Card>
       )}
+
+      {f.actionPlan?.categories?.length ? <ActionPlan plan={f.actionPlan} /> : null}
 
       {!!renames.length && (
         <Card title={`Proposed titles (${renames.length})`}>
@@ -1055,6 +1095,83 @@ function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
       </form>
       {err && <p className="mt-2 text-sm text-destructive">{err}</p>}
     </section>
+  );
+}
+
+/**
+ * How to become the best channel in each category.
+ *
+ * The last thing in the report and the only part that is instructions rather
+ * than findings — so it sits after the evidence it cites, not before it.
+ */
+function ActionPlan({ plan }: { plan: any }) {
+  return (
+    <Card title="How to become the best in each category">
+      <div className="space-y-4">
+        {plan.categories.map((c: any, i: number) => (
+          <div key={i} className="rounded-lg border p-4">
+            <div className="mb-1 text-sm font-medium">{c.name}</div>
+            {c.standing && <p className="text-sm text-muted-foreground">Where you are: {c.standing}</p>}
+            {c.target && <p className="mt-1 text-sm">Best in category looks like: {c.target}</p>}
+
+            {!!c.titleFormulas?.length && (
+              <PlanList title="Title formulas" items={c.titleFormulas} mono />
+            )}
+            {!!c.thumbnails?.length && <PlanList title="Thumbnails" items={c.thumbnails} />}
+            {!!c.topics?.length && <PlanList title="Videos to make" items={c.topics} />}
+            {!!c.firstThree?.length && <PlanList title="The next three, in order" items={c.firstThree} ordered />}
+          </div>
+        ))}
+      </div>
+
+      {!!plan.ninetyDays?.length && (
+        <div className="mt-4 rounded-lg border p-4">
+          <div className="mb-2 text-sm font-medium">The next 90 days</div>
+          <ol className="list-inside list-decimal space-y-1 text-sm">
+            {plan.ninetyDays.map((sIt: string, i: number) => (
+              <li key={i}>{sIt}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {!!plan.stopDoing?.length && (
+        <div className="mt-4 rounded-lg border p-4">
+          <div className="mb-2 text-sm font-medium">Stop doing</div>
+          <ul className="list-inside list-disc space-y-1 text-sm">
+            {plan.stopDoing.map((sIt: string, i: number) => (
+              <li key={i}>{sIt}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PlanList({
+  title,
+  items,
+  mono,
+  ordered,
+}: {
+  title: string;
+  items: string[];
+  mono?: boolean;
+  ordered?: boolean;
+}) {
+  const List: any = ordered ? 'ol' : 'ul';
+  return (
+    <div className="mt-3">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">{title}</div>
+      <List className={`list-inside space-y-1 text-sm ${ordered ? 'list-decimal' : 'list-disc'}`}>
+        {items.map((it, i) => (
+          <li key={i} className={mono ? 'font-mono text-xs' : ''}>
+            {it}
+          </li>
+        ))}
+      </List>
+    </div>
   );
 }
 

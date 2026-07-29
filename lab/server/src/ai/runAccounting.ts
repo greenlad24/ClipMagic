@@ -122,7 +122,10 @@ export type CallPurpose =
   | "audit-report"
   // Channel Audit: the report chat — answering questions over a finished audit
   // and re-focusing it. Runs on Opus 5 explicitly (see claudeJSONWithModel).
-  | "audit-chat";
+  | "audit-chat"
+  // Channel Audit: the closing action plan — how to become the best channel in
+  // each category, grounded in what was measured (director tier).
+  | "audit-plan";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

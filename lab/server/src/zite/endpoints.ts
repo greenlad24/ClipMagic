@@ -3291,6 +3291,7 @@ const startAudit: Handler = async (input) => {
     channel,
     mode: input?.mode === "teardown" ? "teardown" : "own",
     title: typeof input?.title === "string" ? input.title : undefined,
+    angle: typeof input?.angle === "string" && input.angle.trim() ? input.angle.trim().slice(0, 1200) : undefined,
     autoApprove: Boolean(input?.autoApprove),
   };
   return runStartAudit(payload);

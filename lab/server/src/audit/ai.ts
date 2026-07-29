@@ -40,6 +40,36 @@ function parse<T>(raw: string, fallback: T): T {
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
 
+/**
+ * Today's date, and the channel's recent publishing, stated as fact.
+ *
+ * A model has no idea what day it is. Left to infer, one reported that the
+ * channel had not posted in 30 days — while a video had gone up that morning.
+ * That is the kind of wrong that destroys trust in everything around it, and it
+ * is free to prevent: say the date, say when the last upload was, and count the
+ * recent ones so nothing has to be deduced from a list of timestamps.
+ */
+export function whenBlock(videos: AuditVideo[], now = Date.now()): string {
+  const today = new Date(now).toISOString().slice(0, 10);
+  const sorted = [...videos].sort((a, b) => b.publishedAt - a.publishedAt);
+  const last = sorted[0];
+  const days = (t: number) => Math.floor((now - t) / 86_400_000);
+  const in30 = sorted.filter((v) => days(v.publishedAt) <= 30).length;
+  const in90 = sorted.filter((v) => days(v.publishedAt) <= 90).length;
+  if (!last) return `TODAY IS ${today}. This channel has no uploads.`;
+  return `TODAY IS ${today}.
+MOST RECENT UPLOAD: ${new Date(last.publishedAt).toISOString().slice(0, 10)} — ${days(last.publishedAt)} day(s) ago — "${clip(last.title, 70)}".
+UPLOADS IN THE LAST 30 DAYS: ${in30}. IN THE LAST 90: ${in90}.
+Do not infer dates or publishing frequency from anything else; these are the facts.`;
+}
+
+/** The operator's own framing, when they gave one. Their read of their channel beats ours. */
+export function angleBlock(angle?: string): string {
+  return angle && angle.trim()
+    ? `\n\nTHE CREATOR'S OWN FRAMING OF THIS CHANNEL — treat this as authoritative about intent, and weight the analysis toward it:\n"${angle.trim()}"\n`
+    : "";
+}
+
 // ── 1. What market is this channel in, and who is in it with it ─────────────
 
 const MARKET_SYSTEM = `You identify the real market a YouTube channel competes in, and the searches that would find its competitors.
@@ -62,6 +92,7 @@ Make the queries specific enough to find this market and general enough to have 
 export async function proposeMarket(
   channel: AuditChannel,
   videos: AuditVideo[],
+  angle?: string,
 ): Promise<{ market: MarketProposal; searchQueries: string[] }> {
   // The best and worst performers say far more about a market than the newest
   // ones do, so the sample is drawn from both ends rather than the top of the list.
@@ -83,6 +114,8 @@ export async function proposeMarket(
         content: `Channel: ${channel.title}${channel.handle ? ` (@${channel.handle})` : ""}
 Subscribers: ${channel.subscriberCount?.toLocaleString() ?? "unknown"}
 Videos: ${channel.videoCount ?? videos.length}
+
+${whenBlock(videos)}${angleBlock(angle)}
 
 Catalogue sample — "Nx" is how the video did against others published around the same time, so 1.0x is par for its moment:
 
@@ -240,9 +273,11 @@ You get the subject channel's videos with their performance, then the market's b
 
 Return JSON:
 {
-  "topics": [ { "topic": "short label", "videoIds": ["..."], "note": "one line on how this topic does" } ],
+  "topics": [ { "topic": "short label", "videoIds": ["..."], "marketVideoIds": ["..."], "note": "one line on how this topic does" } ],
   "gaps": [ { "topic": "label", "evidence": "why the market shows appetite for this", "marketExamples": ["competitor video titles that prove it"] } ]
 }
+
+Assign the MARKET videos to the same topics too, by id, in "marketVideoIds". This is what makes it possible to say where the channel owns a subject and where the market is winning one it barely touches — a topic with no market videos assigned cannot be compared, so do assign them wherever they genuinely fit. A market video that fits no topic is simply left out.
 
 Rules that matter:
 - A gap must be something the MARKET rewards and this channel barely touches. A topic nobody is winning with is not a gap, it is an empty room.
@@ -254,14 +289,18 @@ export async function clusterTopics(
   videos: AuditVideo[],
   marketVideos: AuditVideo[],
   competitorNames: Map<string, string>,
-): Promise<{ topics: { topic: string; videoIds: string[]; note: string }[]; gaps: ContentFindings["gaps"] }> {
+  angle?: string,
+): Promise<{
+  topics: { topic: string; videoIds: string[]; marketVideoIds: string[]; note: string }[];
+  gaps: ContentFindings["gaps"];
+}> {
   const own = videos
     .filter((v) => v.format === "long")
     .map((v) => `${v.videoId} | ${v.eraMultiple.toFixed(1)}x | ${clip(v.title, 90)}`)
     .join("\n");
   const market = marketVideos
     .slice(0, 120)
-    .map((v) => `${v.eraMultiple.toFixed(1)}x | ${competitorNames.get(v.channelId) ?? "competitor"} | ${clip(v.title, 90)}`)
+    .map((v) => `${v.videoId} | ${v.eraMultiple.toFixed(1)}x | ${v.views.toLocaleString()} views | ${competitorNames.get(v.channelId) ?? "competitor"} | ${clip(v.title, 90)}`)
     .join("\n");
 
   const raw = await claudeJSONForPurpose({
@@ -271,7 +310,7 @@ export async function clusterTopics(
     messages: [
       {
         role: "user",
-        content: `SUBJECT CHANNEL: ${subject.title}\n\nIts catalogue:\n${own}\n\nTHE MARKET'S BEST PERFORMERS:\n${market}`,
+        content: `SUBJECT CHANNEL: ${subject.title}\n\n${whenBlock(videos)}${angleBlock(angle)}\n\nIts catalogue:\n${own}\n\nTHE MARKET'S BEST PERFORMERS:\n${market}`,
       },
     ],
   });
@@ -281,6 +320,7 @@ export async function clusterTopics(
     topics: (got.topics ?? []).map((t: any) => ({
       topic: String(t?.topic ?? "Unlabelled"),
       videoIds: Array.isArray(t?.videoIds) ? t.videoIds.map(String) : [],
+      marketVideoIds: Array.isArray(t?.marketVideoIds) ? t.marketVideoIds.map(String) : [],
       note: String(t?.note ?? ""),
     })),
     gaps: (got.gaps ?? []).map((g: any) => ({
@@ -413,13 +453,15 @@ Rules:
 - Where a sample is small, say so and mark the confidence low. A finding from five videos is a hint, not a fact.
 - If the data does not support a conclusion, say there is not enough evidence. An honest gap is worth more than a confident guess, and the operator is going to act on this.
 - Growth areas must follow from the evidence given, not from general YouTube advice. Four good ones beat ten generic ones.
-- Write plainly. No hype, no "leverage", no "unlock".`;
+- Write plainly. No hype, no "leverage", no "unlock".\n- NEVER state or imply a date, an upload gap or a posting frequency that is not in the facts you were given.`;
 
 export async function writeReport(input: {
   channel: AuditChannel;
   niche: string;
   mode: "own" | "teardown";
-  computed: Omit<AuditFindings, "summary" | "growth"> & { growthHints?: string[] };
+  computed: Omit<AuditFindings, "summary" | "growth" | "actionPlan"> & { growthHints?: string[] };
+  videos?: AuditVideo[];
+  angle?: string;
 }): Promise<{
   verdicts: { titles: string; thumbnails: string; content: string; position: string };
   strengths: string[];
@@ -437,6 +479,7 @@ export async function writeReport(input: {
         role: "user",
         content: `Channel: ${input.channel.title} (${input.channel.subscriberCount?.toLocaleString() ?? "?"} subs)
 Market: ${input.niche}
+${input.videos ? whenBlock(input.videos) : ""}${angleBlock(input.angle)}
 This report is written ${input.mode === "own" ? "FOR the channel's owner, who will act on it" : "ABOUT a competitor, as a diagnosis"}.
 
 TITLE PATTERNS (median multiple, sample size):
@@ -478,5 +521,96 @@ ${JSON.stringify(c.ageCurve)}`,
       confidence: ["low", "medium", "high"].includes(g?.confidence) ? g.confidence : "medium",
     })),
     summary: String(got?.summary ?? ""),
+  };
+}
+
+
+// ── 6. The action plan ──────────────────────────────────────────────────────
+
+const PLAN_SYSTEM = `You write the action plan at the end of a YouTube channel audit: how this channel becomes the best in each category it competes in.
+
+You get the measured findings — which title constructions win here and by how much, which thumbnail attributes correlate with performance, how each topic performs, where the market is rewarded for things this channel barely covers, and the market's actual outlier titles.
+
+For each category, say what "best in this category" looks like and how to get there. Be specific enough to act on today.
+
+Return JSON:
+{
+  "categories": [
+    {
+      "name": "the category or topic",
+      "standing": "where this channel stands in it now, citing a number from the findings",
+      "target": "what being the best in it looks like, concretely",
+      "titleFormulas": ["a reusable formula with a filled-in example, e.g. 'How to X in N minutes (no Y)' — \"How to Scrape 10k Leads in 9 Minutes (No Code)\""],
+      "thumbnails": ["a concrete design rule tied to a measured correlation"],
+      "topics": ["a specific video to make, not a subject area"],
+      "firstThree": ["the next three videos to publish, in order"]
+    }
+  ],
+  "ninetyDays": ["ordered steps for the next 90 days"],
+  "stopDoing": ["things the data says are not working, with the number"]
+}
+
+Rules that decide whether this is worth reading:
+- EVERY claim cites a measurement you were given. "Numbered lists do 1.9x here across 14 videos, so lead with a number" is useful. "Use compelling titles" is filler and worse than nothing.
+- Title formulas must be FORMULAS — a reusable shape plus one filled-in example. Not a list of titles, not vague advice.
+- Thumbnail rules must come from the correlations. If the correlations are empty, say there is not enough evidence to advise on thumbnails rather than repeating general YouTube lore.
+- Topics must be specific videos someone could film this week.
+- Where the evidence is thin, say so and mark it. A confident plan built on five videos is how people waste a quarter.
+- Three to six categories. Cover what matters, not everything.
+- No hype. No "leverage", "unlock", "crush it".`;
+
+/** Turn the findings into what to actually do, per category. */
+export async function writeActionPlan(input: {
+  channel: AuditChannel;
+  niche: string;
+  findings: AuditFindings;
+  marketOutliers: { title: string; channelTitle: string; views: number }[];
+  videos: AuditVideo[];
+  angle?: string;
+}): Promise<AuditFindings["actionPlan"]> {
+  const f = input.findings;
+  const raw = await claudeJSONForPurpose({
+    tier: "director",
+    purpose: "audit-plan",
+    system: PLAN_SYSTEM,
+    messages: [
+      {
+        role: "user",
+        content: `Channel: ${input.channel.title} — ${input.channel.subscriberCount?.toLocaleString() ?? "?"} subscribers
+Market: ${input.niche}
+${whenBlock(input.videos)}${angleBlock(input.angle)}
+
+WHAT THE AUDIT MEASURED
+
+Title patterns that win: ${JSON.stringify(f.titles.winning)}
+Title patterns that lose: ${JSON.stringify(f.titles.losing)}
+Thumbnail correlations (with vs without): ${JSON.stringify(f.thumbnails.correlations)}
+Topics (yours vs the market's coverage of the same topic): ${JSON.stringify(f.content.topics)}
+Market gaps: ${JSON.stringify(f.content.gaps)}
+Position: rank ${f.position.subscriberRank} of ${f.position.competitorCount + 1} by subscribers, ${f.position.medianViewsRank} by median views
+Strengths: ${JSON.stringify(f.position.strengths)}
+Weaknesses: ${JSON.stringify(f.position.weaknesses)}
+Growth areas already identified: ${JSON.stringify(f.growth)}
+
+THE MARKET'S OUTLIER TITLES (borrow structure, never words):
+${input.marketOutliers.slice(0, 25).map((o) => `  ${o.views.toLocaleString()} | ${o.channelTitle} | ${clip(o.title, 90)}`).join("\n")}`,
+      },
+    ],
+  });
+
+  const got = parse<any>(raw, {});
+  const arr = (v: any) => (Array.isArray(v) ? v.map(String) : []);
+  return {
+    categories: (Array.isArray(got?.categories) ? got.categories : []).map((c: any) => ({
+      name: String(c?.name ?? ""),
+      standing: String(c?.standing ?? ""),
+      target: String(c?.target ?? ""),
+      titleFormulas: arr(c?.titleFormulas),
+      thumbnails: arr(c?.thumbnails),
+      topics: arr(c?.topics),
+      firstThree: arr(c?.firstThree),
+    })),
+    ninetyDays: arr(got?.ninetyDays),
+    stopDoing: arr(got?.stopDoing),
   };
 }
