@@ -41,7 +41,11 @@ export interface IngestResult {
  */
 export async function ingestChannel(
   input: string,
-  { maxVideos = 2000, now = Date.now() }: { maxVideos?: number; now?: number } = {},
+  {
+    maxVideos = 2000,
+    now = Date.now(),
+    paidByVideo,
+  }: { maxVideos?: number; now?: number; paidByVideo?: Map<string, number> } = {},
 ): Promise<IngestResult> {
   const resolved = await resolveChannelId(input);
   if (!resolved) throw new ChannelNotFoundError(input);
@@ -71,18 +75,32 @@ export async function ingestChannel(
     })
     .filter((v): v is NonNullable<typeof v> => v !== null && Number.isFinite(v.publishedAt));
 
+  // SCORE ON ORGANIC VIEWS WHEN WE KNOW THEM. Paid views inflate the count, so
+  // a promoted video would otherwise read as a packaging win, enter the outlier
+  // set, and teach the renamer from a title that never earned its audience.
+  // Falls back to total views when no channel is connected, which is every
+  // teardown and any own-channel audit before the operator connects.
+  const scorable2 = paidByVideo
+    ? scorable.map((v) => ({ ...v, views: Math.max(0, v.views - Math.min(paidByVideo.get(v.videoId) ?? 0, v.views)) }))
+    : scorable;
+
   // The subscriber count is what makes views-per-sub meaningful, so it has to
   // be known before scoring rather than attached afterwards.
-  const scored = scoreCatalogue(scorable, now, { subscriberCount: profile.subscriberCount });
+  const scored = scoreCatalogue(scorable2, now, { subscriberCount: profile.subscriberCount });
   const extra = new Map(scorable.map((v) => [v.videoId, v]));
 
-  const videos: AuditVideo[] = scored.map((v) => ({
-    ...v,
-    channelId: resolved.channelId,
-    thumbnailUrl: hqThumbnailUrl(v.videoId),
-    likes: extra.get(v.videoId)?.likes,
-    comments: extra.get(v.videoId)?.comments,
-  }));
+  const videos: AuditVideo[] = scored.map((v) => {
+    const total = extra.get(v.videoId)?.views ?? v.views;
+    const paid = paidByVideo ? Math.min(paidByVideo.get(v.videoId) ?? 0, total) : undefined;
+    return {
+      ...v,
+      channelId: resolved.channelId,
+      thumbnailUrl: hqThumbnailUrl(v.videoId),
+      likes: extra.get(v.videoId)?.likes,
+      comments: extra.get(v.videoId)?.comments,
+      ...(paid !== undefined ? { paidViews: paid, organicViews: Math.max(0, total - paid) } : {}),
+    };
+  });
 
   const channel: AuditChannel = {
     channelId: resolved.channelId,

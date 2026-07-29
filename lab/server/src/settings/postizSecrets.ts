@@ -115,6 +115,14 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // Polled on a SLOW cadence (default 6h) to conserve Apify credits. Same write-only
   // guarantee as every other key: never returned through any HTTP response, never logged.
   { key: "APIFY_TOKEN", label: "Apify API token", group: "Engagement (TikTok)", connects: "An Apify API token so the Engagement Manager can READ your connected TikTok profile's comments via the scrapeforge/tiktok-comments-extractor actor. Create one at apify.com (Settings → Integrations → API token). TikTok is polled on a slow cadence (~4 runs/day) to conserve Apify credits. Server-only; never sent to the browser." },
+  // ── Channel Audit — YouTube Analytics (paid vs organic views) ──────────────
+  // A SEPARATE OAuth client from the sign-in one. Signing in to the lab must
+  // never be able to read anyone's YouTube analytics, so the identity client
+  // keeps its "openid email profile" scopes and this connection is granted
+  // explicitly and separately.
+  { key: "YT_ANALYTICS_CLIENT_ID", label: "YouTube Analytics client ID", group: "Channel Audit", connects: "OAuth client ID for reading YOUR OWN channel's analytics, so the audit can separate paid (advertised) views from organic ones. Requires the yt-analytics.readonly scope. Only ever reads the channel of whoever grants consent — no other channel's paid/organic split is available to anyone." },
+  { key: "YT_ANALYTICS_CLIENT_SECRET", label: "YouTube Analytics client secret", group: "Channel Audit", connects: "Secret for the YouTube Analytics OAuth client above. Server-only; never sent to the browser." },
+  { key: "YT_ANALYTICS_REFRESH_TOKEN", label: "YouTube Analytics refresh token", group: "Channel Audit", connects: "Written automatically when you connect your channel from the Channel Audit page. Grants read-only access to your own analytics; revoke any time at myaccount.google.com/permissions." },
 
   { key: "YOUTUBE_CLIENT_ID", label: "YouTube client ID", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
   { key: "YOUTUBE_CLIENT_SECRET", label: "YouTube client secret", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
@@ -167,6 +175,10 @@ const LAB_ONLY_KEYS = new Set([
   "META_ACCESS_TOKEN",
   // Engagement Manager — TikTok (Apify) comment monitoring, used by the lab server.
   "APIFY_TOKEN",
+  // Channel Audit — YouTube Analytics OAuth (lab server only).
+  "YT_ANALYTICS_CLIENT_ID",
+  "YT_ANALYTICS_CLIENT_SECRET",
+  "YT_ANALYTICS_REFRESH_TOKEN",
 ]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -622,4 +634,37 @@ export function dockerSocketAvailable(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the Channel Audit's YouTube Analytics OAuth
+ * credentials.
+ *
+ * Separate from the sign-in client on purpose: signing in to the lab proves who
+ * you are and nothing more, and must never carry the ability to read YouTube
+ * data. The refresh token is written by the consent callback and is the only
+ * way the audit can see a paid/organic split — which is available for the
+ * granting channel alone. Must NEVER be wired into an HTTP response.
+ */
+export function getYtAnalyticsOAuth(): { clientId: string; clientSecret: string; refreshToken: string | null } | null {
+  const map = readStore();
+  const clientId = (process.env.YT_ANALYTICS_CLIENT_ID || "").trim() || map.YT_ANALYTICS_CLIENT_ID || "";
+  const clientSecret = (process.env.YT_ANALYTICS_CLIENT_SECRET || "").trim() || map.YT_ANALYTICS_CLIENT_SECRET || "";
+  if (!clientId || !clientSecret) return null;
+  const refreshToken = (process.env.YT_ANALYTICS_REFRESH_TOKEN || "").trim() || map.YT_ANALYTICS_REFRESH_TOKEN || null;
+  return { clientId, clientSecret, refreshToken };
+}
+
+/** Persist the refresh token obtained from the consent callback. */
+export function setYtAnalyticsRefreshToken(token: string): void {
+  const map = readStore();
+  map.YT_ANALYTICS_REFRESH_TOKEN = token;
+  writeStore(map);
+}
+
+/** Forget the connection (the user disconnecting their channel). */
+export function clearYtAnalyticsRefreshToken(): void {
+  const map = readStore();
+  delete map.YT_ANALYTICS_REFRESH_TOKEN;
+  writeStore(map);
 }

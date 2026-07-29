@@ -18,6 +18,7 @@ import {
   renamePriority,
   marketRanks,
   evidencePool,
+  engagementAnomalies,
   MIN_SAMPLE,
 } from "../audit/analysis.js";
 import type { AuditVideo } from "../audit/types.js";
@@ -170,6 +171,58 @@ check("a video at or above par is not a rename candidate", () => {
 
 check("an unjudged video is never a rename candidate", () => {
   assert.equal(renamePriority(v({ eraMultiple: 0.01, judged: false, publishedAt: NOW - 1 * DAY }), NOW), 0);
+});
+
+// ── the engagement heuristic (NOT a paid-views detector) ────────────────────
+
+check("a video with big views and flat engagement is flagged", () => {
+  const normal = Array.from({ length: 20 }, () =>
+    v({ views: 10000, likes: 400, comments: 100, eraMultiple: 1 }),
+  );
+  // 5x the views, but the same absolute engagement as an ordinary video —
+  // the extra viewers did nothing, which is what paid traffic looks like.
+  const odd = v({ videoId: "odd", views: 50000, likes: 420, comments: 90, eraMultiple: 5 });
+
+  const flagged = engagementAnomalies([...normal, odd]);
+  assert.equal(flagged.length, 1);
+  assert.equal(flagged[0].videoId, "odd");
+  assert.ok(flagged[0].shortfall > 0.7, `should be far below the norm, got ${flagged[0].shortfall}`);
+});
+
+check("a genuine hit with proportionate engagement is NOT flagged", () => {
+  // The important negative: a video can be a huge outlier and completely
+  // organic. Flagging it would put a real success under suspicion.
+  const normal = Array.from({ length: 20 }, () =>
+    v({ views: 10000, likes: 400, comments: 100, eraMultiple: 1 }),
+  );
+  const hit = v({ videoId: "hit", views: 200000, likes: 8000, comments: 2000, eraMultiple: 20 });
+  assert.deepEqual(engagementAnomalies([...normal, hit]), []);
+});
+
+check("videos with no engagement data are never called suspicious", () => {
+  // Likes hidden and comments disabled is a channel setting, not a signal.
+  const normal = Array.from({ length: 20 }, () =>
+    v({ views: 10000, likes: 400, comments: 100, eraMultiple: 1 }),
+  );
+  const noData = { ...v({ videoId: "quiet", views: 90000, eraMultiple: 9 }) };
+  delete (noData as any).likes;
+  delete (noData as any).comments;
+  assert.ok(!engagementAnomalies([...normal, noData]).some((f) => f.videoId === "quiet"));
+});
+
+check("an ordinary-performing video is not flagged however quiet it is", () => {
+  // The flag needs BOTH halves: unusual views AND flat engagement. A video
+  // with normal views and low engagement is just a quiet video.
+  const normal = Array.from({ length: 20 }, () =>
+    v({ views: 10000, likes: 400, comments: 100, eraMultiple: 1 }),
+  );
+  const quiet = v({ videoId: "quiet", views: 9000, likes: 5, comments: 0, eraMultiple: 0.9 });
+  assert.ok(!engagementAnomalies([...normal, quiet]).some((f) => f.videoId === "quiet"));
+});
+
+check("too small a catalogue yields no verdict at all", () => {
+  const tiny = Array.from({ length: MIN_SAMPLE - 1 }, () => v({ views: 10000, likes: 1, comments: 0, eraMultiple: 9 }));
+  assert.deepEqual(engagementAnomalies(tiny), []);
 });
 
 // ── market position ─────────────────────────────────────────────────────────

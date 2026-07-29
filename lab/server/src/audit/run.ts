@@ -17,6 +17,7 @@
 import { nanoid } from "nanoid";
 import { ingestChannel, ingestCompetitors, ChannelNotFoundError } from "./ingest.js";
 import { discoverCompetitors } from "./discover.js";
+import { fetchPaidViews, ytAnalyticsConnected } from "./analytics.js";
 import { fetchThumbnails } from "./images.js";
 import { proposeMarket, pickCompetitors, readThumbnails, clusterTopics, proposeRenames, writeReport, THUMBNAIL_BATCH } from "./ai.js";
 import {
@@ -75,7 +76,24 @@ export function startAudit(input: AuditInput): { runId: string } {
   void (async () => {
     try {
       // ── ingest ────────────────────────────────────────────────────────────
-      const { channel, videos, quotaUnits } = await ingestChannel(input.channel);
+      // Paid views, when a channel is connected. Only ever available for the
+      // one channel that granted consent, so this is silently absent for every
+      // teardown — and the audit then scores on total views and says so.
+      let paidByVideo: Map<string, number> | undefined;
+      if (input.mode === "own" && ytAnalyticsConnected()) {
+        try {
+          setStage(runId, "ingesting", "Reading your analytics (paid vs organic)", 0.05);
+          const paid = await fetchPaidViews();
+          paidByVideo = paid.paidByVideo;
+          console.log(`[audit] ${runId}: ${paid.totalPaid.toLocaleString()} advertised views across ${paid.paidByVideo.size} video(s)`);
+        } catch (err: any) {
+          // A revoked or expired grant must degrade to a normal audit rather
+          // than sink it — the report simply notes the split is unavailable.
+          console.warn(`[audit] ${runId}: analytics unavailable:`, err?.message || err);
+        }
+      }
+
+      const { channel, videos, quotaUnits } = await ingestChannel(input.channel, { paidByVideo });
       const withFeatures = videos.map((v) => ({ ...v, titleFeatures: titleFeatures(v.title) }));
       updateRun(runId, { subject: channel, videos: withFeatures, quotaUnits, title: input.title || channel.title });
 

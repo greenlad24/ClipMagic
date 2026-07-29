@@ -159,6 +159,7 @@ import {
   deleteRun as deleteAuditRunRow,
 } from "../db/auditRuns.js";
 import type { AuditInput, MarketProposal } from "../audit/types.js";
+import { ytAnalyticsConfigured, ytAnalyticsConnected } from "../audit/analytics.js";
 import { PLANNER_MODEL } from "../planner/client.js";
 import {
   getRun as getPlanRunDb,
@@ -3271,6 +3272,9 @@ const refineScriptParagraph: Handler = async (input) => {
 const auditStatus: Handler = async () => ({
   youtubeConfigured: youtubeConfigured(),
   anthropicConfigured: Boolean((aiConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "").trim()),
+  // Paid/organic is available only for a channel whose owner has connected it.
+  analyticsConfigured: ytAnalyticsConfigured(),
+  analyticsConnected: ytAnalyticsConnected(),
 });
 
 const startAudit: Handler = async (input) => {

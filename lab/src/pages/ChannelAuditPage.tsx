@@ -55,7 +55,12 @@ const STAGE_LABEL: Record<string, string> = {
 };
 
 export default function ChannelAuditPage() {
-  const [config, setConfig] = useState<{ youtubeConfigured: boolean; anthropicConfigured: boolean } | null>(null);
+  const [config, setConfig] = useState<{
+    youtubeConfigured: boolean;
+    anthropicConfigured: boolean;
+    analyticsConfigured?: boolean;
+    analyticsConnected?: boolean;
+  } | null>(null);
   const [channel, setChannel] = useState('');
   const [mode, setMode] = useState<Mode>('own');
   const [runId, setRunId] = useState<string | null>(null);
@@ -161,6 +166,8 @@ export default function ChannelAuditPage() {
           The YouTube Data API key is not configured, so nothing can be read. Add it in Settings → Postiz.
         </Notice>
       )}
+
+      <PaidOrganicPanel config={config} />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_260px]">
         <div className="space-y-6">
@@ -440,6 +447,8 @@ function Report({ run }: { run: any }) {
 
       <ReachCard videos={run.videos} />
 
+      <EngagementSignalCard videos={run.videos} />
+
       <Card title="Titles">
         <p className="mb-3 text-sm">{f.titles.verdict}</p>
         <PatternTable rows={f.titles.winning} tone="up" />
@@ -599,6 +608,128 @@ function ReachCard({ videos }: { videos: any[] }) {
             </div>
           );
         })}
+      </div>
+    </Card>
+  );
+}
+
+/**
+ * Connecting a channel for the paid/organic split.
+ *
+ * States the limit plainly rather than burying it: this works for one channel —
+ * whoever grants consent — and no tool can do it for anyone else's, because no
+ * public API exposes another channel's paid views. Saying so here stops the
+ * absence of the split on a teardown reading as a bug.
+ */
+function PaidOrganicPanel({ config }: { config: any }) {
+  const params = new URLSearchParams(window.location.search);
+  const flash = params.get('ytauth');
+  if (!config) return null;
+
+  return (
+    <div className="mb-6 rounded-lg border p-4 text-sm">
+      <div className="mb-1 flex items-center gap-2 font-medium">
+        {config.analyticsConnected ? (
+          <CheckCircle2 className="h-4 w-4 text-[hsl(var(--chart-3))]" />
+        ) : (
+          <AlertCircle className="h-4 w-4 text-muted-foreground" />
+        )}
+        Paid vs organic views
+      </div>
+
+      {flash === 'connected' && <p className="mb-2 text-[hsl(var(--chart-3))]">Channel connected.</p>}
+      {flash === 'denied' && <p className="mb-2 text-muted-foreground">Consent was declined.</p>}
+      {(flash === 'failed' || flash === 'norefresh') && (
+        <p className="mb-2 text-destructive">That did not complete. Try connecting again.</p>
+      )}
+
+      {config.analyticsConnected ? (
+        <>
+          <p className="text-muted-foreground">
+            Your channel is connected, so <span className="font-medium">your own</span> audits score on ORGANIC
+            views — advertised views are separated out and never counted as evidence that a title worked.
+          </p>
+          <a href="/api/yt-oauth/disconnect" className="mt-2 inline-block text-xs text-muted-foreground underline">
+            Disconnect
+          </a>
+        </>
+      ) : config.analyticsConfigured ? (
+        <>
+          <p className="mb-2 text-muted-foreground">
+            Connect your channel to separate advertised views from organic ones. Without it, a promoted video looks
+            like a packaging win and the renamer will learn from a title that never earned its audience.
+          </p>
+          <a
+            href="/api/yt-oauth/start"
+            className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs font-medium"
+          >
+            Connect my channel (read-only)
+          </a>
+        </>
+      ) : (
+        <p className="text-muted-foreground">
+          Add a YouTube Analytics OAuth client ID and secret in Settings → Postiz to enable this.
+        </p>
+      )}
+
+      <p className="mt-2 text-xs text-muted-foreground">
+        This only ever works for the channel that grants consent. No public API exposes another channel&apos;s
+        paid/organic split, so a teardown of someone else&apos;s channel uses the engagement signal below instead.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The heuristic, for channels we cannot get real analytics for.
+ *
+ * Named for what it measures, not what it might imply. Calling this "paid
+ * views" would be a guess about someone's spending dressed up as data.
+ */
+function EngagementSignalCard({ videos }: { videos: any[] }) {
+  const pool = (videos || []).filter(
+    (v: any) => v.judged && v.format === 'long' && v.views > 0 && (v.likes != null || v.comments != null),
+  );
+  if (pool.length < 5) return null;
+
+  const rates = pool.map((v: any) => ((v.likes ?? 0) + (v.comments ?? 0)) / v.views).sort((a, b) => a - b);
+  const med = rates[Math.floor(rates.length / 2)];
+  if (!med) return null;
+
+  const odd = pool
+    .map((v: any) => ({ v, rate: ((v.likes ?? 0) + (v.comments ?? 0)) / v.views }))
+    .filter((r) => r.v.eraMultiple >= 1.5 && r.rate <= med * 0.4)
+    .sort((a, b) => a.rate - b.rate)
+    .slice(0, 6);
+
+  if (!odd.length) return null;
+
+  return (
+    <Card title="Unusual engagement ratio">
+      <p className="mb-3 text-xs text-muted-foreground">
+        These got far more views than this channel normally does, while likes and comments stayed flat. That is
+        consistent with paid promotion — and equally consistent with a broad, casual audience.{' '}
+        <span className="font-medium">It is a signal, not a verdict</span>: nobody outside a channel can see its
+        paid/organic split.
+      </p>
+      <div className="space-y-1">
+        {odd.map(({ v, rate }) => (
+          <div key={v.videoId} className="flex items-center gap-3 rounded border px-3 py-2 text-sm">
+            <span className="flex-1 truncate" title={v.title}>
+              {v.title}
+            </span>
+            {v.paidViews != null ? (
+              <span className="text-xs text-[hsl(var(--chart-3))]">
+                {v.paidViews.toLocaleString()} paid / {(v.organicViews ?? 0).toLocaleString()} organic
+              </span>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                {(rate * 100).toFixed(2)}% engaged vs {(med * 100).toFixed(2)}% usual
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground">{v.eraMultiple.toFixed(1)}x</span>
+          </div>
+        ))}
       </div>
     </Card>
   );

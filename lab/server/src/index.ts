@@ -6,6 +6,7 @@ import { config, ensureDirs, authConfigured, oauthRedirectUri } from "./config.j
 import { auth } from "./middleware.js";
 import authRouter from "./auth/routes.js";
 import { requireSession } from "./auth/middleware.js";
+import { youtubeOAuthRouter } from "./audit/oauthRoutes.js";
 import { whatsappProxy } from "./whatsappProxy.js";
 import { startWorker } from "./render/worker.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
@@ -51,6 +52,11 @@ app.use(express.json({ limit: "256mb" }));
 // pass-through and the app stays open (legacy behavior).
 app.use(authRouter);
 app.use(requireSession);
+
+// Connecting a YouTube channel for the Channel Audit's paid/organic split.
+// AFTER requireSession on purpose: only a signed-in operator may start an OAuth
+// flow that will store a token on this server.
+app.use(youtubeOAuthRouter());
 
 // Health / readiness — no auth, handy for load balancers and uptime checks.
 app.get("/health", (_req, res) => {

@@ -63,6 +63,14 @@ export interface AuditVideo extends ScoredVideo {
   thumbnailUrl: string;
   likes?: number;
   comments?: number;
+  /**
+   * Views that came from advertising, per YouTube Analytics. Only ever present
+   * for the ONE channel that granted consent — no public API exposes anyone
+   * else's split, so a teardown never has this.
+   */
+  paidViews?: number;
+  /** views - paidViews. This is what the scoring uses when it is known. */
+  organicViews?: number;
   /** Present once the thumbnail pass has run. */
   thumbnail?: ThumbnailAttributes;
   /** Present once the title pass has run. */

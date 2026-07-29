@@ -185,6 +185,63 @@ export function renamePriority(v: AuditVideo, now: number): number {
   return round2(shortfall * recency * 100);
 }
 
+/**
+ * Videos whose views look out of step with how people reacted to them.
+ *
+ * WHAT THIS IS NOT: a paid-views detector. Nobody outside a channel can see its
+ * paid/organic split — no public API exposes it at any price — and a tool that
+ * says "promoted" from engagement alone is guessing about someone's spending.
+ * So this reports exactly what it measures: views far above this channel's norm
+ * while likes and comments stayed near or below it.
+ *
+ * That pattern IS consistent with paid promotion, because ad-served views come
+ * from people who did not choose the video. It is equally consistent with a
+ * video that got picked up by a broad, casual audience, or one that answered a
+ * question so completely that nobody had anything to say. The report labels it
+ * "unusual engagement ratio" and leaves the conclusion to the person who knows
+ * whether they bought ads.
+ *
+ * It matters for the audit's integrity regardless of cause: a video with
+ * inflated views and flat engagement is weak evidence about packaging, so the
+ * caller can keep it out of the outlier set the renamer learns from.
+ */
+export function engagementAnomalies(
+  pool: AuditVideo[],
+  { minEraMultiple = 1.5, ratioOfMedian = 0.4 }: { minEraMultiple?: number; ratioOfMedian?: number } = {},
+): {
+  videoId: string;
+  title: string;
+  views: number;
+  eraMultiple: number;
+  engagementRate: number;
+  channelMedianRate: number;
+  /** How far below the channel's norm this video's engagement sat. */
+  shortfall: number;
+}[] {
+  // Videos with no engagement data at all (comments disabled, likes hidden)
+  // cannot be judged either way and must not be counted as suspicious.
+  const rated = pool
+    .filter((v) => v.views > 0 && (v.likes !== undefined || v.comments !== undefined))
+    .map((v) => ({ v, rate: ((v.likes ?? 0) + (v.comments ?? 0)) / v.views }));
+  if (rated.length < MIN_SAMPLE) return [];
+
+  const medianRate = median(rated.map((r) => r.rate));
+  if (medianRate <= 0) return [];
+
+  return rated
+    .filter((r) => r.v.eraMultiple >= minEraMultiple && r.rate <= medianRate * ratioOfMedian)
+    .map((r) => ({
+      videoId: r.v.videoId,
+      title: r.v.title,
+      views: r.v.views,
+      eraMultiple: round2(r.v.eraMultiple),
+      engagementRate: Number(r.rate.toFixed(5)),
+      channelMedianRate: Number(medianRate.toFixed(5)),
+      shortfall: round2(medianRate > 0 ? 1 - r.rate / medianRate : 0),
+    }))
+    .sort((a, b) => b.shortfall - a.shortfall);
+}
+
 /** Where this channel sits among the scanned set, by two different measures. */
 export function marketRanks(
   subject: { channelId: string; subscriberCount: number | null },
