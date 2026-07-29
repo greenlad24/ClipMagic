@@ -755,6 +755,7 @@ function PaidOrganicPanel({ config }: { config: any }) {
           >
             Connect my channel (read-only)
           </a>
+          <CallbackUrlHint />
         </>
       ) : (
         <p className="text-muted-foreground">
@@ -772,6 +773,46 @@ function PaidOrganicPanel({ config }: { config: any }) {
       <p className="mt-2 text-xs text-muted-foreground">
         This only ever works for the channel that grants consent. No public API exposes another channel&apos;s
         paid/organic split, so a teardown of someone else&apos;s channel uses the engagement signal below instead.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The exact redirect URI Google must have registered.
+ *
+ * `redirect_uri_mismatch` is the first thing that goes wrong when setting this
+ * up, and the error tells you nothing about what was expected. Google compares
+ * the string exactly — a trailing slash or the wrong field on the credentials
+ * page is enough — so the fix is to show the string and let it be copied rather
+ * than retyped.
+ */
+function CallbackUrlHint() {
+  const url = `${window.location.origin}/api/yt-oauth/callback`;
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="mt-3 rounded-md border bg-background p-3">
+      <p className="mb-1 text-xs text-muted-foreground">
+        In the Google Cloud console this exact URL must be listed under{' '}
+        <span className="font-medium">Authorised redirect URIs</span> (not JavaScript origins), on a{' '}
+        <span className="font-medium">Web application</span> client:
+      </p>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 overflow-x-auto whitespace-nowrap rounded bg-muted px-2 py-1 text-xs">{url}</code>
+        <button
+          type="button"
+          onClick={() => {
+            navigator.clipboard?.writeText(url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }}
+          className="shrink-0 rounded-md border px-2 py-1 text-xs"
+        >
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        No trailing slash. Changes can take a few minutes to take effect at Google&apos;s end.
       </p>
     </div>
   );
