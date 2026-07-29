@@ -626,6 +626,8 @@ export const auditChat = endpoint<
   { runId: string; message: string },
   { reply: string; refocused: { note: string; videoCount: number } | null; tooNarrow?: number }
 >("auditChat");
+/** Undo a focus, restoring the whole-catalogue report. */
+export const clearAuditFocus = endpoint<{ runId: string }, { cleared: boolean; reason?: string }>("clearAuditFocus");
 export const getPlanRun = endpoint<{ runId: string }, PlanRunResult>("getPlanRun");
 export const listPlanRuns = endpoint<Record<string, never>, { runs: PlanRunListItem[] }>("listPlanRuns");
 export const deletePlanRun = endpoint<{ runId: string }, { ok: true }>("deletePlanRun");

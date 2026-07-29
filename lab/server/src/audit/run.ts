@@ -226,6 +226,9 @@ async function runRest(runId: string, market: MarketProposal) {
           count: vids.length,
           medianMultiple: mults.length ? Math.round(mults[Math.floor(mults.length / 2)] * 100) / 100 : 0,
           examples: vids.slice(0, 3).map((v) => v.title),
+          // The membership itself, not just three examples — a topic refocus is
+          // built on this, and without it the filter can only see the examples.
+          videoIds: vids.map((v) => v.videoId),
         };
       }),
       gaps: topics.gaps,

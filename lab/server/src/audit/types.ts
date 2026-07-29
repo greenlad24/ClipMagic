@@ -192,8 +192,16 @@ export interface ThumbnailFindings {
 }
 
 export interface ContentFindings {
-  /** Topic clusters found across the catalogue and how each performs. */
-  topics: { topic: string; count: number; medianMultiple: number; examples: string[] }[];
+  /**
+   * Topic clusters found across the catalogue and how each performs.
+   *
+   * `videoIds` is the real membership and must be kept. It was omitted at first,
+   * leaving `examples` — three titles — as the only record of which videos were
+   * in a topic. A refocus by topic then reconstructed membership from those
+   * three, so filtering to four topics kept twelve videos out of 127 and every
+   * pattern table came back empty for want of a sample.
+   */
+  topics: { topic: string; count: number; medianMultiple: number; examples: string[]; videoIds?: string[] }[];
   /** Topics the market rewards that this channel barely touches. */
   gaps: { topic: string; evidence: string; marketExamples: string[] }[];
   verdict: string;
@@ -277,6 +285,16 @@ export interface AuditRunResult {
   findings: AuditFindings | null;
   /** Set when the report has been narrowed via the chat. */
   focus?: AuditFocus | null;
+  /**
+   * The findings as computed over the WHOLE catalogue, kept the first time a
+   * focus is applied so it can be undone.
+   *
+   * A refocus rewrites `findings` in place. Without this the original report is
+   * destroyed — which is what happened on the first real one: a bad topic
+   * filter reduced it to twelve videos and there was nothing to go back to.
+   * Narrowing what counts as evidence must never be a one-way door.
+   */
+  baseFindings?: AuditFindings | null;
   /** The conversation about this report. */
   chat: AuditChatMessage[];
   calls: AuditCallUsage[];

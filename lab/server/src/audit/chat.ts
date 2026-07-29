@@ -159,7 +159,9 @@ export function applyFocusFilter(
   now = Date.now(),
 ): AuditVideo[] {
   return videos.filter((v) => {
-    if (focus.sinceDays && (now - v.publishedAt) / 86_400_000 > focus.sinceDays) return false;
+    // A null or 0 window means "no date filter" — not "keep nothing published
+    // more than zero days ago", which would empty the report.
+    if (focus.sinceDays && focus.sinceDays > 0 && (now - v.publishedAt) / 86_400_000 > focus.sinceDays) return false;
     const topic = topicsByVideo.get(v.videoId);
     if (focus.includeTopics?.length && (!topic || !focus.includeTopics.includes(topic))) return false;
     if (focus.excludeTopics?.length && topic && focus.excludeTopics.includes(topic)) return false;
@@ -178,12 +180,22 @@ export function applyFocusFilter(
 export async function refocusReport(
   run: AuditRunResult,
   focus: AuditFocus,
-): Promise<{ findings: AuditFindings; focus: AuditFocus }> {
+): Promise<{ findings: AuditFindings; focus: AuditFocus; membershipKnown: boolean }> {
   const topicsByVideo = new Map<string, string>();
+  let membershipKnown = false;
   for (const t of run.findings?.content.topics ?? []) {
-    for (const title of t.examples) {
-      const v = run.videos.find((x) => x.title === title);
-      if (v) topicsByVideo.set(v.videoId, t.topic);
+    if (t.videoIds?.length) {
+      membershipKnown = true;
+      for (const id of t.videoIds) topicsByVideo.set(id, t.topic);
+    } else {
+      // Runs recorded before membership was persisted only have three example
+      // titles per topic. Matching on those is what produced a 12-video report
+      // out of 127 — so it is used only as a last resort, and the caller is
+      // told the topic filter cannot be trusted for this run.
+      for (const title of t.examples) {
+        const v = run.videos.find((x) => x.title === title);
+        if (v) topicsByVideo.set(v.videoId, t.topic);
+      }
     }
   }
 
@@ -229,6 +241,7 @@ export async function refocusReport(
   });
 
   return {
+    membershipKnown,
     findings: {
       ...computed,
       titles: { ...computed.titles, verdict: written.verdicts.titles },

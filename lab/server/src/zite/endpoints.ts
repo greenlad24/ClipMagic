@@ -3321,6 +3321,25 @@ const approveAuditMarket: Handler = async (input) => {
   return { runId };
 };
 
+/** Undo a focus and put the whole-catalogue report back. */
+const clearAuditFocus: Handler = async (input) => {
+  const runId = String(input?.runId ?? "");
+  const run = getAuditRunRow(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
+  if (!run.focus) return { cleared: false, reason: "This report is not focused." };
+  if (!run.baseFindings) {
+    // Runs focused before the original was preserved have nothing to restore.
+    // Saying so is the only honest answer; re-running is the way back.
+    return {
+      cleared: false,
+      reason:
+        "This report was focused before the original was being kept, so there is nothing to restore. Re-run the audit for a full-catalogue report.",
+    };
+  }
+  updateAuditRun(runId, { findings: run.baseFindings, focus: null });
+  return { cleared: true };
+};
+
 const getAuditRun: Handler = async (input) => {
   const run = getAuditRunRow(String(input?.runId ?? ""));
   if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
@@ -3359,7 +3378,22 @@ const auditChat: Handler = async (input) => {
 
   let refocused: { note: string; videoCount: number } | undefined;
   if (action) {
-    const { findings, focus } = await refocusReport(run, action);
+    const { findings, focus, membershipKnown } = await refocusReport(run, action);
+    // Audits recorded before topic membership was persisted can only match a
+    // topic against three example titles, which silently produces a tiny,
+    // misleading subset. Refuse rather than hand back a report drawn from a
+    // dozen videos that looked authoritative.
+    if (!membershipKnown && (action.includeTopics?.length || action.excludeTopics?.length)) {
+      const note = `${reply}\n\n(I did not apply that. This audit predates the fix that records which videos are in each topic, so a topic filter here would match only a handful of example titles rather than the real set — which is exactly the bug that produced an empty titles section. Re-run the audit to filter by topic, or ask me to filter by date instead.)`;
+      updateAuditRun(runId, {
+        chat: [
+          ...(run.chat ?? []),
+          { role: "user" as const, content: message, at: Date.now() },
+          { role: "assistant" as const, content: note, at: Date.now() },
+        ],
+      });
+      return { reply: note, refocused: null, staleTopics: true };
+    }
     // A filter that leaves almost nothing is a worse report, not a sharper one,
     // so it is refused rather than applied and explained away afterwards.
     if (focus.videoCount < 5) {
@@ -3375,8 +3409,15 @@ const auditChat: Handler = async (input) => {
       updateAuditRun(runId, { chat });
       return { reply, refocused: null, tooNarrow: focus.videoCount };
     }
-    updateAuditRun(runId, { findings, focus });
+    // Keep the whole-catalogue report the FIRST time a focus is applied, so
+    // narrowing is reversible. Once set it is never overwritten — otherwise a
+    // second refocus would save the already-narrowed version as the "original".
+    const baseFindings = run.baseFindings ?? run.findings;
+    updateAuditRun(runId, { findings, focus, baseFindings });
     refocused = { note: focus.note, videoCount: focus.videoCount };
+    if (!findings.titles.winning.length && !findings.titles.losing.length) {
+      console.warn(`[audit] ${runId}: refocus to ${focus.videoCount} videos left no title pattern above the sample floor`);
+    }
   }
 
   const chat = [
@@ -4042,6 +4083,7 @@ export const HANDLERS: Record<string, Handler> = {
   listAuditRuns,
   deleteAuditRun,
   auditChat,
+  clearAuditFocus,
   // Engagement Manager (LAB tool — Phase 1: monitor)
   engageStatus,
   engageListInbox,

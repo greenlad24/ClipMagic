@@ -37,6 +37,7 @@ interface AuditRunRow {
   findings_json: string | null;
   chat_json: string | null;
   focus_json: string | null;
+  base_findings_json: string | null;
   calls_json: string | null;
   cost_usd: number;
   quota_units: number;
@@ -68,6 +69,7 @@ function hydrate(row: AuditRunRow): AuditRunResult {
     marketVideos: parse<AuditVideo[]>(row.market_json, []),
     findings: parse<AuditFindings | null>(row.findings_json, null),
     focus: parse<AuditFocus | null>(row.focus_json, null),
+    baseFindings: parse<AuditFindings | null>(row.base_findings_json, null),
     chat: parse<AuditChatMessage[]>(row.chat_json, []),
     calls: parse<AuditCallUsage[]>(row.calls_json, []),
     costUsd: row.cost_usd ?? 0,
@@ -97,6 +99,7 @@ export interface AuditRunPatch {
   marketVideos?: AuditVideo[];
   findings?: AuditFindings | null;
   focus?: AuditFocus | null;
+  baseFindings?: AuditFindings | null;
   chat?: AuditChatMessage[];
   calls?: AuditCallUsage[];
   costUsd?: number;
@@ -123,6 +126,7 @@ export function updateRun(id: string, patch: AuditRunPatch): void {
   if (patch.marketVideos !== undefined) json("market_json", patch.marketVideos);
   if (patch.findings !== undefined) json("findings_json", patch.findings);
   if (patch.focus !== undefined) json("focus_json", patch.focus);
+  if (patch.baseFindings !== undefined) json("base_findings_json", patch.baseFindings);
   if (patch.chat !== undefined) json("chat_json", patch.chat);
   if (patch.calls !== undefined) json("calls_json", patch.calls);
   if (patch.costUsd !== undefined) put("cost_usd", patch.costUsd);

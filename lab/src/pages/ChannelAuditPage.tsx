@@ -30,6 +30,7 @@ import {
   listAuditRuns,
   deleteAuditRun,
   auditChat,
+  clearAuditFocus,
 } from '../../web/src/shims/endpoints';
 
 type Mode = 'own' | 'teardown';
@@ -444,13 +445,7 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
 
   return (
     <div className="space-y-6">
-      {run.focus && (
-        <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
-          <span className="font-medium">This report is focused:</span> {run.focus.note} — computed over{' '}
-          {run.focus.videoCount} of {run.videos?.length} videos. Everything below reflects that subset; nothing was
-          deleted.
-        </div>
-      )}
+      {run.focus && <FocusBanner run={run} onChanged={onChanged} />}
 
       <ReportChat run={run} onChanged={onChanged} />
 
@@ -885,6 +880,59 @@ function EngagementSignalCard({ videos }: { videos: any[] }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+/**
+ * The banner saying the report is narrowed, and the way back out.
+ *
+ * A focus is a judgement, and judgements need to be reversible — the first real
+ * one cut the report to twelve videos and there was no undo, which is why the
+ * pre-focus findings are now kept.
+ */
+function FocusBanner({ run, onChanged }: { run: any; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [reason, setReason] = useState<string | null>(null);
+  const thin = run.focus.videoCount < 20;
+
+  return (
+    <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+      <div className="flex flex-wrap items-start gap-2">
+        <div className="flex-1">
+          <span className="font-medium">This report is focused:</span> {run.focus.note} — computed over{' '}
+          <span className="font-medium">
+            {run.focus.videoCount} of {run.videos?.length}
+          </span>{' '}
+          videos. Nothing was deleted.
+          {thin && (
+            <div className="mt-1 text-xs text-muted-foreground">
+              That is a small sample. Patterns need at least five videos each to be reported at all, so some
+              sections may be empty — which means &ldquo;not enough evidence here&rdquo;, not &ldquo;nothing
+              works&rdquo;.
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setReason(null);
+            try {
+              const r: any = await clearAuditFocus({ runId: run.runId });
+              if (r.cleared) onChanged();
+              else setReason(r.reason || 'Could not clear the focus.');
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="shrink-0 rounded-md border bg-background px-2.5 py-1 text-xs"
+        >
+          {busy ? 'Restoring…' : 'Show the whole catalogue'}
+        </button>
+      </div>
+      {reason && <p className="mt-2 text-xs text-muted-foreground">{reason}</p>}
+    </div>
   );
 }
 

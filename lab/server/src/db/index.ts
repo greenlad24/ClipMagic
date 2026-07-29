@@ -543,6 +543,8 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   const has = (n: string) => cols.some((c) => c.name === n);
   if (!has("chat_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN chat_json TEXT");
   if (!has("focus_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN focus_json TEXT");
+  // The whole-catalogue findings, so a focus can be undone.
+  if (!has("base_findings_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN base_findings_json TEXT");
 }
 
 /**
