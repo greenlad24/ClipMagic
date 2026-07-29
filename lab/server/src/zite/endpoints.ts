@@ -160,6 +160,8 @@ import {
 } from "../db/auditRuns.js";
 import type { AuditInput, MarketProposal } from "../audit/types.js";
 import { ytAnalyticsConfigured, ytAnalyticsConnected } from "../audit/analytics.js";
+import { chatAboutAudit, refocusReport } from "../audit/chat.js";
+import { updateRun as updateAuditRun } from "../db/auditRuns.js";
 import { PLANNER_MODEL } from "../planner/client.js";
 import {
   getRun as getPlanRunDb,
@@ -3333,6 +3335,59 @@ const deleteAuditRun: Handler = async (input) => ({
   deleted: deleteAuditRunRow(String(input?.runId ?? "")),
 });
 
+/**
+ * Ask a question about a finished audit, on Opus 5.
+ *
+ * The model may answer with a REFOCUS action — narrowing which videos count as
+ * evidence, for a channel that has changed direction since half its catalogue
+ * was published. Applying it recomputes the findings (pure arithmetic over data
+ * already stored) and rewrites the verdicts in one more call: no quota, nothing
+ * re-scanned, and the videos themselves are untouched.
+ */
+const auditChat: Handler = async (input) => {
+  const runId = String(input?.runId ?? "");
+  const message = String(input?.message ?? "").trim();
+  if (!message) throw new ZiteError({ code: "BAD_REQUEST", message: "Say something first." });
+  const run = getAuditRunRow(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
+  if (!run.findings) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This audit has no report to discuss yet." });
+  }
+
+  const history = (run.chat ?? []).map((m) => ({ role: m.role, content: m.content }));
+  const { reply, action } = await chatAboutAudit(run, history, message);
+
+  let refocused: { note: string; videoCount: number } | undefined;
+  if (action) {
+    const { findings, focus } = await refocusReport(run, action);
+    // A filter that leaves almost nothing is a worse report, not a sharper one,
+    // so it is refused rather than applied and explained away afterwards.
+    if (focus.videoCount < 5) {
+      const chat = [
+        ...(run.chat ?? []),
+        { role: "user" as const, content: message, at: Date.now() },
+        {
+          role: "assistant" as const,
+          content: `${reply}\n\n(I did not apply that — it would leave only ${focus.videoCount} videos, too few to conclude anything from. Try a wider window.)`,
+          at: Date.now(),
+        },
+      ];
+      updateAuditRun(runId, { chat });
+      return { reply, refocused: null, tooNarrow: focus.videoCount };
+    }
+    updateAuditRun(runId, { findings, focus });
+    refocused = { note: focus.note, videoCount: focus.videoCount };
+  }
+
+  const chat = [
+    ...(run.chat ?? []),
+    { role: "user" as const, content: message, at: Date.now() },
+    { role: "assistant" as const, content: reply, at: Date.now(), ...(refocused ? { refocused } : {}) },
+  ];
+  updateAuditRun(runId, { chat });
+  return { reply, refocused: refocused ?? null };
+};
+
 // ── Engagement Manager (LAB tool — Phase 1: MONITOR YouTube comments) ─────────
 
 const ENGAGE_PLATFORMS: ReadonlySet<string> = new Set(["youtube", "instagram", "facebook", "tiktok"]);
@@ -3986,6 +4041,7 @@ export const HANDLERS: Record<string, Handler> = {
   getAuditRun,
   listAuditRuns,
   deleteAuditRun,
+  auditChat,
   // Engagement Manager (LAB tool — Phase 1: monitor)
   engageStatus,
   engageListInbox,

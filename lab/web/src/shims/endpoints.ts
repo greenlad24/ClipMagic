@@ -621,6 +621,11 @@ export const approveAuditMarket = endpoint<{ runId: string; market?: any }, { ru
 export const getAuditRun = endpoint<{ runId: string }, any>("getAuditRun");
 export const listAuditRuns = endpoint<{ limit?: number }, { runs: any[] }>("listAuditRuns");
 export const deleteAuditRun = endpoint<{ runId: string }, { deleted: boolean }>("deleteAuditRun");
+/** Discuss a finished report (Opus 5); may re-aim it at part of the catalogue. */
+export const auditChat = endpoint<
+  { runId: string; message: string },
+  { reply: string; refocused: { note: string; videoCount: number } | null; tooNarrow?: number }
+>("auditChat");
 export const getPlanRun = endpoint<{ runId: string }, PlanRunResult>("getPlanRun");
 export const listPlanRuns = endpoint<Record<string, never>, { runs: PlanRunListItem[] }>("listPlanRuns");
 export const deletePlanRun = endpoint<{ runId: string }, { ok: true }>("deletePlanRun");

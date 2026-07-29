@@ -119,7 +119,10 @@ export type CallPurpose =
   | "audit-rename"
   // Channel Audit: writes the verdicts and growth areas over the computed
   // findings (director tier).
-  | "audit-report";
+  | "audit-report"
+  // Channel Audit: the report chat — answering questions over a finished audit
+  // and re-focusing it. Runs on Opus 5 explicitly (see claudeJSONWithModel).
+  | "audit-chat";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

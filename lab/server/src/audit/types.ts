@@ -222,6 +222,34 @@ export interface GrowthArea {
   confidence: "low" | "medium" | "high";
 }
 
+/**
+ * A narrowing of what counts as EVIDENCE in the report.
+ *
+ * Channels change direction, and a catalogue is a history: the report can end
+ * up describing work its owner has moved on from. A focus filters which videos
+ * the findings are computed over — it deletes nothing, and clearing it restores
+ * the full report.
+ */
+export interface AuditFocus {
+  /** Only judge videos published within this many days. */
+  sinceDays?: number | null;
+  includeTopics?: string[] | null;
+  excludeTopics?: string[] | null;
+  /** One line, shown on the report so nobody forgets it is filtered. */
+  note: string;
+  /** How many videos survived — worth seeing before trusting a narrow report. */
+  videoCount: number;
+}
+
+/** One turn of the report chat. */
+export interface AuditChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  at: number;
+  /** Set on the assistant turn that re-aimed the report. */
+  refocused?: { note: string; videoCount: number };
+}
+
 /** One API call's tokens and price, so a run's bill can be decomposed. */
 export interface AuditCallUsage {
   label: string;
@@ -247,6 +275,10 @@ export interface AuditRunResult {
   /** Competitor videos kept as market evidence (their outliers). */
   marketVideos: AuditVideo[];
   findings: AuditFindings | null;
+  /** Set when the report has been narrowed via the chat. */
+  focus?: AuditFocus | null;
+  /** The conversation about this report. */
+  chat: AuditChatMessage[];
   calls: AuditCallUsage[];
   costUsd: number;
   /** YouTube Data API units spent — the other budget. */

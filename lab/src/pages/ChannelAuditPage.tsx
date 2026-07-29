@@ -18,6 +18,8 @@ import {
   TrendingDown,
   Plus,
   X,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 import {
   auditStatus,
@@ -27,6 +29,7 @@ import {
   getAuditRun,
   listAuditRuns,
   deleteAuditRun,
+  auditChat,
 } from '../../web/src/shims/endpoints';
 
 type Mode = 'own' | 'teardown';
@@ -267,7 +270,9 @@ export default function ChannelAuditPage() {
           )}
 
           {/* ── the report ────────────────────────────────────────────── */}
-          {run?.status === 'completed' && run.findings && <Report run={run} />}
+          {run?.status === 'completed' && run.findings && (
+            <Report run={run} onChanged={() => loadRun(run.runId)} />
+          )}
         </div>
 
         {/* ── history ───────────────────────────────────────────────── */}
@@ -431,7 +436,7 @@ function MarketApproval({ run, onApproved }: { run: any; onApproved: () => void 
   );
 }
 
-function Report({ run }: { run: any }) {
+function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
   const f = run.findings;
   const renames = (run.videos || [])
     .filter((v: any) => v.rename)
@@ -439,6 +444,16 @@ function Report({ run }: { run: any }) {
 
   return (
     <div className="space-y-6">
+      {run.focus && (
+        <div className="rounded-lg border border-primary/40 bg-primary/5 p-3 text-sm">
+          <span className="font-medium">This report is focused:</span> {run.focus.note} — computed over{' '}
+          {run.focus.videoCount} of {run.videos?.length} videos. Everything below reflects that subset; nothing was
+          deleted.
+        </div>
+      )}
+
+      <ReportChat run={run} onChanged={onChanged} />
+
       <Card title="Summary">
         <p className="text-sm">{f.summary}</p>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -870,6 +885,128 @@ function EngagementSignalCard({ videos }: { videos: any[] }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+/**
+ * Talking to the report.
+ *
+ * The thing this exists for: a catalogue is a history, and a channel that has
+ * changed direction gets a report about work its owner has moved on from. Only
+ * they know that — so they say it here, and the findings are recomputed over
+ * the part of the catalogue that still represents them. That recomputation is
+ * arithmetic over data already stored, so it is one model call and no quota.
+ */
+function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
+  const [messages, setMessages] = useState<any[]>(run.chat || []);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => setMessages(run.chat || []), [run.runId, run.chat]);
+
+  async function send(text: string) {
+    const message = text.trim();
+    if (!message || busy) return;
+    setErr(null);
+    setBusy(true);
+    // Show the question immediately; the answer can take a few seconds.
+    setMessages((m) => [...m, { role: 'user', content: message, at: Date.now() }]);
+    setDraft('');
+    try {
+      const res: any = await auditChat({ runId: run.runId, message });
+      setMessages((m) => [
+        ...m,
+        { role: 'assistant', content: res.reply, at: Date.now(), refocused: res.refocused ?? undefined },
+      ]);
+      // A refocus rewrote the findings, so the report above is now stale.
+      if (res.refocused) onChanged();
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+      setMessages((m) => m.slice(0, -1));
+      setDraft(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const suggestions = [
+    'My focus changed — I now make AI tool reviews, not scraping tutorials',
+    'Which of these findings is weakest evidence?',
+    'What should I make next, and why?',
+  ];
+
+  return (
+    <section className="rounded-lg border p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-medium">
+        <MessageSquare className="h-4 w-4" />
+        Ask about this report
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Runs on Claude Opus 5 over this audit&apos;s saved data. If your channel has changed direction, say so — it
+        can recompute the report over just the videos that still represent you, in seconds and at no quota cost.
+      </p>
+
+      {!!messages.length && (
+        <div className="mb-3 space-y-3">
+          {messages.map((m: any, i: number) => (
+            <div key={i} className={m.role === 'user' ? 'text-sm' : 'text-sm'}>
+              <div className="mb-0.5 text-xs font-medium text-muted-foreground">
+                {m.role === 'user' ? 'You' : 'Claude'}
+              </div>
+              <div className={`whitespace-pre-wrap rounded-md p-2.5 ${m.role === 'user' ? 'bg-muted' : 'border'}`}>
+                {m.content}
+              </div>
+              {m.refocused && (
+                <div className="mt-1 text-xs text-[hsl(var(--chart-3))]">
+                  Report re-aimed: {m.refocused.note} ({m.refocused.videoCount} videos)
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!messages.length && (
+        <div className="mb-3 flex flex-wrap gap-2">
+          {suggestions.map((sug) => (
+            <button
+              key={sug}
+              type="button"
+              onClick={() => send(sug)}
+              disabled={busy}
+              className="rounded-md border px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+            >
+              {sug}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send(draft);
+        }}
+        className="flex gap-2"
+      >
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="What changed, or what do you want to know?"
+          disabled={busy}
+          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+        />
+        <button
+          type="submit"
+          disabled={busy || !draft.trim()}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </button>
+      </form>
+      {err && <p className="mt-2 text-sm text-destructive">{err}</p>}
+    </section>
   );
 }
 

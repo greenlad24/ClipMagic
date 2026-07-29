@@ -587,6 +587,31 @@ export async function claudeChatJSON(opts: {
  * extraction that belongs on the fast/Haiku tier and must be attributed to its
  * own purpose in the optimization report — not mis-billed as url-research).
  */
+/**
+ * JSON completion on an EXPLICIT MODEL, bypassing the tier map.
+ *
+ * The tier helpers exist so most callers get a sensible model without thinking
+ * about it. This is for the rare caller that genuinely needs one specific
+ * model: the Channel Audit's report chat runs on Opus 5 because the operator
+ * asked for it by name — it reasons over a whole audit at once and is invoked a
+ * handful of times per report, not per video.
+ */
+export async function claudeJSONWithModel(opts: {
+  model: string;
+  purpose: CallPurpose;
+  system: string;
+  messages: Turn[];
+}): Promise<string> {
+  const raw = await callClaude({
+    model: opts.model,
+    system: opts.system,
+    messages: opts.messages,
+    jsonMode: true,
+    purpose: opts.purpose,
+  });
+  return extractJson(raw);
+}
+
 export async function claudeJSONForPurpose(opts: {
   tier: "director" | "research" | "fast";
   purpose: CallPurpose;

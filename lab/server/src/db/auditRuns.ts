@@ -17,6 +17,8 @@ import type {
   AuditStatus,
   AuditVideo,
   MarketProposal,
+  AuditChatMessage,
+  AuditFocus,
 } from "../audit/types.js";
 
 const now = () => Date.now();
@@ -33,6 +35,8 @@ interface AuditRunRow {
   videos_json: string | null;
   market_json: string | null;
   findings_json: string | null;
+  chat_json: string | null;
+  focus_json: string | null;
   calls_json: string | null;
   cost_usd: number;
   quota_units: number;
@@ -63,6 +67,8 @@ function hydrate(row: AuditRunRow): AuditRunResult {
     videos: parse<AuditVideo[]>(row.videos_json, []),
     marketVideos: parse<AuditVideo[]>(row.market_json, []),
     findings: parse<AuditFindings | null>(row.findings_json, null),
+    focus: parse<AuditFocus | null>(row.focus_json, null),
+    chat: parse<AuditChatMessage[]>(row.chat_json, []),
     calls: parse<AuditCallUsage[]>(row.calls_json, []),
     costUsd: row.cost_usd ?? 0,
     quotaUnits: row.quota_units ?? 0,
@@ -90,6 +96,8 @@ export interface AuditRunPatch {
   videos?: AuditVideo[];
   marketVideos?: AuditVideo[];
   findings?: AuditFindings | null;
+  focus?: AuditFocus | null;
+  chat?: AuditChatMessage[];
   calls?: AuditCallUsage[];
   costUsd?: number;
   quotaUnits?: number;
@@ -114,6 +122,8 @@ export function updateRun(id: string, patch: AuditRunPatch): void {
   if (patch.videos !== undefined) json("videos_json", patch.videos);
   if (patch.marketVideos !== undefined) json("market_json", patch.marketVideos);
   if (patch.findings !== undefined) json("findings_json", patch.findings);
+  if (patch.focus !== undefined) json("focus_json", patch.focus);
+  if (patch.chat !== undefined) json("chat_json", patch.chat);
   if (patch.calls !== undefined) json("calls_json", patch.calls);
   if (patch.costUsd !== undefined) put("cost_usd", patch.costUsd);
   if (patch.quotaUnits !== undefined) put("quota_units", patch.quotaUnits);

@@ -534,6 +534,18 @@ CREATE TABLE IF NOT EXISTS engage_settings (
 }
 
 /**
+ * Additive migration on audit_runs: the report chat and the focus filter it can
+ * set. Both arrived after the table, and an audit is expensive enough that
+ * re-running one to gain a column would be a poor trade.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(audit_runs)").all() as Array<{ name: string }>;
+  const has = (n: string) => cols.some((c) => c.name === n);
+  if (!has("chat_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN chat_json TEXT");
+  if (!has("focus_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN focus_json TEXT");
+}
+
+/**
  * Additive migration on plan_runs: per-call token usage, so a run's bill can be
  * decomposed into research, each planning round, and cache reads. Before this
  * only the run total was stored, which left "where did the money go"
