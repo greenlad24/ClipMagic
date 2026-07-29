@@ -69,6 +69,10 @@ export default function ChannelAuditPage() {
   const [runs, setRuns] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Onboarding hides itself once you have run an audit, and stays hidden after
+  // that. Reopenable from the header, because the "what does 3.2x mean" part is
+  // worth re-reading long after the flow is familiar.
+  const [showHelp, setShowHelp] = useState(() => localStorage.getItem('audit.onboarded') !== '1');
   const poll = useRef<number | null>(null);
 
   useEffect(() => {
@@ -136,6 +140,8 @@ export default function ChannelAuditPage() {
     setBusy(true);
     try {
       const { runId: id } = await startAudit({ channel: channel.trim(), mode });
+      localStorage.setItem('audit.onboarded', '1');
+      setShowHelp(false);
       setRun(null);
       setRunId(id);
       refreshList();
@@ -152,14 +158,23 @@ export default function ChannelAuditPage() {
     <div className="mx-auto max-w-6xl px-4 py-8">
       <header className="mb-6 flex items-start gap-3">
         <Search className="mt-1 h-6 w-6 text-[hsl(var(--chart-4))]" />
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-semibold">Channel Audit</h1>
           <p className="text-sm text-muted-foreground">
             The market, the competitors, what the titles and thumbnails have in common, where it stands — and a
             better title for every video.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowHelp((v) => !v)}
+          className="mt-1 shrink-0 rounded-md border px-2.5 py-1 text-xs text-muted-foreground"
+        >
+          {showHelp ? 'Hide' : 'How this works'}
+        </button>
       </header>
+
+      {showHelp && <Onboarding onDismiss={() => { localStorage.setItem('audit.onboarded', '1'); setShowHelp(false); }} />}
 
       {config && !config.youtubeConfigured && (
         <Notice tone="warn">
@@ -610,6 +625,76 @@ function ReachCard({ videos }: { videos: any[] }) {
         })}
       </div>
     </Card>
+  );
+}
+
+/**
+ * First-run onboarding.
+ *
+ * Two things nobody can guess from the form: the run STOPS halfway to ask you
+ * something, and every table is in multiples of "what this channel normally
+ * does at that time" rather than raw views. Both are explained here because
+ * both are confusing exactly once.
+ */
+function Onboarding({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div className="mb-6 rounded-lg border bg-muted/30 p-5">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <h2 className="text-sm font-medium">How this works</h2>
+        <button onClick={onDismiss} className="text-muted-foreground hover:text-foreground" title="Dismiss">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <ol className="mb-4 space-y-3 text-sm">
+        <li className="flex gap-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-medium">1</span>
+          <span>
+            <span className="font-medium">Paste a channel and pick a mode.</span> “My channel” is written to act on
+            and proposes a new title for every video. “Someone else” is a teardown — the same analysis, no renaming,
+            because you cannot retitle a channel you do not own.
+          </span>
+        </li>
+        <li className="flex gap-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-medium">2</span>
+          <span>
+            <span className="font-medium">It stops and asks you to confirm the market.</span> This is deliberate.
+            It reads the catalogue, searches YouTube for who else ranks for the same things, and shows you the
+            competitors it found. Everything after that point costs real money and a chunk of the day&apos;s API
+            quota — and all of it is wasted if it is comparing you to the wrong people. Two minutes here is the
+            cheapest checkpoint in the whole run.
+          </span>
+        </li>
+        <li className="flex gap-3">
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-medium">3</span>
+          <span>
+            <span className="font-medium">Then it runs for ten to fifteen minutes</span> — scanning competitors,
+            looking at every thumbnail, grouping topics, and writing the report. Roughly $4–5 an audit. You can
+            leave the page; the run continues and appears in History.
+          </span>
+        </li>
+      </ol>
+
+      <div className="rounded-md border bg-background p-3 text-sm">
+        <p className="mb-1 font-medium">Reading the numbers: “3.2x”</p>
+        <p className="text-muted-foreground">
+          Every score is against what that channel was <span className="font-medium">normally doing at the time</span>,
+          not against its all-time average. 1.0x is exactly par for its moment; 3.2x means it did three times what
+          its neighbours did. This matters because a growing channel makes its own past look like failure — on a
+          flat average, more than half of a healthy catalogue reads as “underperforming”, which is just growth, not
+          a finding.
+        </p>
+        <p className="mt-2 text-muted-foreground">
+          <span className="font-medium">Videos newer than two weeks are shown but never judged</span>, and never
+          offered for renaming. A video published this morning has not underperformed, it is just new.
+        </p>
+      </div>
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        The proposed titles are suggestions on this page. Nothing is ever changed on any channel — see the
+        read-only note below.
+      </p>
+    </div>
   );
 }
 
