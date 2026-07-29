@@ -275,3 +275,56 @@ function round2(n: number): number {
 
 /** Re-export so callers don't need two imports for the common case. */
 export type { ScoredVideo };
+
+
+/**
+ * Title-pattern performance across the MARKET's full catalogues.
+ *
+ * Each competitor video is already scored against its OWN channel's era, so
+ * pooling them is legitimate: a 3x is a 3x whether the channel has 20k
+ * subscribers or 900k. That is the point — it is what makes the market sample
+ * comparable at all, and it is why the audit ingests whole competitor
+ * catalogues rather than only their hits.
+ */
+export function marketTitlePatterns(competitorVideos: AuditVideo[]): {
+  winning: ReturnType<typeof titlePatternPerformance>;
+  losing: ReturnType<typeof titlePatternPerformance>;
+  sampleSize: number;
+} | null {
+  const pool = competitorVideos
+    .filter((v) => v.judged && v.format === "long")
+    .map((v) => ({ ...v, titleFeatures: v.titleFeatures ?? titleFeatures(v.title) }));
+  // A market smaller than this cannot say anything a single channel could not.
+  if (pool.length < 40) return null;
+  const rows = titlePatternPerformance(pool);
+  const { winning, losing } = splitWinnersLosers(rows);
+  return { winning, losing, sampleSize: pool.length };
+}
+
+/**
+ * What winning thumbnails have in common — yours and the market's together.
+ *
+ * Deliberately a SHARE, not a correlation. The market's non-outliers never have
+ * their thumbnails read, so there is no comparison group on that side; claiming
+ * a correlation from winners alone is the survivorship error this whole module
+ * exists to avoid. "78% of winners have a dominant face" is a true and useful
+ * sentence. "Dominant faces cause wins" is not one we can support.
+ */
+export function outlierThumbnailProfile(
+  outliers: AuditVideo[],
+): { attribute: string; value: string; share: number; sampleSize: number }[] {
+  const withThumbs = outliers.filter((v) => v.thumbnail);
+  if (withThumbs.length < MIN_SAMPLE) return [];
+  const n = withThumbs.length;
+  const pct = (k: number) => Math.round((k / n) * 100) / 100;
+  const count = (f: (v: AuditVideo) => boolean) => withThumbs.filter(f).length;
+
+  return [
+    { attribute: "Face", value: "any", share: pct(count((v) => (v.thumbnail?.face ?? "none") !== "none")), sampleSize: n },
+    { attribute: "Face", value: "dominant", share: pct(count((v) => v.thumbnail?.face === "dominant")), sampleSize: n },
+    { attribute: "Text on thumbnail", value: "any", share: pct(count((v) => (v.thumbnail?.textWordCount ?? 0) > 0)), sampleSize: n },
+    { attribute: "Text", value: "3 words or fewer", share: pct(count((v) => (v.thumbnail?.textWordCount ?? 0) > 0 && (v.thumbnail?.textWordCount ?? 0) <= 3)), sampleSize: n },
+    { attribute: "Colour", value: "vivid", share: pct(count((v) => v.thumbnail?.colourEnergy === "vivid")), sampleSize: n },
+    { attribute: "Composition", value: "clean", share: pct(count((v) => v.thumbnail?.clutter === "clean")), sampleSize: n },
+  ];
+}

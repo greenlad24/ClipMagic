@@ -514,8 +514,30 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
 
       <Card title="Titles">
         <p className="mb-3 text-sm">{f.titles.verdict}</p>
+        <div className="mb-1 text-xs font-medium text-muted-foreground">On your channel</div>
         <PatternTable rows={f.titles.winning} tone="up" />
         <PatternTable rows={f.titles.losing} tone="down" />
+        {!f.titles.winning.length && !f.titles.losing.length && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            No construction reached a reportable sample on your channel alone.
+          </p>
+        )}
+
+        {f.titles.market && (
+          <>
+            <div className="mb-1 mt-4 text-xs font-medium text-muted-foreground">
+              Across the market — {f.titles.market.sampleSize.toLocaleString()} competitor videos, each scored
+              against its own channel
+            </div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              A far larger sample than one channel, and the stronger evidence for a title formula. Where this and
+              your own channel disagree, your audience is the one being served — but the market is what a new
+              viewer sees.
+            </p>
+            <PatternTable rows={f.titles.market.winning} tone="up" />
+            <PatternTable rows={f.titles.market.losing} tone="down" />
+          </>
+        )}
       </Card>
 
       <Card title="Thumbnails">
@@ -525,6 +547,30 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
             Not enough of a contrast to compare — this channel does much the same thing on every thumbnail.
           </p>
         )}
+        {!!f.thumbnails.outlierProfile?.length && (
+          <div className="mb-4">
+            <div className="mb-1 text-xs font-medium text-muted-foreground">
+              What winning thumbnails share — yours and the market&apos;s, {f.thumbnails.outlierProfile[0].sampleSize}{' '}
+              over-performers
+            </div>
+            <p className="mb-2 text-xs text-muted-foreground">
+              A share among winners, not a cause. The market&apos;s ordinary videos never had their thumbnails read,
+              so this says what winners look like — not that the attribute is what made them win.
+            </p>
+            <div className="space-y-1">
+              {f.thumbnails.outlierProfile.map((p: any, i: number) => (
+                <div key={i} className="flex items-center gap-3 rounded border px-3 py-2 text-sm">
+                  <span className="flex-1">
+                    {p.attribute} <span className="text-muted-foreground">({p.value})</span>
+                  </span>
+                  <span className="font-medium">{Math.round(p.share * 100)}%</span>
+                  <span className="text-xs text-muted-foreground">of winners</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="space-y-1">
           {f.thumbnails.correlations.map((c: any, i: number) => {
             const better = c.medianMultipleWith > c.medianMultipleWithout;

@@ -220,8 +220,21 @@ export async function refocusReport(
 
   const computed = {
     ageCurve: ageCurve(kept, "long"),
-    titles: { winning, losing, verdict: "" },
-    thumbnails: { correlations: [...thumbnailCorrelations(pool), ...titleStructureCorrelations(pool)], verdict: "" },
+    titles: {
+      winning,
+      losing,
+      // The market analysis is about the MARKET, so narrowing which of the
+      // subject's videos count as evidence does not change it. Carrying it
+      // through keeps the strongest sample in the report after a refocus
+      // instead of silently dropping it.
+      market: run.findings?.titles.market ?? null,
+      verdict: "",
+    },
+    thumbnails: {
+      correlations: [...thumbnailCorrelations(pool), ...titleStructureCorrelations(pool)],
+      outlierProfile: run.findings?.thumbnails.outlierProfile ?? [],
+      verdict: "",
+    },
     content: { topics, gaps: run.findings?.content.gaps ?? [], verdict: "" },
     position: run.findings?.position ?? {
       subscriberRank: 1,

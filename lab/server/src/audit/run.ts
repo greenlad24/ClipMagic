@@ -23,6 +23,8 @@ import { proposeMarket, pickCompetitors, readThumbnails, clusterTopics, proposeR
 import {
   titleFeatures,
   titlePatternPerformance,
+  marketTitlePatterns,
+  outlierThumbnailProfile,
   titleStructureCorrelations,
   thumbnailCorrelations,
   splitWinnersLosers,
@@ -168,6 +170,18 @@ async function runRest(runId: string, market: MarketProposal) {
   const marketVideos: AuditVideo[] = results.flatMap((r) =>
     outliers(r.videos, "long", 1.5).slice(0, 30).map((v) => ({ ...v, titleFeatures: titleFeatures(v.title) })),
   );
+  // The FULL competitor catalogues, used for the market-wide title analysis and
+  // then dropped. Only the outliers are persisted — storing thousands of
+  // competitor videos on every run would bloat the row for no later use — but
+  // the whole set is what makes a title formula evidence rather than a hunch.
+  const marketFull: AuditVideo[] = results.flatMap((r) =>
+    r.videos.map((v) => ({ ...v, titleFeatures: titleFeatures(v.title) })),
+  );
+  const marketPatterns = marketTitlePatterns(marketFull);
+  console.log(
+    `[audit] ${runId}: market title analysis over ${marketFull.length} competitor videos` +
+      (marketPatterns ? ` — ${marketPatterns.winning.length} winning pattern(s)` : " — too small to report"),
+  );
   updateRun(runId, { competitors, marketVideos, quotaUnits });
   if (failures.length) {
     console.warn(`[audit] ${runId}: dropped ${failures.length} competitor(s):`, failures.map((f) => f.title).join(", "));
@@ -213,9 +227,15 @@ async function runRest(runId: string, market: MarketProposal) {
 
   const computed: Omit<AuditFindings, "summary" | "growth"> = {
     ageCurve: ageCurve(videosWithThumbs, "long"),
-    titles: { winning, losing, verdict: "" },
+    titles: { winning, losing, market: marketPatterns, verdict: "" },
     thumbnails: {
       correlations: [...thumbnailCorrelations(pool), ...titleStructureCorrelations(pool)],
+      // What winning thumbnails look like across BOTH sides — yours and the
+      // market's. A share among winners, never presented as a cause.
+      outlierProfile: outlierThumbnailProfile([
+        ...outliers(videosWithThumbs, "long", 1.5),
+        ...marketWithThumbs,
+      ]),
       verdict: "",
     },
     content: {
@@ -274,6 +294,7 @@ async function runRest(runId: string, market: MarketProposal) {
           niche: market.niche,
           winning,
           losing,
+          marketPatterns,
           outlierTitles,
         })) {
           const pri = batch.find((t) => t.v.videoId === id)?.priority ?? 0;

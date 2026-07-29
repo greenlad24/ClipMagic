@@ -364,6 +364,12 @@ export async function proposeRenames(
     niche: string;
     winning: { pattern: string; medianMultiple: number; sampleSize: number }[];
     losing: { pattern: string; medianMultiple: number; sampleSize: number }[];
+    /** The same analysis across the competitors' full catalogues. */
+    marketPatterns?: {
+      winning: { pattern: string; medianMultiple: number; sampleSize: number }[];
+      losing: { pattern: string; medianMultiple: number; sampleSize: number }[];
+      sampleSize: number;
+    } | null;
     outlierTitles: { title: string; channelTitle: string; eraMultiple: number }[];
   },
 ): Promise<Map<string, RenameProposal>> {
@@ -376,6 +382,9 @@ export async function proposeRenames(
       : "No title pattern has enough data to call a winner on this channel.",
     context.losing.length
       ? `Patterns that LOSE here:\n${context.losing.map((w) => `  ${w.medianMultiple.toFixed(2)}x  ${w.pattern}  (n=${w.sampleSize})`).join("\n")}`
+      : "",
+    context.marketPatterns
+      ? `Patterns that WIN ACROSS THE WHOLE MARKET (${context.marketPatterns.sampleSize} competitor videos, each scored against its own channel):\n${context.marketPatterns.winning.map((w) => `  ${w.medianMultiple.toFixed(2)}x  ${w.pattern}  (n=${w.sampleSize})`).join("\n") || "  none reportable"}\n\nPatterns that LOSE across the market:\n${context.marketPatterns.losing.map((w) => `  ${w.medianMultiple.toFixed(2)}x  ${w.pattern}  (n=${w.sampleSize})`).join("\n") || "  none reportable"}\n\nWhere the market and this channel disagree, the market is the larger sample but this channel's own audience is the one being served — say which you followed if it matters.`
       : "",
     context.outlierTitles.length
       ? `Market outliers worth borrowing STRUCTURE from:\n${context.outlierTitles.slice(0, 25).map((o) => `  ${o.eraMultiple.toFixed(1)}x  [${o.channelTitle}]  ${clip(o.title, 90)}`).join("\n")}`
@@ -551,6 +560,8 @@ Return JSON:
 }
 
 Rules that decide whether this is worth reading:
+- BUILD THE PLAN FROM THE OUTLIERS — this channel's and the market's. A title formula comes from constructions that over-performed across the market's catalogues, checked against what works on this channel; a thumbnail rule comes from what winning thumbnails actually share. The market sample is far larger than one channel and is the stronger evidence where the two disagree; say which you followed when it matters.
+- The thumbnail profile is a SHARE AMONG WINNERS, not a correlation. "78% of winners use three words or fewer" is a fair sentence. "Short text causes wins" is not — the market's non-outliers were never examined.
 - EVERY claim cites a measurement you were given. "Numbered lists do 1.9x here across 14 videos, so lead with a number" is useful. "Use compelling titles" is filler and worse than nothing.
 - Title formulas must be FORMULAS — a reusable shape plus one filled-in example. Not a list of titles, not vague advice.
 - Thumbnail rules must come from the correlations. If the correlations are empty, say there is not enough evidence to advise on thumbnails rather than repeating general YouTube lore.
@@ -582,9 +593,11 @@ ${whenBlock(input.videos)}${angleBlock(input.angle)}
 
 WHAT THE AUDIT MEASURED
 
-Title patterns that win: ${JSON.stringify(f.titles.winning)}
-Title patterns that lose: ${JSON.stringify(f.titles.losing)}
-Thumbnail correlations (with vs without): ${JSON.stringify(f.thumbnails.correlations)}
+Title patterns that win ON THIS CHANNEL: ${JSON.stringify(f.titles.winning)}
+Title patterns that lose on this channel: ${JSON.stringify(f.titles.losing)}
+Title patterns ACROSS THE WHOLE MARKET — the competitors' full catalogues, each video scored against its own channel's era (${f.titles.market?.sampleSize ?? 0} videos): ${JSON.stringify(f.titles.market ?? "not enough market data")}
+Thumbnail correlations on this channel (with vs without): ${JSON.stringify(f.thumbnails.correlations)}
+What WINNING thumbnails look like across both sides — share of outliers carrying each attribute, NOT a cause: ${JSON.stringify(f.thumbnails.outlierProfile ?? [])}
 Topics (yours vs the market's coverage of the same topic): ${JSON.stringify(f.content.topics)}
 Market gaps: ${JSON.stringify(f.content.gaps)}
 Position: rank ${f.position.subscriberRank} of ${f.position.competitorCount + 1} by subscribers, ${f.position.medianViewsRank} by median views

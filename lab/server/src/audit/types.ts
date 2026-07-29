@@ -201,11 +201,37 @@ export interface TitleFindings {
   /** Patterns that over-perform, with the evidence. */
   winning: { pattern: string; medianMultiple: number; sampleSize: number; examples: string[] }[];
   losing: { pattern: string; medianMultiple: number; sampleSize: number; examples: string[] }[];
+  /**
+   * The same analysis across the COMPETITORS' full catalogues.
+   *
+   * One channel of 117 videos is a thin base for a title formula — several
+   * patterns never reach a reportable sample at all. Seven competitor
+   * catalogues are thousands of videos, each scored against its own channel's
+   * era, so a construction that wins across the market is evidence of a
+   * different order from one that wins across a single channel.
+   */
+  market: {
+    winning: { pattern: string; medianMultiple: number; sampleSize: number; examples: string[] }[];
+    losing: { pattern: string; medianMultiple: number; sampleSize: number; examples: string[] }[];
+    /** How many competitor videos the market analysis is drawn from. */
+    sampleSize: number;
+  } | null;
   /** Prose, grounded in the above. */
   verdict: string;
 }
 
 export interface ThumbnailFindings {
+  /**
+   * What the OUTLIERS look like — yours and the market's, pooled.
+   *
+   * A correlation needs both halves, and thumbnails are only read for the
+   * subject's catalogue plus the market's over-performers, so there is no
+   * "without" group on the market side. This is therefore a profile, not a
+   * correlation: the share of winning thumbnails carrying each attribute. It
+   * says what winners look like, not that the attribute caused the win — and it
+   * is labelled that way wherever it is shown.
+   */
+  outlierProfile: { attribute: string; value: string; share: number; sampleSize: number }[];
   /** Attribute → how videos with it performed, against those without. */
   correlations: {
     attribute: string;
