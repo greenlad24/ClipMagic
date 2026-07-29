@@ -20,6 +20,10 @@
  */
 import type { RequestHandler } from "express";
 import { config } from "./config.js";
+import type { AuthedRequest } from "./auth/middleware.js";
+
+/** Header naming the signed-in lab user to the sidecar. See below. */
+const USER_HEADER = "x-lab-user";
 
 /** Hop-by-hop / host headers we must NOT forward to the upstream. */
 const STRIP_REQUEST_HEADERS = new Set([
@@ -27,10 +31,14 @@ const STRIP_REQUEST_HEADERS = new Set([
   "connection",
   "content-length",
   "authorization", // replaced with the sidecar's shared token below
+  // Set from the VERIFIED session below. Stripping any inbound copy is what
+  // makes the sidecar able to trust it: a browser cannot name itself, and the
+  // sidecar publishes no port, so this proxy is the only way in.
+  USER_HEADER,
 ]);
 
 export function whatsappProxy(): RequestHandler {
-  return async (req, res) => {
+  return async (req: AuthedRequest, res) => {
     if (!config.whatsappUrl) {
       res.status(503).json({ error: "WhatsApp Scheduler is not configured." });
       return;
@@ -47,6 +55,13 @@ export function whatsappProxy(): RequestHandler {
       headers[k] = Array.isArray(v) ? v.join(", ") : String(v);
     }
     if (config.whatsappToken) headers["authorization"] = `Bearer ${config.whatsappToken}`;
+
+    // Who is asking. The sidecar keeps ONE WhatsApp session per lab account —
+    // its own linked device, chats and scheduled messages — and this header is
+    // how it tells them apart. It comes from the session `requireSession` already
+    // verified upstream of this mount, never from the request.
+    const email = req.authSession?.email;
+    if (email) headers[USER_HEADER] = email;
 
     // Only the JSON API carries a body, and express.json() already parsed it;
     // re-serialize for those, none for GET/HEAD.
