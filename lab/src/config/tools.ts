@@ -1,4 +1,5 @@
 import {
+  Search,
   Wand2,
   Layers,
   Scissors,
@@ -233,6 +234,18 @@ export const TOOLS: ToolDefinition[] = [
     detail: 'Long-form planning',
     // Needs the Anthropic key (planning) and Groq (transcription fallback),
     // both set in the same write-only Postiz settings.
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'channel-audit',
+    title: 'Channel Audit',
+    description:
+      'Point it at a channel and get the market, the competitors, what its titles and thumbnails have in common, where it stands — and a better title for every video.',
+    icon: Search,
+    route: '/channel-audit',
+    status: 'live',
+    accent: 'purple',
+    detail: 'Strategy',
     configureRoute: '/settings/postiz',
   },
   {

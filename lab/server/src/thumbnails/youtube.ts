@@ -626,7 +626,12 @@ export async function fetchChannelProfile(
 
   const rows: { videoId: string; title: string; publishedAt: string | null }[] = [];
   let pageToken = "";
-  const cap = Math.max(1, Math.min(200, maxVideos));
+  // The ceiling was 200, which silently truncated any channel bigger than that.
+  // The Channel Audit proposes a rename for EVERY video, so a silent cut would
+  // quietly drop part of the catalogue from the report. Paging is 1 quota unit
+  // per 50 videos, so the cost of a large channel is trivial; callers still
+  // choose their own limit and every existing one asks for 200 or fewer.
+  const cap = Math.max(1, Math.min(2000, maxVideos));
   while (rows.length < cap) {
     const pp = new URLSearchParams({ part: "snippet", playlistId: uploadsPlaylist, maxResults: "50", key });
     if (pageToken) pp.set("pageToken", pageToken);

@@ -152,6 +152,13 @@ import {
 } from "../db/scriptRuns.js";
 import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
 import { startPlan as runStartPlan, planJobStatus as getPlanSnapshot } from "../planner/run.js";
+import { startAudit as runStartAudit, resumeAudit as runResumeAudit, auditJobStatus as getAuditSnapshot } from "../audit/run.js";
+import {
+  getRun as getAuditRunRow,
+  listRuns as listAuditRunRows,
+  deleteRun as deleteAuditRunRow,
+} from "../db/auditRuns.js";
+import type { AuditInput, MarketProposal } from "../audit/types.js";
 import { PLANNER_MODEL } from "../planner/client.js";
 import {
   getRun as getPlanRunDb,
@@ -3255,6 +3262,73 @@ const refineScriptParagraph: Handler = async (input) => {
   return runRefineParagraph(runId, String(input?.paragraph ?? ""), String(input?.instruction ?? ""));
 };
 
+// ── Channel Audit (LAB tool) ─────────────────────────────────────────────────
+// Point it at a channel, get the niche, the competitors, what its titles and
+// thumbnails have in common, where it sits, and a proposed title for every
+// video. The run PAUSES after proposing a market so the operator can correct it
+// before anything expensive is spent on the wrong comparison set.
+
+const auditStatus: Handler = async () => ({
+  youtubeConfigured: youtubeConfigured(),
+  anthropicConfigured: Boolean((aiConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "").trim()),
+});
+
+const startAudit: Handler = async (input) => {
+  const channel = String(input?.channel ?? "").trim();
+  if (!channel) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "A channel URL, @handle or channel id is required." });
+  }
+  if (!youtubeConfigured()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "The YouTube Data API key is not configured." });
+  }
+  const payload: AuditInput = {
+    channel,
+    mode: input?.mode === "teardown" ? "teardown" : "own",
+    title: typeof input?.title === "string" ? input.title : undefined,
+    autoApprove: Boolean(input?.autoApprove),
+  };
+  return runStartAudit(payload);
+};
+
+const auditJobStatus: Handler = async (input) => {
+  const snap = getAuditSnapshot(String(input?.runId ?? ""));
+  if (!snap) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
+  return snap;
+};
+
+/** Confirm (or correct) the proposed market and let the expensive half proceed. */
+const approveAuditMarket: Handler = async (input) => {
+  const runId = String(input?.runId ?? "");
+  const run = getAuditRunRow(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
+  if (run.status !== "awaiting-approval") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: `This run is ${run.status}, not waiting for approval.` });
+  }
+  const edited = input?.market as MarketProposal | undefined;
+  const market = edited && Array.isArray(edited.competitors) ? edited : run.proposal;
+  if (!market) throw new ZiteError({ code: "BAD_REQUEST", message: "No market to approve." });
+  if (!market.competitors.some((c) => c.include)) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Keep at least one competitor — the market analysis needs something to compare against." });
+  }
+  const { ok } = runResumeAudit(runId, market);
+  if (!ok) throw new ZiteError({ code: "BAD_REQUEST", message: "This run could not be resumed." });
+  return { runId };
+};
+
+const getAuditRun: Handler = async (input) => {
+  const run = getAuditRunRow(String(input?.runId ?? ""));
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
+  return run;
+};
+
+const listAuditRuns: Handler = async (input) => ({
+  runs: listAuditRunRows(Math.max(1, Math.min(200, Number(input?.limit) || 50))),
+});
+
+const deleteAuditRun: Handler = async (input) => ({
+  deleted: deleteAuditRunRow(String(input?.runId ?? "")),
+});
+
 // ── Engagement Manager (LAB tool — Phase 1: MONITOR YouTube comments) ─────────
 
 const ENGAGE_PLATFORMS: ReadonlySet<string> = new Set(["youtube", "instagram", "facebook", "tiktok"]);
@@ -3901,6 +3975,13 @@ export const HANDLERS: Record<string, Handler> = {
   getPlanRun,
   listPlanRuns,
   deletePlanRun,
+  auditStatus,
+  startAudit,
+  auditJobStatus,
+  approveAuditMarket,
+  getAuditRun,
+  listAuditRuns,
+  deleteAuditRun,
   // Engagement Manager (LAB tool — Phase 1: monitor)
   engageStatus,
   engageListInbox,

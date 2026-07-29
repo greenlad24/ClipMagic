@@ -610,6 +610,17 @@ export const plannerStatus =
 /** Kick off a run; the work continues in the background. Poll planJobStatus. */
 export const startPlan = endpoint<PlanInput, { runId: string }>("startPlan");
 export const planJobStatus = endpoint<{ runId: string }, PlanJobSnapshot>("planJobStatus");
+
+// ── Channel Audit ───────────────────────────────────────────────────────────
+// startAudit pauses at "awaiting-approval"; the page then calls
+// approveAuditMarket with the (possibly edited) competitor set to continue.
+export const auditStatus = endpoint<void, { youtubeConfigured: boolean; anthropicConfigured: boolean }>("auditStatus");
+export const startAudit = endpoint<any, { runId: string }>("startAudit");
+export const auditJobStatus = endpoint<{ runId: string }, any>("auditJobStatus");
+export const approveAuditMarket = endpoint<{ runId: string; market?: any }, { runId: string }>("approveAuditMarket");
+export const getAuditRun = endpoint<{ runId: string }, any>("getAuditRun");
+export const listAuditRuns = endpoint<{ limit?: number }, { runs: any[] }>("listAuditRuns");
+export const deleteAuditRun = endpoint<{ runId: string }, { deleted: boolean }>("deleteAuditRun");
 export const getPlanRun = endpoint<{ runId: string }, PlanRunResult>("getPlanRun");
 export const listPlanRuns = endpoint<Record<string, never>, { runs: PlanRunListItem[] }>("listPlanRuns");
 export const deletePlanRun = endpoint<{ runId: string }, { ok: true }>("deletePlanRun");

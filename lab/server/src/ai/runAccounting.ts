@@ -102,7 +102,24 @@ export type CallPurpose =
   // voice (director tier). Runs OUTSIDE a render run, so this is booked via
   // claudeJSONForPurposeWithUsage into the reply row's own cost_usd rather than
   // into a run report.
-  | "engagement-reply";
+  | "engagement-reply"
+  // Channel Audit: reads the catalogue and names the niche, the audience and a
+  // competitor set for the operator to approve (research tier).
+  | "audit-market"
+  // Channel Audit: reads thumbnails and reports what is IN them — face, text,
+  // colour, clutter. Deliberately the FAST tier: this is looking, not thinking,
+  // and it runs on every thumbnail in the catalogue plus the market's, so the
+  // tier choice is what keeps a full audit affordable.
+  | "audit-thumbnail"
+  // Channel Audit: groups the catalogue into topics and finds what the market
+  // rewards that this channel does not cover (research tier).
+  | "audit-topics"
+  // Channel Audit: proposes a new title, in batches, each backed by a real
+  // market outlier (director tier — this is the deliverable).
+  | "audit-rename"
+  // Channel Audit: writes the verdicts and growth areas over the computed
+  // findings (director tier).
+  | "audit-report";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

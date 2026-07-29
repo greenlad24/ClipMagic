@@ -294,6 +294,31 @@ CREATE TABLE IF NOT EXISTS plan_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_plan_runs_created ON plan_runs(created_at);
 
+-- Channel Audit: one row per audit. The heavy arrays (videos with their
+-- scoring, thumbnail attributes and proposed renames) live in JSON columns —
+-- a run is read whole by the report page and never queried across, so a table
+-- per entity would buy nothing and cost a migration.
+CREATE TABLE IF NOT EXISTS audit_runs (
+  id              TEXT PRIMARY KEY,
+  title           TEXT NOT NULL DEFAULT '',
+  status          TEXT NOT NULL,   -- ingesting|proposing|awaiting-approval|scanning|analysing|renaming|completed|failed
+  input_json      TEXT NOT NULL,   -- AuditInput
+  subject_json    TEXT,            -- AuditChannel
+  proposal_json   TEXT,            -- MarketProposal as proposed
+  approved_json   TEXT,            -- MarketProposal as the operator approved it
+  competitors_json TEXT,           -- AuditChannel[]
+  videos_json     TEXT,            -- AuditVideo[] (scoring + thumbnail + rename)
+  market_json     TEXT,            -- AuditVideo[] kept as market evidence
+  findings_json   TEXT,            -- AuditFindings
+  calls_json      TEXT,            -- AuditCallUsage[]
+  cost_usd        REAL NOT NULL DEFAULT 0,
+  quota_units     INTEGER NOT NULL DEFAULT 0,
+  error           TEXT,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_runs_created ON audit_runs(created_at);
+
 -- Video Planner: the UI fact sheet keyed by the narration it was built from, so
 -- re-planning the same video does not pay to research the same products twice.
 CREATE TABLE IF NOT EXISTS plan_research_cache (
