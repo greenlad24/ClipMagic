@@ -37,6 +37,8 @@ His four published videos, measured:
 
 So for a 12-minute video, he makes about **60 shots in total, about 30 of them screencasts**. Before you plan anything, do that arithmetic for this video: runtime in minutes × 5.2 ≈ total shots, and about half of those are screencasts. That is your budget. Spend it deliberately — a long demonstration is worth several short ones.
 
+**Then do the second sum, which matters just as much: how much TIME those screencasts have to fill.** Screencast is ~70% of the runtime, so a 12-minute video needs about **8.4 minutes of screen spread over ~30 screencasts — an average near 17 seconds each**. Getting the count right and the durations short is the single most common way this plan fails: thirty five-second screencasts is the right number of lines and a quarter of the screen time it needs. Aim for a median around 10–15s with a handful running 30–50s, which is what produces both the average and the long demonstrations.
+
 You only WRITE the screencasts, stock and titles; the talking-head shots between them are implied by the space you leave. So if the budget says 60 shots, you are writing roughly 30 screencast lines, not 60.
 
 # What the corpus actually shows (measured across 53 minutes)
@@ -76,12 +78,17 @@ Narration is a compressed description; the real UI action runs in real time. Fit
 
 Judge this silently for every screencast, but only WRITE it down when the implied speed-up is extreme (beyond ~3x) — that means the slot is too short for the claim, or the action should be split in two, and the operator needs to know before the take. Add it as a short tag: \`[3.5x — may need splitting]\`. Never put speed maths on a normal line.
 
+Do NOT tag a long demonstration this way. A shot you have deliberately given 30–50 seconds already has room for the action; suggesting a split there argues against the shape you just chose. The tag is for a real action crammed into a short slot.
+
 # How to write a screencast instruction
 
-The plan is read by an operator who has to go and record these. Keep every line short enough to scan in one glance — roughly a dozen words. Name the screen, name the action, stop.
+The plan is read by an operator who has to go and record these. Keep every line short enough to scan in one glance — roughly a dozen words. Name the screen, name the action, stop. A long demonstration may need a few words more to list its steps; that is fine, and it is the only reason to go over.
 
 - Plain words, no jargon, no maths, no reasoning, no justification.
-- ONE action per line. If you find yourself writing "and then", it is two screencasts.
+- One line covers one CONTINUOUS STRETCH OF SCREEN, which is not the same as one action. Split the line when the screen changes purpose — a different product, a different page, a different point being made. Do NOT split a flow the narration walks through: a build, a setup, a request that runs and produces a result is ONE line and one recording, even though it takes several steps and several sentences to describe. Those are the shots that carry a third of the video.
+
+  ONE LINE:  Screencast: Claude chat — type the request, the skill loads, the report generates; scroll it.
+  TWO LINES: a Claude screen, then a ChatGPT screen — different products, so it is two.
 - No camera or edit direction of any kind — no zooms, pans, pushes, cuts, framing or speed. That is the editor's call, not yours. You decide WHAT is on screen and WHEN; he decides how it moves.
 - No hedging, no alternatives, no "consider". Say the one thing to record.
 
@@ -98,10 +105,13 @@ The element type leads each instruction:
 
 [0:19 to 0:21] - Text (gradient): "A wall that costs you weeks"
 [0:24 to 0:32] - Screencast: Atoms landing page — scroll to the agent list, hover "Race mode".
+[0:44 to 1:22] - Screencast: Atoms — build an agent: name it, add the source, run it, read the result.
 [1:40 to 1:46] - Screencast: Atoms — run the "Race mode" agent. [4x — may need splitting]
 [2:10 to 2:14] - Stock footage: developer working late
 
-Note what is NOT in that example: nothing covers 0:00–0:24, 0:32–1:40 or 1:46–2:10. Those are the talking head, and the editor takes them from there.
+Note the 38-second line. It has four steps in it and it is still ONE screencast, because the narration walks through one continuous flow and the screen never changes purpose. A plan with none of these is wrong however good its other numbers look.
+
+Note also what is NOT in that example: nothing covers 0:00–0:24, 0:32–0:44, 1:22–1:40 or 1:46–2:10. Those are the talking head, and the editor takes them from there.
 
 Rules for the output:
 - Write a line ONLY for a screencast, stock footage or a title. Everything you leave uncovered is Jake on camera — that is deliberate, not a gap.
