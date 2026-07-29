@@ -161,6 +161,17 @@ import {
 import type { AuditInput, MarketProposal } from "../audit/types.js";
 import { ytAnalyticsConfigured, ytAnalyticsConnected } from "../audit/analytics.js";
 import { chatAboutAudit, refocusReport } from "../audit/chat.js";
+import {
+  saveMarket as saveAuditMarket,
+  listMarkets as listAuditMarkets,
+  deleteMarket as deleteAuditMarket,
+  recordApplied,
+  unrecordApplied,
+  listApplied,
+  recordCheck,
+} from "../db/auditMarkets.js";
+import { fetchVideoStats } from "../thumbnails/youtube.js";
+import { nanoid as auditNanoid } from "nanoid";
 import { updateRun as updateAuditRun } from "../db/auditRuns.js";
 import { PLANNER_MODEL } from "../planner/client.js";
 import {
@@ -3292,6 +3303,7 @@ const startAudit: Handler = async (input) => {
     mode: input?.mode === "teardown" ? "teardown" : "own",
     title: typeof input?.title === "string" ? input.title : undefined,
     angle: typeof input?.angle === "string" && input.angle.trim() ? input.angle.trim().slice(0, 1200) : undefined,
+    marketId: typeof input?.marketId === "string" && input.marketId.trim() ? input.marketId.trim() : undefined,
     autoApprove: Boolean(input?.autoApprove),
   };
   return runStartAudit(payload);
@@ -3339,6 +3351,119 @@ const clearAuditFocus: Handler = async (input) => {
   }
   updateAuditRun(runId, { findings: run.baseFindings, focus: null });
   return { cleared: true };
+};
+
+// ── saved markets ───────────────────────────────────────────────────────────
+// A market is a NAMED set of competitors, not a property of a channel: the same
+// channel audited against two markets is two different questions.
+
+const listAuditMarketsHandler: Handler = async () => ({ markets: listAuditMarkets() });
+
+const saveAuditMarketHandler: Handler = async (input) => {
+  const name = String(input?.name ?? "").trim();
+  if (!name) throw new ZiteError({ code: "BAD_REQUEST", message: "Give the market a name." });
+  const runId = String(input?.runId ?? "");
+  const run = runId ? getAuditRunRow(runId) : null;
+  const market = run?.approved ?? run?.proposal ?? null;
+  const competitors = Array.isArray(input?.competitors) ? input.competitors : market?.competitors;
+  if (!competitors?.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "There are no competitors to save." });
+  }
+  return {
+    market: saveAuditMarket({
+      id: String(input?.id ?? "").trim() || auditNanoid(),
+      name,
+      niche: String(input?.niche ?? market?.niche ?? name),
+      nicheDescription: market?.nicheDescription,
+      audience: market?.audience,
+      competitors: competitors.filter((c: any) => c?.include !== false),
+      discoveredFrom: run?.subject?.channelId ?? null,
+    }),
+  };
+};
+
+const deleteAuditMarketHandler: Handler = async (input) => ({
+  deleted: deleteAuditMarket(String(input?.id ?? "")),
+});
+
+// ── did the rename work? ────────────────────────────────────────────────────
+// The audit advised and never found out. Marking one applied captures the view
+// count at that moment; without that baseline a later check compares nothing.
+
+const markRenameApplied: Handler = async (input) => {
+  const runId = String(input?.runId ?? "");
+  const videoId = String(input?.videoId ?? "");
+  const run = getAuditRunRow(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
+  const video = run.videos.find((v) => v.videoId === videoId);
+  if (!video?.rename) throw new ZiteError({ code: "BAD_REQUEST", message: "That video has no proposed title." });
+
+  // The live count, not the one stored at audit time — the operator may be
+  // applying this days later, and the baseline has to be true when it is set.
+  let views = video.views;
+  try {
+    const stats = await fetchVideoStats([videoId]);
+    views = stats.get(videoId)?.views ?? views;
+  } catch {
+    // A stale baseline is still better than none; it is off by whatever the
+    // video gained since the audit, which the report shows anyway.
+  }
+
+  recordApplied({
+    runId,
+    videoId,
+    originalTitle: video.title,
+    proposedTitle: video.rename.proposed,
+    appliedAt: Date.now(),
+    viewsAtApply: views,
+    eraMedianAtApply: video.eraMedian,
+  });
+  return { applied: true, viewsAtApply: views };
+};
+
+const unmarkRenameApplied: Handler = async (input) => ({
+  removed: unrecordApplied(String(input?.runId ?? ""), String(input?.videoId ?? "")),
+});
+
+/**
+ * Re-check every applied rename and report what happened.
+ *
+ * Growth is reported against the video's own era median as well as in raw
+ * views, because a video that gained 2,000 views on a channel that has doubled
+ * since is not evidence the title did anything.
+ */
+const checkAppliedRenames: Handler = async (input) => {
+  const runId = String(input?.runId ?? "") || undefined;
+  const applied = listApplied(runId);
+  if (!applied.length) return { results: [] };
+
+  const ids = applied.map((a) => a.videoId);
+  let stats = new Map<string, { views: number }>();
+  try {
+    stats = (await fetchVideoStats(ids)) as any;
+  } catch (err: any) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: `Could not read view counts: ${err?.message || err}` });
+  }
+
+  const results = applied.map((a) => {
+    const nowViews = stats.get(a.videoId)?.views ?? null;
+    if (nowViews !== null) recordCheck(a.runId, a.videoId, nowViews);
+    const gained = nowViews === null ? null : nowViews - a.viewsAtApply;
+    const days = Math.max(1, Math.round((Date.now() - a.appliedAt) / 86_400_000));
+    return {
+      ...a,
+      viewsAtCheck: nowViews,
+      gained,
+      daysSince: days,
+      perDay: gained === null ? null : Math.round((gained / days) * 10) / 10,
+      // Against the era median it was measured in, so a growing channel does
+      // not make every rename look like a success.
+      vsEra: gained === null || !a.eraMedianAtApply ? null : Math.round((gained / a.eraMedianAtApply) * 100) / 100,
+      // Under two weeks is too soon to read anything into.
+      readable: days >= 14,
+    };
+  });
+  return { results };
 };
 
 const getAuditRun: Handler = async (input) => {
@@ -4085,6 +4210,12 @@ export const HANDLERS: Record<string, Handler> = {
   deleteAuditRun,
   auditChat,
   clearAuditFocus,
+  listAuditMarkets: listAuditMarketsHandler,
+  saveAuditMarket: saveAuditMarketHandler,
+  deleteAuditMarket: deleteAuditMarketHandler,
+  markRenameApplied,
+  unmarkRenameApplied,
+  checkAppliedRenames,
   // Engagement Manager (LAB tool — Phase 1: monitor)
   engageStatus,
   engageListInbox,

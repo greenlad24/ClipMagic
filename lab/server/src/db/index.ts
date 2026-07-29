@@ -319,6 +319,37 @@ CREATE TABLE IF NOT EXISTS audit_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_runs_created ON audit_runs(created_at);
 
+-- A named, reusable set of competitors. A market belongs to a SUBJECT, not to a
+-- channel: the same channel can be audited against two different markets and
+-- get different answers, which is the reason to keep them separate.
+CREATE TABLE IF NOT EXISTS audit_markets (
+  id               TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  niche            TEXT NOT NULL DEFAULT '',
+  niche_desc       TEXT,
+  audience         TEXT,
+  competitors_json TEXT NOT NULL,
+  discovered_from  TEXT,            -- channelId it was first found from
+  created_at       INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL
+);
+
+-- Proposed titles the operator actually applied, with the view count at that
+-- moment. That baseline is the whole point: without it a later check has
+-- nothing to compare against, which is why this only works going forward.
+CREATE TABLE IF NOT EXISTS audit_applied_renames (
+  run_id              TEXT NOT NULL,
+  video_id            TEXT NOT NULL,
+  original_title      TEXT NOT NULL,
+  proposed_title      TEXT NOT NULL,
+  applied_at          INTEGER NOT NULL,
+  views_at_apply      INTEGER NOT NULL,
+  era_median_at_apply INTEGER NOT NULL DEFAULT 0,
+  checked_at          INTEGER,
+  views_at_check      INTEGER,
+  PRIMARY KEY (run_id, video_id)
+);
+
 -- Video Planner: the UI fact sheet keyed by the narration it was built from, so
 -- re-planning the same video does not pay to research the same products twice.
 CREATE TABLE IF NOT EXISTS plan_research_cache (

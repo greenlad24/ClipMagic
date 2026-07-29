@@ -31,6 +31,12 @@ import {
   deleteAuditRun,
   auditChat,
   clearAuditFocus,
+  listAuditMarkets,
+  saveAuditMarket,
+  deleteAuditMarket,
+  markRenameApplied,
+  unmarkRenameApplied,
+  checkAppliedRenames,
 } from '../../web/src/shims/endpoints';
 import {
   VIZ_STYLE,
@@ -74,6 +80,8 @@ export default function ChannelAuditPage() {
   const [channel, setChannel] = useState('');
   const [mode, setMode] = useState<Mode>('own');
   const [angle, setAngle] = useState('');
+  const [markets, setMarkets] = useState<any[]>([]);
+  const [marketId, setMarketId] = useState('');
   const [runId, setRunId] = useState<string | null>(null);
   const [job, setJob] = useState<any>(null);
   const [run, setRun] = useState<any>(null);
@@ -88,6 +96,7 @@ export default function ChannelAuditPage() {
 
   useEffect(() => {
     auditStatus().then(setConfig).catch(() => setConfig(null));
+    listAuditMarkets().then((r: any) => setMarkets(r.markets || [])).catch(() => {});
     refreshList();
     return () => {
       if (poll.current) window.clearInterval(poll.current);
@@ -150,7 +159,12 @@ export default function ChannelAuditPage() {
     if (!channel.trim()) return setError('Paste a channel URL or @handle.');
     setBusy(true);
     try {
-      const { runId: id } = await startAudit({ channel: channel.trim(), mode, angle: angle.trim() || undefined });
+      const { runId: id } = await startAudit({
+        channel: channel.trim(),
+        mode,
+        angle: angle.trim() || undefined,
+        marketId: marketId || undefined,
+      });
       localStorage.setItem('audit.onboarded', '1');
       setShowHelp(false);
       setRun(null);
@@ -231,6 +245,26 @@ export default function ChannelAuditPage() {
               A catalogue is a history. If the channel has changed direction, say so here and the whole audit is
               angled to what you make now — the market it looks for, how it groups topics, the report and the plan.
               Without it, an old catalogue gets analysed as the channel it used to be.
+            </p>
+
+            <label className="mt-4 mb-1 block text-sm font-medium">Market</label>
+            <select
+              value={marketId}
+              onChange={(e) => setMarketId(e.target.value)}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+            >
+              <option value="">Research the market fresh (searches YouTube, then asks you to confirm)</option>
+              {markets.map((m: any) => (
+                <option key={m.id} value={m.id}>
+                  {m.name} — {m.competitors?.length ?? 0} competitors
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              A market is a named set of competitors, not a property of a channel — you can audit the same channel
+              against two different markets and get different answers. Reusing one skips the search and the
+              confirmation step, saves about 600 quota units, and keeps runs comparable because the comparison set
+              did not move.
             </p>
 
             <div className="mt-4 flex flex-wrap gap-2">
@@ -434,6 +468,8 @@ function MarketApproval({ run, onApproved }: { run: any; onApproved: () => void 
       </div>
 
       {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+
+      <SaveMarketRow runId={run.runId} market={market} defaultName={market.niche} />
 
       <button
         disabled={busy || kept === 0}
@@ -644,7 +680,11 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
         </Card>
       )}
 
+      {f.contentPatterns?.sampleSize ? <ContentCard c={f.contentPatterns} /> : null}
+
       {f.actionPlan?.categories?.length ? <ActionPlan plan={f.actionPlan} /> : null}
+
+      <AppliedRenames runId={run.runId} />
 
       {!!renames.length && (
         <Card title={`Proposed titles (${renames.length})`}>
@@ -663,6 +703,7 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
                 <div className="text-muted-foreground line-through">{v.title}</div>
                 <div className="font-medium">{v.rename.proposed}</div>
                 <p className="mt-1 text-xs text-muted-foreground">{v.rename.rationale}</p>
+                <ApplyButton runId={run.runId} videoId={v.videoId} />
                 {v.rename.modelledOn && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     Modelled on: “{v.rename.modelledOn.title}” ({v.rename.modelledOn.channelTitle},{' '}
@@ -1144,6 +1185,167 @@ function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
   );
 }
 
+/** Name and keep this competitor set so later runs can reuse it. */
+function SaveMarketRow({ runId, market, defaultName }: { runId: string; market: any; defaultName: string }) {
+  const [name, setName] = useState(defaultName || '');
+  const [saved, setSaved] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="mt-4 rounded-md border p-3">
+      <div className="mb-1 text-xs font-medium">Save this as a market</div>
+      <p className="mb-2 text-xs text-muted-foreground">
+        Reuse it on later runs — same competitors, no search, no confirmation step, and two runs stay comparable.
+      </p>
+      <div className="flex gap-2">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. AI tool reviews"
+          className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm"
+        />
+        <button
+          type="button"
+          disabled={busy || !name.trim()}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await saveAuditMarket({ runId, name: name.trim(), competitors: market.competitors });
+              setSaved(name.trim());
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="rounded-md border px-3 py-1.5 text-sm disabled:opacity-50"
+        >
+          Save
+        </button>
+      </div>
+      {saved && <p className="mt-2 text-xs text-[hsl(var(--chart-3))]">Saved as &ldquo;{saved}&rdquo;.</p>}
+    </div>
+  );
+}
+
+/**
+ * What the winners actually do, and what their viewers asked for.
+ *
+ * The only part of the audit that looks past the click. Viewer asks are the
+ * most directly useful thing in the whole report — they are video ideas that
+ * an audience has already said out loud it wants.
+ */
+function ContentCard({ c }: { c: any }) {
+  return (
+    <Card title="What the winning videos do">
+      <p className="mb-3 text-xs text-muted-foreground">
+        Read from the transcripts and comments of {c.sampleSize} over-performing videos — yours and the
+        market&apos;s. Titles and thumbnails explain the click; this is the part about why anyone stays.
+      </p>
+      {c.verdict && <p className="mb-3 text-sm">{c.verdict}</p>}
+
+      {!!c.hookTypes?.length && (
+        <>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">How they open</div>
+          <div className="mb-4 space-y-1">
+            {c.hookTypes.map((h: any, i: number) => (
+              <div key={i} className="rounded border px-3 py-2 text-sm">
+                <div className="flex items-center gap-3">
+                  <span className="flex-1">{h.type}</span>
+                  <span className="font-medium">{Math.round(h.share * 100)}%</span>
+                  <span className="text-xs text-muted-foreground">{h.count} videos</span>
+                </div>
+                {!!h.examples?.length && (
+                  <div className="mt-1 text-xs text-muted-foreground">e.g. {h.examples[0]}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!!c.viewerAsks?.length && (
+        <>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">
+            What viewers asked for and did not get
+          </div>
+          <ul className="mb-4 list-inside list-disc space-y-1 text-sm">
+            {c.viewerAsks.map((a: string, i: number) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {!!c.praised?.length && (
+        <>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">What they praised</div>
+          <ul className="list-inside list-disc space-y-1 text-sm">
+            {c.praised.map((a: string, i: number) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Did the renames work?
+ *
+ * The audit used to advise and never find out. Growth is shown against the
+ * video's own era median as well as in raw views, because on a growing channel
+ * every video gains and that would make every rename look like a success.
+ */
+function AppliedRenames({ runId }: { runId: string }) {
+  const [results, setResults] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function check() {
+    setBusy(true);
+    try {
+      const r: any = await checkAppliedRenames({ runId });
+      setResults(r.results || []);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card title="Did the renames work?">
+      <p className="mb-3 text-xs text-muted-foreground">
+        Mark a proposed title as applied and this records the view count at that moment — the baseline everything
+        later is measured against. It only works going forward: without that snapshot there is nothing to compare.
+      </p>
+      <button type="button" onClick={check} disabled={busy} className="rounded-md border px-3 py-1.5 text-sm">
+        {busy ? 'Checking…' : 'Check the ones I applied'}
+      </button>
+
+      {results && !results.length && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          Nothing marked as applied yet. Use &ldquo;I applied this&rdquo; on a proposed title below.
+        </p>
+      )}
+
+      {!!results?.length && (
+        <div className="mt-3 space-y-2">
+          {results.map((r: any) => (
+            <div key={r.videoId} className="rounded border p-3 text-sm">
+              <div className="font-medium">{r.proposedTitle}</div>
+              <div className="text-xs text-muted-foreground line-through">{r.originalTitle}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs">
+                <span>{r.daysSince}d since applied</span>
+                {r.gained !== null && <span className="font-medium">+{r.gained.toLocaleString()} views</span>}
+                {r.perDay !== null && <span>{r.perDay}/day</span>}
+                {r.vsEra !== null && <span>{r.vsEra}x its era median</span>}
+                {!r.readable && <span className="text-muted-foreground">too soon to read</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 /**
  * How to become the best channel in each category.
  *
@@ -1218,6 +1420,42 @@ function PlanList({
         ))}
       </List>
     </div>
+  );
+}
+
+function ApplyButton({ runId, videoId }: { runId: string; videoId: string }) {
+  const [state, setState] = useState<'idle' | 'busy' | 'done'>('idle');
+  if (state === 'done') {
+    return (
+      <button
+        type="button"
+        onClick={async () => {
+          await unmarkRenameApplied({ runId, videoId });
+          setState('idle');
+        }}
+        className="mt-2 text-xs text-[hsl(var(--chart-3))] underline"
+      >
+        Marked as applied — undo
+      </button>
+    );
+  }
+  return (
+    <button
+      type="button"
+      disabled={state === 'busy'}
+      onClick={async () => {
+        setState('busy');
+        try {
+          await markRenameApplied({ runId, videoId });
+          setState('done');
+        } catch {
+          setState('idle');
+        }
+      }}
+      className="mt-2 rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+    >
+      {state === 'busy' ? 'Recording…' : 'I applied this'}
+    </button>
   );
 }
 

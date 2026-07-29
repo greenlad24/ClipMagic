@@ -125,7 +125,11 @@ export type CallPurpose =
   | "audit-chat"
   // Channel Audit: the closing action plan — how to become the best channel in
   // each category, grounded in what was measured (director tier).
-  | "audit-plan";
+  | "audit-plan"
+  // Channel Audit: reads competitor transcripts + comments to extract hooks,
+  // structure and what viewers asked for. FAST tier — extraction, not judgement,
+  // across thirty videos a run.
+  | "audit-content";
 
 export interface AiCallRecord {
   provider: "anthropic" | "groq" | "openai";

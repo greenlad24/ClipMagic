@@ -628,6 +628,14 @@ export const auditChat = endpoint<
 >("auditChat");
 /** Undo a focus, restoring the whole-catalogue report. */
 export const clearAuditFocus = endpoint<{ runId: string }, { cleared: boolean; reason?: string }>("clearAuditFocus");
+/** Named, reusable competitor sets — switchable per run, even for one channel. */
+export const listAuditMarkets = endpoint<void, { markets: any[] }>("listAuditMarkets");
+export const saveAuditMarket = endpoint<{ runId?: string; name: string; id?: string; niche?: string; competitors?: any[] }, { market: any }>("saveAuditMarket");
+export const deleteAuditMarket = endpoint<{ id: string }, { deleted: boolean }>("deleteAuditMarket");
+/** Did the rename work? Marking one applied captures the baseline it is judged against. */
+export const markRenameApplied = endpoint<{ runId: string; videoId: string }, { applied: boolean; viewsAtApply: number }>("markRenameApplied");
+export const unmarkRenameApplied = endpoint<{ runId: string; videoId: string }, { removed: boolean }>("unmarkRenameApplied");
+export const checkAppliedRenames = endpoint<{ runId?: string }, { results: any[] }>("checkAppliedRenames");
 export const getPlanRun = endpoint<{ runId: string }, PlanRunResult>("getPlanRun");
 export const listPlanRuns = endpoint<Record<string, never>, { runs: PlanRunListItem[] }>("listPlanRuns");
 export const deletePlanRun = endpoint<{ runId: string }, { ok: true }>("deletePlanRun");

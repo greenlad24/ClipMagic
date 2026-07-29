@@ -18,6 +18,8 @@ import { nanoid } from "nanoid";
 import { ingestChannel, ingestCompetitors, ChannelNotFoundError } from "./ingest.js";
 import { discoverCompetitors } from "./discover.js";
 import { fetchPaidViews, ytAnalyticsConnected } from "./analytics.js";
+import { gatherContent, readContent, summariseContent, transcriptsAvailable } from "./content.js";
+import { getMarket } from "../db/auditMarkets.js";
 import { fetchThumbnails } from "./images.js";
 import { proposeMarket, pickCompetitors, readThumbnails, clusterTopics, proposeRenames, writeReport, writeActionPlan, THUMBNAIL_BATCH } from "./ai.js";
 import {
@@ -48,6 +50,10 @@ const RENAME_BATCH = 15;
 
 /** Competitor videos ingested each — enough for outliers without paging forever. */
 const COMPETITOR_MAX_VIDEOS = 300;
+
+/** How many videos get their transcript and comments read, per side. */
+const CONTENT_MARKET = 30;
+const CONTENT_OWN = 10;
 
 const live = new Map<string, AuditJobSnapshot>();
 
@@ -98,6 +104,28 @@ export function startAudit(input: AuditInput): { runId: string } {
       const { channel, videos, quotaUnits } = await ingestChannel(input.channel, { paidByVideo });
       const withFeatures = videos.map((v) => ({ ...v, titleFeatures: titleFeatures(v.title) }));
       updateRun(runId, { subject: channel, videos: withFeatures, quotaUnits, title: input.title || channel.title });
+
+      // ── a saved market skips discovery entirely ───────────────────────────
+      // A market is a named set of competitors, reusable across runs and across
+      // channels. Reusing one costs no search quota, needs no approval, and
+      // keeps two runs comparable because the comparison set did not move.
+      if (input.marketId) {
+        const saved = getMarket(input.marketId);
+        if (saved) {
+          const proposal = {
+            niche: saved.niche,
+            nicheDescription: saved.nicheDescription ?? "",
+            subjectSummary: "",
+            audience: saved.audience ?? "",
+            competitors: saved.competitors,
+          };
+          updateRun(runId, { proposal, approved: proposal, status: "scanning" });
+          console.log(`[audit] ${runId}: using saved market "${saved.name}" (${saved.competitors.length} competitors)`);
+          await runRest(runId, proposal);
+          return;
+        }
+        console.warn(`[audit] ${runId}: saved market ${input.marketId} is gone — discovering instead`);
+      }
 
       // ── propose the market ────────────────────────────────────────────────
       setStage(runId, "proposing", "Working out the market", 0.12);
@@ -209,6 +237,42 @@ async function runRest(runId: string, market: MarketProposal) {
   const videosWithThumbs: AuditVideo[] = videos.map((v) => ({ ...v, thumbnail: attributes.get(v.videoId) }));
   const marketWithThumbs: AuditVideo[] = marketVideos.map((v) => ({ ...v, thumbnail: attributes.get(v.videoId) }));
   updateRun(runId, { videos: videosWithThumbs, marketVideos: marketWithThumbs });
+
+  // ── what the winners actually do, and what their viewers said ───────────
+  // Titles and thumbnails explain the click. This is the only pass that looks
+  // at why anyone stays, and at what the audience asked for and did not get.
+  let contentPatterns: AuditFindings["contentPatterns"] = null;
+  try {
+    setStage(runId, "analysing", "Reading the winners' transcripts and comments", 0.55);
+    const targets = [
+      ...outliers(marketWithThumbs, "long", 1.5).slice(0, CONTENT_MARKET),
+      ...outliers(videosWithThumbs, "long", 1.5).slice(0, CONTENT_OWN),
+    ].map((v) => ({
+      videoId: v.videoId,
+      title: v.title,
+      channelTitle: competitorNames.get(v.channelId) ?? subject.title,
+      views: v.views,
+    }));
+
+    if (targets.length) {
+      const { items, quotaUnits: cUnits, transcripts } = await gatherContent(targets);
+      quotaUnits += cUnits;
+      const reads = await readContent(items);
+      console.log(
+        `[audit] ${runId}: content — ${transcripts}/${targets.length} transcripts` +
+          `${transcriptsAvailable() ? "" : " (no Apify token: comments only)"}, ${reads.size} read`,
+      );
+      if (reads.size) {
+        const sum = summariseContent(reads, new Map());
+        contentPatterns = { ...sum, verdict: "" };
+      }
+      updateRun(runId, { quotaUnits });
+    }
+  } catch (err: any) {
+    // Content is the newest and least essential half; losing it must not cost
+    // an audit that already spent its quota on the market scan.
+    console.warn(`[audit] ${runId}: content pass failed:`, err?.message || err);
+  }
 
   // ── the computed findings ───────────────────────────────────────────────
   setStage(runId, "analysing", "Working out what wins", 0.62);
@@ -333,6 +397,7 @@ async function runRest(runId: string, market: MarketProposal) {
     },
     growth: written.growth,
     summary: written.summary,
+    contentPatterns,
     actionPlan: null,
   };
 

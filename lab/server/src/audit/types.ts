@@ -51,6 +51,30 @@ export interface AuditInput {
    * unattended wrong market silently wastes the day's quota.
    */
   autoApprove?: boolean;
+  /**
+   * Run against a SAVED market instead of discovering one.
+   *
+   * A market is a named set of competitors, not a property of a channel: the
+   * same channel can be audited against "AI automation" and against "AI tool
+   * reviews" and get different answers, which is the point. Reusing one skips
+   * the search (~600 quota units) and the approval step, and makes two runs
+   * strictly comparable because the comparison set did not move.
+   */
+  marketId?: string;
+}
+
+/** A named, reusable set of competitors. */
+export interface SavedMarket {
+  id: string;
+  name: string;
+  niche: string;
+  nicheDescription?: string;
+  audience?: string;
+  competitors: ProposedCompetitor[];
+  /** The channel it was first discovered from — provenance, not ownership. */
+  discoveredFrom?: string | null;
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** A channel as the audit sees it — the subject or a competitor. */
@@ -173,6 +197,20 @@ export interface AuditFindings {
   titles: TitleFindings;
   thumbnails: ThumbnailFindings;
   content: ContentFindings;
+  /**
+   * What the market's best videos DO, from their transcripts, and what their
+   * viewers said, from their comments. Titles and thumbnails explain the click;
+   * this is the only part of the audit that looks at why anyone stays.
+   */
+  contentPatterns?: {
+    hookTypes: { type: string; count: number; share: number; examples: string[] }[];
+    payoff: { at: string; count: number }[];
+    /** What commenters wanted and did not get — direct video ideas. */
+    viewerAsks: string[];
+    praised: string[];
+    sampleSize: number;
+    verdict: string;
+  } | null;
   position: MarketPosition;
   growth: GrowthArea[];
   /**
@@ -324,6 +362,29 @@ export interface AuditChatMessage {
   at: number;
   /** Set on the assistant turn that re-aimed the report. */
   refocused?: { note: string; videoCount: number };
+}
+
+/**
+ * A proposed title the operator actually applied, and what happened next.
+ *
+ * The audit advised and never found out whether it was right. Recording the
+ * view count AT THE MOMENT OF APPLYING is what makes the later check mean
+ * anything — without that baseline there is nothing to compare against, which
+ * is also why this can only work going forward and never retroactively.
+ */
+export interface AppliedRename {
+  runId: string;
+  videoId: string;
+  originalTitle: string;
+  proposedTitle: string;
+  appliedAt: number;
+  /** Views at the moment it was applied — the baseline. */
+  viewsAtApply: number;
+  /** The channel's median views for that video's era, so growth is comparable. */
+  eraMedianAtApply: number;
+  /** Filled in on a later check. */
+  checkedAt?: number | null;
+  viewsAtCheck?: number | null;
 }
 
 /** One API call's tokens and price, so a run's bill can be decomposed. */
