@@ -15,6 +15,17 @@ import { aiConfig } from "../ai/config.js";
 const API = "https://api.anthropic.com/v1/messages";
 const VERSION = "2023-06-01";
 
+/**
+ * The one place the planner's model is named. It was written out at each call
+ * site and the status endpoint reported a fourth, stale value ("claude-opus-5")
+ * long after the switch to 4.8 — so the tool told you it was running a model it
+ * was not. Every caller reads this.
+ *
+ * Note 4.8 needs `thinking` set EXPLICITLY; omitting it means no thinking at
+ * all, unlike Opus 5 where it is on by default.
+ */
+export const PLANNER_MODEL = "claude-opus-4-8";
+
 /** Claude Opus 4.8 list pricing, USD per million tokens (same rates as Opus 5). */
 const PRICE_IN = 5 / 1_000_000;
 const PRICE_OUT = 25 / 1_000_000;

@@ -13,7 +13,7 @@ import { nanoid } from "nanoid";
 import { ingestNarration } from "./ingest.js";
 import { buildBeatMap } from "./narration.js";
 import { researchProducts } from "./research.js";
-import { anthropicStream } from "./client.js";
+import { anthropicStream, PLANNER_MODEL } from "./client.js";
 import { PLANNER_SYSTEM, buildPlannerUser, buildRepairUser, renderBeats } from "./prompt.js";
 import { parsePlan, measurePlan, planDeviations, planPenalty } from "./planlib.js";
 import { createRun, updateRun, getRun } from "../db/planRuns.js";
@@ -102,7 +102,7 @@ export function startPlan(input: PlanInput): { runId: string } {
 
         const res = await anthropicStream({
           body: {
-            model: "claude-opus-4-8",
+            model: PLANNER_MODEL,
             // Thinking is billed as output and spent before any text — a 32000
             // budget once went entirely on thinking and truncated the plan.
             max_tokens: 96000,

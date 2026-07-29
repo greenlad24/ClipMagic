@@ -15,7 +15,7 @@
  * there is no tool loop to run, but a long search turn can stop with
  * `pause_turn`, which we resume.
  */
-import { anthropicRequest } from "./client.js";
+import { anthropicRequest, PLANNER_MODEL } from "./client.js";
 
 const SYSTEM = `You research the software products discussed in a video narration so that a visual planner can write ACCURATE screencast instructions.
 
@@ -79,7 +79,7 @@ Research the products discussed and produce the UI fact sheet.`;
   for (let guard = 0; guard < 7; guard++) {
     const res = await anthropicRequest({
       body: {
-        model: "claude-opus-4-8",
+        model: PLANNER_MODEL,
         max_tokens: 32000,
         thinking: { type: "adaptive" },
         output_config: { effort: "high" },

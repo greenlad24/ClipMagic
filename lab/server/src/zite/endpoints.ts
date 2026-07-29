@@ -152,6 +152,7 @@ import {
 } from "../db/scriptRuns.js";
 import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
 import { startPlan as runStartPlan, planJobStatus as getPlanSnapshot } from "../planner/run.js";
+import { PLANNER_MODEL } from "../planner/client.js";
 import {
   getRun as getPlanRunDb,
   listRuns as listPlanRunsDb,
@@ -3199,7 +3200,7 @@ const deleteScriptRun: Handler = async (input) => {
 const plannerStatus: Handler = async () => ({
   anthropicConfigured: Boolean((aiConfig.anthropicApiKey || process.env.ANTHROPIC_API_KEY || "").trim()),
   groqConfigured: Boolean(aiConfig.groqApiKey),
-  model: "claude-opus-5",
+  model: PLANNER_MODEL,
 });
 
 const startPlan: Handler = async (input) => {
