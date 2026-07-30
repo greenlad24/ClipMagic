@@ -68,6 +68,44 @@ export interface ElementDescriptor {
   neededHover: boolean;
 }
 
+/**
+ * Turn a fraction of the displayed image into a real viewport pixel.
+ *
+ * The console shows the frame at whatever size fits on screen, so the UI sends
+ * FRACTIONS and the server scales them. Sending pixels would mean every click
+ * landed somewhere else the moment the panel was a different width — the same
+ * reason the engagement console works this way.
+ */
+async function toPixels(xFrac: number, yFrac: number): Promise<{ x: number; y: number }> {
+  const size = await withSkoolPage(async (page) =>
+    page.evaluate(() => ({
+      w: (globalThis as any).innerWidth ?? 0,
+      h: (globalThis as any).innerHeight ?? 0,
+    })),
+  );
+  const w = size?.w || 1280;
+  const h = size?.h || 900;
+  return {
+    x: Math.max(0, Math.min(w - 1, Math.round(xFrac * w))),
+    y: Math.max(0, Math.min(h - 1, Math.round(yFrac * h))),
+  };
+}
+
+/** Fractional variants — what the UI actually calls. */
+export async function hoverFrac(xFrac: number, yFrac: number): Promise<ConsoleFrame> {
+  const { x, y } = await toPixels(xFrac, yFrac);
+  return hover(x, y);
+}
+
+export async function clickFrac(
+  xFrac: number,
+  yFrac: number,
+  opts: { describe?: boolean } = {},
+): Promise<{ frame: ConsoleFrame; descriptor: ElementDescriptor | null }> {
+  const { x, y } = await toPixels(xFrac, yFrac);
+  return clickAt(x, y, opts);
+}
+
 export async function frame(): Promise<ConsoleFrame> {
   const out = await withSkoolPage(async (page) => {
     const image = await screenshotBase64(page, 70);

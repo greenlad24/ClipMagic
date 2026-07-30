@@ -11,14 +11,30 @@
  * whatever this establishes, and building any of it before a real session
  * exists would mean guessing at Skool's DOM.
  */
-import { useCallback, useEffect, useState } from 'react';
-import { BookOpen, Check, ChevronRight, Cookie, ExternalLink, Loader2, RefreshCw, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  BookOpen, Check, ChevronRight, Cookie, ExternalLink, Loader2, MousePointer,
+  RefreshCw, Save, Trash2, X,
+} from 'lucide-react';
 import {
   skoolStatus,
   skoolCheckLogin,
   skoolImportCookies,
   skoolSaveSettings,
+  skoolConsoleFrame,
+  skoolConsoleNavigate,
+  skoolConsoleHover,
+  skoolConsoleClick,
+  skoolConsoleType,
+  skoolConsoleKey,
+  skoolConsoleScroll,
+  skoolSaveRecipe,
+  skoolListRecipes,
+  skoolDeleteRecipe,
   type SkoolStatus,
+  type SkoolConsoleFrame,
+  type SkoolRecipe,
+  type SkoolRecipeStep,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 
@@ -273,16 +289,297 @@ export default function SkoolManagerPage() {
           </h2>
           <p className="text-sm text-muted-foreground">
             {connected
-              ? "Not built yet. Now that there's a live session, the next step is reading your real classroom — its courses, lessons and ordering — so the planner works against what's actually there rather than an assumed shape."
-              : 'Connect Skool above first. The classroom reader, the course planner and the writing pass all depend on a live session, and building them against a guessed page structure would mean rewriting them.'}
+              ? "Skool's editing controls can't be found by reading the page — they're plain divs that don't exist until you hover them. So show it once: click through an action below and it records what you clicked."
+              : 'Connect Skool above first. The console drives the same logged-in browser, so there is nothing to show until a session exists.'}
           </p>
+          {connected && <TeachConsole />}
           <div className="mt-3 flex items-center gap-1 text-xs text-muted-foreground">
             <ChevronRight className="h-3.5 w-3.5" />
-            Nothing here writes to Skool. When it does, it'll show you the plan first.
+            Recording only watches what you do. Nothing is written to Skool except the clicks you make yourself.
           </div>
         </section>
       </div>
     </Layout>
+  );
+}
+
+/**
+ * The teach console.
+ *
+ * A live view of the server's Skool browser. The operator performs an action
+ * once; each click is recorded as an element DESCRIPTOR — what was clicked,
+ * not where — because coordinates stop being true the moment a card moves or
+ * a list grows.
+ *
+ * Positions are sent as FRACTIONS of the displayed image so the panel can be
+ * any size; the server scales them to the real viewport.
+ */
+function TeachConsole() {
+  const [frame, setFrame] = useState<SkoolConsoleFrame | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<'browse' | 'record'>('browse');
+  // Hover is its own action in Skool: the per-card menus do not exist in the
+  // page until the pointer is over the card, so a recipe has to be able to say
+  // "hover this first".
+  const [tool, setTool] = useState<'click' | 'hover'>('click');
+  const [steps, setSteps] = useState<SkoolRecipeStep[]>([]);
+  const [recipeName, setRecipeName] = useState('');
+  const [recipes, setRecipes] = useState<SkoolRecipe[]>([]);
+  const [typing, setTyping] = useState('');
+  const [url, setUrl] = useState('');
+  const imgRef = useRef<HTMLImageElement | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      setFrame((await skoolConsoleFrame()).frame);
+    } catch {
+      /* keep the last frame — a dropped poll is not worth blanking the view */
+    }
+  }, []);
+
+  const loadRecipes = useCallback(async () => {
+    try {
+      setRecipes((await skoolListRecipes()).recipes);
+    } catch {
+      /* non-fatal */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    void loadRecipes();
+  }, [refresh, loadRecipes]);
+
+  async function act(fn: () => Promise<{ frame: SkoolConsoleFrame }>) {
+    setBusy(true);
+    try {
+      setFrame((await fn()).frame);
+    } catch {
+      /* leave the previous frame up */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const onImageClick = async (e: React.MouseEvent<HTMLImageElement>) => {
+    if (!imgRef.current || busy) return;
+    const rect = imgRef.current.getBoundingClientRect();
+    const xFrac = (e.clientX - rect.left) / rect.width;
+    const yFrac = (e.clientY - rect.top) / rect.height;
+
+    if (tool === 'hover') {
+      await act(() => skoolConsoleHover({ xFrac, yFrac }));
+      if (mode === 'record') {
+        setSteps((s) => [...s, { kind: 'hover', label: 'Hover', target: undefined }]);
+      }
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const out = await skoolConsoleClick({ xFrac, yFrac, describe: mode === 'record' });
+      setFrame(out.frame);
+      if (mode === 'record') {
+        // A click whose target could not be described is recorded WITHOUT a
+        // target rather than dropped — a silently missing step would replay as
+        // a recipe that skips an action and looks like it worked.
+        setSteps((s) => [
+          ...s,
+          {
+            kind: 'click',
+            label: out.descriptor?.text || out.descriptor?.ariaLabel || out.descriptor?.tag || 'Click',
+            target: out.descriptor ?? undefined,
+          },
+        ]);
+      }
+    } catch {
+      /* leave the frame */
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    const name = recipeName.trim();
+    if (!name || steps.length === 0) return;
+    try {
+      await skoolSaveRecipe({ name, steps });
+      setSteps([]);
+      setRecipeName('');
+      await loadRecipes();
+    } catch {
+      /* the button stays available to retry */
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && url.trim()) void act(() => skoolConsoleNavigate({ url: url.trim() }));
+          }}
+          placeholder="https://www.skool.com/…  (Enter to go)"
+          className="min-w-[18rem] flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs"
+        />
+        <button onClick={() => void refresh()} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+          <RefreshCw className="mr-1 inline h-3 w-3" />Refresh
+        </button>
+        <div className="flex overflow-hidden rounded-md border border-border text-xs">
+          {(['browse', 'record'] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`px-2 py-1 ${mode === m ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            >
+              {m === 'browse' ? 'Browse' : 'Record'}
+            </button>
+          ))}
+        </div>
+        <div className="flex overflow-hidden rounded-md border border-border text-xs">
+          {(['click', 'hover'] as const).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTool(t)}
+              className={`px-2 py-1 ${tool === t ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+            >
+              {t === 'click' ? 'Click' : 'Hover'}
+            </button>
+          ))}
+        </div>
+        {busy && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+        <span className="ml-auto max-w-[40%] truncate text-xs text-muted-foreground">{frame?.url ?? ''}</span>
+      </div>
+
+      <div className="overflow-auto rounded-lg border border-border bg-black/40 p-2">
+        {frame?.image ? (
+          <img
+            ref={imgRef}
+            src={`data:image/jpeg;base64,${frame.image}`}
+            onClick={onImageClick}
+            onDragStart={(e) => e.preventDefault()}
+            alt="Skool browser"
+            className="mx-auto max-w-full cursor-crosshair select-none rounded-md"
+          />
+        ) : (
+          <div className="grid h-64 place-items-center text-sm text-muted-foreground">
+            {frame?.error ?? 'Waiting for the browser…'}
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={typing}
+          onChange={(e) => setTyping(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && typing) {
+              const text = typing;
+              void act(() => skoolConsoleType({ text })).then(() => {
+                if (mode === 'record') {
+                  setSteps((s) => [...s, { kind: 'type', label: `Type "${text}"`, text }]);
+                }
+                setTyping('');
+              });
+            }
+          }}
+          placeholder="Click a field above, then type here and press Enter"
+          className="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs"
+        />
+        {(['Enter', 'Escape', 'Tab'] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => {
+              void act(() => skoolConsoleKey({ key: k }));
+              if (mode === 'record') setSteps((s) => [...s, { kind: 'key', label: k, value: k }]);
+            }}
+            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+          >
+            {k}
+          </button>
+        ))}
+        <button onClick={() => void act(() => skoolConsoleScroll({ dy: -400 }))} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+          Scroll ↑
+        </button>
+        <button onClick={() => void act(() => skoolConsoleScroll({ dy: 400 }))} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+          Scroll ↓
+        </button>
+      </div>
+
+      {mode === 'record' && (
+        <div className="rounded-lg border border-border p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <MousePointer className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="text-xs font-semibold">Recording — {steps.length} step{steps.length === 1 ? '' : 's'}</span>
+            <input
+              value={recipeName}
+              onChange={(e) => setRecipeName(e.target.value)}
+              placeholder="name this action, e.g. newCourse"
+              className="ml-auto rounded-md border border-border bg-background px-2 py-1 text-xs"
+            />
+            <button
+              onClick={() => void save()}
+              disabled={!recipeName.trim() || steps.length === 0}
+              className="rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-40"
+            >
+              <Save className="mr-1 inline h-3 w-3" />Save
+            </button>
+            <button onClick={() => setSteps([])} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
+              Clear
+            </button>
+          </div>
+          <ol className="space-y-1 text-xs text-muted-foreground">
+            {steps.map((st, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span className="w-5 text-right">{i + 1}.</span>
+                <span className="rounded bg-muted px-1.5 py-0.5">{st.kind}</span>
+                <span className="truncate">{st.label}</span>
+                {/* The handle a step will replay on. A step with only a class
+                    is a step about to break when Skool redeploys. */}
+                {st.target && (
+                  <span className="ml-auto shrink-0 text-[10px] opacity-60">
+                    {st.target.testId
+                      ? `testid=${st.target.testId}`
+                      : st.target.text
+                        ? 'by text'
+                        : st.target.classes[0]
+                          ? `class=${st.target.classes[0]}`
+                          : 'by position — fragile'}
+                  </span>
+                )}
+              </li>
+            ))}
+            {steps.length === 0 && <li className="pl-7">Click something in the view above to record a step.</li>}
+          </ol>
+        </div>
+      )}
+
+      {recipes.length > 0 && (
+        <div className="rounded-lg border border-border p-3">
+          <div className="mb-2 text-xs font-semibold">Taught actions</div>
+          <ul className="space-y-1 text-xs text-muted-foreground">
+            {recipes.map((r) => (
+              <li key={r.name} className="flex items-center gap-2">
+                <Check className="h-3 w-3 text-[hsl(var(--chart-3))]" />
+                <span className="font-mono">{r.name}</span>
+                <span className="opacity-60">{r.steps.length} steps</span>
+                <button
+                  onClick={async () => {
+                    await skoolDeleteRecipe({ name: r.name }).catch(() => undefined);
+                    await loadRecipes();
+                  }}
+                  className="ml-auto opacity-60 hover:opacity-100"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 

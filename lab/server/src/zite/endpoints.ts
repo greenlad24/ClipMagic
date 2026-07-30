@@ -4314,16 +4314,17 @@ const skoolConsoleNavigate: Handler = async (input) => ({
   frame: await skoolConsole.navigate(String(input?.url ?? "")),
 });
 
-const skoolConsoleHover: Handler = async (input) => ({
-  frame: await skoolConsole.hover(Number(input?.x ?? 0), Number(input?.y ?? 0)),
-});
+const skoolConsoleHover: Handler = async (input) =>
+  input?.xFrac !== undefined
+    ? { frame: await skoolConsole.hoverFrac(Number(input.xFrac), Number(input.yFrac ?? 0)) }
+    : { frame: await skoolConsole.hover(Number(input?.x ?? 0), Number(input?.y ?? 0)) };
 
 /** Click, and — while teaching — report what was under the pointer. */
 const skoolConsoleClick: Handler = async (input) => {
-  const result = await skoolConsole.clickAt(Number(input?.x ?? 0), Number(input?.y ?? 0), {
-    describe: input?.describe === true,
-  });
-  return result;
+  const describe = input?.describe === true;
+  return input?.xFrac !== undefined
+    ? skoolConsole.clickFrac(Number(input.xFrac), Number(input.yFrac ?? 0), { describe })
+    : skoolConsole.clickAt(Number(input?.x ?? 0), Number(input?.y ?? 0), { describe });
 };
 
 const skoolConsoleType: Handler = async (input) => ({

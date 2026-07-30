@@ -717,6 +717,69 @@ export const skoolGetInventory = endpoint<
   { inventory: SkoolInventoryRow | null }
 >("skoolGetInventory");
 
+/* ── Teach console ────────────────────────────────────────────────────────
+   Skool's editing controls cannot be found by querying the DOM — they are
+   plain divs that don't exist until hovered. So the operator demonstrates each
+   action once here and the server records WHAT was clicked, as durable element
+   descriptors rather than coordinates.
+   Positions travel as FRACTIONS of the displayed image; the server scales them
+   to the real viewport, so the panel can be any size.                        */
+export interface SkoolConsoleFrame {
+  image: string | null;
+  url: string | null;
+  title: string | null;
+  width: number;
+  height: number;
+  error: string | null;
+}
+export interface SkoolDescriptor {
+  tag: string;
+  text: string;
+  testId: string | null;
+  ariaLabel: string | null;
+  role: string | null;
+  classes: string[];
+  nth: number;
+  path: string;
+  neededHover: boolean;
+}
+export const skoolConsoleFrame = endpoint<void, { frame: SkoolConsoleFrame }>("skoolConsoleFrame");
+export const skoolConsoleNavigate =
+  endpoint<{ url: string }, { frame: SkoolConsoleFrame }>("skoolConsoleNavigate");
+export const skoolConsoleHover =
+  endpoint<{ xFrac: number; yFrac: number }, { frame: SkoolConsoleFrame }>("skoolConsoleHover");
+export const skoolConsoleClick = endpoint<
+  { xFrac: number; yFrac: number; describe?: boolean },
+  { frame: SkoolConsoleFrame; descriptor: SkoolDescriptor | null }
+>("skoolConsoleClick");
+export const skoolConsoleType =
+  endpoint<{ text: string }, { frame: SkoolConsoleFrame }>("skoolConsoleType");
+export const skoolConsoleKey =
+  endpoint<{ key: string }, { frame: SkoolConsoleFrame }>("skoolConsoleKey");
+export const skoolConsoleScroll =
+  endpoint<{ dy: number }, { frame: SkoolConsoleFrame }>("skoolConsoleScroll");
+
+export interface SkoolRecipeStep {
+  kind: "hover" | "click" | "type" | "key" | "navigate" | "wait";
+  label: string;
+  target?: SkoolDescriptor;
+  text?: string;
+  value?: string;
+  ms?: number;
+}
+export interface SkoolRecipe {
+  name: string;
+  description: string;
+  steps: SkoolRecipeStep[];
+  updatedAt: number;
+}
+export const skoolSaveRecipe = endpoint<
+  { name: string; description?: string; steps: SkoolRecipeStep[] },
+  { recipe: SkoolRecipe | null }
+>("skoolSaveRecipe");
+export const skoolListRecipes = endpoint<void, { recipes: SkoolRecipe[] }>("skoolListRecipes");
+export const skoolDeleteRecipe = endpoint<{ name: string }, { deleted: boolean }>("skoolDeleteRecipe");
+
 export const skoolCloseBrowser = endpoint<void, { closed: boolean }>("skoolCloseBrowser");
 export const skoolSaveSettings = endpoint<
   { communityUrl?: string; roadmapMd?: string },
