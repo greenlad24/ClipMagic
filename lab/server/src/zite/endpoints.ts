@@ -192,6 +192,7 @@ import {
 import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom.js";
 import { probeSkool } from "../skool/probe.js";
 import * as skoolConsole from "../skool/console.js";
+import * as skoolActions from "../skool/actions.js";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
 import { runPlan } from "../skool/planRun.js";
 import {
@@ -4344,6 +4345,54 @@ const skoolConsoleScroll: Handler = async (input) => ({
   frame: await skoolConsole.scrollBy(Number(input?.dy ?? 0)),
 });
 
+/**
+ * Run ONE learned action against the live classroom.
+ *
+ * Deliberately one action per call, not a batch: the first writes to a real
+ * community should be individually invoked and individually inspected, and a
+ * batch that fails halfway leaves a classroom in a state nobody chose.
+ */
+const skoolRunAction: Handler = async (input) => {
+  const action = String(input?.action ?? "");
+  const p = input?.params ?? {};
+  const run = async (): Promise<{ ok: boolean; detail: string }> => {
+    switch (action) {
+      case "openMenuFor":
+        return skoolActions.openMenuFor(String(p.title ?? ""));
+      case "chooseMenuItem":
+        return skoolActions.chooseMenuItem(String(p.label ?? ""));
+      case "fillField":
+        return skoolActions.fillField(String(p.placeholder ?? ""), String(p.text ?? ""));
+      case "clickButton":
+        return skoolActions.clickButton(String(p.label ?? ""));
+      case "editCourseSettings":
+        return skoolActions.editCourseSettings(String(p.title ?? ""), {
+          name: p.name ? String(p.name) : undefined,
+          description: p.description ? String(p.description) : undefined,
+        });
+      case "addFolder":
+        return skoolActions.addFolder(String(p.name ?? ""));
+      case "addPage":
+        return skoolActions.addPage({
+          title: String(p.title ?? ""),
+          videoUrl: p.videoUrl ? String(p.videoUrl) : undefined,
+          body: p.body ? String(p.body) : undefined,
+        });
+      case "editPageContent":
+        return skoolActions.editPageContent({
+          title: p.title ? String(p.title) : undefined,
+          body: p.body ? String(p.body) : undefined,
+        });
+      case "deleteThing":
+        return skoolActions.deleteThing(String(p.name ?? ""), p.kind === "folder" ? "folder" : "page");
+      default:
+        return { ok: false, detail: `Unknown action "${action}".` };
+    }
+  };
+  const result = await run();
+  return { ...result, frame: await skoolConsole.frame() };
+};
+
 /** Empty the focused field, refusing when focus is not in one. */
 const skoolConsoleClearField: Handler = async () => {
   const result = await skoolConsole.clearFocusedField();
@@ -4584,6 +4633,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolConsoleKey,
   skoolConsoleScroll,
   skoolConsoleClearField,
+  skoolRunAction,
   skoolDescribePoint,
   skoolSaveRecipe,
   skoolListRecipes,
