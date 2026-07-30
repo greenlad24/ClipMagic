@@ -66,6 +66,14 @@ export interface SpineTrack {
   promise: string;
   /** True when the operator required this track, rather than the model designing it. */
   required: boolean;
+  /**
+   * The track's lessons, in order.
+   *
+   * FLAT, by decision. Skool supports folders inside a course, and an earlier
+   * pass grouped chapters into them — Jake asked for pages only. A course is a
+   * list of pages, and a member reaching every lesson without an extra click
+   * is worth more than the tidiness of sections.
+   */
   modules: SpineModule[];
 }
 
@@ -75,7 +83,6 @@ You are given the course, what the creator said it should be, and the lessons
 already assigned to it. Return the FULL ordered chapter list the course should
 have to deliver on its promise — including chapters there is no lesson for yet.
 
-For each chapter say whether an existing lesson covers it:
 {"chapters":[{"title":"...","covers":N or null,"why":"one line"}]}
 
 "covers" is the number of an existing lesson, or null when nothing covers it.
