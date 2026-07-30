@@ -142,6 +142,16 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   }
 }
 
+/** Additive: page-writing progress on a plan, so a long run can be watched. */
+{
+  const cols = db.prepare("PRAGMA table_info(skool_plans)").all() as Array<{ name: string }>;
+  if (cols.length > 0 && !cols.some((c) => c.name === "lessons_status")) {
+    db.exec("ALTER TABLE skool_plans ADD COLUMN lessons_status TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE skool_plans ADD COLUMN lessons_done INTEGER NOT NULL DEFAULT 0");
+    db.exec("ALTER TABLE skool_plans ADD COLUMN lessons_total INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
 /** Additive: the channel the Skool planner pulls missing lessons from, and the
  *  tracks the operator requires the spine to contain. */
 {

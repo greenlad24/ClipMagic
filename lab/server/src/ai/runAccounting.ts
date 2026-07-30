@@ -103,6 +103,8 @@ export type CallPurpose =
   // no existing lesson covers.
   | "skool-chapters"
   | "skool-author"
+  // Skool Manager: writes one classroom page to the zero-to-advanced standard.
+  | "skool-lesson"
   // Jake Dawson Script Generator: every stage (classify/research/outline/hooks/
   // sponsor/section/review/outro) runs on Opus (director tier).
   | "scriptgen"

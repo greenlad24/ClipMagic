@@ -183,6 +183,8 @@ import {
   saveSkoolSettings,
   setInventoryProgress,
   startInventory,
+  setLessonProgress,
+  updatePlanData,
   // Aliased: the long-form planner already owns startPlan/getPlan in this file.
   finishPlan as finishSkoolPlan,
   getPlan as getSkoolPlan,
@@ -193,6 +195,7 @@ import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom
 import { probeSkool } from "../skool/probe.js";
 import * as skoolConsole from "../skool/console.js";
 import * as skoolActions from "../skool/actions.js";
+import { writePlanLessons } from "../skool/lessons.js";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
 import { runPlan } from "../skool/planRun.js";
 import {
@@ -4298,6 +4301,49 @@ const skoolBuildPlan: Handler = async () => {
   return { plan: getSkoolPlan(id), alreadyRunning: false };
 };
 
+/**
+ * Write every page of the plan to the zero-to-advanced standard.
+ *
+ * Background and polled — 136 director-tier calls plus a transcript fetch for
+ * each video without a write-up. Progress lands on the plan row so a run that
+ * dies partway is visibly partial rather than silently short.
+ */
+const skoolWriteLessons: Handler = async (input) => {
+  const id = Number(input?.planId ?? 0);
+  const plan = id > 0 ? getSkoolPlan(id) : latestSkoolPlan();
+  if (!plan || plan.status !== "done" || !plan.data?.tracks?.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Build a plan first — there are no pages to write." });
+  }
+  if (plan.lessonsStatus === "running") return { plan, alreadyRunning: true };
+
+  const snapshot = getInventory(plan.inventoryId);
+  if (!snapshot?.data?.courses?.length) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "The inventory this plan was built from is missing, so existing write-ups cannot be read.",
+    });
+  }
+
+  const total = plan.data.tracks.reduce((n: number, t: any) => n + (t.modules?.length ?? 0), 0);
+  setLessonProgress(plan.id, "running", 0, total);
+
+  void (async () => {
+    try {
+      const data = plan.data;
+      const stats = await writePlanLessons(data, snapshot.data, (done) =>
+        setLessonProgress(plan.id, "running", done, total),
+      );
+      data.lessonStats = stats;
+      updatePlanData(plan.id, data);
+      setLessonProgress(plan.id, "done", total, total);
+    } catch {
+      setLessonProgress(plan.id, "failed", 0, total);
+    }
+  })();
+
+  return { plan: getSkoolPlan(plan.id), alreadyRunning: false };
+};
+
 const skoolGetPlan: Handler = async (input) => {
   const id = Number(input?.id ?? 0);
   return { plan: id > 0 ? getSkoolPlan(id) : latestSkoolPlan() };
@@ -4624,6 +4670,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolGetInventory,
   skoolBuildPlan,
   skoolGetPlan,
+  skoolWriteLessons,
   skoolProbe,
   skoolConsoleFrame,
   skoolConsoleNavigate,

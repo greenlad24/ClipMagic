@@ -175,6 +175,10 @@ export interface SkoolPlanRow {
   createdAt: number;
   finishedAt: number | null;
   error: string | null;
+  /** Page-writing progress: "" | running | done | failed. */
+  lessonsStatus: string;
+  lessonsDone: number;
+  lessonsTotal: number;
   data: any;
 }
 
@@ -193,6 +197,9 @@ function toPlan(row: any): SkoolPlanRow | null {
     createdAt: row.created_at,
     finishedAt: row.finished_at ?? null,
     error: row.error ?? null,
+    lessonsStatus: row.lessons_status ?? "",
+    lessonsDone: row.lessons_done ?? 0,
+    lessonsTotal: row.lessons_total ?? 0,
     data,
   };
 }
@@ -208,6 +215,20 @@ export function finishPlan(id: number, data: any, error: string | null): void {
   db.prepare(
     `UPDATE skool_plans SET status = ?, finished_at = ?, error = ?, data_json = ? WHERE id = ?`,
   ).run(error ? "failed" : "done", Date.now(), error, JSON.stringify(data ?? {}), id);
+}
+
+export function setLessonProgress(id: number, status: string, done: number, total: number): void {
+  db.prepare(`UPDATE skool_plans SET lessons_status = ?, lessons_done = ?, lessons_total = ? WHERE id = ?`).run(
+    status,
+    done,
+    total,
+    id,
+  );
+}
+
+/** Store the plan back after its pages have been written into it. */
+export function updatePlanData(id: number, data: any): void {
+  db.prepare(`UPDATE skool_plans SET data_json = ? WHERE id = ?`).run(JSON.stringify(data ?? {}), id);
 }
 
 export function getPlan(id: number): SkoolPlanRow | null {

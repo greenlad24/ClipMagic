@@ -50,7 +50,7 @@ export function transcriptsAvailable(): boolean {
  * Null is an ordinary outcome — plenty of videos have captions disabled — and
  * the analysis simply runs over fewer videos rather than failing.
  */
-async function fetchTranscript(videoId: string, token: string, signal?: AbortSignal): Promise<string | null> {
+export async function fetchTranscript(videoId: string, token: string, signal?: AbortSignal): Promise<string | null> {
   try {
     const r = await fetch(
       `https://api.apify.com/v2/acts/${APIFY_ACTOR}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`,
