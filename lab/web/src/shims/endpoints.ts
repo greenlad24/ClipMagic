@@ -632,6 +632,97 @@ export const auditChat = endpoint<
     section?: { id: string; title: string; charts: number } | null;
   }
 >("auditChat");
+/* ── Skool manager ────────────────────────────────────────────────────────
+   Skool has no API, so the session is a headless browser holding a login.  */
+export interface SkoolSettings { communityUrl: string; roadmapMd: string; updatedAt: number }
+export interface SkoolStatus {
+  browserAvailable: boolean;
+  loggedIn: boolean;
+  account: string | null;
+  url: string | null;
+  error: string | null;
+  open: boolean;
+  settings: SkoolSettings;
+}
+export const skoolStatus = endpoint<void, SkoolStatus>("skoolStatus");
+export const skoolCheckLogin = endpoint<void, SkoolStatus>("skoolCheckLogin");
+export const skoolImportCookies = endpoint<
+  { cookies: string },
+  SkoolStatus & { kept: number; total: number }
+>("skoolImportCookies");
+export interface SkoolCourse {
+  id: string; slug: string; title: string; description: string;
+  modules: number; position: number; coverImage: string | null;
+  state: number; privacy: number; minTier: number; published: boolean;
+  createdAt: string; updatedAt: string;
+}
+export interface SkoolClassroom {
+  community: string | null;
+  account: string | null;
+  courses: SkoolCourse[];
+  readAt: number;
+  error: string | null;
+}
+export const skoolReadClassroom = endpoint<
+  { communityUrl?: string },
+  { classroom: SkoolClassroom }
+>("skoolReadClassroom");
+/** One node inside a course. `unitType` is "course" at the root, "module" within. */
+export interface SkoolUnit {
+  id: string; slug: string; title: string; unitType: string;
+  depth: number; position: number; parentId: string | null;
+  videoUrl: string | null; videoSeconds: number | null;
+  content: string; contentChars: number;
+  published: boolean; createdAt: string; updatedAt: string;
+}
+export interface SkoolCourseDetail {
+  courseId: string; slug: string; title: string;
+  units: SkoolUnit[]; error: string | null;
+}
+export const skoolReadCourse = endpoint<
+  { slug: string; communityUrl?: string },
+  { course: SkoolCourseDetail }
+>("skoolReadCourse");
+
+/** The classroom plus the inside of every course — the planner's input. */
+export interface SkoolInventory {
+  community: string | null;
+  account: string | null;
+  courses: (SkoolCourse & { units: SkoolUnit[]; readError: string | null })[];
+  readAt: number;
+  /** Courses whose contents could not be read — named, never silently dropped. */
+  unreadable: string[];
+  error: string | null;
+}
+export interface SkoolInventoryRow {
+  id: number;
+  communityUrl: string;
+  status: "running" | "done" | "failed";
+  startedAt: number;
+  finishedAt: number | null;
+  coursesTotal: number;
+  coursesRead: number;
+  community: string | null;
+  account: string | null;
+  error: string | null;
+  data: SkoolInventory | Record<string, never>;
+}
+/** Minutes of browser work — starts a background read and returns the row to poll. */
+export const skoolBuildInventory = endpoint<
+  { communityUrl?: string },
+  { inventory: SkoolInventoryRow | null; alreadyRunning: boolean }
+>("skoolBuildInventory");
+export const skoolGetInventory = endpoint<
+  { id?: number },
+  { inventory: SkoolInventoryRow | null }
+>("skoolGetInventory");
+
+export const skoolCloseBrowser = endpoint<void, { closed: boolean }>("skoolCloseBrowser");
+export const skoolSaveSettings = endpoint<
+  { communityUrl?: string; roadmapMd?: string },
+  { settings: SkoolSettings }
+>("skoolSaveSettings");
+
 /** Undo a focus, restoring the whole-catalogue report. */
 export const clearAuditFocus = endpoint<{ runId: string }, { cleared: boolean; reason?: string }>("clearAuditFocus");
 /** Named, reusable competitor sets — switchable per run, even for one channel. */

@@ -62,6 +62,10 @@ export const config = {
    * it lives on the /data volume and is never served over HTTP.
    */
   engageBrowserDir: process.env.ENGAGE_BROWSER_DIR || path.join(DATA_DIR, "engage-browser"),
+  // Skool has no public API, so the manager drives the real web UI. Its login
+  // lives in its own persistent Chromium profile, beside (not inside) the
+  // engagement profiles — one tool signing out must never sign out the other.
+  skoolBrowserDir: process.env.SKOOL_BROWSER_DIR || path.join(DATA_DIR, "skool-browser"),
 
   /**
    * Where Remotion caches the Chromium it may download. In Docker this is
@@ -246,6 +250,7 @@ export function ensureDirs(): void {
     config.tmpDir,
     config.imageHistoryDir,
     config.engageBrowserDir,
+    config.skoolBrowserDir,
     path.dirname(config.dbPath),
   ]) {
     fs.mkdirSync(dir, { recursive: true });

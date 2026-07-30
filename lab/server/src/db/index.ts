@@ -319,6 +319,46 @@ CREATE TABLE IF NOT EXISTS audit_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_runs_created ON audit_runs(created_at);
 
+-- Skool manager: one singleton row of operator settings. The classroom itself
+-- is never mirrored here — it is read live from Skool, because a cached copy of
+-- a community someone else can edit is a copy that is wrong by the time it is
+-- read.
+CREATE TABLE IF NOT EXISTS skool_settings (
+  id             INTEGER PRIMARY KEY CHECK (id = 1),
+  community_url  TEXT NOT NULL DEFAULT '',
+  -- The roadmap the operator wants members to move through. Free text: it is
+  -- an input to the course planner, not a schema.
+  roadmap_md     TEXT NOT NULL DEFAULT '',
+  updated_at     INTEGER NOT NULL
+);
+INSERT OR IGNORE INTO skool_settings (id, community_url, roadmap_md, updated_at)
+  VALUES (1, '', '', 0);
+
+-- A SNAPSHOT of the whole classroom, contents and all.
+--
+-- This is not a contradiction of the "never mirror the classroom" rule above.
+-- The course LIST is cheap and always read live. Reading the inside of every
+-- course is minutes of browser work, and the planner needs to reason over the
+-- whole thing across many steps — so it works from a snapshot with an explicit
+-- timestamp on it. The rule that keeps this honest: the write path re-reads
+-- live before it changes anything, and never trusts these ids.
+CREATE TABLE IF NOT EXISTS skool_inventory (
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  community_url  TEXT NOT NULL,
+  -- running | done | failed. A crashed read stays 'running' with its partial
+  -- progress visible, rather than reporting a complete snapshot it never took.
+  status         TEXT NOT NULL,
+  started_at     INTEGER NOT NULL,
+  finished_at    INTEGER,
+  courses_total  INTEGER NOT NULL DEFAULT 0,
+  courses_read   INTEGER NOT NULL DEFAULT 0,
+  community      TEXT,
+  account        TEXT,
+  error          TEXT,
+  data_json      TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_skool_inventory_started ON skool_inventory(started_at);
+
 -- A named, reusable set of competitors. A market belongs to a SUBJECT, not to a
 -- channel: the same channel can be audited against two different markets and
 -- get different answers, which is the reason to keep them separate.

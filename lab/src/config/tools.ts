@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   Search,
   Wand2,
   Layers,
@@ -208,6 +209,17 @@ export const TOOLS: ToolDefinition[] = [
     detail: 'Opus 4.8 scripts',
     // Needs the Anthropic key (set in the same write-only Postiz settings).
     configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'skool',
+    title: 'Skool Manager',
+    description:
+      'Builds and rearranges your Skool classroom — courses, lessons and the videos in them, written in your voice.',
+    icon: BookOpen,
+    route: '/skool',
+    status: 'live',
+    accent: 'primary',
+    detail: 'Classroom builder',
   },
   {
     id: 'engagement',

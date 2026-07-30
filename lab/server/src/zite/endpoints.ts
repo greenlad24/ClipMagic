@@ -168,6 +168,23 @@ import { ytAnalyticsConfigured, ytAnalyticsConnected } from "../audit/analytics.
 import { chatAboutAudit, refocusReport } from "../audit/chat.js";
 import { buildSection } from "../audit/sections.js";
 import {
+  browserAvailable as skoolBrowserAvailable,
+  checkSkoolLogin,
+  closeSkool,
+  importSkoolCookies,
+  isSkoolOpen,
+} from "../skool/browser.js";
+import {
+  finishInventory,
+  getInventory,
+  getSkoolSettings,
+  latestInventory,
+  saveSkoolSettings,
+  setInventoryProgress,
+  startInventory,
+} from "../db/skool.js";
+import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom.js";
+import {
   saveMarket as saveAuditMarket,
   listMarkets as listAuditMarkets,
   deleteMarket as deleteAuditMarket,
@@ -4112,6 +4129,131 @@ const engageBrowserClose: Handler = async (input) => {
   return { ok: true };
 };
 
+// ── Skool manager ─────────────────────────────────────────────────────────────
+// Skool has no public API, so every one of these is really a question about a
+// headless browser: is one available, does its profile still hold a session,
+// and which account is that session for.
+
+const skoolStatus: Handler = async () => {
+  const available = await skoolBrowserAvailable();
+  const settings = getSkoolSettings();
+  if (!available) {
+    return {
+      browserAvailable: false,
+      loggedIn: false,
+      account: null,
+      url: null,
+      error: "No headless browser on this server, so Skool cannot be driven at all.",
+      open: false,
+      settings,
+    };
+  }
+  // Only report a session when one is genuinely open. Launching a browser on
+  // every status poll would spend seconds and RAM to answer a question the
+  // page asks on a timer.
+  if (!isSkoolOpen()) {
+    return { browserAvailable: true, loggedIn: false, account: null, url: null, error: null, open: false, settings };
+  }
+  const state = await checkSkoolLogin();
+  return { browserAvailable: true, ...state, open: true, settings };
+};
+
+/** Force a live check — launches the browser if it isn't already up. */
+const skoolCheckLogin: Handler = async () => {
+  if (!(await skoolBrowserAvailable())) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "No headless browser available on this server." });
+  }
+  const state = await checkSkoolLogin();
+  return { ...state, open: isSkoolOpen(), settings: getSkoolSettings() };
+};
+
+const skoolImportCookies: Handler = async (input) => {
+  const raw = String(input?.cookies ?? "");
+  if (!raw.trim()) throw new ZiteError({ code: "BAD_REQUEST", message: "Paste your exported cookies first." });
+  // Same 500KB cap the engagement importer uses — a cookie export is a few KB,
+  // and anything near this is a paste accident, not a session.
+  if (raw.length > 500_000) throw new ZiteError({ code: "BAD_REQUEST", message: "That paste is too large to be a cookie export." });
+  if (!(await skoolBrowserAvailable())) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "No headless browser available on this server." });
+  }
+  const result = await importSkoolCookies(raw);
+  return { ...result, open: isSkoolOpen(), settings: getSkoolSettings() };
+};
+
+const skoolCloseBrowser: Handler = async () => {
+  await closeSkool();
+  return { closed: true };
+};
+
+/**
+ * Read the live classroom.
+ *
+ * Read live every call, never cached: Jake can edit the classroom in another
+ * tab, and a stale course list is wrong exactly when it matters — when we are
+ * about to reorder or rewrite something in it.
+ */
+const skoolReadClassroom: Handler = async (input) => {
+  const settings = getSkoolSettings();
+  const url = String(input?.communityUrl ?? settings.communityUrl ?? "").trim();
+  if (!url) throw new ZiteError({ code: "BAD_REQUEST", message: "Set the community URL first." });
+  return { classroom: await readClassroom(url) };
+};
+
+/** Read one course's inner structure — what a reorganisation actually moves. */
+const skoolReadCourse: Handler = async (input) => {
+  const settings = getSkoolSettings();
+  const url = String(input?.communityUrl ?? settings.communityUrl ?? "").trim();
+  const slug = String(input?.slug ?? "").trim();
+  if (!url || !slug) throw new ZiteError({ code: "BAD_REQUEST", message: "Community URL and course slug are both required." });
+  return { course: await readCourse(url, slug) };
+};
+
+/**
+ * Read the whole classroom — every course, and everything inside it.
+ *
+ * Kicked off in the background and polled, because it is minutes of sequential
+ * browser work rather than a request. Returns immediately with the row id.
+ *
+ * One inventory at a time: a second concurrent read would drive the same single
+ * browser page from two places and interleave two courses' navigations.
+ */
+const skoolBuildInventory: Handler = async (input) => {
+  const settings = getSkoolSettings();
+  const url = String(input?.communityUrl ?? settings.communityUrl ?? "").trim();
+  if (!url) throw new ZiteError({ code: "BAD_REQUEST", message: "Set the community URL first." });
+
+  const running = latestInventory();
+  if (running?.status === "running") {
+    return { inventory: running, alreadyRunning: true };
+  }
+
+  const id = startInventory(url);
+  void (async () => {
+    try {
+      const data = await readFullClassroom(url, (read, total) => setInventoryProgress(id, read, total));
+      finishInventory(id, data, data.error);
+    } catch (err) {
+      finishInventory(id, {}, String(err));
+    }
+  })();
+
+  return { inventory: getInventory(id), alreadyRunning: false };
+};
+
+/** The newest snapshot — running or finished — for polling and for the planner. */
+const skoolGetInventory: Handler = async (input) => {
+  const id = Number(input?.id ?? 0);
+  const inventory = id > 0 ? getInventory(id) : latestInventory();
+  return { inventory };
+};
+
+const skoolSaveSettings: Handler = async (input) => {
+  const patch: { communityUrl?: string; roadmapMd?: string } = {};
+  if (input?.communityUrl !== undefined) patch.communityUrl = String(input.communityUrl).trim();
+  if (input?.roadmapMd !== undefined) patch.roadmapMd = String(input.roadmapMd);
+  return { settings: saveSkoolSettings(patch) };
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -4265,6 +4407,15 @@ export const HANDLERS: Record<string, Handler> = {
   getAuditRun,
   listAuditRuns,
   deleteAuditRun,
+  skoolStatus,
+  skoolCheckLogin,
+  skoolImportCookies,
+  skoolCloseBrowser,
+  skoolSaveSettings,
+  skoolReadClassroom,
+  skoolReadCourse,
+  skoolBuildInventory,
+  skoolGetInventory,
   auditChat,
   clearAuditFocus,
   listAuditMarkets: listAuditMarketsHandler,

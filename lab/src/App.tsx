@@ -20,6 +20,7 @@ import ScriptGeneratorPage from './pages/ScriptGeneratorPage';
 import EngagementManagerPage from './pages/EngagementManagerPage';
 import VideoPlannerPage from './pages/VideoPlannerPage';
 import ChannelAuditPage from './pages/ChannelAuditPage';
+import SkoolManagerPage from './pages/SkoolManagerPage';
 import EngagementRepliesPage from './pages/EngagementRepliesPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
@@ -50,6 +51,7 @@ export default function App() {
         <Route path="/script-generator" element={<ScriptGeneratorPage />} />
         <Route path="/video-planner" element={<VideoPlannerPage />} />
         <Route path="/channel-audit" element={<ChannelAuditPage />} />
+        <Route path="/skool" element={<SkoolManagerPage />} />
         <Route path="/engagement" element={<EngagementManagerPage />} />
         <Route path="/engagement/replies" element={<EngagementRepliesPage />} />
       </Routes>
