@@ -7,9 +7,11 @@
  *  always computed as (real tokens from the API `usage` field) × (rate here).
  *  Nothing is estimated. To update a price, edit the number AND its citation.
  *
- *  SOURCES (verified 2026-06-02):
+ *  SOURCES (verified 2026-06-02; Anthropic rates re-verified 2026-07-30):
  *   • Anthropic Claude — official pricing page
  *     https://platform.claude.com/docs/en/about-claude/pricing
+ *       Opus 5      : $5.00 in  / $25.00 out  per MTok
+ *                     cache write (5m) $6.25 ; cache read (hit) $0.50
  *       Opus 4.8    : $5.00 in  / $25.00 out  per MTok
  *                     cache write (5m) $6.25 ; cache read (hit) $0.50
  *       Sonnet 4.6  : $3.00 in  / $15.00 out  per MTok
@@ -17,6 +19,9 @@
  *       Haiku 4.5   : $1.00 in  / $5.00  out  per MTok
  *                     cache write (5m) $1.25 ; cache read (hit) $0.10
  *     (Prompt-cache multipliers: 5m write = 1.25× base input, read = 0.10× base.)
+ *     Opus 5 lists at the same rate as Opus 4.8. Its FAST mode is priced
+ *     separately ($10/$50) and is deliberately absent here — nothing in the lab
+ *     requests `speed: "fast"`, so pricing it would invite a wrong attribution.
  *
  *   • OpenAI — pricing (corroborated 2026-06-02 across openai.com/api/pricing and
  *     cloudzero.com/blog/openai-pricing). These rates have been stable.
@@ -55,6 +60,10 @@ export interface TokenRate {
  * guessed).
  */
 export const ANTHROPIC_RATES: Record<string, TokenRate> = {
+  // Opus 5 — the Channel Audit's report chat and section writer. Not a tier:
+  // this model is asked for by name (see claudeJSONWithModel), so its rate has
+  // to be keyed here or every audit chat prices at $0.
+  "claude-opus-5": { input: 5.0, output: 25.0, cacheWrite: 6.25, cacheRead: 0.5 },
   // Opus 4.8 — director tier.
   "claude-opus-4-8": { input: 5.0, output: 25.0, cacheWrite: 6.25, cacheRead: 0.5 },
   // Sonnet 4.6 — research + review tier.

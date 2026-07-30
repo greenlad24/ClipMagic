@@ -43,6 +43,7 @@ import {
   MarketPositionChart,
   TopicPerformanceChart,
   OpportunityChart,
+  SectionChart,
 } from './auditCharts';
 
 type Mode = 'own' | 'teardown';
@@ -684,6 +685,8 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
 
       {f.actionPlan?.categories?.length ? <ActionPlan plan={f.actionPlan} /> : null}
 
+      {run.sections?.map((s: any) => <CustomSection key={s.id} section={s} />)}
+
       <AppliedRenames runId={run.runId} />
 
       {!!renames.length && (
@@ -715,7 +718,136 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
           </div>
         </Card>
       )}
+
+      <RunCost run={run} />
     </div>
+  );
+}
+
+/**
+ * A section the operator asked for, after the fact.
+ *
+ * Rendered exactly like the rest of the report rather than as chat output,
+ * because that is what it is — but it keeps its provenance visible: the request
+ * that produced it, how it was measured, and anything the tool had to go and
+ * fetch to answer. A section that reads as authoritative without saying where
+ * it came from is the thing to avoid.
+ */
+function CustomSection({ section }: { section: any }) {
+  return (
+    <Card title={section.title}>
+      <p className="mb-1 text-xs text-muted-foreground">
+        Added because you asked: “{section.request}”
+      </p>
+      {section.summary && <p className="mb-2 mt-3 text-sm">{section.summary}</p>}
+
+      {!!section.bullets?.length && (
+        <ul className="mb-2 list-disc space-y-1 pl-5 text-sm">
+          {section.bullets.map((b: string, i: number) => (
+            <li key={i}>{b}</li>
+          ))}
+        </ul>
+      )}
+
+      <style>{VIZ_STYLE}</style>
+      <div className="space-y-6">
+        {(section.charts || []).map((c: any) => (
+          <SectionChart key={c.spec.id} spec={c.spec} data={c.data} />
+        ))}
+      </div>
+
+      {section.method && (
+        <p className="mt-4 border-t pt-3 text-xs text-muted-foreground">
+          <span className="font-medium">How this was measured. </span>
+          {section.method}
+        </p>
+      )}
+      {!!section.gathered?.length && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          <span className="font-medium">Data fetched to answer this. </span>
+          {section.gathered.join(' ')}
+          {section.quotaUnits ? ` (${section.quotaUnits} YouTube quota units.)` : ''}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * What this run actually cost.
+ *
+ * Broken down by stage rather than shown as one number, because the total only
+ * tells you whether to wince — the breakdown tells you what to cut. Quota and
+ * dollars are two separate budgets and are never added together.
+ *
+ * Runs from before cost tracking existed have no call records; they say so
+ * instead of showing a confident $0.00, which is what they used to do.
+ */
+function RunCost({ run }: { run: any }) {
+  const calls: any[] = run.calls || [];
+  const quota = run.quotaUnits ?? 0;
+
+  if (!calls.length) {
+    return (
+      <Card title="What this run cost">
+        <p className="text-sm text-muted-foreground">
+          This run has no per-call record, so its bill is unknown — it predates cost tracking. It spent{' '}
+          <span className="font-medium">{fmt(quota)}</span> YouTube quota units. Re-run the audit to get a priced
+          breakdown.
+        </p>
+      </Card>
+    );
+  }
+
+  const byLabel = new Map<string, { cost: number; calls: number; input: number; output: number }>();
+  for (const c of calls) {
+    const row = byLabel.get(c.label) || { cost: 0, calls: 0, input: 0, output: 0 };
+    row.cost += c.costUsd || 0;
+    row.calls += 1;
+    row.input += (c.input || 0) + (c.cacheRead || 0) + (c.cacheWrite || 0);
+    row.output += c.output || 0;
+    byLabel.set(c.label, row);
+  }
+  const rows = [...byLabel.entries()].sort((a, b) => b[1].cost - a[1].cost);
+  const total = calls.reduce((s: number, c: any) => s + (c.costUsd || 0), 0);
+  const unpriced = calls.some((c: any) => c.unpriced);
+
+  const NICE: Record<string, string> = {
+    'audit-market': 'Working out the market',
+    'audit-thumbnail': 'Reading the thumbnails',
+    'audit-topics': 'Clustering the topics',
+    'audit-rename': 'Writing new titles',
+    'audit-report': 'Writing the report',
+    'audit-plan': 'Writing the action plan',
+    'audit-content': "Reading the winners' transcripts",
+    'audit-chat': 'Talking about the report',
+    'audit-section': 'Sections you asked for',
+  };
+
+  return (
+    <Card title="What this run cost">
+      <div className="mb-3 flex flex-wrap gap-3">
+        <Stat label="AI spend" value={`$${total.toFixed(2)}`} />
+        <Stat label="AI calls" value={fmt(calls.length)} />
+        <Stat label="YouTube quota" value={`${fmt(quota)} units`} />
+      </div>
+      <div className="space-y-1">
+        {rows.map(([label, r]) => (
+          <div key={label} className="flex items-center gap-3 rounded border px-3 py-2 text-sm">
+            <span className="flex-1">{NICE[label] || label}</span>
+            <span className="text-xs text-muted-foreground">
+              {r.calls} call{r.calls === 1 ? '' : 's'} · {fmt(r.input)} in / {fmt(r.output)} out
+            </span>
+            <span className="w-16 text-right font-medium">${r.cost.toFixed(3)}</span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Real token counts from the API, priced at Anthropic's published rates — not an estimate. The two budgets are
+        separate: dollars buy the reading and the writing, YouTube quota buys the data.
+        {unpriced && ' Some calls ran on a model with no rate on file, so the total is a floor rather than the whole bill.'}
+      </p>
+    </Card>
   );
 }
 
@@ -1092,10 +1224,17 @@ function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
       const res: any = await auditChat({ runId: run.runId, message });
       setMessages((m) => [
         ...m,
-        { role: 'assistant', content: res.reply, at: Date.now(), refocused: res.refocused ?? undefined },
+        {
+          role: 'assistant',
+          content: res.reply,
+          at: Date.now(),
+          refocused: res.refocused ?? undefined,
+          section: res.section ?? undefined,
+        },
       ]);
-      // A refocus rewrote the findings, so the report above is now stale.
-      if (res.refocused) onChanged();
+      // A refocus rewrote the findings and a new section appended to them —
+      // either way the report above is now stale.
+      if (res.refocused || res.section) onChanged();
     } catch (e: any) {
       setErr(String(e?.message || e));
       setMessages((m) => m.slice(0, -1));
@@ -1108,7 +1247,8 @@ function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
   const suggestions = [
     'My focus changed — I now make AI tool reviews, not scraping tutorials',
     'Which of these findings is weakest evidence?',
-    'What should I make next, and why?',
+    'Add a section on how my Shorts do against my long-form, and against the market',
+    'Add a section on whether my thumbnails changed as the channel grew',
   ];
 
   return (
@@ -1119,7 +1259,10 @@ function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
         Runs on Claude Opus 5 over this audit&apos;s saved data. If your channel has changed direction, say so — it
-        can recompute the report over just the videos that still represent you, in seconds and at no quota cost.
+        can recompute the report over just the videos that still represent you, in seconds and at no quota cost. You
+        can also ask it to <span className="font-medium">add a section</span> to the report: it measures the question
+        against your real data, draws the charts and writes it in — fetching anything it needs and telling you what
+        that cost.
       </p>
 
       {!!messages.length && (
@@ -1135,6 +1278,12 @@ function ReportChat({ run, onChanged }: { run: any; onChanged: () => void }) {
               {m.refocused && (
                 <div className="mt-1 text-xs text-[hsl(var(--chart-3))]">
                   Report re-aimed: {m.refocused.note} ({m.refocused.videoCount} videos)
+                </div>
+              )}
+              {m.section && (
+                <div className="mt-1 text-xs text-[hsl(var(--chart-3))]">
+                  Added to the report: {m.section.title} ({m.section.charts} chart
+                  {m.section.charts === 1 ? '' : 's'}) — scroll down to it
                 </div>
               )}
             </div>

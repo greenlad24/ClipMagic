@@ -123,6 +123,10 @@ export type CallPurpose =
   // Channel Audit: the report chat — answering questions over a finished audit
   // and re-focusing it. Runs on Opus 5 explicitly (see claudeJSONWithModel).
   | "audit-chat"
+  // Channel Audit: a section the operator asked for after the fact — one call
+  // to design what to measure, one to write it once the server has measured.
+  // Opus 5, same as the chat it is requested from.
+  | "audit-section"
   // Channel Audit: the closing action plan — how to become the best channel in
   // each category, grounded in what was measured (director tier).
   | "audit-plan"

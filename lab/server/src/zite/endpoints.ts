@@ -152,15 +152,21 @@ import {
 } from "../db/scriptRuns.js";
 import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
 import { startPlan as runStartPlan, planJobStatus as getPlanSnapshot } from "../planner/run.js";
-import { startAudit as runStartAudit, resumeAudit as runResumeAudit, auditJobStatus as getAuditSnapshot } from "../audit/run.js";
+import {
+  startAudit as runStartAudit,
+  resumeAudit as runResumeAudit,
+  auditJobStatus as getAuditSnapshot,
+  withAuditUsage,
+} from "../audit/run.js";
 import {
   getRun as getAuditRunRow,
   listRuns as listAuditRunRows,
   deleteRun as deleteAuditRunRow,
 } from "../db/auditRuns.js";
-import type { AuditInput, MarketProposal } from "../audit/types.js";
+import type { AuditInput, AuditRunResult, MarketProposal } from "../audit/types.js";
 import { ytAnalyticsConfigured, ytAnalyticsConnected } from "../audit/analytics.js";
 import { chatAboutAudit, refocusReport } from "../audit/chat.js";
+import { buildSection } from "../audit/sections.js";
 import {
   saveMarket as saveAuditMarket,
   listMarkets as listAuditMarkets,
@@ -3499,11 +3505,62 @@ const auditChat: Handler = async (input) => {
     throw new ZiteError({ code: "BAD_REQUEST", message: "This audit has no report to discuss yet." });
   }
 
+  // Bill the chat — and any refocus or new section it triggers — to this run.
+  // Talking to a finished report spends real Opus tokens, and a total that
+  // stopped at "completed" would understate the audit from the first question.
+  return withAuditUsage(runId, run.calls ?? [], () => auditChatBody(runId, run, message));
+};
+
+async function auditChatBody(runId: string, run: AuditRunResult, message: string) {
   const history = (run.chat ?? []).map((m) => ({ role: m.role, content: m.content }));
   const { reply, action } = await chatAboutAudit(run, history, message);
 
+  // Adding a section and re-aiming the report are opposites — one appends to
+  // the document, the other rewrites what the document is about — so they never
+  // share a path.
+  if (action?.kind === "add-section") {
+    const built = await buildSection(run, action.request);
+    const at = Date.now();
+    // A gatherer may have enriched the videos on the way (thumbnails nobody had
+    // read). That is worth keeping whether or not the section itself worked.
+    const enriched = {
+      ...(built.videos ? { videos: built.videos } : {}),
+      ...(built.marketVideos ? { marketVideos: built.marketVideos } : {}),
+    };
+
+    if (!built.section) {
+      const note = `${reply}\n\n(I did not add that section. ${built.declined})`;
+      updateAuditRun(runId, {
+        ...enriched,
+        chat: [
+          ...(run.chat ?? []),
+          { role: "user" as const, content: message, at },
+          { role: "assistant" as const, content: note, at },
+        ],
+      });
+      return { reply: note, refocused: null, section: null };
+    }
+
+    const s = built.section;
+    const charts = s.charts.length;
+    const note =
+      `${reply}\n\nAdded "${s.title}" to the report — ${charts} chart${charts === 1 ? "" : "s"}` +
+      `${s.gathered.length ? `, after fetching some data it needed (${s.gathered.join(" ")})` : ""}.`;
+    updateAuditRun(runId, {
+      ...enriched,
+      sections: [...(run.sections ?? []), s],
+      quotaUnits: (run.quotaUnits ?? 0) + s.quotaUnits,
+      chat: [
+        ...(run.chat ?? []),
+        { role: "user" as const, content: message, at },
+        { role: "assistant" as const, content: note, at },
+      ],
+    });
+    return { reply: note, refocused: null, section: { id: s.id, title: s.title, charts } };
+  }
+
   let refocused: { note: string; videoCount: number } | undefined;
-  if (action) {
+  if (action?.kind === "refocus") {
     const { findings, focus, membershipKnown } = await refocusReport(run, action);
     // Audits recorded before topic membership was persisted can only match a
     // topic against three example titles, which silently produces a tiny,
@@ -3553,7 +3610,7 @@ const auditChat: Handler = async (input) => {
   ];
   updateAuditRun(runId, { chat });
   return { reply, refocused: refocused ?? null };
-};
+}
 
 // ── Engagement Manager (LAB tool — Phase 1: MONITOR YouTube comments) ─────────
 

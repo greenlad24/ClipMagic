@@ -624,7 +624,13 @@ export const deleteAuditRun = endpoint<{ runId: string }, { deleted: boolean }>(
 /** Discuss a finished report (Opus 5); may re-aim it at part of the catalogue. */
 export const auditChat = endpoint<
   { runId: string; message: string },
-  { reply: string; refocused: { note: string; videoCount: number } | null; tooNarrow?: number }
+  {
+    reply: string;
+    refocused: { note: string; videoCount: number } | null;
+    tooNarrow?: number;
+    /** Set when the answer added a new section to the report rather than just replying. */
+    section?: { id: string; title: string; charts: number } | null;
+  }
 >("auditChat");
 /** Undo a focus, restoring the whole-catalogue report. */
 export const clearAuditFocus = endpoint<{ runId: string }, { cleared: boolean; reason?: string }>("clearAuditFocus");

@@ -418,3 +418,212 @@ export function OpportunityChart({ topics }: { topics: any[] }) {
     </figure>
   );
 }
+
+/* ── 4. Whatever the operator asked for ──────────────────────────────────
+   The three charts above answer questions the audit's authors thought of. A
+   custom section answers one they didn't, so its chart cannot be hand-drawn
+   for the occasion — it has to be a renderer general enough for any query the
+   section planner produces, and disciplined enough that it still obeys the
+   rules the hand-drawn three follow.
+
+   The form is chosen SERVER-SIDE from the query (see formFor in sections.ts),
+   not here and not by the model: an ordinal axis is a line, a measure with a
+   real midpoint diverges around it, two populations on one measure are grouped
+   bars. This component renders the form it is given.
+
+   Same colour contract as everything above — blue is always this channel, grey
+   is always the market, red only ever means below par. Every mark carries its
+   sample size in the tooltip and in the table, because a median over three
+   videos and one over forty draw the same bar.                             */
+export function SectionChart({ spec, data }: { spec: any; data: any }) {
+  const points: any[] = data?.points ?? [];
+  if (!points.length) return null;
+
+  const compare = spec?.form === 'grouped' && points.some((p) => typeof p.secondary === 'number');
+  const isMarketOnly = (data.seriesLabels?.[0] ?? '') === 'The market';
+  const mainColour = isMarketOnly ? 'var(--viz-market)' : 'var(--viz-mine)';
+
+  const labelW = 190;
+  const plotW = 640 - labelW - 64;
+
+  /* Diverging around par (1.0). Above and below are opposite states, so the
+     diverging pair is the honest encoding rather than one hue by magnitude. */
+  const renderDiverging = () => {
+    const max = Math.max(2, ...points.map((p) => p.value));
+    const barH = 24;
+    const gap = 8;
+    const h = points.length * (barH + gap) + 18;
+    const zeroX = labelW + (plotW * 1) / max;
+    return (
+      <svg viewBox={`0 0 640 ${h}`} width="100%" height={h} role="img" aria-label={spec.title}>
+        <line x1={zeroX} y1={0} x2={zeroX} y2={h - 18} stroke="var(--viz-grid)" strokeWidth={1} />
+        <text x={zeroX} y={h - 4} textAnchor="middle" style={{ fontSize: 10 }}>
+          1.0 = par
+        </text>
+        {points.map((p, i) => {
+          const y = i * (barH + gap);
+          const x = labelW + (plotW * Math.min(p.value, max)) / max;
+          const under = p.value < 1;
+          return (
+            <g key={p.label}>
+              <title>{`${p.label} — ${p.value} over ${p.n} video${p.n === 1 ? '' : 's'}`}</title>
+              <text x={0} y={y + barH / 2 + 4}>
+                {p.label.length > 26 ? p.label.slice(0, 25) + '…' : p.label}
+              </text>
+              <rect
+                x={under ? x : zeroX}
+                y={y}
+                width={Math.max(2, Math.abs(x - zeroX))}
+                height={barH - 6}
+                rx={3}
+                fill={under ? 'var(--viz-under)' : 'var(--viz-mine)'}
+              />
+              <text x={Math.max(x, zeroX) + 8} y={y + barH / 2 + 4} className="viz-label">
+                {p.value}x
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
+  /* Ranked bars, one or two series. Two series share ONE axis — the same
+     measure on two populations — so there is never a second scale to tune. */
+  const renderBars = () => {
+    const max = Math.max(...points.map((p) => Math.max(p.value, p.secondary ?? 0))) || 1;
+    const rowH = compare ? 34 : 26;
+    const gap = 8;
+    const h = points.length * (rowH + gap);
+    return (
+      <svg viewBox={`0 0 640 ${h}`} width="100%" height={h} role="img" aria-label={spec.title}>
+        {points.map((p, i) => {
+          const y = i * (rowH + gap);
+          const barH = compare ? 12 : rowH - 6;
+          const w = Math.max(2, (plotW * p.value) / max);
+          const w2 = compare ? Math.max(2, (plotW * (p.secondary ?? 0)) / max) : 0;
+          return (
+            <g key={p.label}>
+              <title>
+                {`${p.label} — ${p.value} over ${p.n} video${p.n === 1 ? '' : 's'}` +
+                  (compare ? `; market ${p.secondary} over ${p.nSecondary}` : '')}
+              </title>
+              <text x={0} y={y + (compare ? 10 : rowH / 2 + 4)}>
+                {p.label.length > 26 ? p.label.slice(0, 25) + '…' : p.label}
+              </text>
+              <rect x={labelW} y={y} width={w} height={barH} rx={3} fill={mainColour} />
+              <text x={labelW + w + 8} y={y + barH - 2} className="viz-label">
+                {fmt(p.value)}
+              </text>
+              {compare && (
+                <>
+                  <rect x={labelW} y={y + barH + 4} width={w2} height={barH} rx={3} fill="var(--viz-market)" />
+                  <text x={labelW + w2 + 8} y={y + barH * 2 + 2} className="viz-label">
+                    {fmt(p.secondary ?? 0)}
+                  </text>
+                </>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
+
+  /* Ordinal axis — age, month, duration band. Sorting these by size would
+     destroy the only thing they are for, so the server keeps them in order
+     and this draws them in the order it is given.                          */
+  const renderLine = () => {
+    const h = 200;
+    const padL = 52;
+    const padB = 34;
+    const max = Math.max(...points.map((p) => Math.max(p.value, p.secondary ?? 0))) || 1;
+    const stepX = (640 - padL - 16) / Math.max(1, points.length - 1);
+    const yOf = (v: number) => (h - padB) - ((h - padB - 10) * v) / max;
+    const path = (key: 'value' | 'secondary') =>
+      points
+        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${padL + i * stepX} ${yOf((p as any)[key] ?? 0)}`)
+        .join(' ');
+    const hasSecondary = points.some((p) => typeof p.secondary === 'number');
+    return (
+      <svg viewBox={`0 0 640 ${h}`} width="100%" height={h} role="img" aria-label={spec.title}>
+        <line x1={padL} y1={h - padB} x2={624} y2={h - padB} stroke="var(--viz-grid)" />
+        <text x={0} y={yOf(max) + 4} style={{ fontSize: 10 }}>
+          {fmt(max)}
+        </text>
+        <text x={0} y={h - padB + 4} style={{ fontSize: 10 }}>
+          0
+        </text>
+        {hasSecondary && <path d={path('secondary')} fill="none" stroke="var(--viz-market)" strokeWidth={2} />}
+        <path d={path('value')} fill="none" stroke={mainColour} strokeWidth={2} />
+        {points.map((p, i) => (
+          <g key={p.label}>
+            <title>{`${p.label} — ${p.value} over ${p.n} video${p.n === 1 ? '' : 's'}`}</title>
+            {hasSecondary && typeof p.secondary === 'number' && (
+              <circle cx={padL + i * stepX} cy={yOf(p.secondary)} r={3} fill="var(--viz-market)" />
+            )}
+            <circle cx={padL + i * stepX} cy={yOf(p.value)} r={3.5} fill={mainColour} />
+            <text x={padL + i * stepX} y={h - padB + 14} textAnchor="middle" style={{ fontSize: 10 }}>
+              {p.label.length > 10 ? p.label.slice(0, 9) + '…' : p.label}
+            </text>
+            <text x={padL + i * stepX} y={h - padB + 26} textAnchor="middle" style={{ fontSize: 9 }}>
+              n={p.n}
+            </text>
+          </g>
+        ))}
+      </svg>
+    );
+  };
+
+  const body =
+    spec.form === 'diverging' ? renderDiverging() : spec.form === 'line' ? renderLine() : renderBars();
+
+  return (
+    <figure className="viz m-0 mt-4">
+      <figcaption className="mb-1 text-sm font-medium" style={{ color: 'var(--viz-ink)' }}>
+        {spec.title}
+      </figcaption>
+      {spec.caption && (
+        <p className="mb-2 text-xs" style={{ color: 'var(--viz-ink-2)' }}>
+          {spec.caption}
+        </p>
+      )}
+      {(compare || (data.seriesLabels?.length ?? 0) > 1) && (
+        <Legend
+          items={[
+            { label: data.seriesLabels?.[0] ?? 'This channel', color: mainColour },
+            { label: data.seriesLabels?.[1] ?? 'The market', color: 'var(--viz-market)' },
+          ]}
+        />
+      )}
+      {spec.form === 'diverging' && (
+        <Legend
+          items={[
+            { label: 'At or above par', color: 'var(--viz-mine)' },
+            { label: 'Below par', color: 'var(--viz-under)' },
+          ]}
+        />
+      )}
+      {body}
+      {/* What was counted, and what was left out. A chart that quietly drops
+          half its categories reads as complete, so the note always ships. */}
+      {data.note && (
+        <p className="mt-2 text-xs" style={{ color: 'var(--viz-ink-2)' }}>
+          {data.note}
+        </p>
+      )}
+      <TableView
+        head={
+          compare
+            ? [data.groupLabel, data.measureLabel, 'Videos', 'Market', 'Market videos']
+            : [data.groupLabel, data.measureLabel, 'Videos']
+        }
+        rows={points.map((p) =>
+          compare
+            ? [p.label, p.value, p.n, p.secondary ?? '—', p.nSecondary ?? 0]
+            : [p.label, p.value, p.n],
+        )}
+      />
+    </figure>
+  );
+}

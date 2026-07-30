@@ -18,6 +18,9 @@
  * scan rather than in the finished report.
  */
 import type { ScoredVideo } from "./baseline.ts";
+import type { AuditChartData, AuditSeriesQuery } from "./series.ts";
+
+export type { AuditChartData, AuditSeriesQuery };
 
 export type AuditMode = "own" | "teardown";
 
@@ -305,6 +308,13 @@ export interface ContentFindings {
      */
     marketCount?: number;
     marketMedianViews?: number;
+    /**
+     * Which MARKET videos are in this topic. Same lesson as `videoIds` above,
+     * one level out: without membership, a chart comparing this channel to the
+     * market on a topic can only use the two pre-computed aggregates, and any
+     * question the report did not anticipate is unanswerable.
+     */
+    marketVideoIds?: string[];
     /** This channel's share of the videos on this topic, 0-1. */
     share?: number;
   }[];
@@ -387,7 +397,15 @@ export interface AppliedRename {
   viewsAtCheck?: number | null;
 }
 
-/** One API call's tokens and price, so a run's bill can be decomposed. */
+/**
+ * One API call's tokens and price, so a run's bill can be decomposed.
+ *
+ * Structurally the same shape as `ScopedCall` in ai/usageScope.ts, which is what
+ * actually produces these — the audit opens a usage scope and every Claude call
+ * inside it lands here. `model`, `ms` and `unpriced` are optional only because
+ * runs recorded before cost tracking existed have neither; anything written now
+ * carries all three.
+ */
 export interface AuditCallUsage {
   label: string;
   input: number;
@@ -395,6 +413,47 @@ export interface AuditCallUsage {
   cacheWrite: number;
   cacheRead: number;
   costUsd: number;
+  model?: string;
+  ms?: number;
+  /** The model had no published rate on file — cost is UNKNOWN, not zero. */
+  unpriced?: boolean;
+}
+
+/**
+ * One chart in a custom section.
+ *
+ * The spec is what was ASKED; `AuditChartData` alongside it is what was
+ * MEASURED. They are stored separately on purpose — the query is reproducible,
+ * so a reader can see exactly what question produced the picture, and a stale
+ * chart can be recomputed rather than believed.
+ *
+ * `form` is derived from the query by the server, never chosen by the model.
+ */
+export interface AuditChartSpec {
+  id: string;
+  form: "bars" | "grouped" | "diverging" | "line";
+  title: string;
+  /** One line under the title: what the reader should take from it. */
+  caption: string;
+  query: AuditSeriesQuery;
+}
+
+/** A part of the report the operator asked for after the fact. */
+export interface AuditReportSection {
+  id: string;
+  title: string;
+  /** What was asked, verbatim — the section's own provenance. */
+  request: string;
+  summary: string;
+  bullets: string[];
+  charts: { spec: AuditChartSpec; data: AuditChartData }[];
+  /** Any data fetched to answer this, in plain language. Empty when none was. */
+  gathered: string[];
+  /** How it was measured, so a claim can be checked rather than trusted. */
+  method: string;
+  createdAt: number;
+  /** YouTube quota this section spent gathering. */
+  quotaUnits: number;
 }
 
 export interface AuditRunResult {
@@ -426,6 +485,11 @@ export interface AuditRunResult {
   baseFindings?: AuditFindings | null;
   /** The conversation about this report. */
   chat: AuditChatMessage[];
+  /**
+   * Sections the operator asked for after the report was written. Additive:
+   * a refocus rewrites `findings`, this only ever appends.
+   */
+  sections?: AuditReportSection[];
   calls: AuditCallUsage[];
   costUsd: number;
   /** YouTube Data API units spent — the other budget. */

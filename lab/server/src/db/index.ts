@@ -576,6 +576,10 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   if (!has("focus_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN focus_json TEXT");
   // The whole-catalogue findings, so a focus can be undone.
   if (!has("base_findings_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN base_findings_json TEXT");
+  // Sections the operator asked for after the report was written. Additive to
+  // the report, so they live beside the findings rather than inside them — a
+  // refocus rewrites findings and must not take these with it.
+  if (!has("sections_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN sections_json TEXT");
 }
 
 /**

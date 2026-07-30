@@ -19,6 +19,7 @@
  */
 import { aiConfig, modelForTier } from "./config.js";
 import { recordAnthropicUsage, type CallPurpose } from "./runAccounting.js";
+import { recordScopedUsage } from "./usageScope.js";
 
 interface Turn {
   role: "user" | "assistant";
@@ -322,6 +323,10 @@ async function callClaude(opts: {
   if (opts.purpose) {
     recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms });
   }
+  // …and into the active USAGE SCOPE, if any. Unconditional on purpose: a run
+  // that opened a scope is asking what it spent, and a call with no purpose
+  // still spent money. It books as "unlabelled" rather than vanishing.
+  recordScopedUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms });
   opts.onUsage?.(json.usage, ms);
   return (json.content || [])
     .filter((b) => b.type === "text")

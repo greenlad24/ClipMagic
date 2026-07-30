@@ -36,7 +36,17 @@ import {
 } from "./analysis.js";
 import { ageCurve, outliers } from "./baseline.js";
 import { createRun, updateRun, getRun } from "../db/auditRuns.js";
+import {
+  withUsageScope,
+  currentUsageScope,
+  totalCost,
+  costByLabel,
+  hasUnpriced,
+  type ScopedCall,
+  type UsageScope,
+} from "../ai/usageScope.js";
 import type {
+  AuditCallUsage,
   AuditChannel,
   AuditFindings,
   AuditInput,
@@ -57,6 +67,43 @@ const CONTENT_OWN = 10;
 
 const live = new Map<string, AuditJobSnapshot>();
 
+/**
+ * A usage scope for one audit, persisting the bill as it grows.
+ *
+ * Flushing on every call rather than at the end is the point: an audit spends
+ * real money across several minutes, and a run that dies in the rename stage
+ * should still be able to tell you what the thumbnails cost. A total that only
+ * appears on success is exactly the total you don't get when you need it.
+ *
+ * `seed` carries the calls already on the row, so an approval pause — which ends
+ * one async entry point and starts another — continues the same bill instead of
+ * restarting it at zero.
+ */
+function auditScope(runId: string, seed: AuditCallUsage[]): UsageScope {
+  const calls: ScopedCall[] = seed.map((c) => ({
+    label: c.label,
+    model: c.model ?? "unknown",
+    input: c.input,
+    output: c.output,
+    cacheWrite: c.cacheWrite,
+    cacheRead: c.cacheRead,
+    costUsd: c.costUsd,
+    ms: c.ms ?? 0,
+    ...(c.unpriced ? { unpriced: true as const } : {}),
+  }));
+  return {
+    calls,
+    onCall: (_call, all) => {
+      // Never let a bookkeeping write sink a run that is otherwise fine.
+      try {
+        updateRun(runId, { calls: all, costUsd: totalCost(all) });
+      } catch (err: any) {
+        console.warn(`[audit] ${runId}: could not persist usage:`, err?.message || err);
+      }
+    },
+  };
+}
+
 export function auditJobStatus(runId: string): AuditJobSnapshot | null {
   const l = live.get(runId);
   if (l) return l;
@@ -75,13 +122,29 @@ function setStage(runId: string, status: AuditJobSnapshot["status"], stage: stri
   live.set(runId, { runId, status, stage, progress, error: null });
 }
 
+/**
+ * Bill every Claude call made inside `fn` to this audit's row.
+ *
+ * For work that happens AFTER a run finishes — the report chat, a refocus, a
+ * section the operator asked for later. Those are real spend against the same
+ * report, and a bill that stopped at "completed" would understate what the
+ * audit cost the moment anyone talked to it.
+ */
+export function withAuditUsage<T>(runId: string, seed: AuditCallUsage[], fn: () => Promise<T>): Promise<T> {
+  return withUsageScope(auditScope(runId, seed), fn);
+}
+
 /** Start an audit. Returns immediately; work continues in the background. */
 export function startAudit(input: AuditInput): { runId: string } {
   const runId = nanoid();
   createRun(runId, input);
   setStage(runId, "ingesting", "Reading the channel", 0.02);
 
-  void (async () => {
+  // One scope over the WHOLE background job, including the auto-approve path
+  // into runRest. Nested scopes would shadow each other and split the bill, so
+  // runRest never opens its own — resumeAudit opens the second one, and only
+  // because the approval pause genuinely ends this async context.
+  void withUsageScope(auditScope(runId, []), async () => {
     try {
       // ── ingest ────────────────────────────────────────────────────────────
       // Paid views, when a channel is connected. Only ever available for the
@@ -158,7 +221,7 @@ export function startAudit(input: AuditInput): { runId: string } {
     } catch (err: any) {
       fail(runId, err);
     }
-  })();
+  });
 
   return { runId };
 }
@@ -168,7 +231,10 @@ export function resumeAudit(runId: string, approved: MarketProposal): { ok: bool
   const run = getRun(runId);
   if (!run || run.status !== "awaiting-approval") return { ok: false };
   updateRun(runId, { approved, status: "scanning" });
-  void runRest(runId, approved).catch((err) => fail(runId, err));
+  // Seeded from what the pre-approval half already spent, so the bill continues.
+  void withUsageScope(auditScope(runId, run.calls), () => runRest(runId, approved)).catch((err) =>
+    fail(runId, err),
+  );
   return { ok: true };
 }
 
@@ -317,6 +383,10 @@ async function runRest(runId: string, market: MarketProposal) {
           // The membership itself, not just three examples — a topic refocus is
           // built on this, and without it the filter can only see the examples.
           videoIds: vids.map((v) => v.videoId),
+          // The market side of the same membership. Aggregates alone answer the
+          // questions the report thought to ask; a custom section asking "how do
+          // I compare to the market ON THIS TOPIC" needs the videos themselves.
+          marketVideoIds: mkt.map((v) => v.videoId),
           // The same topic as the market covers it, so ownership and growth are
           // answerable rather than inferred.
           marketCount: mkt.length,
@@ -429,7 +499,15 @@ async function runRest(runId: string, market: MarketProposal) {
   // report because the original only existed in the column being overwritten.
   updateRun(runId, { status: "completed", findings, baseFindings: findings, videos: renamed, quotaUnits });
   live.delete(runId);
-  console.log(`[audit] ${runId} done — ${renamed.length} videos, ${competitors.length} competitors, ${quotaUnits} quota units`);
+  const spent = currentUsageScope()?.calls ?? [];
+  console.log(
+    `[audit] ${runId} done — ${renamed.length} videos, ${competitors.length} competitors, ` +
+      `${quotaUnits} quota units, ${spent.length} AI calls, $${totalCost(spent).toFixed(2)}` +
+      (hasUnpriced(spent) ? " (some calls ran on a model with no rate on file)" : ""),
+  );
+  for (const line of costByLabel(spent)) {
+    console.log(`[audit] ${runId}   ${line.label}: $${line.costUsd.toFixed(3)} over ${line.calls} call(s)`);
+  }
 }
 
 function fail(runId: string, err: any) {

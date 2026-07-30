@@ -49,6 +49,8 @@ Answer from the data you are given. If they ask something the audit did not meas
 
 You can also RE-AIM the report. Channels change: a catalogue full of 2024 tutorials describes a channel that may no longer exist, and only the operator knows that. When they tell you the focus has moved, return an action and the findings are recomputed over just the part of the catalogue that still represents them. This is free and takes seconds — no quota, nothing re-scanned — so offer it whenever their answer implies the report is looking at the wrong videos.
 
+You can also ADD A SECTION to the report. When they ask for something the report does not currently cover — "add a part about my Shorts", "I want a section on posting frequency vs the market" — return the add-section action. A separate pass then measures it against their real data, draws the charts and writes it into the report. It costs a couple of Opus calls, and sometimes a little YouTube quota if it has to go and fetch data nobody has pulled yet.
+
 Return JSON:
 {
   "reply": "your answer, in plain prose",
@@ -58,6 +60,9 @@ Return JSON:
     "includeTopics": string[] | null, // only these topic labels, as named in the report
     "excludeTopics": string[] | null,
     "note": "one line describing the new focus, shown on the report"
+  } | {
+    "kind": "add-section",
+    "request": "one sentence stating what the section should measure and answer"
   }
 }
 
@@ -65,6 +70,8 @@ Rules:
 - Propose a refocus only when it follows from what they said. Do not re-aim a report because they asked a question.
 - Prefer topics over dates when they name a subject, and dates when they name a period. Both together is fine.
 - Say in the reply what the refocus will do and roughly how many videos it will leave, so they can stop you if that is too few.
+- Add a section when they ask for the REPORT to cover something. If they just want to know a fact, answer it in the reply instead — a section is a permanent part of the document, not a way to reply.
+- When you add a section, keep the "request" specific about what to measure. "A section on Shorts" is weak; "how Shorts perform against long-form on this channel, and whether the market's Shorts do better" is what produces a good one.
 - Never invent a number. Every figure you quote must be one you were given.
 - Plain language. No hype.`;
 
@@ -104,9 +111,14 @@ WORST 10:
 ${lines(worst)}`;
 }
 
+/** A refocus narrows the existing report; a section appends a new part to it. */
+export type ChatAction =
+  | (AuditFocus & { kind: "refocus" })
+  | { kind: "add-section"; request: string };
+
 export interface ChatResult {
   reply: string;
-  action: (AuditFocus & { kind: "refocus" }) | null;
+  action: ChatAction | null;
 }
 
 export async function chatAboutAudit(
@@ -136,17 +148,23 @@ export async function chatAboutAudit(
   }
 
   const a = got?.action;
-  const action =
-    a && a.kind === "refocus"
-      ? {
-          kind: "refocus" as const,
-          sinceDays: Number.isFinite(Number(a.sinceDays)) ? Number(a.sinceDays) : null,
-          includeTopics: Array.isArray(a.includeTopics) ? a.includeTopics.map(String) : null,
-          excludeTopics: Array.isArray(a.excludeTopics) ? a.excludeTopics.map(String) : null,
-          note: String(a.note ?? "Refocused"),
-          videoCount: 0, // set once applied
-        }
-      : null;
+  let action: ChatAction | null = null;
+  if (a && a.kind === "refocus") {
+    action = {
+      kind: "refocus" as const,
+      sinceDays: Number.isFinite(Number(a.sinceDays)) ? Number(a.sinceDays) : null,
+      includeTopics: Array.isArray(a.includeTopics) ? a.includeTopics.map(String) : null,
+      excludeTopics: Array.isArray(a.excludeTopics) ? a.excludeTopics.map(String) : null,
+      note: String(a.note ?? "Refocused"),
+      videoCount: 0, // set once applied
+    };
+  } else if (a && a.kind === "add-section") {
+    // Fall back to the operator's own words when the model returns the action
+    // without a usable request — their sentence is better than none, and an
+    // empty request would design a section about nothing.
+    const request = String(a.request ?? "").trim() || message.trim();
+    if (request) action = { kind: "add-section" as const, request };
+  }
 
   return { reply: String(got?.reply ?? "").trim() || "(no answer)", action };
 }
