@@ -4344,6 +4344,12 @@ const skoolConsoleScroll: Handler = async (input) => ({
   frame: await skoolConsole.scrollBy(Number(input?.dy ?? 0)),
 });
 
+/** Empty the focused field, refusing when focus is not in one. */
+const skoolConsoleClearField: Handler = async () => {
+  const result = await skoolConsole.clearFocusedField();
+  return { ...result, frame: await skoolConsole.frame() };
+};
+
 /** Describe what sits at a point without touching it — the teach preview. */
 const skoolDescribePoint: Handler = async (input) => ({
   descriptor: await skoolConsole.describePoint(Number(input?.x ?? 0), Number(input?.y ?? 0)),
@@ -4577,6 +4583,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolConsoleType,
   skoolConsoleKey,
   skoolConsoleScroll,
+  skoolConsoleClearField,
   skoolDescribePoint,
   skoolSaveRecipe,
   skoolListRecipes,

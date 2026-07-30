@@ -760,6 +760,12 @@ export const skoolConsoleKey =
   endpoint<{ key?: string; combo?: string[] }, { frame: SkoolConsoleFrame }>("skoolConsoleKey");
 export const skoolConsoleScroll =
   endpoint<{ dy: number }, { frame: SkoolConsoleFrame }>("skoolConsoleScroll");
+/** Empties the focused field. Refuses when focus is not in an editable one,
+    rather than letting a missed click select the whole page. */
+export const skoolConsoleClearField = endpoint<
+  void,
+  { cleared: boolean; reason: string; frame: SkoolConsoleFrame }
+>("skoolConsoleClearField");
 
 export interface SkoolRecipeStep {
   kind: "hover" | "click" | "type" | "key" | "navigate" | "wait";

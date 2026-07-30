@@ -28,6 +28,7 @@ import {
   skoolConsoleType,
   skoolConsoleKey,
   skoolConsoleScroll,
+  skoolConsoleClearField,
   skoolSaveRecipe,
   skoolListRecipes,
   skoolDeleteRecipe,
@@ -340,6 +341,7 @@ function TeachConsole() {
   const [recipes, setRecipes] = useState<SkoolRecipe[]>([]);
   const [typing, setTyping] = useState('');
   const [chord, setChord] = useState('');
+  const [clearNote, setClearNote] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
   // Keystrokes are queued rather than fired in parallel. Each one returns a
   // frame, and two in flight at once come back in whatever order the server
@@ -608,6 +610,27 @@ function TeachConsole() {
           placeholder="any chord, e.g. cmd+shift+z"
           className="w-40 rounded-md border border-border bg-background px-2 py-1 text-xs"
         />
+        <button
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const out = await skoolConsoleClearField();
+              setFrame(out.frame);
+              if (out.cleared && mode === 'record') {
+                setSteps((s) => [...s, { kind: 'key', label: 'Clear field', value: 'clearField' }]);
+              }
+              if (!out.cleared) setClearNote(out.reason);
+              else setClearNote(null);
+            } catch {
+              /* leave the frame */
+            } finally {
+              setBusy(false);
+            }
+          }}
+          className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+        >
+          Clear field
+        </button>
         <button onClick={() => void act(() => skoolConsoleScroll({ dy: -400 }))} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
           Scroll ↑
         </button>
@@ -615,6 +638,8 @@ function TeachConsole() {
           Scroll ↓
         </button>
       </div>
+
+      {clearNote && <div className="text-xs text-destructive">{clearNote}</div>}
 
       {mode === 'record' && (
         <div className="rounded-lg border border-border p-3">

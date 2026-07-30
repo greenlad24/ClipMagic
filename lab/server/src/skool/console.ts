@@ -292,6 +292,70 @@ export async function scrollBy(dy: number): Promise<ConsoleFrame> {
   return frame();
 }
 
+/**
+ * Empty the field that currently has focus.
+ *
+ * ⌘A + Delete already works, and select-all does scope itself to the focused
+ * editing host — verified against Skool's own composer: it selected the post
+ * body and left the title beside it untouched.
+ *
+ * The hole it does not cover is a MISSED CLICK. If the click that was meant to
+ * land in the field landed just outside it, focus is on the document, ⌘A
+ * selects the entire page, and the write path proceeds believing it cleared a
+ * field. So this refuses when focus is not in something editable, and says so,
+ * rather than doing something dramatic and reporting success.
+ *
+ * The selection is made in the page, but the DELETE is a real keystroke —
+ * ProseMirror and React only update from real input events, and a
+ * programmatic value change leaves the editor's own model untouched.
+ */
+export async function clearFocusedField(): Promise<{ cleared: boolean; reason: string }> {
+  const ready = await withSkoolPage(async (page) =>
+    page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const el: any = doc.activeElement;
+      if (!el || el === doc.body) return { ok: false, reason: "Nothing is focused — click into the field first." };
+
+      const tag = el.tagName.toLowerCase();
+      if (tag === "input" || tag === "textarea") {
+        if (!el.value) return { ok: true, reason: "already empty" };
+        el.select();
+        return { ok: true, reason: "input selected" };
+      }
+
+      // Walk to the editing host: focus often sits on a node inside it.
+      let host: any = el;
+      let hops = 0;
+      while (host && host.getAttribute?.("contenteditable") !== "true" && hops < 6) {
+        host = host.parentElement;
+        hops++;
+      }
+      if (!host) return { ok: false, reason: "Focus is not in an editable field." };
+      if (!(host.textContent || "").trim()) return { ok: true, reason: "already empty" };
+
+      const range = doc.createRange();
+      range.selectNodeContents(host);
+      const sel = (globalThis as any).getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return { ok: true, reason: "editable selected" };
+    }),
+  );
+
+  if (!ready?.ok) return { cleared: false, reason: ready?.reason ?? "The browser could not be reached." };
+  if (ready.reason === "already empty") return { cleared: true, reason: "The field was already empty." };
+
+  await withSkoolPage(async (page) => {
+    try {
+      await page.keyboard.press("Delete");
+    } catch {
+      /* best effort */
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  });
+  return { cleared: true, reason: ready.reason };
+}
+
 /** Describe whatever sits at a point, without touching it. */
 export async function describePoint(x: number, y: number): Promise<ElementDescriptor | null> {
   const out = await withSkoolPage(async (page) =>
