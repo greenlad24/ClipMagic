@@ -142,6 +142,18 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   }
 }
 
+/** Additive: the channel the Skool planner pulls missing lessons from, and the
+ *  tracks the operator requires the spine to contain. */
+{
+  const cols = db.prepare("PRAGMA table_info(skool_settings)").all() as Array<{ name: string }>;
+  if (cols.length > 0 && !cols.some((c) => c.name === "channel_url")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN channel_url TEXT NOT NULL DEFAULT ''");
+  }
+  if (cols.length > 0 && !cols.some((c) => c.name === "required_tracks_json")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN required_tracks_json TEXT NOT NULL DEFAULT '[]'");
+  }
+}
+
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
 
 /**
@@ -329,6 +341,14 @@ CREATE TABLE IF NOT EXISTS skool_settings (
   -- The roadmap the operator wants members to move through. Free text: it is
   -- an input to the course planner, not a schema.
   roadmap_md     TEXT NOT NULL DEFAULT '',
+  -- The creator's YouTube channel — the source of the lessons that are not in
+  -- the classroom yet.
+  channel_url    TEXT NOT NULL DEFAULT '',
+  -- Tracks the operator requires the spine to contain, as JSON:
+  -- [{"title":"...","note":"..."}]. These are a CONSTRAINT, not guidance —
+  -- the planner has already shown it will override an instruction it is merely
+  -- told, so required tracks are built into the structure instead.
+  required_tracks_json TEXT NOT NULL DEFAULT '[]',
   updated_at     INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO skool_settings (id, community_url, roadmap_md, updated_at)
@@ -358,6 +378,35 @@ CREATE TABLE IF NOT EXISTS skool_inventory (
   data_json      TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS idx_skool_inventory_started ON skool_inventory(started_at);
+
+-- A proposed spine for the classroom. Kept separately from the inventory it
+-- was built from, and stamped with that inventory's id: a plan read against a
+-- classroom that has since changed is a plan that would write to the wrong
+-- place, and the write path checks this before it touches anything.
+CREATE TABLE IF NOT EXISTS skool_plans (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  inventory_id  INTEGER NOT NULL,
+  status        TEXT NOT NULL,
+  created_at    INTEGER NOT NULL,
+  finished_at   INTEGER,
+  error         TEXT,
+  data_json     TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_skool_plans_created ON skool_plans(created_at);
+
+-- Recorded recipes for Skool's editing UI, taught by demonstration.
+--
+-- Skool's admin controls cannot be found by querying the DOM: they are plain
+-- divs, they do not exist until hovered, and every class is a build hash. So
+-- the operator performs each action once in a live console and the steps are
+-- recorded here as element DESCRIPTORS — never coordinates, which break the
+-- moment a card moves or a list grows.
+CREATE TABLE IF NOT EXISTS skool_recipes (
+  name        TEXT PRIMARY KEY,
+  description TEXT NOT NULL DEFAULT '',
+  steps_json  TEXT NOT NULL DEFAULT '[]',
+  updated_at  INTEGER NOT NULL
+);
 
 -- A named, reusable set of competitors. A market belongs to a SUBJECT, not to a
 -- channel: the same channel can be audited against two different markets and

@@ -61,12 +61,29 @@ const EMPTY = (error: string): SkoolClassroom => ({
   error,
 });
 
-/** `https://www.skool.com/<slug>` → its classroom URL. */
-export function classroomUrl(communityUrl: string): string {
+/** `https://www.skool.com/<slug>` → its classroom URL, optionally a later page. */
+export function classroomUrl(communityUrl: string, page = 1): string {
   const base = (communityUrl || "").trim().replace(/\/+$/, "");
   if (!base) return "";
-  return base.endsWith("/classroom") ? base : `${base}/classroom`;
+  const url = base.endsWith("/classroom") ? base : `${base}/classroom`;
+  return page > 1 ? `${url}?p=${page}` : url;
 }
+
+/**
+ * ⚠️ THE CLASSROOM IS PAGINATED AT 30 AND THE PAYLOAD ONLY CARRIES ONE PAGE.
+ *
+ * `allCourses` is named as if it were all of them. It is not — it is the
+ * current page, and a community with 60 courses reads as exactly 30 with no
+ * error, no truncation flag, and nothing in the payload to suggest anything is
+ * missing. The tell was elsewhere: `currentGroup.metadata.numCourses` said 60.
+ *
+ * This is the worst failure mode this tool has: a planner working off half a
+ * classroom proposes creating courses that already exist, and the write path
+ * then duplicates them. So the page walk stops only on an empty page or one
+ * that adds nothing new, and the cap is a runaway guard, not a limit anyone is
+ * expected to hit.
+ */
+const MAX_CLASSROOM_PAGES = 40;
 
 /**
  * Read the whole classroom.
@@ -77,8 +94,66 @@ export function classroomUrl(communityUrl: string): string {
  * "new" courses that already exist.
  */
 export async function readClassroom(communityUrl: string): Promise<SkoolClassroom> {
-  const url = classroomUrl(communityUrl);
-  if (!url) return EMPTY("No community URL is set.");
+  if (!classroomUrl(communityUrl)) return EMPTY("No community URL is set.");
+
+  const courses: SkoolCourse[] = [];
+  const seen = new Set<string>();
+  let community: string | null = null;
+  let account: string | null = null;
+  let expected: number | null = null;
+
+  for (let p = 1; p <= MAX_CLASSROOM_PAGES; p++) {
+    const page = await readClassroomPage(communityUrl, p);
+    if (page.error) {
+      // A failure on page 1 is a failure. A failure on a later page would give
+      // a silently short classroom, which is the thing this must never do.
+      if (p === 1) return EMPTY(page.error);
+      return EMPTY(`Read ${courses.length} courses but page ${p} failed: ${page.error}`);
+    }
+    if (p === 1) {
+      community = page.community;
+      account = page.account;
+      expected = page.expectedCourses;
+    }
+    const fresh = page.courses.filter((c) => c.id && !seen.has(c.id));
+    for (const c of fresh) {
+      seen.add(c.id);
+      courses.push({ ...c, position: courses.length });
+    }
+    // Stop on a page that is empty or adds nothing — Skool serves the last page
+    // again for an out-of-range `p` rather than an error.
+    if (fresh.length === 0) break;
+  }
+
+  // Skool tells us how many there should be. If the walk disagrees, say so
+  // rather than returning a plausible-looking short list.
+  const error =
+    expected != null && expected !== courses.length
+      ? `Skool reports ${expected} courses but only ${courses.length} could be read.`
+      : null;
+
+  return { community, account, courses, readAt: Date.now(), error };
+}
+
+interface ClassroomPage {
+  community: string | null;
+  account: string | null;
+  courses: SkoolCourse[];
+  /** `numCourses` from the group payload — the check against a short read. */
+  expectedCourses: number | null;
+  error: string | null;
+}
+
+/** One page of the classroom grid. */
+async function readClassroomPage(communityUrl: string, pageNo: number): Promise<ClassroomPage> {
+  const url = classroomUrl(communityUrl, pageNo);
+  const fail = (error: string): ClassroomPage => ({
+    community: null,
+    account: null,
+    courses: [],
+    expectedCourses: null,
+    error,
+  });
 
   const raw = await withSkoolPage(async (page) => {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
@@ -112,6 +187,9 @@ export async function readClassroom(communityUrl: string): Promise<SkoolClassroo
         // "Classroom · <name>"; the group object is not always present.
         pageTitle: pp.settings?.pageTitle ?? doc.title ?? null,
         account,
+        // How many courses Skool believes the classroom holds, which is the
+        // only in-payload signal that `allCourses` is one page of several.
+        expectedCourses: Number(pp.currentGroup?.metadata?.numCourses ?? 0) || null,
         courses: pp.allCourses.map((c: any, i: number) => ({
           id: String(c?.id ?? ""),
           slug: String(c?.name ?? ""),
@@ -131,7 +209,7 @@ export async function readClassroom(communityUrl: string): Promise<SkoolClassroo
     });
   });
 
-  if (!raw) return EMPTY("The browser could not be reached.");
+  if (!raw) return fail("The browser could not be reached.");
   if (raw.fail) {
     const why: Record<string, string> = {
       "no-payload": "That page carried no Skool data payload — the session may have been bounced to a login.",
@@ -139,7 +217,7 @@ export async function readClassroom(communityUrl: string): Promise<SkoolClassroo
       "no-pageprops": "Skool's data payload had no page props. Its page format may have changed.",
       "no-courses": "Skool's data payload had no course list — check the community URL points at a classroom.",
     };
-    return EMPTY(why[raw.fail] ?? "Could not read the classroom.");
+    return fail(why[raw.fail] ?? "Could not read the classroom.");
   }
 
   // "Classroom · AI & Automation Mastery" → the community's own name.
@@ -149,7 +227,7 @@ export async function readClassroom(communityUrl: string): Promise<SkoolClassroo
     community,
     account: raw.account ?? null,
     courses: raw.courses as SkoolCourse[],
-    readAt: Date.now(),
+    expectedCourses: raw.expectedCourses ?? null,
     error: null,
   };
 }

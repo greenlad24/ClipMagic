@@ -13,13 +13,32 @@ import { db } from "./index.js";
 export interface SkoolSettings {
   communityUrl: string;
   roadmapMd: string;
+  /** The creator's YouTube channel — where missing lessons come from. */
+  channelUrl: string;
+  /** Tracks the spine MUST contain, with optional guidance for each. */
+  requiredTracks: { title: string; note: string }[];
   updatedAt: number;
 }
 
 interface Row {
   community_url: string;
   roadmap_md: string;
+  channel_url: string;
+  required_tracks_json: string;
   updated_at: number;
+}
+
+/** Tolerant: a malformed list means "none required", never a crashed planner. */
+function parseRequired(raw: string | undefined): { title: string; note: string }[] {
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((t: any) => ({ title: String(t?.title ?? "").trim(), note: String(t?.note ?? "").trim() }))
+      .filter((t) => t.title);
+  } catch {
+    return [];
+  }
 }
 
 export function getSkoolSettings(): SkoolSettings {
@@ -27,6 +46,8 @@ export function getSkoolSettings(): SkoolSettings {
   return {
     communityUrl: row?.community_url ?? "",
     roadmapMd: row?.roadmap_md ?? "",
+    channelUrl: row?.channel_url ?? "",
+    requiredTracks: parseRequired(row?.required_tracks_json),
     updatedAt: row?.updated_at ?? 0,
   };
 }
@@ -120,14 +141,79 @@ export function latestCompleteInventory(): SkoolInventoryRow | null {
 }
 
 /** Partial update; an omitted field is left alone rather than blanked. */
-export function saveSkoolSettings(patch: Partial<Pick<SkoolSettings, "communityUrl" | "roadmapMd">>): SkoolSettings {
+export function saveSkoolSettings(
+  patch: Partial<Pick<SkoolSettings, "communityUrl" | "roadmapMd" | "channelUrl" | "requiredTracks">>,
+): SkoolSettings {
   const current = getSkoolSettings();
   const next = {
     communityUrl: patch.communityUrl ?? current.communityUrl,
     roadmapMd: patch.roadmapMd ?? current.roadmapMd,
+    channelUrl: patch.channelUrl ?? current.channelUrl,
+    requiredTracks: patch.requiredTracks ?? current.requiredTracks,
   };
   db.prepare(
-    `UPDATE skool_settings SET community_url = ?, roadmap_md = ?, updated_at = ? WHERE id = 1`,
-  ).run(next.communityUrl, next.roadmapMd, Date.now());
+    `UPDATE skool_settings
+        SET community_url = ?, roadmap_md = ?, channel_url = ?, required_tracks_json = ?, updated_at = ?
+      WHERE id = 1`,
+  ).run(
+    next.communityUrl,
+    next.roadmapMd,
+    next.channelUrl,
+    JSON.stringify(next.requiredTracks),
+    Date.now(),
+  );
   return getSkoolSettings();
+}
+
+/* ── Plans ──────────────────────────────────────────────────────────────── */
+
+export interface SkoolPlanRow {
+  id: number;
+  /** The snapshot this was planned against — the write path must re-check it. */
+  inventoryId: number;
+  status: "running" | "done" | "failed";
+  createdAt: number;
+  finishedAt: number | null;
+  error: string | null;
+  data: any;
+}
+
+function toPlan(row: any): SkoolPlanRow | null {
+  if (!row) return null;
+  let data: any = {};
+  try {
+    data = JSON.parse(row.data_json || "{}");
+  } catch {
+    data = {};
+  }
+  return {
+    id: row.id,
+    inventoryId: row.inventory_id,
+    status: row.status,
+    createdAt: row.created_at,
+    finishedAt: row.finished_at ?? null,
+    error: row.error ?? null,
+    data,
+  };
+}
+
+export function startPlan(inventoryId: number): number {
+  const info = db
+    .prepare(`INSERT INTO skool_plans (inventory_id, status, created_at) VALUES (?, 'running', ?)`)
+    .run(inventoryId, Date.now());
+  return Number(info.lastInsertRowid);
+}
+
+export function finishPlan(id: number, data: any, error: string | null): void {
+  db.prepare(
+    `UPDATE skool_plans SET status = ?, finished_at = ?, error = ?, data_json = ? WHERE id = ?`,
+  ).run(error ? "failed" : "done", Date.now(), error, JSON.stringify(data ?? {}), id);
+}
+
+export function getPlan(id: number): SkoolPlanRow | null {
+  return toPlan(db.prepare(`SELECT * FROM skool_plans WHERE id = ?`).get(id));
+}
+
+export function latestPlan(): SkoolPlanRow | null {
+  return toPlan(db.prepare(`SELECT * FROM skool_plans ORDER BY created_at DESC LIMIT 1`).get());
 }

@@ -178,12 +178,22 @@ import {
   finishInventory,
   getInventory,
   getSkoolSettings,
+  latestCompleteInventory,
   latestInventory,
   saveSkoolSettings,
   setInventoryProgress,
   startInventory,
+  // Aliased: the long-form planner already owns startPlan/getPlan in this file.
+  finishPlan as finishSkoolPlan,
+  getPlan as getSkoolPlan,
+  latestPlan as latestSkoolPlan,
+  startPlan as startSkoolPlan,
 } from "../db/skool.js";
 import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom.js";
+import { probeSkool } from "../skool/probe.js";
+import * as skoolConsole from "../skool/console.js";
+import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
+import { runPlan } from "../skool/planRun.js";
 import {
   saveMarket as saveAuditMarket,
   listMarkets as listAuditMarkets,
@@ -4247,10 +4257,145 @@ const skoolGetInventory: Handler = async (input) => {
   return { inventory };
 };
 
+/**
+ * Design a new spine for the classroom.
+ *
+ * Reads nothing from Skool itself — it plans against the newest COMPLETE
+ * inventory snapshot, and refuses if there isn't one. Planning against a
+ * half-finished read is how a rebuild proposes creating things that exist.
+ *
+ * Background + polled: several director-tier calls is a minute or two.
+ */
+const skoolBuildPlan: Handler = async () => {
+  const settings = getSkoolSettings();
+  const snapshot = latestCompleteInventory();
+  if (!snapshot || !snapshot.data?.courses?.length) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Read the classroom first — a plan needs a complete inventory to work from.",
+    });
+  }
+
+  const running = latestSkoolPlan();
+  if (running?.status === "running") return { plan: running, alreadyRunning: true };
+
+  const id = startSkoolPlan(snapshot.id);
+  void (async () => {
+    try {
+      const plan = await runPlan({
+        inventory: snapshot.data,
+        channelUrl: settings.channelUrl,
+        roadmap: settings.roadmapMd,
+        requiredTracks: settings.requiredTracks,
+      });
+      finishSkoolPlan(id, plan, null);
+    } catch (err) {
+      finishSkoolPlan(id, {}, err instanceof Error ? err.message : String(err));
+    }
+  })();
+
+  return { plan: getSkoolPlan(id), alreadyRunning: false };
+};
+
+const skoolGetPlan: Handler = async (input) => {
+  const id = Number(input?.id ?? 0);
+  return { plan: id > 0 ? getSkoolPlan(id) : latestSkoolPlan() };
+};
+
+/* ── Skool teach console ───────────────────────────────────────────────────
+   A live view of the Skool browser so the operator can DEMONSTRATE each admin
+   action once. Skool's controls cannot be found by querying the DOM — they are
+   plain divs that do not exist until hovered — so they are taught, not guessed.
+   Clicks drive the real mouse; a synthetic click does nothing to Skool's menus. */
+
+const skoolConsoleFrame: Handler = async () => ({ frame: await skoolConsole.frame() });
+
+const skoolConsoleNavigate: Handler = async (input) => ({
+  frame: await skoolConsole.navigate(String(input?.url ?? "")),
+});
+
+const skoolConsoleHover: Handler = async (input) => ({
+  frame: await skoolConsole.hover(Number(input?.x ?? 0), Number(input?.y ?? 0)),
+});
+
+/** Click, and — while teaching — report what was under the pointer. */
+const skoolConsoleClick: Handler = async (input) => {
+  const result = await skoolConsole.clickAt(Number(input?.x ?? 0), Number(input?.y ?? 0), {
+    describe: input?.describe === true,
+  });
+  return result;
+};
+
+const skoolConsoleType: Handler = async (input) => ({
+  frame: await skoolConsole.typeText(String(input?.text ?? "")),
+});
+
+const skoolConsoleKey: Handler = async (input) => ({
+  frame: await skoolConsole.pressKey(String(input?.key ?? "Enter")),
+});
+
+const skoolConsoleScroll: Handler = async (input) => ({
+  frame: await skoolConsole.scrollBy(Number(input?.dy ?? 0)),
+});
+
+/** Describe what sits at a point without touching it — the teach preview. */
+const skoolDescribePoint: Handler = async (input) => ({
+  descriptor: await skoolConsole.describePoint(Number(input?.x ?? 0), Number(input?.y ?? 0)),
+});
+
+const skoolSaveRecipe: Handler = async (input) => {
+  const name = String(input?.name ?? "").trim();
+  if (!name) throw new ZiteError({ code: "BAD_REQUEST", message: "A recipe needs a name." });
+  const steps = Array.isArray(input?.steps) ? (input.steps as RecipeStep[]) : [];
+  if (steps.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "A recipe needs at least one step." });
+  return { recipe: saveRecipe(name, String(input?.description ?? ""), steps) };
+};
+
+const skoolListRecipes: Handler = async () => ({ recipes: listRecipes() });
+
+const skoolGetRecipe: Handler = async (input) => ({ recipe: getRecipe(String(input?.name ?? "")) });
+
+const skoolDeleteRecipe: Handler = async (input) => {
+  deleteRecipe(String(input?.name ?? ""));
+  return { deleted: true };
+};
+
+/**
+ * DEVELOPMENT probe of Skool's editing DOM — see skool/probe.ts. Reading needs
+ * no selectors; writing does, and they have to be learned from the real DOM.
+ * Remove once the write path's selectors are settled.
+ */
+const skoolProbe: Handler = async (input) => {
+  const url = String(input?.url ?? "").trim();
+  if (!/^https:\/\/(www\.)?skool\.com\//.test(url)) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Probe URLs must be on skool.com." });
+  }
+  return {
+    probe: await probeSkool({
+      url,
+      clickText: input?.clickText ? String(input.clickText) : undefined,
+      waitMs: Number(input?.waitMs ?? 2500),
+      dumpHtml: input?.dumpHtml === true,
+      payloadPath: input?.payloadPath ? String(input.payloadPath) : undefined,
+    }),
+  };
+};
+
 const skoolSaveSettings: Handler = async (input) => {
-  const patch: { communityUrl?: string; roadmapMd?: string } = {};
+  const patch: {
+    communityUrl?: string;
+    roadmapMd?: string;
+    channelUrl?: string;
+    requiredTracks?: { title: string; note: string }[];
+  } = {};
   if (input?.communityUrl !== undefined) patch.communityUrl = String(input.communityUrl).trim();
   if (input?.roadmapMd !== undefined) patch.roadmapMd = String(input.roadmapMd);
+  if (input?.channelUrl !== undefined) patch.channelUrl = String(input.channelUrl).trim();
+  if (Array.isArray(input?.requiredTracks)) {
+    patch.requiredTracks = input.requiredTracks
+      .map((t: any) => ({ title: String(t?.title ?? "").trim(), note: String(t?.note ?? "").trim() }))
+      .filter((t: any) => t.title);
+  }
   return { settings: saveSkoolSettings(patch) };
 };
 
@@ -4416,6 +4561,21 @@ export const HANDLERS: Record<string, Handler> = {
   skoolReadCourse,
   skoolBuildInventory,
   skoolGetInventory,
+  skoolBuildPlan,
+  skoolGetPlan,
+  skoolProbe,
+  skoolConsoleFrame,
+  skoolConsoleNavigate,
+  skoolConsoleHover,
+  skoolConsoleClick,
+  skoolConsoleType,
+  skoolConsoleKey,
+  skoolConsoleScroll,
+  skoolDescribePoint,
+  skoolSaveRecipe,
+  skoolListRecipes,
+  skoolGetRecipe,
+  skoolDeleteRecipe,
   auditChat,
   clearAuditFocus,
   listAuditMarkets: listAuditMarketsHandler,

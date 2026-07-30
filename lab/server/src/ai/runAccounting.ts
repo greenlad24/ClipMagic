@@ -95,6 +95,14 @@ export type CallPurpose =
   // Keyword Research favorites: extract searchable keyword phrases from saved
   // YouTube titles (fast tier).
   | "keyword-extract"
+  // Skool Manager: designs the classroom spine (director tier), then places
+  // every content item into it in disjoint batches.
+  | "skool-spine"
+  | "skool-assign"
+  // Skool Manager: lays out a required course's chapters, then writes the ones
+  // no existing lesson covers.
+  | "skool-chapters"
+  | "skool-author"
   // Jake Dawson Script Generator: every stage (classify/research/outline/hooks/
   // sponsor/section/review/outro) runs on Opus (director tier).
   | "scriptgen"
