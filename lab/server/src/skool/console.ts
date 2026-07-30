@@ -190,7 +190,85 @@ export async function typeText(text: string): Promise<ConsoleFrame> {
   return frame();
 }
 
+/**
+ * Modifier names Puppeteer understands, and the ⌘ → Ctrl translation.
+ *
+ * ⚠️ THE REMOTE BROWSER RUNS ON LINUX. Chromium's accelerator there is Control,
+ * not Meta — sending a literal Meta+A does nothing at all, silently, which
+ * looks exactly like "the shortcut is not supported". So an operator on a Mac
+ * pressing ⌘A gets Control+A sent to the page, which is what actually selects
+ * the text they are looking at.
+ */
+const MODIFIER_ALIASES: Record<string, string> = {
+  cmd: "Control",
+  command: "Control",
+  meta: "Control",
+  ctrl: "Control",
+  control: "Control",
+  shift: "Shift",
+  alt: "Alt",
+  option: "Alt",
+};
+
+/**
+ * Press a chord — modifiers held, key tapped, modifiers released.
+ *
+ * Released in reverse order and in a `finally`, because a modifier left stuck
+ * down poisons every later keystroke in the session: the next plain click
+ * becomes a ctrl-click, and nothing about the page explains why.
+ */
+export async function pressCombo(parts: string[]): Promise<ConsoleFrame> {
+  const raw = parts.map((p) => p.trim()).filter(Boolean);
+  if (raw.length === 0) return frame();
+
+  const modifiers: string[] = [];
+  let key = "";
+  for (const part of raw) {
+    const mapped = MODIFIER_ALIASES[part.toLowerCase()];
+    if (mapped) {
+      if (!modifiers.includes(mapped)) modifiers.push(mapped);
+    } else {
+      key = part;
+    }
+  }
+  if (!key) return frame();
+
+  // Copy/paste need clipboard permission or Chromium blocks the read. Granted
+  // best-effort and only for Skool's own origin — a failure here degrades
+  // paste, it does not break the chord.
+  if (/^[cvx]$/i.test(key)) await grantClipboard();
+
+  await withSkoolPage(async (page) => {
+    try {
+      for (const m of modifiers) await page.keyboard.down(m);
+      try {
+        await page.keyboard.press(key);
+      } finally {
+        for (const m of [...modifiers].reverse()) await page.keyboard.up(m);
+      }
+    } catch {
+      /* best effort — the runtime's contract */
+    }
+    await new Promise((r) => setTimeout(r, 700));
+  });
+  return frame();
+}
+
+async function grantClipboard(): Promise<void> {
+  await withSkoolPage(async (page) => {
+    try {
+      const context = page.browserContext?.();
+      await context?.overridePermissions?.("https://www.skool.com", ["clipboard-read", "clipboard-write"]);
+    } catch {
+      /* older Chromium, or a context that refuses — paste simply may not work */
+    }
+  });
+}
+
 export async function pressKey(key: string): Promise<ConsoleFrame> {
+  // "Control+a" and friends route to the chord path — an operator typing a
+  // shortcut into a key field should not have to know the difference.
+  if (key.includes("+")) return pressCombo(key.split("+"));
   await withSkoolPage(async (page) => {
     try {
       await page.keyboard.press(key);

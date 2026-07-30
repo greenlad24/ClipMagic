@@ -304,6 +304,19 @@ export default function SkoolManagerPage() {
 }
 
 /**
+ * Shortcuts worth a button. Labelled with ⌘ because that is the key the
+ * operator presses; the server sends Control, since the remote browser is
+ * Linux and Meta does nothing there.
+ */
+const COMBOS: [string, string[]][] = [
+  ['⌘A', ['cmd', 'a']],
+  ['⌘C', ['cmd', 'c']],
+  ['⌘X', ['cmd', 'x']],
+  ['⌘V', ['cmd', 'v']],
+  ['⌘Z', ['cmd', 'z']],
+];
+
+/**
  * The teach console.
  *
  * A live view of the server's Skool browser. The operator performs an action
@@ -326,6 +339,13 @@ function TeachConsole() {
   const [recipeName, setRecipeName] = useState('');
   const [recipes, setRecipes] = useState<SkoolRecipe[]>([]);
   const [typing, setTyping] = useState('');
+  const [chord, setChord] = useState('');
+  const [capturing, setCapturing] = useState(false);
+  // Keystrokes are queued rather than fired in parallel. Each one returns a
+  // frame, and two in flight at once come back in whatever order the server
+  // finishes them — which shows the operator a stale picture of their own
+  // typing.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
   const [url, setUrl] = useState('');
   const imgRef = useRef<HTMLImageElement | null>(null);
 
@@ -360,6 +380,44 @@ function TeachConsole() {
       setBusy(false);
     }
   }
+
+  /**
+   * Forward a real keystroke to the remote browser.
+   *
+   * Everything goes through here — printable characters, Backspace, Delete,
+   * arrows, and chords — because the alternative is a button per key, and the
+   * keys an operator actually needs while editing a lesson are the ones nobody
+   * thinks to add a button for.
+   */
+  const sendKey = (e: React.KeyboardEvent) => {
+    if (!capturing) return;
+    // The browser's own shortcuts must not also fire: ⌘A here should select
+    // inside the remote page, not this one.
+    e.preventDefault();
+    e.stopPropagation();
+
+    const key = e.key;
+    if (key === 'Meta' || key === 'Control' || key === 'Shift' || key === 'Alt') return;
+
+    const mods: string[] = [];
+    if (e.metaKey || e.ctrlKey) mods.push('cmd');
+    if (e.altKey) mods.push('alt');
+    // Shift is already reflected in `key` for printable characters ("A" not
+    // "a"), so adding it there would send Shift+A and produce nothing.
+    if (e.shiftKey && key.length > 1) mods.push('shift');
+
+    const combo = [...mods, key];
+    const label = combo.join('+');
+    queue.current = queue.current
+      .then(async () => {
+        const out = await skoolConsoleKey(mods.length ? { combo } : { key });
+        setFrame(out.frame);
+        if (mode === 'record') {
+          setSteps((s) => [...s, { kind: 'key', label, value: label }]);
+        }
+      })
+      .catch(() => undefined);
+  };
 
   const onImageClick = async (e: React.MouseEvent<HTMLImageElement>) => {
     if (!imgRef.current || busy) return;
@@ -453,7 +511,24 @@ function TeachConsole() {
         <span className="ml-auto max-w-[40%] truncate text-xs text-muted-foreground">{frame?.url ?? ''}</span>
       </div>
 
-      <div className="overflow-auto rounded-lg border border-border bg-black/40 p-2">
+      <div
+        tabIndex={0}
+        onKeyDown={sendKey}
+        onFocus={() => setCapturing(true)}
+        onBlur={() => setCapturing(false)}
+        className={`overflow-auto rounded-lg border bg-black/40 p-2 outline-none ${
+          capturing ? 'border-primary ring-1 ring-primary' : 'border-border'
+        }`}
+      >
+        <div className="mb-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+          {capturing ? (
+            <span className="text-primary">
+              Keyboard connected — everything you type goes to Skool, including Backspace, Delete and ⌘ shortcuts.
+            </span>
+          ) : (
+            <span>Click the picture to connect your keyboard to it.</span>
+          )}
+        </div>
         {frame?.image ? (
           <img
             ref={imgRef}
@@ -488,7 +563,7 @@ function TeachConsole() {
           placeholder="Click a field above, then type here and press Enter"
           className="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs"
         />
-        {(['Enter', 'Escape', 'Tab'] as const).map((k) => (
+        {(['Enter', 'Escape', 'Tab', 'Backspace', 'Delete'] as const).map((k) => (
           <button
             key={k}
             onClick={() => {
@@ -500,6 +575,39 @@ function TeachConsole() {
             {k}
           </button>
         ))}
+        {/* ⌘ is shown because that is what the operator presses; Control is
+            what gets sent, because the remote browser is Linux. */}
+        {COMBOS.map(([label, combo]) => (
+          <button
+            key={label}
+            onClick={() => {
+              void act(() => skoolConsoleKey({ combo }));
+              if (mode === 'record') {
+                setSteps((s) => [...s, { kind: 'key', label, value: combo.join('+') }]);
+              }
+            }}
+            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+          >
+            {label}
+          </button>
+        ))}
+        <input
+          value={chord}
+          onChange={(e) => setChord(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && chord.trim()) {
+              const combo = chord.split('+').map((p) => p.trim()).filter(Boolean);
+              void act(() => skoolConsoleKey({ combo })).then(() => {
+                if (mode === 'record') {
+                  setSteps((s) => [...s, { kind: 'key', label: chord, value: combo.join('+') }]);
+                }
+                setChord('');
+              });
+            }
+          }}
+          placeholder="any chord, e.g. cmd+shift+z"
+          className="w-40 rounded-md border border-border bg-background px-2 py-1 text-xs"
+        />
         <button onClick={() => void act(() => skoolConsoleScroll({ dy: -400 }))} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
           Scroll ↑
         </button>

@@ -4331,9 +4331,14 @@ const skoolConsoleType: Handler = async (input) => ({
   frame: await skoolConsole.typeText(String(input?.text ?? "")),
 });
 
-const skoolConsoleKey: Handler = async (input) => ({
-  frame: await skoolConsole.pressKey(String(input?.key ?? "Enter")),
-});
+const skoolConsoleKey: Handler = async (input) => {
+  // A combo can arrive as ["Control","a"] or as "Control+a"; both mean the same
+  // thing to an operator and should not be two different endpoints.
+  if (Array.isArray(input?.combo)) {
+    return { frame: await skoolConsole.pressCombo(input.combo.map((k: any) => String(k))) };
+  }
+  return { frame: await skoolConsole.pressKey(String(input?.key ?? "Enter")) };
+};
 
 const skoolConsoleScroll: Handler = async (input) => ({
   frame: await skoolConsole.scrollBy(Number(input?.dy ?? 0)),

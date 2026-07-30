@@ -754,8 +754,10 @@ export const skoolConsoleClick = endpoint<
 >("skoolConsoleClick");
 export const skoolConsoleType =
   endpoint<{ text: string }, { frame: SkoolConsoleFrame }>("skoolConsoleType");
+/** `key` for a single key, `combo` for a chord. ⌘ is translated to Ctrl —
+    the remote browser is Linux, where Meta does nothing. */
 export const skoolConsoleKey =
-  endpoint<{ key: string }, { frame: SkoolConsoleFrame }>("skoolConsoleKey");
+  endpoint<{ key?: string; combo?: string[] }, { frame: SkoolConsoleFrame }>("skoolConsoleKey");
 export const skoolConsoleScroll =
   endpoint<{ dy: number }, { frame: SkoolConsoleFrame }>("skoolConsoleScroll");
 
