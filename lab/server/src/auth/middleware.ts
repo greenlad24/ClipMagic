@@ -23,7 +23,25 @@ import { isAllowedEmail } from "./google.js";
 // `/health` is intentionally NOT a prefix (a prefix would let `/healthfoo` fall
 // through to the SPA shell unauthenticated); it's an exact-match open path below.
 const OPEN_PREFIXES = ["/auth/"];
-const OPEN_EXACT = new Set(["/auth", "/health", "/api/auth/me"]);
+// Brand icons are open. A browser asks for these on the sign-in page too, and a
+// gated favicon answers a 302 to Google's OAuth — so the tab sits blank through
+// the whole sign-in. They are public brand assets and carry nothing private.
+//
+// EXACT MATCHES ONLY, never a prefix: `/favicon.svg` opens one file, where an
+// `/icon` prefix would open anything a future route happens to hang under it.
+const OPEN_ICONS = [
+  "/favicon.svg",
+  "/favicon.ico",
+  "/favicon-16.png",
+  "/favicon-32.png",
+  "/apple-touch-icon.png",
+  "/apple-touch-icon-precomposed.png", // older iOS asks for this name unprompted
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
+  "/site.webmanifest",
+];
+const OPEN_EXACT = new Set(["/auth", "/health", "/api/auth/me", ...OPEN_ICONS]);
 
 // Media asset routes the in-container render process (Remotion headless Chromium)
 // must fetch over LOOPBACK with no session cookie (e.g. sticker PNGs for a meme

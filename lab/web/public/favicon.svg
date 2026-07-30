@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="The Lab">
+  <!--
+    The Lab's mark: the same lucide "Film" glyph the header uses, in the same
+    two theme colours — hsl(49 100% 52%) #FFD20A on hsl(222 14% 7%) #0F1114.
+
+    The tile is not decoration. A bare stroke glyph on transparent disappears
+    against a light browser tab, so the icon carries its own background and
+    reads the same on either. Padding and stroke are tuned for 16px: the glyph
+    fills 44 of 64 units and the stroke lands just under 5, which is as heavy
+    as it can be before the sprocket holes close up.
+  -->
+  <rect width="64" height="64" rx="13" fill="#0F1114"/>
+  <g transform="translate(2.6667,2.6667) scale(2.44444)"
+     fill="none" stroke="#FFD20A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="3" width="18" height="18" rx="2"/>
+    <path d="M7 3v18"/>
+    <path d="M3 7.5h4"/>
+    <path d="M3 12h18"/>
+    <path d="M3 16.5h4"/>
+    <path d="M17 3v18"/>
+    <path d="M17 7.5h4"/>
+    <path d="M17 16.5h4"/>
+  </g>
+</svg>

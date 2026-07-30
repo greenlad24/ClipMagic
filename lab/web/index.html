@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>The Lab</title>
+
+    <!--
+      The mark is the same lucide "Film" glyph the header shows next to "The
+      Lab", in the same two theme colours. Sources live in web/public/ and are
+      copied to the dist root at build time.
+
+      The SVG is declared first on purpose: browsers that support it render the
+      mark at whatever size the tab actually needs, which beats any fixed PNG on
+      a HiDPI screen. The .ico is the fallback for the ones that don't, and is
+      also what a bare request to /favicon.ico gets.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#0F1114" />
   </head>
   <body>
     <div id="root"></div>
