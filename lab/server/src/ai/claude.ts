@@ -26,21 +26,47 @@ interface Turn {
   content: string;
 }
 
+/**
+ * Which credential a call should spend.
+ *
+ *   "api"          — the lab default: API key (or the global ANTHROPIC_AUTH_TOKEN
+ *                    override if one is set). Bills Anthropic API credits.
+ *   "subscription" — the Max-plan token from `claude setup-token`. Bills nothing;
+ *                    it draws on the 5-hour Max window instead.
+ *
+ * A call asks for "subscription" explicitly; there is no automatic promotion and
+ * NO FALLBACK TO CREDITS. Falling back would be the friendlier failure and the
+ * wrong one: the entire reason a call opts in is that it must not spend money,
+ * so a missing or expired token has to fail loudly rather than quietly bill.
+ */
+export type AuthMode = "api" | "subscription";
+
 /** True when either an API key or an OAuth access token is configured. */
 export function anthropicConfigured(): boolean {
   return !!(aiConfig.anthropicAuthToken || aiConfig.anthropicApiKey);
 }
 
+/** True when a Max-subscription token is available for `auth: "subscription"` calls. */
+export function anthropicSubscriptionConfigured(): boolean {
+  return !!aiConfig.anthropicSubscriptionToken;
+}
+
 /**
- * Build the Anthropic request headers for whichever auth mode is configured.
- * An OAuth access token (Bearer + oauth beta) takes precedence over an API key.
+ * Build the Anthropic request headers for the requested auth mode.
+ *
+ * Both OAuth paths (the global override and the subscription token) go on
+ * `Authorization: Bearer` PLUS the oauth beta header — an OAuth token sent as
+ * `x-api-key` is a 401, so this is a header swap, not just a key swap.
  */
-function anthropicHeaders(): Record<string, string> {
+function anthropicHeaders(auth: AuthMode = "api"): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "anthropic-version": aiConfig.anthropicVersion,
   };
-  if (aiConfig.anthropicAuthToken) {
+  if (auth === "subscription") {
+    headers["authorization"] = `Bearer ${aiConfig.anthropicSubscriptionToken}`;
+    headers["anthropic-beta"] = aiConfig.anthropicOauthBeta;
+  } else if (aiConfig.anthropicAuthToken) {
     headers["authorization"] = `Bearer ${aiConfig.anthropicAuthToken}`;
     // Anthropic requires this beta header for OAuth/account access tokens.
     headers["anthropic-beta"] = aiConfig.anthropicOauthBeta;
@@ -133,6 +159,7 @@ async function anthropicRequest(
   body: unknown,
   label: string,
   attempts?: number,
+  auth: AuthMode = "api",
 ): Promise<AnthropicResponse> {
   const maxAttempts = attempts ?? Number.parseInt(process.env.CLAUDE_MAX_RETRIES || "5", 10);
   let lastErr = "";
@@ -142,7 +169,7 @@ async function anthropicRequest(
     try {
       res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
         method: "POST",
-        headers: anthropicHeaders(),
+        headers: anthropicHeaders(auth),
         body: JSON.stringify(body),
         signal: t.signal,
       });
@@ -169,12 +196,29 @@ async function anthropicRequest(
 
     const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
     lastErr = `${res.status}: ${json?.error?.message || JSON.stringify(json)}`;
+    const ra = Number.parseInt(res.headers.get("retry-after") || "", 10);
+
+    // ⚠️ A SUBSCRIPTION 429 IS NOT A RATE BLIP — IT IS THE 5-HOUR MAX WINDOW.
+    // Backoff cannot outwait it, and its Retry-After is measured in hours, so
+    // the generic path below would either burn five pointless attempts or sleep
+    // the request until the window reset. Fail now and say when it lifts.
+    if (auth === "subscription" && res.status === 429) {
+      const mins = Number.isFinite(ra) && ra > 0 ? Math.ceil(ra / 60) : null;
+      throw new Error(
+        `${label}: Max subscription rate limit reached` +
+          (mins ? ` — resets in ~${mins} min` : "") +
+          `. Not retried and NOT billed to API credits. Re-run when the window resets.`,
+      );
+    }
+
     const retryable =
       maxAttempts > 1 && (res.status === 529 || res.status === 429 || (res.status >= 500 && res.status < 600));
     if (retryable && attempt < maxAttempts) {
-      // Honor Retry-After when present, else exponential backoff + jitter.
-      const ra = Number.parseInt(res.headers.get("retry-after") || "", 10);
-      const wait = Number.isFinite(ra) && ra > 0 ? ra * 1000 : backoff(attempt);
+      // Honor Retry-After when present, else exponential backoff + jitter — but
+      // capped: an hours-long Retry-After would otherwise hang the request for
+      // hours inside a sleep, which reads as a wedged server, not a rate limit.
+      const raMs = Number.isFinite(ra) && ra > 0 ? Math.min(ra * 1000, 60_000) : 0;
+      const wait = raMs || backoff(attempt);
       console.warn(`${label} ${res.status} (attempt ${attempt}/${maxAttempts}) — retrying in ${Math.round(wait)}ms`);
       await sleep(wait);
       continue;
@@ -293,8 +337,19 @@ async function callClaude(opts: {
    * calls instead of estimating.
    */
   onUsage?: (usage: AnthropicUsage | undefined, ms: number) => void;
+  /** Which credential to spend. Defaults to the lab-wide one (API credits). */
+  auth?: AuthMode;
 }): Promise<string> {
-  if (!anthropicConfigured()) {
+  const auth: AuthMode = opts.auth ?? "api";
+  if (auth === "subscription" && !anthropicSubscriptionConfigured()) {
+    // Deliberately NOT falling through to the API key — see AuthMode.
+    throw new Error(
+      "This call is configured to run on the Claude Max subscription, but ANTHROPIC_SUBSCRIPTION_TOKEN is not set. " +
+        "Run `claude setup-token` on the host and add the sk-ant-oat… token to .env. " +
+        "Refusing to fall back to ANTHROPIC_API_KEY, because the point of this call is not to spend API credits.",
+    );
+  }
+  if (auth === "api" && !anthropicConfigured()) {
     throw new Error(
       "No Anthropic credentials set. Add ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) to enable the AI director."
     );
@@ -317,7 +372,12 @@ async function callClaude(opts: {
   };
 
   const t0 = Date.now();
-  const json = await anthropicRequest(body, "Claude API error");
+  const json = await anthropicRequest(
+    body,
+    auth === "subscription" ? "Claude API error (Max subscription)" : "Claude API error",
+    undefined,
+    auth,
+  );
   const ms = Date.now() - t0;
   // Record the REAL usage from Anthropic's response into the active run's report.
   if (opts.purpose) {
@@ -622,6 +682,11 @@ export async function claudeJSONForPurpose(opts: {
   purpose: CallPurpose;
   system: string;
   messages: Turn[];
+  /**
+   * Spend the Max subscription instead of API credits. Opt-in per call: the
+   * Skool Manager sets it, everything else leaves it alone. See AuthMode.
+   */
+  auth?: AuthMode;
 }): Promise<string> {
   const raw = await callClaude({
     model: modelForTier(opts.tier),
@@ -629,6 +694,7 @@ export async function claudeJSONForPurpose(opts: {
     messages: opts.messages,
     jsonMode: true,
     purpose: opts.purpose,
+    auth: opts.auth,
   });
   return extractJson(raw);
 }

@@ -28,6 +28,25 @@ export const aiConfig = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || "",
   anthropicAuthToken:
     process.env.ANTHROPIC_AUTH_TOKEN || process.env.CLAUDE_CODE_OAUTH_TOKEN || "",
+
+  // ── Anthropic, SUBSCRIPTION (Max plan) ────────────────────────────────────
+  // A SECOND, PER-CALL credential — not a global override like the two above.
+  // Set it and nothing changes for the lab at large; only call sites that ask
+  // for it by name (`auth: "subscription"` — currently the Skool Manager's
+  // planner and lesson authoring) send it, and those calls bill Jake's Max
+  // subscription instead of API credits.
+  //
+  // ⚠️ IT MUST BE A `claude setup-token` TOKEN, NOT THE ONE IN
+  // ~/.claude/.credentials.json. Claude Code's own access token is refreshed
+  // every few hours and rotated on refresh, so a copy of it here works for one
+  // afternoon and then fails; worse, using its refresh token from two places
+  // races Claude Code and can invalidate the login. `claude setup-token` mints
+  // a separate long-lived token for exactly this.
+  //
+  // The 5-hour Max window is SHARED with Jake's own Claude Code sessions, which
+  // is why this is opt-in per call rather than lab-wide: a background worker on
+  // a timer would quietly eat the limit he is typing into.
+  anthropicSubscriptionToken: process.env.ANTHROPIC_SUBSCRIPTION_TOKEN || "",
   anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",
   anthropicVersion: "2023-06-01",
   anthropicOauthBeta: "oauth-2025-04-20",

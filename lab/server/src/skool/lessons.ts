@@ -41,6 +41,16 @@ export interface LessonSource {
   transcript: string;
 }
 
+export interface LessonWriteStats {
+  written: number;
+  /** Pages a previous run had already written and this one left alone. */
+  reused: number;
+  /** Pages neither written nor reused — a run that ended early says so. */
+  pending: number;
+  skipped: { title: string; why: string }[];
+  grounding: Record<string, number>;
+}
+
 export interface LessonResult {
   body: string;
   /** What the writing was actually grounded in — surfaced, not assumed. */
@@ -123,6 +133,8 @@ export async function writeLesson(source: LessonSource): Promise<LessonResult> {
   try {
     const raw = await claudeJSONForPurpose({
       tier: "director",
+      // Bills Jake's Max subscription, never API credits. See AuthMode in ai/claude.ts.
+      auth: "subscription",
       purpose: "skool-lesson",
       system: LESSON_SYSTEM,
       messages: [{ role: "user", content: parts.join("\n") }],
@@ -155,6 +167,15 @@ export async function transcriptFor(videoId: string | null): Promise<string> {
 export async function writeLessons(
   sources: LessonSource[],
   onProgress?: (done: number, total: number, title: string) => void,
+  /**
+   * Called as each page lands, before the run finishes.
+   *
+   * ⚠️ THIS IS WHAT MAKES A RUN SURVIVABLE. The first real run of this died at
+   * page 35 of 136 when the container restarted, and every one of those 35
+   * director-tier calls was lost — because results were only returned at the
+   * end. A page that has been written is worth keeping the moment it exists.
+   */
+  onDone?: (index: number, result: LessonResult) => void,
 ): Promise<LessonResult[]> {
   const results = new Array<LessonResult>(sources.length);
   let next = 0;
@@ -168,6 +189,7 @@ export async function writeLessons(
       const transcript = source.transcript || (await transcriptFor(source.videoId));
       results[i] = await writeLesson({ ...source, transcript });
       done++;
+      onDone?.(i, results[i]);
       onProgress?.(done, sources.length, source.pageTitle);
     }
   };
@@ -187,8 +209,14 @@ export async function writeLessons(
 export async function writePlanLessons(
   plan: { tracks: { title: string; promise: string; modules: any[] }[] },
   inventory: { courses: { units: { id: string; content: string }[] }[] },
-  onProgress?: (done: number, total: number, title: string) => void,
-): Promise<{ written: number; skipped: { title: string; why: string }[]; grounding: Record<string, number> }> {
+  opts: {
+    onProgress?: (done: number, total: number, title: string) => void;
+    /** Persist the plan mid-run. Called after each page is written home. */
+    onCheckpoint?: () => void;
+    /** Write pages that already have one. Off by default — a rerun resumes. */
+    force?: boolean;
+  } = {},
+): Promise<LessonWriteStats> {
   const bodyByUnitId = new Map<string, string>();
   for (const course of inventory.courses ?? []) {
     for (const unit of course.units ?? []) {
@@ -199,9 +227,17 @@ export async function writePlanLessons(
   // Flattened with a back-reference, so results can be written home without
   // depending on completion order.
   const flat: { module: any; source: LessonSource }[] = [];
+  let reused = 0;
   for (const track of plan.tracks ?? []) {
     for (const module of track.modules ?? []) {
       const item = module.item ?? {};
+      // ALREADY WRITTEN — leave it. `module.lesson` is the marker rather than
+      // `item.body`, because an authored chapter arrives from the planner with
+      // a body already on it and would otherwise look like a finished page.
+      if (module.lesson?.body && !opts.force) {
+        reused++;
+        continue;
+      }
       flat.push({
         module,
         source: {
@@ -216,25 +252,28 @@ export async function writePlanLessons(
     }
   }
 
-  const results = await writeLessons(
-    flat.map((f) => f.source),
-    onProgress,
-  );
-
   const skipped: { title: string; why: string }[] = [];
   const grounding: Record<string, number> = {};
   let written = 0;
-  for (const [i, result] of results.entries()) {
-    const { module, source } = flat[i];
-    grounding[result.grounding] = (grounding[result.grounding] ?? 0) + 1;
-    if (result.skipped) {
-      skipped.push({ title: source.pageTitle, why: result.skipped });
-      // The original body is kept on the item so the page is still writable.
+  let landed = 0;
+
+  await writeLessons(
+    flat.map((f) => f.source),
+    (done, _total, title) => opts.onProgress?.(reused + done, reused + flat.length, title),
+    (i, result) => {
+      const { module, source } = flat[i];
+      grounding[result.grounding] = (grounding[result.grounding] ?? 0) + 1;
+      if (result.skipped) skipped.push({ title: source.pageTitle, why: result.skipped });
+      else written++;
+      // Written home the moment it exists, not after all 136 have finished.
+      // The original body is kept when the writer refused, so the page is
+      // still writable — it just is not improved.
+      module.lesson = { body: result.body, grounding: result.grounding, skipped: result.skipped };
       module.item = { ...module.item, body: result.body };
-      continue;
-    }
-    module.item = { ...module.item, body: result.body };
-    written++;
-  }
-  return { written, skipped, grounding };
+      landed++;
+      opts.onCheckpoint?.();
+    },
+  );
+
+  return { written, reused, pending: flat.length - landed, skipped, grounding };
 }

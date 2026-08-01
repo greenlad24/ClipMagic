@@ -247,6 +247,45 @@ async function readClassroomPage(communityUrl: string, pageNo: number): Promise<
  * `unitType` is Skool's own word for the kind: "course" at the root, "module"
  * for the things inside it.
  */
+/**
+ * Is this unit the COURSE ITSELF rather than a lesson inside it?
+ *
+ * ⚠️ EVERY COURSE TREE HAS A ROOT NODE, AND IT LOOKS LIKE A LESSON. It sits in
+ * `units` alongside the real ones, it has a title (the course's), and it has a
+ * `content` — the course-card blurb, usually 50–150 chars. So a "does this unit
+ * carry anything?" filter says yes to it, and any code that then treats it as a
+ * lesson is off by exactly one per course.
+ *
+ * That is not hypothetical: the planner skipped the root (it placed 63 lessons)
+ * and the rebuild did not, so the rebuild concluded that 58 of 60 courses still
+ * held an unplaced lesson and refused to delete them. Running it would have
+ * built the new spine ALONGSIDE the old classroom, every video twice.
+ *
+ * So the definition lives here, next to the shape it describes, and both halves
+ * import it. Depth is the test rather than `unitType` because depth is what the
+ * tree walk assigns and is meaningful even if Skool renames its own kinds.
+ */
+export function isCourseRootUnit(unit: Pick<SkoolUnit, "depth">): boolean {
+  return unit.depth === 0;
+}
+
+/**
+ * Does this unit hold anything a member could consume — a video or a written
+ * body?
+ *
+ * ⚠️ A UNIT WHOSE BODY WAS NEVER READ ANSWERS TRUE, NOT FALSE. "I did not look"
+ * and "there is nothing there" are different facts, and collapsing them is the
+ * single most expensive mistake this file has made: Skool ships `desc` only for
+ * the unit the URL selects, every other unit read back blank, and 60 modules
+ * full of real prompts were reported to the operator as empty and planned for
+ * deletion. Erring towards "carries something" makes the failure keep a lesson
+ * rather than destroy one.
+ */
+export function unitCarriesContent(unit: Pick<SkoolUnit, "videoUrl" | "content" | "contentRead">): boolean {
+  if (unit.contentRead === false) return true;
+  return !!(unit.videoUrl && unit.videoUrl.trim()) || !!(unit.content && unit.content.trim().length > 0);
+}
+
 export interface SkoolUnit {
   id: string;
   slug: string;
@@ -267,6 +306,16 @@ export interface SkoolUnit {
   content: string;
   /** Length of that body. A unit with a video and 0 chars is a bare video. */
   contentChars: number;
+  /**
+   * Was the body actually read, at this unit's own URL?
+   *
+   * ⚠️ FALSE MEANS UNKNOWN, NOT EMPTY. Only the unit a course URL selects
+   * carries its `desc` in the payload, so every other unit needs its own visit
+   * — and a visit that fails must say so instead of contributing a confident
+   * zero. `contentChars: 0` with `contentRead: false` is "not looked at";
+   * with `contentRead: true` it is "looked at, genuinely blank".
+   */
+  contentRead: boolean;
   published: boolean;
   createdAt: string;
   updatedAt: string;
@@ -317,9 +366,38 @@ export interface SkoolCourseDetail {
   error: string | null;
 }
 
+/** `https://www.skool.com/<community>` + a course slug → the course's page. */
+export function courseUrl(communityUrl: string, slug: string): string {
+  const base = (communityUrl || "").trim().replace(/\/+$/, "").replace(/\/classroom$/, "");
+  if (!base || !slug) return "";
+  return `${base}/classroom/${slug}`;
+}
+
+/**
+ * Read one course: its tree from a single load, then EVERY unit's body from
+ * that unit's own URL.
+ *
+ * ⚠️⚠️ SKOOL SHIPS `metadata.desc` ONLY FOR THE UNIT THE URL SELECTS. Every
+ * other unit in the same tree comes back with `desc: ""` — no flag, no null,
+ * an empty string that flattens to a body of zero characters and reads as a
+ * perfectly ordinary answer. One load of a course page therefore describes a
+ * classroom in which nothing but the landing page was ever written.
+ *
+ * That is not a hypothetical. It was measured, believed, and reported: 60 of
+ * this classroom's 123 modules were recorded as completely empty, the planner
+ * was told they could cease to exist, and the rebuild marked the courses
+ * holding them safe to delete. Re-reading each one at `?md=<unitId>` found
+ * content in 60 out of 60. The tell had been in the data the whole time —
+ * 57 of 60 courses had text in unit 0 or 1 only, which is where the URL lands,
+ * not a pattern any human authoring habit would produce.
+ *
+ * So the body of a unit is fetched at that unit's own URL, one navigation
+ * each. It is slow — a 21-module course is 21 loads — and it is the only
+ * reading of this classroom that has ever been true.
+ */
 export async function readCourse(communityUrl: string, slug: string): Promise<SkoolCourseDetail> {
   const base = (communityUrl || "").trim().replace(/\/+$/, "").replace(/\/classroom$/, "");
-  const url = `${base}/classroom/${slug}`;
+  const url = courseUrl(communityUrl, slug);
   const empty = (error: string): SkoolCourseDetail => ({ courseId: "", slug, title: "", units: [], error });
   if (!base || !slug) return empty("Missing community URL or course slug.");
 
@@ -383,9 +461,67 @@ export async function readCourse(communityUrl: string, slug: string): Promise<Sk
 
   const units: SkoolUnit[] = (raw.units as any[]).map(({ rawContent, ...u }) => {
     const content = plainTextFromSkoolDoc(rawContent);
-    return { ...u, content, contentChars: content.length } as SkoolUnit;
+    // The one unit the URL selected arrived with its body. Everything else is
+    // unknown until it is visited, and says so.
+    return { ...u, content, contentChars: content.length, contentRead: content.length > 0 } as SkoolUnit;
   });
+
+  for (const unit of units) {
+    // Already carries its body from the course load, or is the root wrapper
+    // whose "body" is only the card blurb — neither needs a visit of its own.
+    if (unit.contentRead || isCourseRootUnit(unit) || !unit.id) continue;
+    const body = await readUnitBody(communityUrl, slug, unit.id);
+    if (body === null) continue; // contentRead stays false: unknown, not empty.
+    unit.content = body;
+    unit.contentChars = body.length;
+    unit.contentRead = true;
+  }
+
   return { courseId: raw.courseId, slug, title: raw.title, units, error: null };
+}
+
+/**
+ * One unit's written body, read at its own URL.
+ *
+ * Returns `null` for "could not read", which is deliberately distinct from
+ * `""` for "read, and genuinely blank" — see `contentRead`. The whole point of
+ * this function is that those two were once the same value.
+ */
+async function readUnitBody(communityUrl: string, slug: string, unitId: string): Promise<string | null> {
+  const url = `${courseUrl(communityUrl, slug)}?md=${encodeURIComponent(unitId)}`;
+  const raw = await withSkoolPage(async (page) => {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await new Promise((r) => setTimeout(r, 1200));
+    return await page.evaluate((wanted: string) => {
+      const doc: any = (globalThis as any).document;
+      const el = doc?.getElementById("__NEXT_DATA__");
+      if (!el?.textContent) return null;
+      let pp: any;
+      try {
+        pp = JSON.parse(el.textContent)?.props?.pageProps;
+      } catch {
+        return null;
+      }
+      // Find the unit BY ID rather than trusting the URL to have selected it.
+      // A stale or redirected load would otherwise hand back a neighbouring
+      // lesson's body under this unit's name, which is worse than reading
+      // nothing at all.
+      let found: string | null = null;
+      const walk = (node: any): void => {
+        if (!node || found !== null) return;
+        const rec = node.course ?? node;
+        if (String(rec?.id ?? "") === wanted) {
+          found = String(rec?.metadata?.desc ?? "");
+          return;
+        }
+        for (const child of node.children ?? []) walk(child);
+      };
+      walk(pp?.course ?? pp?.currentCourse ?? null);
+      return found;
+    }, unitId);
+  });
+  if (raw === null || raw === undefined) return null;
+  return plainTextFromSkoolDoc(String(raw));
 }
 
 /** The classroom plus the inside of every course in it. */

@@ -56,17 +56,58 @@ const LOOPBACK_MEDIA_PREFIXES = [
 ];
 
 /**
+ * Skool rebuild endpoints an OPERATOR-DRIVEN process inside this container may
+ * call over loopback without a session cookie. Same peer test as the media
+ * routes above — a forged header cannot reach it, and every browser/Caddy
+ * request stays fully gated.
+ *
+ * ⚠️ NAMED ENDPOINTS, NOT THE WHOLE `/api/fn` ROUTE. Everything the lab does
+ * hangs off that one dispatcher, including `updatePostizSettings`, which takes
+ * write-only secrets in its body. Opening the route wholesale would hand those
+ * to anything that can reach loopback inside the container — which includes a
+ * headless Chromium that spends its day loading pages nobody here controls.
+ * The rebuild needs three endpoints, so it gets three.
+ *
+ * These exist because the rebuild is 151 sequential browser operations against
+ * a live community and there is no UI to drive them yet. When that UI lands,
+ * this list should shrink back to nothing.
+ */
+const LOOPBACK_FN_EXACT = new Set([
+  "/api/fn/skoolPlanRebuild",
+  "/api/fn/skoolRunRebuildOp",
+  "/api/fn/skoolRunAction",
+  // Read-only: where the browser is and whether it is signed in. Diagnosing a
+  // failed write without it means guessing at the browser's state from the
+  // outside, which is how a contention artifact got mistaken for dead cookies.
+  "/api/fn/skoolStatus",
+  // Read-only: re-reads the whole classroom into a snapshot. Takes no secrets
+  // and writes nothing to Skool. Here because the reader had to be corrected —
+  // a unit's body only ships when its own URL selects it, so the previous
+  // snapshot recorded 60 modules full of prompts as empty — and re-reading is
+  // now a routine consequence of touching `classroom.ts`, not a one-off.
+  "/api/fn/skoolBuildInventory",
+]);
+
+/**
  * True only for a genuine in-container loopback request to a media asset route.
  * Uses the raw socket peer (`req.socket.remoteAddress`), NOT `req.ip`/XFF, so a
  * forged `X-Forwarded-For` header can never fake loopback. Host port-publishing
  * and Caddy both present the Docker gateway/proxy IP (not loopback), so only a
  * process INSIDE this container can trip this.
  */
-function isLoopbackMediaFetch(req: Request): boolean {
+function isLoopbackPeer(req: Request): boolean {
   const ip = req.socket?.remoteAddress || "";
-  const loopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
-  if (!loopback) return false;
+  return ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1";
+}
+
+function isLoopbackMediaFetch(req: Request): boolean {
+  if (!isLoopbackPeer(req)) return false;
   return LOOPBACK_MEDIA_PREFIXES.some((p) => req.path === p || req.path.startsWith(p + "/"));
+}
+
+/** In-container loopback call to one of the named Skool rebuild endpoints. */
+function isLoopbackRebuildCall(req: Request): boolean {
+  return isLoopbackPeer(req) && LOOPBACK_FN_EXACT.has(req.path);
 }
 
 function isOpenPath(p: string): boolean {
@@ -98,6 +139,12 @@ export function requireSession(req: AuthedRequest, res: Response, next: NextFunc
   }
   // In-container render fetches (loopback → media routes) bypass the cookie check.
   if (isLoopbackMediaFetch(req)) {
+    next();
+    return;
+  }
+  // …as do operator-driven Skool rebuild calls, by the same peer test.
+  if (isLoopbackRebuildCall(req)) {
+    console.warn(`[auth] loopback rebuild call allowed without session: ${req.path}`);
     next();
     return;
   }

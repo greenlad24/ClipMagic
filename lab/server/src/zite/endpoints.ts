@@ -196,6 +196,7 @@ import { probeSkool } from "../skool/probe.js";
 import * as skoolConsole from "../skool/console.js";
 import * as skoolActions from "../skool/actions.js";
 import { writePlanLessons } from "../skool/lessons.js";
+import { buildRebuild } from "../skool/rebuild.js";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
 import { runPlan } from "../skool/planRun.js";
 import {
@@ -4308,13 +4309,20 @@ const skoolBuildPlan: Handler = async () => {
  * each video without a write-up. Progress lands on the plan row so a run that
  * dies partway is visibly partial rather than silently short.
  */
+const lessonRunsInFlight = new Set<number>();
+
 const skoolWriteLessons: Handler = async (input) => {
   const id = Number(input?.planId ?? 0);
   const plan = id > 0 ? getSkoolPlan(id) : latestSkoolPlan();
   if (!plan || plan.status !== "done" || !plan.data?.tracks?.length) {
     throw new ZiteError({ code: "BAD_REQUEST", message: "Build a plan first — there are no pages to write." });
   }
-  if (plan.lessonsStatus === "running") return { plan, alreadyRunning: true };
+  // ⚠️ A "running" ROW IS NOT PROOF OF A RUNNING JOB. The first real run died
+  // at page 35 of 136 in a container restart and left this column saying
+  // running forever, which locked the plan out of ever being written again.
+  // The truth is in this process's own set: if the job were alive, it would be
+  // here. A row that claims otherwise is a survivor of a dead process.
+  if (plan.lessonsStatus === "running" && lessonRunsInFlight.has(plan.id)) return { plan, alreadyRunning: true };
 
   const snapshot = getInventory(plan.inventoryId);
   if (!snapshot?.data?.courses?.length) {
@@ -4324,20 +4332,32 @@ const skoolWriteLessons: Handler = async (input) => {
     });
   }
 
-  const total = plan.data.tracks.reduce((n: number, t: any) => n + (t.modules?.length ?? 0), 0);
-  setLessonProgress(plan.id, "running", 0, total);
+  const data = plan.data;
+  const total = data.tracks.reduce((n: number, t: any) => n + (t.modules?.length ?? 0), 0);
+  const alreadyWritten = data.tracks.reduce(
+    (n: number, t: any) => n + (t.modules ?? []).filter((m: any) => m.lesson?.body).length,
+    0,
+  );
+  setLessonProgress(plan.id, "running", alreadyWritten, total);
+  lessonRunsInFlight.add(plan.id);
 
   void (async () => {
     try {
-      const data = plan.data;
-      const stats = await writePlanLessons(data, snapshot.data, (done) =>
-        setLessonProgress(plan.id, "running", done, total),
-      );
+      const stats = await writePlanLessons(data, snapshot.data, {
+        onProgress: (done) => setLessonProgress(plan.id, "running", done, total),
+        // Persisted per page. 136 director-tier calls is an hour of work and
+        // real money; losing it to a restart once was enough.
+        onCheckpoint: () => updatePlanData(plan.id, data),
+        force: input?.force === true,
+      });
       data.lessonStats = stats;
       updatePlanData(plan.id, data);
       setLessonProgress(plan.id, "done", total, total);
     } catch {
-      setLessonProgress(plan.id, "failed", 0, total);
+      // The pages already written stay written — the checkpoints kept them.
+      setLessonProgress(plan.id, "failed", alreadyWritten, total);
+    } finally {
+      lessonRunsInFlight.delete(plan.id);
     }
   })();
 
@@ -4398,10 +4418,24 @@ const skoolConsoleScroll: Handler = async (input) => ({
  * community should be individually invoked and individually inspected, and a
  * batch that fails halfway leaves a classroom in a state nobody chose.
  */
+const communityUrlOrThrow = (): string => {
+  const url = String(getSkoolSettings().communityUrl ?? "").trim();
+  if (!url) throw new ZiteError({ code: "BAD_REQUEST", message: "Set the community URL first." });
+  return url;
+};
+
 const skoolRunAction: Handler = async (input) => {
   const action = String(input?.action ?? "");
   const p = input?.params ?? {};
-  const run = async (): Promise<{ ok: boolean; detail: string }> => {
+  // `pages` is optional because one action — pagesInOpenCourse — is a READ, and
+  // its whole value is the structured list rather than the ok/detail line every
+  // write returns. Carried through rather than flattened into `detail`: someone
+  // inspecting an unexpected page order wants the array, not a sentence.
+  const run = async (): Promise<{
+    ok: boolean;
+    detail: string;
+    pages?: skoolActions.OpenCoursePage[] | null;
+  }> => {
     switch (action) {
       case "openMenuFor":
         return skoolActions.openMenuFor(String(p.title ?? ""));
@@ -4419,11 +4453,50 @@ const skoolRunAction: Handler = async (input) => {
       case "addFolder":
         return skoolActions.addFolder(String(p.name ?? ""));
       case "addPage":
-        return skoolActions.addPage({
+        return skoolActions.addPageToOpenCourse({
           title: String(p.title ?? ""),
           videoUrl: p.videoUrl ? String(p.videoUrl) : undefined,
           body: p.body ? String(p.body) : undefined,
         });
+      case "openClassroom":
+        return skoolActions.openClassroom(communityUrlOrThrow(), Number(p.gridPage ?? 1));
+      case "openCourse":
+        return skoolActions.openCourse(communityUrlOrThrow(), String(p.slug ?? ""));
+      // Reads the open course's pages and reports them — no writing. What the
+      // write path believes it is looking at, which is the thing worth being
+      // able to see directly when a page lands somewhere unexpected.
+      case "pagesInOpenCourse": {
+        const pages = await skoolActions.pagesInOpenCourse();
+        return pages
+          ? { ok: true, detail: `${pages.length} page(s): ${pages.map((p) => `${p.title}${p.empty ? " (empty)" : ""}`).join(" · ")}`, pages }
+          : { ok: false, detail: "The open course's contents could not be read.", pages: null };
+      }
+      // Replace an existing page's body — the re-runnable write. Reads the page
+      // back from Skool before reporting success.
+      case "rewritePage":
+        return skoolActions.rewritePage({
+          title: String(p.title ?? ""),
+          videoUrl: p.videoUrl ? String(p.videoUrl) : null,
+          body: String(p.body ?? ""),
+        });
+      case "openPageByTitle":
+        return skoolActions.openPageByTitle(String(p.title ?? ""));
+      case "openMenuOffering":
+        return skoolActions.openMenuOffering(String(p.label ?? ""));
+      case "openPageEditor":
+        return skoolActions.openPageEditor();
+      case "attachVideo":
+        return skoolActions.attachVideo(String(p.videoUrl ?? ""));
+      case "fillPageTitle":
+        return skoolActions.fillPageTitle(String(p.title ?? ""));
+      case "fillBody":
+        return skoolActions.fillBody(String(p.body ?? ""));
+      case "createCourse":
+        return skoolActions.createCourse(communityUrlOrThrow(), String(p.name ?? ""), String(p.description ?? ""));
+      case "courseExists":
+        return skoolActions.courseExists(communityUrlOrThrow(), String(p.name ?? ""));
+      case "deleteCourse":
+        return skoolActions.deleteCourse(communityUrlOrThrow(), String(p.title ?? ""));
       case "editPageContent":
         return skoolActions.editPageContent({
           title: p.title ? String(p.title) : undefined,
@@ -4437,6 +4510,95 @@ const skoolRunAction: Handler = async (input) => {
   };
   const result = await run();
   return { ...result, frame: await skoolConsole.frame() };
+};
+
+/* ── The rebuild ───────────────────────────────────────────────────────────
+   The plan says what the classroom should become; these turn that into the
+   individual writes and run them ONE AT A TIME. Deliberately not a single
+   "rebuild" button: the first writes into a live community with 60 courses in
+   it should each be invoked and each be looked at.                          */
+
+/**
+ * The operation list, WITHOUT touching Skool's editor.
+ *
+ * Reads the live classroom only to see which courses already exist, so that
+ * running this twice does not propose creating everything twice.
+ */
+const skoolPlanRebuild: Handler = async (input) => {
+  const id = Number(input?.planId ?? 0);
+  const plan = id > 0 ? getSkoolPlan(id) : latestSkoolPlan();
+  if (!plan?.data?.tracks?.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Build a plan first — there is nothing to rebuild from." });
+  }
+  const snapshot = getInventory(plan.inventoryId);
+  if (!snapshot?.data?.courses?.length) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "The inventory this plan was built from is missing, so nothing can be checked before deleting it.",
+    });
+  }
+  const live = await readClassroom(communityUrlOrThrow());
+  if (live.error) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `The classroom could not be read, so the rebuild cannot tell what already exists: ${live.error}`,
+    });
+  }
+  const rebuild = buildRebuild(
+    plan.data,
+    snapshot.data,
+    live.courses.map((c: any) => c.title),
+  );
+  const unwritten = plan.data.tracks.reduce(
+    (n: number, t: any) => n + (t.modules ?? []).filter((m: any) => !m.lesson?.body).length,
+    0,
+  );
+  return { rebuild, planId: plan.id, pagesNotYetWritten: unwritten };
+};
+
+/**
+ * Run ONE operation from the rebuild.
+ *
+ * ⚠️ EVERY OPERATION CHECKS THE LIVE CLASSROOM FIRST, and that is what makes a
+ * half-finished run safe to resume. The truth about what exists is in Skool,
+ * not in a status column here: a page that was written just before the process
+ * died is written, whatever any table says. So a create whose course exists is
+ * a no-op, and a page whose title is already in the course is a no-op — rather
+ * than a second copy of it appearing next to the first.
+ */
+const skoolRunRebuildOp: Handler = async (input) => {
+  const opId = String(input?.opId ?? "");
+  const planned = (await skoolPlanRebuild(input, {} as any)) as any;
+  const op = planned.rebuild.ops.find((o: any) => o.id === opId);
+  if (!op) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `No operation called "${opId}" — it may already be done, since the list is derived from what is live.`,
+    });
+  }
+  const community = communityUrlOrThrow();
+
+  const run = async (): Promise<{ ok: boolean; detail: string }> => {
+    if (op.kind === "createCourse") {
+      return skoolActions.createCourse(community, op.trackTitle, op.description);
+    }
+    if (op.kind === "addPage") {
+      const slug = await skoolActions.findCourseSlug(community, op.trackTitle);
+      if (!slug) return { ok: false, detail: `The course "${op.trackTitle}" is not in the classroom yet.` };
+      const opened = await skoolActions.openCourse(community, slug);
+      if (!opened.ok) return opened;
+      // Already-present and unreadable are both decided inside the action, so
+      // that a re-run is a no-op by the same rule wherever it is invoked from.
+      return skoolActions.addPageToOpenCourse({ title: op.title, videoUrl: op.videoUrl, body: op.body });
+    }
+    // ⚠️ THE DELETE. It is only ever reached for a course the operation list
+    // decided was fully absorbed, and buildRebuild only decides that when
+    // every lesson of it that carried content is placed in the new spine.
+    return skoolActions.deleteCourse(community, op.title);
+  };
+
+  const result = await run();
+  return { ...result, op };
 };
 
 /** Empty the focused field, refusing when focus is not in one. */
@@ -4671,6 +4833,8 @@ export const HANDLERS: Record<string, Handler> = {
   skoolBuildPlan,
   skoolGetPlan,
   skoolWriteLessons,
+  skoolPlanRebuild,
+  skoolRunRebuildOp,
   skoolProbe,
   skoolConsoleFrame,
   skoolConsoleNavigate,

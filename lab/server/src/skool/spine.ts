@@ -23,7 +23,7 @@
  * course id would be written to a live community.
  */
 import { claudeJSONForPurpose } from "../ai/claude.js";
-import type { SkoolInventory } from "./classroom.js";
+import { isCourseRootUnit, type SkoolInventory } from "./classroom.js";
 
 /** One placeable thing: an existing unit that carries content, or a video. */
 export interface SpineItem {
@@ -178,7 +178,7 @@ export function buildItems(
 
   for (const course of inventory.courses) {
     for (const unit of course.units) {
-      if (unit.depth === 0) continue; // the course node itself, not content
+      if (isCourseRootUnit(unit)) continue; // the course node itself, not content
       if (!unit.videoUrl && unit.contentChars === 0) {
         empty++;
         continue;
@@ -365,6 +365,8 @@ async function assignAll(
     const batch = items.slice(i, i + ASSIGN_BATCH);
     const raw = await claudeJSONForPurpose({
       tier: "director",
+      // Bills Jake's Max subscription, never API credits. See AuthMode in ai/claude.ts.
+      auth: "subscription",
       purpose: "skool-assign",
       system: ASSIGN_SYSTEM,
       messages: [
@@ -417,6 +419,8 @@ export async function planSpine(
   const catalogue = items.map(itemLine).join("\n");
   const spineRaw = await claudeJSONForPurpose({
     tier: "director",
+    // Bills Jake's Max subscription, never API credits. See AuthMode in ai/claude.ts.
+    auth: "subscription",
     purpose: "skool-spine",
     system: SPINE_SYSTEM,
     messages: [
@@ -491,6 +495,8 @@ export async function planSpine(
 
     const revisedRaw = await claudeJSONForPurpose({
       tier: "director",
+      // Bills Jake's Max subscription, never API credits. See AuthMode in ai/claude.ts.
+      auth: "subscription",
       purpose: "skool-spine",
       system: REBALANCE_SYSTEM,
       messages: [{ role: "user", content: `Workable size is ${MIN_TRACK}–${MAX_TRACK} lessons.\n\n${withCounts}` }],
@@ -592,6 +598,8 @@ async function authorTrack(track: SpineTrack, voiceSamples: string[], budget: nu
   try {
     const raw = await claudeJSONForPurpose({
       tier: "director",
+      // Bills Jake's Max subscription, never API credits. See AuthMode in ai/claude.ts.
+      auth: "subscription",
       purpose: "skool-chapters",
       system: CHAPTERS_SYSTEM,
       messages: [
@@ -662,6 +670,8 @@ async function authorChapter(track: SpineTrack, title: string, voiceSamples: str
   try {
     const raw = await claudeJSONForPurpose({
       tier: "director",
+      // Bills Jake's Max subscription, never API credits. See AuthMode in ai/claude.ts.
+      auth: "subscription",
       purpose: "skool-author",
       system: AUTHOR_SYSTEM,
       messages: [
