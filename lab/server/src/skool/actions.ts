@@ -751,6 +751,44 @@ async function clickFormButton(label: string): Promise<ActionResult> {
 }
 
 /** Put the caret in the lesson body without changing a character of it. */
+/**
+ * Refuse unless the open editor's body is empty.
+ *
+ * ⚠️ THIS IS THE GUARD AGAINST WRITING A LESSON ON TOP OF ANOTHER ONE, AND IT
+ * EXISTS BECAUSE THAT HAPPENED AND WAS NOT NOTICED. When "Add page" fails to
+ * take — the menu did not open, or the click did not land — the editor opens
+ * on the page that is ALREADY selected, which is the one the previous
+ * operation just wrote. The flow then retitles that page and appends the new
+ * body underneath the old one. Two lessons were destroyed this way in a single
+ * run of ten, and every step reported success, including the post-write check:
+ * the page it looked for really did exist, because it had just renamed one.
+ *
+ * A brand-new page has an empty body. That is the whole invariant, it is
+ * checked before a single character is typed, and it turns silent destruction
+ * into a stop.
+ */
+async function bodyMustBeEmpty(): Promise<ActionResult> {
+  const len = await withSkoolPage(async (page) =>
+    page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const editors = (Array.from(doc.querySelectorAll("[contenteditable='true']")) as any[]).filter(
+        (el) => el.getBoundingClientRect().height > 20,
+      );
+      if (editors.length === 0) return -1;
+      editors.sort((a: any, b: any) => b.getBoundingClientRect().height - a.getBoundingClientRect().height);
+      return String(editors[0].textContent ?? "").trim().length;
+    }),
+  );
+  if (len === null || len === -1) return FAIL("No lesson body editor is on screen, so it cannot be confirmed empty.");
+  if (len > 0) {
+    return FAIL(
+      `The editor already holds ${len} characters, so this is an existing lesson rather than a new page. ` +
+        `Refusing to write: "Add page" did not take, and continuing would retitle that lesson and append underneath it.`,
+    );
+  }
+  return OK("The page editor is open and empty.");
+}
+
 async function focusBody(): Promise<boolean> {
   const spot = await withSkoolPage(async (page) =>
     page.evaluate(() => {
@@ -1319,6 +1357,8 @@ export async function addPageToOpenCourse(page: {
 
   steps.push(
     () => openPageEditor(),
+    // Before a single character is typed. See bodyMustBeEmpty.
+    () => bodyMustBeEmpty(),
     () => fillPageTitle(page.title),
     // Video BEFORE the write-up: it is a node in the body document, so the
     // text has to be appended under it rather than the video dropped after.
