@@ -105,6 +105,12 @@ export type CallPurpose =
   | "skool-author"
   // Skool Manager: writes one classroom page to the zero-to-advanced standard.
   | "skool-lesson"
+  // Skool Manager, engagement half: writes one community post, or one reply to
+  // a member's comment or DM, grounded in the rebuilt classroom. Spends the Max
+  // subscription (`auth: "subscription"`), never API credits — the whole feature
+  // is opt-in on that basis, so these must never be billed.
+  | "skool-post"
+  | "skool-engage-reply"
   // Jake Dawson Script Generator: every stage (classify/research/outline/hooks/
   // sponsor/section/review/outro) runs on Opus (director tier).
   | "scriptgen"

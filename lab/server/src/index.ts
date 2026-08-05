@@ -14,6 +14,8 @@ import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
 import { startMonitor } from "./engage/monitor.js";
 import { startReplyWorker } from "./engage/replyWorker.js";
+import { startEngageScheduler } from "./skool/engageSchedule.js";
+import { getSkoolSettings } from "./db/skool.js";
 import uploadsRouter from "./routes/uploads.js";
 import renderRouter, { rendiRouter } from "./routes/render.js";
 import projectsRouter from "./routes/projects.js";
@@ -193,6 +195,11 @@ app.listen(config.port, config.host, () => {
   // Engagement Manager: autonomous reply worker. Inert while the kill-switch is
   // armed (its default), so this is a no-op until someone opts in.
   startReplyWorker();
+  // Skool Manager: the autonomous community poster. Inert until the schedule is
+  // enabled (off by default) AND dry run is turned off (on by default), so
+  // arming it is two deliberate acts, not one. The community URL is read per
+  // tick rather than captured here — the lab boots before it is set.
+  startEngageScheduler(() => String(getSkoolSettings().communityUrl ?? "").trim());
 });
 
 /**

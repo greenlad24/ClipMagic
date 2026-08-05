@@ -713,6 +713,16 @@ export async function claudeJSONForPurposeWithUsage(opts: {
   purpose: CallPurpose;
   system: string;
   messages: Turn[];
+  /**
+   * Spend the Max subscription instead of API credits — see AuthMode.
+   *
+   * Needed here as well as on `claudeJSONForPurpose` because the Skool
+   * engagement agent wants BOTH properties at once: it must not bill (Jake's
+   * condition for the whole feature), and it runs unattended on a timer, so it
+   * needs the real token counts back to stay inside a 5-hour window it SHARES
+   * with his own Claude Code sessions. Without this the two were exclusive.
+   */
+  auth?: AuthMode;
 }): Promise<{ json: string; usage: AnthropicUsage | undefined; model: string; ms: number }> {
   const model = modelForTier(opts.tier);
   let usage: AnthropicUsage | undefined;
@@ -723,6 +733,7 @@ export async function claudeJSONForPurposeWithUsage(opts: {
     messages: opts.messages,
     jsonMode: true,
     purpose: opts.purpose,
+    auth: opts.auth,
     onUsage: (u, elapsed) => {
       usage = u;
       ms = elapsed;

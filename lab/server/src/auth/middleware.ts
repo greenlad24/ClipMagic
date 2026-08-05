@@ -86,6 +86,50 @@ const LOOPBACK_FN_EXACT = new Set([
   // snapshot recorded 60 modules full of prompts as empty — and re-reading is
   // now a routine consequence of touching `classroom.ts`, not a one-off.
   "/api/fn/skoolBuildInventory",
+  // Read-only reconnaissance, and the same bargain as the entries above: the
+  // engagement half of the Skool Manager has to be built against the FEED and
+  // CHAT surfaces, and nothing here has ever read either one. Guessing their
+  // shape is what this probe exists to avoid.
+  //
+  // It takes no secrets, cannot type and cannot submit, and refuses any URL
+  // that is not on skool.com. The worry the block above raises — a headless
+  // Chromium in this container loading pages nobody controls — does not reach
+  // it: a cross-origin POST from such a page cannot read the response, so the
+  // page content it returns is not exfiltratable, and the probe cannot write.
+  // Remove this line together with the probe once the selectors settle.
+  "/api/fn/skoolProbe",
+  // The engagement half, while it is being built and verified. Same bargain and
+  // the same expiry as the rebuild entries: no UI exists yet, and these are how
+  // the read layer and the drafting are exercised at all.
+  //
+  // ⚠️ `skoolDraftPost`/`skoolDraftReply` are the first entries here that SPEND
+  // anything — they draw on the Max window, which is shared with Jake's own
+  // Claude Code sessions. They take no secrets and write nothing to Skool, but
+  // they are not free, so they come off this list as soon as the UI can drive
+  // them. The read-only three can stay.
+  "/api/fn/skoolReadFeed",
+  "/api/fn/skoolReadPost",
+  "/api/fn/skoolUnreadChats",
+  "/api/fn/skoolKnowledge",
+  // ⚠️ SPENDS APIFY CREDITS — the only paid thing in this feature. Here because
+  // the backfill has to be runnable at all before a UI exists; it is guarded by
+  // its own cache (a transcript is bought once) and by `dryRun`.
+  "/api/fn/skoolBackfillTranscripts",
+  "/api/fn/skoolDraftPost",
+  "/api/fn/skoolDraftReply",
+  // The scheduler, on the same terms and with the same expiry. Status and
+  // subject are read-only and free — `skoolEngageSubject` exists precisely so
+  // "what would it write about?" can be answered without spending the window.
+  "/api/fn/skoolEngageStatus",
+  "/api/fn/skoolEngageSubject",
+  "/api/fn/skoolEngageConfigure",
+  // ⚠️ THESE TWO CAN WRITE TO THE LIVE COMMUNITY. `skoolEngageTick` publishes
+  // only when the schedule is enabled AND dry run is off (both off by default);
+  // `skoolEngagePublish` always does. They are here for the same reason
+  // `skoolRunAction` is — the write path has to be exercisable before a UI
+  // exists — and they come off this list with it.
+  "/api/fn/skoolEngageTick",
+  "/api/fn/skoolEngagePublish",
 ]);
 
 /**

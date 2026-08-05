@@ -199,6 +199,21 @@ import { writePlanLessons } from "../skool/lessons.js";
 import { buildRebuild } from "../skool/rebuild.js";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
 import { runPlan } from "../skool/planRun.js";
+import { readFeed, readPost, unreadChatCount } from "../skool/community.js";
+import { allLessons, classroomOutline, indexedCourses, retrieve } from "../skool/knowledge.js";
+import { backfillTranscripts, transcriptCoverage } from "../skool/transcripts.js";
+import { createPost } from "../skool/engageActions.js";
+import { draftPost, draftReply } from "../skool/engageGen.js";
+import {
+  getSchedule,
+  setSchedule,
+  listSlots,
+  publishSlot,
+  tickNow,
+  localNow,
+  chooseSubject,
+  type Weekday,
+} from "../skool/engageSchedule.js";
 import {
   saveMarket as saveAuditMarket,
   listMarkets as listAuditMarkets,
@@ -4424,6 +4439,234 @@ const communityUrlOrThrow = (): string => {
   return url;
 };
 
+/**
+ * The engagement half of the Skool Manager — reads and drafts only.
+ *
+ * Nothing here writes to Skool. Drafting is separated from posting on purpose:
+ * Jake asked for full autonomy, so the only chance to look at what this agent
+ * produces before a community of members does is while it is still a draft, and
+ * that has to be reachable on its own.
+ */
+const skoolReadFeed: Handler = async (input) => {
+  const maxPages = Math.max(1, Math.min(9, Number(input?.maxPages ?? 2)));
+  return { feed: await readFeed(communityUrlOrThrow(), maxPages) };
+};
+
+const skoolReadPost: Handler = async (input) => {
+  const slug = String(input?.slug ?? "").trim();
+  if (!slug) throw new ZiteError({ code: "BAD_REQUEST", message: "Which post? Pass its slug." });
+  return await readPost(communityUrlOrThrow(), slug);
+};
+
+const skoolUnreadChats: Handler = async () => {
+  return { unreadChats: await unreadChatCount(communityUrlOrThrow()) };
+};
+
+/** What the agent knows: retrieval over the rebuilt classroom. No model call. */
+const skoolKnowledge: Handler = async (input) => {
+  const query = String(input?.query ?? "").trim();
+  const communityUrl = communityUrlOrThrow();
+  // No query = show what is indexed. `pages: true` itemises every page inside
+  // every course, which is the level the agent actually cites at.
+  if (!query) {
+    if (input?.pages === true) return indexedCourses(communityUrl);
+    const outline = classroomOutline(communityUrl);
+    return { outline: outline.outline, courses: outline.courses, lessons: outline.lessons };
+  }
+  const { hits, searched, inventoryId, error } = retrieve(communityUrl, query, Math.min(10, Number(input?.limit ?? 5)));
+  return {
+    searched,
+    inventoryId,
+    error,
+    hits: hits.map((h) => ({
+      title: h.title,
+      course: h.courseTitle,
+      // Reported, because it decides whether this lesson may be LINKED in
+      // anything published — see `Lesson.rebuilt`.
+      rebuilt: h.rebuilt,
+      url: h.url,
+      score: Number(h.score.toFixed(2)),
+      excerpt: h.excerpt,
+    })),
+  };
+};
+
+/**
+ * Fetch the transcript of every video the indexed classroom attaches, and store
+ * it. One-time; retrieval reads the table and never the network.
+ *
+ * ⚠️ THIS ONE SPENDS MONEY — Apify charges per transcript, unlike every model
+ * call in this feature, which runs on the Max subscription. So it is an
+ * explicit operation with a report, never a side effect of a query. Pass
+ * `dryRun` to see what it WOULD fetch and what is already held.
+ */
+const skoolBackfillTranscripts: Handler = async (input) => {
+  const communityUrl = communityUrlOrThrow();
+  const { lessons } = allLessons(communityUrl);
+  const videoIds = lessons.map((l) => l.videoId).filter((id): id is string => !!id);
+  const coverage = transcriptCoverage(videoIds);
+
+  if (input?.dryRun === true) {
+    return {
+      dryRun: true,
+      lessons: lessons.length,
+      lessonsWithVideo: videoIds.length,
+      coverage,
+    };
+  }
+
+  const result = await backfillTranscripts(videoIds, {
+    refetchEmpty: input?.refetchEmpty === true,
+    // ⚠️ MUST BE FORWARDED. Without it a caller asking for a free run gets the
+    // free-then-paid default and spends money it explicitly declined to spend —
+    // which is exactly what happened on the first attempt at this backfill.
+    freeOnly: input?.freeOnly === true,
+  });
+  return { result, coverage: transcriptCoverage(videoIds) };
+};
+
+/**
+ * Draft a post. Does NOT publish it — see the note on `skoolReadFeed`.
+ *
+ * The voice comes from the Engagement Manager's stored prompt, which is Jake's
+ * choice (2026-08-05: "reuse the engagement tool's prompt"). Passed verbatim.
+ */
+const skoolDraftPost: Handler = async (input) => {
+  const communityUrl = communityUrlOrThrow();
+  const kind = String(input?.kind ?? "lesson") === "mcp" ? "mcp" : "lesson";
+  const subject = String(input?.subject ?? "").trim();
+  if (!subject) throw new ZiteError({ code: "BAD_REQUEST", message: "What should the post be about?" });
+
+  const feed = await readFeed(communityUrl, 1);
+  const { draft, error } = await draftPost({
+    communityUrl,
+    voicePrompt: getEngageSettings().replyPromptMd ?? "",
+    kind,
+    subject,
+    recentTitles: feed.posts.filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
+    categories: feed.categories.length ? feed.categories : DEFAULT_SKOOL_CATEGORIES,
+    preferredCategory: input?.category ? String(input.category) : null,
+  });
+  return { draft, error };
+};
+
+/**
+ * Publish a post to the community. THE FIRST ENDPOINT HERE THAT WRITES.
+ *
+ * Takes the finished text rather than a subject: drafting and publishing stay
+ * separate so a draft can be looked at, and so a failed publish never silently
+ * re-drafts into something different from what was reviewed.
+ */
+const skoolPublishPost: Handler = async (input) => {
+  const title = String(input?.title ?? "").trim();
+  const body = String(input?.body ?? "");
+  if (!title || !body.trim()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "A post needs both a title and a body." });
+  }
+  return await createPost({
+    communityUrl: communityUrlOrThrow(),
+    title,
+    body,
+    category: input?.category ? String(input.category) : null,
+  });
+};
+
+/** Draft a reply to one comment or DM. Does NOT send it. */
+const skoolDraftReply: Handler = async (input) => {
+  const text = String(input?.text ?? "").trim();
+  if (!text) throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to reply to." });
+  const { reply, error } = await draftReply({
+    communityUrl: communityUrlOrThrow(),
+    voicePrompt: getEngageSettings().replyPromptMd ?? "",
+    surface: String(input?.surface ?? "comment") === "dm" ? "dm" : "comment",
+    authorName: String(input?.authorName ?? "a member"),
+    text,
+    context: String(input?.context ?? ""),
+  });
+  return { reply, error };
+};
+
+/* ─────────────────── the autonomous poster's schedule ─────────────────── */
+
+/**
+ * Everything an operator needs to answer "is this thing armed, and what is it
+ * about to do?" in one call: the settings, where the clock actually is in the
+ * schedule's own timezone, and the queue.
+ *
+ * The local time is returned rather than left to the caller to compute, because
+ * the whole class of bug this feature invites is a timezone one — the box is
+ * UTC, Jake is in Asia/Bangkok, and the schedule is America/New_York. Three
+ * zones, none of them the same, and a settings page that showed only "9:00"
+ * would be telling nobody anything.
+ */
+const skoolEngageStatus: Handler = async () => {
+  const schedule = getSchedule();
+  return {
+    schedule,
+    now: localNow(schedule.timezone),
+    slots: listSlots(30),
+  };
+};
+
+const skoolEngageConfigure: Handler = async (input) => {
+  const patch: Record<string, unknown> = {};
+  if (input?.enabled !== undefined) patch.enabled = !!input.enabled;
+  if (input?.dryRun !== undefined) patch.dryRun = !!input.dryRun;
+  if (input?.timezone !== undefined) patch.timezone = String(input.timezone);
+  if (input?.hour !== undefined) patch.hour = Number(input.hour);
+  if (input?.maxPostsPerWeek !== undefined) patch.maxPostsPerWeek = Number(input.maxPostsPerWeek);
+  if (input?.maxAttempts !== undefined) patch.maxAttempts = Number(input.maxAttempts);
+  if (input?.retryMinutes !== undefined) patch.retryMinutes = Number(input.retryMinutes);
+  if (input?.maxSlotAgeHours !== undefined) patch.maxSlotAgeHours = Number(input.maxSlotAgeHours);
+  if (Array.isArray(input?.days)) patch.days = (input.days as unknown[]).map((d) => String(d).toLowerCase() as Weekday);
+  try {
+    return { schedule: setSchedule(patch as any) };
+  } catch (e) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : String(e) });
+  }
+};
+
+/** Run one scheduler cycle now, without waiting for the interval. */
+const skoolEngageTick: Handler = async () => {
+  const { started, result } = await tickNow(communityUrlOrThrow());
+  if (!started) return { started, result: null, detail: "A cycle is already running." };
+  return { started, result };
+};
+
+/**
+ * Publish a slot that has been drafted and read. THIS WRITES TO THE COMMUNITY.
+ *
+ * Separate from the tick on purpose: with dry run on (the default) this is the
+ * only way a post goes out, so the first thing this agent ever publishes is
+ * something a human chose to publish.
+ */
+const skoolEngagePublish: Handler = async (input) => {
+  const slotKey = String(input?.slotKey ?? "").trim();
+  if (!slotKey) throw new ZiteError({ code: "BAD_REQUEST", message: "Which slot?" });
+  return await publishSlot(communityUrlOrThrow(), slotKey);
+};
+
+/** What the scheduler would write about next — without spending the window on a draft. */
+const skoolEngageSubject: Handler = async () => {
+  return await chooseSubject(communityUrlOrThrow());
+};
+
+/**
+ * The community's own categories, for the rare case where the feed payload does
+ * not carry them. Observed live 2026-08-05 — kept in the order Skool lists them
+ * because that order is what a member sees.
+ */
+const DEFAULT_SKOOL_CATEGORIES = [
+  "Intro",
+  "YouTube Resources",
+  "Announcements",
+  "General Discussion",
+  "Dev Discussion",
+  "Your Journey",
+  "Hiring/For Hire",
+  "Community Resources",
+];
+
 const skoolRunAction: Handler = async (input) => {
   const action = String(input?.action ?? "");
   const p = input?.params ?? {};
@@ -4642,7 +4885,16 @@ const skoolProbe: Handler = async (input) => {
   return {
     probe: await probeSkool({
       url,
+      // `probeSkool` has always supported these three; the handler simply never
+      // forwarded them, which made the whole icon half of Skool unreachable.
+      // The chat surface opens from a header button with NO TEXT AT ALL
+      // (`aria-label="Open chats"`), so clicking by visible text cannot get
+      // there — the same lesson as "find controls by cursor, not by tag",
+      // one layer up.
+      hoverText: input?.hoverText ? String(input.hoverText) : undefined,
       clickText: input?.clickText ? String(input.clickText) : undefined,
+      clickSelector: input?.clickSelector ? String(input.clickSelector) : undefined,
+      clickIndex: input?.clickIndex === undefined ? undefined : Number(input.clickIndex),
       waitMs: Number(input?.waitMs ?? 2500),
       dumpHtml: input?.dumpHtml === true,
       payloadPath: input?.payloadPath ? String(input.payloadPath) : undefined,
@@ -4845,6 +5097,21 @@ export const HANDLERS: Record<string, Handler> = {
   skoolConsoleScroll,
   skoolConsoleClearField,
   skoolRunAction,
+  // Engagement half — reads and drafts, no writes.
+  skoolReadFeed,
+  skoolReadPost,
+  skoolUnreadChats,
+  skoolKnowledge,
+  skoolBackfillTranscripts,
+  skoolDraftPost,
+  skoolDraftReply,
+  skoolPublishPost,
+  // The autonomous poster: schedule, queue, and the reviewed-publish path.
+  skoolEngageStatus,
+  skoolEngageConfigure,
+  skoolEngageTick,
+  skoolEngagePublish,
+  skoolEngageSubject,
   skoolDescribePoint,
   skoolSaveRecipe,
   skoolListRecipes,

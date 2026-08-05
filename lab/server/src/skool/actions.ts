@@ -392,6 +392,20 @@ export async function fillField(placeholder: string, text: string): Promise<Acti
   return OK(`Filled "${placeholder}".`);
 }
 
+/**
+ * Click whatever visible thing carries this text.
+ *
+ * Exported for the community half, whose controls are not buttons: the post
+ * composer opens from a plain div whose text runs together as
+ * "Write somethingGo Live", so an exact-match button lookup cannot reach it.
+ * Loose matching is safe here only because `clickText` picks the SMALLEST
+ * clickable element containing the text — the page body contains it too.
+ */
+export async function clickVisibleText(text: string, opts: { exact?: boolean } = {}): Promise<ActionResult> {
+  const out = await clickText(text, { exact: opts.exact !== false });
+  return out.ok ? OK(`Clicked "${out.matched}".`) : FAIL(`Nothing clickable says "${text}".`);
+}
+
 /** Click a button by its label, case-insensitively — Skool ships SAVE, Save and Add. */
 export async function clickButton(label: string): Promise<ActionResult> {
   const out = await clickText(label, { exact: true });
@@ -1251,6 +1265,17 @@ export interface OpenCoursePage {
    * which costs a re-run — not a lesson.
    */
   empty: boolean;
+  /**
+   * The attached video, or "" for none.
+   *
+   * ⚠️ SAME SELECTED-UNIT CAVEAT AS `empty` — trust it for the page the URL
+   * selects and nowhere else. Its reason for existing is the post-write check
+   * below: on 2026-08-02 a video failed to attach SILENTLY while the op
+   * reported OK, and course 9's lesson 2 shipped as text. `empty` could not
+   * catch it, because a page that saved its body but lost its video is not
+   * empty. The two have to be asked separately.
+   */
+  videoLink: string;
 }
 
 /**
@@ -1309,6 +1334,7 @@ export async function pagesInOpenCourse(): Promise<OpenCoursePage[] | null> {
   return (raw as { title: string; videoLink: string; desc: string }[]).map((p) => ({
     title: p.title,
     empty: !p.videoLink.trim() && plainTextFromSkoolDoc(p.desc).trim().length === 0,
+    videoLink: p.videoLink.trim(),
   }));
 }
 
@@ -1386,6 +1412,21 @@ export async function addPageToOpenCourse(page: {
   if (!landed) return FAIL(`${done.detail} → but "${page.title}" is not in the course afterwards.`);
   if (landed.empty && (page.videoUrl || page.body)) {
     return FAIL(`${done.detail} → but "${page.title}" saved with neither its video nor its body.`);
+  }
+  // ⚠️ A VIDEO CAN FAIL TO ATTACH SILENTLY. Course 9's lesson 2 reported OK with
+  // a live, HTTP-200 link and simply has no video on it. The `Add` click can be
+  // made and the page can SAVE with the video absent, so the only proof is the
+  // reloaded payload. Checked separately from `empty` because a page that kept
+  // its body and lost its video is not empty, which is why this went unseen.
+  //
+  // NOTE this does not self-heal: re-running the op finds the title present and
+  // returns "left alone", so the video stays missing. Attaching it to a page
+  // that already exists needs the editor. Say so, rather than implying a retry.
+  if (page.videoUrl && !landed.videoLink) {
+    return FAIL(
+      `${done.detail} → but "${page.title}" saved WITHOUT its video, though the body is there. ` +
+        `Re-running will not fix this — the page exists, so the op will skip it. Attach it in the editor.`,
+    );
   }
   return OK(`${done.detail} → "${page.title}" is in the course.`);
 }

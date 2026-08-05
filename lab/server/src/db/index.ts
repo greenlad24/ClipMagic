@@ -152,6 +152,19 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   }
 }
 
+/**
+ * Additive: where a transcript came from.
+ *
+ * The table shipped before the free YouTube path existed, so a database created
+ * an hour ago has the column and one created five minutes earlier does not.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(skool_transcripts)").all() as Array<{ name: string }>;
+  if (cols.length > 0 && !cols.some((c) => c.name === "source")) {
+    db.exec("ALTER TABLE skool_transcripts ADD COLUMN source TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 /** Additive: the channel the Skool planner pulls missing lessons from, and the
  *  tracks the operator requires the spine to contain. */
 {
@@ -161,6 +174,15 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   }
   if (cols.length > 0 && !cols.some((c) => c.name === "required_tracks_json")) {
     db.exec("ALTER TABLE skool_settings ADD COLUMN required_tracks_json TEXT NOT NULL DEFAULT '[]'");
+  }
+  // The autonomous poster's schedule, as one JSON blob rather than a column per
+  // knob. It is read and written whole by `engageSchedule.ts` and never queried
+  // by field, so columns would buy nothing and cost a migration per setting.
+  // ⚠️ AN ABSENT BLOB MUST MEAN "OFF", NOT "DEFAULTS" — see getSchedule(),
+  // where `enabled` and `dryRun` are the safe values. A database that upgrades
+  // into this column must not start posting because of it.
+  if (cols.length > 0 && !cols.some((c) => c.name === "engage_schedule_json")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN engage_schedule_json TEXT NOT NULL DEFAULT ''");
   }
 }
 
@@ -411,6 +433,67 @@ CREATE INDEX IF NOT EXISTS idx_skool_plans_created ON skool_plans(created_at);
 -- the operator performs each action once in a live console and the steps are
 -- recorded here as element DESCRIPTORS — never coordinates, which break the
 -- moment a card moves or a list grows.
+
+-- Video transcripts, keyed by YouTube id.
+--
+-- ⚠️ THIS TABLE EXISTS BECAUSE fetchTranscript HAS NO CACHE AND APIFY CHARGES
+-- PER CALL. The engagement agent needs to know what is IN the videos its
+-- lessons attach, and re-fetching ~90 of them on every retrieval would buy the
+-- same transcripts over and over.
+--
+-- ⚠️ FAILURES ARE STORED TOO, and status is the reason. A video with captions
+-- off and a video that could not be reached are both "no text", but only one is
+-- worth retrying — and a missing row would send both back to Apify forever. An
+-- empty transcript is also the tell for a DEAD video (memory: BD5NIcdMBQ4
+-- returns 403 from oembed), so it is a fact worth keeping, not an absence.
+CREATE TABLE IF NOT EXISTS skool_transcripts (
+  video_id   TEXT PRIMARY KEY,
+  text       TEXT NOT NULL DEFAULT '',
+  chars      INTEGER NOT NULL DEFAULT 0,
+  status     TEXT NOT NULL DEFAULT 'ok',
+  -- Where it came from: youtube (free) or apify (paid). Worth recording because
+  -- it is the only way to see whether the free path is actually working from
+  -- this box, and the answer decides whether future runs cost anything.
+  source     TEXT NOT NULL DEFAULT '',
+  fetched_at INTEGER NOT NULL
+);
+
+-- One row per SCHEDULED POSTING SLOT — the autonomous poster's queue and its log.
+--
+-- ⚠️⚠️ slot_key IS THE LOCAL CALENDAR DATE AND IT IS THE PRIMARY KEY, WHICH IS
+-- WHAT MAKES A RETRY SAFE. The scheduler ticks every ten minutes and retries a
+-- rate-limited slot for hours; without a unique key per day, "try again" and
+-- "post again" would be the same operation. The classroom rebuild already paid
+-- for this lesson the expensive way — an op reporting OK is not a thing having
+-- happened, and the only cure is that repeating it cannot double-write.
+--
+-- The states are deliberately four, not ok/failed:
+--   pending   — queued, waiting on a retry. Usually the Max window being shut,
+--               which is NOT a failure and must not read as one.
+--   drafted   — written but deliberately not published (dry run, or awaiting a
+--               human's go-ahead). The body sits here so that what is approved
+--               is exactly what ships.
+--   posted    — read back from the feed by createPost. The only success.
+--   abandoned — out of attempts, or too late to be the post that was promised.
+--               Recorded WITH its reason; a silent skip is indistinguishable
+--               from "not a posting day".
+CREATE TABLE IF NOT EXISTS skool_engage_slots (
+  slot_key        TEXT PRIMARY KEY,
+  state           TEXT NOT NULL DEFAULT 'pending',
+  subject         TEXT NOT NULL DEFAULT '',
+  title           TEXT NOT NULL DEFAULT '',
+  body            TEXT NOT NULL DEFAULT '',
+  category        TEXT NOT NULL DEFAULT '',
+  cited_json      TEXT NOT NULL DEFAULT '[]',
+  attempts        INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at INTEGER NOT NULL DEFAULT 0,
+  last_error      TEXT NOT NULL DEFAULT '',
+  slug            TEXT NOT NULL DEFAULT '',
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skool_slots_due ON skool_engage_slots(state, next_attempt_at);
+
 CREATE TABLE IF NOT EXISTS skool_recipes (
   name        TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',
