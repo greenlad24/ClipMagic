@@ -16,6 +16,7 @@ import {
   MessagesSquare,
   MessageCircle,
   Clapperboard,
+  Bot,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -220,6 +221,17 @@ export const TOOLS: ToolDefinition[] = [
     status: 'live',
     accent: 'primary',
     detail: 'Classroom builder',
+  },
+  {
+    id: 'skool-agent',
+    title: 'Skool Agent',
+    description:
+      'Writes community posts on a schedule, grounded in your rebuilt courses and what you say in the videos. Runs unattended — everything it writes waits here for you.',
+    icon: Bot,
+    route: '/skool/agent',
+    status: 'live',
+    accent: 'primary',
+    detail: 'Autonomous poster',
   },
   {
     id: 'engagement',

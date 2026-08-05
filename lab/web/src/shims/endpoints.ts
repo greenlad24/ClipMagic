@@ -794,6 +794,109 @@ export const skoolSaveSettings = endpoint<
   { settings: SkoolSettings }
 >("skoolSaveSettings");
 
+/* ── The engagement agent ─────────────────────────────────────────────────
+   Writes community posts on a schedule. Everything here is either a read or
+   a draft EXCEPT `skoolPublishPost` and `skoolEngagePublish`, which are the
+   two calls that put text in front of members.                             */
+
+export type SkoolWeekday = "sun" | "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+export type SkoolSlotState = "pending" | "drafted" | "posted" | "abandoned";
+
+export interface SkoolEngageSchedule {
+  enabled: boolean;
+  dryRun: boolean;
+  days: SkoolWeekday[];
+  hour: number;
+  timezone: string;
+  maxPostsPerWeek: number;
+  maxAttempts: number;
+  retryMinutes: number;
+  maxSlotAgeHours: number;
+}
+
+/**
+ * One posting day. `slotKey` is the LOCAL CALENDAR DATE and the primary key —
+ * which is what makes the retry loop safe, since "try again" and "post again"
+ * would otherwise be the same operation.
+ */
+export interface SkoolSlot {
+  slotKey: string;
+  state: SkoolSlotState;
+  subject: string;
+  title: string | null;
+  body: string | null;
+  category: string | null;
+  citedJson: string;
+  attempts: number;
+  nextAttemptAt: number;
+  lastError: string | null;
+  slug: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SkoolDraft {
+  title: string;
+  body: string;
+  category: string | null;
+  cited: { title: string; url: string }[];
+  tokens: number | null;
+  model: string;
+}
+
+/**
+ * The clock in the SCHEDULE's timezone, returned by the server rather than
+ * computed here. Three zones are in play — the box is UTC, Jake is in
+ * Asia/Bangkok, the schedule is America/New_York — so a UI that showed only
+ * "9:00" would be telling nobody anything.
+ */
+export const skoolEngageStatus = endpoint<
+  void,
+  {
+    schedule: SkoolEngageSchedule;
+    now: { date: string; weekday: SkoolWeekday; hour: number };
+    slots: SkoolSlot[];
+  }
+>("skoolEngageStatus");
+
+export const skoolEngageConfigure = endpoint<
+  Partial<SkoolEngageSchedule>,
+  { schedule: SkoolEngageSchedule }
+>("skoolEngageConfigure");
+
+/** Run one scheduler cycle now instead of waiting for the interval. */
+export const skoolEngageTick = endpoint<
+  void,
+  {
+    started: boolean;
+    result: { enqueued: string | null; processed: string[]; skipped: string | null } | null;
+    detail?: string;
+  }
+>("skoolEngageTick");
+
+/** ⚠️ WRITES TO THE COMMUNITY. Publishes a slot that has been drafted and read. */
+export const skoolEngagePublish = endpoint<
+  { slotKey: string },
+  { ok: boolean; detail: string }
+>("skoolEngagePublish");
+
+/** What it would write about next — without spending the window on a full draft. */
+export const skoolEngageSubject = endpoint<
+  void,
+  { subject: string; error: string | null }
+>("skoolEngageSubject");
+
+export const skoolDraftPost = endpoint<
+  { kind?: "lesson" | "mcp"; subject: string; category?: string },
+  { draft: SkoolDraft | null; error: string | null }
+>("skoolDraftPost");
+
+/** ⚠️ WRITES TO THE COMMUNITY. Takes finished text, never a subject. */
+export const skoolPublishPost = endpoint<
+  { title: string; body: string; category?: string | null },
+  { ok: boolean; detail: string; post: any | null }
+>("skoolPublishPost");
+
 /** Undo a focus, restoring the whole-catalogue report. */
 export const clearAuditFocus = endpoint<{ runId: string }, { cleared: boolean; reason?: string }>("clearAuditFocus");
 /** Named, reusable competitor sets — switchable per run, even for one channel. */
