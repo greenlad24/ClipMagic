@@ -202,7 +202,8 @@ import { runPlan } from "../skool/planRun.js";
 import { readFeed, readPost, unreadChatCount } from "../skool/community.js";
 import { allLessons, classroomOutline, indexedCourses, retrieve } from "../skool/knowledge.js";
 import { backfillTranscripts, transcriptCoverage } from "../skool/transcripts.js";
-import { createPost, taughtPostAction } from "../skool/engageActions.js";
+import { createPost, replyToComment, taughtPostAction } from "../skool/engageActions.js";
+import { answerable, readComments } from "../skool/comments.js";
 import { draftPost, draftReply, styleExamplesFrom } from "../skool/engageGen.js";
 import {
   getSchedule,
@@ -4461,6 +4462,20 @@ const skoolReadPost: Handler = async (input) => {
   return await readPost(communityUrlOrThrow(), slug);
 };
 
+/**
+ * A post's comments, with their real ids, over Skool's own API.
+ *
+ * Distinct from `skoolReadPost`, which scrapes the DOM and cannot see an id.
+ * `answerable` is what a reply worker acts on: top-level, not ours, not already
+ * answered by us.
+ */
+const skoolReadComments: Handler = async (input) => {
+  const slug = String(input?.slug ?? "").trim();
+  if (!slug) throw new ZiteError({ code: "BAD_REQUEST", message: "Which post? Pass its slug." });
+  const read = await readComments(communityUrlOrThrow(), slug);
+  return { ...read, answerable: answerable(read.comments) };
+};
+
 const skoolUnreadChats: Handler = async () => {
   return { unreadChats: await unreadChatCount(communityUrlOrThrow()) };
 };
@@ -4590,6 +4605,42 @@ const skoolDraftReply: Handler = async (input) => {
     context: String(input?.context ?? ""),
   });
   return { reply, error };
+};
+
+/**
+ * Send a reply to one comment. THE SECOND ENDPOINT HERE THAT WRITES.
+ *
+ * ⚠️ IT TAKES THE COMMENT'S ID *AND* ITS TEXT, AND NEEDS BOTH. The id is what
+ * Skool's API knows the comment by and is the dedupe key; the text is the only
+ * handle the rendered page shares with it, because a comment has no id, no data
+ * attribute and no permalink in the DOM. Reading happens over the API, writing
+ * happens through the UI, and the text is the seam between them —
+ * `skoolReadComments` returns both, so a caller never constructs either.
+ */
+const skoolReplyToComment: Handler = async (input) => {
+  const slug = String(input?.slug ?? "").trim();
+  const commentId = String(input?.commentId ?? "").trim();
+  const commentBody = String(input?.commentBody ?? "");
+  const text = String(input?.text ?? "");
+  if (!slug) throw new ZiteError({ code: "BAD_REQUEST", message: "Which post is the comment on?" });
+  if (!commentId) throw new ZiteError({ code: "BAD_REQUEST", message: "Which comment? Pass its id from skoolReadComments." });
+  if (!commentBody.trim()) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message:
+        "The comment's own text is required — it is how the reply button is found on the page, which carries no " +
+        "comment id. Pass the `body` from skoolReadComments.",
+    });
+  }
+  if (!text.trim()) throw new ZiteError({ code: "BAD_REQUEST", message: "There is no reply to send." });
+  return await replyToComment({
+    communityUrl: communityUrlOrThrow(),
+    slug,
+    commentId,
+    commentBody,
+    text,
+    dryRun: input?.dryRun === true,
+  });
 };
 
 /* ─────────────────── the autonomous poster's schedule ─────────────────── */
@@ -5145,12 +5196,14 @@ export const HANDLERS: Record<string, Handler> = {
   // Engagement half — reads and drafts, no writes.
   skoolReadFeed,
   skoolReadPost,
+  skoolReadComments,
   skoolUnreadChats,
   skoolKnowledge,
   skoolBackfillTranscripts,
   skoolDraftPost,
   skoolDraftReply,
   skoolPublishPost,
+  skoolReplyToComment,
   // The autonomous poster: schedule, queue, and the reviewed-publish path.
   skoolEngageStatus,
   skoolEngageConfigure,

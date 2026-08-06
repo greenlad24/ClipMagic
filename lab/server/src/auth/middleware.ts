@@ -109,6 +109,9 @@ const LOOPBACK_FN_EXACT = new Set([
   // them. The read-only three can stay.
   "/api/fn/skoolReadFeed",
   "/api/fn/skoolReadPost",
+  // Read-only, and the ONLY place a comment id exists — the rendered page
+  // carries none, so a reply worker cannot be built or checked without it.
+  "/api/fn/skoolReadComments",
   "/api/fn/skoolUnreadChats",
   "/api/fn/skoolKnowledge",
   // ⚠️ SPENDS APIFY CREDITS — the only paid thing in this feature. Here because
@@ -130,6 +133,11 @@ const LOOPBACK_FN_EXACT = new Set([
   // exists — and they come off this list with it.
   "/api/fn/skoolEngageTick",
   "/api/fn/skoolEngagePublish",
+  // ⚠️ WRITES A PUBLIC REPLY, ATTRIBUTED TO JAKE, under a member's comment. Here
+  // on the same terms and with the same expiry as the two above: the write path
+  // has to be exercisable before a UI can drive it, and it takes `dryRun` so the
+  // whole sequence can be proven without a member seeing anything.
+  "/api/fn/skoolReplyToComment",
 ]);
 
 /**

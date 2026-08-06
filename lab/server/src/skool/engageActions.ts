@@ -23,9 +23,10 @@
  * finishes by re-reading the FEED and finding the post by title, and reports
  * failure when it cannot — even though every click "worked".
  */
-import { clickButton, clickVisibleText, fillField, appendBody } from "./actions.js";
+import { clickButton, clickVisibleText, fillField, appendBody, type ActionResult } from "./actions.js";
 import { withSkoolPage } from "./browser.js";
 import { communityFeedUrl, readFeed, type SkoolPost } from "./community.js";
+import { readComments } from "./comments.js";
 import { getRecipe, type RecipeStep } from "./recipes.js";
 import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
 
@@ -128,6 +129,326 @@ function recipeFields(steps: RecipeStep[]): string[] {
     for (const p of placeholdersIn(s.target?.text ?? "")) found.add(p);
   }
   return [...found];
+}
+
+export interface ReplyResult {
+  ok: boolean;
+  detail: string;
+  /** The reply as read back from Skool's own API, when it was found. */
+  replyId: string | null;
+}
+
+/**
+ * Paste a reply into the editor Skool just opened.
+ *
+ * ⚠️⚠️ THIS EXISTS BECAUSE `appendBody` WOULD HAVE TYPED IT INSTEAD. That helper
+ * is the LESSON writer, and every editor lookup in its chain — `bodyStructure`,
+ * `pasteHtmlChunk` — selects "the tallest contenteditable OVER 40 PIXELS". A
+ * lesson body always clears that; a reply box holding nothing but "@Remco
+ * Borsato" is one line tall and need not. When it does not clear it, the chain
+ * does not fail: `pasteHtmlChunk` finds no editor, reports that nothing was
+ * pasted, and `appendBody` FALLS BACK TO TYPING THE REPLY KEY BY KEY.
+ *
+ * That fallback is the worst available outcome here. The text starts life next
+ * to an @mention, and typing into ProseMirror re-opens Skool's mention
+ * autocomplete — so an `@` anywhere in the reply, or the plain act of typing
+ * beside the existing mention, can capture keystrokes into a popup and commit a
+ * member's name into the middle of a sentence. It also puts raw markdown on the
+ * page, which is the scar `pasteBody` was written for in the first place.
+ *
+ * So the reply is pasted into the editor identified by its OWN semantic class,
+ * with no height test anywhere: `skool-editor` is a name somebody chose and
+ * survives a redeploy, unlike the `sc-…` hashes beside it.
+ *
+ * ⚠️ text/plain ONLY, unlike a lesson. A reply is prose — Jake's own comments
+ * carry no headings and no lists — so offering text/html would invite the editor
+ * to build structure that none of the community's replies have.
+ */
+async function pasteIntoReplyEditor(text: string): Promise<ActionResult> {
+  const measure = async (): Promise<number> =>
+    (await withSkoolPage(async (page) =>
+      page.evaluate(() => {
+        const doc: any = (globalThis as any).document;
+        const ed = (Array.from(doc.querySelectorAll(".skool-editor[contenteditable='true']")) as any[]).find(
+          (el) => el.getBoundingClientRect().height > 0,
+        );
+        return ed ? String(ed.textContent ?? "").trim().length : -1;
+      }),
+    )) ?? -1;
+
+  const before = await measure();
+  if (before < 0) return { ok: false, detail: "No reply editor is open to write into." };
+
+  const dispatched = await withSkoolPage(async (page) => {
+    try {
+      return (await page.evaluate((t: string) => {
+        const doc: any = (globalThis as any).document;
+        const g: any = globalThis;
+        const ed = (Array.from(doc.querySelectorAll(".skool-editor[contenteditable='true']")) as any[]).find(
+          (el) => el.getBoundingClientRect().height > 0,
+        );
+        if (!ed) return false;
+        ed.focus();
+
+        // Caret to the very end, so the paste lands AFTER the @mention rather
+        // than in front of it. Set explicitly because the editor was focused by
+        // script rather than by a click, so it may hold no caret at all yet.
+        const sel = g.getSelection?.();
+        if (sel) {
+          const range = doc.createRange();
+          range.selectNodeContents(ed);
+          range.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+
+        const dt = new g.DataTransfer();
+        dt.setData("text/plain", t);
+        ed.dispatchEvent(new g.ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+        return true;
+      }, text)) as boolean;
+    } catch {
+      return false;
+    }
+  });
+  if (!dispatched) return { ok: false, detail: "The reply editor vanished before the text could be pasted." };
+
+  await settle(800);
+  const after = await measure();
+  const gained = after - before;
+  // A proportion, not an equality: the editor normalises whitespace, and the
+  // @mention it starts with is counted in both readings.
+  if (gained < text.length * 0.6) {
+    return {
+      ok: false,
+      detail: `The paste put ${gained} characters into the reply editor against ${text.length} written, so it is incomplete.`,
+    };
+  }
+  return { ok: true, detail: `Pasted ${gained} characters after the mention.` };
+}
+
+/**
+ * Reply to one comment.
+ *
+ * ⚠️⚠️ THE HARD PART IS JOINING AN API ID TO A DOM BUTTON. Comments are READ
+ * from `api2.skool.com`, which is the only place their ids exist — the rendered
+ * page carries no id, no data attribute and no permalink for a comment. But the
+ * reply is WRITTEN through the UI, because that is this project's rule for
+ * anything that changes the community. So the two have to be joined by the one
+ * thing both sides can see: the comment's TEXT.
+ *
+ * The join is: for every visible "Reply" button, climb to the nearest ancestor
+ * whose text contains this comment's opening, and keep the SMALLEST such
+ * ancestor — the comment's own block rather than the thread or the page around
+ * it. Ambiguity is fatal, not resolved by picking the first: two candidates
+ * means the snippet was not distinctive, and a reply under the wrong member's
+ * comment is not something a read-back can undo.
+ *
+ * ⚠️ THE SUBMIT BUTTON IS ALSO CALLED "Reply", WHICH THE POST BUTTON WAS NOT.
+ * Opening the editor takes the count from 40 to 41, so "the button that says
+ * Reply" is meaningless here. Measured: the submit shares a row with the
+ * editor's "Cancel" and sits to its right, and is DISABLED until the body has
+ * real content. Both facts are used.
+ *
+ * ⚠️ THE EDITOR OPENS PRE-FILLED WITH AN @MENTION of the person being answered
+ * ("@Remco Borsato", 14 characters). That is Skool's doing and it must be kept,
+ * so the body is APPENDED and the blank-composer rule from `createPost` cannot
+ * apply — the field is legitimately non-empty before we type.
+ */
+export async function replyToComment(input: {
+  communityUrl: string;
+  slug: string;
+  commentId: string;
+  /** The comment's own text — the only handle the DOM shares with the API. */
+  commentBody: string;
+  text: string;
+  /**
+   * Do everything except the final click.
+   *
+   * ⚠️ THE POINT IS THAT IT IS NOT A SIMULATION. It opens the real editor on the
+   * real thread and pastes the real text; only the submit is withheld, after
+   * being RESOLVED so the count and the disabled state are reported. That is how
+   * `createPost` was proven — every step but the last ran for real — and it is
+   * the only way to learn whether the join, the paste and the submit lookup work
+   * without a member seeing the answer.
+   */
+  dryRun?: boolean;
+}): Promise<ReplyResult> {
+  const text = input.text.trim();
+  if (!text) return { ok: false, detail: "An empty reply was not sent.", replyId: null };
+
+  // The join key. Long enough to be distinctive, short enough to survive the
+  // whitespace and entity differences between the API's text and the DOM's.
+  const snippet = input.commentBody.replace(/\s+/g, " ").trim().slice(0, 60);
+  if (snippet.length < 12) {
+    return {
+      ok: false,
+      detail:
+        `That comment is only ${snippet.length} characters, which is too short to locate reliably on the page. ` +
+        `Refusing rather than risk replying under somebody else's comment.`,
+      replyId: null,
+    };
+  }
+
+  // ⚠️ CHECK SKOOL, NOT OUR OWN RECORD, IMMEDIATELY BEFORE WRITING. The worker
+  // retries, and Jake answers comments himself; either can have happened since
+  // the queue was built.
+  const before = await readComments(input.communityUrl, input.slug);
+  if (before.error) return { ok: false, detail: `Could not read the comments first, so nothing was sent: ${before.error}`, replyId: null };
+  const target = before.comments.find((c) => c.id === input.commentId);
+  if (!target) return { ok: false, detail: `Comment ${input.commentId} is no longer on that post — it may have been deleted.`, replyId: null };
+  if (target.answeredByMe) return { ok: false, detail: `That comment already has a reply from this account. Not answering it twice.`, replyId: null };
+
+  const opened = await withSkoolPage(async (page) => {
+    const found = await page.evaluate((want: string) => {
+      const doc: any = (globalThis as any).document;
+      const win: any = globalThis;
+      const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
+      const vis = (el: any) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const buttons = (Array.from(doc.querySelectorAll("button")) as any[])
+        .filter((b) => norm(b.textContent).toLowerCase() === "reply")
+        .filter(vis);
+
+      const hits: { btn: any; size: number }[] = [];
+      for (const btn of buttons) {
+        let node: any = btn;
+        for (let hop = 0; hop < 9 && node; hop++) {
+          node = node.parentElement;
+          if (!node) break;
+          if (norm(node.textContent).includes(want)) {
+            hits.push({ btn, size: (node.textContent || "").length });
+            break;
+          }
+        }
+      }
+      if (hits.length === 0) return { ok: false, why: "not-found", count: 0 };
+      // The smallest containing block is the comment itself; larger ones are the
+      // thread and the page. Distinct buttons at the same minimum size means the
+      // snippet genuinely appears twice.
+      hits.sort((a, b) => a.size - b.size);
+      const best = hits[0];
+      const tied = hits.filter((h) => h.btn !== best.btn && h.size === best.size);
+      if (tied.length > 0) return { ok: false, why: "ambiguous", count: tied.length + 1 };
+
+      best.btn.scrollIntoView({ block: "center", inline: "nearest" });
+      const r = best.btn.getBoundingClientRect();
+      const x = Math.round(r.x + r.width / 2);
+      const y = Math.round(r.y + r.height / 2);
+      if (!(x >= 0 && y >= 0 && x <= win.innerWidth && y <= win.innerHeight)) {
+        return { ok: false, why: "offscreen", count: hits.length };
+      }
+      return { ok: true, x, y, count: hits.length };
+    }, snippet);
+
+    if (!found?.ok) return found;
+    await page.mouse.click(found.x, found.y, { delay: 40 });
+    return found;
+  });
+
+  if (!opened?.ok) {
+    const why: Record<string, string> = {
+      "not-found": `No comment on that page contains "${snippet.slice(0, 40)}…", so its Reply button could not be found.`,
+      ambiguous: `That comment's opening matches ${opened?.count ?? 2} separate blocks on the page. Refusing rather than guessing which member gets the reply.`,
+      offscreen: "The Reply button would not come into view, so it was not clicked.",
+    };
+    return { ok: false, detail: why[String(opened?.why)] ?? "The reply editor could not be opened.", replyId: null };
+  }
+  await settle(1800);
+
+  // Append: Skool has already put the @mention in, and it belongs there.
+  const written = await pasteIntoReplyEditor(text);
+  if (!written.ok) {
+    await clickButton("Cancel").catch(() => undefined);
+    return { ok: false, detail: `The reply was not written: ${written.detail}`, replyId: null };
+  }
+  await settle(800);
+
+  const sent = await withSkoolPage(async (page) => {
+    const hit = await page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
+      const vis = (el: any) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const all = (Array.from(doc.querySelectorAll("button")) as any[]).filter(vis);
+      const cancel = all.find((b) => norm(b.textContent).toLowerCase() === "cancel");
+      if (!cancel) return { ok: false, why: "no-cancel" };
+      const cr = cancel.getBoundingClientRect();
+      // Same row as Cancel, to its right. Measured on the live editor.
+      const submits = all.filter((b) => {
+        if (norm(b.textContent).toLowerCase() !== "reply") return false;
+        const r = b.getBoundingClientRect();
+        return Math.abs(r.y - cr.y) < 12 && r.x > cr.x;
+      });
+      if (submits.length !== 1) return { ok: false, why: submits.length === 0 ? "no-submit" : "many-submits" };
+      const btn = submits[0];
+      // Disabled means Skool does not consider the body filled — clicking it
+      // would silently do nothing and the read-back would blame the wrong thing.
+      if (btn.disabled) return { ok: false, why: "disabled" };
+      const r = btn.getBoundingClientRect();
+      return { ok: true, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    });
+    if (!hit?.ok) return hit;
+    // ⚠️ RESOLVED BUT NOT CLICKED. Everything above this line has already run
+    // against the live thread — the editor is open and holds the reply — so the
+    // dry run proves the join, the paste and the submit lookup. Only the public
+    // half is withheld.
+    if (input.dryRun) return { ...hit, skipped: true };
+    await page.mouse.click(hit.x, hit.y, { delay: 40 });
+    return hit;
+  });
+
+  if (!sent?.ok) {
+    const why: Record<string, string> = {
+      "no-cancel": "The reply editor did not open — there is no Cancel beside a submit button.",
+      "no-submit": "The editor is open but no Reply button sits beside Cancel, so nothing was submitted.",
+      "many-submits": "More than one submit button matched. Refusing to guess.",
+      disabled: "The submit button is still disabled, so Skool did not register the reply text.",
+    };
+    await clickButton("Cancel").catch(() => undefined);
+    return { ok: false, detail: why[String(sent?.why)] ?? "The reply could not be submitted.", replyId: null };
+  }
+
+  if (input.dryRun) {
+    // ⚠️ CANCEL, AND EXPECT IT TO LEAVE A DRAFT BEHIND. Clearing a ProseMirror
+    // document does not work (measured during the composer work: 2,630 chars
+    // down to 2,591), and Skool raises a native confirm on abandoning a part
+    // written reply. The draft lives in the page rather than on Skool's server,
+    // so a session relaunch is what actually discards it.
+    await clickButton("Cancel").catch(() => undefined);
+    return {
+      ok: true,
+      detail:
+        `DRY RUN — replying to ${target.authorName}: the editor opened on the right comment, ${text.length} characters ` +
+        `were pasted after Skool's @mention, and exactly one enabled submit button was found beside Cancel. ` +
+        `It was NOT clicked; nothing was sent.`,
+      replyId: null,
+    };
+  }
+  await settle(3500);
+
+  // ⚠️ THE ONLY EVIDENCE THAT COUNTS, and here it is exact rather than fuzzy:
+  // re-read the API and look for a NEW child of this comment written by us.
+  const after = await readComments(input.communityUrl, input.slug);
+  if (after.error) {
+    return { ok: false, detail: `Submitted, but the comments could not be re-read, so the reply is UNCONFIRMED: ${after.error}`, replyId: null };
+  }
+  const seen = new Set(before.comments.map((c) => c.id));
+  const landed = after.comments.find((c) => c.parentId === input.commentId && c.byMe && !seen.has(c.id));
+  if (!landed) {
+    return {
+      ok: false,
+      detail:
+        `Every click worked and no new reply from this account is under that comment. Treat it as not sent — ` +
+        `but check the post before retrying, because one that landed late would duplicate.`,
+      replyId: null,
+    };
+  }
+  return { ok: true, detail: `Replied to ${target.authorName}: ${landed.body.trim().length} characters.`, replyId: landed.id };
 }
 
 export interface TaughtPostAction {
