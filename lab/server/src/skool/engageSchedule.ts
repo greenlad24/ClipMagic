@@ -25,6 +25,7 @@
  * skip a promised post. So a rate-limited slot stays QUEUED and comes back on a
  * backoff — the failure it is designed around is the one that actually happened.
  */
+import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
 import { draftPost, type Draft } from "./engageGen.js";
 import { createPost } from "./engageActions.js";
@@ -290,9 +291,27 @@ export async function chooseSubject(communityUrl: string): Promise<{ subject: st
 
 /* ────────────────────────── the tick ────────────────────────── */
 
-/** Is this a Max-window refusal rather than a real failure? */
-function isWindowShut(message: string): boolean {
+/**
+ * Is this a rate-limit refusal rather than a real failure?
+ *
+ * ⚠️ IT MEANS TWO DIFFERENT THINGS DEPENDING ON `SKOOL_AI_AUTH`, AND ONLY ONE
+ * OF THEM IS PATIENT. On `subscription` it is the Max window being shut, which
+ * has been observed to last a day or more — a retry queue is the right answer
+ * but may still run out of attempts. On `api` it is an ordinary per-minute rate
+ * limit that clears in seconds, so a retry almost always succeeds.
+ *
+ * Either way this is NOT the out-of-credit case: an exhausted API balance comes
+ * back as an `invalid_request_error` about the credit balance, does not match
+ * here, and is correctly reported as a hard failure — which is what it is,
+ * since no amount of retrying fixes it.
+ */
+function isRateLimited(message: string): boolean {
   return /rate limit reached|rate_limit|Max subscription/i.test(message);
+}
+
+/** What to call the credential in operator-facing text. */
+function credentialLabel(): string {
+  return aiConfig.skoolEngageAuth === "subscription" ? "Max window shut" : "Rate limited";
 }
 
 export interface TickResult {
@@ -474,8 +493,8 @@ async function attemptSlot(
       // ⚠️ THE WINDOW BEING SHUT IS NOT A FAILURE — IT IS THE CASE THIS QUEUE
       // WAS BUILT FOR. Stay pending and come back on the backoff.
       updateSlot(slot.slotKey, { attempts, next_attempt_at: backoff, last_error: msg });
-      return isWindowShut(msg)
-        ? `Max window shut — still queued, attempt ${attempts}/${cfg.maxAttempts}, retrying in ${cfg.retryMinutes} min.`
+      return isRateLimited(msg)
+        ? `${credentialLabel()} — still queued, attempt ${attempts}/${cfg.maxAttempts}, retrying in ${cfg.retryMinutes} min.`
         : `Draft failed (attempt ${attempts}/${cfg.maxAttempts}): ${msg}`;
     }
     draft = res.draft;

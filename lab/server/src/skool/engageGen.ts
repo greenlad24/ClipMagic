@@ -20,6 +20,7 @@
  * comment box they were written for — and `POST_FORMAT_NOTE` says so in the
  * prompt itself, so the model is not left to reconcile a contradiction silently.
  */
+import { aiConfig } from "../ai/config.js";
 import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
 import { classroomOutline, retrieve, type Retrieved } from "./knowledge.js";
 
@@ -241,7 +242,10 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     purpose: "skool-post",
     system,
     messages: [{ role: "user", content: user }],
-    auth: "subscription",
+    // `SKOOL_AI_AUTH` — API credits by default. The agent posts on days the
+    // community has been promised, so it cannot depend on the Max window being
+    // open; see `skoolEngageAuth` in ai/config.ts.
+    auth: aiConfig.skoolEngageAuth,
   });
 
   const parsed = parseDraft(json);
@@ -334,7 +338,7 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     purpose: "skool-engage-reply",
     system,
     messages: [{ role: "user", content: user }],
-    auth: "subscription",
+    auth: aiConfig.skoolEngageAuth,
   });
 
   const parsed = parseDraft(json);

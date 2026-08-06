@@ -43,10 +43,36 @@ export const aiConfig = {
   // races Claude Code and can invalidate the login. `claude setup-token` mints
   // a separate long-lived token for exactly this.
   //
-  // The 5-hour Max window is SHARED with Jake's own Claude Code sessions, which
-  // is why this is opt-in per call rather than lab-wide: a background worker on
-  // a timer would quietly eat the limit he is typing into.
+  // ⚠️ THE WINDOW IS SLOWER TO REOPEN THAN "5 HOURS" SUGGESTS, AND IT IS NOT
+  // MEASURABLY SHARED WITH CLAUDE CODE. Measured 2026-08-05/06: the lab's token
+  // was 429 on every Opus and Sonnet model for ~26 hours continuously (only
+  // Haiku stayed open) while a Claude Code session on Opus 5 kept working
+  // normally throughout. A 5-hour rolling window would have lifted five times
+  // over, so treat this as a WEEKLY cap on a quota that is effectively separate
+  // from Claude Code's. The practical consequence: a call that must actually
+  // happen on a schedule cannot depend on this token being available.
   anthropicSubscriptionToken: process.env.ANTHROPIC_SUBSCRIPTION_TOKEN || "",
+  // Which credential the SKOOL ENGAGEMENT AGENT drafts with — `api` (default)
+  // or `subscription`. It is a setting rather than a constant because the two
+  // credentials fail in opposite ways and the right answer changes: the
+  // subscription costs nothing but can be shut for a day at a time (see above),
+  // and the agent posts on advertised days, so an unavailable credential is a
+  // missed post rather than a slow one. Jake, 2026-08-06: "lets switch it to
+  // claude api" — after the window had been shut ~26h and no draft had ever
+  // been read. Set `subscription` to hand it back to the free window.
+  //
+  // ⚠️ THIS IS NOT A FALLBACK CHAIN AND MUST NOT BECOME ONE. `AuthMode`'s whole
+  // point is that a call spends the credential it was told to spend; auto-
+  // promoting a 429 to API credits is precisely the quiet billing the no-
+  // fallback rule exists to prevent. It uses exactly what is set here.
+  // The annotation is load-bearing: inside an object literal a string ternary
+  // widens to `string`, which is not assignable to `AuthMode`. It is written
+  // out rather than imported because `ai/claude.ts` (where `AuthMode` lives)
+  // imports THIS file — importing it back would be a cycle.
+  skoolEngageAuth: (process.env.SKOOL_AI_AUTH === "subscription"
+    ? "subscription"
+    : "api") as "api" | "subscription",
+
   anthropicBaseUrl: process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com",
   anthropicVersion: "2023-06-01",
   anthropicOauthBeta: "oauth-2025-04-20",

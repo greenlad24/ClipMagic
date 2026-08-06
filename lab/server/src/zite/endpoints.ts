@@ -4605,6 +4605,11 @@ const skoolEngageStatus: Handler = async () => {
     schedule,
     now: localNow(schedule.timezone),
     slots: listSlots(30),
+    // Which credential the drafter spends (`SKOOL_AI_AUTH`). The operator needs
+    // it because a rate-limit refusal reads completely differently under each:
+    // on the subscription it costs nothing and may last a day, on API credits
+    // it costs money and clears in seconds.
+    aiAuth: aiConfig.skoolEngageAuth,
   };
 };
 

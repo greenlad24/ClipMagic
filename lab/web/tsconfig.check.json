@@ -1,0 +1,30 @@
+// A DIAGNOSTIC typecheck config — not part of any build.
+//
+// ⚠️ THE NORMAL WEB TYPECHECK SILENTLY DOES NOT CHECK ENDPOINT CALLS. The
+// `zite-endpoints-sdk` specifier is mapped in `vite.config.ts` ONLY, so `tsc`
+// resolves nothing for it: every one of the ~39 importers reports "Cannot find
+// module" and then treats each endpoint call as `any`. A page can call a
+// non-existent endpoint, pass the wrong input shape, or read a field the
+// handler never returns, and `npm run build` stays green.
+//
+// This config adds the missing `paths` so those calls are really checked.
+//
+// ⚠️ IT REPORTS ~98 PRE-EXISTING ERRORS AND THAT IS EXPECTED, NOT A REGRESSION.
+// Resolving the shims pulls `../src/api/**` and `../src/utils/**` into the
+// program for the first time; most of the errors live there. Use this to check
+// the files you touched, not as a gate — a clean run is not the bar today.
+//
+//   docker build -f Dockerfile --target web -t web-check .
+//   docker run --rm web-check sh -c \
+//     'cd /build/web && ./node_modules/.bin/tsc --noEmit -p tsconfig.check.json'
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["../src/*"],
+      "zite-endpoints-sdk": ["src/shims/endpoints.ts"],
+      "zite-auth-sdk": ["src/shims/auth.tsx"],
+      "zite-file-upload-sdk": ["src/shims/fileUpload.ts"]
+    }
+  }
+}

@@ -59,15 +59,36 @@ const CATEGORIES = [
 ];
 
 /**
- * The Max window closing is a NORMAL state for this agent, not a crash.
+ * A rate-limit refusal is a NORMAL state for this agent, not a crash.
  *
- * Every drafting call spends a `setup-token` whose quota is regularly
- * exhausted, and the refusal is the no-spend rule working — nothing is billed.
- * Rendering that in the same red box as "Skool logged us out" would train the
- * operator to read a working safety feature as a broken tool.
+ * Rendering it in the same red box as "Skool logged us out" would train the
+ * operator to read a working safety feature as a broken tool. What it MEANS,
+ * though, depends on which credential is drafting (`aiAuth` from the status
+ * endpoint), so the copy is picked per credential rather than hardcoded:
+ *
+ *   subscription — the Max window is shut. Nothing was billed, and it has been
+ *                  observed shut for a day or more, so the retry may not win.
+ *   api          — an ordinary per-minute rate limit. It clears in seconds and
+ *                  the retry almost always succeeds.
+ *
+ * Neither is the out-of-credit case, which arrives as a plain error and is
+ * correctly shown in the destructive box: retrying does not fix a zero balance.
  */
-function isWindowShut(msg: string | null | undefined): boolean {
+function isRateLimited(msg: string | null | undefined): boolean {
   return !!msg && /rate limit|Max subscription/i.test(msg);
+}
+
+/** How to describe a rate-limit refusal for the credential actually in use. */
+function rateLimitCopy(aiAuth: string | null | undefined): { headline: string; detail: string } {
+  return aiAuth === 'subscription'
+    ? {
+        headline: 'The Max window is shut.',
+        detail: 'Nothing was billed. The window has been seen shut for a day at a time, so this may not clear before the slot goes stale.',
+      }
+    : {
+        headline: 'Anthropic rate-limited the request.',
+        detail: 'This is the per-minute API limit, not a spending problem — it normally clears within seconds.',
+      };
 }
 
 export default function SkoolEngagePage() {
@@ -84,6 +105,13 @@ export default function SkoolEngagePage() {
    * link would point at skool.com/<slug>, which is a 404 rather than the post.
    */
   const [communityUrl, setCommunityUrl] = useState<string | null>(null);
+  /**
+   * Which credential the drafter spends (`SKOOL_AI_AUTH`, server-side). It only
+   * decides copy — but the wrong copy here is actively misleading, because a
+   * rate-limit refusal means "free, and possibly shut all day" on the
+   * subscription and "billed, back in seconds" on API credits.
+   */
+  const [aiAuth, setAiAuth] = useState<string | null>(null);
 
   useEffect(() => {
     void skoolStatus()
@@ -96,6 +124,7 @@ export default function SkoolEngagePage() {
       const s = await skoolEngageStatus();
       setNow(s.now);
       setSlots(s.slots);
+      setAiAuth(s.aiAuth ?? null);
       // Don't clobber edits in progress: the settings form is the one part of
       // this page the operator types into, and a poll landing mid-edit that
       // reset the day chips would be indistinguishable from the save failing.
@@ -220,6 +249,7 @@ export default function SkoolEngagePage() {
               busy={busy}
               communityUrl={communityUrl}
               dryRun={schedule.dryRun}
+              aiAuth={aiAuth}
               onPublish={(slotKey) =>
                 run(`pub:${slotKey}`, async () => {
                   const out = await skoolEngagePublish({ slotKey });
@@ -230,7 +260,7 @@ export default function SkoolEngagePage() {
               }
             />
 
-            <DraftBench busy={busy} setBusy={setBusy} onPosted={() => void load()} />
+            <DraftBench busy={busy} setBusy={setBusy} aiAuth={aiAuth} onPosted={() => void load()} />
           </>
         )}
       </div>
@@ -541,12 +571,13 @@ const STATE_LABEL: Record<SkoolSlotState, string> = {
 };
 
 function QueuePanel({
-  slots, busy, dryRun, communityUrl, onPublish,
+  slots, busy, dryRun, communityUrl, aiAuth, onPublish,
 }: {
   slots: SkoolSlot[];
   busy: string | null;
   dryRun: boolean;
   communityUrl: string | null;
+  aiAuth: string | null;
   onPublish: (slotKey: string) => void;
 }) {
   return (
@@ -559,7 +590,7 @@ function QueuePanel({
       ) : (
         <ul className="space-y-3">
           {slots.map((s) => (
-            <SlotRow key={s.slotKey} slot={s} busy={busy} dryRun={dryRun} communityUrl={communityUrl} onPublish={onPublish} />
+            <SlotRow key={s.slotKey} slot={s} busy={busy} dryRun={dryRun} communityUrl={communityUrl} aiAuth={aiAuth} onPublish={onPublish} />
           ))}
         </ul>
       )}
@@ -568,12 +599,13 @@ function QueuePanel({
 }
 
 function SlotRow({
-  slot, busy, dryRun, communityUrl, onPublish,
+  slot, busy, dryRun, communityUrl, aiAuth, onPublish,
 }: {
   slot: SkoolSlot;
   busy: string | null;
   dryRun: boolean;
   communityUrl: string | null;
+  aiAuth: string | null;
   onPublish: (slotKey: string) => void;
 }) {
   const [open, setOpen] = useState(slot.state === 'drafted');
@@ -612,20 +644,19 @@ function SlotRow({
             {slot.category && <> · Category: <span className="text-foreground">{slot.category}</span></>}
           </div>
 
-          {/* A queued slot is nearly always waiting on the Max window, so say
+          {/* A queued slot is nearly always waiting on a rate limit, so say
               which it is rather than showing a bare error string. */}
           {slot.lastError && (
             <div
               className={`rounded-md border p-2 text-xs ${
-                isWindowShut(slot.lastError)
+                isRateLimited(slot.lastError)
                   ? 'border-border bg-muted/50 text-muted-foreground'
                   : 'border-destructive/40 bg-destructive/10'
               }`}
             >
-              {isWindowShut(slot.lastError) ? (
+              {isRateLimited(slot.lastError) ? (
                 <>
-                  The Max window was shut when it last tried, so nothing was written and{' '}
-                  <span className="font-medium">nothing was billed</span>. It keeps retrying on its own.
+                  {rateLimitCopy(aiAuth).headline} Nothing was written. It keeps retrying on its own.
                 </>
               ) : (
                 slot.lastError
@@ -739,10 +770,11 @@ function Cited({ cited }: { cited: { title: string; url: string }[] }) {
  * publish can never quietly re-draft into something other than what was read.
  */
 function DraftBench({
-  busy, setBusy, onPosted,
+  busy, setBusy, aiAuth, onPosted,
 }: {
   busy: string | null;
   setBusy: (v: string | null) => void;
+  aiAuth: string | null;
   onPosted: () => void;
 }) {
   const [subject, setSubject] = useState('');
@@ -842,14 +874,13 @@ function DraftBench({
       {problem && (
         <div
           className={`mb-3 rounded-md border p-3 text-xs ${
-            isWindowShut(problem) ? 'border-border bg-muted/50 text-muted-foreground' : 'border-destructive/40 bg-destructive/10'
+            isRateLimited(problem) ? 'border-border bg-muted/50 text-muted-foreground' : 'border-destructive/40 bg-destructive/10'
           }`}
         >
-          {isWindowShut(problem) ? (
+          {isRateLimited(problem) ? (
             <>
-              <span className="font-medium text-foreground">The Max window is shut.</span> Nothing was written and{' '}
-              <span className="font-medium">nothing was billed to API credits</span> — that refusal is the no-spend
-              rule doing its job. Try again when the window resets.
+              <span className="font-medium text-foreground">{rateLimitCopy(aiAuth).headline}</span>{' '}
+              Nothing was written. {rateLimitCopy(aiAuth).detail}
             </>
           ) : (
             problem
@@ -875,7 +906,9 @@ function DraftBench({
           <div className="text-xs text-muted-foreground">
             {draft.category ? <>Category: <span className="text-foreground">{draft.category}</span> · </> : null}
             Written by <span className="font-mono text-foreground">{draft.model}</span>
-            {draft.tokens != null && <> · {draft.tokens.toLocaleString()} tokens of the Max window</>}
+            {draft.tokens != null && (
+              <> · {draft.tokens.toLocaleString()} tokens{aiAuth === 'subscription' ? ' of the Max window' : ' on API credits'}</>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

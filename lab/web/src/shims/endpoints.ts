@@ -856,6 +856,13 @@ export const skoolEngageStatus = endpoint<
     schedule: SkoolEngageSchedule;
     now: { date: string; weekday: SkoolWeekday; hour: number };
     slots: SkoolSlot[];
+    /**
+     * Which credential the drafter spends (`SKOOL_AI_AUTH` server-side). The UI
+     * needs it because a rate-limit refusal is free-and-possibly-all-day on
+     * `subscription` but billed-and-back-in-seconds on `api`, and the operator
+     * cannot tell which from the error text alone.
+     */
+    aiAuth: 'api' | 'subscription';
   }
 >("skoolEngageStatus");
 
