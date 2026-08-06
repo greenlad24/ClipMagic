@@ -4752,6 +4752,33 @@ const skoolRunAction: Handler = async (input) => {
         });
       case "deleteThing":
         return skoolActions.deleteThing(String(p.name ?? ""), p.kind === "folder" ? "folder" : "page");
+      // Publishing a post through the SAME door the classroom was built with
+      // (Jake, 2026-08-06: "the same way you've added courses you'll add a
+      // post"), rather than opening a second one. `skoolPublishPost` takes the
+      // same arguments but sits behind the sign-in gate, and widening the
+      // loopback allowlist to reach it would go the wrong way — the allowlist's
+      // own note says its write entries come OFF once a UI exists, and one now
+      // does.
+      //
+      // This is the `createCourse` bargain exactly: a composed, guarded write
+      // to the live community, invoked one at a time and looked at. The guards
+      // live in `createPost` and are the point of routing through it instead of
+      // driving fillField/clickButton by hand — it refuses a duplicate title,
+      // refuses a composer holding someone's unsent draft, and confirms by
+      // re-reading the feed rather than trusting that the clicks worked.
+      //
+      // ⚠️ `post` is dropped on purpose: `run()`'s return type has no room for
+      // it, and `createPost` already writes the read-back — slug and landed
+      // character count — into `detail`, which is the part a human checks.
+      case "createPost": {
+        const out = await createPost({
+          communityUrl: communityUrlOrThrow(),
+          title: String(p.title ?? ""),
+          body: String(p.body ?? ""),
+          category: p.category ? String(p.category) : null,
+        });
+        return { ok: out.ok, detail: out.detail };
+      }
       default:
         return { ok: false, detail: `Unknown action "${action}".` };
     }

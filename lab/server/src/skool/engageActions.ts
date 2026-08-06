@@ -107,9 +107,27 @@ export async function createPost(input: CreatePostInput): Promise<PostResult> {
   }
   step(`Feed read: ${before.posts.length} post(s), no duplicate title`);
 
-  await withSkoolPage(async (page) => {
-    await page.goto(communityFeedUrl(input.communityUrl, 1), { waitUntil: "domcontentloaded", timeout: 60_000 });
+  // ⚠️⚠️ DO NOT RE-NAVIGATE TO THE PAGE WE ARE ALREADY ON. THIS IS WHY THE
+  // FIRST EVER PUBLISH FAILED. `readFeed` above just loaded this exact URL, and
+  // Skool is a Next.js SPA: a second `goto` to the identical URL does not commit
+  // a fresh navigation, so `domcontentloaded` never fires and the call sits for
+  // the full 60s and throws. The symptom is maximally misleading — the browser
+  // is healthy and `skoolReadFeed` answers in 3s, so it reads as a dead session
+  // or an expired cookie rather than a redundant navigation.
+  //
+  // Compared by NORMALISED url (trailing slash and #fragment stripped) because
+  // Skool echoes the feed back without the slash we may have asked for, and an
+  // over-strict compare silently reintroduces the hang.
+  const feedUrl = communityFeedUrl(input.communityUrl, 1);
+  const sameUrl = (a: string, b: string): boolean =>
+    a.split("#")[0].replace(/\/+$/, "") === b.split("#")[0].replace(/\/+$/, "");
+
+  const navigated = await withSkoolPage(async (page) => {
+    if (sameUrl(page.url() || "", feedUrl)) return false;
+    await page.goto(feedUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+    return true;
   });
+  step(navigated ? "Navigated to the feed" : "Already on the feed");
   await settle(2500);
 
   const opened = await clickVisibleText("Write something", { exact: false });
