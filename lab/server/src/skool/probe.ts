@@ -44,10 +44,36 @@ export interface ProbeElement {
   visible: boolean;
 }
 
+/** One call the page made to Skool's API while the probe was watching. */
+export interface ProbeRequest {
+  method: string;
+  url: string;
+  /** Null when the response never arrived before the probe stopped watching. */
+  status: number | null;
+}
+
 export interface ProbeResult {
   url: string | null;
   title: string | null;
   elements: ProbeElement[];
+  /** Skool (non-asset) calls seen during the probe. Empty unless `captureRequests`. */
+  requests: ProbeRequest[];
+  /**
+   * EVERY request the page made, counted.
+   *
+   * ⚠️ THIS IS HOW YOU KNOW THE INSTRUMENT IS ALIVE. Zero `requests` with a
+   * healthy `requestsSeen` means Skool really did not call anything; zero of
+   * both means nothing was listening and the run proves nothing.
+   */
+  requestsSeen: number;
+  /** Distinct hosts contacted — names the surface the filter may be missing. */
+  requestHosts: string[];
+  /** Whether a request listener was successfully attached at all. */
+  watching: boolean;
+  /** Why attaching failed, when it did. */
+  watchError: string | null;
+  /** Raw body of the `apiGet` path, truncated. Null unless asked for. */
+  api: { status: number; body: string } | null;
   /** Present only when `dumpHtml` was asked for. Truncated. */
   html: string | null;
   /** Present only when `payloadPath` was asked for — JSON at that path in pageProps. */
@@ -76,12 +102,64 @@ export async function probeSkool(opts: {
   dumpHtml?: boolean;
   /** Dotted path into `props.pageProps` — e.g. "self" or "currentGroup.metadata". */
   payloadPath?: string;
+  /**
+   * Record the calls the page makes to `api2.skool.com`.
+   *
+   * The surface this reveals is not visible any other way: Skool's chat panel
+   * renders nothing at all into the DOM, so what it FETCHES is the only
+   * available evidence about how DMs work.
+   */
+  captureRequests?: boolean;
+  /**
+   * Fetch one `api2.skool.com` path from inside the page and return its raw body.
+   *
+   * ⚠️ GET ONLY, AND api2.skool.com ONLY — this is reconnaissance, not a client.
+   * It exists because the chat panel renders NOTHING into the DOM: the only way
+   * to learn what a DM looks like is to ask the endpoint the panel itself calls
+   * (`/self/chat-channels`, found with `captureRequests`). Running it inside the
+   * page means it carries the session cookies without this module ever handling
+   * them — the same bargain as reading `__NEXT_DATA__`.
+   */
+  apiGet?: string;
+  /**
+   * A SECOND click, after the first has settled.
+   *
+   * ⚠️ SOME OF SKOOL IS TWO CLICKS DEEP AND CANNOT BE REACHED IN ONE. The chat
+   * panel is the case that forced this: opening it fires `/self/chat-channels`,
+   * but the call that loads a CONVERSATION only happens once a thread inside the
+   * panel is clicked, and the panel does not exist until the first click. Probing
+   * one click at a time can therefore see the thread list and never the messages
+   * — and guessing the messages path instead produced three straight 404s.
+   */
+  thenClickText?: string;
+  thenClickSelector?: string;
+  thenWaitMs?: number;
 }): Promise<ProbeResult> {
-  const { url, hoverText, clickText, clickSelector, clickIndex = 0, waitMs = 2500, dumpHtml = false, payloadPath } = opts;
+  const {
+    url,
+    hoverText,
+    clickText,
+    clickSelector,
+    clickIndex = 0,
+    waitMs = 2500,
+    dumpHtml = false,
+    payloadPath,
+    captureRequests = false,
+    apiGet,
+    thenClickText,
+    thenClickSelector,
+    thenWaitMs = 4000,
+  } = opts;
   const empty = (error: string): ProbeResult => ({
     url: null,
     title: null,
     elements: [],
+    requests: [],
+    requestsSeen: 0,
+    requestHosts: [],
+    watching: false,
+    watchError: null,
+    api: null,
     html: null,
     payload: null,
     clicked: null,
@@ -90,6 +168,75 @@ export async function probeSkool(opts: {
   if (!url) return empty("No URL to probe.");
 
   const out = await withSkoolPage(async (page) => {
+    // ⚠️⚠️ THE NETWORK IS WHERE SKOOL'S REAL SURFACE IS, AND THE DOM IS NOT.
+    // The comments API — the only place a comment id exists — was found by
+    // watching a post page load, not by reading its markup. The chat panel makes
+    // the same point from the other side: it renders NOTHING into the DOM (two
+    // occurrences of "chat", both the button's aria-label), so a DM path cannot
+    // be built by looking at elements at all. What it fetches is the only
+    // evidence available about how DMs work.
+    //
+    // Recorded for `api2.skool.com` only. The page also pulls fonts, images and
+    // analytics, and a list that includes those buries the one line that matters.
+    // ⚠️ THE TOTAL IS RECORDED SEPARATELY, AND THAT IS NOT BOOKKEEPING. The first
+    // version filtered to `api2.skool.com` and reported zero calls when the chat
+    // panel was opened — which reads as "opening chats fetches nothing" and is a
+    // real finding. It was not one: a CONTROL RUN against a post page, which is
+    // known to use that API, also reported zero. The filter was the bug. An
+    // instrument that cannot tell "nothing matched" from "nothing was watching"
+    // reports its own failure as a discovery about Skool.
+    const requests: ProbeRequest[] = [];
+    let totalSeen = 0;
+    const hosts = new Set<string>();
+    const onRequest = (req: any): void => {
+      // ⚠️ COUNT FIRST, THEN INSPECT. The previous ordering read `req.url()`
+      // before incrementing, so anything thrown while inspecting the request
+      // landed in the catch below with the counter still at zero — the exact
+      // "nothing was watching" reading this counter exists to rule out.
+      totalSeen += 1;
+      try {
+        const u = String(req.url?.() ?? "");
+        try {
+          hosts.add(new URL(u).host);
+        } catch {
+          /* an unparseable URL still counts toward the total */
+        }
+        // Anything that is not a static asset. Skool's own frontend calls are
+        // the point; fonts, images and analytics bury the line that matters.
+        if (!/skool\.com/.test(u)) return;
+        if (/\.(png|jpe?g|gif|svg|webp|woff2?|ttf|css|ico|mp4)(\?|$)/i.test(u)) return;
+        requests.push({ method: String(req.method() ?? ""), url: u.slice(0, 300), status: null });
+      } catch {
+        /* a probe that throws on its own instrumentation is worse than one that misses a line */
+      }
+    };
+    const onResponse = (res: any): void => {
+      try {
+        const u = String(res.url() ?? "");
+        if (!u.includes("api2.skool.com")) return;
+        const hit = requests.find((r) => r.url === u.slice(0, 300) && r.status === null);
+        if (hit) hit.status = Number(res.status());
+      } catch {
+        /* as above */
+      }
+    };
+    // ⚠️ WHETHER THE LISTENER COULD BE ATTACHED AT ALL IS REPORTED, not assumed.
+    // `withSkoolPage` hands out an `AnyPage` — a deliberately untyped handle —
+    // so "does this object emit request events?" is a question about the runtime,
+    // not about Skool, and a silent no would look identical to a quiet network.
+    let watching = false;
+    let watchError: string | null = null;
+    if (captureRequests) {
+      try {
+        page.on("request", onRequest);
+        page.on("response", onResponse);
+        watching = true;
+      } catch (e: any) {
+        watching = false;
+        watchError = String(e?.message ?? e).slice(0, 200);
+      }
+    }
+
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 });
     await new Promise((r) => setTimeout(r, waitMs));
 
@@ -172,6 +319,45 @@ export async function probeSkool(opts: {
         { needle: clickText, idx: clickIndex },
       );
       await new Promise((r) => setTimeout(r, 1800));
+    }
+
+    // The second click, on whatever the first one revealed.
+    if (thenClickText || thenClickSelector) {
+      const hit = await page.evaluate(
+        ({ txt, sel }: { txt: string | null; sel: string | null }) => {
+          const doc: any = (globalThis as any).document;
+          const vis = (el: any): boolean => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+          };
+          let el: any = null;
+          if (sel) {
+            el = (Array.from(doc.querySelectorAll(sel)) as any[]).filter(vis)[0] ?? null;
+          } else if (txt) {
+            const wanted = txt.trim().toLowerCase();
+            const all = (Array.from(doc.querySelectorAll("*")) as any[]).filter(
+              (e) => vis(e) && (e.textContent || "").trim().toLowerCase().includes(wanted),
+            );
+            // Smallest containing element — the same rule the first click uses,
+            // because every ancestor up to <body> also "contains" the text.
+            all.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+            el = all[0] ?? null;
+          }
+          if (!el) return null;
+          el.scrollIntoView({ block: "center" });
+          const r = el.getBoundingClientRect();
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        },
+        { txt: thenClickText ?? null, sel: thenClickSelector ?? null },
+      );
+      if (hit) {
+        try {
+          await page.mouse.click(hit.x, hit.y, { delay: 40 });
+        } catch {
+          /* best effort */
+        }
+        await new Promise((r) => setTimeout(r, thenWaitMs));
+      }
     }
 
     const described = await page.evaluate(() => {
@@ -264,7 +450,39 @@ export async function probeSkool(opts: {
         }, payloadPath)
       : null;
 
-    return { ...described, html, payload, clicked, error: null };
+    if (captureRequests) {
+      page.off("request", onRequest);
+      page.off("response", onResponse);
+    }
+
+    const api = apiGet
+      ? await page.evaluate(async (path: string) => {
+          const g: any = globalThis;
+          const url = path.startsWith("http") ? path : `https://api2.skool.com${path}`;
+          if (!/^https:\/\/api2\.skool\.com\//.test(url)) return { status: -1, body: "refused: not api2.skool.com" };
+          try {
+            const res = await g.fetch(url, { credentials: "include" });
+            const text = await res.text();
+            return { status: Number(res.status), body: String(text).slice(0, 12_000) };
+          } catch (e: any) {
+            return { status: -1, body: String(e?.message ?? e).slice(0, 200) };
+          }
+        }, apiGet)
+      : null;
+
+    return {
+      ...described,
+      api,
+      html,
+      payload,
+      clicked,
+      requests,
+      requestsSeen: totalSeen,
+      watching,
+      watchError,
+      requestHosts: [...hosts].slice(0, 25),
+      error: null,
+    };
   });
 
   return out ?? empty("The browser could not be reached.");

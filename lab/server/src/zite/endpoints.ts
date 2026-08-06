@@ -4994,6 +4994,22 @@ const skoolProbe: Handler = async (input) => {
       waitMs: Number(input?.waitMs ?? 2500),
       dumpHtml: input?.dumpHtml === true,
       payloadPath: input?.payloadPath ? String(input.payloadPath) : undefined,
+      // ⚠️ AND IT HAPPENED AGAIN, ONE OPTION LATER. `captureRequests` was added
+      // to `probeSkool`, called with `captureRequests: true`, and silently
+      // dropped here — so the probe reported "0 requests" for opening the chat
+      // panel. That reads as a finding about Skool ("opening chats fetches
+      // nothing") and it was a finding about this function. It cost three
+      // rebuild cycles and was only caught by a CONTROL RUN against a post page
+      // that is known to make the call, which also reported zero.
+      //
+      // The lesson is now twice-learned: an option this handler does not
+      // forward does not fail, it returns a confident wrong answer. Anything
+      // added to `probeSkool` gets a line here in the same commit.
+      captureRequests: input?.captureRequests === true,
+      apiGet: input?.apiGet ? String(input.apiGet) : undefined,
+      thenClickText: input?.thenClickText ? String(input.thenClickText) : undefined,
+      thenClickSelector: input?.thenClickSelector ? String(input.thenClickSelector) : undefined,
+      thenWaitMs: input?.thenWaitMs === undefined ? undefined : Number(input.thenWaitMs),
     }),
   };
 };
