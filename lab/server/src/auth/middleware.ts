@@ -138,6 +138,15 @@ const LOOPBACK_FN_EXACT = new Set([
   // has to be exercisable before a UI can drive it, and it takes `dryRun` so the
   // whole sequence can be proven without a member seeing anything.
   "/api/fn/skoolReplyToComment",
+  // Read-only: the DM threads and one conversation. Here because the standing
+  // note that DMs "cannot be verified" turned out to be wrong, and checking
+  // that is exactly what these two are for.
+  "/api/fn/skoolReadDms",
+  "/api/fn/skoolReadDmThread",
+  // ⚠️ SENDS A PRIVATE MESSAGE TO A REAL MEMBER, AS JAKE. The least recoverable
+  // thing in this file: Skool's composer has no send button, so ENTER sends and
+  // there is no second click to withhold. `dryRun` stops one keypress short.
+  "/api/fn/skoolSendDm",
 ]);
 
 /**

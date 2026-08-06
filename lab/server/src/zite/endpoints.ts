@@ -204,6 +204,7 @@ import { allLessons, classroomOutline, indexedCourses, retrieve } from "../skool
 import { backfillTranscripts, transcriptCoverage } from "../skool/transcripts.js";
 import { createPost, replyToComment, taughtPostAction } from "../skool/engageActions.js";
 import { answerable, readComments } from "../skool/comments.js";
+import { needingReply, readChannels, readMessages, sendDm, type DmChannel } from "../skool/dms.js";
 import { draftPost, draftReply, styleExamplesFrom } from "../skool/engageGen.js";
 import {
   getSchedule,
@@ -4643,6 +4644,68 @@ const skoolReplyToComment: Handler = async (input) => {
   });
 };
 
+/**
+ * The DM threads, and which of them are waiting on an answer.
+ *
+ * ⚠️ "WAITING" IS DECIDED BY WHO SPOKE LAST, NOT BY THE UNREAD COUNT. A thread
+ * that has been opened reads as 0 unread while still being unanswered, and
+ * `self.metadata.unreadChats` being 0 is what previously led to the conclusion
+ * that this account had no DMs at all. It has several.
+ */
+const skoolReadDms: Handler = async (input) => {
+  const read = await readChannels(communityUrlOrThrow());
+  const maxAgeDays = input?.maxAgeDays === undefined ? undefined : Number(input.maxAgeDays);
+  return {
+    ...read,
+    needingReply: needingReply(read.channels, { maxAgeDays }),
+    // Reported alongside, so "nothing to answer" can be told apart from
+    // "nothing arrived" — the filters are doing visible work, not hiding it.
+    lastFromThemTotal: read.channels.filter((c) => c.lastFromThem).length,
+  };
+};
+
+/** One conversation, oldest message first. */
+const skoolReadDmThread: Handler = async (input) => {
+  const channelId = String(input?.channelId ?? "").trim();
+  if (!channelId) throw new ZiteError({ code: "BAD_REQUEST", message: "Which thread? Pass its channelId." });
+  const read = await readChannels(communityUrlOrThrow());
+  if (read.error) return { messages: [], error: read.error };
+  const channel = read.channels.find((c) => c.id === channelId);
+  if (!channel) return { messages: [], error: `No DM thread with id ${channelId} is on this account.` };
+  return { channel, ...(await readMessages(communityUrlOrThrow(), channel)) };
+};
+
+/**
+ * Send a DM. THE THIRD ENDPOINT HERE THAT WRITES, and the least recoverable.
+ *
+ * ⚠️ THERE IS NO SEND BUTTON IN SKOOL'S DM COMPOSER — ENTER SENDS. So there is
+ * no disabled-state to check and no second click to withhold: the keystroke is
+ * the publish. `dryRun` therefore stops one keypress short, with the message
+ * sitting in the real composer.
+ */
+const skoolSendDm: Handler = async (input) => {
+  const channelId = String(input?.channelId ?? "").trim();
+  const text = String(input?.text ?? "");
+  if (!channelId) throw new ZiteError({ code: "BAD_REQUEST", message: "Which thread? Pass its channelId." });
+  // `clearDraft` empties the composer instead of writing to it, so it is the
+  // one path that legitimately has no message.
+  if (!text.trim() && input?.clearDraft !== true) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "There is no message to send." });
+  }
+  const communityUrl = communityUrlOrThrow();
+  const read = await readChannels(communityUrl);
+  if (read.error) throw new ZiteError({ code: "BAD_REQUEST", message: read.error });
+  const channel: DmChannel | undefined = read.channels.find((c) => c.id === channelId);
+  if (!channel) throw new ZiteError({ code: "BAD_REQUEST", message: `No DM thread with id ${channelId} is on this account.` });
+  return await sendDm({
+    communityUrl,
+    channel,
+    text,
+    dryRun: input?.dryRun === true,
+    clearDraft: input?.clearDraft === true,
+  });
+};
+
 /* ─────────────────── the autonomous poster's schedule ─────────────────── */
 
 /**
@@ -5220,6 +5283,9 @@ export const HANDLERS: Record<string, Handler> = {
   skoolDraftReply,
   skoolPublishPost,
   skoolReplyToComment,
+  skoolReadDms,
+  skoolReadDmThread,
+  skoolSendDm,
   // The autonomous poster: schedule, queue, and the reviewed-publish path.
   skoolEngageStatus,
   skoolEngageConfigure,
