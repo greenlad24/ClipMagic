@@ -202,8 +202,8 @@ import { runPlan } from "../skool/planRun.js";
 import { readFeed, readPost, unreadChatCount } from "../skool/community.js";
 import { allLessons, classroomOutline, indexedCourses, retrieve } from "../skool/knowledge.js";
 import { backfillTranscripts, transcriptCoverage } from "../skool/transcripts.js";
-import { createPost } from "../skool/engageActions.js";
-import { draftPost, draftReply } from "../skool/engageGen.js";
+import { createPost, taughtPostAction } from "../skool/engageActions.js";
+import { draftPost, draftReply, styleExamplesFrom } from "../skool/engageGen.js";
 import {
   getSchedule,
   setSchedule,
@@ -4396,10 +4396,13 @@ const skoolConsoleNavigate: Handler = async (input) => ({
   frame: await skoolConsole.navigate(String(input?.url ?? "")),
 });
 
-const skoolConsoleHover: Handler = async (input) =>
-  input?.xFrac !== undefined
-    ? { frame: await skoolConsole.hoverFrac(Number(input.xFrac), Number(input.yFrac ?? 0)) }
-    : { frame: await skoolConsole.hover(Number(input?.x ?? 0), Number(input?.y ?? 0)) };
+/** Hover, and — while teaching — report what was under the pointer. */
+const skoolConsoleHover: Handler = async (input) => {
+  const describe = input?.describe === true;
+  return input?.xFrac !== undefined
+    ? skoolConsole.hoverFrac(Number(input.xFrac), Number(input.yFrac ?? 0), { describe })
+    : skoolConsole.hover(Number(input?.x ?? 0), Number(input?.y ?? 0), { describe });
+};
 
 /** Click, and — while teaching — report what was under the pointer. */
 const skoolConsoleClick: Handler = async (input) => {
@@ -4544,6 +4547,9 @@ const skoolDraftPost: Handler = async (input) => {
     kind,
     subject,
     recentTitles: feed.posts.filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
+    // His own posts, as the style spec for the body. From the SAME feed read —
+    // a second one would be a second headless browser cycle for nothing.
+    styleExamples: styleExamplesFrom(feed.posts),
     categories: feed.categories.length ? feed.categories : DEFAULT_SKOOL_CATEGORIES,
     preferredCategory: input?.category ? String(input.category) : null,
   });
@@ -4610,6 +4616,13 @@ const skoolEngageStatus: Handler = async () => {
     // on the subscription it costs nothing and may last a day, on API credits
     // it costs money and clears in seconds.
     aiAuth: aiConfig.skoolEngageAuth,
+    // Whether the composer flow was TAUGHT or is the built-in map.
+    //
+    // ⚠️ WITHOUT THIS, RECORDING ONE IS AN ACT OF FAITH. The two paths click
+    // different things and fail differently, and nothing else on this screen
+    // would tell an operator which one is about to run — least of all after
+    // teaching an action and getting the name slightly wrong.
+    postRecipe: taughtPostAction(),
   };
 };
 

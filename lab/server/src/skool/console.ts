@@ -57,6 +57,17 @@ export interface ElementDescriptor {
   text: string;
   testId: string | null;
   ariaLabel: string | null;
+  /**
+   * An input's placeholder — the only durable handle Skool's fields have.
+   *
+   * ⚠️ ITS TESTID IS WORTHLESS AND THE PLACEHOLDER IS NOT. Every input in Skool
+   * carries `data-testid="input-component"`, so a recorded Title field resolved
+   * on testid + "the third match", which is true only while exactly two search
+   * boxes happen to render before it. Measured on the live composer: it took
+   * match 3 of 3. The proven built-in path has always found this field by
+   * placeholder instead, and now a recording can too.
+   */
+  placeholder: string | null;
   role: string | null;
   /** Styled-components hashes. Volatile: they change on Skool's redeploys. */
   classes: string[];
@@ -92,9 +103,13 @@ async function toPixels(xFrac: number, yFrac: number): Promise<{ x: number; y: n
 }
 
 /** Fractional variants — what the UI actually calls. */
-export async function hoverFrac(xFrac: number, yFrac: number): Promise<ConsoleFrame> {
+export async function hoverFrac(
+  xFrac: number,
+  yFrac: number,
+  opts: { describe?: boolean } = {},
+): Promise<{ frame: ConsoleFrame; descriptor: ElementDescriptor | null }> {
   const { x, y } = await toPixels(xFrac, yFrac);
-  return hover(x, y);
+  return hover(x, y, opts);
 }
 
 export async function clickFrac(
@@ -140,7 +155,26 @@ export async function navigate(url: string): Promise<ConsoleFrame> {
  * not exist in the DOM until the pointer is over the card, so a recipe that
  * clicks one has to hover first, and the teaching has to be able to express it.
  */
-export async function hover(x: number, y: number): Promise<ConsoleFrame> {
+/**
+ * Move the pointer to a point, and describe what was there.
+ *
+ * ⚠️ A HOVER STEP NEEDS A DESCRIPTOR JUST AS MUCH AS A CLICK DOES, and it did
+ * not have one until replay existed. Hover is not decoration in Skool: the
+ * per-card menus are not in the DOM until the card is hovered, so "hover this
+ * first" is a real step with a real target. Recording it as a bare "Hover" left
+ * the one thing replay needs — WHICH card — unrecorded, and a hover replayed at
+ * the wrong card reveals the wrong menu, after which every later step is acting
+ * on the wrong course.
+ *
+ * Described BEFORE the move, for the same reason `clickAt` describes before
+ * clicking: hovering can unmount what was under the pointer.
+ */
+export async function hover(
+  x: number,
+  y: number,
+  opts: { describe?: boolean } = {},
+): Promise<{ frame: ConsoleFrame; descriptor: ElementDescriptor | null }> {
+  const descriptor = opts.describe ? await describePoint(x, y) : null;
   await withSkoolPage(async (page) => {
     try {
       await page.mouse.move(x, y);
@@ -149,7 +183,7 @@ export async function hover(x: number, y: number): Promise<ConsoleFrame> {
     }
     await new Promise((r) => setTimeout(r, 700));
   });
-  return frame();
+  return { frame: await frame(), descriptor };
 }
 
 /**
@@ -442,6 +476,7 @@ export async function describePoint(x: number, y: number): Promise<ElementDescri
           text,
           testId: testId || null,
           ariaLabel: ariaLabel || null,
+          placeholder: el.getAttribute("placeholder") || null,
           role: role || null,
           classes,
           nth,

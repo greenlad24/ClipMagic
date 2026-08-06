@@ -112,6 +112,13 @@ export default function SkoolEngagePage() {
    * subscription and "billed, back in seconds" on API credits.
    */
   const [aiAuth, setAiAuth] = useState<string | null>(null);
+  /**
+   * Whether the composer flow was taught, or is the built-in map of guessed
+   * selectors. Shown because recording one is otherwise an act of faith — the
+   * teach console is on a different page, and getting the action's name slightly
+   * wrong looks exactly like getting it right until a post fails to appear.
+   */
+  const [postRecipe, setPostRecipe] = useState<PostRecipeInfo | null>(null);
 
   useEffect(() => {
     void skoolStatus()
@@ -125,6 +132,7 @@ export default function SkoolEngagePage() {
       setNow(s.now);
       setSlots(s.slots);
       setAiAuth(s.aiAuth ?? null);
+      setPostRecipe(s.postRecipe ?? null);
       // Don't clobber edits in progress: the settings form is the one part of
       // this page the operator types into, and a poll landing mid-edit that
       // reset the day chips would be indistinguishable from the save failing.
@@ -260,11 +268,88 @@ export default function SkoolEngagePage() {
               }
             />
 
+            <HowItPosts info={postRecipe} />
+
             <DraftBench busy={busy} setBusy={setBusy} aiAuth={aiAuth} onPosted={() => void load()} />
           </>
         )}
       </div>
     </Layout>
+  );
+}
+
+interface PostRecipeInfo {
+  taught: boolean;
+  name: string;
+  steps: number;
+  placeholders: string[];
+  missing: string[];
+  fragileSteps: number;
+  unclickableFields: string[];
+}
+
+/**
+ * How the post actually gets typed in — taught, or guessed.
+ *
+ * ⚠️ THIS PANEL EXISTS BECAUSE THE TWO PATHS FAIL DIFFERENTLY. The built-in map
+ * finds the submit button by looking for something whose text is "Post", which
+ * is ambiguous on a page that says "Post" in more than one place; a taught
+ * action names the element itself. An operator debugging a post that never
+ * appeared needs to know which of those was running, and nothing else on this
+ * screen would tell them.
+ *
+ * `{{category}}` missing is a note, not a warning: Skool publishes without one.
+ * `{{title}}` or `{{body}}` missing is a refusal, and says so here rather than
+ * at the moment of publishing.
+ */
+function HowItPosts({ info }: { info: PostRecipeInfo | null }) {
+  if (!info) return null;
+  const broken = info.missing.filter((m) => m !== 'category');
+  return (
+    <section className="rounded-lg border p-5">
+      <div className="mb-1 text-sm font-semibold">How it types the post in</div>
+      {info.taught ? (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <div>
+            Replaying the <span className="font-mono text-foreground">{info.name}</span> action you taught —{' '}
+            {info.steps} step{info.steps === 1 ? '' : 's'}
+            {info.placeholders.length > 0 && (
+              <> · fills in {info.placeholders.map((p) => `{{${p}}}`).join(', ')}</>
+            )}
+            .
+          </div>
+          {info.unclickableFields.length > 0 && (
+            <div className="text-destructive">
+              It clicks {info.unclickableFields.map((f) => `{{${f}}}`).join(' and ')}, which cannot resolve — a
+              placeholder on a click means "the element labelled with this value", and those are typed into a field
+              that is empty when you click it. Mark them on the typing step instead. Only the category is picked by
+              clicking its label. Publishing will refuse until this is re-recorded.
+            </div>
+          )}
+          {broken.length > 0 && (
+            <div className="text-destructive">
+              It has no {broken.map((m) => `{{${m}}}`).join(' or ')} step, so publishing will refuse rather than post
+              whatever was typed when you recorded it. Re-record it with the placeholder buttons.
+            </div>
+          )}
+          {broken.length === 0 && info.missing.includes('category') && (
+            <div>No {'{{category}}'} step, so posts will be uncategorised. Skool allows that.</div>
+          )}
+          {info.fragileSteps > 0 && (
+            <div>
+              {info.fragileSteps} step{info.fragileSteps === 1 ? '' : 's'} can only be found by a styling class or a tag
+              position — those break on Skool's next redeploy. Worth re-recording before you rely on it.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-xs text-muted-foreground">
+          Nothing taught yet, so it uses the built-in map of the composer. That works, but it finds the submit button by
+          looking for something that says "Post" — teach a <span className="font-mono">{info.name}</span> action in the
+          Skool Manager's console to name the exact button instead.
+        </div>
+      )}
+    </section>
   );
 }
 

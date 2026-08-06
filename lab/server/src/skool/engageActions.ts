@@ -9,6 +9,12 @@
  *   ProseMirror body, so the lesson writer's paste path applies unchanged →
  *   "Select a category" → the category → "Post".
  *
+ * ⚠️ THAT MAP IS NOW THE FALLBACK. When the operator has taught a `createPost`
+ * action in the teach console, its recording is replayed instead — see
+ * `composeTaught`. The mapped path stays because it is what runs before anything
+ * has been taught, and because it is the only description of the composer that
+ * survives someone deleting the recipe.
+ *
  * ⚠️⚠️ THE READ-BACK IS THE POINT, NOT THE CLICKS. The classroom rebuild's most
  * expensive lesson was that `addPage` reported success it had not earned: four
  * pages logged "is in the course" and two of them were not there, and a later
@@ -20,6 +26,8 @@
 import { clickButton, clickVisibleText, fillField, appendBody } from "./actions.js";
 import { withSkoolPage } from "./browser.js";
 import { communityFeedUrl, readFeed, type SkoolPost } from "./community.js";
+import { getRecipe, type RecipeStep } from "./recipes.js";
+import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
 
 export interface PostResult {
   ok: boolean;
@@ -78,12 +86,271 @@ async function cancelComposer(): Promise<void> {
   await settle(500);
 }
 
+/**
+ * The taught version of the composer flow, if the operator has recorded one.
+ *
+ * ⚠️⚠️ A RECORDING BEATS A GUESS AT EXACTLY ONE THING, AND IT IS THE THING THAT
+ * KEPT FAILING. The built-in path finds the submit button by looking for a
+ * clickable element whose text is "Post" — and every step below "succeeds"
+ * merely by finding SOMETHING with that label. A recorded descriptor names the
+ * element itself, so a page with several "Post"s on it stops being ambiguous.
+ *
+ * The guards are NOT part of the recording and run either way. A recording can
+ * only carry what the operator did; it cannot carry "and refuse if this post is
+ * already on the feed", which is the part that stops a retry double-posting.
+ */
+const POST_RECIPE = "createPost";
+
+/** How much of the body must survive for the post to count as landed. */
+const BODY_LANDED_RATIO = 0.6;
+
 export interface CreatePostInput {
   communityUrl: string;
   title: string;
   body: string;
   /** Must be one of the community's own categories; Skool will not invent one. */
   category: string | null;
+}
+
+/**
+ * Every `{{field}}` a recording takes from outside.
+ *
+ * ⚠️ BOTH PLACES A PLACEHOLDER CAN LIVE, WHICH IS NOT ONLY THE TYPED STEPS. The
+ * title and body are typed; the CATEGORY is clicked, because it is a menu item
+ * labelled with the category name. A scan that looked at typed steps alone
+ * would report a perfectly good recording as having no `{{category}}` and warn
+ * about a problem that is not there.
+ */
+function recipeFields(steps: RecipeStep[]): string[] {
+  const found = new Set<string>();
+  for (const s of steps) {
+    for (const p of placeholdersIn(s.text ?? "")) found.add(p);
+    for (const p of placeholdersIn(s.target?.text ?? "")) found.add(p);
+  }
+  return [...found];
+}
+
+export interface TaughtPostAction {
+  /** Whether a recording exists at all. False means the built-in map runs. */
+  taught: boolean;
+  /** The name it must be saved under for the publisher to find it. */
+  name: string;
+  steps: number;
+  /** The `{{fields}}` the recording accepts from outside. */
+  placeholders: string[];
+  /** Fields the publisher supplies that the recording has no step for. */
+  missing: string[];
+  /**
+   * Steps whose element can only be found by a styled-components class or a tag
+   * path — the handles that change on Skool's next redeploy. Predicted from the
+   * recording rather than measured, since the real handle is only known once a
+   * step resolves against a live page; a non-zero count here is a recording
+   * worth redoing before it is depended on.
+   */
+  fragileSteps: number;
+  /**
+   * Typed fields that were recorded as CLICK targets — a recording that cannot
+   * work. See `composeTaught`: the publisher refuses on this, and saying so on
+   * the screen means finding out before a posting day rather than during one.
+   */
+  unclickableFields: string[];
+}
+
+/** Typed values can never identify a clicked element. Only a chosen one can. */
+function unclickableFieldsIn(steps: RecipeStep[]): string[] {
+  return [
+    ...new Set(
+      steps
+        .filter((s) => s.kind === "click" || s.kind === "hover")
+        .flatMap((s) => placeholdersIn(s.target?.text ?? ""))
+        .filter((f) => f === "title" || f === "body"),
+    ),
+  ];
+}
+
+/** What the publisher will actually do, for a screen that has to say so. */
+export function taughtPostAction(): TaughtPostAction {
+  const recipe = getRecipe(POST_RECIPE);
+  if (!recipe) {
+    return {
+      taught: false,
+      name: POST_RECIPE,
+      steps: 0,
+      placeholders: [],
+      missing: [],
+      fragileSteps: 0,
+      unclickableFields: [],
+    };
+  }
+  const placeholders = new Set(recipeFields(recipe.steps));
+  // A step with no durable handle of its own. A SEMANTIC class counts as one —
+  // `skool-editor` is a name somebody chose and survives a redeploy, unlike the
+  // `sc-…` hashes beside it, and flagging it trains the reader to ignore this.
+  const fragileSteps = recipe.steps.filter(
+    (s) =>
+      s.target &&
+      !s.target.testId &&
+      !s.target.ariaLabel &&
+      !s.target.placeholder &&
+      !s.target.text &&
+      !isSemanticClass(s.target.classes?.[0]),
+  ).length;
+  return {
+    taught: true,
+    name: POST_RECIPE,
+    steps: recipe.steps.length,
+    placeholders: [...placeholders],
+    missing: ["title", "body", "category"].filter((f) => !placeholders.has(f)),
+    fragileSteps,
+    unclickableFields: unclickableFieldsIn(recipe.steps),
+  };
+}
+
+interface ComposeResult {
+  ok: boolean;
+  detail: string;
+}
+
+const COMPOSED = (): ComposeResult => ({ ok: true, detail: "" });
+const NOT_COMPOSED = (detail: string): ComposeResult => ({ ok: false, detail });
+
+/**
+ * The blank-composer guard, as a replay hook.
+ *
+ * ⚠️ THE SAME SCAR AS `bodyMustBeEmpty` IN THE LESSON WRITER, WHICH FIRED FOUR
+ * TIMES IN TEN PAGES. Skool keeps unsent drafts in the composer, so "the
+ * composer opened" does not mean "the composer is blank" — and writing into one
+ * publishes somebody's half-finished draft with this post underneath it.
+ *
+ * It has to run at the moment the body is about to be written: before the
+ * replay the composer is not open yet, and after it the post is already gone.
+ */
+async function refuseIfComposerHoldsADraft(): Promise<string | null> {
+  const already = await composerBodyChars();
+  if (already <= 40) return null;
+  await cancelComposer();
+  return (
+    `The composer already holds ${already} characters — that is an unsent draft, not a blank post. ` +
+    `Refusing to write: continuing would publish it with this post appended underneath.`
+  );
+}
+
+/** The hand-written composer path. Used when nothing has been taught. */
+async function composeBuiltIn(
+  input: CreatePostInput,
+  title: string,
+  body: string,
+  step: (s: string) => void,
+): Promise<ComposeResult> {
+  const opened = await clickVisibleText("Write something", { exact: false });
+  if (!opened.ok) return NOT_COMPOSED(`Could not open the composer: ${opened.detail}`);
+  await settle(1200);
+  if (!(await composerIsOpen())) {
+    return NOT_COMPOSED('Clicked "Write something" but no Title field appeared, so the composer is not open.');
+  }
+  step("Composer open");
+
+  const draft = await refuseIfComposerHoldsADraft();
+  if (draft) return NOT_COMPOSED(draft);
+
+  const titled = await fillField("Title", title);
+  if (!titled.ok) return NOT_COMPOSED(titled.detail);
+  step("Title filled");
+
+  // The composer body is a ProseMirror document, same as a lesson's, so this is
+  // the proven paste path: a real `paste` event carrying a DataTransfer. Typing
+  // is its fallback and puts raw markdown characters on the page.
+  const written = await appendBody(body);
+  if (!written.ok) return NOT_COMPOSED(written.detail);
+  step("Body pasted");
+
+  if (input.category) {
+    const opensCategory = await clickButton("Select a category");
+    if (opensCategory.ok) {
+      await settle(600);
+      const chose = await clickVisibleText(input.category, { exact: true });
+      // ⚠️ NOT FATAL, AND SAID OUT LOUD. Skool will publish without a category;
+      // an uncategorised post is untidy, a lost post is not recoverable.
+      step(chose.ok ? `Category "${input.category}"` : `Category "${input.category}" NOT set: ${chose.detail}`);
+      await settle(500);
+    } else {
+      step(`Category picker did not open: ${opensCategory.detail}`);
+    }
+  }
+
+  const posted = await clickButton("Post");
+  if (!posted.ok) return NOT_COMPOSED(posted.detail);
+  step('Clicked "Post"');
+  return COMPOSED();
+}
+
+/**
+ * The taught composer path — replay what the operator demonstrated.
+ *
+ * ⚠️ THE RECIPE IS CHECKED FOR ITS PLACEHOLDERS BEFORE ANYTHING IS OPENED. A
+ * recording made without a `{{title}}` step would replay the title the operator
+ * demoed it with, every week, and look like it was working. Refusing up front
+ * costs nothing; discovering it from the feed costs a post members can see.
+ */
+async function composeTaught(
+  steps: RecipeStep[],
+  input: CreatePostInput,
+  title: string,
+  body: string,
+  step: (s: string) => void,
+): Promise<ComposeResult> {
+  // ⚠️⚠️ A TYPED FIELD USED AS A CLICK TARGET CAN NEVER RESOLVE, AND IT IS AN
+  // EASY MISTAKE TO MAKE. A placeholder on a CLICK means "find the element whose
+  // label is this value" — right for the category, whose menu item is labelled
+  // with the category name, and impossible for the title or the body, which are
+  // typed INTO an input that is empty at the moment it is clicked. The first
+  // recording had four such steps and would have died on the first one.
+  //
+  // Caught here rather than mid-replay because mid-replay is after the composer
+  // is open, which leaves a half-filled draft sitting in the community's editor.
+  const unclickable = unclickableFieldsIn(steps);
+  if (unclickable.length > 0) {
+    const which = unclickable.map((f) => `{{${f}}}`).join(" and ");
+    return NOT_COMPOSED(
+      `The taught "${POST_RECIPE}" action clicks ${which}, which cannot work: a placeholder on a click means ` +
+        `"the element labelled with this value", and the title and body are TYPED into a field that is empty when ` +
+        `you click it. Mark those on the typing step instead — only the category is picked by clicking its label.`,
+    );
+  }
+
+  const declared = new Set(recipeFields(steps));
+  const missing = ["title", "body"].filter((f) => !declared.has(f));
+  if (missing.length > 0) {
+    return NOT_COMPOSED(
+      `The taught "${POST_RECIPE}" action has no ${missing.map((m) => `{{${m}}}`).join(" or ")} step, so replaying it ` +
+        `would publish whatever was typed when it was recorded. Re-record it with the placeholder buttons.`,
+    );
+  }
+  // A category is optional in the composer, so a recording without one is a
+  // choice rather than a mistake — but the post will be uncategorised and that
+  // should not be a surprise.
+  if (input.category && !declared.has("category")) {
+    step(`Taught action has no {{category}} step, so "${input.category}" will not be set`);
+  }
+
+  const vars: Record<string, string> = { title, body };
+  if (input.category) vars.category = input.category;
+
+  const played: ReplayResult = await replaySteps(steps, vars, {
+    guard: async (s) => ((s.text ?? "").trim() === "{{body}}" ? refuseIfComposerHoldsADraft() : null),
+  });
+
+  // Which handle each step matched on is the useful part of the log: a step
+  // that used to match on a testId and now matches on a tag path is about to
+  // break, and this is where that becomes visible.
+  const weak = played.steps.filter((s) => s.handle === "class" || s.handle === "path").length;
+  step(
+    `Replayed the taught "${POST_RECIPE}": ${played.steps.filter((s) => s.ok).length}/${steps.length} steps` +
+      (weak > 0 ? `, ${weak} on a fragile handle` : ""),
+  );
+  for (const w of played.warnings) step(`⚠ ${w}`);
+
+  return played.ok ? COMPOSED() : NOT_COMPOSED(played.detail);
 }
 
 export async function createPost(input: CreatePostInput): Promise<PostResult> {
@@ -130,51 +397,11 @@ export async function createPost(input: CreatePostInput): Promise<PostResult> {
   step(navigated ? "Navigated to the feed" : "Already on the feed");
   await settle(2500);
 
-  const opened = await clickVisibleText("Write something", { exact: false });
-  if (!opened.ok) return FAIL(`${log.join(" → ")} → Could not open the composer: ${opened.detail}`);
-  await settle(1200);
-  if (!(await composerIsOpen())) {
-    return FAIL(`${log.join(" → ")} → Clicked "Write something" but no Title field appeared, so the composer is not open.`);
-  }
-  step("Composer open");
-
-  const already = await composerBodyChars();
-  if (already > 40) {
-    await cancelComposer();
-    return FAIL(
-      `${log.join(" → ")} → The composer already holds ${already} characters — that is an unsent draft, not a blank post. ` +
-        `Refusing to write: continuing would publish it with this post appended underneath.`,
-    );
-  }
-
-  const titled = await fillField("Title", title);
-  if (!titled.ok) return FAIL(`${log.join(" → ")} → ${titled.detail}`);
-  step("Title filled");
-
-  // The composer body is a ProseMirror document, same as a lesson's, so this is
-  // the proven paste path: a real `paste` event carrying a DataTransfer. Typing
-  // is its fallback and puts raw markdown characters on the page.
-  const written = await appendBody(body);
-  if (!written.ok) return FAIL(`${log.join(" → ")} → ${written.detail}`);
-  step("Body pasted");
-
-  if (input.category) {
-    const opensCategory = await clickButton("Select a category");
-    if (opensCategory.ok) {
-      await settle(600);
-      const chose = await clickVisibleText(input.category, { exact: true });
-      // ⚠️ NOT FATAL, AND SAID OUT LOUD. Skool will publish without a category;
-      // an uncategorised post is untidy, a lost post is not recoverable.
-      step(chose.ok ? `Category "${input.category}"` : `Category "${input.category}" NOT set: ${chose.detail}`);
-      await settle(500);
-    } else {
-      step(`Category picker did not open: ${opensCategory.detail}`);
-    }
-  }
-
-  const posted = await clickButton("Post");
-  if (!posted.ok) return FAIL(`${log.join(" → ")} → ${posted.detail}`);
-  step('Clicked "Post"');
+  const taught = getRecipe(POST_RECIPE);
+  const composed = taught
+    ? await composeTaught(taught.steps, input, title, body, step)
+    : await composeBuiltIn(input, title, body, step);
+  if (!composed.ok) return FAIL(`${log.join(" → ")} → ${composed.detail}`);
   await settle(4000);
 
   // ⚠️ THE ONLY EVIDENCE THAT COUNTS. Read the feed back and find it by title.
@@ -189,7 +416,7 @@ export async function createPost(input: CreatePostInput): Promise<PostResult> {
         `Treat this as not posted — but check the community before re-running, because a post that landed late would duplicate.`,
     );
   }
-  if (landed.body.trim().length < body.length * 0.6) {
+  if (landed.body.trim().length < body.length * BODY_LANDED_RATIO) {
     return FAIL(
       `${log.join(" → ")} → "${title}" is on the feed but reads ${landed.body.trim().length} characters ` +
         `against ${body.length} written. The body did not land in full.`,

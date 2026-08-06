@@ -27,7 +27,7 @@
  */
 import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
-import { draftPost, type Draft } from "./engageGen.js";
+import { draftPost, styleExamplesFrom, type Draft } from "./engageGen.js";
 import { createPost } from "./engageActions.js";
 import { readFeed } from "./community.js";
 import { allLessons } from "./knowledge.js";
@@ -479,11 +479,17 @@ async function attemptSlot(
       // ⚠️ NOTE THE COUPLING: this is the Engagement Manager's reply prompt,
       // borrowed. It was written for YouTube/IG comment replies, not for a
       // Skool community post, so it is the right VOICE against the wrong
-      // SURFACE. Worth splitting once there is a Skool-specific one to split to.
+      // SURFACE. `styleExamples` below is what closes that gap in practice —
+      // his own posts show the surface far better than a prompt could describe
+      // it — but the prompt itself is still the comment box's.
       voicePrompt: getEngageSettings().replyPromptMd ?? "",
       kind: "lesson",
       subject: slot.subject,
       recentTitles: (feed?.posts ?? []).filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
+      // From the SAME read as recentTitles. If the feed read failed there are no
+      // examples, and the draft falls back to the comment-box register — which
+      // is a worse draft, not a wrong one, so it is not worth failing over.
+      styleExamples: styleExamplesFrom(feed?.posts ?? []),
       categories: feed?.categories?.length ? feed.categories : [],
       preferredCategory: null,
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));

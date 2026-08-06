@@ -737,6 +737,8 @@ export interface SkoolDescriptor {
   text: string;
   testId: string | null;
   ariaLabel: string | null;
+  /** An input's placeholder — the only durable handle Skool's fields have. */
+  placeholder: string | null;
   role: string | null;
   classes: string[];
   nth: number;
@@ -746,8 +748,10 @@ export interface SkoolDescriptor {
 export const skoolConsoleFrame = endpoint<void, { frame: SkoolConsoleFrame }>("skoolConsoleFrame");
 export const skoolConsoleNavigate =
   endpoint<{ url: string }, { frame: SkoolConsoleFrame }>("skoolConsoleNavigate");
-export const skoolConsoleHover =
-  endpoint<{ xFrac: number; yFrac: number }, { frame: SkoolConsoleFrame }>("skoolConsoleHover");
+export const skoolConsoleHover = endpoint<
+  { xFrac: number; yFrac: number; describe?: boolean },
+  { frame: SkoolConsoleFrame; descriptor: SkoolDescriptor | null }
+>("skoolConsoleHover");
 export const skoolConsoleClick = endpoint<
   { xFrac: number; yFrac: number; describe?: boolean },
   { frame: SkoolConsoleFrame; descriptor: SkoolDescriptor | null }
@@ -768,12 +772,14 @@ export const skoolConsoleClearField = endpoint<
 >("skoolConsoleClearField");
 
 export interface SkoolRecipeStep {
-  kind: "hover" | "click" | "type" | "key" | "navigate" | "wait";
+  kind: "hover" | "click" | "type" | "key" | "navigate" | "wait" | "scroll";
   label: string;
   target?: SkoolDescriptor;
   text?: string;
   value?: string;
   ms?: number;
+  /** For `scroll`: pixels, positive is down. */
+  dy?: number;
 }
 export interface SkoolRecipe {
   name: string;
@@ -863,6 +869,22 @@ export const skoolEngageStatus = endpoint<
      * cannot tell which from the error text alone.
      */
     aiAuth: 'api' | 'subscription';
+    /**
+     * Whether the composer flow was taught in the Skool Manager's teach console,
+     * or is the built-in map of guessed selectors. The two click different
+     * things and fail differently, so which one is about to run is worth saying
+     * on screen rather than leaving to be inferred from a failure.
+     */
+    postRecipe: {
+      taught: boolean;
+      name: string;
+      steps: number;
+      placeholders: string[];
+      missing: string[];
+      fragileSteps: number;
+      /** Typed fields recorded as click targets — a recipe that cannot run. */
+      unclickableFields: string[];
+    };
   }
 >("skoolEngageStatus");
 

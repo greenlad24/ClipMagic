@@ -36,6 +36,7 @@ import {
   type SkoolConsoleFrame,
   type SkoolRecipe,
   type SkoolRecipeStep,
+  type SkoolDescriptor,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 
@@ -318,6 +319,56 @@ const COMBOS: [string, string[]][] = [
 ];
 
 /**
+ * The fields a recorded action fills in from outside.
+ *
+ * ⚠️ WITHOUT THESE, A RECORDING IS A ONE-OFF. Demonstrating a post means typing
+ * a real title and a real body, and a step recorded literally replays that same
+ * title every week — which looks like the recipe working right up until the
+ * second post. So what you type still goes to Skool (the demo has to be real,
+ * or the next step has nothing to click), while the STEP is recorded as the
+ * placeholder the publisher fills in.
+ *
+ * ⚠️ IT APPLIES TO A CLICK AS WELL AS TO TYPING, because not every field is
+ * typed: the CATEGORY is a menu item you pick. See `asField` for what a clicked
+ * one has to give up in order to work.
+ *
+ * `body` is special on replay: it is pasted rather than typed, because a post
+ * body is markdown and typing it into ProseMirror leaves the literal `#` and
+ * `**` characters on the page.
+ */
+type PlaceholderField = '' | 'title' | 'body' | 'category';
+
+/**
+ * Turn a clicked element into "whatever is labelled {{field}} at the time".
+ *
+ * ⚠️⚠️ THE HANDLES THAT PIN ONE OPTION ARE DELIBERATELY THROWN AWAY. A category
+ * is picked by clicking a menu item whose label is the category name, so
+ * recording one captures the item you happened to choose — its testid, its
+ * position in the list, its tag path. Keep any of those and replay resolves on
+ * them FIRST and clicks the category you demoed with, every week, whatever the
+ * publisher asked for. That failure is invisible: the click works, the post
+ * appears, and only the category is wrong.
+ *
+ * ⚠️ THE CLASS IS KEPT, THOUGH, AND STRIPPING IT WAS A MISTAKE THE FIRST TIME.
+ * A class here is shared by every option in the menu rather than pinning one —
+ * measured on the live dropdown, they all carry `skool-ui-dropdown-option`. And
+ * it is needed: "General Discussion" also appears as a filter chip in the feed
+ * behind the modal and as a tag on posts, so text alone matches four elements
+ * and document order decides. The resolver narrows the text match by this class
+ * and falls back if it stops matching.
+ */
+function asField(descriptor: SkoolDescriptor, field: PlaceholderField): SkoolDescriptor {
+  return { ...descriptor, text: `{{${field}}}`, testId: null, ariaLabel: null, nth: 0, path: '' };
+}
+
+const PLACEHOLDER_FIELDS: [PlaceholderField, string][] = [
+  ['', 'literal'],
+  ['title', '{{title}}'],
+  ['body', '{{body}}'],
+  ['category', '{{category}}'],
+];
+
+/**
  * The teach console.
  *
  * A live view of the server's Skool browser. The operator performs an action
@@ -340,6 +391,19 @@ function TeachConsole() {
   const [recipeName, setRecipeName] = useState('');
   const [recipes, setRecipes] = useState<SkoolRecipe[]>([]);
   const [typing, setTyping] = useState('');
+  /**
+   * What the NEXT recorded step stands for. A recording is replayed every week,
+   * so the title you demo it with must not become the title it posts every time
+   * — see PLACEHOLDER_FIELDS.
+   *
+   * ⚠️⚠️ IT CLEARS ITSELF AFTER ONE STEP, AND IT HAS TO. Left as a sticky mode
+   * it ate a whole recording: with it on {{body}}, the category picker, the
+   * category and the POST BUTTON were all recorded as "the element labelled with
+   * the post body". Nothing about that looks wrong while recording — the clicks
+   * all work, the post goes out, and the damage only shows on replay. One step
+   * is also what the label promises, so the two now agree.
+   */
+  const [recordAs, setRecordAs] = useState<PlaceholderField>('');
   const [chord, setChord] = useState('');
   const [clearNote, setClearNote] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
@@ -428,9 +492,28 @@ function TeachConsole() {
     const yFrac = (e.clientY - rect.top) / rect.height;
 
     if (tool === 'hover') {
-      await act(() => skoolConsoleHover({ xFrac, yFrac }));
-      if (mode === 'record') {
-        setSteps((s) => [...s, { kind: 'hover', label: 'Hover', target: undefined }]);
+      // A hover records its target just as a click does. Skool's per-card menus
+      // do not exist until the card is hovered, so "hover this" is a real step
+      // — and a hover replayed at the wrong card opens the wrong menu, after
+      // which every later step acts on the wrong thing.
+      setBusy(true);
+      try {
+        const out = await skoolConsoleHover({ xFrac, yFrac, describe: mode === 'record' });
+        setFrame(out.frame);
+        if (mode === 'record') {
+          setSteps((s) => [
+            ...s,
+            {
+              kind: 'hover',
+              label: out.descriptor?.text || out.descriptor?.ariaLabel || out.descriptor?.tag || 'Hover',
+              target: out.descriptor ?? undefined,
+            },
+          ]);
+        }
+      } catch {
+        /* leave the frame */
+      } finally {
+        setBusy(false);
       }
       return;
     }
@@ -445,12 +528,19 @@ function TeachConsole() {
         // a recipe that skips an action and looks like it worked.
         setSteps((s) => [
           ...s,
-          {
-            kind: 'click',
-            label: out.descriptor?.text || out.descriptor?.ariaLabel || out.descriptor?.tag || 'Click',
-            target: out.descriptor ?? undefined,
-          },
+          recordAs && out.descriptor
+            ? {
+                kind: 'click',
+                label: `Click {{${recordAs}}}`,
+                target: asField(out.descriptor, recordAs),
+              }
+            : {
+                kind: 'click',
+                label: out.descriptor?.text || out.descriptor?.ariaLabel || out.descriptor?.tag || 'Click',
+                target: out.descriptor ?? undefined,
+              },
         ]);
+        setRecordAs('');
       }
     } catch {
       /* leave the frame */
@@ -554,9 +644,17 @@ function TeachConsole() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && typing) {
               const text = typing;
+              // Sent literally either way — the browser has to end up in the
+              // state the next step expects. Only the RECORD differs.
               void act(() => skoolConsoleType({ text })).then(() => {
                 if (mode === 'record') {
-                  setSteps((s) => [...s, { kind: 'type', label: `Type "${text}"`, text }]);
+                  setSteps((s) => [
+                    ...s,
+                    recordAs
+                      ? { kind: 'type', label: `Type {{${recordAs}}}`, text: `{{${recordAs}}}` }
+                      : { kind: 'type', label: `Type "${text}"`, text },
+                  ]);
+                  setRecordAs('');
                 }
                 setTyping('');
               });
@@ -565,6 +663,25 @@ function TeachConsole() {
           placeholder="Click a field above, then type here and press Enter"
           className="min-w-[16rem] flex-1 rounded-md border border-border bg-background px-2 py-1 text-xs"
         />
+        {mode === 'record' && (
+          <div className="flex overflow-hidden rounded-md border border-border text-xs">
+            {PLACEHOLDER_FIELDS.map(([f, label]) => (
+              <button
+                key={f || 'literal'}
+                onClick={() => setRecordAs(f)}
+                title={
+                  f
+                    ? `Fill this one in for real to demo it — the next thing you type OR click records as {{${f}}}, ` +
+                      `and the publisher supplies the real value. The category is a click, not a typed field.`
+                    : 'Record exactly what you type or click. Right for anything that is the same every time.'
+                }
+                className={`px-2 py-1 ${recordAs === f ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         {(['Enter', 'Escape', 'Tab', 'Backspace', 'Delete'] as const).map((k) => (
           <button
             key={k}
@@ -631,12 +748,23 @@ function TeachConsole() {
         >
           Clear field
         </button>
-        <button onClick={() => void act(() => skoolConsoleScroll({ dy: -400 }))} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
-          Scroll ↑
-        </button>
-        <button onClick={() => void act(() => skoolConsoleScroll({ dy: 400 }))} className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted">
-          Scroll ↓
-        </button>
+        {/* ⚠️ A SCROLL IS A STEP, NOT A CAMERA MOVE. These used to move the page
+            without recording anything, so a demonstration that had to scroll to
+            reach a control replayed without the scroll — and the control was
+            off screen. The composer is exactly that case: with a real 2,000
+            character body, Post sits below the fold. */}
+        {([['Scroll ↑', -400], ['Scroll ↓', 400]] as const).map(([label, dy]) => (
+          <button
+            key={label}
+            onClick={() => {
+              void act(() => skoolConsoleScroll({ dy }));
+              if (mode === 'record') setSteps((s) => [...s, { kind: 'scroll', label, dy }]);
+            }}
+            className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted"
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {clearNote && <div className="text-xs text-destructive">{clearNote}</div>}
@@ -663,6 +791,22 @@ function TeachConsole() {
               Clear
             </button>
           </div>
+          {/* ⚠️ THE ONE MISTAKE THIS UI MAKES EASY, CAUGHT WHERE IT IS CHEAPEST.
+              A placeholder on a CLICK means "the element labelled with this
+              value". That is right for the category — its menu item is labelled
+              with the category name — and impossible for the title and body,
+              which are typed into a field that is empty at the moment it is
+              clicked. Shown while recording, because after saving the original
+              handles are gone and the step cannot be repaired, only redone. */}
+          {steps.some(
+            (st) => st.kind === 'click' && /\{\{\s*(title|body)\s*\}\}/.test(st.target?.text ?? ''),
+          ) && (
+            <div className="mb-2 rounded-md border border-destructive/50 px-2 py-1.5 text-xs text-destructive">
+              A click is recorded as {'{{title}}'} or {'{{body}}'}. Those are typed, not clicked — the field is empty
+              when you click it, so replay has nothing to find. Delete that step and mark the field on the step where
+              you TYPE it. Only the category is picked by clicking its label.
+            </div>
+          )}
           <ol className="space-y-1 text-xs text-muted-foreground">
             {steps.map((st, i) => (
               <li key={i} className="flex items-center gap-2">
@@ -682,6 +826,17 @@ function TeachConsole() {
                           : 'by position — fragile'}
                   </span>
                 )}
+                {/* A stray keystroke or a mis-set field used to cost the whole
+                    recording, since Clear was the only way to undo anything.
+                    Ten steps re-demonstrated because of one is how a recording
+                    gets saved with the fluff still in it. */}
+                <button
+                  onClick={() => setSteps((s) => s.filter((_, j) => j !== i))}
+                  title="Drop this step"
+                  className={`${st.target ? '' : 'ml-auto'} shrink-0 opacity-40 hover:opacity-100`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
               </li>
             ))}
             {steps.length === 0 && <li className="pl-7">Click something in the view above to record a step.</li>}

@@ -258,6 +258,8 @@ async function ensureSession(profile: BrowserProfile): Promise<Session | null> {
       /* non-fatal */
     }
 
+    attachDialogHandler(profile.id, page);
+
     const session: Session = { id: profile.id, browser, page, busy: false, lastUsedAt: Date.now(), idleTimer: null };
     sessions.set(profile.id, session);
     scheduleIdleClose(session);
@@ -273,6 +275,54 @@ async function ensureSession(profile: BrowserProfile): Promise<Session | null> {
       /* best-effort */
     }
     return null;
+  }
+}
+
+/**
+ * Answer JavaScript dialogs, and say so in the log.
+ *
+ * ⚠️⚠️ AN UNANSWERED DIALOG BLOCKS THE RENDERER, AND EVERY LATER
+ * `page.evaluate` THEN TIMES OUT ON `Runtime.callFunctionOn`. Puppeteer 23 does
+ * NOT auto-dismiss: `CdpPage.#onDialog` emits `dialog` and does nothing else
+ * (checked in the installed source, not assumed), so with no listener the dialog
+ * simply stays open forever.
+ *
+ * That is worth spelling out because it is indistinguishable from a hung page
+ * and it cost real time on the Skool publish: every click succeeded, the flow
+ * died immediately after "Post", and raising `protocolTimeout` 180s → 300s only
+ * moved the failure from 465s to 704s — exactly what a permanent block looks
+ * like and nothing like a slow page.
+ *
+ * WHICH ANSWER, AND WHY IT DIFFERS BY TYPE:
+ *  - `beforeunload` is ACCEPTED, which means "yes, leave the page". Dismissing
+ *    would CANCEL the navigation we just asked for — for a composer that guards
+ *    unsaved changes, that is the difference between a post landing and the
+ *    editor sitting there looking fine.
+ *  - `alert` has only one button, so accept is the only answer.
+ *  - `confirm` and `prompt` are DISMISSED, because their wording is unknown at
+ *    this layer and the negative answer is the non-destructive one. "Are you
+ *    sure you want to discard this?" must not be answered yes by a default.
+ *
+ * The log line is the point as much as the answer is: a dialog nobody expected
+ * is a fact about the page, and it should appear in the logs rather than be
+ * inferred from a timeout three steps later.
+ */
+function attachDialogHandler(id: string, page: AnyPage): void {
+  try {
+    page.on("dialog", (dialog: any) => {
+      const type = String(dialog?.type?.() ?? "dialog");
+      const message = String(dialog?.message?.() ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+      const accept = type === "beforeunload" || type === "alert";
+      console.warn(
+        `[browser] ${id}: ${type} dialog ${accept ? "accepted" : "dismissed"} — "${message}". ` +
+          `Left unanswered this would have blocked the page and timed out every later evaluate.`,
+      );
+      // Answering can itself throw if the page went away first; a dead page is
+      // already the caller's problem and must not become an unhandled rejection.
+      void (accept ? dialog.accept() : dialog.dismiss())?.catch?.(() => undefined);
+    });
+  } catch {
+    /* an older puppeteer without the event is no worse than before */
   }
 }
 

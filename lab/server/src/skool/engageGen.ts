@@ -19,6 +19,16 @@
  * the surface plainly and treats the length/formatting rules as belonging to the
  * comment box they were written for — and `POST_FORMAT_NOTE` says so in the
  * prompt itself, so the model is not left to reconcile a contradiction silently.
+ *
+ * ⚠️⚠️ CAPITALISATION IS NOW OVERRIDDEN FOR POSTS TOO, ON JAKE'S INSTRUCTION
+ * (2026-08-06: "for posts it should have regular formatting, not all
+ * lowercase"). His RULE 1 is "start every sentence with a LOWERCASE letter.
+ * Always" — and three drafts obeyed it exactly where it hurt most, dropping
+ * into lowercase for the caveat near the end while the rest of the post,
+ * learned from the examples, stayed sentence-cased. The override names RULE 1
+ * explicitly rather than hinting, because an unnamed contradiction gets
+ * resolved differently every run. It is grounded, not invented: 95% of the
+ * lines in his own 70 posts start with a capital.
  */
 import { aiConfig } from "../ai/config.js";
 import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
@@ -110,19 +120,103 @@ function mechanics(kind: "post" | "reply", extra: string): string {
  * ⚠️ THE POST SURFACE, STATED. Without this the model is handed a prompt about
  * replying to YouTube comments and asked to write a community post, and the
  * contradiction resolves differently every run.
+ *
+ * ⚠️⚠️ THIS NOTE USED TO DESCRIBE THE FORMAT, HAVING NEVER READ ONE OF JAKE'S
+ * POSTS. Measured against 70 of them (2026-08-06) it was half right, which is
+ * the dangerous kind:
+ *  - RIGHT about markdown — his posts contain zero bold, zero headings and zero
+ *    list markers. Structure is emoji markers and blank lines.
+ *  - WRONG about the shape. "Opens by saying what the member gets… no sign-off"
+ *    describes neither end of a real post: they open on a conversational hook
+ *    ("Alright… this one is wild.") and EVERY ONE closes on a question to the
+ *    community with a "drop it below 👇".
+ *
+ * So the format is no longer asserted here — it is SHOWN, by his own posts, in
+ * `styleBlock`. A half-right description is worse than none, because the wrong
+ * half is indistinguishable from the right half at the point of reading it.
  */
 const POST_FORMAT_NOTE = [
   "THIS IS A POST IN JAKE'S OWN SKOOL COMMUNITY — not a YouTube reply.",
-  "The voice rules above (capitalisation, contractions, banned words, sentence",
-  "starters, punctuation, no hype) apply in full and without exception.",
-  "The rules written for the comment box do not fit this surface:",
-  "- REPLY LENGTH: a post is longer than a comment. Write what the subject needs.",
-  "- FORMATTING: plain numbered lines and short paragraphs are fine here.",
-  "  Still no markdown bold, italics, headers or bullet characters.",
+  "The voice rules above (banned words, no hype, no invented claims) apply in",
+  "full. The rules written for the COMMENT BOX are about a different surface:",
   "",
-  "A post opens by saying what the member gets, gives it, and stops.",
-  "No 'in this post I will', no sign-off, no 'hope this helps'.",
+  "- CAPITALISATION: RULE 1 above says to start every sentence with a lowercase",
+  "  letter, always. THAT IS A COMMENT-BOX RULE AND IT DOES NOT APPLY HERE.",
+  "  A post uses normal sentence capitalisation. This is not a judgement call:",
+  "  across 70 of Jake's own posts, 95% of lines start with a capital letter.",
+  "  Write posts the same way — normal capitalisation throughout, including the",
+  "  short asides and caveats near the end, which are the places this slips.",
+  "  The rest of RULE 1 still holds: the words it says to capitalise, and \"I\".",
+  "- REPLY LENGTH: a post is longer than a comment. The examples show the length.",
+  "- FORMATTING: the comment-box rules forbid formatting because a YouTube",
+  "  comment cannot render it. A Skool post can, and Jake's do. Follow the",
+  "  examples, not the comment rules, on anything to do with layout.",
+  "",
+  "",
+  "The examples below are the spec for how a post is written. Match them.",
 ].join("\n");
+
+/**
+ * Undo what SKOOL did to the text, so the examples show what JAKE typed.
+ *
+ * ⚠️⚠️ THE FEED RETURNS STORED MARKDOWN, NOT AUTHORED MARKDOWN, AND THE
+ * DIFFERENCE IS NOT COSMETIC — IT IS THREE STYLE RULES THAT WOULD BE LEARNED
+ * WRONG. Measured over 70 of his posts (2026-08-06):
+ *
+ *  - 116 markdown links, and every single one is Skool's auto-linker. 80 have
+ *    anchor text identical to the href; of the 36 that differ, the tells are
+ *    conclusive — `Make.com`, `Monday.com`, and best of all `platform. You`
+ *    stored as `[platform. You](http://platform.You)`. Nobody hand-writes a
+ *    link on "platform. You". He types a bare URL; Skool wraps it.
+ *  - 124 escaped `\(` and `\)` plus 9 escaped `\[` `\]` — Skool escaping his
+ *    literal punctuation on save, not something he pressed backslash for.
+ *  - ZERO `**bold**`, zero `#` headings, zero `-` or numbered list markers. His
+ *    structure is emoji markers and blank lines, nothing else.
+ *
+ * A drafter shown the raw payload learns to write `[url](url)` and literal
+ * backslashes into a composer that will escape them AGAIN. The first attempt at
+ * this instead added a prompt rule telling the model to imitate the link form —
+ * chasing an artifact of the reader, and it correctly ignored it twice.
+ */
+function asAuthored(body: string): string {
+  return body
+    // The anchor text is what he actually typed, in every observed case.
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/\\([()[\]])/g, "$1");
+}
+
+/**
+ * Jake's own posts, shown rather than described.
+ *
+ * ⚠️ THIS IS NOT A HOUSE STYLE BEING ADDED IN BREACH OF THE RULE AT THE TOP OF
+ * THIS FILE. That rule exists so nothing here competes with Jake's own words —
+ * and this block is nothing BUT his own words, published under his own name.
+ * Describing his style in prose would be me competing with it; handing over the
+ * posts themselves is the opposite.
+ *
+ * ⚠️ AND IT IS WHY THE FIRST DRAFT READ WRONG. The one draft ever reviewed came
+ * out in comment-reply register — all-lowercase openings, no formatting — which
+ * was correct obedience to a prompt written for YouTube comment boxes. Nothing
+ * in the request had ever shown the model what a post of his looks like.
+ */
+function styleBlock(examples: { title: string; body: string }[]): string {
+  if (!examples.length) return "";
+  return [
+    "",
+    "==========================================",
+    "HOW YOUR POSTS ARE WRITTEN — MATCH THIS",
+    "==========================================",
+    "",
+    "These are your OWN most recent posts in this community, exactly as they were",
+    "published. They are the specification for the body: the opening, the rhythm,",
+    "the line breaks, the emoji, how links are written, and how a post ends.",
+    "",
+    "Take their SHAPE and their VOICE. Do not reuse their subjects, their links or",
+    "their phrasing, and do not write about what they are about.",
+    "",
+    ...examples.map((e, i) => `--- your post ${i + 1}: ${e.title}\n${e.body}`),
+  ].join("\n\n");
+}
 
 const MCP_NOTE = [
   "THIS IS THE TUESDAY POST AND IT HAS A FIXED JOB: one MCP automation idea.",
@@ -202,8 +296,62 @@ export interface PostRequest {
   subject: string;
   /** Titles of recent posts, so the draft does not repeat one. */
   recentTitles: string[];
+  /**
+   * Jake's own recent posts, in full, as the style reference for the body.
+   *
+   * Passed in rather than read here because the caller has already loaded the
+   * feed to get `recentTitles` — and a second read means a second headless
+   * browser cycle on a box where that is the expensive part.
+   *
+   * Empty is allowed and is NOT silently equivalent: with no examples the
+   * drafter falls back to a prompt written for YouTube comment boxes, which is
+   * exactly how the first draft came out in the wrong register.
+   */
+  styleExamples: { title: string; body: string }[];
   categories: string[];
   preferredCategory: string | null;
+}
+
+/**
+ * How many of his own posts to show. Four is enough to establish a shape and
+ * cheap enough not to matter — measured at roughly 2,000 characters each
+ * against a draft that already costs ~9,000 tokens.
+ */
+const STYLE_EXAMPLE_COUNT = 4;
+
+/** A body shorter than this teaches nothing about the shape of a post. */
+const STYLE_EXAMPLE_MIN_CHARS = 600;
+
+/**
+ * Pick the style exemplars out of a feed read.
+ *
+ * ⚠️ `byMe` IS LOAD-BEARING, NOT TIDINESS. There are two "Jake Dawson" accounts
+ * in this community — the pinned "Start here" post belongs to the other one —
+ * so a filter on the display name would quietly teach the agent to write like
+ * whoever else posts here. Recency order is the feed's own.
+ *
+ * Shared by both callers so the scheduled post and the manual draft bench are
+ * shown the same thing. Two selections would mean "what does it sound like?"
+ * answered a different question from the one that actually posts.
+ */
+export function styleExamplesFrom(
+  posts: { title: string; body: string; byMe: boolean }[],
+  count = STYLE_EXAMPLE_COUNT,
+): { title: string; body: string }[] {
+  const seen = new Set<string>();
+  const out: { title: string; body: string }[] = [];
+  for (const p of posts) {
+    if (!p.byMe) continue;
+    const body = asAuthored((p.body ?? "").trim());
+    const title = (p.title ?? "").trim();
+    if (body.length < STYLE_EXAMPLE_MIN_CHARS) continue;
+    // A pinned post is listed twice on page one under two different ids.
+    if (seen.has(title)) continue;
+    seen.add(title);
+    out.push({ title, body });
+    if (out.length >= count) break;
+  }
+  return out;
 }
 
 export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null; error: string | null }> {
@@ -218,6 +366,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
 
   const system = [
     req.voicePrompt,
+    styleBlock(req.styleExamples),
     mechanics("post", req.kind === "mcp" ? `${POST_FORMAT_NOTE}\n\n${MCP_NOTE}` : POST_FORMAT_NOTE),
     "",
     `CATEGORY: choose exactly one of: ${req.categories.join(" · ")}`,
