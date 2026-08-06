@@ -321,6 +321,17 @@ function words(s: string): string[] {
  * that published and then failed its read-back, or a post Jake wrote by hand,
  * are both invisible to this table and both make a subject stale.
  */
+/**
+ * The lesson title out of a stored subject string.
+ *
+ * Subjects are written as `Title (from the course "Course")`, so the course
+ * suffix is stripped back off to compare against the index. Lowercased because
+ * this is an identity check, not a display value.
+ */
+function subjectLessonTitle(subject: string): string {
+  return String(subject).split(' (from the course "')[0].trim().toLowerCase();
+}
+
 export async function chooseSubject(communityUrl: string): Promise<{ subject: string; error: string | null }> {
   const { lessons } = allLessons(communityUrl);
   if (!lessons.length) {
@@ -332,6 +343,23 @@ export async function chooseSubject(communityUrl: string): Promise<{ subject: st
     };
   }
 
+  // ⚠️⚠️ WHAT WE ALREADY CHOSE IS RECORDED, AND UNTIL NOW WAS NOT CONSULTED.
+  // The staleness check below compares a LESSON title against recent POST
+  // titles — but the drafter invents its own headline, so the two need not share
+  // a word. "Finding Your First AI Win" published as "Stop Learning AI and Go
+  // Get a Result" scores zero overlap against its own lesson, and the very same
+  // lesson gets picked again on the next posting day: two posts, one subject,
+  // and the duplicate-title guard in `createPost` cannot see it either because
+  // the second headline is different too.
+  //
+  // The slot table has the exact subject string that was chosen. That is not a
+  // heuristic, so it is checked first.
+  const usedSubjects = new Set(
+    (db.prepare("SELECT subject FROM skool_engage_slots WHERE subject != ''").all() as { subject: string }[]).map((r) =>
+      subjectLessonTitle(r.subject),
+    ),
+  );
+
   const feed = await readFeed(communityUrl, 2);
   // A feed that will not load is not a reason to write about anything at all:
   // without it the staleness check is blind, and repeating last week's subject
@@ -340,7 +368,14 @@ export async function chooseSubject(communityUrl: string): Promise<{ subject: st
 
   const recent = feed.posts.slice(0, 25).map((p) => new Set(words(p.title)));
   let best: { title: string; course: string; penalty: number } | null = null;
+  // Everything already written about, so a second pass over the index does not
+  // repeat the first. When every lesson has been used the set is ignored rather
+  // than obeyed — an exhausted index should mean "pick the stalest", not
+  // "refuse to post". At 3 a week, 143 lessons is about eleven months away.
+  const unusedExists = lessons.some((l) => !usedSubjects.has(l.title.trim().toLowerCase()));
+
   for (const lesson of lessons) {
+    if (unusedExists && usedSubjects.has(lesson.title.trim().toLowerCase())) continue;
     const w = words(`${lesson.title} ${lesson.courseTitle}`);
     if (!w.length) continue;
     // How strongly this lesson's title echoes any recent post title.
