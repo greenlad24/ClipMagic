@@ -217,6 +217,73 @@ export function getSlot(slotKey: string): Slot | null {
 }
 
 /** Posts actually published in the last 7 days — the cap counts reality, not intent. */
+export interface PinnedSubject {
+  id: string;
+  subject: string;
+  state: string;
+  slotKey: string;
+  createdAt: number;
+}
+
+const rowToPin = (r: any): PinnedSubject => ({
+  id: String(r.id),
+  subject: String(r.subject),
+  state: String(r.state),
+  slotKey: String(r.slot_key ?? ""),
+  createdAt: Number(r.created_at),
+});
+
+export function listPinnedSubjects(): PinnedSubject[] {
+  return (
+    db.prepare("SELECT * FROM skool_engage_pinned ORDER BY created_at ASC").all() as any[]
+  ).map(rowToPin);
+}
+
+/** Add a subject to the front of the queue. Returns what was stored. */
+export function pinSubject(subject: string): PinnedSubject {
+  const clean = subject.replace(/\s+/g, " ").trim();
+  if (clean.length < 10) throw new Error("A pinned subject needs to say what the post is about.");
+  const id = `pin_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
+  db.prepare("INSERT INTO skool_engage_pinned (id, subject, state, slot_key, created_at) VALUES (?, ?, 'queued', '', ?)").run(
+    id,
+    clean,
+    Date.now(),
+  );
+  return { id, subject: clean, state: "queued", slotKey: "", createdAt: Date.now() };
+}
+
+export function unpinSubject(id: string): boolean {
+  return db.prepare("DELETE FROM skool_engage_pinned WHERE id = ?").run(id).changes > 0;
+}
+
+/** Reserve the oldest queued pin for a slot. Null when there is none. */
+function takePinnedSubject(slotKey: string): PinnedSubject | null {
+  const row = db
+    .prepare("SELECT * FROM skool_engage_pinned WHERE state = 'queued' ORDER BY created_at ASC LIMIT 1")
+    .get() as any;
+  if (!row) return null;
+  db.prepare("UPDATE skool_engage_pinned SET state = 'used', slot_key = ? WHERE id = ?").run(slotKey, row.id);
+  return rowToPin({ ...row, state: "used", slot_key: slotKey });
+}
+
+/**
+ * Hand a reserved pin back when its slot dies.
+ *
+ * ⚠️ WITHOUT THIS, ASKING FOR A POST AND NOT GETTING ONE WOULD BE SILENT. A slot
+ * abandoned on staleness or attempts is exactly the case where the operator most
+ * needs their subject to survive into the next posting day.
+ */
+function releasePinnedSubject(slotKey: string): void {
+  db.prepare("UPDATE skool_engage_pinned SET state = 'queued', slot_key = '' WHERE slot_key = ? AND state = 'used'").run(
+    slotKey,
+  );
+}
+
+/** Mark a pin as delivered, once its slot actually published. */
+function markPinnedPosted(slotKey: string): void {
+  db.prepare("UPDATE skool_engage_pinned SET state = 'posted' WHERE slot_key = ? AND state = 'used'").run(slotKey);
+}
+
 function postedThisWeek(): number {
   const since = Date.now() - 7 * 24 * 3600_000;
   const r = db
@@ -342,10 +409,17 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
     if (postedThisWeek() >= cfg.maxPostsPerWeek) {
       out.skipped = `Weekly cap reached (${cfg.maxPostsPerWeek} posts in the last 7 days) — no slot opened for ${local.date}.`;
     } else {
-      const { subject, error } = await chooseSubject(communityUrl).catch((e) => ({
-        subject: "",
-        error: e instanceof Error ? e.message : String(e),
-      }));
+      // ⚠️ A PINNED SUBJECT WINS OVER THE AGENT'S OWN CHOICE. The index-driven
+      // picker is right for the standing rhythm and cannot express "say this
+      // specific thing on the next posting day" — the subject may not be a
+      // lesson at all. Reserved rather than deleted here; see the table comment.
+      const pinned = takePinnedSubject(local.date);
+      const { subject, error } = pinned
+        ? { subject: pinned.subject, error: null as string | null }
+        : await chooseSubject(communityUrl).catch((e) => ({
+            subject: "",
+            error: e instanceof Error ? e.message : String(e),
+          }));
       if (error || !subject) {
         // Record the abandoned slot rather than trying again in ten minutes:
         // an empty index or a dead feed will not fix itself within the hour,
@@ -448,11 +522,13 @@ async function attemptSlot(
       `Abandoned after ${ageHours.toFixed(1)}h — past the ${cfg.maxSlotAgeHours}h limit. ` +
       `The day this was promised for has effectively passed; posting it now would arrive as a post nobody was expecting.`;
     updateSlot(slot.slotKey, { state: "abandoned", last_error: why });
+    releasePinnedSubject(slot.slotKey);
     return why;
   }
   if (slot.attempts >= cfg.maxAttempts) {
     const why = `Abandoned after ${slot.attempts} attempts. Last error: ${slot.lastError ?? "unknown"}`;
     updateSlot(slot.slotKey, { state: "abandoned", last_error: why });
+    releasePinnedSubject(slot.slotKey);
     return why;
   }
 
@@ -516,6 +592,12 @@ async function attemptSlot(
 
   if (cfg.dryRun) {
     updateSlot(slot.slotKey, { state: "drafted", last_error: null });
+    // ⚠️ A DRAFTED SLOT NEVER PUBLISHES, SO ITS PINNED SUBJECT WAS NOT
+    // DELIVERED. `drafted` is neither `posted` nor `abandoned`, so without this
+    // the pin would sit reserved against a slot that is finished — never sent,
+    // never returned to the queue, and never mentioned again. The operator
+    // would simply not get the post they asked for, and nothing would say so.
+    releasePinnedSubject(slot.slotKey);
     return `Drafted "${draft.title}" and STOPPED — dry run is on, so nothing was published.`;
   }
 
@@ -536,6 +618,7 @@ async function attemptSlot(
     slug: posted.post?.slug ?? null,
     last_error: null,
   });
+  markPinnedPosted(slot.slotKey);
   console.log(`[skool] (${trigger}) published "${draft.title}" for slot ${slot.slotKey}`);
   return `Published: ${posted.detail}`;
 }

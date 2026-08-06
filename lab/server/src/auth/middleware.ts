@@ -125,6 +125,10 @@ const LOOPBACK_FN_EXACT = new Set([
   // "what would it write about?" can be answered without spending the window.
   "/api/fn/skoolEngageStatus",
   "/api/fn/skoolEngageSubject",
+  // Read/write, but nothing leaves the box: a pinned subject only decides what
+  // the next scheduled post is ABOUT.
+  "/api/fn/skoolEngagePin",
+  "/api/fn/skoolEngageUnpin",
   "/api/fn/skoolEngageConfigure",
   // ⚠️ THESE TWO CAN WRITE TO THE LIVE COMMUNITY. `skoolEngageTick` publishes
   // only when the schedule is enabled AND dry run is off (both off by default);
@@ -137,6 +141,10 @@ const LOOPBACK_FN_EXACT = new Set([
   // on the same terms and with the same expiry as the two above: the write path
   // has to be exercisable before a UI can drive it, and it takes `dryRun` so the
   // whole sequence can be proven without a member seeing anything.
+  // ⚠️ PUBLISHES A POST TO THE LIVE COMMUNITY. Here for the first end-to-end
+  // proof of the write path (Jake, 2026-08-06, having read the exact text), on
+  // the same terms and with the same expiry as the two above.
+  "/api/fn/skoolPublishPost",
   "/api/fn/skoolReplyToComment",
   // Read-only: the DM threads and one conversation. Here because the standing
   // note that DMs "cannot be verified" turned out to be wrong, and checking

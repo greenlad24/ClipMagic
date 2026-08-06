@@ -494,6 +494,31 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
 );
 CREATE INDEX IF NOT EXISTS idx_skool_slots_due ON skool_engage_slots(state, next_attempt_at);
 
+-- Subjects the operator wants posted, ahead of anything the agent would pick.
+--
+-- The scheduler chooses its own subject from the lesson index, which is right
+-- for a standing 3-a-week rhythm and useless when there is something specific
+-- to say — "I rebuilt the classroom and it now has learner journeys" is not a
+-- lesson in the index and could never be selected from it.
+--
+-- ⚠️ A PIN IS RESERVED, NOT CONSUMED, WHEN A SLOT TAKES IT. If it were deleted
+-- at enqueue, a slot that later hit the staleness limit or ran out of attempts
+-- would take the subject down with it and nobody would learn that the thing
+-- they asked for never went out. The state goes back to 'queued' when a slot is
+-- abandoned (a backtick here would close this template literal, which is a trap
+-- this file has sprung before), so the pin outlives the slot that failed it.
+CREATE TABLE IF NOT EXISTS skool_engage_pinned (
+  id         TEXT PRIMARY KEY,
+  subject    TEXT NOT NULL,
+  -- queued — waiting for the next posting day.
+  -- used   — a slot has it; cleared back to queued if that slot is abandoned.
+  -- posted — it actually went out. Kept as a record of what was asked for.
+  state      TEXT NOT NULL DEFAULT 'queued',
+  slot_key   TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skool_pinned_state ON skool_engage_pinned(state, created_at);
+
 CREATE TABLE IF NOT EXISTS skool_recipes (
   name        TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',

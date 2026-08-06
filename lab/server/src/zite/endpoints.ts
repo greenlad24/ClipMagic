@@ -208,7 +208,10 @@ import { needingReply, readChannels, readMessages, sendDm, type DmChannel } from
 import { draftPost, draftReply, styleExamplesFrom } from "../skool/engageGen.js";
 import {
   getSchedule,
+  listPinnedSubjects,
+  pinSubject,
   setSchedule,
+  unpinSubject,
   listSlots,
   publishSlot,
   tickNow,
@@ -4730,6 +4733,7 @@ const skoolEngageStatus: Handler = async () => {
     // on the subscription it costs nothing and may last a day, on API credits
     // it costs money and clears in seconds.
     aiAuth: aiConfig.skoolEngageAuth,
+    pinnedSubjects: listPinnedSubjects(),
     // Whether the composer flow was TAUGHT or is the built-in map.
     //
     // ⚠️ WITHOUT THIS, RECORDING ONE IS AN ACT OF FAITH. The two paths click
@@ -4756,6 +4760,29 @@ const skoolEngageConfigure: Handler = async (input) => {
   } catch (e) {
     throw new ZiteError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : String(e) });
   }
+};
+
+/**
+ * Subjects the operator wants posted, ahead of anything the agent would pick.
+ *
+ * ⚠️ THE SCHEDULER CANNOT BE ASKED FOR A SPECIFIC POST ANY OTHER WAY. It selects
+ * from the lesson index, so a subject that is not a lesson — "the classroom was
+ * rebuilt and now has learner journeys" — is unreachable by it. Pins are taken
+ * oldest-first on the next posting day.
+ */
+const skoolEngagePin: Handler = async (input) => {
+  const subject = String(input?.subject ?? "");
+  try {
+    return { pinned: pinSubject(subject), queue: listPinnedSubjects() };
+  } catch (e) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : String(e) });
+  }
+};
+
+const skoolEngageUnpin: Handler = async (input) => {
+  const id = String(input?.id ?? "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "Which pinned subject? Pass its id." });
+  return { removed: unpinSubject(id), queue: listPinnedSubjects() };
 };
 
 /** Run one scheduler cycle now, without waiting for the interval. */
@@ -5292,6 +5319,8 @@ export const HANDLERS: Record<string, Handler> = {
   skoolEngageTick,
   skoolEngagePublish,
   skoolEngageSubject,
+  skoolEngagePin,
+  skoolEngageUnpin,
   skoolDescribePoint,
   skoolSaveRecipe,
   skoolListRecipes,
