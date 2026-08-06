@@ -23,6 +23,29 @@
  */
 import { withSkoolPage } from "./browser.js";
 
+/**
+ * The community's own post categories.
+ *
+ * ⚠️ THIS IS NOT A FALLBACK FOR A RARE CASE — IT IS THE ONLY SOURCE. The feed
+ * payload does not carry the category list at all (`currentGroup.labels` was a
+ * wrong guess and returns nothing), so `SkoolFeed.categories` is measured EMPTY
+ * every time. Anything that treats the feed as the primary and this as the
+ * unlikely backup has it exactly backwards.
+ *
+ * Observed live 2026-08-05, kept in the order Skool lists them because that
+ * order is what a member sees.
+ */
+export const SKOOL_CATEGORIES = [
+  "Intro",
+  "YouTube Resources",
+  "Announcements",
+  "General Discussion",
+  "Dev Discussion",
+  "Your Journey",
+  "Hiring/For Hire",
+  "Community Resources",
+];
+
 export interface SkoolPost {
   id: string;
   /** The URL slug — `…/ai-automations-for-sales/<slug>`. */

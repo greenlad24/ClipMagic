@@ -199,7 +199,7 @@ import { writePlanLessons } from "../skool/lessons.js";
 import { buildRebuild } from "../skool/rebuild.js";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
 import { runPlan } from "../skool/planRun.js";
-import { readFeed, readPost, unreadChatCount } from "../skool/community.js";
+import { readFeed, readPost, unreadChatCount, SKOOL_CATEGORIES } from "../skool/community.js";
 import { allLessons, classroomOutline, indexedCourses, retrieve } from "../skool/knowledge.js";
 import { backfillTranscripts, transcriptCoverage } from "../skool/transcripts.js";
 import { createPost, replyToComment, taughtPostAction } from "../skool/engageActions.js";
@@ -4569,7 +4569,7 @@ const skoolDraftPost: Handler = async (input) => {
     // His own posts, as the style spec for the body. From the SAME feed read —
     // a second one would be a second headless browser cycle for nothing.
     styleExamples: styleExamplesFrom(feed.posts),
-    categories: feed.categories.length ? feed.categories : DEFAULT_SKOOL_CATEGORIES,
+    categories: feed.categories.length ? feed.categories : SKOOL_CATEGORIES,
     preferredCategory: input?.category ? String(input.category) : null,
   });
   return { draft, error };
@@ -4809,22 +4809,6 @@ const skoolEngagePublish: Handler = async (input) => {
 const skoolEngageSubject: Handler = async () => {
   return await chooseSubject(communityUrlOrThrow());
 };
-
-/**
- * The community's own categories, for the rare case where the feed payload does
- * not carry them. Observed live 2026-08-05 — kept in the order Skool lists them
- * because that order is what a member sees.
- */
-const DEFAULT_SKOOL_CATEGORIES = [
-  "Intro",
-  "YouTube Resources",
-  "Announcements",
-  "General Discussion",
-  "Dev Discussion",
-  "Your Journey",
-  "Hiring/For Hire",
-  "Community Resources",
-];
 
 const skoolRunAction: Handler = async (input) => {
   const action = String(input?.action ?? "");

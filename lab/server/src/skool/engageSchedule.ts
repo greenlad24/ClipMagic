@@ -29,7 +29,7 @@ import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
 import { draftPost, styleExamplesFrom, type Draft } from "./engageGen.js";
 import { createPost } from "./engageActions.js";
-import { readFeed } from "./community.js";
+import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 
@@ -566,7 +566,13 @@ async function attemptSlot(
       // examples, and the draft falls back to the comment-box register — which
       // is a worse draft, not a wrong one, so it is not worth failing over.
       styleExamples: styleExamplesFrom(feed?.posts ?? []),
-      categories: feed?.categories?.length ? feed.categories : [],
+      // ⚠️ AN EMPTY LIST HERE MEANS AN UNCATEGORISED POST, AND THE FEED'S LIST
+      // IS ALWAYS EMPTY. The manual endpoint has always fallen back to the known
+      // categories; the scheduler passed `[]` instead, so the drafter had
+      // nothing to choose from and every autonomous post would have landed with
+      // no category at all. Caught by rehearsing a real tick and finding
+      // `category: null` on the drafted slot.
+      categories: feed?.categories?.length ? feed.categories : SKOOL_CATEGORIES,
       preferredCategory: null,
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
 
