@@ -98,6 +98,11 @@ const LOOPBACK_FN_EXACT = new Set([
   // page content it returns is not exfiltratable, and the probe cannot write.
   // Remove this line together with the probe once the selectors settle.
   "/api/fn/skoolProbe",
+  // Same bargain, same expiry: it opens nothing and submits nothing — it reads
+  // one switch in an already-open composer and can set it. Needed because the
+  // alternative way to verify the switch is to publish a post, which emails the
+  // whole community every time you want to check.
+  "/api/fn/skoolEmailNotify",
   // The engagement half, while it is being built and verified. Same bargain and
   // the same expiry as the rebuild entries: no UI exists yet, and these are how
   // the read layer and the drafting are exercised at all.

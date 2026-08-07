@@ -29,6 +29,7 @@ import { communityFeedUrl, readFeed, type SkoolPost } from "./community.js";
 import { readComments } from "./comments.js";
 import { getRecipe, type RecipeStep } from "./recipes.js";
 import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
+import { setEmailNotify } from "./emailNotify.js";
 
 export interface PostResult {
   ok: boolean;
@@ -111,6 +112,17 @@ export interface CreatePostInput {
   body: string;
   /** Must be one of the community's own categories; Skool will not invent one. */
   category: string | null;
+  /**
+   * Turn on "Send email to all members" before publishing.
+   *
+   * ⚠️ FAILING TO SET THIS DOES NOT BLOCK THE POST, AND THAT IS THE DELIBERATE
+   * DIRECTION. If Skool renames or moves the switch, the choice is between a
+   * post that goes out without an email and no post at all — and the wrong
+   * direction to fail in is the one that emails 65 people by accident. So a
+   * switch that cannot be read is reported loudly in the step log and on the
+   * slot, and the post still goes out.
+   */
+  emailNotify?: boolean;
 }
 
 /**
@@ -599,10 +611,26 @@ async function composeBuiltIn(
     }
   }
 
+  if (input.emailNotify) step(await emailNotifyNote());
+
   const posted = await clickButton("Post");
   if (!posted.ok) return NOT_COMPOSED(posted.detail);
   step('Clicked "Post"');
   return COMPOSED();
+}
+
+/**
+ * Set the email switch and describe what happened, in one line for the log.
+ *
+ * Shared by both compose paths so they cannot drift: the taught path is what
+ * actually runs today, and the built-in path is what runs if the recipe is ever
+ * deleted — a post that quietly stopped emailing on that fallback would be very
+ * hard to notice.
+ */
+async function emailNotifyNote(): Promise<string> {
+  const set = await setEmailNotify(true);
+  if (set.ok) return set.clicked ? `Email to all members: ON` : `Email to all members: already on`;
+  return `⚠ Email to all members NOT set (${set.detail}) — posting anyway, without the email`;
 }
 
 /**
@@ -657,8 +685,20 @@ async function composeTaught(
   const vars: Record<string, string> = { title, body };
   if (input.category) vars.category = input.category;
 
+  // ⚠️ THE SWITCH IS SET BEFORE THE LAST STEP, NOT RECORDED AS ONE. The recipe
+  // ends with the click that publishes — that is what makes it a recipe — so the
+  // last step is the final moment the composer is still open and editable. It
+  // deliberately does not matter WHICH control the last step is: if a future
+  // recording ends on something other than Post, the switch is still set while
+  // the modal is up, which is the only requirement.
+  const emailNotes: string[] = [];
   const played: ReplayResult = await replaySteps(steps, vars, {
     guard: async (s) => ((s.text ?? "").trim() === "{{body}}" ? refuseIfComposerHoldsADraft() : null),
+    beforeStep: async (_s, i, total) => {
+      if (!input.emailNotify || i !== total - 1) return null;
+      emailNotes.push(await emailNotifyNote());
+      return null;
+    },
   });
 
   // Which handle each step matched on is the useful part of the log: a step
@@ -669,6 +709,7 @@ async function composeTaught(
     `Replayed the taught "${POST_RECIPE}": ${played.steps.filter((s) => s.ok).length}/${steps.length} steps` +
       (weak > 0 ? `, ${weak} on a fragile handle` : ""),
   );
+  for (const n of emailNotes) step(n);
   for (const w of played.warnings) step(`⚠ ${w}`);
 
   return played.ok ? COMPOSED() : NOT_COMPOSED(played.detail);

@@ -193,6 +193,7 @@ import {
 } from "../db/skool.js";
 import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom.js";
 import { probeSkool } from "../skool/probe.js";
+import { readEmailNotify, setEmailNotify } from "../skool/emailNotify.js";
 import * as skoolConsole from "../skool/console.js";
 import * as skoolActions from "../skool/actions.js";
 import { writePlanLessons } from "../skool/lessons.js";
@@ -5047,6 +5048,20 @@ const skoolDeleteRecipe: Handler = async (input) => {
  * no selectors; writing does, and they have to be learned from the real DOM.
  * Remove once the write path's selectors are settled.
  */
+/**
+ * Read — and optionally set — the composer's "Send email to all members" switch.
+ *
+ * ⚠️ THIS EXISTS TO PROVE IDEMPOTENCE, WHICH IS THE ONLY PROPERTY THAT MATTERS
+ * HERE AND THE ONE A PUBLISH CANNOT DEMONSTRATE. Verifying the switch through a
+ * real post would mean emailing 65 people per attempt; this reads it, sets it,
+ * and reads it again with the composer open and nothing submitted. Remove it
+ * with the probe.
+ */
+const skoolEmailNotify: Handler = async (input) => {
+  if (input?.set === undefined) return { state: await readEmailNotify() };
+  return { result: await setEmailNotify(input.set === true) };
+};
+
 const skoolProbe: Handler = async (input) => {
   const url = String(input?.url ?? "").trim();
   if (!/^https:\/\/(www\.)?skool\.com\//.test(url)) {
@@ -5067,6 +5082,10 @@ const skoolProbe: Handler = async (input) => {
       clickIndex: input?.clickIndex === undefined ? undefined : Number(input.clickIndex),
       waitMs: Number(input?.waitMs ?? 2500),
       dumpHtml: input?.dumpHtml === true,
+      // Third option, same rule as the two warnings below: forwarded in the
+      // commit that added it. Without this line a caller asking for 250,000
+      // characters silently receives 40,000 and cannot tell.
+      htmlLimit: input?.htmlLimit === undefined ? undefined : Number(input.htmlLimit),
       payloadPath: input?.payloadPath ? String(input.payloadPath) : undefined,
       // ⚠️ AND IT HAPPENED AGAIN, ONE OPTION LATER. `captureRequests` was added
       // to `probeSkool`, called with `captureRequests: true`, and silently
@@ -5274,6 +5293,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolPlanRebuild,
   skoolRunRebuildOp,
   skoolProbe,
+  skoolEmailNotify,
   skoolConsoleFrame,
   skoolConsoleNavigate,
   skoolConsoleHover,

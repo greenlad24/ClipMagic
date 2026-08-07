@@ -68,6 +68,16 @@ export interface EngageSchedule {
    * honest outcome, and it is recorded with its reason rather than dropped.
    */
   maxSlotAgeHours: number;
+  /**
+   * Turn on "Send email to all members" for every autonomous post.
+   *
+   * ⚠️ THIS IS THE ONE SETTING THAT REACHES PEOPLE WHO ARE NOT LOOKING. A post
+   * sits in the feed until someone visits; an email arrives. At 3 posts a week
+   * that is 3 emails a week to all 65 members, and the cost of getting it wrong
+   * is unsubscribes rather than a tidy-up. It lives in config so it can be
+   * turned off in one call, without a rebuild, the moment that looks wrong.
+   */
+  emailNotify: boolean;
 }
 
 const DEFAULTS: EngageSchedule = {
@@ -77,6 +87,8 @@ const DEFAULTS: EngageSchedule = {
   hour: 9,
   timezone: "America/New_York",
   maxPostsPerWeek: 3,
+  // Jake, 2026-08-07: "when you post I want to notify everyone by email."
+  emailNotify: true,
   // 12 attempts × 30 min = 6 hours of trying, which outlasts one 5-hour Max
   // window. Fewer would give up inside the very outage this queue exists for.
   maxAttempts: 12,
@@ -647,6 +659,7 @@ async function attemptSlot(
     title: draft.title,
     body: draft.body,
     category: draft.category,
+    emailNotify: cfg.emailNotify,
   }).catch((e) => ({ ok: false, detail: e instanceof Error ? e.message : String(e), post: null }));
 
   if (!posted.ok) {
@@ -729,11 +742,14 @@ export async function publishSlot(communityUrl: string, slotKey: string): Promis
   if (slot.state === "posted") return { ok: false, detail: `Slot ${slotKey} is already posted (/${slot.slug ?? "?"}).` };
   if (!slot.title || !slot.body) return { ok: false, detail: `Slot ${slotKey} has no draft to publish.` };
 
+  // Same setting as the autonomous path — a hand-published slot that skipped
+  // the email would differ from the scheduled one in a way nobody asked for.
   const posted = await createPost({
     communityUrl,
     title: slot.title,
     body: slot.body,
     category: slot.category,
+    emailNotify: getSchedule().emailNotify,
   });
   if (!posted.ok) {
     updateSlot(slotKey, { last_error: posted.detail });

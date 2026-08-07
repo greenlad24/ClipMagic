@@ -74,8 +74,21 @@ export interface ProbeResult {
   watchError: string | null;
   /** Raw body of the `apiGet` path, truncated. Null unless asked for. */
   api: { status: number; body: string } | null;
-  /** Present only when `dumpHtml` was asked for. Truncated. */
+  /** Present only when `dumpHtml` was asked for. Truncated to `htmlLimit`. */
   html: string | null;
+  /**
+   * Whether the dump hit its limit and lost the tail.
+   *
+   * ⚠️⚠️ A TRUNCATED DUMP READS EXACTLY LIKE A COMPLETE ONE, AND THAT HAS
+   * ALREADY PRODUCED ONE CONFIDENT WRONG ANSWER HERE — the DM panel was
+   * declared unreadable ("renders nothing") because it sat past a 40,000-char
+   * cut, when in fact the account had 167 threads. The composer repeated it:
+   * `skool-editor` was inside the window and `Select a category` was not, so
+   * "no email toggle in the markup" was unprovable rather than false.
+   *
+   * So the reader is now TOLD when it is holding a fragment.
+   */
+  htmlTruncated: boolean;
   /** Present only when `payloadPath` was asked for — JSON at that path in pageProps. */
   payload: any;
   clicked: string | null;
@@ -100,6 +113,15 @@ export async function probeSkool(opts: {
   clickIndex?: number;
   waitMs?: number;
   dumpHtml?: boolean;
+  /**
+   * How much of `document.body.innerHTML` to keep. Default 40,000.
+   *
+   * ⚠️ 40,000 IS NOT ENOUGH TO SEE A SKOOL MODAL. The post composer alone
+   * overruns it, because the emoji picker renders ~1,800 nodes inline before
+   * the category row and the buttons below it — so the half of the modal that
+   * matters is the half that gets cut.
+   */
+  htmlLimit?: number;
   /** Dotted path into `props.pageProps` — e.g. "self" or "currentGroup.metadata". */
   payloadPath?: string;
   /**
@@ -143,6 +165,7 @@ export async function probeSkool(opts: {
     clickIndex = 0,
     waitMs = 2500,
     dumpHtml = false,
+    htmlLimit = 40_000,
     payloadPath,
     captureRequests = false,
     apiGet,
@@ -161,6 +184,7 @@ export async function probeSkool(opts: {
     watchError: null,
     api: null,
     html: null,
+    htmlTruncated: false,
     payload: null,
     clicked: null,
     error,
@@ -418,9 +442,11 @@ export async function probeSkool(opts: {
       };
     });
 
-    const html = dumpHtml
-      ? String(await page.evaluate(() => (globalThis as any).document?.body?.innerHTML ?? "")).slice(0, 40_000)
+    const rawHtml = dumpHtml
+      ? String(await page.evaluate(() => (globalThis as any).document?.body?.innerHTML ?? ""))
       : null;
+    const html = rawHtml === null ? null : rawHtml.slice(0, htmlLimit);
+    const htmlTruncated = rawHtml !== null && rawHtml.length > htmlLimit;
 
     // The payload is the reliable half of Skool. When the DOM is ambiguous —
     // is this session even an admin? — the answer is usually in here.
@@ -474,6 +500,7 @@ export async function probeSkool(opts: {
       ...described,
       api,
       html,
+      htmlTruncated,
       payload,
       clicked,
       requests,

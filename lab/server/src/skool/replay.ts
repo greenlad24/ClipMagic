@@ -83,6 +83,17 @@ export interface ReplayOptions {
    * is written. The publisher uses it for exactly that.
    */
   guard?: (step: RecipeStep, index: number) => Promise<string | null>;
+  /**
+   * Run before each step to DO something. A returned string aborts, as `guard`.
+   *
+   * ⚠️ THE DIFFERENCE FROM `guard` IS INTENT, AND IT IS WORTH THE SECOND HOOK.
+   * `guard` asks a question and may refuse; this one acts. The case that forced
+   * it is the "Send email to all members" switch: it can only be set while the
+   * composer is open and before it submits, so it has to happen INSIDE the
+   * sequence — but it is not a recorded step, because a toggle replayed blind
+   * flips whatever state it is in rather than reaching a known one.
+   */
+  beforeStep?: (step: RecipeStep, index: number, total: number) => Promise<string | null>;
 }
 
 const DEFAULT_PASTE_VARS = ["body"];
@@ -214,6 +225,14 @@ export async function replaySteps(
 
     if (opts.guard) {
       const refusal = await opts.guard(step, i);
+      if (refusal) {
+        add(false, refusal);
+        return finish(false, `${at}: ${refusal}`);
+      }
+    }
+
+    if (opts.beforeStep) {
+      const refusal = await opts.beforeStep(step, i, steps.length);
       if (refusal) {
         add(false, refusal);
         return finish(false, `${at}: ${refusal}`);
