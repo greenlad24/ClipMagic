@@ -186,6 +186,22 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   }
 }
 
+/** Additive: what a slot announces, and what it attaches.
+ *
+ * ⚠️ THE LIVE DATABASE ALREADY HAS THIS TABLE, so adding the columns to the
+ * CREATE above reaches fresh installs only — and the fresh install here is the
+ * one nobody runs. The scheduler is armed and posting against the existing file.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(skool_engage_slots)").all() as Array<{ name: string }>;
+  if (cols.length > 0 && !cols.some((c) => c.name === "video_id")) {
+    db.exec("ALTER TABLE skool_engage_slots ADD COLUMN video_id TEXT NOT NULL DEFAULT ''");
+  }
+  if (cols.length > 0 && !cols.some((c) => c.name === "attachment_json")) {
+    db.exec("ALTER TABLE skool_engage_slots ADD COLUMN attachment_json TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
 
 /**
@@ -489,6 +505,13 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
   next_attempt_at INTEGER NOT NULL DEFAULT 0,
   last_error      TEXT NOT NULL DEFAULT '',
   slug            TEXT NOT NULL DEFAULT '',
+  -- The upload this slot announces, when it is a new-video post. The ledger row
+  -- in skool_video_posts is only written once the post actually lands, so this
+  -- column is what carries the id from "slot opened" to "slot published".
+  video_id        TEXT NOT NULL DEFAULT '',
+  -- The video or poll the drafter chose to attach, as JSON. Stored so a retry
+  -- attaches what was already approved rather than choosing again.
+  attachment_json TEXT NOT NULL DEFAULT '',
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );
@@ -518,6 +541,23 @@ CREATE TABLE IF NOT EXISTS skool_engage_pinned (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_skool_pinned_state ON skool_engage_pinned(state, created_at);
+
+-- Which of Jake's YouTube uploads have already had a post written about them.
+--
+-- Jake, 2026-08-07: "Never post about the same video twice." A video is
+-- announced once, and this is the record that makes that true across restarts.
+-- It stores the id and the title it had at the time, because a title can be
+-- edited on YouTube and the id cannot, and a human reading this table later
+-- needs to recognise the row.
+--
+-- 'announced' is written when the post actually lands, never when it is drafted
+-- (a slot that drafts and fails to publish must not burn the video).
+CREATE TABLE IF NOT EXISTS skool_video_posts (
+  video_id   TEXT PRIMARY KEY,
+  title      TEXT NOT NULL DEFAULT '',
+  slot_key   TEXT NOT NULL DEFAULT '',
+  posted_at  INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS skool_recipes (
   name        TEXT PRIMARY KEY,

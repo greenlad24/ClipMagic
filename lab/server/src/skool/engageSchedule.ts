@@ -27,10 +27,11 @@
  */
 import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
-import { draftPost, styleExamplesFrom, type Draft } from "./engageGen.js";
+import { draftPost, styleExamplesFrom, type Attachment, type Draft } from "./engageGen.js";
 import { createPost } from "./engageActions.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
+import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 
 /** Weekday keys as `Intl` reports them, lowercased. */
@@ -193,8 +194,30 @@ export interface Slot {
   nextAttemptAt: number;
   lastError: string | null;
   slug: string | null;
+  /** The upload this slot announces, when it is a new-video post. */
+  videoId: string | null;
+  /** The video or poll to attach, as stored JSON. */
+  attachmentJson: string;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A stored attachment, or nothing.
+ *
+ * Anything unparseable becomes null rather than throwing: a slot whose
+ * attachment blob is corrupt should still publish its words.
+ */
+function parseAttachment(raw: string): Attachment | null {
+  if (!raw) return null;
+  try {
+    const a = JSON.parse(raw);
+    if (a?.kind === "video" && typeof a.url === "string" && typeof a.videoId === "string") return a as Attachment;
+    if (a?.kind === "poll" && Array.isArray(a.options) && a.options.length >= 2) return a as Attachment;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function rowToSlot(r: any): Slot {
@@ -210,6 +233,8 @@ function rowToSlot(r: any): Slot {
     nextAttemptAt: r.next_attempt_at,
     lastError: r.last_error || null,
     slug: r.slug || null,
+    videoId: r.video_id || null,
+    attachmentJson: r.attachment_json || "",
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -461,12 +486,29 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
       // specific thing on the next posting day" — the subject may not be a
       // lesson at all. Reserved rather than deleted here; see the table comment.
       const pinned = takePinnedSubject(local.date);
+
+      // ⚠️ A NEW VIDEO OUTRANKS THE LESSON INDEX, AND NOTHING ELSE. Jake,
+      // 2026-08-07: "at least one post per week should be about a new video I
+      // posted... and if there's no new video posted don't post about it." So
+      // this is asked EVERY posting day rather than once a week: it answers
+      // "yes" only while an upload is both recent and unannounced, which is
+      // self-limiting — the ledger is written when the post lands, so the same
+      // video can never claim a second slot.
+      //
+      // It sits BELOW a pin because a pin is a human saying "say this next",
+      // and above the index because an announcement has a shelf life that a
+      // lesson does not. With three slots a week, a pin taking one still leaves
+      // the video the next posting day.
+      const video = pinned ? null : await nextVideoToAnnounce().catch(() => null);
+
       const { subject, error } = pinned
         ? { subject: pinned.subject, error: null as string | null }
-        : await chooseSubject(communityUrl).catch((e) => ({
-            subject: "",
-            error: e instanceof Error ? e.message : String(e),
-          }));
+        : video
+          ? { subject: videoSubject(video), error: null as string | null }
+          : await chooseSubject(communityUrl).catch((e) => ({
+              subject: "",
+              error: e instanceof Error ? e.message : String(e),
+            }));
       if (error || !subject) {
         // Record the abandoned slot rather than trying again in ten minutes:
         // an empty index or a dead feed will not fix itself within the hour,
@@ -474,7 +516,7 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
         insertSlot(local.date, "", "abandoned", error ?? "No subject could be chosen.");
         out.skipped = error ?? "No subject could be chosen.";
       } else {
-        insertSlot(local.date, subject, "pending", null);
+        insertSlot(local.date, subject, "pending", null, video?.videoId ?? "");
         out.enqueued = local.date;
       }
     }
@@ -514,16 +556,22 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
  */
 const text = (v: unknown): string => (v == null ? "" : String(v));
 
-function insertSlot(slotKey: string, subject: string, state: SlotState, error: string | null): void {
+function insertSlot(
+  slotKey: string,
+  subject: string,
+  state: SlotState,
+  error: string | null,
+  videoId = "",
+): void {
   const now = Date.now();
   try {
     db
       .prepare(
         `INSERT INTO skool_engage_slots
-           (slot_key, state, subject, cited_json, attempts, next_attempt_at, last_error, created_at, updated_at)
-         VALUES (?, ?, ?, '[]', 0, ?, ?, ?, ?)`,
+           (slot_key, state, subject, cited_json, attempts, next_attempt_at, last_error, video_id, created_at, updated_at)
+         VALUES (?, ?, ?, '[]', 0, ?, ?, ?, ?, ?)`,
       )
-      .run(slotKey, state, subject, now, text(error), now, now);
+      .run(slotKey, state, subject, now, text(error), videoId, now, now);
   } catch (e) {
     // A duplicate slot key is the one benign failure: the day is already open,
     // which is exactly what the primary key is for. Anything else is a bug and
@@ -587,7 +635,18 @@ async function attemptSlot(
   // different words on the community than the ones that were reviewed.
   let draft: Draft | null =
     slot.title && slot.body
-      ? { title: slot.title, body: slot.body, category: slot.category, cited: [], tokens: null, model: "" }
+      ? {
+          title: slot.title,
+          body: slot.body,
+          category: slot.category,
+          // ⚠️ REPLAYED, NOT RE-CHOSEN. The stored words are reused on a retry
+          // precisely so the community gets what was already settled on; the
+          // attachment is part of that and must not be picked again.
+          attachment: parseAttachment(slot.attachmentJson),
+          cited: [],
+          tokens: null,
+          model: "",
+        }
       : null;
 
   if (!draft) {
@@ -621,6 +680,19 @@ async function attemptSlot(
       // `category: null` on the drafted slot.
       categories: feed?.categories?.length ? feed.categories : SKOOL_CATEGORIES,
       preferredCategory: null,
+      // ⚠️⚠️ NO VIDEO CANDIDATES ARE OFFERED, ON PURPOSE, UNTIL THE COMPOSER
+      // CAN ACTUALLY TAKE ONE. The picking half is built and safe — an id off
+      // this list is discarded — but ATTACHING is not working (2026-08-07): the
+      // URL reaches the field, Skool leaves "Add" enabled, Enter closes the
+      // panel, and nothing lands in the modal. Measured with the check scoped to
+      // the modal itself, which is the box that also holds the email switch.
+      //
+      // Offering them anyway would be the worst of both: the drafter would write
+      // "watch it below", the attach would fail, and the post would publish
+      // pointing at a video that is not there — with the failure visible only in
+      // a log nobody reads. A poll still attaches and is verified, so `attach`
+      // can only come back null or a poll until this is finished.
+      videoCandidates: [],
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
 
     if (res.error || !res.draft) {
@@ -638,6 +710,7 @@ async function attemptSlot(
       body: draft.body,
       category: draft.category,
       cited_json: JSON.stringify(draft.cited ?? []),
+      attachment_json: draft.attachment ? JSON.stringify(draft.attachment) : "",
       attempts,
       next_attempt_at: backoff,
     });
@@ -660,6 +733,7 @@ async function attemptSlot(
     body: draft.body,
     category: draft.category,
     emailNotify: cfg.emailNotify,
+    attachment: draft.attachment,
   }).catch((e) => ({ ok: false, detail: e instanceof Error ? e.message : String(e), post: null }));
 
   if (!posted.ok) {
@@ -673,6 +747,12 @@ async function attemptSlot(
     last_error: null,
   });
   markPinnedPosted(slot.slotKey);
+  // ⚠️ THE VIDEO IS BURNED HERE AND NOWHERE EARLIER. Recording it at draft time
+  // would mean a slot that drafted and then failed to publish had "used up" the
+  // video: the retry would find it already announced, fall through to a lesson,
+  // and that upload would never get the post it was owed — silently, since
+  // nothing distinguishes "already announced" from "announced by us, today".
+  if (slot.videoId) recordAnnounced(slot.videoId, draft.title, slot.slotKey);
   console.log(`[skool] (${trigger}) published "${draft.title}" for slot ${slot.slotKey}`);
   return `Published: ${posted.detail}`;
 }
@@ -750,6 +830,9 @@ export async function publishSlot(communityUrl: string, slotKey: string): Promis
     body: slot.body,
     category: slot.category,
     emailNotify: getSchedule().emailNotify,
+    // The attachment the slot already settled on — same reason the words are
+    // replayed rather than re-drafted.
+    attachment: parseAttachment(slot.attachmentJson),
   });
   if (!posted.ok) {
     updateSlot(slotKey, { last_error: posted.detail });

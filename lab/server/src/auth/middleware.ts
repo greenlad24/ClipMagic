@@ -103,6 +103,7 @@ const LOOPBACK_FN_EXACT = new Set([
   // alternative way to verify the switch is to publish a post, which emails the
   // whole community every time you want to check.
   "/api/fn/skoolEmailNotify",
+  "/api/fn/skoolAttach",
   // The engagement half, while it is being built and verified. Same bargain and
   // the same expiry as the rebuild entries: no UI exists yet, and these are how
   // the read layer and the drafting are exercised at all.

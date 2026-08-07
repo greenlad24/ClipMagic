@@ -30,6 +30,8 @@ import { readComments } from "./comments.js";
 import { getRecipe, type RecipeStep } from "./recipes.js";
 import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
 import { setEmailNotify } from "./emailNotify.js";
+import { attachToComposer } from "./attachments.js";
+import type { Attachment } from "./engageGen.js";
 
 export interface PostResult {
   ok: boolean;
@@ -123,6 +125,13 @@ export interface CreatePostInput {
    * slot, and the post still goes out.
    */
   emailNotify?: boolean;
+  /**
+   * A video or poll to put in the composer before submitting.
+   *
+   * Same failure direction as `emailNotify`: an attachment that will not go in
+   * is logged and the post still publishes. The words are the post.
+   */
+  attachment?: Attachment | null;
 }
 
 /**
@@ -611,6 +620,7 @@ async function composeBuiltIn(
     }
   }
 
+  if (input.attachment) step(await attachNote(input.attachment));
   if (input.emailNotify) step(await emailNotifyNote());
 
   const posted = await clickButton("Post");
@@ -627,6 +637,11 @@ async function composeBuiltIn(
  * deleted — a post that quietly stopped emailing on that fallback would be very
  * hard to notice.
  */
+async function attachNote(attachment: Attachment): Promise<string> {
+  const r = await attachToComposer(attachment);
+  return r.ok ? `Attached: ${r.detail}` : `⚠ Attachment SKIPPED — ${r.detail}; posting without it`;
+}
+
 async function emailNotifyNote(): Promise<string> {
   const set = await setEmailNotify(true);
   if (set.ok) return set.clicked ? `Email to all members: ON` : `Email to all members: already on`;
@@ -695,8 +710,10 @@ async function composeTaught(
   const played: ReplayResult = await replaySteps(steps, vars, {
     guard: async (s) => ((s.text ?? "").trim() === "{{body}}" ? refuseIfComposerHoldsADraft() : null),
     beforeStep: async (_s, i, total) => {
-      if (!input.emailNotify || i !== total - 1) return null;
-      emailNotes.push(await emailNotifyNote());
+      if (i !== total - 1) return null;
+      // Both happen at the last moment the composer is still open and editable.
+      if (input.attachment) emailNotes.push(await attachNote(input.attachment));
+      if (input.emailNotify) emailNotes.push(await emailNotifyNote());
       return null;
     },
   });

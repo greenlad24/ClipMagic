@@ -194,6 +194,8 @@ import {
 import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom.js";
 import { probeSkool } from "../skool/probe.js";
 import { readEmailNotify, setEmailNotify } from "../skool/emailNotify.js";
+import { attachToComposer } from "../skool/attachments.js";
+import { isChannelVideo, youtubeUrl } from "../skool/channelVideos.js";
 import * as skoolConsole from "../skool/console.js";
 import * as skoolActions from "../skool/actions.js";
 import { writePlanLessons } from "../skool/lessons.js";
@@ -5062,6 +5064,30 @@ const skoolEmailNotify: Handler = async (input) => {
   return { result: await setEmailNotify(input.set === true) };
 };
 
+/**
+ * Put a video or poll into the OPEN composer, without submitting anything.
+ *
+ * ⚠️ SAME REASON AS `skoolEmailNotify`: the alternative way to find out whether
+ * an attachment goes in is to publish a post, which emails the community. This
+ * drives the two composer flows against the real modal and stops there. Remove
+ * it with the probe.
+ */
+const skoolAttach: Handler = async (input) => {
+  const kind = String(input?.kind ?? "");
+  if (kind === "video") {
+    const videoId = String(input?.videoId ?? "").trim();
+    if (!(await isChannelVideo(videoId))) {
+      throw new ZiteError({ code: "BAD_REQUEST", message: `${videoId} is not one of the channel's uploads.` });
+    }
+    return { result: await attachToComposer({ kind: "video", videoId, title: "", url: youtubeUrl(videoId) }) };
+  }
+  if (kind === "poll") {
+    const options = (Array.isArray(input?.options) ? input.options : []).map(String);
+    return { result: await attachToComposer({ kind: "poll", options }) };
+  }
+  throw new ZiteError({ code: "BAD_REQUEST", message: 'kind must be "video" or "poll".' });
+};
+
 const skoolProbe: Handler = async (input) => {
   const url = String(input?.url ?? "").trim();
   if (!/^https:\/\/(www\.)?skool\.com\//.test(url)) {
@@ -5086,6 +5112,7 @@ const skoolProbe: Handler = async (input) => {
       // commit that added it. Without this line a caller asking for 250,000
       // characters silently receives 40,000 and cannot tell.
       htmlLimit: input?.htmlLimit === undefined ? undefined : Number(input.htmlLimit),
+      elementLimit: input?.elementLimit === undefined ? undefined : Number(input.elementLimit),
       payloadPath: input?.payloadPath ? String(input.payloadPath) : undefined,
       // ⚠️ AND IT HAPPENED AGAIN, ONE OPTION LATER. `captureRequests` was added
       // to `probeSkool`, called with `captureRequests: true`, and silently
@@ -5294,6 +5321,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolRunRebuildOp,
   skoolProbe,
   skoolEmailNotify,
+  skoolAttach,
   skoolConsoleFrame,
   skoolConsoleNavigate,
   skoolConsoleHover,

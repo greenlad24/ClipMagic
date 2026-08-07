@@ -33,11 +33,36 @@
 import { aiConfig } from "../ai/config.js";
 import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
 import { classroomOutline, retrieve, type Retrieved } from "./knowledge.js";
+import { youtubeUrl } from "./channelVideos.js";
+
+/**
+ * Something the composer attaches to a post, beyond its words.
+ *
+ * Jake, 2026-08-07: "add a YouTube video, GIF or a poll when it fits." GIFs were
+ * dropped by his call the same day — the picker is a Giphy surface this system
+ * cannot yet see well enough to drive, and an unvetted third-party image is the
+ * one attachment that would reach 65 inboxes without anyone having looked at it.
+ */
+export type Attachment =
+  | {
+      kind: "video";
+      /** An id from Jake's OWN uploads. Validated against the catalogue, never trusted. */
+      videoId: string;
+      title: string;
+      url: string;
+    }
+  | {
+      kind: "poll";
+      /** 2–4 short answers. Skool has no question field — the body asks it. */
+      options: string[];
+    };
 
 export interface Draft {
   title: string;
   body: string;
   category: string | null;
+  /** What to attach, when the model judged one fitted. Null is the common case. */
+  attachment: Attachment | null;
   /** Lessons the draft was grounded in, for the audit trail and the read-back. */
   cited: { title: string; url: string }[];
   /**
@@ -71,7 +96,7 @@ function mechanics(kind: "post" | "reply", extra: string): string {
     "",
     "Return ONE JSON object and nothing else.",
     kind === "post"
-      ? `Shape: {"title": string, "body": string, "category": string, "cited": string[]}`
+      ? `Shape: {"title": string, "body": string, "category": string, "cited": string[], "attach": null | {"kind":"video","videoId":string} | {"kind":"poll","options":string[]}}`
       : `Shape: {"text": string, "skip": string|null, "cited": string[]}`,
     "",
     "GROUNDING — what you may state as fact:",
@@ -155,6 +180,57 @@ const POST_FORMAT_NOTE = [
   "",
   "The examples below are the spec for how a post is written. Match them.",
 ].join("\n");
+
+/**
+ * What may be stapled to a post, and the far more important question of when.
+ *
+ * ⚠️ "WHEN IT FITS" HAS TO BE SPELLED OUT, BECAUSE A MODEL ASKED WHETHER TO ADD
+ * SOMETHING ALMOST ALWAYS SAYS YES. Left as "attach a video or a poll when it
+ * fits", nearly every post gets one — and an attachment on every post is how a
+ * feature meant to add variety becomes noise. So the default is stated as null,
+ * and each option carries a condition it must actually meet.
+ */
+function attachmentNote(candidates: { videoId: string; title: string }[]): string {
+  const lines = [
+    "",
+    "==========================================",
+    "ATTACHMENTS — usually none",
+    "==========================================",
+    "",
+    'Set "attach" to null unless the post is genuinely better with one. Most',
+    "posts are not. Do not attach something to every post.",
+    "",
+    'A POLL — {"kind":"poll","options":[...]} — only when the post already asks',
+    "the reader a question with a small number of concrete answers. The post's",
+    "closing question IS the poll question; Skool has no separate field for it.",
+    "2 to 4 options, each a few words, and they must be real alternatives",
+    "somebody would choose between — not yes/no padding.",
+  ];
+
+  if (candidates.length === 0) {
+    lines.push(
+      "",
+      "A VIDEO: not available for this post — there are no candidates.",
+      'Do not write a videoId. "attach" may only be null or a poll.',
+    );
+  } else {
+    lines.push(
+      "",
+      'A VIDEO — {"kind":"video","videoId":"..."} — only when one of the videos',
+      "below is genuinely about what this post is about. Not merely the same",
+      "broad topic: a member who clicks it must land on the thing the post just",
+      "told them about. If none is a real match, do not attach one.",
+      "",
+      "⚠️ PICK AN ID FROM THIS LIST EXACTLY. Never write a YouTube URL, never",
+      "adjust an id. Anything not on this list is discarded.",
+      "",
+      ...candidates.map((c) => `- ${c.videoId} — ${c.title}`),
+    );
+  }
+  lines.push("", "Never attach both. One or neither.");
+  return lines.join("\n");
+}
+
 
 /**
  * Undo what SKOOL did to the text, so the examples show what JAKE typed.
@@ -281,6 +357,43 @@ function parseDraft(raw: string): any {
   }
 }
 
+/**
+ * Turn whatever the model returned into an attachment, or nothing.
+ *
+ * ⚠️ THIS IS A GATE, NOT A PARSER, AND IT IS THE ONLY THING STANDING BETWEEN A
+ * HALLUCINATED ID AND A DEAD EMBED IN FRONT OF THE COMMUNITY. It is the same
+ * bargain `citedFrom` makes for lesson links: the model may only choose from
+ * what it was shown, and anything else silently becomes "no attachment" — which
+ * is always a safe post, where a wrong video is not.
+ */
+function attachmentFrom(raw: unknown, candidates: { videoId: string; title: string }[]): Attachment | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a: any = raw;
+
+  if (a.kind === "video") {
+    const id = String(a.videoId ?? "").trim();
+    const known = candidates.find((c) => c.videoId === id);
+    // Not on the list it was given: drop it. No repair, no nearest match.
+    if (!known) return null;
+    return { kind: "video", videoId: known.videoId, title: known.title, url: youtubeUrl(known.videoId) };
+  }
+
+  if (a.kind === "poll") {
+    const options = (Array.isArray(a.options) ? a.options : [])
+      .map((o: unknown) => String(o ?? "").trim())
+      .filter((o: string) => o.length > 0 && o.length <= 80)
+      .slice(0, 4);
+    // A one-option poll is not a poll, and Skool renders three empty boxes by
+    // default — publishing with fewer than two is a broken post, not a quiet
+    // degradation, so it becomes no attachment instead.
+    const unique: string[] = [...new Set<string>(options)];
+    if (unique.length < 2) return null;
+    return { kind: "poll", options: unique };
+  }
+
+  return null;
+}
+
 /** Map the model's cited URLs back to the lessons that were actually offered. */
 function citedFrom(cited: unknown, hits: Retrieved[]): { title: string; url: string }[] {
   const urls = Array.isArray(cited) ? cited.map(String) : [];
@@ -310,6 +423,15 @@ export interface PostRequest {
   styleExamples: { title: string; body: string }[];
   categories: string[];
   preferredCategory: string | null;
+  /**
+   * Jake's own uploads the draft may attach one of, or none.
+   *
+   * ⚠️ THE MODEL PICKS AN ID FROM THIS LIST — IT NEVER WRITES A URL. Whatever it
+   * returns is checked back against these ids and dropped if it is not one of
+   * them, so a hallucinated or half-remembered id becomes "no attachment"
+   * instead of a dead embed in front of the whole community.
+   */
+  videoCandidates?: { videoId: string; title: string }[];
 }
 
 /**
@@ -368,6 +490,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     req.voicePrompt,
     styleBlock(req.styleExamples),
     mechanics("post", req.kind === "mcp" ? `${POST_FORMAT_NOTE}\n\n${MCP_NOTE}` : POST_FORMAT_NOTE),
+    attachmentNote(req.videoCandidates ?? []),
     "",
     `CATEGORY: choose exactly one of: ${req.categories.join(" · ")}`,
     req.preferredCategory ? `Prefer "${req.preferredCategory}" unless the subject clearly belongs elsewhere.` : "",
@@ -412,6 +535,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
       title: String(parsed.title).trim(),
       body: String(parsed.body).trim(),
       category,
+      attachment: attachmentFrom(parsed.attach, req.videoCandidates ?? []),
       cited: citedFrom(parsed.cited, hits),
       tokens: totalTokens(usage),
       model,

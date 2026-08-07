@@ -89,6 +89,8 @@ export interface ProbeResult {
    * So the reader is now TOLD when it is holding a fragment.
    */
   htmlTruncated: boolean;
+  /** Whether the element list hit `elementLimit` and lost the tail. */
+  elementsTruncated: boolean;
   /** Present only when `payloadPath` was asked for — JSON at that path in pageProps. */
   payload: any;
   clicked: string | null;
@@ -122,6 +124,16 @@ export async function probeSkool(opts: {
    * matters is the half that gets cut.
    */
   htmlLimit?: number;
+  /**
+   * How many described elements to return. Default 160.
+   *
+   * ⚠️ AND THIS CAP TOLD THE SAME LIE THE HTML ONE DID, ON THE SAME DAY. Probing
+   * "Add video" and "Add gif" reported no new field appearing — which reads as a
+   * finding about Skool's composer ("those buttons open nothing") and was a
+   * finding about this number. Both runs returned EXACTLY 160 elements, the tell
+   * that a list has been cut rather than exhausted.
+   */
+  elementLimit?: number;
   /** Dotted path into `props.pageProps` — e.g. "self" or "currentGroup.metadata". */
   payloadPath?: string;
   /**
@@ -166,6 +178,7 @@ export async function probeSkool(opts: {
     waitMs = 2500,
     dumpHtml = false,
     htmlLimit = 40_000,
+    elementLimit = 160,
     payloadPath,
     captureRequests = false,
     apiGet,
@@ -185,6 +198,7 @@ export async function probeSkool(opts: {
     api: null,
     html: null,
     htmlTruncated: false,
+    elementsTruncated: false,
     payload: null,
     clicked: null,
     error,
@@ -384,7 +398,7 @@ export async function probeSkool(opts: {
       }
     }
 
-    const described = await page.evaluate(() => {
+    const described = await page.evaluate((limit: number) => {
       const doc: any = (globalThis as any).document;
       const win: any = globalThis;
       const TAGS = new Set(["button", "input", "textarea", "select"]);
@@ -434,13 +448,14 @@ export async function probeSkool(opts: {
           seen.add(key);
           return true;
         })
-        .slice(0, 160);
+        .slice(0, limit);
       return {
         url: (globalThis as any).location?.href ?? null,
         title: doc.title ?? null,
         elements,
+        elementsTruncated: elements.length >= limit,
       };
-    });
+    }, elementLimit);
 
     const rawHtml = dumpHtml
       ? String(await page.evaluate(() => (globalThis as any).document?.body?.innerHTML ?? ""))
