@@ -845,6 +845,12 @@ export interface SkoolSlot {
    * said so.
    */
   kind: "lesson" | "mcp";
+  /**
+   * The publisher's step log for this slot, kept whether it succeeded or not.
+   * Where "⚠ Attachment SKIPPED" shows up — an attachment never blocks a post,
+   * so a post with a missing video is otherwise indistinguishable from a clean one.
+   */
+  steps: string | null;
   createdAt: number;
   updatedAt: number;
 }

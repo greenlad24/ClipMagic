@@ -33,7 +33,7 @@
 import { db } from "../db/index.js";
 import { claudeJSONForPurpose } from "../ai/claude.js";
 import { channelVideos, youtubeUrl, type ChannelVideo } from "./channelVideos.js";
-import { fetchFreeCaptions, getTranscript, youtubeIdFrom } from "./transcripts.js";
+import { fetchFreeCaptions, getTranscript, rememberTranscript, youtubeIdFrom } from "./transcripts.js";
 import { transcriptFor } from "./lessons.js";
 import { indexedCourses } from "./knowledge.js";
 import { openCourse, addPageToOpenCourse } from "./actions.js";
@@ -117,13 +117,24 @@ export async function transcriptForVideo(videoId: string): Promise<string> {
   if (cached && cached.status === "ok" && cached.text.length >= MIN_TRANSCRIPT) return cached.text;
 
   const free = await fetchFreeCaptions(videoId).catch(() => ({ text: null, noCaptions: false }));
-  if (free.text && free.text.length >= MIN_TRANSCRIPT) return free.text;
+  if (free.text && free.text.length >= MIN_TRANSCRIPT) {
+    // Stored, so a re-run after a rate-limited model call does not go back to
+    // YouTube for something it already has. This whole function can be called
+    // several times for one video — the model calls after it are the part that
+    // fails and gets retried.
+    rememberTranscript(videoId, free.text, "youtube-captions");
+    return free.text;
+  }
 
   // Costs money. Last, and only because a page with no transcript is not
   // written at all — so the alternative to spending here is not a cheaper page,
   // it is no page.
   const paid = await transcriptFor(videoId).catch(() => "");
-  return paid.length >= MIN_TRANSCRIPT ? paid : "";
+  if (paid.length >= MIN_TRANSCRIPT) {
+    rememberTranscript(videoId, paid, "apify");
+    return paid;
+  }
+  return "";
 }
 
 const COURSE_SYSTEM = `You file one new lesson page into an existing classroom.

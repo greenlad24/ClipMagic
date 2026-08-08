@@ -207,6 +207,15 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "kind")) {
     db.exec("ALTER TABLE skool_engage_slots ADD COLUMN kind TEXT NOT NULL DEFAULT 'lesson'");
   }
+  // ⚠️ WITHOUT THIS, A SUCCESSFUL POST KEEPS NO RECORD OF HOW IT WENT. The
+  // publisher's step log is where "⚠ Attachment SKIPPED" appears — and the
+  // scheduler wrote that log to `last_error` on FAILURE and threw it away on
+  // SUCCESS. A post that published perfectly except that its video did not
+  // attach is a success by every stored measure, and the one line saying
+  // otherwise went to a container log nobody reads.
+  if (cols.length > 0 && !cols.some((c) => c.name === "steps")) {
+    db.exec("ALTER TABLE skool_engage_slots ADD COLUMN steps TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
@@ -525,6 +534,10 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
   -- a retry must re-draft the post that was queued, not a different one because
   -- the retry happened to land on another weekday.
   kind            TEXT NOT NULL DEFAULT 'lesson',
+  -- The publisher's step log, kept whether the post succeeded or failed. It is
+  -- the only place an attachment that did not attach is recorded, and a post
+  -- can succeed without one.
+  steps           TEXT NOT NULL DEFAULT '',
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );

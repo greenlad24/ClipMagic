@@ -156,6 +156,20 @@ export function transcriptMap(): Map<string, TranscriptRow> {
   );
 }
 
+/**
+ * Store a transcript this module did not fetch.
+ *
+ * ⚠️ THE FREE CAPTION PATH HAD NO WAY IN HERE, so a caller using
+ * `fetchFreeCaptions` re-fetched from YouTube on every run while the file
+ * header promised "fetched once and stored". Harmless in cost and not harmless
+ * in behaviour: a retry loop hit youtube.com once a cycle, and a video whose
+ * captions were readable today read as absent the moment YouTube throttled.
+ */
+export function rememberTranscript(videoId: string, text: string, source: string): void {
+  if (!videoId || !text.trim()) return;
+  saveTranscript(videoId, text, "ok", source);
+}
+
 function saveTranscript(videoId: string, text: string, status: TranscriptStatus, source: string): void {
   db.prepare(
     `INSERT INTO skool_transcripts (video_id, text, chars, status, source, fetched_at)

@@ -201,6 +201,8 @@ export interface Slot {
   attachmentJson: string;
   /** Which post this is: the classroom lesson, or Tuesday's MCP automation. */
   kind: PostKind;
+  /** The publisher's step log, kept on success as well as failure. */
+  steps: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -242,6 +244,7 @@ function rowToSlot(r: any): Slot {
     // fixed shape to violate — an unknown value must not silently impose the
     // MCP structure on a post that was never meant to have it.
     kind: r.kind === "mcp" ? "mcp" : "lesson",
+    steps: r.steps || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -776,7 +779,7 @@ async function attemptSlot(
   }).catch((e) => ({ ok: false, detail: e instanceof Error ? e.message : String(e), post: null }));
 
   if (!posted.ok) {
-    updateSlot(slot.slotKey, { attempts, next_attempt_at: backoff, last_error: posted.detail });
+    updateSlot(slot.slotKey, { attempts, next_attempt_at: backoff, last_error: posted.detail, steps: posted.detail });
     return `Publish failed (attempt ${attempts}/${cfg.maxAttempts}): ${posted.detail}`;
   }
 
@@ -784,6 +787,12 @@ async function attemptSlot(
     state: "posted",
     slug: posted.post?.slug ?? null,
     last_error: null,
+    // ⚠️ KEPT ON SUCCESS TOO, which is the whole point. The publisher's log is
+    // where "⚠ Attachment SKIPPED — …" appears, and an attachment never blocks
+    // a post — so a post whose video did not attach is a SUCCESS by every other
+    // stored measure. Clearing this alongside `last_error` is how that goes
+    // unnoticed.
+    steps: posted.detail,
   });
   markPinnedPosted(slot.slotKey);
   // ⚠️ THE VIDEO IS BURNED HERE AND NOWHERE EARLIER. Recording it at draft time
