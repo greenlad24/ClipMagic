@@ -200,6 +200,13 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "attachment_json")) {
     db.exec("ALTER TABLE skool_engage_slots ADD COLUMN attachment_json TEXT NOT NULL DEFAULT ''");
   }
+  // ⚠️ THE DEFAULT IS 'lesson' AND THAT IS THE PRE-EXISTING BEHAVIOUR, NOT A
+  // CHOICE. Every slot written before this column existed was drafted as a
+  // lesson because the scheduler hardcoded it; backfilling them to anything
+  // else would rewrite history the drafts do not match.
+  if (cols.length > 0 && !cols.some((c) => c.name === "kind")) {
+    db.exec("ALTER TABLE skool_engage_slots ADD COLUMN kind TEXT NOT NULL DEFAULT 'lesson'");
+  }
 }
 
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
@@ -512,6 +519,12 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
   -- The video or poll the drafter chose to attach, as JSON. Stored so a retry
   -- attaches what was already approved rather than choosing again.
   attachment_json TEXT NOT NULL DEFAULT '',
+  -- Which post this slot is: 'lesson' (the classroom post) or 'mcp' (Tuesday's
+  -- automation idea, which has a fixed four-part shape). Decided when the slot
+  -- OPENS, not when it drafts, for the same reason the title and body are kept:
+  -- a retry must re-draft the post that was queued, not a different one because
+  -- the retry happened to land on another weekday.
+  kind            TEXT NOT NULL DEFAULT 'lesson',
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );

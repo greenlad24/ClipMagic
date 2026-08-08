@@ -400,11 +400,21 @@ function citedFrom(cited: unknown, hits: Retrieved[]): { title: string; url: str
   return hits.filter((h) => urls.includes(h.url)).map((h) => ({ title: h.title, url: h.url }));
 }
 
+/** "lesson" = the classroom post; "mcp" = Tuesday's automation idea. */
+export type PostKind = "lesson" | "mcp";
+
 export interface PostRequest {
   communityUrl: string;
   voicePrompt: string;
-  /** "lesson" = the Sunday/Thursday classroom post; "mcp" = Tuesday's. */
-  kind: "lesson" | "mcp";
+  /**
+   * Which of the two post shapes to write.
+   *
+   * ⚠️ NOT COSMETIC. "mcp" adds MCP_NOTE, which imposes a fixed four-part
+   * structure — what the automation does, the services with their links, a
+   * numbered tutorial, then cost and limits. Sending a video announcement or a
+   * pinned subject through it produces a post fighting its own instructions.
+   */
+  kind: PostKind;
   /** What to write about. Chosen by the caller so the same subject is not reused. */
   subject: string;
   /** Titles of recent posts, so the draft does not repeat one. */

@@ -27,7 +27,7 @@
  */
 import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
-import { draftPost, styleExamplesFrom, type Attachment, type Draft } from "./engageGen.js";
+import { draftPost, styleExamplesFrom, type Attachment, type Draft, type PostKind } from "./engageGen.js";
 import { createPost } from "./engageActions.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
@@ -198,6 +198,8 @@ export interface Slot {
   videoId: string | null;
   /** The video or poll to attach, as stored JSON. */
   attachmentJson: string;
+  /** Which post this is: the classroom lesson, or Tuesday's MCP automation. */
+  kind: PostKind;
   createdAt: number;
   updatedAt: number;
 }
@@ -235,6 +237,10 @@ function rowToSlot(r: any): Slot {
     slug: r.slug || null,
     videoId: r.video_id || null,
     attachmentJson: r.attachment_json || "",
+    // Anything unrecognised reads as a lesson, which is the format with no
+    // fixed shape to violate — an unknown value must not silently impose the
+    // MCP structure on a post that was never meant to have it.
+    kind: r.kind === "mcp" ? "mcp" : "lesson",
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -516,7 +522,17 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
         insertSlot(local.date, "", "abandoned", error ?? "No subject could be chosen.");
         out.skipped = error ?? "No subject could be chosen.";
       } else {
-        insertSlot(local.date, subject, "pending", null, video?.videoId ?? "");
+        insertSlot(
+          local.date,
+          subject,
+          "pending",
+          null,
+          video?.videoId ?? "",
+          // Decided HERE, against the weekday the slot was opened for, and
+          // stored — not recomputed at draft time. A slot that retries past
+          // midnight would otherwise change shape between attempts.
+          kindForSlot(local.weekday, Boolean(pinned), Boolean(video)),
+        );
         out.enqueued = local.date;
       }
     }
@@ -556,22 +572,45 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
  */
 const text = (v: unknown): string => (v == null ? "" : String(v));
 
+/**
+ * Which of the two post shapes this slot should be written as.
+ *
+ * ⚠️ THIS WAS HARDCODED TO "lesson" UNTIL 2026-08-08, WHICH MEANT THE TUESDAY
+ * MCP POST HAD NEVER ONCE BEEN WRITTEN BY THE SCHEDULER. `mechanics()` only
+ * reaches for MCP_NOTE when the kind says so, so every autonomous post came out
+ * as a classroom lesson regardless of the day it landed on.
+ *
+ * The two overrides are the point of having a function rather than a weekday
+ * check inline:
+ *   • a PINNED subject is a human saying "say this next", and there is nothing
+ *     in a pin that says it is an automation idea — forcing Tuesday's four-part
+ *     shape onto it would rewrite what was asked for;
+ *   • a NEW-VIDEO announcement is about an upload, and the MCP shape demands a
+ *     step-by-step tutorial for a service integration it does not have.
+ * Both fall back to "lesson", the shape with no fixed structure to break.
+ */
+export function kindForSlot(weekday: Weekday, pinned: boolean, video: boolean): PostKind {
+  if (pinned || video) return "lesson";
+  return weekday === "tue" ? "mcp" : "lesson";
+}
+
 function insertSlot(
   slotKey: string,
   subject: string,
   state: SlotState,
   error: string | null,
   videoId = "",
+  kind: PostKind = "lesson",
 ): void {
   const now = Date.now();
   try {
     db
       .prepare(
         `INSERT INTO skool_engage_slots
-           (slot_key, state, subject, cited_json, attempts, next_attempt_at, last_error, video_id, created_at, updated_at)
-         VALUES (?, ?, ?, '[]', 0, ?, ?, ?, ?, ?)`,
+           (slot_key, state, subject, cited_json, attempts, next_attempt_at, last_error, video_id, kind, created_at, updated_at)
+         VALUES (?, ?, ?, '[]', 0, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(slotKey, state, subject, now, text(error), videoId, now, now);
+      .run(slotKey, state, subject, now, text(error), videoId, kind, now, now);
   } catch (e) {
     // A duplicate slot key is the one benign failure: the day is already open,
     // which is exactly what the primary key is for. Anything else is a bug and
@@ -665,7 +704,8 @@ async function attemptSlot(
       // his own posts show the surface far better than a prompt could describe
       // it — but the prompt itself is still the comment box's.
       voicePrompt: getEngageSettings().replyPromptMd ?? "",
-      kind: "lesson",
+      // From the slot, decided when it opened. See `kindForSlot`.
+      kind: slot.kind,
       subject: slot.subject,
       recentTitles: (feed?.posts ?? []).filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
       // From the SAME read as recentTitles. If the feed read failed there are no

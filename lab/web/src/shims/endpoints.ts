@@ -837,6 +837,14 @@ export interface SkoolSlot {
   nextAttemptAt: number;
   lastError: string | null;
   slug: string | null;
+  /**
+   * Which shape the post was queued as — settled when the slot OPENED.
+   *
+   * Worth showing: this was hardcoded to "lesson" until 2026-08-08, so every
+   * Tuesday slot was written as a classroom post and nothing on this screen
+   * said so.
+   */
+  kind: "lesson" | "mcp";
   createdAt: number;
   updatedAt: number;
 }
