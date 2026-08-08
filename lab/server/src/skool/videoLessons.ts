@@ -31,11 +31,12 @@
  * the announcement ledger both learned it the same way.
  */
 import { db } from "../db/index.js";
-import { claudeJSONForPurpose } from "../ai/claude.js";
+import { aiConfig } from "../ai/config.js";
+import { claudeJSONForPurpose, claudeTextForPurpose } from "../ai/claude.js";
 import { channelVideos, youtubeUrl, type ChannelVideo } from "./channelVideos.js";
 import { fetchFreeCaptions, getTranscript, rememberTranscript, youtubeIdFrom } from "./transcripts.js";
 import { transcriptFor } from "./lessons.js";
-import { indexedCourses } from "./knowledge.js";
+import { indexedCourses, allLessons } from "./knowledge.js";
 import { openCourse, addPageToOpenCourse } from "./actions.js";
 
 /**
@@ -93,16 +94,42 @@ export function recordVideoLesson(videoId: string, courseSlug: string, pageTitle
  * the order they were published rather than newest-first — a member reading
  * the course in order should meet them the way they happened.
  */
-export async function nextVideoNeedingLesson(): Promise<ChannelVideo | null> {
+export async function nextVideoNeedingLesson(communityUrl: string): Promise<ChannelVideo | null> {
   const cutoff = Date.now() - NEW_LESSON_DAYS * 24 * 3600_000;
   const recent = (await channelVideos(25)).filter((v) => v.publishedAt > 0 && v.publishedAt >= cutoff);
   // ⚠️ `publishedAt > 0` MATTERS. `channelVideos` records 0 when YouTube did not
   // say when a video went up, and 0 is not recent — but `0 >= cutoff` is false
   // only by luck of the epoch being in the past. Stated so it cannot be
   // "simplified" into a bug that writes pages for the whole channel.
-  const eligible = recent.filter((v) => !videoHasLesson(v.videoId));
+  const eligible = recent.filter((v) => !videoHasLesson(v.videoId) && !classroomHasPageFor(communityUrl, v.videoId));
   eligible.sort((a, b) => a.publishedAt - b.publishedAt);
   return eligible[0] ?? null;
+}
+
+/**
+ * Does the classroom ALREADY have a page built from this upload?
+ *
+ * ⚠️⚠️ THE LEDGER IS NOT THE RECORD. IT STARTS EMPTY AND THE CLASSROOM DOES
+ * NOT. The rebuild has already written 143 pages, 101 of them carrying a video
+ * id, and **22 of the channel's 25 most recent uploads already have one** —
+ * measured 2026-08-08. Asking only "did I write a page for this?" answers yes
+ * to nothing on the first run, so the first thing this feature would have done
+ * is put a second page about MCP into the AI Agents course, directly beside the
+ * existing "MCP Explained in Plain English" built from the very same video.
+ *
+ * It would have read perfectly. The page was good, the course was right, the
+ * title was different enough to slip past `addPageToOpenCourse`'s duplicate
+ * check — which compares TITLES, not videos. The only tell was the course
+ * chooser mentioning the existing page in its reasoning, on its way to
+ * recommending the duplicate.
+ *
+ * So the question is asked of the CLASSROOM, and the ledger is what stops a
+ * second page between one run and the next re-index.
+ */
+export function classroomHasPageFor(communityUrl: string, videoId: string): boolean {
+  if (!videoId) return false;
+  const { lessons } = allLessons(communityUrl);
+  return lessons.some((l) => l.videoId === videoId);
 }
 
 /**
@@ -187,9 +214,14 @@ export async function chooseCourseFor(
   try {
     const raw = await claudeJSONForPurpose({
       tier: "director",
-      // The Max window, like every other model call in this feature. See
-      // AuthMode in ai/claude.ts — nothing here bills API credits.
-      auth: "subscription",
+      // ⚠️ THE ENGAGEMENT HALF'S CONFIGURED CREDENTIAL (`SKOOL_AI_AUTH`), NOT A
+      // HARDCODED ONE. This was written as `auth: "subscription"`, copied from
+      // `lessons.ts` where it IS deliberate — that path writes 136 pages at
+      // once and the Max window is the only sane way to pay for it. Here it
+      // meant the writer ignored a setting that already said "api" and failed
+      // against a window shared with Jake's own Claude Code sessions, which is
+      // exactly the coupling the setting exists to break.
+      auth: aiConfig.skoolEngageAuth,
       purpose: "skool-video-lesson-course",
       system: COURSE_SYSTEM,
       messages: [
@@ -267,7 +299,29 @@ into prose is a prompt they cannot use.
 
 No preamble about what you are about to cover. No "in conclusion".
 
-Return JSON only: {"body":"the page, in markdown"}`;
+⚠️ RETURN THE PAGE ITSELF — markdown, starting at the "##" heading. No JSON, no
+code fence around the whole thing, no note about what you did. The first
+character of your reply is the first character of the page.`;
+
+/**
+ * Tidy the two things a text completion still gets wrapped in.
+ *
+ * A fence around the WHOLE page would render the entire lesson as one code
+ * block in Skool — every heading and every paragraph in monospace — so it is
+ * stripped. Inner fences (the prompts, which are the point of the page) are
+ * untouched: only a fence that opens on the first line and closes on the last
+ * is the wrapper.
+ *
+ * A leading "#" title is dropped for the reason the spec gives: Skool prints
+ * the page title above the body, so a body that opens with one shows it twice.
+ */
+function stripPageWrapper(raw: string): string {
+  let t = raw.trim();
+  const whole = t.match(/^```(?:markdown|md)?\s*\n([\s\S]*)\n```$/);
+  if (whole) t = whole[1].trim();
+  t = t.replace(/^#[^#\n][^\n]*\n+/, "");
+  return t.trim();
+}
 
 /**
  * Write the page.
@@ -285,9 +339,10 @@ export async function writeVideoLessonBody(
   transcript: string,
 ): Promise<{ body: string; error: string | null }> {
   try {
-    const raw = await claudeJSONForPurpose({
+    const raw = await claudeTextForPurpose({
       tier: "director",
-      auth: "subscription",
+      // Same credential as the course choice above, and for the same reason.
+      auth: aiConfig.skoolEngageAuth,
       purpose: "skool-video-lesson",
       system: PAGE_SYSTEM,
       messages: [
@@ -304,7 +359,7 @@ export async function writeVideoLessonBody(
         },
       ],
     });
-    const body = String(JSON.parse(raw)?.body ?? "").trim();
+    const body = stripPageWrapper(raw);
     if (body.length < 500) return { body: "", error: "The writer returned too little to publish." };
     return { body, error: null };
   } catch (err) {
@@ -341,11 +396,11 @@ export async function writeLessonForNewVideo(
     // gate, exactly as it is for an attachment.
     video = (await channelVideos(25)).find((v) => v.videoId === opts.videoId) ?? null;
     if (!video) return { wrote: false, videoId: opts.videoId, detail: `${opts.videoId} is not one of the channel's uploads.`, steps };
-    if (videoHasLesson(video.videoId)) {
+    if (videoHasLesson(video.videoId) || classroomHasPageFor(communityUrl, video.videoId)) {
       return { wrote: false, videoId: video.videoId, detail: `"${video.title}" already has a classroom page.`, steps };
     }
   } else {
-    video = await nextVideoNeedingLesson();
+    video = await nextVideoNeedingLesson(communityUrl);
     if (!video) {
       return { wrote: false, videoId: null, detail: `No upload in the last ${NEW_LESSON_DAYS} days is without a page.`, steps };
     }

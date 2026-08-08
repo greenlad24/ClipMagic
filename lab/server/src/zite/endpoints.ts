@@ -5115,7 +5115,7 @@ const skoolWriteVideoLesson: Handler = async (input) => {
 
 /** What would get a page next, and what already has one. Free, and writes nothing. */
 const skoolVideoLessonStatus: Handler = async () => {
-  const next = await nextVideoNeedingLesson().catch(() => null);
+  const next = await nextVideoNeedingLesson(communityUrlOrThrow()).catch(() => null);
   return { next, written: listVideoLessons(50) };
 };
 

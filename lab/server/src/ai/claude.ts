@@ -700,6 +700,35 @@ export async function claudeJSONForPurpose(opts: {
 }
 
 /**
+ * A plain-text completion on an explicit tier, with the same purpose/auth
+ * plumbing as the JSON one.
+ *
+ * ⚠️ EXISTS BECAUSE JSON IS THE WRONG ENVELOPE FOR A DOCUMENT. Asking for
+ * `{"body":"…"}` when the body is a 6,000-character markdown page containing
+ * fenced code blocks makes the model escape every newline and every quote
+ * across the whole thing, and one slip anywhere invalidates all of it. That is
+ * not hypothetical — the classroom page writer failed on exactly this, with
+ * `Unexpected token '\'`, after producing a page that was otherwise fine.
+ *
+ * Use JSON when you want FIELDS. Use this when you want PROSE.
+ */
+export async function claudeTextForPurpose(opts: {
+  tier: "director" | "research" | "fast";
+  purpose: CallPurpose;
+  system: string;
+  messages: Turn[];
+  auth?: AuthMode;
+}): Promise<string> {
+  return await callClaude({
+    model: modelForTier(opts.tier),
+    system: opts.system,
+    messages: opts.messages,
+    purpose: opts.purpose,
+    auth: opts.auth,
+  });
+}
+
+/**
  * JSON completion on an explicit tier that ALSO hands the caller the provider's
  * own token usage for that single call.
  *
