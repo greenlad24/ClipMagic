@@ -32,6 +32,7 @@ import { createPost } from "./engageActions.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
+import { videosForSubject } from "./channelVideos.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 
 /** Weekday keys as `Intl` reports them, lowercased. */
@@ -720,19 +721,17 @@ async function attemptSlot(
       // `category: null` on the drafted slot.
       categories: feed?.categories?.length ? feed.categories : SKOOL_CATEGORIES,
       preferredCategory: null,
-      // ⚠️⚠️ NO VIDEO CANDIDATES ARE OFFERED, ON PURPOSE, UNTIL THE COMPOSER
-      // CAN ACTUALLY TAKE ONE. The picking half is built and safe — an id off
-      // this list is discarded — but ATTACHING is not working (2026-08-07): the
-      // URL reaches the field, Skool leaves "Add" enabled, Enter closes the
-      // panel, and nothing lands in the modal. Measured with the check scoped to
-      // the modal itself, which is the box that also holds the email switch.
+      // ⚠️ SWITCHED BACK ON 2026-08-08, AFTER THE ATTACH WAS ACTUALLY FIXED.
+      // These were emptied on 2026-08-07 because attaching appeared not to
+      // work; it did work, and the code was pressing Enter — which closes the
+      // link panel WITHOUT committing — before clicking the button that does
+      // the attaching. The confirmation was also unsatisfiable: it looked for
+      // the video id in the composer's DOM, and Skool never puts it there.
       //
-      // Offering them anyway would be the worst of both: the drafter would write
-      // "watch it below", the attach would fail, and the post would publish
-      // pointing at a video that is not there — with the failure visible only in
-      // a log nobody reads. A poll still attaches and is verified, so `attach`
-      // can only come back null or a poll until this is finished.
-      videoCandidates: [],
+      // The reason they were emptied still stands as a rule: if attaching ever
+      // stops working, empty this list again rather than letting a draft write
+      // "watch it below" over a post with no video.
+      videoCandidates: await videosForSubject(slot.subject).catch(() => []),
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
 
     if (res.error || !res.draft) {

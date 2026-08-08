@@ -5085,7 +5085,10 @@ const skoolAttach: Handler = async (input) => {
     const options = (Array.isArray(input?.options) ? input.options : []).map(String);
     return { result: await attachToComposer({ kind: "poll", options }) };
   }
-  throw new ZiteError({ code: "BAD_REQUEST", message: 'kind must be "video" or "poll".' });
+  if (kind === "gif") {
+    return { result: await attachToComposer({ kind: "gif", query: String(input?.query ?? "") }) };
+  }
+  throw new ZiteError({ code: "BAD_REQUEST", message: 'kind must be "video", "gif" or "poll".' });
 };
 
 const skoolProbe: Handler = async (input) => {

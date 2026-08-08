@@ -39,9 +39,14 @@ import { youtubeUrl } from "./channelVideos.js";
  * Something the composer attaches to a post, beyond its words.
  *
  * Jake, 2026-08-07: "add a YouTube video, GIF or a poll when it fits." GIFs were
- * dropped by his call the same day — the picker is a Giphy surface this system
- * cannot yet see well enough to drive, and an unvetted third-party image is the
- * one attachment that would reach 65 inboxes without anyone having looked at it.
+ * dropped by his call the same day and put back in scope on 2026-08-08, once the
+ * picker turned out to be perfectly drivable — the grid is CSS
+ * `background-image`, not `<img>`, which is the only reason it read as
+ * unreadable. What has NOT changed is the reason he dropped it: the image is
+ * whatever Giphy returns for a search term, and nobody sees it before 65 members
+ * do. So the model supplies a SEARCH TERM, the first result is taken, and the
+ * chosen URL is written to the step log — that log is the only record of what
+ * actually went out.
  */
 export type Attachment =
   | {
@@ -55,6 +60,15 @@ export type Attachment =
       kind: "poll";
       /** 2–4 short answers. Skool has no question field — the body asks it. */
       options: string[];
+    }
+  | {
+      kind: "gif";
+      /**
+       * What to search Giphy for. NOT a URL — the model never names an image,
+       * because it cannot see one; it names a search, and the first result is
+       * taken so that a retry attaches the same thing.
+       */
+      query: string;
     };
 
 export interface Draft {
@@ -96,7 +110,7 @@ function mechanics(kind: "post" | "reply", extra: string): string {
     "",
     "Return ONE JSON object and nothing else.",
     kind === "post"
-      ? `Shape: {"title": string, "body": string, "category": string, "cited": string[], "attach": null | {"kind":"video","videoId":string} | {"kind":"poll","options":string[]}}`
+      ? `Shape: {"title": string, "body": string, "category": string, "cited": string[], "attach": null | {"kind":"video","videoId":string} | {"kind":"poll","options":string[]} | {"kind":"gif","query":string}}`
       : `Shape: {"text": string, "skip": string|null, "cited": string[]}`,
     "",
     "GROUNDING — what you may state as fact:",
@@ -227,7 +241,17 @@ function attachmentNote(candidates: { videoId: string; title: string }[]): strin
       ...candidates.map((c) => `- ${c.videoId} — ${c.title}`),
     );
   }
-  lines.push("", "Never attach both. One or neither.");
+  lines.push(
+    "",
+    'A GIF — {"kind":"gif","query":"..."} — a Giphy SEARCH TERM, never a URL.',
+    "Two or three words, at most four. The first result is what gets attached,",
+    "and nobody sees it before the community does, so pick a term whose obvious",
+    "first result is safe and on-topic: \"typing fast\", not a person, a brand, a",
+    "meme with words in it, or anything you would not want under Jake's name.",
+    "Use this rarely — a gif suits a light, celebratory post and nothing else.",
+    "",
+    "Never attach more than one. One or neither.",
+  );
   return lines.join("\n");
 }
 
@@ -389,6 +413,17 @@ function attachmentFrom(raw: unknown, candidates: { videoId: string; title: stri
     const unique: string[] = [...new Set<string>(options)];
     if (unique.length < 2) return null;
     return { kind: "poll", options: unique };
+  }
+
+  if (a.kind === "gif") {
+    // ⚠️ A SEARCH TERM, AND A SHORT ONE. Giphy matches loosely, so a long
+    // sentence returns whatever it feels like — which on this surface means an
+    // arbitrary image emailed to the community. A term that reads like a
+    // sentence is dropped rather than sent, on the same "no attachment is
+    // always safe" rule as the video.
+    const query = String(a.query ?? "").trim().replace(/\s+/g, " ");
+    if (!query || query.length > 40 || query.split(" ").length > 4) return null;
+    return { kind: "gif", query };
   }
 
   return null;

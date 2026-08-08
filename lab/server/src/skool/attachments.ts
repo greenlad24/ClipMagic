@@ -4,8 +4,10 @@
  * Measured on the live composer, 2026-08-07:
  *
  *   [aria-label="Add video"] → an input placeholdered
- *     "YouTube, Loom, Vimeo, or Wistia link" (testid `add-video-input`)
- *     + a button reading "Add".
+ *     "YouTube, Loom, Vimeo, or Wistia link" (testid `post-video-input`,
+ *     NOT `add-video-input`, which exists nowhere) + a button reading "Add".
+ *     The panel closes when Skool takes the link and stays open, saying
+ *     "Invalid video link", when it does not.
  *   [aria-label="Add poll"] → inputs placeholdered "Option 1", "Option 2",
  *     "Option 3", a button "Add Option", and the toolbar's own button flips
  *     from "Add poll" to "Remove poll".
@@ -74,56 +76,81 @@ export interface AttachResult {
 }
 
 
-/** Is this video actually in the open composer? Also reports what IS there. */
-async function videoInComposer(videoId: string): Promise<{ inComposer: boolean; reason: string; clue: string }> {
+/**
+ * The video link panel's own state: is it open, what does it hold, is Skool
+ * complaining about it.
+ *
+ * ⚠️⚠️ THIS REPLACED A CHECK THAT COULD NEVER HAVE PASSED. Every previous
+ * version asked whether the VIDEO ID appeared in the composer's DOM. It never
+ * does — measured 2026-08-08 across the whole document, on an upload that had
+ * never been posted, so the feed behind the modal could not have supplied a
+ * false positive: zero occurrences, before AND after a video that Skool had
+ * demonstrably accepted. Skool keeps the attachment in React state and renders
+ * no preview carrying the id. Three sessions read that zero as "the attach
+ * failed" and switched a working feature off.
+ */
+async function videoPanelState(): Promise<{ open: boolean; value: string | null; invalid: boolean }> {
   const out = await withSkoolPage(async (page) =>
-    page.evaluate((id: string) => {
+    page.evaluate(() => {
       const doc: any = (globalThis as any).document;
-      const title = (Array.from(doc.querySelectorAll("input")) as any[]).find(
-        (el) => (el.getAttribute("placeholder") || "").trim().toLowerCase() === "title",
-      );
-      if (!title) return { inComposer: false, reason: "the composer is not open", clue: "" };
-
-      // ⚠️ SCOPE TO THE WHOLE MODAL, NOT THE EDITOR'S WRAPPER. The nearest
-      // ancestor containing `.skool-editor` is a tight box around the title and
-      // body, and Skool renders the video preview in a SIBLING region below
-      // them — so that scope reports "no video" for a video that attached fine.
-      // The modal is the nearest ancestor holding both the title and Post.
-      let box: any = title;
-      for (let up = 0; up < 14 && box; up++) {
-        box = box.parentElement;
-        if (!box) break;
-        const hasPost = (Array.from(box.querySelectorAll?.("button") ?? []) as any[]).some(
-          (b: any) => (b.textContent || "").trim() === "Post",
-        );
-        if (hasPost && box.querySelector?.(".skool-editor")) break;
-      }
-      if (!box) return { inComposer: false, reason: "the composer body was not found", clue: "" };
-
-      const html = String(box.innerHTML || "");
-      // Skool may render the embed by id, by thumbnail, or as an iframe.
-      const inComposer =
-        html.includes(id) || !!box.querySelector(`[src*="${id}"], [href*="${id}"], iframe[src*="youtube"]`);
-      let clue = "";
-      if (!inComposer) {
-        const at = html.search(/youtube|ytimg|iframe|vimeo|loom/i);
-        clue = at >= 0 ? html.slice(Math.max(0, at - 120), at + 220) : `tail:${html.slice(-500)}`;
-      }
-      return { inComposer, reason: "", clue };
-    }, videoId),
+      const input = (Array.from(doc.querySelectorAll("input")) as any[]).find((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        const ph = (el.getAttribute("placeholder") || "").toLowerCase();
+        return el.getAttribute("data-testid") === "post-video-input" || ph.includes("youtube");
+      });
+      // Skool's rejection copy. Read as text because it sits in an unlabelled
+      // div — there is no role, no aria-live, nothing else to key on.
+      const invalid = (Array.from(doc.querySelectorAll("div, span, p")) as any[]).some((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 || r.height === 0) return false;
+        const t = String(el.textContent || "");
+        return t.length < 120 && /invalid video link/i.test(t);
+      });
+      return { open: !!input, value: input ? String(input.value || "") : null, invalid };
+    }),
   );
-  return out ?? { inComposer: false, reason: "no browser page", clue: "" };
+  return out ?? { open: false, value: null, invalid: false };
 }
 
+/**
+ * Put a video in the composer.
+ *
+ * ⚠️⚠️ DO NOT PRESS Enter. Enter closes the link panel WITHOUT COMMITTING, and
+ * that single keypress is why this feature was believed broken: the panel
+ * vanished, so the follow-up "click Add" had no button left to click, and the
+ * post went out with no video. The button is the only thing that attaches.
+ *
+ * How Skool answers, measured 2026-08-08 with three runs — a real link, an
+ * empty field, and a non-video URL:
+ *   • accepted → the panel CLOSES (the link input is gone) and "Post" becomes
+ *     enabled;
+ *   • rejected → the panel STAYS OPEN, still holding the text, and the words
+ *     "Invalid video link" appear;
+ *   • empty → the panel stays open and nothing at all happens.
+ *
+ * ⚠️ "Post" BECOMING ENABLED IS NOT USED AS THE CONFIRMATION, even though it is
+ * the cleanest signal in the experiment. In production the title and body are
+ * already filled by the time this runs, so Post is ALREADY enabled and the
+ * signal is constant. It only worked in the experiment because the composer
+ * was otherwise empty. The panel closing is what gets checked.
+ */
 async function attachVideo(videoId: string, url: string): Promise<AttachResult> {
-  // Already open from a previous attempt? Opening it twice closes it again.
-  if (!(await ariaExists("Add video"))) {
-    return { ok: false, detail: "the composer has no \"Add video\" control" };
+  void videoId; // The id is not observable in the DOM; the URL is what is typed.
+
+  // ⚠️ THE TOOLBAR CONTROL TOGGLES, exactly like "Add poll". If a previous
+  // attempt left the panel open, clicking it again CLOSES it and the typing
+  // then goes nowhere.
+  const before = await videoPanelState();
+  if (!before.open) {
+    if (!(await ariaExists("Add video"))) {
+      return { ok: false, detail: 'the composer has no "Add video" control' };
+    }
+    if (!(await clickByAria("Add video"))) {
+      return { ok: false, detail: '"Add video" could not be clicked' };
+    }
+    await settle(1200);
   }
-  if (!(await clickByAria("Add video"))) {
-    return { ok: false, detail: "\"Add video\" could not be clicked" };
-  }
-  await settle(1200);
 
   // ⚠️ THE TESTID IS `post-video-input`. A comment in `actions.ts` named it
   // `add-video-input` — measured 2026-08-07, no such attribute exists anywhere
@@ -136,69 +163,165 @@ async function attachVideo(videoId: string, url: string): Promise<AttachResult> 
   }
   await settle(600);
 
-  // ⚠️ LOOK AT THE FIELD BEFORE PRESSING Add. Skool validates the link and keeps
-  // the button DISABLED until it is happy — and clicking a disabled button
-  // succeeds in every way that a click can be measured, then does nothing.
-  const ready = await withSkoolPage(async (page) =>
-    page.evaluate(() => {
-      const doc: any = (globalThis as any).document;
-      const input = (Array.from(doc.querySelectorAll("input")) as any[]).find((el) => {
-        const ph = (el.getAttribute("placeholder") || "").toLowerCase();
-        return el.getAttribute("data-testid") === "post-video-input" || ph.includes("youtube");
-      });
-      const addBtn = (Array.from(doc.querySelectorAll("button")) as any[]).find(
-        (b) => (b.textContent || "").trim() === "Add" && b.getBoundingClientRect().width > 0,
-      );
-      return {
-        value: input ? String(input.value || "") : null,
-        addFound: !!addBtn,
-        addDisabled: addBtn ? !!addBtn.disabled : null,
-      };
-    }),
-  );
-  if (ready && ready.value !== url) {
+  const ready = await videoPanelState();
+  if (ready.value !== url) {
     return { ok: false, detail: `the link field holds ${JSON.stringify(ready.value)} rather than the URL` };
   }
-  if (ready && ready.addDisabled) {
-    return { ok: false, detail: `Skool kept the video's "Add" button disabled for ${url}` };
+
+  const added = await clickButton("Add");
+  if (!added.ok) return { ok: false, detail: `the video's "Add" button could not be clicked (${added.detail})` };
+
+  // Skool fetches the embed's metadata before it accepts the link, so the
+  // answer is not immediate. Poll rather than sleeping a fixed span: the
+  // rejection is usually instant and the acceptance usually is not.
+  let after = await videoPanelState();
+  for (let i = 0; i < 12 && after.open && !after.invalid; i++) {
+    await settle(500);
+    after = await videoPanelState();
   }
 
-  // ⚠️ ENTER FIRST, THEN THE BUTTON. Clicking "Add" alone leaves the toolbar
-  // still reading "Add video" and nothing in the modal — measured repeatedly on
-  // 2026-08-07 with the URL verified in the field and the button verified
-  // enabled. Skool's DM composer has the same shape (there is no send button at
-  // all there; Enter sends), so the keyboard is tried first here and the button
-  // is kept as the fallback rather than the other way round.
-  await withSkoolPage(async (page) => {
-    try {
-      await page.keyboard.press("Enter");
-    } catch {
-      /* best effort */
-    }
-  });
-  await settle(5000);
-
-  // Enter may have done it. Ask the composer rather than guessing at a label:
-  // "Remove video" was a guess and the toolbar does not use it.
-  if (!(await videoInComposer(videoId)).inComposer) {
-    const added = await clickButton("Add");
-    if (added.ok) await settle(5000);
-  }
-
-  // ⚠️ CONFIRM INSIDE THE COMPOSER, NOT ON THE PAGE. The first attempt to check
-  // this from outside asked whether a YouTube embed existed anywhere in the
-  // document and got "yes" — from the FEED BEHIND THE MODAL, which is full of
-  // his own video posts and their ytimg thumbnails. A check that cannot fail is
-  // not a check. So the search is scoped to the composer subtree and looks for
-  // THIS id.
-  const seen = await videoInComposer(videoId);
-
-  if (!seen?.inComposer) {
-    const clue = (seen as any)?.clue ? ` | composer holds: ${String((seen as any).clue).slice(0, 300)}` : " | nothing video-ish in the composer";
-    const still = (seen as any)?.linkBoxStillOpen ? " | the link box is still open" : "";
-    return { ok: false, detail: `the video did not appear in the composer${seen?.reason ? ` — ${seen.reason}` : ""}${still}${clue}` };
+  if (after.invalid) return { ok: false, detail: `Skool rejected ${url} as an invalid video link` };
+  if (after.open) {
+    return { ok: false, detail: `the link panel stayed open holding ${JSON.stringify(after.value)} — Skool did not take the video` };
   }
   return { ok: true, detail: `video attached (${url})` };
+}
+
+/**
+ * How many Giphy tiles are on the page, and is the picker's search box open.
+ *
+ * ⚠️ THE GRID IS `background-image`, NOT `<img>`. That one fact is why the GIF
+ * path was abandoned on 2026-08-07 as "renders nothing the probe can identify":
+ * every probe counted elements and images, and a Giphy tile is neither. It is a
+ * div with a CSS background. Measured 2026-08-08: opening the picker puts 16 of
+ * them on a page that had ZERO, across media0-4.giphy.com.
+ */
+async function gifPickerState(): Promise<{ open: boolean; tiles: number }> {
+  const out = await withSkoolPage(async (page) =>
+    page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const vis = (el: any): boolean => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const input = (Array.from(doc.querySelectorAll("input")) as any[]).find(
+        (el) => vis(el) && el.getAttribute("data-testid") === "gif-picker-input",
+      );
+      let tiles = 0;
+      for (const el of Array.from(doc.querySelectorAll("div, span, a, li, button")) as any[]) {
+        if (!vis(el)) continue;
+        const bg = String((globalThis as any).getComputedStyle?.(el)?.backgroundImage || "");
+        if (bg.includes("giphy.com")) tiles++;
+      }
+      return { open: !!input, tiles };
+    }),
+  );
+  return out ?? { open: false, tiles: 0 };
+}
+
+/**
+ * Put a GIF in the composer, chosen by searching for `query`.
+ *
+ * ⚠️ THE FIRST RESULT, NEVER A RANDOM ONE. A slot that retries must attach what
+ * the first attempt settled on; a fresh random pick would mean the post that
+ * publishes is not the post that was drafted, which is the same rule the stored
+ * title and body follow.
+ *
+ * ⚠️ AND JAKE SHOULD KNOW WHAT THIS IS: the image is whatever Giphy returns for
+ * a search term, unseen by anyone, on a post that emails 65 members. That is
+ * why the chosen URL goes in the step log rather than just "gif attached" —
+ * it is the only record of what actually went out.
+ *
+ * Confirmation needs NO scoping, which is the point: the page carries zero
+ * Giphy backgrounds before the picker opens, so "the picker closed and a Giphy
+ * background is still on the page" cannot be satisfied by anything behind the
+ * modal. That is the trap the video check kept falling into.
+ */
+async function attachGif(query: string): Promise<AttachResult> {
+  const term = query.trim();
+  if (!term) return { ok: false, detail: "a gif needs something to search for" };
+
+  const baseline = await gifPickerState();
+  if (baseline.tiles > 0 && !baseline.open) {
+    return { ok: false, detail: `the composer already holds a gif (${baseline.tiles} on the page) — refusing to add a second` };
+  }
+
+  // Same toggle rule as the poll and the video: a second click closes it.
+  if (!baseline.open) {
+    if (!(await ariaExists("Add gif"))) return { ok: false, detail: 'the composer has no "Add gif" control' };
+    if (!(await clickByAria("Add gif"))) return { ok: false, detail: '"Add gif" could not be clicked' };
+    await settle(1500);
+  }
+
+  const typed = await fillField("gif-picker-input", term);
+  if (!typed.ok) return { ok: false, detail: `the gif search box did not take "${term}" (${typed.detail})` };
+
+  // ⚠️⚠️ WAITING FOR "SOME TILES" IS NOT WAITING FOR THE SEARCH. The picker
+  // shows a TRENDING grid the moment it opens, so a poll for `tiles > 0`
+  // returns instantly — against the trending results, not the search. Clicking
+  // then lands on a tile React is about to replace, the click hits nothing, and
+  // the picker stays open. That is exactly how this failed on the first live
+  // run, and it looked like "the picker ignores clicks".
+  //
+  // So: give the search its round trip before looking at the grid at all.
+  await settle(2500);
+
+  let results = await gifPickerState();
+  for (let i = 0; i < 12 && results.tiles === 0; i++) {
+    await settle(500);
+    results = await gifPickerState();
+  }
+  if (results.tiles === 0) return { ok: false, detail: `Giphy returned nothing for "${term}"` };
+
+  // Up to three attempts, because the grid can still re-render underneath a
+  // click. Each attempt re-reads the tile's position rather than reusing a
+  // stale one — a remembered coordinate is how you click the gap between
+  // tiles after a reflow.
+  let picked: string | null = null;
+  let after = await gifPickerState();
+  for (let attempt = 0; attempt < 3 && after.open; attempt++) {
+    const got = await withSkoolPage(async (page) => {
+      const spot = await page.evaluate(() => {
+        const doc: any = (globalThis as any).document;
+        for (const el of Array.from(doc.querySelectorAll("div, span, a, li, button")) as any[]) {
+          const r = el.getBoundingClientRect();
+          // A real tile, not the 1px spacer a CSS background can also sit on.
+          if (r.width < 20 || r.height < 20) continue;
+          const bg = String((globalThis as any).getComputedStyle?.(el)?.backgroundImage || "");
+          if (!bg.includes("giphy.com")) continue;
+          const m = bg.match(/url\(["']?([^"')]+)["']?\)/);
+          el.scrollIntoView({ block: "center", inline: "nearest" });
+          const r2 = el.getBoundingClientRect();
+          return { x: Math.round(r2.x + r2.width / 2), y: Math.round(r2.y + r2.height / 2), url: m ? m[1] : "" };
+        }
+        return null;
+      });
+      if (!spot) return null;
+      await page.mouse.click(spot.x, spot.y, { delay: 40 });
+      return spot.url;
+    });
+    if (got) picked = got as string;
+
+    after = await gifPickerState();
+    for (let i = 0; i < 8 && after.open; i++) {
+      await settle(500);
+      after = await gifPickerState();
+    }
+  }
+  if (!picked) return { ok: false, detail: `could not click a gif tile for "${term}"` };
+  if (after.open) return { ok: false, detail: `the gif picker stayed open after choosing a result for "${term}"` };
+
+  // The picker closing and the gif rendering are two different moments, and
+  // checking on the first one reports "nothing attached" for a gif that arrives
+  // a beat later. Same mistake as the video, one surface over.
+  for (let i = 0; i < 12 && after.tiles === 0; i++) {
+    await settle(500);
+    after = await gifPickerState();
+  }
+  if (after.tiles === 0) {
+    return { ok: false, detail: `the picker closed but no gif is on the page — nothing was attached for "${term}"` };
+  }
+  return { ok: true, detail: `gif attached (search "${term}" → ${String(picked).slice(0, 120)})` };
 }
 
 async function attachPoll(options: string[]): Promise<AttachResult> {
@@ -243,6 +366,7 @@ export async function attachToComposer(attachment: Attachment | null): Promise<A
   if (!attachment) return { ok: true, detail: "no attachment" };
   try {
     if (attachment.kind === "video") return await attachVideo(attachment.videoId, attachment.url);
+    if (attachment.kind === "gif") return await attachGif(attachment.query);
     return await attachPoll(attachment.options);
   } catch (e) {
     return { ok: false, detail: e instanceof Error ? e.message : String(e) };
