@@ -33,6 +33,7 @@ import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
 import { videosForSubject } from "./channelVideos.js";
+import { writeLessonForNewVideo } from "./videoLessons.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 
 /** Weekday keys as `Intl` reports them, lowercased. */
@@ -558,6 +559,33 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
   for (const slot of due) {
     const detail = await attemptSlot(communityUrl, slot, cfg, trigger);
     out.processed.push(`${slot.slotKey}: ${detail}`);
+  }
+
+  // 3. A classroom page for a new upload — but ONLY on a tick that opened a
+  //    slot, which is what `out.enqueued` means.
+  //
+  // ⚠️⚠️ NOT ON EVERY TICK, AND THE REASON IS MONEY. This runs every ten
+  // minutes. `transcriptForVideo` falls back to Apify when free captions are
+  // unavailable, and Apify is the one thing in this feature that bills — so a
+  // video whose captions are off would buy a transcript 144 times a day, and
+  // the failure that repeats is exactly the one that reaches the paid path.
+  //
+  // Tying it to a slot opening bounds it to three attempts a week, which is
+  // still several chances inside the upload's 7-day window, and puts it on the
+  // same rhythm as everything else here.
+  //
+  // ⚠️ AFTER THE POST, NEVER BEFORE. Writing a page navigates the shared
+  // browser away to a course and back; doing that first would move the page out
+  // from under a composer the publisher is partway through. And a page that
+  // fails must not cost the community its post — so this is awaited for its log
+  // and its failure is not the tick's.
+  if (out.enqueued && !cfg.dryRun) {
+    try {
+      const lesson = await writeLessonForNewVideo(communityUrl, {});
+      if (lesson.wrote || lesson.videoId) out.processed.push(`classroom page: ${lesson.detail}`);
+    } catch (e) {
+      out.processed.push(`classroom page failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
   return out;
 }
