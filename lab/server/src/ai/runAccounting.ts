@@ -105,6 +105,13 @@ export type CallPurpose =
   | "skool-author"
   // Skool Manager: writes one classroom page to the zero-to-advanced standard.
   | "skool-lesson"
+  // Skool Manager: a classroom page for a NEW upload, grounded in its
+  // transcript, and the separate call that decides which existing course it
+  // belongs in. Two purposes rather than one because the filing decision is
+  // cheap and the page is not — telling them apart is the only way to see which
+  // half of a bad page went wrong.
+  | "skool-video-lesson"
+  | "skool-video-lesson-course"
   // Skool Manager, engagement half: writes one community post, or one reply to
   // a member's comment or DM, grounded in the rebuilt classroom. Spends the Max
   // subscription (`auth: "subscription"`), never API credits — the whole feature

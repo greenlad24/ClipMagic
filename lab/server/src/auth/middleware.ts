@@ -104,6 +104,16 @@ const LOOPBACK_FN_EXACT = new Set([
   // whole community every time you want to check.
   "/api/fn/skoolEmailNotify",
   "/api/fn/skoolAttach",
+  // Read-only and free: what would get a classroom page next, and what already
+  // has one. Its writing counterpart is deliberately NOT here — see below.
+  "/api/fn/skoolVideoLessonStatus",
+  // ⚠️ WRITES A PAGE INTO THE LIVE CLASSROOM. Here on the same terms as
+  // `skoolRunRebuildOp` above, which is the only other thing that does: there
+  // is no UI for it yet, and the page it writes has to be verifiable end to end
+  // before the scheduler is allowed to call it unattended. `dryRun` returns the
+  // full body without placing anything, and the ledger stops a second page ever
+  // being written about the same upload.
+  "/api/fn/skoolWriteVideoLesson",
   // The engagement half, while it is being built and verified. Same bargain and
   // the same expiry as the rebuild entries: no UI exists yet, and these are how
   // the read layer and the drafting are exercised at all.

@@ -195,6 +195,11 @@ import { readClassroom, readCourse, readFullClassroom } from "../skool/classroom
 import { probeSkool } from "../skool/probe.js";
 import { readEmailNotify, setEmailNotify } from "../skool/emailNotify.js";
 import { attachToComposer } from "../skool/attachments.js";
+import {
+  writeLessonForNewVideo,
+  nextVideoNeedingLesson,
+  listVideoLessons,
+} from "../skool/videoLessons.js";
 import { isChannelVideo, youtubeUrl } from "../skool/channelVideos.js";
 import * as skoolConsole from "../skool/console.js";
 import * as skoolActions from "../skool/actions.js";
@@ -5091,6 +5096,29 @@ const skoolAttach: Handler = async (input) => {
   throw new ZiteError({ code: "BAD_REQUEST", message: 'kind must be "video", "gif" or "poll".' });
 };
 
+/**
+ * Write a classroom page for a new upload, from its transcript.
+ *
+ * ⚠️ WRITES TO THE LIVE CLASSROOM unless `dryRun`. The page is placed in a
+ * course the model chose from the courses that exist, and confirmed from
+ * Skool's reloaded payload — not from the SAVE click landing.
+ */
+const skoolWriteVideoLesson: Handler = async (input) => {
+  const communityUrl = communityUrlOrThrow();
+  return {
+    result: await writeLessonForNewVideo(communityUrl, {
+      dryRun: input?.dryRun === true,
+      videoId: input?.videoId ? String(input.videoId) : undefined,
+    }),
+  };
+};
+
+/** What would get a page next, and what already has one. Free, and writes nothing. */
+const skoolVideoLessonStatus: Handler = async () => {
+  const next = await nextVideoNeedingLesson().catch(() => null);
+  return { next, written: listVideoLessons(50) };
+};
+
 const skoolProbe: Handler = async (input) => {
   const url = String(input?.url ?? "").trim();
   if (!/^https:\/\/(www\.)?skool\.com\//.test(url)) {
@@ -5325,6 +5353,8 @@ export const HANDLERS: Record<string, Handler> = {
   skoolProbe,
   skoolEmailNotify,
   skoolAttach,
+  skoolWriteVideoLesson,
+  skoolVideoLessonStatus,
   skoolConsoleFrame,
   skoolConsoleNavigate,
   skoolConsoleHover,

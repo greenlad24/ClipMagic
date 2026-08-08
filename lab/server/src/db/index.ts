@@ -530,6 +530,24 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
 );
 CREATE INDEX IF NOT EXISTS idx_skool_slots_due ON skool_engage_slots(state, next_attempt_at);
 
+-- One row per upload that has been given a classroom page.
+--
+-- ⚠️ A LEDGER, NOT A COUNTER. The question is "has THIS video got a page", which
+-- answers itself when nothing new has been uploaded. As a weekly counter it
+-- would write a second page about the same video every week Jake did not post
+-- one — and unlike a duplicate announcement, the recovery for that is deleting
+-- pages out of a live classroom by hand.
+--
+-- The row is written when the page LANDS in the course, never when it is
+-- drafted: a run that writes a body and then fails to place it must be able to
+-- try again.
+CREATE TABLE IF NOT EXISTS skool_video_lessons (
+  video_id   TEXT PRIMARY KEY,
+  course_slug TEXT NOT NULL DEFAULT '',
+  page_title  TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL
+);
+
 -- Subjects the operator wants posted, ahead of anything the agent would pick.
 --
 -- The scheduler chooses its own subject from the lesson index, which is right
