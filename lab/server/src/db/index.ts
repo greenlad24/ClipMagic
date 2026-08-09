@@ -184,6 +184,22 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "engage_schedule_json")) {
     db.exec("ALTER TABLE skool_settings ADD COLUMN engage_schedule_json TEXT NOT NULL DEFAULT ''");
   }
+  // The scheduler's heartbeat: when a cycle last started, last finished, and
+  // how it went.
+  //
+  // ⚠️ WITHOUT IT, A DEAD SCHEDULER AND A QUIET ONE LOOK IDENTICAL. A tick that
+  // finds nothing to do logs nothing and writes nothing, which is the correct
+  // behaviour and also means silence carries no information — the process can
+  // stop ticking entirely and every observable stays exactly as it was. The
+  // container goes on reporting healthy, because the HTTP server is fine.
+  //
+  // Persisted rather than held in memory for the same reason: an in-memory
+  // heartbeat is reset by the restart that a wedged scheduler needs, so it can
+  // never answer "how long was it down?" — the one question worth asking after
+  // a post fails to appear.
+  if (cols.length > 0 && !cols.some((c) => c.name === "engage_tick_json")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN engage_tick_json TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 /** Additive: what a slot announces, and what it attaches.
@@ -413,6 +429,17 @@ CREATE TABLE IF NOT EXISTS skool_settings (
   -- the planner has already shown it will override an instruction it is merely
   -- told, so required tracks are built into the structure instead.
   required_tracks_json TEXT NOT NULL DEFAULT '[]',
+  -- ⚠️ THESE TWO MUST BE HERE *AND* IN THE ALTER BLOCK ABOVE, BECAUSE THE
+  -- MIGRATIONS RUN BEFORE THIS SCHEMA DOES. On a database that already exists
+  -- the ALTERs add them; on a fresh one PRAGMA table_info returns nothing, the
+  -- "cols.length > 0" guard correctly declines to migrate a table that is
+  -- not there yet — and then this CREATE is the only thing that can supply
+  -- them. Listing them only above meant a fresh install built the table
+  -- without them and every read threw "no such column" forever after. It went
+  -- unnoticed because the live database was migrated long ago; a test on a
+  -- throwaway DATA_DIR found it immediately (2026-08-09).
+  engage_schedule_json TEXT NOT NULL DEFAULT '',
+  engage_tick_json     TEXT NOT NULL DEFAULT '',
   updated_at     INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO skool_settings (id, community_url, roadmap_md, updated_at)

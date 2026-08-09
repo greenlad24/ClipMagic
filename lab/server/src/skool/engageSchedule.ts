@@ -836,11 +836,117 @@ async function attemptSlot(
 /* ────────────────────────── the loop ────────────────────────── */
 
 let timer: NodeJS.Timeout | null = null;
-let inFlight = false;
+
+/**
+ * When the in-flight cycle started, or null when idle. This is the overlap
+ * guard, and it is a TIMESTAMP rather than a boolean so that "a cycle is
+ * running" and "a cycle has been running for four hours" are distinguishable.
+ * As a boolean the second case is invisible, and it is the one that matters.
+ */
+let inFlightSince: number | null = null;
+/** Rate-limit for the wedge warning, so it shouts hourly rather than per tick. */
+let wedgeLoggedAt = 0;
 
 function tickIntervalMs(): number {
   const raw = Number(process.env.SKOOL_ENGAGE_TICK_MS);
   return Number.isFinite(raw) && raw >= 60_000 ? Math.floor(raw) : 600_000;
+}
+
+/**
+ * How long a cycle may run before it is treated as wedged rather than busy.
+ *
+ * Generous on purpose. A real cycle drafts a post (a Claude call), publishes it
+ * through the browser, and may then write a classroom page — which is a second
+ * Claude call plus a transcript fetch. Several minutes is normal. Fifteen is
+ * not, and nothing here has a timeout of its own: `browser.ts` sets none, so a
+ * navigation that never settles never returns.
+ */
+export const STUCK_AFTER_MS = 15 * 60_000;
+
+/**
+ * Read the held lock: is this a cycle that is busy, or one that is never coming
+ * back?
+ *
+ * Pure, and separate from the loop, because it is the judgement worth testing
+ * and the hardest one to reach by waiting — provoking it for real means holding
+ * a lock for a quarter of an hour inside a hung browser call.
+ */
+export function describeLockHold(heldForMs: number): { wedged: boolean; detail: string } {
+  if (heldForMs > STUCK_AFTER_MS) {
+    return {
+      wedged: true,
+      detail:
+        `⚠️ The scheduler is WEDGED — a cycle has held the lock for ${Math.round(heldForMs / 60_000)} min ` +
+        `(limit ${STUCK_AFTER_MS / 60_000} min) and nothing can post until the lab is restarted.`,
+    };
+  }
+  return { wedged: false, detail: `A cycle has been running for ${Math.round(heldForMs / 1000)}s.` };
+}
+
+/* ── the heartbeat ── */
+
+export interface TickHealth {
+  /** Whether the loop was ever started in this process. */
+  armed: boolean;
+  intervalMs: number;
+  lastStartedAt: number | null;
+  lastFinishedAt: number | null;
+  /** One line about the last completed cycle: what it did, or how it failed. */
+  lastOutcome: string;
+  /** Set while a cycle is in flight. */
+  runningSinceMs: number | null;
+  /** True once the in-flight cycle passes STUCK_AFTER_MS. */
+  stuck: boolean;
+}
+
+function readHealth(): Partial<TickHealth> {
+  const row = db
+    .prepare("SELECT engage_tick_json AS j FROM skool_settings WHERE id = 1")
+    .get() as { j?: string } | undefined;
+  return readJson<Partial<TickHealth>>(row?.j, {});
+}
+
+/**
+ * ⚠️ SWALLOWS ITS OWN ERRORS, AND MUST. This is called from the cycle's
+ * `finally`, where a throw becomes an unhandled rejection out of a `void
+ * cycle()` — so a heartbeat that failed to write would take down the scheduler
+ * it exists to watch, turning a monitoring feature into the outage. A missing
+ * heartbeat already reads as "something is wrong", which is the right answer
+ * when writing it is what broke.
+ */
+function writeHealth(patch: Partial<TickHealth>): void {
+  try {
+    const next = { ...readHealth(), ...patch };
+    db
+      .prepare("UPDATE skool_settings SET engage_tick_json = ? WHERE id = 1")
+      .run(JSON.stringify(next));
+  } catch (e) {
+    console.warn(`[skool] could not write the scheduler heartbeat: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * What the operator needs to tell a healthy silence from a dead one.
+ *
+ * ⚠️ THE INTERESTING FIELD IS `stuck`, AND IT EXISTS BECAUSE THE FAILURE IT
+ * REPORTS CANNOT BE SEEN ANY OTHER WAY. If a cycle hangs inside the browser,
+ * the overlap guard does exactly what it was built to do and every later tick
+ * returns immediately — forever, without a log line, with the container still
+ * reporting healthy and the HTTP API still answering. The next missed post is
+ * the first symptom, and by then `maxSlotAgeHours` has abandoned the slot.
+ */
+export function schedulerHealth(): TickHealth {
+  const stored = readHealth();
+  const now = Date.now();
+  return {
+    armed: timer !== null,
+    intervalMs: tickIntervalMs(),
+    lastStartedAt: stored.lastStartedAt ?? null,
+    lastFinishedAt: stored.lastFinishedAt ?? null,
+    lastOutcome: stored.lastOutcome ?? "",
+    runningSinceMs: inFlightSince === null ? null : now - inFlightSince,
+    stuck: inFlightSince !== null && now - inFlightSince > STUCK_AFTER_MS,
+  };
 }
 
 /**
@@ -855,17 +961,47 @@ export function startEngageScheduler(readCommunityUrl: () => string): void {
   const interval = tickIntervalMs();
   console.log(`[skool] engagement scheduler armed — ticking every ${Math.round(interval / 1000)}s`);
   const cycle = async (trigger: string): Promise<void> => {
-    if (inFlight) return; // Overlap guard: a tick landing mid-publish must not stack.
-    inFlight = true;
+    // Overlap guard: a tick landing mid-publish must not stack.
+    //
+    // ⚠️⚠️ A WEDGED CYCLE IS NOT RECOVERED HERE, AND THAT IS DELIBERATE. The
+    // tempting fix is to race the tick against a timeout and release the guard
+    // when it expires — but a timeout does not stop the hung publish, it only
+    // stops waiting for it. Releasing the guard would let the next tick start a
+    // second `attemptSlot` on the same pending row while the first is still
+    // inside the composer, and the two would draft and publish the same day
+    // twice, to 65 inboxes. Against that, a scheduler that stops is the better
+    // failure — so this shouts and keeps refusing, and recovery is a restart a
+    // human orders. What was unacceptable was doing it silently.
+    if (inFlightSince !== null) {
+      const held = describeLockHold(Date.now() - inFlightSince);
+      if (held.wedged && Date.now() - wedgeLoggedAt > 3600_000) {
+        wedgeLoggedAt = Date.now();
+        console.error(`[skool] ${held.detail} Cycle started at ${new Date(inFlightSince).toISOString()}.`);
+        writeHealth({ lastOutcome: `WEDGED since ${new Date(inFlightSince).toISOString()}` });
+      }
+      return;
+    }
+    inFlightSince = Date.now();
+    writeHealth({ lastStartedAt: inFlightSince });
+    let outcome = "";
     try {
       const url = readCommunityUrl();
-      if (!url) return;
+      if (!url) {
+        outcome = "No community URL set.";
+        return;
+      }
       const r = await runScheduleTick(url, trigger);
       for (const line of r.processed) console.log(`[skool] ${line}`);
+      outcome = r.processed.length ? r.processed.join(" | ") : (r.skipped ?? "Nothing due.");
     } catch (e) {
-      console.warn(`[skool] scheduler tick failed: ${e instanceof Error ? e.message : String(e)}`);
+      outcome = `tick failed: ${e instanceof Error ? e.message : String(e)}`;
+      console.warn(`[skool] scheduler ${outcome}`);
     } finally {
-      inFlight = false;
+      inFlightSince = null;
+      // The heartbeat is written on EVERY cycle including the empty ones. A
+      // heartbeat that only marked the interesting ticks would go stale three
+      // times a week by design, which is exactly the signal it has to not send.
+      writeHealth({ lastFinishedAt: Date.now(), lastOutcome: outcome.slice(0, 500) });
     }
   };
   setTimeout(() => void cycle("startup"), 20_000);
@@ -873,14 +1009,27 @@ export function startEngageScheduler(readCommunityUrl: () => string): void {
   if (typeof timer.unref === "function") timer.unref();
 }
 
-/** Run one cycle on demand. Returns false when one is already in flight. */
-export async function tickNow(communityUrl: string): Promise<{ started: boolean; result: TickResult | null }> {
-  if (inFlight) return { started: false, result: null };
-  inFlight = true;
+/**
+ * Run one cycle on demand. Returns false when one is already in flight.
+ *
+ * ⚠️ IT SHARES THE LOOP'S GUARD, SO IT ALSO SEES THE WEDGE — and says so. The
+ * "Run now" button is what an operator presses when a post has not appeared, so
+ * it is the most likely place for a wedged scheduler to be discovered. A bare
+ * "a cycle is already running" would send them away reassured.
+ */
+export async function tickNow(
+  communityUrl: string,
+): Promise<{ started: boolean; result: TickResult | null; detail?: string }> {
+  if (inFlightSince !== null) {
+    return { started: false, result: null, detail: describeLockHold(Date.now() - inFlightSince).detail };
+  }
+  inFlightSince = Date.now();
+  writeHealth({ lastStartedAt: inFlightSince });
   try {
     return { started: true, result: await runScheduleTick(communityUrl, "on-demand") };
   } finally {
-    inFlight = false;
+    inFlightSince = null;
+    writeHealth({ lastFinishedAt: Date.now(), lastOutcome: "on-demand cycle" });
   }
 }
 

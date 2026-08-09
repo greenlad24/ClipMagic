@@ -225,6 +225,7 @@ import {
   tickNow,
   localNow,
   chooseSubject,
+  schedulerHealth,
   type Weekday,
 } from "../skool/engageSchedule.js";
 import {
@@ -4736,6 +4737,9 @@ const skoolEngageStatus: Handler = async () => {
     schedule,
     now: localNow(schedule.timezone),
     slots: listSlots(30),
+    // Is the loop still ticking? Armed and quiet looks identical to stopped
+    // from every other field on this screen — the queue is empty either way.
+    health: schedulerHealth(),
     // Which credential the drafter spends (`SKOOL_AI_AUTH`). The operator needs
     // it because a rate-limit refusal reads completely differently under each:
     // on the subscription it costs nothing and may last a day, on API credits
@@ -4795,8 +4799,8 @@ const skoolEngageUnpin: Handler = async (input) => {
 
 /** Run one scheduler cycle now, without waiting for the interval. */
 const skoolEngageTick: Handler = async () => {
-  const { started, result } = await tickNow(communityUrlOrThrow());
-  if (!started) return { started, result: null, detail: "A cycle is already running." };
+  const { started, result, detail } = await tickNow(communityUrlOrThrow());
+  if (!started) return { started, result: null, detail: detail ?? "A cycle is already running." };
   return { started, result };
 };
 

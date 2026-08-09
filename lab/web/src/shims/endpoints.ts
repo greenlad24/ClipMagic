@@ -884,6 +884,24 @@ export const skoolEngageStatus = endpoint<
      */
     aiAuth: 'api' | 'subscription';
     /**
+     * Is the loop still ticking, and is the current cycle stuck?
+     *
+     * ⚠️ NOTHING ELSE ON THIS RESPONSE CAN ANSWER THAT. A tick with nothing due
+     * writes nothing and logs nothing, so an empty queue is what both a healthy
+     * idle scheduler and a dead one look like. `stuck` is the case worth
+     * showing loudly: the overlap guard is holding against a cycle that will
+     * never return, so no post can go out until the lab is restarted.
+     */
+    health: {
+      armed: boolean;
+      intervalMs: number;
+      lastStartedAt: number | null;
+      lastFinishedAt: number | null;
+      lastOutcome: string;
+      runningSinceMs: number | null;
+      stuck: boolean;
+    };
+    /**
      * Whether the composer flow was taught in the Skool Manager's teach console,
      * or is the built-in map of guessed selectors. The two click different
      * things and fail differently, so which one is about to run is worth saying
