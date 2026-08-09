@@ -605,6 +605,85 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
   };
 }
 
+/**
+ * One automation idea for a Tuesday post.
+ *
+ * ⚠️⚠️ THIS EXISTS BECAUSE TUESDAY WAS ASKING FOR A SHAPE ITS SUBJECT COULD NOT
+ * CARRY. `chooseSubject` picks from the LESSON index — the only subject source
+ * there was — and `kindForSlot` then forced `kind: "mcp"`, so the drafter got
+ * "write about Why Small Businesses Fail at AI" and "this is the Tuesday post,
+ * write one MCP automation idea" in the same prompt. Measured 2026-08-09: it
+ * resolves the contradiction by silently dropping the MCP half and writing a
+ * lesson post. Nobody had ever seen it because every slot ever opened was
+ * `kind: lesson` — the hardcode was only lifted the day before.
+ *
+ * An automation idea is not in the classroom index, so it cannot be retrieved;
+ * it has to be proposed. What keeps that honest is the same rule the MCP post
+ * itself runs under — only services that certainly exist — plus the fact that
+ * the SUBJECT is only a direction. The four-part body still has to stand up on
+ * its own, and `MCP_NOTE` governs it.
+ *
+ * ⚠️ IT REFUSES RATHER THAN INVENTS, and the caller falls back to a lesson
+ * subject with `kind: "lesson"`. A Tuesday that posts a good lesson beats a
+ * Tuesday that posts a tutorial for an MCP server that does not exist — that
+ * one is not recoverable, because members will go and try it.
+ */
+export async function chooseMcpSubject(req: {
+  communityUrl: string;
+  /** Subjects already used, so Tuesday does not propose the same automation twice. */
+  usedSubjects: string[];
+}): Promise<{ subject: string; error: string | null }> {
+  const outline = classroomOutline(req.communityUrl);
+
+  const system = [
+    "You propose ONE automation idea for a weekly post in an AI automation community.",
+    "",
+    "Return ONE JSON object and nothing else.",
+    `Shape: {"subject": string, "why": string}`,
+    "",
+    "`subject` is a single sentence naming the automation, the services it joins,",
+    "and who it is for. It is a brief for the writer, not the post.",
+    "",
+    "HARD RULES:",
+    "- ONLY name services and MCP servers you are CERTAIN exist today. If you are",
+    "  not certain, propose a different automation. An invented MCP server sends",
+    "  members chasing something that is not there, and they will say so.",
+    "- It must be genuinely useful to a small business or solo operator, and",
+    "  doable in an afternoon. Not a platform, not a startup idea.",
+    "- It must fit a four-part write-up: what it does and who for, every service",
+    "  it touches, a step-by-step a beginner can follow, then cost and limits.",
+    "- Prefer the tools this community already teaches, listed below.",
+    "- Do NOT repeat any automation already used. They are listed below.",
+  ].join("\n");
+
+  const user = [
+    "THE CLASSROOM — the tools and subjects these members already know:",
+    outline.outline.slice(0, 4000),
+    "",
+    req.usedSubjects.length
+      ? `ALREADY USED — do not propose these again:\n${req.usedSubjects.map((s) => `- ${s}`).join("\n")}`
+      : "Nothing has been posted yet.",
+  ].join("\n");
+
+  const { json } = await claudeJSONForPurposeWithUsage({
+    tier: "director",
+    purpose: "skool-post",
+    system,
+    messages: [{ role: "user", content: user }],
+    auth: aiConfig.skoolEngageAuth,
+  });
+
+  // ⚠️ `json` IS THE RAW STRING, NOT A PARSED OBJECT — the same `parseDraft`
+  // step `draftPost` runs. Reading `.subject` straight off it yields undefined,
+  // which is indistinguishable from the model declining to answer: the first
+  // version of this reported "the model did not propose an automation" while
+  // the model had proposed a perfectly good one.
+  const parsed = parseDraft(json);
+  const subject = typeof parsed?.subject === "string" ? parsed.subject.trim() : "";
+  if (!subject) return { subject: "", error: "The model did not propose an automation." };
+  return { subject, error: null };
+}
+
 /** Input + output tokens for one call, when the provider reported them. */
 function totalTokens(usage: { input_tokens?: number; output_tokens?: number } | undefined): number | null {
   if (!usage) return null;

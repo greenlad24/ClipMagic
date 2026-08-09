@@ -27,7 +27,14 @@
  */
 import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
-import { draftPost, styleExamplesFrom, type Attachment, type Draft, type PostKind } from "./engageGen.js";
+import {
+  chooseMcpSubject,
+  draftPost,
+  styleExamplesFrom,
+  type Attachment,
+  type Draft,
+  type PostKind,
+} from "./engageGen.js";
 import { createPost } from "./engageActions.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
@@ -332,6 +339,21 @@ function markPinnedPosted(slotKey: string): void {
   db.prepare("UPDATE skool_engage_pinned SET state = 'posted' WHERE slot_key = ? AND state = 'used'").run(slotKey);
 }
 
+/**
+ * Every subject ever chosen, verbatim.
+ *
+ * ⚠️ RAW, NOT REDUCED TO A LESSON TITLE. `chooseSubject` maps these through
+ * `subjectLessonTitle` because it is matching against the lesson index; an
+ * automation subject is not a lesson and has no title to reduce to, so it is
+ * offered to the proposer whole and the model does the "is this the same idea?"
+ * judgement that no string compare can make here.
+ */
+function usedSubjectStrings(): string[] {
+  return (db.prepare("SELECT subject FROM skool_engage_slots WHERE subject != ''").all() as { subject: string }[])
+    .map((r) => r.subject)
+    .slice(-40);
+}
+
 function postedThisWeek(): number {
   const since = Date.now() - 7 * 24 * 3600_000;
   const r = db
@@ -512,14 +534,32 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
       // the video the next posting day.
       const video = pinned ? null : await nextVideoToAnnounce().catch(() => null);
 
+      // ⚠️ TUESDAY NEEDS A SUBJECT ITS OWN SHAPE CAN CARRY. The lesson index is
+      // the wrong source for an automation tutorial — see `chooseMcpSubject`.
+      // Asked only when nothing outranks the index, because a pin and a video
+      // already force `kind: "lesson"` and would waste the call.
+      const wantsMcp = !pinned && !video && local.weekday === "tue";
+      const mcp = wantsMcp
+        ? await chooseMcpSubject({ communityUrl, usedSubjects: usedSubjectStrings() }).catch((e) => ({
+            subject: "",
+            error: e instanceof Error ? e.message : String(e),
+          }))
+        : null;
+      // ⚠️ A FAILED MCP SUBJECT FALLS BACK TO A LESSON, IT DOES NOT LOSE THE DAY.
+      // The community was promised a post on Tuesday, not an MCP post
+      // specifically, and a lesson is the shape with no fixed structure to break.
+      if (mcp?.error) console.log(`[skool] no automation subject (${mcp.error}) — Tuesday falls back to a lesson`);
+
       const { subject, error } = pinned
         ? { subject: pinned.subject, error: null as string | null }
         : video
           ? { subject: videoSubject(video), error: null as string | null }
-          : await chooseSubject(communityUrl).catch((e) => ({
-              subject: "",
-              error: e instanceof Error ? e.message : String(e),
-            }));
+          : mcp?.subject
+            ? { subject: mcp.subject, error: null as string | null }
+            : await chooseSubject(communityUrl).catch((e) => ({
+                subject: "",
+                error: e instanceof Error ? e.message : String(e),
+              }));
       if (error || !subject) {
         // Record the abandoned slot rather than trying again in ten minutes:
         // an empty index or a dead feed will not fix itself within the hour,
@@ -536,7 +576,7 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
           // Decided HERE, against the weekday the slot was opened for, and
           // stored — not recomputed at draft time. A slot that retries past
           // midnight would otherwise change shape between attempts.
-          kindForSlot(local.weekday, Boolean(pinned), Boolean(video)),
+          kindForSlot(local.weekday, Boolean(pinned), Boolean(video), Boolean(mcp?.subject)),
         );
         out.enqueued = local.date;
       }
@@ -621,9 +661,20 @@ const text = (v: unknown): string => (v == null ? "" : String(v));
  *     step-by-step tutorial for a service integration it does not have.
  * Both fall back to "lesson", the shape with no fixed structure to break.
  */
-export function kindForSlot(weekday: Weekday, pinned: boolean, video: boolean): PostKind {
+export function kindForSlot(
+  weekday: Weekday,
+  pinned: boolean,
+  video: boolean,
+  haveMcpSubject: boolean,
+): PostKind {
   if (pinned || video) return "lesson";
-  return weekday === "tue" ? "mcp" : "lesson";
+  // ⚠️ THE THIRD OVERRIDE, ADDED 2026-08-09: NO AUTOMATION SUBJECT, NO MCP SHAPE.
+  // Tuesday used to become "mcp" on the weekday alone, while its subject came
+  // from the LESSON index — a shape demanding a four-part service tutorial
+  // stapled to a subject that is not an automation. The drafter resolved that
+  // by dropping the shape, so the flag said "mcp" and the post was a lesson.
+  // The kind now follows the SUBJECT, which is the thing the shape has to fit.
+  return weekday === "tue" && haveMcpSubject ? "mcp" : "lesson";
 }
 
 function insertSlot(
