@@ -135,6 +135,122 @@ export async function readEmailNotify(): Promise<EmailNotifyState> {
   return { found: out.found, on: out.on, offset: out.offset, reason: out.reason };
 }
 
+/** The heading on the modal Skool raises when Post is pressed with the switch on. */
+export const EMAIL_CONFIRM_HEADING = "Send email to all members?";
+
+export interface EmailConfirmResult {
+  ok: boolean;
+  /** Whether the confirmation modal appeared at all. */
+  appeared: boolean;
+  /** Whether Confirm was clicked and the modal then went away. */
+  submitted: boolean;
+  detail: string;
+}
+
+/**
+ * Answer the "Send email to all members?" modal, if it appears.
+ *
+ * ⚠️⚠️ THIS IS WHY THE FIRST TWELVE ATTEMPTS AT AN EMAILED POST PUBLISHED
+ * NOTHING. With the switch on, the Post click does NOT submit — it opens a React
+ * modal reading "This email will be sent to N members, are you sure you want to
+ * proceed?" over the composer, and `POST /posts` is never issued. Measured
+ * 2026-08-09 with the create-post request intercepted: zero requests fired.
+ *
+ * Every symptom of that is indistinguishable from success from the inside. The
+ * Post button really was clicked, the click really did land, no error is raised,
+ * no native dialog fires, nothing in the modal reads like a warning — and the
+ * composer simply stays open behind the confirmation. Only the read-back knows,
+ * and all it can say is "every click worked and the post is not there".
+ *
+ * ⚠️ ABSENT IS NOT AN ERROR. With the switch off there is no modal, so a missing
+ * one is the normal case for any post that is not emailing the community.
+ *
+ * ⚠️ AND IT MUST NOT BE A RECORDED RECIPE STEP, for the same reason the switch
+ * itself is not one: it exists only when the switch is on, so a recipe carrying
+ * it would stall on every post that does not email, and a recipe without it
+ * would never publish one that does.
+ */
+export async function confirmEmailDialog(timeoutMs = 8000): Promise<EmailConfirmResult> {
+  const deadline = Date.now() + timeoutMs;
+  let at: { x: number; y: number } | null = null;
+
+  // Poll: the modal is mounted by React a moment after the click, and clicking
+  // where it is about to be does nothing at all.
+  while (Date.now() < deadline) {
+    at = await findConfirmButton();
+    if (at) break;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  if (!at) {
+    return { ok: true, appeared: false, submitted: false, detail: "No email confirmation appeared." };
+  }
+
+  const clicked = await withSkoolPage(async (page) => {
+    // The real mouse, like the switch itself — a synthetic click on Skool's
+    // pointer-driven controls does nothing.
+    await page.mouse.click(at!.x, at!.y, { delay: 40 });
+    return true;
+  });
+  if (!clicked) {
+    return { ok: false, appeared: true, submitted: false, detail: "The email confirmation appeared but there was no page to click it with." };
+  }
+
+  await new Promise((r) => setTimeout(r, 1500));
+  const still = await findConfirmButton();
+  if (still) {
+    // ⚠️ NOT REPORTED AS "not posted". The click may have landed and the modal
+    // may merely be slow to unmount; the feed read-back is the only evidence
+    // that counts, and it runs either way.
+    return { ok: false, appeared: true, submitted: false, detail: "Clicked Confirm and the email confirmation is still up." };
+  }
+  return { ok: true, appeared: true, submitted: true, detail: "Confirmed the email to all members." };
+}
+
+/**
+ * Where to click to confirm, or null if the modal is not up.
+ *
+ * ⚠️ SCOPED TO THE MODAL, NEVER MATCHED ACROSS THE DOCUMENT. "Confirm" is a
+ * generic label and the feed behind the modal is a live page; the only safe
+ * anchor is the heading, which names the action in words a human reads.
+ *
+ * ⚠️ AND CANCEL IS NEVER CLICKED. It sits in the same row, one button away, and
+ * clicking it discards the post silently — the same wrong-control failure the
+ * switch's own "exactly one button" rule exists to prevent.
+ */
+async function findConfirmButton(): Promise<{ x: number; y: number } | null> {
+  const out = await withSkoolPage(async (page) =>
+    page.evaluate((heading: string) => {
+      const doc: any = (globalThis as any).document;
+      if (!doc) return null;
+      const vis = (el: any): boolean => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+      };
+      const headings = [...doc.querySelectorAll("h1,h2,h3,h4,div,span,p")].filter(
+        (e: any) => (e.textContent || "").trim() === heading && vis(e),
+      );
+      if (headings.length === 0) return null;
+
+      // Climb from the heading to the nearest ancestor that also holds a
+      // Confirm button — that box is the modal, and nothing outside it counts.
+      let anchor: any = headings[headings.length - 1];
+      for (let up = 0; up < 6; up++) {
+        anchor = anchor?.parentElement;
+        if (!anchor) break;
+        const confirm = [...anchor.querySelectorAll("button")].find(
+          (b: any) => (b.textContent || "").trim().toLowerCase() === "confirm" && vis(b),
+        );
+        if (confirm) {
+          const r = (confirm as any).getBoundingClientRect();
+          return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+        }
+      }
+      return null;
+    }, EMAIL_CONFIRM_HEADING),
+  );
+  return out ?? null;
+}
+
 export interface EmailNotifyResult {
   ok: boolean;
   /** The state the switch was left in. Null when unknown. */

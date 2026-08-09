@@ -29,7 +29,7 @@ import { communityFeedUrl, readFeed, type SkoolPost } from "./community.js";
 import { readComments } from "./comments.js";
 import { getRecipe, type RecipeStep } from "./recipes.js";
 import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
-import { setEmailNotify } from "./emailNotify.js";
+import { confirmEmailDialog, setEmailNotify } from "./emailNotify.js";
 import { attachToComposer } from "./attachments.js";
 import type { Attachment } from "./engageGen.js";
 
@@ -781,6 +781,18 @@ export async function createPost(input: CreatePostInput): Promise<PostResult> {
     ? await composeTaught(taught.steps, input, title, body, step)
     : await composeBuiltIn(input, title, body, step);
   if (!composed.ok) return FAIL(`${log.join(" → ")} → ${composed.detail}`);
+
+  // ⚠️⚠️ THE POST CLICK IS NOT THE SUBMIT WHEN THE EMAIL SWITCH IS ON. Skool
+  // raises a "Send email to all members?" modal over the composer and issues no
+  // request until it is confirmed. Twelve scheduled attempts on 2026-08-09 each
+  // clicked Post, reported nine of nine steps, and published nothing.
+  //
+  // Called on BOTH compose paths and unconditionally — not gated on
+  // `input.emailNotify` — because the switch's state is what raises the modal,
+  // and the switch can be on for reasons this call does not know about (it is a
+  // real control a human may have left on). An absent modal is not an error.
+  const confirmed = await confirmEmailDialog();
+  if (confirmed.appeared) step(confirmed.detail);
   await settle(4000);
 
   // ⚠️ THE ONLY EVIDENCE THAT COUNTS. Read the feed back and find it by title.
