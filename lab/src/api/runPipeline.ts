@@ -6,6 +6,8 @@ import { promisify } from 'node:util';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+// @ts-ignore - bare specifier aliased at bundle time to server/src/ai/localFiles.ts
+import { readProjectMedia } from 'clipmagic-local-files';
 
 const execFileAsync = promisify(execFile);
 
@@ -114,19 +116,22 @@ export default createEndpoint({
     // ── Phase 1: Transcribe ───────────────────────────────────────────────────
     await Projects.update({ id: projectId, record: { status: 'Transcribing' } });
 
-    let audioRes: Response;
+    // Read the narration straight off local disk. This used to be
+    // `fetch(transcriptSourceUrl)`, which made the server request its own file
+    // back over HTTP — and every stored url form has since stopped working for
+    // a different reason: a relative "/api/uploads/<id>" (what "choose from
+    // storage" saves) can't even be parsed by Node's fetch, the public https
+    // url is 401'd by the API_TOKEN gate, and older raw-IP urls are refused now
+    // that port 9090 is 127.0.0.1-only. They all name a file that is already on
+    // this filesystem, so readProjectMedia resolves it locally (and still
+    // downloads a genuinely remote url). See server/src/ai/localFiles.ts.
+    let buffer: Buffer;
     try {
-      audioRes = await fetch(transcriptSourceUrl);
+      buffer = await readProjectMedia(transcriptSourceUrl);
     } catch (e: any) {
       await Projects.update({ id: projectId, record: { status: 'Error', validationErrors: 'Could not fetch audio for transcription' } });
       throw new ZiteError({ code: 'INTERNAL_ERROR', message: 'Could not fetch audio: ' + (e.message ?? String(e)) });
     }
-    if (!audioRes.ok) {
-      await Projects.update({ id: projectId, record: { status: 'Error', validationErrors: `Audio fetch failed: HTTP ${audioRes.status}` } });
-      throw new ZiteError({ code: 'INTERNAL_ERROR', message: `Failed to fetch audio (HTTP ${audioRes.status})` });
-    }
-
-    const buffer = Buffer.from(await audioRes.arrayBuffer());
     const isWav = !!project.audioUrl;
 
     // Prepare the file we hand to the transcription API. When the narration is a

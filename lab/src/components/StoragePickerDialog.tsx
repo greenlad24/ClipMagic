@@ -74,7 +74,19 @@ export default function StoragePickerDialog({
       const area = Array.isArray(res?.areas)
         ? res.areas.find((a: any) => a?.key === 'narratorVideos')
         : null;
-      const list: StoredFile[] = (area?.items ?? []).filter((f: StoredFile) => f.url);
+      // ABSOLUTE urls, always. listStorage returns "/api/uploads/<id>" — right
+      // for a link the UI renders, wrong for anything that leaves the browser.
+      // A picked file's url gets stored on a project (BulkPage) and is later
+      // fetched SERVER-side by the pipeline, where Node's fetch rejects a
+      // relative URL outright: "Failed to parse URL from /api/uploads/…". That
+      // is why bulk runs built from uploads worked (the upload route returns an
+      // absolute url via publicUrlFor) while every "choose from storage" run
+      // failed at transcription. Absolutising here — at the one place the
+      // picker hands urls out — fixes all four consumers at once, and matches
+      // exactly what a fresh upload already stores.
+      const list: StoredFile[] = (area?.items ?? [])
+        .filter((f: StoredFile) => f.url)
+        .map((f: StoredFile) => ({ ...f, url: new URL(f.url!, window.location.origin).href }));
       setItems(list);
     } catch (e: any) {
       setError(e?.message ?? 'Could not load your storage.');
