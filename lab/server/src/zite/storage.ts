@@ -5,15 +5,31 @@
  *
  * Every disk-consuming area lives in one place: the AREAS registry below. Each
  * area is either CONTENT (your media — deleted per-file) or CACHE (regenerates
- * on demand — safe to wipe wholesale with "Clear"). Adding a new area = one
- * registry entry; totals, counts, the breakdown and the UI all derive from it,
- * so nothing can silently go uncounted again.
+ * on demand — safe to wipe wholesale with "Clear").
+ *
+ * TWO separate things have to add up, and they are not the same number:
+ *
+ *  1. The data volume. The registry used to be the whole story, which meant a
+ *     directory nobody added an entry for was simply invisible — that is how
+ *     21 GB of `planner/` ingests went unreported. So the registry is no longer
+ *     trusted to be complete: `unaccounted` measures DATA_DIR as a whole and
+ *     subtracts the cards, and the remainder is shown as its own area. New
+ *     directories now appear on their own; adding a registry entry only gives
+ *     one a name, an explanation, and a delete button.
+ *
+ *  2. The disk. `statfs` reports the whole host filesystem, not the volume, so
+ *     "used" has always included things The Lab does not own — Docker image
+ *     layers and BuildKit cache above all (see systemStorage.ts). Those are
+ *     itemised separately, and whatever neither side can attribute is reported
+ *     as such rather than left as an unexplained gap.
  *
  * Physical areas under DATA_DIR:
  *   uploads/                  → source media (narration videos, music, promos)  [content]
  *   outputs/                  → finished renders + screencast captures (.mp4)    [content]
  *   outputs/thumbnails/       → edited thumbnail renders (Nano Banana Pro)       [content]
  *   thumbnail-fonts/          → custom fonts you uploaded for thumbnails         [content]
+ *   planner/                  → per-session long-form ingests (video+audio+txt)  [content]
+ *   image-history/            → saved AI image-generator output                  [content]
  *   outputs/stickers/         → generated/fetched sticker image cache            [cache]
  *   tmp/                      → remote-download cache                            [cache]
  *   tmp/chunked-uploads/      → in-progress resumable-upload temp               [cache]
@@ -22,15 +38,19 @@
  *   thumbnail-cutouts/        → composited cut-out cache for thumbnails          [cache]
  *   motion-bundle/            → Remotion motion-graphics bundle cache            [cache]
  *   .remotion-chromium/       → Remotion's Chromium browser cache               [cache]
- *   db/                       → sqlite — NEVER offered for deletion
+ *   engage-browser/           → logged-in Chromium profile, Engagement Manager   [cache]
+ *   skool-browser/            → logged-in Chromium profile, Skool Manager        [cache]
+ *   db/                       → sqlite — shown, NEVER offered for deletion
  *
- * Per-file deletes are path-traversal-safe (resolveSafe), and the pure-cache
+ * Per-file deletes are path-traversal-safe (resolveSafe), which also refuses any
+ * area with no directory of its own (`db`, `unaccounted`), and the pure-cache
  * areas can be wiped wholesale ("Clear") — they are recreated on demand.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
 import { db } from "../db/index.js";
+import { readSystemUsage } from "./systemStorage.js";
 
 /**
  * Every physical directory the manager can inspect/delete. A Category maps 1:1
@@ -43,6 +63,8 @@ export type Category =
   | "outputs"
   | "thumbnails"
   | "thumbnailFonts"
+  | "planner"
+  | "imageHistory"
   | "tmp"
   | "stickers"
   | "chunked"
@@ -50,13 +72,24 @@ export type Category =
   | "thumbnailCharacters"
   | "thumbnailBackgrounds"
   | "thumbnailCutouts"
-  | "motionBundle";
+  | "motionBundle"
+  | "engageBrowser"
+  | "skoolBrowser"
+  | "db"
+  /** Synthetic: the DATA_DIR bytes no other card claims. Has no directory. */
+  | "unaccounted";
 
-const DIRS: Record<Category, string> = {
+/**
+ * Partial, deliberately: `unaccounted` is a computed remainder with nothing on
+ * disk of its own, and resolveSafe refuses any category missing from here.
+ */
+const DIRS: Partial<Record<Category, string>> = {
   uploads: config.uploadsDir,
   outputs: config.outputsDir,
   thumbnails: path.join(config.outputsDir, "thumbnails"),
   thumbnailFonts: path.join(config.dataDir, "thumbnail-fonts"),
+  planner: path.join(config.dataDir, "planner"),
+  imageHistory: config.imageHistoryDir,
   tmp: config.tmpDir,
   stickers: path.join(config.outputsDir, "stickers"),
   chunked: path.join(config.tmpDir, "chunked-uploads"),
@@ -65,7 +98,17 @@ const DIRS: Record<Category, string> = {
   thumbnailBackgrounds: path.join(config.dataDir, "thumbnail-backgrounds"),
   thumbnailCutouts: path.join(config.dataDir, "thumbnail-cutouts"),
   motionBundle: config.motionBundleDir,
+  engageBrowser: config.engageBrowserDir,
+  skoolBrowser: config.skoolBrowserDir,
+  db: path.dirname(config.dbPath),
 };
+
+/**
+ * Never deletable through this manager, whatever else they are. The sqlite file
+ * IS the app's state — every project, track, promo and setting — so it is shown
+ * (its bytes are real) but no code path here can touch it.
+ */
+const PROTECTED = new Set<Category>(["db", "unaccounted"]);
 
 /**
  * Pure-cache areas: every file regenerates on demand, so the whole area is safe
@@ -81,14 +124,34 @@ const CACHE_CATEGORIES = new Set<Category>([
   "thumbnailBackgrounds",
   "thumbnailCutouts",
   "motionBundle",
+  "engageBrowser",
+  "skoolBrowser",
 ]);
 
 /**
  * Areas whose contents are nested subdirs / opaque bundles (a webpack bundle, a
- * Chromium install, per-upload part folders). We don't list them file-by-file —
- * we show a recursive size + count and a single "Clear all" (cache) button.
+ * Chromium install, per-upload part folders, a sqlite dir). We don't list them
+ * file-by-file — we show a recursive size + count and, for cache areas, a single
+ * "Clear all" button.
  */
-const FOLDER_ONLY = new Set<Category>(["chunked", "remotionChromium", "motionBundle"]);
+const FOLDER_ONLY = new Set<Category>([
+  "chunked",
+  "remotionChromium",
+  "motionBundle",
+  "engageBrowser",
+  "skoolBrowser",
+  "db",
+  "unaccounted",
+]);
+
+/**
+ * Areas whose direct children are DIRECTORIES, one per unit of work, each worth
+ * deleting on its own — `planner/<sessionId>/{video.mp4,audio.m4a,transcript}`
+ * runs to ~3 GB per session. Listing the sessions (rather than one opaque
+ * folder total) is the difference between "21 GB, somewhere" and "seven old
+ * ingests, delete the six you're done with".
+ */
+const DIR_ENTRY = new Set<Category>(["planner"]);
 
 /**
  * Serve-URL prefix per category, so a listed file gets a preview/download link.
@@ -118,7 +181,7 @@ export interface AreaDef {
   label: string;
   hint: string;
   icon: string;
-  group: "content" | "cache";
+  group: "content" | "cache" | "system";
   danger?: boolean;
   filter?: (it: StorageItem) => boolean;
 }
@@ -171,6 +234,16 @@ const AREAS: AreaDef[] = [
     icon: "Type", label: "Custom thumbnail fonts",
     hint: "Fonts you uploaded for thumbnails. Deleting one removes it from thumbnails that use it.",
   },
+  {
+    key: "plannerIngests", category: "planner", group: "content",
+    icon: "FileVideo", label: "Planner ingests",
+    hint: "One folder per long-form Planner session: the downloaded Descript video, its extracted audio and its transcript. Roughly 3 GB each and never cleaned up automatically — the biggest thing here by far. Deleting one only costs you a re-ingest of that Descript link.",
+  },
+  {
+    key: "imageHistory", category: "imageHistory", group: "content",
+    icon: "Images", label: "AI image history",
+    hint: "Images kept from the AI Image Generator. Deleting one removes it from that tool's history.",
+  },
   // ── Cache: regenerates on demand (safe to Clear) ────────────────────────────
   {
     key: "stickerCache", category: "stickers", group: "cache",
@@ -212,6 +285,27 @@ const AREAS: AreaDef[] = [
     icon: "Chrome", label: "Remotion Chromium cache",
     hint: "A Chromium browser Remotion may have downloaded. Not used in production (Chromium is pre-baked), so always safe to clear.",
   },
+  {
+    key: "engageBrowser", category: "engageBrowser", group: "cache", danger: true,
+    icon: "MessageSquare", label: "Engagement browser profile",
+    hint: "The Chromium profile the Engagement Manager drives — cache, but it also holds the logged-in session. Clearing it signs that browser out, so you'd have to log in again before the next run.",
+  },
+  {
+    key: "skoolBrowser", category: "skoolBrowser", group: "cache", danger: true,
+    icon: "GraduationCap", label: "Skool browser profile",
+    hint: "The Chromium profile the Skool Manager drives — cache, but it also holds the logged-in Skool session. Clearing it signs that browser out, so you'd have to log in again before the next run.",
+  },
+  // ── Accounted-for but not yours to delete / not yet named ───────────────────
+  {
+    key: "database", category: "db", group: "system",
+    icon: "Database", label: "Database",
+    hint: "The sqlite file holding every project, music track, promo and setting. Counted here so the totals are honest — it can never be deleted from this page.",
+  },
+  {
+    key: "unaccounted", category: "unaccounted", group: "system",
+    icon: "HelpCircle", label: "Everything else in the data volume",
+    hint: "Bytes in the data volume that no card above claims — a directory a newer tool writes to that hasn't been given a name here yet. This line is measured as the remainder, so it can never hide anything: if it's large, something new needs a registry entry.",
+  },
 ];
 
 export interface StorageItem {
@@ -238,7 +332,7 @@ export interface StorageArea {
   label: string;
   hint: string;
   icon: string;               // lucide-react icon name
-  group: "content" | "cache";
+  group: "content" | "cache" | "system";
   cache: boolean;             // clearable wholesale via deleteStorageArea
   danger: boolean;            // deleting can break projects
   folderOnly: boolean;        // no per-file list; Clear-all only
@@ -343,15 +437,53 @@ function referencedUploads(): {
  */
 export function resolveSafe(category: Category, name: string): string | null {
   const dir = DIRS[category];
-  if (!dir || typeof name !== "string" || !name) return null;
+  if (!dir || PROTECTED.has(category) || typeof name !== "string" || !name) return null;
   const resolved = path.resolve(dir, name);
   // Must be a direct child of the category dir (no subdirs, no "..").
   if (path.dirname(resolved) !== path.resolve(dir)) return null;
   return resolved;
 }
 
+/**
+ * List the SUBDIRECTORIES of a category as items, each sized recursively — for
+ * areas where the unit of work is a folder (see DIR_ENTRY). deleteStorageFiles
+ * already removes directories recursively, so these delete like any other item.
+ */
+function listDirEntries(category: Category): StorageItem[] {
+  const dir = DIRS[category];
+  if (!dir) return [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: StorageItem[] = [];
+  for (const ent of entries) {
+    if (ent.name.startsWith(".") || !ent.isDirectory()) continue;
+    const full = path.join(dir, ent.name);
+    try {
+      const st = fs.statSync(full);
+      const sub = dirStats(full);
+      out.push({
+        category,
+        name: ent.name,
+        size: sub.size,
+        mtime: Math.round(st.mtimeMs),
+        // The folder is the item; say how many files it holds so the row reads
+        // as "a session with 3 files", not a mystery name.
+        original: `${ent.name} · ${sub.count} file${sub.count !== 1 ? "s" : ""}`,
+      });
+    } catch {
+      /* skip unreadable entries */
+    }
+  }
+  return out;
+}
+
 function listDir(category: Category): StorageItem[] {
   const dir = DIRS[category];
+  if (!dir) return [];
   let names: string[] = [];
   try {
     names = fs.readdirSync(dir);
@@ -449,7 +581,7 @@ export async function listStorage() {
   const filesByCategory: Partial<Record<Category, StorageItem[]>> = { uploads, outputs };
   const LISTABLE: Category[] = [
     "thumbnails", "thumbnailFonts", "tmp", "stickers",
-    "thumbnailCharacters", "thumbnailBackgrounds", "thumbnailCutouts",
+    "thumbnailCharacters", "thumbnailBackgrounds", "thumbnailCutouts", "imageHistory",
   ];
   for (const cat of LISTABLE) {
     const items = listDir(cat);
@@ -457,10 +589,16 @@ export async function listStorage() {
     if (base) for (const f of items) f.url = `${base}${encodeURIComponent(f.name)}`;
     filesByCategory[cat] = items;
   }
+  // Directory-per-unit categories (planner sessions): each subdir is one item.
+  for (const cat of DIR_ENTRY) filesByCategory[cat] = listDirEntries(cat);
 
   // Folder-only categories (nested bundles / part-dirs): recursive stats, no list.
+  // `unaccounted` is the computed remainder and is filled in below, not walked.
   const folderStats: Partial<Record<Category, { size: number; count: number }>> = {};
-  for (const cat of FOLDER_ONLY) folderStats[cat] = dirStats(DIRS[cat]);
+  for (const cat of FOLDER_ONLY) {
+    if (cat === "unaccounted") continue;
+    folderStats[cat] = dirStats(DIRS[cat] ?? "");
+  }
 
   // ── Turn the registry into sized display cards ──────────────────────────────
   const areas: StorageArea[] = AREAS.map((def) => {
@@ -469,8 +607,12 @@ export async function listStorage() {
     let items: StorageItem[] = [];
     let size = 0;
     let count = 0;
-    if (folderOnly) {
-      const st = folderStats[def.category] ?? dirStats(DIRS[def.category]);
+    if (def.category === "unaccounted") {
+      // Filled in after the pass — it is defined as what the others don't claim.
+      size = 0;
+      count = 0;
+    } else if (folderOnly) {
+      const st = folderStats[def.category] ?? dirStats(DIRS[def.category] ?? "");
       size = st.size;
       count = st.count;
     } else {
@@ -495,16 +637,46 @@ export async function listStorage() {
     };
   });
 
-  // Cards partition every byte once, so the grand total is just their sum; the
-  // reclaimable figure is the sum of the cache cards. The db is never a card.
-  const all = areas.reduce((s, a) => s + a.size, 0);
+  // ── Close the books against the volume itself ───────────────────────────────
+  // The cards are a claim about the data volume; dirStats(DATA_DIR) is the fact.
+  // Anything the cards fail to claim becomes the `unaccounted` card, so the two
+  // agree by construction and a directory nobody registered can no longer hide
+  // (which is exactly how 21 GB of planner ingests stayed invisible).
+  const volume = dirStats(config.dataDir);
+  const claimed = areas.reduce((s, a) => s + a.size, 0);
+  const remainder = areas.find((a) => a.category === "unaccounted")!;
+  remainder.size = Math.max(0, volume.size - claimed);
+  // Best-effort file count for the remainder; negative would mean overlap, so floor it.
+  remainder.count = Math.max(0, volume.count - areas.reduce((s, a) => s + (a.category === "unaccounted" ? 0 : a.count), 0));
+
+  const all = volume.size;
   const cacheTotal = areas.reduce((s, a) => s + (a.cache ? a.size : 0), 0);
 
   const disk = readDiskUsage(config.dataDir);
 
+  // ── Account for the rest of the disk ────────────────────────────────────────
+  // `disk.used` is the whole host filesystem, most of which isn't ours. Ask
+  // Docker for its share (images, build cache, other volumes) and report what
+  // still can't be attributed instead of leaving an unexplained gap.
+  const system = await readSystemUsage(all);
+  const systemTotal = system.buckets.reduce((s, b) => s + b.size, 0);
+  const systemReclaimable = system.buckets.reduce((s, b) => s + b.reclaimable, 0);
+  // Docker's image and build-cache figures overlap (shared layers are counted by
+  // both), so this can go negative on a build-heavy box — that's an artefact of
+  // Docker's accounting, not missing bytes, so floor it and say so in the UI.
+  const unattributed = disk ? Math.max(0, disk.used - all - systemTotal) : 0;
+
   return {
     disk,
-    totals: { all, cache: cacheTotal },
+    totals: {
+      all,
+      cache: cacheTotal,
+      /** Bytes on the disk that are not in The Lab's data volume. */
+      outside: disk ? Math.max(0, disk.used - all) : 0,
+      systemReclaimable,
+      unattributed,
+    },
+    system,
     areas,
   };
 }

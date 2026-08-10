@@ -78,6 +78,7 @@ async function main() {
     "uploads", "outputs", "tmp", "stickers", "chunked", "remotionChromium",
     "thumbnails", "thumbnailFonts",
     "thumbnailCharacters", "thumbnailBackgrounds", "thumbnailCutouts", "motionBundle",
+    "planner", "imageHistory", "engageBrowser", "skoolBrowser",
   ]) {
     await check(`resolveSafe: accepts a direct child in "${cat}"`, () => {
       const r = resolveSafe(cat, "file.bin");
@@ -213,6 +214,106 @@ async function main() {
     } finally {
       (fs as any).statfsSync = realStatfs;
     }
+  });
+
+  // ── The invariant that failed before: the cards must equal the volume ───────
+  // 21 GB of planner ingests were invisible because no card claimed them and the
+  // total was defined as the sum of the cards. Now the total is measured from
+  // DATA_DIR and the shortfall lands in `unaccounted`, so an unregistered
+  // directory shows up on its own instead of vanishing.
+  const { listStorage } = storage as any;
+
+  await check("listStorage: totals.all equals the whole data volume, not the card sum", async () => {
+    write(path.join(uploadsDir, "acct.bin"), 1000);
+    write(path.join(dataDir, "a-tool-nobody-registered/blob.bin"), 4321);
+    const res = await listStorage();
+    const volume = dirStats(dataDir);
+    assert.equal(res.totals.all, volume.size, "total is measured, not summed");
+    const cards = res.areas.reduce((s: number, a: any) => s + a.size, 0);
+    assert.equal(cards, volume.size, "cards, including the remainder, add up exactly");
+  });
+
+  await check("listStorage: an unregistered directory surfaces as `unaccounted`", async () => {
+    const res = await listStorage();
+    const other = res.areas.find((a: any) => a.category === "unaccounted");
+    assert.ok(other, "the remainder card always exists");
+    assert.ok(other.size >= 4321, `unregistered bytes are reported (got ${other.size})`);
+    assert.equal(other.group, "system");
+    assert.equal(other.cache, false, "never offered as clearable");
+  });
+
+  await check("listStorage: planner sessions list as one deletable item each", async () => {
+    write(path.join(dataDir, "planner/sessA/video.mp4"), 700);
+    write(path.join(dataDir, "planner/sessA/audio.m4a"), 300);
+    write(path.join(dataDir, "planner/sessB/video.mp4"), 500);
+    const res = await listStorage();
+    const area = res.areas.find((a: any) => a.key === "plannerIngests");
+    assert.ok(area, "planner is registered");
+    assert.equal(area.size, 1500, "sized recursively");
+    assert.equal(area.items.length, 2, "one item per session, not one opaque folder");
+    const a = area.items.find((i: any) => i.name === "sessA");
+    assert.equal(a.size, 1000, "session size is the recursive total");
+  });
+
+  await check("deleteStorageFiles: deleting a planner session frees its whole folder", async () => {
+    const res = await deleteStorageFiles({ items: [{ category: "planner", name: "sessA" }] });
+    assert.equal(res.deleted, 1);
+    assert.equal(res.freed, 1000, "recursive bytes, not 0");
+    assert.ok(!fs.existsSync(path.join(dataDir, "planner/sessA")));
+    assert.ok(fs.existsSync(path.join(dataDir, "planner/sessB")), "other sessions untouched");
+  });
+
+  // ── The db is counted but unreachable by every delete path ─────────────────
+  await check("db: counted as an area but never deletable", async () => {
+    write(path.join(dataDir, "db", "extra.bin"), 64);
+    const res = await listStorage();
+    const dbArea = res.areas.find((a: any) => a.category === "db");
+    assert.ok(dbArea && dbArea.size > 0, "the sqlite dir is counted");
+    assert.equal(dbArea.items.length, 0, "never listed file-by-file");
+    assert.equal(resolveSafe("db", "clipmagic.db"), null, "no per-file delete");
+    assert.equal(resolveSafe("db", "extra.bin"), null);
+    const r = await deleteStorageArea({ category: "db" });
+    assert.equal(r.freed, 0);
+    assert.equal(r.errors.length, 1);
+    assert.ok(fs.existsSync(path.join(dataDir, "db", "extra.bin")), "db untouched");
+  });
+
+  await check("unaccounted: synthetic area is unreachable by any delete path", async () => {
+    assert.equal(resolveSafe("unaccounted", "anything"), null);
+    const r = await deleteStorageArea({ category: "unaccounted" });
+    assert.equal(r.freed, 0);
+    assert.equal(r.errors.length, 1);
+  });
+
+  // ── The browser profiles are cache, but clearing one signs you out ──────────
+  for (const [cat, dir] of [["engageBrowser", "engage-browser"], ["skoolBrowser", "skool-browser"]] as const) {
+    await check(`deleteStorageArea: clears the ${dir} profile`, async () => {
+      write(path.join(dataDir, dir, "Default/Cookies"), 250);
+      const r = await deleteStorageArea({ category: cat });
+      assert.equal(r.freed, 250);
+      assert.ok(fs.existsSync(path.join(dataDir, dir)), "dir recreated so the app keeps working");
+    });
+  }
+
+  await check("browser profiles are flagged danger (clearing signs you out)", async () => {
+    const res = await listStorage();
+    for (const key of ["engageBrowser", "skoolBrowser"]) {
+      const a = res.areas.find((x: any) => x.key === key);
+      assert.ok(a, `${key} registered`);
+      assert.equal(a.cache, true, "clearable");
+      assert.equal(a.danger, true, "warns that the login is lost");
+    }
+  });
+
+  // ── The disk gap is reported, not left unexplained ──────────────────────────
+  await check("listStorage: reports what's outside the data volume", async () => {
+    const res = await listStorage();
+    if (!res.disk) return; // platform without statfs
+    assert.equal(res.totals.outside, Math.max(0, res.disk.used - res.totals.all));
+    assert.ok(res.totals.outside > 0, "a real disk always holds more than our volume");
+    assert.ok(res.system, "a system breakdown is always present");
+    // No Docker socket in the test env — it must degrade with a reason, not throw.
+    if (!res.system.available) assert.ok(res.system.reason, "explains why it's missing");
   });
 
   // Cleanup.

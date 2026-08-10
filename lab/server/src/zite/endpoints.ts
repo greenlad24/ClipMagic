@@ -12,6 +12,7 @@
  */
 import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects, ZiteError } from "./store.js";
 import { listStorage, deleteStorageFiles, deleteStorageArea } from "./storage.js";
+import { pruneSystemStorage } from "./systemStorage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
 import { createJob, getJob, listJobs as listRenderJobs } from "../db/jobs.js";
@@ -5263,6 +5264,7 @@ export const HANDLERS: Record<string, Handler> = {
   listStorage,
   deleteStorageFiles,
   deleteStorageArea,
+  pruneSystemStorage,
   // Thumbnail Designer (LAB tool)
   thumbnailStatus,
   analyzeThumbnailScript,

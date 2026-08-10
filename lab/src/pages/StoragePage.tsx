@@ -5,6 +5,9 @@ import {
   // area icons (resolved by name from the server registry)
   Video, Music, AudioLines, Film, Clapperboard, MonitorPlay, Image as ImageIcon, Type, Sticker,
   Database, FolderClock, UserSquare, Palette, Scissors, Sparkles, Chrome,
+  FileVideo, Images, MessageSquare, GraduationCap, HelpCircle,
+  // "outside The Lab" bucket icons
+  Layers, Hammer, Boxes, Container,
   type LucideIcon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,7 +16,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { listStorage, deleteStorageFiles, deleteStorageArea } from 'zite-endpoints-sdk';
+import { listStorage, deleteStorageFiles, deleteStorageArea, pruneSystemStorage } from 'zite-endpoints-sdk';
 
 // Server-driven model — every card the UI renders comes from `areas` (see
 // server/src/zite/storage.ts). The client never hard-codes the list of areas,
@@ -35,7 +38,7 @@ interface StorageArea {
   label: string;
   hint: string;
   icon: string;
-  group: 'content' | 'cache';
+  group: 'content' | 'cache' | 'system';
   cache: boolean;
   danger: boolean;
   folderOnly: boolean;
@@ -43,9 +46,28 @@ interface StorageArea {
   count: number;
   items: StorageItem[];
 }
+// One line of "what's on the disk that isn't ours" — Docker images, build cache,
+// other services' volumes (see server/src/zite/systemStorage.ts).
+interface SystemBucket {
+  key: string;
+  label: string;
+  hint: string;
+  icon: string;
+  size: number;
+  count: number;
+  reclaimable: number;
+  prune?: 'buildCache' | 'danglingImages';
+}
 interface StorageData {
   disk: { total: number; free: number; used: number } | null;
-  totals: { all: number; cache: number };
+  totals: {
+    all: number;              // The Lab's data volume
+    cache: number;            // reclaimable inside it
+    outside: number;          // disk used that isn't the data volume
+    systemReclaimable: number;// prunable share of `outside`
+    unattributed: number;     // outside, minus what Docker could account for
+  };
+  system: { available: boolean; reason?: string; buckets: SystemBucket[] };
   areas: StorageArea[];
 }
 
@@ -53,6 +75,8 @@ interface StorageData {
 const ICONS: Record<string, LucideIcon> = {
   Video, Music, AudioLines, Film, Clapperboard, MonitorPlay, Image: ImageIcon, Type, Sticker,
   Database, FolderClock, UserSquare, Palette, Scissors, Sparkles, Chrome, HardDrive,
+  FileVideo, Images, MessageSquare, GraduationCap, HelpCircle,
+  Layers, Hammer, Boxes, Container,
 };
 const iconOf = (name: string): LucideIcon => ICONS[name] ?? HardDrive;
 
@@ -65,9 +89,10 @@ const fmtBytes = (n: number) => {
 const fmtDate = (ms: number) => new Date(ms).toLocaleString();
 const keyOf = (it: StorageItem) => `${it.category}/${it.name}`;
 
-const GROUPS: { group: 'content' | 'cache'; title: string; blurb: string }[] = [
-  { group: 'content', title: 'Your media', blurb: 'Uploads and finished renders. Deleting is per-file and permanent.' },
+const GROUPS: { group: 'content' | 'cache' | 'system'; title: string; blurb: string }[] = [
+  { group: 'content', title: 'Your media', blurb: 'Uploads, ingests and finished renders. Deleting is per-file and permanent.' },
   { group: 'cache', title: 'Regenerable cache', blurb: 'Everything here is rebuilt on demand — safe to clear to reclaim space.' },
+  { group: 'system', title: 'Counted, not deletable', blurb: 'Shown so the totals add up to the volume exactly. Nothing here can be removed from this page.' },
 ];
 
 export default function StoragePage() {
@@ -80,6 +105,9 @@ export default function StoragePage() {
   // Pending "Clear whole area" confirm: the cache area to wipe.
   const [clearArea, setClearArea] = useState<StorageArea | null>(null);
   const [clearing, setClearing] = useState(false);
+  // Pending Docker prune: the "outside The Lab" bucket to reclaim.
+  const [pruneTarget, setPruneTarget] = useState<SystemBucket | null>(null);
+  const [pruning, setPruning] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,6 +185,25 @@ export default function StoragePage() {
     }
   };
 
+  const doPrune = async () => {
+    if (!pruneTarget) return;
+    setPruning(true);
+    try {
+      const res = await pruneSystemStorage({ target: pruneTarget.prune });
+      if (res.errors?.length) {
+        toast.error(res.errors[0] ?? 'Prune failed');
+      } else {
+        toast.success(`Reclaimed ${fmtBytes(res.freed)} from ${pruneTarget.label.toLowerCase()}`);
+      }
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message ?? 'Prune failed');
+    } finally {
+      setPruning(false);
+      setPruneTarget(null);
+    }
+  };
+
   const diskPct = data?.disk ? Math.min(100, Math.round((data.disk.used / data.disk.total) * 100)) : null;
   // Breakdown bars: only areas that actually consume space, biggest first.
   const breakdown = [...areas].filter((a) => a.size > 0).sort((a, b) => b.size - a.size);
@@ -198,15 +245,37 @@ export default function StoragePage() {
                     {fmtBytes(data.disk.free)} free of {fmtBytes(data.disk.total)} · {fmtBytes(data.disk.used)} used
                   </span>
                 </div>
-                <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                {/* The used bar, split into the two halves that used to be one
+                    unexplained number: The Lab's own volume vs everything else
+                    on the host (Docker, the OS, other services). */}
+                <div className="h-2.5 bg-muted rounded-full overflow-hidden flex">
                   <div
-                    className={`h-full rounded-full ${diskPct! > 90 ? 'bg-destructive' : diskPct! > 75 ? 'bg-amber-500' : 'bg-primary'}`}
-                    style={{ width: `${diskPct}%` }}
+                    className="h-full bg-primary"
+                    style={{ width: `${(data.totals.all / data.disk.total) * 100}%` }}
+                    title={`The Lab data: ${fmtBytes(data.totals.all)}`}
                   />
+                  <div
+                    className={`h-full ${diskPct! > 90 ? 'bg-destructive' : 'bg-amber-500'}`}
+                    style={{ width: `${(data.totals.outside / data.disk.total) * 100}%` }}
+                    title={`Outside The Lab: ${fmtBytes(data.totals.outside)}`}
+                  />
+                </div>
+                <div className="flex items-center gap-4 text-[11px] text-muted-foreground flex-wrap">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-primary shrink-0" />
+                    The Lab data <span className="font-mono text-foreground">{fmtBytes(data.totals.all)}</span>
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${diskPct! > 90 ? 'bg-destructive' : 'bg-amber-500'}`} />
+                    Everything else on this server <span className="font-mono text-foreground">{fmtBytes(data.totals.outside)}</span>
+                  </span>
                 </div>
                 {diskPct! > 90 && (
                   <p className="text-[11px] text-destructive flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" /> Disk nearly full — uploads and renders may fail. Clear cache or delete unused media below.
+                    <AlertTriangle className="w-3 h-3" /> Disk nearly full — uploads and renders may fail.
+                    {data.totals.systemReclaimable > data.totals.cache
+                      ? ` Most of it isn't The Lab's — see "Everything else on this server" below, where ${fmtBytes(data.totals.systemReclaimable)} can be reclaimed.`
+                      : ' Clear cache or delete unused media below.'}
                   </p>
                 )}
               </div>
@@ -240,6 +309,61 @@ export default function StoragePage() {
                 <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shrink-0" /> = regenerable cache (safe to clear) · others are your content
               </p>
             </div>
+          </div>
+        )}
+
+        {/* What's using the disk that ISN'T The Lab. Without this the page can
+            only say "193 GB used, 14 GB of it mine" and leave you guessing. */}
+        {data && data.totals.outside > 0 && (
+          <div className="rounded-xl border border-border p-4 space-y-3">
+            <div className="flex items-baseline justify-between gap-2 flex-wrap">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Everything else on this server
+              </h2>
+              <span className="text-[11px] text-muted-foreground font-mono">{fmtBytes(data.totals.outside)}</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground/80">
+              The disk is shared with Docker and the rest of the stack, so "used" above is much larger than The Lab's own data.
+              This is the rest of it — none of it is your media, and the biggest part is usually reclaimable.
+            </p>
+
+            {!data.system.available ? (
+              <p className="text-[11px] text-muted-foreground">{data.system.reason}</p>
+            ) : (
+              <div className="space-y-2">
+                {data.system.buckets.map((b) => {
+                  const Icon = iconOf(b.icon);
+                  return (
+                    <div key={b.key} className="rounded-lg border border-border/60 px-3 py-2.5 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span className="text-xs font-medium truncate">{b.label}</span>
+                          <span className="text-[11px] text-muted-foreground font-mono shrink-0">{fmtBytes(b.size)}</span>
+                        </div>
+                        {b.prune && b.reclaimable > 0 && (
+                          <Button
+                            variant="outline" size="sm"
+                            className="h-6 text-[11px] gap-1.5 shrink-0"
+                            onClick={() => setPruneTarget(b)}
+                            disabled={pruning}
+                          >
+                            <Eraser className="w-3 h-3" /> Reclaim {fmtBytes(b.reclaimable)}
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground/80">{b.hint}</p>
+                    </div>
+                  );
+                })}
+                {data.totals.unattributed > 0 && (
+                  <p className="text-[10px] text-muted-foreground/70 pt-0.5">
+                    A further {fmtBytes(data.totals.unattributed)} is the OS, logs and other files outside Docker — plus some slack,
+                    because Docker counts layers shared between an image and the build cache twice.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -360,7 +484,9 @@ export default function StoragePage() {
             <AlertDialogTitle>Clear {clearArea?.label}?</AlertDialogTitle>
             <AlertDialogDescription>
               This wipes the entire {clearArea?.label.toLowerCase()} ({clearArea?.count ?? 0} file{(clearArea?.count ?? 0) !== 1 ? 's' : ''}, {fmtBytes(clearArea?.size ?? 0)}).
-              {' '}It is pure cache — the app regenerates it on demand, so no projects or uploads are affected.
+              {clearArea?.danger
+                ? ' No projects or uploads are affected, but this profile also holds a logged-in session — you will have to sign in again before the next run.'
+                : ' It is pure cache — the app regenerates it on demand, so no projects or uploads are affected.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -372,6 +498,32 @@ export default function StoragePage() {
             >
               {clearing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
               Clear {fmtBytes(clearArea?.size ?? 0)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Docker prune confirm — only ever offered for the two operations that
+          cannot lose work: build cache, and untagged leftover images. */}
+      <AlertDialog open={!!pruneTarget} onOpenChange={(o) => !o && setPruneTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reclaim {fmtBytes(pruneTarget?.reclaimable ?? 0)} from {pruneTarget?.label.toLowerCase()}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pruneTarget?.prune === 'buildCache'
+                ? 'This clears Docker’s build cache. Nothing running is affected and no data is lost — the next image build just takes longer because it starts from scratch.'
+                : 'This removes untagged leftover images that no container uses. Tagged images — including your backup-pre-* and candidate-* rollback points — are left alone.'}
+              {' '}It runs on the server and may take a minute.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pruning}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); doPrune(); }}
+              disabled={pruning}
+            >
+              {pruning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+              Reclaim {fmtBytes(pruneTarget?.reclaimable ?? 0)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -140,6 +140,7 @@ export const renderVideo = endpoint("renderVideo");
 export const listStorage = endpoint("listStorage");
 export const deleteStorageFiles = endpoint("deleteStorageFiles");
 export const deleteStorageArea = endpoint("deleteStorageArea");
+export const pruneSystemStorage = endpoint("pruneSystemStorage");
 export const reviewEdit = endpoint("reviewEdit");
 // AI Image Generator (LAB tool) — ephemeral Nano Banana chat.
 export const imageGeneratorStatus =
