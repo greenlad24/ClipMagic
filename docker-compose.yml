@@ -1,0 +1,15 @@
+services:
+  avatar-narrator:
+    build: .
+    image: avatar-narrator:latest
+    restart: unless-stopped
+    ports:
+      # Bound to loopback: the app has no authentication of its own. Put it
+      # behind a reverse proxy that does, or a tunnel, before exposing it.
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env
+    volumes:
+      # Personas, portraits, character sheets, narration audio, finished videos
+      # and the SQLite database. The only state worth keeping.
+      - ./data:/data
