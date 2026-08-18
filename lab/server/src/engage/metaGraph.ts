@@ -61,8 +61,15 @@ export function metaConfigured(): boolean {
 function resolveFetch(fetchImpl?: FetchFn): FetchFn {
   return (
     fetchImpl ??
-    (async (u) => {
-      const r = await fetch(u);
+    // `init` MUST be forwarded. This wrapper used to take only the url and
+    // silently drop it, which turned every graphPost into a GET: the method,
+    // the headers and the whole body went nowhere. Meta answered those GETs
+    // with "(#100) Tried accessing nonexisting field (messages/replies)" —
+    // which reads exactly like a bad object id, so the comment-reply path was
+    // signed off as "reaches Meta and authenticates" when in truth NOTHING it
+    // ever sent could have been delivered.
+    (async (u, init) => {
+      const r = await fetch(u, init as RequestInit | undefined);
       return { ok: r.ok, status: r.status, json: () => r.json() };
     })
   );

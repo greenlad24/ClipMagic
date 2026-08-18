@@ -45,8 +45,10 @@ function isCommentsDisabled(status: number, json: any): boolean {
 function resolveFetch(fetchImpl?: FetchFn): FetchFn {
   return (
     fetchImpl ??
-    (async (u) => {
-      const r = await fetch(u);
+    // Reads only today, but forward `init` anyway — the sibling wrapper in
+    // metaGraph.ts dropping it is what made every Meta write a silent GET.
+    (async (u, init) => {
+      const r = await fetch(u, init as RequestInit | undefined);
       return { ok: r.ok, status: r.status, json: () => r.json() };
     })
   );
