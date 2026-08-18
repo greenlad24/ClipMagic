@@ -107,7 +107,7 @@ export interface SendResult {
  */
 async function sendViaMetaApi(
   platform: BrowserPlatform,
-  opts: { channelId: string; commentId: string | null; threadId: string | null; text: string },
+  opts: { channelId: string; commentId: string | null; threadId: string | null; text: string; dryRun: boolean },
 ): Promise<SendResult | null> {
   if (platform === "tiktok") return null;
   if (!metaConfigured()) return null;
@@ -121,7 +121,7 @@ async function sendViaMetaApi(
   const targetId = platform === "instagram" ? opts.threadId || opts.commentId : opts.commentId || opts.threadId;
   if (!targetId) return null;
 
-  if (dryRunEnabled()) {
+  if (opts.dryRun) {
     return {
       ok: false,
       externalId: null,
@@ -162,7 +162,7 @@ async function sendViaMetaApi(
  */
 async function sendViaMetaDm(
   platform: BrowserPlatform,
-  opts: { channelId: string; recipientId: string | null; text: string; receivedAt: number | null },
+  opts: { channelId: string; recipientId: string | null; text: string; receivedAt: number | null; dryRun: boolean },
 ): Promise<SendResult> {
   const fail = (error: string, permanent = false): SendResult => ({
     ok: false,
@@ -197,7 +197,7 @@ async function sendViaMetaDm(
     ? ` Their message arrived ${Math.floor((Date.now() - (opts.receivedAt as number)) / 3_600_000)}h ago, past Meta's 24-hour reply window — answer this one by hand.`
     : "";
 
-  if (dryRunEnabled()) {
+  if (opts.dryRun) {
     return {
       ok: false,
       externalId: null,
@@ -232,7 +232,14 @@ async function sendViaMetaDm(
  */
 async function sendDm(
   platform: BrowserPlatform,
-  opts: { channelId: string; authorId: string | null; threadId: string | null; postedAt: number | null; text: string },
+  opts: {
+    channelId: string;
+    authorId: string | null;
+    threadId: string | null;
+    postedAt: number | null;
+    text: string;
+    dryRun: boolean;
+  },
 ): Promise<SendResult> {
   const browserFallback = async (apiError: string | null): Promise<SendResult> => {
     if (platform !== "instagram") {
@@ -263,7 +270,7 @@ async function sendDm(
     // worth answering under Jake's own rules, so accepting is the natural next
     // step. Spam never reaches this line — it was skipped at draft time.
     const r = await sendInstagramDm(opts.threadId, opts.text, {
-      dryRun: dryRunEnabled(),
+      dryRun: opts.dryRun,
       acceptPending: true,
     });
     if (r.accepted) console.log(`[engage/reply] accepted Instagram request ${opts.threadId} before replying`);
@@ -285,6 +292,7 @@ async function sendDm(
     recipientId: opts.authorId,
     text: opts.text,
     receivedAt: opts.postedAt,
+    dryRun: opts.dryRun,
   });
 
   if (viaApi.ok || viaApi.dryRun) return viaApi;
@@ -384,15 +392,23 @@ export async function sendReply(
     authorId: string | null;
     /** When their message arrived — the 24-hour DM window runs from here. */
     postedAt: number | null;
+    /**
+     * Override the global dry run. The autonomous worker never passes this: its
+     * whole reason for existing is that nobody reads its replies first. A person
+     * pressing Send in the UI HAS read it, so that path passes false and the
+     * reply actually goes.
+     */
+    dryRun?: boolean;
   },
 ): Promise<SendResult> {
   const { permalink, text } = opts;
+  const dry = opts.dryRun ?? dryRunEnabled();
 
   // A DM is not a comment: different API, different fallback, and a hard 24-hour
   // deadline on the API half. Route it before any of the comment machinery below,
   // which would otherwise try to post a private answer into a public composer.
   if (opts.kind === "dm") {
-    return sendDm(platform, opts);
+    return sendDm(platform, { ...opts, dryRun: dry });
   }
 
   // API FIRST for Instagram and Facebook. Only when it can't be attempted —
@@ -402,6 +418,7 @@ export async function sendReply(
     commentId: opts.commentId,
     threadId: opts.threadId,
     text,
+    dryRun: dry,
   });
   if (viaApi) return viaApi;
 
@@ -426,8 +443,6 @@ export async function sendReply(
       mechanism: "browser",
     };
   }
-
-  const dry = dryRunEnabled();
 
   // Annotated so the object literals keep their literal `mechanism` type
   // rather than widening to `string`.

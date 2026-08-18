@@ -843,6 +843,18 @@ export function hasReply(inboxId: string): boolean {
 }
 
 /**
+ * The newest reply row for an inbox item, whatever its status. Used by the
+ * regenerate path, which has to retire the previous decision before writing a
+ * new one — an item with two live decisions would be dispatched twice.
+ */
+export function latestReplyFor(inboxId: string): ReplyRecord | null {
+  const row = db
+    .prepare("SELECT * FROM engage_replies WHERE inbox_id = ? ORDER BY created_at DESC LIMIT 1")
+    .get(inboxId) as any;
+  return row ? rowToReply(row) : null;
+}
+
+/**
  * Replies that are due to be dispatched: pending, past their not_before, and
  * not yet exhausted their retries. Oldest first so the queue drains in order.
  */

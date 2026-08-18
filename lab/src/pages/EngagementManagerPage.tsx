@@ -6,6 +6,8 @@ import {
   engageListThreads,
   engageKillSwitch,
   engageRefreshStats,
+  engageDraftReply,
+  engageSendReply,
   type EngageStatus,
   type EngagePlatform,
   type EngageInboxKind,
@@ -313,6 +315,144 @@ function ReplyRow({ item }: { item: InboxItem }) {
 const REPLY_COLLAPSE_AT = 3;
 const REPLY_COLLAPSED_TAIL = 2;
 
+// ── Reply composer (per card) ────────────────────────────────────────────────
+/**
+ * Write a reply to one message and send it yourself.
+ *
+ * Deliberately separate from the autonomous path. "Write with AI" drafts in the
+ * same voice the bot uses, but nothing here is queued for the worker: Send
+ * dispatches immediately and reports what happened, bypassing the pacing delay,
+ * the kill-switch and the dry run — every one of which exists to make an
+ * UNATTENDED replier safe, and none of which should sit between a person
+ * pressing Send and the message going out.
+ *
+ * Generating is optional. An empty box and Send is a perfectly good way to
+ * answer somebody in your own words.
+ */
+function ReplyComposer({
+  item,
+  onSent,
+  onClose,
+}: {
+  item: InboxItem;
+  onSent: () => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState('');
+  const [replyId, setReplyId] = useState<string | null>(null);
+  const [busy, setBusy] = useState<'idle' | 'generating' | 'sending'>('idle');
+  const [sent, setSent] = useState(false);
+
+  const generate = async () => {
+    setBusy('generating');
+    try {
+      // regenerate: the bot may already have decided about this one — skipped it
+      // as spam, or written something you'd rather replace. Asking again is the
+      // whole point of the button.
+      const { reply } = await engageDraftReply({ inboxId: item.id, regenerate: true });
+      if (reply?.generatedText) {
+        setText(reply.generatedText);
+        setReplyId(reply.id);
+        toast.success('Draft ready — edit it if you want, then send.');
+      } else {
+        // A skip is a real answer, not a failure: it's the voice prompt's own
+        // rules deciding this one isn't worth replying to. Say why, and leave the
+        // box open so the operator can overrule it by hand.
+        toast.message('The bot decided not to reply', {
+          description: reply?.decideReason ?? 'No reason given.',
+        });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not generate a reply.');
+    } finally {
+      setBusy('idle');
+    }
+  };
+
+  const send = async () => {
+    const body = text.trim();
+    if (!body) {
+      toast.error('Write something first.');
+      return;
+    }
+    setBusy('sending');
+    try {
+      const res = await engageSendReply(
+        replyId ? { replyId, text: body } : { inboxId: item.id, text: body },
+      );
+      if (res.ok) {
+        setSent(true);
+        toast.success(`Sent${res.mechanism ? ` via ${res.mechanism}` : ''}.`);
+        onSent();
+      } else {
+        // The platform's own refusal — a closed 24-hour window, a missing
+        // composer — is the most useful thing we can show, so show it whole.
+        toast.error(res.error ?? 'The platform refused it.');
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not send.');
+    } finally {
+      setBusy('idle');
+    }
+  };
+
+  if (sent) {
+    return (
+      <div className="mt-2.5 rounded-r-lg border-l-2 border-l-[hsl(var(--chart-3))]/50 bg-[hsl(var(--chart-3))]/[0.06] py-2 pl-2.5 pr-2.5">
+        <div className="mb-1 flex items-center gap-1.5 text-[10.5px] font-semibold text-[hsl(var(--chart-3))]">
+          <Check className="h-3 w-3" /> You replied
+        </div>
+        <div className="text-[12.5px] text-foreground/90">{text}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2.5">
+      <textarea
+        autoFocus
+        value={text}
+        disabled={busy !== 'idle'}
+        placeholder="Write a reply, or generate one…"
+        onChange={(e) => setText(e.target.value)}
+        className="h-20 w-full resize-none rounded-lg border border-primary/50 bg-input p-2 text-[12.5px] text-foreground outline-none disabled:opacity-60"
+      />
+      <div className="mt-1.5 flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={busy !== 'idle'}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 py-1 text-[11.5px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={generate}
+          disabled={busy !== 'idle'}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 py-1 text-[11.5px] text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        >
+          {busy === 'generating' ? (
+            <RefreshCw className="h-3 w-3 animate-spin" />
+          ) : (
+            <Bot className="h-3 w-3" />
+          )}
+          {text ? 'Regenerate' : 'Write with AI'}
+        </button>
+        <button
+          type="button"
+          onClick={send}
+          disabled={busy !== 'idle' || !text.trim()}
+          className="inline-flex items-center gap-1.5 rounded-md border border-transparent bg-primary px-2.5 py-1 text-[11.5px] font-semibold text-primary-foreground disabled:opacity-50"
+        >
+          {busy === 'sending' ? <Clock className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+          Send
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── LIVE thread card (root comment + its nested reply transcript) ─────────────
 // Monitor-only: real YouTube data carries no bot reply, so no reply/edit surface
 // is rendered here — the ReplyBubble/InlineEditor components stay reserved for
@@ -330,6 +470,7 @@ function ThreadCard({
   dm?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [composing, setComposing] = useState(false);
   const { root, replies, replyCount } = thread;
   const author = root.authorName || root.authorHandle || 'Unknown';
   const handle = root.authorHandle ? `@${root.authorHandle}` : '';
@@ -406,6 +547,18 @@ function ThreadCard({
         </div>
       )}
 
+      {/* Reply composer — opened from the Reply action below */}
+      {composing && (
+        <ReplyComposer
+          item={root}
+          onSent={() => {
+            setComposing(false);
+            onReview();
+          }}
+          onClose={() => setComposing(false)}
+        />
+      )}
+
       {/* Root actions */}
       <div className="mt-2 flex items-center justify-end gap-1.5">
         {reviewed ? (
@@ -418,6 +571,14 @@ function ThreadCard({
               <Check className="h-3 w-3" /> Mark reviewed
             </CardAction>
           </span>
+        )}
+        {/* Always visible, not hover-gated like the others: replying is the
+            point of the tool, and a button you have to find by hovering is a
+            button people don't press. */}
+        {!composing && (
+          <CardAction primary onClick={() => setComposing(true)}>
+            <Send className="h-3 w-3" /> Reply
+          </CardAction>
         )}
         {root.permalink && (
           <CardAction href={root.permalink}>
