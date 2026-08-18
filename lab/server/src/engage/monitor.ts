@@ -44,6 +44,7 @@ import {
   metaErrMsg,
 } from "./metaGraph.js";
 import { fetchTikTokComments, tiktokConfigured, TikTokError } from "./tiktok.js";
+import { readInstagramRequests, requestToInboxItems } from "./dmBrowser.js";
 import { isPolling, setPolling, markPollSuccess, setLastError } from "./registry.js";
 import type { EngageChannel } from "./types.js";
 
@@ -62,6 +63,17 @@ function pollIntervalMs(): number {
 function tiktokPollIntervalMs(): number {
   const raw = Number(process.env.ENGAGE_TIKTOK_POLL_INTERVAL_MS);
   return Number.isFinite(raw) && raw >= 3_600_000 ? Math.floor(raw) : 7_200_000;
+}
+
+/**
+ * How often the logged-in browser is walked for Instagram message REQUESTS (ms).
+ * Deliberately far slower than the API loop: this is real page loads in a real
+ * browser, and hammering Instagram from a datacenter IP is how an account gets
+ * challenged. Default 30 min; floored at 5.
+ */
+function igRequestIntervalMs(): number {
+  const raw = Number(process.env.ENGAGE_IG_REQUEST_INTERVAL_MS);
+  return Number.isFinite(raw) && raw >= 300_000 ? Math.floor(raw) : 1_800_000;
 }
 
 /** Recent uploads scanned per channel per cycle (bounds quota). */
@@ -160,6 +172,12 @@ async function runCycle(trigger: string): Promise<void> {
       // Surface a Meta error only if YouTube didn't already claim lastError.
       if (meta.error && !hardError) hardError = meta.error;
     }
+    // Instagram message requests, read through the logged-in browser. The Graph
+    // API cannot see them at all, and with no follows EVERY Instagram DM arrives
+    // as one — so without this pass the Instagram inbox is permanently empty no
+    // matter how healthy the API path looks.
+    ingested += await runInstagramRequests();
+
     if (tiktokOn) {
       // TikTok is throttled to its own slow cadence INSIDE runTikTok — most cycles
       // it's a no-op (nothing due). Never surfaces a hard error (best-effort scrape).
@@ -223,6 +241,47 @@ async function runMeta(): Promise<{ ingested: number; error: string | null }> {
     ingested,
     error: needsReauth ? "A Meta channel's token expired — reconnect it in Settings to resume monitoring." : null,
   };
+}
+
+/** Last time the browser was walked for Instagram requests (epoch-ms, per process). */
+let lastIgRequestSweep = 0;
+/** Logged once per process so a signed-out browser doesn't fill the log. */
+let loggedIgRequestError = false;
+
+/**
+ * Read pending Instagram message requests through the logged-in browser and
+ * ingest them like any other DM.
+ *
+ * Gated to its own slow cadence — the API loop can run every 10 minutes for free,
+ * but this drives a real Chromium. Best-effort in every direction: a signed-out
+ * session, a DOM change or a captcha logs once and returns 0 rather than taking
+ * the cycle down.
+ */
+async function runInstagramRequests(): Promise<number> {
+  const nowMs = Date.now();
+  if (nowMs - lastIgRequestSweep < igRequestIntervalMs()) return 0;
+
+  const channels = listEnabledChannels("instagram");
+  if (channels.length === 0) return 0;
+  lastIgRequestSweep = nowMs;
+
+  let ingested = 0;
+  try {
+    const requests = await readInstagramRequests();
+    for (const req of requests) {
+      for (const item of requestToInboxItems(req, channels[0].id)) {
+        if (insertInboxItem(item).inserted) ingested++;
+      }
+    }
+    loggedIgRequestError = false;
+    if (ingested > 0) console.log(`[engage] ingested ${ingested} message(s) from Instagram requests`);
+  } catch (e) {
+    if (!loggedIgRequestError) {
+      loggedIgRequestError = true;
+      console.warn(`[engage] Instagram request sweep failed — ${errMsg(e)}`);
+    }
+  }
+  return ingested;
 }
 
 /**

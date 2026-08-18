@@ -63,6 +63,7 @@ import {
   type BrowserPlatform,
 } from "./browser.js";
 import { navigationAllowed } from "./browserSession.js";
+import { sendInstagramDm } from "./dmBrowser.js";
 import { getChannelAuth, getChannelMetaPageId } from "./db.js";
 import { getMetaCreds } from "../settings/postizSecrets.js";
 import {
@@ -217,6 +218,83 @@ async function sendViaMetaDm(
   }
 }
 
+/**
+ * Answer a direct message: Graph API first, logged-in browser second.
+ *
+ * The API is preferred wherever it can work — a token beats a DOM, and it has no
+ * captcha and no ToS grey area. But it has two blind spots the browser does not:
+ * an Instagram message REQUEST is invisible to it (no conversation, no
+ * page-scoped sender id, nothing to address), and it refuses anything older than
+ * 24 hours. Those are exactly the cases that fall through to here.
+ *
+ * The browser is not tried for arbitrary API failures — a dead token or a bad id
+ * fails the same way in a browser, just slower and less legibly.
+ */
+async function sendDm(
+  platform: BrowserPlatform,
+  opts: { channelId: string; authorId: string | null; threadId: string | null; postedAt: number | null; text: string },
+): Promise<SendResult> {
+  const browserFallback = async (apiError: string | null): Promise<SendResult> => {
+    if (platform !== "instagram") {
+      // Facebook's browser profile is signed out (verified 2026-08-18: facebook.com
+      // serves the logged-out chooser), and no Messenger composer has ever been
+      // probed, so there is nothing here to fall back TO. Say that plainly rather
+      // than failing in a way that looks like a bug.
+      return {
+        ok: false,
+        externalId: null,
+        dryRun: false,
+        permanent: true,
+        mechanism: "meta-api",
+        error: `${apiError ?? "The API could not deliver this."} No browser fallback for ${platform} DMs yet — its browser session is signed out.`,
+      };
+    }
+    if (!opts.threadId) {
+      return {
+        ok: false,
+        externalId: null,
+        dryRun: false,
+        permanent: true,
+        mechanism: "browser",
+        error: `${apiError ?? "The API could not deliver this."} No thread id either, so the browser has nowhere to type.`,
+      };
+    }
+    // acceptPending: by here the reply generator has already judged this message
+    // worth answering under Jake's own rules, so accepting is the natural next
+    // step. Spam never reaches this line — it was skipped at draft time.
+    const r = await sendInstagramDm(opts.threadId, opts.text, {
+      dryRun: dryRunEnabled(),
+      acceptPending: true,
+    });
+    if (r.accepted) console.log(`[engage/reply] accepted Instagram request ${opts.threadId} before replying`);
+    return {
+      ok: r.ok,
+      externalId: null,
+      dryRun: r.dryRun,
+      mechanism: "browser",
+      error: r.error,
+    };
+  };
+
+  // A browser-read request has no page-scoped sender id, because the API cannot
+  // see the conversation at all. Don't bother asking it.
+  if (!opts.authorId) return browserFallback(null);
+
+  const viaApi = await sendViaMetaDm(platform, {
+    channelId: opts.channelId,
+    recipientId: opts.authorId,
+    text: opts.text,
+    receivedAt: opts.postedAt,
+  });
+
+  if (viaApi.ok || viaApi.dryRun) return viaApi;
+  // `permanent` on the API path means a scope is missing or the 24-hour window
+  // has closed — both of which the browser is immune to. Anything else is a real
+  // error worth reporting as-is.
+  if (viaApi.permanent) return browserFallback(viaApi.error);
+  return viaApi;
+}
+
 /** Dry run is ON unless explicitly disabled — see the caveat above. */
 export function dryRunEnabled(): boolean {
   return (process.env.ENGAGE_REPLY_DRY_RUN || "true").toLowerCase() !== "false";
@@ -310,16 +388,11 @@ export async function sendReply(
 ): Promise<SendResult> {
   const { permalink, text } = opts;
 
-  // A DM is not a comment: different API, no browser fallback, and a hard
-  // 24-hour deadline. Route it before any of the comment machinery below, which
-  // would otherwise try to post a private answer into a public composer.
+  // A DM is not a comment: different API, different fallback, and a hard 24-hour
+  // deadline on the API half. Route it before any of the comment machinery below,
+  // which would otherwise try to post a private answer into a public composer.
   if (opts.kind === "dm") {
-    return sendViaMetaDm(platform, {
-      channelId: opts.channelId,
-      recipientId: opts.authorId,
-      text,
-      receivedAt: opts.postedAt,
-    });
+    return sendDm(platform, opts);
   }
 
   // API FIRST for Instagram and Facebook. Only when it can't be attempted —
