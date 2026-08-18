@@ -104,6 +104,11 @@ const LOOPBACK_FN_EXACT = new Set([
   // whole community every time you want to check.
   "/api/fn/skoolEmailNotify",
   "/api/fn/skoolAttach",
+  // Runs the real publish flow with every write to Skool aborted, so "does the
+  // composer actually submit?" can be asked without a post or an email
+  // reaching 65 members. Here rather than behind the sign-in gate for the same
+  // reason as the probe: the failure it diagnoses only ever happens unattended.
+  "/api/fn/skoolDryPublish",
   // Read-only and free: what would get a classroom page next, and what already
   // has one. Its writing counterpart is deliberately NOT here — see below.
   "/api/fn/skoolVideoLessonStatus",

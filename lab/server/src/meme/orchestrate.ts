@@ -5,10 +5,15 @@
  *   1. FREE path — search Giphy + Tenor, then an AI fit-review picks the best
  *      candidate (or drops it). This is tried FIRST for every moment.
  *   2. PAID fallback — for moments the free path left WITHOUT a fitting sticker,
- *      generate one with OpenAI (gpt-image-1). Capped per video at 6 OpenAI
- *      generations by default (MEME_OPENAI_MAX overrides). When more moments need
- *      generation than the cap allows, the strongest/earliest moments win
- *      (deterministic prioritization) and the rest stay captions-only.
+ *      generate one (Segmind GPT Image 2 by default, OpenAI as its own rescue —
+ *      see meme/imagegen.ts). Capped per video at 6 generations by default
+ *      (MEME_OPENAI_MAX overrides). When more moments need generation than the
+ *      cap allows, the strongest/earliest moments win (deterministic
+ *      prioritization) and the rest stay captions-only.
+ *
+ * The `openai*` names on the cap and its counters predate the move to Segmind
+ * and now mean "the PAID generation path" whichever provider serves it; the env
+ * var keeps its name so existing deployments aren't silently un-capped.
  *
  * The provider calls are INJECTED (search/review/generate/download), so this
  * whole orchestration — the source order, the per-video cap, the prioritization,
@@ -25,11 +30,12 @@ import type { EmphasisStickerClip } from "./sticker.js";
 import { placeSticker } from "./sticker.js";
 
 /**
- * OpenAI generations allowed per video. The DEFAULT cap is 6 — a hard ceiling on
- * how many stickers we'll ever pay to generate per video, keeping cost bounded
- * regardless of how many moments the director picks. `MEME_OPENAI_MAX` overrides
- * (any value ≥ 0, e.g. 0 to disable the paid fallback entirely). The free
- * Giphy/Tenor path is unaffected — this only caps PAID OpenAI generations.
+ * Paid image generations allowed per video. The DEFAULT cap is 6 — a hard
+ * ceiling on how many stickers we'll ever pay to generate per video, keeping
+ * cost bounded regardless of how many moments the director picks. At the current
+ * Segmind rate (~$0.006/image) a fully-generated video tops out under $0.04.
+ * `MEME_OPENAI_MAX` overrides (any value ≥ 0, e.g. 0 to disable the paid
+ * fallback entirely). The free Giphy/Tenor path is unaffected.
  */
 export const DEFAULT_OPENAI_MAX = 6;
 export function resolveOpenAiMax(_momentCount = 0): number {
@@ -52,8 +58,12 @@ export interface StickerProviders {
   review: (line: string, candidates: StickerCandidate[]) => Promise<FitReviewResult>;
   /** Download a chosen candidate's still → a servable URL (or null on failure). */
   download: (candidate: StickerCandidate) => Promise<{ url: string } | null>;
-  /** Generate one OpenAI sticker for a prompt → a servable URL (or null). */
-  generate: (prompt: string) => Promise<{ url: string } | null>;
+  /**
+   * Generate one sticker for a prompt → a servable URL (or null). `provider`
+   * says which paid generator produced it ("segmind" by default, "openai" when
+   * the fallback rescued it) so the diagnostic names the real source.
+   */
+  generate: (prompt: string) => Promise<{ url: string; provider?: string } | null>;
   /**
    * Optional live progress: called after each moment is processed in each pass.
    * `phase` distinguishes the free search/review pass from the paid generation
@@ -102,6 +112,7 @@ export async function orchestrateStickers(
     review: { reviewed: false, chosen: false, reason: "" },
     appliedSource: "none",
     ok: false,
+    alignedTo: m.alignedTo,
   }));
   // Resolved image URL per moment index (null until/unless one is applied).
   const applied: Array<string | null> = moments.map(() => null);
@@ -156,7 +167,7 @@ export async function orchestrateStickers(
   if (providers.openaiAvailable && openaiCap > 0) {
     for (const { m, i } of needsGen) {
       if (openaiUsed >= openaiCap) {
-        const capNote = `OpenAI gen cap (${openaiCap}/video) reached — captions-only`;
+        const capNote = `image-gen cap (${openaiCap}/video) reached — captions-only`;
         diags[i].review.reason = diags[i].review.reason
           ? `${diags[i].review.reason} · ${capNote}`
           : capNote;
@@ -166,11 +177,16 @@ export async function orchestrateStickers(
       openaiUsed++; // count the attempt against the cap (an attempt costs/uses a slot)
       if (img) {
         applied[i] = img.url;
-        diags[i].appliedSource = "openai";
-        if (!diags[i].review.reason) diags[i].review.reason = "no library sticker — used OpenAI fallback";
+        diags[i].appliedSource = img.provider === "openai" ? "openai" : "segmind";
+        // APPEND rather than replace, so the diagnostic keeps both facts: why the
+        // free path didn't fill this moment AND which generator ultimately did.
+        const genNote = `generated via ${img.provider ?? "segmind"}`;
+        diags[i].review.reason = diags[i].review.reason
+          ? `${diags[i].review.reason} · ${genNote}`
+          : `no library sticker — ${genNote}`;
       } else {
         diags[i].review.reason =
-          (diags[i].review.reason ? diags[i].review.reason + " · " : "") + "OpenAI gen returned nothing";
+          (diags[i].review.reason ? diags[i].review.reason + " · " : "") + "image gen returned nothing";
       }
       report(++genDone, "generating");
     }
@@ -179,8 +195,8 @@ export async function orchestrateStickers(
     // didn't run (key missing or cap 0), appending to any free-path reason so the
     // diagnostic keeps both facts ("no candidates" AND "no OpenAI key").
     const why = providers.openaiAvailable
-      ? `OpenAI gen disabled (cap ${openaiCap})`
-      : "no library sticker and no OpenAI key — captions-only";
+      ? `image gen disabled (cap ${openaiCap})`
+      : "no library sticker and no image-gen key — captions-only";
     for (const { i } of needsGen) {
       diags[i].review.reason = diags[i].review.reason
         ? `${diags[i].review.reason} · ${why}`

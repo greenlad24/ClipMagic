@@ -599,6 +599,8 @@ function makeProviders(over: Partial<StickerProviders> & {
   searchResults?: Record<string, StickerCandidate[]>;
   reviewPicks?: (line: string, c: StickerCandidate[]) => FitReviewResult;
   genUrls?: string[];
+  /** Which generator the mock claims produced the image (real one reports this). */
+  genProvider?: string;
 }): StickerProviders & { calls: { search: string[]; review: string[]; download: string[]; generate: string[] } } {
   const calls = { search: [] as string[], review: [] as string[], download: [] as string[], generate: [] as string[] };
   const searchResults = over.searchResults ?? {};
@@ -615,7 +617,11 @@ function makeProviders(over: Partial<StickerProviders> & {
       return { chosen: c[0] ?? null, chosenIndex: c.length ? 0 : null, reason: "top", reviewed: true };
     },
     async download(c) { calls.download.push(c.url); return { url: `/dl/${c.url}` }; },
-    async generate() { calls.generate.push("gen"); const u = genUrls[genIdx++]; return u ? { url: u } : null; },
+    async generate() {
+      calls.generate.push("gen");
+      const u = genUrls[genIdx++];
+      return u ? { url: u, provider: over.genProvider ?? "segmind" } : null;
+    },
     onMomentProgress: over.onMomentProgress,
     calls,
   };
@@ -661,7 +667,7 @@ check("orchestrate tries Giphy/Tenor + review FIRST for every moment (no gen whe
   assert.equal(res.diagnostics[1].candidates.tenor, 1);
 });
 
-check("orchestrate uses OpenAI ONLY for moments the free path left unmatched", async () => {
+check("orchestrate generates ONLY for moments the free path left unmatched", async () => {
   delete process.env.MEME_OPENAI_MAX; // cap = 2
   const moments = [moment(6, "matched"), moment(12, "unmatched")];
   const p = makeProviders({
@@ -671,12 +677,12 @@ check("orchestrate uses OpenAI ONLY for moments the free path left unmatched", a
   const res = await orchestrateStickers(moments, p);
   assert.equal(p.calls.generate.length, 1, "generated once — only for the unmatched moment");
   assert.equal(res.diagnostics[0].appliedSource, "giphy+tenor");
-  assert.equal(res.diagnostics[1].appliedSource, "openai");
+  assert.equal(res.diagnostics[1].appliedSource, "segmind", "the cheap generator is the default");
   assert.equal(res.openaiUsed, 1);
   assert.equal(res.stickers.length, 2);
 });
 
-check("orchestrate NEVER exceeds an explicit OpenAI cap (prioritizing earliest moments)", async () => {
+check("orchestrate NEVER exceeds an explicit generation cap (prioritizing earliest moments)", async () => {
   process.env.MEME_OPENAI_MAX = "2"; // pin the cap at 2 to exercise cap enforcement
   // Four unmatched moments; the cap is 2, so only the two EARLIEST get generated.
   const moments = [moment(6, "a"), moment(10, "b"), moment(14, "c"), moment(18, "d")];
@@ -686,8 +692,8 @@ check("orchestrate NEVER exceeds an explicit OpenAI cap (prioritizing earliest m
   assert.equal(res.openaiUsed, 2, "never exceeds the cap");
   assert.equal(p.calls.generate.length, 2, "exactly two gen calls");
   // Deterministic prioritization: the two EARLIEST moments (6s, 10s) are generated.
-  assert.equal(res.diagnostics[0].appliedSource, "openai", "@6s generated");
-  assert.equal(res.diagnostics[1].appliedSource, "openai", "@10s generated");
+  assert.equal(res.diagnostics[0].appliedSource, "segmind", "@6s generated");
+  assert.equal(res.diagnostics[1].appliedSource, "segmind", "@10s generated");
   assert.equal(res.diagnostics[2].appliedSource, "none", "@14s past the cap → captions-only");
   assert.equal(res.diagnostics[3].appliedSource, "none", "@18s past the cap → captions-only");
   // The capped-out moments record WHY (so the UI can surface it).
@@ -718,7 +724,7 @@ check("orchestrate default cap is a fixed 6 (generates up to 6, caps the rest)",
   assert.ok(/cap \(6\/video\) reached/.test(res.diagnostics[6].review.reason), res.diagnostics[6].review.reason);
 });
 
-check("orchestrate skips OpenAI gen with a clear reason when no OpenAI key is present", async () => {
+check("orchestrate skips paid gen with a clear reason when no image-gen key is present", async () => {
   delete process.env.MEME_OPENAI_MAX;
   const moments = [moment(6, "nope")];
   const p = makeProviders({ openaiAvailable: false, searchResults: {} });
@@ -726,10 +732,10 @@ check("orchestrate skips OpenAI gen with a clear reason when no OpenAI key is pr
   assert.equal(p.calls.generate.length, 0, "no gen attempted without a key");
   assert.equal(res.openaiUsed, 0);
   assert.equal(res.stickers.length, 0, "captions-only for that moment");
-  assert.ok(/no OpenAI key/.test(res.diagnostics[0].review.reason), res.diagnostics[0].review.reason);
+  assert.ok(/no image-gen key/.test(res.diagnostics[0].review.reason), res.diagnostics[0].review.reason);
 });
 
-check("orchestrate: review DROP leaves the moment for the capped OpenAI fallback", async () => {
+check("orchestrate: review DROP leaves the moment for the capped paid fallback", async () => {
   delete process.env.MEME_OPENAI_MAX;
   const moments = [moment(6, "weird")];
   const p = makeProviders({
@@ -739,9 +745,19 @@ check("orchestrate: review DROP leaves the moment for the capped OpenAI fallback
   });
   const res = await orchestrateStickers(moments, p);
   assert.equal(p.calls.review.length, 1, "review ran");
-  assert.equal(p.calls.generate.length, 1, "drop → OpenAI fallback filled it");
-  assert.equal(res.diagnostics[0].appliedSource, "openai");
+  assert.equal(p.calls.generate.length, 1, "drop → the paid generator filled it");
+  assert.equal(res.diagnostics[0].appliedSource, "segmind");
   assert.equal(res.openaiUsed, 1);
+});
+
+check("orchestrate names the OpenAI RESCUE honestly when Segmind couldn't serve it", async () => {
+  delete process.env.MEME_OPENAI_MAX;
+  // imagegen falls back to OpenAI when the cheap generator fails; the diagnostic
+  // must say which one actually produced the sticker, not assume the default.
+  const p = makeProviders({ searchResults: {}, genUrls: ["/gen/r.png"], genProvider: "openai" });
+  const res = await orchestrateStickers([moment(6, "nope")], p);
+  assert.equal(res.diagnostics[0].appliedSource, "openai");
+  assert.ok(/openai/.test(res.diagnostics[0].review.reason), res.diagnostics[0].review.reason);
 });
 
 check("orchestrate legacy 'openai' source skips the free path entirely", async () => {
@@ -930,6 +946,338 @@ check("planEmphasisMoments always reports a SPECIFIC reason when it yields no mo
     assert.ok(/too short/.test(plan.unavailableReason ?? ""), plan.unavailableReason ?? "no reason");
   }
 });
+
+// ── Timeline alignment: stickers must land ON the words being said ───────────
+// The director used to receive an UNTIMED transcript and estimate startTime from
+// reading speed, which drifted. These assert the two halves of the fix: the
+// timestamped prompt body, and the in-code re-derivation of every start.
+import {
+  findPhraseWindow,
+  snapToWordStart,
+  formatTimedTranscript,
+  alignTiming,
+  alignMoments,
+  normalizeToken,
+  tokensMatch,
+  LEAD_SECONDS,
+  HOLD_AFTER_SECONDS,
+  MAX_SNAP_DRIFT_SECONDS,
+} from "../meme/align.js";
+import type { TranscriptWord } from "../ai/transcribe.js";
+
+/** Build word timings from "word@start" specs, each word 0.3s long. */
+function words(spec: string): TranscriptWord[] {
+  return spec.split(" ").map((s) => {
+    const [word, at] = s.split("@");
+    const start = Number.parseFloat(at);
+    return { word, start, end: start + 0.3 };
+  });
+}
+
+const SCRIPT = words(
+  "this@1.0 tool@1.4 is@1.8 ten@2.2 times@2.6 faster@3.0 than@3.5 the@3.9 old@4.3 way@4.7 " +
+    "and@6.0 it@6.3 costs@6.7 almost@7.1 nothing@7.6 to@8.1 run@8.4",
+);
+
+check("findPhraseWindow pins a quoted phrase to the words that were spoken", () => {
+  const w = findPhraseWindow(SCRIPT, "ten times faster");
+  assert.ok(w, "expected a match");
+  assert.equal(w!.start, 2.2);
+  assert.equal(w!.score, 1);
+  // End is the last matched word's end, not a guess.
+  assert.ok(Math.abs(w!.end - 3.3) < 1e-9, `end ${w!.end}`);
+});
+
+check("findPhraseWindow tolerates ASR drift (a dropped/altered word)", () => {
+  // "ten times slower" — 2 of 3 tokens match = 0.67, above the 0.6 threshold.
+  const w = findPhraseWindow(SCRIPT, "ten times slower");
+  assert.ok(w, "expected a tolerant match");
+  assert.equal(w!.start, 2.2);
+});
+
+check("findPhraseWindow REFUSES a phrase that isn't really in the script", () => {
+  assert.equal(findPhraseWindow(SCRIPT, "completely unrelated wording here"), null);
+  assert.equal(findPhraseWindow(SCRIPT, ""), null);
+  assert.equal(findPhraseWindow([], "ten times faster"), null);
+});
+
+check("findPhraseWindow uses the director's guess to pick between REPEATS", () => {
+  const repeated = words("run@1.0 it@1.4 fast@1.8 and@5.0 run@5.4 it@5.8 fast@6.2");
+  const early = findPhraseWindow(repeated, "run it fast", 1.2);
+  const late = findPhraseWindow(repeated, "run it fast", 5.5);
+  assert.equal(early!.start, 1.0);
+  assert.equal(late!.start, 5.4, "the hint must select the later occurrence");
+});
+
+check("tokensMatch: exact, prefix-tolerant for long words, strict for short ones", () => {
+  assert.ok(tokensMatch("faster", "faster"));
+  assert.ok(tokensMatch("number", "numbers"), "plural drift should still match");
+  assert.ok(!tokensMatch("ten", "the"), "short words must not match loosely");
+  assert.ok(!tokensMatch("", "faster"));
+});
+
+check("normalizeToken strips punctuation and case so quotes still match", () => {
+  assert.equal(normalizeToken("Faster,"), "faster");
+  assert.equal(normalizeToken("it's"), "its");
+  assert.equal(normalizeToken("—"), "");
+});
+
+check("alignTiming pins the sticker to the phrase, with a lead for the pop", () => {
+  // The director guessed 5.0s for a line actually spoken at 2.2s — a 2.8s drift.
+  const t = alignTiming(SCRIPT, { startTime: 5.0, endTime: 7.0, phrase: "ten times faster" });
+  assert.equal(t.kind, "phrase");
+  assert.ok(Math.abs(t.startTime - (2.2 - LEAD_SECONDS)) < 1e-9, `start ${t.startTime}`);
+  assert.ok(Math.abs(t.endTime - (3.3 + HOLD_AFTER_SECONDS)) < 1e-9, `end ${t.endTime}`);
+  assert.ok(t.shift > 2.5, "the correction must be reported");
+});
+
+check("alignTiming falls back to the nearest word ONSET when the phrase is unfindable", () => {
+  const t = alignTiming(SCRIPT, { startTime: 6.45, endTime: 8.45, phrase: "nowhere in this script" });
+  assert.equal(t.kind, "snapped");
+  // 6.45 is nearest the word starting at 6.3.
+  assert.ok(Math.abs(t.startTime - (6.3 - LEAD_SECONDS)) < 1e-9, `start ${t.startTime}`);
+  // A snap preserves the planned LENGTH (only the start moves).
+  assert.ok(Math.abs(t.endTime - t.startTime - 2.0) < 1e-9, "length must be preserved");
+});
+
+check("alignTiming leaves a hopeless time exactly as the director planned it", () => {
+  const far = 60; // nowhere near any word in SCRIPT
+  const t = alignTiming(SCRIPT, { startTime: far, endTime: far + 2, phrase: "unfindable" });
+  assert.equal(t.kind, "kept");
+  assert.equal(t.startTime, far);
+  assert.equal(t.shift, 0);
+  assert.ok(MAX_SNAP_DRIFT_SECONDS < far, "sanity: the drift cap is what refused the snap");
+});
+
+check("alignMoments re-derives every start and reports how each was pinned", () => {
+  const { moments: out, summary } = alignMoments(
+    {
+      moments: [
+        { startTime: 5.0, endTime: 7.0, searchQuery: "mind blown", phrase: "ten times faster" },
+        { startTime: 6.45, endTime: 8.0, searchQuery: "money", phrase: "not in the script" },
+      ],
+    },
+    SCRIPT,
+  );
+  assert.equal(summary.phrase, 1);
+  assert.equal(summary.snapped, 1);
+  assert.equal(summary.kept, 0);
+  assert.ok(summary.maxShift > 2.5);
+  // Fields other than the timing survive untouched.
+  assert.equal((out[0] as { searchQuery: string }).searchQuery, "mind blown");
+  assert.equal((out[0] as { alignedTo: string }).alignedTo, "phrase");
+});
+
+check("alignMoments is a NO-OP when there are no word timings (never invents sync)", () => {
+  const raw = { moments: [{ startTime: 5, endTime: 7, searchQuery: "q", phrase: "p" }] };
+  const { moments: out, summary } = alignMoments(raw, []);
+  assert.deepEqual(out, raw.moments);
+  assert.equal(summary.kept, 1);
+});
+
+check("aligned times still pass through sanitize's spacing/hold rules", () => {
+  // Two moments aligned onto phrases 0.4s apart must not both survive — the
+  // alignment feeds sanitize, it does not bypass it.
+  const { moments: aligned } = alignMoments(
+    {
+      moments: [
+        { startTime: 2.0, searchQuery: "one", phrase: "ten times faster" },
+        { startTime: 2.4, searchQuery: "two", phrase: "times faster than" },
+      ],
+    },
+    SCRIPT,
+  );
+  const kept = sanitize({ moments: aligned }, 30);
+  assert.equal(kept.length, 1, "the second is too close and must be dropped");
+  assert.equal(kept[0].alignedTo, "phrase", "the alignment kind survives sanitize");
+});
+
+check("formatTimedTranscript stamps each line with the second it is spoken", () => {
+  const text = formatTimedTranscript(SCRIPT, { wordsPerLine: 4 });
+  const lines = text.split("\n");
+  assert.ok(lines[0].startsWith("[1.0s] "), lines[0]);
+  assert.ok(lines[0].includes("this tool is ten"), lines[0]);
+  // The 1.3s gap between "way" and "and" forces a break of its own.
+  assert.ok(text.includes("[6.0s]"), text);
+  for (const l of lines) assert.match(l, /^\[\d+\.\ds\] \S/);
+});
+
+check("snapToWordStart refuses a time that is nowhere near a word", () => {
+  assert.equal(snapToWordStart(SCRIPT, 2.3), 2.2);
+  assert.equal(snapToWordStart(SCRIPT, 40), null);
+});
+
+// ── Sticker sound effect ─────────────────────────────────────────────────────
+import {
+  buildSfxMix, sfxVolume, DEFAULT_SFX_VOLUME, sfxEnabled,
+  clampSpeed, atempoChain, DEFAULT_SFX_SPEED, MIN_SFX_SPEED, MAX_SFX_SPEED,
+} from "../meme/sfx.js";
+
+check("buildSfxMix drops one pop at each sticker start, delayed in ms", () => {
+  const plan = buildSfxMix({
+    starts: [2, 7.5],
+    sfxInputIndex: 3,
+    baseAudioLabel: "0:a",
+    volume: 0.18,
+  });
+  assert.ok(plan, "expected a mix plan");
+  const f = plan!.filters.join(";");
+  assert.ok(f.includes("[3:a]asplit=2[sfx0][sfx1]"), f);
+  assert.ok(f.includes("adelay=2000:all=1,volume=0.18"), f);
+  assert.ok(f.includes("adelay=7500:all=1,volume=0.18"), f);
+  assert.ok(f.includes("[0:a][sfxd0][sfxd1]amix=inputs=3"), f);
+});
+
+check("buildSfxMix keeps the narration at its own level (the amix flags)", () => {
+  const f = buildSfxMix({ starts: [1], sfxInputIndex: 2, baseAudioLabel: "0:a", volume: 0.2 })!
+    .filters.join(";");
+  // normalize=0 — otherwise amix divides every input by the input count and the
+  // narration audibly ducks under each pop.
+  assert.ok(f.includes("normalize=0"), f);
+  // dropout_transition=0 — otherwise amix ramps its gain for 2s after each short
+  // pop ENDS, swelling the narration after every sticker.
+  assert.ok(f.includes("dropout_transition=0"), f);
+  // duration=first — the mix ends with the narration, not with a trailing pop.
+  assert.ok(f.includes("duration=first"), f);
+  // A limiter after the mix — the base is already at a −1dBTP ceiling, so a pop
+  // landing on a narration peak would otherwise cross 0dBFS and clip.
+  assert.ok(/amix=[^;]*,alimiter=limit=0\.97\[/.test(f), f);
+});
+
+check("buildSfxMix returns nothing to mix when there are no stickers (or no gain)", () => {
+  assert.equal(buildSfxMix({ starts: [], sfxInputIndex: 1, baseAudioLabel: "0:a", volume: 0.2 }), null);
+  assert.equal(buildSfxMix({ starts: [1], sfxInputIndex: 1, baseAudioLabel: "0:a", volume: 0 }), null);
+});
+
+check("the sticker sound is QUIET by default and can never be turned up loud", () => {
+  assert.equal(sfxVolume(undefined), DEFAULT_SFX_VOLUME);
+  assert.equal(sfxVolume("not-a-number"), DEFAULT_SFX_VOLUME);
+  assert.equal(sfxVolume("-1"), DEFAULT_SFX_VOLUME);
+  assert.ok(DEFAULT_SFX_VOLUME <= 0.2, "default must stay well under the narration");
+  assert.equal(sfxVolume("0.05"), 0.05);
+  assert.equal(sfxVolume("5"), 0.6, "a runaway value is clamped, never blasted");
+});
+
+check("MEME_SFX=off disables the sticker sound entirely", () => {
+  const prev = process.env.MEME_SFX;
+  try {
+    delete process.env.MEME_SFX;
+    assert.equal(sfxEnabled(), true, "the sound is on by default");
+    process.env.MEME_SFX = "off";
+    assert.equal(sfxEnabled(), false);
+  } finally {
+    if (prev === undefined) delete process.env.MEME_SFX;
+    else process.env.MEME_SFX = prev;
+  }
+});
+
+check("an uploaded sound's speed is clamped to rates worth playing", () => {
+  assert.equal(clampSpeed(1.5), 1.5);
+  assert.equal(clampSpeed("1.5"), 1.5, "the client sends JSON — a numeric string still works");
+  assert.equal(clampSpeed(undefined), DEFAULT_SFX_SPEED);
+  assert.equal(clampSpeed("fast"), DEFAULT_SFX_SPEED);
+  assert.equal(clampSpeed(0), DEFAULT_SFX_SPEED, "zero would be a silent file, not a slow one");
+  assert.equal(clampSpeed(-2), DEFAULT_SFX_SPEED);
+  assert.equal(clampSpeed(99), MAX_SFX_SPEED);
+  assert.equal(clampSpeed(0.01), MIN_SFX_SPEED);
+});
+
+check("atempo changes tempo without pitch, and splits when one instance can't", () => {
+  // 1× must add NO filter at all — an identity atempo would still resample.
+  assert.equal(atempoChain(1), "");
+  assert.equal(atempoChain(1.5), "atempo=1.500");
+  assert.equal(atempoChain(2), "atempo=2.000");
+  // Above 2 a single instance is unreliable across ffmpeg builds, so it splits
+  // into two equal factors that multiply back to the requested rate.
+  const chain = atempoChain(3);
+  const factors = [...chain.matchAll(/atempo=([\d.]+)/g)].map((m) => Number(m[1]));
+  assert.equal(factors.length, 2, chain);
+  assert.ok(Math.abs(factors[0] * factors[1] - 3) < 0.01, chain);
+  factors.forEach((f) => assert.ok(f >= 0.5 && f <= 2, `${f} is outside atempo's safe range`));
+  // asetrate would be the pitch-shifting alternative; assert we never reach for it.
+  assert.ok(!chain.includes("asetrate"));
+});
+
+// ── Segmind generation: cheaper images, and a SAFE local cut-out ─────────────
+import { looksLikeGreenScreen, averageRgb, toFfmpegHex, GREEN_SCREEN_PROMPT } from "../meme/cutout.js";
+import { providerChain, promptFor, cacheKey } from "../meme/imagegen.js";
+import { SEGMIND_IMAGE_PER_IMAGE, OPENAI_IMAGE_PER_IMAGE, imagePricePerImage } from "../ai/pricing.js";
+
+const GREEN: [number, number, number] = [1, 246, 3];
+
+check("looksLikeGreenScreen accepts a real flat green field", () => {
+  assert.ok(looksLikeGreenScreen([GREEN, [2, 247, 4], [1, 246, 3], [3, 245, 5]]));
+});
+
+check("looksLikeGreenScreen REFUSES to key a background that isn't green", () => {
+  // A white studio background — keying it would punch holes in the sticker.
+  assert.ok(!looksLikeGreenScreen([[250, 250, 250], [250, 250, 250], [249, 250, 251], [250, 249, 250]]));
+  // Black, and a mid grey.
+  assert.ok(!looksLikeGreenScreen([[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]]));
+  assert.ok(!looksLikeGreenScreen([[128, 128, 128], [128, 128, 128], [128, 128, 128], [128, 128, 128]]));
+});
+
+check("looksLikeGreenScreen REFUSES a non-uniform background (gradient / subject at the edge)", () => {
+  // Three green corners and one covered by the subject → do not key.
+  assert.ok(!looksLikeGreenScreen([GREEN, GREEN, GREEN, [180, 120, 90]]));
+  // A green gradient light→dark also fails the uniformity test.
+  assert.ok(!looksLikeGreenScreen([[1, 130, 3], [1, 246, 3], [1, 190, 3], [1, 246, 3]]));
+});
+
+check("looksLikeGreenScreen needs all four corners to judge", () => {
+  assert.ok(!looksLikeGreenScreen([GREEN, GREEN, GREEN]));
+  assert.ok(!looksLikeGreenScreen([]));
+});
+
+check("the key colour is averaged from the corners and formatted for ffmpeg", () => {
+  assert.deepEqual(averageRgb([[0, 240, 0], [2, 250, 4], [1, 245, 2], [1, 247, 2]]), [1, 246, 2]);
+  assert.equal(toFfmpegHex([1, 246, 3]), "0x01f603");
+  assert.equal(toFfmpegHex([255, 255, 255]), "0xffffff");
+  assert.equal(toFfmpegHex([-5, 300, 0]), "0x00ff00", "out-of-range channels are clamped");
+});
+
+check("providerChain prefers the CHEAP generator and keeps OpenAI as a rescue", () => {
+  assert.deepEqual(providerChain({ segmind: true, openai: true }, "segmind"), ["segmind", "openai"]);
+  assert.deepEqual(providerChain({ segmind: true, openai: false }, "segmind"), ["segmind"]);
+  // An unconfigured provider is dropped rather than attempted and failed.
+  assert.deepEqual(providerChain({ segmind: false, openai: true }, "segmind"), ["openai"]);
+  assert.deepEqual(providerChain({ segmind: false, openai: false }, "segmind"), []);
+  // The preference can be pinned the other way.
+  assert.deepEqual(providerChain({ segmind: true, openai: true }, "openai"), ["openai", "segmind"]);
+});
+
+check("only the Segmind prompt asks for a green screen (OpenAI gets real alpha)", () => {
+  const seg = promptFor("a shocked cartoon cat", "segmind");
+  const oai = promptFor("a shocked cartoon cat", "openai");
+  assert.ok(seg.includes(GREEN_SCREEN_PROMPT), "segmind must ask for a keyable field");
+  assert.ok(!oai.includes(GREEN_SCREEN_PROMPT), "openai would keep the green, not key it");
+  // The brand-safety constraint is on BOTH, unconditionally.
+  assert.ok(seg.includes(SAFETY_PROMPT) && oai.includes(SAFETY_PROMPT));
+});
+
+check("the image cache key separates providers so a switch can't serve a stale PNG", () => {
+  const p = "a shocked cartoon cat";
+  assert.notEqual(
+    cacheKey(promptFor(p, "segmind"), "segmind"),
+    cacheKey(promptFor(p, "openai"), "openai"),
+  );
+  assert.equal(cacheKey(promptFor(p, "segmind"), "segmind"), cacheKey(promptFor(p, "segmind"), "segmind"));
+});
+
+check("Segmind GPT Image 2 at the default quality really is cheaper than the OpenAI path", () => {
+  const segmind = imagePricePerImage("gpt-image-2", "segmind", "low");
+  const openai = imagePricePerImage("gpt-image-1", "openai");
+  assert.equal(segmind, SEGMIND_IMAGE_PER_IMAGE["gpt-image-2:low"]);
+  assert.equal(openai, OPENAI_IMAGE_PER_IMAGE["gpt-image-1"]);
+  assert.ok(segmind < openai, `${segmind} should undercut ${openai}`);
+  // "medium" would cost MORE than the path it replaced — the reason low is the
+  // default, asserted so a future bump is a deliberate choice.
+  assert.ok(imagePricePerImage("gpt-image-2", "segmind", "medium") > openai);
+  // An unknown model is reported as $0, never guessed at.
+  assert.equal(imagePricePerImage("no-such-model", "segmind", "low"), 0);
+  assert.equal(imagePricePerImage("no-such-model"), 0);
+});
+
 
 await Promise.all(pending);
 console.log(`\n${passed} checks passed.`);

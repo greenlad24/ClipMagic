@@ -10,7 +10,8 @@
  *   1. transcribe        → Groq Whisper (ai/transcribe), word timestamps
  *   2. caption plan      → buildCaptionEvents → the existing ASS render path
  *   3. emphasis director → Claude picks moments + writes image prompts (sanitized)
- *   4. image generation  → one static still per moment (OpenAI images, cached)
+ *   4. image generation  → one static still per moment (Segmind GPT Image 2,
+ *                          keyed to transparent locally, cached by prompt)
  *   5. manifest render   → a normal "manifest" job: narration video + popping
  *                          captions + emphasisStickers (composited below captions
  *                          by the meme stage in the render worker).
@@ -81,7 +82,7 @@ export function computeSkipReason(opts: {
     return "no emphasis moments were found (or the director is unconfigured) — captions only";
   }
   if (!opts.searchAvailable && !opts.openaiAvailable) {
-    return "no sticker source available — set GIPHY_API_KEY / TENOR_API_KEY (or an OpenAI key) — captions only";
+    return "no sticker source available — set GIPHY_API_KEY / TENOR_API_KEY (or a Segmind/OpenAI image key) — captions only";
   }
   return "no sticker fit (search/review/generation found nothing usable) — captions only";
 }
@@ -108,8 +109,12 @@ export interface MemeResult {
   diagnostics: MemeDiagnostics;
 }
 
-/** Which sticker source produced a given moment's image. */
-export type StickerSource = "giphy+tenor" | "openai" | "none";
+/**
+ * Which sticker source produced a given moment's image. "segmind" is the paid
+ * generator's default (GPT Image 2); "openai" only appears when the Segmind call
+ * failed and the legacy fallback rescued the moment.
+ */
+export type StickerSource = "giphy+tenor" | "segmind" | "openai" | "none";
 
 /** Per-moment trace of the find → review → apply pipeline (for the UI/diagnostics). */
 export interface MomentDiagnostic {
@@ -124,6 +129,12 @@ export interface MomentDiagnostic {
   appliedSource: StickerSource;
   /** True if a sticker image was ultimately applied for this moment. */
   ok: boolean;
+  /**
+   * How this moment's time was pinned to the audio: "phrase" = snapped to the
+   * words it reacts to (properly synced), "snapped" = moved to the nearest word
+   * onset, "kept" = the director's own estimate stood. See meme/align.ts.
+   */
+  alignedTo?: "phrase" | "snapped" | "kept";
 }
 
 /** Why a sticker step was skipped, if it was — surfaced to the user. */
@@ -134,9 +145,9 @@ export interface MemeDiagnostics {
   momentsPlanned: number;
   /** Moments that got a usable image (the rest fall back to captions-only). */
   imagesGenerated: number;
-  /** How many of the applied stickers came from a (capped) OpenAI generation. */
+  /** How many of the applied stickers came from a (capped) paid generation. */
   openaiGenerated: number;
-  /** The per-video OpenAI generation cap in force this run (env MEME_OPENAI_MAX). */
+  /** The per-video paid-generation cap in force this run (env MEME_OPENAI_MAX). */
   openaiCap: number;
   /** Per-moment trace: query, candidate counts, review decision, final source. */
   moments: MomentDiagnostic[];
@@ -149,6 +160,12 @@ export interface MemeDiagnostics {
   skipReason: string | null;
   /** Why the emphasis director produced no moments (unconfigured/errored), or null. */
   directorReason: string | null;
+  /**
+   * How many sticker times were pinned to the spoken words vs merely snapped or
+   * left as the director planned them — the observable form of "is it in sync?".
+   * Null when the run had no word timings to align against.
+   */
+  alignment: { phrase: number; snapped: number; kept: number; maxShift: number } | null;
 }
 
 /** The pipeline stages, in order, as a coarse status the record/UI tracks. */
@@ -222,23 +239,28 @@ export async function runMemePipeline(opts: {
   // ── 3. Emphasis director (content-driven moments + image prompts) ──────────
   report({ stage: "Planning", label: "Picking emphasis moments", progress: MEME_STAGE_PROGRESS.Planning });
   ts = Date.now();
-  const { moments, unavailableReason: directorReason } = await planEmphasisMoments({
-    transcript: tr.text, durationSeconds: duration,
+  const { moments, unavailableReason: directorReason, alignment } = await planEmphasisMoments({
+    transcript: tr.text,
+    durationSeconds: duration,
+    // Word timings are what keep the stickers ON the words: the director reads
+    // real stamps, and every start is then re-derived from these (meme/align.ts).
+    words: tr.words,
   });
   lap(`director planned ${moments.length} moment(s)`, ts);
 
   // ── 4. Sticker source: find → AI fit-review → apply (with fallbacks) ────────
   // Source order (configurable; default = Giphy+Tenor reaction stickers):
   //   1. Giphy + Tenor STATIC transparent stickers, gated by an AI fit-review.
-  //   2. OpenAI image-gen fallback — only if the libraries returned nothing (or
-  //      have no keys) AND an OpenAI key is present.
+  //   2. PAID image-gen fallback (Segmind GPT Image 2, ~$0.006/image, with the
+  //      OpenAI path as its own rescue) — only if the libraries returned nothing
+  //      (or have no keys) AND an image-gen key is present.
   //   3. Nothing available → captions-only with a visible reason.
   const source = resolveStickerSource();
   const searchAvailable = source === "giphy+tenor" && stickerSearchConfigured();
   const openaiAvailable = imageGenConfigured();
   console.log(
     `[meme] director picked ${moments.length} moment(s); source=${source} ` +
-      `(giphy=${giphyConfigured()} tenor=${tenorConfigured()} openai=${openaiAvailable})`,
+      `(giphy=${giphyConfigured()} tenor=${tenorConfigured()} imagegen=${openaiAvailable})`,
   );
   report({
     stage: "Generating",
@@ -251,7 +273,7 @@ export async function runMemePipeline(opts: {
   ts = Date.now();
 
   // Two-pass sourcing — FREE (Giphy/Tenor + review) first for every moment, then
-  // the (capped) OpenAI fallback fills only the moments left unmatched. Cap +
+  // the (capped) paid generator fills only the moments left unmatched. Cap +
   // prioritization + diagnostics all live in the injectable orchestrator so the
   // ordering is unit-testable with mocks.
   // Interpolate the Generating→Rendering band as moments are processed so the
@@ -287,7 +309,7 @@ export async function runMemePipeline(opts: {
     const d = momentDiags[i];
     if (d.ok) {
       console.log(
-        `[meme]   moment @${m.startTime}s "${m.phrase ?? m.searchQuery}" — sticker ok ` +
+        `[meme]   moment @${m.startTime}s "${m.phrase ?? m.searchQuery}" [${m.alignedTo ?? "unaligned"}] — sticker ok ` +
           `(${d.appliedSource}; giphy ${d.candidates.giphy}/tenor ${d.candidates.tenor}; ${d.review.reason})`,
       );
     } else {
@@ -297,7 +319,7 @@ export async function runMemePipeline(opts: {
       );
     }
   }
-  console.log(`[meme] sticker sourcing: ${stickers.length}/${moments.length} applied; OpenAI gen ${openaiUsed}/${openaiCap}`);
+  console.log(`[meme] sticker sourcing: ${stickers.length}/${moments.length} applied; paid gen ${openaiUsed}/${openaiCap}`);
 
   // Backward-compatible flat per-moment results for the existing UI/persistence.
   const imageResults: MemeDiagnostics["imageResults"] = momentDiags.map((d: MomentDiagnostic) => ({
@@ -329,6 +351,7 @@ export async function runMemePipeline(opts: {
     imageResults,
     skipReason,
     directorReason: directorReason ?? null,
+    alignment,
   };
 
   // ── 5. Build the manifest + enqueue the render ─────────────────────────────

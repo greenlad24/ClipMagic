@@ -104,6 +104,42 @@ export const OPENAI_IMAGE_PER_IMAGE: Record<string, number> = {
 };
 
 /**
+ * SEGMIND-hosted image generation — the Sticker/Meme editor's DEFAULT generator
+ * and the reason its per-sticker cost fell ~6×. Segmind bills GPT Image 2 on
+ * tokens ($5/MTok text in, $8/MTok image in, $30/MTok image out), which resolves
+ * to these published per-image prices at 1024×1024 (verified 2026-08-13):
+ *   low $0.01 · medium $0.06 · high $0.22
+ *     https://www.segmind.com/models/gpt-image-2/pricing
+ * We request "low" by default — see meme/imagegen.ts for why (and note that
+ * "medium" would cost MORE than the $0.04 OpenAI path it replaced).
+ *
+ * These are only ever a FALLBACK estimate: Segmind returns the exact charge for
+ * each call in its `x-cost` response header, and recordImageGeneration prefers
+ * that real number whenever it is present.
+ */
+export const SEGMIND_IMAGE_PER_IMAGE: Record<string, number> = {
+  "gpt-image-2:low": 0.01,
+  "gpt-image-2:medium": 0.06,
+  "gpt-image-2:high": 0.22,
+};
+
+/**
+ * Estimated per-image price for a generator, by provider + model (+ quality for
+ * the providers that price on it). Pure, and returns 0 for anything unknown so
+ * an unpriced model is reported as $0 rather than silently guessed at.
+ */
+export function imagePricePerImage(
+  model: string,
+  provider = "openai",
+  quality?: string,
+): number {
+  if (provider === "segmind") {
+    return SEGMIND_IMAGE_PER_IMAGE[`${model}:${quality ?? "low"}`] ?? 0;
+  }
+  return OPENAI_IMAGE_PER_IMAGE[model] ?? 0;
+}
+
+/**
  * Reaction-sticker LIBRARIES used by the Sticker/Meme editor's DEFAULT source.
  * Both are FREE with a developer API key — there is no per-image charge, so the
  * per-image cost line for this source is $0. The only AI cost in this source is

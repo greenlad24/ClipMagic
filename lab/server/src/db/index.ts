@@ -837,6 +837,26 @@ CREATE TABLE IF NOT EXISTS engage_settings (
 }
 
 /**
+ * Additive migration: what we know about WHO sent an inbox item, as JSON.
+ *
+ * Jake's reply rules turn on the sender, not just the message — a verified
+ * account or one with a real following gets an answer, a throwaway account with
+ * a badly-written pitch does not. The model cannot see any of that from the
+ * message text, so the browser reads it off the sender's profile and it is
+ * stored here: { verified, followers, following, posts, bio }.
+ *
+ * Nullable and free-form on purpose. It is only ever populated for browser-read
+ * Instagram DMs today, and a signal we can't get is simply absent rather than
+ * guessed at — an absent follower count must never read as zero followers.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(engage_inbox)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "author_meta")) {
+    db.exec("ALTER TABLE engage_inbox ADD COLUMN author_meta TEXT");
+  }
+}
+
+/**
  * Additive migration: the last time a TikTok channel was polled via the Apify actor
  * (epoch-ms). TikTok scraping costs Apify credits, so the monitor polls it on a
  * SEPARATE SLOW cadence (ENGAGE_TIKTOK_POLL_INTERVAL_MS, default 6h) rather than
@@ -937,5 +957,99 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   const cols = db.prepare("PRAGMA table_info(script_runs)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "refine_chat_json")) {
     db.exec("ALTER TABLE script_runs ADD COLUMN refine_chat_json TEXT");
+  }
+}
+
+// ── Avatar Narrator (synthetic-presenter talking-head videos) ────────────────
+// A PERSONA is the reusable half: one locked-in synthetic face plus the voice
+// and the wardrobe/setting prompt that keep every video looking like the same
+// person. A VIDEO is one narration run against a persona. SEGMENTS exist only
+// because a run can be split into several provider jobs (fast mode) — they
+// carry the per-job cost and clip so a partial failure is resumable and the
+// spend is auditable per clip rather than per run.
+db.exec(`
+CREATE TABLE IF NOT EXISTS avatar_personas (
+  id             TEXT PRIMARY KEY,
+  name           TEXT NOT NULL,
+  look_prompt    TEXT NOT NULL DEFAULT '',   -- how the persona was described to the image model
+  scene_prompt   TEXT NOT NULL DEFAULT '',   -- motion/behaviour hint passed to the avatar model
+  portrait_file  TEXT NOT NULL,              -- absolute path to the locked portrait on disk
+  portrait_mime  TEXT NOT NULL DEFAULT 'image/png',
+  tts_provider   TEXT NOT NULL DEFAULT 'gemini',
+  tts_voice      TEXT NOT NULL DEFAULT '',
+  -- The reference clip the persona's voice was cloned FROM. Kept deliberately:
+  -- a cloned voice model lives inside the vendor and cannot be exported, but
+  -- the sample it was made from is ours, so the voice can be re-cloned into
+  -- another provider later. This file is the durable asset, not the voice id.
+  voice_sample_file TEXT NOT NULL DEFAULT '',
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_avatar_personas_created ON avatar_personas(created_at);
+-- (see the voice_sample_file migration below for databases created before it)
+
+CREATE TABLE IF NOT EXISTS avatar_videos (
+  id             TEXT PRIMARY KEY,
+  persona_id     TEXT NOT NULL,
+  title          TEXT NOT NULL DEFAULT '',
+  script         TEXT NOT NULL DEFAULT '',
+  status         TEXT NOT NULL DEFAULT 'queued', -- queued|voicing|rendering|stitching|done|failed|canceled
+  phase          TEXT NOT NULL DEFAULT '',       -- human-readable current step
+  progress       REAL NOT NULL DEFAULT 0,        -- 0..1
+  provider       TEXT NOT NULL DEFAULT 'kie',
+  resolution     TEXT NOT NULL DEFAULT '720p',
+  audio_file     TEXT,                           -- narration mp3 on disk
+  audio_seconds  REAL NOT NULL DEFAULT 0,
+  video_file     TEXT,                           -- finished mp4 on disk
+  cost_usd       REAL NOT NULL DEFAULT 0,        -- actual, summed from segments + TTS
+  error          TEXT,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL,
+  FOREIGN KEY (persona_id) REFERENCES avatar_personas(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_avatar_videos_created ON avatar_videos(created_at);
+CREATE INDEX IF NOT EXISTS idx_avatar_videos_persona ON avatar_videos(persona_id);
+
+CREATE TABLE IF NOT EXISTS avatar_segments (
+  id             TEXT PRIMARY KEY,
+  video_id       TEXT NOT NULL,
+  idx            INTEGER NOT NULL,
+  text           TEXT NOT NULL DEFAULT '',
+  audio_file     TEXT,
+  seconds        REAL NOT NULL DEFAULT 0,
+  provider_task  TEXT,                           -- the provider's task/prediction id
+  clip_file      TEXT,                           -- downloaded segment mp4
+  status         TEXT NOT NULL DEFAULT 'pending',-- pending|voicing|submitted|done|failed
+  cost_usd       REAL NOT NULL DEFAULT 0,
+  error          TEXT,
+  FOREIGN KEY (video_id) REFERENCES avatar_videos(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_avatar_segments_video ON avatar_segments(video_id, idx);
+`);
+
+/**
+ * Additive: the reference clip a persona's voice was cloned from.
+ *
+ * Needed as a migration and not just in the CREATE above, because the avatar
+ * tables already exist on the deployed lab. A cloned voice cannot be exported
+ * from the vendor that hosts it — keeping the sample is what makes the voice
+ * re-creatable somewhere else, so it is stored beside the portrait rather than
+ * thrown away after the clone succeeds.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(avatar_personas)").all() as Array<{ name: string }>;
+  if (cols.length && !cols.some((c) => c.name === "voice_sample_file")) {
+    db.exec("ALTER TABLE avatar_personas ADD COLUMN voice_sample_file TEXT NOT NULL DEFAULT ''");
+  }
+  // Room plates arrived later than personas. Existing rows default to '', which
+  // means "no plate" and falls back to the text-described room — the behaviour
+  // they were created with, so nobody's face moves house on upgrade.
+  if (cols.length && !cols.some((c) => c.name === "room_id")) {
+    db.exec("ALTER TABLE avatar_personas ADD COLUMN room_id TEXT NOT NULL DEFAULT ''");
+  }
+  // The character sheet: one persona, twenty angles, generated once and reused
+  // for every placement into a room. '' means "not made yet" — placement then
+  // falls back to the single portrait, which works but drifts more.
+  if (cols.length && !cols.some((c) => c.name === "sheet_file")) {
+    db.exec("ALTER TABLE avatar_personas ADD COLUMN sheet_file TEXT NOT NULL DEFAULT ''");
   }
 }

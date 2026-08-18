@@ -143,6 +143,33 @@ of the points in this section. "reason" is one short sentence for whoever
 reviews the queue. When shouldReply is false, "reply" must be an empty string.`.trim();
 }
 
+/**
+ * What we know about the sender, stated as facts for the style guide to act on.
+ *
+ * Jake's rules turn on who is writing — a verified account or one with a real
+ * following gets an answer, a throwaway with a badly-written pitch does not —
+ * and none of that is visible in the message text. So the signals are handed
+ * over plainly and the PROMPT decides what they mean. Deliberately no threshold
+ * here: "many followers" is his call to tune in the rules book, not a constant
+ * buried in this file.
+ *
+ * Unknown signals are omitted rather than reported as zero. Saying "0 followers"
+ * about an account we simply failed to read would invert the decision.
+ */
+function senderLine(item: InboxItem): string | null {
+  const m = item.authorMeta;
+  if (!m) return null;
+  const bits: string[] = [];
+  if (m.verified === true) bits.push("VERIFIED account");
+  else if (m.verified === false) bits.push("not verified");
+  if (typeof m.followers === "number") bits.push(`${m.followers.toLocaleString("en-US")} followers`);
+  if (typeof m.following === "number") bits.push(`following ${m.following.toLocaleString("en-US")}`);
+  if (typeof m.posts === "number") bits.push(`${m.posts} posts`);
+  if (m.bio) bits.push(`bio: "${m.bio}"`);
+  if (!bits.length) return null;
+  return `About the sender: ${bits.join(" · ")}`;
+}
+
 /** Render the thread as context, oldest first, marking the item being answered. */
 function threadContext(item: InboxItem, thread: InboxItem[], channelName: string | null): string {
   const ordered = [...thread].sort((a, b) => (a.postedAt ?? 0) - (b.postedAt ?? 0));
@@ -185,6 +212,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
   const context = [
     item.targetTitle ? `The post/video this is on: "${item.targetTitle}"` : null,
     item.kind === "dm" ? "This is a private direct message, not a public comment." : null,
+    senderLine(item),
     "",
     "Thread (oldest first):",
     threadContext(item, thread, channelName),

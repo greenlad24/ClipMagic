@@ -54,6 +54,20 @@ export interface EngageChannel {
   updatedAt: number;
 }
 
+/**
+ * What we know about the person who sent something — the signals Jake's reply
+ * rules turn on. Every field is optional: a signal we could not read is left
+ * OUT, never defaulted, because "0 followers" and "we don't know" lead to
+ * opposite decisions.
+ */
+export interface AuthorMeta {
+  verified?: boolean;
+  followers?: number;
+  following?: number;
+  posts?: number;
+  bio?: string;
+}
+
 /** One inbound comment or DM we've seen. */
 export interface InboxItem {
   id: string;
@@ -81,6 +95,8 @@ export interface InboxItem {
   ingestedAt: number;
   source: IngestSource;
   replyState: ReplyState;
+  /** Sender signals (verified / followers / bio), when we could read them. */
+  authorMeta?: AuthorMeta | null;
 }
 
 /**

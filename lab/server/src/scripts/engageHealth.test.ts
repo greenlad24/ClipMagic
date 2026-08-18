@@ -5,6 +5,8 @@
  *   - schedulerHealth()   safe shape on a database that has never ticked
  *   - the heartbeat       written by a cycle that did nothing at all
  *   - the overlap guard   refuses a second cycle, and SAYS WHY
+ *   - emailDayFor()       which single day of the week carries the email
+ *   - isEmailSlot()       and that nothing else does, including manual keys
  *
  * ⚠️ THE POINT OF THESE IS THAT A DEAD SCHEDULER LOOKS EXACTLY LIKE A QUIET
  * ONE. A tick with nothing due logs nothing and writes nothing, so no other
@@ -38,7 +40,7 @@ async function main() {
 
   const sched = await import("../skool/engageSchedule.js");
   const { db } = await import("../db/index.js");
-  const { STUCK_AFTER_MS, describeLockHold, schedulerHealth, tickNow, getSchedule } = sched;
+  const { STUCK_AFTER_MS, describeLockHold, schedulerHealth, tickNow, getSchedule, emailDayFor, isEmailSlot } = sched;
 
   /* ── the pure judgement ── */
 
@@ -138,6 +140,41 @@ async function main() {
     assert.equal(h.stuck, false);
     await first;
     assert.equal(schedulerHealth().runningSinceMs, null);
+  });
+
+  // ── one emailed post a week ────────────────────────────────────────────────
+  // Jake, 2026-08-12, after Skool was measured disabling the composer's switch
+  // for days after a broadcast: the week's one email goes on a chosen day, not
+  // on whichever slot happens to fall outside Skool's cooldown.
+
+  await check("emailDayFor: the week's first configured day carries it", () => {
+    assert.equal(emailDayFor(["sun", "tue", "fri"]), "sun");
+    // Order in the array must not matter — this is a property of the week.
+    assert.equal(emailDayFor(["fri", "tue", "sun"]), "sun");
+    assert.equal(emailDayFor(["wed", "mon"]), "mon");
+    assert.equal(emailDayFor([]), null);
+  });
+
+  await check("isEmailSlot: exactly one of the three posting days emails", () => {
+    const days = ["sun", "tue", "fri"] as const;
+    // 2026-08-09 Sun · 08-11 Tue · 08-14 Fri
+    assert.equal(isEmailSlot("2026-08-09", days), true);
+    assert.equal(isEmailSlot("2026-08-11", days), false);
+    assert.equal(isEmailSlot("2026-08-14", days), false);
+    // The following Sunday, so it is weekly rather than one-off.
+    assert.equal(isEmailSlot("2026-08-16", days), true);
+  });
+
+  await check("isEmailSlot: a key that is not a calendar date never emails", () => {
+    const days = ["sun", "tue", "fri"] as const;
+    // ⚠️ A hand-published slot is recorded as `<date>-manual`. A parser that
+    // accepted the prefix would hand the week's only email to a row written
+    // after the post already went out.
+    assert.equal(isEmailSlot("2026-08-09-manual", days), false);
+    assert.equal(isEmailSlot("", days), false);
+    assert.equal(isEmailSlot("not-a-date", days), false);
+    // No configured days at all is also not an email.
+    assert.equal(isEmailSlot("2026-08-09", [] as const), false);
   });
 
   fs.rmSync(root, { recursive: true, force: true });

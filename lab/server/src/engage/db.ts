@@ -12,6 +12,7 @@
 import { nanoid } from "nanoid";
 import { db } from "../db/index.js";
 import type {
+  AuthorMeta,
   ChannelStats,
   EngageChannel,
   EngageSettings,
@@ -329,6 +330,7 @@ interface InboxRow {
   ingested_at: number;
   source: string;
   reply_state: string;
+  author_meta: string | null;
 }
 
 function rowToInbox(row: InboxRow): InboxItem {
@@ -351,7 +353,37 @@ function rowToInbox(row: InboxRow): InboxItem {
     ingestedAt: row.ingested_at,
     source: row.source as InboxItem["source"],
     replyState: row.reply_state as ReplyState,
+    authorMeta: parseAuthorMeta(row.author_meta),
   };
+}
+
+/**
+ * Sender signals come back as JSON text. A row written before the column
+ * existed, or one we could not read a profile for, is simply null — never an
+ * empty object, because "we know nothing about them" and "we checked and they
+ * have nothing" are different answers to Jake's rules.
+ */
+function parseAuthorMeta(raw: string | null): AuthorMeta | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as AuthorMeta) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Attach sender signals to every row in a thread. Called after the profile is
+ * read, which happens AFTER the messages are inserted — the profile costs a page
+ * load, so it is only paid for threads that actually brought something new in.
+ */
+export function setThreadAuthorMeta(platform: Platform, threadId: string, meta: AuthorMeta): void {
+  db.prepare("UPDATE engage_inbox SET author_meta = ? WHERE platform = ? AND thread_id = ?").run(
+    JSON.stringify(meta),
+    platform,
+    threadId,
+  );
 }
 
 /**
@@ -369,8 +401,8 @@ export function insertInboxItem(
       `INSERT INTO engage_inbox
          (id, channel_id, platform, kind, dedup_key, thread_id, parent_id, target_ref,
           target_title, author_name, author_handle, author_id, text, permalink,
-          posted_at, ingested_at, source, reply_state)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+          posted_at, ingested_at, source, reply_state, author_meta)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
        ON CONFLICT(platform, dedup_key) DO NOTHING`,
     )
     .run(
@@ -392,6 +424,7 @@ export function insertInboxItem(
       now(),
       item.source,
       "new" as ReplyState,
+      item.authorMeta ? JSON.stringify(item.authorMeta) : null,
     );
   return { inserted: res.changes > 0 };
 }

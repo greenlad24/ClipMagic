@@ -24,6 +24,8 @@
  * and the editor renders captions-only.
  */
 import { claudeJSONForPurpose, anthropicConfigured } from "../ai/claude.js";
+import type { TranscriptWord } from "../ai/transcribe.js";
+import { alignMoments, formatTimedTranscript, type AlignmentKind, type AlignmentSummary } from "./align.js";
 
 export interface EmphasisMoment {
   /** Output-timeline start, seconds (when the sticker slaps on). */
@@ -42,11 +44,25 @@ export interface EmphasisMoment {
   imagePrompt: string;
   /** The transcript words/phrase this moment emphasizes (logged). */
   phrase?: string;
+  /**
+   * How this moment's timing was pinned to the audio (see meme/align.ts):
+   * "phrase" = snapped to the spoken words it quotes (the synced case),
+   * "snapped" = moved onto the nearest word onset, "kept" = the director's own
+   * estimate stood. Diagnostic only — it never affects placement.
+   */
+  alignedTo?: AlignmentKind;
 }
 
 export interface EmphasisContext {
   transcript: string;
   durationSeconds: number;
+  /**
+   * Word-level timestamps from the transcription. Load-bearing for SYNC: they
+   * both give the director real clock times to read off AND let us re-derive
+   * every start from the audio afterwards (alignMoments). Omitted → the director
+   * falls back to estimating times from the plain text, as it used to.
+   */
+  words?: TranscriptWord[];
 }
 
 const SYSTEM = `You are a senior short-form COMMENTARY/MEME editor. Over a clean narration with popping captions, you drop funny REACTION STICKERS that "slap on" to LAND a point, then pop out. Each sticker is either found in the Giphy + Tenor reaction-sticker libraries (a SEARCH QUERY) or generated from an IMAGE PROMPT.
@@ -56,9 +72,10 @@ YOUR JOB: read the WHOLE script first, then choose the UP TO 6 MAIN emphasis poi
 For EACH chosen point, decide the single most fitting sticker by judging the LOCAL line IN THE CONTEXT OF THE WHOLE SCRIPT, so the set is coherent and EVERY sticker is clearly relevant to what the video is about. An off-topic or generic sticker is worse than none.
 
 TIMING (per point):
+- The transcript is given to you as TIMESTAMPED lines: "[12.4s] ten times faster than". Read "startTime" straight off the stamp of the line the point lands on — do NOT estimate it from reading speed. A sticker that lands off the words it is reacting to is a broken edit.
 - Each sticker holds ~1.5–2.5s, then pops out. Never overlap two; space them out across the video.
 - Be sparing on the hook (first ~1.5s) and the CTA / final ~1.5s — let those breathe.
-- Tie every point to something literally in the transcript (its punchline / key word) — put that in "phrase".
+- "phrase" MUST be copied VERBATIM from the transcript — the exact 2–6 words the sticker reacts to, spelled as they appear there. This is what pins the sticker to the audio, so an approximate or paraphrased quote de-syncs it. Never invent or reword it.
 
 For each point write BOTH:
 - "searchQuery": 1–3 words, lowercase, to find a fitting reaction sticker in the libraries. It MUST relate to what the line is about (its concrete subject/idea or the specific reaction it warrants), read in the context of the whole script. Favor concepts the libraries actually stock (e.g. "robot", "money", "clock ticking", "mind blown", "facepalm").
@@ -121,6 +138,12 @@ export function sanitize(raw: unknown, durationSeconds: number): EmphasisMoment[
           ? m.imagePrompt.trim().slice(0, 400)
           : searchQuery, // fall back to the query so OpenAI gen still has a prompt
       phrase: typeof m.phrase === "string" ? m.phrase.slice(0, 120) : undefined,
+      // Set by alignMoments() upstream when the times were re-derived from the
+      // word timings; absent when sanitize() is called on a raw payload.
+      alignedTo:
+        m.alignedTo === "phrase" || m.alignedTo === "snapped" || m.alignedTo === "kept"
+          ? (m.alignedTo as AlignmentKind)
+          : undefined,
     });
   }
 
@@ -150,21 +173,34 @@ export interface EmphasisPlan {
   moments: EmphasisMoment[];
   /** Null when moments were produced (or genuinely none were warranted); else the reason. */
   unavailableReason: string | null;
+  /** How the run's timings were pinned to the audio (null when no words were given). */
+  alignment: AlignmentSummary | null;
 }
 
 export async function planEmphasisMoments(ctx: EmphasisContext): Promise<EmphasisPlan> {
   if (!anthropicConfigured()) {
-    return { moments: [], unavailableReason: "emphasis director unconfigured (no ANTHROPIC key)" };
+    return {
+      moments: [],
+      unavailableReason: "emphasis director unconfigured (no ANTHROPIC key)",
+      alignment: null,
+    };
   }
   const transcript = (ctx.transcript || "").trim();
   if (transcript.length < 40 || ctx.durationSeconds < 6) {
-    return { moments: [], unavailableReason: "narration too short for emphasis moments" };
+    return { moments: [], unavailableReason: "narration too short for emphasis moments", alignment: null };
   }
 
+  // Prefer the TIMESTAMPED transcript — the director reads startTime off the
+  // stamps instead of estimating it from reading speed (the old de-sync).
+  const words = ctx.words ?? [];
+  const body = words.length > 0 ? formatTimedTranscript(words) : transcript;
   const user =
     `Video duration: ${ctx.durationSeconds.toFixed(1)}s. ` +
     `Read the whole script, then choose the UP TO ${maxMomentsFor(ctx.durationSeconds)} MAIN emphasis points (fewer if fewer genuinely warrant a sticker). For each, give the fitting searchQuery AND a specific imagePrompt, both relevant to the script.\n\n` +
-    `TRANSCRIPT:\n${transcript}\n\nReturn the moments JSON now.`;
+    (words.length > 0
+      ? `TRANSCRIPT (each line is stamped with the second it is spoken — take startTime from the stamp, and copy "phrase" verbatim from these words):\n${body}`
+      : `TRANSCRIPT:\n${body}`) +
+    `\n\nReturn the moments JSON now.`;
 
   try {
     const rawJson = await claudeJSONForPurpose({
@@ -175,17 +211,28 @@ export async function planEmphasisMoments(ctx: EmphasisContext): Promise<Emphasi
       messages: [{ role: "user", content: user }],
     });
     const parsed = JSON.parse(rawJson);
-    const moments = sanitize(parsed, ctx.durationSeconds);
+    // SYNC GUARANTEE: re-derive every start from the word timings before the
+    // spacing/hold rules run, so sanitize() operates on real times rather than
+    // on the model's arithmetic.
+    const { moments: alignedRaw, summary } = alignMoments(parsed, words);
+    const moments = sanitize({ moments: alignedRaw }, ctx.durationSeconds);
     console.log(
       `[meme] director planned ${moments.length} sticker moment(s)` +
         moments.map((m) => ` @${m.startTime}s "${m.searchQuery}"`).join(""),
     );
+    if (words.length > 0) {
+      console.log(
+        `[meme] timeline sync: ${summary.phrase} pinned to the spoken phrase, ` +
+          `${summary.snapped} snapped to a word onset, ${summary.kept} left as planned ` +
+          `(largest correction ${summary.maxShift.toFixed(2)}s)`,
+      );
+    }
     // No reason needed even at 0 moments here: the director ran fine and simply
     // judged none were warranted (computeSkipReason reports that case).
-    return { moments, unavailableReason: null };
+    return { moments, unavailableReason: null, alignment: words.length > 0 ? summary : null };
   } catch (e) {
     const reason = e instanceof Error ? e.message : String(e);
     console.warn(`[meme] emphasis director failed — captions-only this run: ${reason}`);
-    return { moments: [], unavailableReason: `emphasis director failed: ${reason}` };
+    return { moments: [], unavailableReason: `emphasis director failed: ${reason}`, alignment: null };
   }
 }

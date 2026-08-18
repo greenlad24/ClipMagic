@@ -21,7 +21,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
-import { runFfmpeg } from "../render/ffmpeg.js";
+import { runFfmpeg, probe } from "../render/ffmpeg.js";
+import { ensureStickerSfx, buildSfxMix, sfxVolume } from "./sfx.js";
 import { remotionRuntimeAvailable, getBundle, importRenderer, browserExecutable } from "../motion/render.js";
 import { stageFraction } from "../render/progress.js";
 import type { EmphasisStickerClip } from "./sticker.js";
@@ -63,6 +64,8 @@ export interface StickerStageResult {
   ffmpegSpawns: number;
   /** How many stickers actually rendered + composited. */
   applied: number;
+  /** How many sticker pops were mixed into the audio (0 when the sound is off). */
+  sfxApplied: number;
   /**
    * Why no sticker was applied (Chromium unavailable, bundle failed, every
    * render failed, composite skipped …), or null on success. Surfaced to the
@@ -164,15 +167,24 @@ async function renderOne(serveUrl: string, clip: EmphasisStickerClip): Promise<R
  * full-frame overlay (it positions itself BELOW the captions internally), gated
  * to its [startTime,endTime] window — the same technique motion/composite.ts
  * uses. Never throws: on any ffmpeg error it returns the untouched base video.
+ *
+ * This pass ALSO drops the quiet sticker pop at each sticker's start (see
+ * meme/sfx.ts). It is the natural place for it: this is the only stage that
+ * knows both the final sticker times and the final audio, and the pass is
+ * already re-encoding video, so the sound costs one extra input and no extra
+ * spawn. If anything about the sound is unavailable the audio is copied through
+ * exactly as before.
  */
 async function compositeStickers(
   baseVideo: string,
   stickers: RenderedSticker[],
   totalDuration: number,
   onComposite?: (frac: number) => void,
-): Promise<{ file: string; composited: boolean; ffmpegSpawns: number }> {
+): Promise<{ file: string; composited: boolean; ffmpegSpawns: number; sfxApplied: number }> {
   const usable = stickers.filter((s) => s.file);
-  if (usable.length === 0) return { file: baseVideo, composited: false, ffmpegSpawns: 0 };
+  if (usable.length === 0) {
+    return { file: baseVideo, composited: false, ffmpegSpawns: 0, sfxApplied: 0 };
+  }
 
   const ext = path.extname(baseVideo) || ".mp4";
   const out = path.join(
@@ -199,19 +211,39 @@ async function compositeStickers(
     last = outLabel;
   });
 
-  // ── Audio: carry the base mix through unchanged ────────────────────────────
+  // ── Audio: the base mix, plus a quiet pop as each sticker slaps on ─────────
   // The base video already carries the full final mix (narration at full level +
-  // music bed @ 0.03) from the manifest render. The sticker composite is video-
-  // only, so we copy that audio straight through — no per-sticker sound.
+  // music bed @ 0.03) from the manifest render. We keep that mix untouched
+  // underneath (amix normalize=0) and lay one short pop over it per sticker.
+  //
+  // Requires the base to actually HAVE an audio stream — a narration-less source
+  // would make amix fail and cost us the whole composite, so we check first and
+  // fall back to the old copy-through.
+  const baseHasAudio = (await probe(baseVideo)).hasAudio;
+  const sfxFile = baseHasAudio ? await ensureStickerSfx() : null;
+  const sfxMix = sfxFile
+    ? buildSfxMix({
+        starts: usable.map((s) => Math.max(0, s.clip.startTime)),
+        sfxInputIndex: usable.length + 1, // base is 0, stickers are 1..N
+        baseAudioLabel: "0:a",
+        volume: sfxVolume(),
+      })
+    : null;
+  if (sfxFile && sfxMix) {
+    args.push("-i", sfxFile);
+    filters.push(...sfxMix.filters);
+  }
+
   args.push("-filter_complex", filters.join(";"));
   args.push("-map", `[${last}]`);
-  args.push("-map", "0:a?");
+  args.push("-map", sfxMix ? `[${sfxMix.outLabel}]` : "0:a?");
   args.push(
     "-c:v", "libx264",
     "-preset", "medium",
     "-crf", "20",
     "-pix_fmt", "yuv420p",
-    "-c:a", "copy",
+    // A mixed stream has to be encoded; an untouched one is copied as before.
+    ...(sfxMix ? ["-c:a", "aac", "-b:a", "192k"] : ["-c:a", "copy"]),
     "-movflags", "+faststart",
   );
   if (totalDuration > 0) args.push("-t", totalDuration.toFixed(3));
@@ -222,14 +254,23 @@ async function compositeStickers(
     // `-progress pipe:1` pass already in `args`) so the bar keeps moving through
     // "Compositing video…" instead of freezing while the whole video re-encodes.
     await runFfmpeg(args, totalDuration, onComposite ? (f) => onComposite(f) : undefined);
-    return { file: out, composited: true, ffmpegSpawns: 1 };
+    if (sfxMix) {
+      console.log(
+        `[meme] sticker sound: ${usable.length} pop(s) mixed at vol ${sfxVolume()} (${sfxFile})`,
+      );
+    } else {
+      console.log(
+        `[meme] sticker sound: none (${baseHasAudio ? "disabled or unavailable" : "base render has no audio"})`,
+      );
+    }
+    return { file: out, composited: true, ffmpegSpawns: 1, sfxApplied: sfxMix ? usable.length : 0 };
   } catch (e) {
     console.warn(
       `[meme] sticker composite failed — keeping base render: ${
         e instanceof Error ? e.message : String(e)
       }`,
     );
-    return { file: baseVideo, composited: false, ffmpegSpawns: 0 };
+    return { file: baseVideo, composited: false, ffmpegSpawns: 0, sfxApplied: 0 };
   }
 }
 
@@ -250,6 +291,7 @@ export async function applyEmphasisStickers(
       replacedFile: baseVideo,
       ffmpegSpawns: 0,
       applied: 0,
+      sfxApplied: 0,
       skipReason: "no sticker images — captions only",
     };
   }
@@ -262,6 +304,7 @@ export async function applyEmphasisStickers(
       replacedFile: baseVideo,
       ffmpegSpawns: 0,
       applied: 0,
+      sfxApplied: 0,
       skipReason: "Chromium/Remotion unavailable on this server — captions only",
     };
   }
@@ -280,6 +323,7 @@ export async function applyEmphasisStickers(
       replacedFile: baseVideo,
       ffmpegSpawns: 0,
       applied: 0,
+      sfxApplied: 0,
       skipReason: "Remotion bundle failed to build — captions only",
     };
   }
@@ -306,6 +350,7 @@ export async function applyEmphasisStickers(
       replacedFile: baseVideo,
       ffmpegSpawns: 0,
       applied: 0,
+      sfxApplied: 0,
       skipReason: "every sticker render failed — captions only",
     };
   }
@@ -328,6 +373,7 @@ export async function applyEmphasisStickers(
     replacedFile: result.file,
     ffmpegSpawns: result.ffmpegSpawns,
     applied,
+    sfxApplied: result.sfxApplied,
     skipReason: result.composited ? null : "sticker composite failed — captions only",
   };
 }

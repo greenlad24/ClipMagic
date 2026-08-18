@@ -79,13 +79,25 @@ export interface EngageSchedule {
    */
   maxSlotAgeHours: number;
   /**
-   * Turn on "Send email to all members" for every autonomous post.
+   * Turn on "Send email to all members" — for ONE post a week, not every post.
    *
    * ⚠️ THIS IS THE ONE SETTING THAT REACHES PEOPLE WHO ARE NOT LOOKING. A post
-   * sits in the feed until someone visits; an email arrives. At 3 posts a week
-   * that is 3 emails a week to all 65 members, and the cost of getting it wrong
-   * is unsubscribes rather than a tidy-up. It lives in config so it can be
-   * turned off in one call, without a rebuild, the moment that looks wrong.
+   * sits in the feed until someone visits; an email arrives. It lives in config
+   * so it can be turned off in one call, without a rebuild, the moment that
+   * looks wrong.
+   *
+   * ⚠️⚠️ AND SKOOL WILL NOT ALLOW THREE A WEEK ANYWAY — MEASURED 2026-08-12.
+   * The composer's switch carries `disabled` for days after an email goes out,
+   * and `currentGroup.metadata.lastNotifyAll` is the timestamp it is counting
+   * from (Sun 9 Aug 22:11 UTC, still disabled 60 hours later). So "email every
+   * post" was never a thing that could happen: two of the three slots were
+   * always going to find the switch dead.
+   *
+   * ⚠️ WHICH MADE THE CHOICE OF *WHICH* POST GETS THE EMAIL AN ACCIDENT — the
+   * first slot to fall outside Skool's cooldown took it, and that drifts week
+   * to week. Jake, 2026-08-12: one emailed post a week. So it is now the FIRST
+   * posting day of the week that carries it (see `emailDayFor`), deliberately
+   * and predictably, and the other two never touch the switch.
    */
   emailNotify: boolean;
 }
@@ -677,6 +689,45 @@ export function kindForSlot(
   return weekday === "tue" && haveMcpSubject ? "mcp" : "lesson";
 }
 
+/**
+ * Which posting day carries the week's one email — the earliest configured day.
+ *
+ * ⚠️ THE WEEK STARTS ON SUNDAY HERE BECAUSE `WEEKDAYS` DOES, and because the
+ * configured days are sun/tue/fri, which makes Sunday the natural opener rather
+ * than a tie-break nobody would remember. Derived from the configured days
+ * rather than stored, so re-configuring the schedule cannot leave the email
+ * pinned to a day that no longer posts — the failure mode where the setting
+ * silently stops applying to anything.
+ *
+ * Pure and exported for the same reason `describeLockHold` is: the alternative
+ * is proving it by waiting for a Sunday.
+ */
+export function emailDayFor(days: readonly Weekday[]): Weekday | null {
+  for (const d of WEEKDAYS) if (days.includes(d)) return d;
+  return null;
+}
+
+/**
+ * Whether this slot is the one that emails the community.
+ *
+ * ⚠️ A KEY THAT IS NOT A CALENDAR DATE ANSWERS NO. Slots published by hand are
+ * recorded as `2026-08-12-manual` so the subject picker and the weekly cap can
+ * see them, and a parse that quietly accepted the prefix would hand the week's
+ * only email to a row written after the fact. Not-a-posting-day is the safe
+ * answer for anything unrecognised: it fails toward not emailing 65 people.
+ */
+export function isEmailSlot(slotKey: string, days: readonly Weekday[]): boolean {
+  const target = emailDayFor(days);
+  if (!target) return false;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(slotKey);
+  if (!m) return false;
+  // A bare calendar date has one weekday whatever zone reads it, so UTC is not
+  // an assumption here — it is the only way to avoid importing one.
+  const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(at.getTime())) return false;
+  return WEEKDAYS[at.getUTCDay()] === target;
+}
+
 function insertSlot(
   slotKey: string,
   subject: string,
@@ -853,7 +904,10 @@ async function attemptSlot(
     title: draft.title,
     body: draft.body,
     category: draft.category,
-    emailNotify: cfg.emailNotify,
+    // One email a week, on the week's first posting day — see `emailNotify` in
+    // the config above. Skool would refuse the other two anyway; deciding it
+    // here is what makes WHICH post gets it a choice instead of a race.
+    emailNotify: cfg.emailNotify && isEmailSlot(slot.slotKey, cfg.days),
     attachment: draft.attachment,
   }).catch((e) => ({ ok: false, detail: e instanceof Error ? e.message : String(e), post: null }));
 
@@ -1098,14 +1152,17 @@ export async function publishSlot(communityUrl: string, slotKey: string): Promis
   if (slot.state === "posted") return { ok: false, detail: `Slot ${slotKey} is already posted (/${slot.slug ?? "?"}).` };
   if (!slot.title || !slot.body) return { ok: false, detail: `Slot ${slotKey} has no draft to publish.` };
 
-  // Same setting as the autonomous path — a hand-published slot that skipped
-  // the email would differ from the scheduled one in a way nobody asked for.
+  // Same rule as the autonomous path — a hand-published slot that emailed when
+  // its scheduled twin would not have is the surprise nobody asked for, and it
+  // would spend the week's one allowed email on whichever slot an operator
+  // happened to press the button on.
+  const cfg = getSchedule();
   const posted = await createPost({
     communityUrl,
     title: slot.title,
     body: slot.body,
     category: slot.category,
-    emailNotify: getSchedule().emailNotify,
+    emailNotify: cfg.emailNotify && isEmailSlot(slotKey, cfg.days),
     // The attachment the slot already settled on — same reason the words are
     // replayed rather than re-drafted.
     attachment: parseAttachment(slot.attachmentJson),

@@ -46,7 +46,7 @@
  *     clicking something hopeful.
  */
 import { sleep, randInt, typeHuman, waitForAny, withPage } from "./browser.js";
-import type { InboxItem } from "./types.js";
+import type { AuthorMeta, InboxItem } from "./types.js";
 
 /** A pending Instagram message request, as read off the web UI. */
 export interface BrowserRequest {
@@ -399,6 +399,82 @@ export async function sendInstagramDm(
       : { ok: true, dryRun: false, accepted, error: null };
   });
   return out ?? { ok: false, error: "Browser unavailable.", dryRun: opts.dryRun };
+}
+
+/**
+ * Read the signals Jake's rules turn on off a sender's own profile: verified
+ * badge, follower count, bio.
+ *
+ * This visits instagram.com/<handle>/ — the platform's own page for that
+ * account, NOT anything the sender put in their message. The distinction is the
+ * whole point: their link never gets opened, their profile is just Instagram.
+ *
+ * Followers come from the og:description meta tag ("3,173 Followers, 739
+ * Following, 15 Posts — …") rather than the rendered header, because the header
+ * abbreviates large numbers to "12.4K" and loses the precision the rules need.
+ * The header is the fallback when the tag is missing.
+ *
+ * A signal that cannot be read is LEFT OUT. Never defaulted: "no followers" and
+ * "we couldn't tell" point at opposite decisions.
+ */
+export async function readSenderProfile(handle: string): Promise<AuthorMeta | null> {
+  const clean = handle.trim().replace(/^@/, "");
+  // A handle comes off a page we scraped, so it goes in a URL only if it looks
+  // like a handle. Instagram allows letters, digits, dots and underscores.
+  if (!/^[A-Za-z0-9._]{1,30}$/.test(clean)) return null;
+
+  return await withPage<AuthorMeta | null>("instagram", async (page) => {
+    try {
+      await page.goto(`https://www.instagram.com/${clean}/`, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+    } catch {
+      return null;
+    }
+    await sleep(randInt(3_000, 5_000));
+    if (!(await stillOnInstagram(page))) return null;
+
+    const raw = await page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const desc: string | null =
+        doc.querySelector('meta[property="og:description"]')?.getAttribute("content") ?? null;
+      const header: string = doc.querySelector("header")?.innerText ?? "";
+      const verified: boolean = [...doc.querySelectorAll("svg[aria-label]")].some((e: any) =>
+        /verified/i.test(e.getAttribute("aria-label") ?? ""),
+      );
+      return { desc, header, verified };
+    });
+
+    const meta: AuthorMeta = { verified: raw.verified };
+
+    const fromDesc = (label: string): number | undefined => {
+      if (!raw.desc) return undefined;
+      const m = new RegExp(`([\\d,.]+)\\s+${label}`, "i").exec(raw.desc);
+      if (!m) return undefined;
+      const n = Number(m[1].replace(/,/g, ""));
+      return Number.isFinite(n) ? n : undefined;
+    };
+    const followers = fromDesc("Followers");
+    const following = fromDesc("Following");
+    const posts = fromDesc("Posts");
+    if (followers !== undefined) meta.followers = followers;
+    if (following !== undefined) meta.following = following;
+    if (posts !== undefined) meta.posts = posts;
+
+    // The bio is everything after the counts line in the header — genuinely
+    // useful signal for "does this read like a throwaway account".
+    const bio = raw.header
+      .split("\n")
+      .map((l: string) => l.trim())
+      .filter((l: string) => l && !/^\d[\d,.]*\s*(posts|followers|following)$/i.test(l))
+      .slice(2, 7)
+      .join(" ")
+      .slice(0, 300);
+    if (bio) meta.bio = bio;
+
+    return meta;
+  });
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   setTiktokPolledAt,
   insertInboxItem,
   setChannelStats,
+  setThreadAuthorMeta,
 } from "./db.js";
 import {
   resolveChannel,
@@ -44,7 +45,7 @@ import {
   metaErrMsg,
 } from "./metaGraph.js";
 import { fetchTikTokComments, tiktokConfigured, TikTokError } from "./tiktok.js";
-import { readInstagramRequests, requestToInboxItems } from "./dmBrowser.js";
+import { readInstagramRequests, readSenderProfile, requestToInboxItems } from "./dmBrowser.js";
 import { isPolling, setPolling, markPollSuccess, setLastError } from "./registry.js";
 import type { EngageChannel } from "./types.js";
 
@@ -269,8 +270,19 @@ async function runInstagramRequests(): Promise<number> {
   try {
     const requests = await readInstagramRequests();
     for (const req of requests) {
+      let fresh = 0;
       for (const item of requestToInboxItems(req, channels[0].id)) {
-        if (insertInboxItem(item).inserted) ingested++;
+        if (insertInboxItem(item).inserted) fresh++;
+      }
+      ingested += fresh;
+
+      // Only pay for the sender's profile when this thread actually brought
+      // something new in — re-reading the same pending request every sweep
+      // shouldn't cost a page load per spammer forever. The signals it carries
+      // (verified, followers) are what the reply rules turn on.
+      if (fresh > 0 && req.senderHandle) {
+        const meta = await readSenderProfile(req.senderHandle);
+        if (meta) setThreadAuthorMeta("instagram", req.threadId, meta);
       }
     }
     loggedIgRequestError = false;

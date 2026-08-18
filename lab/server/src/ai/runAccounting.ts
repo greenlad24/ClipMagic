@@ -32,6 +32,7 @@ import {
   OPENAI_WHISPER_PER_MINUTE,
   GROQ_WHISPER_PER_MINUTE,
   OPENAI_IMAGE_PER_IMAGE,
+  imagePricePerImage,
   PRICING_SOURCE_DATE,
   tokenCost,
   transcriptionCost,
@@ -159,7 +160,8 @@ export type CallPurpose =
   | "audit-content";
 
 export interface AiCallRecord {
-  provider: "anthropic" | "groq" | "openai";
+  /** "segmind" appears only on image-generation calls (the sticker generator). */
+  provider: "anthropic" | "groq" | "openai" | "segmind";
   model: string;
   purpose: CallPurpose;
   inputTokens: number;
@@ -280,18 +282,30 @@ export function recordGroqTranscription(args: {
 
 /**
  * Record generated still images for the Sticker/Meme editor. Each image is a
- * flat per-image OpenAI charge (no tokens). We aggregate one record per run with
- * the image count and total cost so the optimization report shows a single,
- * honest "N images × $rate" line. `model` is the image model actually used.
+ * flat per-image charge (no tokens). We aggregate one record per run with the
+ * image count and total cost so the optimization report shows a single, honest
+ * "N images × $rate" line. `model` is the image model actually used.
+ *
+ * `costUsd` is the PROVIDER-REPORTED charge for this single image when the API
+ * tells us (Segmind returns it in an `x-cost` header). It is preferred over the
+ * published-rate table, so the report carries what was really billed rather than
+ * an estimate; the table remains the fallback for providers that stay silent.
  */
 export function recordImageGeneration(args: {
   model: string;
   images: number;
   ms: number;
+  /** Which generator billed this ("segmind" | "openai"). Defaults to openai. */
+  provider?: string;
+  /** Quality tier requested, for the providers that price on it (Segmind). */
+  quality?: string;
+  /** Real per-image cost reported by the provider, if any. */
+  costUsd?: number;
 }): void {
   if (!activeRun) return;
   if (args.images <= 0) return;
-  const per = OPENAI_IMAGE_PER_IMAGE[args.model] ?? 0;
+  const provider = (args.provider ?? "openai") as AiCallRecord["provider"];
+  const per = args.costUsd ?? imagePricePerImage(args.model, provider, args.quality);
   const cost = per * args.images;
   // Fold into one running line per model so the report reads "N images".
   const existing = activeRun.calls.find(
@@ -304,7 +318,7 @@ export function recordImageGeneration(args: {
     return;
   }
   activeRun.calls.push({
-    provider: "openai",
+    provider,
     model: args.model,
     purpose: "image-generation",
     inputTokens: 0,
@@ -512,17 +526,30 @@ export function buildReport(projectId: string): OptimizationReport | null {
   // ── Line item: image generation (Sticker/Meme editor) ───────────────────────
   const img = run.calls.find((c) => c.purpose === "image-generation");
   if (img && (img.images ?? 0) > 0) {
-    const perImage = OPENAI_IMAGE_PER_IMAGE[img.model] ?? 0;
+    const images = img.images ?? 0;
+    // What was really billed per image (Segmind reports its exact charge; the
+    // published-rate table backs the providers that don't).
+    const perImage = images > 0 ? img.costUsd / images : 0;
+    // The BASELINE is the OpenAI gpt-image-1 path this editor used before — the
+    // honest comparison for the switch to Segmind's GPT Image 2, and $0 saved
+    // when OpenAI is still the provider (the fallback ran).
+    const baselinePerImage = OPENAI_IMAGE_PER_IMAGE["gpt-image-1"] ?? 0;
+    const baselineUsd = roundUsd(baselinePerImage * images);
+    const isSegmind = img.provider === "segmind";
     lineItems.push({
-      label: `Sticker image generation · ${img.images} image${img.images !== 1 ? "s" : ""}`,
+      label: `Sticker image generation · ${images} image${images !== 1 ? "s" : ""}`,
       labUsd: roundUsd(img.costUsd),
-      baselineUsd: roundUsd(img.costUsd),
-      savedUsd: 0,
-      note: `${img.images} × OpenAI ${img.model} still${img.images !== 1 ? "s" : ""} at $${perImage.toFixed(2)}/image (transparent PNG, 1024², priced ${PRICING_SOURCE_DATE}). FALLBACK source only — used when Giphy/Tenor returned nothing (or have no keys) and an OpenAI key is present. Added cost shown transparently.`,
-      kind: "quality-investment",
+      baselineUsd: isSegmind ? baselineUsd : roundUsd(img.costUsd),
+      savedUsd: isSegmind ? roundUsd(Math.max(0, baselineUsd - img.costUsd)) : 0,
+      note: isSegmind
+        ? `${images} × Segmind ${img.model} still${images !== 1 ? "s" : ""} at $${perImage.toFixed(4)}/image (provider-reported charge, 1024², green-screen keyed to a transparent PNG locally at $0). Baseline is the OpenAI gpt-image-1 path this replaced at $${baselinePerImage.toFixed(2)}/image (priced ${PRICING_SOURCE_DATE}). FALLBACK source only — used when Giphy/Tenor returned nothing.`
+        : `${images} × OpenAI ${img.model} still${images !== 1 ? "s" : ""} at $${perImage.toFixed(2)}/image (transparent PNG, 1024², priced ${PRICING_SOURCE_DATE}). FALLBACK source only — used when Giphy/Tenor returned nothing (or have no keys) and an OpenAI key is present. Added cost shown transparently.`,
+      kind: isSegmind ? "saving" : "quality-investment",
     });
     whatWasOptimized.push(
-      `Sticker editor used the OpenAI image-gen FALLBACK for ${img.images} moment${img.images !== 1 ? "s" : ""} (no free library sticker fit) — cached by prompt, rendered as bouncy stickers below the captions.`,
+      isSegmind
+        ? `Sticker generation runs on Segmind GPT Image 2 at ~$${perImage.toFixed(4)}/image instead of OpenAI at $${baselinePerImage.toFixed(2)} — ${images} generated sticker${images !== 1 ? "s" : ""} this run, cached by prompt.`
+        : `Sticker editor used the OpenAI image-gen FALLBACK for ${images} moment${images !== 1 ? "s" : ""} (no free library sticker fit) — cached by prompt, rendered as bouncy stickers below the captions.`,
     );
   }
 

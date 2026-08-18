@@ -79,6 +79,21 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "GEMINI_API_KEY", label: "Gemini API key", group: "Thumbnail Designer", connects: "Powers the Thumbnail Designer's Nano Banana editing chain (Gemini 2.5 Flash Image AND Nano Banana Pro / Gemini 3 Pro Image) that recreates a top thumbnail with your character. Create a key in Google AI Studio (aistudio.google.com/apikey), then paste it here. Used only by this lab server — never sent to the browser." },
   { key: "YOUTUBE_DATA_API_KEY", label: "YouTube Data API key", group: "Thumbnail Designer", connects: "Lets the Thumbnail Designer search YouTube for the top-performing thumbnails for a keyword. Create an API key in Google Cloud Console (enable the YouTube Data API v3), then paste it here. Used only for search — server-only; never sent to the browser." },
 
+  // ── Avatar Narrator (LAB tool — synthetic-presenter talking-head videos) ────
+  // ONE key by design. Segmind hosts both halves of the tool — Seedance 2.5 for
+  // the video and ElevenLabs for the voice and its cloning — so the alternative
+  // engines (kie.ai InfiniteTalk, WaveSpeed, Higgsfield, a self-hosted worker)
+  // and the direct ElevenLabs account were removed from this registry on
+  // 2026-08-10 rather than left as fields nobody fills in. Their ADAPTERS are
+  // still in avatar/providers.ts and avatar/tts.ts and still read their env
+  // vars, so bringing one back is re-adding its line here — not a rewrite.
+  // All consumed by THIS lab server (avatar/providers.ts + avatar/tts.ts), never
+  // by the Postiz container, so they're excluded from the Postiz env file via
+  // LAB_ONLY_KEYS. The tool needs exactly ONE video key (kie.ai by default) and
+  // reuses GEMINI_API_KEY above for both the portrait and the narration voice —
+  // so with Gemini already set, kie.ai is the only new account required.
+  { key: "SEGMIND_API_KEY", label: "Segmind API key", group: "Avatar Narrator", connects: "The Avatar Narrator's default engine — Segmind hosts Seedance 2.5 (portrait + narration -> generated presenter) at $0.1065/sec at 480p and $0.2389/sec at 720p, roughly 24% under kie.ai for the same ByteDance model. Create a key at segmind.com (console -> API keys), then paste it here. Server-only; never sent to the browser." },
+
   { key: "DATAFORSEO_LOGIN", label: "DataForSEO login (optional)", group: "Keyword Research", connects: "OPTIONAL. The Keyword Research tool works out of the box on free signals (YouTube autocomplete + Data API + Google Trends). Add your DataForSEO API login (the email you sign in with at dataforseo.com) here — together with the password — for exact monthly Google search volume, CPC and extra keyword ideas. Server-only; never sent to the browser." },
   { key: "DATAFORSEO_PASSWORD", label: "DataForSEO password (optional)", group: "Keyword Research", connects: "OPTIONAL. The API password from your DataForSEO dashboard (API Access), paired with the login above. Used server-side for HTTP Basic auth to DataForSEO; never sent to the browser." },
 
@@ -166,6 +181,15 @@ const LAB_ONLY_KEYS = new Set([
   // Thumbnail Designer (used by the lab server, never by Postiz).
   "GEMINI_API_KEY",
   "YOUTUBE_DATA_API_KEY",
+  // Avatar Narrator — lipsync engines + optional voice, used by the lab server.
+  "KIE_API_KEY",
+  "SEGMIND_API_KEY",
+  "WAVESPEED_API_KEY",
+  "ELEVENLABS_API_KEY",
+  "HIGGSFIELD_API_KEY",
+  "HIGGSFIELD_API_SECRET",
+  "INFINITETALK_SELFHOST_URL",
+  "INFINITETALK_SELFHOST_KEY",
   // Keyword Research (optional DataForSEO volume provider), used by the lab server.
   "DATAFORSEO_LOGIN",
   "DATAFORSEO_PASSWORD",
@@ -427,6 +451,43 @@ export function getYoutubeDataApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.YOUTUBE_DATA_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getters for the Avatar Narrator's engines. Same
+ * write-only guarantee as every key above: none of these may ever be wired into
+ * an HTTP response, and none is logged. Env vars take precedence over the
+ * UI-managed store so a compose-level key wins on the droplet.
+ */
+export function getKieApiKey(): string | null {
+  return (process.env.KIE_API_KEY || "").trim() || readStore().KIE_API_KEY || null;
+}
+export function getSegmindApiKey(): string | null {
+  return (process.env.SEGMIND_API_KEY || "").trim() || readStore().SEGMIND_API_KEY || null;
+}
+export function getWaveSpeedApiKey(): string | null {
+  return (process.env.WAVESPEED_API_KEY || "").trim() || readStore().WAVESPEED_API_KEY || null;
+}
+export function getElevenLabsApiKey(): string | null {
+  return (process.env.ELEVENLABS_API_KEY || "").trim() || readStore().ELEVENLABS_API_KEY || null;
+}
+/**
+ * Higgsfield credentials. Returned as a PAIR because the API authenticates with
+ * HTTP Basic over `key:secret` — a key on its own cannot sign a request, so
+ * "configured" has to mean both are present or the engine would offer itself
+ * and then fail at submit time.
+ */
+export function getHiggsfieldCredentials(): { key: string; secret: string } | null {
+  const key = (process.env.HIGGSFIELD_API_KEY || "").trim() || readStore().HIGGSFIELD_API_KEY || "";
+  const secret = (process.env.HIGGSFIELD_API_SECRET || "").trim() || readStore().HIGGSFIELD_API_SECRET || "";
+  return key && secret ? { key, secret } : null;
+}
+
+export function getSelfHostAvatarUrl(): string | null {
+  return (process.env.INFINITETALK_SELFHOST_URL || "").trim() || readStore().INFINITETALK_SELFHOST_URL || null;
+}
+export function getSelfHostAvatarKey(): string | null {
+  return (process.env.INFINITETALK_SELFHOST_KEY || "").trim() || readStore().INFINITETALK_SELFHOST_KEY || null;
 }
 
 /**

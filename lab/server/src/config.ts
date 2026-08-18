@@ -55,6 +55,30 @@ export const config = {
   imageHistoryDir: process.env.IMAGE_HISTORY_DIR || path.join(DATA_DIR, "image-history"),
 
   /**
+   * Avatar Narrator library — the synthetic personas' portraits, the generated
+   * narration audio and the finished talking-head MP4s. Served read-only at
+   * /api/avatar/<file> BEHIND the auth gate (like image-history), so only a
+   * signed-in operator can browse the library.
+   */
+  avatarDir: process.env.AVATAR_DIR || path.join(DATA_DIR, "avatar"),
+
+  /**
+   * PUBLIC, UNAUTHENTICATED asset drop — the one hole in the auth gate, and it
+   * exists for a single reason: the avatar/lipsync APIs (kie.ai, WaveSpeed)
+   * take the portrait and the narration audio as URLs they fetch THEMSELVES.
+   * A provider's fetcher has no Google session, so anything behind
+   * requireSession is invisible to it.
+   *
+   * The mitigation is unguessability, not authentication: every file lands
+   * under a 32-hex-char random token directory (128 bits) and is pruned after
+   * `publicAssetTtlMs`. Only ever put provider inputs here — a portrait and a
+   * TTS clip that are about to become a public video anyway. Never anything
+   * else. See avatar/publicAssets.ts.
+   */
+  publicAssetsDir: process.env.PUBLIC_ASSETS_DIR || path.join(DATA_DIR, "public-assets"),
+  publicAssetTtlMs: envInt("PUBLIC_ASSET_TTL_MS", 24 * 60 * 60 * 1000),
+
+  /**
    * Engagement Manager browser profiles. One persistent Chromium profile per
    * platform (<dir>/instagram, /facebook, /tiktok) holding the logged-in
    * cookies, localStorage and device fingerprint, so the once-only interactive
@@ -249,6 +273,8 @@ export function ensureDirs(): void {
     config.outputsDir,
     config.tmpDir,
     config.imageHistoryDir,
+    config.avatarDir,
+    config.publicAssetsDir,
     config.engageBrowserDir,
     config.skoolBrowserDir,
     path.dirname(config.dbPath),

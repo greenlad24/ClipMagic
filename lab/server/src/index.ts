@@ -16,6 +16,8 @@ import { startMonitor } from "./engage/monitor.js";
 import { startReplyWorker } from "./engage/replyWorker.js";
 import { startEngageScheduler } from "./skool/engageSchedule.js";
 import { getSkoolSettings } from "./db/skool.js";
+import { PUBLIC_ASSET_ROUTE, pruneExpired as pruneAvatarAssets } from "./avatar/publicAssets.js";
+import { resumeInterrupted as resumeAvatarRuns } from "./avatar/pipeline.js";
 import uploadsRouter from "./routes/uploads.js";
 import renderRouter, { rendiRouter } from "./routes/render.js";
 import projectsRouter from "./routes/projects.js";
@@ -46,6 +48,30 @@ app.use((_req, res, next) => {
 
 // Large JSON bodies: manifests for a 300-item batch can be sizeable.
 app.use(express.json({ limit: "256mb" }));
+
+// ── Avatar Narrator provider drop (the ONE route outside the auth gate) ─────
+// Mounted BEFORE requireSession because it is not for the operator — it is for
+// kie.ai / WaveSpeed, whose fetchers pull the portrait and the narration by URL
+// with no Google session. Everything served here is a copy of a provider INPUT
+// under a 128-bit random path that expires within 24h; see
+// avatar/publicAssets.ts for the full rationale and the rules. `index: false`
+// and `dotfiles: "deny"` so a token cannot be probed by listing.
+app.use(
+  PUBLIC_ASSET_ROUTE,
+  express.static(config.publicAssetsDir, { index: false, dotfiles: "deny", fallthrough: false })
+);
+// `fallthrough: false` is deliberate — without it an expired token would fall
+// through the gate to the SPA and hand the provider an HTML page where it asked
+// for a JPEG. But it reports a miss by passing ENOENT to the error handler,
+// which answers 500 and logs it. A swept or mistyped token is a 404, not a
+// server fault, so it is translated here rather than polluting the error log.
+app.use(PUBLIC_ASSET_ROUTE, (err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.code === "ENOENT" || err?.statusCode === 404 || err?.status === 404) {
+    res.status(404).type("text/plain").send("Not found");
+    return;
+  }
+  next(err);
+});
 
 // ── Google Sign-In auth gate ────────────────────────────────────────────────
 // The sign-in routes must be reachable BEFORE the gate; the gate then covers
@@ -96,6 +122,15 @@ app.use(
   "/api/image-history",
   auth,
   express.static(config.imageHistoryDir)
+);
+
+// Avatar Narrator library — persona portraits, narration MP3s and finished
+// talking-head MP4s under DATA_DIR/avatar (config.avatarDir). Behind `auth`,
+// unlike the provider drop above: this is the operator's library.
+app.use(
+  "/api/avatar",
+  auth,
+  express.static(config.avatarDir)
 );
 
 // API
@@ -200,6 +235,19 @@ app.listen(config.port, config.host, () => {
   // arming it is two deliberate acts, not one. The community URL is read per
   // tick rather than captured here — the lab boots before it is set.
   startEngageScheduler(() => String(getSkoolSettings().communityUrl ?? "").trim());
+
+  // Avatar Narrator: an avatar render runs for tens of minutes on the
+  // provider's side, so a deploy will land mid-render. Re-attach to anything
+  // already submitted rather than abandoning a render that has been paid for,
+  // and sweep any capability URLs the last process left behind.
+  try {
+    const { resumed, failed } = resumeAvatarRuns();
+    if (resumed || failed) console.log(`[avatar] resumed ${resumed} interrupted run(s), failed ${failed} pre-submit`);
+    const swept = pruneAvatarAssets();
+    if (swept) console.log(`[avatar] swept ${swept} expired public asset(s)`);
+  } catch (e) {
+    console.warn(`[avatar] startup recovery failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
 });
 
 /**

@@ -81,6 +81,23 @@ function dist(a: [number, number, number], b: [number, number, number]): number 
   return Math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2);
 }
 
+/**
+ * Peak level (dBFS) of a slice of a file's audio, via ffmpeg's volumedetect.
+ * Digital silence reports `-91.0 dB` (or no max_volume line at all), which is
+ * what makes this a usable proof: the base video here is `anullsrc`, so ANY
+ * measurable level in the output can only have come from the sticker pop.
+ */
+function peakDbfs(video: string, start: number, length: number): number {
+  const r = spawnSync(
+    FFMPEG,
+    ["-hide_banner", "-ss", start.toFixed(3), "-t", length.toFixed(3), "-i", video,
+      "-af", "volumedetect", "-vn", "-f", "null", "-"],
+    { encoding: "utf8" },
+  );
+  const m = /max_volume:\s*(-?\d+(?:\.\d+)?) dB/.exec(`${r.stderr}${r.stdout}`);
+  return m ? Number.parseFloat(m[1]) : -Infinity;
+}
+
 async function main(): Promise<void> {
   const dur = 8;
   const stickerStart = 3.0;
@@ -184,6 +201,24 @@ async function main(): Promise<void> {
   assert(
     maxPairwise > 12,
     `sticker ANIMATES — region color changes across the window (max pairwise Δ = ${maxPairwise.toFixed(1)}, frozen ⇒ ~0)`,
+  );
+
+  // ── 5. SOUND proof: a quiet pop lands AT the sticker, and nowhere else. ────
+  // The base video is anullsrc (digital silence), so any level in the output is
+  // the sticker sound and nothing else.
+  const silentPeak = peakDbfs(out, 0.2, stickerStart - 0.6);
+  const popPeak = peakDbfs(out, stickerStart, 0.4);
+  assert(
+    popPeak > silentPeak + 20,
+    `a sound effect fires AT the sticker (${popPeak.toFixed(1)} dB) and not before it (${silentPeak.toFixed(1)} dB)`,
+  );
+  assert(
+    popPeak < -6,
+    `the sticker sound stays QUIET — peak ${popPeak.toFixed(1)} dB, well under the narration it sits over`,
+  );
+  assert(
+    result.sfxApplied === 1,
+    `the stage reports the pop it mixed (sfxApplied=${result.sfxApplied})`,
   );
 
   console.log(`\n[e2e] region means (R,G,B):`);
