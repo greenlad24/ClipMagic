@@ -707,6 +707,56 @@ export async function fetchInstagramDMs(
   return parseMetaDMs(json, { channelId: "", platform: "instagram", selfIds: new Set([pageId]) });
 }
 
+// ── sending a direct message ────────────────────────────────────────────────────
+//
+// Replying to a DM is NOT the comment API. It's the Send API: POST to the PAGE's
+// /messages edge, addressed to the recipient's page-scoped id — the same endpoint
+// for Facebook Messenger and for Instagram Direct (Instagram messaging runs
+// through the linked Page). The operator's token already carries both scopes
+// (`pages_messaging`, `instagram_manage_messages`).
+//
+// THE 24-HOUR WINDOW is the thing to know here. Standard messaging only permits a
+// reply within 24 hours of the person's last message; after that Meta rejects the
+// send (#10) and the only ways through are a message tag or the Human Agent
+// feature (7 days, needs App Review). An autonomous replier that polls slowly can
+// therefore miss its chance entirely, which is why the sender checks the age
+// itself and says so plainly rather than letting it look like a bug.
+
+/** Meta's standard messaging window: 24h from the person's last message. */
+export const DM_REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Send a direct message from a Page: POST /{page-id}/messages.
+ *
+ * `recipientId` is the sender's page-scoped id as it arrived on the inbound
+ * message (PSID for Messenger, IGSID for Instagram Direct) — NOT their public
+ * username, which the Send API won't accept. `messaging_type=RESPONSE` declares
+ * this as an answer to their message, which is what keeps it inside the standard
+ * 24-hour window.
+ *
+ * Returns Meta's message id when it reports one.
+ */
+export async function sendDirectMessage(
+  pageId: string,
+  recipientId: string,
+  text: string,
+  pageToken: string,
+  fetchImpl?: FetchFn,
+): Promise<string | null> {
+  const doFetch = resolveFetch(fetchImpl);
+  const json = await graphPost(
+    `${pageId}/messages`,
+    {
+      recipient: JSON.stringify({ id: recipientId }),
+      message: JSON.stringify({ text }),
+      messaging_type: "RESPONSE",
+    },
+    pageToken,
+    doFetch,
+  );
+  return typeof json?.message_id === "string" ? json.message_id : null;
+}
+
 // ── engagement stats (fans/followers · comments · likes) ─────────────────────────
 
 /** A channel's engagement snapshot (counts only; the DB stamps updatedAt). */

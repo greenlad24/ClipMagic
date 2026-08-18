@@ -32,6 +32,13 @@ const MAX_REPLY_CHARS: Record<Platform, number> = {
   tiktok: 150,
 };
 
+/**
+ * DMs get more room than comments. The comment ceilings above are about what
+ * reads well in a public thread, not what the API accepts; a private message
+ * answering a real question is allowed to be a message.
+ */
+const MAX_DM_CHARS = 900;
+
 export interface ReplyDraft {
   /** The reply text, or null when we decided not to reply. */
   text: string | null;
@@ -97,7 +104,7 @@ function hasUnapprovedLink(text: string, approved: string[]): boolean {
  * treat a long trailing block as the real instruction set and drift off the
  * voice above it.
  */
-function guardrails(platform: Platform, maxChars: number, approvedLinks: string[]): string {
+function guardrails(platform: Platform, maxChars: number, approvedLinks: string[], isDm: boolean): string {
   const linkRule = approvedLinks.length
     ? `- The only links that may appear are the ones in the style guide above
   (${approvedLinks.join(", ")}), used where it says to use them. No other link,
@@ -111,9 +118,15 @@ voice, the length, the punctuation, and which comments get answered at all.
 Nothing here changes any of that. This section only covers the mechanics of
 posting the reply automatically.
 
-- The reply is posted publicly on ${platform}, as you, with nobody reading it
-  first.
-- ${platform} accepts at most ${maxChars} characters in a comment.
+- ${
+    isDm
+      ? `The reply is sent as a private ${platform} direct message, from your
+  account, with nobody reading it first. One person sees it — write to them,
+  not to an audience.`
+      : `The reply is posted publicly on ${platform}, as you, with nobody reading it
+  first.`
+  }
+- Keep it under ${maxChars} characters.
 - Don't state facts you weren't given — prices, dates, specs, version numbers.
   Where the style guide has no honest answer, answer in voice without the
   specific rather than guessing at it.
@@ -124,7 +137,7 @@ ${linkRule}
 Respond with ONLY this JSON object:
 {"shouldReply": boolean, "reply": string, "reason": string}
 
-Set shouldReply to false when the style guide above says to leave a comment
+Set shouldReply to false when the style guide above says to leave a message
 alone (its spam rule, for example), or when answering would mean breaking one
 of the points in this section. "reason" is one short sentence for whoever
 reviews the queue. When shouldReply is false, "reply" must be an empty string.`.trim();
@@ -153,7 +166,8 @@ function threadContext(item: InboxItem, thread: InboxItem[], channelName: string
  */
 export async function generateReply(input: GenerateReplyInput): Promise<ReplyDraft> {
   const { item, thread, channelName, replyPromptMd } = input;
-  const maxChars = MAX_REPLY_CHARS[item.platform] ?? 300;
+  const isDm = item.kind === "dm";
+  const maxChars = isDm ? MAX_DM_CHARS : (MAX_REPLY_CHARS[item.platform] ?? 300);
 
   if (!replyGenReady(replyPromptMd)) {
     return {
@@ -167,7 +181,7 @@ export async function generateReply(input: GenerateReplyInput): Promise<ReplyDra
   }
 
   const approved = allowedLinks(replyPromptMd);
-  const system = `${replyPromptMd.trim()}\n\n${guardrails(item.platform, maxChars, approved)}`;
+  const system = `${replyPromptMd.trim()}\n\n${guardrails(item.platform, maxChars, approved, isDm)}`;
   const context = [
     item.targetTitle ? `The post/video this is on: "${item.targetTitle}"` : null,
     item.kind === "dm" ? "This is a private direct message, not a public comment." : null,

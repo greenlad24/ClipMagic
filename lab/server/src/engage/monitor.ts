@@ -284,6 +284,21 @@ async function runTikTok(): Promise<{ ingested: number }> {
 const loggedDmDisabled = new Set<string>();
 
 /**
+ * Channels whose COMMENT read is failing for a non-auth reason (Jake's Facebook
+ * Page: #10 `pages_read_user_content`, which his app's use case doesn't offer).
+ * Same once-per-process logging as the DM set — the error is permanent, so
+ * repeating it every cycle would bury everything else in the log.
+ */
+const loggedCommentDisabled = new Set<string>();
+
+/** Log `message` the first time it happens for a channel, then stay quiet. */
+function logOnce(seen: Set<string>, channelId: string, message: string): void {
+  if (seen.has(channelId)) return;
+  seen.add(channelId);
+  console.warn(message);
+}
+
+/**
  * Ingest one Meta channel's DMs (read-only), best-effort. IG → fetchInstagramDMs,
  * FB → fetchFacebookDMs, both against the channel's stored FB Page id. Returns how
  * many NEW messages were inserted. Skips silently if the page id is missing (channel
@@ -304,13 +319,12 @@ async function pollMetaDMs(channel: EngageChannel, token: string): Promise<numbe
         : await fetchInstagramDMs(pageId, token);
   } catch (e) {
     if (e instanceof MetaGraphError && e.isAuth) throw e; // genuine token failure → re-auth signal.
-    if (!loggedDmDisabled.has(channel.id)) {
-      loggedDmDisabled.add(channel.id);
-      console.warn(
-        `[engage] DM monitoring for "${channel.displayName ?? channel.externalId}" is off — ${metaErrMsg(e)}. ` +
-          `Grant "${channel.platform === "facebook" ? "pages_messaging" : "instagram_manage_messages"}" on the Meta token to enable it.`,
-      );
-    }
+    logOnce(
+      loggedDmDisabled,
+      channel.id,
+      `[engage] DM monitoring for "${channel.displayName ?? channel.externalId}" is off — ${metaErrMsg(e)}. ` +
+        `Grant "${channel.platform === "facebook" ? "pages_messaging" : "instagram_manage_messages"}" on the Meta token to enable it.`,
+    );
     return 0;
   }
 
@@ -322,11 +336,21 @@ async function pollMetaDMs(channel: EngageChannel, token: string): Promise<numbe
 }
 
 /**
- * Poll one Meta channel using its stored PAGE token: fetch recent post/media
- * comments (deduped into the inbox) and refresh stats on the throttled TTL. A
- * channel without a stored token is skipped (logged). The channelId is stamped
- * onto each mapped item before insert. Propagates MetaGraphError(isAuth) so runMeta
- * can flag re-auth.
+ * Poll one Meta channel using its stored PAGE token: recent post/media comments,
+ * DMs, and (on the throttled TTL) stats. A channel without a stored token is
+ * skipped (logged).
+ *
+ * The three reads are INDEPENDENT. They used to run in sequence in one try, so
+ * the FIRST failure skipped everything after it — and Jake's Facebook Page fails
+ * its comment read every single cycle (code #10, `pages_read_user_content`, a
+ * permission his app's use case doesn't even offer). That one expected,
+ * permanent error meant his Facebook DMs were NEVER fetched: a real message sat
+ * in the Graph API for a day while the inbox showed nothing. Each read now
+ * stands on its own, so a dead comment path can't take the DMs down with it.
+ *
+ * A genuine auth failure (MetaGraphError.isAuth — an expired/revoked token)
+ * still propagates so runMeta can raise the re-auth banner; that one really does
+ * break every read on the channel.
  */
 async function pollMetaChannel(channel: EngageChannel): Promise<number> {
   const token = getChannelAuth(channel.id);
@@ -335,22 +359,32 @@ async function pollMetaChannel(channel: EngageChannel): Promise<number> {
     return 0;
   }
 
-  const comments =
-    channel.platform === "facebook"
-      ? await fetchFacebookComments(channel.externalId, token, META_TARGETS_PER_CHANNEL)
-      : await fetchInstagramComments(channel.externalId, token, META_TARGETS_PER_CHANNEL);
-
   let inserted = 0;
-  for (const c of comments) {
-    // Stamp the real channel id (the mappers leave it as a placeholder).
-    if (insertInboxItem({ ...c, channelId: channel.id }).inserted) inserted++;
+
+  // 1. COMMENTS. A permission error here is logged once and survived; it must
+  //    not reach the DM read below.
+  try {
+    const comments =
+      channel.platform === "facebook"
+        ? await fetchFacebookComments(channel.externalId, token, META_TARGETS_PER_CHANNEL)
+        : await fetchInstagramComments(channel.externalId, token, META_TARGETS_PER_CHANNEL);
+    for (const c of comments) {
+      // Stamp the real channel id (the mappers leave it as a placeholder).
+      if (insertInboxItem({ ...c, channelId: channel.id }).inserted) inserted++;
+    }
+  } catch (e) {
+    if (e instanceof MetaGraphError && e.isAuth) throw e; // dead token — the whole channel is down.
+    logOnce(
+      loggedCommentDisabled,
+      channel.id,
+      `[engage] comment monitoring for "${channel.displayName ?? channel.externalId}" is off — ${metaErrMsg(e)}`,
+    );
   }
 
-  // ALSO ingest DMs (read-only) best-effort. Propagates MetaGraphError(isAuth) so
-  // runMeta flags re-auth; a missing-messaging-permission error is swallowed inside
-  // pollMetaDMs so it never crashes the comment path or spams the log.
+  // 2. DMs (read-only), independent of the comment read above.
   inserted += await pollMetaDMs(channel, token);
 
+  // 3. STATS, on the throttled TTL. Secondary — never breaks ingestion.
   if (statsAreStale(channel)) {
     try {
       const stats =

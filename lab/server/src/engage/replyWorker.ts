@@ -250,6 +250,11 @@ async function dispatchDue(settings: EngageSettings): Promise<number> {
       channelId: reply.channelId,
       commentId: item.dedupKey,
       threadId: item.threadId,
+      // A DM goes out through Meta's Send API, addressed to the sender and
+      // bounded by their message's age — none of which a comment reply needs.
+      kind: item.kind,
+      authorId: item.authorId,
+      postedAt: item.postedAt,
     });
 
     if (result.ok) {
@@ -280,7 +285,10 @@ async function dispatchDue(settings: EngageSettings): Promise<number> {
       continue;
     }
 
-    const exhausted = attempts >= MAX_ATTEMPTS;
+    // Some failures never come good — a DM past Meta's 24-hour window, a missing
+    // messaging scope. Retrying those twice more just delays the same answer and
+    // buries it under "attempt 3 of 3", so they fail now, with their real reason.
+    const exhausted = result.permanent === true || attempts >= MAX_ATTEMPTS;
     updateReply(reply.id, {
       status: exhausted ? "failed" : "pending",
       attempts,

@@ -1,7 +1,12 @@
 /**
  * Engagement Manager — reply delivery (Phase 3).
  *
- * TWO PATHS, in order of preference:
+ * DIRECT MESSAGES take their own route entirely (sendViaMetaDm below): Meta's
+ * Send API on the Page's /messages edge, no browser fallback, and a hard 24-hour
+ * deadline from the moment their message arrived. Everything below this line is
+ * about COMMENTS.
+ *
+ * TWO PATHS for a comment, in order of preference:
  *
  *  1. META GRAPH API — addressed by the comment id the monitor already stored.
  *     The token is the auth, so there's no session, no selectors, no captcha
@@ -58,15 +63,17 @@ import {
   type BrowserPlatform,
 } from "./browser.js";
 import { navigationAllowed } from "./browserSession.js";
-import { getChannelAuth } from "./db.js";
+import { getChannelAuth, getChannelMetaPageId } from "./db.js";
 import { getMetaCreds } from "../settings/postizSecrets.js";
 import {
+  DM_REPLY_WINDOW_MS,
   isPermissionError,
   metaConfigured,
   replyToFacebookComment,
   replyToInstagramComment,
+  sendDirectMessage,
 } from "./metaGraph.js";
-import type { ReplyMechanism } from "./types.js";
+import type { InboxKind, ReplyMechanism } from "./types.js";
 
 export interface SendResult {
   ok: boolean;
@@ -76,6 +83,12 @@ export interface SendResult {
   error: string | null;
   /** True when the sender stopped short of submitting (dry run). */
   dryRun: boolean;
+  /**
+   * The failure will never come good, so retrying is pointless — a DM past
+   * Meta's 24-hour window is the case this exists for. The worker fails these
+   * immediately instead of burning three attempts over half an hour.
+   */
+  permanent?: boolean;
   /** How it went out (or would have). Recorded on the reply row. */
   mechanism: ReplyMechanism;
 }
@@ -132,6 +145,75 @@ async function sendViaMetaApi(
     // A real failure (bad id, deleted comment, expired token). Don't paper over
     // it by retrying in a browser — report it.
     return { ok: false, externalId: null, dryRun: false, mechanism: "meta-api", error: errMsg(e) };
+  }
+}
+
+/**
+ * Answer a DIRECT MESSAGE via Meta's Send API — POST /{page-id}/messages,
+ * addressed to the sender's page-scoped id. This is a different API from the
+ * comment reply above and there is no browser fallback for it: driving the
+ * Messenger/Instagram web UI would mean typing into a chat window we've never
+ * verified, and getting it wrong sends a stranger the wrong message privately.
+ * If the API can't do it, the reply is held with the reason rather than guessed
+ * at in a browser.
+ *
+ * Returns a SendResult always (never null) — a DM has nowhere else to go.
+ */
+async function sendViaMetaDm(
+  platform: BrowserPlatform,
+  opts: { channelId: string; recipientId: string | null; text: string; receivedAt: number | null },
+): Promise<SendResult> {
+  const fail = (error: string, permanent = false): SendResult => ({
+    ok: false,
+    externalId: null,
+    error,
+    dryRun: false,
+    permanent,
+    mechanism: "meta-api",
+  });
+
+  if (platform === "tiktok") return fail("TikTok DMs have no API and no verified browser path.", true);
+  if (!metaConfigured()) return fail("Meta isn't configured — no app credentials for the Send API.");
+
+  const pageId = getChannelMetaPageId(opts.channelId);
+  if (!pageId) return fail('No Facebook Page id on this channel — run "refresh channels" to backfill it.');
+
+  const token = getChannelAuth(opts.channelId) || getMetaCreds()?.token || "";
+  if (!token) return fail("No stored Meta token for this channel.");
+
+  if (!opts.recipientId) {
+    return fail("The inbound message carried no sender id, so there's nobody to address the reply to.", true);
+  }
+
+  // Meta's standard messaging window (24h from their last message) is checked
+  // but NOT enforced here: Meta is the authority on its own deadline and our
+  // copy of "their last message" can be stale, so refusing locally would mean
+  // silently dropping replies Meta would have accepted. We send, and if it's
+  // refused we explain WHY in terms of the window instead of leaving a bare
+  // "(#10)" for someone to decode.
+  const stale = opts.receivedAt != null && Date.now() - opts.receivedAt > DM_REPLY_WINDOW_MS;
+  const windowNote = stale
+    ? ` Their message arrived ${Math.floor((Date.now() - (opts.receivedAt as number)) / 3_600_000)}h ago, past Meta's 24-hour reply window — answer this one by hand.`
+    : "";
+
+  if (dryRunEnabled()) {
+    return {
+      ok: false,
+      externalId: null,
+      dryRun: true,
+      mechanism: "meta-api",
+      error: `DRY RUN — would have sent a ${platform} DM to ${opts.recipientId} via the Send API. Set ENGAGE_REPLY_DRY_RUN=false to send.`,
+    };
+  }
+
+  try {
+    const id = await sendDirectMessage(pageId, opts.recipientId, opts.text, token);
+    return { ok: true, externalId: id, error: null, dryRun: false, mechanism: "meta-api" };
+  } catch (e) {
+    // A missing scope, or a closed 24-hour window, both come back as a
+    // permission-class error and neither is retryable — fail them for good
+    // rather than looping, and say which one it was.
+    return fail(`${errMsg(e)}${windowNote}`, isPermissionError(e));
   }
 }
 
@@ -218,9 +300,27 @@ export async function sendReply(
     commentId: string | null;
     /** Top-level comment id — what Instagram's API needs. */
     threadId: string | null;
+    /** 'comment' or 'dm' — they are answered through completely different APIs. */
+    kind: InboxKind;
+    /** Page-scoped id of whoever sent it. The DM path addresses the reply to it. */
+    authorId: string | null;
+    /** When their message arrived — the 24-hour DM window runs from here. */
+    postedAt: number | null;
   },
 ): Promise<SendResult> {
   const { permalink, text } = opts;
+
+  // A DM is not a comment: different API, no browser fallback, and a hard
+  // 24-hour deadline. Route it before any of the comment machinery below, which
+  // would otherwise try to post a private answer into a public composer.
+  if (opts.kind === "dm") {
+    return sendViaMetaDm(platform, {
+      channelId: opts.channelId,
+      recipientId: opts.authorId,
+      text,
+      receivedAt: opts.postedAt,
+    });
+  }
 
   // API FIRST for Instagram and Facebook. Only when it can't be attempted —
   // missing scope, no token, TikTok — do we drive a browser.
