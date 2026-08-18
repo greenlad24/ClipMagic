@@ -63,6 +63,35 @@ export interface BrowserRequest {
   permalink: string;
 }
 
+/**
+ * Nothing a stranger sends is ever opened. Not a Loom, not a file, not a link.
+ *
+ * The reader never clicks message content — it clicks the conversation ROW and
+ * nothing else — but "we don't do that" is a claim about code, and code changes.
+ * This is the check that makes it true: after every click, if the page has left
+ * Instagram, it is dragged back and that row is abandoned. The browser is signed
+ * in as Jake, so a followed link from a cold pitch is not a wasted page load, it
+ * is his live session on someone else's site.
+ *
+ * Returns true when we're still somewhere we're allowed to be.
+ */
+async function stillOnInstagram(page: any): Promise<boolean> {
+  let host = "";
+  try {
+    host = new URL(String(page.url())).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  if (host === "instagram.com" || host.endsWith(".instagram.com")) return true;
+  console.warn(`[engage] browser left Instagram for ${host} — backing out, that row is being skipped`);
+  try {
+    await page.goto(REQUESTS_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  } catch {
+    // Even the retreat failing is fine: every caller treats false as "stop".
+  }
+  return false;
+}
+
 /** Bounded so a spam wave can't turn one poll into a thousand page loads. */
 const MAX_REQUESTS_PER_POLL = 10;
 
@@ -146,6 +175,9 @@ export async function readInstagramRequests(limit = MAX_REQUESTS_PER_POLL): Prom
       if (!rowText) continue;
 
       await sleep(randInt(3_500, 5_500));
+      // The row is a div, not an anchor — but if a click ever lands on a link
+      // inside it, this is where that stops.
+      if (!(await stillOnInstagram(page))) continue;
 
       const detail = await page.evaluate(() => {
         const doc: any = (globalThis as any).document;
@@ -311,6 +343,11 @@ export async function sendInstagramDm(
       // Accepting swaps Accept/Delete/Block for the composer; that swap is the
       // proof it went through, so the composer wait below doubles as the check.
       await sleep(randInt(3_000, 5_000));
+    }
+
+    // Never type a reply into a page that isn't Instagram's.
+    if (!(await stillOnInstagram(page))) {
+      return { ok: false, dryRun: opts.dryRun, accepted, error: "The browser was not on Instagram — nothing was typed." };
     }
 
     const composer = await waitForAny(page, IG_COMPOSER_SELECTORS, 20_000);
