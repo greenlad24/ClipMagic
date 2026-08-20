@@ -29,7 +29,7 @@
  * a failure proves nothing on its own.
  */
 import { withSkoolPage } from "./browser.js";
-import { createPost, type CreatePostInput, type PostResult } from "./engageActions.js";
+import { createPost, replyToComment, type CreatePostInput, type PostResult, type ReplyResult } from "./engageActions.js";
 
 /** One call the page made to Skool's API while the harness was armed. */
 export interface ProbedRequest {
@@ -87,7 +87,20 @@ export interface DryPublishOptions {
   allowWrites?: boolean;
 }
 
-export async function dryPublish(input: CreatePostInput, opts: DryPublishOptions = {}): Promise<DryPublishResult> {
+/**
+ * Run any flow with Skool's write surface watched, and optionally blocked.
+ *
+ * ⚠️⚠️ EXTRACTED FROM `dryPublish` 2026-08-20 BECAUSE THE COMMENT REPLY FAILED
+ * THE SAME WAY THE POST DID — every click worked and nothing appeared. That
+ * cost the poster three sessions of reasoning about the DOM, and what finally
+ * answered it in an hour was watching whether the submit fired at all. The
+ * harness was welded to `createPost`; the second time a write fails silently is
+ * not the moment to write a second one.
+ */
+export async function probeWrites<T>(
+  run: () => Promise<T>,
+  opts: DryPublishOptions = {},
+): Promise<{ armed: boolean; requests: ProbedRequest[]; blocked: number; result: T | null; detail: string }> {
   const allowWrites = opts.allowWrites === true;
   const requests: ProbedRequest[] = [];
   /** Response bodies are read asynchronously; the run waits for them at the end. */
@@ -182,18 +195,18 @@ export async function dryPublish(input: CreatePostInput, opts: DryPublishOptions
       armed: false,
       requests: [],
       blocked: 0,
-      post: null,
-      detail: "Request interception could not be armed, so nothing was run — this never publishes unarmed.",
+      result: null,
+      detail: "Request interception could not be armed, so nothing was run — this never writes unarmed.",
     };
   }
 
-  let post: PostResult | null = null;
+  let result: T | null = null;
   try {
     // ⚠️ NOT INSIDE `withSkoolPage`. `withPage` serialises on a busy flag by
     // spinning until it clears, so a nested call from inside one never returns —
     // and `createPost` makes dozens. The listeners live on the page and outlast
     // the call that attached them, which is what makes this work.
-    post = await createPost(input);
+    result = await run();
   } finally {
     await withSkoolPage(async (page) => {
       page.off("request", onRequest);
@@ -213,7 +226,7 @@ export async function dryPublish(input: CreatePostInput, opts: DryPublishOptions
     armed: true,
     requests,
     blocked,
-    post,
+    result,
     detail: allowWrites
       ? writes > 0
         ? `WRITES WERE ALLOWED THROUGH. ${writes} write(s) reached Skool; read their status and response.`
@@ -222,4 +235,38 @@ export async function dryPublish(input: CreatePostInput, opts: DryPublishOptions
         ? `The flow tried to write ${blocked} time(s); all of them were blocked, so nothing reached the community.`
         : `The flow made ${requests.length} API call(s) and NOT ONE of them was a write. The composer never submitted.`,
   };
+}
+
+/** The original: drive the composer with the write surface watched. */
+export async function dryPublish(input: CreatePostInput, opts: DryPublishOptions = {}): Promise<DryPublishResult> {
+  const r = await probeWrites(() => createPost(input), opts);
+  return { armed: r.armed, requests: r.requests, blocked: r.blocked, post: r.result, detail: r.detail };
+}
+
+export interface DryReplyResult {
+  armed: boolean;
+  requests: ProbedRequest[];
+  blocked: number;
+  reply: ReplyResult | null;
+  detail: string;
+}
+
+/**
+ * The same instrument, pointed at a comment reply.
+ *
+ * ⚠️ THE QUESTION IT ANSWERS IS THE ONLY ONE THAT MATTERS AFTER "every click
+ * worked and nothing appeared": DOES THE SUBMIT FIRE? A flow that makes no
+ * write never submitted, whatever the buttons did — and a flow that writes and
+ * gets a 4xx is being refused by Skool, which is a completely different bug
+ * from a mis-resolved button. Nothing about the DOM can tell those apart.
+ */
+export async function dryReply(
+  input: Parameters<typeof replyToComment>[0],
+  opts: DryPublishOptions = {},
+): Promise<DryReplyResult> {
+  // `dryRun` on the reply itself would stop before the click, which is exactly
+  // the half we need to observe — so it is forced off and the interception is
+  // what keeps it safe.
+  const r = await probeWrites(() => replyToComment({ ...input, dryRun: false }), opts);
+  return { armed: r.armed, requests: r.requests, blocked: r.blocked, reply: r.result, detail: r.detail };
 }

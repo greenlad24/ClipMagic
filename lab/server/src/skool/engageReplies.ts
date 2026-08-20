@@ -71,6 +71,19 @@ export interface ReplyConfig {
   maxAgeDays: number;
   /** How many recent posts to look for comments under. */
   postsToScan: number;
+  /**
+   * How many times one message's reply may be attempted before a human is
+   * needed.
+   *
+   * ⚠️ THIS IS WHAT MAKES A FAILURE SELF-HEALING RATHER THAN PERMANENT. Driving
+   * somebody else's SPA through a headless browser fails sometimes — that is not
+   * a bug to be finally fixed, it is the medium. Before this existed an
+   * `unconfirmed` row was never touched again, which was SAFE (no double
+   * answers) and also meant "it did not work" was the final state for that
+   * member. See `reconcileUnfinished`: the retry is only safe because the
+   * re-read is exact.
+   */
+  maxSendAttempts: number;
 }
 
 const DEFAULTS: ReplyConfig = {
@@ -91,6 +104,7 @@ const DEFAULTS: ReplyConfig = {
   maxPerDay: 10,
   maxAgeDays: 30,
   postsToScan: 5,
+  maxSendAttempts: 3,
 };
 
 function readJson<T>(raw: string | null | undefined, fallback: T): T {
@@ -118,6 +132,7 @@ export function setReplyConfig(patch: Partial<ReplyConfig>): ReplyConfig {
   next.maxPerDay = Math.max(1, Math.min(100, Math.floor(next.maxPerDay)));
   next.maxAgeDays = Math.max(1, Math.min(365, Math.floor(next.maxAgeDays)));
   next.postsToScan = Math.max(1, Math.min(25, Math.floor(next.postsToScan)));
+  next.maxSendAttempts = Math.max(1, Math.min(10, Math.floor(next.maxSendAttempts)));
   db
     .prepare("UPDATE skool_settings SET engage_replies_json = ?, updated_at = ? WHERE id = 1")
     .run(JSON.stringify(next), Date.now());
@@ -548,6 +563,113 @@ async function sendOne(communityUrl: string, row: ReplyRow, dryRun: boolean): Pr
 }
 
 /**
+ * Has our reply actually landed, whatever the click said?
+ *
+ * ⚠️⚠️ THIS IS THE EXACT CHECK, AND ITS EXACTNESS IS WHAT MAKES A RETRY SAFE.
+ * "Every click worked and nothing appeared" is indistinguishable from "it
+ * landed a second after we looked" — the two need opposite responses, and only
+ * the thread itself can tell them apart. `replyToComment` says so in its own
+ * failure message; this is that instruction, automated.
+ *
+ * ⚠️ ANY reply from this account counts, not just one this agent wrote. If Jake
+ * answered from his phone in the meantime, the member is answered — which is
+ * the outcome, and posting a second reply underneath would be the failure.
+ */
+async function findLanded(
+  communityUrl: string,
+  row: ReplyRow,
+): Promise<{ landed: boolean; replyId: string; error: string | null }> {
+  if (row.surface === "comment") {
+    const read = await readComments(communityUrl, row.postSlug);
+    if (read.error) return { landed: false, replyId: "", error: read.error };
+    const mine = read.comments.find((c) => c.parentId === row.targetId && c.byMe);
+    return { landed: Boolean(mine), replyId: mine?.id ?? "", error: null };
+  }
+  const channels = await readChannels(communityUrl);
+  if (channels.error) return { landed: false, replyId: "", error: channels.error };
+  const channel = channels.channels.find((c) => c.id === row.channelId);
+  if (!channel) return { landed: false, replyId: "", error: `No DM thread with id ${row.channelId}.` };
+  // ⚠️ THE THREAD NO LONGER ENDING ON THEIR MESSAGE IS ITSELF THE ANSWER. The
+  // channel list carries the last message and who sent it, so the common case
+  // costs no extra navigation.
+  if (channel.lastMessageId !== row.targetId && !channel.lastFromThem) {
+    return { landed: true, replyId: channel.lastMessageId, error: null };
+  }
+  const { messages, error } = await readMessages(communityUrl, channel);
+  if (error) return { landed: false, replyId: "", error };
+  const idx = messages.findIndex((m) => m.id === row.targetId);
+  const after = idx < 0 ? messages : messages.slice(idx + 1);
+  const mine = after.find((m) => m.byMe);
+  return { landed: Boolean(mine), replyId: mine?.id ?? "", error: null };
+}
+
+/**
+ * Finish what an earlier sweep started: look at everything left `unconfirmed`
+ * or `failed`, and either record that it landed or try again.
+ *
+ * ⚠️⚠️ IT LOOKS BEFORE IT RETRIES, ALWAYS, AND THAT ORDER IS THE WHOLE SAFETY.
+ * Retrying first would answer some members twice, which is the one failure here
+ * that cannot be walked back. Looking first turns "unconfirmed" into a fact.
+ *
+ * ⚠️ AND IT GIVES UP OUT LOUD. After `maxSendAttempts` the row becomes `failed`
+ * with a reason and is left for a person — a queue that retries forever would
+ * spend a browser cycle on the same broken thread every sweep, and hide it.
+ */
+async function reconcileUnfinished(
+  communityUrl: string,
+  cfg: ReplyConfig,
+  out: SweepResult,
+  room: () => number,
+): Promise<void> {
+  const rows = (
+    db
+      .prepare("SELECT * FROM skool_reply_log WHERE state IN ('unconfirmed','failed') ORDER BY created_at ASC")
+      .all() as any[]
+  ).map(rowToReply);
+  for (const row of rows) {
+    if (room() <= 0) break;
+    const check = await findLanded(communityUrl, row).catch((e) => ({
+      landed: false,
+      replyId: "",
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (check.error) {
+      // A read that failed is not evidence of anything. Leave the row exactly
+      // as it is and say so — treating it as "not landed" would retry on no
+      // information at all.
+      out.notes.push(`${row.memberName}: could not check whether the reply landed — ${check.error}`);
+      continue;
+    }
+    if (check.landed) {
+      updateReply(row.id, { state: "sent", reply_id: check.replyId, last_error: "" });
+      out.handled.push(`${row.memberName} (${row.surface}): it had landed after all — recorded as sent.`);
+      out.sent++;
+      continue;
+    }
+    if (row.attempts >= cfg.maxSendAttempts) {
+      if (row.state !== "failed") {
+        updateReply(row.id, {
+          state: "failed",
+          last_error:
+            `Gave up after ${row.attempts} attempts — the reply never appeared under the message. ` +
+            `Nothing was sent. ${row.lastError}`.trim(),
+        });
+      }
+      continue;
+    }
+    if (cfg.dryRun) continue;
+    const sent = await sendOne(communityUrl, row, false).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      updateReply(row.id, { state: "failed", last_error: msg });
+      return { state: "failed" as ReplyState, detail: msg };
+    });
+    if (sent.state === "sent") out.sent++;
+    else out.failed++;
+    out.handled.push(`${row.memberName} (${row.surface}, retry ${row.attempts + 1}/${cfg.maxSendAttempts}): ${sent.detail}`);
+  }
+}
+
+/**
  * One sweep: read, filter, draft, and (unless dry-run) answer.
  *
  * `force` is the "Run now" button — it ignores the cadence but NOT the kill
@@ -601,6 +723,13 @@ export async function runReplySweep(
   }
 
   out.ran = true;
+
+  // ⚠️ UNFINISHED WORK BEFORE NEW WORK. A member already half-answered is ahead
+  // of a member not answered at all, and the cap is shared — spending the whole
+  // sweep on new targets would starve the retries forever.
+  let spent = 0;
+  await reconcileUnfinished(communityUrl, cfg, out, () => Math.min(cfg.maxPerSweep, cfg.maxPerDay - already) - spent++);
+
   const collected = await collectTargets(communityUrl, cfg);
   out.scanned = collected.scanned;
   out.notes = collected.notes;
@@ -610,7 +739,7 @@ export async function runReplySweep(
     return out;
   }
 
-  const room = Math.min(cfg.maxPerSweep, cfg.maxPerDay - already);
+  const room = Math.max(0, Math.min(cfg.maxPerSweep, cfg.maxPerDay - already) - out.sent - out.failed);
   const todo = collected.targets.slice(0, room);
   // ⚠️ SAY WHAT WAS LEFT BEHIND. A cap that silently truncates reads as "that
   // was everything" — the same rule the workflow guidance states and the same

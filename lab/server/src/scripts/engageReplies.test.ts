@@ -93,6 +93,18 @@ async function main() {
     assert.equal(c.everyMinutes, 5);
     assert.equal(c.maxAgeDays, 365);
     assert.equal(c.postsToScan, 25);
+    // The retry budget is a cap too — an unbounded one would spend a browser
+    // cycle on the same broken thread every sweep, forever, and hide it.
+    assert.equal(setReplyConfig({ maxSendAttempts: 99 }).maxSendAttempts, 10);
+    assert.equal(setReplyConfig({ maxSendAttempts: 0 }).maxSendAttempts, 1);
+  });
+
+  await check("a fresh database retries a failed send, but only a few times", () => {
+    // ⚠️ THE DEFAULT MATTERS MORE THAN THE CLAMP. Before `maxSendAttempts`
+    // existed an `unconfirmed` row was never touched again — safe, and it also
+    // made "it did not work" the permanent state for that member.
+    setReplyConfig({ maxSendAttempts: 3 });
+    assert.equal(getReplyConfig().maxSendAttempts, 3);
   });
 
   /* ── the sweep refuses, and says why ── */

@@ -410,8 +410,31 @@ export async function replyToComment(input: {
       // Disabled means Skool does not consider the body filled — clicking it
       // would silently do nothing and the read-back would blame the wrong thing.
       if (btn.disabled) return { ok: false, why: "disabled" };
+
+      // ⚠️⚠️ SCROLL IT INTO VIEW AND RE-MEASURE, OR A LONG REPLY IS NEVER SENT.
+      // `page.mouse.click` takes VIEWPORT coordinates. A reply of any length
+      // grows the editor and pushes this button below the 900px fold, so the
+      // rect comes back with y past the bottom of the window and the click is
+      // delivered to empty space — no error, no write, and every step still
+      // reports success. Measured 2026-08-20 with request interception armed:
+      // the whole flow made FIVE api2.skool.com calls and NOT ONE was a write.
+      // The dry run could never have caught it, because it resolves the button
+      // and deliberately does not click.
+      btn.scrollIntoView({ block: "center", inline: "nearest" });
       const r = btn.getBoundingClientRect();
-      return { ok: true, x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      const x = Math.round(r.x + r.width / 2);
+      const y = Math.round(r.y + r.height / 2);
+      const w = (globalThis as any).innerWidth;
+      const h = (globalThis as any).innerHeight;
+      if (x < 0 || y < 0 || x > w || y > h) return { ok: false, why: "offscreen", x, y, w, h };
+      // ⚠️ AND CHECK WHAT IS ACTUALLY AT THAT POINT. Scrolled into view is not
+      // the same as clickable: a sticky footer or a toast sitting over the
+      // button swallows the click just as silently as the fold did.
+      const at = doc.elementFromPoint(x, y);
+      if (!at || (at !== btn && !btn.contains(at) && !at.contains(btn))) {
+        return { ok: false, why: "covered", at: norm(at?.tagName) + " " + norm(at?.textContent).slice(0, 60) };
+      }
+      return { ok: true, x, y };
     });
     if (!hit?.ok) return hit;
     // ⚠️ RESOLVED BUT NOT CLICKED. Everything above this line has already run
@@ -429,6 +452,10 @@ export async function replyToComment(input: {
       "no-submit": "The editor is open but no Reply button sits beside Cancel, so nothing was submitted.",
       "many-submits": "More than one submit button matched. Refusing to guess.",
       disabled: "The submit button is still disabled, so Skool did not register the reply text.",
+      offscreen:
+        `The submit button is outside the window even after scrolling to it ` +
+        `(${sent?.x},${sent?.y} in a ${sent?.w}x${sent?.h} viewport), so a click would have gone nowhere.`,
+      covered: `Something is sitting on top of the submit button (${sent?.at}), so the click would not reach it.`,
     };
     await clickButton("Cancel").catch(() => undefined);
     return { ok: false, detail: why[String(sent?.why)] ?? "The reply could not be submitted.", replyId: null };
