@@ -229,9 +229,17 @@ export async function readFeed(communityUrl: string, maxPages = 3): Promise<Skoo
     // different ids and the same slug. Deduping on id let "🔥 Start here! 🔥"
     // through twice, which would have taught the drafter that a subject was
     // posted about more often than it was.
-    const fresh = page.posts.filter((p) => p.slug && !seen.has(p.slug));
-    for (const p of fresh) {
+    // ⚠️ THE `seen` SET HAS TO GROW *DURING* THE FILTER, NOT AFTER IT. Adding
+    // the slugs in a second loop dedupes across pages and NOT within one — and
+    // the duplicate this exists to catch is on a single page, in the pinned
+    // slot and the stream at once. Measured 2026-08-20: the pinned post came
+    // back twice from page one, which is exactly what the comment above says
+    // must not happen.
+    const fresh: SkoolPost[] = [];
+    for (const p of page.posts) {
+      if (!p.slug || seen.has(p.slug)) continue;
       seen.add(p.slug);
+      fresh.push(p);
       posts.push(p);
     }
     // A page that adds nothing new is the end of the feed — the same

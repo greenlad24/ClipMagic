@@ -134,6 +134,14 @@ const LOOPBACK_FN_EXACT = new Set([
   // carries none, so a reply worker cannot be built or checked without it.
   "/api/fn/skoolReadComments",
   "/api/fn/skoolUnreadChats",
+  // The reply agent's two READ-ONLY endpoints. `skoolRepliesQueue` runs the
+  // real filters over the real community and spends no model call, which makes
+  // "who would it write to?" answerable from inside the container without
+  // arming anything. Its three WRITING siblings — Configure, Sweep, Send — are
+  // deliberately NOT here: they sit behind the sign-in gate like
+  // `skoolPublishPost`, and for the same reason.
+  "/api/fn/skoolRepliesStatus",
+  "/api/fn/skoolRepliesQueue",
   "/api/fn/skoolKnowledge",
   // ⚠️ SPENDS APIFY CREDITS — the only paid thing in this feature. Here because
   // the backfill has to be runnable at all before a UI exists; it is guarded by

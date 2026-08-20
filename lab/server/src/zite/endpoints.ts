@@ -267,6 +267,16 @@ import {
   type Weekday,
 } from "../skool/engageSchedule.js";
 import {
+  getReplyConfig,
+  setReplyConfig,
+  replyAgentStatus,
+  runReplySweep,
+  collectTargets,
+  sendDraftedReply,
+  forgetReply,
+  listReplies,
+} from "../skool/engageReplies.js";
+import {
   saveMarket as saveAuditMarket,
   listMarkets as listAuditMarkets,
   deleteMarket as deleteAuditMarket,
@@ -4978,6 +4988,79 @@ const skoolEngageConfigure: Handler = async (input) => {
   }
 };
 
+/* ────────────────────────── the reply agent ────────────────────────── */
+
+/**
+ * Everything /skool/agent needs to render the reply half: the two switches, the
+ * caps, the heartbeat, the counts by state and the recent rows.
+ *
+ * ⚠️ THE COUNTS ARE BY STATE RATHER THAN A TOTAL, because `unconfirmed` and
+ * `failed` are the two that need a human and a total hides both.
+ */
+const skoolRepliesStatus: Handler = async () => replyAgentStatus();
+
+const skoolRepliesConfigure: Handler = async (input) => {
+  const patch: Record<string, unknown> = {};
+  if (input?.enabled !== undefined) patch.enabled = !!input.enabled;
+  if (input?.dryRun !== undefined) patch.dryRun = !!input.dryRun;
+  if (input?.comments !== undefined) patch.comments = !!input.comments;
+  if (input?.dms !== undefined) patch.dms = !!input.dms;
+  if (input?.everyMinutes !== undefined) patch.everyMinutes = Number(input.everyMinutes);
+  if (input?.maxPerSweep !== undefined) patch.maxPerSweep = Number(input.maxPerSweep);
+  if (input?.maxPerDay !== undefined) patch.maxPerDay = Number(input.maxPerDay);
+  if (input?.maxAgeDays !== undefined) patch.maxAgeDays = Number(input.maxAgeDays);
+  if (input?.postsToScan !== undefined) patch.postsToScan = Number(input.postsToScan);
+  return { config: setReplyConfig(patch as any) };
+};
+
+/**
+ * What is waiting, without answering any of it.
+ *
+ * ⚠️ THIS IS THE ONE TO REACH FOR BEFORE ARMING ANYTHING. It runs the real
+ * filters over the real community and spends no model call, so "who would it
+ * write to?" is answerable without it writing to them.
+ */
+const skoolRepliesQueue: Handler = async () => {
+  const collected = await collectTargets(communityUrlOrThrow(), getReplyConfig());
+  return {
+    ...collected,
+    // Drop the post body from the wire — it is context for the drafter, not for
+    // a screen, and it makes this response ten times its useful size.
+    targets: collected.targets.map(({ context, ...t }) => t),
+  };
+};
+
+/** Run a sweep now, ignoring the cadence but NOT the kill switch or the caps. */
+const skoolRepliesSweep: Handler = async () =>
+  runReplySweep(communityUrlOrThrow(), { force: true, trigger: "on-demand" });
+
+/**
+ * Send one drafted reply on a human's say-so.
+ *
+ * ⚠️ THE GATE THAT MAKES DRY-RUN USEFUL RATHER THAN MERELY SAFE. Without it a
+ * dry run produces drafts nobody can act on, and the only way to answer anyone
+ * is to arm the whole agent.
+ */
+const skoolRepliesSend: Handler = async (input) => {
+  const id = String(input?.id ?? "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "Which reply? Pass its id from skoolRepliesStatus." });
+  return sendDraftedReply(communityUrlOrThrow(), id);
+};
+
+/**
+ * Forget one message so it can be offered again.
+ *
+ * ⚠️ THE ONLY WAY OUT OF "ENGAGED WITH, IN ANY STATE". That rule is deliberately
+ * strict enough to strand a message a crash interrupted, and this is the human
+ * act that releases it. It does NOT unsend anything.
+ */
+const skoolRepliesForget: Handler = async (input) => {
+  const id = String(input?.id ?? "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "Which reply? Pass its id." });
+  const forgotten = forgetReply(id);
+  return { forgotten, replies: listReplies(25) };
+};
+
 /**
  * Subjects the operator wants posted, ahead of anything the agent would pick.
  *
@@ -6133,6 +6216,12 @@ export const HANDLERS: Record<string, Handler> = {
   skoolReadFeed,
   skoolReadPost,
   skoolReadComments,
+  skoolRepliesStatus,
+  skoolRepliesConfigure,
+  skoolRepliesQueue,
+  skoolRepliesSweep,
+  skoolRepliesSend,
+  skoolRepliesForget,
   skoolUnreadChats,
   skoolKnowledge,
   skoolBackfillTranscripts,

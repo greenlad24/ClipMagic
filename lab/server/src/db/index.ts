@@ -200,6 +200,20 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "engage_tick_json")) {
     db.exec("ALTER TABLE skool_settings ADD COLUMN engage_tick_json TEXT NOT NULL DEFAULT ''");
   }
+  // The reply agent's own settings, kept apart from the poster's blob on
+  // purpose: they are armed separately, and one of them writes to a member's
+  // private inbox. Sharing a blob would make "turn the poster on" and "start
+  // messaging people" one edit away from each other.
+  //
+  // ⚠️ SAME RULE AS ABOVE — AN ABSENT BLOB MEANS OFF, NOT DEFAULTS.
+  if (cols.length > 0 && !cols.some((c) => c.name === "engage_replies_json")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN engage_replies_json TEXT NOT NULL DEFAULT ''");
+  }
+  // The reply agent's heartbeat, and when its last sweep ran — the sweep is on
+  // its own cadence, so the poster's heartbeat says nothing about it.
+  if (cols.length > 0 && !cols.some((c) => c.name === "engage_replies_tick_json")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN engage_replies_tick_json TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 /** Additive: what a slot announces, and what it attaches.
@@ -440,6 +454,8 @@ CREATE TABLE IF NOT EXISTS skool_settings (
   -- throwaway DATA_DIR found it immediately (2026-08-09).
   engage_schedule_json TEXT NOT NULL DEFAULT '',
   engage_tick_json     TEXT NOT NULL DEFAULT '',
+  engage_replies_json      TEXT NOT NULL DEFAULT '',
+  engage_replies_tick_json TEXT NOT NULL DEFAULT '',
   updated_at     INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO skool_settings (id, community_url, roadmap_md, updated_at)
@@ -629,6 +645,57 @@ CREATE TABLE IF NOT EXISTS skool_video_posts (
   slot_key   TEXT NOT NULL DEFAULT '',
   posted_at  INTEGER NOT NULL
 );
+
+-- Every member message the reply agent has ENGAGED WITH, and what came of it.
+--
+-- ⚠️⚠️ THE KEY IS THE MESSAGE, NOT THE PERSON OR THE THREAD. For a comment that
+-- is Skool's comment id; for a DM it is the id of THEIR last message. Keying on
+-- the channel would mean a member who asks a second question in the same thread
+-- is never answered again, and keying on the member would mean it once, ever.
+--
+-- ⚠️⚠️ A ROW EXISTS FROM THE MOMENT ANYTHING IS SPENT ON A MESSAGE, and the
+-- collector excludes any message that has one. That is deliberately stricter
+-- than "exclude what was sent": a crash between the send and the read-back
+-- leaves 'unconfirmed', and re-answering someone is the failure that cannot be
+-- walked back, while failing to answer them is one a human can see and fix from
+-- this table. Every state that is not 'sent' or 'skipped' is therefore a row
+-- somebody should look at, which is exactly what /skool/agent shows.
+--
+--   drafted     — written, deliberately not sent (dry run, or awaiting approval)
+--   sent        — read back from Skool's own API, with the reply's id
+--   unconfirmed — the click went in and the read-back did not find it. DO NOT
+--                 retry from here; look at the thread.
+--   skipped     — the drafter declined, with its reason. Not a failure.
+--   failed      — refused before anything was written. Retryable.
+CREATE TABLE IF NOT EXISTS skool_reply_log (
+  id           TEXT PRIMARY KEY,      -- "<surface>:<target_id>"
+  surface      TEXT NOT NULL,         -- 'comment' | 'dm'
+  target_id    TEXT NOT NULL,         -- comment id, or their last message id
+  -- Where to go to look at it. A comment needs its post; a DM needs its channel.
+  post_slug    TEXT NOT NULL DEFAULT '',
+  channel_id   TEXT NOT NULL DEFAULT '',
+  member_id    TEXT NOT NULL DEFAULT '',
+  member_name  TEXT NOT NULL DEFAULT '',
+  -- What they said, stored because the reply is unreadable without it and the
+  -- API paginates the original away.
+  their_text   TEXT NOT NULL DEFAULT '',
+  state        TEXT NOT NULL DEFAULT 'drafted',
+  reply_text   TEXT NOT NULL DEFAULT '',
+  skip_reason  TEXT NOT NULL DEFAULT '',
+  cited_json   TEXT NOT NULL DEFAULT '[]',
+  -- The id Skool gave the reply when it was read back. Empty unless 'sent'.
+  reply_id     TEXT NOT NULL DEFAULT '',
+  tokens       INTEGER NOT NULL DEFAULT 0,
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  last_error   TEXT NOT NULL DEFAULT '',
+  -- The writer's step log, kept on success as well as failure: it is the only
+  -- record of HOW a reply reached a member.
+  steps        TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skool_reply_log_state ON skool_reply_log(state, created_at);
+CREATE INDEX IF NOT EXISTS idx_skool_reply_log_sent ON skool_reply_log(updated_at);
 
 CREATE TABLE IF NOT EXISTS skool_recipes (
   name        TEXT PRIMARY KEY,

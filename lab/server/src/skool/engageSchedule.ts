@@ -41,6 +41,7 @@ import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
 import { videosForSubject } from "./channelVideos.js";
 import { writeLessonForNewVideo } from "./videoLessons.js";
+import { runReplySweep } from "./engageReplies.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 
 /** Weekday keys as `Intl` reports them, lowercased. */
@@ -1178,6 +1179,29 @@ export function startEngageScheduler(readCommunityUrl: () => string): void {
       const r = await runScheduleTick(url, trigger);
       for (const line of r.processed) console.log(`[skool] ${line}`);
       outcome = r.processed.length ? r.processed.join(" | ") : (r.skipped ?? "Nothing due.");
+
+      // ⚠️⚠️ THE REPLY SWEEP RUNS IN THE CYCLE, NOT INSIDE `runScheduleTick`,
+      // AND THE DIFFERENCE IS NOT COSMETIC. That function returns immediately
+      // when the POSTER's schedule is off — so putting the sweep inside it
+      // would mean switching off the weekly posts silently stops answering
+      // members too, which is neither obvious from the switch nor anything
+      // anybody asked for. The two agents share this loop's browser and its
+      // overlap guard; they do not share an on switch.
+      //
+      // ⚠️ AFTER THE POSTER, ALWAYS. A sweep navigates the shared browser to a
+      // post and into the chat panel; doing that first would move the page out
+      // from under a composer the publisher is partway through. Its failure is
+      // caught and is never the poster's.
+      try {
+        const sweep = await runReplySweep(url, { trigger });
+        if (sweep.handled.length) {
+          for (const line of sweep.handled) console.log(`[skool] reply — ${line}`);
+          outcome += ` || replies: ${sweep.drafted} drafted, ${sweep.sent} sent, ${sweep.failed} failed`;
+        }
+        for (const note of sweep.notes) console.log(`[skool] reply note — ${note}`);
+      } catch (e) {
+        console.warn(`[skool] reply sweep failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
     } catch (e) {
       outcome = `tick failed: ${e instanceof Error ? e.message : String(e)}`;
       console.warn(`[skool] scheduler ${outcome}`);

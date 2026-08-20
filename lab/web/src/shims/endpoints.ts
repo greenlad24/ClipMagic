@@ -954,6 +954,117 @@ export const skoolEngageSubject = endpoint<
   { subject: string; error: string | null }
 >("skoolEngageSubject");
 
+/* ────────────────────────── the reply agent ────────────────────────── */
+
+export type SkoolReplySurface = "comment" | "dm";
+/**
+ * ⚠️ FIVE STATES, NOT OK/FAILED. `unconfirmed` means the click went in and the
+ * read-back did not find it — a retry from there could answer someone twice,
+ * which is why it is not `failed`. `skipped` is the drafter declining with a
+ * reason (money, legal, personal, spam) and is a success, not an error.
+ */
+export type SkoolReplyState = "drafted" | "sent" | "unconfirmed" | "skipped" | "failed";
+
+export interface SkoolReplyConfig {
+  enabled: boolean;
+  dryRun: boolean;
+  comments: boolean;
+  dms: boolean;
+  everyMinutes: number;
+  maxPerSweep: number;
+  maxPerDay: number;
+  maxAgeDays: number;
+  postsToScan: number;
+}
+
+export interface SkoolReplyRow {
+  id: string;
+  surface: SkoolReplySurface;
+  targetId: string;
+  postSlug: string;
+  channelId: string;
+  memberId: string;
+  memberName: string;
+  theirText: string;
+  state: SkoolReplyState;
+  replyText: string;
+  skipReason: string;
+  cited: { title: string; url: string }[];
+  replyId: string;
+  tokens: number;
+  attempts: number;
+  lastError: string;
+  steps: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SkoolReplyScan {
+  posts: number;
+  postsWithComments: number;
+  comments: number;
+  dmThreads: number;
+  dmTheySpokeLast: number;
+}
+
+export interface SkoolReplyTarget {
+  surface: SkoolReplySurface;
+  targetId: string;
+  postSlug: string;
+  postTitle: string;
+  channelId: string;
+  memberId: string;
+  memberName: string;
+  theirText: string;
+  createdAt: string;
+}
+
+export const skoolRepliesStatus = endpoint<
+  void,
+  {
+    config: SkoolReplyConfig;
+    health: { lastSweepAt: number | null; lastOutcome: string; lastTrigger: string };
+    counts: { drafted: number; sent: number; unconfirmed: number; skipped: number; failed: number; sentLastDay: number };
+    recent: SkoolReplyRow[];
+  }
+>("skoolRepliesStatus");
+
+export const skoolRepliesConfigure = endpoint<
+  Partial<SkoolReplyConfig>,
+  { config: SkoolReplyConfig }
+>("skoolRepliesConfigure");
+
+/** Who is waiting, run through the real filters. Reads only; spends nothing. */
+export const skoolRepliesQueue = endpoint<
+  void,
+  { targets: SkoolReplyTarget[]; scanned: SkoolReplyScan; notes: string[]; error: string | null }
+>("skoolRepliesQueue");
+
+/** ⚠️ WRITES unless the agent is in dry-run. Ignores the cadence, not the caps. */
+export const skoolRepliesSweep = endpoint<
+  void,
+  {
+    ran: boolean;
+    skipped: string | null;
+    scanned: SkoolReplyScan;
+    notes: string[];
+    handled: string[];
+    drafted: number;
+    sent: number;
+    skippedByDrafter: number;
+    failed: number;
+  }
+>("skoolRepliesSweep");
+
+/** ⚠️ WRITES TO THE COMMUNITY. Sends one drafted reply. */
+export const skoolRepliesSend = endpoint<{ id: string }, { ok: boolean; detail: string }>("skoolRepliesSend");
+
+/** Forget a message so it can be offered again. Does NOT unsend anything. */
+export const skoolRepliesForget = endpoint<
+  { id: string },
+  { forgotten: boolean; replies: SkoolReplyRow[] }
+>("skoolRepliesForget");
+
 export const skoolDraftPost = endpoint<
   { kind?: "lesson" | "mcp"; subject: string; category?: string },
   { draft: SkoolDraft | null; error: string | null }

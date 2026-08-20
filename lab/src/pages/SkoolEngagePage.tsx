@@ -22,8 +22,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle, Check, Clock, ExternalLink, Loader2, PauseCircle, PlayCircle,
-  RefreshCw, Send, Sparkles, X,
+  AlertTriangle, Check, Clock, ExternalLink, Loader2, MessageSquare, PauseCircle, PlayCircle,
+  RefreshCw, Send, Sparkles, Trash2, X,
 } from 'lucide-react';
 import {
   skoolStatus,
@@ -39,6 +39,14 @@ import {
   type SkoolSlotState,
   type SkoolWeekday,
   type SkoolDraft,
+  skoolRepliesStatus,
+  skoolRepliesConfigure,
+  skoolRepliesSweep,
+  skoolRepliesSend,
+  skoolRepliesForget,
+  type SkoolReplyConfig,
+  type SkoolReplyRow,
+  type SkoolReplyState,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 
@@ -119,6 +127,19 @@ export default function SkoolEngagePage() {
    * wrong looks exactly like getting it right until a post fails to appear.
    */
   const [postRecipe, setPostRecipe] = useState<PostRecipeInfo | null>(null);
+  /**
+   * The reply agent, which is a SEPARATE agent sharing this screen — its own
+   * switches, its own cadence, its own log. It is deliberately not folded into
+   * `schedule`: turning the weekly posts off must not stop answering members,
+   * and one blob would make that one edit away.
+   */
+  const [replyConfig, setReplyConfig] = useState<SkoolReplyConfig | null>(null);
+  const [replyCounts, setReplyCounts] = useState({ drafted: 0, sent: 0, unconfirmed: 0, skipped: 0, failed: 0, sentLastDay: 0 });
+  const [replyHealth, setReplyHealth] = useState<{ lastSweepAt: number | null; lastOutcome: string; lastTrigger: string }>({
+    lastSweepAt: null, lastOutcome: '', lastTrigger: '',
+  });
+  const [replyRows, setReplyRows] = useState<SkoolReplyRow[]>([]);
+  const [replyDirty, setReplyDirty] = useState(false);
 
   useEffect(() => {
     void skoolStatus()
@@ -137,10 +158,21 @@ export default function SkoolEngagePage() {
       // this page the operator types into, and a poll landing mid-edit that
       // reset the day chips would be indistinguishable from the save failing.
       setSchedule((prev) => (dirty && prev ? prev : s.schedule));
+      // The reply agent's status is its own call — it is a different agent, and
+      // a failure to read it must not blank the poster's queue.
+      try {
+        const r = await skoolRepliesStatus();
+        setReplyCounts(r.counts);
+        setReplyHealth(r.health);
+        setReplyRows(r.recent);
+        setReplyConfig((prev) => (replyDirty && prev ? prev : r.config));
+      } catch {
+        /* non-fatal — the reply panel simply does not render */
+      }
     } catch (e: any) {
       setErr(String(e?.message || e));
     }
-  }, [dirty]);
+  }, [dirty, replyDirty]);
 
   useEffect(() => {
     void load();
@@ -168,6 +200,15 @@ export default function SkoolEngagePage() {
       if (then) setNote(then);
     });
 
+  /** Same shape as `configure`, for the other agent on this page. */
+  const configureReplies = (patch: Partial<SkoolReplyConfig>, label: string, then?: string) =>
+    run(label, async () => {
+      const { config: next } = await skoolRepliesConfigure(patch);
+      setReplyConfig(next);
+      setReplyDirty(false);
+      if (then) setNote(then);
+    });
+
   const hasEverPosted = slots.some((s) => s.state === 'posted');
 
   return (
@@ -179,8 +220,9 @@ export default function SkoolEngagePage() {
             Skool Agent
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Writes community posts on a schedule, grounded in your 15 rebuilt courses — the lesson pages and what
-            you actually say in the videos. It runs unattended, so everything it writes lands here first.
+            Writes community posts on a schedule and answers your members, grounded in your 15 rebuilt courses — the
+            lesson pages and what you actually say in the videos. Both run unattended, so everything they write lands
+            here first.
           </p>
         </header>
 
@@ -271,6 +313,58 @@ export default function SkoolEngagePage() {
             <HowItPosts info={postRecipe} />
 
             <DraftBench busy={busy} setBusy={setBusy} aiAuth={aiAuth} onPosted={() => void load()} />
+
+            {replyConfig ? (
+              <RepliesPanel
+                config={replyConfig}
+                counts={replyCounts}
+                health={replyHealth}
+                rows={replyRows}
+                busy={busy}
+                communityUrl={communityUrl}
+                dirty={replyDirty}
+                onToggle={(patch, key) => configureReplies(patch, key)}
+                onEdit={(patch) => { setReplyDirty(true); setReplyConfig((p) => (p ? { ...p, ...patch } : p)); }}
+                onSave={() => {
+                  const { enabled, dryRun, comments, dms, ...rest } = replyConfig;
+                  return configureReplies(rest, 'r-save', 'Saved.');
+                }}
+                onSweep={() =>
+                  run('r-sweep', async () => {
+                    const r = await skoolRepliesSweep();
+                    // ⚠️ SAY WHY IT DID NOTHING. "Ran and found nobody" and
+                    // "refused because of a cap" are the same empty result
+                    // otherwise, and the second is the one worth knowing.
+                    if (r.skipped) setNote(`Sweep skipped — ${r.skipped}`);
+                    else if (!r.handled.length) {
+                      setNote(
+                        `Sweep ran — nothing to answer. Read ${r.scanned.postsWithComments} post(s) with comments ` +
+                        `and ${r.scanned.dmThreads} DM thread(s).`,
+                      );
+                    } else {
+                      setNote(`Sweep ran: ${r.drafted} drafted, ${r.sent} sent, ${r.skippedByDrafter} left for you, ${r.failed} failed.`);
+                    }
+                    if (r.notes.length) setNote((n) => `${n ?? ''} ${r.notes.join(' · ')}`.trim());
+                    await load();
+                  })
+                }
+                onSend={(id) =>
+                  run(`r-send:${id}`, async () => {
+                    const out = await skoolRepliesSend({ id });
+                    if (out.ok) setNote(out.detail);
+                    else setErr(out.detail);
+                    await load();
+                  })
+                }
+                onForget={(id) =>
+                  run(`r-forget:${id}`, async () => {
+                    await skoolRepliesForget({ id });
+                    setNote('Forgotten — it may be offered again on the next sweep. Nothing was unsent.');
+                    await load();
+                  })
+                }
+              />
+            ) : null}
           </>
         )}
       </div>
@@ -828,6 +922,302 @@ function SlotRow({
 }
 
 /** The lessons a draft was grounded in — the audit trail, and the read-back. */
+
+/* ────────────────────────── the reply agent ────────────────────────── */
+
+const REPLY_STATE_STYLE: Record<SkoolReplyState, string> = {
+  drafted: 'border-primary/40 text-primary',
+  sent: 'border-[hsl(var(--chart-1))]/50 text-[hsl(var(--chart-1))]',
+  unconfirmed: 'border-amber-500/50 text-amber-600',
+  skipped: 'border-muted-foreground/30 text-muted-foreground',
+  failed: 'border-destructive/50 text-destructive',
+};
+
+const REPLY_STATE_LABEL: Record<SkoolReplyState, string> = {
+  drafted: 'Waiting for you',
+  sent: 'Sent',
+  unconfirmed: 'Unconfirmed',
+  skipped: 'Left for you',
+  failed: 'Failed',
+};
+
+/**
+ * The reply agent: two switches, the caps, and the log.
+ *
+ * ⚠️ COMMENTS AND DMs ARE SEPARATE SWITCHES ON THIS SCREEN because they are
+ * separate acts. Answering under Jake's own post is public and correctable in
+ * the open; a DM lands in somebody's private inbox and Skool's composer sends on
+ * Enter, so there is no button to withhold and nothing to delete afterwards.
+ * One switch for both would make the safer of the two arm the riskier.
+ */
+function RepliesPanel({
+  config, counts, health, rows, busy, communityUrl,
+  onToggle, onEdit, onSave, onSweep, onSend, onForget, dirty,
+}: {
+  config: SkoolReplyConfig;
+  counts: { drafted: number; sent: number; unconfirmed: number; skipped: number; failed: number; sentLastDay: number };
+  health: { lastSweepAt: number | null; lastOutcome: string; lastTrigger: string };
+  rows: SkoolReplyRow[];
+  busy: string | null;
+  communityUrl: string | null;
+  dirty: boolean;
+  onToggle: (patch: Partial<SkoolReplyConfig>, key: string) => void;
+  onEdit: (patch: Partial<SkoolReplyConfig>) => void;
+  onSave: () => void;
+  onSweep: () => void;
+  onSend: (id: string) => void;
+  onForget: (id: string) => void;
+}) {
+  const [confirmLive, setConfirmLive] = useState(false);
+  const live = config.enabled && !config.dryRun;
+  const surfaces = [config.comments ? 'comments' : null, config.dms ? 'DMs' : null].filter(Boolean).join(' and ');
+
+  return (
+    <section className={`rounded-lg border p-5 ${live ? 'border-[hsl(var(--chart-1))]/50 bg-[hsl(var(--chart-1))]/5' : ''}`}>
+      <div className="flex items-start gap-3">
+        <MessageSquare className={`mt-0.5 h-5 w-5 shrink-0 ${live ? 'text-[hsl(var(--chart-1))]' : 'text-muted-foreground'}`} />
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold">
+            {!config.enabled
+              ? 'Replies — off'
+              : !surfaces
+                ? 'Replies — on, but nothing is switched on to answer'
+                : live
+                  ? `Replies — answering ${surfaces} on its own`
+                  : `Replies — drafting ${surfaces} for you`}
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {!config.enabled
+              ? 'Nothing is read and nothing is written. Members are not answered.'
+              : live
+                ? `Every ${config.everyMinutes} min it reads ${surfaces}, writes an answer and sends it. Nobody reads it first.`
+                : `Every ${config.everyMinutes} min it reads ${surfaces} and writes an answer, then stops. Nothing reaches a member until you send it below.`}
+          </p>
+          {/* ⚠️ A DM IS THE LESS RECOVERABLE OF THE TWO AND THE SCREEN SAYS SO
+              WHERE THE DECISION IS MADE, not in a doc nobody opens. */}
+          {live && config.dms ? (
+            <p className="mt-1 text-xs text-amber-600">
+              DMs are private and Skool sends on Enter — a sent message cannot be deleted from here.
+            </p>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button" disabled={!!busy}
+          onClick={() => onToggle({ enabled: !config.enabled }, 'r-enabled')}
+          className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50"
+        >
+          {busy === 'r-enabled' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+          {config.enabled ? 'Turn replies off' : 'Turn replies on'}
+        </button>
+
+        {config.enabled ? (
+          <>
+            <button
+              type="button" disabled={!!busy}
+              onClick={() => onToggle({ comments: !config.comments }, 'r-comments')}
+              className={`rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${config.comments ? 'border-primary text-primary' : 'text-muted-foreground'}`}
+            >
+              {config.comments ? '✓ ' : ''}Comments
+            </button>
+            <button
+              type="button" disabled={!!busy}
+              onClick={() => onToggle({ dms: !config.dms }, 'r-dms')}
+              className={`rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${config.dms ? 'border-primary text-primary' : 'text-muted-foreground'}`}
+            >
+              {config.dms ? '✓ ' : ''}DMs
+            </button>
+
+            {config.dryRun ? (
+              confirmLive ? (
+                <span className="inline-flex items-center gap-2 rounded-md border border-destructive/50 px-2 py-1 text-xs">
+                  <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
+                  {counts.sent === 0
+                    ? 'It has never sent anything to a member. Answer people for real?'
+                    : 'Answer people without you reading it first?'}
+                  <button type="button" className="rounded border border-destructive/50 px-2 py-0.5 text-destructive"
+                    onClick={() => { setConfirmLive(false); onToggle({ dryRun: false }, 'r-dry'); }}>
+                    Yes, go live
+                  </button>
+                  <button type="button" className="rounded border px-2 py-0.5" onClick={() => setConfirmLive(false)}>
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button type="button" disabled={!!busy} onClick={() => setConfirmLive(true)}
+                  className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">
+                  Go live
+                </button>
+              )
+            ) : (
+              <button type="button" disabled={!!busy} onClick={() => onToggle({ dryRun: true }, 'r-dry')}
+                className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-50">
+                Back to drafting only
+              </button>
+            )}
+
+            <button
+              type="button" disabled={!!busy}
+              onClick={onSweep}
+              className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50"
+            >
+              {busy === 'r-sweep' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              Sweep now
+            </button>
+          </>
+        ) : null}
+      </div>
+
+      {config.enabled ? (
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <Field label="Sweep every (min)">
+              <input type="number" min={5} max={1440} value={config.everyMinutes}
+                onChange={(e) => onEdit({ everyMinutes: Number(e.target.value) })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+            </Field>
+            <Field label="Most per sweep">
+              <input type="number" min={1} max={20} value={config.maxPerSweep}
+                onChange={(e) => onEdit({ maxPerSweep: Number(e.target.value) })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+            </Field>
+            <Field label="Most per 24h">
+              <input type="number" min={1} max={100} value={config.maxPerDay}
+                onChange={(e) => onEdit({ maxPerDay: Number(e.target.value) })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+            </Field>
+            <Field label="Ignore older than (days)">
+              <input type="number" min={1} max={365} value={config.maxAgeDays}
+                onChange={(e) => onEdit({ maxAgeDays: Number(e.target.value) })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+            </Field>
+            <Field label="Posts to scan">
+              <input type="number" min={1} max={25} value={config.postsToScan}
+                onChange={(e) => onEdit({ postsToScan: Number(e.target.value) })}
+                className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+            </Field>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>
+              {/* Counts by state, not a total: `unconfirmed` and `failed` are the
+                  two that need a person, and a total hides both. */}
+              {counts.sent} sent ({counts.sentLastDay} in 24h) · {counts.drafted} waiting · {counts.skipped} left for you
+              {counts.unconfirmed ? ` · ${counts.unconfirmed} unconfirmed` : ''}
+              {counts.failed ? ` · ${counts.failed} failed` : ''}
+            </span>
+            <span>
+              {health.lastSweepAt
+                ? `Last swept ${new Date(health.lastSweepAt).toLocaleString()} — ${health.lastOutcome || 'no outcome recorded'}`
+                : 'Never swept.'}
+            </span>
+          </div>
+
+          {dirty ? (
+            <button type="button" disabled={!!busy} onClick={onSave}
+              className="mt-3 inline-flex items-center gap-2 rounded-md border border-primary px-3 py-1.5 text-xs text-primary disabled:opacity-50">
+              {busy === 'r-save' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Save these settings
+            </button>
+          ) : null}
+        </>
+      ) : null}
+
+      <div className="mt-5 space-y-3">
+        {rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nothing yet. Every member message it engages with is listed here, whether it answered, skipped it or failed.
+          </p>
+        ) : (
+          rows.map((r) => (
+            <ReplyRowCard key={r.id} row={r} busy={busy} communityUrl={communityUrl} onSend={onSend} onForget={onForget} />
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReplyRowCard({
+  row, busy, communityUrl, onSend, onForget,
+}: {
+  row: SkoolReplyRow;
+  busy: string | null;
+  communityUrl: string | null;
+  onSend: (id: string) => void;
+  onForget: (id: string) => void;
+}) {
+  // A comment links to its post; a DM has no URL at all — Skool's chat is a
+  // panel, not a page (`skool.com/chat` redirects to the group), so there is
+  // deliberately no link rather than a broken one.
+  const link = row.surface === 'comment' && communityUrl && row.postSlug
+    ? `${communityUrl.replace(/\/+$/, '')}/${row.postSlug}`
+    : null;
+
+  return (
+    <div className="rounded-md border p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded border px-1.5 py-0.5 text-[11px] ${REPLY_STATE_STYLE[row.state]}`}>
+          {REPLY_STATE_LABEL[row.state]}
+        </span>
+        <span className="text-xs font-medium">{row.memberName || 'Unknown member'}</span>
+        <span className="text-[11px] text-muted-foreground">
+          {row.surface === 'dm' ? 'direct message' : 'comment'} · {new Date(row.createdAt).toLocaleString()}
+        </span>
+        {link ? (
+          <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary">
+            open <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : null}
+      </div>
+
+      <p className="mt-2 whitespace-pre-wrap text-xs text-muted-foreground">“{row.theirText.slice(0, 400)}”</p>
+
+      {row.skipReason ? (
+        <p className="mt-2 text-xs">
+          {/* A skip is a decision with a reason, never a silent nothing — and
+              the reasons it is told to skip on (money, legal, personal) are
+              exactly the messages a person needs to see. */}
+          <span className="text-muted-foreground">Left for you: </span>{row.skipReason}
+        </p>
+      ) : null}
+
+      {row.replyText ? (
+        <p className="mt-2 whitespace-pre-wrap rounded bg-muted/40 p-2 text-xs">{row.replyText}</p>
+      ) : null}
+
+      {row.cited.length ? <Cited cited={row.cited} /> : null}
+
+      {row.lastError ? (
+        <p className="mt-2 text-xs text-destructive">{row.lastError}</p>
+      ) : null}
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {row.state === 'drafted' ? (
+          <button type="button" disabled={!!busy} onClick={() => onSend(row.id)}
+            className="inline-flex items-center gap-2 rounded-md border border-primary px-2 py-1 text-[11px] text-primary disabled:opacity-50">
+            {busy === `r-send:${row.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+            Send this
+          </button>
+        ) : null}
+        {/* ⚠️ FORGET IS NOT UNSEND, AND THE LABEL HAS TO SAY SO. It releases the
+            message back to the queue so the agent may write to that person
+            again — which is the wrong thing to click on a row that says Sent. */}
+        {row.state !== 'sent' ? (
+          <button type="button" disabled={!!busy} onClick={() => onForget(row.id)}
+            className="inline-flex items-center gap-2 rounded-md border px-2 py-1 text-[11px] text-muted-foreground disabled:opacity-50">
+            {busy === `r-forget:${row.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+            Forget (let it try again)
+          </button>
+        ) : null}
+        {row.tokens ? <span className="text-[11px] text-muted-foreground">{row.tokens.toLocaleString()} tokens</span> : null}
+      </div>
+    </div>
+  );
+}
+
 function Cited({ cited }: { cited: { title: string; url: string }[] }) {
   if (!cited.length) return null;
   return (
