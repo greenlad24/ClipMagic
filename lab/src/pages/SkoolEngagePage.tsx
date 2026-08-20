@@ -979,8 +979,21 @@ function RepliesPanel({
   onForget: (id: string) => void;
 }) {
   const [confirmLive, setConfirmLive] = useState(false);
+  const [showSent, setShowSent] = useState(false);
   const live = config.enabled && !config.dryRun;
   const surfaces = [config.comments ? 'comments' : null, config.dms ? 'DMs' : null].filter(Boolean).join(' and ');
+  /**
+   * ⚠️ A SENT ROW IS AN ARCHIVE, NOT A QUEUE ITEM, AND MIXING THEM MADE DONE
+   * WORK LOOK OUTSTANDING. Jake, 2026-08-20: "if the DM worked why is it still
+   * in the lab? ... remove it from the queue."
+   *
+   * ⚠️ IT IS NOT DELETED, AND MUST NOT BE. The ledger row is exactly what stops
+   * the collector offering that message again — drop it and the member gets a
+   * second answer to something already answered. So `sent` moves out of the
+   * list and behind a count, where it still answers "did that go?".
+   */
+  const needsYou = rows.filter((r) => r.state !== 'sent');
+  const sent = rows.filter((r) => r.state === 'sent');
 
   return (
     <section className={`rounded-lg border p-5 ${live ? 'border-[hsl(var(--chart-1))]/50 bg-[hsl(var(--chart-1))]/5' : ''}`}>
@@ -1136,15 +1149,39 @@ function RepliesPanel({
       ) : null}
 
       <div className="mt-5 space-y-3">
-        {rows.length === 0 ? (
+        {needsYou.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nothing yet. Every member message it engages with is listed here, whether it answered, skipped it or failed.
+            {sent.length
+              ? 'Nothing waiting. Everything it has picked up has been answered.'
+              : 'Nothing yet. Any member message it picks up appears here until it is answered.'}
           </p>
         ) : (
-          rows.map((r) => (
+          needsYou.map((r) => (
             <ReplyRowCard key={r.id} row={r} busy={busy} communityUrl={communityUrl} onSend={onSend} onRetry={onRetry} onForget={onForget} />
           ))
         )}
+
+        {sent.length ? (
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowSent((v) => !v)}
+              className="text-xs text-muted-foreground underline underline-offset-2"
+            >
+              {showSent ? 'Hide' : 'Show'} {sent.length} already answered
+            </button>
+            {/* Kept reachable rather than hidden: "did that actually go?" is the
+                question this record exists to answer, and the reply's own id is
+                the only proof there is. */}
+            {showSent ? (
+              <div className="mt-3 space-y-3 opacity-70">
+                {sent.map((r) => (
+                  <ReplyRowCard key={r.id} row={r} busy={busy} communityUrl={communityUrl} onSend={onSend} onRetry={onRetry} onForget={onForget} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
   );
