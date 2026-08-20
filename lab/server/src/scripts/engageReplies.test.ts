@@ -203,6 +203,37 @@ async function main() {
     assert.ok(s.health.lastSweepAt, "a sweep that refused still leaves a heartbeat");
   });
 
+  /* ── what web search leaves behind ── */
+
+  await check("stripSearchMarkup removes citation tags and keeps the sentence", async () => {
+    const { stripSearchMarkup } = await import("../skool/engageGen.js");
+    // ⚠️ THE REAL LINE FROM THE FIRST SEARCH-BACKED DRAFT. It would have been
+    // posted to a member exactly like this: the JSON parsed, the length was
+    // right, the links were real, and nothing else in the pipeline looks at
+    // prose.
+    const real =
+      'look at <cite index="3-0">Synthesia — it turns text into video content with AI avatars</cite>. ' +
+      '<cite index="1-0">HeyGen is the other big one</cite>, so good if you want your own face.';
+    const out = stripSearchMarkup(real);
+    assert.ok(!out.includes("<cite"), out);
+    assert.ok(!out.includes("</cite>"), out);
+    // The inner text is the sentence, not decoration — it must survive.
+    assert.match(out, /Synthesia — it turns text into video content with AI avatars/);
+    assert.match(out, /HeyGen is the other big one/);
+    // And the strip must not leave a space sitting before the full stop.
+    assert.ok(!/ \./.test(out), out);
+  });
+
+  await check("stripSearchMarkup leaves a markdown link and a real bracket alone", async () => {
+    const { stripSearchMarkup } = await import("../skool/engageGen.js");
+    // A bare [1] is a reference marker; [label](url) is a link, and eating its
+    // label would silently mangle the one thing members click.
+    assert.equal(stripSearchMarkup("see [the docs](https://x.dev) [1]"), "see [the docs](https://x.dev)");
+    assert.equal(stripSearchMarkup("costs $29 [2, 3] a month"), "costs $29 a month");
+    // Nothing to strip must come back unchanged, trimmed.
+    assert.equal(stripSearchMarkup("Hey Jason, this one's clean"), "Hey Jason, this one's clean");
+  });
+
   fs.rmSync(root, { recursive: true, force: true });
   console.log(`\n${passed} passed`);
 }

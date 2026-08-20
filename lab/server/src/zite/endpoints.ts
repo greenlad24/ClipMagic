@@ -266,6 +266,7 @@ import {
   schedulerHealth,
   type Weekday,
 } from "../skool/engageSchedule.js";
+import { firstNameOf } from "../skool/engageGen.js";
 import {
   getReplyConfig,
   setReplyConfig,
@@ -4823,6 +4824,8 @@ const skoolDraftReply: Handler = async (input) => {
     voicePrompt: getEngageSettings().replyPromptMd ?? "",
     surface: String(input?.surface ?? "comment") === "dm" ? "dm" : "comment",
     authorName: String(input?.authorName ?? "a member"),
+    // The bench passes a display name; the greeting needs the first name only.
+    authorFirstName: String(input?.authorFirstName ?? "") || firstNameOf(String(input?.authorName ?? "")),
     text,
     context: String(input?.context ?? ""),
   });

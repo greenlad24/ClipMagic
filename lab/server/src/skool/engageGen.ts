@@ -350,59 +350,188 @@ function styleBlock(examples: { title: string; body: string }[]): string {
  * openings, contractions, no markdown, Jake's banned words. Jake, 2026-08-20:
  * "still in the Jake Dawson voice". Only length and deflection change.
  */
-const SKOOL_REPLY_NOTE = [
-  "==========================================",
-  "TWO OVERRIDES TO THE STYLE GUIDE ABOVE, FOR SKOOL ONLY",
-  "==========================================",
-  "",
-  "Everything in the style guide still governs your VOICE — the lowercase",
-  "openings, the contractions, the sentence patterns, the words Jake never uses,",
-  "no markdown, the emoji limit. Keep all of it. Two rules do not apply here,",
-  "and they are named so there is nothing to interpret.",
-  "",
-  "⚠️ OVERRIDE 1 — `RULE 3: REPLY LENGTH` DOES NOT APPLY. Jake, 2026-08-20:",
-  '"I want the answers to be complete, not just surface level replies."',
-  "That rule caps every reply at 5-10 sentences and it was written for a YouTube",
-  "comment box, where nobody reads more. This is his own paid community: the",
-  "member asked because they are stuck, and half an answer sends them away to",
-  "look the rest up somewhere else.",
-  "- Answer the WHOLE question. Every part of it they asked.",
-  "- Give the specifics: the actual tool, the actual setting, the actual steps,",
-  "  in the order they would do them. `RULE 7`'s plain numbered lines are the",
-  "  format, and the four-step limit under COMMENT TYPES does not apply either —",
-  "  use as many steps as the job actually takes.",
-  "- Say what it costs, what the free tier does, and where it breaks, when those",
-  "  are part of a real answer.",
-  "- Length is decided by the question, not by a cap. A one-line question still",
-  "  gets a one-line answer; a four-part question gets four parts. Padding a",
-  "  short answer to look thorough is the opposite of what this asks for.",
-  "",
-  "⚠️ OVERRIDE 2 — NEVER DEFLECT SOMETHING FOR BEING OFF-TOPIC. Jake,",
-  '2026-08-20: "for things that are outside of the scope of the skool community',
-  '— always do research and help (never say sorry this is not what I do here)."',
-  "The style guide tells you to answer ON-TOPIC questions and, when you do not",
-  "know, to say \"not sure off the top of my head\" and point at the docs. Both of",
-  "those are withdrawn.",
-  "- A member asking about a tool the classroom never covers still gets a real",
-  "  answer. Research it and answer it.",
-  "- Never write any version of \"that's outside what I cover\", \"I'd check their",
-  "  docs\", \"not really my area\", or \"not sure off the top of my head\".",
-  "- You have web search. USE IT whenever the answer depends on something you",
-  "  are not certain is still true — a price, a free tier, a menu path, a limit,",
-  "  whether a product still exists. Search first, then answer.",
-  "",
-  "⚠️ WHAT DOES NOT CHANGE, and it is what makes the two above safe:",
-  "- No invented numbers, prices, limits or results. If a search did not confirm",
-  "  it, say what you do know and say plainly what they should check.",
-  "- No earnings claims and no time-to-result promises, ever, from any source.",
-  "- The classroom-link rule stands exactly as written. Off-topic means answer",
-  "  it, NOT invent a lesson for it — if nothing in the list teaches it, answer",
-  "  it in plain words with no classroom pointer at all.",
-  "- `skip` is still for the things that need Jake HIMSELF — money owed, refunds,",
-  "  complaints, anything legal or personal — and for spam. Those are about WHO",
-  "  should answer, not about what the question is about, and none of them are",
-  "  affected by the two overrides.",
-].join("\n");
+/**
+ * What a Skool reply is allowed to be, against a voice prompt written for a
+ * YouTube comment box.
+ *
+ * ⚠️⚠️ EVERY OVERRIDE NAMES THE RULE IT OVERRIDES, and that is the whole
+ * technique. This file's founding lesson is that an unnamed contradiction gets
+ * resolved differently on every run — `POST_FORMAT_NOTE` had to name RULE 1
+ * after three posts in a row obeyed a lowercase rule written for Instagram.
+ *
+ * ⚠️ IT IS NOW FIVE OVERRIDES DEEP, WHICH IS THE ARGUMENT FOR A SKOOL-SPECIFIC
+ * VOICE PROMPT. `replyPromptMd` is a YouTube/IG comment-box guide and it is the
+ * ONLY voice source both agents have. Each override here is correct and each
+ * one widens the gap between what the prompt says and what actually runs.
+ *
+ * ⚠️ AND MOST OF THE PROMPT IS STILL KEPT ON PURPOSE — Jake, 2026-08-20:
+ * "still in the Jake Dawson voice". RULE 2 (sentence length), 5 (contractions),
+ * 6 (sentence starters), 7 (no markdown, the emoji limit) and 8/9 (the words
+ * and phrases he never uses) are the voice, and none of them are touched.
+ */
+/**
+ * Strip the citation markup web search leaves in the model's prose.
+ *
+ * ⚠️⚠️ THIS IS A HARD STRIP, NOT A PROMPT RULE, AND IT EXISTS BECAUSE THE FIRST
+ * SEARCH-BACKED DRAFT WOULD HAVE POSTED THIS TO A MEMBER VERBATIM:
+ *
+ *   look at <cite index="3-0">Synthesia — it turns text into video</cite>
+ *
+ * With the `web_search` tool on, Claude marks which sentences came from which
+ * result using `<cite index="…">` tags around the borrowed text. That is correct
+ * behaviour for a research answer and it is unreadable in a Skool comment. It
+ * appeared in the very first draft after search was enabled, in three separate
+ * sentences, and nothing else in the pipeline would have caught it — the JSON
+ * parsed, the length was right, the links were real.
+ *
+ * A prompt line asking for no citation markup is added as well, but the strip is
+ * what makes it safe: a rule the model merely obeys most of the time is not a
+ * defence when nobody reads the output before the community does.
+ *
+ * The INNER TEXT IS KEPT — it is the sentence, not decoration. Only the tags go.
+ */
+export function stripSearchMarkup(text: string): string {
+  return String(text ?? "")
+    // <cite index="3-0">the sentence</cite> → the sentence
+    .replace(/<\/?cite\b[^>]*>/gi, "")
+    // Bare reference markers some responses use instead: [1], [2, 3] on their
+    // own — but NOT a markdown link's [label](url), which is why the lookahead
+    // refuses a following paren.
+    .replace(/\[\d+(?:\s*,\s*\d+)*\](?!\()/g, "")
+    // The strip can leave a doubled space or a space before punctuation.
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/ ([.,;:!?])/g, "$1")
+    .trim();
+}
+
+/**
+ * The name to greet somebody by.
+ *
+ * ⚠️ FIRST TOKEN, AND NOTHING CLEVERER. Skool gives DMs a real `memberFirstName`
+ * and gives comments only a display name, so this is the fallback for the
+ * comment surface. It deliberately does not try to parse titles, particles or
+ * reversed name orders: an empty string is a supported answer here — the rule
+ * greets without a name rather than with a wrong one.
+ */
+export function firstNameOf(fullName: string): string {
+  const first = String(fullName ?? "").trim().split(/\s+/)[0] ?? "";
+  // A handle like "ai_automations" or an emoji display name is not a name to
+  // greet. Letters only, and long enough to be one.
+  if (first.length < 2 || !/^\p{L}[\p{L}'’-]*$/u.test(first)) return "";
+  return first;
+}
+
+function skoolReplyNote(firstName: string): string {
+  const greeting = firstName
+    ? `The first line begins exactly "Hey ${firstName}," and carries straight on`
+    : 'This member\'s first name is not known, so open with "Hey," and carry straight on';
+  return [
+    "==========================================",
+    "OVERRIDES TO THE STYLE GUIDE ABOVE — SKOOL ONLY",
+    "==========================================",
+    "",
+    "The style guide still governs your VOICE. Keep the sentence length, the",
+    "contractions, the sentence patterns, the plain formatting, the emoji limit,",
+    "and every word and phrase it tells you Jake never uses. The rules below are",
+    "named one by one, and only those named are withdrawn.",
+    "",
+    "⚠️ OVERRIDE 1 — `RULE 3: REPLY LENGTH` DOES NOT APPLY. Jake, 2026-08-20:",
+    '"I want the answers to be complete (but still in the Jake Dawson voice) not',
+    'just surface level replies."',
+    "That rule caps every reply at 5-10 sentences. It was written for a YouTube",
+    "comment box where nobody reads more. This is his own paid community: the",
+    "member asked because they are stuck, and half an answer sends them somewhere",
+    "else to find the rest.",
+    "- Answer the WHOLE question — every part of it they asked.",
+    "- Give the specifics: the actual tool, the actual setting, the actual steps",
+    "  in the order they would do them. `RULE 7`'s plain numbered lines are the",
+    "  format, and the four-step limit under COMMENT TYPES does not apply either.",
+    "- Say what it costs, what the free tier does and where it breaks, when those",
+    "  are part of a real answer.",
+    "- Length is decided by the question, not by a cap. A one-line question still",
+    "  gets a one-line answer. Padding a short answer to look thorough is the",
+    "  opposite of what this asks for.",
+    "",
+    "⚠️ OVERRIDE 2 — NEVER DEFLECT SOMETHING FOR BEING OFF-TOPIC. Jake,",
+    '2026-08-20: "for things that are outside of the scope of the skool community',
+    '— always do research and help (never say sorry this is not what I do here)."',
+    "The guide tells you to answer ON-TOPIC questions and, when you do not know,",
+    'to say "not sure off the top of my head" and point at the docs. Both are',
+    "withdrawn.",
+    "- A member asking about a tool the classroom never covers still gets a real",
+    "  answer. Research it and answer it.",
+    '- Never write any version of "that\'s outside what I cover", "I\'d check their',
+    '  docs", "not really my area", or "not sure off the top of my head".',
+    "- You have web search. USE IT whenever the answer depends on something you",
+    "  are not certain is still true — a price, a free tier, a menu path, a limit,",
+    "  whether a product still exists. Search first, then answer.",
+    "- ⚠️ NEVER PUT CITATION MARKUP IN THE REPLY. No `<cite>` tags, no [1] style",
+    "  reference markers, no \"according to their site\" framing. This is a message",
+    "  to one person, not a research write-up: state what you found in Jake's own",
+    "  words. If a source is worth handing over, paste the bare URL on its own",
+    "  line, the way the classroom links are written.",
+    "",
+    "⚠️ OVERRIDE 3 — `RULE 1: CAPITALIZATION` DOES NOT APPLY. Jake, 2026-08-20:",
+    '"make the first letter of a sentence an uppercase."',
+    'RULE 1 says start every sentence with a lowercase letter, always. Write',
+    "normal sentence case instead: every sentence, and every numbered step,",
+    "starts with a capital letter.",
+    "- The rest of RULE 1 stands: \"I\" is always uppercase, and the product and",
+    "  proper names it lists keep their real capitalisation.",
+    "- This does NOT make the voice formal. Short sentences, contractions and the",
+    "  same word choices — just capitalised the way anyone writes.",
+    "",
+    "⚠️ OVERRIDE 4 — OPEN WITH A GREETING BY NAME. Jake, 2026-08-20: \"start each",
+    'reply with Hey {name}".',
+    greeting + " into the answer on the SAME line — not a greeting paragraph of",
+    "its own, and no \"hope you're well\".",
+    "- Their FIRST name only. Never the full name, never a nickname you invented.",
+    "- It replaces whatever opener PATTERN A/B/C or COMMENT TYPES would have",
+    "  chosen. Even a one-fragment praise reply gets it.",
+    "",
+    "⚠️ OVERRIDE 5 — DO NOT OPEN WITH THE SAME WORD EVERY TIME. Jake,",
+    '2026-08-20: "not every time say yeah as the first word."',
+    "`PATTERN A` is [short acknowledgment] — [the actual content], and that",
+    'acknowledgment collapses to "yeah" on nearly every reply, which reads as a',
+    "tic rather than a voice. It is a real word in this voice; it is not the only",
+    "one.",
+    "- The word after the comma must vary from reply to reply. Often the cleanest",
+    "  opener is no acknowledgment at all — go straight at the answer.",
+    '- Never let "yeah" become the default. If it is the honest reaction, use it;',
+    "  if it is filler, cut it.",
+    '- Do NOT swap one tic for another. "Ah", "right", "so", "honestly" on every',
+    "  reply is the same failure wearing a different word.",
+    "",
+    "⚠️ WHAT DOES NOT CHANGE, and it is what makes the overrides safe:",
+    "- No invented numbers, prices, limits or results. If a search did not",
+    "  confirm it, say what you do know and say plainly what they should check.",
+    "- No earnings claims and no time-to-result promises, ever, from any source.",
+    "- The classroom-link rule stands exactly as written. Off-topic means ANSWER",
+    "  it, not invent a lesson for it — if nothing in the list teaches it, answer",
+    "  in plain words with no classroom pointer at all.",
+    "",
+    "⚠️⚠️ A REAL URL UNDER A FALSE PROMISE IS THE FAILURE TO WATCH FOR, AND IT HAS",
+    "ALREADY HAPPENED ONCE. A reply explained system prompts, formatting",
+    'instructions and temperature, then wrote "that lesson walks through it" over',
+    'a link to "Finding Your First AI Win" — a real page, in the list, that scores',
+    "your recurring tasks and mentions none of those three things. Nothing caught",
+    "it: the URL was genuine, so the never-invent-a-URL rule was satisfied while",
+    "the sentence around it was not.",
+    "- Before you attach a link, check the PAGE actually teaches the SPECIFIC",
+    "  thing the sentence just named. Close subject, same course, sounds related —",
+    "  none of those are the test. Does it teach that?",
+    "- If it does not, say the thing in plain words and attach nothing. A member",
+    "  who clicks and finds something else has been told the classroom covers",
+    "  something it does not, which is worse than never being pointed anywhere.",
+    "- ⚠️ OVERRIDE 2 MAKES THIS MORE LIKELY, NOT LESS. Being told to help with",
+    "  anything creates pressure to find somewhere in the classroom to point for",
+    "  everything. Answering off-topic well means answering it in plain words —",
+    "  it does not mean finding the nearest lesson.",
+    "- `skip` is still for what needs Jake HIMSELF — money owed, refunds,",
+    "  complaints, anything legal or personal — and for spam. Those are about WHO",
+    "  should answer, not about what the question is about.",
+  ].join("\n");
+}
 
 const MCP_NOTE = [
   "THIS IS THE TUESDAY POST AND IT HAS A FIXED JOB: one MCP automation idea.",
@@ -766,6 +895,17 @@ export interface ReplyRequest {
   surface: "comment" | "dm";
   /** Who wrote it, and what they wrote. */
   authorName: string;
+  /**
+   * Their first name, for the greeting.
+   *
+   * ⚠️ PASSED IN RATHER THAN LEFT TO THE MODEL TO SPLIT. "Hey Jason," is right
+   * and "Hey Jason Davies," is not — but guessing which half of a two-word
+   * handle is the given name is not something to do on a live message. The DM
+   * payload already carries a real `memberFirstName`, so the caller supplies
+   * what it knows, and an empty string means "greet without a name" rather
+   * than "invent one".
+   */
+  authorFirstName: string;
   text: string;
   /** The post the comment sits under, when there is one. */
   context: string;
@@ -796,7 +936,7 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     mechanics(
       "reply",
       [
-        SKOOL_REPLY_NOTE,
+        skoolReplyNote(req.authorFirstName),
         "",
         surfaceNote,
         "",
@@ -857,7 +997,16 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
   if (!skip && !body) return { reply: null, error: "The model returned neither a reply nor a reason to skip." };
 
   return {
-    reply: { text: body, skip, cited: citedFrom(parsed.cited, hits), tokens: totalTokens(usage) },
+    reply: {
+      // ⚠️ STRIPPED HERE, NOT AT THE WRITE PATH. Both surfaces and the manual
+      // draft bench go through this return, so one strip covers all three;
+      // doing it in `replyToComment` and `sendDm` separately is two places to
+      // forget when a third surface arrives.
+      text: stripSearchMarkup(body),
+      skip,
+      cited: citedFrom(parsed.cited, hits),
+      tokens: totalTokens(usage),
+    },
     error: null,
   };
 }

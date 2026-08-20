@@ -30,7 +30,7 @@ import { getSettings as getEngageSettings } from "../engage/db.js";
 import { readComments, answerable, type SkoolComment } from "./comments.js";
 import { readChannels, readMessages, needingReply, sendDm, type DmChannel } from "./dms.js";
 import { readFeed } from "./community.js";
-import { draftReply } from "./engageGen.js";
+import { draftReply, firstNameOf } from "./engageGen.js";
 import { replyToComment } from "./engageActions.js";
 
 export type ReplySurface = "comment" | "dm";
@@ -278,6 +278,8 @@ export interface ReplyTarget {
   channelId: string;
   memberId: string;
   memberName: string;
+  /** For the greeting. Skool gives DMs a real one; comments get the fallback. */
+  memberFirstName: string;
   theirText: string;
   /** What the reply has to make sense inside: the post, or the conversation. */
   context: string;
@@ -356,6 +358,7 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           channelId: "",
           memberId: c.authorId,
           memberName: c.authorName,
+          memberFirstName: firstNameOf(c.authorName),
           theirText: c.body,
           context: `${post.title}\n\n${post.body}`.trim(),
           createdAt: c.createdAt,
@@ -386,6 +389,8 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           channelId: ch.id,
           memberId: ch.memberId,
           memberName: ch.memberName,
+          // Skool's own field, not a split — see `firstNameOf`.
+          memberFirstName: ch.memberFirstName || firstNameOf(ch.memberName),
           theirText: ch.lastMessageBody,
           context: "",
           createdAt: ch.lastMessageAt,
@@ -448,6 +453,7 @@ async function draftOne(
     voicePrompt,
     surface: target.surface,
     authorName: target.memberName,
+    authorFirstName: target.memberFirstName,
     text: target.theirText,
     context: target.context,
   });
