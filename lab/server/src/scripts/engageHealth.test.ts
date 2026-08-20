@@ -7,6 +7,9 @@
  *   - the overlap guard   refuses a second cycle, and SAYS WHY
  *   - emailDayFor()       which single day of the week carries the email
  *   - isEmailSlot()       and that nothing else does, including manual keys
+ *   - weekStartDate()     where the cap's week begins
+ *   - scheduledPostsThisWeek()  that the cap counts the agent's own posts only,
+ *                         replayed against the data that closed Tue 2026-08-18
  *
  * ⚠️ THE POINT OF THESE IS THAT A DEAD SCHEDULER LOOKS EXACTLY LIKE A QUIET
  * ONE. A tick with nothing due logs nothing and writes nothing, so no other
@@ -40,7 +43,10 @@ async function main() {
 
   const sched = await import("../skool/engageSchedule.js");
   const { db } = await import("../db/index.js");
-  const { STUCK_AFTER_MS, describeLockHold, schedulerHealth, tickNow, getSchedule, emailDayFor, isEmailSlot } = sched;
+  const {
+    STUCK_AFTER_MS, describeLockHold, schedulerHealth, tickNow, getSchedule,
+    emailDayFor, isEmailSlot, weekStartDate, scheduledPostsThisWeek,
+  } = sched;
 
   /* ── the pure judgement ── */
 
@@ -175,6 +181,77 @@ async function main() {
     assert.equal(isEmailSlot("not-a-date", days), false);
     // No configured days at all is also not an email.
     assert.equal(isEmailSlot("2026-08-09", [] as const), false);
+  });
+
+  // ── the weekly cap ─────────────────────────────────────────────────────────
+  // Jake, 2026-08-20: "open a slot no matter what — every Sunday, Tue, Fri —
+  // even if I post other things on other days." Tuesday 2026-08-18 opened no
+  // slot because the cap counted hand-published posts AND slid over a rolling
+  // seven days. These replay that exact table.
+
+  await check("weekStartDate: the week opens on Sunday, and a Sunday is its own", () => {
+    assert.equal(weekStartDate("2026-08-16"), "2026-08-16"); // Sunday
+    assert.equal(weekStartDate("2026-08-18"), "2026-08-16"); // Tuesday
+    assert.equal(weekStartDate("2026-08-21"), "2026-08-16"); // Friday
+    assert.equal(weekStartDate("2026-08-22"), "2026-08-16"); // Saturday, still
+    assert.equal(weekStartDate("2026-08-23"), "2026-08-23"); // and over it rolls
+    // Month and year boundaries are the arithmetic, not a special case.
+    assert.equal(weekStartDate("2026-01-01"), "2025-12-28");
+  });
+
+  await check("weekStartDate: anything that is not a calendar date has no week", () => {
+    assert.equal(weekStartDate("2026-08-12-manual"), "");
+    assert.equal(weekStartDate(""), "");
+    assert.equal(weekStartDate("nonsense"), "");
+  });
+
+  await check("scheduledPostsThisWeek: THE Tue 2026-08-18 REGRESSION, replayed", () => {
+    // The live table as it stood that morning.
+    const rows: [string, string][] = [
+      ["2026-08-07", "posted"],       // Fri, two weeks back
+      ["2026-08-09", "abandoned"],    // Sun, the attachment run that never landed
+      ["2026-08-09-manual", "posted"],// published by hand that evening
+      ["2026-08-11", "abandoned"],    // Tue, twelve tries at a disabled switch
+      ["2026-08-12-manual", "posted"],// published by hand the next day
+      ["2026-08-14", "posted"],       // Fri, scheduled
+      ["2026-08-16", "posted"],       // Sun, scheduled — the current week
+    ];
+    for (const [key, state] of rows) {
+      db.prepare(
+        "INSERT INTO skool_engage_slots (slot_key, state, subject, created_at, updated_at) VALUES (?, ?, 'x', 0, 0)",
+      ).run(key, state);
+    }
+    // Tuesday's week began on the 16th, and one scheduled post has landed in it.
+    // The old counter said 3 — 08-12-manual, 08-14 and 08-16 over a rolling
+    // week — and shut the day. Under a cap of 3 this now opens.
+    assert.equal(scheduledPostsThisWeek("2026-08-18"), 1);
+    // Friday, after a Tuesday post lands, is still inside the cap.
+    db.prepare(
+      "INSERT INTO skool_engage_slots (slot_key, state, subject, created_at, updated_at) VALUES ('2026-08-18', 'posted', 'x', 0, 0)",
+    ).run();
+    assert.equal(scheduledPostsThisWeek("2026-08-21"), 2);
+    // ⚠️ AND THE CEILING IS STILL REAL. Three scheduled posts in one week is
+    // the cap, so a fourth day in the same week would be refused.
+    db.prepare(
+      "INSERT INTO skool_engage_slots (slot_key, state, subject, created_at, updated_at) VALUES ('2026-08-21', 'posted', 'x', 0, 0)",
+    ).run();
+    assert.equal(scheduledPostsThisWeek("2026-08-22"), 3);
+    assert.equal(getSchedule().maxPostsPerWeek, 3);
+  });
+
+  await check("scheduledPostsThisWeek: hand-published and unposted slots do not count", () => {
+    // The week of 2026-08-09 holds one scheduled post (08-14), one manual post,
+    // and two abandoned slots. Only the scheduled one is the agent's allowance.
+    assert.equal(scheduledPostsThisWeek("2026-08-15"), 1);
+    // A post later in the same week cannot be spent before it happens: 08-16 is
+    // 'posted' above, and asking on the 16th itself counts it, not the 18th's.
+    assert.equal(scheduledPostsThisWeek("2026-08-16"), 1);
+  });
+
+  await check("scheduledPostsThisWeek: a key that is not a date refuses rather than uncapping", () => {
+    // Returning 0 here would read as "nothing posted this week" and open a slot
+    // on every tick — the one failure mode worse than closing a day.
+    assert.throws(() => scheduledPostsThisWeek("2026-08-12-manual"), /not a calendar date/);
   });
 
   fs.rmSync(root, { recursive: true, force: true });

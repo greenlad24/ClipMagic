@@ -564,7 +564,7 @@ function SchedulePanel({
             className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
           />
         </Field>
-        <Field label="Most posts in any 7 days">
+        <Field label="Most scheduled posts in a week">
           <input
             type="number" min={1} max={14}
             value={schedule.maxPostsPerWeek}

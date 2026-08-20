@@ -63,7 +63,15 @@ export interface EngageSchedule {
   /** Local hour in `timezone`, 0–23. The slot opens at the top of this hour. */
   hour: number;
   timezone: string;
-  /** Hard ceiling on posts in any rolling 7 days, counted from what we published. */
+  /**
+   * Hard ceiling on posts the SCHEDULER publishes in one calendar week.
+   *
+   * ⚠️ IT DOES NOT COUNT POSTS MADE BY HAND, AND IT DOES NOT SLIDE. Both were
+   * true until 2026-08-20 and between them they closed a posting day nobody
+   * asked to close — see `scheduledPostsThisWeek`, which carries the argument.
+   * At sun/tue/fri and 3 it cannot bind; it exists for the day someone
+   * configures more days than they meant to.
+   */
   maxPostsPerWeek: number;
   /** Attempts before a slot is abandoned. Each attempt is one backoff apart. */
   maxAttempts: number;
@@ -283,7 +291,6 @@ export function getSlot(slotKey: string): Slot | null {
   return r ? rowToSlot(r) : null;
 }
 
-/** Posts actually published in the last 7 days — the cap counts reality, not intent. */
 export interface PinnedSubject {
   id: string;
   subject: string;
@@ -366,11 +373,65 @@ function usedSubjectStrings(): string[] {
     .slice(-40);
 }
 
-function postedThisWeek(): number {
-  const since = Date.now() - 7 * 24 * 3600_000;
+/**
+ * The Sunday that opens the local week a bare calendar date falls in.
+ *
+ * ⚠️ SUNDAY BECAUSE `WEEKDAYS` STARTS THERE, and because `emailDayFor` already
+ * treats Sunday as the week's opener for the sun/tue/fri schedule. Two different
+ * week boundaries in one scheduler would put the email and the cap out of step.
+ *
+ * Pure and exported for the reason `emailDayFor` and `describeLockHold` are:
+ * the alternative is proving the week rolls over by waiting for a Saturday.
+ * Returns "" for anything that is not a bare date — see `scheduledPostsThisWeek`.
+ */
+export function weekStartDate(date: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+  if (!m) return "";
+  const at = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(at.getTime())) return "";
+  // A bare calendar date has one weekday whatever zone reads it, so the UTC
+  // arithmetic here is not an assumption about the schedule's timezone — the
+  // date string has already been resolved in it by `localNow`.
+  at.setUTCDate(at.getUTCDate() - at.getUTCDay());
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * How many posts THIS SCHEDULER has published in the current local week.
+ *
+ * ⚠️⚠️ IT COUNTS SCHEDULED SLOTS ONLY, AND IT COUNTS A CALENDAR WEEK — JAKE,
+ * 2026-08-20: "open a slot no matter what — every Sunday, Tue, Fri — even if I
+ * post other things on other days." The old version counted every `posted` row
+ * over a ROLLING 7 days and closed Tuesday 2026-08-18 without a word. Two
+ * separate faults produced that, and fixing one alone would leave it:
+ *
+ * 1. **Posts made by hand are not the agent's.** They are recorded as
+ *    `<date>-manual` so the subject picker can see them and never write the
+ *    same subject twice — a genuinely useful record that was also being read as
+ *    "the agent has already used its allowance". The GLOB keeps the first job
+ *    and drops the second: a bare `YYYY-MM-DD` key is one the tick opened.
+ * 2. **A rolling window eats its own tail.** Measured from Tuesday 09:00, the
+ *    previous week's Sunday, Tuesday and Friday are all still inside seven
+ *    days, so three scheduled days a week with a cap of three could never open
+ *    the third. The cap read as "3 a week" and behaved as "2 a week, sometimes".
+ *
+ * With sun/tue/fri and a cap of 3 this can no longer bind — which is the point.
+ * It still binds if the days are ever configured beyond the cap, so it remains a
+ * real ceiling on what reaches 65 inboxes rather than a line that does nothing.
+ */
+export function scheduledPostsThisWeek(today: string): number {
+  const weekStart = weekStartDate(today);
+  // No week means no date, which is not a state the tick can reach — `today`
+  // comes from `localNow`. Counting nothing would silently uncap; refuse instead.
+  if (!weekStart) throw new Error(`Cannot count this week's posts: "${today}" is not a calendar date.`);
   const r = db
-    .prepare("SELECT COUNT(*) AS n FROM skool_engage_slots WHERE state = 'posted' AND updated_at >= ?")
-    .get(since) as { n: number };
+    .prepare(
+      `SELECT COUNT(*) AS n FROM skool_engage_slots
+        WHERE state = 'posted'
+          AND slot_key GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          AND slot_key >= ? AND slot_key <= ?`,
+    )
+    .get(weekStart, today) as { n: number };
   return r.n;
 }
 
@@ -523,8 +584,26 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
   //    The slot key is the LOCAL date and the table's primary key, so a tick
   //    every 10 minutes cannot open the same day twice.
   if (cfg.days.includes(local.weekday) && local.hour >= cfg.hour && !getSlot(local.date)) {
-    if (postedThisWeek() >= cfg.maxPostsPerWeek) {
-      out.skipped = `Weekly cap reached (${cfg.maxPostsPerWeek} posts in the last 7 days) — no slot opened for ${local.date}.`;
+    const postedThisWeek = scheduledPostsThisWeek(local.date);
+    if (postedThisWeek >= cfg.maxPostsPerWeek) {
+      out.skipped =
+        `Weekly cap reached (${postedThisWeek} of ${cfg.maxPostsPerWeek} scheduled posts since ` +
+        `${weekStartDate(local.date)}) — no slot opened for ${local.date}. ` +
+        `Raise the cap and delete this row to reopen the day.`;
+      // ⚠️⚠️ A CLOSED POSTING DAY IS RECORDED, NOT MERELY SKIPPED. This is the
+      // same rule as the no-subject branch below, and it was missing here: the
+      // reason went only to the heartbeat's `lastOutcome`, which the next tick
+      // overwrites ten minutes later with "Nothing due.". So Tuesday
+      // 2026-08-18 closed itself, said why for ten minutes, and then looked
+      // exactly like a day nobody had scheduled — which is how it was reported
+      // and how it had to be re-derived from the empty row.
+      //
+      // The slot makes the day permanent in the queue on /skool/agent. It also
+      // means the day stays shut once shut, so a cap raised at noon needs the
+      // row deleted — which the message says, and which is the lesser evil
+      // against a skip nothing can see.
+      console.log(`[skool] ${out.skipped}`);
+      insertSlot(local.date, "", "abandoned", out.skipped);
     } else {
       // ⚠️ A PINNED SUBJECT WINS OVER THE AGENT'S OWN CHOICE. The index-driven
       // picker is right for the standing rhythm and cannot express "say this
@@ -711,8 +790,9 @@ export function emailDayFor(days: readonly Weekday[]): Weekday | null {
  * Whether this slot is the one that emails the community.
  *
  * ⚠️ A KEY THAT IS NOT A CALENDAR DATE ANSWERS NO. Slots published by hand are
- * recorded as `2026-08-12-manual` so the subject picker and the weekly cap can
- * see them, and a parse that quietly accepted the prefix would hand the week's
+ * recorded as `2026-08-12-manual` so the subject picker can see them (the weekly
+ * cap deliberately cannot — `scheduledPostsThisWeek`), and a parse that quietly
+ * accepted the prefix would hand the week's
  * only email to a row written after the fact. Not-a-posting-day is the safe
  * answer for anything unrecognised: it fails toward not emailing 65 people.
  */
