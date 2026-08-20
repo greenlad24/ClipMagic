@@ -43,6 +43,7 @@ import {
   skoolRepliesConfigure,
   skoolRepliesSweep,
   skoolRepliesSend,
+  skoolRepliesRetry,
   skoolRepliesForget,
   type SkoolReplyConfig,
   type SkoolReplyRow,
@@ -351,6 +352,14 @@ export default function SkoolEngagePage() {
                 onSend={(id) =>
                   run(`r-send:${id}`, async () => {
                     const out = await skoolRepliesSend({ id });
+                    if (out.ok) setNote(out.detail);
+                    else setErr(out.detail);
+                    await load();
+                  })
+                }
+                onRetry={(id) =>
+                  run(`r-retry:${id}`, async () => {
+                    const out = await skoolRepliesRetry({ id });
                     if (out.ok) setNote(out.detail);
                     else setErr(out.detail);
                     await load();
@@ -952,7 +961,7 @@ const REPLY_STATE_LABEL: Record<SkoolReplyState, string> = {
  */
 function RepliesPanel({
   config, counts, health, rows, busy, communityUrl,
-  onToggle, onEdit, onSave, onSweep, onSend, onForget, dirty,
+  onToggle, onEdit, onSave, onSweep, onSend, onRetry, onForget, dirty,
 }: {
   config: SkoolReplyConfig;
   counts: { drafted: number; sent: number; unconfirmed: number; skipped: number; failed: number; sentLastDay: number };
@@ -966,6 +975,7 @@ function RepliesPanel({
   onSave: () => void;
   onSweep: () => void;
   onSend: (id: string) => void;
+  onRetry: (id: string) => void;
   onForget: (id: string) => void;
 }) {
   const [confirmLive, setConfirmLive] = useState(false);
@@ -1132,7 +1142,7 @@ function RepliesPanel({
           </p>
         ) : (
           rows.map((r) => (
-            <ReplyRowCard key={r.id} row={r} busy={busy} communityUrl={communityUrl} onSend={onSend} onForget={onForget} />
+            <ReplyRowCard key={r.id} row={r} busy={busy} communityUrl={communityUrl} onSend={onSend} onRetry={onRetry} onForget={onForget} />
           ))
         )}
       </div>
@@ -1141,12 +1151,13 @@ function RepliesPanel({
 }
 
 function ReplyRowCard({
-  row, busy, communityUrl, onSend, onForget,
+  row, busy, communityUrl, onSend, onRetry, onForget,
 }: {
   row: SkoolReplyRow;
   busy: string | null;
   communityUrl: string | null;
   onSend: (id: string) => void;
+  onRetry: (id: string) => void;
   onForget: (id: string) => void;
 }) {
   // A comment links to its post; a DM has no URL at all — Skool's chat is a
@@ -1200,6 +1211,18 @@ function ReplyRowCard({
             className="inline-flex items-center gap-2 rounded-md border border-primary px-2 py-1 text-[11px] text-primary disabled:opacity-50">
             {busy === `r-send:${row.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
             Send this
+          </button>
+        ) : null}
+        {/* ⚠️ THE ROW THAT HAD NO USABLE BUTTON. "Send this" is offered only on
+            a draft — correctly, since a blind resend is how somebody gets
+            answered twice — which left an unconfirmed row with nothing but
+            Forget, and forgetting throws the reviewed reply away. This one
+            re-reads the thread FIRST, so pressing it twice cannot double-answer. */}
+        {row.state === 'unconfirmed' || row.state === 'failed' ? (
+          <button type="button" disabled={!!busy} onClick={() => onRetry(row.id)}
+            className="inline-flex items-center gap-2 rounded-md border border-primary px-2 py-1 text-[11px] text-primary disabled:opacity-50">
+            {busy === `r-retry:${row.id}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            Check and send again
           </button>
         ) : null}
         {/* ⚠️ FORGET IS NOT UNSEND, AND THE LABEL HAS TO SAY SO. It releases the

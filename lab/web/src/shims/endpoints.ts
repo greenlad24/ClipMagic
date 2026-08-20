@@ -1059,6 +1059,12 @@ export const skoolRepliesSweep = endpoint<
 /** ⚠️ WRITES TO THE COMMUNITY. Sends one drafted reply. */
 export const skoolRepliesSend = endpoint<{ id: string }, { ok: boolean; detail: string }>("skoolRepliesSend");
 
+/**
+ * ⚠️ WRITES TO THE COMMUNITY. Re-checks whether the reply landed, and sends it
+ * again only if it genuinely did not — so pressing it twice cannot double-answer.
+ */
+export const skoolRepliesRetry = endpoint<{ id: string }, { ok: boolean; detail: string }>("skoolRepliesRetry");
+
 /** Forget a message so it can be offered again. Does NOT unsend anything. */
 export const skoolRepliesForget = endpoint<
   { id: string },

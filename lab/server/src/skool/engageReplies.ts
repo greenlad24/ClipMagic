@@ -800,6 +800,60 @@ export async function sendDraftedReply(communityUrl: string, id: string): Promis
   return { ok: r.state === "sent", detail: r.detail };
 }
 
+/**
+ * Check one message and finish it — the per-row version of the sweep's
+ * reconcile, for an operator looking at a row that did not go.
+ *
+ * ⚠️⚠️ THIS EXISTS BECAUSE `unconfirmed` WAS A DEAD END ON THE SCREEN. "Send
+ * this" is offered only on a draft — correctly, since a blind resend is how a
+ * member gets answered twice — so a row that failed its read-back showed only
+ * "Forget", which throws the reviewed reply away. The row was visible, wrong,
+ * and had no button that would fix it. Jake, 2026-08-20: "the comment is stuck
+ * in the lab now."
+ *
+ * ⚠️ IT LOOKS FIRST, exactly like the sweep. That is what makes a retry button
+ * safe to put in front of somebody: pressing it twice cannot answer a member
+ * twice, because the second press finds the first one's reply and records it.
+ *
+ * ⚠️ AND IT DELIBERATELY IGNORES `maxSendAttempts`. That budget stops an
+ * unattended loop from burning browser cycles on a broken thread; a person
+ * pressing a button is not an unattended loop, and refusing them the one action
+ * that fixes the row would be the dead end all over again. It says so in the
+ * result rather than silently overriding.
+ */
+export async function retryReply(communityUrl: string, id: string): Promise<{ ok: boolean; detail: string }> {
+  const row = getReply(id);
+  if (!row) return { ok: false, detail: `No reply with id ${id}.` };
+  if (row.state === "sent") return { ok: true, detail: "That one is already sent — nothing to do." };
+  if (row.state === "skipped") {
+    return {
+      ok: false,
+      detail:
+        "That message was deliberately left for you, with a reason. Forget it if you want the agent to write to them after all.",
+    };
+  }
+  if (!row.replyText.trim()) return { ok: false, detail: "That row has no text to send." };
+
+  const check = await findLanded(communityUrl, row).catch((e) => ({
+    landed: false,
+    replyId: "",
+    error: e instanceof Error ? e.message : String(e),
+  }));
+  if (check.error) {
+    // Not evidence of anything. Retrying on a failed read is how a thread gets
+    // two answers because the network hiccuped.
+    return { ok: false, detail: `Could not check whether it landed, so nothing was retried: ${check.error}` };
+  }
+  if (check.landed) {
+    updateReply(row.id, { state: "sent", reply_id: check.replyId, last_error: "" });
+    return { ok: true, detail: "It had landed after all — recorded as sent. Nothing was sent twice." };
+  }
+  const over = row.attempts >= getReplyConfig().maxSendAttempts;
+  const sent = await sendOne(communityUrl, row, false);
+  const note = over ? " (past the automatic retry budget — sent because you asked)" : "";
+  return { ok: sent.state === "sent", detail: sent.detail + note };
+}
+
 /* ────────────────────────── the heartbeat ────────────────────────── */
 
 export interface ReplyHealth {

@@ -274,6 +274,7 @@ import {
   runReplySweep,
   collectTargets,
   sendDraftedReply,
+  retryReply,
   forgetReply,
   listReplies,
 } from "../skool/engageReplies.js";
@@ -5051,6 +5052,21 @@ const skoolRepliesSend: Handler = async (input) => {
 };
 
 /**
+ * Look at one message again and finish it: record a reply that landed late, or
+ * try the send once more.
+ *
+ * ⚠️ THE ANSWER TO A ROW WITH NO USABLE BUTTON. "Send this" is offered only on a
+ * draft, so an `unconfirmed` row could only be forgotten — which throws away a
+ * reviewed reply. This looks before it retries, so pressing it twice cannot
+ * answer a member twice.
+ */
+const skoolRepliesRetry: Handler = async (input) => {
+  const id = String(input?.id ?? "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "Which reply? Pass its id." });
+  return retryReply(communityUrlOrThrow(), id);
+};
+
+/**
  * Forget one message so it can be offered again.
  *
  * ⚠️ THE ONLY WAY OUT OF "ENGAGED WITH, IN ANY STATE". That rule is deliberately
@@ -6224,6 +6240,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolRepliesQueue,
   skoolRepliesSweep,
   skoolRepliesSend,
+  skoolRepliesRetry,
   skoolRepliesForget,
   skoolUnreadChats,
   skoolKnowledge,
