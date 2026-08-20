@@ -237,13 +237,22 @@ async function anthropicRequest(
  * Never retried: by the time a stream fails we have already been billed for
  * whatever was generated.
  */
-async function anthropicStreamRequest(body: Record<string, unknown>, label: string): Promise<AnthropicResponse> {
+async function anthropicStreamRequest(
+  body: Record<string, unknown>,
+  label: string,
+  // ⚠️ THIS USED TO BE HARDCODED TO THE API KEY BY OMISSION. Only scriptgen
+  // streamed, and scriptgen is always on API credits, so the default was right
+  // by accident. Now that a subscription-configured caller can reach this path,
+  // silently spending the other credential is exactly the quiet billing
+  // `AuthMode`'s no-fallback rule exists to prevent.
+  auth: AuthMode = "api",
+): Promise<AnthropicResponse> {
   const t = withTimeout();
   let res: Response;
   try {
     res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
       method: "POST",
-      headers: anthropicHeaders(),
+      headers: anthropicHeaders(auth),
       body: JSON.stringify({ ...body, stream: true }),
       signal: t.signal,
     });
@@ -339,6 +348,14 @@ async function callClaude(opts: {
   onUsage?: (usage: AnthropicUsage | undefined, ms: number) => void;
   /** Which credential to spend. Defaults to the lab-wide one (API credits). */
   auth?: AuthMode;
+  /**
+   * Let the model run Anthropic's server-side web search before answering.
+   *
+   * ⚠️ IT FORCES STREAMING. A search-heavy call runs for minutes, and the
+   * non-streaming path sits behind undici's 300s timeout with no headers to
+   * keep it alive — the same trap the scriptgen research stage already hit.
+   */
+  webSearch?: boolean;
 }): Promise<string> {
   const auth: AuthMode = opts.auth ?? "api";
   if (auth === "subscription" && !anthropicSubscriptionConfigured()) {
@@ -364,20 +381,26 @@ async function callClaude(opts: {
     ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
     : undefined;
 
-  const body = {
+  const body: Record<string, unknown> = {
     model: opts.model,
     max_tokens: aiConfig.maxTokens,
     ...(systemBlocks ? { system: systemBlocks } : {}),
     messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
   };
+  if (opts.webSearch) {
+    // Four, not scriptgen's eight: this is one member's question, not a tool
+    // review that has to price every tier, and every search is billed and slow.
+    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 4 }];
+  }
 
   const t0 = Date.now();
-  const json = await anthropicRequest(
-    body,
-    auth === "subscription" ? "Claude API error (Max subscription)" : "Claude API error",
-    undefined,
-    auth,
-  );
+  const label = auth === "subscription" ? "Claude API error (Max subscription)" : "Claude API error";
+  // ⚠️ A SEARCH CALL STREAMS AND IS NEVER RETRIED. Partial output is already
+  // billed, and the retry loop below would re-issue the whole search-heavy
+  // request — the exact double-bill the scriptgen path documents.
+  const json = opts.webSearch
+    ? await anthropicStreamRequest(body, label, auth)
+    : await anthropicRequest(body, label, undefined, auth);
   const ms = Date.now() - t0;
   // Record the REAL usage from Anthropic's response into the active run's report.
   if (opts.purpose) {
@@ -752,6 +775,21 @@ export async function claudeJSONForPurposeWithUsage(opts: {
    * with his own Claude Code sessions. Without this the two were exclusive.
    */
   auth?: AuthMode;
+  /**
+   * Let the model run Anthropic's server-side web search before answering.
+   *
+   * ⚠️ IT COSTS PER SEARCH AND IT MAKES THE CALL SLOW — a search-heavy call
+   * streams for minutes, which is why `callClaude` forces streaming whenever
+   * this is on. Only turn it on where being out of date is worse than being
+   * slow. The Skool reply agent is the case: Jake, 2026-08-20, "always do
+   * research and help", about questions the classroom does not cover.
+   *
+   * ⚠️ AND IT IS COMBINED WITH `jsonMode` HERE FOR THE FIRST TIME. The search
+   * results arrive as tool_result blocks and the JSON is whatever text the
+   * model emits after them, so `extractJson` still has to find it — callers
+   * that cannot tolerate a miss should be ready to ask again without search.
+   */
+  webSearch?: boolean;
 }): Promise<{ json: string; usage: AnthropicUsage | undefined; model: string; ms: number }> {
   const model = modelForTier(opts.tier);
   let usage: AnthropicUsage | undefined;
@@ -763,6 +801,7 @@ export async function claudeJSONForPurposeWithUsage(opts: {
     jsonMode: true,
     purpose: opts.purpose,
     auth: opts.auth,
+    webSearch: opts.webSearch,
     onUsage: (u, elapsed) => {
       usage = u;
       ms = elapsed;

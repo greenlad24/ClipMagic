@@ -334,6 +334,76 @@ function styleBlock(examples: { title: string; body: string }[]): string {
   ].join("\n\n");
 }
 
+/**
+ * What a Skool reply is allowed to be, against a voice prompt written for a
+ * YouTube comment box.
+ *
+ * ⚠️⚠️ THE OVERRIDES NAME THE RULES THEY OVERRIDE, and that is the whole
+ * technique — this file's founding lesson is that an unnamed contradiction gets
+ * resolved differently on every run. `POST_FORMAT_NOTE` had to do exactly this
+ * for RULE 1 when three posts in a row obeyed a lowercase rule written for
+ * Instagram. The same prompt is the ONLY voice source here, so the same fix
+ * applies, aimed at two different rules.
+ *
+ * ⚠️ AND MOST OF THE VOICE PROMPT IS KEPT ON PURPOSE. Unlike a post, a Skool
+ * comment or DM IS the register those rules were written for — lowercase
+ * openings, contractions, no markdown, Jake's banned words. Jake, 2026-08-20:
+ * "still in the Jake Dawson voice". Only length and deflection change.
+ */
+const SKOOL_REPLY_NOTE = [
+  "==========================================",
+  "TWO OVERRIDES TO THE STYLE GUIDE ABOVE, FOR SKOOL ONLY",
+  "==========================================",
+  "",
+  "Everything in the style guide still governs your VOICE — the lowercase",
+  "openings, the contractions, the sentence patterns, the words Jake never uses,",
+  "no markdown, the emoji limit. Keep all of it. Two rules do not apply here,",
+  "and they are named so there is nothing to interpret.",
+  "",
+  "⚠️ OVERRIDE 1 — `RULE 3: REPLY LENGTH` DOES NOT APPLY. Jake, 2026-08-20:",
+  '"I want the answers to be complete, not just surface level replies."',
+  "That rule caps every reply at 5-10 sentences and it was written for a YouTube",
+  "comment box, where nobody reads more. This is his own paid community: the",
+  "member asked because they are stuck, and half an answer sends them away to",
+  "look the rest up somewhere else.",
+  "- Answer the WHOLE question. Every part of it they asked.",
+  "- Give the specifics: the actual tool, the actual setting, the actual steps,",
+  "  in the order they would do them. `RULE 7`'s plain numbered lines are the",
+  "  format, and the four-step limit under COMMENT TYPES does not apply either —",
+  "  use as many steps as the job actually takes.",
+  "- Say what it costs, what the free tier does, and where it breaks, when those",
+  "  are part of a real answer.",
+  "- Length is decided by the question, not by a cap. A one-line question still",
+  "  gets a one-line answer; a four-part question gets four parts. Padding a",
+  "  short answer to look thorough is the opposite of what this asks for.",
+  "",
+  "⚠️ OVERRIDE 2 — NEVER DEFLECT SOMETHING FOR BEING OFF-TOPIC. Jake,",
+  '2026-08-20: "for things that are outside of the scope of the skool community',
+  '— always do research and help (never say sorry this is not what I do here)."',
+  "The style guide tells you to answer ON-TOPIC questions and, when you do not",
+  "know, to say \"not sure off the top of my head\" and point at the docs. Both of",
+  "those are withdrawn.",
+  "- A member asking about a tool the classroom never covers still gets a real",
+  "  answer. Research it and answer it.",
+  "- Never write any version of \"that's outside what I cover\", \"I'd check their",
+  "  docs\", \"not really my area\", or \"not sure off the top of my head\".",
+  "- You have web search. USE IT whenever the answer depends on something you",
+  "  are not certain is still true — a price, a free tier, a menu path, a limit,",
+  "  whether a product still exists. Search first, then answer.",
+  "",
+  "⚠️ WHAT DOES NOT CHANGE, and it is what makes the two above safe:",
+  "- No invented numbers, prices, limits or results. If a search did not confirm",
+  "  it, say what you do know and say plainly what they should check.",
+  "- No earnings claims and no time-to-result promises, ever, from any source.",
+  "- The classroom-link rule stands exactly as written. Off-topic means answer",
+  "  it, NOT invent a lesson for it — if nothing in the list teaches it, answer",
+  "  it in plain words with no classroom pointer at all.",
+  "- `skip` is still for the things that need Jake HIMSELF — money owed, refunds,",
+  "  complaints, anything legal or personal — and for spam. Those are about WHO",
+  "  should answer, not about what the question is about, and none of them are",
+  "  affected by the two overrides.",
+].join("\n");
+
 const MCP_NOTE = [
   "THIS IS THE TUESDAY POST AND IT HAS A FIXED JOB: one MCP automation idea.",
   "",
@@ -726,6 +796,8 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     mechanics(
       "reply",
       [
+        SKOOL_REPLY_NOTE,
+        "",
         surfaceNote,
         "",
         "SET `skip` (and leave `text` empty) rather than replying at all when:",
@@ -746,16 +818,39 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     groundingBlock(hits),
   ].join("\n");
 
-  const { json, usage } = await claudeJSONForPurposeWithUsage({
-    tier: "director",
-    purpose: "skool-engage-reply",
-    system,
-    messages: [{ role: "user", content: user }],
-    auth: aiConfig.skoolEngageAuth,
-  });
+  // ⚠️ WEB SEARCH IS ON FOR REPLIES AND OFF FOR POSTS, AND THE ASYMMETRY IS THE
+  // POINT. A post is written about a lesson that is already in the index, so
+  // there is nothing to look up. A reply answers whatever a member happened to
+  // ask — Jake, 2026-08-20: "for things that are outside of the scope of the
+  // skool community - always do research and help". Without a real search that
+  // instruction can only be obeyed from memory, which is exactly how a
+  // confidently wrong price or menu path reaches a member.
+  const ask = (webSearch: boolean) =>
+    claudeJSONForPurposeWithUsage({
+      tier: "director",
+      purpose: "skool-engage-reply",
+      system,
+      messages: [{ role: "user", content: user }],
+      auth: aiConfig.skoolEngageAuth,
+      webSearch,
+    });
 
-  const parsed = parseDraft(json);
-  if (!parsed) return { reply: null, error: "The model's reply was not usable JSON." };
+  let { json, usage } = await ask(true);
+  let parsed = parseDraft(json);
+  if (!parsed) {
+    // ⚠️ ONE RETRY, WITHOUT SEARCH — and this is a deliberate exception to the
+    // "one attempt, never a second" rule that governs the scriptgen research
+    // call. That rule protects a single very expensive pipeline stage. Here the
+    // failure being caught is specific and new: `jsonMode` combined with the
+    // search tool, where the JSON has to survive a response that also carries
+    // tool_result blocks. The alternative to retrying is that a member with an
+    // off-topic question is never answered at all, silently, because nothing
+    // records a draft that was never produced.
+    console.warn("[skool] reply JSON was unusable with web search — asking again without it");
+    ({ json, usage } = await ask(false));
+    parsed = parseDraft(json);
+  }
+  if (!parsed) return { reply: null, error: "The model's reply was not usable JSON, with or without web search." };
 
   const skip = parsed.skip ? String(parsed.skip) : null;
   const body = String(parsed.text ?? "").trim();
