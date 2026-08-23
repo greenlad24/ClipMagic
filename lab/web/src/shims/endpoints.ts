@@ -94,6 +94,8 @@ export const getBulkSchedulerStatus = endpoint("getBulkSchedulerStatus");
 export const getBulkSchedulerChannels = endpoint("getBulkSchedulerChannels");
 export const previewBulkSchedule = endpoint("previewBulkSchedule");
 export const runBulkSchedule = endpoint("runBulkSchedule");
+export const getHiddenRenders = endpoint("getHiddenRenders");
+export const setRenderHidden = endpoint("setRenderHidden");
 export const listCloudFolder = endpoint("listCloudFolder");
 export const getShots = endpoint("getShots");
 export const getWaveform = endpoint("getWaveform");
@@ -1454,6 +1456,20 @@ export type GetBulkSchedulerStatusOutputType = {
   error?: string;
 };
 export type GetBulkSchedulerChannelsOutputType = { channels: BulkChannel[] };
+/**
+ * Renders the user has parked as "not posting this". Display-only: the picker
+ * drops them from the grid; nothing here blocks scheduling. Both endpoints
+ * return the resulting FULL list so the UI can replace its state outright.
+ */
+export type HiddenRendersOutputType = { names: string[] };
+export type SetRenderHiddenInputType = {
+  /** One filename to hide/restore — shorthand for `names: [name]`. */
+  name?: string;
+  /** Several filenames at once (e.g. "restore all"). */
+  names?: string[];
+  /** Defaults to true (hide); pass false to restore. */
+  hidden?: boolean;
+};
 
 /** Cloud provider key for the folder-browse endpoint. */
 export type CloudProvider = 'gdrive' | 'dropbox';
@@ -1546,6 +1562,8 @@ export type RunBulkScheduleOutputType = {
   results: BulkScheduleItemResult[];
   scheduled: number;
   failed: number;
+  /** Renders auto-parked in the picker's Hidden list because they fully posted. */
+  autoHidden?: string[];
 };
 /** Auto-Screencast input/output (plan + capture website footage into the timeline). */
 export type AutoScreencastInputType = { projectId: string; maxMoments?: number };

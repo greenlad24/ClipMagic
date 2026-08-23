@@ -89,6 +89,7 @@ import {
   schedule as bulkSchedulerSchedule,
 } from "../postiz/bulkScheduler.js";
 import { listCloudFolder, cloudProvidersConfigured } from "../postiz/cloudSources.js";
+import { listHiddenRenders, setRendersHidden } from "../postiz/hiddenRenders.js";
 import {
   autoScreencast as runAutoScreencast,
   recaptureScreencastShot,
@@ -2638,6 +2639,25 @@ const previewBulkSchedule: Handler = async (input) =>
 
 const runBulkSchedule: Handler = async (input) =>
   bulkSchedulerSchedule({ posts: Array.isArray(input?.posts) ? input.posts : [] });
+
+/**
+ * Hidden renders: display-only state for the picker. `getHiddenRenders` lists
+ * the filenames the user has parked; `setRenderHidden` hides or restores one or
+ * many and returns the resulting full list, so the UI replaces its state in one
+ * round-trip. Neither ever blocks scheduling — hiding only removes a clip from
+ * the picker grid.
+ */
+const getHiddenRenders: Handler = async () => ({ names: listHiddenRenders() });
+
+const setRenderHidden: Handler = async (input) => {
+  const names = Array.isArray(input?.names)
+    ? input.names.map((n: unknown) => String(n))
+    : input?.name !== undefined
+      ? [String(input.name)]
+      : [];
+  // `hidden` defaults to true so a bare { name } call hides rather than restores.
+  return { names: setRendersHidden(names, input?.hidden !== false) };
+};
 
 // ── Thumbnail Designer (LAB tool) ────────────────────────────────────────────
 // Recreates top-performing YouTube thumbnails with the user's character via the
@@ -6066,6 +6086,8 @@ export const HANDLERS: Record<string, Handler> = {
   getBulkSchedulerChannels,
   previewBulkSchedule,
   runBulkSchedule,
+  getHiddenRenders,
+  setRenderHidden,
   listCloudFolder: listCloudFolderHandler,
   getPromoVideos,
   getPromoIndex,

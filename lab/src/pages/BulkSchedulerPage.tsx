@@ -4,6 +4,8 @@ import {
   getBulkSchedulerStatus,
   previewBulkSchedule,
   runBulkSchedule,
+  getHiddenRenders,
+  setRenderHidden,
   listCloudFolder,
   getServiceStatus,
   listStorage,
@@ -26,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -56,8 +59,14 @@ import {
   Cloud,
   HardDrive,
   Play,
+  Maximize2,
+  X,
+  Eye,
+  EyeOff,
   Search,
   FileText,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import type { Growth, GrowthCheck } from 'zite-endpoints-sdk';
 
@@ -209,6 +218,17 @@ type EditablePost = BulkPreviewPost & { override?: boolean };
  */
 function isGrowthBlocked(_growth: Growth | undefined): boolean {
   return false;
+}
+
+/**
+ * The server parks a render in the picker's Hidden list once every post for it
+ * has gone out, so a published clip stops being offered. Say so, otherwise the
+ * clip just silently vanishes from the grid on the way back to step 1.
+ */
+function announceAutoHidden(res: RunBulkScheduleOutputType): void {
+  const n = res.autoHidden?.length ?? 0;
+  if (n === 0) return;
+  toast.info(`${n} posted clip${n === 1 ? '' : 's'} moved to Hidden in the picker.`);
 }
 
 const PLATFORM_BADGE: Record<string, string> = {
@@ -399,6 +419,7 @@ export default function BulkSchedulerPage() {
       setResults(res);
       if (res.failed === 0) toast.success(`Scheduled all ${res.scheduled} posts.`);
       else toast.warning(`${res.scheduled} scheduled, ${res.failed} failed — retry the failures below.`);
+      announceAutoHidden(res);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to schedule');
     } finally {
@@ -438,6 +459,7 @@ export default function BulkSchedulerPage() {
         return { results: all, scheduled, failed: all.length - scheduled };
       });
       if (res.failed === 0) toast.success('Retried failures scheduled.');
+      announceAutoHidden(res);
     } finally {
       setScheduling(false);
     }
@@ -966,6 +988,14 @@ function RendersTab({
   onToggle: (f: SelectedFile) => void;
 }) {
   const [renders, setRenders] = useState<Array<{ name: string; url?: string }> | null>(null);
+  // Which tile is playing inline (one at a time), and which clip — if any — is
+  // open in the popup player. Both are keyed by render name.
+  const [inlineName, setInlineName] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ name: string; url: string } | null>(null);
+  // Renders parked as "not posting this" (server-persisted, by filename), and
+  // whether the collapsed drawer holding them is open.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [showHidden, setShowHidden] = useState(false);
   useEffect(() => {
     listStorage({})
       .then((res: any) => {
@@ -977,7 +1007,40 @@ function RendersTab({
         setRenders((area?.items ?? []).filter((o: any) => /\.mp4$/i.test(o.name)));
       })
       .catch(() => setRenders([]));
+    // A failed load just means nothing is hidden — never block the picker on it.
+    getHiddenRenders({})
+      .then((res) => setHidden(new Set(res.names ?? [])))
+      .catch(() => setHidden(new Set()));
   }, []);
+
+  /**
+   * Hide or restore renders. The grid updates optimistically and the server's
+   * authoritative list replaces it on success; a failure rolls back so the UI
+   * never claims a clip is parked when the data dir refused the write.
+   */
+  const applyHidden = (names: string[], hide: boolean) => {
+    if (names.length === 0) return;
+    const before = hidden;
+    const next = new Set(before);
+    for (const n of names) (hide ? next.add(n) : next.delete(n));
+    setHidden(next);
+    if (hide) setInlineName((cur) => (cur && names.includes(cur) ? null : cur));
+    setRenderHidden({ names, hidden: hide })
+      .then((res) => setHidden(new Set(res.names ?? [])))
+      .catch((e) => {
+        setHidden(before);
+        toast.error(e instanceof Error ? e.message : 'Failed to save the hidden list');
+      });
+  };
+
+  /** Hiding a render also drops it from the selection, so it can't reach a plan. */
+  const hideRender = (r: { name: string; url?: string }) => {
+    const fileId = `render:${r.name}`;
+    if (isSelected(fileId)) {
+      onToggle({ fileId, source: { kind: 'render', ref: r.name }, label: r.name, brief: '', thumbUrl: r.url });
+    }
+    applyHidden([r.name], true);
+  };
 
   if (!renders) {
     return (
@@ -995,47 +1058,340 @@ function RendersTab({
       </p>
     );
   }
+  const visible = renders.filter((r) => !hidden.has(r.name));
+  const hiddenRenders = renders.filter((r) => hidden.has(r.name));
+
+  const asFile = (r: { name: string; url?: string }): SelectedFile => ({
+    fileId: `render:${r.name}`,
+    source: { kind: 'render', ref: r.name },
+    label: r.name,
+    brief: '',
+    thumbUrl: r.url,
+  });
+
+  /**
+   * Bulk select/deselect. It only ever touches the VISIBLE grid — a hidden
+   * render is parked as "not posting this", so no bulk pick may sweep it into a
+   * plan. Once everything visible is selected the same button clears them.
+   */
+  const unselected = visible.filter((r) => !isSelected(`render:${r.name}`));
+  const allSelected = visible.length > 0 && unselected.length === 0;
+  const toggleAllVisible = () => {
+    for (const r of allSelected ? visible : unselected) onToggle(asFile(r));
+  };
+
   return (
-    <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
-      {renders.map((r) => {
-        const fileId = `render:${r.name}`;
-        const on = isSelected(fileId);
-        return (
-          <button
-            key={r.name}
-            type="button"
-            onClick={() =>
-              onToggle({
-                fileId,
-                source: { kind: 'render', ref: r.name },
-                label: r.name,
-                brief: '',
-                thumbUrl: r.url,
-              })
-            }
-            className={`group relative aspect-[9/16] overflow-hidden rounded-lg border-2 transition-colors ${
-              on ? 'border-primary' : 'border-transparent hover:border-border'
-            }`}
-          >
-            {r.url ? (
-              <video src={r.url} className="h-full w-full object-cover bg-muted" muted preload="metadata" />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center bg-muted">
-                <Film className="h-6 w-6 text-muted-foreground" />
-              </div>
+    <>
+      {visible.length === 0 ? (
+        <p className="mt-4 rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+          Every render is hidden. Open the list below to bring one back.
+        </p>
+      ) : (
+        <>
+        <div className="mt-4 flex items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
+            {hiddenRenders.length > 0 && <>{hiddenRenders.length} hidden — not offered here</>}
+          </span>
+          <Button variant="outline" size="sm" onClick={toggleAllVisible}>
+            {allSelected ? <Square className="h-4 w-4" /> : <CheckSquare className="h-4 w-4" />}
+            {allSelected
+              ? `Deselect all (${visible.length} video${visible.length === 1 ? '' : 's'})`
+              : `Select all (${visible.length} video${visible.length === 1 ? '' : 's'})`}
+          </Button>
+        </div>
+        <div className="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+          {visible.map((r) => {
+            const fileId = `render:${r.name}`;
+            return (
+              <RenderCard
+                key={r.name}
+                name={r.name}
+                url={r.url}
+                selected={isSelected(fileId)}
+                playing={inlineName === r.name}
+                onToggle={() => onToggle(asFile(r))}
+                onPlay={() => setInlineName(r.name)}
+                onStop={() => setInlineName((cur) => (cur === r.name ? null : cur))}
+                onExpand={() => r.url && setLightbox({ name: r.name, url: r.url })}
+                onHide={() => hideRender(r)}
+              />
+            );
+          })}
+        </div>
+        </>
+      )}
+
+      {hiddenRenders.length > 0 && (
+        <section className="mt-4 rounded-xl border border-border bg-muted/20">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setShowHidden((v) => !v)}
+              aria-expanded={showHidden}
+              className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronDown
+                className={`h-4 w-4 transition-transform ${showHidden ? '' : '-rotate-90'}`}
+              />
+              <EyeOff className="h-4 w-4" />
+              <span className="font-medium">Hidden ({hiddenRenders.length})</span>
+              <span className="text-xs">— not offered for posting</span>
+            </button>
+            {showHidden && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => applyHidden(hiddenRenders.map((r) => r.name), false)}
+              >
+                <Eye className="h-4 w-4" /> Restore all
+              </Button>
             )}
-            {on && (
-              <span className="absolute right-1.5 top-1.5 rounded-full bg-primary p-0.5 text-primary-foreground">
-                <CheckCircle2 className="h-4 w-4" />
-              </span>
-            )}
-            <span className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
-              {r.name}
-            </span>
-          </button>
-        );
-      })}
+          </div>
+          {showHidden && (
+            <div className="grid grid-cols-3 gap-3 px-3 pb-3 sm:grid-cols-4 md:grid-cols-6">
+              {hiddenRenders.map((r) => (
+                <div
+                  key={r.name}
+                  className="group relative aspect-[9/16] overflow-hidden rounded-lg border border-border opacity-60 transition-opacity hover:opacity-100"
+                >
+                  {r.url ? (
+                    <video src={r.url} className="h-full w-full bg-muted object-cover" muted preload="metadata" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-muted">
+                      <Film className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 bg-black/30 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                    <TileAction label={`Restore ${r.name}`} onClick={() => applyHidden([r.name], false)}>
+                      <Eye className="h-4 w-4" />
+                    </TileAction>
+                    {r.url && (
+                      <TileAction
+                        label={`Open ${r.name} in the popup player`}
+                        onClick={() => setLightbox({ name: r.name, url: r.url! })}
+                      >
+                        <Maximize2 className="h-4 w-4" />
+                      </TileAction>
+                    )}
+                  </div>
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
+                    {r.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {lightbox && (
+        <VideoLightbox
+          name={lightbox.name}
+          url={lightbox.url}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+    </>
+  );
+}
+
+/** A small circular overlay control that floats above a grid tile. */
+function TileAction({
+  label,
+  onClick,
+  className = '',
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className={`pointer-events-auto z-10 rounded-full bg-black/65 p-1.5 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-black/90 focus:outline-none focus:ring-2 focus:ring-white/70 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * One render in the picker grid. Clicking anywhere on the tile still toggles
+ * selection; hovering reveals two controls:
+ *   - Play  → plays the clip inline, with sound and native controls, right here
+ *             in the grid (the parent keeps this to one tile at a time);
+ *   - Expand → hands the clip to the popup player;
+ *   - Hide   → parks the clip in the collapsed "Hidden" list so it stops being
+ *             offered for posting (reversible; the file is never touched).
+ * While a tile plays inline the whole-tile select target is disabled so the
+ * video's own controls (scrub, volume, fullscreen) stay clickable.
+ */
+function RenderCard({
+  name,
+  url,
+  selected,
+  playing,
+  onToggle,
+  onPlay,
+  onStop,
+  onExpand,
+  onHide,
+}: {
+  name: string;
+  url?: string;
+  selected: boolean;
+  playing: boolean;
+  onToggle: () => void;
+  onPlay: () => void;
+  onStop: () => void;
+  onExpand: () => void;
+  onHide: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Playback follows the parent's "which tile is playing" state, so starting one
+  // clip rewinds and silences whichever was playing before.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (playing) {
+      v.muted = false;
+      // The click that set `playing` is the user gesture; if a browser still
+      // refuses audible playback, fall back to a muted play rather than nothing.
+      v.play().catch(() => {
+        v.muted = true;
+        v.play().catch(() => {});
+      });
+    } else {
+      v.pause();
+      v.muted = true;
+      try {
+        v.currentTime = 0;
+      } catch {
+        /* not seekable yet — nothing to rewind */
+      }
+    }
+  }, [playing]);
+
+  return (
+    <div
+      className={`group relative aspect-[9/16] overflow-hidden rounded-lg border-2 transition-colors ${
+        selected ? 'border-primary' : 'border-transparent hover:border-border'
+      }`}
+    >
+      {url ? (
+        <video
+          ref={videoRef}
+          src={url}
+          className={`h-full w-full bg-muted ${playing ? 'object-contain' : 'object-cover'}`}
+          muted
+          playsInline
+          preload="metadata"
+          controls={playing}
+          onEnded={onStop}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-muted">
+          <Film className="h-6 w-6 text-muted-foreground" />
+        </div>
+      )}
+
+      {/* Whole-tile select target, sitting under the overlay controls. */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-pressed={selected}
+        aria-label={`${selected ? 'Deselect' : 'Select'} ${name}`}
+        className={`absolute inset-0 ${playing ? 'pointer-events-none' : ''}`}
+      />
+
+      {selected && (
+        <span className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-primary p-0.5 text-primary-foreground">
+          <CheckCircle2 className="h-4 w-4" />
+        </span>
+      )}
+
+      {!playing && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center gap-2 bg-black/25 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+          {url && (
+            <>
+              <TileAction label={`Play ${name} here`} onClick={onPlay}>
+                <Play className="h-4 w-4" />
+              </TileAction>
+              <TileAction label={`Open ${name} in the popup player`} onClick={onExpand}>
+                <Maximize2 className="h-4 w-4" />
+              </TileAction>
+            </>
+          )}
+          <TileAction label={`Hide ${name} — don't post this one`} onClick={onHide}>
+            <EyeOff className="h-4 w-4" />
+          </TileAction>
+        </div>
+      )}
+
+      {playing && (
+        <TileAction
+          label={`Stop playing ${name}`}
+          onClick={onStop}
+          className="absolute left-1.5 top-1.5"
+        >
+          <X className="h-4 w-4" />
+        </TileAction>
+      )}
+
+      {!playing && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-left text-[10px] text-white">
+          {name}
+        </span>
+      )}
     </div>
+  );
+}
+
+/**
+ * Popup player: a big, near-full-screen video over the picker that autoplays
+ * with sound. Closes on the X, Esc, or a click outside (Radix Dialog handles the
+ * last two); the native controls still offer real browser fullscreen.
+ */
+function VideoLightbox({ name, url, onClose }: { name: string; url: string; onClose: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = false;
+    // Opening the popup came from a click, so audible autoplay is normally
+    // allowed; degrade to muted playback instead of failing silently.
+    v.play().catch(() => {
+      v.muted = true;
+      v.play().catch(() => {});
+    });
+  }, [url]);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="w-auto max-w-[min(94vw,calc(86vh*9/16))] gap-0 border-0 bg-black p-0 sm:rounded-xl [&>button]:right-2 [&>button]:top-2 [&>button]:rounded-full [&>button]:bg-black/65 [&>button]:p-1.5 [&>button]:text-white [&>button]:opacity-90 [&>button]:hover:bg-black/90"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <video
+          ref={videoRef}
+          src={url}
+          controls
+          autoPlay
+          playsInline
+          className="max-h-[86vh] w-full bg-black object-contain"
+        />
+        <DialogTitle className="truncate px-3 py-2 text-left text-xs font-medium text-white/80">
+          {name}
+        </DialogTitle>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -34,6 +34,7 @@ import { getChannelState, recordScheduled, deriveChannelTimeline } from "./sched
 import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
 import { isYouTubePost, youtubeShortsGate } from "./youtubeGate.js";
+import { rendersToAutoHide, setRendersHidden } from "./hiddenRenders.js";
 import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
 import { readFile } from "node:fs/promises";
 
@@ -612,6 +613,8 @@ export interface ScheduleOutput {
   results: ScheduleItemResult[];
   scheduled: number;
   failed: number;
+  /** Render filenames this run parked in the picker's Hidden list (see below). */
+  autoHidden: string[];
 }
 
 
@@ -703,8 +706,15 @@ export async function schedule(
     if (p) recordScheduled(p.channelId, p.fileId, new Date(p.scheduledAt).toISOString());
   }
 
+  // A render whose posts ALL went out parks itself in the picker's Hidden list,
+  // so a clip that's already published stops being offered for selection. This
+  // is display state only (restorable from the Hidden drawer); a partially
+  // failed file stays visible so the retry still has something to select.
+  const autoHidden = rendersToAutoHide(submitted, results);
+  if (autoHidden.length > 0) setRendersHidden(autoHidden, true);
+
   const scheduled = results.filter((r) => r.ok).length;
-  return { results, scheduled, failed: results.length - scheduled };
+  return { results, scheduled, failed: results.length - scheduled, autoHidden };
 }
 
 /** Postiz leg: createPost per item using the pre-uploaded media (id + path). */
