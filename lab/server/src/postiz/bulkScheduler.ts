@@ -30,6 +30,8 @@ import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./pr
 import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type CaptionPlatform } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput, type ChannelStartState } from "./scheduling.js";
 import { sequenceDrops, groupKeyForFilename, countLooks, type DropFile } from "./dropSequencing.js";
+import { POSITION_UNKNOWN } from "./renderPosition.js";
+import { loadRenderPositions } from "./renderPositionStore.js";
 import { getChannelState, recordScheduled, deriveChannelTimeline } from "./scheduleLedger.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
@@ -245,6 +247,13 @@ export interface PreviewInput {
    * seed reshuffles. Default 1 (stable) so callers/tests are reproducible.
    */
   seed?: number;
+  /**
+   * An explicit drop order (fileIds), as produced by `randomizeOrder`. When the
+   * UI's Randomize button has arranged the picked videos, it sends that exact
+   * arrangement so the plan is the order the user was shown — not a second,
+   * differently-seeded mix. Omit it and the seeded interleave runs as before.
+   */
+  fileOrder?: string[];
 }
 
 export interface PreviewPostDto {
@@ -342,13 +351,27 @@ export async function preview(
     targets.push({ channel: c, plat: c.platform ?? "generic" });
   }
 
-  // Each file's visual "look" is derived from its display name / filename, so
-  // batch renders named `<Look>_<n>.mp4` group by `<Look>`. This drives the mix.
-  const files = input.files.map((f, i) => ({
-    ...f,
-    fileId: f.fileId || `${f.source.kind}:${f.source.ref}` || `file-${i}`,
-    groupId: groupKeyForFilename(f.label || f.source.ref) || `file-${i}`,
-  }));
+  // What must not repeat back-to-back is the SHOOTING POSITION: clips shot in one
+  // setup look near-identical in the feed. A server render carries no position in
+  // its (nanoid) filename, so it is recovered through the project that made it
+  // (see renderPosition.ts); everything else keeps the filename-derived look, and
+  // renders whose position can't be recovered share one POSITION_UNKNOWN group so
+  // a run of them can't post consecutively either.
+  //
+  // The multi-day spacing rule stays on the filename look (`spacingId`) — see the
+  // note on DropFile for why merging the two would blow the plan out to months.
+  const positions = renderPositions();
+  const files = input.files.map((f, i) => {
+    const lookKey = groupKeyForFilename(f.label || f.source.ref) || `file-${i}`;
+    const groupId =
+      f.source.kind === "render" ? positions.get(f.source.ref) ?? POSITION_UNKNOWN : lookKey;
+    return {
+      ...f,
+      fileId: f.fileId || `${f.source.kind}:${f.source.ref}` || `file-${i}`,
+      groupId,
+      spacingId: lookKey,
+    };
+  });
   const groupByFile = new Map(files.map((f) => [f.fileId, f.groupId]));
 
   // 1) Transcribe each file FIRST (in parallel across files, cached per resolved
@@ -455,12 +478,13 @@ export async function preview(
   // Only live files consume day slots (fully de-duped files get no drop).
   const dropFiles: DropFile[] = files
     .filter((f) => liveFileIds.has(f.fileId))
-    .map((f) => ({ fileId: f.fileId, groupId: f.groupId }));
+    .map((f) => ({ fileId: f.fileId, groupId: f.groupId, spacingId: f.spacingId }));
   const assignments = sequenceDrops(dropFiles, {
     videosPerDay: cadence,
     minGapDays: minGapDays,
     seed,
     startDayOffset,
+    fixedOrder: input.fileOrder,
   });
   const dropDateByFile = new Map<string, string>(
     assignments.map((a) => [a.fileId, addDaysToLocalKey(todayLocalKey, a.dayOffset)]),
@@ -853,6 +877,67 @@ export function composeContent(caption: string, hashtags: string[]): string {
 
 function unique<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
+}
+
+/**
+ * Render positions, cached for a short while. The join is cheap (two indexed
+ * reads) but preview calls it per request and the picker calls it per Randomize,
+ * and a render's position never changes once it exists.
+ */
+let positionCache: { at: number; map: Map<string, string> } | null = null;
+function renderPositions(): Map<string, string> {
+  const now = Date.now();
+  if (positionCache && now - positionCache.at < 60_000) return positionCache.map;
+  const map = loadRenderPositions();
+  positionCache = { at: now, map };
+  return map;
+}
+
+/** Test seam: drop the memoized position map. */
+export function resetRenderPositionCache(): void {
+  positionCache = null;
+}
+
+/**
+ * Arrange picked files into a mixed order where two clips shot in the SAME
+ * position never sit next to each other, as far as the counts allow.
+ *
+ * This is the Randomize button. It deliberately runs the sequencer's own
+ * interleave (cadence high enough that day-packing can't reorder anything) so
+ * the arrangement the user is shown is produced by the exact algorithm that
+ * would otherwise have planned it — there is no second shuffle to disagree with.
+ *
+ * `fileIds` are the UI's ids (`render:<name>`, `upload:<id>`, `cloud:<url>`).
+ */
+export function randomizeOrder(
+  fileIds: readonly string[],
+  seed: number,
+): { fileIds: string[]; positions: Record<string, string>; positionCount: number; adjacentRepeats: number } {
+  const positions = renderPositions();
+  const groupOf = (fileId: string): string => {
+    const i = fileId.indexOf(":");
+    const kind = i === -1 ? "" : fileId.slice(0, i);
+    const ref = i === -1 ? fileId : fileId.slice(i + 1);
+    if (kind === "render") return positions.get(ref) ?? POSITION_UNKNOWN;
+    return groupKeyForFilename(ref) || POSITION_UNKNOWN;
+  };
+  const dropFiles: DropFile[] = fileIds.map((id) => ({ fileId: id, groupId: groupOf(id) }));
+  const assignments = sequenceDrops(dropFiles, {
+    videosPerDay: Math.max(1, dropFiles.length),
+    minGapDays: 0,
+    seed: seed >>> 0,
+  });
+  const ordered = assignments.slice().sort((a, b) => a.order - b.order);
+  // Report, never hide, the repeats the counts made unavoidable: one position
+  // holding more than half the pile MUST touch itself somewhere.
+  let adjacentRepeats = 0;
+  for (let i = 1; i < ordered.length; i++) if (ordered[i].groupId === ordered[i - 1].groupId) adjacentRepeats++;
+  return {
+    fileIds: ordered.map((a) => a.fileId),
+    positions: Object.fromEntries(dropFiles.map((f) => [f.fileId, f.groupId])),
+    positionCount: new Set(dropFiles.map((f) => f.groupId)).size,
+    adjacentRepeats,
+  };
 }
 
 /**

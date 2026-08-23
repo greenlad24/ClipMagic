@@ -6,6 +6,7 @@ import {
   runBulkSchedule,
   getHiddenRenders,
   setRenderHidden,
+  randomizeBulkOrder,
   listCloudFolder,
   getServiceStatus,
   listStorage,
@@ -67,6 +68,7 @@ import {
   FileText,
   CheckSquare,
   Square,
+  Dices,
 } from 'lucide-react';
 import type { Growth, GrowthCheck } from 'zite-endpoints-sdk';
 
@@ -276,6 +278,13 @@ export default function BulkSchedulerPage() {
   const [videosPerDay, setVideosPerDay] = useState(2);
   const [minGapDays, setMinGapDays] = useState(3);
   const [seed, setSeed] = useState(1);
+  // Randomize: the server arranges the picked videos so two clips shot in the
+  // SAME position never sit next to each other, and we keep that exact order to
+  // hand back to the planner — the user must get the mix they were shown, not a
+  // second one. It only counts while the selection still matches (see mixIsLive).
+  const [mixOrder, setMixOrder] = useState<string[] | null>(null);
+  const [positionByFile, setPositionByFile] = useState<Record<string, string>>({});
+  const [randomizing, setRandomizing] = useState(false);
 
   // Step 2
   const [posts, setPosts] = useState<EditablePost[]>([]);
@@ -349,10 +358,60 @@ export default function BulkSchedulerPage() {
     );
   }
 
+  /**
+   * A randomized order only survives while the selection is unchanged — add or
+   * drop a video and the arrangement no longer covers what's picked, so we fall
+   * back to the planner's own mix rather than post a stale order.
+   */
+  const mixIsLive =
+    !!mixOrder && mixOrder.length === selected.length && selected.every((f) => mixOrder.includes(f.fileId));
+
+  /**
+   * Randomize the drop order. The SERVER arranges it (same interleave the planner
+   * uses) so the order shown here is exactly the order that will post; we reorder
+   * the selected list in place so the mix is visible, not just promised.
+   */
+  const randomizeSelection = async () => {
+    if (selected.length < 2) {
+      toast.info('Pick at least two videos first.');
+      return;
+    }
+    const nextSeed = (seed % 1000000) + 7919;
+    setRandomizing(true);
+    try {
+      const res = await randomizeBulkOrder({ fileIds: selected.map((f) => f.fileId), seed: nextSeed });
+      const rank = new Map(res.fileIds.map((id, i) => [id, i]));
+      setSelected((prev) =>
+        prev
+          .slice()
+          .sort((a, b) => (rank.get(a.fileId) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.fileId) ?? Number.MAX_SAFE_INTEGER)),
+      );
+      setMixOrder(res.fileIds);
+      setPositionByFile(res.positions ?? {});
+      setSeed(nextSeed);
+      const spots = res.positionCount ?? 0;
+      // Say when a repeat was forced: one position holding more than half the
+      // pile has to touch itself somewhere, and silently "guaranteeing" it would
+      // be a lie.
+      toast.success(
+        `Randomized ${selected.length} videos across ${spots} position${spots === 1 ? '' : 's'}.` +
+          (res.adjacentRepeats
+            ? ` ${res.adjacentRepeats} same-position pair${res.adjacentRepeats === 1 ? '' : 's'} were unavoidable — one position dominates the pile.`
+            : ' No two from the same position land back-to-back.'),
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not randomize the order');
+    } finally {
+      setRandomizing(false);
+    }
+  };
+
   // ── Step transitions ──────────────────────────────────────────────────────
   // `seedOverride` lets "Reshuffle" build a fresh mix without changing the other
   // controls; it's persisted so scheduling posts the plan the user actually saw.
-  const goPreview = async (seedOverride?: number) => {
+  // `ignoreMix` is what makes Reshuffle mean something after a Randomize: it drops
+  // the pinned order so the planner mixes afresh (still position-aware).
+  const goPreview = async (seedOverride?: number, opts?: { ignoreMix?: boolean }) => {
     if (selected.length === 0) {
       toast.info('Select at least one video first.');
       return;
@@ -371,6 +430,7 @@ export default function BulkSchedulerPage() {
         videosPerDay,
         minGapDays,
         seed: useSeed,
+        fileOrder: !opts?.ignoreMix && mixIsLive ? selected.map((f) => f.fileId) : undefined,
       });
       if (typeof res.seed === 'number') setSeed(res.seed);
       setPosts(res.posts);
@@ -504,6 +564,10 @@ export default function BulkSchedulerPage() {
             setVideosPerDay={setVideosPerDay}
             minGapDays={minGapDays}
             setMinGapDays={setMinGapDays}
+            onRandomize={randomizeSelection}
+            randomizing={randomizing}
+            mixIsLive={mixIsLive}
+            positionByFile={positionByFile}
             onNext={() => goPreview()}
             previewing={previewing}
           />
@@ -520,7 +584,10 @@ export default function BulkSchedulerPage() {
             dropDateByFile={dropDateByFile}
             lookCount={lookCount}
             reshuffling={previewing}
-            onReshuffle={() => goPreview((seed % 1000000) + 7919)}
+            onReshuffle={() => {
+              setMixOrder(null);
+              goPreview((seed % 1000000) + 7919, { ignoreMix: true });
+            }}
             onBack={() => setStep(1)}
             onNext={() => setStep(3)}
           />
@@ -715,6 +782,10 @@ function StepSelect({
   setVideosPerDay,
   minGapDays,
   setMinGapDays,
+  onRandomize,
+  randomizing,
+  mixIsLive,
+  positionByFile,
   onNext,
   previewing,
 }: {
@@ -730,6 +801,10 @@ function StepSelect({
   setVideosPerDay: (v: number) => void;
   minGapDays: number;
   setMinGapDays: (v: number) => void;
+  onRandomize: () => void;
+  randomizing: boolean;
+  mixIsLive: boolean;
+  positionByFile: Record<string, string>;
   onNext: () => void;
   previewing: boolean;
 }) {
@@ -796,9 +871,26 @@ function StepSelect({
 
       {/* Selected files + briefs */}
       <section className="rounded-xl border border-border bg-card p-5">
-        <h2 className="text-sm font-semibold text-foreground">
-          Selected videos {selected.length > 0 && <span className="text-muted-foreground">({selected.length})</span>}
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-foreground">
+            Selected videos {selected.length > 0 && <span className="text-muted-foreground">({selected.length})</span>}
+            {mixIsLive && (
+              <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">
+                Randomized — this is the drop order
+              </span>
+            )}
+          </h2>
+          {selected.length > 1 && (
+            <Button variant="outline" size="sm" onClick={onRandomize} disabled={randomizing}>
+              {randomizing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Dices className="h-4 w-4" />}
+              {randomizing ? 'Randomizing…' : 'Randomize order'}
+            </Button>
+          )}
+        </div>
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+          Randomize shuffles the drop order so two clips shot in the same position never post
+          back-to-back. The list below is the order they go out in.
+        </p>
         {selected.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">
             Nothing selected yet. Pick renders, upload a file, or paste a cloud link above.
@@ -817,15 +909,20 @@ function StepSelect({
                       {f.source.kind}
                     </Badge>
                     {(() => {
-                      const key = lookKeyForName(f.label);
+                      // A render's filename is a nanoid, so the filename-derived
+                      // "look" is meaningless for it — show the real shooting
+                      // position whenever Randomize has resolved one.
+                      const pos = positionByFile[f.fileId];
+                      const key = pos || lookKeyForName(f.label);
                       const c = lookColor(key);
+                      const known = pos && pos !== 'no-position';
                       return (
                         <span
                           className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
                           style={{ backgroundColor: c.bg, color: c.fg }}
-                          title={`Look: ${key || 'ungrouped'}`}
+                          title={known ? `Position ${pos.toUpperCase()}` : `Look: ${key || 'ungrouped'}`}
                         >
-                          {lookLabel(key)}
+                          {known ? pos.toUpperCase() : lookLabel(key)}
                         </span>
                       );
                     })()}
@@ -947,17 +1044,25 @@ function StepSelect({
               className="mt-2 w-full accent-primary"
             />
             <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              We detect each video&apos;s <em>look</em> from its filename and mix looks so two similar
-              clips never post back-to-back — a look repeats no sooner than this.
+              Back-to-back clips are kept to different <em>shooting positions</em> automatically. This
+              slider is the separate rule for <em>named looks</em>: two videos whose filenames share a
+              look repeat no sooner than this many days apart.
             </p>
           </div>
           <div className="rounded-lg border border-dashed border-border bg-muted/30 p-3 text-[11px] leading-snug text-muted-foreground">
-            The plan is <strong>shuffled</strong> so looks are spread out and randomized. You can
-            <strong> Reshuffle</strong> for a fresh mix on the review step. We continue after each
-            channel&apos;s existing queue and never schedule the same video to a channel twice.
+            The plan is <strong>shuffled</strong> so two clips from the same position never post
+            back-to-back. <strong>Randomize order</strong> above pins an arrangement you can see;
+            <strong> Reshuffle</strong> on the review step drops it for a fresh mix. We continue after
+            each channel&apos;s existing queue and never schedule the same video to a channel twice.
             {selected.length > 0 && (() => {
-              const looks = new Set(selected.map((f) => lookKeyForName(f.label))).size;
-              return <div className="mt-1 text-foreground">{selected.length} videos · {looks} look{looks === 1 ? '' : 's'} detected</div>;
+              const known = selected.map((f) => positionByFile[f.fileId]).filter((p) => p && p !== 'no-position');
+              const spots = new Set(known).size;
+              return (
+                <div className="mt-1 text-foreground">
+                  {selected.length} videos
+                  {spots > 0 && <> · {spots} position{spots === 1 ? '' : 's'} detected</>}
+                </div>
+              );
             })()}
           </div>
         </div>

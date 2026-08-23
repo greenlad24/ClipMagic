@@ -96,6 +96,10 @@ export const previewBulkSchedule = endpoint("previewBulkSchedule");
 export const runBulkSchedule = endpoint("runBulkSchedule");
 export const getHiddenRenders = endpoint("getHiddenRenders");
 export const setRenderHidden = endpoint("setRenderHidden");
+export const randomizeBulkOrder = endpoint<
+  { fileIds: string[]; seed?: number },
+  RandomizeBulkOrderOutputType
+>("randomizeBulkOrder");
 export const listCloudFolder = endpoint("listCloudFolder");
 export const getShots = endpoint("getShots");
 export const getWaveform = endpoint("getWaveform");
@@ -1549,6 +1553,18 @@ export type PreviewBulkScheduleOutputType = {
   seed: number;
   /** How many distinct visual "looks" the selected videos span. */
   lookCount: number;
+};
+/** Randomize the drop order so no two clips from the same shooting position touch. */
+export type RandomizeBulkOrderOutputType = {
+  /** The picked fileIds, re-ordered into the mix. */
+  fileIds: string[];
+  /** fileId → position group key ("t7", or "no-position" when unrecoverable). */
+  positions: Record<string, string>;
+  /** How many distinct positions the picked videos span. */
+  positionCount: number;
+  /** Same-position neighbours the counts made unavoidable (0 when fully mixed). */
+  adjacentRepeats: number;
+  seed: number;
 };
 export type BulkScheduleItemResult = {
   fileId: string;

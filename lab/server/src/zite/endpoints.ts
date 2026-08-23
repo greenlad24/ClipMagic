@@ -87,6 +87,7 @@ import {
   listChannels as bulkSchedulerChannels,
   preview as bulkSchedulerPreview,
   schedule as bulkSchedulerSchedule,
+  randomizeOrder as bulkRandomizeOrder,
 } from "../postiz/bulkScheduler.js";
 import { listCloudFolder, cloudProvidersConfigured } from "../postiz/cloudSources.js";
 import { listHiddenRenders, setRendersHidden } from "../postiz/hiddenRenders.js";
@@ -2635,10 +2636,23 @@ const previewBulkSchedule: Handler = async (input) =>
     videosPerDay: typeof input?.videosPerDay === "number" ? input.videosPerDay : undefined,
     minGapDays: typeof input?.minGapDays === "number" ? input.minGapDays : undefined,
     seed: typeof input?.seed === "number" ? input.seed : undefined,
+    fileOrder: Array.isArray(input?.fileOrder) ? input.fileOrder.map((x: unknown) => String(x)) : undefined,
   });
 
 const runBulkSchedule: Handler = async (input) =>
   bulkSchedulerSchedule({ posts: Array.isArray(input?.posts) ? input.posts : [] });
+
+/**
+ * Randomize the drop order of the picked videos so two clips shot in the SAME
+ * position never sit next to each other. Returns the arrangement plus each
+ * file's position, so the picker can show the mix it just made; the UI hands the
+ * same order back to `previewBulkSchedule` as `fileOrder`.
+ */
+const randomizeBulkOrder: Handler = async (input) => {
+  const fileIds = Array.isArray(input?.fileIds) ? input.fileIds.map((x: unknown) => String(x)) : [];
+  const seed = typeof input?.seed === "number" && Number.isFinite(input.seed) ? input.seed : 1;
+  return { seed, ...bulkRandomizeOrder(fileIds, seed) };
+};
 
 /**
  * Hidden renders: display-only state for the picker. `getHiddenRenders` lists
@@ -6088,6 +6102,7 @@ export const HANDLERS: Record<string, Handler> = {
   runBulkSchedule,
   getHiddenRenders,
   setRenderHidden,
+  randomizeBulkOrder,
   listCloudFolder: listCloudFolderHandler,
   getPromoVideos,
   getPromoIndex,

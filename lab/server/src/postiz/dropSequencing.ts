@@ -75,8 +75,18 @@ export function groupKeyForFilename(name: string): string {
 export interface DropFile {
   /** Stable id (matches bulkScheduler's fileId). */
   fileId: string;
-  /** The look/visual group key (from groupKeyForFilename). */
+  /** The look/visual group key used for INTERLEAVING (never two in a row). */
   groupId: string;
+  /**
+   * The key used for the multi-day SPACING rule, when it differs from groupId.
+   * These are two different questions: "which clips look alike back-to-back?"
+   * (groupId — for renders, the shooting position) versus "which clips are the
+   * same look and so must sit days apart?" (spacingId — the filename look).
+   * Collapsing them would be a trap: with only a handful of positions, applying
+   * a 3-day gap to positions would stretch a 240-clip plan across ~180 days.
+   * Defaults to groupId, which is the historical behavior.
+   */
+  spacingId?: string;
 }
 
 export interface SequenceOptions {
@@ -91,6 +101,14 @@ export interface SequenceOptions {
   seed: number;
   /** First day index the plan may use (>= 0). Default 0. */
   startDayOffset?: number;
+  /**
+   * An explicit emission order (fileIds) that REPLACES the seeded interleave.
+   * The UI's Randomize button sends the arrangement the user is looking at, so
+   * the plan is the order they were shown rather than a second, different mix.
+   * Ids not in the list keep their input order and follow the listed ones; the
+   * seeded interleave still runs when this is absent.
+   */
+  fixedOrder?: readonly string[];
 }
 
 export interface DropAssignment {
@@ -140,6 +158,16 @@ export function sequenceDrops(files: readonly DropFile[], opts: SequenceOptions)
   }));
 
   const sequence: DropFile[] = [];
+  if (opts.fixedOrder && opts.fixedOrder.length > 0) {
+    const rank = new Map(opts.fixedOrder.map((id, i) => [id, i]));
+    sequence.push(
+      ...files
+        .map((f, i) => ({ f, i, r: rank.get(f.fileId) ?? Number.POSITIVE_INFINITY }))
+        .sort((a, b) => a.r - b.r || a.i - b.i)
+        .map((x) => x.f),
+    );
+    return pack(sequence, { cadence, gap, startDay });
+  }
   let lastGroup: string | null = null;
   let remaining = files.length;
   while (remaining > 0) {
@@ -160,16 +188,30 @@ export function sequenceDrops(files: readonly DropFile[], opts: SequenceOptions)
   }
 
   // 2) PACK ─────────────────────────────────────────────────────────────────────
+  return pack(sequence, { cadence, gap, startDay });
+}
+
+/**
+ * Walk a decided sequence and give each drop the EARLIEST day with cadence room
+ * that also clears its look's min gap. The gap is enforced on spacingId (which
+ * falls back to groupId), so a plan can alternate positions on consecutive drops
+ * while still holding same-look clips days apart.
+ */
+function pack(
+  sequence: readonly DropFile[],
+  { cadence, gap, startDay }: { cadence: number; gap: number; startDay: number },
+): DropAssignment[] {
   const lastDayForGroup = new Map<string, number>();
   const countOnDay = new Map<number, number>();
   const out: DropAssignment[] = [];
   sequence.forEach((f, order) => {
-    const gapDay = lastDayForGroup.has(f.groupId) ? lastDayForGroup.get(f.groupId)! + gap : startDay;
+    const spacing = f.spacingId ?? f.groupId;
+    const gapDay = lastDayForGroup.has(spacing) ? lastDayForGroup.get(spacing)! + gap : startDay;
     let day = Math.max(startDay, gapDay);
     while ((countOnDay.get(day) ?? 0) >= cadence) day++;
     const slot = countOnDay.get(day) ?? 0;
     countOnDay.set(day, slot + 1);
-    lastDayForGroup.set(f.groupId, day);
+    lastDayForGroup.set(spacing, day);
     out.push({ fileId: f.fileId, groupId: f.groupId, dayOffset: day, slot, order });
   });
   return out;
