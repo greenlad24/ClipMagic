@@ -1171,6 +1171,23 @@ CREATE INDEX IF NOT EXISTS idx_bulk_preview_created ON bulk_preview_runs(created
 `);
 
 /**
+ * Additive: which version of the caption VOICE wrote this row. NULL means it
+ * predates the voice entirely (the 908 captions written before 2026-08-24) —
+ * those read fine but are not in Jake's voice, and the deterministic tell-strip
+ * hides the difference, so the text itself cannot be used to tell them apart.
+ *
+ * MUST sit after the db.exec() that CREATEs bulk_captions — a migration placed
+ * above its own table crashes a FRESH database on boot with "no such table",
+ * which an existing install never shows you.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(bulk_captions)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "voice_version")) {
+    db.exec("ALTER TABLE bulk_captions ADD COLUMN voice_version INTEGER");
+  }
+}
+
+/**
  * Additive: the reference clip a persona's voice was cloned from.
  *
  * Needed as a migration and not just in the CREATE above, because the avatar

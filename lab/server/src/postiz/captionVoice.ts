@@ -51,6 +51,16 @@ export function markdownSection(doc: string, heading: RegExp): string {
   return body.join("\n").trim();
 }
 
+/**
+ * Bump when the voice CHANGES MEANINGFULLY. Every caption is stamped with the
+ * version that wrote it, so the review step can tell "written before the voice
+ * existed" from "written badly" — the difference is invisible in the text once
+ * the deterministic strip has cleaned the em-dashes off an old caption.
+ *
+ * 1 = the first bar-Jake voice (2026-08-24).
+ */
+export const CAPTION_VOICE_VERSION = 1;
+
 let cached: string | null = null;
 
 /**

@@ -2702,6 +2702,16 @@ const bulkTranscriptGaps: Handler = async () => ({
   fileIds: bulkRuns.fileIdsMissingTranscript(),
 });
 
+/**
+ * Which of the plan's videos were captioned BEFORE the current voice. The review
+ * step folds these into the same "Fix N captions" button — the text reads fine
+ * by every guideline, it just isn't in Jake's voice, and the tell-strip hides
+ * the difference, so nothing else would ever surface them.
+ */
+const bulkVoiceGaps: Handler = async () => ({
+  fileIds: bulkRuns.fileIdsStaleVoice(),
+});
+
 /** Forget cached captions so the next plan writes fresh ones. */
 const clearBulkCaptions: Handler = async (input) => {
   const fileIds = Array.isArray(input?.fileIds) ? input.fileIds.map((x: unknown) => String(x)) : [];
@@ -6625,6 +6635,7 @@ export const HANDLERS: Record<string, Handler> = {
   cancelBulkPreview,
   refreshBulkPlanCaptions,
   bulkTranscriptGaps,
+  bulkVoiceGaps,
   bulkScheduledPairs,
   bulkFinishedRenders,
   clearBulkCaptions,

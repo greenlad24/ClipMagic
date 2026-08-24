@@ -9,6 +9,7 @@ import {
   fillBulkCaptions,
   refreshBulkPlanCaptions,
   bulkTranscriptGaps,
+  bulkVoiceGaps,
   bulkScheduledPairs,
   type BulkPreviewRun,
   runBulkSchedule,
@@ -2235,10 +2236,15 @@ function StepReview({
 
   /** Files the server says were captioned without the video's audio. */
   const [transcriptGaps, setTranscriptGaps] = useState<Set<string>>(new Set());
+  /** Files captioned BEFORE the current voice — they read fine but aren't Jake. */
+  const [voiceGaps, setVoiceGaps] = useState<Set<string>>(new Set());
   useEffect(() => {
     void bulkTranscriptGaps({})
       .then((r) => setTranscriptGaps(new Set(r.fileIds)))
       .catch(() => setTranscriptGaps(new Set()));
+    void bulkVoiceGaps({})
+      .then((r) => setVoiceGaps(new Set(r.fileIds)))
+      .catch(() => setVoiceGaps(new Set()));
   }, []);
 
   /**
@@ -2266,6 +2272,11 @@ function StepReview({
     // the caption is grounded in the brief instead of what she actually says.
     // Re-transcribing and re-writing it is the same repair, so it belongs here.
     if (transcriptGaps.has(p.fileId)) return 'captioned without the audio';
+    // Reads fine by every rule above and yet isn't Jake: written before the
+    // bar-Jake voice existed. The tell-strip already took the em-dashes off, so
+    // the text LOOKS current — only the stored voice stamp knows. Last, so a
+    // caption with a substantive defect reports that instead.
+    if (voiceGaps.has(p.fileId)) return 'not in your voice yet';
     return null;
   };
 
@@ -2274,11 +2285,12 @@ function StepReview({
       posts
         .map((p, index) => ({ p, index, problem: captionProblem(p) }))
         .filter((x) => x.problem !== null),
-    // captionProblem reads ctaKeyword AND transcriptGaps — the gap list arrives
-    // from the server a moment after mount, so it MUST be a dependency or the
-    // memo keeps its first (gap-free) answer and those videos never show up.
+    // captionProblem reads ctaKeyword, transcriptGaps AND voiceGaps — both gap
+    // lists arrive from the server a moment after mount, so they MUST be
+    // dependencies or the memo keeps its first (gap-free) answer and those
+    // videos never show up.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [posts, ctaKeyword, transcriptGaps],
+    [posts, ctaKeyword, transcriptGaps, voiceGaps],
   );
 
   /** Counts per problem, so the panel can say what it is about to change. */
@@ -2353,9 +2365,13 @@ function StepReview({
       if (applied) toast.success(`${opts.label} — ${applied} caption${applied === 1 ? '' : 's'} updated.`);
       else toast.info('Nothing could be written — see the errors below.');
       if (failed) toast.error(`${failed} file${failed === 1 ? '' : 's'} failed: ${firstError}`);
-      // The gaps may have closed now that transcription works.
+      // The gaps may have closed now that transcription works — and a rewrite
+      // stamps the current voice, so the voice gaps close too.
       void bulkTranscriptGaps({})
         .then((r) => setTranscriptGaps(new Set(r.fileIds)))
+        .catch(() => {});
+      void bulkVoiceGaps({})
+        .then((r) => setVoiceGaps(new Set(r.fileIds)))
         .catch(() => {});
     } catch (e) {
       toast.error(

@@ -15,6 +15,7 @@
  */
 import { nanoid } from "nanoid";
 import { db } from "./index.js";
+import { CAPTION_VOICE_VERSION } from "../postiz/captionVoice.js";
 
 const now = () => Date.now();
 
@@ -56,13 +57,14 @@ export function putCaption(
 ): void {
   const t = now();
   db.prepare(
-    `INSERT INTO bulk_captions (file_id, platform, caption, hashtags_json, first_line_hook, transcript, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO bulk_captions (file_id, platform, caption, hashtags_json, first_line_hook, transcript, voice_version, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(file_id, platform) DO UPDATE SET
        caption = excluded.caption,
        hashtags_json = excluded.hashtags_json,
        first_line_hook = excluded.first_line_hook,
        transcript = excluded.transcript,
+       voice_version = excluded.voice_version,
        updated_at = excluded.updated_at`,
   ).run(
     fileId,
@@ -71,6 +73,7 @@ export function putCaption(
     JSON.stringify(cap.hashtags ?? []),
     cap.firstLineHook ?? "",
     transcript,
+    CAPTION_VOICE_VERSION,
     t,
     t,
   );
@@ -298,6 +301,27 @@ export function refreshRunCaptionsFromCache(runId: string): number {
  * bounded and works; nothing else about them is wrong, so the guideline checks
  * pass and would never flag them.
  */
+/**
+ * Files whose captions predate the CURRENT voice — written before bar-Jake
+ * existed, or by an older version of it.
+ *
+ * These are the counterpart to fileIdsMissingTranscript: nothing is wrong with
+ * them by the guideline checks, so nothing else would ever flag them, and the
+ * tell-strip makes them LOOK current. Only the stamp knows. A file counts as
+ * stale if ANY of its platform rows is behind, since they are rewritten together.
+ */
+export function fileIdsStaleVoice(): string[] {
+  const rows = db
+    .prepare(
+      `SELECT file_id FROM bulk_captions
+        WHERE length(trim(caption)) > 0
+        GROUP BY file_id
+       HAVING MIN(COALESCE(voice_version, 0)) < ?`,
+    )
+    .all(CAPTION_VOICE_VERSION) as Array<{ file_id: string }>;
+  return rows.map((r) => r.file_id);
+}
+
 export function fileIdsMissingTranscript(): string[] {
   const rows = db
     .prepare(

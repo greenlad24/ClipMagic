@@ -172,6 +172,9 @@ export const bulkFinishedRenders =
 
 export const bulkTranscriptGaps =
   endpoint<Record<string, never>, { fileIds: string[] }>("bulkTranscriptGaps");
+/** Files whose captions predate the current bar-Jake voice. */
+export const bulkVoiceGaps =
+  endpoint<Record<string, never>, { fileIds: string[] }>("bulkVoiceGaps");
 
 /**
  * Copy stored captions into the saved plan. Free repair for a plan whose
