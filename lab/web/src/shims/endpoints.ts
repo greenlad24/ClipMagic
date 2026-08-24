@@ -1637,6 +1637,14 @@ export type BulkPreviewFile = {
   /** Local day ("YYYY-MM-DD") this video drops on across all accounts; null if fully de-duped. */
   dropDate: string | null;
 };
+/**
+ * How a campaign's cadence behaves over time.
+ *   - "steady" — the videos/day slider, every day.
+ *   - "warmup" — a new account's ramp: 3 a week for 4 weeks, 1/day for 4 more,
+ *     then 2/day. The slider is ignored.
+ */
+export type BulkCadenceMode = "steady" | "warmup";
+
 /** A (file × channel) post dropped as a de-duplicate (already in the ledger). */
 export type BulkSkippedPost = {
   fileId: string;
@@ -1654,6 +1662,8 @@ export type PreviewBulkScheduleOutputType = {
   continuedFrom: Array<{ channelId: string; channelName: string; fromLocalDay: string }>;
   /** The seed that produced this plan — pass it back to reproduce, change it to reshuffle. */
   seed: number;
+  /** Which cadence shape built this plan: a flat rate, or the new-account ramp. */
+  cadenceMode?: BulkCadenceMode;
   /** How many distinct visual "looks" the selected videos span. */
   lookCount: number;
 };

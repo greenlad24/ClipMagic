@@ -23,6 +23,7 @@ import {
   type BulkChannel,
   type BulkProvider,
   type BulkPreviewPost,
+  type BulkCadenceMode,
   type PreviewBulkScheduleOutputType,
   type RunBulkScheduleOutputType,
   type CloudProvider,
@@ -217,6 +218,30 @@ function SelectPreview({ file }: { file: SelectedFile }) {
       <Film className="h-7 w-7 text-muted-foreground" />
     </div>
   );
+}
+
+/**
+ * Mirror of the server's WARM_UP_RAMP (postiz/dropSequencing.ts): 3 drops a week
+ * for 4 weeks, then 1/day for 4 weeks, then 2/day from week 9. Duplicated here —
+ * like lookKeyForName — only so step 1 can say what a warm-up plan costs in days
+ * BEFORE paying to build one. The server stays the authority on the real plan.
+ */
+function warmUpCapacityOnDay(day: number): number {
+  // 3/week lands on days 0, 2 and 4 of each week; the rest are rest days.
+  if (day < 28) return day % 7 === 0 || day % 7 === 2 || day % 7 === 4 ? 1 : 0;
+  if (day < 56) return 1;
+  return 2;
+}
+
+/** How many days the warm-up ramp needs to release `count` videos. */
+function warmUpDaysToClear(count: number): number {
+  let left = count;
+  let day = 0;
+  while (left > 0 && day < 3650) {
+    left -= warmUpCapacityOnDay(day);
+    day++;
+  }
+  return day;
 }
 
 // Editable preview row (a copy of a BulkPreviewPost the user can tweak).
@@ -454,6 +479,10 @@ export default function BulkSchedulerPage() {
   // same 24h. Same-look videos are spaced ≥ minGapDays apart; `seed` shuffles the
   // mix (Reshuffle bumps it for a fresh arrangement).
   const [videosPerDay, setVideosPerDay] = useState(2);
+  // Warm-up mode replaces the flat rate with a ramp for a brand-new account:
+  // 3 drops a week for 4 weeks, 1/day for 4 more, then 2/day. `videosPerDay` is
+  // ignored while it's on, so the slider is disabled rather than silently unused.
+  const [cadenceMode, setCadenceMode] = useState<BulkCadenceMode>('steady');
   const [minGapDays, setMinGapDays] = useState(3);
   const [seed, setSeed] = useState(1);
   // Randomize: the server arranges the picked videos so two clips shot in the
@@ -729,6 +758,7 @@ export default function BulkSchedulerPage() {
         channelIds: selectedChannelIds,
         intent: intent === 'none' ? undefined : intent,
         videosPerDay,
+        cadenceMode,
         minGapDays,
         seed: useSeed,
         fileOrder: !opts?.ignoreMix && mixIsLive ? selected.map((f) => f.fileId) : undefined,
@@ -892,6 +922,8 @@ export default function BulkSchedulerPage() {
             setIntent={setIntent}
             videosPerDay={videosPerDay}
             setVideosPerDay={setVideosPerDay}
+            cadenceMode={cadenceMode}
+            setCadenceMode={setCadenceMode}
             minGapDays={minGapDays}
             setMinGapDays={setMinGapDays}
             onRandomize={randomizeSelection}
@@ -917,6 +949,7 @@ export default function BulkSchedulerPage() {
             continuedFrom={continuedFrom}
             dropDateByFile={dropDateByFile}
             lookCount={lookCount}
+            cadenceMode={cadenceMode}
             reshuffling={previewing}
             onReshuffle={() => {
               setMixOrder(null);
@@ -1114,6 +1147,8 @@ function StepSelect({
   setIntent,
   videosPerDay,
   setVideosPerDay,
+  cadenceMode,
+  setCadenceMode,
   minGapDays,
   setMinGapDays,
   onRandomize,
@@ -1136,6 +1171,8 @@ function StepSelect({
   setIntent: (v: 'none' | 'commute' | 'lunch' | 'evening') => void;
   videosPerDay: number;
   setVideosPerDay: (v: number) => void;
+  cadenceMode: BulkCadenceMode;
+  setCadenceMode: (v: BulkCadenceMode) => void;
   minGapDays: number;
   setMinGapDays: (v: number) => void;
   onRandomize: () => void;
@@ -1348,26 +1385,70 @@ function StepSelect({
             </Select>
           </div>
           <div>
-            <label htmlFor="videos-per-day" className="flex items-center justify-between text-xs font-medium text-muted-foreground">
-              <span>Videos per day</span>
-              <span className="tabular-nums text-foreground">{videosPerDay}/day</span>
-            </label>
-            <input
-              id="videos-per-day"
-              type="range"
-              min={1}
-              max={8}
-              step={1}
-              value={videosPerDay}
-              onChange={(e) => setVideosPerDay(Math.min(8, Math.max(1, Math.round(Number(e.target.value)))))}
-              className="mt-2 w-full accent-primary"
-            />
-            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-              How many videos drop each day. Each one posts to <em>all</em> selected accounts within the same 24h.
-              {selected.length > 0 && (
-                <> ~{Math.ceil(selected.length / Math.max(1, videosPerDay))} days to clear {selected.length} videos.</>
-              )}
-            </p>
+            <label className="text-xs font-medium text-muted-foreground">Campaign pace</label>
+            <Select value={cadenceMode} onValueChange={(v) => setCadenceMode(v as BulkCadenceMode)}>
+              <SelectTrigger className="mt-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="steady">Steady — the same rate every day</SelectItem>
+                <SelectItem value="warmup">Warm up — ramp up a new account</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {cadenceMode === 'steady' ? (
+              <>
+                <label
+                  htmlFor="videos-per-day"
+                  className="mt-3 flex items-center justify-between text-xs font-medium text-muted-foreground"
+                >
+                  <span>Videos per day</span>
+                  <span className="tabular-nums text-foreground">{videosPerDay}/day</span>
+                </label>
+                <input
+                  id="videos-per-day"
+                  type="range"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={videosPerDay}
+                  onChange={(e) => setVideosPerDay(Math.min(8, Math.max(1, Math.round(Number(e.target.value)))))}
+                  className="mt-2 w-full accent-primary"
+                />
+                <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                  How many videos drop each day. Each one posts to <em>all</em> selected accounts within the same 24h.
+                  {selected.length > 0 && (
+                    <> ~{Math.ceil(selected.length / Math.max(1, videosPerDay))} days to clear {selected.length} videos.</>
+                  )}
+                </p>
+              </>
+            ) : (
+              <div className="mt-3 rounded-lg border border-border bg-muted/30 p-3 text-[11px] leading-snug text-muted-foreground">
+                <div className="mb-2 font-medium text-foreground">Ramps up from a standing start</div>
+                <ul className="space-y-1">
+                  <li>
+                    <span className="tabular-nums text-foreground">Weeks 1–4</span> — 3 videos a week, on the same
+                    days each week
+                  </li>
+                  <li>
+                    <span className="tabular-nums text-foreground">Weeks 5–8</span> — 1 a day
+                  </li>
+                  <li>
+                    <span className="tabular-nums text-foreground">Week 9 on</span> — 2 a day
+                  </li>
+                </ul>
+                <p className="mt-2">
+                  Every drop still posts to <em>all</em> selected accounts within the same 24h, so weeks 1–4 are 3
+                  videos a week <em>per account</em>. The videos-per-day slider doesn&apos;t apply.
+                </p>
+                {selected.length > 0 && (
+                  <p className="mt-2 text-foreground">
+                    ~{warmUpDaysToClear(selected.length)} days to clear {selected.length} videos
+                    {selected.length > 40 ? <> — only 40 of them land in the first 8 weeks.</> : <>.</>}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
           <div>
             <label htmlFor="gap-days" className="flex items-center justify-between text-xs font-medium text-muted-foreground">
@@ -2124,6 +2205,7 @@ function StepReview({
   continuedFrom,
   dropDateByFile,
   lookCount,
+  cadenceMode,
   reshuffling,
   onReshuffle,
   onBack,
@@ -2139,6 +2221,7 @@ function StepReview({
   continuedFrom: PreviewBulkScheduleOutputType['continuedFrom'];
   dropDateByFile: Map<string, string | null>;
   lookCount: number;
+  cadenceMode: BulkCadenceMode;
   reshuffling: boolean;
   onReshuffle: () => void;
   onBack: () => void;
@@ -2381,6 +2464,12 @@ function StepReview({
                 {scheduleMap.reduce((n, [, v]) => n + v.length, 0)} videos · {lookCount} look{lookCount === 1 ? '' : 's'} ·
                 {' '}{scheduleMap.length} day{scheduleMap.length === 1 ? '' : 's'} · {formatLocalDay(scheduleMap[0][0])} → {formatLocalDay(scheduleMap[scheduleMap.length - 1][0])}
               </p>
+              {cadenceMode === 'warmup' && (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  <Badge variant="outline" className="mr-1.5 align-middle text-[10px]">Warm up</Badge>
+                  3 a week for 4 weeks, then 1 a day, then 2 a day — the gaps below are rest days, not missing videos.
+                </p>
+              )}
             </div>
             <Button variant="outline" size="sm" onClick={onReshuffle} disabled={reshuffling}>
               {reshuffling ? <Loader2 className="h-4 w-4 animate-spin" /> : <Shuffle className="h-4 w-4" />}

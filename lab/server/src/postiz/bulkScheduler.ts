@@ -29,7 +29,15 @@ import {
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
 import { generateCaptions, scoreCaption, scoreChecks, CTA_KEYWORD, type PlatformCaption, type CaptionPlatform } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput, type ChannelStartState } from "./scheduling.js";
-import { sequenceDrops, groupKeyForFilename, countLooks, type DropFile } from "./dropSequencing.js";
+import {
+  sequenceDrops,
+  groupKeyForFilename,
+  countLooks,
+  rampPeakPerDay,
+  WARM_UP_RAMP,
+  type CadencePhase,
+  type DropFile,
+} from "./dropSequencing.js";
 import { POSITION_UNKNOWN } from "./renderPosition.js";
 import { loadRenderPositions } from "./renderPositionStore.js";
 import { getChannelState, recordScheduled, deriveChannelTimeline } from "./scheduleLedger.js";
@@ -225,6 +233,14 @@ export interface PreviewFileInput {
   label?: string;
 }
 
+/** Cadence shape for a campaign: flat, or the new-account warm-up ramp. */
+export type CadenceMode = "steady" | "warmup";
+
+/** The ramp a mode runs on — `null` for "steady", which uses a flat cadence. */
+export function rampForMode(mode: CadenceMode): readonly CadencePhase[] | null {
+  return mode === "warmup" ? WARM_UP_RAMP : null;
+}
+
 export interface PreviewInput {
   files: PreviewFileInput[];
   /** Channel ids to target (must be currently connected). */
@@ -246,6 +262,14 @@ export interface PreviewInput {
    * filename). 0 = no spacing. Default 3 ("a look at most once every 3 days").
    */
   minGapDays?: number;
+  /**
+   * How the cadence behaves over the life of the campaign.
+   *   - "steady"  (default) — `videosPerDay` every day, the original behavior.
+   *   - "warmup"  — ramp up from a new account's standing start: 3 drops a week
+   *     for 4 weeks, then 1/day for 4 weeks, then 2/day (see WARM_UP_RAMP).
+   *     `videosPerDay` is ignored; the ramp decides every day's capacity.
+   */
+  cadenceMode?: CadenceMode;
   /**
    * Shuffle seed for the look-mixing + minute jitter. Same seed → same plan; a new
    * seed reshuffles. Default 1 (stable) so callers/tests are reproducible.
@@ -329,6 +353,8 @@ export interface PreviewOutput {
   continuedFrom: Array<{ channelId: string; channelName: string; fromLocalDay: string }>;
   /** The seed that produced this plan (echo it back to `preview` to reproduce; change it to reshuffle). */
   seed: number;
+  /** The cadence shape this plan was built with (so the review step can say so). */
+  cadenceMode: CadenceMode;
   /** How many distinct visual "looks" the selected videos span (UI hint). */
   lookCount: number;
 }
@@ -518,6 +544,12 @@ export async function preview(
   // Cadence = how many DROPS (videos) release per day; each goes to every account.
   // `videosPerDay` is preferred; `maxPerDay` kept for back-compat.
   const cadence = Math.max(1, Math.floor(input.videosPerDay ?? input.maxPerDay ?? 2));
+  // Warm-up mode replaces the flat cadence with a ramp. The per-CHANNEL day cap
+  // handed to the engine below must clear the ramp's BUSIEST day, or a pinned
+  // drop would be pushed off its day and split its cohort across two dates.
+  const cadenceMode: CadenceMode = input.cadenceMode === "warmup" ? "warmup" : "steady";
+  const ramp = rampForMode(cadenceMode);
+  const peakPerDay = ramp ? rampPeakPerDay(ramp) : cadence;
   const minGapDays = Math.max(0, Math.floor(input.minGapDays ?? 3));
   const seed = Number.isFinite(input.seed) ? (input.seed as number) >>> 0 : 1;
   const channelStates = new Map(targets.map((t) => [t.channel.id, getChannelState(t.channel.id)]));
@@ -583,6 +615,7 @@ export async function preview(
     .map((f) => ({ fileId: f.fileId, groupId: f.groupId, spacingId: f.spacingId }));
   const assignments = sequenceDrops(dropFiles, {
     videosPerDay: cadence,
+    ramp: ramp ?? undefined,
     minGapDays: minGapDays,
     seed,
     startDayOffset,
@@ -613,7 +646,7 @@ export async function preview(
     timezone: input.timezone,
     intent: input.intent,
     startTomorrow: false,
-    maxPerChannelPerDay: cadence,
+    maxPerChannelPerDay: peakPerDay,
     channelStartStates,
     seed,
   });
@@ -670,6 +703,7 @@ export async function preview(
     skippedPosts,
     continuedFrom,
     seed,
+    cadenceMode,
     lookCount: countLooks(dropFiles),
   };
 }

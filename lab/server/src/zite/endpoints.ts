@@ -2739,6 +2739,7 @@ function bulkPreviewInput(input: any) {
     maxPerDay: typeof input?.maxPerDay === "number" ? input.maxPerDay : undefined,
     videosPerDay: typeof input?.videosPerDay === "number" ? input.videosPerDay : undefined,
     minGapDays: typeof input?.minGapDays === "number" ? input.minGapDays : undefined,
+    cadenceMode: input?.cadenceMode === "warmup" ? ("warmup" as const) : undefined,
     seed: typeof input?.seed === "number" ? input.seed : undefined,
     fileOrder: Array.isArray(input?.fileOrder) ? input.fileOrder.map((x: unknown) => String(x)) : undefined,
   };
@@ -2755,6 +2756,7 @@ const previewBulkSchedule: Handler = async (input) =>
     maxPerDay: typeof input?.maxPerDay === "number" ? input.maxPerDay : undefined,
     videosPerDay: typeof input?.videosPerDay === "number" ? input.videosPerDay : undefined,
     minGapDays: typeof input?.minGapDays === "number" ? input.minGapDays : undefined,
+    cadenceMode: input?.cadenceMode === "warmup" ? ("warmup" as const) : undefined,
     seed: typeof input?.seed === "number" ? input.seed : undefined,
     fileOrder: Array.isArray(input?.fileOrder) ? input.fileOrder.map((x: unknown) => String(x)) : undefined,
   });
