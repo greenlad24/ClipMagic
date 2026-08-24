@@ -2272,7 +2272,11 @@ function StepReview({
     // A warm-up post in weeks 1–4 ships with no ask ON PURPOSE. Flagging it here
     // would make the Fix button rewrite the CTA straight back in, undoing the
     // quiet period the campaign pace exists to create.
-    if (!p.ctaSuppressed && !new RegExp(`\\b${ctaKeyword}\\b`, 'i').test(text)) {
+    // CASE-SENSITIVE, like the stripper. The CTA ships in capitals, and a
+    // case-insensitive test reads the ordinary word as an ask — in this niche
+    // half the captions discuss "prompts", so a genuinely CTA-less post looked
+    // fine and the review step never offered to fix it.
+    if (!p.ctaSuppressed && !new RegExp(`\\b${ctaKeyword}\\b`).test(text)) {
       return `no "${ctaKeyword}" CTA`;
     }
     // Reads fine, but was written blind: transcription failed for this video, so

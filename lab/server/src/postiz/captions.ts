@@ -329,8 +329,10 @@ export function scoreCaption(
     checks.push({
       id: "growth-cta",
       label: `Asks for the "${kw}" comment`,
-      // Case-insensitive: a hand-edit that lowercases it still counts.
-      pass: new RegExp(`\\b${kw}\\b`, "i").test(text),
+      // CASE-SENSITIVE. The keyword ships in capitals; matching loosely lets the
+      // ordinary English word pass as an ask, and in this niche the captions
+      // discuss "prompts" constantly — a CTA-less caption scored as if it had one.
+      pass: new RegExp(`\\b${kw}\\b`).test(text),
       severity: "recommended",
       hint: `Close with a short, video-relevant line asking for a like and the comment ${kw}.`,
     });

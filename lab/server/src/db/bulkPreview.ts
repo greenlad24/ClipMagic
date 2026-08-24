@@ -15,7 +15,8 @@
  */
 import { nanoid } from "nanoid";
 import { db } from "./index.js";
-import { CAPTION_VOICE_VERSION, stripGrowthCta } from "../postiz/captionVoice.js";
+import { CAPTION_VOICE_VERSION, stripGrowthCta, ctaSuppressedFileIds } from "../postiz/captionVoice.js";
+import { rampRampUpDays, WARM_UP_RAMP } from "../postiz/dropSequencing.js";
 import { CTA_KEYWORD } from "../postiz/captions.js";
 
 const now = () => Date.now();
@@ -242,6 +243,77 @@ function syncFileTranscripts(result: { files?: any[] } | null): number {
   return changed;
 }
 
+/** Local "YYYY-MM-DD" for an instant in a zone. */
+function localDay(iso: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date(iso));
+  const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+/**
+ * Recompute which of a plan's posts ship WITHOUT the comment CTA, from the plan's
+ * OWN schedule.
+ *
+ * `ctaSuppressed` used to be decided once, when the plan was built, and frozen
+ * into it — so Jake's 908-post plan kept the 4-week rule it was built under
+ * after the policy moved to 8 weeks plus one-in-three, and no amount of using
+ * the Fix button could change that (2026-08-24). The whole decision is derivable
+ * from what the plan already holds (each post's scheduled instant plus the
+ * campaign's cadence mode), so it is derived on load instead of trusted.
+ *
+ * Pairs with refreshRunCaptionsFromCache: the cache keeps the full caption, so a
+ * post that should now ASK gets its CTA back, not just the other way round.
+ */
+export function applyCtaPolicy(result: { posts?: any[] } | null, input: unknown): number {
+  const posts = result?.posts;
+  if (!posts?.length) return 0;
+  const cfg = (input ?? {}) as { cadenceMode?: string; timezone?: string };
+  const timeZone = cfg.timezone || "America/New_York";
+  // Only a ramped campaign has a quiet period; steady asks on every post.
+  if (cfg.cadenceMode !== "warmup") {
+    let cleared = 0;
+    for (const p of posts) {
+      if (p.ctaSuppressed) {
+        p.ctaSuppressed = false;
+        cleared++;
+      }
+    }
+    return cleared;
+  }
+
+  // One drop per VIDEO, ordered by its earliest scheduled instant.
+  const earliest = new Map<string, string>();
+  for (const p of posts) {
+    const cur = earliest.get(p.fileId);
+    if (!cur || p.scheduledAt < cur) earliest.set(p.fileId, p.scheduledAt);
+  }
+  const byDay = new Map<string, string[]>();
+  for (const [fileId, iso] of earliest) {
+    const d = localDay(iso, timeZone);
+    byDay.set(d, [...(byDay.get(d) ?? []), fileId]);
+  }
+  const dayKeys = [...byDay.keys()].sort();
+  const firstDay = dayKeys[0];
+  const drops: Array<{ fileId: string; dayOffset: number; slot: number }> = [];
+  for (const d of dayKeys) {
+    const offset = Math.round((Date.parse(`${d}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) / 86400000);
+    const ids = [...byDay.get(d)!].sort((a, b) => (earliest.get(a)! < earliest.get(b)! ? -1 : 1));
+    ids.forEach((fileId, slot) => drops.push({ fileId, dayOffset: offset, slot }));
+  }
+
+  const suppressed = ctaSuppressedFileIds(drops, { quietUntilDayOffset: rampRampUpDays(WARM_UP_RAMP) });
+  let changed = 0;
+  for (const p of posts) {
+    const want = suppressed.has(p.fileId);
+    if (!!p.ctaSuppressed !== want) {
+      p.ctaSuppressed = want;
+      changed++;
+    }
+  }
+  return changed;
+}
+
 /**
  * The caption as the PLAN should hold it.
  *
@@ -289,6 +361,10 @@ export function refreshRunCaptionsFromCache(runId: string): number {
   const run = getRun(runId);
   const result = run?.result as { posts?: any[]; files?: any[] } | null;
   if (!result?.posts?.length) return 0;
+  // Derive the CTA policy from the plan's own schedule FIRST, so the caption
+  // write below uses corrected flags. A plan built under an older policy fixes
+  // itself on the next load instead of staying wrong until it is rebuilt.
+  const policyChanged = applyCtaPolicy(result, run?.input);
   const byFile = new Map<string, Map<string, CachedCaption>>();
   let changed = 0;
   for (const post of result.posts) {
@@ -309,7 +385,7 @@ export function refreshRunCaptionsFromCache(runId: string): number {
     changed++;
   }
   const trChanged = syncFileTranscripts(result);
-  if (changed || trChanged) updateRun(runId, { result });
+  if (changed || trChanged || policyChanged) updateRun(runId, { result });
   return changed + trChanged;
 }
 
