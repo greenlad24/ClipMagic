@@ -2263,7 +2263,10 @@ function StepReview({
     // A link is dead weight on TikTok/IG/Shorts and throttles a Facebook Page.
     if (/https?:\/\/|\bwww\./i.test(text)) return 'contains a link';
     // Meta demotes posts that explicitly solicit likes/saves/shares.
-    if (/\b(like (this|the post|it)|double tap|save this post|share this post)\b/i.test(text)) {
+    // Anchored at a sentence start, like the server-side strip. Unanchored it
+    // matched "treating recurring work like it's brand new" and flagged four
+    // perfectly good captions that no rewrite could ever clear.
+    if (/(^|[\n.!?]\s*)(?:so\s+)?(?:please\s+)?(?:double[- ]tap|like (?:this|the post)\b|save this\b|share this\b)/i.test(text)) {
       return 'asks for likes';
     }
     // A warm-up post in weeks 1–4 ships with no ask ON PURPOSE. Flagging it here

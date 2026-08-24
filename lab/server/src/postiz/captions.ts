@@ -539,12 +539,40 @@ export function assemblePlatformCaption(
     caption = `${caption}\n\nWhat do you think?`;
   }
   if (caption.length > rule.maxCaptionChars) {
-    // Word-safe clamp: never cut mid-word (which would leave a dangling fragment
-    // like "…transforms. Y" and chop a trailing CTA). Back up to the last
-    // whitespace within the cap.
-    const cut = caption.slice(0, rule.maxCaptionChars);
-    const lastWs = cut.replace(/\S+$/, "").trimEnd();
-    caption = (lastWs.length > 0 ? lastWs : cut).trimEnd();
+    // Trim the MIDDLE, not the end. This clamp used to run last and simply cut
+    // the tail, which chopped the CTA and the closing question straight back off
+    // — and then the review step flagged the caption "no CTA" forever, because a
+    // rewrite reproduced the identical truncation. The hook and the closing
+    // block are guardrails; the middle is the only part that may be shortened.
+    const paras = caption.split(/\n{2,}/).filter((x) => x.trim().length > 0);
+    if (paras.length >= 3) {
+      const head = paras[0];
+      const kw = rule.cta ? new RegExp(`\\b${rule.cta.keyword}\\b`, "i") : null;
+      // The closing block starts at the first trailing paragraph that carries
+      // the CTA or ends on the question.
+      let tailStart = paras.length - 1;
+      for (let i = 1; i < paras.length; i++) {
+        if ((kw && kw.test(paras[i])) || /\?\s*$/.test(paras[i].trim())) {
+          tailStart = i;
+          break;
+        }
+      }
+      const tail = paras.slice(tailStart);
+      const middle = paras.slice(1, tailStart);
+      let joined = [head, ...middle, ...tail].join("\n\n");
+      while (joined.length > rule.maxCaptionChars && middle.length > 0) {
+        middle.pop();
+        joined = [head, ...middle, ...tail].join("\n\n");
+      }
+      caption = joined;
+    }
+    if (caption.length > rule.maxCaptionChars) {
+      // Hook plus closing block alone exceed the cap: word-safe clamp, never
+      // mid-word. Rare, and there is nothing left to protect.
+      const cut = caption.slice(0, rule.maxCaptionChars);
+      const lastWs = cut.replace(/\S+$/, "").trimEnd();
+      caption = (lastWs.length > 0 ? lastWs : cut).trimEnd();
+    }
   }
 
   // Hashtags: normalize, dedupe (case-insensitive), clamp to the rule's max.

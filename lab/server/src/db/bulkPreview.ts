@@ -15,7 +15,8 @@
  */
 import { nanoid } from "nanoid";
 import { db } from "./index.js";
-import { CAPTION_VOICE_VERSION } from "../postiz/captionVoice.js";
+import { CAPTION_VOICE_VERSION, stripGrowthCta } from "../postiz/captionVoice.js";
+import { CTA_KEYWORD } from "../postiz/captions.js";
 
 const now = () => Date.now();
 
@@ -241,6 +242,23 @@ function syncFileTranscripts(result: { files?: any[] } | null): number {
   return changed;
 }
 
+/**
+ * The caption as the PLAN should hold it.
+ *
+ * Captions are cached with their comment CTA whatever the schedule says — one
+ * cached caption stays usable whichever side of the quiet period a post falls
+ * on. The PLAN copy is the scheduled one, so a post that is deliberately not
+ * asking must not carry the ask here.
+ *
+ * Applied at every point a caption is written into a plan, because there are
+ * three of them (preview, a rewrite, and the refresh-from-cache that runs on
+ * every reload) and missing one is enough to put the ask back: 47 posts sat in
+ * a rewrite loop because the rewrite path skipped it (2026-08-24).
+ */
+function captionForPlan(post: { ctaSuppressed?: boolean }, caption: string): string {
+  return post?.ctaSuppressed ? stripGrowthCta(caption, CTA_KEYWORD) : caption;
+}
+
 export function patchRunCaptions(
   runId: string,
   captions: Record<string, Record<string, { caption: string; hashtags: string[]; firstLineHook: string }>>,
@@ -252,7 +270,7 @@ export function patchRunCaptions(
   for (const post of result.posts) {
     const c = captions[post.fileId]?.[post.platform];
     if (!c || !c.caption?.trim()) continue;
-    post.caption = c.caption;
+    post.caption = captionForPlan(post, c.caption);
     post.hashtags = c.hashtags ?? [];
     post.firstLineHook = c.firstLineHook ?? "";
     changed++;
@@ -280,8 +298,12 @@ export function refreshRunCaptionsFromCache(runId: string): number {
       byFile.set(post.fileId, caps);
     }
     const c = caps.get(post.platform);
-    if (!c || !c.caption.trim() || c.caption === post.caption) continue;
-    post.caption = c.caption;
+    if (!c || !c.caption.trim()) continue;
+    // Compare against what the plan SHOULD hold, or a suppressed post would be
+    // rewritten from cache on every single reload and never settle.
+    const next = captionForPlan(post, c.caption);
+    if (next === post.caption) continue;
+    post.caption = next;
     post.hashtags = c.hashtags;
     post.firstLineHook = c.firstLineHook;
     changed++;

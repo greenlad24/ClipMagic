@@ -19,6 +19,7 @@ import {
   scoreCaption,
   stripTrailingHashtags,
   PLATFORM_RULES,
+  CTA_KEYWORD,
   MAX_TRANSCRIPT_PROMPT_CHARS,
 } from "../postiz/captions.js";
 import { normalizeCloudLink, resolveSourceUrl } from "../postiz/fileSources.js";
@@ -322,6 +323,25 @@ async function main() {
       resolveSourceUrl({ kind: "cloud", ref: "https://drive.google.com/file/d/XYZ/view" }),
       "https://drive.google.com/uc?export=download&id=XYZ",
     );
+  });
+
+  await check("clamping a long caption keeps the hook, the CTA and the question", () => {
+    // The clamp used to run LAST and simply cut the tail, which chopped the CTA
+    // back off — and then the review step flagged "no CTA" forever, because a
+    // rewrite reproduced the identical truncation. 3 real posts sat in that loop.
+    const filler = "This is a middle paragraph that exists only to blow past the cap. ".repeat(30);
+    const out = assemblePlatformCaption("tiktok", {
+      firstLineHook: "A keyword-rich hook up front",
+      caption: `A keyword-rich hook up front\n\n${filler}\n\nComment ${CTA_KEYWORD} and I'll send you the templates.\n\nWhat would you try first?`,
+      hashtags: ["fyp"],
+    });
+    assert.ok(out.caption.length <= PLATFORM_RULES.tiktok.maxCaptionChars, "still within the cap");
+    assert.ok(out.caption.startsWith("A keyword-rich hook up front"), "hook survives");
+    assert.ok(
+      new RegExp(`\\b${CTA_KEYWORD}\\b`).test(out.caption),
+      `CTA was clamped off: ${out.caption.slice(-120)}`,
+    );
+    assert.ok(/\?\s*$/.test(out.caption.trim()), "still ends on the question");
   });
 
   console.log(`\n${passed} checks passed`);

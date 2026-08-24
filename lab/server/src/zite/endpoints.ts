@@ -2793,10 +2793,11 @@ const fillBulkCaptions: Handler = async (input) => {
     throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to fill." });
   }
   const result = await bulkFillCaptions({ files: wanted as any });
+  const run = bulkRuns.latestRun();
+
   // Write them into the SAVED plan as well, not just the response. Without this
   // a reload restores the original captions and asks for the same (already paid
   // for) rewrite again.
-  const run = bulkRuns.latestRun();
   const persisted = run ? bulkRuns.patchRunCaptions(run.id, result.captions) : 0;
   return {
     ...result,
