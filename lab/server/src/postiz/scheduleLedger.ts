@@ -150,3 +150,21 @@ function localDayKey(date: Date, timeZone: string): string | null {
   const d = get("day");
   return y && mo && d ? `${y}-${mo}-${d}` : null;
 }
+
+/**
+ * Every (file × channel) pair this tool has already scheduled, as
+ * "<fileId>|<channelId>" keys.
+ *
+ * The plan builder filters these out when a plan is BUILT, but a plan built
+ * before a partial send still lists them — it said "908 posts" while 90 were
+ * already live (2026-08-24). The review step uses this to show what is actually
+ * left rather than what was once proposed.
+ */
+export function scheduledPairs(): string[] {
+  const file = readLedger();
+  const out: string[] = [];
+  for (const [channelId, entry] of Object.entries(file)) {
+    for (const fileId of entry.fileIds ?? []) out.push(`${fileId}|${channelId}`);
+  }
+  return out;
+}

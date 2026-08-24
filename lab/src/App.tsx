@@ -23,6 +23,8 @@ import ChannelAuditPage from './pages/ChannelAuditPage';
 import SkoolManagerPage from './pages/SkoolManagerPage';
 import SkoolEngagePage from './pages/SkoolEngagePage';
 import EngagementRepliesPage from './pages/EngagementRepliesPage';
+import AvatarNarratorPage from './pages/AvatarNarratorPage';
+import TutorialStudioPage from './pages/TutorialStudioPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -48,6 +50,8 @@ export default function App() {
         <Route path="/bulk-scheduler" element={<BulkSchedulerPage />} />
         <Route path="/thumbnail-designer" element={<ThumbnailDesignerPage />} />
         <Route path="/image-generator" element={<ImageGeneratorPage />} />
+        <Route path="/avatar-narrator" element={<AvatarNarratorPage />} />
+        <Route path="/tutorial-studio" element={<TutorialStudioPage />} />
         <Route path="/keyword-research" element={<KeywordResearchPage />} />
         <Route path="/script-generator" element={<ScriptGeneratorPage />} />
         <Route path="/video-planner" element={<VideoPlannerPage />} />

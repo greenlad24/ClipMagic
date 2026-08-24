@@ -32,19 +32,60 @@ export interface PlatformCaption {
 }
 
 /**
- * Optional off-platform "growth link" CTA. When set, captions for this platform
- * carry ONE persuasive (never salesy), video-relevant CTA that drives to `link`,
- * placed AFTER the SEO hook — never as the first line (the hook owns line 1). Only
- * platforms that make caption links useful should set this: on TikTok/Instagram
- * links aren't clickable AND suppress reach, so those rules deliberately omit it.
+ * The growth CTA: a KEYWORD to comment, not a link.
+ *
+ * This used to put a raw community URL in the caption, which stopped being a
+ * good idea (researched 2026-08-24). In 2026: Facebook halves the reach of link
+ * posts (~5–6% vs ~11% native) and caps non-verified Pages at roughly two link
+ * posts a MONTH; Instagram caption links are still not clickable for standard
+ * accounts and suppress distribution; YouTube deliberately makes Shorts
+ * description links non-clickable; TikTok never made them clickable. A URL in
+ * the caption is therefore somewhere between inert and actively costly on every
+ * channel this tool posts to.
+ *
+ * What still works everywhere is asking for a comment: it costs the reader
+ * nothing, it feeds the engagement the ranking systems reward, and the resource
+ * is delivered afterwards (by DM where that is possible, by reply where it is
+ * not). So the caption carries a keyword, never the link.
  */
 export interface PlatformCta {
-  /** The URL to drive traffic to. */
-  link: string;
+  /** The word to comment, e.g. "PROMPTS". Matched later when fulfilling. */
+  keyword: string;
+  /** What they get for commenting, in plain words. */
+  offer: string;
   /** Prompt instruction telling the model how/where to write the CTA. */
   guidance: string;
-  /** Deterministic fallback sentence if the model omits the link entirely. */
+  /** Deterministic fallback sentence if the model omits the CTA entirely. */
   fallback: string;
+}
+
+/**
+ * One keyword across every platform, so fulfilment has a single thing to match
+ * and the audience learns one habit. Override per install without a rebuild.
+ */
+export const CTA_KEYWORD = (process.env.BULK_CTA_KEYWORD || "PROMPTS").trim().toUpperCase();
+export const CTA_OFFER =
+  process.env.BULK_CTA_OFFER || "free access to my full prompt library";
+
+/** Shared wording rules; each platform tunes only the placement around them. */
+function ctaFor(placement: string): PlatformCta {
+  return {
+    keyword: CTA_KEYWORD,
+    offer: CTA_OFFER,
+    guidance:
+      // Asking for a COMMENT only. "Like this post" was dropped on 2026-08-24:
+      // Meta demotes posts that explicitly solicit likes (engagement bait),
+      // while asking for a comment is ordinary practice — and the comment is
+      // what actually triggers fulfilment here, so the like bought nothing.
+      `${placement} Ask the reader to comment the single word ` +
+      `${CTA_KEYWORD}, and say they will be sent ${CTA_OFFER}. Tie the sentence to ` +
+      `THIS video's specific topic so it reads as a natural next step, never a canned ` +
+      `template — vary the wording every time. Keep it to one or two short sentences, ` +
+      `never salesy, and NEVER include a URL (links are penalised or dead on every ` +
+      `platform here). Do NOT ask for likes, saves or shares — the comment is the ` +
+      `only ask. The word ${CTA_KEYWORD} must appear exactly once, in capitals.`,
+    fallback: `Comment ${CTA_KEYWORD} and I'll send you ${CTA_OFFER}.`,
+  };
 }
 
 /** Tunable per-platform best-practice guidance the prompt encodes. */
@@ -71,6 +112,7 @@ export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
     maxCaptionChars: 2200,
     guidance:
       "Punchy, keyword-rich hook in the FIRST LINE for TikTok search/SEO, then a few conversational sentences of real substance (TikTok now allows long captions — use the room for keywords/context, don't pad). 3–5 hashtags mixing niche + broad. No links. End on a question.",
+    cta: ctaFor("After the hook and the substance, before the hashtags:"),
   },
   instagram: {
     platform: "instagram",
@@ -80,6 +122,9 @@ export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
     maxCaptionChars: 600,
     guidance:
       "Hook first line, then value, then a light CTA (save/share/follow). Use line breaks for readability. 3–8 hashtags mixing niche + medium-reach. No outbound links (IG suppresses them). Keep it warm and scannable.",
+    // Instagram is the one channel where fulfilment is fully automatic today —
+    // engage/senders.ts can DM there, so a commenter really does get sent it.
+    cta: ctaFor("On its own line after the value, before the hashtags:"),
   },
   youtube: {
     platform: "youtube",
@@ -89,6 +134,8 @@ export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
     maxCaptionChars: 700,
     guidance:
       "First line is an SEO TITLE-STYLE phrase (this becomes the video title) — front-load the primary keyword. Follow with a keyword-dense 1–2 sentence description optimized for search/suggested. Include #Shorts plus 2–4 topical tags. Optimize for discovery, not chatter.",
+    // NEVER on line 1 here: that line becomes the video title.
+    cta: ctaFor("After the keyword description and NEVER on the first line (line 1 is the video title):"),
   },
   // Generic / general-audience (e.g. a Facebook Page). One untuned rule reused
   // for any channel without a tuned short-form platform — deliberately broad,
@@ -100,16 +147,12 @@ export const PLATFORM_RULES: Record<CaptionPlatform, PlatformRule> = {
     maxTags: 5,
     maxCaptionChars: 2000,
     guidance:
-      "Write an engaging general-audience caption for a vertical short-form clip. Strong first-line hook that front-loads the topic, then 1–2 sentences of value, ending with a comment-driving CTA. Light hashtag use (2–5). Outbound links are allowed (unlike IG). Conversational and shareable.",
-    // Facebook/general is link-friendly, so it carries the community CTA. The
-    // tuned short-form trio (TikTok/IG/YouTube) deliberately has NO cta: TikTok +
-    // IG punish outbound links, and YouTube's line-1 is the SEO title.
-    cta: {
-      link: "https://www.skool.com/ai-automations-for-sales",
-      guidance:
-        "After the opening hook and 1–2 sentences of value — NOT on the first line — add ONE short, persuasive but NOT salesy sentence that ties directly to THIS specific video's topic and naturally invites the reader to go deeper, then include the link https://www.skool.com/ai-automations-for-sales. Then still close on the comment-driving question, AFTER the link. Vary the CTA wording per video; do not use a canned template.",
-      fallback: "Want to go deeper on this? The full breakdown is inside our free community:",
-    },
+      "Write an engaging general-audience caption for a vertical short-form clip. Strong first-line hook that front-loads the topic, then 1–2 sentences of value, ending with a comment-driving CTA. Light hashtag use (2–5). NO outbound links — a Facebook Page that posts links loses about half its reach. Conversational and shareable.",
+    // The community URL used to live here. It was removed on 2026-08-24: a
+    // Facebook Page that posts links is throttled to ~half the reach and capped
+    // near two link posts a month, so putting one on EVERY post spent that
+    // budget immediately and suppressed the rest. The keyword CTA replaces it.
+    cta: ctaFor("After the hook and 1–2 sentences of value, NOT on the first line:"),
   },
 };
 
@@ -268,17 +311,19 @@ export function scoreCaption(
     },
   ];
 
-  // growth-link (recommended/ADVISORY): platforms that carry a growth CTA should
-  // include the link. Advisory so a hand-edit that drops it dips the score + shows
-  // a hint but never blocks — assemblePlatformCaption already guarantees it on
-  // AI-written captions.
+  // growth-cta (recommended/ADVISORY): the caption should ask for the comment
+  // keyword, which is how the resource actually gets delivered. Advisory so a
+  // hand-edit that drops it dips the score and shows a hint but never blocks —
+  // assemblePlatformCaption already guarantees it on AI-written captions.
   if (rule.cta) {
+    const kw = rule.cta.keyword;
     checks.push({
-      id: "growth-link",
-      label: "Growth link included",
-      pass: text.includes(rule.cta.link),
+      id: "growth-cta",
+      label: `Asks for the "${kw}" comment`,
+      // Case-insensitive: a hand-edit that lowercases it still counts.
+      pass: new RegExp(`\\b${kw}\\b`, "i").test(text),
       severity: "recommended",
-      hint: `Add a short, video-relevant CTA after the hook that links to ${rule.cta.link}.`,
+      hint: `Close with a short, video-relevant line asking for a like and the comment ${kw}.`,
     });
   }
 
@@ -329,7 +374,7 @@ function buildSystemPrompt(platforms: CaptionPlatform[], hasTranscript: boolean)
   // model must add NO link on any other platform (TikTok/IG suppress links).
   const ctaPlatforms = platforms.filter((p) => PLATFORM_RULES[p].cta);
   const ctaBlock = ctaPlatforms.length
-    ? "Growth-link CTA — apply ONLY to these platforms; add NO outbound link on any other platform:\n" +
+    ? "Growth CTA (comment keyword — NEVER a URL, on any platform):\n" +
       ctaPlatforms.map((p) => `- ${p}: ${PLATFORM_RULES[p].cta!.guidance}`).join("\n")
     : "";
   return [
@@ -417,6 +462,33 @@ export function assemblePlatformCaption(
   const firstLineHook = typeof raw.firstLineHook === "string" ? raw.firstLineHook.trim() : "";
   let caption = typeof raw.caption === "string" ? raw.caption.trim() : firstLineHook;
 
+  // No like-bait, ever. The prompt forbids asking for likes/saves/shares, but the
+  // model reintroduces it on some videos anyway (2026-08-24) — the phrasing is
+  // everywhere in its training data. Meta demotes posts that solicit likes, and
+  // the COMMENT is what triggers fulfilment here, so the ask buys nothing. The
+  // sentence is removed rather than the caption rejected: everything around it
+  // is fine.
+  caption = caption
+    .replace(
+      /(^|[\n.!?—-]\s*)(?:so\s+)?(?:go\s+ahead\s+and\s+)?(?:please\s+)?(?:double[- ]tap|like\s+(?:this|the\s+post|it)\b|save\s+this\b|share\s+this\b)[^.!?\n]*[.!?]?/gi,
+      "$1",
+    )
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  // No URLs, ever. Every platform this posts to either ignores caption links
+  // (TikTok, IG, YouTube Shorts) or throttles the post for carrying one
+  // (Facebook), so a link is at best dead weight. Stripped here rather than
+  // only in the prompt, so a hand-edited or older caption is cleaned too.
+  caption = caption
+    .replace(/\bhttps?:\/\/\S+/gi, "")
+    .replace(/\bwww\.\S+/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
   // Ensure the hook IS the first line of the caption.
   if (firstLineHook && !caption.startsWith(firstLineHook)) {
     caption = `${firstLineHook}\n\n${caption}`.trim();
@@ -430,8 +502,8 @@ export function assemblePlatformCaption(
   // Facebook): if the model omitted the link, inject a fallback CTA line. It must
   // land BEFORE the closing question so the caption still ENDS on that question
   // (the comment-CTA is a required check) — never on the raw URL.
-  if (rule.cta && caption && !caption.includes(rule.cta.link)) {
-    const ctaLine = `${rule.cta.fallback} ${rule.cta.link}`;
+  if (rule.cta && caption && !new RegExp(`\\b${rule.cta.keyword}\\b`, "i").test(caption)) {
+    const ctaLine = rule.cta.fallback;
     const paras = caption.split(/\n{2,}/);
     if (paras.length >= 2 && /\?\s*$/.test(caption)) {
       const closing = paras.pop()!; // the closing question — keep it last
@@ -501,6 +573,29 @@ export interface GenerateCaptionsOptions {
  * transcript is supplied the prompt is grounded in the ACTUAL spoken content;
  * otherwise behavior is exactly as before (brief/metadata only).
  */
+/**
+ * Parse the model's reply into the {platforms:{…}} envelope, tolerating the
+ * usual wrappers: a ```json fence, a leading sentence, trailing prose. Returns
+ * an empty object when there is genuinely nothing parseable in it.
+ */
+function parseCaptionJson(raw: unknown): { platforms?: Record<string, unknown> } {
+  if (typeof raw !== "string" || !raw.trim()) return {};
+  const text = raw.replace(/^\s*```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  const candidates = [text];
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) candidates.push(text.slice(start, end + 1));
+  for (const c of candidates) {
+    try {
+      const obj = JSON.parse(c);
+      if (obj && typeof obj === "object") return obj as { platforms?: Record<string, unknown> };
+    } catch {
+      /* try the next shape */
+    }
+  }
+  return {};
+}
+
 export async function generateCaptions(
   brief: string,
   platforms: CaptionPlatform[],
@@ -514,12 +609,19 @@ export async function generateCaptions(
   const wanted = platforms.filter((p) => CAPTION_PLATFORMS.includes(p));
   if (wanted.length === 0) return {} as Record<CaptionPlatform, PlatformCaption>;
 
-  const rawJson = await gen(buildSystemPrompt(wanted, Boolean(ts)), buildUserPrompt(brief, wanted, ts));
+  const system = buildSystemPrompt(wanted, Boolean(ts));
+  const user = buildUserPrompt(brief, wanted, ts);
+
+  // ONE retry, and a tolerant parse. A bare JSON.parse of the model's reply
+  // fails on a ```json fence or a word of preamble, and the failure was silent:
+  // `{}` produced an EMPTY caption for every platform, which then read as "the
+  // caption writer returned nothing" (2026-08-24). Neither is a reason to lose
+  // a whole file's captions — the model is simply asked again.
   let parsed: { platforms?: Record<string, unknown> } = {};
-  try {
-    parsed = JSON.parse(rawJson);
-  } catch {
-    parsed = {};
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const rawJson = await gen(system, user);
+    parsed = parseCaptionJson(rawJson);
+    if (parsed.platforms && Object.keys(parsed.platforms).length) break;
   }
   const byPlatform = (parsed.platforms ?? {}) as Record<string, { firstLineHook?: unknown; caption?: unknown; hashtags?: unknown }>;
 

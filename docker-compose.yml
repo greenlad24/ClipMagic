@@ -104,6 +104,11 @@ services:
       # secret injected as a Bearer header (matches the sidecar's API_TOKEN).
       WHATSAPP_URL: ${WHATSAPP_URL:-http://whatsapp-scheduler:3000}
       WHATSAPP_API_TOKEN: ${WA_API_TOKEN:-}
+      # Tutorial Studio sidecar: same shape as WhatsApp above — the Lab reaches it
+      # over the Docker network only, and injects this shared secret as a Bearer
+      # header so even the internal port refuses an un-tokened call.
+      TUTORIAL_STUDIO_URL: ${TUTORIAL_STUDIO_URL:-http://tutorial-studio:3100}
+      TUTORIAL_STUDIO_API_TOKEN: ${TUTORIAL_STUDIO_TOKEN:-}
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data
@@ -149,6 +154,33 @@ services:
     volumes:
       # Persistent: WhatsApp Web session (wwebjs_auth) + scheduled messages.json.
       - whatsapp-data:/app/data
+
+  # ── TUTORIAL STUDIO: topic -> finished 9:16 talking-head tutorial reel ─────
+  # A Python pipeline (script -> talking-head+voice -> carousel -> slides ->
+  # overlays/memes/SFX -> reel.mp4) that needs ffmpeg, a headless Chromium and
+  # faster-whisper — none of which belong in the Lab's Node image. So it runs
+  # here and the Lab drives it over the Docker network.
+  #
+  # Like the WhatsApp sidecar: NO public port, gated behind the `lab` profile,
+  # and protected by a shared Bearer token on top of the Lab's Google Sign-In.
+  # Needs APIMART_API_KEY + ANTHROPIC_API_KEY from the shared .env; without the
+  # first, the API refuses to queue a job rather than failing mid-render.
+  tutorial-studio:
+    profiles: ["lab"]
+    build:
+      context: ./tutorial-studio
+    image: clipmagic-tutorial-studio:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "3100"
+      DATA_DIR: /data
+      API_TOKEN: ${TUTORIAL_STUDIO_TOKEN:-}
+    volumes:
+      # Per-job working dirs, the reusable talking-head clip, and the whisper
+      # model cache. Its own volume — nothing here touches the Lab's media.
+      - tutorial-studio-data:/data
 
   # ── POSTIZ: self-hosted social-media scheduler (opt-in) ───────────────────
   # The open-source social poster (gitroomhq/postiz-app) that the hub's "Social
@@ -229,6 +261,14 @@ services:
       # Required for the self-hosted (non-cloud) build.
       IS_GENERAL: "true"
       DISABLE_REGISTRATION: ${POSTIZ_DISABLE_REGISTRATION:-false}
+      # Public-API rate limit. Postiz defaults to 90 requests PER HOUR
+      # (ThrottlerModule ttl 3600000 / limit 90), which is sized for a shared
+      # cloud tenant. A bulk drop from the Lab is thousands of calls against a
+      # SINGLE-tenant instance, and on 2026-08-24 exactly 90 posts landed and
+      # 818 came back "ThrottlerException: Too Many Requests". The API still
+      # requires the public API key, so this raises a throughput ceiling, not a
+      # security boundary.
+      API_LIMIT: ${POSTIZ_API_LIMIT:-20000}
       # Allow the auth cookie over plain HTTP. In production mode Postiz marks the
       # session cookie `Secure`, so browsers DROP it on http:// — login appears to
       # succeed but bounces straight back to /auth. Defaults to true for the bare-IP
@@ -417,6 +457,7 @@ volumes:
   clipmagic-data:
   clipmagic-lab-data:
   whatsapp-data:
+  tutorial-studio-data:
   postiz-uploads:
   postiz-config:
   postiz-postgres-data:

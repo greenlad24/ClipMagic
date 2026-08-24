@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { authConfigured } from "../config.js";
 import { SESSION_COOKIE, readCookie, verifySession, type SessionPayload } from "./session.js";
+import { hasValidMediaSignature } from "../postiz/mediaSignature.js";
 import { isAllowedEmail } from "./google.js";
 
 /**
@@ -232,6 +233,18 @@ export function requireSession(req: AuthedRequest, res: Response, next: NextFunc
     return;
   }
   if (isOpenPath(req.path)) {
+    next();
+    return;
+  }
+  // A SIGNED media URL is its own credential: the HMAC covers that exact path
+  // and an expiry, so it grants one file for a limited window and nothing else.
+  // This is what lets an external service (PostPeer) fetch a video it must pull
+  // itself, without opening the render library to the internet.
+  if (
+    req.method === "GET" &&
+    LOOPBACK_MEDIA_PREFIXES.some((prefix) => req.path.startsWith(prefix)) &&
+    hasValidMediaSignature(req.path, req.query as Record<string, unknown>)
+  ) {
     next();
     return;
   }

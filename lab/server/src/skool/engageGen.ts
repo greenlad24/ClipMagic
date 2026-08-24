@@ -33,7 +33,7 @@
 import { aiConfig } from "../ai/config.js";
 import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
 import { classroomOutline, retrieve, type Retrieved } from "./knowledge.js";
-import { youtubeUrl } from "./channelVideos.js";
+import { youtubeUrl, videosForSubject } from "./channelVideos.js";
 
 /**
  * Something the composer attaches to a post, beyond its words.
@@ -402,6 +402,75 @@ export function stripSearchMarkup(text: string): string {
     .replace(/[ \t]{2,}/g, " ")
     .replace(/ ([.,;:!?])/g, "$1")
     .trim();
+}
+
+/**
+ * Today's date, and the instruction that makes the search worth running.
+ *
+ * ⚠️⚠️ WITHOUT THIS THE MODEL ANSWERS FROM ITS TRAINING AND THE SEARCH BECOMES
+ * DECORATION. Jake, 2026-08-20: a member asked about video tools and the reply
+ * recommended Runway, Pika, Kling and Veo — a reasonable list, and out of date:
+ * "Seedance 2.5 was the right answer". Web search was ON for that reply. It had
+ * no reason to look, because nothing told it that what it already knew might be
+ * stale, or even what day it is.
+ *
+ * Lifted from `researchDateBlock` in the script generator, which learned the
+ * same thing the expensive way — a script that tells a hundred thousand people
+ * to click a button that no longer exists.
+ */
+function replyDateBlock(today: string): string {
+  return [
+    `TODAY'S DATE IS ${today}.`,
+    "",
+    "⚠️ YOUR TRAINING IS OLDER THAN TODAY AND THIS FIELD MOVES EVERY FEW WEEKS.",
+    "The best tool for a job changes, models get replaced by better ones, prices",
+    "and free tiers change, and products get discontinued. A name you are",
+    "confident about may have been superseded since you last saw it.",
+    "",
+    "So before you recommend ANY tool, model or price: SEARCH FOR WHAT IS",
+    "CURRENT TODAY. Not what was best when you learned it — what somebody would",
+    "actually be told to use this week.",
+    "- If the thing you were about to recommend has been overtaken, say what has",
+    "  overtaken it and recommend that instead.",
+    "- Name versions where versions matter. \"the latest\" ages; a version number",
+    "  and a date does not.",
+    "- If a search cannot confirm something, say you could not confirm it. A gap",
+    "  you flag is useful. A gap you fill from memory is how a member is sent to",
+    "  a product that no longer exists.",
+  ].join("\n");
+}
+
+/**
+ * Jake's own recent uploads, offered so a reply can point at his video.
+ *
+ * ⚠️ HIS OWN VIDEO BEATS A THIRD-PARTY LINK AND THE FIRST VERSION COULD NOT SEE
+ * ONE. Jake, 2026-08-20, about the same video-tools reply: "I did a video about
+ * it (Higgsfield video)." The classroom index is the 15 rebuilt courses, which
+ * is months of work behind the channel — so a tool he covered last week is
+ * invisible to retrieval and visible here.
+ *
+ * ⚠️ OFFERED, NOT INSTRUCTED. The matcher is word overlap on titles and it
+ * deliberately includes a few of the newest even when nothing matches, so the
+ * list routinely contains videos that have nothing to do with the question. The
+ * prompt has to say that plainly or the model will reach for one anyway.
+ */
+function ownVideosBlock(videos: { title: string; url: string; publishedAt: number }[]): string {
+  if (!videos.length) return "";
+  const fmt = (ms: number): string => (ms ? new Date(ms).toISOString().slice(0, 10) : "date unknown");
+  return [
+    "==========================================",
+    "JAKE'S OWN RECENT YOUTUBE VIDEOS — link one ONLY if it really covers this",
+    "==========================================",
+    ...videos.map((v) => `- ${v.title}  (${fmt(v.publishedAt)})  ${v.url}`),
+    "",
+    "If one of these actually covers what the member asked, say so in your own",
+    "voice and paste the bare URL on its own line — his own video is a better",
+    "answer than a link to somebody else's tool page.",
+    "⚠️ THIS LIST INCLUDES RECENT VIDEOS THAT MATCH NOTHING, on purpose, so that a",
+    "subject his titles do not name can still find its video. Most of the time",
+    "the honest answer is that none of them covers it. Linking a video that does",
+    "not is the same failure as linking a lesson that does not — see above.",
+  ].join("\n");
 }
 
 /**
@@ -949,13 +1018,23 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     ),
   ].join("\n");
 
+  // His own uploads that might cover the question. Read live (memoised 30 min,
+  // 2 quota units) rather than from the classroom index, which is months behind
+  // the channel by design. A failure here costs the video suggestion and must
+  // not cost the reply.
+  const ownVideos = await videosForSubject(`${req.text} ${req.context}`.slice(0, 400), 8).catch(() => []);
+
   const user = [
+    replyDateBlock(new Date().toISOString().slice(0, 10)),
+    "",
     `${req.authorName} wrote:`,
     req.text,
     "",
     req.context ? `CONTEXT — the post this sits under:\n${req.context.slice(0, 2500)}` : "",
     "",
     groundingBlock(hits),
+    "",
+    ownVideosBlock(ownVideos),
   ].join("\n");
 
   // ⚠️ WEB SEARCH IS ON FOR REPLIES AND OFF FOR POSTS, AND THE ASYMMETRY IS THE

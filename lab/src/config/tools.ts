@@ -17,6 +17,7 @@ import {
   MessageCircle,
   Clapperboard,
   Bot,
+  UserRound,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -68,6 +69,20 @@ export interface ToolDefinition {
 }
 
 export const TOOLS: ToolDefinition[] = [
+  {
+    id: 'tutorial-studio',
+    title: 'Tutorial Studio',
+    description:
+      'One topic becomes a finished tutorial reel — talking head with its own voice, a real carousel, screenshots, paper-note overlays, memes and SFX.',
+    icon: Clapperboard,
+    route: '/tutorial-studio',
+    status: 'live',
+    accent: 'purple',
+    detail: '9:16 · ~30s',
+    // Needs the apimart key (set in the same write-only Postiz settings) — it
+    // pays for the script, start frame and talking-head stages.
+    configureRoute: '/settings/postiz',
+  },
   {
     id: 'short',
     title: 'Short-form creator',
@@ -183,6 +198,20 @@ export const TOOLS: ToolDefinition[] = [
     accent: 'blue',
     detail: 'Nano Banana chat',
     // Reuses the same Gemini key as the Thumbnail Designer.
+    configureRoute: '/settings/postiz',
+  },
+  {
+    id: 'avatar-narrator',
+    title: 'Avatar Narrator',
+    description:
+      'A synthetic presenter reads your script to camera. Lock in one AI-generated face, paste a script, and get a talking-head video — the voice and the face stay the same across every video you make.',
+    icon: UserRound,
+    route: '/avatar-narrator',
+    status: 'live',
+    accent: 'purple',
+    detail: '~$4.90 per 45s Short',
+    // One SEGMIND_API_KEY covers the whole tool: GPT Image 2 for the portrait,
+    // ElevenLabs for the voice and its cloning, Seedance 2.5 for the video.
     configureRoute: '/settings/postiz',
   },
   {

@@ -1,0 +1,101 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@700;800&family=Space+Grotesk:wght@700&display=swap');
+  @font-face{font-family:'FunClub';src:url('FONT_DATAURI') format('truetype');font-style:italic;font-display:block;}
+  @font-face{font-family:'FruityCake';src:url('FONT2_DATAURI') format('truetype');font-display:block;}
+  @font-face{font-family:'RozanovaBlack';src:url('FONT3_DATAURI') format('truetype');font-display:block;}
+  html,body{margin:0;width:720px;height:1280px;background:transparent;overflow:hidden;
+    font-family:'Poppins',system-ui,sans-serif;}
+  #stage{position:absolute;inset:0;}
+  .el{position:absolute;will-change:transform,opacity;opacity:0;}
+
+  /* every card sits in the SAME centered position (50px higher than middle) */
+  .card{left:125px;top:370px;width:470px;height:440px;border-radius:26px;overflow:hidden;
+    box-shadow:0 26px 60px rgba(0,0,0,.5);border:6px solid #fff;background:#111;}
+  .card img{width:100%;height:100%;object-fit:cover;display:block;}
+  /* smaller "held at chest" card — keeps her face visible */
+  .card.small{left:250px;top:470px;width:330px;height:412px;}
+  /* examples grid — fills the upper frame, no white border */
+  .card.grid{left:34px;top:120px;width:652px;height:980px;border:none;background:transparent;
+    box-shadow:none;}
+  .card.grid img{object-fit:contain;filter:drop-shadow(0 18px 40px rgba(0,0,0,.5));}
+  /* reaction / meme sticker — transparent, centered, no frame */
+  .card.meme{left:200px;top:300px;width:320px;height:320px;border:none;background:transparent;
+    box-shadow:none;border-radius:0;overflow:visible;}
+  .card.meme img{object-fit:contain;filter:drop-shadow(0 12px 26px rgba(0,0,0,.45));}
+
+  .cap{left:40px;right:40px;bottom:400px;width:640px;text-align:center;font-weight:800;
+    font-size:50px;line-height:1.15;color:#fff;letter-spacing:.2px;
+    -webkit-text-stroke:1px rgba(0,0,0,.35);
+    text-shadow:0 2px 3px rgba(0,0,0,.55),0 6px 22px rgba(0,0,0,.45);}
+  .cap b{color:#fff;-webkit-text-stroke:1px rgba(0,0,0,.35);}   /* no brush on captions */
+
+  .title{left:30px;right:30px;top:120px;width:660px;text-align:center;color:#fff;}
+  .title .small{display:block;font-family:'FruityCake';font-size:46px;line-height:1;
+    transform:rotate(-3deg);margin-bottom:6px;text-shadow:0 3px 6px rgba(0,0,0,.4);}
+  .title .main{display:block;font-family:'RozanovaBlack';font-size:62px;line-height:1.0;
+    text-shadow:0 4px 0 rgba(0,0,0,.35),0 8px 22px rgba(0,0,0,.4);}
+  .title .accent{color:#FF7A59;}
+
+  /* paper note (torn ruled paper + FunClub handwritten ink) */
+  .note{display:flex;align-items:center;justify-content:center;text-align:center;
+    font-family:'FunClub';font-style:italic;color:#1b1b1b;line-height:1.02;
+    background-repeat:no-repeat;background-position:center;background-size:100% 100%;
+    padding:0 30px;box-sizing:border-box;}
+</style></head>
+<body>
+<div id="stage"></div>
+<script>
+const stage = document.getElementById('stage');
+const BRUSH = 'BRUSH_DATAURI';
+const T = window.TIMELINE || {cards:[],caps:[],labels:[],title:null,cta:null};
+const nodes = [];
+function mk(cls, html){ const d=document.createElement('div'); d.className='el '+cls; d.innerHTML=html; stage.appendChild(d); return d; }
+
+// build DOM once
+if (T.title) T.title.node = mk('title',
+  '<span class="small">'+(T.title.small||'')+'</span><span class="main">'+(T.title.main||'')+'</span>');
+T.cards.forEach(c => { c.node = mk('card '+(c.kind||''), `<img src="${c.img}">`);
+  c.node.style.transform='rotate('+(c.rot===undefined?0:c.rot)+'deg)';   // 0 = straight
+  if (c.zoom){ const im=c.node.querySelector('img'); im.style.transform='scale(1.6)'; im.style.transformOrigin='center 20%'; } });
+T.caps.forEach(c => c.node = mk('cap', c.html));
+function setupNote(n, node){
+  // FIXED paper box (centered); auto-fit the FONT so the text fills it perfectly with even padding
+  const boxW=n.w, boxH=n.h, px=54, py=30;
+  node.style.width=boxW+'px'; node.style.height=boxH+'px'; node.style.boxSizing='border-box';
+  node.style.display='flex'; node.style.alignItems='center'; node.style.justifyContent='center';
+  node.style.textAlign='center'; node.style.padding=py+'px '+px+'px';
+  node.style.whiteSpace='nowrap';   // <br> is the ONLY break; font shrinks so each line fits
+  node.style.lineHeight='1.06';
+  if(n.paper) node.style.backgroundImage="url('"+n.paper+"')";
+  // grow-then-shrink the font to the largest size that fits the inner area
+  let fs=Math.min(boxH-2*py, 72); node.style.fontSize=fs+'px';
+  let g=0;
+  while((node.scrollWidth>node.clientWidth || node.scrollHeight>node.clientHeight) && fs>14 && g<80){
+    fs-=2; node.style.fontSize=fs+'px'; g++;
+  }
+  node.style.left=Math.round((720-boxW)/2)+'px';                       // horizontally centered
+  node.style.top=(n.center ? Math.round(590-boxH/2) : n.y)+'px';       // top band OR center-middle
+  node.style.transform='rotate('+(n.rot||0)+'deg)';
+  // brush-stroke underline BELOW the paper element (emphasis)
+  const br=document.createElement('div');
+  br.style.cssText="position:absolute;left:12%;width:76%;height:30px;bottom:-24px;"
+    +"background:url('"+BRUSH+"') no-repeat center;background-size:100% 100%;pointer-events:none;";
+  node.appendChild(br);
+}
+T.labels.forEach(l => { l.node = mk('note', l.text); setupNote(l, l.node); });
+if (T.cta){ T.cta.node = mk('note', T.cta.html); setupNote(T.cta, T.cta.node); }
+
+// ZERO transition — every element is a hard on/off (opacity 1 or 0), nothing tweens.
+function on(node, v){ node.style.opacity = v ? 1 : 0; }
+window.render = function(t){
+  if (T.title) on(T.title.node, t < T.title.t1);
+  T.cards.forEach(c => on(c.node, t>=c.t0 && t<c.t1));
+  T.caps.forEach(c => on(c.node, t>=c.t0 && t<c.t1));
+  T.labels.forEach(l => on(l.node, t>=l.t0 && t<l.t1));
+  if (T.cta) on(T.cta.node, t>=T.cta.t0);
+};
+window.render(0);
+</script>
+</body></html>

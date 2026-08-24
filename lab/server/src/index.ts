@@ -8,7 +8,9 @@ import authRouter from "./auth/routes.js";
 import { requireSession } from "./auth/middleware.js";
 import { youtubeOAuthRouter } from "./audit/oauthRoutes.js";
 import { whatsappProxy } from "./whatsappProxy.js";
+import { tutorialRouter } from "./tutorial/route.js";
 import { startWorker } from "./render/worker.js";
+import { failInterruptedRuns } from "./db/bulkPreview.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
@@ -151,6 +153,11 @@ app.use("/v1", auth, rendiRouter);
 // the `*` fallback; inert (503) until WHATSAPP_URL is set. See whatsappProxy.ts.
 app.use("/wa", whatsappProxy());
 
+// Tutorial Studio reels. The JSON API for this tool rides /api/fn like every
+// other tool; only the finished mp4 needs its own route (Range requests, so the
+// player can seek). After requireSession, like everything above.
+app.use("/api/tutorial", tutorialRouter());
+
 // Serve a frontend. Preference order:
 //   1. A built Vite app at FRONTEND_DIR (the full ClipMagic UI), if present.
 //   2. The bundled self-contained bulk dashboard in server/public — so the
@@ -171,11 +178,42 @@ if (fs.existsSync(path.join(bulkDir, "index.html"))) {
 }
 
 if (uiDir) {
-  app.use(express.static(uiDir));
+  // CACHING, and why it is spelled out rather than left to express.static:
+  //
+  // Vite fingerprints every bundle (assets/index-<hash>.js) and rewrites
+  // index.html to point at the new name. express.static sends no Cache-Control
+  // at all, so a browser applies HEURISTIC freshness and can reuse a cached
+  // index.html without revalidating — one that names a bundle the last deploy
+  // deleted. The result is a white page that only a hard refresh fixes, which
+  // is exactly what happened on 2026-08-24.
+  //
+  // So: the HTML entry point must always be revalidated, while the fingerprinted
+  // assets it names can be cached hard (their name changes when they do).
+  const setCacheHeaders = (res: express.Response, filePath: string) => {
+    if (filePath.endsWith("index.html")) {
+      res.setHeader("Cache-Control", "no-cache");
+    } else if (/[\\/]assets[\\/]/.test(filePath)) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    }
+  };
+  app.use(express.static(uiDir, { setHeaders: setCacheHeaders }));
   app.get("*", (req, res, next) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/v1") || req.path.startsWith("/bulk")) {
+    // NOTE the exact match on /bulk: the standalone dashboard lives at /bulk,
+    // but a prefix test also swallows the React route /bulk-scheduler, which
+    // then 404s on a direct load or refresh (client-side navigation hides it,
+    // so it only bites someone who reloads the page — 2026-08-24).
+    if (
+      req.path.startsWith("/api/") ||
+      req.path === "/api" ||
+      req.path.startsWith("/v1/") ||
+      req.path === "/v1" ||
+      req.path === "/bulk" ||
+      req.path.startsWith("/bulk/")
+    ) {
       return next();
     }
+    // Same rule for the SPA fallback — this is the path most deep links take.
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(path.join(uiDir, "index.html"));
   });
   console.log(`[server] serving UI from ${uiDir}`);
@@ -223,6 +261,12 @@ app.listen(config.port, config.host, () => {
   // can actually render here and the resolved Chromium executable, so a missing
   // browser / failed launch is obvious immediately rather than at first render.
   void logMotionReadiness();
+// A plan that was building when the process stopped has no worker any more —
+// fail it so a reconnecting page gets an answer instead of a spinner.
+{
+  const ghosts = failInterruptedRuns();
+  if (ghosts) console.log(`[bulk] ${ghosts} interrupted plan build(s) marked failed`);
+}
   startWorker();
   // Engagement Manager: always-on read-only YouTube comment monitor. Resilient
   // (never throws), quota-bounded, 10-min interval. Durable data lives in SQLite.

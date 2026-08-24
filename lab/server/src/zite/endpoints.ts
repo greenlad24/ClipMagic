@@ -16,6 +16,12 @@ import path from "node:path";
 import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects, ZiteError } from "./store.js";
 // Avatar Narrator (LAB tool)
 import * as avatarStore from "../db/avatar.js";
+// Tutorial Studio (LAB tool) — the Python reel sidecar.
+import * as tutorial from "../tutorial/client.js";
+import * as tutorialBatches from "../db/tutorialBatches.js";
+import * as tutorialAi from "../tutorial/apimart.js";
+import * as tutorialAccounts from "../tutorial/accounts.js";
+import { startScripting, isScripting, assignLooks } from "../tutorial/batchRunner.js";
 import { listProviders as listAvatarProviders } from "../avatar/providers.js";
 import {
   ttsConfigured,
@@ -83,6 +89,9 @@ import {
   getDataForSeoCreds,
 } from "../settings/postizSecrets.js";
 import {
+  fullyScheduledRenders as bulkFullyScheduledRenders,
+  fillCaptions as bulkFillCaptions,
+  FILL_CAPTIONS_LIMIT,
   getStatus as bulkSchedulerStatus,
   listChannels as bulkSchedulerChannels,
   preview as bulkSchedulerPreview,
@@ -90,6 +99,9 @@ import {
   randomizeOrder as bulkRandomizeOrder,
 } from "../postiz/bulkScheduler.js";
 import { listCloudFolder, cloudProvidersConfigured } from "../postiz/cloudSources.js";
+import { scheduledPairs as ledgerScheduledPairs } from "../postiz/scheduleLedger.js";
+import * as bulkRuns from "../db/bulkPreview.js";
+import { startPreview as startPreviewRun, cancelPreview as cancelPreviewRun } from "../postiz/previewRunner.js";
 import { listHiddenRenders, setRendersHidden } from "../postiz/hiddenRenders.js";
 import {
   autoScreencast as runAutoScreencast,
@@ -2625,6 +2637,114 @@ const listCloudFolderHandler: Handler = async (input) => {
   return { items };
 };
 
+/**
+ * Build a plan in the BACKGROUND and return its run id at once.
+ *
+ * The old synchronous version held one request open for the whole build; a
+ * 227-video plan meant 31 minutes of silence and, when the socket died, a
+ * finished plan with nowhere to go. The page now polls getBulkPreviewRun.
+ */
+const startBulkPreview: Handler = async (input) => {
+  const files = Array.isArray(input?.files) ? input.files : [];
+  if (!files.length) throw new ZiteError({ code: "BAD_REQUEST", message: "Select at least one video." });
+  const run = startPreviewRun(bulkPreviewInput(input));
+  return { run: publicRun(run) };
+};
+
+/** Poll a run; pass no id to reconnect to the most recent one after a reload. */
+const getBulkPreviewRun: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  const run = id ? bulkRuns.getRun(id) : bulkRuns.latestRun();
+  if (!run) return { run: null };
+  return { run: publicRun(run) };
+};
+
+const cancelBulkPreview: Handler = async (input) => ({
+  cancelled: cancelPreviewRun(String(input?.id || "").trim()),
+});
+
+/**
+ * Pull stored captions into the saved plan. Free — it copies captions already
+ * written and paid for, for a plan that predates the write-back above.
+ */
+const refreshBulkPlanCaptions: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  const run = id ? bulkRuns.getRun(id) : bulkRuns.latestRun();
+  if (!run) return { refreshed: 0, run: null };
+  const refreshed = bulkRuns.refreshRunCaptionsFromCache(run.id);
+  return { refreshed, run: publicRun(bulkRuns.getRun(run.id)!) };
+};
+
+/**
+ * (file × channel) pairs this tool has already scheduled. The review step drops
+ * them from a plan that was built before they went out, so the counts describe
+ * the work that is LEFT rather than what was originally proposed.
+ */
+const bulkScheduledPairs: Handler = async () => ({
+  pairs: ledgerScheduledPairs(),
+});
+
+/**
+ * Renders with nothing left to post — scheduled to every connected channel. The
+ * picker filters these out instead of hiding them, so the Hidden drawer stays
+ * the operator's own manual list.
+ */
+const bulkFinishedRenders: Handler = async () => ({
+  names: await bulkFullyScheduledRenders(),
+});
+
+/**
+ * Which of the plan's videos were captioned without their audio. The review step
+ * offers to re-caption these: their text is fine by the guidelines but says
+ * nothing specific about the video, which is what drags the score down.
+ */
+const bulkTranscriptGaps: Handler = async () => ({
+  fileIds: bulkRuns.fileIdsMissingTranscript(),
+});
+
+/** Forget cached captions so the next plan writes fresh ones. */
+const clearBulkCaptions: Handler = async (input) => {
+  const fileIds = Array.isArray(input?.fileIds) ? input.fileIds.map((x: unknown) => String(x)) : [];
+  return { cleared: bulkRuns.clearCaptions(fileIds) };
+};
+
+/** The run row as the browser sees it: the plan itself only once it is ready. */
+function publicRun(run: import("../db/bulkPreview.js").PreviewRun) {
+  return {
+    id: run.id,
+    status: run.status,
+    stage: run.stage,
+    doneCount: run.doneCount,
+    totalCount: run.totalCount,
+    cachedCount: run.cachedCount,
+    error: run.error,
+    createdAt: run.createdAt,
+    updatedAt: run.updatedAt,
+    result: run.status === "done" ? run.result : null,
+    // The files this plan was built from. A reconnecting page needs them: the
+    // plan is keyed by fileId and scheduling resolves each post's source
+    // through the picker's list, so a plan restored WITHOUT this looks correct
+    // and cannot be sent.
+    input: run.input ?? null,
+  };
+}
+
+function bulkPreviewInput(input: any) {
+  return {
+    files: Array.isArray(input?.files) ? input.files : [],
+    channelIds: Array.isArray(input?.channelIds) ? input.channelIds : [],
+    intent: input?.intent,
+    timezone: input?.timezone,
+    now: input?.now,
+    maxPerDay: typeof input?.maxPerDay === "number" ? input.maxPerDay : undefined,
+    videosPerDay: typeof input?.videosPerDay === "number" ? input.videosPerDay : undefined,
+    minGapDays: typeof input?.minGapDays === "number" ? input.minGapDays : undefined,
+    seed: typeof input?.seed === "number" ? input.seed : undefined,
+    fileOrder: Array.isArray(input?.fileOrder) ? input.fileOrder.map((x: unknown) => String(x)) : undefined,
+  };
+}
+
+/** Kept for callers that still want to wait inline (small selections). */
 const previewBulkSchedule: Handler = async (input) =>
   bulkSchedulerPreview({
     files: Array.isArray(input?.files) ? input.files : [],
@@ -2638,6 +2758,41 @@ const previewBulkSchedule: Handler = async (input) =>
     seed: typeof input?.seed === "number" ? input.seed : undefined,
     fileOrder: Array.isArray(input?.fileOrder) ? input.fileOrder.map((x: unknown) => String(x)) : undefined,
   });
+
+/**
+ * Write captions for the posts that came back blank, without rebuilding the plan.
+ * Capped per call so the request stays short; the UI reports what is left.
+ */
+const fillBulkCaptions: Handler = async (input) => {
+  const files = Array.isArray(input?.files) ? input.files : [];
+  if (!files.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to fill." });
+  }
+  const wanted = files
+    .map((f: any) => ({
+      fileId: String(f?.fileId || ""),
+      source: f?.source,
+      brief: typeof f?.brief === "string" ? f.brief : undefined,
+      platforms: Array.isArray(f?.platforms) ? f.platforms.map((p: unknown) => String(p)) : [],
+      force: Boolean(f?.force),
+    }))
+    .filter((f: any) => f.fileId && f.source && f.platforms.length);
+  if (!wanted.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to fill." });
+  }
+  const result = await bulkFillCaptions({ files: wanted as any });
+  // Write them into the SAVED plan as well, not just the response. Without this
+  // a reload restores the original captions and asks for the same (already paid
+  // for) rewrite again.
+  const run = bulkRuns.latestRun();
+  const persisted = run ? bulkRuns.patchRunCaptions(run.id, result.captions) : 0;
+  return {
+    ...result,
+    persisted,
+    limit: FILL_CAPTIONS_LIMIT,
+    remaining: Math.max(0, wanted.length - FILL_CAPTIONS_LIMIT),
+  };
+};
 
 const runBulkSchedule: Handler = async (input) =>
   bulkSchedulerSchedule({ posts: Array.isArray(input?.posts) ? input.posts : [] });
@@ -6077,6 +6232,369 @@ const avatarDeleteVideo: Handler = async (input) => ({
   deleted: avatarStore.deleteVideo(String(input?.videoId ?? "")),
 });
 
+
+// ── Tutorial Studio (LAB tool) ───────────────────────────────────────────────
+// Thin pass-through to the sidecar. All the real work (queue, per-job dirs, the
+// pipeline itself) lives there; these handlers exist so the page talks to the
+// same /api/fn surface as every other tool and never sees the sidecar directly.
+// TutorialUnavailable becomes a readable message rather than a 500 — "the
+// sidecar isn't running" is a normal state here, not a bug.
+
+function tutorialError(err: unknown): never {
+  const message = err instanceof Error ? err.message : String(err);
+  throw new ZiteError({
+    code: err instanceof tutorial.TutorialUnavailable ? "UNAVAILABLE" : "BAD_REQUEST",
+    message,
+  });
+}
+
+const tutorialStudioStatus: Handler = async () => {
+  if (!tutorial.isConfigured()) {
+    return { configured: false, reachable: false, health: null };
+  }
+  try {
+    const health = await tutorial.health();
+    // The sidecar only knows its OWN environment. The apimart key normally
+    // lives in the write-only settings store on this side and is forwarded per
+    // job, so the honest answer to "can this render?" is the union of the two.
+    return {
+      configured: true,
+      reachable: true,
+      health: { ...health, has_apimart: tutorial.apimartAvailable(health.has_apimart) },
+    };
+  } catch {
+    // Configured but down (still building, restarting, crashed). The page shows
+    // this as "unreachable" rather than throwing an error toast at the user.
+    return { configured: true, reachable: false, health: null };
+  }
+};
+
+const tutorialStudioJobs: Handler = async () => {
+  try {
+    return await tutorial.listJobs();
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+const tutorialStudioJob: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    const { job } = await tutorial.getJob(id);
+    const offset = Number.isFinite(Number(input?.logOffset)) ? Number(input.logOffset) : 0;
+    const log = await tutorial.getLog(id, Math.max(0, offset));
+    return { job, log: log.text, logOffset: log.offset };
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+const tutorialStudioStart: Handler = async (input) => {
+  const topic = String(input?.topic || "").trim();
+  if (!topic) throw new ZiteError({ code: "BAD_REQUEST", message: "A topic is required." });
+  try {
+    return await tutorial.startJob({
+      topic,
+      outfit: String(input?.outfit || "").trim() || undefined,
+      scene: String(input?.scene || "").trim() || undefined,
+      avatar_id: String(input?.avatarId || "").trim() || undefined,
+      environment: String(input?.environment || "").trim() || undefined,
+      reuse_base: Boolean(input?.reuseBase),
+    });
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+// ── Tutorial Studio: avatars ────────────────────────────────────────────────
+// The operator makes each avatar's start image themselves and uploads it here;
+// the pipeline uses it as the identity reference, holding the face while the
+// outfit and the corner of the room change per video.
+
+const tutorialAvatars: Handler = async () => {
+  try {
+    return await tutorial.listAvatars();
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+const tutorialAvatarCreate: Handler = async (input) => {
+  const name = String(input?.name || "").trim();
+  const environment = String(input?.environment || "").trim();
+  // Accept a data: URL or bare base64 — the file picker gives the former.
+  const raw = String(input?.imageBase64 || "");
+  const b64 = raw.includes(",") && raw.startsWith("data:") ? raw.slice(raw.indexOf(",") + 1) : raw;
+  if (!b64) throw new ZiteError({ code: "BAD_REQUEST", message: "An image is required." });
+  if (!name) throw new ZiteError({ code: "BAD_REQUEST", message: "Give the avatar a name." });
+  try {
+    return await tutorial.createAvatar({ name, environment, image_b64: b64 });
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+const tutorialAvatarUpdate: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await tutorial.updateAvatar(id, {
+      name: typeof input?.name === "string" ? input.name : undefined,
+      environment: typeof input?.environment === "string" ? input.environment : undefined,
+    });
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+const tutorialAvatarDelete: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await tutorial.deleteAvatar(id);
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
+// ── Tutorial Studio: batches ────────────────────────────────────────────────
+// Ideas -> scripts -> the operator approves or edits each one -> only then do
+// paid renders start. Everything up to approval is cheap text.
+
+function batchOr404(id: string) {
+  const batch = tutorialBatches.getBatch(id);
+  if (!batch) throw new ZiteError({ code: "BAD_REQUEST", message: "No such batch." });
+  return batch;
+}
+
+function aiError(err: unknown): never {
+  throw new ZiteError({
+    code: "BAD_REQUEST",
+    message: err instanceof Error ? err.message : "The model call failed.",
+  });
+}
+
+const tutorialBatchList: Handler = async () => ({
+  batches: tutorialBatches.listBatches(),
+});
+
+const tutorialBatchCreate: Handler = async (input) => {
+  const theme = String(input?.theme || "").trim();
+  if (!theme) throw new ZiteError({ code: "BAD_REQUEST", message: "A theme is required." });
+  const target = Number(input?.targetCount);
+  return {
+    batch: tutorialBatches.createBatch({
+      name: String(input?.name || "").trim().slice(0, 120) || theme.slice(0, 120),
+      theme: theme.slice(0, 600),
+      avatarId: String(input?.avatarId || "").trim(),
+      environment: String(input?.environment || "").trim().slice(0, 600),
+      targetCount: Number.isFinite(target) ? Math.max(1, Math.min(60, Math.round(target))) : 30,
+    }),
+  };
+};
+
+const tutorialBatchGet: Handler = async (input) => {
+  const batch = batchOr404(String(input?.id || "").trim());
+  return {
+    batch,
+    items: tutorialBatches.listItems(batch.id),
+    scripting: isScripting(batch.id),
+  };
+};
+
+const tutorialBatchDelete: Handler = async (input) => ({
+  deleted: tutorialBatches.deleteBatch(String(input?.id || "").trim()),
+});
+
+/** Propose ideas for the batch's theme. Cheap: one text call, no renders. */
+const tutorialBatchIdeas: Handler = async (input) => {
+  const batch = batchOr404(String(input?.id || "").trim());
+  const count = Number(input?.count);
+  const n = Number.isFinite(count)
+    ? Math.max(1, Math.min(60, Math.round(count)))
+    : Math.round(batch.targetCount * 1.5); // over-propose so there is room to reject
+  try {
+    const ideas = await tutorialAi.generateIdeas(batch.theme, n);
+    if (!ideas.length) throw new tutorialAi.ApimartError("the model proposed no usable ideas.");
+    const items = tutorialBatches.replaceItems(batch.id, ideas);
+    tutorialBatches.updateBatch(batch.id, { status: "ideas", error: "" });
+    return { batch: tutorialBatches.getBatch(batch.id), items };
+  } catch (err) {
+    aiError(err);
+  }
+};
+
+const tutorialBatchPick: Handler = async (input) => {
+  const batch = batchOr404(String(input?.id || "").trim());
+  const ids = Array.isArray(input?.itemIds) ? input.itemIds.map((x: unknown) => String(x)) : [];
+  return { items: tutorialBatches.setPicked(batch.id, ids) };
+};
+
+/**
+ * Write a script for every picked idea. Returns immediately — 30 Qwen calls take
+ * minutes, so the work runs in the background and the page polls the batch.
+ */
+const tutorialBatchScripts: Handler = async (input) => {
+  const batch = batchOr404(String(input?.id || "").trim());
+  const picked = tutorialBatches.listItems(batch.id).filter((i) => i.picked);
+  if (!picked.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one idea first." });
+  }
+  startScripting(batch.id);
+  return { started: true, pending: picked.filter((i) => !i.script).length };
+};
+
+/** Edit or approve one item's script. This is the review step before any spend. */
+const tutorialBatchItemUpdate: Handler = async (input) => {
+  const id = String(input?.itemId || "").trim();
+  const item = tutorialBatches.getItem(id);
+  if (!item) throw new ZiteError({ code: "BAD_REQUEST", message: "No such item." });
+
+  let script = item.script;
+  if (input?.script && typeof input.script === "object") {
+    const text = String((input.script as any).script || "").trim();
+    if (!text) throw new ZiteError({ code: "BAD_REQUEST", message: "The script cannot be empty." });
+    script = { ...(item.script || {}), ...(input.script as Record<string, unknown>), script: text };
+  }
+  const approved = typeof input?.approved === "boolean" ? input.approved : item.approved;
+  return {
+    item: tutorialBatches.updateItem(id, {
+      script,
+      approved,
+      status: approved ? "approved" : script ? "scripted" : "idea",
+      error: "",
+    }),
+  };
+};
+
+/** Regenerate one item's script (for a rejected or failed one). */
+const tutorialBatchItemRescript: Handler = async (input) => {
+  const id = String(input?.itemId || "").trim();
+  const item = tutorialBatches.getItem(id);
+  if (!item) throw new ZiteError({ code: "BAD_REQUEST", message: "No such item." });
+  try {
+    const script = await tutorialAi.generateScript(item.topic);
+    return {
+      item: tutorialBatches.updateItem(id, {
+        script,
+        approved: false,
+        status: "scripted",
+        error: "",
+      }),
+    };
+  } catch (err) {
+    aiError(err);
+  }
+};
+
+/**
+ * Queue a render for every approved item. THIS is the step that spends money —
+ * each queued reel is a paid Wan clip — so it reports exactly what it queued.
+ */
+const tutorialBatchRender: Handler = async (input) => {
+  const batch = batchOr404(String(input?.id || "").trim());
+  const approved = tutorialBatches
+    .listItems(batch.id)
+    .filter((i) => i.approved && i.script && !i.jobId);
+  if (!approved.length) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Nothing to render — approve at least one script first.",
+    });
+  }
+
+  // One outfit and one corner of the room per video, varied against each other.
+  await assignLooks(batch.id);
+
+  let queued = 0;
+  const failures: Array<{ topic: string; error: string }> = [];
+  for (const stale of approved) {
+    const item = tutorialBatches.getItem(stale.id);
+    if (!item?.script) continue;
+    try {
+      const { job } = await tutorial.startJob({
+        topic: item.topic,
+        outfit: item.outfit || undefined,
+        scene: item.scene || undefined,
+        environment: batch.environment || undefined,
+        avatar_id: batch.avatarId || undefined,
+        batch_id: batch.id,
+        script: item.script,
+      });
+      tutorialBatches.updateItem(item.id, { jobId: job.id, status: "queued", error: "" });
+      queued++;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "could not queue";
+      tutorialBatches.updateItem(item.id, { status: "failed", error: message });
+      failures.push({ topic: item.topic, error: message });
+    }
+  }
+  tutorialBatches.updateBatch(batch.id, {
+    status: queued ? "rendering" : "review",
+    error: failures.length ? `${failures.length} could not be queued.` : "",
+  });
+  return { queued, failures, batch: tutorialBatches.getBatch(batch.id) };
+};
+
+// ── Tutorial Studio: its own social accounts ────────────────────────────────
+
+const tutorialStudioAccounts: Handler = async () => {
+  const configured = tutorialAccounts.studioPostizConfigured();
+  if (!configured) {
+    return { configured: false, channels: [], postpeerConfigured: false };
+  }
+  try {
+    return {
+      configured: true,
+      postpeerConfigured: tutorialAccounts.studioPostPeerConfigured(),
+      channels: await tutorialAccounts.listStudioChannels(),
+    };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Could not list the studio accounts.",
+    });
+  }
+};
+
+const tutorialStudioPost: Handler = async (input) => {
+  const jobId = String(input?.jobId || "").trim();
+  const content = String(input?.content || "").trim();
+  const channelIds = Array.isArray(input?.channelIds)
+    ? input.channelIds.map((x: unknown) => String(x)).filter(Boolean)
+    : [];
+  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
+  if (!channelIds.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Pick at least one channel." });
+  }
+  try {
+    await tutorialAccounts.postReel({
+      jobId,
+      channelIds,
+      content,
+      title: typeof input?.title === "string" ? input.title : undefined,
+      when: typeof input?.when === "string" && input.when ? input.when : undefined,
+    });
+    return { posted: true };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Posting failed.",
+    });
+  }
+};
+
+const tutorialStudioCancel: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await tutorial.cancelJob(id);
+  } catch (err) {
+    tutorialError(err);
+  }
+};
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -6099,6 +6617,15 @@ export const HANDLERS: Record<string, Handler> = {
   getBulkSchedulerStatus,
   getBulkSchedulerChannels,
   previewBulkSchedule,
+  fillBulkCaptions,
+  startBulkPreview,
+  getBulkPreviewRun,
+  cancelBulkPreview,
+  refreshBulkPlanCaptions,
+  bulkTranscriptGaps,
+  bulkScheduledPairs,
+  bulkFinishedRenders,
+  clearBulkCaptions,
   runBulkSchedule,
   getHiddenRenders,
   setRenderHidden,
@@ -6367,6 +6894,28 @@ export const HANDLERS: Record<string, Handler> = {
   avatarCancelVideo,
   avatarRetryVideo,
   avatarDeleteVideo,
+  // Tutorial Studio (LAB tool)
+  tutorialStudioStatus,
+  tutorialAvatars,
+  tutorialAvatarCreate,
+  tutorialAvatarUpdate,
+  tutorialAvatarDelete,
+  tutorialBatchList,
+  tutorialBatchCreate,
+  tutorialBatchGet,
+  tutorialBatchDelete,
+  tutorialBatchIdeas,
+  tutorialBatchPick,
+  tutorialBatchScripts,
+  tutorialBatchItemUpdate,
+  tutorialBatchItemRescript,
+  tutorialBatchRender,
+  tutorialStudioAccounts,
+  tutorialStudioPost,
+  tutorialStudioJobs,
+  tutorialStudioJob,
+  tutorialStudioStart,
+  tutorialStudioCancel,
 };
 
 void config;

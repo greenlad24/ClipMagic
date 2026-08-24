@@ -93,6 +93,107 @@ export const restartPostiz = endpoint("restartPostiz");
 export const getBulkSchedulerStatus = endpoint("getBulkSchedulerStatus");
 export const getBulkSchedulerChannels = endpoint("getBulkSchedulerChannels");
 export const previewBulkSchedule = endpoint("previewBulkSchedule");
+
+// ── Bulk plan building, in the background ───────────────────────────────────
+// Building a plan is minutes of AI work, so it no longer rides one HTTP
+// request: start it, then poll. A reload reconnects via getBulkPreviewRun with
+// no id, and captions already written are reused for free next time.
+
+export type BulkPreviewStatus = "running" | "done" | "failed" | "cancelled";
+
+export interface BulkPreviewRun {
+  id: string;
+  status: BulkPreviewStatus;
+  /** Human-readable stage, e.g. "writing captions (84 of 227)". */
+  stage: string;
+  doneCount: number;
+  totalCount: number;
+  /** Files that reused a stored caption and cost nothing. */
+  cachedCount: number;
+  error: string;
+  createdAt: number;
+  updatedAt: number;
+  /** The plan itself — only once status is "done". */
+  result: PreviewBulkScheduleOutputType | null;
+  /**
+   * What the plan was built from. Carried back so a reloaded page can restore
+   * the picker's selection — without it a recovered plan cannot be scheduled,
+   * because posts resolve their media through that list.
+   */
+  input: { files?: Array<{ fileId: string; source: any; label?: string; brief?: string }> } | null;
+}
+
+/**
+ * Fill in captions for posts that came back blank, without rebuilding the plan.
+ * Uses a stored caption where one exists (free) and writes a fresh one where not.
+ */
+export const fillBulkCaptions = endpoint<
+  {
+    files: Array<{
+      fileId: string;
+      source: unknown;
+      brief?: string;
+      /** Which platforms need a caption written for this file. */
+      platforms: string[];
+      /** Rewrite even if one is stored — the stored caption is the problem. */
+      force?: boolean;
+    }>;
+  },
+  {
+    captions: Record<string, Record<string, { caption: string; hashtags: string[]; firstLineHook: string }>>;
+    reused: number;
+    generated: number;
+    failures: Array<{ fileId: string; error: string }>;
+    limit: number;
+    remaining: number;
+    /** How many posts in the SAVED plan were updated (survives a reload). */
+    persisted: number;
+  }
+>("fillBulkCaptions");
+
+/**
+ * Videos whose captions were written WITHOUT the transcript (transcription
+ * failed at the time). Their captions pass the guidelines but aren't grounded
+ * in what the video says — worth re-captioning now that it works.
+ */
+/**
+ * "<fileId>|<channelId>" pairs already scheduled by this tool. The review step
+ * removes them from a plan built before they went out.
+ */
+export const bulkScheduledPairs =
+  endpoint<Record<string, never>, { pairs: string[] }>("bulkScheduledPairs");
+
+/**
+ * Render filenames with nothing left to post (scheduled to every connected
+ * channel). The picker filters these out — they are NOT hidden.
+ */
+export const bulkFinishedRenders =
+  endpoint<Record<string, never>, { names: string[] }>("bulkFinishedRenders");
+
+export const bulkTranscriptGaps =
+  endpoint<Record<string, never>, { fileIds: string[] }>("bulkTranscriptGaps");
+
+/**
+ * Copy stored captions into the saved plan. Free repair for a plan whose
+ * rewrites were applied before they were written back.
+ */
+export const refreshBulkPlanCaptions = endpoint<
+  { id?: string },
+  { refreshed: number; run: BulkPreviewRun | null }
+>("refreshBulkPlanCaptions");
+
+export const startBulkPreview =
+  endpoint<Record<string, unknown>, { run: BulkPreviewRun }>("startBulkPreview");
+
+/** Omit `id` to reconnect to the most recent run after a page reload. */
+export const getBulkPreviewRun =
+  endpoint<{ id?: string }, { run: BulkPreviewRun | null }>("getBulkPreviewRun");
+
+export const cancelBulkPreview = endpoint<{ id: string }, { cancelled: boolean }>("cancelBulkPreview");
+
+/** Forget stored captions for these files so the next plan rewrites them. */
+export const clearBulkCaptions =
+  endpoint<{ fileIds: string[] }, { cleared: number }>("clearBulkCaptions");
 export const runBulkSchedule = endpoint("runBulkSchedule");
 export const getHiddenRenders = endpoint("getHiddenRenders");
 export const setRenderHidden = endpoint("setRenderHidden");
@@ -1451,6 +1552,8 @@ export type BulkProviderStatus = {
 /** Which cloud-folder providers are configured (gates the Drive/Dropbox tabs). */
 export type CloudProvidersStatus = { gdrive: boolean; dropbox: boolean };
 export type GetBulkSchedulerStatusOutputType = {
+  /** The comment keyword captions must ask for (server-configured). */
+  ctaKeyword?: string;
   apiKeyConfigured: boolean;
   channelCount: number;
   channels: BulkChannel[];
@@ -1573,8 +1676,12 @@ export type BulkScheduleItemResult = {
   error?: string;
   /** Set when blocked by Growth Guardrails: the failing required checks. */
   blockedChecks?: GrowthCheck[];
+  /** Already scheduled to this channel — skipped, and never worth retrying. */
+  duplicate?: boolean;
 };
 export type RunBulkScheduleOutputType = {
+  /** Items refused because this tool already scheduled them (not failures). */
+  skippedDuplicates?: number;
   results: BulkScheduleItemResult[];
   scheduled: number;
   failed: number;
@@ -2225,3 +2332,229 @@ export const avatarCancelVideo = endpoint<{ videoId: string }, { canceled: boole
  */
 export const avatarRetryVideo = endpoint<{ videoId: string }, { retried: boolean }>("avatarRetryVideo");
 export const avatarDeleteVideo = endpoint<{ videoId: string }, { deleted: boolean }>("avatarDeleteVideo");
+
+// ── Tutorial Studio (LAB tool) ───────────────────────────────────────────────
+// Topic → finished 9:16 talking-head tutorial reel. The pipeline runs in a
+// Python sidecar; these just carry the job records back and forth. The finished
+// mp4 is NOT here — it streams from /api/tutorial/reel/<id>.mp4 (Range requests).
+
+export type TutorialJobStatus =
+  | "queued"
+  | "running"
+  | "done"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+export interface TutorialJob {
+  id: string;
+  topic: string;
+  outfit: string;
+  scene: string;
+  /** The room this reel was shot in ("" = the packaged look). */
+  environment: string;
+  /** Uploaded avatar that drove the face ("" = the packaged creator sheet). */
+  avatar_id: string;
+  /** Groups the reels of one batch ("" = a one-off). */
+  batch_id: string;
+  reuse_base: boolean;
+  status: TutorialJobStatus;
+  error: string;
+  created_at: number | null;
+  started_at: number | null;
+  finished_at: number | null;
+  size_bytes: number | null;
+  has_reel: boolean;
+}
+
+export interface TutorialHealth {
+  ok: boolean;
+  /** Without this the sidecar refuses to queue — it drives 3 of the 8 stages. */
+  has_apimart: boolean;
+  has_anthropic: boolean;
+  /** A previous run's talking-head is on disk, so --reuse-base is offerable. */
+  has_base_clip: boolean;
+  queued: number;
+}
+
+export const tutorialStudioStatus = endpoint<
+  Record<string, never>,
+  { configured: boolean; reachable: boolean; health: TutorialHealth | null }
+>("tutorialStudioStatus");
+
+export const tutorialStudioJobs =
+  endpoint<Record<string, never>, { jobs: TutorialJob[] }>("tutorialStudioJobs");
+
+export const tutorialStudioJob = endpoint<
+  { id: string; logOffset?: number },
+  { job: TutorialJob; log: string; logOffset: number }
+>("tutorialStudioJob");
+
+export const tutorialStudioStart = endpoint<
+  {
+    topic: string;
+    outfit?: string;
+    scene?: string;
+    /** Uploaded avatar to use as the identity reference. */
+    avatarId?: string;
+    /** The room to shoot in; normally the chosen avatar's own. */
+    environment?: string;
+    reuseBase?: boolean;
+  },
+  { job: TutorialJob }
+>("tutorialStudioStart");
+
+export const tutorialStudioCancel = endpoint<{ id: string }, { ok: boolean }>("tutorialStudioCancel");
+
+// ── Tutorial Studio: avatars, batches, and its own posting identity ─────────
+// The avatar is an image the operator made themselves; the pipeline uses it as
+// the identity reference and varies outfit + corner of the room per video.
+
+export interface TutorialAvatar {
+  id: string;
+  name: string;
+  /** The ONE place every video with this avatar is shot in. */
+  environment: string;
+  mime: string;
+  bytes: number;
+  created_at: number | null;
+}
+
+export const tutorialAvatars =
+  endpoint<Record<string, never>, { avatars: TutorialAvatar[] }>("tutorialAvatars");
+
+export const tutorialAvatarCreate = endpoint<
+  { name: string; environment: string; imageBase64: string },
+  { avatar: TutorialAvatar }
+>("tutorialAvatarCreate");
+
+export const tutorialAvatarUpdate = endpoint<
+  { id: string; name?: string; environment?: string },
+  { avatar: TutorialAvatar }
+>("tutorialAvatarUpdate");
+
+export const tutorialAvatarDelete =
+  endpoint<{ id: string }, { deleted: boolean }>("tutorialAvatarDelete");
+
+export type TutorialBatchStatus = "ideas" | "scripting" | "review" | "rendering" | "done";
+export type TutorialItemStatus =
+  | "idea"
+  | "scripted"
+  | "approved"
+  | "queued"
+  | "rendering"
+  | "done"
+  | "failed";
+
+export interface TutorialBatch {
+  id: string;
+  name: string;
+  theme: string;
+  avatarId: string;
+  environment: string;
+  targetCount: number;
+  status: TutorialBatchStatus;
+  error: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TutorialScript {
+  title_small?: string;
+  title_main?: string;
+  script?: string;
+  cta?: string;
+  keyword?: string;
+  topic?: string;
+}
+
+export interface TutorialBatchItem {
+  id: string;
+  batchId: string;
+  idx: number;
+  topic: string;
+  hook: string;
+  picked: boolean;
+  approved: boolean;
+  script: TutorialScript | null;
+  outfit: string;
+  scene: string;
+  jobId: string;
+  status: TutorialItemStatus;
+  error: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export const tutorialBatchList =
+  endpoint<Record<string, never>, { batches: TutorialBatch[] }>("tutorialBatchList");
+
+export const tutorialBatchCreate = endpoint<
+  { name?: string; theme: string; avatarId?: string; environment?: string; targetCount?: number },
+  { batch: TutorialBatch }
+>("tutorialBatchCreate");
+
+export const tutorialBatchGet = endpoint<
+  { id: string },
+  { batch: TutorialBatch; items: TutorialBatchItem[]; scripting: boolean }
+>("tutorialBatchGet");
+
+export const tutorialBatchDelete =
+  endpoint<{ id: string }, { deleted: boolean }>("tutorialBatchDelete");
+
+export const tutorialBatchIdeas = endpoint<
+  { id: string; count?: number },
+  { batch: TutorialBatch | null; items: TutorialBatchItem[] }
+>("tutorialBatchIdeas");
+
+export const tutorialBatchPick = endpoint<
+  { id: string; itemIds: string[] },
+  { items: TutorialBatchItem[] }
+>("tutorialBatchPick");
+
+/** Returns as soon as the background scripting starts; poll tutorialBatchGet. */
+export const tutorialBatchScripts = endpoint<
+  { id: string },
+  { started: boolean; pending: number }
+>("tutorialBatchScripts");
+
+export const tutorialBatchItemUpdate = endpoint<
+  { itemId: string; script?: TutorialScript; approved?: boolean },
+  { item: TutorialBatchItem | null }
+>("tutorialBatchItemUpdate");
+
+export const tutorialBatchItemRescript = endpoint<
+  { itemId: string },
+  { item: TutorialBatchItem | null }
+>("tutorialBatchItemRescript");
+
+/** The paid step: queues one render per approved script. */
+export const tutorialBatchRender = endpoint<
+  { id: string },
+  {
+    queued: number;
+    failures: Array<{ topic: string; error: string }>;
+    batch: TutorialBatch | null;
+  }
+>("tutorialBatchRender");
+
+export interface StudioChannel {
+  id: string;
+  name: string;
+  platform: string;
+  picture?: string;
+  disabled: boolean;
+  provider: "postiz" | "postpeer";
+  /** False when this backend cannot publish to it yet (PostPeer needs a public URL). */
+  postable: boolean;
+}
+
+export const tutorialStudioAccounts = endpoint<
+  Record<string, never>,
+  { configured: boolean; postpeerConfigured: boolean; channels: StudioChannel[] }
+>("tutorialStudioAccounts");
+
+export const tutorialStudioPost = endpoint<
+  { jobId: string; channelIds: string[]; content: string; title?: string; when?: string },
+  { posted: boolean }
+>("tutorialStudioPost");

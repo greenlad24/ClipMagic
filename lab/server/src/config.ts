@@ -118,6 +118,16 @@ export const config = {
   whatsappToken: process.env.WHATSAPP_API_TOKEN || "",
 
   /**
+   * Tutorial Studio sidecar (a separate Python container: ffmpeg + headless
+   * Chromium + whisper). Same arrangement as WhatsApp above — no public port,
+   * reached only over the Docker network, with a shared Bearer token on top of
+   * the Google gate. Blank → the tool reports itself unavailable rather than
+   * throwing.
+   */
+  tutorialStudioUrl: process.env.TUTORIAL_STUDIO_URL || "",
+  tutorialStudioToken: process.env.TUTORIAL_STUDIO_API_TOKEN || "",
+
+  /**
    * How many FFmpeg renders run in parallel. Defaults to the CPU count: FFmpeg
    * is already multi-threaded per job, so going much above vCPUs hurts overall
    * throughput. This is the knob that lets a droplet chew through 300+ jobs.

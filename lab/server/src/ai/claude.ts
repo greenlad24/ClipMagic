@@ -402,6 +402,18 @@ async function callClaude(opts: {
     ? await anthropicStreamRequest(body, label, auth)
     : await anthropicRequest(body, label, undefined, auth);
   const ms = Date.now() - t0;
+  // ⚠️⚠️ SAY WHETHER THE SEARCH ACTUALLY RAN. Offering the tool is not using it:
+  // the model decides, and with `jsonMode` telling it to return only a JSON
+  // object it can reasonably go straight to answering. A reply that recommended
+  // superseded tools looked identical to one that had searched and found
+  // nothing newer — same shape, same token count, no way to tell them apart
+  // from outside, because everything but the text blocks is discarded below.
+  if (opts.webSearch) {
+    const blocks = (json.content || []) as unknown as { type?: string }[];
+    const issued = blocks.filter((b) => b.type === "server_tool_use").length;
+    const results = blocks.filter((b) => b.type === "web_search_tool_result").length;
+    console.log(`[claude] web search — ${issued} search(es) issued, ${results} result block(s) (${opts.purpose ?? "no purpose"})`);
+  }
   // Record the REAL usage from Anthropic's response into the active run's report.
   if (opts.purpose) {
     recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms });

@@ -4,6 +4,7 @@ import { ArrowLeft, UploadCloud, Loader2, Download, CheckCircle2, XCircle, Stick
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { uploadBlobToZite } from '@/utils/videoUtils';
+import { StickerSoundCard } from '@/components/meme/StickerSoundCard';
 import { createMeme, getMemeRun } from 'zite-endpoints-sdk';
 import StoragePickerDialog, { type StoredFile } from '@/components/StoragePickerDialog';
 
@@ -169,6 +170,9 @@ export default function MemePage() {
           <input ref={inputRef} type="file" accept="video/*" multiple className="hidden"
             onChange={(e) => { addFiles(e.target.files); e.currentTarget.value = ''; }} />
         </div>
+
+        {/* The sound each sticker lands with — built-in, or your own file. */}
+        <StickerSoundCard />
 
         {/* Reuse an already-uploaded narration instead of uploading again. */}
         <div className="flex justify-center -mt-2">

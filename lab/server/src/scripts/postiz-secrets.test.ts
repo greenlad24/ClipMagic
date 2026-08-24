@@ -36,6 +36,7 @@ async function main() {
   const {
     getSettings, updateSettings, buildEnvFileContents, POSTIZ_KEY_DEFS,
     getPostizApiKey, getPostPeerApiKey, getGoogleDriveApiKey, getDropboxCredentials,
+    getApimartApiKey,
   } = mod;
 
   const SECRET = "super-secret-jwt-value-1234567890";
@@ -200,6 +201,52 @@ async function main() {
     process.env.POSTIZ_API_KEY = "from-env-override";
     assert.equal(getPostizApiKey(), "from-env-override");
     delete process.env.POSTIZ_API_KEY;
+  });
+
+  // ── APIMART_API_KEY: write-only + server-only getter + NOT in Postiz env ────
+  // Tutorial Studio's paid engine. Unlike its siblings the lab server does not
+  // USE this key — it forwards it to the render sidecar with the job — so the
+  // getter is the only way out of the store, and nothing else may expose it.
+  const APIMART_KEY = "apimart-key-tutorial-studio-4242";
+
+  await check("APIMART_API_KEY is in the registry under the Tutorial Studio group", () => {
+    const def = POSTIZ_KEY_DEFS.find((d) => d.key === "APIMART_API_KEY");
+    assert.ok(def, "APIMART_API_KEY missing from the registry");
+    assert.equal(def?.group, "Tutorial Studio");
+  });
+
+  await check("APIMART_API_KEY value never leaks via getSettings/updateSettings", () => {
+    delete process.env.APIMART_API_KEY; // test the STORE path, not env
+    const responses = [
+      JSON.stringify(updateSettings({ values: { APIMART_API_KEY: APIMART_KEY } })),
+      JSON.stringify(getSettings()),
+    ];
+    for (const r of responses) {
+      assert.ok(!r.includes(APIMART_KEY), "a response leaked the apimart API key");
+    }
+  });
+
+  await check("APIMART_API_KEY is reported configured after save", () => {
+    const s = getSettings();
+    const k = s.keys.find((x) => x.key === "APIMART_API_KEY");
+    assert.equal(k?.configured, true);
+  });
+
+  await check("getApimartApiKey() returns the raw value for server-side use only", () => {
+    delete process.env.APIMART_API_KEY;
+    assert.equal(getApimartApiKey(), APIMART_KEY);
+  });
+
+  await check("APIMART_API_KEY is NOT emitted into the Postiz container env file", () => {
+    const text = buildEnvFileContents({ APIMART_API_KEY: APIMART_KEY, POSTIZ_JWT_SECRET: SECRET });
+    assert.ok(!text.includes("APIMART_API_KEY"), "APIMART_API_KEY leaked into the Postiz env file");
+    assert.ok(text.includes("POSTIZ_JWT_SECRET="), "other keys should still be emitted");
+  });
+
+  await check("env var APIMART_API_KEY takes precedence over the store", () => {
+    process.env.APIMART_API_KEY = "from-env-override";
+    assert.equal(getApimartApiKey(), "from-env-override");
+    delete process.env.APIMART_API_KEY;
   });
 
   // ── POSTPEER_API_KEY: write-only + server-only getter + NOT in Postiz env ────

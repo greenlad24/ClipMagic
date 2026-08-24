@@ -1091,6 +1091,83 @@ CREATE TABLE IF NOT EXISTS avatar_segments (
   FOREIGN KEY (video_id) REFERENCES avatar_videos(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_avatar_segments_video ON avatar_segments(video_id, idx);
+
+-- Tutorial Studio batches: one theme in, ~30 finished reels out. The batch is a
+-- REVIEW queue first and a render queue second — ideas are proposed, scripts are
+-- written, and nothing paid happens until the operator approves each one. That
+-- is why the items live here and not in the sidecar: they are edited for a while
+-- before a job exists, and the edits must survive a container restart.
+CREATE TABLE IF NOT EXISTS ts_batches (
+  id           TEXT PRIMARY KEY,
+  name         TEXT NOT NULL DEFAULT '',
+  theme        TEXT NOT NULL DEFAULT '',
+  avatar_id    TEXT NOT NULL DEFAULT '',   -- sidecar avatar id ('' = packaged look)
+  environment  TEXT NOT NULL DEFAULT '',   -- the one room every video is shot in
+  target_count INTEGER NOT NULL DEFAULT 30,
+  status       TEXT NOT NULL,              -- ideas | scripting | review | rendering | done
+  error        TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ts_batches_created ON ts_batches(created_at);
+
+-- One row per video in a batch, carrying it from idea to posted reel.
+-- job_id is the sidecar job once rendering starts; before that it is ''.
+CREATE TABLE IF NOT EXISTS ts_batch_items (
+  id          TEXT PRIMARY KEY,
+  batch_id    TEXT NOT NULL,
+  idx         INTEGER NOT NULL,
+  topic       TEXT NOT NULL DEFAULT '',
+  hook        TEXT NOT NULL DEFAULT '',
+  picked      INTEGER NOT NULL DEFAULT 0,  -- operator chose this idea
+  approved    INTEGER NOT NULL DEFAULT 0,  -- operator approved the script
+  script_json TEXT,                        -- TutorialScript, editable until approved
+  outfit      TEXT NOT NULL DEFAULT '',
+  scene       TEXT NOT NULL DEFAULT '',
+  job_id      TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL DEFAULT 'idea', -- idea | scripted | approved | queued | rendering | done | failed
+  error       TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ts_items_batch ON ts_batch_items(batch_id, idx);
+
+-- Bulk Scheduler CAPTION CACHE. Captions were regenerated from scratch on every
+-- preview — one AI call per video, plus a transcription — so re-planning the
+-- same library cost the same money and the same half hour every time. A file's
+-- caption does not depend on WHEN it is scheduled, so it is cached here per
+-- (file, platform) and reused until explicitly re-generated.
+CREATE TABLE IF NOT EXISTS bulk_captions (
+  file_id         TEXT NOT NULL,          -- "<kind>:<ref>"
+  platform        TEXT NOT NULL,          -- tiktok | instagram | youtube | generic
+  caption         TEXT NOT NULL DEFAULT '',
+  hashtags_json   TEXT NOT NULL DEFAULT '[]',
+  first_line_hook TEXT NOT NULL DEFAULT '',
+  transcript      TEXT,                   -- what the caption was grounded in
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL,
+  PRIMARY KEY (file_id, platform)
+);
+
+-- Bulk Scheduler PREVIEW RUNS. Building a plan used to live entirely inside one
+-- HTTP request: a 227-video plan took 31 minutes of silence, and when the
+-- connection died the finished 2.5MB result had nowhere to go and every AI call
+-- was wasted (2026-08-24). The plan is now built in the background against this
+-- row, so the page can drop, reload and reconnect without re-spending.
+CREATE TABLE IF NOT EXISTS bulk_preview_runs (
+  id           TEXT PRIMARY KEY,
+  status       TEXT NOT NULL,             -- running | done | failed | cancelled
+  stage        TEXT NOT NULL DEFAULT '',  -- human-readable current stage
+  done_count   INTEGER NOT NULL DEFAULT 0,
+  total_count  INTEGER NOT NULL DEFAULT 0,
+  cached_count INTEGER NOT NULL DEFAULT 0, -- files that reused a stored caption
+  input_json   TEXT NOT NULL,
+  result_json  TEXT,                      -- PreviewOutput, once finished
+  error        TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_bulk_preview_created ON bulk_preview_runs(created_at);
 `);
 
 /**

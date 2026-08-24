@@ -129,8 +129,14 @@ export function postizApiConfigured(): boolean {
   return !!getPostizApiKey();
 }
 
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const key = getPostizApiKey();
+/**
+ * `apiKey` overrides the default account. It is how a SEPARATE account group is
+ * kept separate: a client built with another group's key authenticates as that
+ * Postiz account and therefore cannot see — let alone post to — the default
+ * account's channels. Absent, the configured default key is used.
+ */
+function authHeaders(extra?: Record<string, string>, apiKey?: string): Record<string, string> {
+  const key = apiKey || getPostizApiKey();
   if (!key) {
     throw new PostizApiError(
       "Postiz API key not configured. Add it under Settings → Postiz (Bulk Scheduler group).",
@@ -148,7 +154,14 @@ async function request<T>(
   path: string,
   // `body` is a FormData (multipart upload); typed loosely since the server's TS
   // lib is ES2022-only (no DOM `BodyInit`) — fetch/FormData come from @types/node.
-  opts: { json?: unknown; body?: FormData; headers?: Record<string, string>; timeoutMs?: number } = {},
+  opts: {
+    json?: unknown;
+    body?: FormData;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+    /** Authenticate as a different account group (see authHeaders). */
+    apiKey?: string;
+  } = {},
 ): Promise<T> {
   // SECURITY CHOKEPOINT: refuse any write this backend must never make (all
   // edit/delete; anything touching the protected @jake.dawson channel beyond a
@@ -156,6 +169,58 @@ async function request<T>(
   // postiz/postizGuard.ts. Long-form-upload blocking is separate (schedule gate).
   assertPostizWriteAllowed(method, path, opts.json);
 
+  return requestWithRetry(method, path, opts, 0);
+}
+
+/**
+ * Postiz throttles its public API — `ttl: 3600000, limit: 90` by default, i.e.
+ * 90 requests PER HOUR (raise it with API_LIMIT on the Postiz container). A bulk
+ * drop is thousands of calls, so on 2026-08-24 exactly 90 posts landed and 818
+ * came back "Too Many Requests" with nothing retried.
+ *
+ * A 429 is a "wait", not a failure, so it is retried with backoff, honouring
+ * Retry-After when Postiz sends one. The ceiling is deliberately low: if the
+ * limit is genuinely exhausted for the hour, waiting inside a request helps
+ * nobody — the caller should be told, and the operator should raise API_LIMIT.
+ */
+const RATE_LIMIT_RETRIES = Number.parseInt(process.env.POSTIZ_RATE_LIMIT_RETRIES || "3", 10);
+
+async function requestWithRetry<T>(
+  method: string,
+  path: string,
+  opts: {
+    json?: unknown;
+    body?: FormData;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+    apiKey?: string;
+  },
+  attempt: number,
+): Promise<T> {
+  try {
+    return await requestOnce<T>(method, path, opts);
+  } catch (e) {
+    const throttled = e instanceof PostizApiError && e.status === 429;
+    if (!throttled || attempt >= RATE_LIMIT_RETRIES) throw e;
+    // Backoff: 2s, 8s, 30s — enough to ride out a burst without pretending we
+    // can outwait an exhausted hourly quota.
+    const waitMs = [2_000, 8_000, 30_000][Math.min(attempt, 2)];
+    await new Promise((r) => setTimeout(r, waitMs));
+    return requestWithRetry<T>(method, path, opts, attempt + 1);
+  }
+}
+
+async function requestOnce<T>(
+  method: string,
+  path: string,
+  opts: {
+    json?: unknown;
+    body?: FormData;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+    apiKey?: string;
+  } = {},
+): Promise<T> {
   const url = `${postizBaseUrl()}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -163,10 +228,13 @@ async function request<T>(
   try {
     res = await fetch(url, {
       method,
-      headers: authHeaders({
-        ...(opts.json !== undefined ? { "content-type": "application/json" } : {}),
-        ...(opts.headers ?? {}),
-      }),
+      headers: authHeaders(
+        {
+          ...(opts.json !== undefined ? { "content-type": "application/json" } : {}),
+          ...(opts.headers ?? {}),
+        },
+        opts.apiKey,
+      ),
       body: opts.json !== undefined ? JSON.stringify(opts.json) : opts.body,
       signal: controller.signal,
     });
@@ -209,11 +277,18 @@ export interface PostizClient {
   getAnalytics(integrationId: string): Promise<PostizAnalyticsSeries[]>;
 }
 
-/** Build a Postiz public-API client bound to the configured key + internal URL. */
-export function createPostizClient(): PostizClient {
+/**
+ * Build a Postiz public-API client bound to the configured key + internal URL.
+ *
+ * Pass `apiKey` to bind it to a DIFFERENT Postiz account instead — the
+ * mechanism behind separate account groups. The write guard still applies to
+ * every client, whichever account it speaks for.
+ */
+export function createPostizClient(opts: { apiKey?: string } = {}): PostizClient {
+  const apiKey = opts.apiKey;
   return {
     async listIntegrations() {
-      const raw = await request<unknown>("GET", "/integrations");
+      const raw = await request<unknown>("GET", "/integrations", { apiKey });
       const arr = Array.isArray(raw) ? raw : [];
       // Tolerate extra/missing fields across Postiz versions; keep only what we use.
       return arr
@@ -238,6 +313,7 @@ export function createPostizClient(): PostizClient {
       // extension (issue #1147), fall back to downloading + multipart upload().
       const r = await request<Record<string, unknown>>("POST", "/upload-from-url", {
         json: { url: mediaUrl },
+        apiKey,
       });
       return normalizeUpload(r);
     },
@@ -249,6 +325,7 @@ export function createPostizClient(): PostizClient {
       // Let fetch set the multipart boundary; only pass the auth header.
       const r = await request<Record<string, unknown>>("POST", "/upload", {
         body: form,
+        apiKey,
       });
       return normalizeUpload(r);
     },
@@ -263,14 +340,14 @@ export function createPostizClient(): PostizClient {
         tags: input.tags ?? [],
         posts: input.posts,
       };
-      return request<unknown>("POST", "/posts", { json: body });
+      return request<unknown>("POST", "/posts", { json: body, apiKey });
     },
 
     async getAnalytics(integrationId) {
       // Best-effort: empty for new/unverified accounts. Never throw on an empty
       // body; only real HTTP errors propagate (the caller treats those as "no
       // analytics" too — see scheduling.refineWithAnalytics).
-      const raw = await request<unknown>("GET", `/analytics/${encodeURIComponent(integrationId)}`);
+      const raw = await request<unknown>("GET", `/analytics/${encodeURIComponent(integrationId)}`, { apiKey });
       if (!Array.isArray(raw)) return [];
       return raw
         .map((s): PostizAnalyticsSeries | null => {

@@ -107,8 +107,9 @@ export function postPeerApiConfigured(): boolean {
   return !!getPostPeerApiKey();
 }
 
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const key = getPostPeerApiKey();
+/** `apiKey` authenticates as a DIFFERENT PostPeer account (separate account groups). */
+function authHeaders(extra?: Record<string, string>, apiKey?: string): Record<string, string> {
+  const key = apiKey || getPostPeerApiKey();
   if (!key) {
     throw new PostPeerApiError(
       "PostPeer API key not configured. Add it under Settings → Postiz (Bulk Scheduler group).",
@@ -124,7 +125,13 @@ const DEFAULT_TIMEOUT_MS = Number.parseInt(process.env.POSTPEER_API_TIMEOUT_MS |
 async function request<T>(
   method: string,
   path: string,
-  opts: { json?: unknown; headers?: Record<string, string>; timeoutMs?: number } = {},
+  opts: {
+    json?: unknown;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+    /** Authenticate as a different account group (see authHeaders). */
+    apiKey?: string;
+  } = {},
 ): Promise<T> {
   const url = `${postPeerBaseUrl()}${path}`;
   const controller = new AbortController();
@@ -133,10 +140,13 @@ async function request<T>(
   try {
     res = await fetch(url, {
       method,
-      headers: authHeaders({
-        ...(opts.json !== undefined ? { "content-type": "application/json" } : {}),
-        ...(opts.headers ?? {}),
-      }),
+      headers: authHeaders(
+        {
+          ...(opts.json !== undefined ? { "content-type": "application/json" } : {}),
+          ...(opts.headers ?? {}),
+        },
+        opts.apiKey,
+      ),
       body: opts.json !== undefined ? JSON.stringify(opts.json) : undefined,
       signal: controller.signal,
     });
@@ -185,14 +195,20 @@ async function request<T>(
  * (POST /v1/posts will 400 with a clear message if a name is off) and adjust.
  */
 export function buildTikTokPlatformData(t: PostPeerTikTokOptions): Record<string, unknown> {
-  return {
-    privacyLevel: t.privacyLevel,
-    allowComment: t.allowComment,
-    allowDuet: t.allowDuet,
-    allowStitch: t.allowStitch,
-    // Commercial-content disclosure (TikTok requires it be declared up-front).
-    commercialContent: t.commercialContent,
-  };
+  // PROBED AGAINST THE LIVE API (2026-08-24), which is what the TODO above asked
+  // for. PostPeer validates this object STRICTLY and accepts exactly one key:
+  //
+  //   privacyLevel       ACCEPTED
+  //   allowComment       400 "platformSpecificData must NOT have additional properties"
+  //   allowDuet          400  (same)
+  //   allowStitch        400  (same)
+  //   commercialContent  400  (same)
+  //
+  // Sending any of the rejected four fails the WHOLE post, which is how 130 of
+  // Jake's TikTok posts died. The comment/duet/stitch and commercial-content
+  // toggles are therefore left to the defaults on the PostPeer account — this
+  // API gives us no way to set them. Re-probe before adding a key back.
+  return { privacyLevel: t.privacyLevel };
 }
 
 export interface PostPeerClient {
@@ -201,11 +217,16 @@ export interface PostPeerClient {
   createPost(input: PostPeerCreatePostInput): Promise<unknown>;
 }
 
-/** Build a PostPeer public-API client bound to the configured key + base URL. */
-export function createPostPeerClient(): PostPeerClient {
+/**
+ * Build a PostPeer public-API client bound to the configured key + base URL.
+ * Pass `apiKey` to bind it to a DIFFERENT PostPeer account instead — the
+ * mechanism behind separate account groups.
+ */
+export function createPostPeerClient(opts: { apiKey?: string } = {}): PostPeerClient {
+  const apiKey = opts.apiKey;
   return {
     async listAccounts() {
-      const raw = await request<unknown>("GET", "/connect/integrations");
+      const raw = await request<unknown>("GET", "/connect/integrations", { apiKey });
       // PostPeer wraps the list as { success, total, integrations: [...] }. Also
       // tolerate a bare array or a { data: [...] } envelope across versions.
       const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
@@ -265,7 +286,7 @@ export function createPostPeerClient(): PostPeerClient {
       } else {
         body.publishNow = true;
       }
-      return request<unknown>("POST", "/posts", { json: body });
+      return request<unknown>("POST", "/posts", { json: body, apiKey });
     },
   };
 }

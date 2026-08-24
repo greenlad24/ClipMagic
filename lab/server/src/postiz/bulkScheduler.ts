@@ -27,12 +27,13 @@ import {
   type PostPeerTikTokOptions,
 } from "./postpeerClient.js";
 import { toShortPlatform, buildProviderSettings, type ShortPlatform } from "./providerSettings.js";
-import { generateCaptions, scoreCaption, scoreChecks, type PlatformCaption, type CaptionPlatform } from "./captions.js";
+import { generateCaptions, scoreCaption, scoreChecks, CTA_KEYWORD, type PlatformCaption, type CaptionPlatform } from "./captions.js";
 import { buildSchedule, type Intent, type ScheduleItemInput, type ChannelStartState } from "./scheduling.js";
 import { sequenceDrops, groupKeyForFilename, countLooks, type DropFile } from "./dropSequencing.js";
 import { POSITION_UNKNOWN } from "./renderPosition.js";
 import { loadRenderPositions } from "./renderPositionStore.js";
 import { getChannelState, recordScheduled, deriveChannelTimeline } from "./scheduleLedger.js";
+import { getCaptions as getCachedCaptions, putCaption as putCachedCaption } from "../db/bulkPreview.js";
 import { resolveSourceUrl, resolvePublicSourceUrl, resolveLocalPath, filenameFor, type FileSourceRef } from "./fileSources.js";
 import { preflightVideo, type ProbeFn } from "./preflight.js";
 import { isYouTubePost, youtubeShortsGate } from "./youtubeGate.js";
@@ -114,6 +115,8 @@ export async function getStatus(): Promise<{
   channelCount: number;
   channels: ChannelDto[];
   providers: { postiz: ProviderStatus; postpeer: ProviderStatus };
+  /** The comment keyword captions ask for, so the review step can check for it. */
+  ctaKeyword: string;
   error?: string;
 }> {
   const [postiz, postpeer] = await Promise.all([listPostizChannels.safe(), listPostPeerChannels.safe()]);
@@ -127,6 +130,7 @@ export async function getStatus(): Promise<{
   return {
     apiKeyConfigured: providers.postiz.configured || providers.postpeer.configured,
     channelCount: channels.length,
+    ctaKeyword: CTA_KEYWORD,
     channels,
     providers,
     ...(error ? { error } : {}),
@@ -329,9 +333,49 @@ export interface PreviewOutput {
   lookCount: number;
 }
 
+/** How many videos are transcribed at once (download + ffmpeg each). */
+const TRANSCRIBE_CONCURRENCY = Number.parseInt(process.env.BULK_TRANSCRIBE_CONCURRENCY || "4", 10);
+
+/** How many caption calls are in flight at once. */
+const CAPTION_CONCURRENCY = Number.parseInt(process.env.BULK_CAPTION_CONCURRENCY || "5", 10);
+
+/** Progress ticks for a background plan build. */
+export interface PreviewProgress {
+  stage: string;
+  done: number;
+  total: number;
+  cached: number;
+}
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight. Order of completion is
+ * irrelevant here — every result is written into a Map keyed by file.
+ */
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  const width = Math.max(1, Math.min(limit || 1, items.length));
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: width }, async () => {
+      for (;;) {
+        const i = next++;
+        if (i >= items.length) return;
+        await fn(items[i]);
+      }
+    }),
+  );
+}
+
 export async function preview(
   input: PreviewInput,
-  opts: { transcribeDeps?: TranscribeSourceDeps } = {},
+  opts: {
+    transcribeDeps?: TranscribeSourceDeps;
+    /** Called as the plan progresses, for the background run record. */
+    onProgress?: (p: PreviewProgress) => void;
+  } = {},
 ): Promise<PreviewOutput> {
   const now = input.now ? new Date(input.now) : new Date();
   const channels = await listChannels();
@@ -379,25 +423,83 @@ export async function preview(
   // — a missing key / no speech / ffmpeg-or-download failure / timeout yields null
   // and that file simply falls back to its brief. One file's failure can't kill
   // the batch.
-  const transcriber = createTranscriptionCache(opts.transcribeDeps);
+  const platformsNeeded = unique(targets.map((t) => t.plat));
+
+  // 0) REUSE. A caption describes the VIDEO, not when it is posted, so a file
+  // that already has captions and tags for every platform we need is finished
+  // work: no transcription, no AI call, straight through to scheduling. Only
+  // the remainder is built below. (Re-write one with clearBulkCaptions.)
+  const captionsByFile = new Map<string, Record<CaptionPlatform, PlatformCaption>>();
   const transcriptByFile = new Map<string, string | null>();
-  await Promise.all(
-    files.map(async (f) => {
-      const tr = await transcriber.get(f.source);
-      transcriptByFile.set(f.fileId, tr?.text ?? null);
-    }),
-  );
+  const todo: typeof files = [];
+  for (const f of files) {
+    const cached = getCachedCaptions(f.fileId);
+    const complete = platformsNeeded.every((p) => cached.has(p));
+    if (!complete) {
+      todo.push(f);
+      continue;
+    }
+    const caps = {} as Record<CaptionPlatform, PlatformCaption>;
+    for (const p of platformsNeeded) {
+      const c = cached.get(p)!;
+      caps[p] = {
+        platform: p,
+        caption: c.caption,
+        hashtags: c.hashtags,
+        firstLineHook: c.firstLineHook,
+      };
+    }
+    captionsByFile.set(f.fileId, caps);
+    transcriptByFile.set(f.fileId, cached.get(platformsNeeded[0])?.transcript ?? null);
+  }
+  opts.onProgress?.({ stage: "reusing captions", done: files.length - todo.length, total: files.length, cached: files.length - todo.length });
+
+  // 1) Transcribe what is left (in parallel across files, cached per resolved
+  // file so we never transcribe the same video twice). Transcription NEVER throws
+  // — a missing key / no speech / ffmpeg-or-download failure / timeout yields null
+  // and that file simply falls back to its brief. One file's failure can't kill
+  // the batch.
+  const transcriber = createTranscriptionCache(opts.transcribeDeps);
+  if (todo.length) {
+    opts.onProgress?.({ stage: `transcribing ${todo.length}`, done: files.length - todo.length, total: files.length, cached: files.length - todo.length });
+  }
+  // Bounded, NOT Promise.all over everything: each transcription downloads the
+  // video and runs ffmpeg, so firing 227 at once took this 4-core box to a load
+  // average of 26 and the server stopped answering long enough for a poll to
+  // come back 502 (2026-08-24). The work is the same; it just arrives in order.
+  await mapWithConcurrency(todo, TRANSCRIBE_CONCURRENCY, async (f) => {
+    const tr = await transcriber.get(f.source);
+    transcriptByFile.set(f.fileId, tr?.text ?? null);
+  });
 
   // 2) Captions: one AI call per file, covering all distinct target platforms,
   // grounded in the transcript when we have one (brief is supplementary context).
-  const platformsNeeded = unique(targets.map((t) => t.plat));
-  const captionsByFile = new Map<string, Record<CaptionPlatform, PlatformCaption>>();
-  for (const f of files) {
+  //
+  // Run a few at a time rather than strictly one after another: this loop was
+  // the whole cost of a large plan (227 files took 31 minutes serially). The cap
+  // is deliberately small — these are the same AI account the rest of the suite
+  // uses, and a burst of 227 is how an account gets rate-limited.
+  const cachedCount = files.length - todo.length;
+  let captioned = 0;
+  await mapWithConcurrency(todo, CAPTION_CONCURRENCY, async (f) => {
     const brief = (f.brief ?? "").trim() || (await autoSeedBrief(f.source));
     const transcript = transcriptByFile.get(f.fileId) ?? undefined;
     const caps = await generateCaptions(brief, platformsNeeded, { transcript });
     captionsByFile.set(f.fileId, caps);
-  }
+    // Persist immediately: a plan that dies later must not throw away calls
+    // that have already been paid for.
+    for (const p of platformsNeeded) {
+      const c = caps[p];
+      if (c) putCachedCaption(f.fileId, c, transcript ?? null);
+    }
+    captioned++;
+    opts.onProgress?.({
+      stage: `writing captions (${captioned} of ${todo.length})`,
+      done: cachedCount + captioned,
+      total: files.length,
+      cached: cachedCount,
+    });
+  });
 
   // 1b) Pre-flight: probe each file's video ONCE (same media across channels).
   // Cloud links / missing files degrade to `unknown` checks (never fail hard).
@@ -631,12 +733,19 @@ export interface ScheduleItemResult {
   error?: string;
   /** Set when the item was blocked by Growth Guardrails (the failing checks). */
   blockedChecks?: GrowthCheckDto[];
+  /**
+   * Set when the item was refused because this tool has ALREADY scheduled this
+   * video to this channel. Not a failure to retry — retrying would post twice.
+   */
+  duplicate?: boolean;
 }
 
 export interface ScheduleOutput {
   results: ScheduleItemResult[];
   scheduled: number;
   failed: number;
+  /** Items refused because they were already scheduled (not failures). */
+  skippedDuplicates?: number;
   /** Render filenames this run parked in the picker's Hidden list (see below). */
   autoHidden: string[];
 }
@@ -664,7 +773,36 @@ export async function schedule(
 ): Promise<ScheduleOutput> {
   // Growth Guardrails are ADVISORY: the score guides the user in the review UI, but
   // it NEVER blocks scheduling (no override needed). We just post what was sent.
-  const submitted = Array.isArray(input.posts) ? input.posts : [];
+  const rawSubmitted = Array.isArray(input.posts) ? input.posts : [];
+
+  // ALREADY-SCHEDULED GUARD. The plan builder drops (file × channel) pairs the
+  // ledger already knows about, but that is a PLAN-time filter and the server
+  // otherwise posts whatever it is handed — a stale tab, a re-submitted plan or
+  // a retry that includes successes would post the same video to the same
+  // channel twice. The ledger is the authority, so the check belongs here too.
+  const duplicates: ScheduleItemResult[] = [];
+  const submitted: SchedulePostInput[] = [];
+  {
+    const stateByChannel = new Map<string, ReturnType<typeof getChannelState>>();
+    for (const p of rawSubmitted) {
+      let state = stateByChannel.get(p.channelId);
+      if (!state) {
+        state = getChannelState(p.channelId);
+        stateByChannel.set(p.channelId, state);
+      }
+      if (state.fileIds.has(p.fileId)) {
+        duplicates.push({
+          fileId: p.fileId,
+          channelId: p.channelId,
+          ok: false,
+          duplicate: true,
+          error: "Already scheduled to this channel — skipped so it isn't posted twice.",
+        });
+        continue;
+      }
+      submitted.push(p);
+    }
+  }
 
   // YouTube Shorts-only HARD GATE (vertical only — duration NOT gated): a YouTube
   // post is REJECTED before any upload unless its video is CONFIRMED vertical
@@ -714,6 +852,7 @@ export async function schedule(
   }
 
   const results: ScheduleItemResult[] = [
+    ...duplicates,
     ...blocked,
     ...(await schedulePostiz(postizPosts, mediaByFile)),
     ...(await schedulePostPeer(postPeerPosts, mediaByFile)),
@@ -730,15 +869,24 @@ export async function schedule(
     if (p) recordScheduled(p.channelId, p.fileId, new Date(p.scheduledAt).toISOString());
   }
 
-  // A render whose posts ALL went out parks itself in the picker's Hidden list,
-  // so a clip that's already published stops being offered for selection. This
-  // is display state only (restorable from the Hidden drawer); a partially
-  // failed file stays visible so the retry still has something to select.
-  const autoHidden = rendersToAutoHide(submitted, results);
-  if (autoHidden.length > 0) setRendersHidden(autoHidden, true);
+  // Finished renders are NOT auto-hidden any more. Hidden is the operator's own
+  // "not posting this" drawer; filling it automatically buried 241 renders they
+  // never chose to hide (2026-08-24). The picker now filters finished videos out
+  // via the ledger instead — see fullyScheduledRenders() — which keeps them out
+  // of the way without taking over a manual control.
+  const autoHidden: string[] = [];
 
   const scheduled = results.filter((r) => r.ok).length;
-  return { results, scheduled, failed: results.length - scheduled, autoHidden };
+  // Duplicates are neither scheduled nor failed — they are work that was
+  // already done, and counting them as failures would invite a retry loop.
+  const skippedDuplicates = duplicates.length;
+  return {
+    results,
+    scheduled,
+    failed: results.length - scheduled - skippedDuplicates,
+    skippedDuplicates,
+    autoHidden,
+  };
 }
 
 /** Postiz leg: createPost per item using the pre-uploaded media (id + path). */
@@ -965,4 +1113,175 @@ async function autoSeedBrief(source: FileSourceRef): Promise<string> {
 function errMsg(e: unknown): string {
   if (e instanceof PostizApiError || e instanceof PostPeerApiError) return e.message;
   return e instanceof Error ? e.message : String(e);
+}
+
+// ── filling in the blanks ────────────────────────────────────────────────────
+
+export interface FillCaptionsInput {
+  files: Array<{
+    fileId: string;
+    source: FileSourceRef;
+    brief?: string;
+    /** Platforms this file still needs a caption for. */
+    platforms: CaptionPlatform[];
+    /**
+     * Rewrite even if a caption is already stored. Used when the CAPTION ITSELF
+     * is the problem — one written before the current rules (a URL in it, an
+     * old CTA, no CTA at all) is cached and would otherwise be handed straight
+     * back unchanged.
+     */
+    force?: boolean;
+  }>;
+}
+
+export interface FillCaptionsOutput {
+  /** fileId -> platform -> the caption to drop into the post. */
+  captions: Record<string, Record<string, PlatformCaption>>;
+  /** How many files were written from the cache (free) vs freshly generated. */
+  reused: number;
+  generated: number;
+  failures: Array<{ fileId: string; error: string }>;
+}
+
+/** Never write more than this in one click — keeps the request short. */
+export const FILL_CAPTIONS_LIMIT = 40;
+
+/**
+ * Write captions for posts that came back blank.
+ *
+ * A caption can be missing because its AI call failed mid-plan, or because the
+ * plan was built before a channel's platform was added. Rebuilding the whole
+ * plan to recover a handful of them is wasteful, so this fills just the gaps:
+ * the cache first (free), then a fresh call for whatever is genuinely missing,
+ * transcribing only when no transcript is already on record.
+ */
+/** A second transcription attempt with its own cache, for a file that just failed. */
+async function transcribeAgain(source: FileSourceRef) {
+  try {
+    return await createTranscriptionCache().get(source);
+  } catch {
+    return null;
+  }
+}
+
+export async function fillCaptions(input: FillCaptionsInput): Promise<FillCaptionsOutput> {
+  const files = (input.files ?? []).slice(0, FILL_CAPTIONS_LIMIT);
+  const out: FillCaptionsOutput = { captions: {}, reused: 0, generated: 0, failures: [] };
+  if (!files.length) return out;
+
+  const transcriber = createTranscriptionCache();
+
+  await mapWithConcurrency(files, CAPTION_CONCURRENCY, async (f) => {
+    try {
+      const cached = getCachedCaptions(f.fileId);
+      const result: Record<string, PlatformCaption> = {};
+      const missing: CaptionPlatform[] = [];
+
+      for (const p of f.platforms) {
+        const hit = f.force ? undefined : cached.get(p);
+        // A cached BLANK is not a caption — treat it as missing, or the button
+        // would report success and change nothing.
+        if (hit && hit.caption.trim()) {
+          result[p] = {
+            platform: p,
+            caption: hit.caption,
+            hashtags: hit.hashtags,
+            firstLineHook: hit.firstLineHook,
+          };
+        } else {
+          missing.push(p);
+        }
+      }
+
+      if (missing.length) {
+        // Reuse a transcript we already paid for; only transcribe if there is none.
+        let transcript = "";
+        for (const c of cached.values()) {
+          if (c.transcript && c.transcript.trim()) {
+            transcript = c.transcript;
+            break;
+          }
+        }
+        if (!transcript) {
+          // One retry: the transcripts missing from this plan were lost to a
+          // 90s timeout while 227 videos transcribed at once, not because the
+          // media is bad. A second, unhurried attempt usually lands.
+          const tr = (await transcriber.get(f.source)) ?? (await transcribeAgain(f.source));
+          transcript = tr?.text ?? "";
+        }
+        const brief = (f.brief ?? "").trim() || (await autoSeedBrief(f.source));
+
+        // The caption writer has NOTHING to work from without one of these, and
+        // returns an empty caption rather than inventing a video. That is how
+        // these posts came to be blank in the first place (transcription timed
+        // out under load), so say so instead of reporting a silent success.
+        if (!transcript.trim() && !brief.trim()) {
+          out.failures.push({
+            fileId: f.fileId,
+            error: "no transcript and no brief — could not read this video, so there is nothing to write from",
+          });
+          return;
+        }
+
+        const fresh = await generateCaptions(brief, missing, {
+          transcript: transcript || undefined,
+        });
+        let wrote = 0;
+        for (const p of missing) {
+          const c = fresh[p];
+          if (c && c.caption.trim()) {
+            result[p] = c;
+            putCachedCaption(f.fileId, c, transcript || null);
+            wrote++;
+          }
+        }
+        if (!wrote) {
+          out.failures.push({ fileId: f.fileId, error: "the caption writer returned nothing" });
+          return;
+        }
+        out.generated++;
+      } else {
+        out.reused++;
+      }
+
+      if (Object.keys(result).length) out.captions[f.fileId] = result;
+    } catch (err) {
+      out.failures.push({
+        fileId: f.fileId,
+        error: err instanceof Error ? err.message : "caption generation failed",
+      });
+    }
+  });
+
+  return out;
+}
+
+/**
+ * Renders that have been scheduled to EVERY connected channel — i.e. there is
+ * no posting left to do for them.
+ *
+ * The picker uses this to stop offering finished videos. It deliberately does
+ * NOT hide them: Hidden is the operator's own "not posting this" drawer, and
+ * filling it automatically buried 241 renders that the operator never chose to
+ * hide (2026-08-24). Returns bare filenames, which is what the picker keys on.
+ */
+export async function fullyScheduledRenders(): Promise<string[]> {
+  const channels = await listChannels();
+  if (!channels.length) return [];
+  const states = channels.map((c) => getChannelState(c.id));
+  // A render counts as done only when every channel's ledger holds it, so a
+  // video still owed to one account keeps showing up.
+  const counts = new Map<string, number>();
+  for (const state of states) {
+    for (const fileId of state.fileIds) {
+      counts.set(fileId, (counts.get(fileId) ?? 0) + 1);
+    }
+  }
+  const done: string[] = [];
+  for (const [fileId, n] of counts) {
+    if (n < channels.length) continue;
+    if (!fileId.startsWith("render:")) continue;
+    done.push(fileId.slice("render:".length));
+  }
+  return done;
 }

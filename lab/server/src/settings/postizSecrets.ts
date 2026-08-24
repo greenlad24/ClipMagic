@@ -94,6 +94,31 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // so with Gemini already set, kie.ai is the only new account required.
   { key: "SEGMIND_API_KEY", label: "Segmind API key", group: "Avatar Narrator", connects: "The Avatar Narrator's default engine — Segmind hosts Seedance 2.5 (portrait + narration -> generated presenter) at $0.1065/sec at 480p and $0.2389/sec at 720p, roughly 24% under kie.ai for the same ByteDance model. Create a key at segmind.com (console -> API keys), then paste it here. Server-only; never sent to the browser." },
 
+  // ── Tutorial Studio (LAB tool — topic -> finished talking-head reel) ────────
+  // apimart is a single account fronting three models the reel pipeline needs:
+  // Qwen (script), GPT Image 2 (start frame) and Wan 3.0 (the talking clip, the
+  // ~$2 stage). Without it nothing past stage 0 runs, so the sidecar refuses to
+  // queue rather than failing mid-render.
+  //
+  // Unlike every other LAB_ONLY key here, this one is not consumed by the lab
+  // server itself — it is FORWARDED to the Tutorial Studio sidecar with the job
+  // that needs it (tutorial/client.ts), which writes it into that job's 0600
+  // .env. That keeps the key in one place, this store, instead of a second copy
+  // in the container environment. Same write-only guarantee: never returned
+  // through any HTTP response, and never emitted into the Postiz env file.
+  { key: "APIMART_API_KEY", label: "apimart API key", group: "Tutorial Studio", connects: "Powers Tutorial Studio's paid stages — the script (Qwen), the start frame (GPT Image 2) and the talking-head clip (Wan 3.0, about $2 of the ~$2.45 per reel). Create a key at apimart.ai, then paste it here. Held by this lab server and handed to the render sidecar per job — never sent to the browser." },
+
+  // ── Tutorial Studio ACCOUNTS (a separate posting identity) ─────────────────
+  // Tutorial Studio publishes to a DIFFERENT set of social accounts than the
+  // Bulk Scheduler does. The separation is credentials, not a filter: these are
+  // a second Postiz account and a second PostPeer account, so a client built
+  // with these keys authenticates as that identity and cannot see — let alone
+  // post to — the channels the Bulk Scheduler's keys reach. Leave them unset and
+  // Tutorial Studio simply has nowhere to post; it never falls back to the
+  // Bulk Scheduler's accounts.
+  { key: "STUDIO_POSTIZ_API_KEY", label: "Studio Postiz API key", group: "Tutorial Studio accounts", connects: "The Postiz public-API key for the SEPARATE account group Tutorial Studio posts to. Create a second Postiz account (or workspace), connect only that group's socials to it, then Settings → Developers → Public API there, and paste the key here. Never mixed with the Bulk Scheduler's Postiz account." },
+  { key: "STUDIO_POSTPEER_API_KEY", label: "Studio PostPeer API key", group: "Tutorial Studio accounts", connects: "OPTIONAL. A second PostPeer account's key, for posting the batch's reels to that group's TikTok via Direct Post. Leave blank to post through Postiz only. Never mixed with the Bulk Scheduler's PostPeer account." },
+
   { key: "DATAFORSEO_LOGIN", label: "DataForSEO login (optional)", group: "Keyword Research", connects: "OPTIONAL. The Keyword Research tool works out of the box on free signals (YouTube autocomplete + Data API + Google Trends). Add your DataForSEO API login (the email you sign in with at dataforseo.com) here — together with the password — for exact monthly Google search volume, CPC and extra keyword ideas. Server-only; never sent to the browser." },
   { key: "DATAFORSEO_PASSWORD", label: "DataForSEO password (optional)", group: "Keyword Research", connects: "OPTIONAL. The API password from your DataForSEO dashboard (API Access), paired with the login above. Used server-side for HTTP Basic auth to DataForSEO; never sent to the browser." },
 
@@ -190,6 +215,12 @@ const LAB_ONLY_KEYS = new Set([
   "HIGGSFIELD_API_SECRET",
   "INFINITETALK_SELFHOST_URL",
   "INFINITETALK_SELFHOST_KEY",
+  // Tutorial Studio — forwarded to the render sidecar, never Postiz config.
+  "APIMART_API_KEY",
+  // Tutorial Studio's separate posting identity — used by the lab server to
+  // authenticate AS that account group; never this container's own config.
+  "STUDIO_POSTIZ_API_KEY",
+  "STUDIO_POSTPEER_API_KEY",
   // Keyword Research (optional DataForSEO volume provider), used by the lab server.
   "DATAFORSEO_LOGIN",
   "DATAFORSEO_PASSWORD",
@@ -451,6 +482,41 @@ export function getYoutubeDataApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.YOUTUBE_DATA_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the apimart key — the paid engine behind
+ * Tutorial Studio's script, start-frame and talking-head stages. Unlike its
+ * siblings the value is not used here: it is forwarded to the render sidecar
+ * with the job (tutorial/client.ts), which writes it into that job's 0600 .env.
+ * It must NEVER be wired into an HTTP response (write-only guarantee). An env
+ * var (APIMART_API_KEY) takes precedence over the UI-managed store.
+ */
+export function getApimartApiKey(): string | null {
+  const fromEnv = (process.env.APIMART_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.APIMART_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getters for Tutorial Studio's SEPARATE posting identity.
+ * A client built with these authenticates as a different Postiz/PostPeer
+ * account, which is what keeps that batch's videos away from the Bulk
+ * Scheduler's channels. Never wire either into an HTTP response.
+ */
+export function getStudioPostizApiKey(): string | null {
+  const fromEnv = (process.env.STUDIO_POSTIZ_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.STUDIO_POSTIZ_API_KEY || null;
+}
+
+export function getStudioPostPeerApiKey(): string | null {
+  const fromEnv = (process.env.STUDIO_POSTPEER_API_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.STUDIO_POSTPEER_API_KEY || null;
 }
 
 /**

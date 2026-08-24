@@ -22,6 +22,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.js";
+import { signMediaPath } from "./mediaSignature.js";
 import { resolveInput } from "../render/resolve.js";
 
 export type FileSourceKind = "render" | "upload" | "cloud";
@@ -147,7 +148,9 @@ export function resolvePublicSourceUrl(src: FileSourceRef): string {
         );
       }
       const path = src.kind === "render" ? "outputs" : "uploads";
-      return `${base}/api/${path}/${encodeURIComponent(src.ref)}`;
+      // SIGNED: the lab is behind the sign-in gate, so an external fetcher gets
+      // a 401 from a bare URL. The signature grants this one file, and expires.
+      return `${base}${signMediaPath(`/api/${path}/${encodeURIComponent(src.ref)}`)}`;
     }
     case "cloud":
       return normalizeCloudLink(src.ref);

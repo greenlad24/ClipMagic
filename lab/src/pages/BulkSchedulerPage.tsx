@@ -3,8 +3,17 @@ import { useAuth } from 'zite-auth-sdk';
 import {
   getBulkSchedulerStatus,
   previewBulkSchedule,
+  startBulkPreview,
+  getBulkPreviewRun,
+  cancelBulkPreview,
+  fillBulkCaptions,
+  refreshBulkPlanCaptions,
+  bulkTranscriptGaps,
+  bulkScheduledPairs,
+  type BulkPreviewRun,
   runBulkSchedule,
   getHiddenRenders,
+  bulkFinishedRenders,
   setRenderHidden,
   randomizeBulkOrder,
   listCloudFolder,
@@ -28,6 +37,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -226,11 +236,15 @@ function isGrowthBlocked(_growth: Growth | undefined): boolean {
  * The server parks a render in the picker's Hidden list once every post for it
  * has gone out, so a published clip stops being offered. Say so, otherwise the
  * clip just silently vanishes from the grid on the way back to step 1.
+ *
+ * Nothing is moved to Hidden any more — Hidden is the operator's own drawer —
+ * so this reports the filtering instead, and stays quiet when the server has
+ * nothing to report.
  */
 function announceAutoHidden(res: RunBulkScheduleOutputType): void {
   const n = res.autoHidden?.length ?? 0;
   if (n === 0) return;
-  toast.info(`${n} posted clip${n === 1 ? '' : 's'} moved to Hidden in the picker.`);
+  toast.info(`${n} clip${n === 1 ? '' : 's'} finished — no longer offered in the picker.`);
 }
 
 const PLATFORM_BADGE: Record<string, string> = {
@@ -261,6 +275,170 @@ const TIKTOK_PRIVACY_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'FOLLOWER_OF_CREATOR', label: 'Followers' },
   { value: 'SELF_ONLY', label: 'Private (only me)' },
 ];
+
+/**
+ * Poll a background plan build until it finishes, reporting progress as it goes.
+ *
+ * Polling — rather than one long request — is the whole point: each call is a
+ * couple of hundred milliseconds, so nothing in the network path sees a
+ * connection sitting silent for half an hour, and a refresh mid-build rejoins
+ * the same run instead of starting a second one.
+ */
+const PLAN_POLL_MS = 3000;
+
+/** Files per caption-fix request. Matches the server's own per-call cap. */
+const BULK_FIX_BATCH = 40;
+
+/**
+ * Remove (file × channel) posts this tool has already scheduled.
+ *
+ * A plan is a snapshot of what was proposed; the ledger is the record of what
+ * actually went out. A plan built before a partial send keeps listing the posts
+ * that are already live — "908 posts across 4 channels" while 90 were already
+ * scheduled (2026-08-24). The review step should describe the work that is
+ * LEFT, so those are dropped on load. The saved plan is untouched.
+ */
+async function dropAlreadyScheduled(
+  posts: BulkPreviewPost[],
+): Promise<{ posts: BulkPreviewPost[]; removed: number }> {
+  try {
+    const { pairs } = await bulkScheduledPairs({});
+    if (!pairs.length) return { posts, removed: 0 };
+    const done = new Set(pairs);
+    const left = posts.filter((p) => !done.has(`${p.fileId}|${p.channelId}`));
+    return { posts: left, removed: posts.length - left.length };
+  } catch {
+    // The ledger is an optimisation here, not a safety net — the SERVER refuses
+    // duplicates regardless, so a failed read must not block the plan.
+    return { posts, removed: 0 };
+  }
+}
+
+/** Render filenames with nothing left to post. Empty set if the call fails. */
+async function finishedRenderNames(): Promise<Set<string>> {
+  try {
+    const { names } = await bulkFinishedRenders({});
+    return new Set(names ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
+async function waitForPlan(
+  id: string,
+  onTick: (run: BulkPreviewRun) => void,
+): Promise<PreviewBulkScheduleOutputType> {
+  // A poll that fails is NOT a plan that failed. Transcribing a big batch spikes
+  // the box hard enough that a single poll can come back 502 while the build is
+  // perfectly healthy; giving up there stranded a finished 227-video plan
+  // (2026-08-24). Only a long unbroken run of failures means anything.
+  let consecutiveFailures = 0;
+  const MAX_CONSECUTIVE_FAILURES = 20; // ~1 minute of silence before we quit
+  for (;;) {
+    let run: BulkPreviewRun | null = null;
+    try {
+      ({ run } = await getBulkPreviewRun({ id }));
+      consecutiveFailures = 0;
+    } catch (e) {
+      if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+        throw new Error('Lost contact with the server while the plan was building. Reload to rejoin it.');
+      }
+      await new Promise((r) => setTimeout(r, PLAN_POLL_MS));
+      continue;
+    }
+    if (!run) throw new Error('That plan build is no longer on the server.');
+    onTick(run);
+    if (run.status === 'done') {
+      if (!run.result) throw new Error('The plan finished but came back empty.');
+      return run.result;
+    }
+    if (run.status === 'failed') throw new Error(run.error || 'Building the plan failed.');
+    if (run.status === 'cancelled') throw new Error('Plan build cancelled.');
+    await new Promise((r) => setTimeout(r, PLAN_POLL_MS));
+  }
+}
+
+
+/**
+ * Live progress for a plan being built.
+ *
+ * The build runs server-side (a dropped connection must not lose it), but from
+ * the button onwards it should feel like one continuous action — so this shows
+ * exactly where it is: which stage, how many videos are done, how many cost
+ * nothing because their captions were already written, and how long is left.
+ * Without it the wait is a spinner with no information, which is how a 31-minute
+ * build once looked identical to a hung one.
+ */
+function PlanProgress({
+  run,
+  startedAt,
+  onCancel,
+}: {
+  run: BulkPreviewRun | null;
+  startedAt: number | null;
+  onCancel: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+
+  const total = run?.totalCount ?? 0;
+  const done = run?.doneCount ?? 0;
+  const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0;
+  const elapsedSec = startedAt ? Math.max(0, Math.round((now - startedAt) / 1000)) : 0;
+
+  // Rate is measured over THIS run rather than assumed: a batch of already-
+  // captioned videos flies through, a cold one does not.
+  const remaining = Math.max(0, total - done);
+  const etaSec = done > 0 && elapsedSec > 2 ? Math.round((elapsedSec / done) * remaining) : null;
+  const fmt = (sec: number) =>
+    sec >= 60 ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s` : `${sec}s`;
+
+  return (
+    <div className="rounded-xl border border-border bg-card/60 p-4">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          Building your plan
+          {total > 0 && (
+            <span className="tabular-nums text-muted-foreground">
+              {done} of {total}
+            </span>
+          )}
+        </div>
+        <div className="text-xs tabular-nums text-muted-foreground">
+          {fmt(elapsedSec)} elapsed
+          {etaSec !== null && remaining > 0 && <> · about {fmt(etaSec)} left</>}
+        </div>
+      </div>
+
+      <Progress value={pct} />
+
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-muted-foreground">
+          {run?.stage || 'starting…'}
+          {(run?.cachedCount ?? 0) > 0 && (
+            <> · {run!.cachedCount} reused an existing caption (free)</>
+          )}
+        </p>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
+
+      <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+        This runs on the server — you can close the tab and come back; the plan will be
+        waiting. Captions already written are kept even if you cancel.
+      </p>
+    </div>
+  );
+}
 
 export default function BulkSchedulerPage() {
   const { user } = useAuth();
@@ -298,6 +476,10 @@ export default function BulkSchedulerPage() {
   const [dropDateByFile, setDropDateByFile] = useState<Map<string, string | null>>(new Map());
   const [lookCount, setLookCount] = useState(0);
   const [previewing, setPreviewing] = useState(false);
+  /** The background plan build, when one is in flight (or left over from a reload). */
+  const [previewRun, setPreviewRun] = useState<BulkPreviewRun | null>(null);
+  /** When the current build started, for elapsed time and ETA. */
+  const [previewStartedAt, setPreviewStartedAt] = useState<number | null>(null);
 
   // Step 3
   const [scheduling, setScheduling] = useState(false);
@@ -331,6 +513,110 @@ export default function BulkSchedulerPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectedChannels]);
+
+  // NOTE: this must stay ABOVE the early returns below. Hooks run in order
+  // and unconditionally; placed after a `return`, this one is skipped on the
+  // renders that bail out early and then appears when they stop bailing,
+  // which React rejects outright ("rendered more hooks than during the
+  // previous render") and the page goes blank.
+  // A refresh mid-build must not orphan the run: rejoin whatever is still
+  // going on the server and pick up its result, rather than starting a second
+  // build of the same plan (which would pay for it twice).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { run } = await getBulkPreviewRun({});
+        if (cancelled || !run) return;
+        // Only a run from the last few hours is worth restoring; anything older
+        // is history, not an interrupted session.
+        const fresh = Date.now() - run.updatedAt < 6 * 60 * 60 * 1000;
+        if (!fresh) return;
+        if (run.status !== 'running' && run.status !== 'done') return;
+
+        // Whichever state it is in, put the files back FIRST. The plan is keyed
+        // by fileId and scheduling resolves each post's source through this
+        // list, so a plan restored without it looks fine and cannot be sent.
+        const restored = (run.input as { files?: Array<{ fileId: string; source: FileSource; label?: string; brief?: string }> } | null)?.files;
+        if (Array.isArray(restored) && restored.length) {
+          // Drop the ones with nothing left to post. A plan's input is the list
+          // as it was when the plan was BUILT, so restoring it verbatim put all
+          // 227 videos back in the selection after every one had been scheduled
+          // (2026-08-24). Selection means "still to do".
+          const done = await finishedRenderNames();
+          const left = restored.filter((f) => !done.has(f.fileId.replace(/^render:/, '')));
+          setSelected((cur) =>
+            cur.length
+              ? cur
+              : left.map((f) => ({
+                  fileId: f.fileId,
+                  source: f.source,
+                  label: f.label ?? f.fileId,
+                  brief: f.brief ?? '',
+                })),
+          );
+        }
+
+        let res: PreviewBulkScheduleOutputType;
+        if (run.status === 'done') {
+          // It finished while the page was away (or while its poll was dead).
+          if (!run.result) return;
+          res = run.result;
+          // Pull in any captions written since the plan was saved — a rewrite
+          // from an earlier session lives in the caption store, and without this
+          // the page would ask you to pay for it a second time. Free, so it runs
+          // every time the plan is restored.
+          try {
+            const refreshed = await refreshBulkPlanCaptions({ id: run.id });
+            if (refreshed.refreshed > 0 && refreshed.run?.result) {
+              res = refreshed.run.result;
+              toast.success(
+                `Picked up your plan — ${refreshed.refreshed} caption${refreshed.refreshed === 1 ? '' : 's'} restored from your last rewrite.`,
+              );
+            } else {
+              toast.success('Picked up the plan that finished while you were away.');
+            }
+          } catch {
+            toast.success('Picked up the plan that finished while you were away.');
+          }
+        } else {
+          setPreviewing(true);
+          setPreviewRun(run);
+          setPreviewStartedAt(run.createdAt || Date.now());
+          toast.info('Reconnected to the plan that was still building.');
+          res = await waitForPlan(run.id, setPreviewRun);
+        }
+        if (cancelled) return;
+        if (typeof res.seed === 'number') setSeed(res.seed);
+        {
+          const { posts: left, removed } = await dropAlreadyScheduled(res.posts);
+          setPosts(left);
+          if (removed) {
+            toast.info(`${removed} post${removed === 1 ? '' : 's'} in this plan are already scheduled — removed.`);
+          }
+        }
+        setTranscriptByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.transcript])));
+        setDropDateByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.dropDate])));
+        setLookCount(res.lookCount ?? 0);
+        setSkippedPosts(res.skippedPosts ?? []);
+        setContinuedFrom(res.continuedFrom ?? []);
+        if ((res.posts ?? []).length) setStep(2);
+      } catch (e) {
+        if (!cancelled) toast.error(e instanceof Error ? e.message : 'Failed to rejoin the plan.');
+      } finally {
+        if (!cancelled) {
+          setPreviewing(false);
+          setPreviewRun(null);
+          setPreviewStartedAt(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Runs once on mount: this is recovery, not a subscription.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Gating ──────────────────────────────────────────────────────────────────
   if (!status) {
@@ -406,6 +692,18 @@ export default function BulkSchedulerPage() {
     }
   };
 
+  /** Stop following AND stop the run; captions already written are kept. */
+  const cancelPlan = async () => {
+    const id = previewRun?.id;
+    if (!id) return;
+    try {
+      await cancelBulkPreview({ id });
+      toast.info('Plan build cancelled — the captions it already wrote are saved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not cancel.');
+    }
+  };
+
   // ── Step transitions ──────────────────────────────────────────────────────
   // `seedOverride` lets "Reshuffle" build a fresh mix without changing the other
   // controls; it's persisted so scheduling posts the plan the user actually saw.
@@ -423,7 +721,10 @@ export default function BulkSchedulerPage() {
     const useSeed = seedOverride ?? seed;
     setPreviewing(true);
     try {
-      const res: PreviewBulkScheduleOutputType = await previewBulkSchedule({
+      // The plan is built in the BACKGROUND: a large one is minutes of AI work,
+      // and holding a request open that long is what lost the last 227-video
+      // plan. We start it, then poll — a reload can rejoin the same run.
+      const started = await startBulkPreview({
         files: selected.map((f) => ({ source: f.source, brief: f.brief, fileId: f.fileId, label: f.label })),
         channelIds: selectedChannelIds,
         intent: intent === 'none' ? undefined : intent,
@@ -432,8 +733,17 @@ export default function BulkSchedulerPage() {
         seed: useSeed,
         fileOrder: !opts?.ignoreMix && mixIsLive ? selected.map((f) => f.fileId) : undefined,
       });
+      setPreviewRun(started.run);
+      setPreviewStartedAt(started.run.createdAt || Date.now());
+      const res = await waitForPlan(started.run.id, setPreviewRun);
       if (typeof res.seed === 'number') setSeed(res.seed);
-      setPosts(res.posts);
+      {
+        const { posts: left, removed } = await dropAlreadyScheduled(res.posts);
+        setPosts(left);
+        if (removed) {
+          toast.info(`${removed} post${removed === 1 ? '' : 's'} were already scheduled — not included.`);
+        }
+      }
       setTranscriptByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.transcript])));
       setDropDateByFile(new Map((res.files ?? []).map((f) => [f.fileId, f.dropDate])));
       setLookCount(res.lookCount ?? 0);
@@ -454,6 +764,8 @@ export default function BulkSchedulerPage() {
       toast.error(e instanceof Error ? e.message : 'Failed to build the plan');
     } finally {
       setPreviewing(false);
+      setPreviewRun(null);
+      setPreviewStartedAt(null);
     }
   };
 
@@ -480,6 +792,7 @@ export default function BulkSchedulerPage() {
       if (res.failed === 0) toast.success(`Scheduled all ${res.scheduled} posts.`);
       else toast.warning(`${res.scheduled} scheduled, ${res.failed} failed — retry the failures below.`);
       announceAutoHidden(res);
+      await dropFinishedFromSelection();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to schedule');
     } finally {
@@ -487,9 +800,25 @@ export default function BulkSchedulerPage() {
     }
   };
 
+  /**
+   * Take finished videos out of the selection. Selection means "still to do",
+   * so a video posted to every channel has no business sitting there — it would
+   * be swept into the next plan and refused as a duplicate.
+   */
+  const dropFinishedFromSelection = async () => {
+    const done = await finishedRenderNames();
+    if (!done.size) return;
+    setSelected((cur) => cur.filter((f) => !done.has(f.fileId.replace(/^render:/, ''))));
+  };
+
   const retryFailures = async () => {
     if (!results) return;
-    const failedKeys = new Set(results.results.filter((r) => !r.ok).map((r) => `${r.fileId}|${r.channelId}`));
+    // `duplicate` items are already live on that channel — retrying them would
+    // post the same video twice, which is the one outcome a retry must never
+    // produce. Only genuine failures are re-sent.
+    const failedKeys = new Set(
+      results.results.filter((r) => !r.ok && !r.duplicate).map((r) => `${r.fileId}|${r.channelId}`),
+    );
     const sourceByFile = new Map(selected.map((f) => [f.fileId, f.source]));
     setScheduling(true);
     try {
@@ -520,6 +849,7 @@ export default function BulkSchedulerPage() {
       });
       if (res.failed === 0) toast.success('Retried failures scheduled.');
       announceAutoHidden(res);
+      await dropFinishedFromSelection();
     } finally {
       setScheduling(false);
     }
@@ -570,6 +900,9 @@ export default function BulkSchedulerPage() {
             positionByFile={positionByFile}
             onNext={() => goPreview()}
             previewing={previewing}
+            previewRun={previewRun}
+            previewStartedAt={previewStartedAt}
+            onCancelPlan={cancelPlan}
           />
         )}
 
@@ -577,6 +910,7 @@ export default function BulkSchedulerPage() {
           <StepReview
             posts={posts}
             setPosts={setPosts}
+            ctaKeyword={status.ctaKeyword || 'PROMPTS'}
             filesById={filesById}
             transcriptByFile={transcriptByFile}
             skippedPosts={skippedPosts}
@@ -788,6 +1122,9 @@ function StepSelect({
   positionByFile,
   onNext,
   previewing,
+  previewRun,
+  previewStartedAt,
+  onCancelPlan,
 }: {
   channels: BulkChannel[];
   cloudProviders: GetBulkSchedulerStatusOutputType['cloudProviders'];
@@ -807,6 +1144,10 @@ function StepSelect({
   positionByFile: Record<string, string>;
   onNext: () => void;
   previewing: boolean;
+  /** Live progress of the background plan build, when one is running. */
+  previewRun: BulkPreviewRun | null;
+  previewStartedAt: number | null;
+  onCancelPlan: () => void;
 }) {
   const toggleFile = (file: SelectedFile) => {
     setSelected((prev) => {
@@ -1068,11 +1409,18 @@ function StepSelect({
         </div>
       </section>
 
+      {previewing && (
+        <PlanProgress run={previewRun} startedAt={previewStartedAt} onCancel={onCancelPlan} />
+      )}
+
       <div className="flex justify-end">
         <Button onClick={onNext} disabled={previewing || selected.length === 0}>
           {previewing ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" /> Building plan…
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {previewRun && previewRun.totalCount > 0
+                ? `Building plan… ${previewRun.doneCount}/${previewRun.totalCount}`
+                : 'Building plan…'}
             </>
           ) : (
             <>
@@ -1101,6 +1449,8 @@ function RendersTab({
   // whether the collapsed drawer holding them is open.
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [showHidden, setShowHidden] = useState(false);
+  /** Renders already scheduled to every channel — filtered out, never hidden. */
+  const [finished, setFinished] = useState<Set<string>>(new Set());
   useEffect(() => {
     listStorage({})
       .then((res: any) => {
@@ -1116,6 +1466,12 @@ function RendersTab({
     getHiddenRenders({})
       .then((res) => setHidden(new Set(res.names ?? [])))
       .catch(() => setHidden(new Set()));
+    // Videos with nothing left to post. Kept SEPARATE from `hidden`: Hidden is
+    // the operator's own "not posting this" drawer and must stay theirs, while
+    // this is simply work that is done.
+    bulkFinishedRenders({})
+      .then((res) => setFinished(new Set(res.names ?? [])))
+      .catch(() => setFinished(new Set()));
   }, []);
 
   /**
@@ -1163,8 +1519,9 @@ function RendersTab({
       </p>
     );
   }
-  const visible = renders.filter((r) => !hidden.has(r.name));
+  const visible = renders.filter((r) => !hidden.has(r.name) && !finished.has(r.name));
   const hiddenRenders = renders.filter((r) => hidden.has(r.name));
+  const finishedCount = renders.filter((r) => finished.has(r.name) && !hidden.has(r.name)).length;
 
   const asFile = (r: { name: string; url?: string }): SelectedFile => ({
     fileId: `render:${r.name}`,
@@ -1189,12 +1546,16 @@ function RendersTab({
     <>
       {visible.length === 0 ? (
         <p className="mt-4 rounded-lg border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Every render is hidden. Open the list below to bring one back.
+          {finishedCount > 0
+            ? `Nothing left to schedule — all ${finishedCount} render${finishedCount === 1 ? ' is' : 's are'} already posted to every channel.`
+            : 'Every render is hidden. Open the list below to bring one back.'}
         </p>
       ) : (
         <>
         <div className="mt-4 flex items-center justify-between gap-3">
           <span className="text-xs text-muted-foreground">
+            {finishedCount > 0 && <>{finishedCount} already scheduled — not offered here</>}
+            {finishedCount > 0 && hiddenRenders.length > 0 && <> · </>}
             {hiddenRenders.length > 0 && <>{hiddenRenders.length} hidden — not offered here</>}
           </span>
           <Button variant="outline" size="sm" onClick={toggleAllVisible}>
@@ -1756,6 +2117,7 @@ function CloudFolderTab({
 function StepReview({
   posts,
   setPosts,
+  ctaKeyword,
   filesById,
   transcriptByFile,
   skippedPosts,
@@ -1769,6 +2131,8 @@ function StepReview({
 }: {
   posts: EditablePost[];
   setPosts: React.Dispatch<React.SetStateAction<EditablePost[]>>;
+  /** The comment keyword captions must ask for (server-configured). */
+  ctaKeyword: string;
   filesById: Map<string, SelectedFile>;
   transcriptByFile: Map<string, string | null>;
   skippedPosts: PreviewBulkScheduleOutputType['skippedPosts'];
@@ -1782,6 +2146,154 @@ function StepReview({
 }) {
   const update = (i: number, patch: Partial<EditablePost>) =>
     setPosts((prev) => prev.map((p, idx) => (idx === i ? { ...p, ...patch } : p)));
+
+  const [filling, setFilling] = useState(false);
+  const [fillProgress, setFillProgress] = useState<{ done: number; total: number } | null>(null);
+
+  /** Files the server says were captioned without the video's audio. */
+  const [transcriptGaps, setTranscriptGaps] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    void bulkTranscriptGaps({})
+      .then((r) => setTranscriptGaps(new Set(r.fileIds)))
+      .catch(() => setTranscriptGaps(new Set()));
+  }, []);
+
+  /**
+   * Every way a caption can fail the CURRENT rules. A plan is built once and
+   * reviewed later, by which time the rules may have moved — captions written
+   * before the comment-keyword CTA carry a community URL and no CTA at all, and
+   * they are cached, so they would otherwise survive every rebuild untouched.
+   */
+  const captionProblem = (p: EditablePost): string | null => {
+    const text = p.caption || '';
+    if (!text.trim()) return 'no caption';
+    // A link is dead weight on TikTok/IG/Shorts and throttles a Facebook Page.
+    if (/https?:\/\/|\bwww\./i.test(text)) return 'contains a link';
+    // Meta demotes posts that explicitly solicit likes/saves/shares.
+    if (/\b(like (this|the post|it)|double tap|save this post|share this post)\b/i.test(text)) {
+      return 'asks for likes';
+    }
+    if (!new RegExp(`\\b${ctaKeyword}\\b`, 'i').test(text)) return `no "${ctaKeyword}" CTA`;
+    // Reads fine, but was written blind: transcription failed for this video, so
+    // the caption is grounded in the brief instead of what she actually says.
+    // Re-transcribing and re-writing it is the same repair, so it belongs here.
+    if (transcriptGaps.has(p.fileId)) return 'captioned without the audio';
+    return null;
+  };
+
+  const needsWork = useMemo(
+    () =>
+      posts
+        .map((p, index) => ({ p, index, problem: captionProblem(p) }))
+        .filter((x) => x.problem !== null),
+    // captionProblem reads ctaKeyword AND transcriptGaps — the gap list arrives
+    // from the server a moment after mount, so it MUST be a dependency or the
+    // memo keeps its first (gap-free) answer and those videos never show up.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [posts, ctaKeyword, transcriptGaps],
+  );
+
+  /** Counts per problem, so the panel can say what it is about to change. */
+  const problemCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const x of needsWork) m.set(x.problem!, (m.get(x.problem!) ?? 0) + 1);
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [needsWork]);
+
+  /**
+   * Write captions for just the blank posts, reusing a stored caption where one
+   * exists. Rebuilding the whole plan to recover a few of these would re-do all
+   * the work and re-spend on every video that was already fine.
+   */
+  /**
+   * Bring every off-guideline caption up to the current rules in one pass.
+   *
+   * Anything already written is REGENERATED rather than reused: the stored
+   * caption is exactly the thing that is wrong (old CTA, a link, no CTA), so a
+   * cache hit would hand the same text straight back. Blank posts have nothing
+   * to preserve and take the normal path. Captions that already pass are left
+   * completely alone — no spend, no churn on text you may have hand-edited.
+   */
+  /** Run a set of files through the caption writer in short batches. */
+  const rewriteFiles = async (
+    fileIds: string[],
+    opts: { force: boolean; label: string },
+  ): Promise<void> => {
+    const files = fileIds
+      .map((fileId) => {
+        const f = filesById.get(fileId);
+        if (!f) return null;
+        const platforms = Array.from(
+          new Set(posts.filter((p) => p.fileId === fileId).map((p) => p.platform)),
+        );
+        if (!platforms.length) return null;
+        return { fileId, source: f.source, brief: f.brief, platforms, force: opts.force };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    if (!files.length) {
+      toast.error('Those posts’ videos are no longer in the picker, so they cannot be rewritten.');
+      return;
+    }
+
+    setFilling(true);
+    setFillProgress({ done: 0, total: files.length });
+    let applied = 0;
+    let failed = 0;
+    let firstError = '';
+    try {
+      for (let i = 0; i < files.length; ) {
+        const batch = files.slice(i, i + BULK_FIX_BATCH);
+        const res = await fillBulkCaptions({ files: batch });
+        const touched = new Set(batch.map((b) => b.fileId));
+        setPosts((prev) =>
+          prev.map((p) => {
+            if (!touched.has(p.fileId)) return p;
+            const c = res.captions?.[p.fileId]?.[p.platform];
+            if (!c || !c.caption.trim()) return p;
+            applied++;
+            return { ...p, caption: c.caption, hashtags: c.hashtags, firstLineHook: c.firstLineHook };
+          }),
+        );
+        if (res.failures?.length) {
+          failed += res.failures.length;
+          firstError = firstError || res.failures[0].error;
+        }
+        i += batch.length;
+        setFillProgress({ done: Math.min(i, files.length), total: files.length });
+      }
+      if (applied) toast.success(`${opts.label} — ${applied} caption${applied === 1 ? '' : 's'} updated.`);
+      else toast.info('Nothing could be written — see the errors below.');
+      if (failed) toast.error(`${failed} file${failed === 1 ? '' : 's'} failed: ${firstError}`);
+      // The gaps may have closed now that transcription works.
+      void bulkTranscriptGaps({})
+        .then((r) => setTranscriptGaps(new Set(r.fileIds)))
+        .catch(() => {});
+    } catch (e) {
+      toast.error(
+        (e instanceof Error ? e.message : 'Could not rewrite the captions.') +
+          (applied ? ` ${applied} were updated before it stopped — press again to continue.` : ''),
+      );
+    } finally {
+      setFilling(false);
+      setFillProgress(null);
+    }
+  };
+
+  /**
+   * Bring every flagged caption up to the current rules in one pass — including
+   * re-transcribing the videos whose audio never made it in (the fill path
+   * transcribes when no transcript is stored, and retries once).
+   *
+   * `force` is always on: every reason a post is flagged means the STORED
+   * caption is the thing that is wrong, so a cache hit would hand the same text
+   * straight back. Captions that already pass are never touched.
+   */
+  const fixCaptions = () =>
+    rewriteFiles(Array.from(new Set(needsWork.map(({ p }) => p.fileId))), {
+      force: true,
+      label: 'Rewritten to the current guidelines',
+    });
 
   // Group rows by file for a tidy review.
   const byFile = useMemo(() => {
@@ -1820,6 +2332,46 @@ function StepReview({
 
   return (
     <div className="space-y-6">
+      {needsWork.length > 0 && (
+        <section className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">
+                {needsWork.length} caption{needsWork.length === 1 ? '' : 's'} don&apos;t match the
+                current guidelines
+              </h3>
+              <p className="text-[11px] text-muted-foreground">
+                {problemCounts.map(([reason, n], i) => (
+                  <span key={reason}>
+                    {i > 0 && ' · '}
+                    {n} {reason}
+                  </span>
+                ))}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Rewrites just these, in place — captions that already pass are left untouched,
+                and nothing is re-transcribed.
+              </p>
+            </div>
+            <Button size="sm" onClick={fixCaptions} disabled={filling}>
+              {filling ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {fillProgress
+                    ? `Rewriting… ${fillProgress.done}/${fillProgress.total} videos`
+                    : 'Rewriting…'}
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" /> Fix {needsWork.length} caption
+                  {needsWork.length === 1 ? '' : 's'}
+                </>
+              )}
+            </Button>
+          </div>
+        </section>
+      )}
+
       {scheduleMap.length > 0 && (
         <section className="rounded-xl border border-border bg-card p-4">
           <div className="flex items-center justify-between gap-3">
@@ -2323,9 +2875,46 @@ function StepSchedule({
       </section>
 
       {results && results.failed > 0 && (
-        <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          {results.failed} post(s) failed. Hover the status for the error, then retry just the failures.
-        </p>
+        <section className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="font-medium text-destructive">
+                {results.failed} post{results.failed === 1 ? '' : 's'} failed
+                {results.scheduled > 0 && ` · ${results.scheduled} scheduled`}
+                {(results.skippedDuplicates ?? 0) > 0 &&
+                  ` · ${results.skippedDuplicates} already scheduled, skipped`}
+              </p>
+              {/* The reasons, grouped. Hovering hundreds of rows to find out they
+                  all say the same thing is not a diagnosis. */}
+              <ul className="mt-1 space-y-0.5 text-xs text-destructive/90">
+                {Array.from(
+                  results.results
+                    .filter((r) => !r.ok && !r.duplicate)
+                    .reduce((m, r) => {
+                      const key = (r.error || 'unknown error').trim();
+                      m.set(key, (m.get(key) ?? 0) + 1);
+                      return m;
+                    }, new Map<string, number>()),
+                )
+                  .sort((a, b) => b[1] - a[1])
+                  .slice(0, 4)
+                  .map(([reason, n]) => (
+                    <li key={reason}>
+                      <span className="tabular-nums font-medium">{n}×</span> {reason}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+            <Button variant="outline" size="sm" onClick={onRetry} disabled={scheduling}>
+              <RefreshCw className={`h-4 w-4 ${scheduling ? 'animate-spin' : ''}`} />
+              {scheduling ? 'Retrying…' : `Retry ${results.failed} failure${results.failed === 1 ? '' : 's'}`}
+            </Button>
+          </div>
+          <p className="mt-2 text-[11px] text-destructive/80">
+            Only the failures are re-sent — posts that already went out are recorded and skipped, so
+            nothing is duplicated.
+          </p>
+        </section>
       )}
 
       <div className="flex items-center justify-between">
