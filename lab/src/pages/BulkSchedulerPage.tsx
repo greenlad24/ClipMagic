@@ -1442,6 +1442,10 @@ function StepSelect({
                   Every drop still posts to <em>all</em> selected accounts within the same 24h, so weeks 1–4 are 3
                   videos a week <em>per account</em>. The videos-per-day slider doesn&apos;t apply.
                 </p>
+                <p className="mt-2">
+                  <span className="text-foreground">No call to action for the first 8 weeks</span>, then one post in
+                  three asks for the comment keyword. The rest are pure value.
+                </p>
                 {selected.length > 0 && (
                   <p className="mt-2 text-foreground">
                     ~{warmUpDaysToClear(selected.length)} days to clear {selected.length} videos
@@ -2488,7 +2492,8 @@ function StepReview({
               {cadenceMode === 'warmup' && (
                 <p className="mt-1 text-[11px] text-muted-foreground">
                   <Badge variant="outline" className="mr-1.5 align-middle text-[10px]">Warm up</Badge>
-                  3 a week for 4 weeks, then 1 a day, then 2 a day — the gaps below are rest days, not missing videos.
+                  3 a week for 4 weeks, then 1 a day, then 2 a day. The gaps below are rest days, not missing
+                  videos. No CTA for the first 8 weeks, then one post in three.
                 </p>
               )}
             </div>
