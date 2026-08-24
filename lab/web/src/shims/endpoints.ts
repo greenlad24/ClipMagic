@@ -1619,6 +1619,8 @@ export type BulkPreviewPost = {
   reason: string;
   /** The video's visual "look" group (from its filename); same-look posts are spaced apart. */
   groupId: string;
+  /** Ships deliberately without the comment CTA (warm-up weeks 1–4). */
+  ctaSuppressed?: boolean;
   tiktok?: TikTokOptions;
   /** Growth Guardrails score + checklist for this (file × channel) post. */
   growth: Growth;

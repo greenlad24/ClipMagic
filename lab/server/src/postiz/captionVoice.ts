@@ -1,0 +1,203 @@
+/**
+ * The bar-Jake voice, for captions.
+ *
+ * The Bulk Scheduler's caption writer used to have NO voice guidance at all —
+ * the only style instruction in the whole prompt was "make each platform's
+ * caption different". With nothing else to go on the model wrote generic
+ * marketing copy: measured across 908 real captions, 89% carried an em-dash and
+ * a third opened on "here's why…". That reads as machine-written, which is a
+ * CONTENT-quality problem (platforms score it) rather than an automation one.
+ *
+ * Jake's voice is already written down — the Script Generator runs on it. This
+ * module reads THOSE SAME FILES rather than restating them, so editing SOUL.md
+ * or the rule amendments steers scripts and captions together and they can never
+ * drift apart:
+ *   - scriptgen/reference/SOUL.md          → the bar-Jake persona + hard rules
+ *   - scriptgen/prompts/rule-amendments.md → §8 banned words / talk like a person
+ *
+ * Both are copied into dist by `copy:assets` (tsc does not copy .md), which is
+ * why they can be read at runtime here.
+ *
+ * Prompting alone is not enough — the model reintroduces banned phrasing the way
+ * it reintroduced like-bait (2026-08-24). So the tells are ALSO stripped
+ * deterministically in assemblePlatformCaption, same as URLs and like-bait.
+ */
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
+
+/** Read a reference doc; a missing file degrades to "" (never throws). */
+function readRef(relative: string): string {
+  try {
+    return fs.readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Extract one `## Heading` section (up to the next `## ` or `---` rule).
+ * Returns "" when the heading isn't found, so a renamed section degrades to
+ * "less guidance" rather than to a crash.
+ */
+export function markdownSection(doc: string, heading: RegExp): string {
+  const lines = doc.split("\n");
+  const start = lines.findIndex((l) => /^##\s/.test(l) && heading.test(l));
+  if (start < 0) return "";
+  const body: string[] = [lines[start]];
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s/.test(lines[i]) || /^---\s*$/.test(lines[i])) break;
+    body.push(lines[i]);
+  }
+  return body.join("\n").trim();
+}
+
+let cached: string | null = null;
+
+/**
+ * The voice block injected into the caption system prompt. Built once per
+ * process — the reference files don't change under a running server.
+ */
+export function captionVoiceBlock(): string {
+  if (cached !== null) return cached;
+  const soul = readRef("../scriptgen/reference/SOUL.md");
+  const amendments = readRef("../scriptgen/prompts/rule-amendments.md");
+
+  const persona = markdownSection(soul, /BRAND PERSONA/i);
+  const hardRules = markdownSection(soul, /HARD CONTENT RULES/i);
+  const talkLikeAPerson = markdownSection(amendments, /Banned words/i);
+
+  const parts = [
+    "VOICE — you are writing AS Jake Dawson. This matters more than any copywriting instinct you have.",
+    persona,
+    hardRules,
+    talkLikeAPerson,
+    // Caption-specific, because the source docs are written for spoken scripts.
+    [
+      "## Writing captions in this voice",
+      "",
+      "- NEVER use an em-dash (—). Split the sentence in two instead. This is the single loudest tell that a caption was machine-written.",
+      "- Short sentences. One idea each. Plain words a person says out loud.",
+      "- No copywriter openers: not \"Here's why\", not \"Here's the thing\", not \"Stop doing X\", not \"The reason?\", not \"Let that sink in\".",
+      "- Do not stack a three-item rhythm just because it sounds good. Say the thing once.",
+      "- Dry humour that feels accidental, not performed. Never at the viewer.",
+      "- The bar test applies to every line: would Jake say this to a stranger he just met and likes? If no, cut it.",
+      "- Write like one person talking to one person. If a line would work as a landing-page headline, rewrite it.",
+    ].join("\n"),
+  ].filter(Boolean);
+  cached = parts.join("\n\n");
+  return cached;
+}
+
+/** Test seam: forget the cached voice block (the reference files are read once). */
+export function resetCaptionVoiceCache(): void {
+  cached = null;
+}
+
+// ── Deterministic de-tell ─────────────────────────────────────────────────────
+/**
+ * Word swaps from rule-amendments §8. Each is a word Jake does not write; the
+ * replacement is the one the rule doc names. Applied case-insensitively with the
+ * original capitalization preserved on the first letter.
+ */
+const WORD_SWAPS: Array<[RegExp, string]> = [
+  [/\bcaveat\b/gi, "catch"],
+  [/\bgenuinely\s+/gi, ""],
+  [/\bwhether\b/gi, "if"],
+  [/\bthe real deal\b/gi, "the real thing"],
+];
+
+/** Copywriter openers that read as generated. Cut the lead-in, keep the sentence. */
+const OPENER_CUTS: Array<[RegExp, string]> = [
+  [/(^|\n)here'?s (?:why|what|how|the thing|the kicker|the fix)[:,]?\s*/gi, "$1"],
+  [/(^|\n)the (?:reason|kicker|pattern|breakthrough|fix)\??[:—]\s*/gi, "$1"],
+  [/\blet that sink in\.?\s*/gi, ""],
+];
+
+/**
+ * Replace em-dashes the way rule §8 says to: split into two short sentences.
+ *
+ * A period is used when what follows is a real clause, a comma when it is a
+ * short fragment — turning "options—you're converting at 9%" into two sentences
+ * reads like Jake, but doing it to a two-word tail would leave a fragment.
+ */
+export function splitEmDashes(text: string): string {
+  return text.replace(/\s*—\s*/g, (_m, offset: number, whole: string) => {
+    const after = whole.slice(offset).replace(/^\s*—\s*/, "");
+    const tail = after.split(/(?<=[.!?])\s|\n/)[0] ?? "";
+    const words = tail.trim().split(/\s+/).filter(Boolean).length;
+    return words >= 4 ? ". " : ", ";
+  });
+}
+
+/**
+ * Capitalize after a sentence break we introduced — and at the start of the
+ * caption or any line, because cutting a leading opener ("Here's why: buyers
+ * freeze.") otherwise leaves the HOOK starting in lowercase.
+ */
+function recapitalize(text: string): string {
+  return text
+    .replace(/([.!?]\s+)([a-z])/g, (_m, p, c) => p + c.toUpperCase())
+    .replace(/(^|\n)(\s*)([a-z])/g, (_m, br, sp, c) => br + sp + c.toUpperCase());
+}
+
+/**
+ * Strip the tells that make a caption read as generated. Runs alongside the
+ * existing URL and like-bait strips in assemblePlatformCaption, for the same
+ * reason: the prompt asks, this guarantees.
+ */
+export function stripAiTells(caption: string): string {
+  let out = caption;
+  for (const [re, to] of OPENER_CUTS) out = out.replace(re, to);
+  out = splitEmDashes(out);
+  for (const [re, to] of WORD_SWAPS) out = out.replace(re, to);
+  out = recapitalize(out);
+  return out
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+([.,!?])/g, "$1")
+    .trim();
+}
+
+// ── Warm-up: no ask at all ────────────────────────────────────────────────────
+/**
+ * Remove the growth CTA from a caption.
+ *
+ * Weeks 1–4 of a warm-up campaign ship NO call to action (Jake's call): a brand
+ * new account whose every post asks for a comment reads as a funnel, and 95% of
+ * posts carrying a byte-identical CTA line is a template fingerprint far louder
+ * than any single caption.
+ *
+ * It is removed HERE rather than never generated, because captions are cached
+ * per (file, platform) while the CTA depends on WHEN the post lands. Generating
+ * two variants would double the AI bill and split the cache; stripping at
+ * assembly keeps one cached caption usable in either phase.
+ *
+ * The closing question is deliberately kept — that is engagement, not an offer,
+ * and the growth scorer requires the caption to end on one.
+ */
+export function stripGrowthCta(caption: string, keyword: string): string {
+  const kw = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // CASE-SENSITIVE on purpose. The CTA keyword ships in capitals ("Comment
+  // PROMPTS"), and matching loosely strips the ordinary English word out of
+  // legitimate lines — "staying focused on prompts?" lost 9 of 908 real captions
+  // their closing question before this was tightened.
+  const hits = () => new RegExp(`\\b${kw}\\b`);
+  // Sentence-level ONLY. Dropping a whole PARAGRAPH that mentions the keyword
+  // also throws away the closing question when the model put both in one block —
+  // that cost 22 of 908 real captions their required question, and emptied 6
+  // outright. A paragraph left with nothing is dropped; one with value survives.
+  const out = caption
+    .split(/\n{2,}/)
+    .map((para) => {
+      if (!hits().test(para)) return para;
+      return para
+        .split(/(?<=[.!?])\s+/)
+        .filter((sentence) => !hits().test(sentence))
+        .join(" ")
+        .trim();
+    })
+    .filter((para) => para.trim().length > 0)
+    .join("\n\n");
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}

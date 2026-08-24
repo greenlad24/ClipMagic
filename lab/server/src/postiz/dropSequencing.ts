@@ -154,6 +154,21 @@ export function rampCapacityFn(ramp: readonly CadencePhase[], startDay: number):
   };
 }
 
+/**
+ * Days covered by a ramp's FIRST phase — its sparse opening.
+ *
+ * Warm-up ships no call to action for exactly this window, so the two stay tied:
+ * retune the ramp's opening and the quiet period follows it, instead of a 28
+ * hard-coded somewhere else drifting out of sync.
+ */
+export function rampFirstPhaseDays(ramp: readonly CadencePhase[]): number {
+  const first = ramp[0];
+  if (!first) return 0;
+  const weeks = Math.floor(first.weeks ?? 0);
+  // A single-phase ramp has no "opening" distinct from the rest of the campaign.
+  return ramp.length <= 1 || weeks <= 0 ? 0 : weeks * 7;
+}
+
 /** The busiest day any phase of a ramp allows (the per-channel cap must clear it). */
 export function rampPeakPerDay(ramp: readonly CadencePhase[]): number {
   let peak = 1;

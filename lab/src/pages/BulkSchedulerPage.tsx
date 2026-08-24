@@ -2256,7 +2256,12 @@ function StepReview({
     if (/\b(like (this|the post|it)|double tap|save this post|share this post)\b/i.test(text)) {
       return 'asks for likes';
     }
-    if (!new RegExp(`\\b${ctaKeyword}\\b`, 'i').test(text)) return `no "${ctaKeyword}" CTA`;
+    // A warm-up post in weeks 1–4 ships with no ask ON PURPOSE. Flagging it here
+    // would make the Fix button rewrite the CTA straight back in, undoing the
+    // quiet period the campaign pace exists to create.
+    if (!p.ctaSuppressed && !new RegExp(`\\b${ctaKeyword}\\b`, 'i').test(text)) {
+      return `no "${ctaKeyword}" CTA`;
+    }
     // Reads fine, but was written blind: transcription failed for this video, so
     // the caption is grounded in the brief instead of what she actually says.
     // Re-transcribing and re-writing it is the same repair, so it belongs here.

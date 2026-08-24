@@ -34,6 +34,7 @@ import {
   groupKeyForFilename,
   countLooks,
   rampPeakPerDay,
+  rampFirstPhaseDays,
   WARM_UP_RAMP,
   type CadencePhase,
   type DropFile,
@@ -48,6 +49,7 @@ import { isYouTubePost, youtubeShortsGate } from "./youtubeGate.js";
 import { rendersToAutoHide, setRendersHidden } from "./hiddenRenders.js";
 import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
 import { readFile } from "node:fs/promises";
+import { stripGrowthCta, stripAiTells } from "./captionVoice.js";
 
 /** Which API a channel posts through. */
 export type Provider = "postiz" | "postpeer";
@@ -300,6 +302,11 @@ export interface PreviewPostDto {
   reason: string;
   /** The video's visual "look" group (from its filename); posts of one look are spaced apart. */
   groupId: string;
+  /**
+   * This post deliberately ships WITHOUT the comment-keyword CTA — warm-up
+   * weeks 1–4. The review step must not offer to "fix" it back in.
+   */
+  ctaSuppressed?: boolean;
   /** TikTok Direct-Post options (postpeer/tiktok only); defaults applied. */
   tiktok?: PostPeerTikTokOptions;
   /** Growth Guardrails: combined caption + pre-flight score + checklist. */
@@ -624,6 +631,18 @@ export async function preview(
   const dropDateByFile = new Map<string, string>(
     assignments.map((a) => [a.fileId, addDaysToLocalKey(todayLocalKey, a.dayOffset)]),
   );
+  // WARM-UP, weeks 1–4: ship no call to action at all. A brand-new account that
+  // asks for a comment on every post reads as a funnel rather than a person, and
+  // an identical CTA line on 95% of posts is a template fingerprint louder than
+  // any single caption. The ask returns with the daily cadence in week 5.
+  // Captions are cached per (file, platform) while this depends on WHEN a post
+  // lands, so it is stripped at assembly rather than never generated — one
+  // cached caption stays usable in both phases.
+  const ctaFreeFileIds = new Set<string>(
+    ramp
+      ? assignments.filter((a) => a.dayOffset < startDayOffset + rampFirstPhaseDays(ramp)).map((a) => a.fileId)
+      : [],
+  );
 
   // One scheduling ITEM per LIVE (file × channel). Each item is PINNED to its
   // video's drop day so all accounts post that video within the same 24h; the
@@ -661,7 +680,15 @@ export async function preview(
       if (skippedKeys.has(`${f.fileId}|${c.id}`)) continue;
       const cap = caps[plat];
       const sched = scheduleByKey.get(`${f.fileId}|${c.id}`)!;
-      const captionScore = scoreCaption(cap?.caption ?? "", cap?.hashtags ?? [], plat);
+      // De-tell here rather than only at generation time: captions are CACHED,
+      // so the ones written before the voice existed would otherwise keep their
+      // em-dashes forever. Idempotent, so a freshly-assembled caption (already
+      // stripped) is unchanged. It cleans the phrasing; giving an old caption
+      // the actual voice still needs a rewrite through the review step.
+      const voiced = stripAiTells(cap?.caption ?? "");
+      const ctaSuppressed = ctaFreeFileIds.has(f.fileId);
+      const caption = ctaSuppressed ? stripGrowthCta(voiced, CTA_KEYWORD) : voiced;
+      const captionScore = scoreCaption(caption, cap?.hashtags ?? [], plat, { ctaSuppressed });
       const growth = combineGrowth(captionScore.checks as GrowthCheckDto[], preflightChecks);
       posts.push({
         fileId: f.fileId,
@@ -670,7 +697,8 @@ export async function preview(
         channelName: c.name,
         identifier: c.identifier,
         platform: plat,
-        caption: cap?.caption ?? "",
+        caption,
+        ctaSuppressed,
         firstLineHook: cap?.firstLineHook ?? "",
         hashtags: cap?.hashtags ?? [],
         scheduledAt: sched.scheduledAt,

@@ -12,6 +12,7 @@
  */
 import { claudeJSONForPurpose } from "../ai/claude.js";
 import type { ShortPlatform } from "./providerSettings.js";
+import { captionVoiceBlock, stripAiTells } from "./captionVoice.js";
 
 /**
  * Caption platforms = the tuned short trio PLUS "generic". Channels whose
@@ -225,6 +226,14 @@ export function scoreCaption(
   caption: string,
   hashtags: string[],
   platform: CaptionPlatform,
+  /**
+   * `ctaSuppressed` = this post is deliberately shipping WITHOUT the comment
+   * keyword (warm-up weeks 1–4). Without it the advisory growth-cta check fails
+   * on every warm-up post, which both tanks the score and makes the review
+   * step's "Fix captions" button rewrite them — putting the CTA straight back
+   * and silently undoing the quiet period.
+   */
+  opts: { ctaSuppressed?: boolean } = {},
 ): CaptionScore {
   const rule = PLATFORM_RULES[platform];
   const text = (caption ?? "").trim();
@@ -315,7 +324,7 @@ export function scoreCaption(
   // keyword, which is how the resource actually gets delivered. Advisory so a
   // hand-edit that drops it dips the score and shows a hint but never blocks —
   // assemblePlatformCaption already guarantees it on AI-written captions.
-  if (rule.cta) {
+  if (rule.cta && !opts.ctaSuppressed) {
     const kw = rule.cta.keyword;
     checks.push({
       id: "growth-cta",
@@ -378,7 +387,10 @@ function buildSystemPrompt(platforms: CaptionPlatform[], hasTranscript: boolean)
       ctaPlatforms.map((p) => `- ${p}: ${PLATFORM_RULES[p].cta!.guidance}`).join("\n")
     : "";
   return [
-    "You are a short-form social media SEO copywriter. You write DISTINCT, platform-native captions for the SAME video, optimized for each platform's search and discovery in 2026.",
+    "You write DISTINCT, platform-native captions for the SAME video, optimized for each platform's search and discovery in 2026 — in Jake's own voice, not a copywriter's.",
+    // Jake's voice is defined once, in the Script Generator's reference docs.
+    // Without this block the model defaults to generic marketing copy.
+    captionVoiceBlock(),
     hasTranscript
       ? "You are given a TRANSCRIPT of what is ACTUALLY SAID in the video. Base every caption on the real spoken content: pull the genuine hook, the key points, and the search keywords straight from the transcript. The brief is only SUPPLEMENTARY context — when the transcript and the brief disagree, trust the transcript. Never invent claims that aren't supported by what's said."
       : "",
@@ -459,7 +471,7 @@ export function assemblePlatformCaption(
   raw: { firstLineHook?: unknown; caption?: unknown; hashtags?: unknown },
 ): PlatformCaption {
   const rule = PLATFORM_RULES[platform];
-  const firstLineHook = typeof raw.firstLineHook === "string" ? raw.firstLineHook.trim() : "";
+  let firstLineHook = typeof raw.firstLineHook === "string" ? raw.firstLineHook.trim() : "";
   let caption = typeof raw.caption === "string" ? raw.caption.trim() : firstLineHook;
 
   // No like-bait, ever. The prompt forbids asking for likes/saves/shares, but the
@@ -488,6 +500,14 @@ export function assemblePlatformCaption(
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+
+  // Strip the phrasing that reads as machine-written (em-dashes, copywriter
+  // openers, the banned words from the voice rules). Prompted against AND
+  // stripped here, because the model reintroduces these the way it reintroduced
+  // like-bait. Applied to the hook too, or the startsWith() below stops matching
+  // and the hook gets duplicated onto the front of the caption.
+  caption = stripAiTells(caption);
+  firstLineHook = stripAiTells(firstLineHook);
 
   // Ensure the hook IS the first line of the caption.
   if (firstLineHook && !caption.startsWith(firstLineHook)) {
