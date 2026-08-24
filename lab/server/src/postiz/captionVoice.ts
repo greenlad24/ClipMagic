@@ -58,8 +58,12 @@ export function markdownSection(doc: string, heading: RegExp): string {
  * the deterministic strip has cleaned the em-dashes off an old caption.
  *
  * 1 = the first bar-Jake voice (2026-08-24).
+ * 2 = full sentences (2026-08-24). v1 said "short sentences" and the model read
+ *     that as licence to drop the subject — "Met a competitor…" for "I met a
+ *     competitor…" — which is the clipped-fragment shape rule 8 forbids. Any
+ *     caption written under v1 is re-flagged for rewrite.
  */
-export const CAPTION_VOICE_VERSION = 1;
+export const CAPTION_VOICE_VERSION = 2;
 
 let cached: string | null = null;
 
@@ -86,7 +90,13 @@ export function captionVoiceBlock(): string {
       "## Writing captions in this voice",
       "",
       "- NEVER use an em-dash (—). Split the sentence in two instead. This is the single loudest tell that a caption was machine-written.",
-      "- Short sentences. One idea each. Plain words a person says out loud.",
+      // "Short sentences" alone steered the model into TELEGRAPHIC copy — it
+      // started dropping the subject ("Met a competitor…" for "I met a
+      // competitor…"), which is the clipped-fragment shape rule 8 above
+      // explicitly forbids. Short has to mean "one idea", not "fewer words".
+      "- One idea per sentence. Short because each sentence says one thing, NOT because words were cut out of it.",
+      "- Write FULL sentences. NEVER drop the leading subject or the small connecting words to save space: write \"I met a competitor who does exactly what I do\", never \"Met a competitor who does exactly what I do\". A clipped fragment reads as ad copy, which is the opposite of this voice.",
+      "- Keep the words a person actually says out loud: I, and, so, but, then, actually, still. Trimming them is what makes writing sound like a machine compressed it.",
       "- No copywriter openers: not \"Here's why\", not \"Here's the thing\", not \"Stop doing X\", not \"The reason?\", not \"Let that sink in\".",
       "- Do not stack a three-item rhythm just because it sounds good. Say the thing once.",
       "- Dry humour that feels accidental, not performed. Never at the viewer.",
