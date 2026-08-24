@@ -265,16 +265,28 @@ export function stripGrowthCta(caption: string, keyword: string): string {
   // Sentence-level ONLY. Dropping a whole PARAGRAPH that mentions the keyword
   // also throws away the closing question when the model put both in one block —
   // that cost 22 of 908 real captions their required question, and emptied 6
-  // outright. A paragraph left with nothing is dropped; one with value survives.
+  // outright.
   const out = caption
     .split(/\n{2,}/)
     .map((para) => {
       if (!hits().test(para)) return para;
-      return para
-        .split(/(?<=[.!?])\s+/)
-        .filter((sentence) => !hits().test(sentence))
-        .join(" ")
-        .trim();
+      const sentences = para.split(/(?<=[.!?])\s+/);
+      const firstAsk = sentences.findIndex((x) => hits().test(x));
+      const kept: string[] = [];
+      sentences.forEach((sentence, i) => {
+        if (hits().test(sentence)) return; // the ask itself
+        // Anything BEFORE the ask is the caption's own value — keep it.
+        if (i < firstAsk) {
+          kept.push(sentence);
+          return;
+        }
+        // After the ask, only a QUESTION stands on its own. A declarative tail is
+        // the offer's elaboration and reads as an orphan once the ask is gone:
+        // "…I'll send you my framework. The exact structure that works in 2026."
+        // leaves that second sentence promising something nothing delivers.
+        if (/\?\s*$/.test(sentence.trim())) kept.push(sentence);
+      });
+      return kept.join(" ").trim();
     })
     .filter((para) => para.trim().length > 0)
     .join("\n\n");

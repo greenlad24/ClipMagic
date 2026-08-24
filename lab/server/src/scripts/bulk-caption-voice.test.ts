@@ -103,6 +103,32 @@ check("a paragraph that was ONLY the CTA is dropped, not left blank", () => {
   assert.equal(out, "Hook.\n\nQuestion?");
 });
 
+check("the ask's ELABORATION goes with it, not left as an orphan", () => {
+  // Real shape from the corpus: the model continued the offer into a second
+  // sentence, which survived a keyword-only strip and read as a promise with
+  // nothing behind it.
+  const caption =
+    "The hook.\n\nComment PROMPTS and I'll send you my full portfolio framework. The exact structure that works in 2026.\n\nWhat would you show first?";
+  const out = stripGrowthCta(caption, "PROMPTS");
+  assert.ok(!/exact structure/i.test(out), `orphan survived: ${out}`);
+  assert.equal(out, "The hook.\n\nWhat would you show first?");
+});
+
+check("value BEFORE the ask is kept; only the ask and its tail go", () => {
+  const caption =
+    "Context is the skill in 2026. Comment PROMPTS and I'll send the templates. Everything you need.\n\nWhat's your blocker?";
+  const out = stripGrowthCta(caption, "PROMPTS");
+  assert.ok(out.startsWith("Context is the skill in 2026."), out);
+  assert.ok(!/Everything you need/.test(out), out);
+  assert.ok(out.endsWith("What's your blocker?"), out);
+});
+
+check("a question AFTER the ask still survives", () => {
+  // Guards the fix above from over-reaching: a closing question stands alone.
+  const out = stripGrowthCta("Hook.\n\nComment PROMPTS for it. What would you try first?", "PROMPTS");
+  assert.ok(out.endsWith("What would you try first?"), out);
+});
+
 check("a caption with no CTA is returned untouched", () => {
   const caption = "Hook.\n\nValue.\n\nWhat do you think?";
   assert.equal(stripGrowthCta(caption, "PROMPTS"), caption);

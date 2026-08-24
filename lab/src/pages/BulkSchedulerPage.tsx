@@ -2275,6 +2275,17 @@ function StepReview({
     // Reads fine, but was written blind: transcription failed for this video, so
     // the caption is grounded in the brief instead of what she actually says.
     // Re-transcribing and re-writing it is the same repair, so it belongs here.
+    // A post inside the quiet period (or one of the two in three that don't ask)
+    // must not still PROMISE something, because nothing will deliver it. The
+    // stripper removes the ask and its elaboration, so this is a safety net for
+    // a hand-edit or a phrasing it hasn't seen — first-person delivery only, so
+    // "you review it, you send it" is not mistaken for an offer.
+    if (
+      p.ctaSuppressed &&
+      /\bI'?ll (send|DM|share) (you|it)\b|\bfree access to my\b|\bcomment\b[^.!?\n]{0,30}\band I'?ll\b/i.test(text)
+    ) {
+      return 'promises something with no CTA to deliver it';
+    }
     if (transcriptGaps.has(p.fileId)) return 'captioned without the audio';
     // Reads fine by every rule above and yet isn't Jake: written before the
     // bar-Jake voice existed. The tell-strip already took the em-dashes off, so
