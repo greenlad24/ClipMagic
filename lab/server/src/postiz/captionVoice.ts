@@ -179,14 +179,73 @@ export function stripAiTells(caption: string): string {
     .trim();
 }
 
+// ── How often a campaign is allowed to ask ────────────────────────────────────
+/**
+ * One post out of every N carries the CTA once the quiet period ends.
+ *
+ * Not every post: an identical ask on 95% of a feed is a template fingerprint
+ * louder than any single caption, and a new account that wants something every
+ * time reads as a funnel. Env-overridable alongside the keyword itself.
+ */
+export const CTA_EVERY_NTH_POST = Math.max(
+  1,
+  Number.parseInt(process.env.BULK_CTA_EVERY_NTH || "3", 10) || 3,
+);
+
+/** A scheduled drop, as far as CTA policy is concerned. */
+export interface CtaDrop {
+  fileId: string;
+  /** Whole days from the schedule's start day. */
+  dayOffset: number;
+  /** Position within that day. */
+  slot: number;
+}
+
+/**
+ * Decide which drops ship WITHOUT the comment CTA. Returns the fileIds to strip.
+ *
+ * Two rules, in order:
+ *   1. QUIET PERIOD — nothing before `quietUntilDayOffset` asks for anything.
+ *   2. Afterwards, one drop in every `everyNth` carries the ask; the rest don't.
+ *      Counting restarts after the quiet period, so the first ask lands on the
+ *      Nth post of the campaign proper, not at some offset inherited from it.
+ *
+ * The decision is per DROP, not per post: one video says the same thing on every
+ * account, so a follower on any single platform sees an ask every Nth post —
+ * which is what "one every three posts" means from where they are sitting.
+ *
+ * Deterministic: drops are ordered by (day, slot), so the same plan always
+ * chooses the same posts and a rebuild doesn't reshuffle who asks.
+ */
+export function ctaSuppressedFileIds(
+  drops: readonly CtaDrop[],
+  opts: { quietUntilDayOffset: number; everyNth?: number },
+): Set<string> {
+  const everyNth = Math.max(1, Math.floor(opts.everyNth ?? CTA_EVERY_NTH_POST));
+  const ordered = [...drops].sort((a, b) => a.dayOffset - b.dayOffset || a.slot - b.slot || (a.fileId < b.fileId ? -1 : 1));
+  const out = new Set<string>();
+  let sinceQuiet = 0;
+  for (const d of ordered) {
+    if (d.dayOffset < opts.quietUntilDayOffset) {
+      out.add(d.fileId);
+      continue;
+    }
+    // The Nth drop after the quiet period asks; 1 and 2 of every 3 do not.
+    const asks = (sinceQuiet + 1) % everyNth === 0;
+    if (!asks) out.add(d.fileId);
+    sinceQuiet++;
+  }
+  return out;
+}
+
 // ── Warm-up: no ask at all ────────────────────────────────────────────────────
 /**
  * Remove the growth CTA from a caption.
  *
- * Weeks 1–4 of a warm-up campaign ship NO call to action (Jake's call): a brand
- * new account whose every post asks for a comment reads as a funnel, and 95% of
- * posts carrying a byte-identical CTA line is a template fingerprint far louder
- * than any single caption.
+ * The whole 8-week ramp-up ships NO call to action (Jake's call), and after it
+ * only one drop in three asks. A new account whose every post wants something
+ * reads as a funnel, and 95% of posts carrying a byte-identical CTA line is a
+ * template fingerprint far louder than any single caption.
  *
  * It is removed HERE rather than never generated, because captions are cached
  * per (file, platform) while the CTA depends on WHEN the post lands. Generating

@@ -34,7 +34,7 @@ import {
   groupKeyForFilename,
   countLooks,
   rampPeakPerDay,
-  rampFirstPhaseDays,
+  rampRampUpDays,
   WARM_UP_RAMP,
   type CadencePhase,
   type DropFile,
@@ -49,7 +49,7 @@ import { isYouTubePost, youtubeShortsGate } from "./youtubeGate.js";
 import { rendersToAutoHide, setRendersHidden } from "./hiddenRenders.js";
 import { createTranscriptionCache, type TranscribeSourceDeps } from "./transcription.js";
 import { readFile } from "node:fs/promises";
-import { stripGrowthCta, stripAiTells } from "./captionVoice.js";
+import { stripGrowthCta, stripAiTells, ctaSuppressedFileIds } from "./captionVoice.js";
 
 /** Which API a channel posts through. */
 export type Provider = "postiz" | "postpeer";
@@ -631,18 +631,21 @@ export async function preview(
   const dropDateByFile = new Map<string, string>(
     assignments.map((a) => [a.fileId, addDaysToLocalKey(todayLocalKey, a.dayOffset)]),
   );
-  // WARM-UP, weeks 1–4: ship no call to action at all. A brand-new account that
-  // asks for a comment on every post reads as a funnel rather than a person, and
-  // an identical CTA line on 95% of posts is a template fingerprint louder than
-  // any single caption. The ask returns with the daily cadence in week 5.
+  // HOW OFTEN THE CAMPAIGN ASKS. Nothing asks for anything while the ramp is
+  // still ramping (8 weeks on the warm-up ramp); after that one drop in three
+  // carries the CTA and the other two are pure value. A brand-new account that
+  // wants something on every post reads as a funnel rather than a person, and an
+  // identical CTA line on 95% of posts is a template fingerprint louder than any
+  // single caption.
+  //
   // Captions are cached per (file, platform) while this depends on WHEN a post
-  // lands, so it is stripped at assembly rather than never generated — one
-  // cached caption stays usable in both phases.
-  const ctaFreeFileIds = new Set<string>(
-    ramp
-      ? assignments.filter((a) => a.dayOffset < startDayOffset + rampFirstPhaseDays(ramp)).map((a) => a.fileId)
-      : [],
-  );
+  // lands, so the ask is stripped at assembly rather than never generated — one
+  // cached caption stays usable whichever side of the line it falls.
+  const ctaFreeFileIds = ramp
+    ? ctaSuppressedFileIds(assignments, {
+        quietUntilDayOffset: startDayOffset + rampRampUpDays(ramp),
+      })
+    : new Set<string>();
 
   // One scheduling ITEM per LIVE (file × channel). Each item is PINNED to its
   // video's drop day so all accounts post that video within the same 24h; the

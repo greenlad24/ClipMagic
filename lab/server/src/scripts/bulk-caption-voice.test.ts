@@ -15,7 +15,10 @@ import {
   stripAiTells,
   stripGrowthCta,
   markdownSection,
+  ctaSuppressedFileIds,
+  type CtaDrop,
 } from "../postiz/captionVoice.js";
+import { rampRampUpDays, WARM_UP_RAMP } from "../postiz/dropSequencing.js";
 
 let passed = 0;
 function check(name: string, fn: () => void) {
@@ -111,6 +114,72 @@ check("markdownSection pulls one ## section and stops at the next", () => {
   assert.ok(markdownSection(doc, /One/).includes("alpha"));
   assert.ok(!markdownSection(doc, /One/).includes("beta"));
   assert.equal(markdownSection(doc, /Nope/), "", "a missing section degrades to empty");
+});
+
+// ── how often the campaign asks ───────────────────────────────────────────────
+/** N drops, one per day from `from`. */
+function drops(n: number, from = 0): CtaDrop[] {
+  return Array.from({ length: n }, (_, i) => ({ fileId: `f${i}`, dayOffset: from + i, slot: 0 }));
+}
+
+check("the warm-up ramp-up is 8 weeks, and the quiet period tracks it", () => {
+  assert.equal(rampRampUpDays(WARM_UP_RAMP), 56, "4 weeks at 3/week + 4 weeks at 1/day");
+  // Retuning the ramp moves the quiet period rather than desyncing from it.
+  assert.equal(rampRampUpDays([{ weeks: 2, perWeek: 3 }, { perDay: 1 }]), 14);
+  assert.equal(rampRampUpDays([{ perDay: 2 }]), 0, "a single-phase ramp never ramps up");
+});
+
+check("nothing asks during the quiet period", () => {
+  const d = drops(56);
+  const off = ctaSuppressedFileIds(d, { quietUntilDayOffset: 56 });
+  assert.equal(off.size, 56, "every drop inside the quiet window is stripped");
+});
+
+check("after the quiet period, exactly one drop in three asks", () => {
+  const d = drops(9, 56);
+  const off = ctaSuppressedFileIds(d, { quietUntilDayOffset: 56, everyNth: 3 });
+  const asks = d.filter((x) => !off.has(x.fileId)).map((x) => x.fileId);
+  assert.deepEqual(asks, ["f2", "f5", "f8"], "the 3rd, 6th and 9th ask");
+});
+
+check("counting restarts after the quiet period, not at day 0", () => {
+  // 5 quiet drops then 3 live ones: the FIRST ask must be the 3rd live drop,
+  // not whatever the global index happens to land on.
+  const d = [...drops(5, 0), ...drops(3, 56).map((x, i) => ({ ...x, fileId: `live${i}` }))];
+  const off = ctaSuppressedFileIds(d, { quietUntilDayOffset: 56, everyNth: 3 });
+  assert.ok(off.has("live0") && off.has("live1"), "the first two live drops stay quiet");
+  assert.ok(!off.has("live2"), "the third live drop asks");
+});
+
+check("the choice follows schedule order, not input order", () => {
+  const shuffled: CtaDrop[] = [
+    { fileId: "c", dayOffset: 58, slot: 0 },
+    { fileId: "a", dayOffset: 56, slot: 0 },
+    { fileId: "b", dayOffset: 57, slot: 0 },
+  ];
+  const off = ctaSuppressedFileIds(shuffled, { quietUntilDayOffset: 56, everyNth: 3 });
+  assert.deepEqual([...off].sort(), ["a", "b"], "the chronologically third one asks");
+});
+
+check("two drops on one day are ordered by slot", () => {
+  const d: CtaDrop[] = [
+    { fileId: "second", dayOffset: 56, slot: 1 },
+    { fileId: "first", dayOffset: 56, slot: 0 },
+    { fileId: "third", dayOffset: 57, slot: 0 },
+  ];
+  const off = ctaSuppressedFileIds(d, { quietUntilDayOffset: 56, everyNth: 3 });
+  assert.ok(!off.has("third"), "slot ordering puts 'third' in the 3rd position");
+});
+
+check("everyNth of 1 means every drop asks (after the quiet period)", () => {
+  const d = drops(4, 56);
+  assert.equal(ctaSuppressedFileIds(d, { quietUntilDayOffset: 56, everyNth: 1 }).size, 0);
+});
+
+check("a zero-length quiet period still applies the 1-in-3 rule", () => {
+  const d = drops(6, 0);
+  const off = ctaSuppressedFileIds(d, { quietUntilDayOffset: 0, everyNth: 3 });
+  assert.equal(off.size, 4, "4 of 6 stay quiet");
 });
 
 console.log(`\n${passed} checks passed.`);
