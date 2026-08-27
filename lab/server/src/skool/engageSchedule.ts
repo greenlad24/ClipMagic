@@ -789,6 +789,7 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
             usedSubjects: usedSubjectStrings(),
             newMemberCount: greet?.members.length ?? 0,
             welcomeMessage: getSkoolSettings().welcomeMessageMd,
+            voiceGuide: getSkoolSettings().voiceGuideMd,
           }).catch((e) => ({ subject: "", error: e instanceof Error ? e.message : String(e) }))
         : null;
       // ⚠️ A FAILED ASK SUBJECT KEEPS `kind: "ask"` AND FALLS BACK TO A LESSON
@@ -1136,6 +1137,7 @@ async function attemptSlot(
       // joined. The drafter is told not to ask it again — and to borrow its
       // register for the greeting.
       welcomeMessage: getSkoolSettings().welcomeMessageMd,
+      voiceGuide: getSkoolSettings().voiceGuideMd,
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
 
     if (res.error || !res.draft) {

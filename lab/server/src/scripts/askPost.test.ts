@@ -6,6 +6,7 @@
  *   - getSchedule()          an ask day that is not a posting day READS as off
  *   - setSchedule()          …while writing that same combination is refused loudly
  *   - openingForMentions()   a leading "- " is a bullet, not a dash
+ *   - voiceGuideBlock()      the voice guide wins on tone and NEVER on facts
  *   - the welcome ledger     records on publish, and never greets anyone twice
  *
  * ⚠️ THREE OF THESE GUARD FAILURES THAT ARE INVISIBLE FROM THE OUTSIDE. An ask
@@ -39,7 +40,7 @@ async function main() {
   fs.mkdirSync(path.join(root, "db"), { recursive: true });
 
   const { kindForSlot, getSchedule, setSchedule } = await import("../skool/engageSchedule.js");
-  const { openingForMentions } = await import("../skool/engageGen.js");
+  const { openingForMentions, voiceGuideBlock } = await import("../skool/engageGen.js");
   const { welcomedUserIds, recordWelcomed } = await import("../skool/members.js");
   const { db } = await import("../db/index.js");
 
@@ -136,6 +137,42 @@ async function main() {
     // "-" only starts a list when whitespace follows it. Without this the post
     // would open on a mangled word.
     assert.equal(openingForMentions("-welcome in"), "-welcome in");
+  });
+
+  /* ── the voice guide, and what it must never be allowed to replace ── */
+
+  await check("voiceGuideBlock: no guide stored changes nothing at all", () => {
+    // An empty setting must add no text whatsoever — not a heading, not an empty
+    // section. A prompt that says "THE VOICE:" and then nothing invites the
+    // model to fill the gap itself.
+    assert.equal(voiceGuideBlock(""), "");
+    assert.equal(voiceGuideBlock("   \n  "), "");
+  });
+
+  await check("voiceGuideBlock: the guide is carried verbatim", () => {
+    const guide = "# Bar-Jake\n\nShort sentences. No hype.";
+    assert.ok(voiceGuideBlock(guide).includes(guide));
+  });
+
+  await check("voiceGuideBlock: it is told it outranks TONE", () => {
+    // The whole point of storing it: it must beat the borrowed YouTube
+    // comment-box rules on how things SOUND, which are the last word otherwise.
+    const out = voiceGuideBlock("anything").toLowerCase();
+    assert.ok(out.includes("outranks every other description of tone"));
+    assert.ok(out.includes("capitalisation"));
+  });
+
+  await check("⚠️ voiceGuideBlock: it is told it does NOT outrank the safety rules", () => {
+    // ⚠️⚠️ THE ONE THAT MATTERS. A voice guide has no opinion on inventing a
+    // price or on refusing a refund question — so a guide allowed to REPLACE the
+    // prompt would drop every rule that keeps this agent from hurting a member,
+    // and the result would read better than ever. If this assertion is ever
+    // deleted, the failure it guards is invisible in the output.
+    const out = voiceGuideBlock("anything").toLowerCase();
+    assert.ok(out.includes("does not outrank"));
+    for (const rule of ["price", "url", "refund", "spam", "earnings"]) {
+      assert.ok(out.includes(rule), `the guide block must still restate: ${rule}`);
+    }
   });
 
   /* ── the welcome ledger ── */

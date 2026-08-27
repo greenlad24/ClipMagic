@@ -26,6 +26,7 @@
  *    167 threads is exactly when a bug is worth the least and costs the most.
  */
 import { db } from "../db/index.js";
+import { getSkoolSettings } from "../db/skool.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 import { readComments, answerable, type SkoolComment } from "./comments.js";
 import { readChannels, readMessages, needingReply, sendDm, type DmChannel } from "./dms.js";
@@ -471,6 +472,9 @@ async function draftOne(
     authorFirstName: target.memberFirstName,
     text: target.theirText,
     context: target.context,
+      // Jake, 2026-08-27: the bar-Jake voice goes into anything the Skool agent
+    // does — the replies as much as the posts.
+    voiceGuide: getSkoolSettings().voiceGuideMd,
   });
   if (error || !reply) {
     // ⚠️ NOT RECORDED. See above — a rate-limited window is the common case

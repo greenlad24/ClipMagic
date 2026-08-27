@@ -602,6 +602,60 @@ function skoolReplyNote(firstName: string): string {
   ].join("\n");
 }
 
+/**
+ * The operator's own voice guide, laid over everything else this agent writes.
+ *
+ * ⚠️⚠️ IT WINS ON WORDS AND LOSES ON FACTS, AND THAT PRECEDENCE IS STATED
+ * RATHER THAN INFERRED. Jake's "Bar-Jake" document is a complete description of
+ * how he sounds and a better one than anything here — and it has no position on
+ * inventing a price, on linking a lesson that does not teach what the sentence
+ * just claimed, or on refusing a message about money, refunds or anything legal.
+ * Those rules are the ones that keep this agent from hurting a member, and a
+ * voice guide that quietly outranked them would produce a post that read better
+ * than it ever has while being the dangerous kind of wrong.
+ *
+ * ⚠️ PLACED AFTER THE STORED PROMPT, DELIBERATELY. The stored prompt is the
+ * YouTube comment-box voice this agent borrowed and never had its own; where the
+ * two describe the same thing differently, the later block is the one a model
+ * follows, and this is the one Jake actually wrote for these surfaces.
+ */
+export function voiceGuideBlock(guide: string): string {
+  if (!guide.trim()) return "";
+  return [
+    "",
+    "==========================================",
+    "THE VOICE — JAKE'S OWN GUIDE. THIS IS THE AUTHORITY ON HOW TO SOUND.",
+    "==========================================",
+    "",
+    guide.trim(),
+    "",
+    "==========================================",
+    "HOW THAT GUIDE INTERACTS WITH EVERYTHING ELSE HERE",
+    "==========================================",
+    "",
+    "⚠️ IT OUTRANKS EVERY OTHER DESCRIPTION OF TONE, RHYTHM, WORD CHOICE,",
+    "SENTENCE LENGTH, HUMOUR, CAPITALISATION AND EMOJI IN THIS PROMPT. Where an",
+    "earlier rule describes how to SOUND and this guide says otherwise, follow",
+    "the guide. It was written for exactly these surfaces; the rules above it",
+    "were written for a YouTube comment box and borrowed.",
+    "",
+    "⚠️⚠️ IT DOES NOT OUTRANK ANYTHING ABOUT FACTS, AND IT DOES NOT MENTION",
+    "THEM. A voice guide has no opinion on these, so they stand exactly as",
+    "written above, unchanged and non-negotiable:",
+    "- never invent a number, a price, a limit, a result or an earnings claim",
+    "- never invent a URL, and never link a lesson unless that page teaches the",
+    "  specific thing the sentence just named",
+    "- never invent an MCP server, a service or a feature",
+    "- skip anything needing Jake himself — money owed, refunds, complaints,",
+    "  anything legal or personal — and skip spam",
+    "- never engage with a link, file or attachment somebody sent you",
+    "",
+    "Said plainly: the guide decides HOW you say it. The rules above decide WHAT",
+    "you are allowed to say. A sentence that sounds perfect and claims something",
+    "you do not know is a failure of this prompt, not a success of the guide.",
+  ].join("\n");
+}
+
 const MCP_NOTE = [
   "THIS IS THE TUESDAY POST AND IT HAS A FIXED JOB: one MCP automation idea.",
   "",
@@ -646,24 +700,52 @@ function askNote(
     "It is SHORT — much shorter than a lesson post. Well under half the length",
     "of the examples above. Nobody answers a question they had to scroll to.",
     "",
-    "It must:",
+    "==========================================",
+    "⚠️⚠️ THE ANSWER MUST BE ALMOST EFFORTLESS TO GIVE. READ THIS TWICE.",
+    "==========================================",
+    "",
+    "The instinct is to ask a good, open, thoughtful question. That instinct is",
+    "WRONG here and it is the single reason this kind of post gets no replies.",
+    "Jake's guide says it plainly: people do not reply to homework.",
+    "",
+    "So the question must be answerable in about three seconds, with a tap or a",
+    "word. Build it one of these ways:",
+    "- GIVE THE OPTIONS. Two to four, numbered, and ask them to drop the number.",
+    "  \"Where are you at with AI right now — 1) total beginner, 2) messed around",
+    "  a bit, 3) already using it and want to go deeper? Just drop the number 👇\"",
+    "- ASK FOR ONE WORD, or one short thing. Not an explanation of it.",
+    "- FILL IN THE BLANK. \"The thing I keep doing by hand is ______\"",
+    "",
+    "⚠️ AND OFFER SOMETHING BACK FOR ANSWERING. A reason to reply, not just a",
+    "request for information: \"tell me and I'll point you at the best place to",
+    "start\", \"say which one and I'll do a post on whichever wins\". Every ask",
+    "post needs this line. Without it the post is asking members for a favour.",
+    "",
+    "⚠️ GIVE PERMISSION AND NORMALISE. \"No judgment.\" \"Whatever's real for you.\"",
+    "\"That's most of us.\" This is what gets an answer out of the quiet majority,",
+    "who are the people worth reaching — the confident ones already comment.",
+    "",
+    "❌ TOO MUCH WORK, do not write questions like these, however good they look:",
+    "   \"What's the one repetitive thing in your week you'd most love to never",
+    "   do by hand again? The more specific the better.\"",
+    "   \"What are you building right now and what's blocking you?\"",
+    "   Both ask somebody to compose a paragraph about themselves. They won't.",
+    "",
+    "==========================================",
+    "",
+    "It must also:",
     "- ask ONE question, and only one. Two questions get zero answers.",
-    "- ask something a member can answer from their own experience in a",
-    "  sentence or two — what they are building, what is in their way, what",
-    "  they tried that worked. Never a quiz with a right answer, never",
-    "  something they would need to go and look up.",
-    "- be specific enough to be answerable. \"What are your AI goals?\" is not a",
-    "  question, it is a survey. \"What is the one task you keep doing by hand",
-    "  that you know a machine could take?\" is a question.",
-    "- say something real before the question — one short observation, from the",
-    "  subject below, that gives the question a reason to exist today. Two or",
-    "  three sentences, not a lesson.",
+    "- say something real before it — one short observation, from the subject",
+    "  below, that gives the question a reason to exist today. Two or three",
+    "  sentences, not a lesson.",
     "- close by asking for the answer in the comments, in Jake's own way.",
     "",
-    "⚠️ PREFER NO POLL. This post exists to collect REPLIES, and a poll gives",
-    "people a way to take part without writing one. Attach a poll only if the",
-    "honest answers really are a short list of options — if the question invites",
-    "a sentence, the answer belongs in the comments.",
+    "⚠️ A NUMBERED LIST IN THE TEXT BEATS AN ATTACHED POLL, and it is not a close",
+    "call. A poll collects a click and nothing else — no name against it, no",
+    "thread to reply into, nothing to answer. Numbered options asked in the words",
+    "of the post are just as easy to answer and produce a COMMENT, which is a",
+    "member Jake can actually talk to. Attach a poll only if the post genuinely",
+    "wants a headcount and no conversation.",
     "",
     "Do NOT teach a lesson here. Do NOT list steps. Do NOT link a lesson unless",
     "the question genuinely needs it — this post asks, it does not explain.",
@@ -930,6 +1012,11 @@ export interface PostRequest {
    * they have already been asked — which is a worse post, not a broken one.
    */
   welcomeMessage?: string;
+  /**
+   * The operator's own voice guide. Empty means the borrowed YouTube prompt is
+   * the only description of the voice, which is where this started.
+   */
+  voiceGuide?: string;
 }
 
 /**
@@ -1022,6 +1109,10 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
 
   const system = [
     req.voicePrompt,
+    // ⚠️ AFTER the stored prompt and BEFORE the mechanics: it overrides how the
+    // borrowed YouTube voice describes SOUNDING, and the mechanics that follow
+    // re-state the factual rules it must not touch.
+    voiceGuideBlock(req.voiceGuide ?? ""),
     styleBlock(req.styleExamples),
     mechanics("post", extra),
     attachmentNote(req.videoCandidates ?? []),
@@ -1196,10 +1287,21 @@ export async function chooseAskSubject(req: {
    * badly, and only visible once it is on the feed.
    */
   welcomeMessage: string;
+  /**
+   * Jake's voice guide.
+   *
+   * ⚠️ THE SUBJECT *IS* THE QUESTION, so the guide's rule about what makes one
+   * answerable has to reach this call and not only the writer. The same trap as
+   * the welcome message: hand the writer a brief it has been forbidden to carry
+   * out and the contradiction resolves silently, on the feed.
+   */
+  voiceGuide: string;
 }): Promise<{ subject: string; error: string | null }> {
   const outline = classroomOutline(req.communityUrl);
 
   const system = [
+    voiceGuideBlock(req.voiceGuide),
+    "",
     "You propose ONE question for a weekly engagement post in an AI automation",
     "community for beginners.",
     "",
@@ -1210,9 +1312,14 @@ export async function chooseAskSubject(req: {
     "worth saying before it. It is a brief for the writer, not the post.",
     "",
     "HARD RULES:",
-    "- It must be answerable from the member's OWN experience, in a sentence or",
-    "  two, with no research and no right answer. If it could be graded, it is",
-    "  the wrong question.",
+    "- ⚠️⚠️ IT MUST BE ANSWERABLE IN ABOUT THREE SECONDS. Not \"in a sentence or",
+    "  two\" — that is already homework and it is why this kind of post gets no",
+    "  replies. Propose a question that comes with its own OPTIONS (two to four,",
+    "  which the post will number), or that wants ONE WORD, or that is a",
+    "  fill-in-the-blank. If answering it means composing a paragraph about",
+    "  yourself, propose a different question.",
+    "- No research and no right answer. If it could be graded, it is the wrong",
+    "  question.",
     "- It must be specific. A question that could be asked of any community on",
     "  any week is one nobody answers.",
     "- A beginner must be able to answer it. Most of these members are early —",
@@ -1290,6 +1397,8 @@ export interface ReplyRequest {
   text: string;
   /** The post the comment sits under, when there is one. */
   context: string;
+  /** The operator's own voice guide — see `voiceGuideBlock`. */
+  voiceGuide?: string;
 }
 
 export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft | null; error: string | null }> {
@@ -1299,21 +1408,40 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
 
   const { hits } = retrieve(req.communityUrl, `${req.text} ${req.context}`, 4);
 
+  // ⚠️⚠️ "THE RULES ABOVE APPLY AS WRITTEN" IS THE LAST WORD IN THIS PROMPT, AND
+  // IT WOULD HAVE QUIETLY REINSTATED EVERYTHING THE VOICE GUIDE JUST OVERRODE.
+  // The guide is inserted further up; this line sits below it and a model
+  // follows the later instruction. So when a guide is present the sentence has
+  // to be narrowed to what it was actually for — reply LENGTH and the fact that
+  // these are his own members — and hand the voice back.
+  const guided = (req.voiceGuide ?? "").trim().length > 0;
+  const deferToGuide = guided
+    ? "⚠️ EXCEPT ON VOICE: the guide above is the authority on how this SOUNDS — " +
+      "tone, rhythm, word choice, capitalisation, humour, emoji. Where it and an " +
+      "earlier rule disagree about that, the guide wins. The earlier rules keep " +
+      "everything about facts, links and when to skip."
+    : "";
   const surfaceNote =
     req.surface === "comment"
       ? [
           "THIS IS A COMMENT ON A POST IN JAKE'S OWN SKOOL COMMUNITY.",
           "Close enough to a YouTube comment that the rules above apply as written,",
           "including reply length. These are his own members, not strangers.",
-        ].join("\n")
+          deferToGuide,
+        ].filter(Boolean).join("\n")
       : [
           "THIS IS A DIRECT MESSAGE IN SKOOL, one-to-one.",
           "The rules above apply as written. It is a private message, so no",
           "broadcast phrasing — answer the person.",
-        ].join("\n");
+          deferToGuide,
+        ].filter(Boolean).join("\n");
 
   const system = [
     req.voicePrompt,
+    // Jake, 2026-08-27: "I want this bar-jake voice go into anything the Skool
+    // agent does" — the posts AND the replies. Same block, same precedence: it
+    // decides how a reply sounds, never what it is allowed to claim.
+    voiceGuideBlock(req.voiceGuide ?? ""),
     mechanics(
       "reply",
       [

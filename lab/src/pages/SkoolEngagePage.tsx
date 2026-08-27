@@ -148,12 +148,16 @@ export default function SkoolEngagePage() {
   // never re-polled: it is a textarea the operator types into, and the ask
   // panel below is the only thing that reads it.
   const [welcome, setWelcome] = useState('');
+  // Jake's own voice guide. Read once at mount, like the welcome message — it is
+  // a long document he pastes in, not something to re-poll under his cursor.
+  const [voice, setVoice] = useState('');
 
   useEffect(() => {
     void skoolStatus()
       .then((s) => {
         setCommunityUrl(s.settings.communityUrl || null);
         setWelcome(s.settings.welcomeMessageMd ?? '');
+        setVoice(s.settings.voiceGuideMd ?? '');
       })
       .catch(() => undefined); // non-fatal — the queue just shows no link
   }, []);
@@ -269,6 +273,19 @@ export default function SkoolEngagePage() {
                   'dryrun',
                   v ? 'Back to drafting only.' : 'Live — it can now publish without asking.',
                 )
+              }
+            />
+
+            <VoicePanel
+              voice={voice}
+              onVoice={setVoice}
+              busy={busy}
+              onSave={() =>
+                run('voice', async () => {
+                  const out = await skoolSaveSettings({ voiceGuideMd: voice });
+                  setVoice(out.settings.voiceGuideMd ?? '');
+                  setNote('Saved the voice guide.');
+                })
               }
             />
 
@@ -597,6 +614,64 @@ function ArmPanel({
 }
 
 /* ─────────────────────────── 2. when ─────────────────────────── */
+
+/**
+ * Jake's own voice guide — the authority on how everything here SOUNDS.
+ *
+ * ⚠️ ITS OWN PANEL, ABOVE THE SCHEDULE, BECAUSE IT IS NOT A POSTING SETTING. It
+ * reaches every post AND every reply the Skool agent writes, which is a wider
+ * blast radius than anything else on this screen, and burying it inside "When it
+ * posts" would say the opposite.
+ */
+function VoicePanel({
+  voice, onVoice, busy, onSave,
+}: {
+  voice: string;
+  onVoice: (v: string) => void;
+  busy: string | null;
+  onSave: () => void;
+}) {
+  return (
+    <section className="rounded-lg border p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <h2 className="text-sm font-semibold">The voice</h2>
+        <span className={`rounded-full px-2 py-0.5 text-xs ${voice.trim() ? 'bg-[hsl(var(--chart-3))]/15 text-[hsl(var(--chart-3))]' : 'bg-muted text-muted-foreground'}`}>
+          {voice.trim() ? `${voice.trim().length.toLocaleString()} characters` : 'not set'}
+        </span>
+      </div>
+      <p className="mb-3 text-sm text-muted-foreground">
+        How everything here sounds — every post and every reply the Skool agent writes. It overrides the tone
+        rules the agent inherited from the YouTube comment box, which is what it wrote in before.
+      </p>
+      <textarea
+        value={voice}
+        onChange={(e) => onVoice(e.target.value)}
+        rows={10}
+        placeholder="Paste the voice guide…"
+        className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-xs"
+      />
+      <div className="mt-2 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          disabled={!!busy}
+          onClick={onSave}
+          className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs disabled:opacity-50"
+        >
+          {busy === 'voice' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+          Save the voice
+        </button>
+        {/* ⚠️ SAID ON THE SCREEN, NOT ONLY IN THE PROMPT. Someone pasting a voice
+            document here would reasonably assume it replaces the instructions —
+            and if it did, the rules that stop the agent inventing a price or
+            answering a refund question would go with them. */}
+        <span className="text-xs text-muted-foreground">
+          Voice only. What the agent is allowed to claim — no invented prices or links, and skipping anything
+          about money, refunds or legal — is set separately and this does not change it.
+        </span>
+      </div>
+    </section>
+  );
+}
 
 function SchedulePanel({
   schedule, now, busy, dirty, onEdit, onSave, onTick, onRefresh, welcome, onWelcome, onSaveWelcome,

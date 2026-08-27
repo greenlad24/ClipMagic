@@ -31,6 +31,22 @@ export interface SkoolSettings {
    * not a template this code fills in.
    */
   welcomeMessageMd: string;
+  /**
+   * The operator's own voice guide, verbatim.
+   *
+   * ⚠️⚠️ A VOICE GUIDE IS NOT A SAFETY GUIDE, AND THIS ONE IS LAYERED RATHER
+   * THAN SUBSTITUTED FOR EXACTLY THAT REASON. Jake's "Bar-Jake" document is a
+   * complete and genuinely good description of how he sounds — and it has no
+   * position on inventing a price, on linking a lesson that does not teach what
+   * the sentence just claimed, or on refusing a message about money or a
+   * refund. Those live in `mechanics()` and the stored reply prompt, and a post
+   * that lost them would read better than ever while being the dangerous kind
+   * of wrong.
+   *
+   * So it wins on WORDS and loses on FACTS, and the prompt states that
+   * precedence rather than hoping the model infers it.
+   */
+  voiceGuideMd: string;
   updatedAt: number;
 }
 
@@ -40,6 +56,7 @@ interface Row {
   channel_url: string;
   required_tracks_json: string;
   welcome_message_md: string;
+  voice_guide_md: string;
   updated_at: number;
 }
 
@@ -64,6 +81,7 @@ export function getSkoolSettings(): SkoolSettings {
     channelUrl: row?.channel_url ?? "",
     requiredTracks: parseRequired(row?.required_tracks_json),
     welcomeMessageMd: (row as any)?.welcome_message_md ?? "",
+    voiceGuideMd: (row as any)?.voice_guide_md ?? "",
     updatedAt: row?.updated_at ?? 0,
   };
 }
@@ -159,7 +177,10 @@ export function latestCompleteInventory(): SkoolInventoryRow | null {
 /** Partial update; an omitted field is left alone rather than blanked. */
 export function saveSkoolSettings(
   patch: Partial<
-    Pick<SkoolSettings, "communityUrl" | "roadmapMd" | "channelUrl" | "requiredTracks" | "welcomeMessageMd">
+    Pick<
+      SkoolSettings,
+      "communityUrl" | "roadmapMd" | "channelUrl" | "requiredTracks" | "welcomeMessageMd" | "voiceGuideMd"
+    >
   >,
 ): SkoolSettings {
   const current = getSkoolSettings();
@@ -169,11 +190,12 @@ export function saveSkoolSettings(
     channelUrl: patch.channelUrl ?? current.channelUrl,
     requiredTracks: patch.requiredTracks ?? current.requiredTracks,
     welcomeMessageMd: patch.welcomeMessageMd ?? current.welcomeMessageMd,
+    voiceGuideMd: patch.voiceGuideMd ?? current.voiceGuideMd,
   };
   db.prepare(
     `UPDATE skool_settings
         SET community_url = ?, roadmap_md = ?, channel_url = ?, required_tracks_json = ?,
-            welcome_message_md = ?, updated_at = ?
+            welcome_message_md = ?, voice_guide_md = ?, updated_at = ?
       WHERE id = 1`,
   ).run(
     next.communityUrl,
@@ -181,6 +203,7 @@ export function saveSkoolSettings(
     next.channelUrl,
     JSON.stringify(next.requiredTracks),
     next.welcomeMessageMd,
+    next.voiceGuideMd,
     Date.now(),
   );
   return getSkoolSettings();

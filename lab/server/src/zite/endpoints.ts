@@ -5004,6 +5004,7 @@ const skoolDraftPost: Handler = async (input) => {
     subject,
     newMembers: (greet?.members ?? []).map((m) => ({ firstName: m.firstName, displayName: m.displayName })),
     welcomeMessage: getSkoolSettings().welcomeMessageMd,
+    voiceGuide: getSkoolSettings().voiceGuideMd,
     recentTitles: feed.posts.filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
     // His own posts, as the style spec for the body. From the SAME feed read —
     // a second one would be a second headless browser cycle for nothing.
@@ -5074,6 +5075,7 @@ const skoolDraftReply: Handler = async (input) => {
     authorFirstName: String(input?.authorFirstName ?? "") || firstNameOf(String(input?.authorName ?? "")),
     text,
     context: String(input?.context ?? ""),
+      voiceGuide: getSkoolSettings().voiceGuideMd,
   });
   return { reply, error };
 };
@@ -5801,6 +5803,7 @@ const skoolSaveSettings: Handler = async (input) => {
     channelUrl?: string;
     requiredTracks?: { title: string; note: string }[];
     welcomeMessageMd?: string;
+    voiceGuideMd?: string;
   } = {};
   if (input?.communityUrl !== undefined) patch.communityUrl = String(input.communityUrl).trim();
   if (input?.roadmapMd !== undefined) patch.roadmapMd = String(input.roadmapMd);
@@ -5809,6 +5812,9 @@ const skoolSaveSettings: Handler = async (input) => {
   // is a VOICE reference: the blank lines between its paragraphs and its own
   // placeholder token are part of what the drafter is being shown.
   if (input?.welcomeMessageMd !== undefined) patch.welcomeMessageMd = String(input.welcomeMessageMd);
+  // Verbatim, like the welcome message: it is a document the MODEL reads, and
+  // its headings, its examples and its before/after pairs are what make it work.
+  if (input?.voiceGuideMd !== undefined) patch.voiceGuideMd = String(input.voiceGuideMd);
   if (Array.isArray(input?.requiredTracks)) {
     patch.requiredTracks = input.requiredTracks
       .map((t: any) => ({ title: String(t?.title ?? "").trim(), note: String(t?.note ?? "").trim() }))

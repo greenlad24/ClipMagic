@@ -764,6 +764,16 @@ export interface SkoolSettings {
    * else in the system can see a Skool auto-DM.
    */
   welcomeMessageMd: string;
+  /**
+   * The operator's own voice guide, verbatim.
+   *
+   * ⚠️ IT GOVERNS VOICE AND NOTHING ELSE. The prompt states that precedence
+   * explicitly: the guide decides how a post or reply SOUNDS, and the rules it
+   * is layered over keep deciding what the agent may CLAIM. A voice document has
+   * no opinion on inventing a price or on refusing a message about a refund, and
+   * one that quietly outranked those would read beautifully and be dangerous.
+   */
+  voiceGuideMd: string;
   updatedAt: number;
 }
 export interface SkoolStatus {
@@ -927,7 +937,7 @@ export const skoolDeleteRecipe = endpoint<{ name: string }, { deleted: boolean }
 
 export const skoolCloseBrowser = endpoint<void, { closed: boolean }>("skoolCloseBrowser");
 export const skoolSaveSettings = endpoint<
-  { communityUrl?: string; roadmapMd?: string; welcomeMessageMd?: string },
+  { communityUrl?: string; roadmapMd?: string; welcomeMessageMd?: string; voiceGuideMd?: string },
   { settings: SkoolSettings }
 >("skoolSaveSettings");
 
