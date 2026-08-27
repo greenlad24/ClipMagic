@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import {
   skoolStatus,
+  skoolSaveSettings,
   skoolEngageStatus,
   skoolEngageConfigure,
   skoolEngageTick,
@@ -143,10 +144,17 @@ export default function SkoolEngagePage() {
   });
   const [replyRows, setReplyRows] = useState<SkoolReplyRow[]>([]);
   const [replyDirty, setReplyDirty] = useState(false);
+  // The welcome message every new member already gets. Read once at mount and
+  // never re-polled: it is a textarea the operator types into, and the ask
+  // panel below is the only thing that reads it.
+  const [welcome, setWelcome] = useState('');
 
   useEffect(() => {
     void skoolStatus()
-      .then((s) => setCommunityUrl(s.settings.communityUrl || null))
+      .then((s) => {
+        setCommunityUrl(s.settings.communityUrl || null);
+        setWelcome(s.settings.welcomeMessageMd ?? '');
+      })
       .catch(() => undefined); // non-fatal — the queue just shows no link
   }, []);
 
@@ -273,6 +281,15 @@ export default function SkoolEngagePage() {
                 setDirty(true);
               }}
               dirty={dirty}
+              welcome={welcome}
+              onWelcome={setWelcome}
+              onSaveWelcome={() =>
+                run('welcome', async () => {
+                  const out = await skoolSaveSettings({ welcomeMessageMd: welcome });
+                  setWelcome(out.settings.welcomeMessageMd ?? '');
+                  setNote('Saved the welcome message.');
+                })
+              }
               onSave={() => configure(schedule, 'save', 'Saved.')}
               onTick={() =>
                 run('tick', async () => {
@@ -582,7 +599,7 @@ function ArmPanel({
 /* ─────────────────────────── 2. when ─────────────────────────── */
 
 function SchedulePanel({
-  schedule, now, busy, dirty, onEdit, onSave, onTick, onRefresh,
+  schedule, now, busy, dirty, onEdit, onSave, onTick, onRefresh, welcome, onWelcome, onSaveWelcome,
 }: {
   schedule: SkoolEngageSchedule;
   now: { date: string; weekday: SkoolWeekday; hour: number } | null;
@@ -592,6 +609,10 @@ function SchedulePanel({
   onSave: () => void;
   onTick: () => void;
   onRefresh: () => void;
+  /** The welcome message every new member already gets. */
+  welcome: string;
+  onWelcome: (v: string) => void;
+  onSaveWelcome: () => void;
 }) {
   const toggleDay = (d: SkoolWeekday) => {
     const has = schedule.days.includes(d);
@@ -688,6 +709,45 @@ function SchedulePanel({
           <>No ask post — every posting day writes a lesson, and new members are not greeted.</>
         )}
       </p>
+
+      {/* ⚠️ THIS IS NOT DECORATION AND IT IS NOT A TEMPLATE THIS APP SENDS. It is
+          the message Skool already delivers to every joiner, pasted in so the
+          drafter can see it — and it does two jobs nothing else can do. It is
+          the register the greeting should match (how Jake greets a PERSON, not
+          how he writes a post), and it is a question those exact members have
+          already been asked privately, which the post must therefore not ask
+          again. Left empty, Thursday can put the same question to the same five
+          people twice in a week and nothing would notice but the members. */}
+      {schedule.askDay && (
+        <div className="mb-4">
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+            The welcome message new members already get
+          </label>
+          <textarea
+            value={welcome}
+            onChange={(e) => onWelcome(e.target.value)}
+            rows={6}
+            placeholder="Paste the automatic welcome message Skool sends when someone joins…"
+            className="w-full rounded-md border bg-background px-2 py-1.5 font-mono text-xs"
+          />
+          <div className="mt-1.5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              disabled={!!busy}
+              onClick={onSaveWelcome}
+              className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs disabled:opacity-50"
+            >
+              {busy === 'welcome' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              Save the welcome message
+            </button>
+            <span className="text-xs text-muted-foreground">
+              {welcome.trim()
+                ? 'The ask post matches its tone and will not repeat the question it asks.'
+                : 'Empty — the ask post may repeat whatever this already asks them.'}
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Hour (local to the timezone below)">

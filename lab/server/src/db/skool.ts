@@ -17,6 +17,20 @@ export interface SkoolSettings {
   channelUrl: string;
   /** Tracks the spine MUST contain, with optional guidance for each. */
   requiredTracks: { title: string; note: string }[];
+  /**
+   * The welcome message every new member already receives, verbatim.
+   *
+   * ⚠️ TWO JOBS, AND THE SECOND IS THE ONE NOTHING ELSE CAN DO. It is the voice
+   * the ask post's greeting should sound like — but it is also a question that
+   * has ALREADY been put to exactly the people that post is about to @mention.
+   * Nothing in this system can see a Skool auto-DM, so without it stored here
+   * the same five members are asked the same thing twice in one week and the
+   * agent has no way of knowing.
+   *
+   * Stored verbatim, placeholder token and all. It is a reference for a writer,
+   * not a template this code fills in.
+   */
+  welcomeMessageMd: string;
   updatedAt: number;
 }
 
@@ -25,6 +39,7 @@ interface Row {
   roadmap_md: string;
   channel_url: string;
   required_tracks_json: string;
+  welcome_message_md: string;
   updated_at: number;
 }
 
@@ -48,6 +63,7 @@ export function getSkoolSettings(): SkoolSettings {
     roadmapMd: row?.roadmap_md ?? "",
     channelUrl: row?.channel_url ?? "",
     requiredTracks: parseRequired(row?.required_tracks_json),
+    welcomeMessageMd: (row as any)?.welcome_message_md ?? "",
     updatedAt: row?.updated_at ?? 0,
   };
 }
@@ -142,7 +158,9 @@ export function latestCompleteInventory(): SkoolInventoryRow | null {
 
 /** Partial update; an omitted field is left alone rather than blanked. */
 export function saveSkoolSettings(
-  patch: Partial<Pick<SkoolSettings, "communityUrl" | "roadmapMd" | "channelUrl" | "requiredTracks">>,
+  patch: Partial<
+    Pick<SkoolSettings, "communityUrl" | "roadmapMd" | "channelUrl" | "requiredTracks" | "welcomeMessageMd">
+  >,
 ): SkoolSettings {
   const current = getSkoolSettings();
   const next = {
@@ -150,16 +168,19 @@ export function saveSkoolSettings(
     roadmapMd: patch.roadmapMd ?? current.roadmapMd,
     channelUrl: patch.channelUrl ?? current.channelUrl,
     requiredTracks: patch.requiredTracks ?? current.requiredTracks,
+    welcomeMessageMd: patch.welcomeMessageMd ?? current.welcomeMessageMd,
   };
   db.prepare(
     `UPDATE skool_settings
-        SET community_url = ?, roadmap_md = ?, channel_url = ?, required_tracks_json = ?, updated_at = ?
+        SET community_url = ?, roadmap_md = ?, channel_url = ?, required_tracks_json = ?,
+            welcome_message_md = ?, updated_at = ?
       WHERE id = 1`,
   ).run(
     next.communityUrl,
     next.roadmapMd,
     next.channelUrl,
     JSON.stringify(next.requiredTracks),
+    next.welcomeMessageMd,
     Date.now(),
   );
   return getSkoolSettings();

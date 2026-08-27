@@ -636,7 +636,10 @@ const MCP_NOTE = [
  * gets the engagement a welcome post gets. The proportions are stated here as
  * numbers for that reason.
  */
-function askNote(newMembers: { firstName: string; displayName: string }[]): string {
+function askNote(
+  newMembers: { firstName: string; displayName: string }[],
+  welcomeMessage: string,
+): string {
   const lines = [
     "THIS IS THE WEEKLY ASK POST, AND ITS JOB IS TO GET REPLIES.",
     "",
@@ -665,6 +668,53 @@ function askNote(newMembers: { firstName: string; displayName: string }[]): stri
     "Do NOT teach a lesson here. Do NOT list steps. Do NOT link a lesson unless",
     "the question genuinely needs it — this post asks, it does not explain.",
   ];
+
+  // ⚠️⚠️ THE WELCOME MESSAGE IS TWO INSTRUCTIONS, AND THE SECOND IS THE ONE
+  // NOTHING ELSE IN THIS SYSTEM COULD SUPPLY. Every new member has ALREADY been
+  // asked a question, privately, by a Skool auto-DM this code cannot see — and
+  // the post is about to @mention those exact people. Without this block it will
+  // cheerfully ask them the same thing again within days of the DM, and the only
+  // witness is the member.
+  //
+  // It is also the voice spec for the greeting. `styleBlock` shows how Jake
+  // writes a POST; this shows how he greets a PERSON, which is a different and
+  // shorter register, and the greeting is the one line of this post that has to
+  // sound like it.
+  if (welcomeMessage.trim()) {
+    lines.push(
+      "",
+      "==========================================",
+      "WHAT THEY HAVE ALREADY BEEN SENT",
+      "==========================================",
+      "",
+      "Every new member gets this message from Jake privately when they join:",
+      "",
+      welcomeMessage.trim(),
+      "",
+      "TWO THINGS FOLLOW FROM IT, AND BOTH ARE HARD RULES:",
+      "",
+      "1. ⚠️ DO NOT ASK WHAT IT ALREADY ASKS. These people have had that",
+      "   question put to them personally, days ago. Asking it again in public",
+      "   reads as not having noticed they answered. Ask something ELSE — and if",
+      "   the subject below is close to it, go at a different angle.",
+      "",
+      "2. THIS IS THE VOICE FOR THE GREETING. Warm, direct, plain. It asks ONE",
+      "   thing. It lets the reader off the hook rather than putting them on the",
+      "   spot. Match that register in the opening line — the examples further up",
+      "   show how Jake writes a POST, this shows how he greets a PERSON.",
+      "   ⚠️ BUT USE FEWER EMOJI THAN IT DOES. Jake, 2026-08-27: that voice,",
+      "   \"just not too many emojis\". Copy the warmth, not the decoration.",
+      "",
+      "   ⚠️⚠️ AND BE PRECISE ABOUT WHICH ONES, OR THIS RULE GETS OVERRULED AND",
+      "   NOTHING SAYS SO. Two emoji are HOUSE STYLE and are not what he means:",
+      "   the single marker at the front of the TITLE, and the 👇 on the closing",
+      "   line. Every post in the examples above has both, and dropping them",
+      "   would make this post look like it came from somebody else.",
+      "   What to cut is emoji in the BODY PROSE — the 🥳 and 😅 sprinkled through",
+      "   the welcome message. Zero of those. So: one in the title, one 👇 at the",
+      "   end, and none anywhere in between.",
+    );
+  }
 
   if (newMembers.length) {
     const names = newMembers.map((m) => m.firstName || m.displayName).filter(Boolean);
@@ -873,6 +923,13 @@ export interface PostRequest {
    * Ignored unless `kind` is "ask". Empty is a normal week.
    */
   newMembers?: { firstName: string; displayName: string }[];
+  /**
+   * The welcome message every new member already receives, verbatim.
+   *
+   * Ignored unless `kind` is "ask". Empty means the drafter is not told what
+   * they have already been asked — which is a worse post, not a broken one.
+   */
+  welcomeMessage?: string;
 }
 
 /**
@@ -960,7 +1017,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     req.kind === "mcp"
       ? `${POST_FORMAT_NOTE}\n\n${MCP_NOTE}`
       : req.kind === "ask"
-        ? `${POST_FORMAT_NOTE}\n\n${askNote(req.newMembers ?? [])}`
+        ? `${POST_FORMAT_NOTE}\n\n${askNote(req.newMembers ?? [], req.welcomeMessage ?? "")}`
         : POST_FORMAT_NOTE;
 
   const system = [
@@ -1129,6 +1186,16 @@ export async function chooseAskSubject(req: {
   usedSubjects: string[];
   /** How many people joined this week, so the question can be aimed at them. */
   newMemberCount: number;
+  /**
+   * The welcome message they have already been sent.
+   *
+   * ⚠️ NEEDED HERE AS WELL AS IN THE DRAFTER, AND NOT REDUNDANTLY. If the
+   * SUBJECT is the duplicate question, telling the writer "do not ask this"
+   * leaves it with a brief it has been forbidden to carry out — and the way that
+   * gets resolved is the way every contradiction here gets resolved: silently,
+   * badly, and only visible once it is on the feed.
+   */
+  welcomeMessage: string;
 }): Promise<{ subject: string; error: string | null }> {
   const outline = classroomOutline(req.communityUrl);
 
@@ -1160,6 +1227,15 @@ export async function chooseAskSubject(req: {
         "their first day, while still being worth answering for someone who has " +
         "been here a year."
       : "- Nobody new joined this week, so the question is for the whole community.",
+    req.welcomeMessage.trim()
+      ? [
+          "",
+          "⚠️ EVERY NEW MEMBER HAS ALREADY BEEN ASKED THIS, PRIVATELY, WHEN THEY",
+          "JOINED. Do not propose it again, and do not propose a rephrasing of it:",
+          "",
+          req.welcomeMessage.trim(),
+        ].join("\n")
+      : "",
   ].join("\n");
 
   const user = [

@@ -175,6 +175,13 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "required_tracks_json")) {
     db.exec("ALTER TABLE skool_settings ADD COLUMN required_tracks_json TEXT NOT NULL DEFAULT '[]'");
   }
+  // The welcome message every new member already receives. ⚠️ ALSO IN THE
+  // CREATE BELOW — these ALTERs run BEFORE it and correctly decline against a
+  // table that does not exist yet, so a column listed only here is missing on a
+  // fresh database and every read throws forever after.
+  if (cols.length > 0 && !cols.some((c) => c.name === "welcome_message_md")) {
+    db.exec("ALTER TABLE skool_settings ADD COLUMN welcome_message_md TEXT NOT NULL DEFAULT ''");
+  }
   // The autonomous poster's schedule, as one JSON blob rather than a column per
   // knob. It is read and written whole by `engageSchedule.ts` and never queried
   // by field, so columns would buy nothing and cost a migration per setting.
@@ -463,6 +470,18 @@ CREATE TABLE IF NOT EXISTS skool_settings (
   engage_tick_json     TEXT NOT NULL DEFAULT '',
   engage_replies_json      TEXT NOT NULL DEFAULT '',
   engage_replies_tick_json TEXT NOT NULL DEFAULT '',
+  -- The welcome message every new member already gets, verbatim.
+  --
+  -- It is TWO things to the ask post and both matter. It is the voice the
+  -- greeting should sound like -- warm, direct, one question, the aside that
+  -- lets the reader off the hook. And it is a question ALREADY ASKED of exactly
+  -- the people the post is about to @mention, so the post must not ask it
+  -- again: nothing else in the system can see a Skool auto-DM, and without this
+  -- the same five members get the same question twice in a week.
+  --
+  -- Free text, stored verbatim including its own placeholder token -- it is a
+  -- reference for a writer, not a template this code fills in.
+  welcome_message_md TEXT NOT NULL DEFAULT '',
   updated_at     INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO skool_settings (id, community_url, roadmap_md, updated_at)

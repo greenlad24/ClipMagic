@@ -751,7 +751,21 @@ export const auditChat = endpoint<
 >("auditChat");
 /* ── Skool manager ────────────────────────────────────────────────────────
    Skool has no API, so the session is a headless browser holding a login.  */
-export interface SkoolSettings { communityUrl: string; roadmapMd: string; updatedAt: number }
+export interface SkoolSettings {
+  communityUrl: string;
+  roadmapMd: string;
+  /**
+   * The welcome message every new member already receives, verbatim.
+   *
+   * ⚠️ THE ASK POST READS IT FOR TWO REASONS. It is the register its greeting
+   * should match — how Jake greets a PERSON, which is shorter and warmer than
+   * how he writes a post — and it is a question those exact members have ALREADY
+   * been asked privately, which the post must therefore not ask again. Nothing
+   * else in the system can see a Skool auto-DM.
+   */
+  welcomeMessageMd: string;
+  updatedAt: number;
+}
 export interface SkoolStatus {
   browserAvailable: boolean;
   loggedIn: boolean;
@@ -913,7 +927,7 @@ export const skoolDeleteRecipe = endpoint<{ name: string }, { deleted: boolean }
 
 export const skoolCloseBrowser = endpoint<void, { closed: boolean }>("skoolCloseBrowser");
 export const skoolSaveSettings = endpoint<
-  { communityUrl?: string; roadmapMd?: string },
+  { communityUrl?: string; roadmapMd?: string; welcomeMessageMd?: string },
   { settings: SkoolSettings }
 >("skoolSaveSettings");
 

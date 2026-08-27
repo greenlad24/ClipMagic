@@ -5003,6 +5003,7 @@ const skoolDraftPost: Handler = async (input) => {
     kind,
     subject,
     newMembers: (greet?.members ?? []).map((m) => ({ firstName: m.firstName, displayName: m.displayName })),
+    welcomeMessage: getSkoolSettings().welcomeMessageMd,
     recentTitles: feed.posts.filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
     // His own posts, as the style spec for the body. From the SAME feed read —
     // a second one would be a second headless browser cycle for nothing.
@@ -5799,10 +5800,15 @@ const skoolSaveSettings: Handler = async (input) => {
     roadmapMd?: string;
     channelUrl?: string;
     requiredTracks?: { title: string; note: string }[];
+    welcomeMessageMd?: string;
   } = {};
   if (input?.communityUrl !== undefined) patch.communityUrl = String(input.communityUrl).trim();
   if (input?.roadmapMd !== undefined) patch.roadmapMd = String(input.roadmapMd);
   if (input?.channelUrl !== undefined) patch.channelUrl = String(input.channelUrl).trim();
+  // ⚠️ NOT TRIMMED PER LINE AND NOT NORMALISED. It is stored verbatim because it
+  // is a VOICE reference: the blank lines between its paragraphs and its own
+  // placeholder token are part of what the drafter is being shown.
+  if (input?.welcomeMessageMd !== undefined) patch.welcomeMessageMd = String(input.welcomeMessageMd);
   if (Array.isArray(input?.requiredTracks)) {
     patch.requiredTracks = input.requiredTracks
       .map((t: any) => ({ title: String(t?.title ?? "").trim(), note: String(t?.note ?? "").trim() }))

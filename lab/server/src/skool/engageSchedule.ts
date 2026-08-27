@@ -37,6 +37,7 @@ import {
   type PostKind,
 } from "./engageGen.js";
 import { newMembers, recordWelcomed, type SkoolMember } from "./members.js";
+import { getSkoolSettings } from "../db/skool.js";
 import { createPost } from "./engageActions.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
@@ -787,6 +788,7 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
             communityUrl,
             usedSubjects: usedSubjectStrings(),
             newMemberCount: greet?.members.length ?? 0,
+            welcomeMessage: getSkoolSettings().welcomeMessageMd,
           }).catch((e) => ({ subject: "", error: e instanceof Error ? e.message : String(e) }))
         : null;
       // ⚠️ A FAILED ASK SUBJECT KEEPS `kind: "ask"` AND FALLS BACK TO A LESSON
@@ -1130,6 +1132,10 @@ async function attemptSlot(
       // single one of these names itself, because a pasted @mention notifies
       // nobody.
       newMembers: mentions.map((m) => ({ firstName: m.firstName, displayName: m.displayName })),
+      // What these exact people were already asked, privately, on the day they
+      // joined. The drafter is told not to ask it again — and to borrow its
+      // register for the greeting.
+      welcomeMessage: getSkoolSettings().welcomeMessageMd,
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
 
     if (res.error || !res.draft) {
