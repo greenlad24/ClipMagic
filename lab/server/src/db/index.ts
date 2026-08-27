@@ -264,6 +264,33 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "mentions_json")) {
     db.exec("ALTER TABLE skool_engage_slots ADD COLUMN mentions_json TEXT NOT NULL DEFAULT ''");
   }
+  // The last line of the ask post's first comment, written by the drafter. Kept
+  // for the same reason the body is: a retry must post the comment that was
+  // drafted, not a second attempt at writing one.
+  if (cols.length > 0 && !cols.some((c) => c.name === "welcome_close")) {
+    db.exec("ALTER TABLE skool_engage_slots ADD COLUMN welcome_close TEXT NOT NULL DEFAULT ''");
+  }
+}
+
+/**
+ * Additive: which tier the member was on when a reply was written to them.
+ *
+ * ⚠️ RECORDED PER REPLY RATHER THAN LOOKED UP LATER, and the difference is the
+ * whole point of storing it: a member who upgrades tomorrow would make
+ * yesterday's free-tier answer look like a mistake, and a member who lapses
+ * would hide a real one. This says what the agent believed AT THE TIME.
+ *
+ * 'unknown' is its own value: the free default was applied because nothing was
+ * known about the person, which is not the same as knowing they are free.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(skool_reply_log)").all() as Array<{ name: string }>;
+  if (cols.length > 0 && !cols.some((c) => c.name === "member_tier")) {
+    db.exec("ALTER TABLE skool_reply_log ADD COLUMN member_tier TEXT NOT NULL DEFAULT ''");
+  }
+  if (cols.length > 0 && !cols.some((c) => c.name === "member_level")) {
+    db.exec("ALTER TABLE skool_reply_log ADD COLUMN member_level INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
@@ -628,6 +655,11 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
   -- normal week rather than a fault. NOTE: no backticks anywhere in this block —
   -- the whole schema is one template literal and a backtick closes it.
   mentions_json   TEXT NOT NULL DEFAULT '',
+  -- The closing line of the first comment, the one that follows the @mentions
+  -- ("welcome guys!"). Written by the drafter so it differs every week, and
+  -- stored so a retry posts the line that was drafted. ALSO ADDED BY AN ALTER
+  -- ABOVE, for databases that already exist.
+  welcome_close   TEXT NOT NULL DEFAULT '',
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );
@@ -757,11 +789,52 @@ CREATE TABLE IF NOT EXISTS skool_reply_log (
   -- The writer's step log, kept on success as well as failure: it is the only
   -- record of HOW a reply reached a member.
   steps        TEXT NOT NULL DEFAULT '',
+  -- What the agent believed about this member when it wrote: 'free' | 'paid' |
+  -- 'unknown'. ⚠️ ALSO ADDED BY AN ALTER ABOVE, for the live database — a column
+  -- that exists in only one of the two places is missing on half the installs.
+  member_tier  TEXT NOT NULL DEFAULT '',
+  member_level INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_skool_reply_log_state ON skool_reply_log(state, created_at);
 CREATE INDEX IF NOT EXISTS idx_skool_reply_log_sent ON skool_reply_log(updated_at);
+
+-- WHAT EACH MEMBER PAYS, AND HOW FAR THEY HAVE LEVELLED — the cache the reply
+-- agent judges a recommendation against. Written whole by a members-page read;
+-- never edited a row at a time.
+--
+-- ⚠️ THIS EXISTS BECAUSE SKOOL HAS NO PER-MEMBER LOOKUP. The billing fields
+-- appear only on the paginated members page, so answering "is this DM from a
+-- paying member?" without a cache means three browser navigations per reply.
+--
+-- ⚠️ ABSENCE IS NOT FREE-NESS. A user_id missing from this table is a member
+-- nothing is known about — the caller applies the free default deliberately and
+-- records that it did, rather than this table asserting a tier it never read.
+CREATE TABLE IF NOT EXISTS skool_member_access (
+  user_id      TEXT PRIMARY KEY,
+  handle       TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  tier         INTEGER NOT NULL DEFAULT 1,   -- 1 = free, 2 = paid (or admin)
+  paid         INTEGER NOT NULL DEFAULT 0,
+  level        INTEGER NOT NULL DEFAULT 0,   -- Skool gamification level, 1-9
+  plan         TEXT NOT NULL DEFAULT '',     -- "$69/month" — for a human, not a test
+  renews_at    INTEGER NOT NULL DEFAULT 0,
+  role         TEXT NOT NULL DEFAULT '',     -- member | group-admin | group-owner
+  read_at      INTEGER NOT NULL
+);
+
+-- The two numbers that decide who can open a course: Skool's own minTier and
+-- minAccessLevel, per course slug. Read live rather than assumed, because
+-- "the first course is the free one" is a fact about this week's classroom.
+CREATE TABLE IF NOT EXISTS skool_course_gate (
+  slug             TEXT PRIMARY KEY,
+  course_id        TEXT NOT NULL DEFAULT '',
+  title            TEXT NOT NULL DEFAULT '',
+  min_tier         INTEGER NOT NULL DEFAULT 0,
+  min_access_level INTEGER NOT NULL DEFAULT 0,
+  read_at          INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS skool_recipes (
   name        TEXT PRIMARY KEY,

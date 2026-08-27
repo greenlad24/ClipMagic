@@ -147,6 +147,14 @@ export interface CreatePostInput {
    * cannot be tagged is dropped and said so in the step log; the post still goes
    * out. The question is the post.
    */
+  /**
+   * Members to tag at the top of the body, as real mention chips.
+   *
+   * ⚠️ THIS DOES NOT NOTIFY THEM — see `mentions.ts`. Kept because the manual
+   * publish endpoint offers it and the chips do render, but the weekly greeting
+   * no longer uses it: it tags the new members in the first comment instead
+   * (`postComment.ts`), which is the only place a Skool mention reaches anyone.
+   */
   mentions?: SkoolMember[];
 }
 

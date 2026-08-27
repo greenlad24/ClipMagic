@@ -39,9 +39,9 @@ async function main() {
   process.env.DB_PATH = path.join(root, "db", "test.db");
   fs.mkdirSync(path.join(root, "db"), { recursive: true });
 
-  const { kindForSlot, getSchedule, setSchedule } = await import("../skool/engageSchedule.js");
+  const { kindForSlot, getSchedule, setSchedule, welcomeClosing } = await import("../skool/engageSchedule.js");
   const { openingForMentions, voiceGuideBlock } = await import("../skool/engageGen.js");
-  const { welcomedUserIds, recordWelcomed } = await import("../skool/members.js");
+  const { welcomedUserIds, recordWelcomed, mentionMember } = await import("../skool/members.js");
   const { db } = await import("../db/index.js");
 
   /* ── which shape a slot is written as ── */
@@ -175,14 +175,47 @@ async function main() {
     }
   });
 
+  /* ── the line that closes the first comment ── */
+
+  await check("welcomeClosing: the drafter's own line is the one that ships", () => {
+    // ⚠️ THE POOL IS A FALLBACK, NOT THE FEATURE. Jake asked for a different
+    // closing every week; a rotation of seven stock phrases is what he would
+    // notice, so anything the drafter wrote outranks it.
+    assert.equal(welcomeClosing("welcome in, you three 👋", "2026-08-27"), "welcome in, you three 👋");
+    assert.equal(welcomeClosing("  padded  ", "2026-08-27"), "padded");
+  });
+
+  await check("welcomeClosing: two consecutive Thursdays never get the same line", () => {
+    // The failure this guards is not a crash — it is the same seven words
+    // appearing under six weekly posts, which reads as an autoresponder.
+    const thursdays = ["2026-08-27", "2026-09-03", "2026-09-10", "2026-09-17", "2026-09-24"];
+    const lines = thursdays.map((d) => welcomeClosing("", d));
+    for (let i = 1; i < lines.length; i++) {
+      assert.notEqual(lines[i], lines[i - 1], `${thursdays[i]} repeated ${thursdays[i - 1]}`);
+    }
+    assert.equal(new Set(lines).size, lines.length, "five weeks running should be five different lines");
+  });
+
+  await check("welcomeClosing: the same slot retried gets the same line", () => {
+    // A retry publishes the post that was queued; the comment under it is part
+    // of that post and must not change between attempt one and attempt four.
+    assert.equal(welcomeClosing("", "2026-08-27"), welcomeClosing("", "2026-08-27"));
+  });
+
+  await check("welcomeClosing: a key that is not a date still answers", () => {
+    const line = welcomeClosing("", "not-a-date");
+    assert.ok(line.length > 0);
+    assert.equal(line, welcomeClosing("", "not-a-date"));
+  });
+
   /* ── the welcome ledger ── */
 
   await check("the ledger: a welcomed member is not offered again", () => {
     assert.equal(welcomedUserIds().size, 0);
     recordWelcomed(
       [
-        { userId: "u1", handle: "claudia-garcia-3172", firstName: "Claudia", displayName: "Claudia Garcia", joinedAt: 1 },
-        { userId: "u2", handle: "denise-ferguson-7626", firstName: "Denise", displayName: "Denise Ferguson", joinedAt: 2 },
+        mentionMember({ userId: "u1", handle: "claudia-garcia-3172", firstName: "Claudia", displayName: "Claudia Garcia", joinedAt: 1 }),
+        mentionMember({ userId: "u2", handle: "denise-ferguson-7626", firstName: "Denise", displayName: "Denise Ferguson", joinedAt: 2 }),
       ],
       "2026-08-27",
     );
@@ -196,7 +229,7 @@ async function main() {
     // ambiguous failure. Throwing here would fail a post that had already gone
     // out, which is the worst available outcome.
     recordWelcomed(
-      [{ userId: "u1", handle: "claudia-garcia-3172", firstName: "Claudia", displayName: "Claudia Garcia", joinedAt: 1 }],
+      [mentionMember({ userId: "u1", handle: "claudia-garcia-3172", firstName: "Claudia", displayName: "Claudia Garcia", joinedAt: 1 })],
       "2026-09-03",
     );
     assert.equal(welcomedUserIds().size, 2);

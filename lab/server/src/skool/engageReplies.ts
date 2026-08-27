@@ -29,9 +29,10 @@ import { db } from "../db/index.js";
 import { getSkoolSettings } from "../db/skool.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 import { readComments, answerable, type SkoolComment } from "./comments.js";
-import { readChannels, readMessages, needingReply, sendDm, type DmChannel } from "./dms.js";
-import { readFeed } from "./community.js";
+import { readChannels, readMessages, needingReply, sendDm, type DmChannel, type DmMessage } from "./dms.js";
+import { readFeed, type SkoolPost } from "./community.js";
 import { draftReply, firstNameOf } from "./engageGen.js";
+import { ensureAccessFresh, entitlementFor, type Entitlement } from "./access.js";
 import { replyToComment } from "./engageActions.js";
 
 export type ReplySurface = "comment" | "dm";
@@ -150,6 +151,13 @@ export interface ReplyRow {
   channelId: string;
   memberId: string;
   memberName: string;
+  /**
+   * What the agent believed the member was PAYING when it wrote: 'free',
+   * 'paid', or 'unknown' (nothing was known, so free was applied). Empty on
+   * rows written before the community went freemium.
+   */
+  memberTier: string;
+  memberLevel: number;
   theirText: string;
   state: ReplyState;
   replyText: string;
@@ -175,6 +183,8 @@ const rowToReply = (r: any): ReplyRow => ({
   channelId: String(r.channel_id ?? ""),
   memberId: String(r.member_id ?? ""),
   memberName: String(r.member_name ?? ""),
+  memberTier: String(r.member_tier ?? ""),
+  memberLevel: Number(r.member_level ?? 0),
   theirText: String(r.their_text ?? ""),
   state: (["drafted", "sent", "unconfirmed", "skipped", "failed"] as const).includes(r.state) ? r.state : "failed",
   replyText: String(r.reply_text ?? ""),
@@ -225,6 +235,106 @@ function sentLastDay(): number {
   return r.n;
 }
 
+/**
+ * Whether this DM may carry a nudge towards the plans page, and why.
+ *
+ * Jake, 2026-08-27: a free member should be helped, "but in a non-salsy way
+ * nudge them to take a look at [the plans page] to upgrade to get a specific
+ * course or something more from this community - only do it once per whole
+ * conversation so it doesn't sound salesy. You can do it twice only if the
+ * member is asking specifically for 'where can I upgrade'."
+ *
+ * ⚠️⚠️ "ONCE PER CONVERSATION" IS A FACT ABOUT THE THREAD, SO IT IS COUNTED,
+ * NOT REQUESTED. A prompt cannot know what the drafter said last Tuesday: every
+ * reply is written from scratch by a model that has never seen its own previous
+ * output, so "mention this only once" asked in the prompt means "mention it
+ * every single time" in practice — a free member gets the same link in four
+ * consecutive answers, which is the exact thing being avoided.
+ *
+ * TWO PLACES ARE COUNTED, because either one alone would miss a real nudge:
+ *   • THE LEDGER, keyed on the channel. This is our own record of what was
+ *     written to this person, and it is checked in every state that reached
+ *     them or is about to — a draft waiting for review has not been seen yet,
+ *     but sending it would be the second nudge if this reply carried one too.
+ *   • THE THREAD ITSELF. Jake answers his own DMs, and a link he sent by hand
+ *     an hour ago is still a link this person has just been given.
+ */
+export function plansNudgeState(
+  channelId: string,
+  theirText: string,
+  transcript: string,
+  plansUrl: string,
+): { allowed: boolean; asked: boolean; seen: number; why: string } {
+  const asked = asksAboutUpgrading(theirText);
+  // The path, not the whole URL: it survives a trailing slash, a query string
+  // and the difference between www.skool.com and skool.com.
+  const needle = "/plans";
+
+  let seen = 0;
+  if (channelId) {
+    const rows = db
+      .prepare(
+        `SELECT reply_text FROM skool_reply_log
+          WHERE surface = 'dm' AND channel_id = ?
+            AND state IN ('sent', 'unconfirmed', 'drafted')`,
+      )
+      .all(channelId) as { reply_text: string }[];
+    seen += rows.filter((r) => String(r.reply_text ?? "").includes(needle)).length;
+  }
+  if (transcript.includes(needle)) seen += 1;
+
+  // Asked outright, the link IS the answer — so a second one is allowed and a
+  // third is not. Unasked, one per conversation, ever.
+  const allowance = asked ? 2 : 1;
+  const allowed = seen < allowance;
+  return {
+    allowed,
+    asked,
+    seen,
+    why: allowed
+      ? asked
+        ? `They asked how to upgrade and the plans page has come up ${seen} time(s), so the link is the answer.`
+        : `The plans page has not come up in this conversation, so one plain mention is allowed.`
+      : asked
+        ? `The plans page has already come up ${seen} times in this conversation, which is the limit even when asked.`
+        : `The plans page has already come up in this conversation (${seen}), so it must not come up again.`,
+  };
+}
+
+/**
+ * Are they actually asking how to pay for this community?
+ *
+ * ⚠️ DELIBERATELY NARROW, AND A MISS IS THE SAFE DIRECTION. Reading "how much
+ * does HeyGen cost" as an upgrade question would spend a second nudge on
+ * somebody who asked about a video tool. Missing a real one costs nothing worse
+ * than the ordinary single mention every free member's conversation allows.
+ */
+export function asksAboutUpgrading(text: string): boolean {
+  // ⚠️⚠️ SENTENCE BY SENTENCE, AND THE WORD "UPGRADE" ALONE IS NOT ENOUGH.
+  // "Should I upgrade to ChatGPT Plus?" is the commonest question in a
+  // beginners' community about AI tools, and reading it as "where do I upgrade
+  // my membership" would answer a tool question with a link to Jake's plans
+  // page — the precise thing that makes an agent feel like a salesman. So a
+  // sentence naming a TOOL never counts, and "I upgraded ChatGPT. Where do I
+  // upgrade here?" is two sentences for exactly this reason.
+  const TOOL =
+    /\b(chatgpt|gpt-?[0-9]|claude|gemini|copilot|perplexity|midjourney|heygen|synthesia|canva|veed|make\.com|zapier|n8n|notion|figma|runway|sora|elevenlabs)\b/;
+
+  for (const sentence of String(text ?? "").toLowerCase().split(/[.?!\n]+/)) {
+    if (!sentence.trim()) continue;
+    const aboutATool = TOOL.test(sentence);
+    if (!aboutATool && /\bupgrad(e|ing)\b/.test(sentence)) return true;
+    if (!aboutATool && /\b(plans page|paid (plan|member|membership|tier)|premium member)\b/.test(sentence)) return true;
+    // "how do I join the paid side", "where do I subscribe to the community".
+    // No tool test here: the object of the verb is already this community.
+    if (/\b(join|subscribe|sign\s?up|pay for|get access to)\b[^,]{0,40}\b(community|membership|classroom|courses?|inside)\b/.test(sentence)) {
+      return true;
+    }
+    if (!aboutATool && /\bhow much\b[^,]{0,30}\b(community|membership|month|monthly)\b/.test(sentence)) return true;
+  }
+  return false;
+}
+
 function insertReply(row: {
   surface: ReplySurface;
   targetId: string;
@@ -232,6 +342,8 @@ function insertReply(row: {
   channelId?: string;
   memberId?: string;
   memberName?: string;
+  memberTier?: string;
+  memberLevel?: number;
   theirText?: string;
   state: ReplyState;
   replyText?: string;
@@ -249,13 +361,15 @@ function insertReply(row: {
     db
       .prepare(
         `INSERT INTO skool_reply_log
-           (id, surface, target_id, post_slug, channel_id, member_id, member_name, their_text,
-            state, reply_text, skip_reason, cited_json, reply_id, tokens, attempts, last_error, steps, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, 0, ?, '', ?, ?)`,
+           (id, surface, target_id, post_slug, channel_id, member_id, member_name, member_tier, member_level,
+            their_text, state, reply_text, skip_reason, cited_json, reply_id, tokens, attempts, last_error, steps,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, 0, ?, '', ?, ?)`,
       )
       .run(
         id, row.surface, row.targetId, text(row.postSlug), text(row.channelId), text(row.memberId),
-        text(row.memberName), text(row.theirText), row.state, text(row.replyText), text(row.skipReason),
+        text(row.memberName), text(row.memberTier), Number(row.memberLevel ?? 0),
+        text(row.theirText), row.state, text(row.replyText), text(row.skipReason),
         JSON.stringify(row.cited ?? []), Number(row.tokens ?? 0), text(row.lastError), now, now,
       );
   } catch (e) {
@@ -299,6 +413,14 @@ export interface ReplyTarget {
   theirText: string;
   /** What the reply has to make sense inside: the post, or the conversation. */
   context: string;
+  /**
+   * How many of their messages this reply answers — a DM run, unanswered.
+   *
+   * 1 for a comment and for the ordinary one-message DM. Higher when somebody
+   * sent two or three in a row before anyone got to them, which is the case
+   * this exists for: they get ONE reply and it has to cover all of it.
+   */
+  unansweredCount: number;
   createdAt: string;
 }
 
@@ -377,6 +499,7 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           memberFirstName: firstNameOf(c.authorName),
           theirText: c.body,
           context: `${post.title}\n\n${post.body}`.trim(),
+          unansweredCount: 1,
           createdAt: c.createdAt,
         });
       }
@@ -407,8 +530,13 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           memberName: ch.memberName,
           // Skool's own field, not a split — see `firstNameOf`.
           memberFirstName: ch.memberFirstName || firstNameOf(ch.memberName),
+          // Their LAST message only, and replaced by the whole unanswered run
+          // once the thread itself is read — see `dmThread`. The channel list
+          // carries one line per thread and no history, so this is the most
+          // that is known at collection time.
           theirText: ch.lastMessageBody,
           context: "",
+          unansweredCount: 1,
           createdAt: ch.lastMessageAt,
         });
       }
@@ -419,21 +547,72 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
   return out;
 }
 
+interface DmThread {
+  /** The exchange BEFORE the unanswered run, oldest first, as speaker lines. */
+  transcript: string;
+  /** Their messages since Jake last spoke — in order, oldest first. */
+  unanswered: string[];
+}
+
 /**
- * The conversation so far, for a DM.
+ * The conversation so far, split at the point Jake last spoke.
  *
  * Read only for a thread we are about to answer, never for all 168 — it is one
  * navigation per thread and the sweep is capped at a handful.
+ *
+ * ⚠️⚠️ THE SPLIT IS THE POINT. Jake, 2026-08-27: a member "just replied in the
+ * DM at skool with 3 messages one after the other" and the reply has to answer
+ * the thread rather than the last line. The channel list only carries
+ * `lastMessageBody`, so before this the drafter was handed message three as the
+ * question and one through two as scenery — and the earlier messages are
+ * routinely where the actual question is ("I tried that", "here's my error",
+ * "does it work with Sheets?").
+ *
+ * ⚠️ AND THE TRANSCRIPT EXCLUDES THE RUN RATHER THAN REPEATING IT. Showing the
+ * same three messages twice — once as history, once as the question — invites a
+ * reply that answers them twice, which is the failure this whole change is
+ * about.
  */
-async function dmContext(communityUrl: string, channelId: string, channels: DmChannel[]): Promise<string> {
+async function dmThread(communityUrl: string, channelId: string, channels: DmChannel[]): Promise<DmThread> {
   const channel = channels.find((c) => c.id === channelId);
-  if (!channel) return "";
+  if (!channel) return { transcript: "", unanswered: [] };
   const { messages, error } = await readMessages(communityUrl, channel);
-  if (error || !messages.length) return "";
-  return messages
-    .slice(-12)
-    .map((m) => `${m.byMe ? "Jake" : channel.memberFirstName || channel.memberName}: ${m.body}`)
-    .join("\n");
+  if (error || !messages.length) return { transcript: "", unanswered: [] };
+  return splitAtLastReply(messages, channel.memberFirstName || channel.memberName);
+}
+
+/**
+ * The split itself, with no browser in it — see `dmThread`.
+ *
+ * Exported for the tests, because this is the part that can be wrong quietly:
+ * a mis-drawn line puts a message the agent has already answered back in front
+ * of it as a new question, or drops the one it was supposed to answer.
+ *
+ * `keep` bounds the history, not the run. Every unanswered message is returned
+ * however many there are — they are the question — while the exchange before
+ * them is the last `keep` lines, because a two-year-old thread is context no
+ * answer needs and 35 messages of it is most of the prompt.
+ */
+export function splitAtLastReply(
+  messages: Pick<DmMessage, "body" | "byMe">[],
+  them: string,
+  keep = 12,
+): DmThread {
+  // Walk back over the trailing messages that are theirs. `needingReply` has
+  // already established they spoke last, so this run is never empty in practice
+  // — but a thread that has moved on between the two reads returns no run and
+  // the caller keeps the message it collected, rather than an empty question.
+  let cut = messages.length;
+  while (cut > 0 && !messages[cut - 1].byMe) cut--;
+
+  return {
+    unanswered: messages.slice(cut).map((m) => m.body.trim()).filter(Boolean),
+    transcript: messages
+      .slice(0, cut)
+      .slice(-keep)
+      .map((m) => `${m.byMe ? "Jake" : them}: ${m.body}`)
+      .join("\n"),
+  };
 }
 
 /* ────────────────────────── answering ────────────────────────── */
@@ -463,7 +642,22 @@ async function draftOne(
   communityUrl: string,
   target: ReplyTarget,
   voicePrompt: string,
+  access: Entitlement,
+  posts: SkoolPost[],
 ): Promise<{ id: string | null; detail: string }> {
+  // ⚠️ COMPUTED PER TARGET, NOT PER SWEEP. Two members can be at opposite ends
+  // of this: one has never heard of the plans page and one was sent it an hour
+  // ago by Jake himself.
+  const nudge =
+    target.surface === "dm" && !access.member.paid && !access.member.unknown
+      ? plansNudgeState(
+          target.channelId,
+          target.theirText,
+          target.context,
+          `${communityUrl.replace(/\/+$/, "")}/plans`,
+        )
+      : null;
+
   const { reply, error } = await draftReply({
     communityUrl,
     voicePrompt,
@@ -472,9 +666,17 @@ async function draftOne(
     authorFirstName: target.memberFirstName,
     text: target.theirText,
     context: target.context,
+    unansweredCount: target.unansweredCount,
       // Jake, 2026-08-27: the bar-Jake voice goes into anything the Skool agent
     // does — the replies as much as the posts.
     voiceGuide: getSkoolSettings().voiceGuideMd,
+    // ⚠️ THE FREEMIUM GATE, AND IT IS NEVER OMITTED HERE. `entitlementFor`
+    // always returns something — an unrecognised member comes back as free —
+    // so a missing entitlement on this path would be a bug, not a member the
+    // rule does not apply to.
+    access,
+    nudge: nudge ? { allowed: nudge.allowed, asked: nudge.asked } : null,
+    posts: posts.map((p) => ({ id: p.id, slug: p.slug, title: p.title, body: p.body, createdAt: p.createdAt })),
   });
   if (error || !reply) {
     // ⚠️ NOT RECORDED. See above — a rate-limited window is the common case
@@ -488,6 +690,10 @@ async function draftOne(
     channelId: target.channelId,
     memberId: target.memberId,
     memberName: target.memberName,
+    // Stored per reply, not looked up later: see the column comment. A member
+    // who upgrades tomorrow must not make today's answer look like a mistake.
+    memberTier: access.member.unknown ? "unknown" : access.member.paid ? "paid" : "free",
+    memberLevel: access.member.level,
     theirText: target.theirText,
     tokens: reply.tokens ?? 0,
     cited: reply.cited,
@@ -728,6 +934,27 @@ export async function runReplySweep(
 
   out.ran = true;
 
+  // ⚠️⚠️ WHO IS PAYING, BEFORE ANYTHING IS DRAFTED. Jake, 2026-08-27: the
+  // community is freemium, so "before answering a person on a DM, first
+  // understand if he or she is a paid or free user". Once per sweep, not once
+  // per reply — both reads are browser navigations, and every target in a sweep
+  // is judged against the same snapshot.
+  //
+  // A failure here is a NOTE, not a stop: `entitlementFor` falls back to the
+  // free entitlement for everyone, which is the safe direction (a paying member
+  // gets offered a free lesson) and is recorded on every row it touches.
+  const access = await ensureAccessFresh(communityUrl).catch((e) => ({
+    notes: [`Member tiers/course gates could not be re-read: ${String(e?.message ?? e)}`],
+    membersReadAt: 0,
+    gatesReadAt: 0,
+  }));
+  out.notes.push(...access.notes);
+  if (!access.gatesReadAt) {
+    // Worth saying out loud: with no gates, every free member's grounding is
+    // empty and their replies will carry no classroom link at all.
+    out.notes.push("⚠️ No course gates are cached, so free members can be pointed at no classroom page this sweep.");
+  }
+
   // ⚠️ UNFINISHED WORK BEFORE NEW WORK. A member already half-answered is ahead
   // of a member not answered at all, and the cap is shared — spending the whole
   // sweep on new targets would starve the retries forever.
@@ -736,7 +963,10 @@ export async function runReplySweep(
 
   const collected = await collectTargets(communityUrl, cfg);
   out.scanned = collected.scanned;
-  out.notes = collected.notes;
+  // ⚠️ PUSHED, NOT ASSIGNED. The access refresh above already wrote notes onto
+  // this sweep, and assigning here threw them away — including the one that
+  // says nobody's tier could be read.
+  out.notes.push(...collected.notes);
   if (collected.error) {
     out.skipped = collected.error;
     writeReplyHealth({ lastSweepAt: Date.now(), lastOutcome: collected.error });
@@ -758,12 +988,59 @@ export async function runReplySweep(
     ? (await readChannels(communityUrl).catch(() => ({ channels: [] as DmChannel[], error: "" }))).channels
     : [];
 
+  // One entitlement per target, from the caches refreshed above. Cheap — no
+  // browser, no network — so it is resolved for every target rather than
+  // guessed from the surface.
+  const entitlements = new Map(todo.map((t) => [t.targetId, entitlementFor(t.memberId, t.memberName)]));
+  const free = todo.filter((t) => !entitlements.get(t.targetId)?.member.paid);
+  if (free.length) {
+    out.notes.push(
+      `${free.length} of ${todo.length} to answer are free members: ${free.map((t) => t.memberName).join(", ")}.`,
+    );
+  }
+
+  // ⚠️ THE FEED IS READ ONLY WHEN A FREE MEMBER IS ACTUALLY BEING ANSWERED, and
+  // it is the other half of what they may be pointed at ("a page from the first
+  // class or a past post in the community"). Two pages is ~60 posts and two
+  // navigations; a sweep of paying members pays for neither.
+  let recentPosts: SkoolPost[] = [];
+  if (free.length) {
+    const feed = await readFeed(communityUrl, 2).catch(() => ({ posts: [] as SkoolPost[], error: "read failed" }));
+    recentPosts = feed.posts ?? [];
+    if (!recentPosts.length) {
+      out.notes.push("⚠️ No past posts could be read, so free members get lesson links only.");
+    }
+  }
+
   for (const target of todo) {
-    const withContext =
-      target.surface === "dm"
-        ? { ...target, context: await dmContext(communityUrl, target.channelId, dmChannels).catch(() => "") }
-        : target;
-    const { id, detail } = await draftOne(communityUrl, withContext, voicePrompt);
+    let withContext = target;
+    if (target.surface === "dm") {
+      const thread = await dmThread(communityUrl, target.channelId, dmChannels).catch(() => ({
+        transcript: "",
+        unanswered: [] as string[],
+      }));
+      withContext = {
+        ...target,
+        context: thread.transcript,
+        // ⚠️ ALL OF THE RUN, NOT ITS LAST LINE — and it goes in `theirText`, so
+        // the ledger and the review card show what was actually answered too.
+        // Falls back to the collected message when the thread could not be
+        // re-read: a worse question is still a question, an empty one is not.
+        theirText: thread.unanswered.length ? thread.unanswered.join("\n\n") : target.theirText,
+        unansweredCount: Math.max(thread.unanswered.length, 1),
+      };
+    }
+    const entitlement = entitlements.get(target.targetId) ?? entitlementFor(target.memberId, target.memberName);
+    const { id, detail } = await draftOne(
+      communityUrl,
+      withContext,
+      voicePrompt,
+      entitlement,
+      // Offered to paying members too when they were read at all — "if he's
+      // paid you can recommend anything" includes a post. Empty on a sweep with
+      // no free member in it, because the feed was never read.
+      recentPosts,
+    );
     if (!id) {
       out.handled.push(detail);
       if (/skipped —/.test(detail)) out.skippedByDrafter++;

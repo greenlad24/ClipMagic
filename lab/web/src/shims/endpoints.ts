@@ -1175,6 +1175,14 @@ export interface SkoolReplyRow {
   channelId: string;
   memberId: string;
   memberName: string;
+  /**
+   * What the agent believed the member was PAYING when it wrote this reply:
+   * 'free', 'paid', or 'unknown' (nobody by that id was in the member cache, so
+   * the free rule was applied). '' on rows written before the community went
+   * freemium — which is why the badge is not rendered for an empty string.
+   */
+  memberTier: string;
+  memberLevel: number;
   theirText: string;
   state: SkoolReplyState;
   replyText: string;

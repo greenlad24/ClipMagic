@@ -41,6 +41,44 @@ export interface SkoolMember {
   displayName: string;
   /** When they were approved into THIS community, epoch ms. 0 when unknown. */
   joinedAt: number;
+  /**
+   * Skool's own membership role: "member", "group-admin", "group-owner".
+   *
+   * Carried rather than interpreted — an admin is not a paying member and is
+   * not a free one either, and the entitlement layer needs to see which.
+   */
+  role: string;
+  /**
+   * The gamification level, 1-9, read from `user.metadata.spData.lv`.
+   *
+   * ⚠️ NOT COSMETIC HERE. Skool gates a course on BOTH a tier and a level
+   * (`minAccessLevel`), and this community's landing page promises "At Level 6
+   * — unlock 5 paid courses for free". So a free member at level 6 can open
+   * things a free member at level 1 cannot, and only this number tells them
+   * apart. 0 when the payload carried nothing parseable.
+   */
+  level: number;
+  /**
+   * Whether they are PAYING for this community right now.
+   *
+   * ⚠️⚠️ DERIVED FROM AN ADMIN-ONLY PART OF THE PAYLOAD. `member.metadata`
+   * carries the Stripe subscription id (`msbs`), the current period end
+   * (`mbscpe`, epoch SECONDS) and the plan (`mmbp`) — and it carries them
+   * because this session is a group-admin. A member session would not see them,
+   * so this whole file's answer depends on the imported cookie staying an
+   * admin's. `readMembers` says so rather than reporting everyone as free.
+   *
+   * ⚠️ THE BILLING EMAIL (`mbme`) IS DELIBERATELY NOT CARRIED OUT OF THE PAGE.
+   * Nothing downstream needs a member's payment email to decide what to
+   * recommend them, and the reply ledger would then hold 73 of them.
+   */
+  paid: boolean;
+  /** 1 = free tier, 2 = paid tier. Compared against a course's `minTier`. */
+  tier: 1 | 2;
+  /** "$69/month", "$580/year", "admin" — for a human reading the ledger. */
+  plan: string;
+  /** When the current paid period ends, epoch ms. 0 when they are not paying. */
+  renewsAt: number;
 }
 
 export interface MemberRead {
@@ -83,15 +121,28 @@ async function readMembersPage(communityUrl: string, pageNo: number): Promise<Me
 
       return {
         fail: null,
-        users: pp.users.map((u: any) => ({
-          userId: String(u?.id ?? ""),
-          handle: String(u?.name ?? ""),
-          firstName: String(u?.firstName ?? ""),
-          lastName: String(u?.lastName ?? ""),
-          // The community membership, not the Skool account. See the header.
-          approvedAt: String(u?.member?.approvedAt ?? ""),
-          role: String(u?.member?.role ?? ""),
-        })),
+        users: pp.users.map((u: any) => {
+          // The BILLING half, admin-only — see `SkoolMember.paid`. Reduced to
+          // the four facts an entitlement needs before it leaves the page, so
+          // the payment email never travels.
+          const mm = u?.member?.metadata ?? {};
+          return {
+            userId: String(u?.id ?? ""),
+            handle: String(u?.name ?? ""),
+            firstName: String(u?.firstName ?? ""),
+            lastName: String(u?.lastName ?? ""),
+            // The community membership, not the Skool account. See the header.
+            approvedAt: String(u?.member?.approvedAt ?? ""),
+            role: String(u?.member?.role ?? ""),
+            // Points/level live on the USER's metadata as a JSON STRING, not on
+            // the membership. Parsed outside the page so a malformed one is a
+            // level of 0 rather than a thrown evaluate.
+            spData: String(u?.metadata?.spData ?? ""),
+            hasSubscription: !!String(mm.msbs ?? ""),
+            periodEndSec: Number(mm.mbscpe ?? 0),
+            plan: String(mm.mmbp ?? ""),
+          };
+        }),
       };
     });
   });
@@ -118,8 +169,99 @@ async function readMembersPage(communityUrl: string, pageNo: number): Promise<Me
         firstName: u.firstName,
         displayName: [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.handle,
         joinedAt: epoch(u.approvedAt),
+        role: String(u.role ?? ""),
+        level: levelFrom(u.spData),
+        ...billingFrom(u),
       })),
   };
+}
+
+/**
+ * A member built from a NAME AND A HANDLE ALONE — an @mention list typed into
+ * the composer, or one replayed from a stored slot.
+ *
+ * ⚠️⚠️ THE ENTITLEMENT HALF IS NOT KNOWN HERE, AND THE ZEROES BELOW ARE NOT A
+ * READING OF SKOOL. Nothing that decides what a member may be shown may take
+ * its answer from one of these — that is `access.ts`'s job, from the cache the
+ * members page actually filled. This exists so a mention list does not have to
+ * pretend to be a full member record, and so the fields it cannot know are
+ * absent-looking rather than plausible.
+ */
+export function mentionMember(m: {
+  userId?: string;
+  handle: string;
+  firstName?: string;
+  displayName: string;
+  joinedAt?: number;
+}): SkoolMember {
+  return {
+    userId: String(m.userId ?? ""),
+    handle: m.handle,
+    firstName: String(m.firstName ?? ""),
+    displayName: m.displayName,
+    joinedAt: Number(m.joinedAt ?? 0),
+    role: "",
+    level: 0,
+    paid: false,
+    tier: 1,
+    plan: "",
+    renewsAt: 0,
+  };
+}
+
+/** `{"pts":457,"lv":5,...}`, stored as a string. 0 when it will not parse. */
+function levelFrom(spData: unknown): number {
+  try {
+    const lv = Number(JSON.parse(String(spData ?? "{}"))?.lv ?? 0);
+    return Number.isFinite(lv) ? lv : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Are they paying, and for what.
+ *
+ * ⚠️⚠️ A SUBSCRIPTION ID IS NOT PROOF OF A LIVE SUBSCRIPTION. Measured on this
+ * community 2026-08-27: `louis-s-6733` carries `mbsltv: 2500` — money that was
+ * once paid — and no `msbs` and no period end at all. Someone who cancels keeps
+ * their history on the record. So the test is the PERIOD END, and the id alone
+ * is only the shape of the evidence.
+ *
+ * ⚠️ AND THE GRACE IS DELIBERATE. Skool writes the new period end when a renewal
+ * settles, so a member billed an hour ago can read as expired for as long as
+ * that takes. Two days of grace costs a cancelled member two days of answers
+ * they were getting anyway (Skool itself keeps their access to the end of the
+ * period); no grace costs a PAYING member the thing they paid for, which is the
+ * failure this whole file exists to prevent.
+ */
+const RENEWAL_GRACE_MS = 2 * 24 * 3600_000;
+
+function billingFrom(u: any): { paid: boolean; tier: 1 | 2; plan: string; renewsAt: number } {
+  const role = String(u.role ?? "");
+  // An admin or the owner sees everything regardless of what they pay, and this
+  // account's own row is an admin one — so "not paying" must not read as "free
+  // member" for them.
+  if (role === "group-admin" || role === "group-owner") {
+    return { paid: true, tier: 2, plan: `${role} — full access, not a subscription`, renewsAt: 0 };
+  }
+  const endsAt = Number(u.periodEndSec ?? 0) * 1000;
+  const live = !!u.hasSubscription && endsAt > 0 && endsAt + RENEWAL_GRACE_MS > Date.now();
+  if (!live) return { paid: false, tier: 1, plan: "", renewsAt: 0 };
+  return { paid: true, tier: 2, plan: planLabel(u.plan), renewsAt: endsAt };
+}
+
+/** `{"currency":"usd","amount":6900,"recurring_interval":"month"}` → "$69/month". */
+function planLabel(raw: unknown): string {
+  try {
+    const p = JSON.parse(String(raw ?? "{}"));
+    const amount = Number(p?.amount ?? 0);
+    if (!amount) return String(p?.tier ?? "") || "paid";
+    const money = `${String(p?.currency ?? "").toUpperCase() === "USD" ? "$" : ""}${(amount / 100).toFixed(2).replace(/\.00$/, "")}`;
+    return p?.recurring_interval ? `${money}/${p.recurring_interval}` : money;
+  } catch {
+    return "paid";
+  }
 }
 
 /**
@@ -213,11 +355,18 @@ export interface NewMemberRead {
  * here treats "nobody new" as a post that opens with the question instead of a
  * welcome, never as a reason to skip the day.
  *
- * `limit` exists because the greeting is a line of a post, not a roll call:
- * eleven chips before the first word is a wall, and the people at the end of it
- * are decoration. The overflow is deliberately NOT deferred to next week — they
- * are recorded as welcomed either way, because a member greeted three weeks
- * after joining is worse than one not greeted at all.
+ * ⚠️ EVERYONE IN THE WINDOW, NOT THE NEWEST FEW. Jake, 2026-08-27: "I want you
+ * in the next time to tag all of the new members from that week (since last
+ * Thursday)." `limit` survives only as a runaway guard — see `askMaxMentions`,
+ * which is now 25 rather than 5 — because the greeting moved from the post's
+ * opening line, where a row of chips is a wall, to a comment underneath, where
+ * a list of names is simply what the comment is.
+ *
+ * ⚠️ AND THE OVERFLOW IS NO LONGER SPENT. It used to be recorded as welcomed
+ * whether or not it was greeted, on the reasoning that a member greeted three
+ * weeks late is worse than one never greeted. The ledger now records only the
+ * mentions that actually landed, so anyone past the guard comes back next
+ * Thursday — which, at a guard of 25, means a week that broke every record.
  */
 export async function newMembers(
   communityUrl: string,
@@ -238,7 +387,11 @@ export async function newMembers(
   const detail =
     `${read.members.length} member(s) read over ${read.pagesRead} page(s); ` +
     `${recent.length} joined in the last ${sinceDays} days, ${fresh.length} of them not yet welcomed` +
-    (fresh.length > picked.length ? `, taking the ${picked.length} newest` : "");
+    // ⚠️ SAID OUT LOUD WHEN IT BITES. A guard that quietly drops the tail reads
+    // exactly like a week when fewer people joined.
+    (fresh.length > picked.length
+      ? `, and the guard held it to the ${picked.length} newest — ${fresh.length - picked.length} roll into next week`
+      : "");
 
   return { members: picked, detail, error: read.error };
 }

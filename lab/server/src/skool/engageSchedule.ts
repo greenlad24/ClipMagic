@@ -36,9 +36,10 @@ import {
   type Draft,
   type PostKind,
 } from "./engageGen.js";
-import { newMembers, recordWelcomed, type SkoolMember } from "./members.js";
+import { mentionMember, newMembers, recordWelcomed, type SkoolMember } from "./members.js";
 import { getSkoolSettings } from "../db/skool.js";
 import { createPost } from "./engageActions.js";
+import { commentOnPost } from "./postComment.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
@@ -130,12 +131,26 @@ export interface EngageSchedule {
   /** How many days back counts as a "new" member for the ask post's greeting. */
   askNewMemberDays: number;
   /**
-   * Most people to @mention in one ask post.
+   * A RUNAWAY GUARD on how many people one welcome comment tags — not an
+   * editorial cap.
    *
-   * ⚠️ THE OVERFLOW IS NOT HELD OVER TO NEXT WEEK — everyone inside the window
-   * is recorded as welcomed either way. A member greeted three weeks after
-   * joining is worse than one never greeted, and a backlog that drains five a
-   * week would put the newest arrivals last. See `newMembers`.
+   * ⚠️⚠️ IT USED TO BE FIVE, AND THAT WAS AN EDITORIAL CHOICE ABOUT A POST. The
+   * greeting was the post's opening line, where "eleven chips before the first
+   * word is a wall" is true, so the sixth arrival of the week was dropped — and
+   * dropped for good, because everyone inside the window was recorded as
+   * welcomed whether they were tagged or not. Jake, 2026-08-27: "I want you in
+   * the next time to tag all of the new members from that week (since last
+   * Thursday)." The tags now live in a comment underneath, where a list of names
+   * is the normal shape of the thing, so the reason for the cap is gone.
+   *
+   * What remains is the reason a number is still here at all: each chip is a
+   * typed query, a wait for Skool's autocomplete and a keystroke — three or four
+   * seconds of a shared browser — so an unexpected influx must not turn one
+   * comment into a ten-minute hold on every other Skool job.
+   *
+   * ⚠️ AND ANYONE PAST IT IS NO LONGER RECORDED AS WELCOMED. The ledger now
+   * takes only the chips that actually landed (see `welcomeComment`), so an
+   * overflow rolls into next Thursday instead of being silently spent.
    */
   askMaxMentions: number;
 }
@@ -153,8 +168,13 @@ const DEFAULTS: EngageSchedule = {
   // number.
   maxPostsPerWeek: 4,
   askDay: "thu",
+  // Seven days is "since last Thursday" for a post that runs weekly on Thursday,
+  // which is exactly how Jake framed the window.
   askNewMemberDays: 7,
-  askMaxMentions: 5,
+  // High enough to be everybody on any ordinary week — this community takes
+  // ~10 members a week at its busiest — and low enough that a bot influx cannot
+  // hold the browser for ten minutes. See the field's note: a guard, not a cap.
+  askMaxMentions: 25,
   // Jake, 2026-08-07: "when you post I want to notify everyone by email."
   emailNotify: true,
   // 12 attempts × 30 min = 6 hours of trying, which outlasts one 5-hour Max
@@ -230,7 +250,11 @@ export function setSchedule(patch: Partial<EngageSchedule>): EngageSchedule {
     );
   }
   next.askNewMemberDays = Math.min(90, Math.max(1, Math.floor(next.askNewMemberDays)));
-  next.askMaxMentions = Math.min(20, Math.max(0, Math.floor(next.askMaxMentions)));
+  // ⚠️ THE CEILING MOVED WITH THE DEFAULT, AND HAD TO. It was 20 against a
+  // default of 5; leaving it there while the default became 25 would mean the
+  // stored schedule silently disagreed with the documented one the first time
+  // anybody saved the settings form.
+  next.askMaxMentions = Math.min(25, Math.max(0, Math.floor(next.askMaxMentions)));
   db
     .prepare("UPDATE skool_settings SET engage_schedule_json = ?, updated_at = ? WHERE id = 1")
     .run(JSON.stringify(next), Date.now());
@@ -305,6 +329,14 @@ export interface Slot {
    * a retry six hours later must greet the people the post was queued for.
    */
   mentionsJson: string;
+  /**
+   * The last line of the first comment — the one that follows the @mentions.
+   *
+   * Written by the drafter (Jake, 2026-08-27: "everytime something different to
+   * not be repeatable") and stored so a retry posts the line that was drafted.
+   * Empty falls back to `welcomeClosing`.
+   */
+  welcomeClose: string;
   /** The publisher's step log, kept on success as well as failure. */
   steps: string | null;
   createdAt: number;
@@ -338,6 +370,88 @@ function parseAttachment(raw: string): Attachment | null {
  * are typed into a live composer — a blank handle would type a bare "@" and open
  * an autocomplete over the whole community.
  */
+/**
+ * The line that follows the @mentions in the first comment.
+ *
+ * ⚠️ THE DRAFTER'S LINE IS THE ONE THAT SHIPS. Jake asked for it to be
+ * different every week ("everytime something different to not be repeatable"),
+ * and a model writing it fresh against the voice guide is the only version of
+ * that which is actually true. These are the FALLBACK, for the week the drafter
+ * returns nothing — and they are chosen by the slot key rather than at random so
+ * that two consecutive Thursdays cannot land on the same one.
+ */
+const WELCOME_CLOSINGS = [
+  "welcome in, glad you're here",
+  "great to have you all here",
+  "welcome aboard",
+  "glad you found us",
+  "welcome guys, make yourselves at home",
+  "good to have you with us",
+  "welcome in",
+];
+
+export function welcomeClosing(fromDraft: string, slotKey: string): string {
+  const written = (fromDraft ?? "").trim();
+  if (written) return written;
+
+  // ⚠️ WALKED BY WEEK, NOT HASHED. A slot key is a calendar date, so the week
+  // number cycles the list in order — which is what actually guarantees the
+  // thing a random pick only makes likely: two consecutive Thursdays never
+  // land on the same line. Retrying the same slot returns the same line,
+  // because the same date is the same week.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(slotKey ?? "");
+  if (m) {
+    const at = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (!Number.isNaN(at)) {
+      const weeks = Math.floor(at / (7 * 24 * 3600_000));
+      return WELCOME_CLOSINGS[((weeks % WELCOME_CLOSINGS.length) + WELCOME_CLOSINGS.length) % WELCOME_CLOSINGS.length];
+    }
+  }
+  // Not a date — nothing in this system produces one, but a stable answer beats
+  // throwing on the line that closes the community's weekly welcome.
+  let hash = 0;
+  for (const ch of slotKey ?? "") hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  return WELCOME_CLOSINGS[hash % WELCOME_CLOSINGS.length];
+}
+
+/**
+ * Tag the week's new members underneath a post that is already live.
+ *
+ * ⚠️ SHARED BY BOTH PUBLISH PATHS ON PURPOSE. The hand-published route never
+ * greeted anybody — it did not pass `mentions` to `createPost` — which was
+ * invisible while the greeting was the post's opening line, because the line
+ * was in the drafted body either way. Now that the names are a separate write,
+ * a path that skips it publishes a post welcoming people it never tags.
+ */
+async function welcomeComment(
+  communityUrl: string,
+  slot: Slot,
+  slug: string,
+  closing: string,
+  postedDetail: string,
+): Promise<string> {
+  const mentions = slot.kind === "ask" ? parseMentions(slot.mentionsJson) : [];
+  if (!mentions.length) return "";
+
+  const commented = await commentOnPost({ communityUrl, slug, mentions, closing }).catch((e) => ({
+    ok: false,
+    detail: `⚠ The welcome comment threw: ${e instanceof Error ? e.message : String(e)}`,
+    mentioned: [] as SkoolMember[],
+    text: "",
+    buttons: [] as string[],
+  }));
+  // The publisher's log and the comment's log are one record of one post.
+  updateSlot(slot.slotKey, { steps: `${postedDetail} · ${commented.detail}` });
+  // ⚠️⚠️ ONLY THE MEMBERS WHOSE CHIP ACTUALLY WENT IN ARE RECORDED AS WELCOMED,
+  // AND THIS IS THE OPPOSITE OF THE OLD RULE. It was right to record everyone
+  // when the greeting was the post's opening line: that line had been written
+  // around them and could not be written again. The comment carries no such
+  // cost — nobody is named in the post — so a member the tag missed is simply
+  // greeted next Thursday, which is the outcome they should have had.
+  if (commented.mentioned.length) recordWelcomed(commented.mentioned, slot.slotKey);
+  return ` ${commented.detail}`;
+}
+
 function parseMentions(raw: string): SkoolMember[] {
   if (!raw) return [];
   try {
@@ -345,13 +459,17 @@ function parseMentions(raw: string): SkoolMember[] {
     if (!Array.isArray(list)) return [];
     return list
       .filter((m: any) => m && typeof m.handle === "string" && m.handle.trim() && typeof m.displayName === "string")
-      .map((m: any) => ({
-        userId: String(m.userId ?? ""),
-        handle: String(m.handle),
-        firstName: String(m.firstName ?? ""),
-        displayName: String(m.displayName),
-        joinedAt: Number(m.joinedAt ?? 0),
-      }));
+      // The entitlement half of a member is not stored on a slot and is not
+      // needed to type an @mention — a stored blob is replayed, not re-judged.
+      .map((m: any) =>
+        mentionMember({
+          userId: String(m.userId ?? ""),
+          handle: String(m.handle),
+          firstName: String(m.firstName ?? ""),
+          displayName: String(m.displayName),
+          joinedAt: Number(m.joinedAt ?? 0),
+        }),
+      );
   } catch {
     return [];
   }
@@ -377,6 +495,7 @@ function rowToSlot(r: any): Slot {
     // MCP structure on a post that was never meant to have it.
     kind: r.kind === "mcp" ? "mcp" : r.kind === "ask" ? "ask" : "lesson",
     mentionsJson: r.mentions_json || "",
+    welcomeClose: r.welcome_close || "",
     steps: r.steps || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -1079,6 +1198,9 @@ async function attemptSlot(
           // attachment is part of that and must not be picked again.
           attachment: parseAttachment(slot.attachmentJson),
           cited: [],
+          // Replayed with everything else: a retry posts the comment that was
+          // drafted, not a fresh line written by a second call.
+          welcomeClose: slot.welcomeClose,
           tokens: null,
           model: "",
         }
@@ -1154,6 +1276,7 @@ async function attemptSlot(
       title: draft.title,
       body: draft.body,
       category: draft.category,
+      welcome_close: draft.welcomeClose ?? "",
       cited_json: JSON.stringify(draft.cited ?? []),
       attachment_json: draft.attachment ? JSON.stringify(draft.attachment) : "",
       attempts,
@@ -1170,7 +1293,8 @@ async function attemptSlot(
     // would simply not get the post they asked for, and nothing would say so.
     releasePinnedSubject(slot.slotKey);
     const greeting = mentions.length
-      ? ` It would have opened by mentioning ${mentions.map((m) => `@${m.displayName}`).join(", ")}.`
+      ? ` A first comment would have tagged ${mentions.map((m) => `@${m.displayName}`).join(", ")}` +
+        `, closing with "${welcomeClosing(draft.welcomeClose, slot.slotKey)}".`
       : slot.kind === "ask"
         ? " Nobody new to greet this week, so it opens on the question."
         : "";
@@ -1187,9 +1311,10 @@ async function attemptSlot(
     // here is what makes WHICH post gets it a choice instead of a race.
     emailNotify: cfg.emailNotify && isEmailSlot(slot.slotKey, cfg.days),
     attachment: draft.attachment,
-    // Typed into the composer as real mention chips before the body is pasted.
-    // Empty on every other kind of post, and a normal week on this one.
-    mentions,
+    // ⚠️⚠️ NO MENTIONS. Jake, 2026-08-27: "we can't tag people directly in the
+    // post itself". The chips went in — `typeMentions` verifies a real mention
+    // node, not typed text — and still did not reach the members, so the
+    // greeting moved to the first comment underneath. See `postComment.ts`.
   }).catch((e) => ({ ok: false, detail: e instanceof Error ? e.message : String(e), post: null }));
 
   if (!posted.ok) {
@@ -1215,16 +1340,22 @@ async function attemptSlot(
   // and that upload would never get the post it was owed — silently, since
   // nothing distinguishes "already announced" from "announced by us, today".
   if (slot.videoId) recordAnnounced(slot.videoId, draft.title, slot.slotKey);
-  // ⚠️ EVERYONE THE SLOT NAMED IS RECORDED AS WELCOMED, INCLUDING ANY WHOSE CHIP
-  // FAILED TO GO IN. `typeMentions` drops a member it cannot tag rather than
-  // failing the post, and the alternative here — recording only the chips that
-  // landed — would put that member back in next week's greeting, in a post whose
-  // opening line has already been written around them once. The step log says
-  // exactly who was skipped and why, which is the record worth having; a second
-  // attempt at a greeting a week late is not.
-  if (mentions.length) recordWelcomed(mentions, slot.slotKey);
+
+  // ⚠️⚠️ THE GREETING IS A SEPARATE WRITE NOW, AND IT HAPPENS AFTER THE POST IS
+  // ALREADY LIVE. That ordering is not incidental: the post welcomes the group
+  // in its own words and stands on its own, so a comment that fails costs the
+  // names and nothing else. The reverse — refusing to publish because the tags
+  // failed — would cost the community its Thursday over a notification.
+  const welcome = await welcomeComment(
+    communityUrl,
+    slot,
+    posted.post?.slug ?? "",
+    welcomeClosing(draft.welcomeClose, slot.slotKey),
+    posted.detail,
+  );
+
   console.log(`[skool] (${trigger}) published "${draft.title}" for slot ${slot.slotKey}`);
-  return `Published: ${posted.detail}`;
+  return `Published: ${posted.detail}${welcome}`;
 }
 
 /* ────────────────────────── the loop ────────────────────────── */
@@ -1484,5 +1615,12 @@ export async function publishSlot(communityUrl: string, slotKey: string): Promis
     return { ok: false, detail: posted.detail };
   }
   updateSlot(slotKey, { state: "posted", slug: posted.post?.slug ?? null, last_error: null });
-  return { ok: true, detail: posted.detail };
+  const welcome = await welcomeComment(
+    communityUrl,
+    slot,
+    posted.post?.slug ?? "",
+    welcomeClosing(slot.welcomeClose, slotKey),
+    posted.detail,
+  );
+  return { ok: true, detail: `${posted.detail}${welcome}` };
 }

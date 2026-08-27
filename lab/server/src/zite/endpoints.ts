@@ -264,6 +264,16 @@ import { backfillTranscripts, transcriptCoverage } from "../skool/transcripts.js
 import { createPost, replyToComment, taughtPostAction } from "../skool/engageActions.js";
 import { answerable, readComments } from "../skool/comments.js";
 import { needingReply, readChannels, readMessages, sendDm, type DmChannel } from "../skool/dms.js";
+import {
+  courseGates,
+  entitlementFor,
+  type Entitlement,
+  memberAccessReadAt,
+  refreshCourseGates,
+  refreshMemberAccess,
+} from "../skool/access.js";
+import { topUpInventoryWithCourse } from "../skool/indexTopUp.js";
+import { commentOnPost, diagnoseCommentMentions, probeCommentSubmit } from "../skool/postComment.js";
 import { draftPost, draftReply, styleExamplesFrom } from "../skool/engageGen.js";
 import {
   getSchedule,
@@ -281,8 +291,9 @@ import {
   type Weekday,
 } from "../skool/engageSchedule.js";
 import { firstNameOf } from "../skool/engageGen.js";
-import { newMembers as readNewMembers, recordWelcomed } from "../skool/members.js";
+import { mentionMember, newMembers as readNewMembers, readMembers, recordWelcomed } from "../skool/members.js";
 import {
+  asksAboutUpgrading,
   getReplyConfig,
   setReplyConfig,
   replyAgentStatus,
@@ -4927,8 +4938,8 @@ const skoolKnowledge: Handler = async (input) => {
       title: h.title,
       course: h.courseTitle,
       // Reported, because it decides whether this lesson may be LINKED in
-      // anything published — see `Lesson.rebuilt`.
-      rebuilt: h.rebuilt,
+      // anything published — see `Lesson.live`.
+      live: h.live,
       url: h.url,
       score: Number(h.score.toFixed(2)),
       excerpt: h.excerpt,
@@ -5039,13 +5050,15 @@ const skoolPublishPost: Handler = async (input) => {
   const mentions = Array.isArray(input?.mentions)
     ? (input.mentions as any[])
         .filter((m) => m && String(m.handle ?? "").trim() && String(m.displayName ?? "").trim())
-        .map((m) => ({
-          userId: String(m.userId ?? ""),
-          handle: String(m.handle).trim(),
-          firstName: String(m.firstName ?? ""),
-          displayName: String(m.displayName).trim(),
-          joinedAt: Number(m.joinedAt ?? 0),
-        }))
+        .map((m) =>
+          mentionMember({
+            userId: String(m.userId ?? ""),
+            handle: String(m.handle).trim(),
+            firstName: String(m.firstName ?? ""),
+            displayName: String(m.displayName).trim(),
+            joinedAt: Number(m.joinedAt ?? 0),
+          }),
+        )
     : [];
 
   const result = await createPost({
@@ -5066,8 +5079,41 @@ const skoolPublishPost: Handler = async (input) => {
 const skoolDraftReply: Handler = async (input) => {
   const text = String(input?.text ?? "").trim();
   if (!text) throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to reply to." });
+  const communityUrl = communityUrlOrThrow();
+
+  // ⚠️ THE BENCH IS GATED THE SAME WAY THE SWEEP IS, WHENEVER IT CAN BE. A
+  // bench that answers as if everyone were paying would show Jake a reply the
+  // agent would never send — and the free-member reply, which is the one that
+  // just changed, would be the one he could not see. Pass a `memberId` to judge
+  // a real person; pass `tier: "free"` to see the free-member shape without
+  // one. Neither: ungated, and the response says so.
+  const memberId = String(input?.memberId ?? "").trim();
+  const forcedTier = String(input?.tier ?? "").trim().toLowerCase();
+  const authorName = String(input?.authorName ?? "");
+
+  let gated: Entitlement | null = null;
+  if (memberId) {
+    gated = entitlementFor(memberId, authorName);
+  } else if (forcedTier === "free" || forcedTier === "paid") {
+    const base = entitlementFor("", authorName);
+    const tier: 1 | 2 = forcedTier === "paid" ? 2 : 1;
+    const member = { ...base.member, tier, paid: tier === 2, unknown: false };
+    // ⚠️ RECOMPUTED, NOT COPIED. `entitlementFor` opened the courses for the
+    // member it was given (nobody, hence free); a forced tier that kept those
+    // would hand a "paid" bench run the free member's grounding and read as a
+    // gate that does not work.
+    gated = {
+      ...base,
+      member,
+      openCourses: courseGates().filter(
+        (g) => g.minTier <= tier && g.minAccessLevel <= Math.max(member.level, 1),
+      ),
+    };
+  }
+  const posts = gated && !gated.member.paid ? (await readFeed(communityUrl, 2).catch(() => ({ posts: [] }))).posts : [];
+
   const { reply, error } = await draftReply({
-    communityUrl: communityUrlOrThrow(),
+    communityUrl,
     voicePrompt: getEngageSettings().replyPromptMd ?? "",
     surface: String(input?.surface ?? "comment") === "dm" ? "dm" : "comment",
     authorName: String(input?.authorName ?? "a member"),
@@ -5076,8 +5122,90 @@ const skoolDraftReply: Handler = async (input) => {
     text,
     context: String(input?.context ?? ""),
       voiceGuide: getSkoolSettings().voiceGuideMd,
+    access: gated,
+    // ⚠️ THE BENCH ALWAYS ALLOWS IT, AND SAYS SO IN THE RESPONSE. It has no
+    // conversation to count, so the alternative is a bench that silently never
+    // shows the nudge — which is the half of a free member's reply Jake most
+    // wants to read before it goes anywhere near a member. Pass
+    // `nudged: true` to see the reply that a second question in the same thread
+    // would get instead.
+    nudge:
+      gated && !gated.member.paid
+        ? { allowed: input?.nudged !== true, asked: asksAboutUpgrading(text) }
+        : null,
+    posts: (posts ?? []).map((p) => ({ id: p.id, slug: p.slug, title: p.title, body: p.body, createdAt: p.createdAt })),
   });
-  return { reply, error };
+  return {
+    reply,
+    error,
+    access: gated
+      ? {
+          tier: gated.member.paid ? "paid" : "free",
+          level: gated.member.level,
+          unknown: gated.member.unknown,
+          openCourses: gated.openCourses.map((c) => c.title),
+          postsOffered: (posts ?? []).length,
+        }
+      : { tier: "ungated", note: "No memberId or tier was passed, so no freemium gate was applied." },
+  };
+};
+
+/**
+ * WHO PAYS, AND WHAT EACH COURSE COSTS TO OPEN — the freemium picture.
+ *
+ * Read-only against the caches by default. `refresh: true` re-reads both from
+ * Skool (three members pages plus one classroom page, on the shared browser).
+ */
+const skoolAccess: Handler = async (input) => {
+  const communityUrl = communityUrlOrThrow();
+  const notes: string[] = [];
+  if (input?.refresh === true) {
+    const gates = await refreshCourseGates(communityUrl);
+    if (gates.error) notes.push(`Course gates: ${gates.error}`);
+    const members = await refreshMemberAccess(communityUrl);
+    if (members.error) notes.push(`Members: ${members.error}`);
+    // ⚠️ ZERO PAYING MEMBERS IS THE TELL THAT THE SESSION LOST ITS ADMIN ROLE.
+    // The billing fields are admin-only, so a demoted cookie reports a community
+    // where nobody has ever paid — which is a perfectly ordinary-looking answer.
+    if (!members.error && members.members > 0 && members.paying === 0) {
+      notes.push(
+        "⚠️ Not one paying member was found. If that is wrong, the signed-in session is no longer a " +
+          "group-admin — the subscription fields are only visible to admins, and everyone reads as free without them.",
+      );
+    }
+  }
+  const gates = courseGates();
+  const rows = db
+    .prepare("SELECT tier, COUNT(*) AS n FROM skool_member_access GROUP BY tier")
+    .all() as { tier: number; n: number }[];
+  return {
+    members: {
+      total: rows.reduce((n, r) => n + r.n, 0),
+      paying: rows.find((r) => Number(r.tier) === 2)?.n ?? 0,
+      free: rows.find((r) => Number(r.tier) === 1)?.n ?? 0,
+      readAt: memberAccessReadAt(),
+    },
+    courses: gates.map((g) => ({
+      title: g.title,
+      slug: g.slug,
+      minTier: g.minTier,
+      minAccessLevel: g.minAccessLevel,
+      openToFreeMembers: g.minTier <= 1 && g.minAccessLevel <= 1,
+    })),
+    notes,
+  };
+};
+
+/**
+ * Read ONE course again and add it to the index, without a full classroom scan.
+ *
+ * ⚠️ WHAT MADE THE FREE COURSE REACHABLE AT ALL. See `indexTopUp.ts` — the
+ * newest full inventory predates *Free AI Starter Pack*, and a free member's
+ * reply has nothing to point at until this has run for it.
+ */
+const skoolIndexCourse: Handler = async (input) => {
+  const slug = String(input?.slug ?? "").trim();
+  return topUpInventoryWithCourse(communityUrlOrThrow(), slug);
 };
 
 /**
@@ -5310,7 +5438,20 @@ const skoolRepliesQueue: Handler = async () => {
     ...collected,
     // Drop the post body from the wire — it is context for the drafter, not for
     // a screen, and it makes this response ten times its useful size.
-    targets: collected.targets.map(({ context, ...t }) => t),
+    //
+    // The TIER comes along, read from the cache rather than from Skool: "who
+    // would it write to?" is a different question now that the answer depends
+    // on whether they pay. `readAt` on the cache is what says how much to trust
+    // it; a member cached before they upgraded reads as free here.
+    targets: collected.targets.map(({ context, ...t }) => {
+      const ent = entitlementFor(t.memberId, t.memberName);
+      return {
+        ...t,
+        tier: ent.member.unknown ? "unknown" : ent.member.paid ? "paid" : "free",
+        level: ent.member.level,
+      };
+    }),
+    accessReadAt: memberAccessReadAt(),
   };
 };
 
@@ -5747,6 +5888,76 @@ const skoolDryPublish: Handler = async (input) => {
       },
       { allowWrites },
     ),
+  };
+};
+
+/**
+ * Bench the WELCOME COMMENT — the first comment that tags the week's new members.
+ *
+ * ⚠️ DRY UNLESS `allowWrites` IS EXPLICITLY TRUE — the same switch, spelled the
+ * same way, as `skoolDryPublish`. It was written without one, on the grounds
+ * that a hand-run live comment would "burn the welcome for people the weekly
+ * post is about to greet properly". That reasoning was wrong and worth
+ * correcting rather than deleting: the welcome ledger is written by
+ * `welcomeComment` in engageSchedule, never by `commentOnPost`, so this path
+ * cannot burn anyone. What it really costs is a real comment and a real
+ * notification to whoever is tagged, which is a thing to be deliberate about
+ * and not a thing to be prevented — Skool's comment box has no submit button
+ * and posts on Enter, and NOTHING SHORT OF A LIVE SEND PROVES THAT KEY WORKS.
+ *
+ * What it is FOR is the one thing that cannot be read from the code: whether
+ * Skool's mention autocomplete opens in a COMMENT box, and what the submit
+ * control next to it is called this month. It opens the real post, types real
+ * chips, reports what Skool did, then empties the box.
+ */
+const skoolCommentDryRun: Handler = async (input) => {
+  const slug = String(input?.slug ?? "").trim();
+  if (!slug) throw new ZiteError({ code: "BAD_REQUEST", message: "Which post? Pass its slug." });
+  const handles = Array.isArray(input?.handles) ? input.handles.map((h: unknown) => String(h).trim()).filter(Boolean) : [];
+  if (!handles.length) throw new ZiteError({ code: "BAD_REQUEST", message: "Pass at least one member handle to tag." });
+
+  const communityUrl = communityUrlOrThrow();
+  // ⚠️ RESOLVED AGAINST THE REAL MEMBER LIST, NOT TAKEN ON TRUST. The chip is
+  // committed from an autocomplete whose first entry is whatever Skool offers,
+  // so a handle that does not exist is exactly how the wrong person gets tagged.
+  const read = await readMembers(communityUrl);
+  if (read.error && !read.members.length) throw new ZiteError({ code: "INTERNAL", message: read.error });
+  const wanted = handles.map((h: string) => {
+    const found = read.members.find((m) => m.handle === h.replace(/^@/, ""));
+    if (!found) throw new ZiteError({ code: "BAD_REQUEST", message: `No member with handle "${h}" is in this community.` });
+    return found;
+  });
+
+  // ⚠️ THE DIAGNOSTIC IS NOT A SECOND FEATURE — it is what makes a failed dry
+  // run readable. "The autocomplete never opened" and "the keystrokes never
+  // reached the box" produce the same sentence otherwise.
+  // ⚠️ WRITES A REAL COMMENT IF Ctrl+Enter TURNS OUT TO SEND. That is the
+  // question it exists to answer, so it cannot be asked safely — the caller
+  // re-reads the post afterwards to find out what happened.
+  if (input?.submitHunt === true) {
+    return {
+      dryRun: false,
+      probe: await probeCommentSubmit(communityUrl, slug, wanted[0], String(input?.closing ?? "welcome in").trim()),
+    };
+  }
+
+  if (input?.diagnose === true) {
+    return { dryRun: true, diagnosis: await diagnoseCommentMentions(communityUrl, slug, wanted[0].handle) };
+  }
+
+  // ⚠️ READ OFF `input` AT THE CALL SITE, NOT FORWARDED. The one field that
+  // changes what this endpoint IS must be impossible to set by passing an
+  // options object through by accident — same rule as `skoolDryPublish`.
+  const allowWrites = input?.allowWrites === true;
+  return {
+    dryRun: !allowWrites,
+    result: await commentOnPost({
+      communityUrl,
+      slug,
+      mentions: wanted,
+      closing: String(input?.closing ?? "welcome guys!").trim(),
+      dryRun: !allowWrites,
+    }),
   };
 };
 
@@ -6912,6 +7123,9 @@ export const HANDLERS: Record<string, Handler> = {
   skoolBackfillTranscripts,
   skoolDraftPost,
   skoolDraftReply,
+  skoolAccess,
+  skoolIndexCourse,
+  skoolCommentDryRun,
   skoolPublishPost,
   skoolReplyToComment,
   skoolReadDms,

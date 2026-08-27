@@ -1170,6 +1170,27 @@ const REPLY_STATE_STYLE: Record<SkoolReplyState, string> = {
   failed: 'border-destructive/50 text-destructive',
 };
 
+/**
+ * What the agent believed the member could open when it wrote — see
+ * `skool/access.ts`.
+ *
+ * ⚠️ 'unknown' IS NOT 'free', AND THE UI HAS TO SHOW WHICH. Both got the free
+ * treatment, but one of them is a member the tier read never found — three of
+ * those in a row is a members-page read that has quietly stopped working, and
+ * a badge that said "free" would hide exactly that.
+ */
+const REPLY_TIER_STYLE: Record<string, string> = {
+  paid: 'border-[hsl(var(--chart-1))]/50 text-[hsl(var(--chart-1))]',
+  free: 'border-amber-500/50 text-amber-600',
+  unknown: 'border-muted-foreground/30 text-muted-foreground',
+};
+
+const REPLY_TIER_LABEL: Record<string, string> = {
+  paid: 'paying',
+  free: 'free member',
+  unknown: 'tier unknown — answered as free',
+};
+
 const REPLY_STATE_LABEL: Record<SkoolReplyState, string> = {
   drafted: 'Waiting for you',
   sent: 'Sent',
@@ -1439,6 +1460,14 @@ function ReplyRowCard({
           {REPLY_STATE_LABEL[row.state]}
         </span>
         <span className="text-xs font-medium">{row.memberName || 'Unknown member'}</span>
+        {/* Empty on every row written before the community went freemium, and a
+            badge reading "free" on those would be a claim nothing made. */}
+        {row.memberTier ? (
+          <span className={`rounded border px-1.5 py-0.5 text-[11px] ${REPLY_TIER_STYLE[row.memberTier] ?? REPLY_TIER_STYLE.unknown}`}>
+            {REPLY_TIER_LABEL[row.memberTier] ?? row.memberTier}
+            {row.memberTier === 'free' && row.memberLevel ? ` · level ${row.memberLevel}` : ''}
+          </span>
+        ) : null}
         <span className="text-[11px] text-muted-foreground">
           {row.surface === 'dm' ? 'direct message' : 'comment'} · {new Date(row.createdAt).toLocaleString()}
         </span>

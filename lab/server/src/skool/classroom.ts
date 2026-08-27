@@ -36,7 +36,18 @@ export interface SkoolCourse {
   /** Skool's own flags — carried through rather than interpreted. */
   state: number;
   privacy: number;
+  /**
+   * The membership tier a course needs: 1 = free members too, 2 = paid only.
+   *
+   * ⚠️ THIS IS HALF OF THE GATE, AND ON ITS OWN IT OVERSTATES WHAT A FREE
+   * MEMBER CAN OPEN. Measured 2026-08-27: *Make Videos with AI* and *Automation
+   * For Beginners* are both `minTier: 1` — and both `minAccessLevel: 9`, which
+   * nobody in this community has reached. Read one number and you conclude
+   * three courses are open to free members when exactly one is.
+   */
   minTier: number;
+  /** The gamification level a course needs (1-9). The other half of the gate. */
+  minAccessLevel: number;
   published: boolean;
   createdAt: string;
   updatedAt: string;
@@ -201,6 +212,7 @@ async function readClassroomPage(communityUrl: string, pageNo: number): Promise<
           state: Number(c?.state ?? 0),
           privacy: Number(c?.metadata?.privacy ?? 0),
           minTier: Number(c?.metadata?.minTier ?? 0),
+          minAccessLevel: Number(c?.metadata?.minAccessLevel ?? 0),
           published: c?.public === true,
           createdAt: String(c?.createdAt ?? ""),
           updatedAt: String(c?.updatedAt ?? ""),

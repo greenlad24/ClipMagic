@@ -144,6 +144,23 @@ const LOOPBACK_FN_EXACT = new Set([
   "/api/fn/skoolRepliesStatus",
   "/api/fn/skoolRepliesQueue",
   "/api/fn/skoolKnowledge",
+  // The freemium half, added 2026-08-27 on the same terms and with the same
+  // expiry as everything above it.
+  //
+  // `skoolAccess` reads the members page and the classroom and stores WHO PAYS
+  // and WHAT EACH COURSE COSTS TO OPEN. It writes nothing to Skool and takes no
+  // secrets. It does put billing-derived facts (a tier, a plan label) in this
+  // box's database — no payment emails, deliberately (see `members.ts`) — so it
+  // is here for the read, not because it is free of consequence.
+  "/api/fn/skoolAccess",
+  // `skoolIndexCourse` re-reads ONE course into the agent's index. Read-only
+  // against Skool; the only write is a new inventory row in this box.
+  "/api/fn/skoolIndexCourse",
+  // `skoolCommentDryRun` types real mention chips into a real comment box and
+  // then EMPTIES it — it has no code path that submits. Here for the same
+  // reason `skoolDryPublish` is: the write path has to be provable before the
+  // Thursday slot runs it unattended.
+  "/api/fn/skoolCommentDryRun",
   // ⚠️ SPENDS APIFY CREDITS — the only paid thing in this feature. Here because
   // the backfill has to be runnable at all before a UI exists; it is guarded by
   // its own cache (a transcript is bought once) and by `dryRun`.

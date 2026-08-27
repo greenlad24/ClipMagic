@@ -32,7 +32,8 @@
  */
 import { aiConfig } from "../ai/config.js";
 import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
-import { classroomOutline, retrieve, type Retrieved } from "./knowledge.js";
+import { classroomOutline, retrieve, retrievePosts, type Retrieved, type RetrievedPost } from "./knowledge.js";
+import { allowedCourseSlugs, type Entitlement } from "./access.js";
 import { youtubeUrl, videosForSubject } from "./channelVideos.js";
 
 /**
@@ -80,6 +81,16 @@ export interface Draft {
   /** Lessons the draft was grounded in, for the audit trail and the read-back. */
   cited: { title: string; url: string }[];
   /**
+   * The last line of the ask post's first comment — the one that follows the
+   * @mentions ("welcome guys!").
+   *
+   * ⚠️ WRITTEN BY THE DRAFTER RATHER THAN PICKED FROM A LIST, because Jake asked
+   * for it to be different every week and a rotation of stock phrases is exactly
+   * what a member notices. Empty on every other kind of post, and empty is
+   * survivable — `welcomeClosing` in engageSchedule has a fallback.
+   */
+  welcomeClose: string;
+  /**
    * Tokens, not dollars. These calls spend the Max subscription, so their cost
    * is zero by construction — what is actually scarce is the 5-hour window,
    * which is measured in tokens and SHARED with Jake's own sessions.
@@ -115,6 +126,10 @@ function mechanics(kind: "post" | "reply", extra: string): string {
     "",
     "GROUNDING — what you may state as fact:",
     "- the classroom lessons and video transcripts quoted below,",
+    // A reply can also be grounded in a past community post — the community is
+    // freemium now, and the feed is the half of it every member can open. Only
+    // for replies: nothing quotes posts to the post drafter.
+    ...(kind === "reply" ? ["- any past community posts quoted below,"] : []),
     "- what the member actually wrote, and",
     "- current, well-established facts about tools you are confident about (see STALENESS).",
     "No invented numbers, no invented results, no promises about what someone",
@@ -490,6 +505,88 @@ export function firstNameOf(fullName: string): string {
   return first;
 }
 
+/**
+ * WHAT THIS COMMUNITY IS ABOUT, as of the 2026 rebrand.
+ *
+ * ⚠️⚠️ IT IS NOT AN AUTOMATION COMMUNITY ANY MORE. Jake, 2026-08-27: "the skool
+ * community has rebranded — it's not an automation community anymore. It's a
+ * community about AI tools and how to use them."
+ *
+ * ⚠️ THE FAILURE THIS PREVENTS IS SPECIFIC AND THE AGENT WOULD MAKE IT DAILY.
+ * "I'm new to this" reaches a drafter grounded in a classroom that still holds
+ * *Automated Cold Outreach*, *Make.com Course For Beginners* and a dozen
+ * scraping lessons, and the honest, well-retrieved answer is a Make.com
+ * scenario — to somebody who has not written a prompt yet. Retrieval cannot
+ * catch this: those lessons genuinely match the words. Only a statement of what
+ * the community is FOR can.
+ *
+ * The direction is Jake's, quoted rather than paraphrased because the whole
+ * point is that it is a judgement about his own business, not a fact the model
+ * could derive: "Automation is 2024. 2026 and beyond is learning how to connect
+ * tools inside Claude, Gemini, ChatGPT and create workflows this way."
+ */
+const COMMUNITY_NOTE_LINES = [
+  "==========================================",
+  "WHO THIS COMMUNITY IS FOR — READ BEFORE YOU RECOMMEND ANYTHING",
+  "==========================================",
+  "",
+  "This is a community about AI TOOLS and how to use them. Two kinds of member:",
+  "",
+  "1. BEGINNERS taking their first steps in AI — ChatGPT, Claude, Gemini. What",
+  "   the tools are, what the words mean, how to get a useful answer out of one.",
+  "2. People LEVELLING UP from there — making images with AI, making videos with",
+  "   AI, building apps with AI, and yes, automation as one branch among those.",
+  "",
+  "⚠️⚠️ \"I'M NEW TO THIS\" MEANS NEW TO AI. IT DOES NOT MEAN NEW TO AUTOMATION.",
+  "Someone starting out needs help in the world of AI tools — not a Make.com",
+  "scenario, not a webhook, not a scraper. The classroom still holds automation",
+  "and scraping lessons and they will match the words in a beginner's question.",
+  "Matching the words is not the same as being the right answer.",
+  "",
+  "⚠️ AND AUTOMATION ITSELF HAS MOVED ON. Jake, 2026-08-27: \"Automation is 2024.",
+  "2026 and beyond is learning how to connect tools inside Claude, Gemini,",
+  "ChatGPT and create workflows this way.\" So when the answer really is about",
+  "automating something, reach first for what lives INSIDE the assistants —",
+  "connected tools and apps, projects, custom assistants, the things that let one",
+  "chat reach a calendar, an inbox or a sheet — before reaching for a separate",
+  "no-code platform wiring services together from the outside. The old way still",
+  "works and is still taught here; it is not where a member starting today",
+  "should be sent first.",
+  "",
+  "WHERE TO TAKE THEM: understand the basic terms, then the next step of their",
+  "journey. One step, the one after where they actually are — not the map.",
+  "",
+  "None of this narrows what you may LINK or teach. It decides what you point at",
+  "FIRST when more than one answer is true.",
+];
+
+/**
+ * The same framing, aimed at the surface that is being written.
+ *
+ * ⚠️ THE POST TAIL EXISTS BECAUSE A POST DOES NOT CHOOSE ITS OWN SUBJECT. A
+ * reply answers whatever a member asked, so "point them at the AI answer first"
+ * is the whole instruction. The weekly lesson post is handed a subject from the
+ * classroom index — which still holds *Scrape LinkedIn for Leads* and the
+ * Make.com courses — and a drafter told only "this is not an automation
+ * community" would then argue with the post it was told to write, or quietly
+ * write a different one. The subject stands; how it is PITCHED changes.
+ */
+function communityNote(kind: "post" | "reply"): string {
+  const tail =
+    kind === "post"
+      ? [
+          "",
+          "⚠️ THIS POST'S SUBJECT IS ALREADY CHOSEN, AND THIS DOES NOT OVERRULE IT.",
+          "If the subject is an automation or scraping lesson, write that lesson —",
+          "for THIS audience. Open on what it does for someone learning AI, use the",
+          "assistants as the way in where that is honest, and skip the jargon that",
+          "assumes a year of no-code platforms. Do not refuse a subject, and do not",
+          "swap it for a different one because it sounds like 2024.",
+        ]
+      : [];
+  return [...COMMUNITY_NOTE_LINES, ...tail].join("\n");
+}
+
 function skoolReplyNote(firstName: string): string {
   const greeting = firstName
     ? `The first line begins exactly "Hey ${firstName}," and carries straight on`
@@ -800,36 +897,62 @@ function askNote(
 
   if (newMembers.length) {
     const names = newMembers.map((m) => m.firstName || m.displayName).filter(Boolean);
+    const count = names.length;
     lines.push(
       "",
       "==========================================",
-      "THE OPENING — IT IS ALREADY WRITTEN. DO NOT WRITE IT AGAIN.",
+      "THE OPENING — A WELCOME TO THE GROUP, WITH NO NAMES IN IT",
       "==========================================",
       "",
-      `${names.length} ${names.length === 1 ? "person" : "people"} joined this week: ${names.join(", ")}.`,
+      `${count} ${count === 1 ? "person" : "people"} joined this week.`,
       "",
-      "Their @mentions are placed at the very start of the post BEFORE your text,",
-      "automatically, as real Skool mention chips. Your body is added straight",
-      "after them, on the same line.",
+      "⚠️⚠️ THE TAGS ARE NOT IN THE POST. THEY GO IN THE FIRST COMMENT.",
+      "Jake, 2026-08-27: a member cannot be tagged in the post itself. So the",
+      "@mentions are posted underneath, as the first comment, automatically —",
+      "you do not write them and you must not leave a gap where they would go.",
       "",
-      "So your FIRST WORDS continue that line. Write them to follow a list of",
-      "names — an em dash and a welcome, then straight into why you are asking",
-      "them in particular.",
+      "OPEN THE POST WITH A WELCOME TO THEM AS A GROUP. One line, first line,",
+      `something along the lines of "welcome to everyone who joined this week" —`,
+      "then straight into the observation and the question.",
+      "",
+      "⚠️ WRITE IT DIFFERENTLY EVERY WEEK. This post goes out every single week",
+      "and the same opening sentence every time reads like an autoresponder,",
+      "which is exactly what it must not look like. Change the wording, the",
+      "rhythm and the angle — greet the week, the room, the new faces, the",
+      "number of them. Never a stock phrase you would recognise from last week.",
+      "",
+      count > 1
+        ? `You may say how many joined — "${count} new people this week" is a fact, not a name.`
+        : "One person joined, so a plural welcome would be wrong — greet them in the singular.",
+      "",
+      "⚠️ DO NOT WRITE ANY NAME OR ANY @ YOURSELF. Not in the welcome, not later,",
+      `not "welcome Claudia and Denise". A name you type is plain text that`,
+      "notifies nobody, and it would then appear twice — once as your text and",
+      "once as the real tag in the comment underneath. Refer to them as a group.",
       "",
       "⚠️ THE FIRST LINE MUST NOT START WITH \"-\" OR \"*\". Those are list markers:",
-      "the body is rendered as markdown, so a leading dash becomes a BULLET on its",
-      "own line and the greeting stops following the names. Use an em dash — like",
-      "this one — or no dash at all.",
+      "the body is rendered as markdown, so a leading dash becomes a BULLET on",
+      "its own line and the welcome stops reading as a sentence. Use an em dash —",
+      "like this one — or no dash at all.",
       "",
-      "⚠️ DO NOT WRITE ANY NAME OR ANY @ YOURSELF. Not at the start, not later,",
-      "not \"welcome Claudia and Denise\". A name you type is plain text that",
-      "notifies nobody, and it would appear twice — once as your text and once as",
-      "the real mention. Refer to them as a group if you need to: \"you three\".",
+      "Address the question to the newcomers FIRST — they are the reason it is",
+      "being asked today — then invite everybody else to answer it too, in one",
+      "line. Both halves matter: a question only the newcomers can answer gets",
+      "four replies, and a question that ignores them wastes the welcome.",
       "",
-      "Address the question to them FIRST — they are the reason it is being asked",
-      "today — then invite everybody else to answer it too, in one line. Both",
-      "halves matter: a question only the newcomers can answer gets four replies,",
-      "and a question that ignores them wastes the welcome.",
+      "==========================================",
+      "ONE EXTRA JSON FIELD THIS WEEK: \"welcome\"",
+      "==========================================",
+      "",
+      "Return one more field alongside title/body/category: \"welcome\".",
+      "",
+      "It is the LAST LINE of that first comment — the tags are written in front",
+      "of it automatically, so it follows a row of names. Short, warm, plain:",
+      `"welcome guys!" is the shape of it. One line, no @, no names, no emoji.`,
+      "",
+      "⚠️ AND IT TOO MUST BE DIFFERENT EVERY WEEK, for the same reason. Nobody",
+      "reads one week's comment; everybody notices the same seven words in six of",
+      "them.",
     );
   } else {
     lines.push(
@@ -859,9 +982,14 @@ function groundingBlock(hits: Retrieved[]): string {
     ...hits.map((h, i) =>
       [
         `--- lesson ${i + 1} — ${h.title} (course: ${h.courseTitle})`,
-        h.rebuilt
+        // ⚠️ EVERY LESSON CARRIES A URL NOW. The "this course is being retired,
+        // use it but do not link it" branch that stood here is gone with the
+        // legacy courses themselves — Jake, 2026-08-27: "be free to refer to
+        // them". A lesson with no URL is a bug in the index rather than a
+        // policy, so it is named as one instead of being explained away.
+        h.url
           ? `URL: ${h.url}`
-          : "URL: none — this course is being retired. Use what it teaches, but do not link it.",
+          : "URL: none — this lesson has no link, which should not happen. Do not invent one.",
         // The date is here so the STALENESS rule has something to act on. A
         // model cannot judge whether a specific has moved on if it cannot see
         // how long ago it was written.
@@ -880,6 +1008,221 @@ function groundingBlock(hits: Retrieved[]): string {
         .join("\n"),
     ),
   ].join("\n\n");
+}
+
+/**
+ * What this member is allowed to be pointed at, stated to the drafter.
+ *
+ * ⚠️ THIS IS THE SECOND HALF OF THE GATE, NOT THE GATE. The first half already
+ * happened: a free member's grounding was filtered to the courses they can open
+ * before the model saw a word of it, and `citedFrom` will drop any URL it was
+ * not shown. This block exists so the reply READS right — so it does not
+ * describe a locked course in prose, or promise a walkthrough the member will
+ * hit a paywall on — not so that the model can be trusted to enforce a rule.
+ */
+function accessBlock(ent: Entitlement | null, postCount: number): string {
+  if (!ent) return "";
+  const m = ent.member;
+  const who = m.displayName || "This member";
+
+  if (m.tier >= 2) {
+    const how = m.role === "group-admin" || m.role === "group-owner"
+      ? `an admin of this community`
+      : `a PAYING member${m.plan ? ` (${m.plan})` : ""}`;
+    return [
+      "==========================================",
+      "WHAT THIS MEMBER CAN OPEN — FREEMIUM COMMUNITY",
+      "==========================================",
+      "",
+      `${who} is ${how}. Everything in the classroom is open to them.`,
+      "Recommend whatever actually answers the question — any course, any lesson.",
+    ].join("\n");
+  }
+
+  const openTitles = ent.openCourses.map((c) => c.title).filter(Boolean);
+  return [
+    "==========================================",
+    "⚠️ WHAT THIS MEMBER CAN OPEN — FREEMIUM COMMUNITY",
+    "==========================================",
+    "",
+    m.unknown
+      ? `${who} could not be found in the member list, so treat them as a FREE member. Free is the safe assumption: a free member sent a paid link cannot open it.`
+      : `${who} is a FREE member${m.level ? ` (level ${m.level})` : ""}. They are not paying.`,
+    "",
+    "A FREE member can open exactly two things:",
+    openTitles.length
+      ? `1. The free course${openTitles.length > 1 ? "s" : ""}: ${openTitles.join(", ")}. The lessons below are from it and nothing else — link them freely.`
+      : "1. The free course — but its lessons could not be read this time, so link no classroom page at all.",
+    postCount
+      ? "2. Any past post in the community. The feed is open to every member; the ones below are the relevant ones."
+      : "2. Any past post in the community — none were supplied here, so do not invent one.",
+    "",
+    "⚠️ EVERY OTHER COURSE IS BEHIND THE PAYWALL. Do not link one, do not send",
+    "them to one for the answer, and do not describe what is inside it. A member",
+    "who clicks through to a locked page has been sold something by an answer",
+    "that was supposed to help them. Naming one is allowed in exactly one place —",
+    "the single line UPGRADING below may permit — and nowhere else.",
+    "",
+    "ANSWER THE QUESTION ANYWAY, IN FULL, RIGHT HERE. Being on the free tier is",
+    "not a reason to get half an answer — give them the actual steps, the actual",
+    "tool, the actual settings, exactly as you would for anyone else. The gate is",
+    "on what you LINK, not on what you TEACH.",
+    "",
+    "If, and only if, the thing they are asking for genuinely only exists inside",
+    "the paid classroom, you may say so ONCE, in one plain sentence, at the end —",
+    "no price, no pitch. Answer first; that sentence is never the reply.",
+    "",
+    "Whether you may LINK anywhere they could upgrade is decided below, in one",
+    "place, and not by you — see UPGRADING.",
+  ].join("\n");
+}
+
+/**
+ * Whether this reply may point at the plans page, in Jake's words.
+ *
+ * ⚠️ THE PROMPT IS TOLD THE ANSWER, NOT THE RULE. "Mention it only once per
+ * conversation" is unenforceable from inside a single call: the drafter has
+ * never seen its own previous replies. `plansNudgeState` counts what this
+ * person has actually been sent and this block states the verdict — allowed or
+ * forbidden — which is a thing a model can obey in one turn.
+ */
+function upgradeBlock(
+  ent: Entitlement | null,
+  surface: "comment" | "dm",
+  nudge: { allowed: boolean; asked: boolean } | null,
+  plansUrl: string,
+): string {
+  // ⚠️ DMs ONLY, AND ONLY SOMEONE KNOWN TO BE FREE. Jake asked for this "in
+  // DMs" — a comment is read by the whole community and an upgrade link under a
+  // public answer is an advert. And a member the tier read simply MISSED comes
+  // back as free (`unknown`); inviting a paying member to upgrade is the one
+  // version of this that is actually embarrassing, so silence is the default
+  // for anyone we cannot name as free.
+  if (!ent || surface !== "dm" || ent.member.paid || ent.member.unknown || !nudge) return "";
+
+  const head = ["==========================================", "UPGRADING", "=========================================="];
+
+  if (!nudge.allowed) {
+    return [
+      ...head,
+      "",
+      "⚠️ DO NOT MENTION UPGRADING, PLANS, PRICES OR THE PAID SIDE AT ALL IN THIS",
+      "REPLY, AND DO NOT LINK THE PLANS PAGE. It has already come up in this",
+      "conversation, and raising it twice is what turns help into a pitch.",
+      "Answer the question and stop.",
+    ].join("\n");
+  }
+
+  if (nudge.asked) {
+    return [
+      ...head,
+      "",
+      "THEY ASKED HOW TO UPGRADE, SO THE LINK IS THE ANSWER, NOT A PITCH.",
+      `Give it plainly: ${plansUrl}`,
+      "Say what changes for them in a sentence — the rest of the classroom opens",
+      "up — and answer anything else they asked. No urgency, no price talk you",
+      "cannot verify, no persuasion. They already decided to ask.",
+    ].join("\n");
+  }
+
+  const locked = ent.lockedCourses.map((c) => c.title).filter(Boolean);
+  if (!locked.length) {
+    return [
+      ...head,
+      "",
+      "There is nothing this member cannot already open, so there is nothing to",
+      "point them at. Say nothing about upgrading at all.",
+    ].join("\n");
+  }
+
+  return [
+    ...head,
+    "",
+    "⚠️⚠️ THIS REPLY MUST END WITH A PAID RECOMMENDATION AND THE LINK. It is not",
+    "optional and it is not a judgement call. This is the FIRST reply of this",
+    "conversation and the only one allowed to carry it, so it happens here or it",
+    "never happens.",
+    "",
+    // ⚠️⚠️ REQUIRED, BECAUSE PERMITTED DID NOT WORK. An earlier version of this
+    // block offered the nudge and told the drafter to use it "when a named
+    // course genuinely fits" — and on the bench, twice, it wrote an excellent
+    // free answer and silently omitted it. That is the correct reading of
+    // "you may", and it is not what was asked for. Jake, 2026-08-27: "even if
+    // it gives a free advice - I want in the first DM to also recommend a paid
+    // advice (paid course) and tell that for that they'll need to upgrade (and
+    // give them the link)."
+    "Jake asked for this in those words: \"even if it gives a free advice - I want",
+    "in the first DM to also recommend a paid advice (paid course) and tell that",
+    "for that they'll need to upgrade (and give them the link)\".",
+    "",
+    "THREE THINGS, IN THIS ORDER:",
+    "1. The full free answer, exactly as the rules above require. A good free",
+    "   answer is not a reason to leave the rest out — it is what earns it.",
+    `2. ONE course from this list, named, as the real next step for what they`,
+    "   asked. Pick the one that fits THEIR question and their business, not the",
+    "   most expensive-sounding one:",
+    `   ${locked.join(", ")}.`,
+    `3. That it needs the paid side, and the link: ${plansUrl}`,
+    "",
+    "⚠️ AND IT STILL HAS TO SOUND LIKE HELP. Two sentences at the very end, in",
+    "Jake's voice, no pitch grammar:",
+    "  \"If you want to go deeper on this, the [name] course covers it properly —",
+    "   that one's on the paid side: <link>\"",
+    "That is the whole shape. What makes it not salesy is that it comes AFTER a",
+    "real answer, names one specific thing, and asks for nothing.",
+    "",
+    "❌ NEVER: a price, \"limited\", \"only today\", a list of benefits, more than",
+    "one course, a second mention later in the reply, or any suggestion that the",
+    "free answer above was the trailer for it.",
+    "",
+    "⚠️ DO NOT DESCRIBE WHAT IS INSIDE A LOCKED COURSE BEYOND ITS NAME AND ITS",
+    "SUBJECT. You have not been shown those lessons. Naming one is a signpost;",
+    "summarising one you cannot see is an invention.",
+  ].join("\n");
+}
+
+/**
+ * Past community posts the reply may point at.
+ *
+ * Kept separate from the classroom block because they are a different kind of
+ * thing to a member — a post is a conversation they can join, a lesson is a
+ * page. The drafter should not blur them.
+ */
+function pastPostsBlock(posts: RetrievedPost[]): string {
+  if (!posts.length) return "";
+  return [
+    "PAST COMMUNITY POSTS — open to every member, free or paying.",
+    "Link ONLY these, and only when one genuinely answers what was asked:",
+    ...posts.map((p, i) =>
+      [
+        `--- post ${i + 1} — ${p.title}`,
+        p.url ? `URL: ${p.url}` : "URL: none — mention it if you like, but do not link it.",
+        p.createdAt ? `POSTED: ${p.createdAt.slice(0, 10)}` : "",
+        p.excerpt,
+      ].filter(Boolean).join("\n"),
+    ),
+  ].join("\n\n");
+}
+
+/**
+ * The citation gate, over everything the model was actually shown.
+ *
+ * ⚠️ THE SAME BARGAIN `citedFrom` MAKES, WIDENED BY EXACTLY ONE SOURCE. A URL
+ * that was not in the prompt cannot come out of it — which is what makes the
+ * freemium rule structural: a paid lesson is never in this list for a free
+ * member, so no reply can cite one however the prose is worded.
+ */
+function citedFromShown(
+  cited: unknown,
+  hits: Retrieved[],
+  posts: RetrievedPost[],
+): { title: string; url: string }[] {
+  const urls = Array.isArray(cited) ? cited.map(String) : [];
+  const shown = [
+    ...hits.map((h) => ({ title: h.title, url: h.url })),
+    ...posts.filter((p) => p.url).map((p) => ({ title: p.title, url: p.url })),
+  ];
+  return shown.filter((s) => urls.includes(s.url));
 }
 
 function parseDraft(raw: string): any {
@@ -1062,14 +1405,18 @@ export function styleExamplesFrom(
 }
 
 /**
- * Make an ask post's first line safe to sit behind a row of mention chips.
+ * Make an ask post's welcome line render as a sentence.
  *
  * ⚠️⚠️ A LEADING "- " IS A BULLET, NOT A DASH, AND THE FIRST DRAFT EVER WRITTEN
  * OPENED WITH ONE. Asked for "a dash and a welcome", the model wrote
  * `- welcome in, glad you made it here.` — which is exactly what it was told to
  * write, and which the markdown renderer turns into a list item on its own line.
- * The chips would then sit alone above a bullet, and the sentence written to
- * follow them would not.
+ *
+ * ⚠️ THE REASON CHANGED ON 2026-08-27 AND THE GUARANTEE DID NOT. It was written
+ * when the post opened with a row of mention chips and the first line had to
+ * follow them; the tags now go in the first comment (see `postComment.ts`) and
+ * this line opens the post alone. A welcome rendered as a bullet is still the
+ * wrong first thing in the community's weekly post.
  *
  * The prompt now says so, but a prompt is a request. This is the guarantee, and
  * it is deliberately narrow: only the FIRST line, only when there are chips to
@@ -1100,12 +1447,18 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
   const { hits } = retrieve(req.communityUrl, req.subject, req.kind === "lesson" ? 6 : 4);
   const outline = classroomOutline(req.communityUrl);
 
-  const extra =
+  // ⚠️ THE COMMUNITY NOTE LEADS, ON EVERY KIND OF POST. Jake, 2026-08-27, having
+  // seen it go into the replies: "this is true also to posts". A weekly post
+  // pitched at the old audience is the more expensive version of the mistake —
+  // a reply reaches one member and a post reaches everybody, including the 60
+  // free members who are here to learn what ChatGPT is.
+  const kindNote =
     req.kind === "mcp"
-      ? `${POST_FORMAT_NOTE}\n\n${MCP_NOTE}`
+      ? MCP_NOTE
       : req.kind === "ask"
-        ? `${POST_FORMAT_NOTE}\n\n${askNote(req.newMembers ?? [], req.welcomeMessage ?? "")}`
-        : POST_FORMAT_NOTE;
+        ? askNote(req.newMembers ?? [], req.welcomeMessage ?? "")
+        : "";
+  const extra = [communityNote("post"), POST_FORMAT_NOTE, kindNote].filter(Boolean).join("\n\n");
 
   const system = [
     req.voicePrompt,
@@ -1160,6 +1513,9 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
   return {
     draft: {
       title: String(parsed.title).trim(),
+      // Only ever asked for on an ask post; anything else returning it is
+      // ignored rather than carried into a post that has no comment to write.
+      welcomeClose: req.kind === "ask" ? String(parsed.welcome ?? "").trim().slice(0, 200) : "",
       // Only an ask post that actually has chips in front of it: on every other
       // post the first line stands on its own and a bullet there is the author's
       // choice.
@@ -1399,6 +1755,41 @@ export interface ReplyRequest {
   context: string;
   /** The operator's own voice guide — see `voiceGuideBlock`. */
   voiceGuide?: string;
+  /**
+   * How many of their messages this one reply is answering.
+   *
+   * ⚠️ SET BY THE SWEEP FROM THE THREAD ITSELF, and 0/1 are not the same as
+   * absent-and-wrong: a member who sends three messages in a row gets ONE
+   * reply, and the drafter has to know that so it answers all three rather than
+   * the last line. See `dmThread` in `engageReplies.ts`.
+   */
+  unansweredCount?: number;
+  /**
+   * What this member is entitled to open — the freemium gate.
+   *
+   * ⚠️ ABSENT MEANS UNGATED, AND ONLY THE MANUAL DRAFT BENCH SHOULD EVER BE
+   * ABSENT. The sweep always passes one, because a reply written without it can
+   * link a paid course to a free member. `entitlementFor` never fails and never
+   * returns null — an unknown person comes back as free — so there is no case
+   * where the sweep legitimately has nothing to pass.
+   */
+  access?: Entitlement | null;
+  /**
+   * Whether this reply may point at the plans page — see `plansNudgeState`.
+   *
+   * Absent means no upgrade block at all, which is what the manual bench and
+   * every comment get. The sweep passes one for every DM.
+   */
+  nudge?: { allowed: boolean; asked: boolean } | null;
+  /**
+   * Recent community posts to choose a recommendation from.
+   *
+   * Supplied by the caller because reading the feed is a browser navigation per
+   * page and one sweep answers several members. REQUIRED in practice for a free
+   * member: the free course is one course, and a past post is the other half of
+   * what they are allowed to be sent to.
+   */
+  posts?: { id: string; slug: string; title: string; body: string; createdAt: string }[];
 }
 
 export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft | null; error: string | null }> {
@@ -1406,7 +1797,18 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     return { reply: null, error: "No voice prompt is stored, so nothing was drafted." };
   }
 
-  const { hits } = retrieve(req.communityUrl, `${req.text} ${req.context}`, 4);
+  const query = `${req.text} ${req.context}`;
+  const access = req.access ?? null;
+  // ⚠️ THE FILTER IS APPLIED BEFORE RETRIEVAL, NOT AFTER. A free member's
+  // grounding is the free course and nothing else, so the paid classroom is
+  // never in this prompt to be quoted, paraphrased or linked. See `access.ts`.
+  const { hits } = retrieve(req.communityUrl, query, 4, {
+    onlyCourseSlugs: access ? allowedCourseSlugs(access) : null,
+  });
+  // Offered to everyone who has them — a paying member can be pointed at a post
+  // too ("if he's paid you can recommend anything"). For a free member they are
+  // half of what is permitted at all.
+  const postHits = retrievePosts(req.posts ?? [], query, req.communityUrl, 3);
 
   // ⚠️⚠️ "THE RULES ABOVE APPLY AS WRITTEN" IS THE LAST WORD IN THIS PROMPT, AND
   // IT WOULD HAVE QUIETLY REINSTATED EVERYTHING THE VOICE GUIDE JUST OVERRODE.
@@ -1433,8 +1835,39 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
           "THIS IS A DIRECT MESSAGE IN SKOOL, one-to-one.",
           "The rules above apply as written. It is a private message, so no",
           "broadcast phrasing — answer the person.",
+          "",
+          // Jake, 2026-08-27: "when answering him I want the agent to have the
+          // context of the whole thread (not just the last message) so he
+          // doesn't repeat advice it already gave".
+          //
+          // ⚠️ THE THREAD WAS ALWAYS IN THE PROMPT; NOTHING TOLD THE MODEL WHAT
+          // IT WAS. It arrived under the comment surface's header — "CONTEXT —
+          // the post this sits under" — so a conversation was presented as an
+          // article, and Jake's own earlier replies inside it read as source
+          // material rather than as things this person has already been told.
+          "⚠️ YOU ARE ANSWERING A CONVERSATION, NOT A MESSAGE. The thread so far is",
+          "below, oldest first, and every line marked Jake is something you have",
+          "ALREADY said to this person.",
+          "- Do not repeat advice that is already in the thread. Do not re-explain a",
+          "  tool you have explained, re-list steps you have listed, or re-send a link",
+          "  that is already up there.",
+          "- If they are asking again, the first answer did not land. Say the NEXT",
+          "  thing — more specific, or the part they are stuck on — never the same",
+          "  thing again in the same words.",
+          "- Do not re-introduce yourself or re-greet someone mid-conversation.",
+          "- Several messages in a row are ONE question in pieces. Answer all of it in",
+          "  one reply; answering only the last line leaves the rest hanging.",
+          "- Where two of their messages disagree, the LATEST one is what they mean.",
           deferToGuide,
         ].filter(Boolean).join("\n");
+
+  const gate = accessBlock(access, postHits.length);
+  const upgrade = upgradeBlock(
+    access,
+    req.surface,
+    req.nudge ?? null,
+    `${req.communityUrl.replace(/\/+$/, "")}/plans`,
+  );
 
   const system = [
     req.voicePrompt,
@@ -1447,7 +1880,24 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
       [
         skoolReplyNote(req.authorFirstName),
         "",
+        // ⚠️ BEFORE THE SURFACE NOTE AND THE GATE, because it decides what the
+        // answer is ABOUT — the other two decide how it sounds and what it may
+        // link. A gate applied to the wrong subject still recommends the wrong
+        // thing, correctly.
+        communityNote("reply"),
+        "",
         surfaceNote,
+        "",
+        // ⚠️ INSIDE MECHANICS, NOT INSIDE THE VOICE GUIDE, AND THAT IS THE
+        // PRECEDENCE THIS FILE ALREADY ESTABLISHED: the guide governs how a
+        // reply SOUNDS and mechanics govern what it may CLAIM and link. Who can
+        // open which course is not a matter of tone.
+        gate,
+        "",
+        // ⚠️ AFTER THE GATE, WHICH IS WHERE IT BELONGS: what a member can OPEN
+        // is the reason there is anything to upgrade to, and the gate's own
+        // closing rule now defers to this block by name.
+        upgrade,
         "",
         "SET `skip` (and leave `text` empty) rather than replying at all when:",
         "- the message needs Jake himself — money owed, refunds, complaints, anything legal or personal",
@@ -1464,15 +1914,34 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
   // not cost the reply.
   const ownVideos = await videosForSubject(`${req.text} ${req.context}`.slice(0, 400), 8).catch(() => []);
 
+  // ⚠️ THE TAIL, NOT THE HEAD, FOR A CONVERSATION. Cutting a thread at 2,500
+  // characters from the front throws away the most recent exchange and keeps
+  // the oldest — the exact opposite of what an answer needs. A post is cut from
+  // the front because a post's opening is its subject.
+  const threadTail = (text: string, max: number): string =>
+    text.length <= max ? text : `…\n${text.slice(text.length - max)}`;
+
+  const unanswered = req.unansweredCount ?? 0;
+  const heading =
+    req.surface === "dm" && unanswered > 1
+      ? `${req.authorName} sent these ${unanswered} messages one after another, and none of them has been answered yet. Answer all of them, in one reply:`
+      : `${req.authorName} wrote:`;
+
   const user = [
     replyDateBlock(new Date().toISOString().slice(0, 10)),
     "",
-    `${req.authorName} wrote:`,
+    heading,
     req.text,
     "",
-    req.context ? `CONTEXT — the post this sits under:\n${req.context.slice(0, 2500)}` : "",
+    req.context
+      ? req.surface === "dm"
+        ? `THE CONVERSATION SO FAR, oldest first — everything said BEFORE the message${unanswered > 1 ? "s" : ""} above.\nLines marked Jake are what this person has already been told:\n${threadTail(req.context, 6000)}`
+        : `CONTEXT — the post this sits under:\n${req.context.slice(0, 2500)}`
+      : "",
     "",
     groundingBlock(hits),
+    "",
+    pastPostsBlock(postHits),
     "",
     ownVideosBlock(ownVideos),
   ].join("\n");
@@ -1523,7 +1992,7 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
       // forget when a third surface arrives.
       text: stripSearchMarkup(body),
       skip,
-      cited: citedFrom(parsed.cited, hits),
+      cited: citedFromShown(parsed.cited, hits, postHits),
       tokens: totalTokens(usage),
     },
     error: null,

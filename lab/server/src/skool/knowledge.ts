@@ -20,6 +20,7 @@
  * and — importantly — its misses look like misses.
  */
 import { db } from "../db/index.js";
+import { courseGates, freeTierCourseSlugs } from "./access.js";
 import { transcriptMap, youtubeIdFrom } from "./transcripts.js";
 
 export interface Lesson {
@@ -52,11 +53,17 @@ export interface Lesson {
   /** The link a member can click. */
   url: string;
   /**
-   * Always true — the index holds nothing else. Kept as a field because it is
-   * what every lesson here had to PROVE to be included, and a reader of a
-   * retrieval result should be able to see that rather than assume it.
+   * Whether the course this lesson sits in is STILL IN THE CLASSROOM.
+   *
+   * ⚠️ THIS FIELD WAS CALLED `rebuilt` AND MEANT "THE REBUILD WROTE IT". That
+   * was the admission test until 2026-08-27; the test is now "Skool still lists
+   * it", so the old name would have described the wrong thing while reading as
+   * a fact about provenance. Always true for a lesson that comes out of
+   * `allLessons` — a course that has gone is not indexed at all — and kept as a
+   * field because a retrieval result should be able to state that rather than
+   * have its reader assume it.
    */
-  rebuilt: boolean;
+  live: boolean;
 }
 
 export interface Retrieved extends Lesson {
@@ -183,18 +190,25 @@ function rebuiltCourseSlugs(courses: any[]): Set<string> {
 /**
  * Every lesson the agent is allowed to know — THE REBUILT COURSES ONLY.
  *
- * ⚠️⚠️ THE 60 LEGACY COURSES ARE EXCLUDED ENTIRELY. Jake's instruction
- * (2026-08-05): "make sure you index only the new course and existing course -
- * no old courses". An earlier version indexed all 75 and merely withheld links
- * from the legacy ones — that is not what he asked for. The legacy courses are
- * being retired, and an agent that teaches from retiring material writes posts
- * about lessons that will not exist.
+ * ⚠️⚠️ THE INDEX IS THE WHOLE LIVE CLASSROOM, AND EVERY LESSON IN IT MAY BE
+ * LINKED. Jake, 2026-08-27: "extend and have an index of the whole classroom
+ * (and be free to refer to them in the posts)."
  *
- * ⚠️ THIS MAKES COURSE IDENTIFICATION LOAD-BEARING. It used to decide whether a
- * lesson could be LINKED; it now decides whether the agent knows it at all, so
- * a course it fails to recognise disappears silently. `indexedCourses()` exists
- * to make that inspectable, and an empty index is reported as an ERROR rather
- * than as "nothing matched" — the two look identical to a caller otherwise, and
+ * ⚠️ THAT REVERSES AN EARLIER INSTRUCTION, AND THE REVERSAL IS ONLY SAFE
+ * BECAUSE THE WORLD CHANGED. On 2026-08-05 he asked for "only the new course
+ * and existing course - no old courses", when 60 legacy courses were queued for
+ * retirement and teaching from them meant writing posts about lessons that were
+ * about to stop existing. The retirement is done: Skool lists 19 courses today.
+ * So the exclusion no longer protects anything, and it was costing the agent
+ * three live courses it is welcome to teach — *25 Advanced ChatGPT Features*,
+ * *The Complete AI Marketing Playbook for 2026* and *Community Resources*.
+ *
+ * ⚠️ WHAT IS STILL EXCLUDED IS ANYTHING SKOOL NO LONGER SERVES. See
+ * `allLessons` — the admission list is the course-gate table, which is
+ * rewritten from the live classroom, and NOT the inventory blob, which is a
+ * snapshot still holding all 75. `indexedCourses()` makes the result
+ * inspectable, and an empty index is reported as an ERROR rather than as
+ * "nothing matched" — the two look identical to a caller otherwise, and
  * grounding in nothing is exactly how an agent invents.
  *
  * ⚠️ COURSE ROOTS AND EMPTY UNITS ARE ALSO EXCLUDED, AND THE HUSKS ARE WHY. The
@@ -217,15 +231,41 @@ export function allLessons(communityUrl: string): { lessons: Lesson[]; inventory
   }
 
   const courses = parsed?.courses ?? [];
-  const rebuilt = rebuiltCourseSlugs(courses);
+  // ⚠️⚠️ THE WHOLE CLASSROOM, AS SKOOL CURRENTLY LISTS IT. Jake, 2026-08-27:
+  // "extend and have an index of the whole classroom (and be free to refer to
+  // them in the posts)". This reverses his instruction of 2026-08-05 ("index
+  // only the new course and existing course — no old courses"), and the reason
+  // it is safe to reverse now is that the retirement actually happened: the
+  // classroom is 19 courses today, not 75, so "everything live" and "everything
+  // Jake wants taught" have converged.
+  //
+  // ⚠️⚠️ AND THE LIST COMES FROM THE GATE TABLE, NOT FROM THE INVENTORY BLOB.
+  // The inventory is a snapshot and still holds 75 courses, most of which Skool
+  // no longer serves — indexing those would put confident links to deleted
+  // pages in front of members, which is worse than the narrow index it
+  // replaces. `skool_course_gate` is rewritten from the live classroom on every
+  // refresh and DELETES the rows of courses that have gone (see access.ts), so
+  // it is the only list here that means "still there".
+  //
+  // Admission is not permission: this puts a course IN the index, and
+  // `retrieve`'s `onlyCourseSlugs` is what keeps a paid course out of a free
+  // member's answer.
+  const liveSlugs = new Set(courseGates().map((g) => g.slug).filter(Boolean));
+  // ⚠️ THE OLD RULE IS THE FALLBACK, NOT A TIE-BREAK. With no gates ever read
+  // there is no way to tell a live course from a deleted one, and the safe
+  // answer is the narrow index that was correct for three weeks — never "admit
+  // all 75", which is exactly the broken-link failure above.
+  const indexed = liveSlugs.size
+    ? liveSlugs
+    : new Set([...rebuiltCourseSlugs(courses), ...freeTierCourseSlugs()]);
   // One read for the whole index rather than one per lesson.
   const transcripts = transcriptMap();
 
   const lessons: Lesson[] = [];
   for (const course of courses) {
-    // The whole filter, in one line: a course that is not the rebuild's is not
-    // the agent's to teach from.
-    if (!rebuilt.has(String(course?.slug ?? ""))) continue;
+    // The whole filter, in one line: a course that is neither the rebuild's nor
+    // free to everyone is not the agent's to teach from.
+    if (!indexed.has(String(course?.slug ?? ""))) continue;
     for (const unit of course?.units ?? []) {
       if (Number(unit?.depth ?? 0) <= 0) continue;
       const text = String(unit?.content ?? "").trim();
@@ -247,7 +287,7 @@ export function allLessons(communityUrl: string): { lessons: Lesson[]; inventory
         transcript,
         updatedAt: String(unit?.updatedAt ?? ""),
         url: lessonUrl(communityUrl, String(course?.slug ?? ""), String(unit?.id ?? "")),
-        rebuilt: rebuilt.has(String(course?.slug ?? "")),
+        live: indexed.has(String(course?.slug ?? "")),
       });
     }
   }
@@ -266,8 +306,33 @@ export function retrieve(
   communityUrl: string,
   query: string,
   limit = 5,
+  opts: {
+    /**
+     * Restrict the search to these course slugs — the freemium gate.
+     *
+     * ⚠️⚠️ A FILTER ON WHAT IS SEARCHED, NOT ON WHAT IS SHOWN, AND THAT IS THE
+     * SAFETY. The drafter may only cite a URL it was given (`citedFrom`), so a
+     * lesson that never enters this list cannot reach a member — no prompt
+     * sentence has to hold. Telling the model "don't mention the paid courses"
+     * while handing it their contents is the version of this that fails
+     * quietly, once, in front of a member who cannot open the link.
+     *
+     * `undefined`/`null` = no restriction (a paying member). `[]` = nothing
+     * matches, which is the correct answer for a free member whose course gates
+     * have never been read.
+     */
+    onlyCourseSlugs?: string[] | null;
+  } = {},
 ): { hits: Retrieved[]; searched: number; inventoryId: number | null; error: string | null } {
-  const { lessons, inventoryId } = allLessons(communityUrl);
+  const { lessons: all, inventoryId } = allLessons(communityUrl);
+  const allow = opts.onlyCourseSlugs;
+  const lessons = allow ? all.filter((l) => allow.includes(l.courseSlug)) : all;
+  // ⚠️ THE EMPTINESS TEST BELOW MUST STILL SEE THE WHOLE INDEX. An empty index
+  // is a broken tool and says so; an empty ALLOWED set is a member with little
+  // to be pointed at, which is a normal answer and not an error.
+  if (allow && all.length && !lessons.length) {
+    return { hits: [], searched: 0, inventoryId, error: null };
+  }
   // ⚠️ AN EMPTY INDEX IS AN ERROR, NOT AN EMPTY RESULT. Since the index is now
   // filtered to the rebuilt courses, a failure to identify them returns exactly
   // what "your question matched nothing" returns — and a drafter told "no
@@ -318,12 +383,12 @@ export function retrieve(
       // lesson mentions AI.
       if (titleTerms[i].has(t)) score += weight * 2;
     }
-    // A tilt, not a filter. The rebuilt courses are the current, verified
-    // teaching and the ones that will still exist next month, so they win ties —
-    // but a legacy lesson that is genuinely the better answer still surfaces,
-    // because 60 of them hold real content and pretending otherwise is the
-    // hollow-classroom mistake again.
-    if (lesson.rebuilt) score *= 1.25;
+    // ⚠️ THE 1.25× TILT TOWARDS REBUILT COURSES IS GONE, AND ITS ABSENCE IS THE
+    // CHANGE. It existed to rank the rebuild's lessons above the legacy ones
+    // when both were in the index. Every lesson in the index is now a live
+    // classroom page, so the tilt applied to all of them equally — which is not
+    // a tie-break, it is a multiplier on every score and changes no ordering at
+    // all. Leaving it would have been a rule that looks like it does something.
     return { lesson, score, matched };
   });
 
@@ -343,6 +408,88 @@ export function retrieve(
     }));
 
   return { hits, searched: lessons.length, inventoryId, error: null };
+}
+
+/* ────────────────────────── past posts ────────────────────────── */
+
+export interface RetrievedPost {
+  id: string;
+  slug: string;
+  title: string;
+  url: string;
+  /** The matched part of the body, not the whole post. */
+  excerpt: string;
+  createdAt: string;
+  score: number;
+}
+
+/**
+ * The community posts most likely to bear on `query`.
+ *
+ * ⚠️ THIS EXISTS FOR THE FREE HALF OF A REPLY. Jake, 2026-08-27: a free member
+ * may be pointed at "a page from the first class or a past post in the
+ * community". One free course is not much to answer 73 members' questions with,
+ * and the feed is 243 posts of real answers that every member — free or paying —
+ * can already open. Measured 2026-08-27: a post's payload carries NO `minTier`
+ * and no `minAccessLevel`, and the landing page sells "full access to the AI
+ * beginner community", so the feed genuinely is open to everyone. If Skool ever
+ * gates a post, this function is where that gate has to be read.
+ *
+ * Takes the posts as an argument rather than reading the feed itself: the feed
+ * is a browser navigation per page, and a sweep answering four members must not
+ * pay for it four times.
+ *
+ * Scoring is the same rare-term overlap `retrieve` uses, against the posts in
+ * hand rather than the classroom — deliberately not shared code, because a
+ * post's "title" is a headline and its weight against a lesson title is not a
+ * thing either corpus can tell us.
+ */
+export function retrievePosts(
+  posts: { id: string; slug: string; title: string; body: string; createdAt: string }[],
+  query: string,
+  communityUrl: string,
+  limit = 3,
+): RetrievedPost[] {
+  const wanted = Array.from(new Set(terms(query)));
+  if (!wanted.length || !posts.length) return [];
+
+  const postTerms = posts.map((p) => new Set(terms(`${p.title} ${p.body}`)));
+  const titleTerms = posts.map((p) => new Set(terms(p.title)));
+  const base = communityUrl.replace(/\/+$/, "");
+
+  const scored = posts.map((post, i) => {
+    let score = 0;
+    const matched: string[] = [];
+    for (const t of wanted) {
+      const n = postTerms.reduce((acc, set) => acc + (set.has(t) ? 1 : 0), 0);
+      if (!n) continue;
+      const weight = Math.log(1 + posts.length / n);
+      if (postTerms[i].has(t)) {
+        score += weight;
+        matched.push(t);
+      }
+      if (titleTerms[i].has(t)) score += weight * 2;
+    }
+    return { post, score, matched };
+  });
+
+  return scored
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ post, score, matched }) => ({
+      id: post.id,
+      slug: post.slug,
+      title: post.title,
+      // ⚠️ BUILT FROM THE SLUG, WHICH IS THE ONLY LINKABLE THING A POST HAS.
+      // A post with no slug gets no URL rather than a guessed one — the same
+      // rule the lesson citations follow, and `citedFrom` drops what it cannot
+      // match anyway.
+      url: post.slug ? `${base}/${post.slug}` : "",
+      excerpt: excerptAround(post.body, matched),
+      createdAt: post.createdAt,
+      score,
+    }));
 }
 
 /**
