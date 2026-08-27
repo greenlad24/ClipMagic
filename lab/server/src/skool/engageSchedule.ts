@@ -28,6 +28,7 @@
 import { aiConfig } from "../ai/config.js";
 import { db } from "../db/index.js";
 import {
+  chooseAskSubject,
   chooseMcpSubject,
   draftPost,
   styleExamplesFrom,
@@ -35,6 +36,7 @@ import {
   type Draft,
   type PostKind,
 } from "./engageGen.js";
+import { newMembers, recordWelcomed, type SkoolMember } from "./members.js";
 import { createPost } from "./engageActions.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
@@ -109,15 +111,49 @@ export interface EngageSchedule {
    * and predictably, and the other two never touch the switch.
    */
   emailNotify: boolean;
+  /**
+   * Which posting day is the ASK post — the question to the community that
+   * opens by @mentioning whoever joined that week.
+   *
+   * ⚠️ A DAY, NOT A BOOLEAN, AND IT MUST BE ONE OF `days`. Jake, 2026-08-27:
+   * one more post a week that asks the community something and tags the new
+   * members. Thursday, because Tuesday and Friday are promised to members by the
+   * pinned "Start here!" post and Sunday carries the week's one email — leaving
+   * the ask post the only slot with nothing already riding on it.
+   *
+   * ⚠️ SET IT TO null TO TURN THE ASK POST OFF WITHOUT LOSING THE DAY: the slot
+   * still opens and writes a lesson post. Removing "thu" from `days` instead
+   * drops a posting day, which is a different decision and should look like one.
+   */
+  askDay: Weekday | null;
+  /** How many days back counts as a "new" member for the ask post's greeting. */
+  askNewMemberDays: number;
+  /**
+   * Most people to @mention in one ask post.
+   *
+   * ⚠️ THE OVERFLOW IS NOT HELD OVER TO NEXT WEEK — everyone inside the window
+   * is recorded as welcomed either way. A member greeted three weeks after
+   * joining is worse than one never greeted, and a backlog that drains five a
+   * week would put the newest arrivals last. See `newMembers`.
+   */
+  askMaxMentions: number;
 }
 
 const DEFAULTS: EngageSchedule = {
   enabled: false,
   dryRun: true,
-  days: ["sun", "tue", "fri"],
+  days: ["sun", "tue", "thu", "fri"],
   hour: 9,
   timezone: "America/New_York",
-  maxPostsPerWeek: 3,
+  // ⚠️ FOUR, BECAUSE THERE ARE FOUR POSTING DAYS. Three days against a cap of
+  // three could never open the third (see `scheduledPostsThisWeek`); four days
+  // against three would close two of them. The cap is a guard against a
+  // misconfigured day list, not a second schedule — it must never be the smaller
+  // number.
+  maxPostsPerWeek: 4,
+  askDay: "thu",
+  askNewMemberDays: 7,
+  askMaxMentions: 5,
   // Jake, 2026-08-07: "when you post I want to notify everyone by email."
   emailNotify: true,
   // 12 attempts × 30 min = 6 hours of trying, which outlasts one 5-hour Max
@@ -146,13 +182,28 @@ export function getSchedule(): EngageSchedule {
   const days = Array.isArray(stored.days)
     ? stored.days.filter((d): d is Weekday => (WEEKDAYS as readonly string[]).includes(d))
     : DEFAULTS.days;
-  return {
+  const merged = {
     ...DEFAULTS,
     ...stored,
     // A settings blob with an empty or unparseable day list must not silently
     // mean "every day" or "never" — fall back to the agreed schedule.
     days: days.length ? days : DEFAULTS.days,
   };
+  // ⚠️⚠️ AN ASK DAY THAT IS NOT A POSTING DAY READS AS null, AND THIS IS NOT
+  // BELT-AND-BRACES WITH `setSchedule` — IT IS THE CASE `setSchedule` CANNOT
+  // REACH. The stored blob is merged over the DEFAULTS, so the day this feature
+  // shipped every existing install acquired `askDay: "thu"` from the new default
+  // while its stored `days` was still sun/tue/fri. Nothing had written an
+  // invalid value; the merge produced one.
+  //
+  // Reporting it as configured would be a lie the screen repeats — the ask post
+  // genuinely cannot run, because the day never opens. So the READ is honest
+  // (and the UI shows "None"), while an explicit WRITE of the same combination
+  // is still refused loudly in `setSchedule`. Writes are loud; reads are true.
+  if (merged.askDay && !merged.days.includes(merged.askDay)) {
+    return { ...merged, askDay: null };
+  }
+  return merged;
 }
 
 export function setSchedule(patch: Partial<EngageSchedule>): EngageSchedule {
@@ -166,6 +217,19 @@ export function setSchedule(patch: Partial<EngageSchedule>): EngageSchedule {
     throw new Error(`"${next.timezone}" is not a timezone this system knows.`);
   }
   next.hour = Math.min(23, Math.max(0, Math.floor(next.hour)));
+  // ⚠️ AN ASK DAY THAT IS NOT A POSTING DAY IS AN ASK POST THAT NEVER RUNS, AND
+  // NOTHING ELSE WOULD SAY SO — the day simply never opens, and every slot that
+  // does open is a lesson. Refused here rather than tolerated, because the two
+  // settings are edited on the same screen and dropping "thu" from the day list
+  // is exactly how they would fall out of step.
+  if (next.askDay && !next.days.includes(next.askDay)) {
+    throw new Error(
+      `"${next.askDay}" is the ask day but is not one of the posting days (${next.days.join(", ")}), ` +
+        `so the ask post would never run. Add it to the days, or set the ask day to null to turn the ask post off.`,
+    );
+  }
+  next.askNewMemberDays = Math.min(90, Math.max(1, Math.floor(next.askNewMemberDays)));
+  next.askMaxMentions = Math.min(20, Math.max(0, Math.floor(next.askMaxMentions)));
   db
     .prepare("UPDATE skool_settings SET engage_schedule_json = ?, updated_at = ? WHERE id = 1")
     .run(JSON.stringify(next), Date.now());
@@ -228,8 +292,18 @@ export interface Slot {
   videoId: string | null;
   /** The video or poll to attach, as stored JSON. */
   attachmentJson: string;
-  /** Which post this is: the classroom lesson, or Tuesday's MCP automation. */
+  /**
+   * Which post this is: the classroom lesson, Tuesday's MCP automation, or
+   * Thursday's question to the community.
+   */
   kind: PostKind;
+  /**
+   * The new members this ask post greets, as stored JSON.
+   *
+   * Settled when the slot OPENS, for the same reason the title and body are:
+   * a retry six hours later must greet the people the post was queued for.
+   */
+  mentionsJson: string;
   /** The publisher's step log, kept on success as well as failure. */
   steps: string | null;
   createdAt: number;
@@ -254,6 +328,34 @@ function parseAttachment(raw: string): Attachment | null {
   }
 }
 
+/**
+ * The stored greeting list, or nobody.
+ *
+ * Anything unparseable becomes an empty list rather than throwing, on the same
+ * rule as `parseAttachment`: a slot whose mention blob is corrupt should still
+ * publish its question. The shape is checked field by field because these values
+ * are typed into a live composer — a blank handle would type a bare "@" and open
+ * an autocomplete over the whole community.
+ */
+function parseMentions(raw: string): SkoolMember[] {
+  if (!raw) return [];
+  try {
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter((m: any) => m && typeof m.handle === "string" && m.handle.trim() && typeof m.displayName === "string")
+      .map((m: any) => ({
+        userId: String(m.userId ?? ""),
+        handle: String(m.handle),
+        firstName: String(m.firstName ?? ""),
+        displayName: String(m.displayName),
+        joinedAt: Number(m.joinedAt ?? 0),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 function rowToSlot(r: any): Slot {
   return {
     slotKey: r.slot_key,
@@ -272,7 +374,8 @@ function rowToSlot(r: any): Slot {
     // Anything unrecognised reads as a lesson, which is the format with no
     // fixed shape to violate — an unknown value must not silently impose the
     // MCP structure on a post that was never meant to have it.
-    kind: r.kind === "mcp" ? "mcp" : "lesson",
+    kind: r.kind === "mcp" ? "mcp" : r.kind === "ask" ? "ask" : "lesson",
+    mentionsJson: r.mentions_json || "",
     steps: r.steps || null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -606,11 +709,24 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
       console.log(`[skool] ${out.skipped}`);
       insertSlot(local.date, "", "abandoned", out.skipped);
     } else {
+      // ⚠️⚠️ THE ASK DAY TAKES NOTHING FROM THE QUEUE — NOT A PIN, NOT A VIDEO.
+      // Both of those override the lesson index, and on any other day they
+      // should. This day is not the index's: it is the one slot a week that asks
+      // the community a question and greets whoever joined. A video landing on
+      // it would skip that week's welcome permanently, since the ledger only
+      // records greetings that actually went out, and the members who joined
+      // that week would fall out of the seven-day window unmet.
+      //
+      // Nothing is lost by it. A pin stays `queued` and takes the next posting
+      // day; an unannounced upload is asked about again on every posting day and
+      // there are three others.
+      const isAskDay = !!cfg.askDay && local.weekday === cfg.askDay;
+
       // ⚠️ A PINNED SUBJECT WINS OVER THE AGENT'S OWN CHOICE. The index-driven
       // picker is right for the standing rhythm and cannot express "say this
       // specific thing on the next posting day" — the subject may not be a
       // lesson at all. Reserved rather than deleted here; see the table comment.
-      const pinned = takePinnedSubject(local.date);
+      const pinned = isAskDay ? null : takePinnedSubject(local.date);
 
       // ⚠️ A NEW VIDEO OUTRANKS THE LESSON INDEX, AND NOTHING ELSE. Jake,
       // 2026-08-07: "at least one post per week should be about a new video I
@@ -624,13 +740,13 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
       // and above the index because an announcement has a shelf life that a
       // lesson does not. With three slots a week, a pin taking one still leaves
       // the video the next posting day.
-      const video = pinned ? null : await nextVideoToAnnounce().catch(() => null);
+      const video = isAskDay || pinned ? null : await nextVideoToAnnounce().catch(() => null);
 
       // ⚠️ TUESDAY NEEDS A SUBJECT ITS OWN SHAPE CAN CARRY. The lesson index is
       // the wrong source for an automation tutorial — see `chooseMcpSubject`.
       // Asked only when nothing outranks the index, because a pin and a video
       // already force `kind: "lesson"` and would waste the call.
-      const wantsMcp = !pinned && !video && local.weekday === "tue";
+      const wantsMcp = !isAskDay && !pinned && !video && local.weekday === "tue";
       const mcp = wantsMcp
         ? await chooseMcpSubject({ communityUrl, usedSubjects: usedSubjectStrings() }).catch((e) => ({
             subject: "",
@@ -642,16 +758,56 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
       // specifically, and a lesson is the shape with no fixed structure to break.
       if (mcp?.error) console.log(`[skool] no automation subject (${mcp.error}) — Tuesday falls back to a lesson`);
 
+      // ⚠️ THE MEMBERS ARE READ BEFORE THE SUBJECT IS CHOSEN, because the
+      // question is aimed at them: "someone who joined yesterday can answer
+      // this" is a constraint on what to ask, not a decoration added afterwards.
+      //
+      // ⚠️ AND A FAILED READ DOES NOT COST THE DAY. A members page that will not
+      // load means a post with no greeting, which is exactly what a week with no
+      // new members produces — a normal outcome the ask post is already written
+      // for. Losing Thursday over it would be the wrong trade.
+      const greet = isAskDay
+        ? await newMembers(communityUrl, {
+            sinceDays: cfg.askNewMemberDays,
+            limit: cfg.askMaxMentions,
+          }).catch((e) => ({
+            members: [] as SkoolMember[],
+            detail: "",
+            error: e instanceof Error ? e.message : String(e),
+          }))
+        : null;
+      if (greet) {
+        console.log(
+          `[skool] ask post for ${local.date}: ${greet.error ? `members unreadable (${greet.error})` : greet.detail}`,
+        );
+      }
+
+      const ask = isAskDay
+        ? await chooseAskSubject({
+            communityUrl,
+            usedSubjects: usedSubjectStrings(),
+            newMemberCount: greet?.members.length ?? 0,
+          }).catch((e) => ({ subject: "", error: e instanceof Error ? e.message : String(e) }))
+        : null;
+      // ⚠️ A FAILED ASK SUBJECT KEEPS `kind: "ask"` AND FALLS BACK TO A LESSON
+      // SUBJECT — deliberately unlike Tuesday, which falls back to
+      // `kind: "lesson"`. See `chooseAskSubject`: the MCP shape cannot carry a
+      // lesson subject, the ask shape can, and a Thursday that quietly becomes a
+      // fourth lesson post is the failure this day was added to prevent.
+      if (ask?.error) console.log(`[skool] no question proposed (${ask.error}) — the ask post falls back to a lesson subject`);
+
       const { subject, error } = pinned
         ? { subject: pinned.subject, error: null as string | null }
         : video
           ? { subject: videoSubject(video), error: null as string | null }
           : mcp?.subject
             ? { subject: mcp.subject, error: null as string | null }
-            : await chooseSubject(communityUrl).catch((e) => ({
-                subject: "",
-                error: e instanceof Error ? e.message : String(e),
-              }));
+            : ask?.subject
+              ? { subject: ask.subject, error: null as string | null }
+              : await chooseSubject(communityUrl).catch((e) => ({
+                  subject: "",
+                  error: e instanceof Error ? e.message : String(e),
+                }));
       if (error || !subject) {
         // Record the abandoned slot rather than trying again in ten minutes:
         // an empty index or a dead feed will not fix itself within the hour,
@@ -668,7 +824,8 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
           // Decided HERE, against the weekday the slot was opened for, and
           // stored — not recomputed at draft time. A slot that retries past
           // midnight would otherwise change shape between attempts.
-          kindForSlot(local.weekday, Boolean(pinned), Boolean(video), Boolean(mcp?.subject)),
+          kindForSlot(local.weekday, Boolean(pinned), Boolean(video), Boolean(mcp?.subject), cfg.askDay),
+          greet?.members ?? [],
         );
         out.enqueued = local.date;
       }
@@ -758,7 +915,21 @@ export function kindForSlot(
   pinned: boolean,
   video: boolean,
   haveMcpSubject: boolean,
+  askDay: Weekday | null = null,
 ): PostKind {
+  // ⚠️ THE ASK DAY IS DECIDED BEFORE THE PIN AND THE VIDEO, WHICH IS THE
+  // OPPOSITE OF EVERY OTHER RULE HERE, AND IT IS DELIBERATE. Those two override
+  // the LESSON INDEX — a human saying "say this next" and an upload with a shelf
+  // life both beat the standing rhythm. But the ask post is not a subject the
+  // index chose; it is the one day a week the community is asked a question and
+  // the week's new members are greeted. Letting a video announcement take it
+  // would mean the greeting is skipped, silently, in whichever weeks Jake
+  // happens to have uploaded — and the members who joined that week are never
+  // welcomed at all, because the ledger only records greetings that went out.
+  //
+  // The other three days are where a pin and a video belong, and with four
+  // posting days there is always one within 48 hours.
+  if (askDay && weekday === askDay) return "ask";
   if (pinned || video) return "lesson";
   // ⚠️ THE THIRD OVERRIDE, ADDED 2026-08-09: NO AUTOMATION SUBJECT, NO MCP SHAPE.
   // Tuesday used to become "mcp" on the weekday alone, while its subject came
@@ -816,16 +987,17 @@ function insertSlot(
   error: string | null,
   videoId = "",
   kind: PostKind = "lesson",
+  mentions: SkoolMember[] = [],
 ): void {
   const now = Date.now();
   try {
     db
       .prepare(
         `INSERT INTO skool_engage_slots
-           (slot_key, state, subject, cited_json, attempts, next_attempt_at, last_error, video_id, kind, created_at, updated_at)
-         VALUES (?, ?, ?, '[]', 0, ?, ?, ?, ?, ?, ?)`,
+           (slot_key, state, subject, cited_json, attempts, next_attempt_at, last_error, video_id, kind, mentions_json, created_at, updated_at)
+         VALUES (?, ?, ?, '[]', 0, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(slotKey, state, subject, now, text(error), videoId, kind, now, now);
+      .run(slotKey, state, subject, now, text(error), videoId, kind, mentions.length ? JSON.stringify(mentions) : "", now, now);
   } catch (e) {
     // A duplicate slot key is the one benign failure: the day is already open,
     // which is exactly what the primary key is for. Anything else is a bug and
@@ -883,6 +1055,12 @@ async function attemptSlot(
 
   const attempts = slot.attempts + 1;
   const backoff = Date.now() + cfg.retryMinutes * 60_000;
+
+  // Who this post greets, as settled when the slot opened. Replayed on every
+  // retry rather than re-read, for the same reason the drafted words are: the
+  // post that goes out must be the post that was queued, and somebody who joined
+  // between the first attempt and the fourth belongs to next week.
+  const mentions = slot.kind === "ask" ? parseMentions(slot.mentionsJson) : [];
 
   // Draft, unless a previous attempt already produced one. Re-drafting a slot
   // that failed only at the publish step would spend the window again AND put
@@ -946,6 +1124,12 @@ async function attemptSlot(
       // stops working, empty this list again rather than letting a draft write
       // "watch it below" over a post with no video.
       videoCandidates: await videosForSubject(slot.subject).catch(() => []),
+      // Names only, and only so the first sentence can be written to follow
+      // them. The chips themselves are typed into the composer by the publisher
+      // — `askNote` spends most of its length telling the model not to write a
+      // single one of these names itself, because a pasted @mention notifies
+      // nobody.
+      newMembers: mentions.map((m) => ({ firstName: m.firstName, displayName: m.displayName })),
     }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
 
     if (res.error || !res.draft) {
@@ -977,7 +1161,12 @@ async function attemptSlot(
     // never returned to the queue, and never mentioned again. The operator
     // would simply not get the post they asked for, and nothing would say so.
     releasePinnedSubject(slot.slotKey);
-    return `Drafted "${draft.title}" and STOPPED — dry run is on, so nothing was published.`;
+    const greeting = mentions.length
+      ? ` It would have opened by mentioning ${mentions.map((m) => `@${m.displayName}`).join(", ")}.`
+      : slot.kind === "ask"
+        ? " Nobody new to greet this week, so it opens on the question."
+        : "";
+    return `Drafted "${draft.title}" and STOPPED — dry run is on, so nothing was published.${greeting}`;
   }
 
   const posted = await createPost({
@@ -990,6 +1179,9 @@ async function attemptSlot(
     // here is what makes WHICH post gets it a choice instead of a race.
     emailNotify: cfg.emailNotify && isEmailSlot(slot.slotKey, cfg.days),
     attachment: draft.attachment,
+    // Typed into the composer as real mention chips before the body is pasted.
+    // Empty on every other kind of post, and a normal week on this one.
+    mentions,
   }).catch((e) => ({ ok: false, detail: e instanceof Error ? e.message : String(e), post: null }));
 
   if (!posted.ok) {
@@ -1015,6 +1207,14 @@ async function attemptSlot(
   // and that upload would never get the post it was owed — silently, since
   // nothing distinguishes "already announced" from "announced by us, today".
   if (slot.videoId) recordAnnounced(slot.videoId, draft.title, slot.slotKey);
+  // ⚠️ EVERYONE THE SLOT NAMED IS RECORDED AS WELCOMED, INCLUDING ANY WHOSE CHIP
+  // FAILED TO GO IN. `typeMentions` drops a member it cannot tag rather than
+  // failing the post, and the alternative here — recording only the chips that
+  // landed — would put that member back in next week's greeting, in a post whose
+  // opening line has already been written around them once. The step log says
+  // exactly who was skipped and why, which is the record worth having; a second
+  // attempt at a greeting a week late is not.
+  if (mentions.length) recordWelcomed(mentions, slot.slotKey);
   console.log(`[skool] (${trigger}) published "${draft.title}" for slot ${slot.slotKey}`);
   return `Published: ${posted.detail}`;
 }

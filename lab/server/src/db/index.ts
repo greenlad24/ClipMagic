@@ -246,6 +246,13 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "steps")) {
     db.exec("ALTER TABLE skool_engage_slots ADD COLUMN steps TEXT NOT NULL DEFAULT ''");
   }
+  // The members the ask post opens by @mentioning, resolved when the slot opens
+  // and replayed on every retry. ⚠️ ALSO IN THE CREATE BELOW — a column added
+  // only here is missing on a fresh database, because these ALTERs run BEFORE
+  // the CREATE and correctly decline against a table that does not exist yet.
+  if (cols.length > 0 && !cols.some((c) => c.name === "mentions_json")) {
+    db.exec("ALTER TABLE skool_engage_slots ADD COLUMN mentions_json TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
@@ -571,20 +578,47 @@ CREATE TABLE IF NOT EXISTS skool_engage_slots (
   -- The video or poll the drafter chose to attach, as JSON. Stored so a retry
   -- attaches what was already approved rather than choosing again.
   attachment_json TEXT NOT NULL DEFAULT '',
-  -- Which post this slot is: 'lesson' (the classroom post) or 'mcp' (Tuesday's
-  -- automation idea, which has a fixed four-part shape). Decided when the slot
-  -- OPENS, not when it drafts, for the same reason the title and body are kept:
-  -- a retry must re-draft the post that was queued, not a different one because
-  -- the retry happened to land on another weekday.
+  -- Which post this slot is: 'lesson' (the classroom post), 'mcp' (Tuesday's
+  -- automation idea, which has a fixed four-part shape) or 'ask' (the weekly
+  -- question to the community, which opens by mentioning that week's new
+  -- members). Decided when the slot OPENS, not when it drafts, for the same
+  -- reason the title and body are kept: a retry must re-draft the post that was
+  -- queued, not a different one because the retry happened to land on another
+  -- weekday.
   kind            TEXT NOT NULL DEFAULT 'lesson',
   -- The publisher's step log, kept whether the post succeeded or failed. It is
   -- the only place an attachment that did not attach is recorded, and a post
   -- can succeed without one.
   steps           TEXT NOT NULL DEFAULT '',
+  -- The new members the ask post greets, as JSON, settled when the slot OPENED.
+  -- Stored for the same reason the title and body are: a retry must greet the
+  -- people the post was queued for, not whoever has joined since. Empty is a
+  -- normal week rather than a fault. NOTE: no backticks anywhere in this block —
+  -- the whole schema is one template literal and a backtick closes it.
+  mentions_json   TEXT NOT NULL DEFAULT '',
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_skool_slots_due ON skool_engage_slots(state, next_attempt_at);
+
+-- Everyone the ask post has already welcomed by name.
+--
+-- ⚠️ A LEDGER, NOT A DATE WINDOW. The ask post looks back seven days and runs
+-- every seven days, so somebody who joined shortly before last week's post sits
+-- inside both windows and would be greeted twice. The window answers "who is
+-- new"; this answers "who have we already met". Keyed on the Skool USER ID,
+-- which survives a display-name change, so a member who renames themselves is
+-- not welcomed a second time as somebody else.
+--
+-- The row is written when the post LANDS, never when it drafts: a slot that
+-- drafts and fails to publish must not burn the greeting.
+CREATE TABLE IF NOT EXISTS skool_welcomed_members (
+  user_id      TEXT PRIMARY KEY,
+  handle       TEXT NOT NULL DEFAULT '',
+  display_name TEXT NOT NULL DEFAULT '',
+  slot_key     TEXT NOT NULL DEFAULT '',
+  welcomed_at  INTEGER NOT NULL
+);
 
 -- One row per upload that has been given a classroom page.
 --

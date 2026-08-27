@@ -281,6 +281,7 @@ import {
   type Weekday,
 } from "../skool/engageSchedule.js";
 import { firstNameOf } from "../skool/engageGen.js";
+import { newMembers as readNewMembers, recordWelcomed } from "../skool/members.js";
 import {
   getReplyConfig,
   setReplyConfig,
@@ -4977,9 +4978,23 @@ const skoolBackfillTranscripts: Handler = async (input) => {
  */
 const skoolDraftPost: Handler = async (input) => {
   const communityUrl = communityUrlOrThrow();
-  const kind = String(input?.kind ?? "lesson") === "mcp" ? "mcp" : "lesson";
+  const raw = String(input?.kind ?? "lesson");
+  const kind = raw === "mcp" ? "mcp" : raw === "ask" ? "ask" : "lesson";
   const subject = String(input?.subject ?? "").trim();
   if (!subject) throw new ZiteError({ code: "BAD_REQUEST", message: "What should the post be about?" });
+
+  // ⚠️ THE BENCH READS THE REAL MEMBERS LIST FOR AN ASK DRAFT, because the
+  // question's shape depends on how many people it is aimed at and the whole
+  // point of the bench is "what would it actually write?". It does NOT touch the
+  // welcome ledger: drafting is not greeting, and a bench run that marked five
+  // members welcomed would leave Thursday with nobody to say hello to.
+  const greet =
+    kind === "ask"
+      ? await readNewMembers(communityUrl, {
+          sinceDays: getSchedule().askNewMemberDays,
+          limit: getSchedule().askMaxMentions,
+        }).catch(() => ({ members: [], detail: "", error: null }))
+      : null;
 
   const feed = await readFeed(communityUrl, 1);
   const { draft, error } = await draftPost({
@@ -4987,6 +5002,7 @@ const skoolDraftPost: Handler = async (input) => {
     voicePrompt: getEngageSettings().replyPromptMd ?? "",
     kind,
     subject,
+    newMembers: (greet?.members ?? []).map((m) => ({ firstName: m.firstName, displayName: m.displayName })),
     recentTitles: feed.posts.filter((p) => p.byMe).slice(0, 12).map((p) => p.title).filter(Boolean),
     // His own posts, as the style spec for the body. From the SAME feed read —
     // a second one would be a second headless browser cycle for nothing.
@@ -4994,7 +5010,9 @@ const skoolDraftPost: Handler = async (input) => {
     categories: feed.categories.length ? feed.categories : SKOOL_CATEGORIES,
     preferredCategory: input?.category ? String(input.category) : null,
   });
-  return { draft, error };
+  // The names go back with the draft so the bench can show the opening line as
+  // it will actually read — the chips are not in the body and never will be.
+  return { draft, error, newMembers: greet?.members ?? [] };
 };
 
 /**
@@ -5010,12 +5028,36 @@ const skoolPublishPost: Handler = async (input) => {
   if (!title || !body.trim()) {
     throw new ZiteError({ code: "BAD_REQUEST", message: "A post needs both a title and a body." });
   }
-  return await createPost({
+  // ⚠️ THE BENCH CAN PUBLISH AN ASK POST, SO IT MUST BE ABLE TO CARRY THE CHIPS.
+  // An ask draft's first sentence is written to follow a row of @mentions;
+  // published without them it opens mid-thought and notifies nobody. Validated
+  // field by field rather than passed through — these values are typed into a
+  // live composer, and a blank handle would type a bare "@" and open an
+  // autocomplete over the whole community.
+  const mentions = Array.isArray(input?.mentions)
+    ? (input.mentions as any[])
+        .filter((m) => m && String(m.handle ?? "").trim() && String(m.displayName ?? "").trim())
+        .map((m) => ({
+          userId: String(m.userId ?? ""),
+          handle: String(m.handle).trim(),
+          firstName: String(m.firstName ?? ""),
+          displayName: String(m.displayName).trim(),
+          joinedAt: Number(m.joinedAt ?? 0),
+        }))
+    : [];
+
+  const result = await createPost({
     communityUrl: communityUrlOrThrow(),
     title,
     body,
     category: input?.category ? String(input.category) : null,
+    mentions,
   });
+  // ⚠️ ON SUCCESS ONLY, AND THE SAME LEDGER THE SCHEDULER WRITES. Without this a
+  // post published from the bench greets five members and Thursday greets the
+  // same five again, because nothing recorded that they had already been met.
+  if (result.ok && mentions.length) recordWelcomed(mentions, `${new Date().toISOString().slice(0, 10)}-manual`);
+  return result;
 };
 
 /** Draft a reply to one comment or DM. Does NOT send it. */
@@ -5173,7 +5215,29 @@ const skoolEngageStatus: Handler = async () => {
     // would tell an operator which one is about to run — least of all after
     // teaching an action and getting the name slightly wrong.
     postRecipe: taughtPostAction(),
+    // Which posting day asks the community a question and greets that week's new
+    // members, when one is configured. Derived rather than assumed by the UI:
+    // the ask day is a setting and can be turned off without losing the day.
+    askDay: schedule.askDay,
   };
+};
+
+/**
+ * Who the next ask post would @mention, without drafting anything.
+ *
+ * ⚠️ ITS OWN ENDPOINT BECAUSE IT COSTS A BROWSER WALK, NOT A MODEL CALL. Folding
+ * it into `skoolEngageStatus` would make every poll of that screen navigate the
+ * shared browser through three members pages — on a box where a headless
+ * Chromium cycle is the expensive part, and while a publish may be halfway
+ * through a composer. So it is a button, not a field.
+ */
+const skoolEngageNewMembers: Handler = async () => {
+  const schedule = getSchedule();
+  const read = await readNewMembers(communityUrlOrThrow(), {
+    sinceDays: schedule.askNewMemberDays,
+    limit: schedule.askMaxMentions,
+  });
+  return { members: read.members, detail: read.detail, error: read.error };
 };
 
 const skoolEngageConfigure: Handler = async (input) => {
@@ -5186,7 +5250,18 @@ const skoolEngageConfigure: Handler = async (input) => {
   if (input?.maxAttempts !== undefined) patch.maxAttempts = Number(input.maxAttempts);
   if (input?.retryMinutes !== undefined) patch.retryMinutes = Number(input.retryMinutes);
   if (input?.maxSlotAgeHours !== undefined) patch.maxSlotAgeHours = Number(input.maxSlotAgeHours);
+  if (input?.emailNotify !== undefined) patch.emailNotify = !!input.emailNotify;
   if (Array.isArray(input?.days)) patch.days = (input.days as unknown[]).map((d) => String(d).toLowerCase() as Weekday);
+  // ⚠️ null IS A REAL VALUE HERE — it turns the ask post off while KEEPING the
+  // posting day, which then writes a lesson. So this cannot use the
+  // `!== undefined` shorthand collapsed with a String() cast: `String(null)` is
+  // "null", a weekday nothing matches, and the day would silently stop asking
+  // AND stop validating against the day list.
+  if (input?.askDay !== undefined) {
+    patch.askDay = input.askDay === null || input.askDay === "" ? null : (String(input.askDay).toLowerCase() as Weekday);
+  }
+  if (input?.askNewMemberDays !== undefined) patch.askNewMemberDays = Number(input.askNewMemberDays);
+  if (input?.askMaxMentions !== undefined) patch.askMaxMentions = Number(input.askMaxMentions);
   try {
     return { schedule: setSchedule(patch as any) };
   } catch (e) {
@@ -6836,6 +6911,7 @@ export const HANDLERS: Record<string, Handler> = {
   skoolEngageTick,
   skoolEngagePublish,
   skoolEngageSubject,
+  skoolEngageNewMembers,
   skoolEngagePin,
   skoolEngageUnpin,
   skoolDescribePoint,

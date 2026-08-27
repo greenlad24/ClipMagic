@@ -236,7 +236,10 @@ async function main() {
       "INSERT INTO skool_engage_slots (slot_key, state, subject, created_at, updated_at) VALUES ('2026-08-21', 'posted', 'x', 0, 0)",
     ).run();
     assert.equal(scheduledPostsThisWeek("2026-08-22"), 3);
-    assert.equal(getSchedule().maxPostsPerWeek, 3);
+    // Four posting days, four allowed. ⚠️ THE CAP MUST NEVER BE THE SMALLER
+    // NUMBER: three days against three closed Tue 2026-08-18, which is the data
+    // this block replays.
+    assert.equal(getSchedule().maxPostsPerWeek, 4);
   });
 
   await check("scheduledPostsThisWeek: hand-published and unposted slots do not count", () => {

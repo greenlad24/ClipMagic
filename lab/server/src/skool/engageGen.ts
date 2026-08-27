@@ -619,6 +619,99 @@ const MCP_NOTE = [
 ].join("\n");
 
 /**
+ * The ask post: a question to the community, opening on the week's new members.
+ *
+ * ⚠️⚠️ THE @MENTIONS ARE NOT WRITTEN BY THE MODEL, AND THIS NOTE'S MAIN JOB IS
+ * TO SAY SO. A mention only notifies when it is a real ProseMirror node, and the
+ * body arrives in the composer as ONE PASTE — so `@Claudia Garcia` written into
+ * the draft would be grey text linking to nobody, which is the exact opposite of
+ * the point. The publisher types the chips itself, first, and the body is pasted
+ * after them (`typeMentions` in mentions.ts). The drafter's job is therefore to
+ * write a first sentence that reads correctly with a list of names already
+ * standing in front of it.
+ *
+ * ⚠️ AND THE QUESTION IS THE POST, NOT THE GARNISH. Asked for "a post that
+ * welcomes the new members and asks a question", a model writes four paragraphs
+ * of welcome and one limp question at the end — which is a welcome post, and
+ * gets the engagement a welcome post gets. The proportions are stated here as
+ * numbers for that reason.
+ */
+function askNote(newMembers: { firstName: string; displayName: string }[]): string {
+  const lines = [
+    "THIS IS THE WEEKLY ASK POST, AND ITS JOB IS TO GET REPLIES.",
+    "",
+    "It is SHORT — much shorter than a lesson post. Well under half the length",
+    "of the examples above. Nobody answers a question they had to scroll to.",
+    "",
+    "It must:",
+    "- ask ONE question, and only one. Two questions get zero answers.",
+    "- ask something a member can answer from their own experience in a",
+    "  sentence or two — what they are building, what is in their way, what",
+    "  they tried that worked. Never a quiz with a right answer, never",
+    "  something they would need to go and look up.",
+    "- be specific enough to be answerable. \"What are your AI goals?\" is not a",
+    "  question, it is a survey. \"What is the one task you keep doing by hand",
+    "  that you know a machine could take?\" is a question.",
+    "- say something real before the question — one short observation, from the",
+    "  subject below, that gives the question a reason to exist today. Two or",
+    "  three sentences, not a lesson.",
+    "- close by asking for the answer in the comments, in Jake's own way.",
+    "",
+    "⚠️ PREFER NO POLL. This post exists to collect REPLIES, and a poll gives",
+    "people a way to take part without writing one. Attach a poll only if the",
+    "honest answers really are a short list of options — if the question invites",
+    "a sentence, the answer belongs in the comments.",
+    "",
+    "Do NOT teach a lesson here. Do NOT list steps. Do NOT link a lesson unless",
+    "the question genuinely needs it — this post asks, it does not explain.",
+  ];
+
+  if (newMembers.length) {
+    const names = newMembers.map((m) => m.firstName || m.displayName).filter(Boolean);
+    lines.push(
+      "",
+      "==========================================",
+      "THE OPENING — IT IS ALREADY WRITTEN. DO NOT WRITE IT AGAIN.",
+      "==========================================",
+      "",
+      `${names.length} ${names.length === 1 ? "person" : "people"} joined this week: ${names.join(", ")}.`,
+      "",
+      "Their @mentions are placed at the very start of the post BEFORE your text,",
+      "automatically, as real Skool mention chips. Your body is added straight",
+      "after them, on the same line.",
+      "",
+      "So your FIRST WORDS continue that line. Write them to follow a list of",
+      "names — an em dash and a welcome, then straight into why you are asking",
+      "them in particular.",
+      "",
+      "⚠️ THE FIRST LINE MUST NOT START WITH \"-\" OR \"*\". Those are list markers:",
+      "the body is rendered as markdown, so a leading dash becomes a BULLET on its",
+      "own line and the greeting stops following the names. Use an em dash — like",
+      "this one — or no dash at all.",
+      "",
+      "⚠️ DO NOT WRITE ANY NAME OR ANY @ YOURSELF. Not at the start, not later,",
+      "not \"welcome Claudia and Denise\". A name you type is plain text that",
+      "notifies nobody, and it would appear twice — once as your text and once as",
+      "the real mention. Refer to them as a group if you need to: \"you three\".",
+      "",
+      "Address the question to them FIRST — they are the reason it is being asked",
+      "today — then invite everybody else to answer it too, in one line. Both",
+      "halves matter: a question only the newcomers can answer gets four replies,",
+      "and a question that ignores them wastes the welcome.",
+    );
+  } else {
+    lines.push(
+      "",
+      "Nobody new joined this week, so there is no welcome and no mention. Open",
+      "straight on the observation and go to the question. Do not invent a",
+      "greeting for members who are not there.",
+    );
+  }
+
+  return lines.join("\n");
+}
+
+/**
  * The classroom lessons, rendered for a prompt.
  *
  * ⚠️ ONLY REBUILT LESSONS GET A URL. The legacy courses are still full of real
@@ -719,8 +812,15 @@ function citedFrom(cited: unknown, hits: Retrieved[]): { title: string; url: str
   return hits.filter((h) => urls.includes(h.url)).map((h) => ({ title: h.title, url: h.url }));
 }
 
-/** "lesson" = the classroom post; "mcp" = Tuesday's automation idea. */
-export type PostKind = "lesson" | "mcp";
+/**
+ * "lesson" = the classroom post; "mcp" = Tuesday's automation idea;
+ * "ask" = Thursday's question to the community.
+ *
+ * ⚠️ EACH ONE SWITCHES IN A DIFFERENT SET OF INSTRUCTIONS, so a kind that does
+ * not match its SUBJECT produces a post fighting its own prompt — see the note
+ * on `PostRequest.kind`, which is where that has actually happened.
+ */
+export type PostKind = "lesson" | "mcp" | "ask";
 
 export interface PostRequest {
   communityUrl: string;
@@ -761,6 +861,18 @@ export interface PostRequest {
    * instead of a dead embed in front of the whole community.
    */
   videoCandidates?: { videoId: string; title: string }[];
+  /**
+   * The members the ask post opens by greeting — names only, for the prompt.
+   *
+   * ⚠️ THE DRAFTER IS TOLD ABOUT THEM SO IT DOES NOT WRITE THEM. The chips are
+   * typed into the composer by the publisher before the body is pasted, because
+   * a pasted @mention is inert text. Passing the names lets the first sentence
+   * be written to follow them; `askNote` spends most of its length forbidding
+   * the model from writing them itself.
+   *
+   * Ignored unless `kind` is "ask". Empty is a normal week.
+   */
+  newMembers?: { firstName: string; displayName: string }[];
 }
 
 /**
@@ -805,6 +917,31 @@ export function styleExamplesFrom(
   return out;
 }
 
+/**
+ * Make an ask post's first line safe to sit behind a row of mention chips.
+ *
+ * ⚠️⚠️ A LEADING "- " IS A BULLET, NOT A DASH, AND THE FIRST DRAFT EVER WRITTEN
+ * OPENED WITH ONE. Asked for "a dash and a welcome", the model wrote
+ * `- welcome in, glad you made it here.` — which is exactly what it was told to
+ * write, and which the markdown renderer turns into a list item on its own line.
+ * The chips would then sit alone above a bullet, and the sentence written to
+ * follow them would not.
+ *
+ * The prompt now says so, but a prompt is a request. This is the guarantee, and
+ * it is deliberately narrow: only the FIRST line, only when there are chips to
+ * follow, and only a marker that begins it. A genuine bulleted list later in the
+ * post is untouched.
+ */
+export function openingForMentions(body: string): string {
+  const nl = body.indexOf("\n");
+  const first = nl === -1 ? body : body.slice(0, nl);
+  const rest = nl === -1 ? "" : body.slice(nl);
+  // "- welcome in" → "— welcome in". An em dash is what the line wanted to be,
+  // so the sentence survives intact rather than losing its opening beat.
+  const fixed = first.replace(/^\s*[-*+]\s+/, "— ");
+  return fixed === first ? body : fixed + rest;
+}
+
 export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null; error: string | null }> {
   if (!req.voicePrompt.trim()) {
     // Same refusal as the Engagement Manager: with no voice stored, generation
@@ -812,13 +949,24 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     return { draft: null, error: "No voice prompt is stored, so nothing was drafted." };
   }
 
-  const { hits } = retrieve(req.communityUrl, req.subject, req.kind === "mcp" ? 4 : 6);
+  // The ask post retrieves as few lessons as the MCP one: it is not built out of
+  // the classroom, it only needs enough of it to have something true to say
+  // before the question. Six hits would invite it to teach, which askNote is
+  // otherwise busy forbidding.
+  const { hits } = retrieve(req.communityUrl, req.subject, req.kind === "lesson" ? 6 : 4);
   const outline = classroomOutline(req.communityUrl);
+
+  const extra =
+    req.kind === "mcp"
+      ? `${POST_FORMAT_NOTE}\n\n${MCP_NOTE}`
+      : req.kind === "ask"
+        ? `${POST_FORMAT_NOTE}\n\n${askNote(req.newMembers ?? [])}`
+        : POST_FORMAT_NOTE;
 
   const system = [
     req.voicePrompt,
     styleBlock(req.styleExamples),
-    mechanics("post", req.kind === "mcp" ? `${POST_FORMAT_NOTE}\n\n${MCP_NOTE}` : POST_FORMAT_NOTE),
+    mechanics("post", extra),
     attachmentNote(req.videoCandidates ?? []),
     "",
     `CATEGORY: choose exactly one of: ${req.categories.join(" · ")}`,
@@ -859,10 +1007,15 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     req.preferredCategory ??
     null;
 
+  const body = String(parsed.body).trim();
+
   return {
     draft: {
       title: String(parsed.title).trim(),
-      body: String(parsed.body).trim(),
+      // Only an ask post that actually has chips in front of it: on every other
+      // post the first line stands on its own and a bullet there is the author's
+      // choice.
+      body: req.kind === "ask" && (req.newMembers?.length ?? 0) > 0 ? openingForMentions(body) : body,
       category,
       attachment: attachmentFrom(parsed.attach, req.videoCandidates ?? []),
       cited: citedFrom(parsed.cited, hits),
@@ -949,6 +1102,89 @@ export async function chooseMcpSubject(req: {
   const parsed = parseDraft(json);
   const subject = typeof parsed?.subject === "string" ? parsed.subject.trim() : "";
   if (!subject) return { subject: "", error: "The model did not propose an automation." };
+  return { subject, error: null };
+}
+
+/**
+ * One question for the weekly ask post.
+ *
+ * ⚠️ THE LESSON INDEX IS THE WRONG SOURCE FOR THIS, THE SAME WAY IT WAS WRONG
+ * FOR TUESDAY. `chooseSubject` returns "Finding Your First AI Win (from the
+ * course …)", which is a thing to TEACH; the ask post needs a thing to ASK. Fed
+ * a lesson title, the drafter resolves the mismatch the way it always does —
+ * quietly, by writing a lesson post with a question stapled on the end, which is
+ * the shape this post was added to stop producing.
+ *
+ * ⚠️ IT REFUSES RATHER THAN INVENTS, and the caller falls back to a lesson
+ * subject while KEEPING `kind: "ask"` — deliberately unlike Tuesday, which falls
+ * back to `kind: "lesson"`. The MCP shape cannot survive a lesson subject (it
+ * demands services, links and a tutorial); the ask shape can, because "ask the
+ * community a question about X" works whatever X is. A Thursday that asks a
+ * slightly duller question still gets replies; a Thursday that quietly becomes a
+ * fourth lesson post does not.
+ */
+export async function chooseAskSubject(req: {
+  communityUrl: string;
+  /** Subjects already used, so it does not ask the same thing twice. */
+  usedSubjects: string[];
+  /** How many people joined this week, so the question can be aimed at them. */
+  newMemberCount: number;
+}): Promise<{ subject: string; error: string | null }> {
+  const outline = classroomOutline(req.communityUrl);
+
+  const system = [
+    "You propose ONE question for a weekly engagement post in an AI automation",
+    "community for beginners.",
+    "",
+    "Return ONE JSON object and nothing else.",
+    `Shape: {"subject": string, "why": string}`,
+    "",
+    "`subject` is a single sentence: the question to ask, plus the one thing",
+    "worth saying before it. It is a brief for the writer, not the post.",
+    "",
+    "HARD RULES:",
+    "- It must be answerable from the member's OWN experience, in a sentence or",
+    "  two, with no research and no right answer. If it could be graded, it is",
+    "  the wrong question.",
+    "- It must be specific. A question that could be asked of any community on",
+    "  any week is one nobody answers.",
+    "- A beginner must be able to answer it. Most of these members are early —",
+    "  a question that assumes a running pipeline excludes the people it is",
+    "  most meant for.",
+    "- Do NOT repeat a question or subject already used. They are listed below.",
+    "- It may lean on what the classroom teaches, listed below, but it must not",
+    "  require having done a lesson.",
+    req.newMemberCount > 0
+      ? `- ${req.newMemberCount} member(s) joined this week and will be greeted at the top of ` +
+        "the post, so the question should be one a brand-new member can answer on " +
+        "their first day, while still being worth answering for someone who has " +
+        "been here a year."
+      : "- Nobody new joined this week, so the question is for the whole community.",
+  ].join("\n");
+
+  const user = [
+    "THE CLASSROOM — what these members are here to learn:",
+    outline.outline.slice(0, 4000),
+    "",
+    req.usedSubjects.length
+      ? `ALREADY USED — do not propose these again:\n${req.usedSubjects.map((s) => `- ${s}`).join("\n")}`
+      : "Nothing has been posted yet.",
+  ].join("\n");
+
+  const { json } = await claudeJSONForPurposeWithUsage({
+    tier: "director",
+    purpose: "skool-post",
+    system,
+    messages: [{ role: "user", content: user }],
+    auth: aiConfig.skoolEngageAuth,
+  });
+
+  // ⚠️ `json` IS THE RAW STRING — the same trap `chooseMcpSubject` documents.
+  // Reading `.subject` off it yields undefined, which is indistinguishable from
+  // the model declining.
+  const parsed = parseDraft(json);
+  const subject = typeof parsed?.subject === "string" ? parsed.subject.trim() : "";
+  if (!subject) return { subject: "", error: "The model did not propose a question." };
   return { subject, error: null };
 }
 

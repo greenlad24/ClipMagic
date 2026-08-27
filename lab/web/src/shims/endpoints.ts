@@ -935,6 +935,36 @@ export interface SkoolEngageSchedule {
   maxAttempts: number;
   retryMinutes: number;
   maxSlotAgeHours: number;
+  /** Turn on "Send email to all members" — for ONE post a week, not every one. */
+  emailNotify: boolean;
+  /**
+   * Which posting day asks the community a question and @mentions that week's
+   * new members. null turns the ask post off WITHOUT losing the day — the slot
+   * still opens and writes a lesson.
+   *
+   * ⚠️ MUST BE ONE OF `days`. The server refuses otherwise, because an ask day
+   * that is not a posting day is an ask post that silently never runs.
+   */
+  askDay: SkoolWeekday | null;
+  /** How far back counts as a "new" member for that greeting. */
+  askNewMemberDays: number;
+  /** Most people to @mention in one ask post. The overflow is not held over. */
+  askMaxMentions: number;
+}
+
+/**
+ * One member the ask post would greet.
+ *
+ * `handle` is the thing Skool's mention autocomplete matches on and `userId` is
+ * the welcome ledger's key — a display name is neither, since two members can
+ * share one and a member can change theirs.
+ */
+export interface SkoolNewMember {
+  userId: string;
+  handle: string;
+  firstName: string;
+  displayName: string;
+  joinedAt: number;
 }
 
 /**
@@ -961,7 +991,18 @@ export interface SkoolSlot {
    * Tuesday slot was written as a classroom post and nothing on this screen
    * said so.
    */
-  kind: "lesson" | "mcp";
+  kind: "lesson" | "mcp" | "ask";
+  /**
+   * The new members this ask post greets, as stored JSON — settled when the slot
+   * opened, so a retry greets the people it was queued for.
+   *
+   * ⚠️ THESE ARE NOT IN `body` AND NEVER WILL BE. A mention only notifies when
+   * it is a real Skool mention node, and the body is delivered as one paste — so
+   * the publisher TYPES the chips into the composer ahead of it. A draft whose
+   * first line reads oddly on its own is reading correctly: it is written to
+   * follow a row of names.
+   */
+  mentionsJson: string;
   /**
    * The publisher's step log for this slot, kept whether it succeeded or not.
    * Where "⚠ Attachment SKIPPED" shows up — an attachment never blocks a post,
@@ -1034,8 +1075,23 @@ export const skoolEngageStatus = endpoint<
       /** Typed fields recorded as click targets — a recipe that cannot run. */
       unclickableFields: string[];
     };
+    /** Which posting day is the ask post, when one is configured. */
+    askDay: SkoolWeekday | null;
   }
 >("skoolEngageStatus");
+
+/**
+ * Who the next ask post would @mention.
+ *
+ * ⚠️ A BUTTON, NOT A FIELD ON THE STATUS RESPONSE. It walks the members pages in
+ * the shared headless browser, which is the expensive thing on this box — and
+ * possibly while a publish is halfway through a composer. Polling the status
+ * screen must not do that.
+ */
+export const skoolEngageNewMembers = endpoint<
+  void,
+  { members: SkoolNewMember[]; detail: string; error: string | null }
+>("skoolEngageNewMembers");
 
 export const skoolEngageConfigure = endpoint<
   Partial<SkoolEngageSchedule>,
@@ -1182,13 +1238,36 @@ export const skoolRepliesForget = endpoint<
 >("skoolRepliesForget");
 
 export const skoolDraftPost = endpoint<
-  { kind?: "lesson" | "mcp"; subject: string; category?: string },
-  { draft: SkoolDraft | null; error: string | null }
+  { kind?: "lesson" | "mcp" | "ask"; subject: string; category?: string },
+  {
+    draft: SkoolDraft | null;
+    error: string | null;
+    /**
+     * For an "ask" draft: the members the real post would greet, read live.
+     *
+     * ⚠️ THE BENCH DOES NOT MARK THEM WELCOMED. Drafting is not greeting, and a
+     * bench run that wrote the ledger would leave the next ask post with nobody
+     * to say hello to.
+     */
+    newMembers: SkoolNewMember[];
+  }
 >("skoolDraftPost");
 
 /** ⚠️ WRITES TO THE COMMUNITY. Takes finished text, never a subject. */
 export const skoolPublishPost = endpoint<
-  { title: string; body: string; category?: string | null },
+  {
+    title: string;
+    body: string;
+    category?: string | null;
+    /**
+     * Members to @mention ahead of the body, as real Skool mention chips.
+     *
+     * Publishing an ask draft without them posts a fragment: its first sentence
+     * is written to follow a row of names. Anyone passed here is recorded as
+     * welcomed, so the next scheduled ask post does not greet them again.
+     */
+    mentions?: SkoolNewMember[];
+  },
   { ok: boolean; detail: string; post: any | null }
 >("skoolPublishPost");
 

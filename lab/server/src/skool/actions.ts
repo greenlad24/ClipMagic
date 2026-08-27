@@ -803,7 +803,16 @@ async function bodyMustBeEmpty(): Promise<ActionResult> {
   return OK("The page editor is open and empty.");
 }
 
-async function focusBody(): Promise<boolean> {
+/**
+ * Put the caret in the tallest visible editor on screen — a lesson body, or the
+ * post composer's, which are the same ProseMirror document type.
+ *
+ * ⚠️ EXPORTED FOR THE MENTION WRITER (`mentions.ts`), which must type into that
+ * same editor before the body is pasted into it. A second implementation there
+ * would be a second definition of "which box is the body", and the pair would
+ * drift the first time Skool adds another contenteditable to the composer.
+ */
+export async function focusBody(): Promise<boolean> {
   const spot = await withSkoolPage(async (page) =>
     page.evaluate(() => {
       const doc: any = (globalThis as any).document;

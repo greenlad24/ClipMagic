@@ -31,6 +31,8 @@ import { getRecipe, type RecipeStep } from "./recipes.js";
 import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
 import { confirmEmailDialog, setEmailNotify } from "./emailNotify.js";
 import { attachToComposer } from "./attachments.js";
+import { typeMentions } from "./mentions.js";
+import type { SkoolMember } from "./members.js";
 import type { Attachment } from "./engageGen.js";
 
 export interface PostResult {
@@ -132,6 +134,20 @@ export interface CreatePostInput {
    * is logged and the post still publishes. The words are the post.
    */
   attachment?: Attachment | null;
+  /**
+   * Members to @mention at the very start of the body, as real mention chips.
+   *
+   * ⚠️ THESE CANNOT TRAVEL IN `body`, WHICH IS WHY THEY ARE A SEPARATE FIELD. A
+   * post body is delivered as ONE PASTE, and a pasted "@Name" is grey text that
+   * links to nobody and notifies nobody. A mention has to be TYPED so Skool's
+   * autocomplete can turn it into a node — see `typeMentions`, which does that
+   * immediately before the body is pasted in after it.
+   *
+   * Same failure direction as the attachment and the email switch: a member who
+   * cannot be tagged is dropped and said so in the step log; the post still goes
+   * out. The question is the post.
+   */
+  mentions?: SkoolMember[];
 }
 
 /**
@@ -626,6 +642,11 @@ async function composeBuiltIn(
   if (!titled.ok) return NOT_COMPOSED(titled.detail);
   step("Title filled");
 
+  // ⚠️ BEFORE THE BODY, NEVER AFTER. `appendBody` sends the caret to the end of
+  // the document and pastes there, so chips typed first land in front of the
+  // first sentence — which is where the drafter was told to expect them.
+  if (input.mentions?.length) step((await typeMentions(input.mentions)).detail);
+
   // The composer body is a ProseMirror document, same as a lesson's, so this is
   // the proven paste path: a real `paste` event carrying a DataTransfer. Typing
   // is its fallback and puts raw markdown characters on the page.
@@ -736,7 +757,16 @@ async function composeTaught(
   const emailNotes: string[] = [];
   const played: ReplayResult = await replaySteps(steps, vars, {
     guard: async (s) => ((s.text ?? "").trim() === "{{body}}" ? refuseIfComposerHoldsADraft() : null),
-    beforeStep: async (_s, i, total) => {
+    beforeStep: async (s, i, total) => {
+      // ⚠️ THE CHIPS GO IN ON THE {{body}} STEP, NOT AS A RECORDED ONE. A
+      // recording cannot carry them: it was made once, with whoever had joined
+      // that day, and replaying it would tag those same people every week. This
+      // hook runs AFTER the guard above has confirmed the composer is blank and
+      // BEFORE the step that pastes the body, which is the only moment the
+      // caret is in an empty editor.
+      if (input.mentions?.length && (s.text ?? "").trim() === "{{body}}") {
+        emailNotes.push((await typeMentions(input.mentions)).detail);
+      }
       if (i !== total - 1) return null;
       // Both happen at the last moment the composer is still open and editable.
       if (input.attachment) emailNotes.push(await attachNote(input.attachment));

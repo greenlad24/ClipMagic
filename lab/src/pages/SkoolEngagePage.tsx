@@ -32,6 +32,7 @@ import {
   skoolEngageTick,
   skoolEngagePublish,
   skoolEngageSubject,
+  skoolEngageNewMembers,
   skoolDraftPost,
   skoolPublishPost,
   type SkoolEngageSchedule,
@@ -39,6 +40,7 @@ import {
   type SkoolSlotState,
   type SkoolWeekday,
   type SkoolDraft,
+  type SkoolNewMember,
   skoolRepliesStatus,
   skoolRepliesConfigure,
   skoolRepliesSweep,
@@ -647,6 +649,46 @@ function SchedulePanel({
         ))}
       </div>
 
+      {/* ⚠️ THE ASK DAY IS A DAY, NOT A SWITCH, AND IT HAS TO BE ONE OF THE DAYS
+          ABOVE — the server refuses otherwise, because an ask day that is not a
+          posting day is an ask post that silently never runs. "None" keeps the
+          day and writes a lesson on it, which is a different decision from
+          dropping the day and should look like one. */}
+      <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <Field label="Ask the community (and greet new members) on">
+          <select
+            value={schedule.askDay ?? ''}
+            onChange={(e) => onEdit({ askDay: e.target.value ? (e.target.value as SkoolWeekday) : null })}
+            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+          >
+            <option value="">None — every day writes a lesson</option>
+            {schedule.days.map((d) => (
+              <option key={d} value={d}>{DAY_LABEL[d]}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="@mention members who joined in the last (days)">
+          <input
+            type="number" min={1} max={90}
+            value={schedule.askNewMemberDays}
+            onChange={(e) => onEdit({ askNewMemberDays: Number(e.target.value) })}
+            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+          />
+        </Field>
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        {schedule.askDay ? (
+          <>
+            On {DAY_LABEL[schedule.askDay]} it asks one question instead of teaching a lesson, opening by
+            @mentioning up to {schedule.askMaxMentions} members who joined in the last {schedule.askNewMemberDays} days.
+            Nobody is greeted twice, and a week with no new members still gets the question.
+            {' '}A pinned subject and a new-video announcement both step aside on that day and take the next one.
+          </>
+        ) : (
+          <>No ask post — every posting day writes a lesson, and new members are not greeted.</>
+        )}
+      </p>
+
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Hour (local to the timezone below)">
           <select
@@ -667,13 +709,26 @@ function SchedulePanel({
             className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
           />
         </Field>
+        {/* ⚠️ NEVER SMALLER THAN THE NUMBER OF DAYS ABOVE. A cap equal to the day
+            count already closed a Tuesday once (2026-08-18): three posting days
+            against a cap of three could never open the third. The cap guards
+            against a day list nobody meant to widen — it is not a second
+            schedule. */}
         <Field label="Most scheduled posts in a week">
           <input
             type="number" min={1} max={14}
             value={schedule.maxPostsPerWeek}
             onChange={(e) => onEdit({ maxPostsPerWeek: Number(e.target.value) })}
-            className="w-full rounded-md border bg-background px-2 py-1.5 text-sm"
+            className={`w-full rounded-md border bg-background px-2 py-1.5 text-sm ${
+              schedule.maxPostsPerWeek < schedule.days.length ? 'border-amber-500' : ''
+            }`}
           />
+          {schedule.maxPostsPerWeek < schedule.days.length && (
+            <p className="mt-1 text-xs text-amber-600">
+              Lower than the {schedule.days.length} posting days — {schedule.days.length - schedule.maxPostsPerWeek}{' '}
+              of them will close themselves each week.
+            </p>
+          )}
         </Field>
         <Field label="Give up after this many tries">
           <input
@@ -731,6 +786,22 @@ function SchedulePanel({
       </p>
     </section>
   );
+}
+
+/**
+ * The members a slot will greet, out of its stored blob.
+ *
+ * Tolerates anything: this is display-only, and a slot with a corrupt mentions
+ * blob still publishes its question — the server parses the same field again,
+ * field by field, before typing any of it into a live composer.
+ */
+function mentionsOf(slot: SkoolSlot): SkoolNewMember[] {
+  try {
+    const list = JSON.parse(slot.mentionsJson || '[]');
+    return Array.isArray(list) ? list.filter((m: any) => m?.displayName) : [];
+  } catch {
+    return [];
+  }
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -830,7 +901,29 @@ function SlotRow({
           <div className="text-xs text-muted-foreground">
             Subject: <span className="text-foreground">{slot.subject}</span>
             {slot.category && <> · Category: <span className="text-foreground">{slot.category}</span></>}
+            {' · '}Written as{' '}
+            <span className="text-foreground">
+              {slot.kind === 'mcp' ? 'an automation tutorial' : slot.kind === 'ask' ? 'a question to the community' : 'a lesson post'}
+            </span>
           </div>
+
+          {/* ⚠️ THE MENTIONS ARE NOT IN THE BODY BELOW AND NEVER WILL BE. They
+              are typed into the composer as real Skool chips ahead of the pasted
+              text — which is why a draft that opens mid-sentence is correct. The
+              step log records any that could not be written. */}
+          {slot.kind === 'ask' && (
+            <div className="text-xs text-muted-foreground">
+              {mentionsOf(slot).length ? (
+                <>
+                  Opens by mentioning{' '}
+                  <span className="text-foreground">{mentionsOf(slot).map((m) => `@${m.displayName}`).join(', ')}</span>
+                  {' — added to the composer as real mentions, ahead of the body.'}
+                </>
+              ) : (
+                <>Nobody new to greet — it opens straight on the question.</>
+              )}
+            </div>
+          )}
 
           {/* A queued slot is nearly always waiting on a rate limit, so say
               which it is rather than showing a bare error string. */}
@@ -1313,7 +1406,11 @@ function DraftBench({
   onPosted: () => void;
 }) {
   const [subject, setSubject] = useState('');
-  const [kind, setKind] = useState<'lesson' | 'mcp'>('lesson');
+  const [kind, setKind] = useState<'lesson' | 'mcp' | 'ask'>('lesson');
+  // The members an "ask" draft would greet, as the server read them. Kept beside
+  // the draft rather than inside it: the chips are typed into the composer, not
+  // written into the body, so the body alone cannot show the real opening line.
+  const [greeting, setGreeting] = useState<SkoolNewMember[]>([]);
   const [category, setCategory] = useState('');
   const [draft, setDraft] = useState<SkoolDraft | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -1352,6 +1449,24 @@ function DraftBench({
           disabled={!!busy}
           onClick={() =>
             go('subject', async () => {
+              // ⚠️ THE LESSON PICKER IS THE WRONG SOURCE FOR AN ASK POST — it
+              // returns a thing to TEACH, and fed one the drafter writes a
+              // lesson with a question stapled on. For "ask" this asks the
+              // server who would be greeted instead, and leaves the question
+              // itself to the drafter, which is where it is chosen on a real
+              // Thursday too.
+              if (kind === 'ask') {
+                const who = await skoolEngageNewMembers();
+                setGreeting(who.members);
+                setResult(
+                  who.error
+                    ? `Could not read the members list: ${who.error}`
+                    : who.members.length
+                      ? `Would greet ${who.members.map((m) => `@${m.displayName}`).join(', ')}. ${who.detail}`
+                      : `Nobody new to greet — the post would open straight on the question. ${who.detail}`,
+                );
+                return;
+              }
               const out = await skoolEngageSubject();
               if (out.subject) setSubject(out.subject);
               if (out.error) setProblem(out.error);
@@ -1360,20 +1475,20 @@ function DraftBench({
           className="inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs disabled:opacity-50"
         >
           {busy === 'subject' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-          What would it pick?
+          {kind === 'ask' ? 'Who would it greet?' : 'What would it pick?'}
         </button>
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className="flex overflow-hidden rounded-md border text-xs">
-          {(['lesson', 'mcp'] as const).map((k) => (
+          {(['lesson', 'mcp', 'ask'] as const).map((k) => (
             <button
               key={k}
               type="button"
               onClick={() => setKind(k)}
               className={`px-2.5 py-1 ${kind === k ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
             >
-              {k === 'lesson' ? 'From a lesson' : 'MCP / tooling'}
+              {k === 'lesson' ? 'From a lesson' : k === 'mcp' ? 'MCP / tooling' : 'Ask the community'}
             </button>
           ))}
         </div>
@@ -1396,6 +1511,7 @@ function DraftBench({
                 ...(category ? { category } : {}),
               });
               setDraft(out.draft);
+              setGreeting(out.newMembers ?? []);
               if (out.error) setProblem(out.error);
             })
           }
@@ -1433,8 +1549,26 @@ function DraftBench({
         <div className="space-y-3">
           <div className="rounded-md border bg-muted/30 p-3">
             <div className="mb-1.5 text-sm font-semibold">{draft.title}</div>
-            <div className="whitespace-pre-wrap text-sm leading-relaxed">{draft.body}</div>
+            {/* Shown INLINE with the body, because that is where they land: the
+                chips are typed into the composer first and the body is pasted
+                straight after them, on the same line. Rendering them separately
+                would hide the one thing worth checking — whether the first
+                sentence reads properly after a row of names. */}
+            <div className="whitespace-pre-wrap text-sm leading-relaxed">
+              {kind === 'ask' && greeting.length > 0 && (
+                <span className="font-medium text-[hsl(var(--chart-1))]">
+                  {greeting.map((m) => `@${m.displayName}`).join(' ')}{' '}
+                </span>
+              )}
+              {draft.body}
+            </div>
           </div>
+          {kind === 'ask' && greeting.length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              The coloured names are not part of the text — they are typed into the composer as real Skool
+              mentions when this is published, which is the only way they notify anybody.
+            </p>
+          )}
           <Cited cited={draft.cited} />
           {/* Which model wrote it, stated plainly — a draft in the wrong voice
               does not verify the thing that needs verifying. */}
@@ -1459,6 +1593,11 @@ function DraftBench({
                         title: draft.title,
                         body: draft.body,
                         category: draft.category,
+                        // ⚠️ WITHOUT THIS THE BENCH PUBLISHES A FRAGMENT. An ask
+                        // draft's first sentence is written to follow a row of
+                        // names; posted without them it opens mid-thought, and
+                        // the members it was written for are never notified.
+                        ...(kind === 'ask' && greeting.length ? { mentions: greeting } : {}),
                       });
                       if (out.ok) {
                         setResult(out.detail);
