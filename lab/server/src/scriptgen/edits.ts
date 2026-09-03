@@ -461,12 +461,14 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
 // ── Canonical outro ───────────────────────────────────────────────────────────
 
 /**
- * Jake's fixed closing, word for word. Every script ends exactly this way — no
- * teasing what the next video is about, because YouTube picks it. Applied in
- * code so it's verbatim, not approximated by the model.
+ * Jake's fixed closing, word for word. Every script ends exactly this way.
+ * Applied in code so it is verbatim rather than approximated by the model.
+ *
+ * It now carries the socials and the bell itself, so the outro stage is told NOT
+ * to write those — otherwise the video asks for both twice, thirty seconds apart.
  */
 export const CANONICAL_OUTRO =
-  "Thanks so much for hanging out with me today. Before you click away, here's a video you'll probably want to watch next — YouTube's pretty good at this, it'll line up the one video it thinks you'll love next. Just click the video to my left and you'll see exactly what I'm talking about. See you there.";
+  "Oh and by the way, follow me on TikTok and Instagram, because I post short clips there I usually don't put up here, and honestly... well, go over there and see for yourself. The links are down in the description. And I'm starting a new live show on this channel — so click that notification bell to catch the latest show or video the second it goes up. That's the place where you can ask me questions and actually connect with me.\n\nThank you so much for hanging out with me today, and I'll see you in the next video, where we take this further and I build out a full week of workflows start to finish. Just click the video to my left and you'll see exactly what I mean. See you there.";
 
 /** The phrases that mark where the model's own sign-off / next-video tease begins. */
 const SIGN_OFF_TRIGGERS = [
@@ -476,6 +478,9 @@ const SIGN_OFF_TRIGGERS = [
   /\bhere'?s a video you/i,
   /\bclick the video to my left\b/i,
   /\bthanks (?:so much |a lot )?for (?:hanging|watching|sticking)/i,
+  /\bthank you so much for hanging\b/i,
+  /\bfollow me on (?:tiktok|instagram|ig)\b/i,
+  /\boh and by the way\b/i,
   /\bcatch you (?:in|on|next|later)\b/i,
   /\b(?:i'?ll )?see you (?:in|next|there|soon)\b/i,
   /\bthat'?s (?:it|all) for (?:today|this one)\b/i,

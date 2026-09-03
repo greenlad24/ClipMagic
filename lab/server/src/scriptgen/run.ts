@@ -525,12 +525,10 @@ function outroNoVerdictBlock(videoType: VideoType, sponsored: boolean, sponsorNa
     "",
     sponsored
       ? `1. **The ${sponsorName} link.** It's free to start (if it is) — tell them where to go. One or two sentences, warm, no pressure.`
-      : "1. **Skool** — only if this video referenced prompts, templates, or resources people would want. One soft sentence, link's in the description. Skip it entirely otherwise.",
-    "2. **Social** — follow on TikTok and Instagram, because Jake posts short clips there he doesn't put on YouTube. Links in the description.",
-    "3. **The bell** — click the notification bell so they catch the next one the second it goes up.",
-    "4. **The comment prompt** — a real question about THIS video's topic, the kind Jake would actually want answered. \"Which of these would you build first?\" He reads every one.",
+      : "1. **Skool** — only if this video referenced prompts, templates, or resources people would want, AND the script has not already mentioned the free course earlier. One soft sentence, link's in the description. One Skool mention per video, so skip this entirely if it has already happened.",
+    "2. **The comment prompt** — a real question about THIS video's topic, the kind Jake would actually want answered. \"Which of these would you build first?\" He reads every one.",
     "",
-    "STOP THERE. Do NOT write a sign-off, do NOT tease the next video, do NOT say what's coming up, do NOT say \"thanks for watching\" or \"see you\". A fixed closing line is added automatically after your outro — anything you write along those lines will be deleted. End on the comment prompt.",
+    "STOP THERE, on the comment prompt. Do NOT write a sign-off, do NOT tease the next video, do NOT say what's coming up, do NOT say \"thanks for watching\" or \"see you\". **And do NOT write the socials or the notification bell** — no TikTok, no Instagram, no bell, no live show. A fixed closing block is added automatically after your outro and it already says all of that, word for word. Anything you write along those lines is deleted, and if you write it the video asks twice.",
     "",
     "Keep the whole thing under about 160 words. Warm, quick, no lingering.",
   ].join("\n");
@@ -553,7 +551,7 @@ function reviewStructureGuard(videoType: VideoType): string {
     "This script is built as three use-case stories, then pricing, then a very short honest-thoughts beat. That is the intended shape. When the checklist above asks whether honest thoughts are included, the short honest-thoughts beat satisfies it — as do the honest bits woven inside the stories.",
     "",
     "Do not add a pros-and-cons section. Do not add a cons section. Do not add a final verdict, a scorecard, or a 'who should buy this'. Do not expand the honest-thoughts beat beyond about thirty seconds, and do not turn it into a balanced weighing of good against bad. Do not reorganise the stories into a feature list.",
-    "The script ends with a fixed closing line (\"Thanks so much for hanging out… See you there.\"). Leave it exactly as it is. Do not tease the next video's topic, do not add or change the sign-off.",
+    "The script ends with a fixed closing block (\"Oh and by the way, follow me on TikTok and Instagram… See you there.\") that carries the socials, the notification bell and the sign-off. Leave it exactly as it is. Do not add a sign-off of your own, do not add the socials or the bell anywhere else, and do not change its wording.",
     "",
     "Fix voice, clarity, accuracy, and reading level. Leave the architecture alone.",
   ].join("\n");

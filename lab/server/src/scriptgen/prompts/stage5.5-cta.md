@@ -11,9 +11,10 @@ The whole point: the viewer should never feel "sold to." Each CTA rides in on th
 | CTA | Where it goes | Action wanted | Tone |
 |---|---|---|---|
 | **Subscribe + Like** | In the intro, on the welcome line — "welcome back to the channel…" then the ask | Subscribe AND like the video | Light, almost throwaway. Never commercial. |
+| **Free course** | Once, mid-script, on a moment where someone would want to go deeper | Join the free course in the Skool community | Soft. An offer, not a pitch. Easy to walk past. |
 | **Comment** | Once, at the **END**, in the outro | Comment a topic-specific reply | Curious, like Jake actually wants to hear it |
 
-**Two moments in the whole video. Never more.** The intro ask (subscribe and like, said together in one breath) and the comment ask at the end. Nothing in between, and nothing repeated.
+**Three moments in the whole video. Never more.** The intro ask (subscribe and like, said together in one breath), the free-course mention somewhere in the middle, and the comment ask at the end. Well spaced, never clustered, never repeated.
 
 ---
 
@@ -55,7 +56,33 @@ What stays mid-video is the content. A payoff beat keeps its payoff — you are 
 
 ---
 
-## RULE 3 — COMMENT goes once, at the END, and it's topic-specific
+## RULE 3 — THE FREE COURSE goes once, mid-script, and it has to be soft
+
+Jake has a free course inside his Skool community. This is the one place in the video it gets mentioned, and it is the softest CTA of the three — an offer left on the table, not an ask.
+
+**Where it goes:** on a moment where the viewer has just seen something work and would plausibly want more of it — right after a result lands, or right after a step that was clearly the bigger piece of the puzzle. It rides that beat the way the like ask used to: content first, one sentence, then straight back to the work.
+
+Good (soft, earns its place, easy to walk past):
+> "...and that's the whole workflow running on its own. If you want to go deeper on this stuff, I've got a free course inside my Skool community that walks through it properly — link's in the description, it costs nothing. Anyway — next thing."
+
+> "That's the part most people get stuck on. I actually built a free course in my Skool community that covers this end to end, if you want it. Link's below. Alright, moving on."
+
+Bad (pitchy, urgent, or bolted onto nothing):
+> ❌ "Make sure you join my free course right now — spots are limited!"
+> ❌ "Before we continue, go sign up for my free course."
+> ❌ A mention floating between two sections, attached to no moment.
+
+**Rules for the free-course CTA:**
+- **Once. Anywhere in the middle** — not in the hook, not in the first thirty seconds, not in the outro.
+- It says the course is **free** and that it lives in the Skool community. Link's in the description.
+- One or two sentences, then pivot back to content in the same breath.
+- No urgency, no scarcity, no "you need this". If the viewer walks past it, that is fine — it is there for the people who want more.
+- **One Skool mention per video.** If you place this, the outro must not also plug Skool. Say so in the notes so the check is easy.
+- Skip it entirely if this video's content gives no natural moment for it — a forced one is worse than none.
+
+---
+
+## RULE 4 — COMMENT goes once, at the END, and it's topic-specific
 
 The comment ask lives in the outro, near the sign-off. Not mid-video. It's not "comment below!" — it's Jake asking something specific he'd actually be curious to hear answers to, tied to whatever the video is about.
 
@@ -77,16 +104,16 @@ Bad (generic, no topic hook):
 
 ---
 
-## RULE 4 — REMOVE any comment prompt sitting MID-VIDEO
+## RULE 5 — REMOVE any comment prompt sitting MID-VIDEO
 
-The comment ask belongs at the end (Rule 3). If a comment / "let me know below" / engagement question has landed in the middle of the script, take it out.
+The comment ask belongs at the end (Rule 4). If a comment / "let me know below" / engagement question has landed in the middle of the script, take it out.
 
 When running this pass:
 1. Find any comment or engagement-question CTA before the final ~90 seconds.
 2. Delete it, and stitch the surrounding lines back together so the section still flows.
 3. Make sure exactly one comment ask survives, and that it's the one at the end.
 
-**Like and subscribe are handled by Rules 1 and 2** — both ride the hook's welcome line, and any second ask mid-video comes out.
+**Like and subscribe are handled by Rules 1 and 2** — both ride the hook's welcome line, and any second ask mid-video comes out. The free-course mention (Rule 3) stays where it is.
 
 ---
 
@@ -109,10 +136,11 @@ Return exactly three delimited blocks, in this order, with the delimiter lines w
 ===HOOKS===
 (All four hook options, reproduced in full and unchanged, except the subscribe-and-like ask is now tagged onto each welcome/identity beat.)
 ===SCRIPT===
-(The full script — sections and outro — with any mid-video like, subscribe or comment ask removed, and exactly one comment ask surviving at the END, in the outro.)
+(The full script — sections and outro — with the free-course mention placed once in the middle, any mid-video like, subscribe or comment ask removed, and exactly one comment ask surviving at the END, in the outro.)
 ===NOTES===
 (A short bullet list of exactly what you placed and where, so Jake can sanity-check placement. For example:
 - Subscribe + like: tagged onto the welcome line in all four hooks.
+- Free course: after the first workflow runs on its own, in "Building the workflow". Outro Skool plug not needed.
 - Comment: at the end of the outro, tied to what the viewer would build first.
 - Removed: the like ask after the first result in "Building the workflow".)
 

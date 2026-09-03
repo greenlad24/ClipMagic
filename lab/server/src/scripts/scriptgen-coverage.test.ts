@@ -6,6 +6,8 @@
  *     node --experimental-strip-types /t.ts
  */
 import {
+  CANONICAL_OUTRO,
+  ensureCanonicalOutro,
   findBannedWords,
   parseCoveragePass,
   parseOutlineSections,
@@ -363,6 +365,30 @@ check("the other banned words still fire", findBannedWords("That is genuinely cl
 check("neat is banned too", findBannedWords("That is a neat trick.").length === 1);
 check("a word merely starting with a banned one is safe", findBannedWords("He worked neatly and cleverly.").length === 0);
 check("a word merely containing one is not flagged", findBannedWords("She caveated nothing; whichever works.").length === 0);
+
+// ── the fixed closing ────────────────────────────────────────────────────────
+// It now carries the socials and the bell, so the risk is the video asking twice.
+
+check("the closing block is appended when the script has no sign-off",
+  ensureCanonicalOutro("So that is the whole workflow.").endsWith(CANONICAL_OUTRO));
+check("the model's own sign-off is replaced, not duplicated",
+  (() => {
+    const out = ensureCanonicalOutro("That is the workflow. Thanks for watching — catch you in the next one.");
+    return out.endsWith(CANONICAL_OUTRO) && !out.includes("catch you in the next one");
+  })());
+check("a socials block the model wrote itself is cut, so it is not said twice",
+  (() => {
+    const out = ensureCanonicalOutro("That is the workflow. Oh and by the way, follow me on TikTok and Instagram, links below. See you!");
+    return out.split("follow me on TikTok").length === 2;
+  })());
+check("the comment prompt before the sign-off survives",
+  ensureCanonicalOutro("Which one would you build first? I read every one. Thanks for watching, see you next time.")
+    .includes("I read every one."));
+check("a 'see you' early in the body is not mistaken for the sign-off",
+  (() => {
+    const body = "See you in the dashboard, right there. " + "Then the workflow runs. ".repeat(60) + "That is it.";
+    return ensureCanonicalOutro(body).includes("See you in the dashboard");
+  })());
 
 console.log("");
 if (fail.length) {
