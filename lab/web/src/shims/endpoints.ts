@@ -541,6 +541,8 @@ export interface ScriptInput {
   targetLength?: string;
 }
 export type ScriptVideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
+/** "outline" stops the run once the outline exists; "full" writes the video. */
+export type ScriptMode = "full" | "outline";
 export interface Stage0Result {
   videoTypeDetailed: string;
   videoType: ScriptVideoType;
@@ -556,6 +558,8 @@ export interface ScriptSetup {
   specificFocus: string;
   sponsorship: Sponsorship;
   targetLength: string;
+  /** Defaults to "full" — runs made before outline mode carry no mode. */
+  mode?: ScriptMode;
 }
 export interface ScriptSection {
   name: string;
@@ -654,6 +658,8 @@ export interface ScriptRunListItem {
   videoType: ScriptVideoType | null;
   status: ScriptRunStatus;
   createdAt: number;
+  /** What the run produced, so an outline isn't mistaken for a finished script. */
+  mode: ScriptMode;
   generationMs: number;
 }
 export interface ScriptJobSnapshot {

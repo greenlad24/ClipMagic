@@ -9,6 +9,12 @@
  *      methodology as a fire-and-forget background job (runScript). The frontend
  *      polls getScriptSnapshot(jobId) for phase/percent while it runs.
  *
+ * setup.mode picks how far that job goes: "full" writes the video, "outline"
+ * stops once the outline exists (research → fact sheet → outline → brief
+ * coverage) and ships that as the deliverable. A finished outline run can be
+ * continued into a full script later — every stage it bought is persisted, so
+ * the script picks up at the hooks.
+ *
  * runScript() runs the stages VERBATIM and IN SEQUENCE on Opus 4.8, persisting
  * ScriptStages to the DB incrementally after each stage, and NEVER throws — any
  * failure is captured onto both the job and the run row as status 'failed'.
@@ -55,6 +61,7 @@ import type {
   ScriptRunStatus,
   RefineMessage,
   VideoType,
+  ScriptMode,
 } from "./types.js";
 
 // ── Stage 2 research-paste block ──────────────────────────────────────────────
@@ -98,6 +105,11 @@ function coerceVideoType(v: unknown): VideoType {
 
 /** The Stage 3 / hook "SPONSORSHIP STATUS" line for a given sponsorship. */
 export function sponsorshipLabel(s: Sponsorship | undefined | null): string {
+/** A setup's mode. Runs that predate outline mode have none, and were all full. */
+function modeOf(setup: ScriptSetup | null | undefined): ScriptMode {
+  return setup?.mode === "outline" ? "outline" : "full";
+}
+
   if (!s || s.mode === "organic") return "Organic";
   const name = (s.sponsorName || "the sponsor").trim() || "the sponsor";
   if (s.mode === "whole-video") return `Whole-video sponsorship — ${name}`;
@@ -267,7 +279,15 @@ export function continueScript(runId: string, setup: ScriptSetup): { jobId: stri
   // the same row — the second silently overwrites the first, and both bill Opus.
   // A failed run may be resumed: every stage it already paid for is persisted,
   // and runScript skips whatever is present. A completed or running one may not.
-  if (run.status !== "awaiting_confirmation" && run.status !== "failed") {
+  //
+  // The one exception is a finished OUTLINE run being turned into a script. That
+  // isn't a re-run: an outline is a stopping point by design, and the research,
+  // fact sheet and outline it paid for are all persisted, so this picks up at the
+  // hooks. There is nothing to overwrite — the outline stays in stages.outline,
+  // and only the outline-shaped finalDocument is replaced by the script.
+  const upgradingOutline =
+    run.status === "completed" && modeOf(run.setup) === "outline" && modeOf(setup) === "full";
+  if (run.status !== "awaiting_confirmation" && run.status !== "failed" && !upgradingOutline) {
     throw new ZiteError({
       code: "BAD_REQUEST",
       message: `This script is already ${run.status}; it cannot be started again.`,
@@ -879,6 +899,35 @@ async function runScript(
     ].filter(Boolean);
     if (done.length) console.log(`[scriptgen] resuming run ${runId}; already paid for: ${done.join(", ")}`);
   }
+/**
+ * The deliverable for an outline-only run.
+ *
+ * It is the outline exactly as Stage 2 (and, where there's a brief, Stage 2.5)
+ * left it — the same artifact the section writers would have worked from, not a
+ * summary of it — under a header that says what has and hasn't been written. The
+ * point of stopping here is to read the plan before paying for the prose, so the
+ * plan has to be the real one.
+ */
+function buildOutlineDocument(
+  title: string,
+  videoType: VideoType,
+  budget: number,
+  stages: ScriptStages,
+): string {
+  const head = [
+    `# ${title}`,
+    "",
+    `**Detailed outline** — ${videoType}, built for about ${budget} words of script (~${Math.round(budget / 150)} minutes).`,
+    "",
+    "Outline only: the hooks, the section drafts, the outro and the review passes have not been written yet. The research, sources and fact sheet behind this outline are saved with the run, so writing the full script from it doesn't pay for them again.",
+  ];
+  const coverage = stages.briefCoverage;
+  if (coverage) {
+    head.push("", `**Brief coverage: ${coverage.score}/100** — ${coverage.verdict}`);
+  }
+  return `${head.join("\n")}\n\n---\n\n${stages.outline ?? ""}`;
+}
+
 
   const persist = () => updateRun(runId, { stages });
   // The spend cap is per run, not per process.
@@ -915,7 +964,7 @@ async function runScript(
     // persisted after it completes. If a later stage failed and this run is being
     // started again, reuse what was bought rather than buying it twice.
     if (!stages.research) {
-    progress(job, "Researching the web…", 10);
+    progress(job, "Researching the web…", PCT.research);
     const s1 = fill(loadPrompt("stage1-research"), {
       "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
       "[INSERT VIDEO TITLE HERE]": title,
@@ -942,11 +991,40 @@ async function runScript(
     }
 
     // ── Stage 1.5 — FACT SHEET ──
+  const mode = modeOf(setup);
+
+  // An outline-only run does four of the eleven stages, so its progress bar
+  // spreads those four across the whole width rather than crawling to 38% and
+  // jumping to done.
+  const PCT =
+    mode === "outline"
+      ? { research: 12, facts: 35, outline: 58, coverage: 80 }
+      : { research: 10, facts: 22, outline: 30, coverage: 38 };
+
+  /** Close the job + the run row: same accounting whichever stage we stopped at. */
+  const finish = (): void => {
+    const generationMs = priorGenerationMs + (Date.now() - runStartedAt);
+    const spend = scriptgenUsageTotal();
+    console.log(
+      `[scriptgen:usage] TOTAL(run) calls=${spend.calls} in=${spend.input} out=${spend.output} ` +
+        `cache_read=${spend.cacheRead} cache_write=${spend.cacheWrite} $${spend.costUsd.toFixed(2)} ` +
+        `${(spend.ms / 1000).toFixed(0)}s api | ${fmtDuration(generationMs)} wall`,
+    );
+    console.log(
+      `[scriptgen:time] run ${runId} completed in ${fmtDuration(generationMs)} (${generationMs} ms wall clock)`,
+    );
+    progress(job, "Done", 100);
+    job.status = "completed";
+    job.costUsd = Number(spend.costUsd.toFixed(4));
+    job.updatedAt = Date.now();
+    updateRun(runId, { status: "completed", generationMs });
+  };
+
     // The outline compresses; the section writer is told to use the outline only.
     // Anything checkable that the outline drops has to survive somewhere, or the
     // writer fills the hole from memory. This is that somewhere.
     if (!stages.factSheet) {
-    progress(job, "Pulling out the checkable facts…", 22);
+    progress(job, "Pulling out the checkable facts…", PCT.facts);
     const s15 = fill(loadPrompt("stage1.5-factsheet"), {
       "[TODAY'S DATE]": today,
       "[INSERT TITLE]": title,
@@ -965,7 +1043,7 @@ async function runScript(
 
     // ── Stage 2 — OUTLINE ──
     if (!stages.outline) {
-    progress(job, "Building the outline…", 30);
+    progress(job, "Building the outline…", PCT.outline);
     const s2 = fill(loadPrompt("stage2-outline"), {
       "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
       "[INSERT VIDEO TITLE HERE]": title,
@@ -1001,7 +1079,7 @@ async function runScript(
     // script and can only reach for a scalpel — it scored the Expertise run
     // 48/100, said three requests "need their own section", and shipped anyway.
     if (brief && !stages.briefCoverage) {
-      progress(job, "Checking the outline against the brief…", 38);
+      progress(job, "Checking the outline against the brief…", PCT.coverage);
       const s25 = fill(loadPrompt("stage2.5-coverage"), {
         "[INSERT TITLE]": title,
         "[PASTE THE BRIEF]": brief,
@@ -1115,6 +1193,18 @@ async function runScript(
     const atFloor = sectionBudgets.filter((w) => w === MIN_SECTION_WORDS).length;
     if (declaredSum > pot * 1.05 || atFloor > 0) {
       console.warn(
+    // ── Outline-only runs stop here ──
+    // Everything above is the plan; everything below writes the video from it.
+    // Nothing is discarded — the run keeps its research, fact sheet and outline,
+    // so "write the full script" resumes at the hooks instead of buying them again.
+    if (mode === "outline") {
+      progress(job, "Assembling the outline…", 95);
+      const outlineDoc = buildOutlineDocument(title, videoType, budget, stages);
+      updateRun(runId, { stages, finalDocument: outlineDoc });
+      finish();
+      return;
+    }
+
         `[scriptgen:budget] the outline asks for ~${declaredSum} words but "${targetLength}" funds ~${Math.round(pot)}; ` +
           `scaled to fit${atFloor ? `, and ${atFloor}/${total} section(s) landed on the ${MIN_SECTION_WORDS}-word floor` : ""}. ` +
           `If the brief genuinely needs this much, raise the target length.`,
@@ -1375,19 +1465,7 @@ async function runScript(
     updateRun(runId, { stages, finalDocument });
 
     // ── Done ──
-    const generationMs = priorGenerationMs + (Date.now() - runStartedAt);
-    const spend = scriptgenUsageTotal();
-    console.log(
-      `[scriptgen:usage] TOTAL(run) calls=${spend.calls} in=${spend.input} out=${spend.output} ` +
-        `cache_read=${spend.cacheRead} cache_write=${spend.cacheWrite} $${spend.costUsd.toFixed(2)} ` +
-        `${(spend.ms / 1000).toFixed(0)}s api | ${fmtDuration(generationMs)} wall`,
-    );
-    console.log(`[scriptgen:time] run ${runId} completed in ${fmtDuration(generationMs)} (${generationMs} ms wall clock)`);
-    progress(job, "Done", 100);
-    job.status = "completed";
-    job.costUsd = Number(spend.costUsd.toFixed(4));
-    job.updatedAt = Date.now();
-    updateRun(runId, { status: "completed", generationMs });
+    finish();
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const generationMs = priorGenerationMs + (Date.now() - runStartedAt);

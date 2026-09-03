@@ -18,6 +18,7 @@ import type {
   ScriptRunResult,
   ScriptRunListItem,
   ScriptRunStatus,
+  ScriptMode,
   RefineMessage,
   VideoType,
 } from "../scriptgen/types.js";
@@ -230,15 +231,28 @@ export function getRun(id: string): ScriptRunResult | null {
   return row ? rowToResult(row) : null;
 }
 
-/** Saved-scripts history rows, newest first. */
+/**
+ * Saved-scripts history rows, newest first.
+ *
+ * The mode lives inside setup_json rather than in a column of its own — it is
+ * set at the same moment as the rest of the setup, and a JSON field needs no
+ * migration. That costs this query the setup blob per row (a few hundred bytes),
+ * which is cheaper than a schema change and keeps the two in one place.
+ */
 export function listRuns(): ScriptRunListItem[] {
   const rows = db
-    .prepare("SELECT id, title, video_type, status, created_at, generation_ms FROM script_runs ORDER BY created_at DESC")
-    .all() as Array<Pick<ScriptRunRow, "id" | "title" | "video_type" | "status" | "created_at" | "generation_ms">>;
+    .prepare(
+      "SELECT id, title, video_type, status, created_at, generation_ms, setup_json FROM script_runs ORDER BY created_at DESC",
+    )
+    .all() as Array<
+      Pick<ScriptRunRow, "id" | "title" | "video_type" | "status" | "created_at" | "generation_ms" | "setup_json">
+    >;
   return rows.map((r) => ({
     id: r.id,
     title: r.title,
     videoType: (r.video_type as VideoType | null) ?? null,
+    // Runs that predate outline mode carry no mode; they were all full scripts.
+    mode: (safeParse<ScriptSetup>(r.setup_json)?.mode as ScriptMode | undefined) ?? "full",
     status: r.status as ScriptRunStatus,
     createdAt: r.created_at,
     generationMs: r.generation_ms ?? 0,

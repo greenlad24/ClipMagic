@@ -16,6 +16,7 @@ import {
   type ScriptRunListItem,
   type ScriptJobSnapshot,
   type ScriptVideoType,
+  type ScriptMode,
   type ScriptSection,
   type SponsorshipMode,
   type Sponsorship,
@@ -56,6 +57,7 @@ import {
   FlaskConical,
   Megaphone,
   Wand2,
+  ListTree,
 } from 'lucide-react';
 
 /**
@@ -444,12 +446,15 @@ export default function ScriptGeneratorPage() {
   const [sponsorMode, setSponsorMode] = useState<SponsorshipMode>('organic');
   const [sponsorName, setSponsorName] = useState('');
   const [targetLength, setTargetLength] = useState('');
-  const [starting, setStarting] = useState(false);
+  // Which button is in flight, so only the one that was clicked spins.
+  const [starting, setStarting] = useState<ScriptMode | null>(null);
+  // What the user asked for on the way in, so the checkpoint leads with it.
+  const [requestedMode, setRequestedMode] = useState<ScriptMode>('full');
 
   // Active run + long-job.
   const [run, setRun] = useState<ScriptRunResult | null>(null);
   const [job, setJob] = useState<ScriptJobSnapshot | null>(null);
-  const [continuing, setContinuing] = useState(false);
+  const [continuing, setContinuing] = useState<ScriptMode | null>(null);
   const [loadingRun, setLoadingRun] = useState(false);
 
   // Checkpoint editable fields (seeded from stage0 on entry).
@@ -570,7 +575,12 @@ export default function ScriptGeneratorPage() {
     return { mode: sponsorMode, sponsorName: sponsorName.trim() || null };
   }
 
-  const generate = async () => {
+  /**
+   * Both entry buttons run Stage 0 — the classifier has to propose a type and a
+   * title either way. The mode only decides how far the job goes after the
+   * checkpoint, so it's remembered here and applied there.
+   */
+  const generate = async (mode: ScriptMode) => {
     const trimmed = idea.trim();
     if (!trimmed) {
       toast.error('Describe the video idea first');
@@ -580,7 +590,8 @@ export default function ScriptGeneratorPage() {
     if (brief.trim()) input.brief = brief.trim();
     if (targetLength.trim()) input.targetLength = targetLength.trim();
 
-    setStarting(true);
+    setStarting(mode);
+    setRequestedMode(mode);
     setJob(null);
     try {
       const { runId } = await startScript(input);
@@ -591,26 +602,41 @@ export default function ScriptGeneratorPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not start the script');
     } finally {
-      setStarting(false);
+      setStarting(null);
     }
   };
 
-  const confirmSetup = async () => {
-    if (!run) return;
-    const title = cpTitle.trim();
-    if (!title) {
-      toast.error('Give the video a title');
-      return;
+  /**
+   * The setup to generate from. At the checkpoint that's the editable fields;
+   * turning a finished outline into a script reuses the setup it was built from,
+   * so the script matches the outline rather than whatever is on screen.
+   */
+  const setupFor = (mode: ScriptMode): ScriptSetup | null => {
+    if (!run) return null;
+    if (run.status === 'awaiting_confirmation') {
+      const title = cpTitle.trim();
+      if (!title) {
+        toast.error('Give the video a title');
+        return null;
+      }
+      return {
+        videoType: cpVideoType,
+        title,
+        coreTopic: cpCoreTopic.trim(),
+        specificFocus: cpSpecificFocus.trim(),
+        sponsorship: run.input.sponsorship ?? { mode: 'organic', sponsorName: null },
+        targetLength: run.input.targetLength ?? '',
+        mode,
+      };
     }
-    const setup: ScriptSetup = {
-      videoType: cpVideoType,
-      title,
-      coreTopic: cpCoreTopic.trim(),
-      specificFocus: cpSpecificFocus.trim(),
-      sponsorship: run.input.sponsorship ?? { mode: 'organic', sponsorName: null },
-      targetLength: run.input.targetLength ?? '',
-    };
-    setContinuing(true);
+    return run.setup ? { ...run.setup, mode } : null;
+  };
+
+  const confirmSetup = async (mode: ScriptMode) => {
+    if (!run) return;
+    const setup = setupFor(mode);
+    if (!setup) return;
+    setContinuing(mode);
     try {
       const { jobId } = await continueScript({ runId: run.runId, setup });
       // Optimistically flip into the running view, then poll the job.
@@ -620,7 +646,7 @@ export default function ScriptGeneratorPage() {
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not start generation');
     } finally {
-      setContinuing(false);
+      setContinuing(null);
     }
   };
 
@@ -632,6 +658,7 @@ export default function ScriptGeneratorPage() {
     try {
       const full = await getScriptRun({ runId });
       seededRef.current = null; // allow checkpoint reseed for this run
+      setRequestedMode(full.setup?.mode === 'outline' ? 'outline' : 'full');
       setRun(full);
       if (full.status === 'running' || full.status === 'classifying') {
         startRunPolling(runId);
@@ -665,13 +692,14 @@ export default function ScriptGeneratorPage() {
     setRun(null);
     setJob(null);
     setHistoryOpen(false);
+    setRequestedMode('full');
     seededRef.current = null;
   };
 
   const copyDocument = async () => {
     if (!run?.finalDocument) return;
     if (await copyText(run.finalDocument)) {
-      toast.success('Script copied to clipboard');
+      toast.success(run.setup?.mode === 'outline' ? 'Outline copied to clipboard' : 'Script copied to clipboard');
     } else {
       toast.error('Could not copy — select and copy manually');
     }
@@ -685,6 +713,9 @@ export default function ScriptGeneratorPage() {
   // ── Render ───────────────────────────────────────────────────────────────────
   const status = run?.status;
   const isRunning = status === 'running' || status === 'classifying';
+  // An outline run's deliverable is the plan, so the result view says so — and
+  // offers the one thing an outline is for: writing the script from it.
+  const isOutlineRun = run?.setup?.mode === 'outline';
   const phase = job?.phase || (status === 'classifying' ? 'Classifying the idea' : 'Working…');
   const percent = job?.percent ?? null;
   const costUsd = job?.costUsd ?? null;
@@ -702,7 +733,7 @@ export default function ScriptGeneratorPage() {
             </h1>
             <p className="text-xs text-muted-foreground">
               Turn a video idea into a full YouTube script — research, outline, all four hook
-              formulas and a section-by-section draft.
+              formulas and a section-by-section draft. Or stop at the outline.
             </p>
           </div>
           {!loadingStatus && anthropicConfigured && model && (
@@ -819,6 +850,13 @@ export default function ScriptGeneratorPage() {
                                 >
                                   {meta.label}
                                 </span>
+                                {r.mode === 'outline' && (
+                                  <span
+                                    className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', HUE_TINT[4])}
+                                  >
+                                    Outline
+                                  </span>
+                                )}
                                 {r.videoType && <span>{r.videoType}</span>}
                                 <span>· {relTime(r.createdAt)}</span>
                                 {r.generationMs > 0 && (
@@ -921,20 +959,38 @@ export default function ScriptGeneratorPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <Button onClick={generate} disabled={starting || !idea.trim()}>
-                        {starting ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Sparkles className="h-4 w-4" />
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Button onClick={() => void generate('full')} disabled={starting !== null || !idea.trim()}>
+                          {starting === 'full' ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Sparkles className="h-4 w-4" />
+                          )}
+                          Generate script
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => void generate('outline')}
+                          disabled={starting !== null || !idea.trim()}
+                        >
+                          {starting === 'outline' ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <ListTree className="h-4 w-4" />
+                          )}
+                          Generate outline
+                        </Button>
+                        {starting && (
+                          <span className="text-xs text-muted-foreground">
+                            Classifying &amp; proposing titles — about 15 seconds…
+                          </span>
                         )}
-                        Generate script
-                      </Button>
-                      {starting && (
-                        <span className="text-xs text-muted-foreground">
-                          Classifying &amp; proposing titles — about 15 seconds…
-                        </span>
-                      )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Outline stops after the research and the outline — the plan, not the prose. You can write the
+                        full script from it afterwards without paying for the research twice.
+                      </p>
                     </div>
                   </section>
                 ) : status === 'awaiting_confirmation' ? (
@@ -1053,14 +1109,36 @@ export default function ScriptGeneratorPage() {
                       </div>
                     </div>
 
-                    <Button onClick={confirmSetup} disabled={continuing || !cpTitle.trim()}>
-                      {continuing ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Sparkles className="h-4 w-4" />
-                      )}
-                      Generate full script
-                    </Button>
+                    {/* The mode asked for on the way in leads — first in the row and
+                        styled as the primary. Clicking the leading button out of habit
+                        should never buy a full script when an outline was asked for. */}
+                    <div className="flex flex-wrap items-center gap-3">
+                      {(requestedMode === 'outline'
+                        ? (['outline', 'full'] as const)
+                        : (['full', 'outline'] as const)
+                      ).map((m) => (
+                        <Button
+                          key={m}
+                          variant={m === requestedMode ? 'default' : 'outline'}
+                          onClick={() => void confirmSetup(m)}
+                          disabled={continuing !== null || !cpTitle.trim()}
+                        >
+                          {continuing === m ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : m === 'outline' ? (
+                            <ListTree className="h-4 w-4" />
+                          ) : (
+                            <Sparkles className="h-4 w-4" />
+                          )}
+                          {m === 'outline' ? 'Generate outline' : 'Generate full script'}
+                        </Button>
+                      ))}
+                      <span className="text-xs text-muted-foreground">
+                        {requestedMode === 'outline'
+                          ? 'The outline stops when the outline is done — a few minutes. The full script takes about 20.'
+                          : 'The full script takes about 20 minutes; the outline alone takes a few.'}
+                      </span>
+                    </div>
                   </section>
                 ) : isRunning ? (
                   /* ── View 3a: Running ──────────────────────────────────────── */
@@ -1129,9 +1207,14 @@ export default function ScriptGeneratorPage() {
                       <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
                         <div className="min-w-0">
                           <h2 className="truncate text-sm font-semibold text-foreground">
-                            {run.title || 'Final script'}
+                            {run.title || (isOutlineRun ? 'Detailed outline' : 'Final script')}
                           </h2>
                           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                            {isOutlineRun && (
+                              <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', HUE_TINT[4])}>
+                                Outline only
+                              </span>
+                            )}
                             {run.setup?.videoType && (
                               <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', HUE_TINT[3])}>
                                 {run.setup.videoType}
@@ -1144,6 +1227,22 @@ export default function ScriptGeneratorPage() {
                           </div>
                         </div>
                         <div className="ml-auto flex items-center gap-2">
+                          {isOutlineRun && (
+                            <Button
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => void confirmSetup('full')}
+                              disabled={continuing !== null || !run.stages.outline}
+                              title="Writes the video from this outline — the research and fact sheet are reused, not bought again"
+                            >
+                              {continuing === 'full' ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="h-4 w-4" />
+                              )}
+                              Write the full script
+                            </Button>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
@@ -1177,8 +1276,9 @@ export default function ScriptGeneratorPage() {
                       </div>
                     </section>
 
-                    {/* Refine a paragraph — post-generation edit chat */}
-                    {run.finalDocument && (
+                    {/* Refine a paragraph — post-generation edit chat (script runs only:
+                        it rewrites spoken prose, which an outline hasn't got yet). */}
+                    {run.finalDocument && !isOutlineRun && (
                       <RefineChat key={run.runId} runId={run.runId} initialMessages={run.refineChat ?? []} />
                     )}
 

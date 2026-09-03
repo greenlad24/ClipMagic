@@ -37,6 +37,18 @@ export interface ScriptInput {
 
 export type VideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
 
+/**
+ * What a run is asked to produce.
+ *
+ * "outline" stops after the outline (research → fact sheet → outline → brief
+ * coverage) instead of going on to write the video. It is a deliberate stopping
+ * point, not a failure: the outline is the plan, and it is far cheaper to read,
+ * cut and re-order a plan than a finished script. Everything it paid for is
+ * persisted, so writing the full script from it later resumes rather than
+ * re-buying the research.
+ */
+export type ScriptMode = "full" | "outline";
+
 /** Stage 0 output — the classifier's read of the idea. */
 export interface Stage0Result {
   videoTypeDetailed: string;
@@ -60,6 +72,8 @@ export interface ScriptSetup {
   specificFocus: string;
   sponsorship: Sponsorship;
   targetLength: string;
+  /** Defaults to "full" — runs that predate outline mode have no mode at all. */
+  mode?: ScriptMode;
 }
 
 export interface ScriptSection {
@@ -250,6 +264,8 @@ export interface ScriptRunListItem {
   title: string;
   videoType: VideoType | null;
   status: ScriptRunStatus;
+  /** What the run produced, so an outline isn't mistaken for a finished script. */
+  mode: ScriptMode;
   createdAt: number;
   /** Wall-clock generation time in ms, for the history row. */
   generationMs: number;
