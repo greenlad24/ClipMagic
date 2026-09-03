@@ -1025,8 +1025,8 @@ async function runScript(
   // jumping to done.
   const PCT =
     mode === "outline"
-      ? { research: 12, videos: 24, facts: 40, outline: 60, coverage: 80 }
-      : { research: 10, videos: 16, facts: 22, outline: 30, coverage: 38 };
+      ? { videos: 10, research: 26, facts: 42, outline: 62, coverage: 80 }
+      : { videos: 6, research: 14, facts: 22, outline: 30, coverage: 38 };
 
   /** Close the job + the run row: same accounting whichever stage we stopped at. */
   const finish = (): void => {
@@ -1076,39 +1076,7 @@ async function runScript(
     const brief = (input.brief || "").trim();
     const briefExtra = brief ? [briefBlock(brief)] : [];
 
-    // ── Stage 1 — RESEARCH (live web) ──
-    // Research runs ONCE per run row, ever. It is the single most expensive call
-    // in the pipeline (web search + adaptive thinking), and it is already
-    // persisted after it completes. If a later stage failed and this run is being
-    // started again, reuse what was bought rather than buying it twice.
-    if (!stages.research) {
-    progress(job, "Researching the web…", PCT.research);
-    const s1 = fill(loadPrompt("stage1-research"), {
-      "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
-      "[INSERT VIDEO TITLE HERE]": title,
-      "[What specifically needs research - tool name, concept, strategy, etc.]": setup.coreTopic,
-      "[INSERT TYPE]": videoType,
-      "[INSERT WHAT TO RESEARCH]": setup.coreTopic,
-      "[INSERT ANY SPECIFIC ANGLES OR QUESTIONS TO ANSWER]": setup.specificFocus || "(none specified)",
-      "[Current date]": today,
-    });
-    stages.research = await opusScriptChat({
-      system: preamble(false),
-      // Without the brief, research only ever saw Stage 0's compressed
-      // specificFocus — which is how "live demos without signing in", a headline
-      // client request, was never searched for at all.
-      systemExtra: briefExtra,
-      messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
-      webSearch: true,
-      maxTokens: 16000,
-      label: "stage1-research",
-      sinkSources: stages.sources,
-      purpose: "scriptgen",
-    });
-    persist();
-    }
-
-    // ── Stage 1.6 — VIDEO WORKFLOWS (what the newest tutorials show on screen) ──
+    // ── Stage 0.6 — VIDEO WORKFLOWS (runs FIRST: it shapes everything after it) ──
     // Web research knows what a tool IS and not where its buttons are. Someone who
     // recorded themselves using it does. This runs once per run — the transcripts
     // are bought from Apify and the extraction is a long-context call, so a resumed
@@ -1158,6 +1126,41 @@ async function runScript(
       persist();
     }
 
+    // ── Stage 1 — RESEARCH (live web) ──
+    // Research runs ONCE per run row, ever. It is the single most expensive call
+    // in the pipeline (web search + adaptive thinking), and it is already
+    // persisted after it completes. If a later stage failed and this run is being
+    // started again, reuse what was bought rather than buying it twice.
+    if (!stages.research) {
+    progress(job, "Researching the web…", PCT.research);
+    const s1 = fill(loadPrompt("stage1-research"), {
+      "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
+      "[INSERT VIDEO TITLE HERE]": title,
+      "[What specifically needs research - tool name, concept, strategy, etc.]": setup.coreTopic,
+      "[INSERT TYPE]": videoType,
+      "[INSERT WHAT TO RESEARCH]": setup.coreTopic,
+      "[INSERT ANY SPECIFIC ANGLES OR QUESTIONS TO ANSWER]": setup.specificFocus || "(none specified)",
+      "[Current date]": today,
+    });
+    stages.research = await opusScriptChat({
+      system: preamble(false),
+      // Without the brief, research only ever saw Stage 0's compressed
+      // specificFocus — which is how "live demos without signing in", a headline
+      // client request, was never searched for at all.
+      // The videos ran first, and what they showed is evidence the search should
+      // start from: confirm the paths, price what they demo, and go after the gaps
+      // they left rather than re-deriving the whole topic from scratch.
+      systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : [])],
+      messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
+      webSearch: true,
+      maxTokens: 16000,
+      label: "stage1-research",
+      sinkSources: stages.sources,
+      purpose: "scriptgen",
+    });
+    persist();
+    }
+
     // ── Stage 1.5 — FACT SHEET ──
     // The outline compresses; the section writer is told to use the outline only.
     // Anything checkable that the outline drops has to survive somewhere, or the
@@ -1168,6 +1171,7 @@ async function runScript(
       "[TODAY'S DATE]": today,
       "[RECENT WINDOW]": windows.recent,
       "[ONE YEAR AGO]": windows.oneYear,
+      "[PASTE THE VIDEO WORKFLOWS]": stages.videoWorkflows ?? "(no recent video tutorials were found for this topic)",
       "[INSERT TITLE]": title,
       "[PASTE THE RESEARCH]": stages.research ?? "",
     });
@@ -1231,6 +1235,7 @@ async function runScript(
         system: preamble(false),
         messages: [{ role: "user", content: s25 }],
         maxTokens: 32000,
+        systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : [])],
         label: "stage2.5-coverage",
         purpose: "scriptgen",
       });
@@ -1513,6 +1518,7 @@ async function runScript(
       systemExtra: [
         ...briefExtra,
         ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : []),
         reviewFactUseBlock(),
       ],
       messages: [{ role: "user", content: s7 }],

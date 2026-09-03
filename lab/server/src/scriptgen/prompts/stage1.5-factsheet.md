@@ -51,7 +51,8 @@ Plain markdown, no preamble. Use exactly these headings, and omit a heading only
 
 ## EXACT STEPS — WHAT THE VIEWER CLICKS
 - One line per step, in order, naming the exact screen, menu, or button.
-- Where the research describes an outcome but not the click that produces it, say so on that line: "(research describes the result, not the exact click)".
+- Where a step came from the video sheet, carry its citation onto the line — that is a step somebody was filmed doing, and it is the strongest evidence in this document.
+- Where the research describes an outcome but not the click that produces it, and no video showed it either, say so on that line: "(described as a result, not a confirmed click)".
 
 ## NUMBERS, VERSIONS & DATES
 - Statistics, version numbers, funding, counts. Each with its date.
@@ -68,9 +69,24 @@ Plain markdown, no preamble. Use exactly these headings, and omit a heading only
 
 ---
 
+## TWO SOURCES, AND WHICH ONE WINS
+
+You are given the written research AND a workflow sheet built from recent video tutorials — people recorded doing the thing on screen. Both feed this sheet.
+
+- **Click paths, menu names, button labels, the order of steps, values typed:** the video sheet wins. A written source describes a product; a screen recording shows it. Copy its labels exactly, and carry its `[V2 @ 7:41]` citations through onto the step lines so they can be checked.
+- **Prices, tiers, limits, statistics:** the written research wins. Tutorials quote prices from memory and go out of date fastest, so a figure heard in a video is only used when the research has nothing, and then it is dated as what that video said, on its publish date.
+- **Where only one source has something:** use it, and let the line say where it came from.
+
+Anything the video sheet lists under NOT SHOWN stays unconfirmed here too — put it under DO NOT CLAIM rather than smoothing over it.
+
+---
+
 ## INPUTS
 
 VIDEO TITLE: [INSERT TITLE]
+
+THE WORKFLOW SHEET (from recent video tutorials — best evidence for steps and labels):
+[PASTE THE VIDEO WORKFLOWS]
 
 THE RESEARCH:
 [PASTE THE RESEARCH]
