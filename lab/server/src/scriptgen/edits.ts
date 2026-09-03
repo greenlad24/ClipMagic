@@ -466,9 +466,14 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
  *
  * It now carries the socials and the bell itself, so the outro stage is told NOT
  * to write those — otherwise the video asks for both twice, thirty seconds apart.
+ *
+ * It does NOT name the next video. "Where we take this further" points at the card
+ * without promising a topic: YouTube decides what actually plays next, and a fixed
+ * closing that names a specific follow-up is wrong on every script where that is
+ * not the one queued.
  */
 export const CANONICAL_OUTRO =
-  "Oh and by the way, follow me on TikTok and Instagram, because I post short clips there I usually don't put up here, and honestly... well, go over there and see for yourself. The links are down in the description. And I'm starting a new live show on this channel — so click that notification bell to catch the latest show or video the second it goes up. That's the place where you can ask me questions and actually connect with me.\n\nThank you so much for hanging out with me today, and I'll see you in the next video, where we take this further and I build out a full week of workflows start to finish. Just click the video to my left and you'll see exactly what I mean. See you there.";
+  "Oh and by the way, follow me on TikTok and Instagram, because I post short clips there I usually don't put up here, and honestly... well, go over there and see for yourself. The links are down in the description. And I'm starting a new live show on this channel — so click that notification bell to catch the latest show or video the second it goes up. That's the place where you can ask me questions and actually connect with me.\n\nThank you so much for hanging out with me today, and I'll see you in the next video, where we take this further. Just click the video to my left and you'll see exactly what I mean. See you there.";
 
 /** The phrases that mark where the model's own sign-off / next-video tease begins. */
 const SIGN_OFF_TRIGGERS = [
