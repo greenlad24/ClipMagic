@@ -25,7 +25,12 @@
 import { nanoid } from "nanoid";
 import { opusScriptChat, extractJson, scriptgenUsageTotal, resetScriptgenUsage } from "../ai/claude.js";
 import { ZiteError } from "../zite/store.js";
-import { gatherTutorialTranscripts, transcriptsBlock, videoResearchConfigured } from "./videoResearch.js";
+import {
+  gatherTutorialTranscripts,
+  searchTopic,
+  transcriptsBlock,
+  videoResearchConfigured,
+} from "./videoResearch.js";
 import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
 import {
@@ -1090,7 +1095,11 @@ async function runScript(
           // saying so is more useful than widening the window and quietly handing
           // the writer a click path from a version of the product that is gone.
           stages.videoWorkflows = null;
-          console.log(`[scriptgen:videos] no recent tutorials found for "${setup.coreTopic}"`);
+          // The SEARCH TERM, not the brief — when this stage comes back empty the
+          // first question is always what it actually looked for.
+          console.log(
+            `[scriptgen:videos] no recent tutorials found for "${searchTopic(setup.coreTopic)}"`,
+          );
         } else {
           stages.videoSources = videos.map((v) => ({
             title: v.title,
@@ -1112,8 +1121,10 @@ async function runScript(
             purpose: "scriptgen",
           });
           console.log(
-            `[scriptgen:videos] ${videos.length} transcript(s) → workflow sheet ` +
-              `(${stages.videoWorkflows.length} chars)`,
+            `[scriptgen:videos] "${searchTopic(setup.coreTopic)}" → ` +
+              `${videos.length} transcript(s) → workflow sheet ` +
+              `(${stages.videoWorkflows.length} chars): ` +
+              videos.map((v) => `${v.title} [${v.views.toLocaleString()} views]`).join(" | "),
           );
         }
       } catch (e) {

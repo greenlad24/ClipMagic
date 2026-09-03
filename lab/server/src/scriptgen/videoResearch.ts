@@ -70,6 +70,34 @@ export function mentionsTopic(haystack: string, topic: string): boolean {
   return words.length === 1 ? hits === 1 : hits >= words.length - 1;
 }
 
+/**
+ * The thing to actually search YouTube for, out of Stage 0's research brief.
+ *
+ * `coreTopic` is written for the researcher, not for a search box. A live run on
+ * 2026-09-03 classified the topic as "Claude Cowork (Anthropic's
+ * collaborative/agentic workspace feature) — what it is, how it works, setup,
+ * and core use cases" and the whole sentence went into `q` and into
+ * `mentionsTopic`. Both failed on it: YouTube matched nothing against a
+ * 120-character query, and the relevance filter demanded eleven of its twelve
+ * meaningful words in one title. The run logged "no recent tutorials found" and
+ * the script was written with no click paths at all — the exact hedging this
+ * feature exists to remove. Searching the same run for "Claude Cowork" returns a
+ * three-hour full course and a beginners' walkthrough.
+ *
+ * So: drop parenthetical asides, cut the explanatory tail at the first dash or
+ * colon, and cap what is left — a tutorial search is a product's NAME, and past
+ * about six words the extra ones only narrow it towards nothing.
+ */
+export function searchTopic(topic: string): string {
+  let t = (topic || "").replace(/\([^)]*\)/g, " ");
+  // "Claude Cowork — what it is" / "Repurposing: one video into ten". The tail
+  // after these is always the brief describing what to find out, never the name.
+  t = t.split(/\s+[—–]\s+|\s+-\s+|[:;]/)[0];
+  t = t.replace(/\s+/g, " ").replace(/[\s,.]+$/, "").trim();
+  const words = t.split(" ").filter(Boolean);
+  return words.length > 6 ? words.slice(0, 6).join(" ") : t;
+}
+
 function isEnglish(lang: string | undefined): boolean {
   // Absent is common and not a reason to drop a video — only an explicit
   // non-English tag is. "en", "en-US" and "en-GB" all pass: they are English and
@@ -132,13 +160,16 @@ export async function findTutorialVideos(
   if (!key) return [];
   const months = opts.months ?? SEARCH_MONTHS;
   const count = opts.count ?? VIDEO_COUNT;
+  // Everything below matches on the NAME, never on the brief it arrived in.
+  const query = searchTopic(topic);
+  if (!query) return [];
 
   const after = new Date();
   after.setMonth(after.getMonth() - months);
 
   const search = new URLSearchParams({
     part: "snippet",
-    q: `${topic} tutorial`,
+    q: `${query} tutorial`,
     type: "video",
     // RELEVANCE, not viewCount. Asking YouTube to sort by views returns whatever
     // is popular near the topic rather than about it — a search for "Blotato"
@@ -203,7 +234,7 @@ export async function findTutorialVideos(
     .filter((v) => v.seconds >= MIN_SECONDS)
     .filter((v) => isEnglish(v.lang))
     .filter((v) => !MONEY_BAIT.test(v.title))
-    .filter((v) => mentionsTopic(v.haystack, topic));
+    .filter((v) => mentionsTopic(v.haystack, query));
 
   // A video that names the topic in its TITLE is about the topic. One that only
   // mentions it in the description is usually a roundup that lists the tool in
@@ -211,8 +242,8 @@ export async function findTutorialVideos(
   // out to be videos about something else that mention it. Title matches go
   // first, and descriptions only fill the slots left over.
   const byViews = (a: { views: number }, b: { views: number }) => b.views - a.views;
-  const titled = candidates.filter((v) => mentionsTopic(v.title, topic)).sort(byViews);
-  const rest = candidates.filter((v) => !mentionsTopic(v.title, topic)).sort(byViews);
+  const titled = candidates.filter((v) => mentionsTopic(v.title, query)).sort(byViews);
+  const rest = candidates.filter((v) => !mentionsTopic(v.title, query)).sort(byViews);
   return [...titled, ...rest].slice(0, count).map(({ haystack, ...v }) => v);
 }
 

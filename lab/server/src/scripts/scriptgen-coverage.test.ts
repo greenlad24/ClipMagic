@@ -23,6 +23,7 @@ import {
   mentionsTopic,
   parseIsoDuration,
   pickSubtitleTracks,
+  searchTopic,
   stamp,
 } from "../scriptgen/videoResearch.js";
 
@@ -465,6 +466,23 @@ check("matching is case-insensitive", mentionsTopic("automate social media with 
 check("a two-word topic may drop one word", mentionsTopic("The Ultimate Beginner Guide to Claude AI", "Claude Code"));
 check("a two-word topic missing both words is rejected", !mentionsTopic("I Built a Trading System", "Claude Code"));
 check("filler words in the topic do not count against it", mentionsTopic("Notion tips", "How to use the Notion app"));
+
+// Stage 0 writes coreTopic for the researcher, so it arrives as a sentence. The
+// live "Claude Cowork (…) — what it is, how it works, setup, and core use cases"
+// run searched on the whole thing, found nothing, and produced a script with no
+// click paths. Only the NAME goes to YouTube.
+const LIVE_BRIEF =
+  "Claude Cowork (Anthropic's collaborative/agentic workspace feature) — what it is, how it works, setup, and core use cases";
+check("the live brief reduces to the product name", searchTopic(LIVE_BRIEF) === "Claude Cowork");
+check("the live brief no longer rejects a real tutorial title", mentionsTopic("Claude Cowork Tutorial for Beginners", searchTopic(LIVE_BRIEF)));
+check("a parenthetical aside is dropped", searchTopic("Blotato (the social posting tool)") === "Blotato");
+check("an explanatory tail after a colon is cut", searchTopic("AI repurposing: turn one video into ten") === "AI repurposing");
+check("a hyphen tail is cut", searchTopic("n8n - the automation tool everyone uses") === "n8n");
+check("a short topic passes through untouched", searchTopic("Claude Code") === "Claude Code");
+check("a one-word topic passes through untouched", searchTopic("Blotato") === "Blotato");
+check("a long unpunctuated brief is capped at six words", searchTopic("how to build an automated content system with ai agents today").split(" ").length === 6);
+check("an empty topic yields an empty query", searchTopic("") === "");
+check("trailing punctuation is trimmed", searchTopic("Notion AI,") === "Notion AI");
 
 console.log("");
 if (fail.length) {
