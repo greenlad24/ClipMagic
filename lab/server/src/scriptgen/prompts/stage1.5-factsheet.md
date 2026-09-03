@@ -23,7 +23,7 @@ Everything else — opinions, positioning, vibes, what the tool "feels like" —
 
 Today's date is **[TODAY'S DATE]**.
 
-Every price, tier, version, and statistic gets a verification date in parentheses. Use the date the research itself gives when it gives one. Where the research clearly established the fact from a live search today and gives no other date, use today's date. Where you genuinely cannot tell when a fact was true, it belongs under DO NOT CLAIM, not under a guessed date.
+Every price, tier, version, and statistic gets a verification date in parentheses. Use the date the research itself gives when it gives one. Where the research clearly established the fact from a live search today and gives no other date, use today's date. Where you cannot tell when a fact was true, it belongs under DO NOT CLAIM, not under a guessed date.
 
 **Age is not a filter, it is a label.** Nothing gets dropped for being old — an old figure reported with its age is useful, and dropping it leaves the writer with nothing. What age decides is how confidently the fact may be spoken:
 

@@ -343,7 +343,7 @@ function briefBlock(brief: string): string {
     "",
     "This is what the client asked for, in their own words. It is the spec for the video: the research tells you what is TRUE, and this tells you what this video is FOR.",
     "",
-    "**Every request in here needs a home.** Where the brief asks for something — a moment to show, a point to land, a contrast to draw, a specific example to use — it goes in, at the depth the brief implies. A request the brief spends a paragraph on is not satisfied by a passing clause. If you genuinely cannot carry one, say so plainly in your output rather than quietly dropping it; a flagged gap is a decision Jake gets to make, and a silent one is a decision taken away from him.",
+    "**Every request in here needs a home.** Where the brief asks for something — a moment to show, a point to land, a contrast to draw, a specific example to use — it goes in, at the depth the brief implies. A request the brief spends a paragraph on is not satisfied by a passing clause. If you cannot carry one, say so plainly in your output rather than quietly dropping it; a flagged gap is a decision Jake gets to make, and a silent one is a decision taken away from him.",
     "",
     "**Where it does NOT get the last word:**",
     "",
@@ -427,7 +427,7 @@ function researchDateBlock(w: DateWindows): string {
     "1. **When two sources disagree, the newer one wins** — not the more detailed one, not the better written one, not the one that agrees with what you already believed. Report the newer figure, and note the older one and its date where the difference is worth knowing.",
     "2. **Never stop at an old source you found first.** Finding a 2024 pricing page is the beginning of the search, not the end of it. Go and check whether it still holds before you report it.",
     "",
-    "The single most common failure here is a confident price from a year-old review blog. A tool's pricing page from this month beats a well-written comparison article from last year, every time — and if the year-old article is genuinely all there is, the fact goes in wearing its date rather than dressed up as today's.",
+    "The single most common failure here is a confident price from a year-old review blog. A tool's pricing page from this month beats a well-written comparison article from last year, every time — and if the year-old article is really all there is, the fact goes in wearing its date rather than dressed up as today's.",
     "",
     "## ANCHOR THE SEARCHES",
     "",
@@ -440,7 +440,7 @@ function researchDateBlock(w: DateWindows): string {
     "",
     `Next to every price, tier, credit cost, version number, and statistic you report, write the date it was verified, like this: "€20/month (verified ${w.today})". If the fact comes from a source with its own date, give that date instead — the source's date, not today's.`,
     "",
-    `Add a section headed **WHAT CHANGED RECENTLY** near the top of your report: everything material that happened since ${w.recent} — new features, pricing changes, renames, rebuilds, limits that moved, models added or dropped, anything announced or shipped. Each item with its date and its source. If genuinely nothing changed in that window, say so explicitly and give the date of the most recent change you could find. This section is not optional, and it is the part later stages depend on most: a video that describes last year's version of a product is wrong even when every sentence in it was once true.`,
+    `Add a section headed **WHAT CHANGED RECENTLY** near the top of your report: everything material that happened since ${w.recent} — new features, pricing changes, renames, rebuilds, limits that moved, models added or dropped, anything announced or shipped. Each item with its date and its source. If nothing at all changed in that window, say so explicitly and give the date of the most recent change you could find. This section is not optional, and it is the part later stages depend on most: a video that describes last year's version of a product is wrong even when every sentence in it was once true.`,
     "",
     "If a search cannot confirm a detail, write that you could not confirm it. A gap you flag is useful. A gap you fill from memory is how a script ends up telling a hundred thousand people to click a button that no longer exists.",
   ].join("\n");
@@ -497,7 +497,7 @@ function storyStructureBlock(wordBudget: number): string {
     "",
     "### The honest-thoughts section",
     "",
-    "Thirty seconds. Jake's actual take, said once, plainly, the way you'd answer a friend who asked 'so is it any good?'. It is NOT a balanced weighing of pros against cons, and it is not a list of anything. A couple of sentences on what genuinely impressed him and one on what he'd want to see improve. Then stop.",
+    "Thirty seconds. Jake's actual take, said once, plainly, the way you'd answer a friend who asked 'so is it any good?'. It is NOT a balanced weighing of pros against cons, and it is not a list of anything. A couple of sentences on what really impressed him and one on what he'd want to see improve. Then stop.",
     "",
     "### Header rules (these matter)",
     "",
@@ -638,7 +638,7 @@ function reviewFactUseBlock(): string {
     "",
     "You have the fact sheet above so you can tell whether what the script says is still true. Use it to correct a wrong or stale figure, to move a superseded one into the past tense, and to cut a claim the sheet does not support.",
     "",
-    "Do not use it to enrich the script. A fact the writer chose to leave out stays out — extra prices, extra tiers, extra limits and extra features are not review notes, and adding them is how a tight script turns into a spec sheet. If something important is genuinely missing, say so in `changes` instead of writing it in.",
+    "Do not use it to enrich the script. A fact the writer chose to leave out stays out — extra prices, extra tiers, extra limits and extra features are not review notes, and adding them is how a tight script turns into a spec sheet. If something important is really missing, say so in `changes` instead of writing it in.",
   ].join("\n");
 }
 
@@ -1271,7 +1271,7 @@ async function runScript(
       console.warn(
         `[scriptgen:budget] the outline asks for ~${declaredSum} words but "${targetLength}" funds ~${Math.round(pot)}; ` +
           `scaled to fit${atFloor ? `, and ${atFloor}/${total} section(s) landed on the ${MIN_SECTION_WORDS}-word floor` : ""}. ` +
-          `If the brief genuinely needs this much, raise the target length.`,
+          `If the brief really needs this much, raise the target length.`,
       );
     }
     // Byte-stable across every section, so the cached prefix actually engages —

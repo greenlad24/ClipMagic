@@ -105,11 +105,11 @@ Owns it as opinion, leaves room to be wrong, defers final judgment.
 - "I'm in the curious-watching category until I see [X]." ← Jake's positive variant of MKBHD's "skeptical category"
 
 ▶ Slot 5 — CREDIT-GIVING (positive framing for new / different / clever features)
-Throw these in whenever a feature is genuinely interesting. Don't oversell.
+Throw these in whenever a feature is really interesting. Don't oversell.
 - "…it's a different take on it. I'll give them credit for that."
-- "It's a genuinely smart idea."
+- "It's a really smart idea."
 - "What's clever about this is…"
-- "What I find genuinely impressive here…"
+- "What I find really impressive here…"
 - "Making that [thing] super convenient — that's the bit that levels this thing up."
 - "…which is nice."
 - "That's a huge win."
@@ -170,7 +170,7 @@ The honest-enthusiasm outro. Use this verbatim shape for any tool review or new-
 This is the meta-pattern that holds everything together. For EACH feature inside a section:
 1. **Describe** ("So this new [feature] lets you…")
 2. **Demo / specific example** ("Like let's say you're…")
-3. **React** ("…which is nice." / "That's a huge win." / "It's a genuinely smart idea.")
+3. **React** ("…which is nice." / "That's a huge win." / "It's a really smart idea.")
 4. **Caveat** (one slot 4 or slot 8 phrase) ("We'll have to test it." / "I'm curious to see how they handle…")
 5. **Credit or curiosity payoff** ("I'll give them credit for that." / "And the part I keep coming back to is…")
 

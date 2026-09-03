@@ -238,7 +238,7 @@ Conversational texture rules (MKBHD-style, positive sparkle):
 The hook should sound spoken, not presented. Use 2-3 (max) of these conversational moves IN THE HOOK to make it feel human — never stack, never sound performed. Match the formula:
 1. Real-time thinking openers — "So…" / "Like…" / "I mean…" / "You know…" (use sparingly, 1-2 max in hook)
 2. Soft hedge ownership — "…I think." / "…honestly." / "…in a good way." — one of these in the hook humanizes the dramatic claim
-3. Credit-giving when the topic deserves it — "It's a genuinely smart idea." / "That's the part I keep coming back to." (only in Formula A hooks, not B/C)
+3. Credit-giving when the topic deserves it — "It's a really smart idea." / "That's the part I keep coming back to." (only in Formula A hooks, not B/C)
 4. Self-aware aside — "…to make sure I'm not crazy here…" / "…which is hilarious, in a good way." (max once, optional)
 5. Curious framing instead of skeptical — "I'm curious-watching to see how this plays out." / "If they get this right, that's a real win." — replaces any negative framing
 

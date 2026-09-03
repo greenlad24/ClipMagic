@@ -53,7 +53,7 @@ The like ask lands right after the viewer has gotten something good — the firs
 It uses the phrasing Jake likes: "click the like button below if you like what you're seeing" — or a natural variant of that.
 
 Good (rides a payoff moment):
-> "...and that's the result, built in about two minutes. If you're into this kind of thing, go ahead and click that like button — it genuinely helps. Alright, let's keep going."
+> "...and that's the result, built in about two minutes. If you're into this kind of thing, go ahead and click that like button — it really helps. Alright, let's keep going."
 
 > "See how clean that came out? If you like what you're seeing so far, tap the like button real quick — then let's get into the next part."
 

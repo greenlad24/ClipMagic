@@ -82,7 +82,7 @@ const ORGANIC_COMPETITOR_RULE = [
   "",
   "Naming other tools is useful, and Jake does it. \"You'll still want a real design tool like Figma or Photoshop for the final version.\" \"You don't need Tableau or Power BI for this anymore.\" That's honest, it helps the viewer place the tool, and it costs nothing.",
   "",
-  "Name them when it genuinely helps someone decide. Say what each is good at. Never write \"better than X\", never imply the people using X are behind, and never make another tool the butt of a joke.",
+  "Name them when it really helps someone decide. Say what each is good at. Never write \"better than X\", never imply the people using X are behind, and never make another tool the butt of a joke.",
 ].join("\n");
 
 /**
