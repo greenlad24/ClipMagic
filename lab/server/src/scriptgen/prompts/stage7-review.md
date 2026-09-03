@@ -9,6 +9,7 @@ VOICE & PERSONA:
 - No punch-sideways (no competitor / other-YouTuber / "better than X" references)?
 - No punch-down (no "if you've been doing this wrong")?
 - Humor at self or situation, never at viewer?
+- **No banned word survives, in any form.** "caveat"/"caveats" (say "one thing to know" or "the catch"), "clever", "genuinely", "real deal", "which" (split the sentence or use "that"), "whether" (say "if"). Singular or plural, they get rewritten — not softened, removed. Also "Picture …" as an opener (Jake says "Imagine …").
 - At most one story-shrapnel line? No credential monologue anywhere, and no credential in the opener — one short line max, landing during the video, not at the top? (Rule 4.)
 - Welcome line at the END of the hook, never the opener?
 - Is the tool called by its NAME after the hook — never "this thing" / "the thing" once it's been named? (Rule 8. Fix by naming the tool, or the concrete noun: "the website", "the page".)

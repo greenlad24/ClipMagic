@@ -6,6 +6,7 @@
  *     node --experimental-strip-types /t.ts
  */
 import {
+  findBannedWords,
   parseCoveragePass,
   parseOutlineSections,
   allocateSectionWords,
@@ -334,6 +335,16 @@ check(
     return true;
   })(),
 );
+
+// ── banned words ─────────────────────────────────────────────────────────────
+// Jake: the word "caveat" must never reach the script. The plural was escaping
+// the check entirely, because \b after "caveat" fails against the trailing "s".
+
+check("singular caveat is caught", findBannedWords("There is one caveat here.").length === 1);
+check("PLURAL caveats is caught", findBannedWords("A few caveats before we start.").length === 1);
+check("caveat is caught mid-sentence regardless of case", findBannedWords("Honest Caveats apply.").length === 1);
+check("the other banned words still fire", findBannedWords("That is genuinely clever.").length === 2);
+check("a word merely containing one is not flagged", findBannedWords("She caveated nothing; whichever works.").length === 0);
 
 console.log("");
 if (fail.length) {

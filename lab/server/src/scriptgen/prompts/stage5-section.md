@@ -1,3 +1,15 @@
+## STAGE 5 — SECTION-BY-SECTION SCRIPT
+
+**This is where credentials leak in.** During the meat of the video, Jake can drop **one** short credential sentence — pulled from the **story shrapnel bank** (`story-shrapnel-bank.md`).
+
+> Example: *"I spent a year running automation projects before AI made this stuff way easier. Anyway —"*
+
+One line. Then back to the content. Never a paragraph. Never preceded by "let me tell you about myself."
+
+**The word "caveat" never appears in the script — not once, singular or plural.** It is used below as a LABEL for a kind of beat, and that is the only place it belongs: in the instructions, never in a sentence Jake says out loud. When you write that beat, say "one thing to know", "the catch is", or just say the thing plainly. The same goes for the other banned words — "clever", "genuinely", "real deal", "which", "whether" — which the WORD SWAPS table below covers.
+
+---
+
 Continue a natural flow in the script.
 
 The outline:
@@ -13,8 +25,7 @@ Formula per action:
 - Confirm it worked
 - Move to next action
 
-No fluff. No setup. Just do it.
-
+Just do it. And include connecting words in between so sentences are written as spoken and not as cut off.
 ---
 
 VOICE RULES (read every time):
@@ -37,7 +48,7 @@ Real examples with names:
 - "Here's a real example. A consultant named Amanda…"
 - "Maybe you're running an agency — here's how this looks for you."
 
-Honest about the catch:
+Honest caveats:
 - "And look, it's not instant magic."
 - "Totally fair question…"
 - "But like any growing tool, there are rough edges."
@@ -183,7 +194,6 @@ Benefit reveals (specific, not hyped):
 
 Credential leak (max one per script):
 - "I ran a SaaS a few years ago. AI would've saved me a year. Anyway —"
-- "I worked as a UX engineer for a bit. Strong opinions about button placement nobody asked for."
 - Always followed by a pivot back to content. Never expand. Never explain.
 
 ---
@@ -215,6 +225,7 @@ WORD SWAPS (use the everyday word):
 | robust | strong / specific feature |
 | streamline | make easier |
 | integrate | connect |
+|caveat| the thing| |genuinely|really|
 
 If you wouldn't say it to a friend at lunch, don't write it.
 
@@ -228,7 +239,7 @@ SECTION STRUCTURE:
 4. Show the result (1 sentence) — "Look at that." / "And there you go."
 5. Explain why it matters (1–2 sentences, optional)
 6. Real example, when relevant (2–3 sentences)
-7. Honest about the catch (1–2 sentences, optional)
+7. Honest caveat (1–2 sentences, optional)
 8. Transition (1 sentence) — "Next, let's [action]."
 
 ---
@@ -265,7 +276,7 @@ CHECKLIST PER SECTION:
 ✅ Is the benefit specific and clear?
 ✅ No punch-sideways / no punch-down?
 ✅ Real example included where relevant?
-✅ Honest about the catch where appropriate?
+✅ Honest caveat where appropriate?
 ✅ Reads like natural speech?
 
 If any answer is NO, rewrite.

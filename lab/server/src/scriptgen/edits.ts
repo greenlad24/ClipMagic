@@ -742,7 +742,9 @@ export const BANNED_WORDS = ["caveat", "clever", "which", "whether", "genuinely"
 export function findBannedWords(text: string): string[] {
   const out: string[] = [];
   const sentences = splitSentences(text);
-  const bannedRe = new RegExp(`\\b(${BANNED_WORDS.join("|")})\\b`, "gi");
+  // Plurals count. "a few caveats" is the same word and was escaping the check
+  // entirely, because \b after "caveat" fails against the "s".
+  const bannedRe = new RegExp(`\\b(${BANNED_WORDS.join("|")})s?\\b`, "gi");
   for (const s of sentences) {
     for (const m of s.matchAll(bannedRe)) {
       const at = m.index ?? 0;
