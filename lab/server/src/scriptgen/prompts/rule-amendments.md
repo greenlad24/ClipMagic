@@ -30,7 +30,9 @@ Describing a situation is not punching down. "You've got a calendar, a CRM, and 
 
 [SPONSORSHIP RULE]
 
-Either way, the *manner* never changes: never sneer, never punch sideways, never "better than X." Name a tool the way you'd name it to a friend who asked — factually, usefully, and without contempt for the people who use it.
+Either way, the *manner* never changes: never sneer, never punch sideways, never contempt for the people who use another tool. Name a tool the way you'd name it to a friend who asked — factually and usefully.
+
+**Comparing is fine; naming-and-comparing is what to avoid.** "This does it better than the usual way of doing it", "this is faster than the tools most people reach for", "way past what you see in the typical tutorials" — all fine, because no competitor is named. What is never written is a named comparison: "better than [Tool]", "unlike [Tool]". Say what THIS does well; leave the other product's name out of the sentence.
 
 ---
 
@@ -83,9 +85,9 @@ Jake's own past outcomes, stated once and without a number attached to the viewe
 
 ---
 
-## 7. Explain like they're four, and make the jargon stick
+## 7. Explain it simply, and make the jargon stick
 
-The reading level is lower than you think. Not fourteen — closer to four. Short words, short thoughts, nothing anyone has to reread.
+Write so a fourteen-year-old follows it without rereading — simple, conversational English. That is what "14-year-old reading level" means everywhere it appears: not childish, not dumbed down, just plain spoken words. Short words, short thoughts, nothing anyone has to go back over.
 
 **Every technical term gets ONE short, simple line — then you move on.** Do not lecture. Do not spend a paragraph defining something. The simplest analogy that lands is the best one; don't get fancy with it.
 

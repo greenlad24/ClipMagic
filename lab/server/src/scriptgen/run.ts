@@ -565,7 +565,7 @@ function outlineFidelityBlock(w: DateWindows, budget: number): string {
   return [
     `TODAY'S DATE IS ${today}.`,
     "",
-    `TARGET LENGTH: about **${budget} words** of spoken script — roughly ${Math.round(budget / 150)} minutes. Build an outline that fits in that. Timestamps in the template below are illustrative; this word count is the real constraint.`,
+    `TARGET LENGTH: at least **${budget} words** of spoken script — roughly ${Math.round(budget / 150)} minutes. That is a MINIMUM, not a ceiling. Build an outline that delivers at least that much, and more where the material genuinely needs it — a step that takes eight beats gets eight beats. What is never acceptable is padding to reach it: repetition, restating the premise, or narrating what you are about to say. Timestamps in the template below are illustrative.`,
     "",
     "The section writer who works from this outline will see NOTHING ELSE except the brief and a fact sheet — not the research, not the sources. So every exact price, exact click path, exact setting, and exact number that belongs in the finished script has to be carried into this outline verbatim, with its verification date. Do not round them, do not summarize them into 'affordable' or 'a few clicks'. Copy them.",
     "",
@@ -726,7 +726,7 @@ function continuityBlock(
     "",
     `## CONTINUITY — this is section ${index + 1} of ${total}`,
     "",
-    `Write roughly **${sectionWords} words** for this section. That's a budget, not a suggestion — the video has a runtime to hit, and every section that overruns steals from the ones after it.`,
+    `Write at least **${sectionWords} words** for this section — that is a floor, not a cap. Go longer where this section genuinely needs it: a walkthrough with more steps takes more words, and the video has no maximum length. What must not happen is padding to fill it — no repeating a point, no restating the premise, no announcing what you are about to explain.`,
     "",
   ];
 
@@ -1271,7 +1271,7 @@ async function runScript(
       console.warn(
         `[scriptgen:budget] the outline asks for ~${declaredSum} words but "${targetLength}" funds ~${Math.round(pot)}; ` +
           `scaled to fit${atFloor ? `, and ${atFloor}/${total} section(s) landed on the ${MIN_SECTION_WORDS}-word floor` : ""}. ` +
-          `If the brief really needs this much, raise the target length.`,
+          `The outline's own allocations are honoured — the runtime target is a floor, so nothing is cut to fit.`,
       );
     }
     // Byte-stable across every section, so the cached prefix actually engages —

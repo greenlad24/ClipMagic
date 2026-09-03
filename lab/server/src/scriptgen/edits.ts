@@ -314,9 +314,14 @@ export function allocateSectionWords(sections: { targetWords: number | null }[],
   if (weightSum <= 0) {
     return sections.map(() => Math.max(MIN_SECTION_WORDS, Math.round(pot / total / 25) * 25));
   }
-  return weights.map((w) =>
-    Math.max(MIN_SECTION_WORDS, Math.round((pot * w) / weightSum / 25) * 25),
-  );
+  // The runtime is a FLOOR, not a ceiling. Scale UP to fill the pot when the
+  // outline asked for less than the video has room for, but never scale DOWN:
+  // if the outline sized its sections at more than the runtime suggests, that is
+  // the material saying it needs the space, and squeezing it is how a walkthrough
+  // turns into a summary. Padding is prevented by the rules against filler, not
+  // by a word cap.
+  const scale = Math.max(1, pot / weightSum);
+  return weights.map((w) => Math.max(MIN_SECTION_WORDS, Math.round((w * scale) / 25) * 25));
 }
 
 // ── Deliverable shaping ───────────────────────────────────────────────────────

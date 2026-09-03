@@ -106,11 +106,27 @@ check(
   })(),
 );
 check(
-  "an outline that over-allocates in absolute terms is scaled to fit",
+  // Jake's ruling: the runtime is a MINIMUM, not a maximum — "nothing would stop
+  // the AI from writing everything that needs to be written". An outline that
+  // sizes itself past the runtime is the material asking for room, and it keeps it.
+  "an outline that over-allocates is honoured, not squeezed to fit the runtime",
   (() => {
     const big = allocateSectionWords([{ targetWords: 5000 }, { targetWords: 5000 }], 1800);
-    const sum = big.reduce((a, b) => a + b, 0);
-    return sum < 1800; // scaled down, not taken literally
+    return big[0] === 5000 && big[1] === 5000;
+  })(),
+);
+check(
+  "a short outline is still scaled UP to fill the runtime",
+  (() => {
+    const small = allocateSectionWords([{ targetWords: 100 }, { targetWords: 100 }], 4000);
+    return small.reduce((a, b) => a + b, 0) > 200;
+  })(),
+);
+check(
+  "scaling up keeps the outline's own ratio between sections",
+  (() => {
+    const r = allocateSectionWords([{ targetWords: 100 }, { targetWords: 300 }], 4000);
+    return Math.abs(r[1] / r[0] - 3) < 0.1;
   })(),
 );
 check(

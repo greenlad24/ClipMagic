@@ -56,7 +56,7 @@ Your recommendation line at the very end of the output must follow from this rea
 | Beat | Time | Word count | Purpose |
 |---|---|---|---|
 | **1. Visual outcome on screen** | 0:00–0:08 | ~25 words | Show the impressive result IMMEDIATELY. State what it is in one short line. No confession, no metaphor, no setup. |
-| **2. Narrative credential + copy-paste promise** | 0:08–0:25 | ~35 words | Short proof ("I've tested every trick I can find") + a concrete value promise ("you can copy and paste every prompt from this video") |
+| **2. Copy-paste promise** | 0:08–0:25 | ~35 words | A concrete value promise ("you can copy and paste every prompt from this video"). No credential — nothing about how long Jake has been doing this. |
 | **3. Transformation + welcome + identity** | 0:25–0:50 | ~50 words | "By the end of this video, you'll [outcome]" + welcome line + 1-sentence positioning + brief inclusivity nod |
 
 **Total: ~110 words, ~50 seconds at natural pace.**
@@ -73,7 +73,7 @@ Your recommendation line at the very end of the output must follow from this rea
 1. **Beat 1 MUST show a visual result.** Not describe it — show it on screen. The first sentence states what's on screen, not what you're about to teach.
 2. **No "I used to think..." confession.** That's Formula A-Long's signature. This formula is too short for an arc — it's pure proof-of-value.
 3. **No "What if I told you..." metaphor.** That's Formula B/C. This formula starts with the literal result.
-4. **The credential in Beat 2 is short and time-bound.** "Last few weeks testing" / "tested every prompt I could find" / "30 days experimenting" — concrete, recent, specific.
+4. **No credential in Beat 2.** Not a short one, not a time-bound one. Beat 2 is the promise of what the viewer gets, and nothing else — the work is the credential.
 5. **The "copy and paste" or equivalent concrete promise is non-negotiable in Beat 2.** Search-intent viewers came for the goods. Tell them they're getting the goods.
 6. **Welcome line lands at ~0:30** — woven into Beat 3, not separate.
 7. **Inclusivity nod is brief — one phrase, not a list.** "Even if you've never touched a design tool in your life" does the funnel job in 10 words.
@@ -96,7 +96,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 | Beat | Time | Word count | Purpose |
 |---|---|---|---|
 | **1. Metaphor + number stake** | 0:00–0:08 | ~25 words | Visceral image + the specific number, no preamble |
-| **2. The universal gap + audience qualifier** | 0:08–0:22 | ~35 words | "Most people only use X%" + name who this is for (in 1 line) |
+| **2. The universal gap + audience qualifier** | 0:08–0:22 | ~35 words | "Only about X% of it ever gets used" + name who this is for (in 1 line) |
 | **3. Number reveal + proof tease** | 0:22–0:42 | ~50 words | Reveal the X, promise real examples, hint at transformation |
 | **4. Welcome + identity + transition** | 0:42–0:55 | ~25 words | 1-sentence welcome + 1-sentence positioning + "let's go" |
 
@@ -106,7 +106,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 
 > **Beat 1 (0:00–0:08):** *"What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"*
 >
-> **Beat 2 (0:08–0:22):** *"Most people are only using maybe 10% of what this thing can actually do — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
+> **Beat 2 (0:08–0:22):** *"Only about 10% of what this thing can do ever gets used — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
 >
 > **Beat 3 (0:22–0:42):** *"So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."*
 >
@@ -137,9 +137,9 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 | Beat | Time | Word count | Purpose |
 |---|---|---|---|
 | **1. Visceral metaphor + number stake** | 0:00–0:10 | ~30 words | The image + the number, end with a transition line ("Today, we're pulling back the curtain.") |
-| **2. The universal gap** | 0:10–0:25 | ~35 words | "Most people only use X%" + "the other (100-X)% is where the magic lives" |
+| **2. The universal gap** | 0:10–0:25 | ~35 words | "Only about X% of it ever gets used" + "the other (100-X)% is where the magic lives" |
 | **3. Outcome stack + curtain pull** | 0:25–0:40 | ~40 words | "I'm going to show you some wild [features/moves] that'll completely change how you [3 outcomes]" |
-| **4. Narrative credential** | 0:40–1:10 | ~70 words | Short story credential — "for the past [N] years, I've been deep in the trenches with [topic]" + 1 line of proof ("used these to launch my own business / save crazy amounts of time / etc.") |
+| **4. Welcome + identity anchor** | 0:40–1:10 | ~70 words | The welcome line and one sentence of positioning — who Jake helps and with what. No credential: no years, no track record, no "I've used these to…". Frame it forward, at what this video is about to do. |
 | **5. Number reveal + audience qualifier (the funnel)** | 1:10–2:00 | ~120 words | Reveal the X. List 3-4 viewer types explicitly ("Doesn't matter if you're a student, a business owner, a creative, or just curious about [topic]"). Promise transformation. |
 | **6. Anti-clickbait + value-anchored Skool plug + transition** | 2:00–3:00 | ~140 words | "I'm not just gonna list features and leave you hanging — I'm showing you real examples you can steal." Then Skool plug **anchored to the exact value in THIS video** ("if you want all the prompts I'm using in this video, you can grab them inside my Skool community"). Close with "Alright — let's dive in." |
 
@@ -161,7 +161,7 @@ If you compress this hook to 50 seconds for a TV/older audience, you lose the tr
 1. **The metaphor + number in sentence 1 is non-negotiable.** Same as Formula B.
 2. **The audience qualifier MUST be explicit** — name 3-4 viewer types by noun. This is the funnel.
 3. **The Skool plug MUST be value-anchored to THIS video** — "the prompts I'm using IN THIS VIDEO" not generic "join my Skool community."
-4. **Welcome line lands at 0:40 inside Beat 4** — woven into the credential, not separate.
+4. **Welcome line lands at 0:40 inside Beat 4** — woven into the positioning sentence, not separate.
 5. **"Alright — let's dive in" closes the hook cleanly.**
 6. **Do NOT use this for tutorials** — the long setup feels like dragging when the value is "I'll walk you through one thing." Save it for the "X Things" format.
 
@@ -213,7 +213,7 @@ Voice rules (non-negotiable):
 1. Never punch sideways — no "most tutorials don't…", no competitor names, no "unlike other tools"
 2. Never punch down — no "if you've been doing this wrong", no "most people don't know" framed as judgment (note: "most people don't know exist" is fine when framed as opportunity)
 3. Self at the punchline, never the viewer or peers
-4. No credential dump in Formula A-Long — credentials leak in sideways. Formula A-Compressed has a short narrative credential in Beat 2 (keep it under 20 words). Formula C has its own credential beat (Beat 4) which is allowed — keep it short.
+4. **No credentials in the hook — in any of the four formulas.** No "for the past two years…", no "I've spent the last few weeks testing…", no track record, no proof of standing, however short. Credentials land later, once, during the video (one line from the story shrapnel bank). A hook earns attention with the thing itself, not with who is holding it. Welcome and positioning ("I'm Jake Dawson and I help business owners use AI without it turning into another full-time job") are not credentials — those stay.
 5. No company name drops (Talkme, Weshare, etc.)
 6. Welcome line goes AFTER the hook earned attention — never the opening line
 7. Use "Turns out..." in Formula A-Long Beat 2 (signature reframe word)
@@ -312,7 +312,7 @@ REFERENCE EXAMPLE (ChatGPT Image Generator tutorial — 11.7K views, 6.4% CTR, 4
 
 Beat 1 (0:00–0:08, ~25 words): [Visual outcome on screen FIRST. Then: state what's on screen in one short line + emphasize the impressive part in fragment sentences. Example structure: "Look at this [thing]. [Tool] made this in under a minute. No [hard alternative]. No [hard skill]. Just [one specific input]."]
 
-Beat 2 (0:08–0:25, ~35 words): [Short time-bound credential ("I've spent the last few weeks testing every trick I can find") + concrete copy-paste value promise ("I'm going to give you the exact prompts that get results like this. You can copy and paste every single one from this video.")]
+Beat 2 (0:08–0:25, ~35 words): [Concrete copy-paste value promise, and nothing else — no credential. ("I'm going to give you the exact prompts that get results like this. You can copy and paste every single one from this video.")]
 
 Beat 3 (0:25–0:50, ~50 words): ["By the end of this video, you'll [specific outcome]. Even if you've never [common barrier]." + welcome line + 1-sentence positioning. Example: "By the end of this video, you'll know how to [outcome]. Even if you've never [barrier]. Hey everyone, I'm Jake Dawson, and I help [audience description]."]
 
@@ -320,7 +320,7 @@ Rules specific to Formula A-Compressed:
 - Beat 1 visual result MUST be on screen — first words describe what's there, not what you'll teach
 - No "I used to think..." confession — that's A-Long's signature
 - No "What if I told you..." metaphor — that's B/C
-- Credential in Beat 2 must be time-bound and short (under 20 words)
+- No credential in Beat 2 — the value promise carries it
 - Concrete value promise ("copy and paste every prompt") is non-negotiable in Beat 2
 - Welcome line woven INTO Beat 3, not separate
 - Inclusivity is ONE phrase in Beat 3 ("even if you've never touched a [tool] in your life"), not a list of viewer types
@@ -335,7 +335,7 @@ REFERENCE EXAMPLE (compressed listicle):
 
 Beat 1 (0:00–0:08, ~25 words): "What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"
 
-Beat 2 (0:08–0:22, ~35 words): "Most people are only using maybe 10% of what this thing can actually do — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."
+Beat 2 (0:08–0:22, ~35 words): "Only about 10% of what this thing can do ever gets used — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."
 
 Beat 3 (0:22–0:42, ~50 words): "So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."
 
@@ -353,15 +353,15 @@ FORMULA C — LONG NUMBERED REVEAL (2:30–3:30)
 
 REFERENCE EXAMPLE (25 Things ChatGPT Could Do — 1.3M views, 7:45 AVD, +31.5K subs):
 
-Beat 1 (0:00–0:10, ~30 words): "What if I told you that the AI assistant you're using right now is basically a Swiss Army knife... and you're only using, like, one blade out of 25? Most people? They're only tapping into maybe 10% of what ChatGPT can actually do. Today, we're pulling back the curtain."
+Beat 1 (0:00–0:10, ~30 words): "What if I told you that the AI assistant you're using right now is basically a Swiss Army knife... and you're only using, like, one blade out of 25? And maybe 10% of what ChatGPT can actually do is all that ever gets used. Today, we're pulling back the curtain."
 
 Beat 2 (0:10–0:25, ~35 words): "I'm gonna show you some wild features that'll completely change how you work, create, and solve problems. Let's go."
 
 [Note: Beats 1 and 2 in the original are tightly merged. Keep the structure: metaphor → stat → curtain pull → 3 outcomes.]
 
-Beat 3 (0:25–0:40, ~40 words): [The 3-outcome stack is baked into Beats 1-2 in the original. Use this slot to add a transition line that bridges into the credential.]
+Beat 3 (0:25–0:40, ~40 words): [The 3-outcome stack is baked into Beats 1-2 in the original. Use this slot to add a transition line that bridges into the welcome.]
 
-Beat 4 (0:40–1:10, ~70 words): "Hey, I'm Jake Dawson — and for the past two years, I've been deep in the trenches with AI, pushing ChatGPT way past what you see in the typical tutorials. I've used these hidden features to launch my own business, and save crazy amounts of time doing it."
+Beat 4 (0:40–1:10, ~70 words): "Hey, I'm Jake Dawson — and I help business owners use AI without it turning into another full-time job. Today we're pushing ChatGPT way past what you see in the typical tutorials — the stuff that actually saves you time, not the stuff that just looks impressive."
 
 Beat 5 (1:10–2:00, ~120 words): "In today's video, I'm gonna show you 25 insanely powerful ChatGPT tricks that most people don't even know exist. Doesn't matter if you're a student, a business owner, a creative, or just curious about AI — once you see what this thing can actually do, it's gonna completely change how you use it."
 
@@ -371,7 +371,7 @@ Rules specific to Formula C:
 - The audience qualifier in Beat 5 is the FUNNEL — must list 3-4 viewer types as nouns ("student, business owner, creative, AI-curious")
 - The Skool plug in Beat 6 MUST be anchored to "the prompts I'm using IN THIS VIDEO" — generic "join my community" kills the trust pact
 - The "I'm not gonna leave you hanging" anti-clickbait line is ESSENTIAL — it's the trust pact that earns the rest of the watch
-- Narrative credential (Beat 4) is short: time + proof in 2 sentences max
+- Beat 4 is welcome + positioning, not a credential — no years, no track record
 
 ------------------------------------------------------------
 OUTPUT FORMAT — GENERATE ALL FOUR FORMULAS
@@ -413,7 +413,7 @@ Beat 1 (0:00–0:08, ~25 words):
 [Visual outcome on screen FIRST. State what's there in one short line, fragment sentences for emphasis. "Look at this [thing]. [Tool] made this in [time]. No [hard alternative]."]
 
 Beat 2 (0:08–0:25, ~35 words):
-[Short time-bound credential + concrete copy-paste value promise]
+[Concrete copy-paste value promise — no credential]
 
 Beat 3 (0:25–0:50, ~50 words):
 ["By the end of this video, you'll [outcome]. Even if you've never [barrier]." + welcome line + 1-sentence positioning]
@@ -428,7 +428,7 @@ Beat 1 (0:00–0:08, ~25 words):
 [Visceral metaphor + specific number stake, no preamble. "What if I told you [tool] is [metaphor] — and you've only [used X out of total]?"]
 
 Beat 2 (0:08–0:22, ~35 words):
-[Universal gap statistic + audience qualifier baked in. "Most people are only using [X%] — and if you're a [type 1], [type 2], or [type 3], the other [X%] is where the real magic lives."]
+[Universal gap statistic + audience qualifier baked in. "Only about [X%] of it ever gets used — and if you're a [type 1], [type 2], or [type 3], the other [X%] is where the real magic lives."]
 
 Beat 3 (0:22–0:42, ~50 words):
 [Number reveal + proof tease + transformation promise]
@@ -446,13 +446,13 @@ Beat 1 (0:00–0:10, ~30 words):
 [Visceral metaphor + specific number stake + transition line]
 
 Beat 2 (0:10–0:25, ~35 words):
-[Universal gap — "Most people only use X%" + "the other (100-X)% is where the magic lives"]
+[Universal gap — "Only about X% of it ever gets used" + "the other (100-X)% is where the magic lives"]
 
 Beat 3 (0:25–0:40, ~40 words):
 [Outcome stack + curtain pull — "I'm going to show you wild [features/moves] that'll change how you [3 outcomes]"]
 
 Beat 4 (0:40–1:10, ~70 words):
-[Short narrative credential — time + 1 line of proof]
+[Welcome line + one sentence of positioning — no credential]
 
 Beat 5 (1:10–2:00, ~120 words):
 [Number reveal + EXPLICIT audience funnel — list 3-4 viewer types as nouns + transformation promise]

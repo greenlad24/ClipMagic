@@ -88,7 +88,7 @@ Tiny words that signal a real person, not a teleprompter. Spread across the whol
 - "I mean…"
 - "You know…"
 - "…kind of…" / "…basically…" / "…essentially…" / "…literally…" / "…technically…"
-- "…you know, most people just…"
+- "…you know how it usually goes…"
 Rule: at least 3-4 of these per section. They're the seasoning.
 
 ▶ Slot 4 — SOFT HEDGES (honesty without negativity)

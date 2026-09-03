@@ -481,14 +481,14 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 **Opening Style:** Share a specific result or success story (yours or client's)
 
 **Required Elements:**
-- Concrete business result [FROM MY EXPERIENCE]
+- Concrete business result [FROM MY EXPERIENCE] — **never a money figure.** No revenue, no "$X/month", no income of any kind, whether it's Jake's, a client's, or the viewer's. Time saved, work removed, a thing that now runs itself: those are the results.
 - Timeframe to achieve it
 - Starting point context (to show it's replicable)
 - Promise: Step-by-step roadmap
 
 **Example Openings:**
-- "So I helped a client go from zero to $8K/month in automation services in 90 days. And in this video I'm breaking down the exact roadmap we followed."
-- "I started my AI automation business 6 months ago. Today it's doing $15K/month. Let me show you the framework."
+- "So I helped a client cut their client onboarding from three days of admin down to about twenty minutes, in under a month. And in this video I'm breaking down the exact roadmap we followed."
+- "I set this up six months ago with no technical background at all. Today it runs without me touching it. Let me show you the framework."
 
 **Incorporate My Research:**
 [REFERENCE: My personal results, client success story, specific numbers/timeline]
