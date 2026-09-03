@@ -20,6 +20,7 @@ import {
 import {
   formatTranscript,
   parseCaptionBody,
+  mentionsTopic,
   parseIsoDuration,
   pickSubtitleTracks,
   stamp,
@@ -454,6 +455,16 @@ check(
 );
 check("an unknown caption format gives [], not a throw", parseCaptionBody("just some text") .length === 0);
 check("malformed json gives [], not a throw", parseCaptionBody("{not json") .length === 0);
+
+// Relevance: order=viewCount returned videos that were popular NEAR the topic
+// rather than about it ("Blotato" -> "Claude Design OS"), so relevance comes
+// from YouTube and the view ranking is applied over on-topic results only.
+check("a one-word topic must be named outright", mentionsTopic("Blotato Beginner Tutorial", "Blotato"));
+check("a one-word topic missing entirely is rejected", !mentionsTopic("Claude Design OS Changes Everything", "Blotato"));
+check("matching is case-insensitive", mentionsTopic("automate social media with BLOTATO", "Blotato"));
+check("a two-word topic may drop one word", mentionsTopic("The Ultimate Beginner Guide to Claude AI", "Claude Code"));
+check("a two-word topic missing both words is rejected", !mentionsTopic("I Built a Trading System", "Claude Code"));
+check("filler words in the topic do not count against it", mentionsTopic("Notion tips", "How to use the Notion app"));
 
 console.log("");
 if (fail.length) {

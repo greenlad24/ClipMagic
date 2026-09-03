@@ -37,8 +37,51 @@ export const VIDEO_COUNT = 4;
  */
 const MIN_SECONDS = 240;
 
+/**
+ * A live search for "Claude Code tutorial" returned, in the top four by views, a
+ * 58-minute Japanese walkthrough and a video titled "Claude Code (Free Plan) +
+ * YouTube = $77,000/Month". Neither is a source of click paths, and between them
+ * they were most of the token budget.
+ *
+ * `relevanceLanguage` only biases the ranking, so language has to be filtered
+ * afterwards on the video's own metadata. And an income-bait title is a reliable
+ * marker of a video that never opens the product — plus Rule 6 bans money claims
+ * outright, so a transcript full of them is the last thing this script needs
+ * near its facts.
+ */
+const MONEY_BAIT = /\$\s?\d|\bincome\b|\bmake (?:money|\$)|\b\d+k\s*(?:\/|per |a )\s*(?:mo|month)|\bper month\b|\bpassive income\b/i;
+
+/**
+ * Does this video actually cover the topic, or is it just popular nearby?
+ *
+ * Every word of the topic that carries meaning has to appear in the title or
+ * description. A one-word topic ("Blotato") must be named outright; a multi-word
+ * one ("Claude Code") is allowed to have a word missing, because titles compress
+ * — but not all of them.
+ */
+export function mentionsTopic(haystack: string, topic: string): boolean {
+  const hay = haystack.toLowerCase();
+  const words = topic
+    .toLowerCase()
+    .split(/[^a-z0-9.+]+/i)
+    .filter((w) => w.length > 2 && !["the", "and", "for", "with", "how", "app", "ai"].includes(w));
+  if (words.length === 0) return true;
+  const hits = words.filter((w) => hay.includes(w)).length;
+  return words.length === 1 ? hits === 1 : hits >= words.length - 1;
+}
+
+function isEnglish(lang: string | undefined): boolean {
+  // Absent is common and not a reason to drop a video — only an explicit
+  // non-English tag is. "en", "en-US" and "en-GB" all pass: they are English and
+  // they all surface in a US search, and dropping en-GB would lose good
+  // walkthroughs for no gain in what the viewer sees on screen.
+  return !lang || /^en/i.test(lang);
+}
+
 export interface TutorialVideo {
   videoId: string;
+  /** The video's own language tag, where it declares one. */
+  lang?: string;
   title: string;
   channel: string;
   publishedAt: string;
@@ -97,12 +140,23 @@ export async function findTutorialVideos(
     part: "snippet",
     q: `${topic} tutorial`,
     type: "video",
-    order: "viewCount",
+    // RELEVANCE, not viewCount. Asking YouTube to sort by views returns whatever
+    // is popular near the topic rather than about it — a search for "Blotato"
+    // came back with "Claude Design OS" and "1-Person Business", and one for
+    // "Claude Code" with two AI-trading videos. So relevance is bought from
+    // YouTube, and the view ranking is applied here, over results that are
+    // actually on topic.
+    order: "relevance",
     publishedAfter: after.toISOString(),
     // Over-fetch: the length filter below discards Shorts and explainers, and
     // those are exactly what ranks highest on views.
     maxResults: "25",
+    // English-language, US results. relevanceLanguage only biases the ranking —
+    // it let a 58-minute Japanese walkthrough take the top slot — so the language
+    // tag is filtered properly below. regionCode is what actually scopes the
+    // search to the US.
     relevanceLanguage: "en",
+    regionCode: "US",
     key,
   });
   const sr = await fetch(`https://www.googleapis.com/youtube/v3/search?${search}`);
@@ -121,13 +175,20 @@ export async function findTutorialVideos(
   const dj = (await dr.json()) as {
     items?: Array<{
       id: string;
-      snippet: { title: string; channelTitle: string; publishedAt: string };
+      snippet: {
+        title: string;
+        description: string;
+        channelTitle: string;
+        publishedAt: string;
+        defaultAudioLanguage?: string;
+        defaultLanguage?: string;
+      };
       statistics: { viewCount?: string };
       contentDetails: { duration: string };
     }>;
   };
 
-  return (dj.items ?? [])
+  const candidates = (dj.items ?? [])
     .map((v) => ({
       videoId: v.id,
       title: v.snippet.title,
@@ -136,10 +197,23 @@ export async function findTutorialVideos(
       views: Number(v.statistics.viewCount ?? 0),
       seconds: parseIsoDuration(v.contentDetails.duration),
       url: `https://www.youtube.com/watch?v=${v.id}`,
+      lang: v.snippet.defaultAudioLanguage ?? v.snippet.defaultLanguage,
+      haystack: `${v.snippet.title} ${v.snippet.description ?? ""}`,
     }))
     .filter((v) => v.seconds >= MIN_SECONDS)
-    .sort((a, b) => b.views - a.views)
-    .slice(0, count);
+    .filter((v) => isEnglish(v.lang))
+    .filter((v) => !MONEY_BAIT.test(v.title))
+    .filter((v) => mentionsTopic(v.haystack, topic));
+
+  // A video that names the topic in its TITLE is about the topic. One that only
+  // mentions it in the description is usually a roundup that lists the tool in
+  // passing — real for "Blotato", where three of four description-matches turned
+  // out to be videos about something else that mention it. Title matches go
+  // first, and descriptions only fill the slots left over.
+  const byViews = (a: { views: number }, b: { views: number }) => b.views - a.views;
+  const titled = candidates.filter((v) => mentionsTopic(v.title, topic)).sort(byViews);
+  const rest = candidates.filter((v) => !mentionsTopic(v.title, topic)).sort(byViews);
+  return [...titled, ...rest].slice(0, count).map(({ haystack, ...v }) => v);
 }
 
 interface TranscriptSegment {
