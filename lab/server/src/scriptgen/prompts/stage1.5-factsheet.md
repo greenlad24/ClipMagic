@@ -71,10 +71,13 @@ Plain markdown, no preamble. Use exactly these headings, and omit a heading only
 
 ## TWO SOURCES, AND WHICH ONE WINS
 
-You are given the written research AND a workflow sheet built from recent video tutorials — people recorded doing the thing on screen. Both feed this sheet.
+You are given a workflow sheet built from recent video tutorials — people recorded doing the thing on screen — AND the written research. **The video sheet is the primary source. The written research supports it.**
 
-- **Click paths, menu names, button labels, the order of steps, values typed:** the video sheet wins. A written source describes a product; a screen recording shows it. Copy its labels exactly, and carry its `[V2 @ 7:41]` citations through onto the step lines so they can be checked.
-- **Prices, tiers, limits, statistics:** the written research wins. Tutorials quote prices from memory and go out of date fastest, so a figure heard in a video is only used when the research has nothing, and then it is dated as what that video said, on its publish date.
+An article describes a product from the outside, often written once and never revisited. A recording published this month shows the product as it is now. When both cover the same ground, build on the recording.
+
+- **What the product actually does, how a job runs start to finish, what happens at each step, click paths, menu names, button labels, the order of steps, values typed:** the video sheet wins. Copy its labels exactly, and carry its `[V2 @ 7:41]` citations through onto the step lines so they can be checked.
+- **Where the research contradicts something plainly shown on screen, the screen is right.** Say what the videos show and drop the written claim — do not average the two into a hedge.
+- **Prices, tiers, limits, statistics:** the written research wins. This is the one exception, and it is narrow: tutorials quote figures from memory and go stale fastest. A figure heard in a video is used only when the research has nothing, and then it is dated as what that video said, on its publish date.
 - **Where only one source has something:** use it, and let the line say where it came from.
 
 Anything the video sheet lists under NOT SHOWN stays unconfirmed here too — put it under DO NOT CLAIM rather than smoothing over it.
@@ -85,7 +88,7 @@ Anything the video sheet lists under NOT SHOWN stays unconfirmed here too — pu
 
 VIDEO TITLE: [INSERT TITLE]
 
-THE WORKFLOW SHEET (from recent video tutorials — best evidence for steps and labels):
+THE WORKFLOW SHEET (from recent video tutorials — the PRIMARY source for how the product works):
 [PASTE THE VIDEO WORKFLOWS]
 
 THE RESEARCH:
