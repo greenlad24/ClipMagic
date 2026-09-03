@@ -536,6 +536,16 @@ export async function opusScriptChat(opts: {
     ? await anthropicStreamRequest(body, "Claude (scriptgen) API error")
     : await anthropicRequest(body, "Claude (scriptgen) API error", 1);
   const ms = Date.now() - t0;
+  // A stage that stops on `max_tokens` did not finish its answer, and the ones
+  // that return the whole script fail SOFT when that happens — the guard drops
+  // the truncated text and the run carries on without that pass. That is a
+  // silent quality loss unless it is said out loud here.
+  if ((json as { stop_reason?: string }).stop_reason === "max_tokens") {
+    console.warn(
+      `[scriptgen:truncated] ${opts.label ?? "scriptgen"} hit its ${opts.maxTokens ?? 16000}-token output cap ` +
+        `and was cut off mid-answer. Whatever this stage produces is incomplete.`,
+    );
+  }
   if (opts.purpose) {
     recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms });
   }

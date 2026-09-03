@@ -301,7 +301,16 @@ export function continueScript(runId: string, setup: ScriptSetup): { jobId: stri
       message: `This script is already ${run.status}; it cannot be started again.`,
     });
   }
-  updateRun(runId, { setup, title: setup.title, videoType: setup.videoType, status: "running" });
+  // Clear the previous failure's message. Without this a resumed run carries the
+  // old error all the way to completion, so a finished script still reads "hit
+  // the ceiling" in the row that produced it.
+  updateRun(runId, {
+    setup,
+    title: setup.title,
+    videoType: setup.videoType,
+    status: "running",
+    error: null,
+  });
   const job = createJob(runId);
   void runScript(job.id, runId, setup, run.input, run.stage0);
   return { jobId: job.id, runId };
@@ -1029,19 +1038,26 @@ async function runScript(
   const runStartedAt = Date.now();
   const priorGenerationMs = priorRun?.generationMs ?? 0;
   if (prior) {
-    stages.research = prior.research;
-    stages.sources = prior.sources ?? [];
-    stages.factSheet = prior.factSheet;
-    stages.outline = prior.outline;
-    // The persisted outline is the one the coverage pass already revised, so the
-    // pass must not run again — it would re-score its own output and re-bill for it.
-    stages.briefCoverage = prior.briefCoverage ?? null;
-    stages.hooks = prior.hooks;
-    stages.sponsorSegment = prior.sponsorSegment;
-    stages.sections = Array.isArray(prior.sections) ? [...prior.sections] : [];
-    stages.outro = prior.outro;
+    // Carry EVERY persisted field forward, rather than naming them one by one.
+    // The named version silently dropped `videoWorkflows` when Stage 0.6 was
+    // added: undefined is that stage's "never ran" signal, so a resume re-bought
+    // the Apify transcripts and re-ran the extraction — 148s and ~$0.76 — and
+    // showed "Watching the newest tutorials…" at 6%, which reads as the run
+    // starting over. Copying generically means the next stage added is carried
+    // whether or not anyone remembers this block.
+    //
+    // Every stage guard is `if (!stages.x)`, so a completed value skips the
+    // stage and a null (it ran, it found nothing) is preserved as its own
+    // answer. Arrays are cloned so the prior row is never mutated in place.
+    // Note this includes the outline the coverage pass already revised — that
+    // pass must not run again, or it re-scores its own output and re-bills.
+    for (const [k, v] of Object.entries(prior) as [keyof ScriptStages, unknown][]) {
+      if (v === undefined) continue;
+      (stages as unknown as Record<string, unknown>)[k] = Array.isArray(v) ? [...v] : v;
+    }
     const done = [
       prior.research && "research",
+      prior.videoWorkflows && "tutorial sheet",
       prior.factSheet && "fact sheet",
       prior.outline && "outline",
       prior.briefCoverage && "brief coverage",
@@ -1493,7 +1509,13 @@ async function runScript(
     const raw55 = await opusScriptChat({
       system: preamble(false),
       messages: [{ role: "user", content: s55 + sponsorCapBlock(sponsored, setup.sponsorship?.sponsorName || "the tool") }],
-      maxTokens: 16000,
+      // This is the one stage that must return the WHOLE script back, hooks and
+      // all, and adaptive thinking spends from the same output budget. At 16000
+      // a 13-section script ran out mid-answer: the pass stopped on max_tokens,
+      // the shrink guard correctly threw the truncated script away, and the run
+      // shipped with no CTAs placed at all — for $0.48. The cap only bills what
+      // is actually generated, so the headroom is close to free.
+      maxTokens: 32000,
       label: "stage5.5-cta",
       purpose: "scriptgen",
     });
