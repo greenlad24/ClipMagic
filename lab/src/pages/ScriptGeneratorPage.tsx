@@ -58,6 +58,7 @@ import {
   Megaphone,
   Wand2,
   ListTree,
+  RotateCw,
 } from 'lucide-react';
 
 /**
@@ -716,6 +717,16 @@ export default function ScriptGeneratorPage() {
   // An outline run's deliverable is the plan, so the result view says so — and
   // offers the one thing an outline is for: writing the script from it.
   const isOutlineRun = run?.setup?.mode === 'outline';
+  // Resuming needs a confirmed setup to re-send; a run that died before the
+  // checkpoint has nothing to carry forward and only offers a fresh start.
+  const resumable = run?.status === 'failed' && Boolean(run.setup);
+  const resumeSummary = (() => {
+    const done = run?.stages?.sections?.length ?? 0;
+    if (done > 0) return `${done} section${done === 1 ? '' : 's'} are already written.`;
+    if (run?.stages?.outline) return 'The research and outline are already done.';
+    if (run?.stages?.research) return 'The research is already done.';
+    return 'The stages that completed are saved.';
+  })();
   const phase = job?.phase || (status === 'classifying' ? 'Classifying the idea' : 'Working…');
   const percent = job?.percent ?? null;
   const costUsd = job?.costUsd ?? null;
@@ -1193,10 +1204,37 @@ export default function ScriptGeneratorPage() {
                         <p className="mt-0.5 text-xs text-muted-foreground">
                           {run.error || 'Something went wrong. Try again.'}
                         </p>
-                        <Button variant="outline" size="sm" className="mt-3 gap-1.5" onClick={newScript}>
-                          <Plus className="h-4 w-4" />
-                          New script
-                        </Button>
+                        {/* A failed run keeps every stage it already paid for, so resuming
+                            picks up at the first thing that never ran rather than buying
+                            the research, outline and finished sections a second time. */}
+                        {resumable && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            {resumeSummary} Resuming carries on from there — nothing already written is
+                            re-bought.
+                          </p>
+                        )}
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {resumable && (
+                            <Button
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => void confirmSetup(isOutlineRun ? 'outline' : 'full')}
+                              disabled={continuing !== null}
+                              title="Continues this run from the last stage it completed"
+                            >
+                              {continuing !== null ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <RotateCw className="h-4 w-4" />
+                              )}
+                              Resume
+                            </Button>
+                          )}
+                          <Button variant="outline" size="sm" className="gap-1.5" onClick={newScript}>
+                            <Plus className="h-4 w-4" />
+                            New script
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </section>

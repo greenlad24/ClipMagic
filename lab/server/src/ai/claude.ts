@@ -613,8 +613,14 @@ function logScriptgenUsage(
  * Hard ceiling for one script run. The tally is checked BEFORE each call, so a
  * runaway pipeline stops instead of being discovered on a billing page. Set
  * SCRIPTGEN_MAX_USD=0 to disable.
+ *
+ * The old $4 was set before Stage 1.6 (tutorial transcripts) and the recency
+ * research existed. Those put ~$3.10 on the clock BEFORE the first section is
+ * drafted, so a normal full run now lands near $4.60 and tripped the ceiling
+ * with three sections left to write. $12 is roughly 2.5x a healthy run: still
+ * a real runaway guard, but no longer a ceiling an ordinary script hits.
  */
-const SCRIPTGEN_MAX_USD = Number.parseFloat(process.env.SCRIPTGEN_MAX_USD || "4");
+const SCRIPTGEN_MAX_USD = Number.parseFloat(process.env.SCRIPTGEN_MAX_USD || "12");
 
 /** Throw before spending another dollar if this run has already blown its budget. */
 function assertScriptgenBudget(label: string): void {
@@ -622,7 +628,8 @@ function assertScriptgenBudget(label: string): void {
   const spent = scriptgenUsageTotal().costUsd;
   if (spent >= SCRIPTGEN_MAX_USD) {
     throw new Error(
-      `Script run stopped at $${spent.toFixed(2)}: it hit the SCRIPTGEN_MAX_USD ceiling of $${SCRIPTGEN_MAX_USD.toFixed(2)} before "${label}". Raise the limit or shorten the script.`,
+      `Script run stopped at $${spent.toFixed(2)}: it hit the SCRIPTGEN_MAX_USD ceiling of $${SCRIPTGEN_MAX_USD.toFixed(2)} before "${label}". ` +
+        `Nothing it already paid for is lost — raise SCRIPTGEN_MAX_USD and resume the run, and it picks up from here.`,
     );
   }
 }
