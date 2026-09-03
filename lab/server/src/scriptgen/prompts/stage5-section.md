@@ -6,7 +6,7 @@
 
 One line. Then back to the content. Never a paragraph. Never preceded by "let me tell you about myself."
 
-**The word "caveat" never appears in the script — not once, singular or plural.** It is used below as a LABEL for a kind of beat, and that is the only place it belongs: in the instructions, never in a sentence Jake says out loud. When you write that beat, say "one thing to know", "the catch is", or just say the thing plainly. The same goes for the other banned words — "clever", "genuinely", "real deal", "which", "whether" — which the WORD SWAPS table below covers.
+**Some words are never written, in the script or anywhere else.** "caveat" (say "one thing to know" or "the catch is"), "clever" and "neat" (say what the thing actually does, or what it saves the viewer), "genuinely" and "real deal" (cut them — if a thing is good, show why). The WORD SWAPS table below carries the rest. Where a beat below is about being honest regarding a limitation, that is what to write — the limitation itself, plainly.
 
 ---
 
@@ -48,7 +48,7 @@ Real examples with names:
 - "Here's a real example. A consultant named Amanda…"
 - "Maybe you're running an agency — here's how this looks for you."
 
-Honest caveats:
+Honest about the catch:
 - "And look, it's not instant magic."
 - "Totally fair question…"
 - "But like any growing tool, there are rough edges."
@@ -68,13 +68,13 @@ These aren't a flat phrase list — they're **structural slots in the script**. 
 Sort the whole video into buckets so the viewer knows the architecture.
 - "So I'm going to show you what's good, what's new, what's smart, and what I'd love to see them push further."
 - "I have some thoughts. We'll get to that."
-- "[Company] hyped this up as [the marketing line] — which is a high bar to set. Let's see how it holds up."
+- "[Company] hyped this up as [the marketing line] — that's a high bar to set. Let's see how it holds up."
 - "Three things I keep coming back to. We'll get to all of them."
 
 ▶ Slot 2 — SECTION OPENERS (start of each new beat)
 Casual, low-energy, almost off-hand. Never "Number 3 is…"
 - "So, I'm going to start with [X], just because…"
-- "A couple neat things in [X]."
+- "A couple of good ones in [X]."
 - "But then there's this new feature…"
 - "Now, [X] got a big update as well."
 - "And then there's also…"
@@ -111,7 +111,7 @@ Throw these in whenever a feature is really interesting. Don't oversell.
 - "What this actually does is…"
 - "What I find really impressive here…"
 - "Making that [thing] super convenient — that's the bit that levels this thing up."
-- "…which is nice."
+- "…and that's nice."
 - "That's a huge win."
 - "You love to see it." / "We love to see that."
 - "…that's still a win."
@@ -146,7 +146,7 @@ MKBHD asks practical questions to pressure-test. Jake asks the same questions bu
 One per script, max two.
 - "…to make sure I'm not crazy here…"
 - "I don't know why they named it that, but…"
-- "…which is hilarious, in a good way."
+- "…and that's hilarious, in a good way."
 - "Anyway — moving on."
 - Throwaway personal aside ("…also, you might have noticed [random thing], I really like that.")
 
@@ -170,8 +170,8 @@ The honest-enthusiasm outro. Use this verbatim shape for any tool review or new-
 This is the meta-pattern that holds everything together. For EACH feature inside a section:
 1. **Describe** ("So this new [feature] lets you…")
 2. **Demo / specific example** ("Like let's say you're…")
-3. **React** ("…which is nice." / "That's a huge win." / "It's a really smart idea.")
-4. **Caveat** (one slot 4 or slot 8 phrase) ("We'll have to test it." / "I'm curious to see how they handle…")
+3. **React** ("…and that's nice." / "That's a huge win." / "It's a really smart idea.")
+4. **The catch** (one slot 4 or slot 8 phrase) ("We'll have to test it." / "I'm curious to see how they handle…")
 5. **Credit or curiosity payoff** ("I'll give them credit for that." / "And the part I keep coming back to is…")
 
 Run this 5-beat micro-loop per feature. That's the texture that makes a script feel like a person talking, not a script being read.
@@ -239,7 +239,7 @@ SECTION STRUCTURE:
 4. Show the result (1 sentence) — "Look at that." / "And there you go."
 5. Explain why it matters (1–2 sentences, optional)
 6. Real example, when relevant (2–3 sentences)
-7. Honest caveat (1–2 sentences, optional)
+7. Honest about the catch (1–2 sentences, optional)
 8. Transition (1 sentence) — "Next, let's [action]."
 
 ---
@@ -257,7 +257,7 @@ One line, then move on. No sarcasm. No memes. No internet slang.
 
 NUMBERS — state clearly, don't make the viewer do math:
 
-❌ "Fifty images every three hours, which adds up to four hundred plus a month."
+❌ "Fifty images every three hours, and that adds up to four hundred plus a month."
 ✅ "Fifty images every three hours."
 
 ---
@@ -276,7 +276,7 @@ CHECKLIST PER SECTION:
 ✅ Is the benefit specific and clear?
 ✅ No punch-sideways / no punch-down?
 ✅ Real example included where relevant?
-✅ Honest caveat where appropriate?
+✅ Honest about the catch where appropriate?
 ✅ Reads like natural speech?
 
 If any answer is NO, rewrite.

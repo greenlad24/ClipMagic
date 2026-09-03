@@ -728,7 +728,7 @@ export function findExperienceClaims(script: string, support: string): string[] 
  *   where "I ran this for a full 30 days" tends to land.
  */
 /** Words Jake never wants in a script. Whole-word, case-insensitive. */
-export const BANNED_WORDS = ["caveat", "clever", "which", "whether", "genuinely", "real deal"];
+export const BANNED_WORDS = ["caveat", "clever", "neat", "which", "whether", "genuinely", "real deal"];
 
 /**
  * Banned words and phrasings in the finished script, with a little context so

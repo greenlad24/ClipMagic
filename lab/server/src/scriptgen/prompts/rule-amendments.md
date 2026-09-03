@@ -109,6 +109,7 @@ The reading level is lower than you think. Not fourteen — closer to four. Shor
 - **"clever"** — say what it actually does instead. "It opens a browser and clicks the buttons itself" beats "it's clever".
 - **"which"** — split the sentence in two, or use "that". "It runs on a schedule, which is handy" → "It runs on a schedule. That's handy." Two short spoken sentences beat one written one.
 - **"whether"** — say "if". "whether it works" → "if it works". "whether or not you..." → "if you...".
+- **"neat"** — Jake doesn't say it. Say what the thing does, or how it lands for the viewer: "that saves you a click" beats "that's neat".
 - **"genuinely"** — cut it. It's filler that tries to sound sincere and does the opposite. "genuinely useful" → "useful". If a thing is good, show why; don't label it.
 - **"real deal"** — cut it. Say the concrete thing instead: not "this is the real deal" but "this actually ships the file, not just a chat answer".
 

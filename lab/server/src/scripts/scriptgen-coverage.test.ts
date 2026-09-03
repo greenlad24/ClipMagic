@@ -344,6 +344,8 @@ check("singular caveat is caught", findBannedWords("There is one caveat here.").
 check("PLURAL caveats is caught", findBannedWords("A few caveats before we start.").length === 1);
 check("caveat is caught mid-sentence regardless of case", findBannedWords("Honest Caveats apply.").length === 1);
 check("the other banned words still fire", findBannedWords("That is genuinely clever.").length === 2);
+check("neat is banned too", findBannedWords("That is a neat trick.").length === 1);
+check("a word merely starting with a banned one is safe", findBannedWords("He worked neatly and cleverly.").length === 0);
 check("a word merely containing one is not flagged", findBannedWords("She caveated nothing; whichever works.").length === 0);
 
 console.log("");

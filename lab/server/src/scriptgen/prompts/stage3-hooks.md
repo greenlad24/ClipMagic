@@ -106,7 +106,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 
 > **Beat 1 (0:00–0:08):** *"What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"*
 >
-> **Beat 2 (0:08–0:22):** *"Most people are only using maybe 10% of what this thing can actually do — and whether you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
+> **Beat 2 (0:08–0:22):** *"Most people are only using maybe 10% of what this thing can actually do — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
 >
 > **Beat 3 (0:22–0:42):** *"So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."*
 >
@@ -239,7 +239,7 @@ The hook should sound spoken, not presented. Use 2-3 (max) of these conversation
 1. Real-time thinking openers — "So…" / "Like…" / "I mean…" / "You know…" (use sparingly, 1-2 max in hook)
 2. Soft hedge ownership — "…I think." / "…honestly." / "…in a good way." — one of these in the hook humanizes the dramatic claim
 3. Credit-giving when the topic deserves it — "It's a really smart idea." / "That's the part I keep coming back to." (only in Formula A hooks, not B/C)
-4. Self-aware aside — "…to make sure I'm not crazy here…" / "…which is hilarious, in a good way." (max once, optional)
+4. Self-aware aside — "…to make sure I'm not crazy here…" / "…and that's hilarious, in a good way." (max once, optional)
 5. Curious framing instead of skeptical — "I'm curious-watching to see how this plays out." / "If they get this right, that's a real win." — replaces any negative framing
 
 Examples of how this lands in a hook (compare two versions):
@@ -335,7 +335,7 @@ REFERENCE EXAMPLE (compressed listicle):
 
 Beat 1 (0:00–0:08, ~25 words): "What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"
 
-Beat 2 (0:08–0:22, ~35 words): "Most people are only using maybe 10% of what this thing can actually do — and whether you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."
+Beat 2 (0:08–0:22, ~35 words): "Most people are only using maybe 10% of what this thing can actually do — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."
 
 Beat 3 (0:22–0:42, ~50 words): "So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."
 
@@ -428,7 +428,7 @@ Beat 1 (0:00–0:08, ~25 words):
 [Visceral metaphor + specific number stake, no preamble. "What if I told you [tool] is [metaphor] — and you've only [used X out of total]?"]
 
 Beat 2 (0:08–0:22, ~35 words):
-[Universal gap statistic + audience qualifier baked in. "Most people are only using [X%] — and whether you're a [type 1], [type 2], or [type 3], the other [X%] is where the real magic lives."]
+[Universal gap statistic + audience qualifier baked in. "Most people are only using [X%] — and if you're a [type 1], [type 2], or [type 3], the other [X%] is where the real magic lives."]
 
 Beat 3 (0:22–0:42, ~50 words):
 [Number reveal + proof tease + transformation promise]

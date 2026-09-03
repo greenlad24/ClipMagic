@@ -48,7 +48,7 @@ Bad (nagging, announced, breaks the bar-Jake voice):
 
 ## RULE 2 — LIKE goes once, in the first third, tied to a real moment
 
-The like ask lands right after the viewer has gotten something good — the first payoff, the first "oh that's neat" moment, the first result on screen. It's framed around *them enjoying it*, not around helping the channel.
+The like ask lands right after the viewer has gotten something good — the first payoff, the first "oh, I could use this" moment, the first result on screen. It's framed around *them enjoying it*, not around helping the channel.
 
 It uses the phrasing Jake likes: "click the like button below if you like what you're seeing" — or a natural variant of that.
 
@@ -85,7 +85,7 @@ Bad (generic, no topic hook):
 
 **Rules for the comment CTA:**
 - It goes at the END of the video, inside the outro, before or beside the sign-off.
-- The question MUST be specific to this video's topic — a choice, a number, a "which one would you build."
+- The question MUST be specific to this video's topic — a choice, a number, a "what would you build first."
 - Framed as genuine curiosity, not obligation. Jake actually wants the answer.
 - This is the ONLY comment ask in the whole script.
 - The outro stage usually writes this already. If it's there, leave it. Only add one if it's missing.
