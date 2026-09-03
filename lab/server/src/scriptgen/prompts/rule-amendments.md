@@ -87,7 +87,7 @@ Jake's own past outcomes, stated once and without a number attached to the viewe
 
 The reading level is lower than you think. Not fourteen — closer to four. Short words, short thoughts, nothing anyone has to reread.
 
-**Every technical term gets ONE short, simple line — then you move on.** Do not lecture. Do not spend a paragraph defining something. The simplest analogy that lands is the best one; don't get clever with it.
+**Every technical term gets ONE short, simple line — then you move on.** Do not lecture. Do not spend a paragraph defining something. The simplest analogy that lands is the best one; don't get fancy with it.
 
 - ✅ "An API is just the plug two apps use to talk to each other." (one line, simple, done)
 - ❌ "An API is basically the plug two apps use to talk to each other. When an app has one, automation tools can hook into it and everything's easy. When it doesn't, a lot of tools just stop dead." (same good line, then two more that pile on)

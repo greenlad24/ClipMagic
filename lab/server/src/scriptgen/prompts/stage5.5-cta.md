@@ -48,7 +48,7 @@ Bad (nagging, announced, breaks the bar-Jake voice):
 
 ## RULE 2 — LIKE goes once, in the first third, tied to a real moment
 
-The like ask lands right after the viewer has gotten something good — the first payoff, the first "oh that's clever" moment, the first result on screen. It's framed around *them enjoying it*, not around helping the channel.
+The like ask lands right after the viewer has gotten something good — the first payoff, the first "oh that's neat" moment, the first result on screen. It's framed around *them enjoying it*, not around helping the channel.
 
 It uses the phrasing Jake likes: "click the like button below if you like what you're seeing" — or a natural variant of that.
 

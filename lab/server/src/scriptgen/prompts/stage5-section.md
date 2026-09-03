@@ -66,7 +66,7 @@ These aren't a flat phrase list — they're **structural slots in the script**. 
 
 ▶ Slot 1 — VIDEO-OPENING FRAMING (top of script, after the hook)
 Sort the whole video into buckets so the viewer knows the architecture.
-- "So I'm going to show you what's good, what's new, what's clever, and what I'd love to see them push further."
+- "So I'm going to show you what's good, what's new, what's smart, and what I'd love to see them push further."
 - "I have some thoughts. We'll get to that."
 - "[Company] hyped this up as [the marketing line] — which is a high bar to set. Let's see how it holds up."
 - "Three things I keep coming back to. We'll get to all of them."
@@ -104,11 +104,11 @@ Owns it as opinion, leaves room to be wrong, defers final judgment.
 - "…if they get this right, that's a real win."
 - "I'm in the curious-watching category until I see [X]." ← Jake's positive variant of MKBHD's "skeptical category"
 
-▶ Slot 5 — CREDIT-GIVING (positive framing for new / different / clever features)
+▶ Slot 5 — CREDIT-GIVING (positive framing for new / different / smart features)
 Throw these in whenever a feature is really interesting. Don't oversell.
 - "…it's a different take on it. I'll give them credit for that."
 - "It's a really smart idea."
-- "What's clever about this is…"
+- "What this actually does is…"
 - "What I find really impressive here…"
 - "Making that [thing] super convenient — that's the bit that levels this thing up."
 - "…which is nice."
