@@ -1346,7 +1346,7 @@ async function runScript(
     // ── Stage 5.5 — CTA PLACEMENT ──
     // Numbered 5.5 but runs AFTER the outro: Rule 4 strips the outro's trailing
     // comment prompt, so the pass has to see the end of the video. It also takes
-    // the Stage 3 hooks, tagging the subscribe clause onto all four welcome
+    // the Stage 3 hooks, tagging the subscribe-and-like ask onto all four welcome
     // beats so whichever hook Jake picks already carries it.
     progress(job, "Placing calls to action…", 90);
     const baseHooks = stages.hooks ?? "";

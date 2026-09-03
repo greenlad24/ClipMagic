@@ -6,67 +6,52 @@ The whole point: the viewer should never feel "sold to." Each CTA rides in on th
 
 ---
 
-## THE THREE CTAs — what goes where
+## THE CTAs — what goes where
 
 | CTA | Where it goes | Action wanted | Tone |
 |---|---|---|---|
-| **Subscribe** | In the intro, woven into the welcome/identity beat | Subscribe | Light, almost throwaway. Never commercial. |
-| **Like** | Once, in the **first third** of the video | Like the video | Casual, tied to a moment the viewer's enjoying |
+| **Subscribe + Like** | In the intro, on the welcome line — "welcome back to the channel…" then the ask | Subscribe AND like the video | Light, almost throwaway. Never commercial. |
 | **Comment** | Once, at the **END**, in the outro | Comment a topic-specific reply | Curious, like Jake actually wants to hear it |
 
-**One of each. Never more.** Three CTAs total across the whole video, spaced out. They never cluster, never stack, never repeat.
+**Two moments in the whole video. Never more.** The intro ask (subscribe and like, said together in one breath) and the comment ask at the end. Nothing in between, and nothing repeated.
 
 ---
 
-## RULE 1 — SUBSCRIBE goes in the intro, light and non-commercial
+## RULE 1 — SUBSCRIBE AND LIKE go together in the intro, right after the welcome
 
-The subscribe ask rides along with the welcome line that already exists at the end of the hook. It's a half-sentence, framed as "if you want more of this." Keep it light here — the energy ("smash that like button") belongs on the like ask, not tacked onto the identity beat.
+Both asks ride the welcome line that already exists at the end of the hook. "Hey everyone, welcome back to the channel, I'm Jake Dawson…" — and then, in the same breath, subscribe and like. One aside, both verbs, then straight back into the video.
 
-It attaches to the positioning line Jake already says. The structure: identity line → subscribe as a soft tag.
+The structure: welcome + identity line → the ask as a soft tag.
 
 Good (rides the welcome line, sounds like an aside):
-> "Hey everyone, I'm Jake Dawson, I help business owners use AI without it turning into another full-time job — so if that's the kind of thing you want more of, subscribing keeps it coming."
+> "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, subscribe and like the video so more of this finds you. Alright — let's get into it."
 
-> "...I'm Jake Dawson. If you're into using AI to get real work done faster, you'll probably want to stick around — subscribe and you won't miss the next one."
+> "...I'm Jake Dawson. Go ahead and hit subscribe and smash that like button if you want more of this — then let's get to work."
 
 Bad (nagging, announced, breaks the bar-Jake voice):
 > ❌ "Don't forget to subscribe and hit the bell!"
-> ❌ "Make sure you subscribe so you never miss an upload!"
+> ❌ "Make sure you like the video and subscribe so you never miss an upload!"
 
-(Note: "smash the like button" and "hit that subscribe button" are approved phrasings — the problem above is the scolding, not the verb.)
+(The problem above is the scolding, not the verb. "Smash the like button", "hit that subscribe button" and "click that notification bell" are all approved.)
 
-**Rules for the subscribe CTA:**
+**Rules for the intro ask:**
 - It lives inside or right after the welcome/identity beat at the END of the hook — never the opening line.
-- One clause, not a sentence of its own.
-- Framed as a benefit to the viewer ("you'll want more of this"), never a demand.
-- "Smash the like button", "hit that subscribe button", "click that notification bell" are all approved phrasings — use them. What's banned is nagging: no "don't forget," no "make sure you."
-- If the hook already feels full, make it the lightest possible touch — even just "...subscribe if that sounds useful" tagged onto the positioning line.
+- Both asks in ONE aside. Not two sentences, not two moments — "subscribe and like the video" is a single beat.
+- Framed as a benefit to the viewer ("if you want more of this"), never a demand.
+- Approved phrasings: "smash the like button", "hit that subscribe button", "click that notification bell". Banned: nagging — no "don't forget," no "make sure you."
+- If the hook already feels full, make it the lightest possible touch — even just "subscribe and like it if that sounds useful" tagged onto the positioning line.
 
-**You are given FOUR hook options below.** Jake picks one later, so place the subscribe clause into the welcome/identity beat of EACH of the four hooks. Change nothing else about any hook. If a hook has no welcome/identity beat, leave that hook untouched.
+**You are given FOUR hook options below.** Jake picks one later, so place the ask into the welcome/identity beat of EACH of the four hooks. Change nothing else about any hook. If a hook has no welcome/identity beat, leave that hook untouched.
 
 ---
 
-## RULE 2 — LIKE goes once, in the first third, tied to a real moment
+## RULE 2 — the like ask happens ONCE, and it happened in the intro
 
-The like ask lands right after the viewer has gotten something good — the first payoff, the first "oh, I could use this" moment, the first result on screen. It's framed around *them enjoying it*, not around helping the channel.
+There is no second like ask, and no second subscribe ask, anywhere in the video. The intro carried both.
 
-It uses the phrasing Jake likes: "click the like button below if you like what you're seeing" — or a natural variant of that.
+When running this pass, if the drafted script has a like or subscribe ask sitting mid-video — after a payoff, after a result, anywhere — take it out and stitch the surrounding lines back together so the section still flows. That placement was the old policy; the ask lives on the welcome line now.
 
-Good (rides a payoff moment):
-> "...and that's the result, built in about two minutes. If you're into this kind of thing, go ahead and click that like button — it really helps. Alright, let's keep going."
-
-> "See how clean that came out? If you like what you're seeing so far, tap the like button real quick — then let's get into the next part."
-
-Bad (floating, no context, demanding):
-> ❌ "Before we continue, please like the video and subscribe!"
-> ❌ "If you haven't liked the video yet, do it now."
-
-**Rules for the like CTA:**
-- Place it in the **first third** of the video, immediately after a value beat or a satisfying result — never in a vacuum.
-- Use "if you like what you're seeing" / "if you're into this" framing — about the viewer's experience, not the channel's metrics.
-- One sentence, then pivot straight back to content ("Alright, let's keep going.").
-- Never paired with the subscribe ask. Subscribe already happened in the intro. Keep them apart.
-- Energy is fine ("smash that like button"). Nagging is not: no "make sure you," no "don't forget."
+What stays mid-video is the content. A payoff beat keeps its payoff — you are removing the ask that was bolted onto it, not the moment itself.
 
 ---
 
@@ -101,7 +86,7 @@ When running this pass:
 2. Delete it, and stitch the surrounding lines back together so the section still flows.
 3. Make sure exactly one comment ask survives, and that it's the one at the end.
 
-**Like and subscribe are unaffected** — subscribe rides the hook's welcome line (Rule 1), like lands in the first third (Rule 2).
+**Like and subscribe are handled by Rules 1 and 2** — both ride the hook's welcome line, and any second ask mid-video comes out.
 
 ---
 
@@ -109,7 +94,7 @@ When running this pass:
 
 - Each CTA must ride a real moment in the script — a payoff, a result, a question. Never floating, never announced.
 - One sentence each. Pivot back to content immediately.
-- Never cluster two CTAs together.
+- Never cluster two CTAs together — with one deliberate exception: subscribe and like are ONE ask on the welcome line, said in a single breath. The comment ask stays far away from them, at the end.
 - "Smash"/"hit"/"click" are approved on the like, subscribe, and bell. Still banned: "don't forget," "make sure you." Energetic, never scolding.
 - Bar-Jake voice throughout. Would Jake say this to a stranger he just met and liked? If no, soften it.
 - 14-year-old reading level. Contractions. Short sentences.
@@ -122,15 +107,14 @@ When running this pass:
 Return exactly three delimited blocks, in this order, with the delimiter lines written on their own line, character for character. No markdown fences around them. No preamble.
 
 ===HOOKS===
-(All four hook options, reproduced in full and unchanged, except the subscribe clause is now tagged onto each welcome/identity beat.)
+(All four hook options, reproduced in full and unchanged, except the subscribe-and-like ask is now tagged onto each welcome/identity beat.)
 ===SCRIPT===
-(The full script — sections and outro — with the like CTA placed in the first third, the comment CTA placed around the middle, and any end-of-video comment prompt removed.)
+(The full script — sections and outro — with any mid-video like, subscribe or comment ask removed, and exactly one comment ask surviving at the END, in the outro.)
 ===NOTES===
 (A short bullet list of exactly what you placed and where, so Jake can sanity-check placement. For example:
-- Subscribe: tagged onto the welcome line in all four hooks.
-- Like: after the first result in "Building the workflow".
-- Comment: mid-video, tied to which automation saves the most time.
-- Removed: end-of-outro comment prompt; outro now closes on the sign-off.)
+- Subscribe + like: tagged onto the welcome line in all four hooks.
+- Comment: at the end of the outro, tied to what the viewer would build first.
+- Removed: the like ask after the first result in "Building the workflow".)
 
 ---
 
