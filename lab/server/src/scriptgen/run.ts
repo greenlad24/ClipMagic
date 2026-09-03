@@ -656,6 +656,36 @@ function workflowBlock(sheet: string): string {
 }
 
 /**
+ * Research runs AFTER the tutorials have been transcribed, so most of what the
+ * written web is good for has already been answered on screen. This tells the
+ * research stage to spend its searches on what a recording cannot give — a
+ * current price, an official limit, a dated announcement — instead of
+ * re-deriving the walkthrough it has already been handed.
+ *
+ * This is a cost dial as much as a quality one. Each search round re-sends the
+ * whole conversation, so the stage bills far more than the searches themselves;
+ * asking for fewer, better-aimed ones is what makes it cheaper.
+ */
+function researchScopeBlock(): string {
+  return [
+    "",
+    "---",
+    "",
+    "## WHERE TO SPEND THE SEARCHES",
+    "",
+    "You already have the tutorial sheet above: how the product works, the click paths, the real UI labels, the order of the steps. **Do not spend searches re-establishing any of it.** A search that returns a write-up of what the sheet already shows on screen has bought nothing, and the sheet outranks it anyway.",
+    "",
+    "Spend them on the things a recording cannot be trusted for, in this order:",
+    "1. **Numbers as they stand today** — prices, tiers, limits, quotas. Prefer the vendor's own pricing or docs page over anybody's summary of it. Tutorials quote figures from memory and go stale fastest, so this is the one place the written web outranks the video.",
+    "2. **What changed recently** — the newest release, deprecation or repricing, with its date. If something in the sheet has since changed, say so plainly.",
+    "3. **The gaps the sheet marks NOT SHOWN** — the steps nobody recorded.",
+    "4. **Anything the brief asks for that neither of the above covers.**",
+    "",
+    "Fewer, better-aimed searches beat a wide sweep. When the sheet and the brief are already answered, stop searching and write up what you have — a thin, current, checkable research doc is worth more than a long one padded with articles about a product you can already watch someone use.",
+  ].join("\n");
+}
+
+/**
  * Stage 7 gets the fact sheet so it can judge whether a figure is current, and
  * this says what it may do with it. Without the fence a reviewer handed a sheet
  * of facts starts enriching the script with them — adding a tier here, a limit
@@ -1161,9 +1191,17 @@ async function runScript(
       // The videos ran first, and what they showed is evidence the search should
       // start from: confirm the paths, price what they demo, and go after the gaps
       // they left rather than re-deriving the whole topic from scratch.
-      systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : [])],
+      systemExtra: [
+        ...briefExtra,
+        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows), researchScopeBlock()] : []),
+      ],
       messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
       webSearch: true,
+      // Half the sweep when the tutorials already answered how the product
+      // works: the searches that remain are for prices, dates and the gaps the
+      // sheet marks NOT SHOWN. With no sheet the written web is all there is,
+      // so it keeps the full eight.
+      searchMaxUses: stages.videoWorkflows ? 4 : 8,
       maxTokens: 16000,
       label: "stage1-research",
       sinkSources: stages.sources,

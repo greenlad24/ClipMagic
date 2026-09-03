@@ -457,6 +457,12 @@ export async function opusScriptChat(opts: {
   /** Enable Anthropic's server-side web search (used by Stage 1 research). */
   webSearch?: boolean;
   /**
+   * How many searches that call may run. Each round re-sends the conversation
+   * so far, so the cost of this stage rises with the SQUARE of the rounds, not
+   * linearly — it is the biggest single dial in the pipeline. Defaults to 8.
+   */
+  searchMaxUses?: number;
+  /**
    * Adaptive thinking. On by default — most stages are judgement calls. Pass
    * false for mechanical stages (classify, reformat, extract): thinking bills as
    * OUTPUT at 5x the input rate, so it is the most expensive thing to waste.
@@ -504,8 +510,12 @@ export async function opusScriptChat(opts: {
     // research call past five minutes — straight into undici's 300s fetch
     // timeout, which the old retry path then treated as a network blip and
     // re-issued, billing the whole search-heavy call again. Eight is what the
-    // pipeline shipped with and what it was measured on.
-    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 8 }];
+    // pipeline shipped with and what it was measured on. It is now the CEILING
+    // rather than the setting: research asks for fewer when the tutorials have
+    // already established how the product works.
+    body.tools = [
+      { type: "web_search_20260209", name: "web_search", max_uses: opts.searchMaxUses ?? 8 },
+    ];
   }
   assertScriptgenBudget(opts.label ?? "scriptgen");
 
