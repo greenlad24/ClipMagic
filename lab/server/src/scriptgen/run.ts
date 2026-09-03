@@ -25,6 +25,7 @@
 import { nanoid } from "nanoid";
 import { opusScriptChat, extractJson, scriptgenUsageTotal, resetScriptgenUsage } from "../ai/claude.js";
 import { ZiteError } from "../zite/store.js";
+import { gatherTutorialTranscripts, transcriptsBlock, videoResearchConfigured } from "./videoResearch.js";
 import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
 import {
@@ -622,6 +623,34 @@ function factSheetBlock(factSheet: string): string {
 }
 
 /**
+ * The workflow sheet, handed to the stages that decide what the video SHOWS.
+ *
+ * It outranks the fact sheet on one specific thing and nothing else: where a
+ * control lives and what it is called. The fact sheet is built from written
+ * sources that describe a product; this is built from people using it on camera.
+ */
+function workflowBlock(sheet: string): string {
+  return [
+    "",
+    "---",
+    "",
+    "## WHAT THE NEWEST TUTORIALS SHOW ON SCREEN",
+    "",
+    "This was pulled from the most-watched tutorials published in the last three months — people recording themselves doing the thing. It is the best evidence available for the parts a written source never covers: the real name of a button, the order of the clicks, the value that gets typed.",
+    "",
+    "**A label that appears in EXACT UI LABELS SEEN is confirmed.** Write it plainly, with no `[VERIFY ON SCREEN: …]` marker — the marker is for controls nobody could confirm, and these were confirmed by watching someone use them.",
+    "",
+    "**Anything under NOT SHOWN is still unconfirmed.** Those steps keep their markers.",
+    "",
+    "Where this sheet and the written research disagree about a click path, this wins — a screen recording beats a docs page that was written once and never revisited. Where they disagree about a PRICE, the fact sheet wins: tutorials quote prices from memory and go stale fastest.",
+    "",
+    "Use the steps. Never use the wording — every one of these came out of somebody else's video, and the script is Jake's.",
+    "",
+    sheet,
+  ].join("\n");
+}
+
+/**
  * Stage 7 gets the fact sheet so it can judge whether a figure is current, and
  * this says what it may do with it. Without the fence a reviewer handed a sheet
  * of facts starts enriching the script with them — adding a tier here, a limit
@@ -996,8 +1025,8 @@ async function runScript(
   // jumping to done.
   const PCT =
     mode === "outline"
-      ? { research: 12, facts: 35, outline: 58, coverage: 80 }
-      : { research: 10, facts: 22, outline: 30, coverage: 38 };
+      ? { research: 12, videos: 24, facts: 40, outline: 60, coverage: 80 }
+      : { research: 10, videos: 16, facts: 22, outline: 30, coverage: 38 };
 
   /** Close the job + the run row: same accounting whichever stage we stopped at. */
   const finish = (): void => {
@@ -1079,6 +1108,56 @@ async function runScript(
     persist();
     }
 
+    // ── Stage 1.6 — VIDEO WORKFLOWS (what the newest tutorials show on screen) ──
+    // Web research knows what a tool IS and not where its buttons are. Someone who
+    // recorded themselves using it does. This runs once per run — the transcripts
+    // are bought from Apify and the extraction is a long-context call, so a resumed
+    // run reuses what it already paid for, exactly like the research above.
+    if (stages.videoWorkflows === undefined && videoResearchConfigured()) {
+      progress(job, "Watching the newest tutorials…", PCT.videos);
+      try {
+        const videos = await gatherTutorialTranscripts(setup.coreTopic);
+        if (videos.length === 0) {
+          // Not an error. A tool that shipped last month has no tutorials yet, and
+          // saying so is more useful than widening the window and quietly handing
+          // the writer a click path from a version of the product that is gone.
+          stages.videoWorkflows = null;
+          console.log(`[scriptgen:videos] no recent tutorials found for "${setup.coreTopic}"`);
+        } else {
+          stages.videoSources = videos.map((v) => ({
+            title: v.title,
+            channel: v.channel,
+            url: v.url,
+            publishedAt: v.publishedAt,
+            views: v.views,
+          }));
+          const s16 = fill(loadPrompt("stage1.6-workflows"), {
+            "[INSERT TOPIC]": setup.coreTopic,
+            "[INSERT TRANSCRIPTS]": transcriptsBlock(videos),
+          });
+          stages.videoWorkflows = await opusScriptChat({
+            system: preamble(false),
+            systemExtra: briefExtra,
+            messages: [{ role: "user", content: s16 }],
+            maxTokens: 16000,
+            label: "stage1.6-workflows",
+            purpose: "scriptgen",
+          });
+          console.log(
+            `[scriptgen:videos] ${videos.length} transcript(s) → workflow sheet ` +
+              `(${stages.videoWorkflows.length} chars)`,
+          );
+        }
+      } catch (e) {
+        // Two paid third-party services sit behind this. Neither is allowed to
+        // take the run down — the script is worse without the click paths, not
+        // impossible.
+        stages.videoWorkflows = null;
+        console.warn(`[scriptgen:videos] skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      persist();
+    }
+
     // ── Stage 1.5 — FACT SHEET ──
     // The outline compresses; the section writer is told to use the outline only.
     // Anything checkable that the outline drops has to survive somewhere, or the
@@ -1115,8 +1194,9 @@ async function runScript(
       system: preamble(false),
       // The outline is the only thing the section writers ever see. Whatever it
       // drops, the video will not contain — so this is the stage that most needs
-      // the brief, and the one that never had it.
-      systemExtra: briefExtra,
+      // the brief, and the one that never had it. Same reasoning for the click
+      // paths: a step that misses the outline cannot come back later.
+      systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : [])],
       messages: [
         {
           role: "user",
@@ -1278,6 +1358,7 @@ async function runScript(
     const sectionExtra = [
       ...briefExtra,
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+      ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : []),
       stepScaffoldBlock(),
     ];
     for (let i = alreadyDrafted; i < total; i++) {

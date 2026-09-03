@@ -155,6 +155,12 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // Polled on a SLOW cadence (default 6h) to conserve Apify credits. Same write-only
   // guarantee as every other key: never returned through any HTTP response, never logged.
   { key: "APIFY_TOKEN", label: "Apify API token", group: "Engagement (TikTok)", connects: "An Apify API token so the Engagement Manager can READ your connected TikTok profile's comments via the scrapeforge/tiktok-comments-extractor actor. Create one at apify.com (Settings → Integrations → API token). TikTok is polled on a slow cadence (~4 runs/day) to conserve Apify credits. Server-only; never sent to the browser." },
+  // ── Script Generator — transcript fallback (RapidAPI yt-api) ────────────────
+  // The script generator reads recent tutorials to learn a tool's real click
+  // paths. Apify is the primary transcript source; this is the fallback for when
+  // an actor run fails or returns nothing. LAB_ONLY, read internally via
+  // getRapidApiKey(), same write-only guarantee as the rest.
+  { key: "RAPIDAPI_KEY", label: "RapidAPI key (yt-api)", group: "Script Generator", connects: "A RapidAPI key subscribed to yt-api (yt-api.p.rapidapi.com), used as the FALLBACK transcript source when Apify fails. The script generator reads the newest tutorials on a topic to learn a tool's real menu names and click paths. Server-only; never sent to the browser." },
   // ── Channel Audit — YouTube Analytics (paid vs organic views) ──────────────
   // A SEPARATE OAuth client from the sign-in one. Signing in to the lab must
   // never be able to read anyone's YouTube analytics, so the identity client
@@ -230,6 +236,8 @@ const LAB_ONLY_KEYS = new Set([
   "META_ACCESS_TOKEN",
   // Engagement Manager — TikTok (Apify) comment monitoring, used by the lab server.
   "APIFY_TOKEN",
+  // Script Generator — transcript fallback (lab server only).
+  "RAPIDAPI_KEY",
   // Channel Audit — YouTube Analytics OAuth (lab server only).
   "YT_ANALYTICS_CLIENT_ID",
   "YT_ANALYTICS_CLIENT_SECRET",
@@ -482,6 +490,20 @@ export function getYoutubeDataApiKey(): string | null {
   if (fromEnv) return fromEnv;
   const map = readStore();
   return map.YOUTUBE_DATA_API_KEY || null;
+}
+
+/**
+ * INTERNAL, SERVER-ONLY getter for the RapidAPI key — used by
+ * scriptgen/videoResearch.ts as the FALLBACK transcript source when an Apify
+ * actor run fails or comes back empty. Must NEVER be wired into an HTTP response
+ * or logged (write-only guarantee). An env var (RAPIDAPI_KEY) takes precedence
+ * over the UI-managed store.
+ */
+export function getRapidApiKey(): string | null {
+  const fromEnv = (process.env.RAPIDAPI_KEY || "").trim();
+  if (fromEnv) return fromEnv;
+  const map = readStore();
+  return map.RAPIDAPI_KEY || null;
 }
 
 /**

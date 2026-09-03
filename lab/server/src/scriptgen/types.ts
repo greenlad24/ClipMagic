@@ -49,6 +49,15 @@ export type VideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business 
  */
 export type ScriptMode = "full" | "outline";
 
+/** One tutorial the workflow sheet was built from. */
+export interface VideoSourceRef {
+  title: string;
+  channel: string;
+  url: string;
+  publishedAt: string;
+  views: number;
+}
+
 /** Stage 0 output — the classifier's read of the idea. */
 export interface Stage0Result {
   videoTypeDetailed: string;
@@ -189,6 +198,14 @@ export interface ScriptStages {
    * number or a button name that the outline happened to compress away.
    */
   factSheet: string | null;
+  /**
+   * What recent video tutorials actually show on screen: click paths, real UI
+   * labels, values typed, and what they disagree about. Null when video research
+   * is unconfigured or the topic had no recent tutorials.
+   */
+  videoWorkflows?: string | null;
+  /** The videos it was built from, for the deliverable's source list. */
+  videoSources?: VideoSourceRef[];
   outline: string | null;
   /** Stage 2.5 — brief coverage judged at outline-time. Null when the run had no brief. */
   briefCoverage: BriefCoverage | null;

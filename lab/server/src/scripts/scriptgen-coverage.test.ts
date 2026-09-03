@@ -17,6 +17,13 @@ import {
   dateWindows,
   MIN_SECTION_WORDS,
 } from "../scriptgen/edits.js";
+import {
+  formatTranscript,
+  parseCaptionBody,
+  parseIsoDuration,
+  pickSubtitleTracks,
+  stamp,
+} from "../scriptgen/videoResearch.js";
 
 let passed = 0;
 const fail: string[] = [];
@@ -389,6 +396,64 @@ check("a 'see you' early in the body is not mistaken for the sign-off",
     const body = "See you in the dashboard, right there. " + "Then the workflow runs. ".repeat(60) + "That is it.";
     return ensureCanonicalOutro(body).includes("See you in the dashboard");
   })());
+
+// ── video research ───────────────────────────────────────────────────────────
+// The parsers are the risky part: a transcript that silently comes back empty
+// costs the run its click paths, and the RapidAPI shapes cannot be exercised
+// live until a key exists.
+
+check("ISO duration with hours", parseIsoDuration("PT1H2M3S") === 3723);
+check("ISO duration minutes and seconds", parseIsoDuration("PT15M13S") === 913);
+check("ISO duration seconds only", parseIsoDuration("PT47S") === 47);
+check("a Short is under the four-minute floor", parseIsoDuration("PT2M56S") < 240);
+check("garbage duration is 0, not NaN", parseIsoDuration("banana") === 0);
+check("stamp pads the seconds", stamp(61) === "1:01" && stamp(3599) === "59:59");
+
+check(
+  "transcript gets a timestamp about every 30s, not every line",
+  (() => {
+    const segs = Array.from({ length: 20 }, (_, i) => ({ start: i * 5, text: `line ${i}` }));
+    const out = formatTranscript(segs);
+    const stamps = out.match(/\[\d+:\d\d\]/g) ?? [];
+    return stamps.length >= 3 && stamps.length <= 5 && out.includes("line 19");
+  })(),
+);
+check("empty segments are dropped", !formatTranscript([{ start: 0, text: "  " }, { start: 1, text: "real" }]).includes("  ]"));
+
+check(
+  "subtitle tracks are found under .subtitles",
+  pickSubtitleTracks({ subtitles: [{ languageCode: "en", url: "u" }] }).length === 1,
+);
+check(
+  "subtitle tracks are found nested under .subtitles.subtitles",
+  pickSubtitleTracks({ subtitles: { subtitles: [{ languageCode: "en", url: "u" }] } }).length === 1,
+);
+check("no tracks gives an empty list, never a throw", pickSubtitleTracks({ foo: 1 }).length === 0);
+
+check(
+  "json3 captions parse",
+  (() => {
+    const body = JSON.stringify({ events: [{ tStartMs: 1500, segs: [{ utf8: "click " }, { utf8: "Settings" }] }] });
+    const segs = parseCaptionBody(body);
+    return segs.length === 1 && segs[0].text === "click Settings" && segs[0].start === 1.5;
+  })(),
+);
+check(
+  "XML timedtext captions parse and decode entities",
+  (() => {
+    const segs = parseCaptionBody('<?xml version="1.0"?><transcript><text start="4.2" dur="2">Tools &amp; Settings</text></transcript>');
+    return segs.length === 1 && segs[0].text === "Tools & Settings" && segs[0].start === 4.2;
+  })(),
+);
+check(
+  "VTT captions parse",
+  (() => {
+    const segs = parseCaptionBody("WEBVTT\n\n00:00:07.000 --> 00:00:09.000\nopen the Skills tab");
+    return segs.length === 1 && segs[0].text === "open the Skills tab" && segs[0].start === 7;
+  })(),
+);
+check("an unknown caption format gives [], not a throw", parseCaptionBody("just some text") .length === 0);
+check("malformed json gives [], not a throw", parseCaptionBody("{not json") .length === 0);
 
 console.log("");
 if (fail.length) {
