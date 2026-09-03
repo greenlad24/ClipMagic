@@ -96,7 +96,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 | Beat | Time | Word count | Purpose |
 |---|---|---|---|
 | **1. Metaphor + number stake** | 0:00–0:08 | ~25 words | Visceral image + the specific number, no preamble |
-| **2. The universal gap + audience qualifier** | 0:08–0:22 | ~35 words | "Only about X% of it ever gets used" + name who this is for (in 1 line) |
+| **2. The universal gap + audience qualifier** | 0:08–0:22 | ~35 words | "Most people only use X%" + name who this is for (in 1 line) |
 | **3. Number reveal + proof tease** | 0:22–0:42 | ~50 words | Reveal the X, promise real examples, hint at transformation |
 | **4. Welcome + identity + transition** | 0:42–0:55 | ~25 words | 1-sentence welcome + 1-sentence positioning + "let's go" |
 
@@ -106,7 +106,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 
 > **Beat 1 (0:00–0:08):** *"What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"*
 >
-> **Beat 2 (0:08–0:22):** *"Only about 10% of what this thing can do ever gets used — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
+> **Beat 2 (0:08–0:22):** *"Most people are only using maybe 10% of what this thing can actually do — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
 >
 > **Beat 3 (0:22–0:42):** *"So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."*
 >
@@ -137,7 +137,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 | Beat | Time | Word count | Purpose |
 |---|---|---|---|
 | **1. Visceral metaphor + number stake** | 0:00–0:10 | ~30 words | The image + the number, end with a transition line ("Today, we're pulling back the curtain.") |
-| **2. The universal gap** | 0:10–0:25 | ~35 words | "Only about X% of it ever gets used" + "the other (100-X)% is where the magic lives" |
+| **2. The universal gap** | 0:10–0:25 | ~35 words | "Most people only use X%" + "the other (100-X)% is where the magic lives" |
 | **3. Outcome stack + curtain pull** | 0:25–0:40 | ~40 words | "I'm going to show you some wild [features/moves] that'll completely change how you [3 outcomes]" |
 | **4. Welcome + identity anchor** | 0:40–1:10 | ~70 words | The welcome line and one sentence of positioning — who Jake helps and with what. No credential: no years, no track record, no "I've used these to…". Frame it forward, at what this video is about to do. |
 | **5. Number reveal + audience qualifier (the funnel)** | 1:10–2:00 | ~120 words | Reveal the X. List 3-4 viewer types explicitly ("Doesn't matter if you're a student, a business owner, a creative, or just curious about [topic]"). Promise transformation. |
@@ -335,7 +335,7 @@ REFERENCE EXAMPLE (compressed listicle):
 
 Beat 1 (0:00–0:08, ~25 words): "What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"
 
-Beat 2 (0:08–0:22, ~35 words): "Only about 10% of what this thing can do ever gets used — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."
+Beat 2 (0:08–0:22, ~35 words): "Most people are only using maybe 10% of what this thing can actually do — and if you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."
 
 Beat 3 (0:22–0:42, ~50 words): "So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."
 
@@ -353,7 +353,7 @@ FORMULA C — LONG NUMBERED REVEAL (2:30–3:30)
 
 REFERENCE EXAMPLE (25 Things ChatGPT Could Do — 1.3M views, 7:45 AVD, +31.5K subs):
 
-Beat 1 (0:00–0:10, ~30 words): "What if I told you that the AI assistant you're using right now is basically a Swiss Army knife... and you're only using, like, one blade out of 25? And maybe 10% of what ChatGPT can actually do is all that ever gets used. Today, we're pulling back the curtain."
+Beat 1 (0:00–0:10, ~30 words): "What if I told you that the AI assistant you're using right now is basically a Swiss Army knife... and you're only using, like, one blade out of 25? Most people? They're only tapping into maybe 10% of what ChatGPT can actually do. Today, we're pulling back the curtain."
 
 Beat 2 (0:10–0:25, ~35 words): "I'm gonna show you some wild features that'll completely change how you work, create, and solve problems. Let's go."
 
@@ -428,7 +428,7 @@ Beat 1 (0:00–0:08, ~25 words):
 [Visceral metaphor + specific number stake, no preamble. "What if I told you [tool] is [metaphor] — and you've only [used X out of total]?"]
 
 Beat 2 (0:08–0:22, ~35 words):
-[Universal gap statistic + audience qualifier baked in. "Only about [X%] of it ever gets used — and if you're a [type 1], [type 2], or [type 3], the other [X%] is where the real magic lives."]
+[Universal gap statistic + audience qualifier baked in. "Most people are only using [X%] — and if you're a [type 1], [type 2], or [type 3], the other [X%] is where the real magic lives."]
 
 Beat 3 (0:22–0:42, ~50 words):
 [Number reveal + proof tease + transformation promise]
@@ -446,7 +446,7 @@ Beat 1 (0:00–0:10, ~30 words):
 [Visceral metaphor + specific number stake + transition line]
 
 Beat 2 (0:10–0:25, ~35 words):
-[Universal gap — "Only about X% of it ever gets used" + "the other (100-X)% is where the magic lives"]
+[Universal gap — "Most people only use X%" + "the other (100-X)% is where the magic lives"]
 
 Beat 3 (0:25–0:40, ~40 words):
 [Outcome stack + curtain pull — "I'm going to show you wild [features/moves] that'll change how you [3 outcomes]"]

@@ -24,6 +24,8 @@ Older Jake videos did this. They were wrong, and they are not the model. The vie
 
 Describing a situation is not punching down. "You've got a calendar, a CRM, and a form tool, and they barely speak to each other" is fine — that's the world. "Most people don't even realise their tools don't talk" is not — that's the viewer.
 
+**One exception, and it is only in the hook: the universal-gap line.** "Most people are only using maybe 10% of what this thing can actually do — the other 90% is where the real magic lives" stays exactly as it is. It is the opening of the highest-performing video on the channel, and it lands as an invitation rather than a judgement: it is about how much of the TOOL is still unopened, and the next breath hands that 90% to the viewer. Do not soften it, do not rewrite it, and do not flag it. Outside the hook, the rule above holds without exception — the body of the video never tells the viewer what most people get wrong.
+
 ---
 
 ## 3. Competitor mentions — depends on whether this video is sponsored
