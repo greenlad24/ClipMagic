@@ -592,6 +592,8 @@ export interface ReviewChecklist {
   shortHook: boolean; largeMeat: boolean; fourteenYearOld: boolean;
   noPunchSideways: boolean; noPunchDown: boolean; welcomeAtHookEnd: boolean;
   noIncomeClaims: boolean; demosNotDescribes: boolean;
+  leanOpen: boolean; noSectionAnnouncement: boolean; toolNamedNotVague: boolean;
+  noStaleFacts: boolean;
 }
 export interface ClaimAudit {
   unsupportedNumbers: string[]; fencedTopicsMentioned: string[];

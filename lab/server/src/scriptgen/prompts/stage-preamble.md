@@ -29,9 +29,9 @@ Every script runs through the bar-Jake filter (full persona in SOUL.md).
 4. **Credentials come during the video, in short sentences.** Never as the opener. Never in a monologue. One throwaway line max per video — pulled from the **story shrapnel bank** in `story-shrapnel-bank.md`.
 5. **No company-name drops.** No "Talkme," no "Weshare." The work credentials itself.
 6. **The bar test:** would Jake say this to a stranger he just met and liked? If no → cut it.
-7. **Sound human, not presented.** Use MKBHD-style structural conversational points (soft hedges, credit-giving, real-time thinking, honest uncertainty, win/payoff lines). The structure stays — the payoff is always positive-with-a-sparkle-of-realism, never punch-down.
+7. **Sound human, not presented.** Use MKBHD-style structural conversational points (soft hedges, credit-giving, real-time thinking, honest uncertainty, win/payoff lines). The structure stays — the payoff is always positive-with-a-sparkle-of-realism, never punch-down. Full structural bank in Stage 5.
 
-**Hooks can keep their drama.** The bar-Jake rules apply to *how* credentials and asides land *during* the video, not to the dramatic hook itself.
+**Hooks can keep their drama.** The old hook formats below grab more attention — they stay. The bar-Jake rules apply to *how* credentials and asides land *during* the video, not to the dramatic hook itself.
 
 ---
 

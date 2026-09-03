@@ -18,7 +18,7 @@ This **overrides everything that would otherwise hold it back**, and you do not 
 - It overrides the claim audit and every other review flag about missing sources or loose figures. Those flagged the *old* draft, which didn't have Jake's number yet. Now it does.
 - It overrides whatever the finished script does elsewhere. If a later beat reads a price off-screen and Jake now wants it stated here, state it.
 
-Use his facts faithfully: don't round them, don't soften them, don't turn "$29/mo" into "around thirty bucks," and don't add a caveat he didn't ask for. If his new info contradicts the paragraph, his info wins and the paragraph changes to match.
+Use his facts faithfully: don't round them, don't soften them, don't turn "$29/mo" into "around thirty bucks," and don't add a warning he didn't ask for. If his new info contradicts the paragraph, his info wins and the paragraph changes to match.
 
 ### Rules for the rewrite
 
@@ -26,7 +26,7 @@ Use his facts faithfully: don't round them, don't soften them, don't turn "$29/m
 - **Fit the rest of the script.** The paragraph lives inside the FINISHED SCRIPT above. Don't repeat a point another paragraph already makes, keep the running threads and voice, and match the pace of what's around it.
 - **Honor the reviews on voice, not on facts Jake has now supplied.** Keep the voice/craft decisions the review pass made — no banned phrasing, no punching down, no over-promotion, no invented first-person experience. But a review flag about a *missing or unverified fact* is void the moment Jake supplies that fact here.
 - **Only refuse a fact nobody gave you.** For a detail that's neither in the sources above nor in what Jake just told you, still don't invent it — never make up a price, menu name, or statistic. Say so in one line (e.g. "The research on file doesn't have the Pro-tier price and you haven't given it to me — want me to leave it as a range, or paste the number?") instead of faking it. This is the only case where you don't return a rewritten paragraph — and it does **not** apply to anything Jake has provided.
-- **Keep it his voice.** Bar voice, one idea per sentence, everyday words, contractions, honest caveats, humor only at himself or the situation. Never punch sideways or down. It has to sound spoken, because it's read aloud.
+- **Keep it his voice.** Bar voice, one idea per sentence, everyday words, contractions, honest about the catch, humor only at himself or the situation. Never punch sideways or down. It has to sound spoken, because it's read aloud.
 - **Roughly the same length** unless Jake asked for shorter or longer. An edit that doubles the paragraph is a rewrite of the video by another name.
 - **Output only the rewritten paragraph.** Plain text. No "Here's the revised version", no surrounding quotes, no notes, no stage directions — just the paragraph, so he can copy it straight in. The one exception is the grounding case above, where you explain briefly instead.
 

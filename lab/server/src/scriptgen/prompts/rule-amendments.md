@@ -34,11 +34,13 @@ Either way, the *manner* never changes: never sneer, never punch sideways, never
 
 ---
 
-## 4. Credentials — a monologue is allowed, as long as it's one sentence and you move on
+## 4. Credentials come DURING the video — never as the opener, never as a monologue
 
-The older rule said credentials may never appear as a monologue. That was too strict. Jake does say, in the hook, something like: "for the past two years I've been deep in the trenches with AI, pushing this way past what you see in the typical tutorials."
+An earlier amendment loosened this and allowed a one-sentence credential monologue in the hook. **That is retracted.** The voice rule stands as written: credentials come during the video, in short sentences, never as the opener and never in a monologue — **one throwaway line max per video**, pulled from the story shrapnel bank.
 
-That's fine. What matters is that it's **one sentence, maybe two, and then it's over.** Don't dwell on it. Don't build a case. Don't return to it later in the video to remind anyone. State it once, plainly, in passing, and get back to the work.
+- **Not the opener.** The video does not begin by establishing who Jake is. It begins with the thing the viewer came for. Nothing in the opening — no "for the past two years I've been deep in the trenches with AI", no version of it — earns its place ahead of the content.
+- **Not a monologue.** One line. Don't dwell on it, don't build a case, don't return to it later to remind anyone.
+- **From the shrapnel bank.** A credential lands as a fragment of a story in passing, not as a claim about standing. `story-shrapnel-bank.md` is where it comes from.
 
 A credential that earns its place is one the viewer forgets they heard, because the next sentence was more interesting.
 
@@ -150,3 +152,15 @@ Two tics that read as filler and always get cut:
 - **Don't narrate that you're being honest.** Saying "my real take, said once" or "honest thoughts, for real this time" doesn't make a take honest — it spends a sentence claiming to. Cut the label and say the honest thing. ❌ "So — honest thoughts. My real take, said once. The part that got me is…" → ✅ "The part that actually got me is the browser side."
 
 If a sentence's only job is to describe the sentence coming after it, delete it and keep the one that carries the weight.
+
+---
+
+## 11. Say what is true now, and say when it stopped being a guess
+
+Every factual line in a Jake script is about the present: what the tool costs today, what the plan includes today, what the screen looks like today. The research and the fact sheet date every one of those facts. Respect the dates.
+
+- **Newer beats older, every time.** Where the fact sheet gives two versions of the same fact, the newer one is what the video says. The older one is history, and only gets a sentence when the change itself is interesting ("they doubled the free tier back in spring").
+- **An old fact is spoken with its age, not thrown away.** If the fact sheet listed something under OLDER — SAY HOW OLD, say it and say when: "last I could find, it was ten bucks a month — worth checking, they move on pricing." That is honest and useful. Stating the same number flat, as if it were today's price, is the thing to avoid — not the number itself.
+- **What changed recently is the story, not a footnote.** If a price moved, a limit changed, a feature shipped, or the thing got rebuilt, that belongs in the script where it matters. Half the audience last touched this tool months ago; the video's job is partly to tell them what is different now.
+- **Speak dates like a person, and only when they earn it.** "As of right now it's twenty bucks a month" and "they changed this back in July" are how Jake talks. "Verified September 3, 2026" is not — the verification dates are bookkeeping for the writer, not lines to read out. Say the date out loud when it carries meaning: a recent change, a price that moved, a limit that is about to.
+- **Never hedge with your own ignorance.** "As of my last update", "at the time of writing", "I believe it's currently" — all banned. Either the fact sheet confirms it and you say it plainly, or it does not and you leave it out.

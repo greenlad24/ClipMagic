@@ -37,7 +37,7 @@ Real examples with names:
 - "Here's a real example. A consultant named Amanda…"
 - "Maybe you're running an agency — here's how this looks for you."
 
-Honest caveats:
+Honest about the catch:
 - "And look, it's not instant magic."
 - "Totally fair question…"
 - "But like any growing tool, there are rough edges."
@@ -228,7 +228,7 @@ SECTION STRUCTURE:
 4. Show the result (1 sentence) — "Look at that." / "And there you go."
 5. Explain why it matters (1–2 sentences, optional)
 6. Real example, when relevant (2–3 sentences)
-7. Honest caveat (1–2 sentences, optional)
+7. Honest about the catch (1–2 sentences, optional)
 8. Transition (1 sentence) — "Next, let's [action]."
 
 ---
@@ -265,7 +265,7 @@ CHECKLIST PER SECTION:
 ✅ Is the benefit specific and clear?
 ✅ No punch-sideways / no punch-down?
 ✅ Real example included where relevant?
-✅ Honest caveat where appropriate?
+✅ Honest about the catch where appropriate?
 ✅ Reads like natural speech?
 
 If any answer is NO, rewrite.

@@ -11,6 +11,7 @@ import {
   allocateSectionWords,
   toCleanProse,
   stripVerifyMarkers,
+  dateWindows,
   MIN_SECTION_WORDS,
 } from "../scriptgen/edits.js";
 
@@ -280,6 +281,58 @@ check(
 check(
   "a marker's numbers never reach the claim audit",
   !stripVerifyMarkers("The trial runs [VERIFY ON SCREEN: is it 14 days?] for a while.").includes("14"),
+);
+
+// ── the recency ladder ───────────────────────────────────────────────────────
+// "Prioritize the last 6 months" did nothing because a model has no clock. These
+// windows are what make the instruction checkable, so the arithmetic has to hold
+// at the edges of a month and a year.
+
+check(
+  "today is the full date",
+  dateWindows(new Date(2026, 8, 3)).today === "September 3, 2026",
+);
+check(
+  "thisMonth is what a search query gets anchored to",
+  dateWindows(new Date(2026, 8, 3)).thisMonth === "September 2026",
+);
+check("recent is three months back", dateWindows(new Date(2026, 8, 3)).recent === "June 2026");
+check("oneYear is twelve months back", dateWindows(new Date(2026, 8, 3)).oneYear === "September 2025");
+
+check(
+  "the three-month window crosses the year boundary",
+  dateWindows(new Date(2026, 0, 15)).recent === "October 2025",
+);
+check(
+  "the twelve-month anchor crosses the year boundary",
+  dateWindows(new Date(2026, 0, 15)).oneYear === "January 2025",
+);
+
+// The bug this guards: `setMonth(-3)` on the 31st of a month lands in the month
+// AFTER the one asked for (May 31 -> "February 31" -> March 3), which would
+// shift the anchor by a month on 7 days out of every 31.
+check(
+  "a 31-day month does not overshoot the window",
+  dateWindows(new Date(2026, 4, 31)).recent === "February 2026",
+);
+check(
+  "a 31-day month does not overshoot the twelve-month anchor",
+  dateWindows(new Date(2026, 4, 31)).oneYear === "May 2025",
+);
+check(
+  "the last day of a leap February behaves",
+  dateWindows(new Date(2028, 1, 29)).recent === "November 2027",
+);
+
+check(
+  "recent is always newer than oneYear",
+  (() => {
+    for (let m = 0; m < 12; m++) {
+      const w = dateWindows(new Date(2026, m, 28));
+      if (new Date(w.recent) <= new Date(w.oneYear)) return false;
+    }
+    return true;
+  })(),
 );
 
 console.log("");

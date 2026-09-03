@@ -1037,3 +1037,47 @@ export function applyBriefEdits(
   }
   return { script: out, applied, skipped };
 }
+
+// ── Recency ──────────────────────────────────────────────────────────────────
+
+/**
+ * The recency ladder, computed from the clock.
+ *
+ * "Prioritize information from the last 6 months" was already in the research
+ * prompt and did nothing, because a model with no clock cannot tell whether a
+ * page it just read is inside that window. Turning the window into named months
+ * makes it checkable, and lets a search query be anchored to `thisMonth`.
+ *
+ * These are PREFERENCE anchors, not a cutoff. Older information stays usable —
+ * sometimes it is all that exists — it simply loses to anything newer, and it
+ * has to be spoken with its age attached. A hard cliff would be worse than the
+ * problem it solves: it would throw away the only figure available and leave the
+ * script silent about a price rather than honest about how old the price is.
+ */
+export interface DateWindows {
+  /** "September 3, 2026" */
+  today: string;
+  /** "September 2026" — what a search query gets anchored to. */
+  thisMonth: string;
+  /** Three months back. Inside this window a fact needs no hedge. */
+  recent: string;
+  /** Twelve months back. Beyond it a fact is still usable, but its age gets said out loud. */
+  oneYear: string;
+}
+
+export function dateWindows(now: Date = new Date()): DateWindows {
+  const month = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "long" });
+  const back = (months: number) => {
+    // Day 1 first: subtracting a month from the 31st lands in the month after
+    // the one we asked for, which would shift the anchor by a month.
+    const d = new Date(now.getFullYear(), now.getMonth(), 1);
+    d.setMonth(d.getMonth() - months);
+    return d;
+  };
+  return {
+    today: now.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+    thisMonth: month(now),
+    recent: month(back(3)),
+    oneYear: month(back(12)),
+  };
+}

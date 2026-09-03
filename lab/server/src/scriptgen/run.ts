@@ -28,6 +28,8 @@ import { ZiteError } from "../zite/store.js";
 import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
 import {
+  dateWindows,
+  type DateWindows,
   parseCtaPass,
   parseCoveragePass,
   applyBriefEdits,
@@ -59,9 +61,9 @@ import type {
   ScriptRunResult,
   ScriptJobSnapshot,
   ScriptRunStatus,
+  ScriptMode,
   RefineMessage,
   VideoType,
-  ScriptMode,
 } from "./types.js";
 
 // ── Stage 2 research-paste block ──────────────────────────────────────────────
@@ -103,13 +105,13 @@ function coerceVideoType(v: unknown): VideoType {
   return "Tutorial";
 }
 
-/** The Stage 3 / hook "SPONSORSHIP STATUS" line for a given sponsorship. */
-export function sponsorshipLabel(s: Sponsorship | undefined | null): string {
 /** A setup's mode. Runs that predate outline mode have none, and were all full. */
 function modeOf(setup: ScriptSetup | null | undefined): ScriptMode {
   return setup?.mode === "outline" ? "outline" : "full";
 }
 
+/** The Stage 3 / hook "SPONSORSHIP STATUS" line for a given sponsorship. */
+export function sponsorshipLabel(s: Sponsorship | undefined | null): string {
   if (!s || s.mode === "organic") return "Organic";
   const name = (s.sponsorName || "the sponsor").trim() || "the sponsor";
   if (s.mode === "whole-video") return `Whole-video sponsorship — ${name}`;
@@ -319,10 +321,6 @@ function fmtDuration(ms: number): string {
 // the model cannot know on its own (what day it is) and the one thing the
 // pipeline structurally hides from it (what the other sections already said).
 
-/** "July 10, 2026" — the model has no clock, and every stage prompt asks for currency. */
-function todayLabel(): string {
-  return new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-}
 
 /**
  * The brief, handed to every stage that WRITES. Byte-stable across a run, so it
@@ -399,14 +397,50 @@ function stepScaffoldBlock(): string {
   ].join("\n");
 }
 
-/** Prepended to Stage 1. The research prompt asks for "the last 6 months" — of what? */
-function researchDateBlock(today: string): string {
+/**
+ * Prepended to Stage 1. The research prompt asks for "the last 6 months" — of what?
+ *
+ * Dating the output was never the hard part; the searches themselves were. An
+ * unanchored query ("Blotato pricing") returns whatever ranks, and what ranks is
+ * usually a review blog from last year — so the research came back accurate about
+ * a product that had since changed. This block does three things the prompt did
+ * not: it anchors the queries to the current month, it makes the age of a source
+ * a hard gate rather than a preference, and it requires a section whose only job
+ * is to report what changed lately, so recency has somewhere to survive.
+ */
+function researchDateBlock(w: DateWindows): string {
   return [
-    `TODAY'S DATE IS ${today}.`,
+    `TODAY'S DATE IS ${w.today}.`,
     "",
     "Your training data is older than today, and this topic moves. Pricing, plan tiers, credit costs, free-trial terms, feature availability, version numbers, and the tool's actual interface must come from a web search you run right now — never from memory, and never from what seems reasonable.",
     "",
-    `Next to every price, tier, credit cost, version number, and statistic you report, write the date it was verified, like this: "€20/month (verified ${today})". If a source is older, give the source's date instead.`,
+    "## NEWER ALWAYS WINS",
+    "",
+    "There is no age at which a fact becomes unusable — sometimes an old figure is the only one that exists, and reporting it with its date beats reporting nothing. What there IS, is a strict order of preference: **the newer a source is, the more it counts, all the way down.**",
+    "",
+    `- **Since ${w.recent}** — the strongest. Build the video on this where it exists.`,
+    `- **${w.oneYear} to ${w.recent}** — good. Use it, with its date.`,
+    `- **Older than ${w.oneYear}** — still usable, and still worth reporting, but only once you have looked for something newer and said what you found. Flag it clearly as the age it is, so the stages after you know what they are holding.`,
+    "",
+    "Two rules fall out of that ordering, and they are the ones that matter:",
+    "",
+    "1. **When two sources disagree, the newer one wins** — not the more detailed one, not the better written one, not the one that agrees with what you already believed. Report the newer figure, and note the older one and its date where the difference is worth knowing.",
+    "2. **Never stop at an old source you found first.** Finding a 2024 pricing page is the beginning of the search, not the end of it. Go and check whether it still holds before you report it.",
+    "",
+    "The single most common failure here is a confident price from a year-old review blog. A tool's pricing page from this month beats a well-written comparison article from last year, every time — and if the year-old article is genuinely all there is, the fact goes in wearing its date rather than dressed up as today's.",
+    "",
+    "## ANCHOR THE SEARCHES",
+    "",
+    `- Put the date in the query. Search things like "[tool] pricing ${w.thisMonth}", "[tool] changelog", "[tool] release notes", "[tool] what's new", "[tool] update ${new Date().getFullYear()}".`,
+    "- Go to the primary source: the tool's own pricing page, docs, changelog, and release notes, plus its official account's recent announcements. Rankings favour old blogs; the vendor's own pages do not.",
+    `- **Run at least one search whose only job is to find what changed recently** — in the last few weeks or months. Do this even when you already believe you know the answer, because that is exactly when the answer is out of date.`,
+    "- If two sources disagree, the newer one wins, and you report both with their dates.",
+    "",
+    "## WHAT TO REPORT",
+    "",
+    `Next to every price, tier, credit cost, version number, and statistic you report, write the date it was verified, like this: "€20/month (verified ${w.today})". If the fact comes from a source with its own date, give that date instead — the source's date, not today's.`,
+    "",
+    `Add a section headed **WHAT CHANGED RECENTLY** near the top of your report: everything material that happened since ${w.recent} — new features, pricing changes, renames, rebuilds, limits that moved, models added or dropped, anything announced or shipped. Each item with its date and its source. If genuinely nothing changed in that window, say so explicitly and give the date of the most recent change you could find. This section is not optional, and it is the part later stages depend on most: a video that describes last year's version of a product is wrong even when every sentence in it was once true.`,
     "",
     "If a search cannot confirm a detail, write that you could not confirm it. A gap you flag is useful. A gap you fill from memory is how a script ends up telling a hundred thousand people to click a button that no longer exists.",
   ].join("\n");
@@ -526,7 +560,8 @@ function reviewStructureGuard(videoType: VideoType): string {
 }
 
 /** Prepended to Stage 2. The outline is the only thing Stage 5 gets to see. */
-function outlineFidelityBlock(today: string, budget: number): string {
+function outlineFidelityBlock(w: DateWindows, budget: number): string {
+  const today = w.today;
   return [
     `TODAY'S DATE IS ${today}.`,
     "",
@@ -537,6 +572,10 @@ function outlineFidelityBlock(today: string, budget: number): string {
     "Where the research could not confirm a FACT — a price, a statistic, a claim about what the product does — leave it out rather than smoothing over the gap.",
     "",
     "A missing STEP is different, and the two were being conflated. Where this video shows someone how to do something, the outline carries the sequence: where to go, what to do there, in order. If a control's exact name was never confirmed, the step still goes in the outline with the unknown marked `[VERIFY ON SCREEN: …]` for Jake to read off the screen. What must never happen is a walkthrough that dissolves into 'talk them through the flow' — the section writer cannot invent what the outline didn't carry, so a vague outline is a vague video.",
+    "",
+    `**Carry what is NEW.** The research reports what changed since ${w.recent}. Anything material there — a new feature, a price that moved, a rename, a limit that changed, a model added or dropped — goes into this outline, in the section it belongs to, with its date. Where a recent change is big enough to be the reason someone watches this video now rather than a year ago, give it a beat of its own. A viewer who already knows the old version has to hear what is different; that is what makes the video current instead of merely correct.`,
+    "",
+    `**Carry a fact's age with it.** Where the research gives a figure older than ${w.oneYear} and found nothing newer, the outline still carries it — with its date, and with a note that it is the most recent confirmation there was. What must never happen is an old figure arriving in the outline stripped of its date, because the section writer cannot tell the difference and will write it as today's.`,
   ].join("\n");
 }
 
@@ -578,7 +617,28 @@ function factSheetBlock(factSheet: string): string {
     "",
     "Anything under DO NOT CLAIM must not appear in the script in any form.",
     "",
+    "**WHAT'S NEW is what makes this video worth watching now.** Where a section touches something that recently changed, say what it is today and, where it matters, that it changed — a viewer who used this tool six months ago needs to hear what is different. Facts under OLDER — SAY HOW OLD are the mirror image: they are not banned, they are dated. Speak them with their age attached (\"last time they published a price it was ten bucks a month\") rather than as a flat statement of what the viewer will find today.",
+    "",
     factSheet,
+  ].join("\n");
+}
+
+/**
+ * Stage 7 gets the fact sheet so it can judge whether a figure is current, and
+ * this says what it may do with it. Without the fence a reviewer handed a sheet
+ * of facts starts enriching the script with them — adding a tier here, a limit
+ * there — which is a rewrite wearing a review's clothes.
+ */
+function reviewFactUseBlock(): string {
+  return [
+    "",
+    "---",
+    "",
+    "## THE FACT SHEET IS FOR CHECKING, NOT FOR ADDING",
+    "",
+    "You have the fact sheet above so you can tell whether what the script says is still true. Use it to correct a wrong or stale figure, to move a superseded one into the past tense, and to cut a claim the sheet does not support.",
+    "",
+    "Do not use it to enrich the script. A fact the writer chose to leave out stays out — extra prices, extra tiers, extra limits and extra features are not review notes, and adding them is how a tight script turns into a spec sheet. If something important is genuinely missing, say so in `changes` instead of writing it in.",
   ].join("\n");
 }
 
@@ -796,6 +856,7 @@ function coerceChecklist(raw: unknown): ReviewChecklist | null {
     leanOpen: b("leanOpen"),
     noSectionAnnouncement: b("noSectionAnnouncement"),
     toolNamedNotVague: b("toolNamedNotVague"),
+    noStaleFacts: b("noStaleFacts"),
   };
 }
 
@@ -836,6 +897,35 @@ function runBriefEdits(raw: string, script: string): { script: string; check: Br
       editsSkipped: skipped,
     },
   };
+}
+
+/**
+ * The deliverable for an outline-only run.
+ *
+ * It is the outline exactly as Stage 2 (and, where there's a brief, Stage 2.5)
+ * left it — the same artifact the section writers would have worked from, not a
+ * summary of it — under a header that says what has and hasn't been written. The
+ * point of stopping here is to read the plan before paying for the prose, so the
+ * plan has to be the real one.
+ */
+function buildOutlineDocument(
+  title: string,
+  videoType: VideoType,
+  budget: number,
+  stages: ScriptStages,
+): string {
+  const head = [
+    `# ${title}`,
+    "",
+    `**Detailed outline** — ${videoType}, built for about ${budget} words of script (~${Math.round(budget / 150)} minutes).`,
+    "",
+    "Outline only: the hooks, the section drafts, the outro and the review passes have not been written yet. The research, sources and fact sheet behind this outline are saved with the run, so writing the full script from it doesn't pay for them again.",
+  ];
+  const coverage = stages.briefCoverage;
+  if (coverage) {
+    head.push("", `**Brief coverage: ${coverage.score}/100** — ${coverage.verdict}`);
+  }
+  return `${head.join("\n")}\n\n---\n\n${stages.outline ?? ""}`;
 }
 
 // ── The full run (background, never throws) ───────────────────────────────────
@@ -899,98 +989,8 @@ async function runScript(
     ].filter(Boolean);
     if (done.length) console.log(`[scriptgen] resuming run ${runId}; already paid for: ${done.join(", ")}`);
   }
-/**
- * The deliverable for an outline-only run.
- *
- * It is the outline exactly as Stage 2 (and, where there's a brief, Stage 2.5)
- * left it — the same artifact the section writers would have worked from, not a
- * summary of it — under a header that says what has and hasn't been written. The
- * point of stopping here is to read the plan before paying for the prose, so the
- * plan has to be the real one.
- */
-function buildOutlineDocument(
-  title: string,
-  videoType: VideoType,
-  budget: number,
-  stages: ScriptStages,
-): string {
-  const head = [
-    `# ${title}`,
-    "",
-    `**Detailed outline** — ${videoType}, built for about ${budget} words of script (~${Math.round(budget / 150)} minutes).`,
-    "",
-    "Outline only: the hooks, the section drafts, the outro and the review passes have not been written yet. The research, sources and fact sheet behind this outline are saved with the run, so writing the full script from it doesn't pay for them again.",
-  ];
-  const coverage = stages.briefCoverage;
-  if (coverage) {
-    head.push("", `**Brief coverage: ${coverage.score}/100** — ${coverage.verdict}`);
-  }
-  return `${head.join("\n")}\n\n---\n\n${stages.outline ?? ""}`;
-}
-
 
   const persist = () => updateRun(runId, { stages });
-  // The spend cap is per run, not per process.
-  resetScriptgenUsage();
-
-  try {
-    const videoType = setup.videoType;
-    const title = setup.title;
-    // Competitor mentions are allowed on organic videos and banned on sponsored
-    // ones — the single rule that flips per video rather than per writer.
-    const sponsored = (setup.sponsorship?.mode ?? "organic") !== "organic";
-    const preamble = (withShrapnel: boolean) => systemPreamble(withShrapnel, sponsored);
-    const targetLength = (setup.targetLength || "").trim() || "10–12 minutes minimum";
-    const sponsorLabel = sponsorshipLabel(setup.sponsorship);
-    // Anchored on Jake's approved scripts: a review lands at ~2,200 words and a
-    // tutorial ~1,800. A list is sized by how many good items it has, not by a
-    // runtime. "12 minutes minimum" was being read as a floor with no ceiling —
-    // that is how a review reached 5,673 words.
-    // The item count is Stage 0's judgement on the idea and brief. It is never
-    // read off the title — a title is written to be clicked, not to be true.
-    const budget = wordBudget(videoType, targetLength, stage0?.itemCount ?? null);
-
-    const today = todayLabel();
-
-    // The brief goes to every stage that WRITES, in the cached system prefix.
-    // Byte-stable across the run, so it costs full price once and cache-read
-    // thereafter — the reason it can be the whole brief rather than a summary.
-    const brief = (input.brief || "").trim();
-    const briefExtra = brief ? [briefBlock(brief)] : [];
-
-    // ── Stage 1 — RESEARCH (live web) ──
-    // Research runs ONCE per run row, ever. It is the single most expensive call
-    // in the pipeline (web search + adaptive thinking), and it is already
-    // persisted after it completes. If a later stage failed and this run is being
-    // started again, reuse what was bought rather than buying it twice.
-    if (!stages.research) {
-    progress(job, "Researching the web…", PCT.research);
-    const s1 = fill(loadPrompt("stage1-research"), {
-      "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
-      "[INSERT VIDEO TITLE HERE]": title,
-      "[What specifically needs research - tool name, concept, strategy, etc.]": setup.coreTopic,
-      "[INSERT TYPE]": videoType,
-      "[INSERT WHAT TO RESEARCH]": setup.coreTopic,
-      "[INSERT ANY SPECIFIC ANGLES OR QUESTIONS TO ANSWER]": setup.specificFocus || "(none specified)",
-      "[Current date]": today,
-    });
-    stages.research = await opusScriptChat({
-      system: preamble(false),
-      // Without the brief, research only ever saw Stage 0's compressed
-      // specificFocus — which is how "live demos without signing in", a headline
-      // client request, was never searched for at all.
-      systemExtra: briefExtra,
-      messages: [{ role: "user", content: `${researchDateBlock(today)}\n\n---\n\n${s1}` }],
-      webSearch: true,
-      maxTokens: 16000,
-      label: "stage1-research",
-      sinkSources: stages.sources,
-      purpose: "scriptgen",
-    });
-    persist();
-    }
-
-    // ── Stage 1.5 — FACT SHEET ──
   const mode = modeOf(setup);
 
   // An outline-only run does four of the eleven stages, so its progress bar
@@ -1020,6 +1020,68 @@ function buildOutlineDocument(
     updateRun(runId, { status: "completed", generationMs });
   };
 
+  // The spend cap is per run, not per process.
+  resetScriptgenUsage();
+
+  try {
+    const videoType = setup.videoType;
+    const title = setup.title;
+    // Competitor mentions are allowed on organic videos and banned on sponsored
+    // ones — the single rule that flips per video rather than per writer.
+    const sponsored = (setup.sponsorship?.mode ?? "organic") !== "organic";
+    const preamble = (withShrapnel: boolean) => systemPreamble(withShrapnel, sponsored);
+    const targetLength = (setup.targetLength || "").trim() || "10–12 minutes minimum";
+    const sponsorLabel = sponsorshipLabel(setup.sponsorship);
+    // Anchored on Jake's approved scripts: a review lands at ~2,200 words and a
+    // tutorial ~1,800. A list is sized by how many good items it has, not by a
+    // runtime. "12 minutes minimum" was being read as a floor with no ceiling —
+    // that is how a review reached 5,673 words.
+    // The item count is Stage 0's judgement on the idea and brief. It is never
+    // read off the title — a title is written to be clicked, not to be true.
+    const budget = wordBudget(videoType, targetLength, stage0?.itemCount ?? null);
+
+    const windows = dateWindows();
+    const today = windows.today;
+
+    // The brief goes to every stage that WRITES, in the cached system prefix.
+    // Byte-stable across the run, so it costs full price once and cache-read
+    // thereafter — the reason it can be the whole brief rather than a summary.
+    const brief = (input.brief || "").trim();
+    const briefExtra = brief ? [briefBlock(brief)] : [];
+
+    // ── Stage 1 — RESEARCH (live web) ──
+    // Research runs ONCE per run row, ever. It is the single most expensive call
+    // in the pipeline (web search + adaptive thinking), and it is already
+    // persisted after it completes. If a later stage failed and this run is being
+    // started again, reuse what was bought rather than buying it twice.
+    if (!stages.research) {
+    progress(job, "Researching the web…", PCT.research);
+    const s1 = fill(loadPrompt("stage1-research"), {
+      "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
+      "[INSERT VIDEO TITLE HERE]": title,
+      "[What specifically needs research - tool name, concept, strategy, etc.]": setup.coreTopic,
+      "[INSERT TYPE]": videoType,
+      "[INSERT WHAT TO RESEARCH]": setup.coreTopic,
+      "[INSERT ANY SPECIFIC ANGLES OR QUESTIONS TO ANSWER]": setup.specificFocus || "(none specified)",
+      "[Current date]": today,
+    });
+    stages.research = await opusScriptChat({
+      system: preamble(false),
+      // Without the brief, research only ever saw Stage 0's compressed
+      // specificFocus — which is how "live demos without signing in", a headline
+      // client request, was never searched for at all.
+      systemExtra: briefExtra,
+      messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
+      webSearch: true,
+      maxTokens: 16000,
+      label: "stage1-research",
+      sinkSources: stages.sources,
+      purpose: "scriptgen",
+    });
+    persist();
+    }
+
+    // ── Stage 1.5 — FACT SHEET ──
     // The outline compresses; the section writer is told to use the outline only.
     // Anything checkable that the outline drops has to survive somewhere, or the
     // writer fills the hole from memory. This is that somewhere.
@@ -1027,6 +1089,8 @@ function buildOutlineDocument(
     progress(job, "Pulling out the checkable facts…", PCT.facts);
     const s15 = fill(loadPrompt("stage1.5-factsheet"), {
       "[TODAY'S DATE]": today,
+      "[RECENT WINDOW]": windows.recent,
+      "[ONE YEAR AGO]": windows.oneYear,
       "[INSERT TITLE]": title,
       "[PASTE THE RESEARCH]": stages.research ?? "",
     });
@@ -1060,7 +1124,7 @@ function buildOutlineDocument(
           role: "user",
           content: [
             ...(STORY_TYPES.has(videoType) ? [storyStructureBlock(budget)] : []),
-            outlineFidelityBlock(today, budget),
+            outlineFidelityBlock(windows, budget),
             stepScaffoldBlock(),
             s2,
           ].join("\n\n---\n\n"),
@@ -1129,6 +1193,18 @@ function buildOutlineDocument(
       persist();
     }
 
+    // ── Outline-only runs stop here ──
+    // Everything above is the plan; everything below writes the video from it.
+    // Nothing is discarded — the run keeps its research, fact sheet and outline,
+    // so "write the full script" resumes at the hooks instead of buying them again.
+    if (mode === "outline") {
+      progress(job, "Assembling the outline…", 95);
+      const outlineDoc = buildOutlineDocument(title, videoType, budget, stages);
+      updateRun(runId, { stages, finalDocument: outlineDoc });
+      finish();
+      return;
+    }
+
     // ── Stage 3 — ALL FOUR HOOKS ──
     if (!stages.hooks) {
     progress(job, "Writing all four hooks…", 45);
@@ -1193,18 +1269,6 @@ function buildOutlineDocument(
     const atFloor = sectionBudgets.filter((w) => w === MIN_SECTION_WORDS).length;
     if (declaredSum > pot * 1.05 || atFloor > 0) {
       console.warn(
-    // ── Outline-only runs stop here ──
-    // Everything above is the plan; everything below writes the video from it.
-    // Nothing is discarded — the run keeps its research, fact sheet and outline,
-    // so "write the full script" resumes at the hooks instead of buying them again.
-    if (mode === "outline") {
-      progress(job, "Assembling the outline…", 95);
-      const outlineDoc = buildOutlineDocument(title, videoType, budget, stages);
-      updateRun(runId, { stages, finalDocument: outlineDoc });
-      finish();
-      return;
-    }
-
         `[scriptgen:budget] the outline asks for ~${declaredSum} words but "${targetLength}" funds ~${Math.round(pot)}; ` +
           `scaled to fit${atFloor ? `, and ${atFloor}/${total} section(s) landed on the ${MIN_SECTION_WORDS}-word floor` : ""}. ` +
           `If the brief genuinely needs this much, raise the target length.`,
@@ -1363,6 +1427,15 @@ function buildOutlineDocument(
       reviewRuleGuard(sponsored);
     const raw7 = await opusScriptChat({
       system: preamble(false),
+      // Rule 11 asks the review to catch a stale figure stated as current — which
+      // it cannot do from the script alone, because the age of a number is not
+      // visible in the sentence containing it. Same blocks, same order as the
+      // section stages, so this rides their cached prefix rather than paying again.
+      systemExtra: [
+        ...briefExtra,
+        ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+        reviewFactUseBlock(),
+      ],
       messages: [{ role: "user", content: s7 }],
       maxTokens: 16000,
       label: "stage7-review",

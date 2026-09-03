@@ -65,6 +65,16 @@ const SPONSORED_COMPETITOR_RULE = [
   "**Name the tool early, with its offer.** Within the first minute, say what it's called and what it costs to start, and point at the link: \"the tool I'm showing today is called X, it's completely free to start, and I'll drop the link in the description if you want to follow along.\" One sentence. Not a pitch.",
   "",
   "**The link CTA points at the sponsor**, not only at Jake's own community. Somewhere natural — usually once early, once near the end — tell the viewer where to go and that it's free to start, if it is.",
+  "",
+  // Jake's Stage 4 doc splits sponsorship into two cases, and the rule that a
+  // WHOLE-video sponsorship carries no spoken disclosure lived only in the Stage 3
+  // hook prompt. Every other stage that writes — the sections, the outro, the CTA
+  // pass — could have opened with "quick heads up, this video is sponsored by…"
+  // and nothing in its context said not to. This rule rides the system prefix, so
+  // now they all see it.
+  "**No spoken sponsorship disclosure.** Where the WHOLE video is the sponsored content, the disclosure is handled at upload — YouTube Studio's \"Paid promotion\" checkbox, the \"(sponsor)\" label on the description link, and an #ad / #sponsored hashtag if the sponsor asks for one. Never write a spoken one. No \"real quick, this video is sponsored by…\", no \"quick heads up, [brand] is paying for this one\", no version of it anywhere in the script. It costs retention and buys no legal protection that the checkbox doesn't already provide. Naming the tool and its offer, per the rule above, is not a disclosure — that is just saying what you're showing.",
+  "",
+  "A 60–90 second sponsor READ dropped into an otherwise organic video is the other case entirely, and that one DOES open with a single transparency sentence. It is written as its own segment, not here.",
 ].join("\n");
 
 const ORGANIC_COMPETITOR_RULE = [

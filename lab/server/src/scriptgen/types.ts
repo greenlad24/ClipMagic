@@ -124,6 +124,7 @@ export interface ReviewChecklist {
   leanOpen: boolean;
   noSectionAnnouncement: boolean;
   toolNamedNotVague: boolean;
+  noStaleFacts: boolean;
 }
 
 /** Deterministic fact check of the finished script against the Stage 1.5 fact sheet. */
@@ -263,9 +264,9 @@ export interface ScriptRunListItem {
   id: string;
   title: string;
   videoType: VideoType | null;
-  status: ScriptRunStatus;
   /** What the run produced, so an outline isn't mistaken for a finished script. */
   mode: ScriptMode;
+  status: ScriptRunStatus;
   createdAt: number;
   /** Wall-clock generation time in ms, for the history row. */
   generationMs: number;

@@ -22,7 +22,7 @@ Your goal is to gather detailed, accurate, and current information that Jake can
 
 **Tool/Platform Research:**
 - Official website and documentation
-- Latest version/updates (within last 3 months)
+- Latest version/updates (within last 3 months) — check the changelog or release notes, not a review blog
 - Free vs. paid tier breakdown
 - Integration capabilities
 - System requirements
@@ -252,10 +252,11 @@ For each major feature (typically 5-8 features):
 
 **For All Research:**
 
-✅ **Currency:** Prioritize information from the last 6 months
-- Note publication dates
-- Flag if information might be outdated
-- Check for recent updates or changes
+✅ **Currency:** Prioritize the newest information you can find. This is the standard that outranks the others — see the recency rules at the top of this task for today's date and the order of preference by age.
+- Note publication dates — every fact carries the date it was true, and every source carries its own publication date
+- Flag if information might be outdated. Where the newest thing you can find is old, say that plainly instead of presenting it as current
+- Check for recent updates or changes — anchor searches to the current month, and read the vendor's own pricing page, docs and changelog before anything that outranks them
+- Run at least one search purely to find what changed in the last few weeks or months
 
 ✅ **Accuracy:** Verify from multiple sources
 - Cross-reference key facts
@@ -367,6 +368,8 @@ Structure your research findings clearly:
 
 **Date of Research:** [Current date]
 
+**Source Dates:** [For each source above, when it was published or last updated. A source you cannot date is a source the writer cannot trust — say so.]
+
 **Verification Notes:**
 [Any sources that conflicted, information that needs Jake's personal testing to verify, or gaps that need filling]
 
@@ -404,7 +407,10 @@ Before submitting research, verify:
 ✅ Pricing information is current and accurate
 ✅ Real examples or case studies included
 ✅ Information is relevant to non-technical audience
-✅ Latest updates within last 6 months noted
+✅ WHAT CHANGED RECENTLY section written, with dates and sources
+✅ Every price, tier and statistic carries the date it was verified
+✅ Where sources disagreed, the NEWEST one is what got reported
+✅ Any fact older than a year is reported with its age, and only after looking for something newer
 ✅ Sources provided for verification
 ✅ Unique insights identified (not just generic info)
 ✅ Practical applications clearly explained

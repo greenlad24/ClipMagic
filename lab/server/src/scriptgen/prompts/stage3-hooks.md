@@ -1,3 +1,180 @@
+# HOOK STRATEGY — read this in full, and reason with it, BEFORE writing anything
+
+This is the evidence behind the four hook formulas: which one fits which video, what each beat is FOR, what breaks when a beat is skipped, and the real channel numbers each formula earned. It is not background reading. Work through it first.
+
+Before you write, think through — and only then start drafting:
+
+1. **Which formula does THIS video actually lean toward?** Use the selection table and the audience signal, not the video's topic alone. You will still write all four, but knowing which one fits shapes how well you write the others.
+2. **What is each beat's job in this specific video, and what breaks if it's weak?** The tables below give the purpose and the failure mode for each beat. A beat written to fill a slot fails; a beat written to do its job works.
+3. **What is this video's goal — retention, search compounding, or subscriber conversion?** The formulas trade against each other, and the tradeoffs below are measured, not theoretical.
+
+Your recommendation line at the very end of the output must follow from this reasoning.
+
+---
+
+### WHICH FORMULA TO USE — pick BEFORE writing
+
+| If video type from Stage 0 is... | + Audience signal | Use formula | Length | Proof point |
+|---|---|---|---|---|
+| Tutorial / Tool Review / Workflow / "Here's how I did X" | Algorithmic-discovery / browse-led / casual learner | **Formula A-Long — 5-Beat Confession Reframe** | 90–110s | Nano Banana Pro tutorial — 15K organic, 57-59% retention at 0:30 |
+| Tutorial / "How to use X" / Search-intent tutorial | Search-driven / high-intent / mobile-led / "I just need to know X" | **Formula A-Compressed — Show-Tell-Promise** | 45–60s | ChatGPT Image Generator tutorial — 11.7K views, 6.4% CTR, 43% retention at 0:30, still gaining organic 72 days after publish |
+| Listicle / Roundup / "X Things You Didn't Know" | Mobile-skewed / fast-payoff intent | **Formula B — Compressed Numbered Reveal** | 45–60s | Compressed derivative of Formula C, optimized for mobile retention |
+| Listicle / Roundup / "X Things You Didn't Know" | TV-friendly / 35+ audience / viral subscriber play | **Formula C — Long Numbered Reveal** | 2:30–3:30 | 25 Things ChatGPT Could Do — 1.3M views, 7:45 AVD, +31.5K subs converted |
+
+**The signal that picks between A-Long and A-Compressed: search intent.** If viewers are typing the topic into Google or YouTube search ("how to use X," "X tutorial," "X for beginners," tool-name + verb), use **A-Compressed**. If viewers are arriving from suggested videos, browse, or discovery-led traffic with no specific question in mind, use **A-Long**.
+
+**Critical principle for ALL four formulas:** the hook is also a **funnel** — it should self-qualify the right viewer and let the wrong viewer leave. Every formula below has an inclusivity / audience-naming beat where you list who the video is for. That's not bloat — that's the audience funneling. Keep it. Just compress when needed.
+
+**The sub-conversion tradeoff:** compressed hooks (B and A-Compressed) retain better but convert subscribers worse (~0.85% vs ~2.25% on viral long hooks). When the goal is subscriber growth + viral reach, prefer Formula C. When the goal is value delivery + organic search compounding, prefer A-Compressed or B.
+
+---
+
+### FORMULA A-LONG — 5-BEAT CONFESSION REFRAME (proven at 57-59% retention)
+
+**Use for:** Tutorials, workflows, single-tool reviews, "Here's how I did X" videos, sponsored tutorials — when the audience is arriving via algorithmic discovery (suggested videos, browse) rather than active search.
+
+| Beat | Time | Purpose | Failure mode if skipped |
+|---|---|---|---|
+| **1. Confession + reframe** | 0:00–0:25 | First-person mistake → "turns out" insight | If skipped: viewer projects, doesn't relate |
+| **2. The crazy part** | 0:25–0:45 | Kill the main objection before it forms | If skipped: viewer doubts whole premise |
+| **3. Specific deliverables + retention bait** | 0:45–1:10 | 3 concrete outcomes + 1 tease for later | If skipped: viewer has no reason to stay |
+| **4. Welcome + identity anchor + pain validation** | 1:10–1:35 | Welcome line + 1-sentence positioning + specific pain | If skipped: viewer doesn't know who/what you are |
+| **5. Soft Skool plug + back to content** | 1:35–2:00 | One brief value-framed plug, then go | If skipped: lose monetization, OR break flow if too pitchy |
+
+**Total cold open: ~90–110 seconds. Then straight into the meat.**
+
+---
+
+### FORMULA A-COMPRESSED — SHOW-TELL-PROMISE (45–60 seconds, search-driven tutorials)
+
+**Use for:** Tutorials with high search intent. The audience typed something into Google or YouTube search ("chatgpt image generator," "how to use X," "X tutorial," "X for beginners") and they want the demo immediately. They're mobile-led, transactional, and they'll bail if you spend 90 seconds on a confession arc before showing the goods.
+
+**Proof point:** ChatGPT Image Generator tutorial — published Mar 2 2026, still gaining organic views 72 days later. 6.4% CTR (above 5.5% channel avg), 43% retention at 0:30 ("above typical intros"), AVD climbing from 3:38 lifetime to 4:58 in the last 28 days as paid traffic dropped off and organic compounded.
+
+#### The 3-beat structure
+
+| Beat | Time | Word count | Purpose |
+|---|---|---|---|
+| **1. Visual outcome on screen** | 0:00–0:08 | ~25 words | Show the impressive result IMMEDIATELY. State what it is in one short line. No confession, no metaphor, no setup. |
+| **2. Narrative credential + copy-paste promise** | 0:08–0:25 | ~35 words | Short proof ("I've tested every trick I can find") + a concrete value promise ("you can copy and paste every prompt from this video") |
+| **3. Transformation + welcome + identity** | 0:25–0:50 | ~50 words | "By the end of this video, you'll [outcome]" + welcome line + 1-sentence positioning + brief inclusivity nod |
+
+**Total: ~110 words, ~50 seconds at natural pace.**
+
+#### Worked reference example (ChatGPT Image Generator, 11.7K and counting)
+
+> **Beat 1 (0:00–0:08):** [Image of impressive AI-generated result on screen.] *"Look at this image. ChatGPT made this in under a minute. No Photoshop. No design skills. Just one sentence."*
+>
+> **Beat 2 (0:08–0:25):** *"I've spent the last few weeks testing every trick I can find. And I'm going to give you the exact prompts that get results like this. You can copy and paste every single one from this video."*
+>
+> **Beat 3 (0:25–0:50):** *"By the end of this video, you'll know how to create images like a pro. Even if you've never touched a design tool in your life. Hey everyone, I'm Jake Dawson, and I help people like you get better with the newest AI tools without wasting time or money on expensive tools."*
+
+#### Critical rules for Formula A-Compressed
+1. **Beat 1 MUST show a visual result.** Not describe it — show it on screen. The first sentence states what's on screen, not what you're about to teach.
+2. **No "I used to think..." confession.** That's Formula A-Long's signature. This formula is too short for an arc — it's pure proof-of-value.
+3. **No "What if I told you..." metaphor.** That's Formula B/C. This formula starts with the literal result.
+4. **The credential in Beat 2 is short and time-bound.** "Last few weeks testing" / "tested every prompt I could find" / "30 days experimenting" — concrete, recent, specific.
+5. **The "copy and paste" or equivalent concrete promise is non-negotiable in Beat 2.** Search-intent viewers came for the goods. Tell them they're getting the goods.
+6. **Welcome line lands at ~0:30** — woven into Beat 3, not separate.
+7. **Inclusivity nod is brief — one phrase, not a list.** "Even if you've never touched a design tool in your life" does the funnel job in 10 words.
+8. **No Skool plug in the hook.** Move it to ~1:00 as one brief line, or save it for the end of the video.
+9. **For sponsored videos:** If the WHOLE video is sponsored (single-tool deep dive paid for by that tool's company), no verbal disclosure needed — YouTube Studio's "Paid promotion" checkbox handles it. If a sponsor SEGMENT is inserted mid-video (a 60-90s ad read), place it mid-roll after the first value section, not in Beats 1-3. See Sponsored Video Rules section for full guidance.
+
+#### Tradeoff to know about
+Compressed hooks retain better but convert subscribers worse. The ChatGPT Image Generator video did 11.7K views and 100 subs (~0.85% conversion). The 25 Things ChatGPT video did 1.4M views and 31.5K subs (~2.25% conversion). The compressed hook delivers faster value but builds less of a relationship.
+
+**Use A-Compressed when the goal is search-traffic compounding and value delivery.** Use A-Long when the goal is bonding with viewers who will subscribe. Use C when the goal is virality + max subscriber conversion.
+
+---
+
+### FORMULA B — COMPRESSED NUMBERED REVEAL (45–60 seconds)
+
+**Use for:** Listicles / roundups / "X Things" content when audience skews mobile, when you need fast payoff, or when the topic has high search intent (people clicking from search results bail fast).
+
+#### The 4-beat structure
+
+| Beat | Time | Word count | Purpose |
+|---|---|---|---|
+| **1. Metaphor + number stake** | 0:00–0:08 | ~25 words | Visceral image + the specific number, no preamble |
+| **2. The universal gap + audience qualifier** | 0:08–0:22 | ~35 words | "Most people only use X%" + name who this is for (in 1 line) |
+| **3. Number reveal + proof tease** | 0:22–0:42 | ~50 words | Reveal the X, promise real examples, hint at transformation |
+| **4. Welcome + identity + transition** | 0:42–0:55 | ~25 words | 1-sentence welcome + 1-sentence positioning + "let's go" |
+
+**Total: ~135 words, ~50 seconds at natural pace.**
+
+#### Worked example — compressed 25 Things ChatGPT
+
+> **Beat 1 (0:00–0:08):** *"What if I told you ChatGPT is a Swiss Army knife — and you've only opened one blade out of 25?"*
+>
+> **Beat 2 (0:08–0:22):** *"Most people are only using maybe 10% of what this thing can actually do — and whether you're a student, running a business, or just AI-curious, the other 90% is where the real magic lives."*
+>
+> **Beat 3 (0:22–0:42):** *"So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."*
+>
+> **Beat 4 (0:42–0:55):** *"Hey everyone, welcome back to the channel — I'm Jake Dawson and I help business owners use AI without it turning into another full-time job. Let's get into it."*
+
+#### Critical rules for Formula B
+1. **Metaphor + number in sentence 1.** No "What if I told you..." preamble. Get to the image fast.
+2. **Audience qualifier baked into Beat 2** — name the 2-3 viewer types in one line ("student, business owner, AI-curious"). Don't make it a separate beat.
+3. **No "I'm not gonna leave you hanging" anti-clickbait line** — "with real examples you can copy today" handles that in 7 words.
+4. **No credential paragraph** — the number IS the credential (25 specific things = proof you have depth).
+5. **No Skool plug in the hook** — move it to ~1:30 as a single brief line after value has started.
+6. **Welcome line lands at 0:42** — after the hook earned attention, not before.
+
+---
+
+### FORMULA C — LONG NUMBERED REVEAL (2:30–3:30, viral subscriber conversion)
+
+**Use for:** Listicles aiming at TV-friendly + 35+ audience, when going for max subscriber conversion (not just retention), high-stakes uploads where you're betting on virality. This is the formula that converted +31.5K subscribers on a single 1.3M-view video.
+
+**WARNING:** This formula is LONG. Only use it when:
+- You expect TV viewing share to be significant (35%+ of watch time)
+- Audience skews 35+ (patient watchers)
+- The topic has broad appeal (universal-curiosity listicles, not niche tutorials)
+- You're optimizing for sub conversion + virality, not just per-video retention
+
+#### The 6-beat structure
+
+| Beat | Time | Word count | Purpose |
+|---|---|---|---|
+| **1. Visceral metaphor + number stake** | 0:00–0:10 | ~30 words | The image + the number, end with a transition line ("Today, we're pulling back the curtain.") |
+| **2. The universal gap** | 0:10–0:25 | ~35 words | "Most people only use X%" + "the other (100-X)% is where the magic lives" |
+| **3. Outcome stack + curtain pull** | 0:25–0:40 | ~40 words | "I'm going to show you some wild [features/moves] that'll completely change how you [3 outcomes]" |
+| **4. Narrative credential** | 0:40–1:10 | ~70 words | Short story credential — "for the past [N] years, I've been deep in the trenches with [topic]" + 1 line of proof ("used these to launch my own business / save crazy amounts of time / etc.") |
+| **5. Number reveal + audience qualifier (the funnel)** | 1:10–2:00 | ~120 words | Reveal the X. List 3-4 viewer types explicitly ("Doesn't matter if you're a student, a business owner, a creative, or just curious about [topic]"). Promise transformation. |
+| **6. Anti-clickbait + value-anchored Skool plug + transition** | 2:00–3:00 | ~140 words | "I'm not just gonna list features and leave you hanging — I'm showing you real examples you can steal." Then Skool plug **anchored to the exact value in THIS video** ("if you want all the prompts I'm using in this video, you can grab them inside my Skool community"). Close with "Alright — let's dive in." |
+
+**Total: ~430 words, ~3 minutes at natural pace.**
+
+#### Why this length works (and when it doesn't)
+
+The 3-minute hook is **not bloat** for the right audience. From the 1.3M video data:
+- 48% TV viewing — TV viewers lean back, tolerate long setups
+- 99.1% non-subscribers — cold audience needed full context before committing
+- 35-54 = 52% of viewers — patient, TV-friendly demographic
+- +31.5K subs converted (3% conversion rate) — the long hook *earned* the subscribe
+
+The pattern: **each beat adds another reason to keep watching**. Beat 1 = image. Beat 2 = stake. Beat 3 = outcomes. Beat 4 = credibility. Beat 5 = "this is for me." Beat 6 = "I trust this person."
+
+If you compress this hook to 50 seconds for a TV/older audience, you lose the trust-building beats — and you lose the subscribe conversion. The retention might be similar, but the funnel collapses.
+
+#### Critical rules for Formula C
+1. **The metaphor + number in sentence 1 is non-negotiable.** Same as Formula B.
+2. **The audience qualifier MUST be explicit** — name 3-4 viewer types by noun. This is the funnel.
+3. **The Skool plug MUST be value-anchored to THIS video** — "the prompts I'm using IN THIS VIDEO" not generic "join my Skool community."
+4. **Welcome line lands at 0:40 inside Beat 4** — woven into the credential, not separate.
+5. **"Alright — let's dive in" closes the hook cleanly.**
+6. **Do NOT use this for tutorials** — the long setup feels like dragging when the value is "I'll walk you through one thing." Save it for the "X Things" format.
+
+---
+
+### THE PROMPT — paste into Genspark, Claude Opus, or any capable LLM (generates all 4 formulas at once)
+
+**Updated workflow:** Don't ask Jake to pick a formula first. Generate ALL FOUR hook variants and let Jake pick the one that feels right for the video. Each variant is fully written, ready to record.
+
+**Target video length:** ALWAYS 10–12 minutes minimum (long-form). Hook is a small fraction of total runtime — the meat carries the video.
+
+---
+
 You are writing the cold open (hook) for a Jake Dawson YouTube video. Jake's channel is AI tutorials for solopreneurs and small business owners. The voice is "the smart, curious friend at the bar" — approachable, slightly dry, never lecturing, never punching sideways at competitors, never punching down at the viewer.
 
 Target video length is 10–12 minutes minimum. The hook is the first 45 seconds to 3 minutes depending on which formula. The rest of the video is the meat.
