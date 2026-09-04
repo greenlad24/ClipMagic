@@ -1341,7 +1341,8 @@ export default function ScriptGeneratorPage() {
                           run.stages.claimAudit.fencedTopicsMentioned.length === 0 &&
                           run.stages.claimAudit.experienceClaims.length === 0 &&
                           run.stages.claimAudit.excessSponsorPlugs.length === 0 &&
-                          run.stages.claimAudit.bannedWords.length === 0 ? (
+                          run.stages.claimAudit.bannedWords.length === 0 &&
+                          run.stages.claimAudit.sourceNames.length === 0 ? (
                             <p className="text-sm text-muted-foreground">
                               Every number in the script traces back to the fact sheet.
                             </p>
@@ -1393,6 +1394,16 @@ export default function ScriptGeneratorPage() {
                                   </ul>
                                 </div>
                               )}
+                              {run.stages.claimAudit.sourceNames.length > 0 && (
+                                <div>
+                                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-destructive">
+                                    Presenters from the source tutorials, named in the script
+                                  </p>
+                                  <p className="text-sm text-foreground">
+                                    {run.stages.claimAudit.sourceNames.join(", ")}
+                                  </p>
+                                </div>
+                              )}
                               {run.stages.claimAudit.fencedTopicsMentioned.length > 0 && (
                                 <div>
                                   <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1403,6 +1414,33 @@ export default function ScriptGeneratorPage() {
                                   </p>
                                 </div>
                               )}
+                            </div>
+                          )}
+                        </StagePanel>
+                      )}
+
+                      {run.stages.claimFix && (
+                        <StagePanel
+                          title="Claim fixes applied"
+                          hint={`${run.stages.claimFix.applied.length} applied`}
+                        >
+                          {run.stages.claimFix.applied.length > 0 && (
+                            <ul className="space-y-1">
+                              {run.stages.claimFix.applied.map((c, i) => (
+                                <li key={i} className="text-sm text-foreground">{c}</li>
+                              ))}
+                            </ul>
+                          )}
+                          {run.stages.claimFix.skipped.length > 0 && (
+                            <div className="mt-3">
+                              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Left alone — fix these by hand
+                              </p>
+                              <ul className="space-y-1">
+                                {run.stages.claimFix.skipped.map((c, i) => (
+                                  <li key={i} className="text-sm text-muted-foreground">{c}</li>
+                                ))}
+                              </ul>
                             </div>
                           )}
                         </StagePanel>

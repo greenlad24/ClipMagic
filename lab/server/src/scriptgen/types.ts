@@ -148,6 +148,13 @@ export interface ClaimAudit {
   excessSponsorPlugs: string[];
   /** Banned words that survived into the finished script. */
   bannedWords: string[];
+  /**
+   * Names of the people whose tutorials fed the workflow sheet, found in the
+   * script. A run said "that's the version Nate actually runs day to day" —
+   * Nate being the presenter of two source videos, never introduced, and no
+   * part of Jake's voice.
+   */
+  sourceNames: string[];
   numbersChecked: number;
 }
 
@@ -231,6 +238,8 @@ export interface ScriptStages {
   quality: ScriptQuality | null;
   /** Computed from the finished document — unsupported numbers + fenced topics. */
   claimAudit: ClaimAudit | null;
+  /** What the claim-fix pass rewrote, and what it refused to. Null when the audit found nothing. */
+  claimFix: { applied: string[]; skipped: string[] } | null;
 }
 
 /**

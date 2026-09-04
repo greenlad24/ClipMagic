@@ -659,6 +659,9 @@ function workflowBlock(sheet: string, developerOk: boolean): string {
     "Where this sheet and the written research disagree, this wins — on what the product does, on how it behaves, and on every click path. Say what the videos show rather than averaging the two into a hedge. The one exception is a NUMBER: prices, tiers and limits come from the fact sheet, because tutorials quote figures from memory and go stale fastest.",
     "",
     "Use the steps. Never use the wording — every one of these came out of somebody else's video, and the script is Jake's.",
+    // A run said "that's the version Nate actually runs day to day" — Nate being
+    // the presenter of two source videos, introduced to the viewer nowhere.
+    "**Never name the people in these videos.** The viewer has never heard of them and Jake is not narrating someone else's tutorial. Cite a setup as the one you would run, not as the one a named person runs.",
     // The sheet is only as non-technical as the tutorials it came from, and the
     // most-watched tutorial for an AI topic is very often aimed at developers.
     // Left ungated, a note-taking script inherits a CLI install, a Git URL and a
@@ -942,6 +945,72 @@ function coerceChecklist(raw: unknown): ReviewChecklist | null {
   };
 }
 
+// ── Stage 7.5 claim fix ───────────────────────────────────────────────────────
+
+/**
+ * Turn the audit's findings into instructions a writer can act on.
+ *
+ * Only the unambiguous ones. A fenced topic may be a deliberate rebuttal and an
+ * extra sponsor plug may be the sponsor's own ask, so those stay reported and
+ * unedited — a fix pass that deletes a legitimate line is worse than a flag
+ * nobody acted on.
+ */
+export function claimFixList(audit: ClaimAudit): string[] {
+  const out: string[] = [];
+  for (const n of audit.unsupportedNumbers) {
+    out.push(
+      `The number ${n} is stated as fact but the fact sheet never established it. Rewrite the sentence so it makes the same point without the figure, or cut the claim. Do not substitute a different number.`,
+    );
+  }
+  for (const w of audit.bannedWords) {
+    out.push(`Banned phrasing: ${w} Rewrite that sentence so the rule is satisfied and the meaning survives.`);
+  }
+  for (const c of audit.experienceClaims) {
+    out.push(
+      `First-person experience claim with nothing behind it: ${c} Soften it to what Jake can honestly say, or cut it.`,
+    );
+  }
+  for (const name of audit.sourceNames) {
+    out.push(
+      `"${name}" is the presenter of one of the tutorials this script was researched from, and the viewer has never heard of them. Remove the name — attribute the point to the script itself ("the setup I'd actually run") or cut the attribution.`,
+    );
+  }
+  return out;
+}
+
+/**
+ * The claim audit has always been deterministic and always been ignored: it
+ * printed its findings after the last pass had run, so a made-up statistic in
+ * the opening line shipped with a warning next to it. This is the pass that
+ * acts on it.
+ *
+ * It returns EDITS, never a script — the same shape and the same applier as
+ * Stage 6.5, so it inherits that pass's growth and shrink guards and cannot
+ * quietly replace the document. That also keeps its output tiny, which is what
+ * makes it immune to the truncation that kept killing Stage 7.
+ */
+export function claimFixPrompt(script: string, findings: string[]): string {
+  return [
+    "A finished Jake Dawson script has failed a deterministic check. Fix exactly what is listed and nothing else.",
+    "",
+    "WHAT FAILED:",
+    ...findings.map((f, i) => `${i + 1}. ${f}`),
+    "",
+    "RULES:",
+    "- Change as little as possible. One sentence per finding wherever one sentence will do.",
+    "- Keep Jake's voice: the smart, curious friend at the bar. Never formal, never salesy.",
+    "- Never introduce a new number, statistic, name or claim. Removing is safer than replacing.",
+    "- If a finding cannot be fixed without rewriting the section around it, skip it and say why.",
+    "",
+    "SCRIPT:",
+    script,
+    "",
+    'Reply with JSON only: {"edits": [{"mode": "replace", "find": "the exact text to replace, copied verbatim", "text": "the replacement", "reason": "which finding this closes"}], "skipped": ["finding you could not fix, and why"]}',
+    "",
+    "`find` must appear in the script EXACTLY as written, once. Copy it, do not retype it.",
+  ].join("\n");
+}
+
 // ── Stage 6.5 brief adherence ─────────────────────────────────────────────────
 
 /** Parse the Stage 6.5 JSON, apply its edits (see edits.ts), and summarize. Never throws. */
@@ -1002,6 +1071,11 @@ export async function finalReviewAndAssemble(opts: {
   brief: string;
   briefExtra: string[];
   developerOk: boolean;
+  /** Subject words that a source channel is allowed to share without being a name. */
+  topic: string;
+  title: string;
+  /** Channels of the tutorials behind the workflow sheet. */
+  sourceChannels: string[];
   stages: ScriptStages;
 }): Promise<string> {
   const {
@@ -1014,6 +1088,9 @@ export async function finalReviewAndAssemble(opts: {
     brief,
     briefExtra,
     developerOk,
+    topic,
+    title,
+    sourceChannels,
     stages,
   } = opts;
   // Same system prefix the section stages used, built the same way — the whole
@@ -1098,7 +1175,65 @@ export async function finalReviewAndAssemble(opts: {
   // Deliverable: Jake reads continuous prose. Strip the headers, beat markers,
   // and timestamps that made the artifact look like a spec — and that were
   // feeding phantom numbers into the claim audit.
-  const spokenBody = ensureCanonicalOutro(toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody));
+  let spokenBody = ensureCanonicalOutro(toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody));
+
+  // ── Stage 7.5 — ACT on the claim audit ──
+  // The audit is deterministic and, until now, purely advisory: it ran last and
+  // printed what it found. A run opened on "most people use maybe 10% of what
+  // Claude can do — the other 90% is where the real magic lives", the audit
+  // flagged the 90 correctly, and the script shipped with the invented figure as
+  // its FIRST LINE. Auditing without fixing just documents the defect.
+  const auditOf = (body: string): ClaimAudit =>
+    auditClaims(
+      stripVerifyMarkers(body),
+      stages.factSheet ?? "",
+      brief,
+      stages.hooksWithCta ?? stages.hooks ?? "",
+      sponsorName,
+      sourceChannels,
+      `${topic} ${title}`,
+    );
+  let audit = auditOf(spokenBody);
+  const findings = claimFixList(audit);
+  if (findings.length > 0) {
+    try {
+      const rawFix = await opusScriptChat({
+        system: preamble(false),
+        systemExtra: briefExtra,
+        messages: [{ role: "user", content: claimFixPrompt(spokenBody, findings) }],
+        // Edits only, never the document — so this pass cannot truncate the way
+        // the whole-script passes could.
+        maxTokens: 8000,
+        effort: "medium",
+        label: "stage7.5-claimfix",
+        purpose: "scriptgen",
+      });
+      const parsed = JSON.parse(extractJson(rawFix)) as { edits?: unknown; skipped?: unknown };
+      const { script: fixed, applied, skipped } = applyBriefEdits(spokenBody, parsed.edits, "claim audit");
+      const refused = Array.isArray(parsed.skipped)
+        ? parsed.skipped.filter((x): x is string => typeof x === "string")
+        : [];
+      if (applied.length > 0) {
+        spokenBody = ensureCanonicalOutro(fixed);
+        // Re-audit rather than assume: an edit can miss, and the record has to
+        // say what is STILL wrong, not what was wrong before the attempt.
+        audit = auditOf(spokenBody);
+      }
+      stages.claimFix = { applied, skipped: [...skipped, ...refused] };
+      console.log(
+        `[scriptgen:claimfix] ${findings.length} finding(s) → ${applied.length} applied, ` +
+          `${skipped.length + refused.length} skipped`,
+      );
+    } catch (e) {
+      // Never fatal: a script with a flagged claim is worse than one without,
+      // and far better than no script at all.
+      stages.claimFix = { applied: [], skipped: [`Claim fix pass failed: ${e instanceof Error ? e.message : String(e)}`] };
+      console.warn(`[scriptgen:claimfix] skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    stages.claimFix = null;
+  }
+
   const prompts = extractPrompts(spokenBody);
   const promptAppendix =
     prompts.length > 0
@@ -1119,15 +1254,10 @@ export async function finalReviewAndAssemble(opts: {
   // claiming 14 would flag the one line that was honest about not knowing.
   const auditedBody = stripVerifyMarkers(spokenBody);
 
-  // Deterministic fact check: does the script assert a number the research never
-  // established, or touch a topic the fact sheet fenced off? No model call.
-  stages.claimAudit = auditClaims(
-    auditedBody,
-    stages.factSheet ?? "",
-    brief,
-    stages.hooksWithCta ?? stages.hooks ?? "",
-    sponsorName,
-  );
+  // Deterministic fact check, as re-run above after any fix landed: does the
+  // script assert a number the research never established, touch a topic the
+  // fact sheet fenced off, or name a presenter from the source tutorials?
+  stages.claimAudit = audit;
   if (
     stages.claimAudit.unsupportedNumbers.length ||
     stages.claimAudit.fencedTopicsMentioned.length ||
@@ -1220,6 +1350,9 @@ export async function rerunFinalReview(
     brief,
     briefExtra: brief ? [briefBlock(brief)] : [],
     developerOk: wantsDeveloperWorkflow(run.setup.coreTopic, run.setup.specificFocus, brief),
+    topic: run.setup.coreTopic,
+    title: run.setup.title,
+    sourceChannels: (stages.videoSources ?? []).map((v) => v.channel),
     stages,
   });
   const costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
@@ -1293,6 +1426,7 @@ async function runScript(
     reviewChecklist: null,
     quality: null,
     claimAudit: null,
+    claimFix: null,
   };
   const runStartedAt = Date.now();
   const priorGenerationMs = priorRun?.generationMs ?? 0;
@@ -1867,6 +2001,9 @@ async function runScript(
       brief: input.brief ?? "",
       briefExtra,
       developerOk,
+      topic: setup.coreTopic,
+      title,
+      sourceChannels: (stages.videoSources ?? []).map((v) => v.channel),
       stages,
     });
 

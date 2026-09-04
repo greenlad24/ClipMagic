@@ -598,7 +598,10 @@ export interface ReviewChecklist {
 export interface ClaimAudit {
   unsupportedNumbers: string[]; fencedTopicsMentioned: string[];
   experienceClaims: string[];
-  excessSponsorPlugs: string[]; bannedWords: string[]; numbersChecked: number;
+  excessSponsorPlugs: string[]; bannedWords: string[];
+  /** Presenters from the source tutorials, named in the script. */
+  sourceNames: string[];
+  numbersChecked: number;
 }
 export interface ScriptQuality {
   words: number; sentences: number; meanSentenceWords: number; burstiness: number;
@@ -630,6 +633,8 @@ export interface ScriptStages {
   reviewChecklist: ReviewChecklist | null;
   quality: ScriptQuality | null;
   claimAudit: ClaimAudit | null;
+  /** What the claim-fix pass rewrote, and what it refused to. */
+  claimFix: { applied: string[]; skipped: string[] } | null;
 }
 export type ScriptRunStatus = "classifying" | "awaiting_confirmation" | "running" | "completed" | "failed";
 /** One turn of the post-generation paragraph-refinement chat. */

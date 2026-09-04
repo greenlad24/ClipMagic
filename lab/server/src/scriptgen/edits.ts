@@ -617,7 +617,13 @@ export interface ClaimAudit {
   excessSponsorPlugs: string[];
   /** Banned words / phrasings that survived into the finished script. */
   bannedWords: string[];
-  /** Numbers checked, for context on how meaningful the above is. */
+  /**
+   * Names of the presenters whose tutorials fed the workflow sheet, found in the
+   * script. A run said "that's the version Nate actually runs day to day" — Nate
+   * being the channel behind two of its four source videos, introduced to the
+   * viewer nowhere, and no part of Jake's voice.
+   */
+  sourceNames: string[];
   numbersChecked: number;
 }
 
@@ -818,13 +824,68 @@ export function excessSponsorPlugs(body: string, sponsorName = ""): string[] {
   return plugs.slice(1, -1);
 }
 
+/**
+ * Words in a channel name that are never the presenter — the descriptor half of
+ * "Nate Herk | AI Automation", and the words any channel might carry.
+ */
+const CHANNEL_NOISE = new Set([
+  "ai", "the", "and", "with", "for", "how", "to", "your", "you", "my", "our",
+  "automation", "productivity", "tutorials", "tutorial", "tips", "academy",
+  "channel", "media", "studio", "studios", "labs", "lab", "tech", "official",
+  "guy", "guru", "school", "hq", "co", "inc", "team", "show", "podcast",
+  "claude", "chatgpt", "openai", "anthropic", "gemini", "notion", "obsidian",
+]);
+
+/**
+ * The presenters whose videos fed the workflow sheet, found in the script.
+ *
+ * A run said "that's the version Nate actually runs day to day". Nate Herk is
+ * the channel behind two of its four source videos — never introduced to the
+ * viewer, and a tell that the script is relaying someone else's tutorial rather
+ * than speaking in Jake's voice. The source channels are already stored per
+ * run, so this is an exact check rather than name detection.
+ *
+ * `protect` holds the topic and title: a channel token that is also part of the
+ * subject ("Claude Tips" on a Claude video) must never be flagged.
+ */
+export function findSourceNames(script: string, channels: string[], protect = ""): string[] {
+  const safe = new Set(
+    protect
+      .toLowerCase()
+      .split(/[^a-z0-9]+/i)
+      .filter(Boolean),
+  );
+  const hits = new Set<string>();
+  for (const channel of channels) {
+    // "Nate Herk | AI Automation" and "ICOR with Tom" — the presenter is in the
+    // first segment; everything after a pipe or dash is the channel's descriptor.
+    const head = channel.split(/[|\u2013\u2014-]/)[0];
+    for (const word of head.split(/[^A-Za-z']+/).filter(Boolean)) {
+      const lower = word.toLowerCase();
+      if (word.length < 3) continue;
+      if (CHANNEL_NOISE.has(lower) || safe.has(lower)) continue;
+      // Only a capitalised word is a name; a lowercased one is a description.
+      if (word[0] !== word[0].toUpperCase()) continue;
+      if (new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(script)) {
+        hits.add(word);
+      }
+    }
+  }
+  return [...hits];
+}
+
 export function auditClaims(
   script: string,
   factSheet: string,
   brief = "",
   alsoScanForExperience = "",
   sponsorName = "",
+  /** Channels of the tutorials that fed the workflow sheet. */
+  sourceChannels: string[] = [],
+  /** Topic + title: a channel word that is part of the subject is never a name. */
+  protectWords = "",
 ): ClaimAudit {
+  const sourceNames = findSourceNames(script, sourceChannels, protectWords);
   const experienceClaims = findExperienceClaims(
     `${alsoScanForExperience}\n${script}`,
     `${brief}\n${factSheet}`,
@@ -838,6 +899,7 @@ export function auditClaims(
       experienceClaims,
       excessSponsorPlugs: excess,
       bannedWords,
+      sourceNames,
       numbersChecked: 0,
     };
   }
@@ -879,6 +941,7 @@ export function auditClaims(
     experienceClaims,
     excessSponsorPlugs: excess,
     bannedWords,
+    sourceNames,
     numbersChecked: scriptNumbers.length,
   };
 }
@@ -1002,6 +1065,8 @@ function snippet(s: string): string {
 export function applyBriefEdits(
   script: string,
   rawEdits: unknown,
+  /** What to call an edit that arrives without its own reason. */
+  defaultReason = "brief adherence",
 ): { script: string; applied: string[]; skipped: string[] } {
   const applied: string[] = [];
   const skipped: string[] = [];
@@ -1015,7 +1080,7 @@ export function applyBriefEdits(
     const find = typeof e.find === "string" ? e.find.trim() : "";
     const text = typeof e.text === "string" ? e.text.trim() : "";
     const mode = e.mode === "replace" ? "replace" : e.mode === "insert_after" ? "insert_after" : null;
-    const reason = typeof e.reason === "string" && e.reason.trim() ? e.reason.trim() : "brief adherence";
+    const reason = typeof e.reason === "string" && e.reason.trim() ? e.reason.trim() : defaultReason;
 
     if (!mode || !find || !text) {
       skipped.push(`Malformed edit discarded (${snippet(find || String(e.mode ?? "?"))}).`);

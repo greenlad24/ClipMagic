@@ -16,7 +16,10 @@ import {
   stripVerifyMarkers,
   dateWindows,
   MIN_SECTION_WORDS,
+  findSourceNames,
+  applyBriefEdits,
 } from "../scriptgen/edits.js";
+import { claimFixList, claimFixPrompt } from "../scriptgen/run.js";
 import {
   formatTranscript,
   parseCaptionBody,
@@ -643,6 +646,68 @@ check(
 check(
   "a developer topic selects without the gate",
   !selectionPrompt("Claude Code", CANDS, 4, undefined, true).includes("AUDIENCE GATE"),
+);
+
+// ── Acting on the claim audit ────────────────────────────────────────────────
+// The audit ran last and only printed. A script shipped opening on "most people
+// use maybe 10% of what Claude can do — the other 90% is where the real magic
+// lives": an invented statistic, flagged correctly, as the FIRST LINE.
+
+const CHANNELS = ["Nate Herk | AI Automation", "ICOR with Tom", "Kevin Stratvert"];
+const NATE_LINE = "That's the version Nate actually runs day to day. He stopped at the wiki level.";
+
+check("a presenter named in the script is caught", findSourceNames(NATE_LINE, CHANNELS).includes("Nate"));
+check("the channel's descriptor half is not a name", !findSourceNames("This is real automation for your ai business", CHANNELS).length);
+check("a surname is caught too", findSourceNames("as Stratvert showed", CHANNELS).includes("Stratvert"));
+check("a presenter who is never named is not invented", findSourceNames("A clean second brain in Claude.", CHANNELS).length === 0);
+check(
+  "a channel word that is part of the subject is protected",
+  findSourceNames("Claude keeps your notes", ["Claude Tips"], "Claude as a note-taking app").length === 0,
+);
+check("matching is case-insensitive but anchored to whole words", findSourceNames("Renate wrote it", CHANNELS).length === 0);
+
+const AUDIT = {
+  unsupportedNumbers: ["90"],
+  fencedTopicsMentioned: ["semantic search"],
+  experienceClaims: ["I tested it for 30 days"],
+  excessSponsorPlugs: ["third plug"],
+  bannedWords: ['clipped question "Honestly?"'],
+  sourceNames: ["Nate"],
+  numbersChecked: 12,
+};
+const FIXES = claimFixList(AUDIT);
+check("an unsupported number becomes a fix instruction", FIXES.some((f) => f.includes("90")));
+check("the fix forbids swapping in another number", FIXES.some((f) => /Do not substitute a different number/.test(f)));
+check("a banned word becomes a fix instruction", FIXES.some((f) => f.includes("Honestly?")));
+check("an unbacked experience claim becomes a fix instruction", FIXES.some((f) => f.includes("30 days")));
+check("a source name becomes a fix instruction", FIXES.some((f) => f.includes("Nate")));
+check(
+  "a fenced topic is reported but NOT auto-edited — it may be a deliberate rebuttal",
+  !FIXES.some((f) => f.includes("semantic search")),
+);
+check(
+  "an extra sponsor plug is reported but NOT auto-edited",
+  !FIXES.some((f) => f.includes("third plug")),
+);
+check("a clean audit produces no pass at all", claimFixList({ ...AUDIT, unsupportedNumbers: [], bannedWords: [], experienceClaims: [], sourceNames: [] }).length === 0);
+
+const CFP = claimFixPrompt("Some script text here.", ["Fix the 90."]);
+check("the fix prompt carries the script", CFP.includes("Some script text here."));
+check("the fix prompt numbers the findings", CFP.includes("1. Fix the 90."));
+check("the fix prompt demands verbatim anchors", /must appear in the script EXACTLY/.test(CFP));
+check("the fix prompt asks for edits, never a script", /"edits"/.test(CFP) && !/revisedScript/.test(CFP));
+
+// The applier is Stage 6.5's, so the fix pass inherits its guards.
+const APPLIED = applyBriefEdits(
+  "The other 90% is where the real magic lives.",
+  [{ mode: "replace", find: "The other 90% is", text: "The rest of it is", reason: "invented statistic" }],
+  "claim audit",
+);
+check("an edit lands", APPLIED.script === "The rest of it is where the real magic lives.");
+check("the applied note carries its reason", APPLIED.applied.some((a) => /invented statistic/.test(a)));
+check(
+  "an anchor that is not in the script is skipped, not forced",
+  applyBriefEdits("abc", [{ mode: "replace", find: "not here", text: "x" }], "claim audit").skipped.length === 1,
 );
 
 console.log("");
