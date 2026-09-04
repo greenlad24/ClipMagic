@@ -295,6 +295,11 @@ export function selectionPrompt(
     "",
     `Choose at most ${count}, best first. What matters:`,
     "- The video is about THIS topic, not about the same product used for something else. A video about the product's other features is the wrong video.",
+    ...(focus
+      ? [
+          "- **It covers something in the SPECIFIC FOCUS above, for the same kind of person this video is for.** A video doing this exact job in another industry, or for a much bigger or more technical operation, is the wrong video however well its words match — a construction firm's document system and a solopreneur's notes are not the same video, even though both are \"a knowledge base\".",
+        ]
+      : []),
     "- It demonstrates a workflow: menus, clicks, settings, the order things happen in.",
     "- Prefer the video that covers the topic directly over a longer one that touches it in passing.",
     "- Views and recency break ties. They do not outrank relevance.",
@@ -302,9 +307,44 @@ export function selectionPrompt(
     "Reject roundups that mention the topic in a list, reaction and news videos, and anything whose title promises money rather than a method.",
     ...(gate ? ["", gate, ""] : []),
     `Returning fewer than ${count} is correct when fewer are relevant. Returning none is correct when none are.`,
+    ...(focus
+      ? [
+          "A thin set of genuinely on-focus videos beats a full set padded with near misses: everything downstream treats this sheet as the primary source for how the product works, so one off-focus walkthrough teaches the whole script the wrong workflow.",
+        ]
+      : []),
     "",
-    'Reply with JSON only: {"picks": [{"n": 1, "why": "one short clause"}]}',
+    ...(focus
+      ? [
+          'For each pick, `covers` must name the part of the SPECIFIC FOCUS it actually delivers. If you cannot name one, it is not a pick.',
+          "",
+          'Reply with JSON only: {"picks": [{"n": 1, "covers": "which part of the focus", "why": "one short clause"}]}',
+        ]
+      : ['Reply with JSON only: {"picks": [{"n": 1, "why": "one short clause"}]}']),
   ].join("\n");
+}
+
+/**
+ * What the selector said it was picking each video FOR.
+ *
+ * Purely diagnostic, and worth the four lines: a run drew a construction-industry
+ * walkthrough for a solopreneur's notes video and nothing said why until the
+ * finished script was read. The reason belongs in the log next to the titles.
+ */
+export function pickReasons(text: string): string[] {
+  try {
+    const parsed = JSON.parse(extractJsonish(text)) as { picks?: Array<Record<string, unknown>> };
+    return (parsed?.picks ?? [])
+      .map((p) => {
+        const n = Number(p?.n);
+        const covers = typeof p?.covers === "string" ? p.covers.trim() : "";
+        const why = typeof p?.why === "string" ? p.why.trim() : "";
+        if (!Number.isInteger(n)) return "";
+        return `#${n}${covers ? ` covers: ${covers}` : ""}${why ? ` — ${why}` : ""}`;
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -521,6 +561,19 @@ export async function findTutorialVideos(
       })
       .catch(() => "");
     queries = parseQueries(answer, fallbackQuery);
+    // ALWAYS search the plain product name too, alongside the model's angles.
+    //
+    // Two runs on the same topic drew very different pools. One asked for
+    // "claude second brain notes" and got tutorials at 359k and 234k views; the
+    // next asked for "claude personal knowledge base" — just as faithful to the
+    // brief — and the best thing available was a 6.6k-view walkthrough about
+    // construction drawings. The narrow angles are worth having, but on their own
+    // they make the whole stage a coin flip, and the selector can only choose
+    // from what the searches return. The broad query is the one that reliably
+    // surfaces the popular tutorials, so it is no longer left to chance.
+    if (!queries.some((q) => q.toLowerCase() === fallbackQuery.toLowerCase())) {
+      queries = [fallbackQuery, ...queries].slice(0, QUERY_COUNT + 1);
+    }
   }
   opts.sinkQueries?.push(...queries);
 
@@ -553,6 +606,13 @@ export async function findTutorialVideos(
     })
     .catch(() => "");
   const picked = parseSelection(answer, shortlist, count);
+  const reasons = pickReasons(answer);
+  if (reasons.length > 0) {
+    console.log(`[scriptgen:videos] selector: ${reasons.join(" | ")}`);
+  }
+  if (picked.length === 0) {
+    console.warn("[scriptgen:videos] the selector picked nothing usable — falling back to the ranked list");
+  }
   return (picked.length > 0 ? picked : ranked).map(strip);
 }
 

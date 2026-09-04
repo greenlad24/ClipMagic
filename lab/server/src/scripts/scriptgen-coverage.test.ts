@@ -49,6 +49,7 @@ import {
   candidateBlock,
   selectionPrompt,
   parseSelection,
+  pickReasons,
   mechanicalRank,
   wantsDeveloperWorkflow,
   audienceRule,
@@ -852,6 +853,46 @@ check("the free hook prompt plants the loops", OHP.includes("Which one of these 
 check("the free hook prompt bans the generic opener", /no generic percentage opener/.test(OHP));
 check("the free hook prompt demands it be unreusable", /would work on any other video about this topic/.test(OHP));
 check("the free hook prompt asks for the hook alone", /Write only the hook/.test(OHP));
+
+// ── The broad query is never left to chance ──────────────────────────────────
+// Same topic, two runs: "claude second brain notes" found tutorials at 359k and
+// 234k views; "claude personal knowledge base" found a 6.6k construction
+// walkthrough. The selector can only pick from what the searches return.
+
+check(
+  "the model's angles are still capped at QUERY_COUNT",
+  parseQueries('{"queries":["a one","b two","c three","d four"]}', "Claude").length === QUERY_COUNT,
+);
+check(
+  "the broad query is not duplicated when the model already asked for it",
+  parseQueries('{"queries":["Claude Cowork","claude cowork setup"]}', "Claude Cowork").filter(
+    (q) => q.toLowerCase() === "claude cowork",
+  ).length === 1,
+);
+
+// ── Research stays on the focus ──────────────────────────────────────────────
+// A run drew "How to Build a Construction Project Knowledge Base (Drawings,
+// Contracts & Specs)" for a solopreneur's note-taking video: the words matched,
+// the audience did not, and nothing said why until the script was read.
+
+const FOCUSED = selectionPrompt("Claude for notes", CANDS, 4, "capturing and organizing meeting notes", false);
+check("the focus is a selection rule, not just context", /It covers something in the SPECIFIC FOCUS above/.test(FOCUSED));
+check("a different industry is called out as the wrong video", /construction firm's document system/.test(FOCUSED));
+check("a thin on-focus set is preferred to a padded one", /A thin set of genuinely on-focus videos beats a full set/.test(FOCUSED));
+check("each pick must name the focus it covers", /`covers` must name the part of the SPECIFIC FOCUS/.test(FOCUSED));
+check("the JSON shape asks for covers when there is a focus", FOCUSED.includes('"covers"'));
+check(
+  "with no focus the prompt does not invent one",
+  !selectionPrompt("Claude for notes", CANDS, 4, undefined, false).includes("SPECIFIC FOCUS"),
+);
+
+check(
+  "the selector's reasoning is recoverable for the log",
+  JSON.stringify(pickReasons('{"picks":[{"n":2,"covers":"meeting notes","why":"real walkthrough"}]}')) ===
+    JSON.stringify(["#2 covers: meeting notes — real walkthrough"]),
+);
+check("a pick with no reasoning still reports its number", pickReasons('{"picks":[{"n":1}]}')[0] === "#1");
+check("unparseable reasoning is not an error", pickReasons("nope").length === 0);
 
 console.log("");
 if (fail.length) {

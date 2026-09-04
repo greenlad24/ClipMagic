@@ -691,7 +691,7 @@ function workflowBlock(sheet: string, developerOk: boolean): string {
  * whole conversation, so the stage bills far more than the searches themselves;
  * asking for fewer, better-aimed ones is what makes it cheaper.
  */
-function researchScopeBlock(): string {
+function researchScopeBlock(focus: string): string {
   return [
     "",
     "---",
@@ -707,7 +707,14 @@ function researchScopeBlock(): string {
     "4. **Anything the brief asks for that neither of the above covers.**",
     "",
     "Fewer, better-aimed searches beat a wide sweep. When the sheet and the brief are already answered, stop searching and write up what you have — a thin, current, checkable research doc is worth more than a long one padded with articles about a product you can already watch someone use.",
-  ].join("\n");
+      ...(focus.trim()
+      ? [
+          "",
+          `**Everything you search for must serve this focus: ${focus.trim()}**`,
+          "An adjacent use of the same product is not this video. Do not research what the product does for a different job, a different industry, or a much larger operation — that reading ends up in the script as a workflow the viewer cannot use.",
+        ]
+      : []),
+].join("\n");
 }
 
 /**
@@ -1933,7 +1940,7 @@ async function runScript(
       // they left rather than re-deriving the whole topic from scratch.
       systemExtra: [
         ...briefExtra,
-        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk), researchScopeBlock()] : []),
+        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk), researchScopeBlock(setup.specificFocus ?? "")] : []),
       ],
       messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
       webSearch: true,
