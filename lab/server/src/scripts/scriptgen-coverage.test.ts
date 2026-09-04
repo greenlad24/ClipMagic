@@ -35,6 +35,7 @@ import {
   openHookPrompt,
   OPEN_HOOK_HEADING,
 } from "../scriptgen/run.js";
+import { extractPrompts } from "../scriptgen/edits.js";
 import {
   formatTranscript,
   parseCaptionBody,
@@ -737,6 +738,14 @@ const LOOPS = parseOpenLoops(LOOP_JSON, SECTIONS.length);
 check("loops are read out of the JSON", LOOPS.length === 2);
 check("a loop keeps the section that owes it", LOOPS[0].closesInSection === 4);
 check(
+  "the real prompts from a live script are all collected now",
+  ["Clean it up into a dated journal entry and save it as a new note in this folder.",
+   "Check my emails and draft replies for anything that needs a human response today.",
+   "Go through every note in this folder and group them into topics for me.",
+   "Read this note and put a five-bullet summary at the very top under a heading."]
+    .every((t) => extractPrompts(`Type this: "${t}"`).length === 1),
+);
+check(
   "a loop pointing past the last section is dropped — it could never be closed",
   parseOpenLoops('{"loops":[{"question":"q","payoff":"p","closesInSection":9}]}', SECTIONS.length).length === 0,
 );
@@ -745,7 +754,7 @@ check(
   parseOpenLoops('{"loops":[{"question":"q","payoff":"","closesInSection":2}]}', SECTIONS.length).length === 0,
 );
 check("duplicate loops collapse", parseOpenLoops('{"loops":[{"question":"Q","payoff":"p","closesInSection":1},{"question":"q","payoff":"p2","closesInSection":2}]}', SECTIONS.length).length === 1);
-check("never more than three", parseOpenLoops('{"loops":[' + [1,2,3,4,5].map((n)=>`{"question":"q${n}","payoff":"p","closesInSection":1}`).join(",") + ']}', SECTIONS.length).length === 3);
+check("never more than three", parseOpenLoops('{"loops":[' + [1,2,3,4,5].map((n)=>`{"question":"q${n}","payoff":"p","closesInSection":2}`).join(",") + ']}', SECTIONS.length).length === 3);
 check("an unparseable answer plants no loops rather than throwing", parseOpenLoops("sorry", SECTIONS.length).length === 0);
 
 const OLP = openLoopsPrompt("7 Ways Claude Replaces Your Notes", "…outline…", SECTIONS);
@@ -853,6 +862,10 @@ check("the free hook prompt plants the loops", OHP.includes("Which one of these 
 check("the free hook prompt bans the generic opener", /no generic percentage opener/.test(OHP));
 check("the free hook prompt demands it be unreusable", /would work on any other video about this topic/.test(OHP));
 check("the free hook prompt asks for the hook alone", /Write only the hook/.test(OHP));
+// The first free hook shipped with no subscribe ask: Stage 5.5 attaches it to the
+// welcome/identity beat and is told to skip any hook that has not got one.
+check("the free hook must carry a welcome/identity beat", /WELCOME\/IDENTITY BEAT/.test(OHP));
+check("and it is told why that beat is not optional", /ships with no subscribe ask at all/.test(OHP));
 
 // ── The broad query is never left to chance ──────────────────────────────────
 // Same topic, two runs: "claude second brain notes" found tutorials at 359k and
@@ -893,6 +906,68 @@ check(
 );
 check("a pick with no reasoning still reports its number", pickReasons('{"picks":[{"n":1}]}')[0] === "#1");
 check("unparseable reasoning is not an error", pickReasons("nope").length === 0);
+
+// ── What one hand-edit taught ────────────────────────────────────────────────
+// Jake edited a finished script. The body survived almost untouched; every
+// change clustered in the hook and the first 300 words, and each was a habit.
+
+// A UI label read aloud is not a prompt anyone would copy.
+check(
+  "a settings toggle read aloud is not collected as a prompt",
+  extractPrompts('flip on "generate memory from chat history."').length === 0,
+);
+check(
+  "a real prompt still is",
+  extractPrompts(
+    'Type this: "Clean it up into a dated journal entry and save it as a new note in this folder."',
+  ).length === 1,
+);
+check(
+  "a connective is not used as the prompt's label",
+  extractPrompts('you can do this: "Summarize the article I just saved into three real takeaways today."')[0]
+    ?.label === "Prompt 1",
+);
+check(
+  "a descriptive lead-in still becomes the label",
+  extractPrompts(
+    'Here is the morning brief prompt: "Check my emails and draft replies for anything that needs a human response."',
+  )[0]?.label.includes("morning brief"),
+);
+
+// A loop closed in section 1 was cut by hand; sections 2 and 3 were kept.
+check(
+  "a loop cannot close in section 1 — the payoff is too close to the promise",
+  parseOpenLoops('{"loops":[{"question":"q","payoff":"p","closesInSection":1}]}', SECTIONS.length).length === 0,
+);
+check(
+  "section 2 is the earliest a loop may close",
+  parseOpenLoops('{"loops":[{"question":"q","payoff":"p","closesInSection":2}]}', SECTIONS.length).length === 1,
+);
+check("and the prompt says so", /Nothing closes in section 1/.test(openLoopsPrompt("t", "o", SECTIONS)));
+
+// The hook that planted three loops was cut back to one by hand.
+const THREE = [
+  { question: "Q one?", payoff: "p", closesInSection: 2 },
+  { question: "Q two?", payoff: "p", closesInSection: 3 },
+  { question: "Q three?", payoff: "p", closesInSection: 4 },
+];
+const OHP3 = openHookPrompt("T", "topic", "outline", THREE, KW);
+check("the hook is asked to plant at most two loops", /AT MOST TWO/.test(OHP3));
+check("and is only shown two of them", OHP3.includes("Q one?") && OHP3.includes("Q two?") && !OHP3.includes("Q three?"));
+check("the hook may not describe what is on screen", /Never describe what is on screen/.test(OHP3));
+
+check("\"folks\" is caught", findBannedWords("Alright folks, let's get into it.").length === 1);
+check("the report says which word it was", /"folks"/.test(findBannedWords("Hey folks.")[0] ?? ""));
+check("a word that merely contains it is not caught", findBannedWords("The folkses sang.").length === 0);
+check(
+  "\"keep coming back to\" is caught",
+  findBannedWords("That's the bit I keep coming back to.").length === 1,
+);
+check("its tense variants are caught too", findBannedWords("The one he kept coming back to.").length === 1);
+check(
+  "a plain \"coming back to\" is left alone",
+  findBannedWords("We're coming back to that in a minute.").length === 0,
+);
 
 console.log("");
 if (fail.length) {

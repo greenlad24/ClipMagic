@@ -410,9 +410,21 @@ export interface ExtractedPrompt {
 }
 
 /** Verbs that open an actual prompt rather than an ordinary quoted phrase. */
+/**
+ * The verbs a prompt starts with.
+ *
+ * The first list was written from imagination and missed most of what Jake
+ * actually types. In one script "Clean it up into a dated journal entry…",
+ * "Check my emails and draft replies…", "Go through every note in this
+ * folder…", "Read this note and put a five-bullet summary…" and "Package that
+ * whole process up as a skill" were ALL real prompts, and not one of them was
+ * collected — the appendix was quietly missing most of the video's value.
+ */
 const PROMPT_VERBS =
   "create|design|write|make|generate|build|draw|translate|summarize|summarise|analyze|analyse|" +
-  "explain|rewrite|edit|plot|compare|outline|suggest|give me|act as|help me|show|remove|change|add";
+  "explain|rewrite|edit|plot|compare|outline|suggest|give me|act as|help me|show|remove|change|add|" +
+  "clean|check|go through|read|search|pull|package|run|find|sort|organize|organise|group|tag|" +
+  "turn|take|put|draft|list|extract|split|merge|rename|move|save|update|review|scan|look";
 
 /**
  * Pull the exact prompts a script tells the viewer to copy.
@@ -429,7 +441,9 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
   const clean = script.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
   const out: ExtractedPrompt[] = [];
   const seen = new Set<string>();
-  const verb = new RegExp(`^\\s*(?:${PROMPT_VERBS})\\b`, "i");
+  // Optionally preceded by one short clause — "Before organizing, build me an
+  // index file…" is a prompt whose first word is not its verb.
+  const verb = new RegExp(`^\\s*(?:[^,.]{0,40},\\s*)?(?:${PROMPT_VERBS})\\b`, "i");
 
   // Pair the quotes BY POSITION. A regex that searches for "…" will let a short,
   // rejected quote ("a dog in a field") swallow the opening quote of the real
@@ -437,7 +451,12 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
   const parts = clean.split('"');
   for (let i = 1; i < parts.length; i += 2) {
     const text = parts[i].trim();
-    if (text.length < 30 || text.length > 900) continue;
+    // 30 characters let a UI label through: "generate memory from chat history"
+    // is a settings toggle Jake reads aloud, not a prompt anyone would copy, and
+    // it shipped in the appendix under the heading "Prompt". A real prompt tells
+    // the model what to do AND what to do it to, which takes more than a phrase.
+    if (text.length < 45 || text.length > 900) continue;
+    if (text.split(/\s+/).length < 8) continue;
     if (!verb.test(text)) continue;
     const key = text.toLowerCase();
     if (seen.has(key)) continue;
@@ -453,7 +472,20 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
       .replace(/[:\-–—\s]+$/, "")
       .trim();
 
-    out.push({ label: label.length >= 4 && label.length <= 80 ? label : "Prompt", text });
+    // A scavenged sentence is only a label if it describes the prompt. The
+    // sentence before a prompt is very often the hand-off itself — "you can do
+    // this:", "and then this" — which labelled the appendix with the connective
+    // instead of the subject. Where it fails, number the prompt: a plain
+    // "Prompt 3" is more use than a misleading name.
+    const usable =
+      label.length >= 8 &&
+      label.length <= 80 &&
+      // Only the contentless hand-offs. "Here is the morning brief prompt" is a
+      // real label; "you can do this" is the sentence that hands over to it.
+      !/^(?:you can (?:do|say|type|use)|and then this|then this|like this|watch this|here goes|this|it|so)\b/i.test(
+        label,
+      );
+    out.push({ label: usable ? label : `Prompt ${out.length + 1}`, text });
   }
   return out;
 }
@@ -749,7 +781,20 @@ export function findExperienceClaims(script: string, support: string): string[] 
  *   where "I ran this for a full 30 days" tends to land.
  */
 /** Words Jake never wants in a script. Whole-word, case-insensitive. */
-export const BANNED_WORDS = ["caveat", "clever", "neat", "which", "whether", "genuinely", "real deal"];
+export const BANNED_WORDS = [
+  "caveat",
+  "clever",
+  "neat",
+  "which",
+  "whether",
+  "genuinely",
+  "real deal",
+  "folks",
+  // A tic rather than a word: it was the most-repeated phrase in a finished
+  // script (3x) and reads as filler wherever it lands. The tense variants are
+  // matched too — the entry is a fragment of the alternation, not a literal.
+  "(?:keep|keeps|kept|keeping) coming back to",
+];
 
 /**
  * Banned words and phrasings in the finished script, with a little context so

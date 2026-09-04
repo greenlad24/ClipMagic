@@ -723,6 +723,29 @@ function researchScopeBlock(focus: string): string {
  * of facts starts enriching the script with them — adding a tier here, a limit
  * there — which is a rewrite wearing a review's clothes.
  */
+/**
+ * What the FINAL review can catch that a section writer structurally cannot.
+ *
+ * Every rule here needs whole-document sight: a section writing "number two"
+ * looks fine on its own and is only wrong once you can count the items before
+ * it. These all came out of one hand-edit of a finished script.
+ */
+function wholeScriptGuard(): string {
+  return [
+    "",
+    "---",
+    "",
+    "## THINGS ONLY THIS PASS CAN SEE",
+    "",
+    "You are the only pass that reads the whole script at once. Three checks need exactly that:",
+    "",
+    "1. **Numbered items must agree with the count.** A seven-ways video shipped with its SIXTH item announcing \"So, number two.\" Count the items as they actually appear. If a spoken number is wrong, either correct it or — better — replace it with a transition that carries order without counting (\"next up\", \"here's another one\").",
+    "2. **A promise made in the hook must be kept, and kept where it was promised.** If the hook says a thing is coming and no section delivers it, cut the promise rather than leaving it owed.",
+    "3. **The product is named plainly throughout.** \"Claude\" or \"it\" — never a periphrasis invented to avoid repeating the name (\"Anthropic's assistant\", \"the assistant\"). Fix every instance.",
+    "",
+  ].join("\n");
+}
+
 function reviewFactUseBlock(): string {
   return [
     "",
@@ -821,6 +844,18 @@ function continuityBlock(
     `## CONTINUITY — this is section ${index + 1} of ${total}`,
     "",
     `Write at least **${sectionWords} words** for this section — that is a floor, not a cap. Go longer where this section genuinely needs it: a walkthrough with more steps takes more words, and the video has no maximum length. What must not happen is padding to fill it — no repeating a point, no restating the premise, no announcing what you are about to explain.`,
+    "",
+    // Everything below came out of ONE hand-edit. Jake deleted each of these
+    // from a finished script, and each is a habit rather than a one-off.
+    "**Open on the thing itself.** Three openings were cut by hand from the last script for the same reason: \"The whole idea is simple. You point Claude at the folder…\" restated what the hook had already said; \"Let's start easy and build up to the wild one\" is a roadmap of the video (Rule 9); \"Here's the answer to that\" announces an answer instead of giving one. If your first sentence could be deleted without losing information, delete it yourself.",
+    "",
+    "**Name the product plainly, every time.** Say \"Claude\", or \"it\". Never a periphrasis invented to avoid repeating the name — \"Anthropic's assistant\", \"the assistant\", \"the tool\" — which reads as a press release and was hand-corrected out of the last script. Repetition of a product's name is normal speech; elegant variation is not.",
+    "",
+    // A seven-item video shipped with its sixth item announcing "So, number two."
+    // The section writer cannot know an item's number: the outline's sections and
+    // the video's numbered items are not the same list, and it only sees its own
+    // index in the former.
+    "**Never announce an item's number out loud** — no \"number two\", \"the third one\", \"step five\" for the video's numbered items. You are told which SECTION you are writing, and the sections are not the same list as the items the title counts, so any number you state will eventually be the wrong one. Move between items with language that carries order without counting: \"next up\", \"here's another one\", \"this next one\". (Numbering the steps INSIDE a walkthrough is fine — those you can see.)",
     "",
   ];
 
@@ -1048,8 +1083,15 @@ export function openHookPrompt(
     "",
     "OUTLINE:",
     outline,
+    // At most TWO. A hook that planted three was cut back to one by hand: each
+    // planting costs a paragraph, and the opening got bloated enough that the
+    // welcome line had nowhere to sit.
     ...(loops.length
-      ? ["", "Plant these and answer none of them:", ...loops.map((l) => `- ${l.question}`)]
+      ? [
+          "",
+          "Plant AT MOST TWO of these, and answer none of them. Pick the two a viewer would most want closed; planting all of them makes the hook long enough that nothing in it lands:",
+          ...loops.slice(0, 2).map((l) => `- ${l.question}`),
+        ]
       : []),
     ...(keywords.length
       ? [
@@ -1066,6 +1108,11 @@ export function openHookPrompt(
     "- Earn the next line, twice: the first sentence buys the second, the second buys the third.",
     "",
     "Hard nos: no generic percentage opener, no roadmap of the video, no income claim, no competitor named, no rhetorical question you answer yourself in the next breath.",
+    // "That's the file scrolling on screen right now" was deleted by hand: it
+    // committed Jake to a shot he had not recorded.
+    "**Never describe what is on screen.** No \"that's it running right now\", no \"look at this\", nothing that refers to a shot. The hook is written before anything is filmed, so a line like that quietly commits Jake to recording a specific piece of footage — and if he does not, the line is a lie the viewer can see.",
+    "",
+    "It must contain a WELCOME/IDENTITY BEAT — one short line where Jake says who he is and who he helps — placed wherever it does least damage to the momentum, usually after the opening has landed. This is not optional: the CTA pass attaches the subscribe ask to that beat and skips any hook that has not got one, so a hook without it ships with no subscribe ask at all.",
     "",
     "Jake's voice: the smart, curious friend at the bar. 45-90 seconds spoken. Write only the hook — no title, no notes, no explanation of what you did.",
   ].join("\n");
@@ -1241,7 +1288,12 @@ export function openLoopsPrompt(title: string, outline: string, sectionNames: st
     "",
     "Rules:",
     "- A loop must be answered by something ALREADY IN THE OUTLINE. If the outline does not answer it, it is not a loop, it is a lie.",
-    "- Spread them. Do not close every loop in the final section — a loop that only pays off at the end is a reason to leave, not to stay.",
+    // A loop closed in section 1 was hand-deleted from a finished script: the
+    // callback ("Here's the answer to that") read as filler because the promise
+    // and the payoff were seconds apart. Sections 2 and 3's callbacks, on the
+    // same script, were kept almost word for word.
+    "- **Nothing closes in section 1.** A loop the viewer barely has to wait for is not tension, and the call-back to it reads as padding. Section 2 is the earliest that works.",
+    "- Spread them. Do not close every loop in the final section either — a loop that only pays off at the end is a reason to leave, not to stay.",
     "- The question is what the viewer wants to know, in Jake's voice, short enough to say out loud in one breath.",
     "- The payoff is the specific thing that answers it — a step, a number, a verdict. Not \"we explain it later\".",
     "- No loop about money made, and none that needs a competitor named.",
@@ -1266,7 +1318,9 @@ export function parseOpenLoops(raw: string, sectionCount: number): OpenLoop[] {
       const payoff = typeof l.payoff === "string" ? l.payoff.trim() : "";
       const n = Number(l.closesInSection);
       if (!question || !payoff) continue;
-      if (!Number.isInteger(n) || n < 1 || n > sectionCount) continue;
+      // Section 1 is excluded in code as well as in the prompt: the payoff is
+      // too close to the promise to be felt as one.
+      if (!Number.isInteger(n) || n < 2 || n > sectionCount) continue;
       if (out.some((o) => o.question.toLowerCase() === question.toLowerCase())) continue;
       out.push({ question, payoff, closesInSection: n });
     }
@@ -1445,6 +1499,7 @@ export async function finalReviewAndAssemble(opts: {
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
       ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
       reviewFactUseBlock(),
+      wholeScriptGuard(),
     ],
     messages: [{ role: "user", content: s7 }],
     // Whole-document pass: it re-emits the ENTIRE script inside a JSON string,
@@ -1624,6 +1679,44 @@ export async function finalReviewAndAssemble(opts: {
  */
 const SCRIPT_HEADING = "## SCRIPT\n\n";
 const PROMPT_APPENDIX_MARK = "\n\n---\n\n## PROMPT SUMMARY";
+
+/** How much script we accept in one save. Generous: a 20-minute video is ~3,500 words. */
+const MAX_EDITED_CHARS = 400_000;
+
+/**
+ * Save Jake's hand edit.
+ *
+ * Writes to its own column, never over `finalDocument`. The generated script
+ * stays recoverable for the life of the run, which is what makes it safe to
+ * autosave on a debounce rather than only on an explicit press: nothing typed
+ * can destroy anything the pipeline paid to produce.
+ */
+export function saveScriptEdit(runId: string, text: string): { savedAt: number; chars: number } {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  if (typeof text !== "string") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "The edited script must be text." });
+  }
+  if (text.length > MAX_EDITED_CHARS) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `That script is ${text.length.toLocaleString()} characters, past the ${MAX_EDITED_CHARS.toLocaleString()} limit.`,
+    });
+  }
+  // An empty editor means "revert", not "save nothing" — otherwise a stray
+  // select-all-delete would persist an empty script over a real one.
+  const value = text.trim() ? text : null;
+  updateRun(runId, { editedDocument: value });
+  return { savedAt: Date.now(), chars: value ? value.length : 0 };
+}
+
+/** Throw the edit away and go back to what the pipeline wrote. */
+export function revertScriptEdit(runId: string): { ok: true } {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  updateRun(runId, { editedDocument: null });
+  return { ok: true };
+}
 
 /**
  * Run Stage 7 again over a script that already finished.
@@ -2147,7 +2240,7 @@ async function runScript(
           content:
             s3 +
             (loops.length
-              ? "\n\n---\n\nEvery one of the four hooks must PLANT the open loops above and answer none of them. " +
+              ? "\n\n---\n\nEvery one of the four hooks must PLANT AT MOST TWO of the open loops above and answer none of them. " +
                 "A loop is planted when the viewer can feel the shape of the answer and knows they have not been given it — " +
                 "not when it is merely alluded to. Do not list them as a roadmap of the video: that is the preview beat Rule 9 bans."
               : ""),
