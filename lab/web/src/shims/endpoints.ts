@@ -672,6 +672,10 @@ export interface ScriptRunResult {
   stage0: Stage0Result | null;
   stages: ScriptStages;
   finalDocument: string | null;
+  /** Jake's hand-edited script, or null if untouched. */
+  editedDocument: string | null;
+  /** When that edit was last saved. */
+  editedAt: number | null;
   /** Post-generation paragraph-refinement chat, oldest first. */
   refineChat: RefineMessage[];
   status: ScriptRunStatus;
@@ -714,6 +718,58 @@ export const scriptJobStatus = endpoint<{ jobId: string }, ScriptJobSnapshot>("s
 export const getScriptRun = endpoint<{ runId: string }, ScriptRunResult>("getScriptRun");
 export const listScriptRuns = endpoint<Record<string, never>, { runs: ScriptRunListItem[] }>("listScriptRuns");
 export const deleteScriptRun = endpoint<{ runId: string }, { ok: true }>("deleteScriptRun");
+/** Save Jake's hand edit. Never touches the generated document. */
+export const saveScriptEdit =
+  endpoint<{ runId: string; text: string }, { savedAt: number; chars: number }>("saveScriptEdit");
+/** Throw the hand edit away and go back to what the pipeline wrote. */
+export const revertScriptEdit = endpoint<{ runId: string }, { ok: true }>("revertScriptEdit");
+
+// ── Google Docs export ──
+export const scriptDocsStatus =
+  endpoint<Record<string, never>, { configured: boolean; connected: boolean; folderId: string }>("scriptDocsStatus");
+export const setScriptDocsFolder =
+  endpoint<{ folderId: string }, { folderId: string }>("setScriptDocsFolder");
+/** Exports whatever is in the editor — hand-edited if it exists, generated otherwise. */
+export const exportScriptToDocs =
+  endpoint<{ runId: string; folderId?: string }, { docId: string; docUrl: string; name: string; number: number }>(
+    "exportScriptToDocs",
+  );
+
+// ── Bulk queue: several ideas in, one finished script at a time ──
+/** One idea waiting in, or moving through, a queue. */
+export interface ScriptQueueItem {
+  id: string;
+  queueId: string;
+  idx: number;
+  input: ScriptInput;
+  /** `skipped` is your decision; `failed` is the pipeline's. */
+  status: "queued" | "running" | "done" | "failed" | "skipped";
+  runId: string | null;
+  title: string;
+  costUsd: number;
+  error: string;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+export interface ScriptQueue {
+  id: string;
+  name: string;
+  status: "idle" | "running" | "paused" | "done";
+  error: string;
+  createdAt: number;
+  updatedAt: number;
+  items: ScriptQueueItem[];
+  /** Whether a worker is live in the server process right now. */
+  live?: boolean;
+}
+export const createScriptQueue =
+  endpoint<{ name?: string; ideas: Array<{ idea: string; brief?: string }> }, ScriptQueue>("createScriptQueue");
+export const listScriptQueues = endpoint<Record<string, never>, { queues: ScriptQueue[] }>("listScriptQueues");
+export const getScriptQueue = endpoint<{ queueId: string }, ScriptQueue>("getScriptQueue");
+export const startScriptQueue = endpoint<{ queueId: string }, ScriptQueue>("startScriptQueue");
+export const pauseScriptQueue = endpoint<{ queueId: string }, ScriptQueue>("pauseScriptQueue");
+export const skipScriptQueueItem = endpoint<{ itemId: string }, { ok: true }>("skipScriptQueueItem");
+export const deleteScriptQueue = endpoint<{ queueId: string }, { ok: true }>("deleteScriptQueue");
 /** Rewrite ONE pasted paragraph per an instruction, grounded in the run's research + fact sheet. */
 export const refineScriptParagraph =
   endpoint<{ runId: string; paragraph?: string; instruction: string }, { messages: RefineMessage[]; costUsd: number }>(

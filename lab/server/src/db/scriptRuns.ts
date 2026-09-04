@@ -66,6 +66,8 @@ interface ScriptRunRow {
   updated_at: number;
   generation_ms: number;
   refine_chat_json: string | null;
+  edited_document: string | null;
+  edited_at: number | null;
 }
 
 /** Parse the persisted refine thread, dropping anything malformed. */
@@ -152,6 +154,8 @@ export function updateRun(
     stage0?: Stage0Result | null;
     stages?: ScriptStages;
     finalDocument?: string | null;
+  /** Jake's hand-edited script. Null clears the edit and restores the generated one. */
+  editedDocument?: string | null;
     error?: string | null;
     generationMs?: number;
     refineChat?: RefineMessage[];
@@ -182,6 +186,12 @@ export function updateRun(
   if (patch.stages !== undefined) {
     sets.push("stages_json = ?");
     vals.push(JSON.stringify(patch.stages));
+  }
+  if (patch.editedDocument !== undefined) {
+    sets.push("edited_document = ?");
+    vals.push(patch.editedDocument);
+    sets.push("edited_at = ?");
+    vals.push(patch.editedDocument === null ? null : Date.now());
   }
   if (patch.finalDocument !== undefined) {
     sets.push("final_document = ?");
@@ -216,6 +226,8 @@ function rowToResult(row: ScriptRunRow): ScriptRunResult {
     stage0: safeParse<Stage0Result>(row.stage0_json),
     stages: hydrateStages(safeParse<Partial<ScriptStages>>(row.stages_json)),
     finalDocument: row.final_document,
+    editedDocument: row.edited_document ?? null,
+    editedAt: row.edited_at ?? null,
     refineChat: hydrateRefineChat(row.refine_chat_json),
     status: row.status as ScriptRunStatus,
     error: row.error,

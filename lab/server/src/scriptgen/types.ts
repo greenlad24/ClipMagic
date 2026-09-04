@@ -312,6 +312,14 @@ export interface ScriptRunResult {
   stages: ScriptStages;
   /** Assembled document: all-4-hooks + [sponsor segment] + meat + outro. */
   finalDocument: string | null;
+  /**
+   * Jake's hand-edited script, or null if he never touched it. Kept apart from
+   * `finalDocument` so a regenerating pass cannot destroy the edit — and so
+   * "revert to what the machine wrote" stays possible forever.
+   */
+  editedDocument: string | null;
+  /** When that edit was last saved. */
+  editedAt: number | null;
   /** Post-generation paragraph-refinement chat, oldest first. Empty until used. */
   refineChat: RefineMessage[];
   status: ScriptRunStatus;

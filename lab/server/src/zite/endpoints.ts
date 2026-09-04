@@ -194,7 +194,31 @@ import {
   continueScript as runContinueScript,
   getScriptSnapshot,
   refineParagraph as runRefineParagraph,
+  saveScriptEdit as runSaveScriptEdit,
+  revertScriptEdit as runRevertScriptEdit,
 } from "../scriptgen/run.js";
+import {
+  startQueue as runStartQueue,
+  pauseQueue as runPauseQueue,
+  isQueueRunning,
+} from "../scriptgen/queueRunner.js";
+import {
+  exportScriptToDoc as exportScriptToDocFn,
+  googleDocsConfigured as googleDocsConfiguredFn,
+  parseFolderId as parseFolderIdFn,
+} from "../scriptgen/googleDocs.js";
+import {
+  getGoogleDocsOAuth as getGoogleDocsOAuthCfg,
+  getGoogleDocsFolder as getGoogleDocsFolderCfg,
+  setGoogleDocsFolder as setGoogleDocsFolderCfg,
+} from "../settings/postizSecrets.js";
+import {
+  createQueue as createQueueDb,
+  getQueue as getQueueDb,
+  listQueues as listQueuesDb,
+  updateItem as updateQueueItemDb,
+  deleteQueue as deleteQueueDb,
+} from "../db/scriptQueue.js";
 import {
   getRun as getScriptRunDb,
   listRuns as listScriptRunsDb,
@@ -3607,6 +3631,111 @@ const getScriptRun: Handler = async (input) => {
 };
 
 const listScriptRuns: Handler = async () => ({ runs: listScriptRunsDb() });
+
+// ── Google Docs export ──
+const scriptDocsStatus: Handler = async () => ({
+  configured: Boolean(getGoogleDocsOAuthCfg()),
+  connected: googleDocsConfiguredFn(),
+  folderId: getGoogleDocsFolderCfg(),
+});
+
+const setScriptDocsFolder: Handler = async (input) => {
+  const raw = String(input?.folderId ?? "").trim();
+  // Empty clears it; anything else has to be a folder we can actually address.
+  if (raw && !parseFolderIdFn(raw)) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "That doesn't look like a Google Drive folder — paste the folder's URL or its id.",
+    });
+  }
+  setGoogleDocsFolderCfg(raw ? parseFolderIdFn(raw)! : "");
+  return { folderId: getGoogleDocsFolderCfg() };
+};
+
+const exportScriptToDocs: Handler = async (input) => {
+  const runId = String(input?.runId ?? "");
+  const run = getScriptRunDb(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  const folderId = String(input?.folderId ?? "").trim() || getGoogleDocsFolderCfg();
+  if (!folderId) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Choose the Drive folder to export into first." });
+  }
+  // WHATEVER IS IN THE EDITOR — the hand-edited text when there is one, the
+  // generated document otherwise. Never a re-assembled version: what Jake read
+  // and approved on screen is what lands in the doc.
+  const body = run.editedDocument ?? run.finalDocument ?? "";
+  if (!body.trim()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This run has no script to export." });
+  }
+  try {
+    return await exportScriptToDocFn({ folderId, title: run.title || "Untitled", body });
+  } catch (e) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : String(e) });
+  }
+};
+
+// ── Script queue (bulk) ──
+const createScriptQueue: Handler = async (input) => {
+  const ideas: unknown = input?.ideas;
+  if (!Array.isArray(ideas) || ideas.length === 0) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Add at least one video idea to the queue." });
+  }
+  if (ideas.length > 20) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "20 scripts at a time is the ceiling — that is already ten hours of work." });
+  }
+  const inputs = ideas.map((raw) => {
+    const idea = String((raw as { idea?: unknown })?.idea ?? "").trim();
+    if (!idea) throw new ZiteError({ code: "BAD_REQUEST", message: "Every item needs a video idea." });
+    const brief = String((raw as { brief?: unknown })?.brief ?? "").trim();
+    return { idea, ...(brief ? { brief } : {}) } as ScriptInput;
+  });
+  const id = createQueueDb(String(input?.name ?? "").trim(), inputs);
+  return getQueueDb(id);
+};
+
+const listScriptQueues: Handler = async () => ({ queues: listQueuesDb() });
+
+const getScriptQueue: Handler = async (input) => {
+  const q = getQueueDb(input?.queueId);
+  if (!q) throw new ZiteError({ code: "NOT_FOUND", message: "Queue not found." });
+  return { ...q, live: isQueueRunning(q.id) };
+};
+
+const startScriptQueue: Handler = async (input) => {
+  const q = runStartQueue(String(input?.queueId ?? ""));
+  if (!q) throw new ZiteError({ code: "NOT_FOUND", message: "Queue not found." });
+  return q;
+};
+
+const pauseScriptQueue: Handler = async (input) => {
+  const q = runPauseQueue(String(input?.queueId ?? ""));
+  if (!q) throw new ZiteError({ code: "NOT_FOUND", message: "Queue not found." });
+  return q;
+};
+
+const skipScriptQueueItem: Handler = async (input) => {
+  const itemId = String(input?.itemId ?? "");
+  if (!itemId) throw new ZiteError({ code: "BAD_REQUEST", message: "itemId is required." });
+  updateQueueItemDb(itemId, { status: "skipped", finishedAt: Date.now() });
+  return { ok: true };
+};
+
+const deleteScriptQueue: Handler = async (input) => {
+  deleteQueueDb(String(input?.queueId ?? ""));
+  return { ok: true };
+};
+
+const saveScriptEdit: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return runSaveScriptEdit(runId, String(input?.text ?? ""));
+};
+
+const revertScriptEdit: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return runRevertScriptEdit(runId);
+};
 
 const deleteScriptRun: Handler = async (input) => {
   deleteScriptRunDb(input?.runId);
@@ -7155,6 +7284,18 @@ export const HANDLERS: Record<string, Handler> = {
   listScriptRuns,
   deleteScriptRun,
   refineScriptParagraph,
+  saveScriptEdit,
+  revertScriptEdit,
+  scriptDocsStatus,
+  setScriptDocsFolder,
+  exportScriptToDocs,
+  createScriptQueue,
+  listScriptQueues,
+  getScriptQueue,
+  startScriptQueue,
+  pauseScriptQueue,
+  skipScriptQueueItem,
+  deleteScriptQueue,
   // Video Planner (LAB tool — infrastructure for the future long-form editor)
   plannerStatus,
   startPlan,

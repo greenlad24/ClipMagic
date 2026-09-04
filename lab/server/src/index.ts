@@ -15,6 +15,8 @@ import { failInterruptedRuns } from "./db/bulkPreview.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
+import { googleDocsOAuthRouter } from "./scriptgen/docsOauthRoutes.js";
+import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
 import { startMonitor } from "./engage/monitor.js";
 import { startReplyWorker } from "./engage/replyWorker.js";
@@ -89,6 +91,7 @@ app.use(requireSession);
 // AFTER requireSession on purpose: only a signed-in operator may start an OAuth
 // flow that will store a token on this server.
 app.use(youtubeOAuthRouter());
+  app.use(googleDocsOAuthRouter());
 
 // Health / readiness — no auth, handy for load balancers and uptime checks.
 app.get("/health", (_req, res) => {
@@ -244,6 +247,15 @@ app.listen(config.port, config.host, () => {
   // mid-flight as 'running' forever. Mark them failed so they read as dead.
   const orphaned = failOrphanedRuns();
   if (orphaned > 0) console.log(`[server] marked ${orphaned} interrupted script run(s) as failed`);
+  // The bulk queue is durable but its WORKER is not: nothing is auto-restarted,
+  // because silently resuming hours of paid generation after a deploy is not a
+  // decision a boot sequence should make. The queue is left paused and visible.
+  failOrphanedQueueItems();
+  // Same for a Channel Audit: its progress lives in memory, so a restart leaves
+  // a working status with nothing working on it. Marked failed, it can be
+  // carried on from where it stopped instead of being re-run from nothing.
+  const deadAudits = failInterruptedAudits();
+  if (deadAudits > 0) console.log(`[audit] marked ${deadAudits} interrupted audit(s) as failed — they can be carried on`);
   // Auth gate status — a missing config means the app is OPEN, which must be
   // impossible to miss in the logs.
   if (authConfigured()) {

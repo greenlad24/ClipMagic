@@ -1183,6 +1183,18 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   if (!cols.some((c) => c.name === "refine_chat_json")) {
     db.exec("ALTER TABLE script_runs ADD COLUMN refine_chat_json TEXT");
   }
+  // Jake's hand edits, kept SEPARATE from final_document rather than replacing
+  // it. The pipeline writes final_document at three points and a re-run of the
+  // final review rewrites it on a finished run — so an edit stored in that
+  // column would be silently destroyed by a pass the user did not think of as
+  // regenerating anything. NULL means "never edited": the generated document is
+  // still the deliverable.
+  if (!cols.some((c) => c.name === "edited_document")) {
+    db.exec("ALTER TABLE script_runs ADD COLUMN edited_document TEXT");
+  }
+  if (!cols.some((c) => c.name === "edited_at")) {
+    db.exec("ALTER TABLE script_runs ADD COLUMN edited_at INTEGER");
+  }
 }
 
 // ── Avatar Narrator (synthetic-presenter talking-head videos) ────────────────
@@ -1249,6 +1261,43 @@ CREATE TABLE IF NOT EXISTS avatar_segments (
   FOREIGN KEY (video_id) REFERENCES avatar_videos(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_avatar_segments_video ON avatar_segments(video_id, idx);
+
+-- Script Generator queue: several video ideas in, one finished script at a time
+-- out. STRICTLY SERIAL, and not merely as a courtesy to the API — scriptgen's
+-- cost accounting (scriptgenTally in ai/claude.ts) is module-level global
+-- state that is zeroed at the start of each run, so two runs in one process
+-- would interleave their token counts, mis-report every cost line, and trip the
+-- $12 ceiling on their combined spend.
+--
+-- Items live in the DB rather than in memory because a queue of five scripts is
+-- two and a half hours of work: it has to survive a container restart, a closed
+-- tab, and a laptop going to sleep.
+CREATE TABLE IF NOT EXISTS script_queue (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL DEFAULT '',
+  status      TEXT NOT NULL,            -- idle | running | paused | done
+  error       TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS script_queue_items (
+  id          TEXT PRIMARY KEY,
+  queue_id    TEXT NOT NULL,
+  idx         INTEGER NOT NULL,         -- position in the queue, 0-based
+  input_json  TEXT NOT NULL,            -- the ScriptInput this item will run
+  -- queued | running | done | failed | skipped. "skipped" is a user decision,
+  -- "failed" is the pipeline's -- they are not the same thing and the UI says so.
+  status      TEXT NOT NULL DEFAULT 'queued',
+  run_id      TEXT,                     -- the script_runs row it produced
+  title       TEXT NOT NULL DEFAULT '', -- filled in once Stage 0 has named it
+  cost_usd    REAL NOT NULL DEFAULT 0,
+  error       TEXT NOT NULL DEFAULT '',
+  started_at  INTEGER,
+  finished_at INTEGER,
+  FOREIGN KEY (queue_id) REFERENCES script_queue(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_script_queue_items ON script_queue_items(queue_id, idx);
 
 -- Tutorial Studio batches: one theme in, ~30 finished reels out. The batch is a
 -- REVIEW queue first and a render queue second — ideas are proposed, scripts are

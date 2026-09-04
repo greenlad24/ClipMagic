@@ -187,6 +187,16 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "YT_ANALYTICS_CLIENT_SECRET", label: "YouTube Analytics client secret", group: "Channel Audit", connects: "Secret for the YouTube Analytics OAuth client above. Server-only; never sent to the browser." },
   { key: "YT_ANALYTICS_REFRESH_TOKEN", label: "YouTube Analytics refresh token", group: "Channel Audit", connects: "Written automatically when you connect your channel from the Channel Audit page. Grants read-only access to your own analytics; revoke any time at myaccount.google.com/permissions." },
 
+  // Google Docs export (Script Generator). A THIRD Google client, separate from
+  // sign-in and from Channel Audit, and the narrowest of the three: drive.file
+  // reaches only the documents this app itself creates. It cannot read, edit or
+  // delete anything else in the Drive, which is why connecting it is safe even
+  // though the account holds everything else Jake owns.
+  { key: "GDOCS_CLIENT_ID", label: "Google Docs client ID", group: "Script Generator", connects: "OAuth client ID for exporting a finished script into a Google Doc. Uses the drive.file scope: it can create documents and re-open the ones it created, and nothing else in your Drive is visible to it." },
+  { key: "GDOCS_CLIENT_SECRET", label: "Google Docs client secret", group: "Script Generator", connects: "Secret for the Google Docs OAuth client above. Server-only; never sent to the browser." },
+  { key: "GDOCS_REFRESH_TOKEN", label: "Google Docs refresh token", group: "Script Generator", connects: "Written automatically when you connect Google Docs from the Script Generator. Revoke any time at myaccount.google.com/permissions." },
+  { key: "GDOCS_FOLDER_ID", label: "Google Docs export folder", group: "Script Generator", connects: "The Drive folder finished scripts are exported into. Paste the folder's URL or its id — open the folder in Drive and copy the address bar." },
+
   { key: "YOUTUBE_CLIENT_ID", label: "YouTube client ID", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
   { key: "YOUTUBE_CLIENT_SECRET", label: "YouTube client secret", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
 
@@ -259,6 +269,10 @@ const LAB_ONLY_KEYS = new Set([
   "YT_ANALYTICS_CLIENT_ID",
   "YT_ANALYTICS_CLIENT_SECRET",
   "YT_ANALYTICS_REFRESH_TOKEN",
+  "GDOCS_CLIENT_ID",
+  "GDOCS_CLIENT_SECRET",
+  "GDOCS_REFRESH_TOKEN",
+  "GDOCS_FOLDER_ID",
 ]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -820,6 +834,61 @@ export function getYtAnalyticsOAuth(): { clientId: string; clientSecret: string;
   if (!clientId || !clientSecret) return null;
   const refreshToken = (process.env.YT_ANALYTICS_REFRESH_TOKEN || "").trim() || map.YT_ANALYTICS_REFRESH_TOKEN || null;
   return { clientId, clientSecret, refreshToken };
+}
+
+/** The Google Docs export client. Same shape as the analytics one, different grant. */
+export function getGoogleDocsOAuth(): { clientId: string; clientSecret: string; refreshToken: string | null } | null {
+  const map = readStore();
+  const clientId = (process.env.GDOCS_CLIENT_ID || "").trim() || map.GDOCS_CLIENT_ID || "";
+  const clientSecret = (process.env.GDOCS_CLIENT_SECRET || "").trim() || map.GDOCS_CLIENT_SECRET || "";
+  if (!clientId || !clientSecret) return null;
+  const refreshToken = (process.env.GDOCS_REFRESH_TOKEN || "").trim() || map.GDOCS_REFRESH_TOKEN || null;
+  return { clientId, clientSecret, refreshToken };
+}
+
+export function setGoogleDocsRefreshToken(token: string): void {
+  const map = readStore();
+  map.GDOCS_REFRESH_TOKEN = token;
+  writeStore(map);
+}
+
+export function clearGoogleDocsRefreshToken(): void {
+  const map = readStore();
+  delete map.GDOCS_REFRESH_TOKEN;
+  writeStore(map);
+}
+
+/** The folder finished scripts are exported into. */
+export function getGoogleDocsFolder(): string {
+  const map = readStore();
+  return (process.env.GDOCS_FOLDER_ID || "").trim() || map.GDOCS_FOLDER_ID || "";
+}
+
+export function setGoogleDocsFolder(folderId: string): void {
+  const map = readStore();
+  map.GDOCS_FOLDER_ID = folderId;
+  writeStore(map);
+}
+
+/**
+ * The highest doc number used in a folder.
+ *
+ * Needed because the drive.file scope cannot list documents this app did not
+ * create: without a stored floor, a doc Jake made by hand would be invisible
+ * and its number handed out twice.
+ */
+export function getGoogleDocsHighWater(folderId: string): number {
+  const map = readStore();
+  const n = Number(map[`GDOCS_SEQ_${folderId}`] || 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function setGoogleDocsHighWater(folderId: string, n: number): void {
+  const map = readStore();
+  if (n > getGoogleDocsHighWater(folderId)) {
+    map[`GDOCS_SEQ_${folderId}`] = String(n);
+    writeStore(map);
+  }
 }
 
 /** Persist the refresh token obtained from the consent callback. */

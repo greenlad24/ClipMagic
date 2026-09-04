@@ -10,6 +10,17 @@ import {
   listScriptRuns,
   deleteScriptRun,
   refineScriptParagraph,
+  saveScriptEdit,
+  revertScriptEdit,
+  scriptDocsStatus,
+  exportScriptToDocs,
+  createScriptQueue,
+  listScriptQueues,
+  getScriptQueue,
+  startScriptQueue,
+  pauseScriptQueue,
+  skipScriptQueueItem,
+  type ScriptQueue,
   type ScriptInput,
   type ScriptSetup,
   type ScriptRunResult,
@@ -47,6 +58,9 @@ import {
   Sparkles,
   Copy,
   Download,
+  Pencil,
+  Save,
+  FileText,
   Trash2,
   Plus,
   History,
@@ -230,6 +244,392 @@ function StagePanel({
 }
 
 /** Monospace, line-break-preserving text block for stage output. */
+/**
+ * The script, editable, with the save you do not have to think about.
+ *
+ * Two things make the autosave safe rather than frightening. The edit lands in
+ * its own column, so the generated script is always recoverable — "Revert" is a
+ * real escape hatch, not a promise. And an empty editor reverts rather than
+ * saving nothing, so a stray select-all-delete cannot quietly persist over a
+ * script that cost five dollars to write.
+ *
+ * The debounce is deliberately long enough to cover a pause for thought, and
+ * every path that could lose text — closing the tab, switching run, pressing
+ * Save — flushes first.
+ */
+const AUTOSAVE_DEBOUNCE_MS = 1200;
+
+/**
+ * Queue several ideas and let them run one after another.
+ *
+ * Strictly serial, and not as a courtesy: the generator's cost accounting is
+ * process-global state zeroed per run, so two scripts at once would mis-report
+ * every cost and trip the spend ceiling on their combined total.
+ */
+function BulkQueuePanel() {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [queue, setQueue] = useState<ScriptQueue | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Only poll while something is actually moving.
+  useEffect(() => {
+    if (!queue || queue.status !== 'running') return;
+    const t = setInterval(() => {
+      void getScriptQueue({ queueId: queue.id })
+        .then(setQueue)
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(t);
+  }, [queue?.id, queue?.status]);
+
+  // Pick up a queue left running by a previous visit, so closing the tab does
+  // not hide two hours of work in progress.
+  useEffect(() => {
+    void listScriptQueues({})
+      .then(({ queues }) => {
+        const active = queues.find((q) => q.status === 'running' || q.status === 'paused');
+        if (active) {
+          setQueue(active);
+          setOpen(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const ideas = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  const create = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const q = await createScriptQueue({ ideas: ideas.map((idea) => ({ idea })) });
+      setQueue(await startScriptQueue({ queueId: q.id }));
+      setText('');
+      toast.success(`Queued ${ideas.length} script${ideas.length === 1 ? '' : 's'} — they'll run one at a time.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const act = async (fn: () => Promise<ScriptQueue>): Promise<void> => {
+    setBusy(true);
+    try {
+      setQueue(await fn());
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const done = queue?.items.filter((i) => i.status === 'done').length ?? 0;
+  const spend = queue?.items.reduce((a, i) => a + i.costUsd, 0) ?? 0;
+
+  if (!open) {
+    return (
+      <div className="mb-4">
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+          <ListTree className="h-4 w-4" />
+          Queue several scripts
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="mb-4 rounded-xl border border-border bg-card p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-medium">Bulk scripts</h2>
+          <p className="text-xs text-muted-foreground">
+            One idea per line. They run one after another — never at the same time — and each one stops at
+            about {'$'}12.
+          </p>
+        </div>
+        {!queue && (
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+            Close
+          </Button>
+        )}
+      </div>
+
+      {!queue ? (
+        <>
+          <Textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={5}
+            placeholder={'How to build a lead magnet that converts, for coaches\nThe 5 AI tools I actually pay for\nWhy your email list is not growing'}
+            disabled={busy}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs text-muted-foreground">
+              {ideas.length === 0
+                ? 'Nothing queued yet'
+                : `${ideas.length} script${ideas.length === 1 ? '' : 's'} · roughly ${ideas.length * 30} minutes, about ${'$'}${(ideas.length * 5).toFixed(0)}`}
+            </span>
+            <Button size="sm" className="gap-1.5" disabled={ideas.length === 0 || busy} onClick={() => void create()}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListTree className="h-4 w-4" />}
+              Queue {ideas.length || ''}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {done}/{queue.items.length} written
+            </span>
+            <span aria-hidden>·</span>
+            <span className="tabular-nums">{'$'}{spend.toFixed(2)}</span>
+            <span aria-hidden>·</span>
+            <span>{queue.status}</span>
+          </div>
+          <ul className="divide-y divide-border rounded-lg border border-border">
+            {queue.items.map((item) => (
+              <li key={item.id} className="flex items-start justify-between gap-3 px-3 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-foreground">{item.title || item.input.idea}</p>
+                  {item.error && <p className="mt-0.5 text-xs text-destructive">{item.error}</p>}
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {item.costUsd > 0 && (
+                    <span className="tabular-nums text-xs text-muted-foreground">
+                      {'$'}{item.costUsd.toFixed(2)}
+                    </span>
+                  )}
+                  <span
+                    className={
+                      item.status === 'failed'
+                        ? 'text-xs text-destructive'
+                        : item.status === 'running'
+                          ? 'text-xs font-medium text-foreground'
+                          : 'text-xs text-muted-foreground'
+                    }
+                  >
+                    {item.status}
+                  </span>
+                  {item.runId && item.status === 'done' && (
+                    <Button variant="ghost" size="sm" onClick={() => { window.location.href = `/script-generator?run=${item.runId}`; }}>
+                      Open
+                    </Button>
+                  )}
+                  {item.status === 'queued' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        void skipScriptQueueItem({ itemId: item.id }).then(() =>
+                          getScriptQueue({ queueId: queue.id }).then(setQueue),
+                        )
+                      }
+                    >
+                      Skip
+                    </Button>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-center gap-2">
+            {queue.status === 'running' ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => void act(() => pauseScriptQueue({ queueId: queue.id }))}
+              >
+                Pause after this script
+              </Button>
+            ) : queue.status !== 'done' ? (
+              <Button
+                size="sm"
+                disabled={busy}
+                onClick={() => void act(() => startScriptQueue({ queueId: queue.id }))}
+              >
+                Resume
+              </Button>
+            ) : null}
+            <Button variant="ghost" size="sm" onClick={() => setQueue(null)}>
+              {queue.status === 'done' ? 'New queue' : 'Hide'}
+            </Button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ScriptEditor({
+  runId,
+  generated,
+  editedInitial,
+  editedAtInitial,
+  onSavedChange,
+}: {
+  runId: string;
+  generated: string;
+  editedInitial: string | null;
+  editedAtInitial: number | null;
+  onSavedChange?: (edited: string | null) => void;
+}) {
+  const [text, setText] = useState(editedInitial ?? generated);
+  const [state, setState] = useState<"clean" | "dirty" | "saving" | "error">("clean");
+  const [savedAt, setSavedAt] = useState<number | null>(editedAtInitial);
+  const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The last value actually persisted, so a flush can skip a no-op save and the
+  // unmount path knows whether it still owes the server anything.
+  const lastSaved = useRef(editedInitial ?? generated);
+  const pending = useRef<string | null>(null);
+
+  const save = useCallback(
+    async (value: string) => {
+      if (value === lastSaved.current) {
+        setState("clean");
+        return;
+      }
+      setState("saving");
+      try {
+        const res = await saveScriptEdit({ runId, text: value });
+        lastSaved.current = value;
+        pending.current = null;
+        setSavedAt(res.savedAt);
+        setState("clean");
+        setErr(null);
+        onSavedChange?.(value.trim() ? value : null);
+      } catch (e) {
+        setState("error");
+        setErr(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [runId, onSavedChange],
+  );
+
+  const onChange = (value: string): void => {
+    setText(value);
+    setState("dirty");
+    pending.current = value;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => void save(value), AUTOSAVE_DEBOUNCE_MS);
+  };
+
+  // Leaving the page or switching runs must not drop what is still in the
+  // debounce window.
+  useEffect(() => {
+    const flush = (): void => {
+      if (pending.current !== null && pending.current !== lastSaved.current) {
+        void saveScriptEdit({ runId, text: pending.current }).catch(() => {});
+      }
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      if (timer.current) clearTimeout(timer.current);
+      flush();
+    };
+  }, [runId]);
+
+  const revert = async (): Promise<void> => {
+    if (!window.confirm("Throw away your edits and go back to the generated script?")) return;
+    if (timer.current) clearTimeout(timer.current);
+    pending.current = null;
+    setState("saving");
+    try {
+      await revertScriptEdit({ runId });
+      setText(generated);
+      lastSaved.current = generated;
+      setSavedAt(null);
+      setState("clean");
+      onSavedChange?.(null);
+    } catch (e) {
+      setState("error");
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const isEdited = text !== generated;
+  const status =
+    state === "saving"
+      ? "Saving…"
+      : state === "dirty"
+        ? "Unsaved changes"
+        : state === "error"
+          ? "Not saved"
+          : savedAt
+            ? `Saved ${new Date(savedAt).toLocaleTimeString()}`
+            : "No edits";
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className={state === "error" ? "text-destructive" : undefined}>{status}</span>
+          <span aria-hidden>·</span>
+          <span className="tabular-nums">{words.toLocaleString()} words</span>
+          {isEdited && (
+            <>
+              <span aria-hidden>·</span>
+              <span>edited by hand</span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {!editing ? (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditing(true)}>
+              <Pencil className="h-4 w-4" />
+              Edit
+            </Button>
+          ) : (
+            <>
+              {isEdited && (
+                <Button variant="ghost" size="sm" onClick={() => void revert()}>
+                  Revert
+                </Button>
+              )}
+              <Button
+                size="sm"
+                className="gap-1.5"
+                onClick={() => {
+                  if (timer.current) clearTimeout(timer.current);
+                  void save(text);
+                }}
+                disabled={state === "saving" || state === "clean"}
+              >
+                <Save className="h-4 w-4" />
+                Save
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
+                Done
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+      {err && <p className="px-4 text-xs text-destructive">{err}</p>}
+      {editing ? (
+        <textarea
+          value={text}
+          onChange={(e) => onChange(e.target.value)}
+          spellCheck
+          className="h-[70vh] w-full resize-none border-0 bg-transparent px-4 py-2 font-mono text-[13px] leading-relaxed outline-none focus-visible:ring-0"
+        />
+      ) : (
+        <div className="max-h-[70vh] overflow-y-auto px-4 pb-4">
+          <TextBlock text={text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TextBlock({ text }: { text: string }) {
   return (
     <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-relaxed text-foreground">
@@ -467,6 +867,34 @@ export default function ScriptGeneratorPage() {
   // History.
   const [runs, setRuns] = useState<ScriptRunListItem[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [docs, setDocs] = useState<{ configured: boolean; connected: boolean; folderId: string } | null>(null);
+  const [exportingDoc, setExportingDoc] = useState(false);
+
+  // Whether the Google Docs connection exists at all. Asked once: it is a
+  // settings-level fact, not something that changes while a script is read.
+  useEffect(() => {
+    void scriptDocsStatus({})
+      .then(setDocs)
+      .catch(() => setDocs(null));
+  }, []);
+
+  const exportToDocs = useCallback(async () => {
+    if (!run) return;
+    setExportingDoc(true);
+    try {
+      const res = await exportScriptToDocs({ runId: run.runId });
+      // The link is the useful part — a toast that only says "done" makes you
+      // go and find the doc yourself.
+      toast.success(`Created "${res.name}"`, {
+        action: { label: 'Open', onClick: () => window.open(res.docUrl, '_blank', 'noopener') },
+        duration: 10000,
+      });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingDoc(false);
+    }
+  }, [run]);
   const [historyOpen, setHistoryOpen] = useState(false); // mobile drawer
 
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -905,6 +1333,8 @@ export default function ScriptGeneratorPage() {
                   </div>
                 ) : !run ? (
                   /* ── View 1: Input ─────────────────────────────────────────── */
+                  <>
+                  <BulkQueuePanel />
                   <section className="rounded-xl border border-border bg-card p-4 space-y-4">
                     <div className="space-y-1.5">
                       <Label htmlFor="sg-idea">Video idea</Label>
@@ -1004,6 +1434,7 @@ export default function ScriptGeneratorPage() {
                       </p>
                     </div>
                   </section>
+                  </>
                 ) : status === 'awaiting_confirmation' ? (
                   /* ── View 2: Checkpoint ────────────────────────────────────── */
                   <section className="rounded-xl border border-border bg-card p-4 space-y-4">
@@ -1301,17 +1732,46 @@ export default function ScriptGeneratorPage() {
                             <Download className="h-4 w-4" />
                             Export .md
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => void exportToDocs()}
+                            disabled={!run.finalDocument || exportingDoc || !docs?.connected}
+                            title={
+                              !docs?.configured
+                                ? "Add the Google Docs client ID and secret in Settings first"
+                                : !docs?.connected
+                                  ? "Connect Google Docs in Settings first"
+                                  : docs.folderId
+                                    ? "Creates a numbered Google Doc from what is in the editor"
+                                    : "Choose the export folder in Settings first"
+                            }
+                          >
+                            {exportingDoc ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <FileText className="h-4 w-4" />
+                            )}
+                            Google Doc
+                          </Button>
                         </div>
                       </div>
-                      <div className="max-h-[70vh] overflow-y-auto px-4 py-4">
-                        {run.finalDocument ? (
-                          <TextBlock text={run.finalDocument} />
-                        ) : (
+                      {run.finalDocument ? (
+                        <ScriptEditor
+                          key={run.runId}
+                          runId={run.runId}
+                          generated={run.finalDocument}
+                          editedInitial={run.editedDocument}
+                          editedAtInitial={run.editedAt}
+                        />
+                      ) : (
+                        <div className="px-4 py-4">
                           <p className="text-sm text-muted-foreground">
                             No final document was produced for this run.
                           </p>
-                        )}
-                      </div>
+                        </div>
+                      )}
                     </section>
 
                     {/* Refine a paragraph — post-generation edit chat (script runs only:
