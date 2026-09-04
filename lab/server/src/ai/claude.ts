@@ -468,6 +468,17 @@ export async function opusScriptChat(opts: {
    * OUTPUT at 5x the input rate, so it is the most expensive thing to waste.
    */
   thinking?: boolean;
+  /**
+   * How hard the model thinks, via `output_config.effort` (GA, no beta header).
+   * Defaults to `high` at the API when unset.
+   *
+   * This is the ONLY way to bound thinking on Opus 4.8: `budget_tokens` was
+   * removed from the thinking parameter and now returns a 400. It matters for
+   * the whole-document passes, where thinking and the answer share one output
+   * budget — stage 7 spent so much of a 32000-token ceiling on thinking that
+   * the script it had to re-emit was cut off.
+   */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Shows up in the [scriptgen:usage] log line. */
   label?: string;
   /**
@@ -498,6 +509,8 @@ export async function opusScriptChat(opts: {
     model,
     max_tokens: opts.maxTokens ?? 16000,
     ...(opts.thinking === false ? {} : { thinking: { type: "adaptive" } }),
+    // `effort` lives inside output_config, not at the top level.
+    ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
     ...(systemBlocks ? { system: systemBlocks } : {}),
     messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
   };

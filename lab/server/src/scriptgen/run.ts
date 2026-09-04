@@ -969,6 +969,242 @@ function runBriefEdits(raw: string, script: string): { script: string; check: Br
   };
 }
 
+
+/**
+ * Stage 7 and everything downstream of it: the review pass, the guard that
+ * throws away a truncated one, the clean-prose assembly, the prompt appendix,
+ * the deterministic claim audit and the quality measure.
+ *
+ * Extracted so the pipeline and `rerunFinalReview` cannot drift apart — a
+ * re-run that reviewed the script differently from the run would be worse than
+ * no re-run at all. Mutates `stages` (reviewNotes, reviewChecklist, claimAudit,
+ * quality) and persists both it and the document before returning.
+ */
+export async function finalReviewAndAssemble(opts: {
+  runId: string;
+  topPart: string;
+  scriptBody: string;
+  videoType: VideoType;
+  sponsored: boolean;
+  sponsorName: string;
+  brief: string;
+  briefExtra: string[];
+  stages: ScriptStages;
+}): Promise<string> {
+  const { runId, topPart, scriptBody, videoType, sponsored, sponsorName, brief, briefExtra, stages } =
+    opts;
+  // Same system prefix the section stages used, built the same way — the whole
+  // point of the shared block is that this call rides their cache rather than
+  // paying to re-establish the rules.
+  const preamble = (withShrapnel: boolean): string => systemPreamble(withShrapnel, sponsored);
+  let finalDocument = topPart + scriptBody;
+  // ── Stage 7 — FINAL REVIEW (reviews the SCRIPT+OUTRO body, not the hooks) ──
+  const s7 =
+    fill(loadPrompt("stage7-review"), { "[PASTE FULL SCRIPT]": scriptBody }) +
+    reviewStructureGuard(videoType) +
+    reviewRuleGuard(sponsored);
+  const raw7 = await opusScriptChat({
+    system: preamble(false),
+    // Rule 11 asks the review to catch a stale figure stated as current — which
+    // it cannot do from the script alone, because the age of a number is not
+    // visible in the sentence containing it. Same blocks, same order as the
+    // section stages, so this rides their cached prefix rather than paying again.
+    systemExtra: [
+      ...briefExtra,
+      ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+      ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : []),
+      reviewFactUseBlock(),
+    ],
+    messages: [{ role: "user", content: s7 }],
+    // Whole-document pass: it re-emits the ENTIRE script inside a JSON string,
+    // and adaptive thinking spends from the same output budget. At 16000 a
+    // 17-section script hit the ceiling exactly (out=16000) and the guard below
+    // correctly threw the answer away — $0.53 for no review at all. Same cause
+    // and same number as stage2.5-coverage and stage5.5-cta, which is why they
+    // are both already 32000. Length is a floor with no maximum (part 11), so
+    // this recurs on every long script until the ceiling clears it.
+    maxTokens: 32000,
+    // Thinking and the answer share this budget, and this pass has to re-emit
+    // the ENTIRE script inside a JSON string. At the default effort it spent
+    // 32000 tokens and still got cut off mid-answer on a 5,300-word script —
+    // twice, at two different ceilings, which is what proves the ceiling was
+    // never the problem. Medium effort buys the room back; a rule-check over a
+    // finished document is the cheapest kind of judgement in the pipeline.
+    effort: "medium",
+    label: "stage7-review",
+    purpose: "scriptgen",
+  });
+  let reviewNotes: string[] = [];
+  let reviewOk = false;
+  try {
+    const parsed = JSON.parse(extractJson(raw7)) as {
+      revisedScript?: unknown;
+      changes?: unknown;
+      checklist?: unknown;
+    };
+    const revised =
+      typeof parsed.revisedScript === "string" && parsed.revisedScript.trim()
+        ? parsed.revisedScript
+        : null;
+    const changes = Array.isArray(parsed.changes)
+      ? parsed.changes.filter((x): x is string => typeof x === "string")
+      : [];
+    // Stage 7 re-emits the WHOLE script inside a JSON string. If it hits the
+    // token ceiling the JSON still parses sometimes, leaving a truncated
+    // script — which would silently replace a complete one. A big shrink means
+    // truncation, not editing: keep the unreviewed script and say so.
+    const truncated = revised !== null && revised.length < scriptBody.length * 0.6;
+    if (revised && !truncated) {
+      finalDocument = topPart + revised;
+      reviewNotes = changes;
+      reviewOk = true;
+    } else if (truncated) {
+      reviewNotes = [
+        `Final review returned a truncated script (${revised!.length} vs ${scriptBody.length} chars) — discarded; script kept as written.`,
+      ];
+    }
+    stages.reviewChecklist = coerceChecklist(parsed.checklist);
+  } catch {
+    reviewOk = false;
+  }
+  if (!reviewOk && reviewNotes.length === 0) {
+    reviewNotes = ["Final review could not be parsed; script assembled without automated fixes."];
+  }
+  stages.reviewNotes = reviewNotes;
+
+  // Deliverable: Jake reads continuous prose. Strip the headers, beat markers,
+  // and timestamps that made the artifact look like a spec — and that were
+  // feeding phantom numbers into the claim audit.
+  const spokenBody = ensureCanonicalOutro(toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody));
+  const prompts = extractPrompts(spokenBody);
+  const promptAppendix =
+    prompts.length > 0
+      ? "\n\n---\n\n## PROMPT SUMMARY (for the description / pinned comment)\n\n" +
+        prompts.map((p) => `**${p.label}:** "${p.text}"`).join("\n\n")
+      : "";
+  finalDocument = `${topPart}## SCRIPT\n\n${spokenBody}${promptAppendix}`;
+  if (prompts.length > 0) console.log(`[scriptgen:prompts] extracted ${prompts.length} copy-paste prompt(s)`);
+
+  // Audit and measure the SCRIPT BODY, not the assembled document. The document
+  // leads with four alternate hooks and their production notes ("listicles for
+  // TV-friendly / 35+ audience"), which are neither spoken nor claims — counting
+  // them inflates the repetition metric and invents audit findings.
+  //
+  // The verify markers come out too. They stay in the deliverable, but they are
+  // notes to Jake rather than things the video says: "[VERIFY ON SCREEN: is the
+  // trial 14 days?]" is a question, and an audit that reads it as the script
+  // claiming 14 would flag the one line that was honest about not knowing.
+  const auditedBody = stripVerifyMarkers(spokenBody);
+
+  // Deterministic fact check: does the script assert a number the research never
+  // established, or touch a topic the fact sheet fenced off? No model call.
+  stages.claimAudit = auditClaims(
+    auditedBody,
+    stages.factSheet ?? "",
+    brief,
+    stages.hooksWithCta ?? stages.hooks ?? "",
+    sponsorName,
+  );
+  if (
+    stages.claimAudit.unsupportedNumbers.length ||
+    stages.claimAudit.fencedTopicsMentioned.length ||
+    stages.claimAudit.experienceClaims.length ||
+    stages.claimAudit.excessSponsorPlugs.length ||
+    stages.claimAudit.bannedWords.length
+  ) {
+    console.warn(
+      `[scriptgen:claims] unsupported=${JSON.stringify(stages.claimAudit.unsupportedNumbers)} ` +
+        `fenced=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)} ` +
+        `experience=${JSON.stringify(stages.claimAudit.experienceClaims)} ` +
+        `excessPlugs=${stages.claimAudit.excessSponsorPlugs.length} ` +
+        `banned=${JSON.stringify(stages.claimAudit.bannedWords.slice(0, 6))}`,
+    );
+  }
+
+  // Measured, not modelled: how repetitive and how spoken the finished script is.
+  stages.quality = scriptQuality(auditedBody);
+  console.log(
+    `[scriptgen:quality] words=${stages.quality.words} burstiness=${stages.quality.burstiness} ` +
+      `repeatedPhrases=${stages.quality.repeatedPhraseCount} worst=${stages.quality.worstPhraseRepeats}x ` +
+      `"${stages.quality.worstPhrase ?? ""}"`,
+  );
+  updateRun(runId, { stages, finalDocument });
+  return finalDocument;
+}
+
+/**
+ * The heading the assembler writes between the hooks block and the spoken body,
+ * and the appendix it writes after it. Splitting the stored document on these is
+ * how a re-run recovers its inputs byte-for-byte: `topPart` has to come back
+ * identical or the re-run would quietly rewrite the hooks section too.
+ */
+const SCRIPT_HEADING = "## SCRIPT\n\n";
+const PROMPT_APPENDIX_MARK = "\n\n---\n\n## PROMPT SUMMARY";
+
+/**
+ * Run Stage 7 again over a script that already finished.
+ *
+ * Exists because the pass fails soft by design: a truncated or unparseable
+ * answer is discarded and the script ships unreviewed, which has now happened
+ * twice — once when the ceiling was too low for a 13-section script, once for a
+ * 17-section one. `continueScript` cannot help there (it only accepts
+ * `awaiting_confirmation`, `failed`, or an outline upgrade), so without this the
+ * only ways to recover a $0.50 pass were a hand-edit or a full re-run.
+ *
+ * The review reads the SHIPPED prose rather than the pre-assembly body — that
+ * text is what the document actually contains, and it is the only version still
+ * persisted.
+ */
+export async function rerunFinalReview(
+  runId: string,
+): Promise<{ finalDocument: string; reviewNotes: string[]; costUsd: number }> {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  if (!run.setup) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This script hasn't been set up yet." });
+  }
+  const doc = run.finalDocument ?? "";
+  if (!doc.trim()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This script hasn't finished generating yet." });
+  }
+  const at = doc.indexOf(SCRIPT_HEADING);
+  if (at < 0) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "This run's document predates the current format, so its script body can't be isolated.",
+    });
+  }
+  const topPart = doc.slice(0, at);
+  let scriptBody = doc.slice(at + SCRIPT_HEADING.length);
+  // The appendix is regenerated from the reviewed body — carrying the old one in
+  // would put the prompt summary inside the script and then duplicate it.
+  const appendixAt = scriptBody.indexOf(PROMPT_APPENDIX_MARK);
+  if (appendixAt >= 0) scriptBody = scriptBody.slice(0, appendixAt);
+
+  // Fresh process-wide accounting: this is one pass, and its cost is reported on
+  // its own rather than added to what the original run already billed.
+  resetScriptgenUsage();
+  const stages = run.stages;
+  const sponsored = (run.setup.sponsorship?.mode ?? "organic") !== "organic";
+  const brief = (run.input.brief || "").trim();
+  const finalDocument = await finalReviewAndAssemble({
+    runId,
+    topPart,
+    scriptBody,
+    videoType: run.setup.videoType,
+    sponsored,
+    sponsorName: sponsored ? run.setup.sponsorship?.sponsorName || "the sponsor" : "",
+    brief,
+    briefExtra: brief ? [briefBlock(brief)] : [],
+    stages,
+  });
+  const costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
+  console.log(
+    `[scriptgen:rereview] ${runId} → ${(stages.reviewNotes ?? []).length} change(s), $${costUsd.toFixed(2)}`,
+  );
+  return { finalDocument, reviewNotes: stages.reviewNotes ?? [], costUsd };
+}
+
 /**
  * The deliverable for an outline-only run.
  *
@@ -1593,122 +1829,17 @@ async function runScript(
 
     // ── Stage 7 — FINAL REVIEW (reviews the SCRIPT+OUTRO body, not the hooks) ──
     progress(job, "Final review pass…", 96);
-    const s7 =
-      fill(loadPrompt("stage7-review"), { "[PASTE FULL SCRIPT]": scriptBody }) +
-      reviewStructureGuard(videoType) +
-      reviewRuleGuard(sponsored);
-    const raw7 = await opusScriptChat({
-      system: preamble(false),
-      // Rule 11 asks the review to catch a stale figure stated as current — which
-      // it cannot do from the script alone, because the age of a number is not
-      // visible in the sentence containing it. Same blocks, same order as the
-      // section stages, so this rides their cached prefix rather than paying again.
-      systemExtra: [
-        ...briefExtra,
-        ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
-        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : []),
-        reviewFactUseBlock(),
-      ],
-      messages: [{ role: "user", content: s7 }],
-      maxTokens: 16000,
-      label: "stage7-review",
-      purpose: "scriptgen",
+    finalDocument = await finalReviewAndAssemble({
+      runId,
+      topPart,
+      scriptBody,
+      videoType,
+      sponsored,
+      sponsorName: sponsored ? setup.sponsorship?.sponsorName || "the sponsor" : "",
+      brief: input.brief ?? "",
+      briefExtra,
+      stages,
     });
-    let reviewNotes: string[] = [];
-    let reviewOk = false;
-    try {
-      const parsed = JSON.parse(extractJson(raw7)) as {
-        revisedScript?: unknown;
-        changes?: unknown;
-        checklist?: unknown;
-      };
-      const revised =
-        typeof parsed.revisedScript === "string" && parsed.revisedScript.trim()
-          ? parsed.revisedScript
-          : null;
-      const changes = Array.isArray(parsed.changes)
-        ? parsed.changes.filter((x): x is string => typeof x === "string")
-        : [];
-      // Stage 7 re-emits the WHOLE script inside a JSON string. If it hits the
-      // token ceiling the JSON still parses sometimes, leaving a truncated
-      // script — which would silently replace a complete one. A big shrink means
-      // truncation, not editing: keep the unreviewed script and say so.
-      const truncated = revised !== null && revised.length < scriptBody.length * 0.6;
-      if (revised && !truncated) {
-        finalDocument = topPart + revised;
-        reviewNotes = changes;
-        reviewOk = true;
-      } else if (truncated) {
-        reviewNotes = [
-          `Final review returned a truncated script (${revised!.length} vs ${scriptBody.length} chars) — discarded; script kept as written.`,
-        ];
-      }
-      stages.reviewChecklist = coerceChecklist(parsed.checklist);
-    } catch {
-      reviewOk = false;
-    }
-    if (!reviewOk && reviewNotes.length === 0) {
-      reviewNotes = ["Final review could not be parsed; script assembled without automated fixes."];
-    }
-    stages.reviewNotes = reviewNotes;
-
-    // Deliverable: Jake reads continuous prose. Strip the headers, beat markers,
-    // and timestamps that made the artifact look like a spec — and that were
-    // feeding phantom numbers into the claim audit.
-    const spokenBody = ensureCanonicalOutro(toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody));
-    const prompts = extractPrompts(spokenBody);
-    const promptAppendix =
-      prompts.length > 0
-        ? "\n\n---\n\n## PROMPT SUMMARY (for the description / pinned comment)\n\n" +
-          prompts.map((p) => `**${p.label}:** "${p.text}"`).join("\n\n")
-        : "";
-    finalDocument = `${topPart}## SCRIPT\n\n${spokenBody}${promptAppendix}`;
-    if (prompts.length > 0) console.log(`[scriptgen:prompts] extracted ${prompts.length} copy-paste prompt(s)`);
-
-    // Audit and measure the SCRIPT BODY, not the assembled document. The document
-    // leads with four alternate hooks and their production notes ("listicles for
-    // TV-friendly / 35+ audience"), which are neither spoken nor claims — counting
-    // them inflates the repetition metric and invents audit findings.
-    //
-    // The verify markers come out too. They stay in the deliverable, but they are
-    // notes to Jake rather than things the video says: "[VERIFY ON SCREEN: is the
-    // trial 14 days?]" is a question, and an audit that reads it as the script
-    // claiming 14 would flag the one line that was honest about not knowing.
-    const auditedBody = stripVerifyMarkers(spokenBody);
-
-    // Deterministic fact check: does the script assert a number the research never
-    // established, or touch a topic the fact sheet fenced off? No model call.
-    stages.claimAudit = auditClaims(
-      auditedBody,
-      stages.factSheet ?? "",
-      input.brief ?? "",
-      stages.hooksWithCta ?? stages.hooks ?? "",
-      sponsored ? setup.sponsorship?.sponsorName || "the sponsor" : "",
-    );
-    if (
-      stages.claimAudit.unsupportedNumbers.length ||
-      stages.claimAudit.fencedTopicsMentioned.length ||
-      stages.claimAudit.experienceClaims.length ||
-      stages.claimAudit.excessSponsorPlugs.length ||
-      stages.claimAudit.bannedWords.length
-    ) {
-      console.warn(
-        `[scriptgen:claims] unsupported=${JSON.stringify(stages.claimAudit.unsupportedNumbers)} ` +
-          `fenced=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)} ` +
-          `experience=${JSON.stringify(stages.claimAudit.experienceClaims)} ` +
-          `excessPlugs=${stages.claimAudit.excessSponsorPlugs.length} ` +
-          `banned=${JSON.stringify(stages.claimAudit.bannedWords.slice(0, 6))}`,
-      );
-    }
-
-    // Measured, not modelled: how repetitive and how spoken the finished script is.
-    stages.quality = scriptQuality(auditedBody);
-    console.log(
-      `[scriptgen:quality] words=${stages.quality.words} burstiness=${stages.quality.burstiness} ` +
-        `repeatedPhrases=${stages.quality.repeatedPhraseCount} worst=${stages.quality.worstPhraseRepeats}x ` +
-        `"${stages.quality.worstPhrase ?? ""}"`,
-    );
-    updateRun(runId, { stages, finalDocument });
 
     // ── Done ──
     finish();
