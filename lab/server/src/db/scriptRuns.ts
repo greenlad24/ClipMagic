@@ -46,6 +46,8 @@ export function emptyStages(): ScriptStages {
     quality: null,
     claimAudit: null,
     claimFix: null,
+    openLoops: null,
+    hookRanking: null,
   };
 }
 

@@ -1419,6 +1419,73 @@ export default function ScriptGeneratorPage() {
                         </StagePanel>
                       )}
 
+                      {run.stages.hookRanking && run.stages.hookRanking.length > 0 && (
+                        <StagePanel
+                          title="Hooks ranked"
+                          hint="virality judged · search measured"
+                        >
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="border-b text-xs uppercase tracking-wide text-muted-foreground">
+                                  <th className="py-1.5 pr-3 text-left font-medium">Hook</th>
+                                  <th className="py-1.5 pr-3 text-right font-medium tabular-nums">Viral</th>
+                                  <th className="py-1.5 pr-3 text-right font-medium tabular-nums">SEO</th>
+                                  <th className="py-1.5 text-left font-medium">Why</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {run.stages.hookRanking.map((h, i) => (
+                                  <tr key={h.hook} className="border-b last:border-0 align-top">
+                                    <td className="py-2 pr-3">
+                                      <span className={i === 0 ? "font-medium text-foreground" : "text-foreground"}>
+                                        #{h.hook}
+                                      </span>{" "}
+                                      <span className="text-xs text-muted-foreground">{h.label}</span>
+                                      {h.bestFor !== "—" && (
+                                        <span className="block text-xs text-muted-foreground">
+                                          best for {h.bestFor}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-2 pr-3 text-right tabular-nums text-foreground">{h.virality}</td>
+                                    <td className="py-2 pr-3 text-right tabular-nums text-foreground">{h.seo}</td>
+                                    <td className="py-2 text-muted-foreground">{h.why}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            Ranked by how likely a viewer is to stay; search value breaks ties. SEO counts the
+                            title and topic language the hook carries, and counts it double in the opening lines.
+                          </p>
+                        </StagePanel>
+                      )}
+
+                      {run.stages.openLoops && run.stages.openLoops.length > 0 && (
+                        <StagePanel
+                          title="Open loops"
+                          hint={`${run.stages.openLoops.filter((l) => l.closed !== false).length}/${run.stages.openLoops.length} closed`}
+                        >
+                          <ul className="space-y-2.5">
+                            {run.stages.openLoops.map((l, i) => (
+                              <li key={i} className="text-sm">
+                                <span className="text-foreground">{l.question}</span>
+                                <span className="block text-xs text-muted-foreground">
+                                  closed in section {l.closesInSection} — {l.payoff}
+                                </span>
+                                {l.closed === false && (
+                                  <span className="mt-0.5 inline-block text-xs font-medium text-destructive">
+                                    Never paid off — the hook promises this and the script does not deliver it.
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
                       {run.stages.claimFix && (
                         <StagePanel
                           title="Claim fixes applied"

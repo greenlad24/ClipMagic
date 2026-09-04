@@ -31,7 +31,7 @@ import {
   videoResearchConfigured,
   wantsDeveloperWorkflow,
 } from "./videoResearch.js";
-import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
+import { createRun, updateRun, getRun, emptyStages } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
 import {
   dateWindows,
@@ -61,6 +61,8 @@ import type {
   BriefCheck,
   BriefCoverage,
   ClaimAudit,
+  OpenLoop,
+  HookRank,
   ReviewChecklist,
   ScriptSource,
   ScriptStages,
@@ -1011,6 +1013,328 @@ export function claimFixPrompt(script: string, findings: string[]): string {
   ].join("\n");
 }
 
+// ── Stage 3.2 free hook ───────────────────────────────────────────────────────
+
+/** The heading the free hook is written under. `splitHooks` knows this string. */
+export const OPEN_HOOK_HEADING = "### OPEN HOOK — no template, written for this video";
+
+/**
+ * A fifth hook with no formula behind it.
+ *
+ * Stage 3's four are proven shapes, and a proven shape is also a shape every
+ * other channel is using. This one is told the search language and the loops and
+ * then left alone — it exists to find the opening the templates cannot reach, and
+ * to give the ranking something real to beat.
+ */
+export function openHookPrompt(
+  title: string,
+  topic: string,
+  outline: string,
+  loops: OpenLoop[],
+  keywords: string[],
+): string {
+  return [
+    "Write ONE hook for this video. No template, no formula, no beat structure — none of the four shapes the previous stage used.",
+    "",
+    `TITLE: ${title}`,
+    `TOPIC: ${topic}`,
+    "",
+    "OUTLINE:",
+    outline,
+    ...(loops.length
+      ? ["", "Plant these and answer none of them:", ...loops.map((l) => `- ${l.question}`)]
+      : []),
+    ...(keywords.length
+      ? [
+          "",
+          `SEARCH LANGUAGE — work these in naturally, and early, because the first lines are what a searcher and the algorithm both read: ${keywords.slice(0, 8).join(", ")}.`,
+          "Worked in naturally. A hook that lists keywords is worse than one that carries none.",
+        ]
+      : []),
+    "",
+    "What this hook has to do:",
+    "- Open on something the viewer already believes or is already annoyed by. Not a statistic about other people.",
+    "- Be impossible to reuse. If the first sentence would work on any other video about this topic, it is the wrong sentence.",
+    "- Promise one specific thing the outline actually delivers, and make the viewer feel what they do not yet have.",
+    "- Earn the next line, twice: the first sentence buys the second, the second buys the third.",
+    "",
+    "Hard nos: no generic percentage opener, no roadmap of the video, no income claim, no competitor named, no rhetorical question you answer yourself in the next breath.",
+    "",
+    "Jake's voice: the smart, curious friend at the bar. 45-90 seconds spoken. Write only the hook — no title, no notes, no explanation of what you did.",
+  ].join("\n");
+}
+
+// ── Stage 3.5 hook ranking ────────────────────────────────────────────────────
+
+/**
+ * Split the hooks block into its four hooks.
+ *
+ * Stage 3 labels each one "FORMULA A-LONG — …", which is the only stable seam in
+ * the block; everything else about a hook is prose that varies run to run.
+ */
+export function splitHooks(hooksText: string): Array<{ label: string; text: string }> {
+  const lines = (hooksText || "").split("\n");
+  const out: Array<{ label: string; text: string }> = [];
+  let cur: { label: string; text: string } | null = null;
+  for (const line of lines) {
+    const m = line.match(/^#{0,4}\s*\**\s*((?:FORMULA\s+[A-Z][A-Z0-9-]*\b|OPEN HOOK\b)[^*\n]*)/i);
+    if (m) {
+      if (cur) out.push(cur);
+      cur = { label: m[1].replace(/\s*[*_]+\s*$/, "").trim(), text: "" };
+    } else if (cur) {
+      cur.text += line + "\n";
+    }
+  }
+  if (cur) out.push(cur);
+  return out.map((h) => ({ label: h.label, text: h.text.trim() })).filter((h) => h.text.length > 0);
+}
+
+/**
+ * The words someone would actually type to find this video.
+ *
+ * Taken from the title and the topic rather than invented, because those are the
+ * two things already written for search.
+ */
+export function seoKeywords(title: string, topic: string): string[] {
+  const stop = new Set([
+    "the", "and", "for", "with", "your", "you", "how", "why", "what", "ways",
+    "using", "use", "into", "from", "that", "this", "these", "those", "exact",
+    "best", "top", "guide", "tutorial", "step", "steps", "new", "get", "make",
+    "like", "than", "when", "who", "can", "will", "app", "apps", "are", "its",
+  ]);
+  return [
+    ...new Set(
+      `${title} ${topic}`
+        .toLowerCase()
+        .split(/[^a-z0-9.+]+/)
+        .filter((w) => w.length > 2 && !stop.has(w)),
+    ),
+  ].slice(0, 14);
+}
+
+/**
+ * How much search language the hook carries, and how early — MEASURED, not judged.
+ *
+ * A model asked to score SEO will produce a confident number from nothing. What
+ * can actually be checked is whether the words a searcher types are present, and
+ * whether they arrive before the viewer decides to leave. The first 40 words
+ * count double: a keyword in the last line of a 110-second hook is not doing
+ * search work, and it is not doing retention work either.
+ */
+export function seoScore(hookText: string, keywords: string[]): number {
+  if (keywords.length === 0) return 0;
+  const words = hookText.toLowerCase().split(/\s+/);
+  const opening = words.slice(0, 40).join(" ");
+  const whole = words.join(" ");
+  let score = 0;
+  for (const k of keywords) {
+    if (opening.includes(k)) score += 2;
+    else if (whole.includes(k)) score += 1;
+  }
+  return Math.min(100, Math.round((score / (keywords.length * 2)) * 100));
+}
+
+/** Ask for the half that cannot be measured: would anyone stay. */
+export function hookRankPrompt(
+  title: string,
+  hooks: Array<{ label: string; text: string }>,
+  loops: OpenLoop[],
+): string {
+  return [
+    "Score each of these hooks for one thing only: how likely a viewer is to still be watching ten seconds in, and to keep watching after that.",
+    "",
+    `TITLE: ${title}`,
+    ...(loops.length
+      ? ["", "The video owes the viewer these payoffs, which a good hook plants without answering:", ...loops.map((l) => `- ${l.question}`)]
+      : []),
+    "",
+    ...hooks.flatMap((h, i) => [`### HOOK ${i + 1} — ${h.label}`, h.text, ""]),
+    "What earns a high score:",
+    "- It opens on a problem the viewer already has, in their words, not a statistic about other people.",
+    "- Something specific and checkable is promised — a named thing, a real outcome — not \"everything you need to know\".",
+    "- It plants a loop the viewer wants closed, and does not close it.",
+    "- The first sentence could not be the first sentence of any other video on this topic.",
+    "",
+    "What loses points: a generic opener (\"most people only use 10% of…\"), a promise the video cannot obviously keep, a roadmap of the video's sections, and anything that sounds like it was read off a template.",
+    "",
+    "Do NOT score search value — that is measured separately and is not your job here.",
+    "",
+    `Reply with JSON only: {"scores": [{"hook": 1, "virality": 72, "why": "one short clause", "bestFor": "browse / suggested"}]}`,
+  ].join("\n");
+}
+
+/**
+ * Combine the judged half with the measured half.
+ *
+ * A hook missing from the model's answer keeps a virality of 0 rather than being
+ * dropped: Jake sees four hooks in the document and must see four rows here, or
+ * the ranking is quietly about a different set of hooks than the one he is
+ * reading.
+ */
+export function parseHookRanking(
+  raw: string,
+  hooks: Array<{ label: string; text: string }>,
+  keywords: string[],
+): HookRank[] {
+  let scores: Array<Record<string, unknown>> = [];
+  try {
+    scores = (JSON.parse(extractJson(raw)) as { scores?: Array<Record<string, unknown>> }).scores ?? [];
+  } catch {
+    // Measured SEO still stands on its own.
+  }
+  const clamp = (n: unknown): number => {
+    const v = Number(n);
+    return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : 0;
+  };
+  return hooks
+    .map((h, i) => {
+      const found = scores.find((s) => Number(s.hook) === i + 1) ?? {};
+      return {
+        hook: i + 1,
+        label: h.label,
+        virality: clamp(found.virality),
+        seo: seoScore(h.text, keywords),
+        why: typeof found.why === "string" && found.why.trim() ? found.why.trim() : "Not scored.",
+        bestFor: typeof found.bestFor === "string" && found.bestFor.trim() ? found.bestFor.trim() : "—",
+      };
+    })
+    // Virality leads: a hook nobody watches earns nothing from its keywords.
+    // Search value breaks ties, which is where it genuinely decides between two
+    // hooks that would both hold a viewer.
+    .sort((a, b) => b.virality - a.virality || b.seo - a.seo);
+}
+
+// ── Stage 2.6 open loops ──────────────────────────────────────────────────────
+
+/** How many loops to plant. Two or three: one is not a structure, four is a maze. */
+const MAX_OPEN_LOOPS = 3;
+
+/**
+ * Ask the outline what it can honestly promise and withhold.
+ *
+ * This runs at outline time and nowhere else, because a loop is only worth
+ * planting if the video actually pays it off — and the outline is the first
+ * artefact that knows what the video contains. Planting loops in the hook stage
+ * would be guessing, and guessing is how a hook writes a cheque the script
+ * cannot cash.
+ */
+export function openLoopsPrompt(title: string, outline: string, sectionNames: string[]): string {
+  return [
+    "Plan the open loops for this video: questions the hook plants and deliberately does not answer, each paid off later in a specific section.",
+    "",
+    `TITLE: ${title}`,
+    "",
+    "SECTIONS, in order:",
+    ...sectionNames.map((n, i) => `${i + 1}. ${n}`),
+    "",
+    "OUTLINE:",
+    outline,
+    "",
+    `Give 2 or 3 loops. Never more than ${MAX_OPEN_LOOPS}.`,
+    "",
+    "Rules:",
+    "- A loop must be answered by something ALREADY IN THE OUTLINE. If the outline does not answer it, it is not a loop, it is a lie.",
+    "- Spread them. Do not close every loop in the final section — a loop that only pays off at the end is a reason to leave, not to stay.",
+    "- The question is what the viewer wants to know, in Jake's voice, short enough to say out loud in one breath.",
+    "- The payoff is the specific thing that answers it — a step, a number, a verdict. Not \"we explain it later\".",
+    "- No loop about money made, and none that needs a competitor named.",
+    "",
+    'Reply with JSON only: {"loops": [{"question": "...", "payoff": "...", "closesInSection": 3}]}',
+  ].join("\n");
+}
+
+/**
+ * Read the loops back, dropping anything unusable.
+ *
+ * A loop pointing at a section that does not exist is the failure that matters:
+ * it would be opened in the hook and closed nowhere, which is worse than never
+ * having planted it.
+ */
+export function parseOpenLoops(raw: string, sectionCount: number): OpenLoop[] {
+  const out: OpenLoop[] = [];
+  try {
+    const parsed = JSON.parse(extractJson(raw)) as { loops?: Array<Record<string, unknown>> };
+    for (const l of parsed?.loops ?? []) {
+      const question = typeof l.question === "string" ? l.question.trim() : "";
+      const payoff = typeof l.payoff === "string" ? l.payoff.trim() : "";
+      const n = Number(l.closesInSection);
+      if (!question || !payoff) continue;
+      if (!Number.isInteger(n) || n < 1 || n > sectionCount) continue;
+      if (out.some((o) => o.question.toLowerCase() === question.toLowerCase())) continue;
+      out.push({ question, payoff, closesInSection: n });
+    }
+  } catch {
+    // No loops is a fine outcome; a broken pass must not take the run with it.
+  }
+  return out.slice(0, MAX_OPEN_LOOPS);
+}
+
+/**
+ * What the hooks and every section are told. Byte-stable for a run, so it rides
+ * the cached prefix rather than being re-sent per section.
+ */
+export function openLoopsBlock(loops: OpenLoop[], sectionNames: string[]): string {
+  if (loops.length === 0) return "";
+  return [
+    "",
+    "---",
+    "",
+    "## OPEN LOOPS FOR THIS VIDEO",
+    "",
+    "These are the questions the hook plants and the script pays off later. They are the spine of the video's retention: the viewer stays because something specific is still owed to them.",
+    "",
+    ...loops.map(
+      (l, i) =>
+        `${i + 1}. **${l.question}** — closed in section ${l.closesInSection} (${sectionNames[l.closesInSection - 1] ?? "?"}), by: ${l.payoff}`,
+    ),
+    "",
+    "**Never answer a loop before the section that owns it.** A loop answered early is not a payoff, it is a spoiler, and everything after it is the viewer waiting for a reason to stay that has already been spent.",
+  ].join("\n");
+}
+
+/** The one line the section that owns a loop needs, appended to that section's prompt only. */
+export function loopCloseBlock(loops: OpenLoop[], sectionIndex: number): string {
+  const mine = loops.filter((l) => l.closesInSection === sectionIndex + 1);
+  if (mine.length === 0) return "";
+  return [
+    "",
+    "---",
+    "",
+    "## THIS SECTION CLOSES AN OPEN LOOP",
+    "",
+    ...mine.map((l) => `- Promised in the hook: **${l.question}**\n  Pay it off here, explicitly: ${l.payoff}`),
+    "",
+    "Call back to the promise in the viewer's own terms before you answer it — they need to feel the loop close, not merely have the information arrive somewhere near it. One sentence of callback is enough; do not restate the whole hook.",
+  ].join("\n");
+}
+
+/**
+ * Did the section that owns a loop actually close it?
+ *
+ * Deterministic and deliberately loose: it asks whether the substance of the
+ * question shows up in the section that promised to answer it. A model saying
+ * "yes I closed it" is not evidence; the words being there is.
+ */
+export function loopClosed(sectionText: string, loop: OpenLoop): boolean {
+  const stop = new Set([
+    "the", "and", "for", "with", "what", "why", "how", "does", "did", "you",
+    "your", "this", "that", "actually", "really", "can", "will", "its", "it's",
+    "about", "from", "into", "when", "where", "who", "which", "there", "here",
+    "have", "has", "are", "was", "were", "not", "but", "all", "one", "get",
+  ]);
+  const words = [...new Set(
+    `${loop.question} ${loop.payoff}`
+      .toLowerCase()
+      .split(/[^a-z0-9']+/)
+      .filter((w) => w.length > 3 && !stop.has(w)),
+  )];
+  if (words.length === 0) return false;
+  const hay = sectionText.toLowerCase();
+  const hits = words.filter((w) => hay.includes(w)).length;
+  // Half the substance, present in the section that owes it.
+  return hits * 2 >= words.length;
+}
+
 // ── Stage 6.5 brief adherence ─────────────────────────────────────────────────
 
 /** Parse the Stage 6.5 JSON, apply its edits (see edits.ts), and summarize. Never throws. */
@@ -1408,26 +1732,11 @@ async function runScript(
   // that hadn't landed yet.
   const priorRun = getRun(runId);
   const prior = priorRun?.stages;
-  const stages: ScriptStages = {
-    research: null,
-    sources: [],
-    factSheet: null,
-    outline: null,
-    briefCoverage: null,
-    hooks: null,
-    sponsorSegment: null,
-    sections: [],
-    outro: null,
-    hooksWithCta: null,
-    ctaScript: null,
-    ctaNotes: [],
-    briefCheck: null,
-    reviewNotes: [],
-    reviewChecklist: null,
-    quality: null,
-    claimAudit: null,
-    claimFix: null,
-  };
+  // emptyStages(), never a literal repeated here. This object was hand-built and
+  // fell behind ScriptStages three times in one day — every field added to the
+  // type is a compile error in a file that has no business knowing the full
+  // shape. Same lesson as hydrateStages: enumerate in one place or not at all.
+  const stages: ScriptStages = emptyStages();
   const runStartedAt = Date.now();
   const priorGenerationMs = priorRun?.generationMs ?? 0;
   if (prior) {
@@ -1768,6 +2077,48 @@ async function runScript(
       return;
     }
 
+    // ── Stage 2.6 — OPEN LOOPS (needs the outline; must precede the hooks) ──
+    // The hook plants them and the sections pay them off, so they have to be
+    // decided in between — and against the outline, which is the first thing
+    // that knows what the video actually delivers.
+    const loopSectionNames = parseOutlineSections(stages.outline ?? "").map((x) => x.name);
+    if (stages.openLoops === undefined || stages.openLoops === null) {
+      if (loopSectionNames.length >= 2) {
+        try {
+          const rawLoops = await opusScriptChat({
+            system: preamble(false),
+            systemExtra: briefExtra,
+            messages: [
+              {
+                role: "user",
+                content: openLoopsPrompt(title, stages.outline ?? "", loopSectionNames),
+              },
+            ],
+            maxTokens: 2000,
+            effort: "medium",
+            label: "stage2.6-loops",
+            purpose: "scriptgen",
+          });
+          stages.openLoops = parseOpenLoops(rawLoops, loopSectionNames.length);
+          console.log(
+            `[scriptgen:loops] ${stages.openLoops.length} loop(s): ` +
+              stages.openLoops
+                .map((l) => `"${l.question}" → §${l.closesInSection}`)
+                .join(" | "),
+          );
+        } catch (e) {
+          // A video without planted loops is the video we shipped yesterday.
+          stages.openLoops = [];
+          console.warn(`[scriptgen:loops] skipped: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        persist();
+      } else {
+        stages.openLoops = [];
+      }
+    }
+    const loops = stages.openLoops ?? [];
+    const loopsBlock = openLoopsBlock(loops, loopSectionNames);
+
     // ── Stage 3 — ALL FOUR HOOKS ──
     if (!stages.hooks) {
     progress(job, "Writing all four hooks…", 45);
@@ -1782,13 +2133,95 @@ async function runScript(
       system: preamble(false),
       // The brief usually says what the hook is FOR — which pain to open on, which
       // moment is the wow. Stage 3 was guessing at it from the outline alone.
-      systemExtra: briefExtra,
-      messages: [{ role: "user", content: s3 }],
+      systemExtra: [...briefExtra, ...(loopsBlock ? [loopsBlock] : [])],
+      messages: [
+        {
+          role: "user",
+          content:
+            s3 +
+            (loops.length
+              ? "\n\n---\n\nEvery one of the four hooks must PLANT the open loops above and answer none of them. " +
+                "A loop is planted when the viewer can feel the shape of the answer and knows they have not been given it — " +
+                "not when it is merely alluded to. Do not list them as a roadmap of the video: that is the preview beat Rule 9 bans."
+              : ""),
+        },
+      ],
       maxTokens: 16000,
       label: "stage3-hooks",
       purpose: "scriptgen",
     });
     persist();
+    }
+
+    // ── Stage 3.2 — THE FIFTH HOOK, WITH NO TEMPLATE ──
+    // The four above are proven shapes, which also means they are the shapes
+    // every other channel is using. This one gets the search language and the
+    // loops and is then left alone — it exists to reach an opening the templates
+    // cannot, and to give the ranking something real to beat.
+    if (stages.hooks && !stages.hooks.includes(OPEN_HOOK_HEADING)) {
+      try {
+        const freeHook = await opusScriptChat({
+          system: preamble(false),
+          systemExtra: [...briefExtra, ...(loopsBlock ? [loopsBlock] : [])],
+          messages: [
+            {
+              role: "user",
+              content: openHookPrompt(
+                title,
+                setup.coreTopic,
+                stages.outline ?? "",
+                loops,
+                seoKeywords(title, setup.coreTopic),
+              ),
+            },
+          ],
+          maxTokens: 4000,
+          label: "stage3.2-openhook",
+          purpose: "scriptgen",
+        });
+        if (freeHook.trim()) {
+          stages.hooks = `${stages.hooks.trimEnd()}\n\n${OPEN_HOOK_HEADING}\n\n${freeHook.trim()}\n`;
+          console.log(`[scriptgen:hooks] free hook added (${freeHook.trim().length} chars)`);
+          persist();
+        }
+      } catch (e) {
+        // Four hooks is still four hooks.
+        console.warn(`[scriptgen:hooks] free hook skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // ── Stage 3.5 — RANK THE HOOKS ──
+    // Stage 3 writes four and says which traffic each is FOR; nothing said which
+    // is better. Virality is judged, search value is measured — a model asked to
+    // score SEO invents a confident number, whereas "are the words a searcher
+    // types actually in here, and early" is checkable.
+    if (!stages.hookRanking && stages.hooks) {
+      try {
+        const parsedHooks = splitHooks(stages.hooks);
+        if (parsedHooks.length > 0) {
+          const keywords = seoKeywords(title, setup.coreTopic);
+          const rawRank = await opusScriptChat({
+            system: preamble(false),
+            systemExtra: briefExtra,
+            messages: [{ role: "user", content: hookRankPrompt(title, parsedHooks, loops) }],
+            maxTokens: 3000,
+            effort: "medium",
+            label: "stage3.5-hookrank",
+            purpose: "scriptgen",
+          });
+          stages.hookRanking = parseHookRanking(rawRank, parsedHooks, keywords);
+          console.log(
+            `[scriptgen:hooks] ranked: ` +
+              stages.hookRanking
+                .map((h) => `#${h.hook} ${h.label.split("—")[0].trim()} virality=${h.virality} seo=${h.seo}`)
+                .join(" | "),
+          );
+          persist();
+        }
+      } catch (e) {
+        // Ranking is an aid to choosing, never a gate on shipping.
+        console.warn(`[scriptgen:hooks] ranking skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
     }
 
     // ── Stage 4 — SPONSOR SEGMENT (mid-roll only) ──
@@ -1844,6 +2277,9 @@ async function runScript(
       ...briefExtra,
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
       ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
+      // Every section carries the whole loop list, not just its own: a section
+      // that does not own a loop still has to avoid answering it early.
+      ...(loopsBlock ? [loopsBlock] : []),
       stepScaffoldBlock(),
     ];
     for (let i = alreadyDrafted; i < total; i++) {
@@ -1857,7 +2293,9 @@ async function runScript(
       const draftPrompt =
         fill(loadPrompt("stage5-section"), {
           "[PASTE THE SECTION YOU'RE WORKING ON]": sec.text,
-        }) + continuityBlock(i, total, stages.sections.map((s) => s.name), ledger, sectionWords);
+        }) +
+        continuityBlock(i, total, stages.sections.map((s) => s.name), ledger, sectionWords) +
+        loopCloseBlock(loops, i);
 
       const draft = await opusScriptChat({
         system: preamble(true),
@@ -1882,6 +2320,26 @@ async function runScript(
         purpose: "scriptgen",
       });
       stages.sections.push({ name: sec.name, draft, final });
+      persist();
+    }
+
+    // Did the sections actually close what the hook promised? Checked against
+    // the text, not asserted — a loop opened and never paid off is the single
+    // worst thing this feature could introduce, because the hook has already
+    // spent the viewer's patience buying it.
+    if (loops.length > 0) {
+      for (const l of loops) {
+        const owner = stages.sections[l.closesInSection - 1];
+        l.closed = owner ? loopClosed(owner.final, l) : false;
+      }
+      stages.openLoops = loops;
+      const stillOpen = loops.filter((l) => !l.closed);
+      console.log(
+        `[scriptgen:loops] ${loops.length - stillOpen.length}/${loops.length} closed` +
+          (stillOpen.length
+            ? ` — STILL OPEN: ${stillOpen.map((l) => `"${l.question}" (§${l.closesInSection})`).join(", ")}`
+            : ""),
+      );
       persist();
     }
 
@@ -1923,7 +2381,19 @@ async function runScript(
     });
     const raw55 = await opusScriptChat({
       system: preamble(false),
-      messages: [{ role: "user", content: s55 + sponsorCapBlock(sponsored, setup.sponsorship?.sponsorName || "the tool") }],
+      messages: [
+        {
+          role: "user",
+          content:
+            s55 +
+            sponsorCapBlock(sponsored, setup.sponsorship?.sponsorName || "the tool") +
+            // Jake's prompt says FOUR hooks, twice, and it is canonical — so the
+            // fifth is introduced here rather than by editing his text.
+            (baseHooks.includes(OPEN_HOOK_HEADING)
+              ? `\n\n---\n\nNOTE: there are FIVE hook options below, not four. The last one ("${OPEN_HOOK_HEADING.replace(/^#+\s*/, "")}") follows no formula and must be returned with the same treatment as the other four — and returned in full, whether or not you change it.`
+              : ""),
+        },
+      ],
       // This is the one stage that must return the WHOLE script back, hooks and
       // all, and adaptive thinking spends from the same output budget. At 16000
       // a 13-section script ran out mid-answer: the pass stopped on max_tokens,
@@ -1943,7 +2413,16 @@ async function runScript(
       cta.script.length >= baseScriptBody.length * 0.5 &&
       cta.hooks.length >= baseHooks.length * 0.5;
     if (cta && ctaIntact) {
-      stages.hooksWithCta = cta.hooks;
+      // A length check cannot notice one hook of five going missing, and the
+      // free hook is the one a pass told "there are four" would drop. Put it
+      // back rather than lose the stage that wrote it.
+      let hooksOut = cta.hooks;
+      if (baseHooks.includes(OPEN_HOOK_HEADING) && !hooksOut.includes(OPEN_HOOK_HEADING)) {
+        const kept = baseHooks.slice(baseHooks.indexOf(OPEN_HOOK_HEADING));
+        hooksOut = `${hooksOut.trimEnd()}\n\n${kept.trim()}\n`;
+        console.warn("[scriptgen:hooks] the CTA pass dropped the free hook — restored from the pre-CTA block");
+      }
+      stages.hooksWithCta = hooksOut;
       stages.ctaScript = cta.script;
       stages.ctaNotes = cta.notes;
     } else {
@@ -1999,7 +2478,7 @@ async function runScript(
       sponsored,
       sponsorName: sponsored ? setup.sponsorship?.sponsorName || "the sponsor" : "",
       brief: input.brief ?? "",
-      briefExtra,
+      briefExtra: [...briefExtra, ...(loopsBlock ? [loopsBlock] : [])],
       developerOk,
       topic: setup.coreTopic,
       title,

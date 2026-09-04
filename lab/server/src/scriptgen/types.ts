@@ -136,6 +136,39 @@ export interface ReviewChecklist {
   noStaleFacts: boolean;
 }
 
+/** One hook, scored. Stage 3 writes four; this is how Jake chooses between them. */
+export interface HookRank {
+  /** 1-based position in the hooks block, in the order Stage 3 wrote them. */
+  hook: number;
+  /** The formula label Stage 3 gave it, e.g. "FORMULA A-LONG — 5-Beat Confession Reframe". */
+  label: string;
+  /** 0-100, judged: does this make someone stay past the first ten seconds. */
+  virality: number;
+  /** 0-100, MEASURED: how much of the topic's search language it carries, and how early. */
+  seo: number;
+  /** One clause on the virality score. */
+  why: string;
+  /** The traffic this hook is built for — browse, search, mobile. */
+  bestFor: string;
+}
+
+/**
+ * A question the hook plants and deliberately does not answer, paid off later in
+ * a named section. Decided at outline time — the loop has to be something the
+ * video genuinely delivers, and only the outline knows what that is — then
+ * opened by the hooks and closed by the section that owns it.
+ */
+export interface OpenLoop {
+  /** The tease, as the hook will pose it. */
+  question: string;
+  /** What actually answers it. Taken from the outline, so it cannot be a promise the video never keeps. */
+  payoff: string;
+  /** 1-based index into the outline's sections — the one that closes it. */
+  closesInSection: number;
+  /** Set after the sections are written: did that section actually pay it off? */
+  closed?: boolean;
+}
+
 /** Deterministic fact check of the finished script against the Stage 1.5 fact sheet. */
 export interface ClaimAudit {
   /** Numbers the script asserts that the fact sheet never established. */
@@ -230,6 +263,10 @@ export interface ScriptStages {
   ctaNotes: string[];
   /** Stage 6.5 — brief adherence score + applied edits. Null when the run had no brief. */
   briefCheck: BriefCheck | null;
+  /** Stage 2.6 — the loops the hook opens and the sections close. Null when the pass found none. */
+  openLoops: OpenLoop[] | null;
+  /** Stage 3.5 — the four hooks ranked on virality and search value. */
+  hookRanking: HookRank[] | null;
   /** Stage 7 final-review change notes. */
   reviewNotes: string[];
   /** Stage 7's checklist. The model returns it on every run; it used to be discarded. */

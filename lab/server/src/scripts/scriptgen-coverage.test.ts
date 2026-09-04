@@ -19,7 +19,22 @@ import {
   findSourceNames,
   applyBriefEdits,
 } from "../scriptgen/edits.js";
-import { claimFixList, claimFixPrompt } from "../scriptgen/run.js";
+import {
+  claimFixList,
+  claimFixPrompt,
+  openLoopsPrompt,
+  parseOpenLoops,
+  openLoopsBlock,
+  loopCloseBlock,
+  loopClosed,
+  splitHooks,
+  seoKeywords,
+  seoScore,
+  hookRankPrompt,
+  parseHookRanking,
+  openHookPrompt,
+  OPEN_HOOK_HEADING,
+} from "../scriptgen/run.js";
 import {
   formatTranscript,
   parseCaptionBody,
@@ -709,6 +724,134 @@ check(
   "an anchor that is not in the script is skipped, not forced",
   applyBriefEdits("abc", [{ mode: "replace", find: "not here", text: "x" }], "claim audit").skipped.length === 1,
 );
+
+// ── Open loops ───────────────────────────────────────────────────────────────
+// Decided at outline time (the first artefact that knows what the video
+// delivers), opened by the hooks, closed by the section that owns each one.
+
+const SECTIONS = ["Capture", "Organize", "Summarize", "Retrieve", "The verdict"];
+const LOOP_JSON = '{"loops":[{"question":"Which one of these actually replaces Notion?","payoff":"The retrieval setup, in section 4","closesInSection":4},{"question":"What does this cost once you rely on it?","payoff":"The pricing verdict","closesInSection":5}]}';
+
+const LOOPS = parseOpenLoops(LOOP_JSON, SECTIONS.length);
+check("loops are read out of the JSON", LOOPS.length === 2);
+check("a loop keeps the section that owes it", LOOPS[0].closesInSection === 4);
+check(
+  "a loop pointing past the last section is dropped — it could never be closed",
+  parseOpenLoops('{"loops":[{"question":"q","payoff":"p","closesInSection":9}]}', SECTIONS.length).length === 0,
+);
+check(
+  "a loop with no payoff is dropped — that is a promise the video never keeps",
+  parseOpenLoops('{"loops":[{"question":"q","payoff":"","closesInSection":2}]}', SECTIONS.length).length === 0,
+);
+check("duplicate loops collapse", parseOpenLoops('{"loops":[{"question":"Q","payoff":"p","closesInSection":1},{"question":"q","payoff":"p2","closesInSection":2}]}', SECTIONS.length).length === 1);
+check("never more than three", parseOpenLoops('{"loops":[' + [1,2,3,4,5].map((n)=>`{"question":"q${n}","payoff":"p","closesInSection":1}`).join(",") + ']}', SECTIONS.length).length === 3);
+check("an unparseable answer plants no loops rather than throwing", parseOpenLoops("sorry", SECTIONS.length).length === 0);
+
+const OLP = openLoopsPrompt("7 Ways Claude Replaces Your Notes", "…outline…", SECTIONS);
+check("the loop prompt lists the sections it may point at", OLP.includes("4. Retrieve"));
+check("the loop prompt refuses a promise the outline cannot keep", /it is not a loop, it is a lie/.test(OLP));
+check("the loop prompt spreads them off the final section", /Do not close every loop in the final section/.test(OLP));
+
+const BLOCK = openLoopsBlock(LOOPS, SECTIONS);
+check("the block names the section that closes each loop", BLOCK.includes("closed in section 4 (Retrieve)"));
+check("the block forbids answering a loop early", /Never answer a loop before the section that owns it/.test(BLOCK));
+check("no loops means no block at all", openLoopsBlock([], SECTIONS) === "");
+
+check("the owning section is told to close its loop", loopCloseBlock(LOOPS, 3).includes("THIS SECTION CLOSES AN OPEN LOOP"));
+check("the owning section is identified by index, not by order asked", loopCloseBlock(LOOPS, 3).includes("Which one of these actually replaces Notion?"));
+check("a section that owns nothing gets nothing", loopCloseBlock(LOOPS, 0) === "");
+check("the second loop lands in its own section", loopCloseBlock(LOOPS, 4).includes("What does this cost"));
+
+check(
+  "a section that pays the loop off counts as closed",
+  loopClosed("So which one actually replaces Notion? This retrieval setup does, and here is the section where it happens.", LOOPS[0]),
+);
+check(
+  "a section that never touches it is not closed",
+  !loopClosed("Here is how to summarize a long call transcript quickly.", LOOPS[0]),
+);
+check(
+  "a mention too thin to be a payoff does not count",
+  !loopClosed("Notion is fine.", LOOPS[0]),
+);
+
+// ── Hook ranking ─────────────────────────────────────────────────────────────
+// Stage 3 writes four hooks and says which traffic each is FOR; nothing said
+// which is better. Virality is judged; search value is measured, because a model
+// asked to score SEO produces a confident number from nothing.
+
+const HOOKS_BLOCK = [
+  "## HOOKS — pick one",
+  "",
+  "### FORMULA A-LONG — 5-Beat Confession Reframe (90–110s)",
+  "I ditched my note-taking app for Claude and here is what broke.",
+  "",
+  "### FORMULA A-COMPRESSED — Show-Tell-Promise (45–60s)",
+  "Claude replaces your note app. Watch this note get sorted in four seconds.",
+  "",
+  "### FORMULA B — Compressed Numbered Reveal (45–60s)",
+  "Seven ways to run your notes through Claude, starting with the messy one.",
+  "",
+].join("\n");
+
+const SPLIT = splitHooks(HOOKS_BLOCK);
+check("every hook in the block is found", SPLIT.length === 3);
+check("the formula label is kept for the ranking row", SPLIT[0].label.startsWith("FORMULA A-LONG"));
+check("the hook's own text is captured", SPLIT[1].text.includes("four seconds"));
+check("the block's heading is not mistaken for a hook", !SPLIT.some((h) => /HOOKS — pick one/.test(h.label)));
+check("an empty hooks block yields nothing rather than throwing", splitHooks("").length === 0);
+
+const KW = seoKeywords("7 Ways Claude Replaces Your Note-Taking App", "Using Claude as a replacement for Notion and Obsidian");
+check("keywords come from the title and topic", KW.includes("claude") && KW.includes("notion"));
+check("filler is not a keyword", !KW.includes("ways") && !KW.includes("your") && !KW.includes("using"));
+
+const EARLY = seoScore("Claude replaces Notion for your notes today.", KW);
+const LATE = seoScore(("filler ".repeat(45)) + " claude notion notes", KW);
+check("keywords in the opening score higher than the same words buried", EARLY > LATE);
+check("a hook carrying none of the search language scores zero", seoScore("Here is a thing I tried.", KW) === 0);
+check("no keywords at all cannot divide by zero", seoScore("anything", []) === 0);
+check("the score is capped at 100", seoScore("claude notion obsidian replacement notes note-taking claude notion", KW) <= 100);
+
+const HRP = hookRankPrompt("7 Ways Claude Replaces Your Notes", SPLIT, LOOPS);
+check("the rank prompt shows every hook", HRP.includes("HOOK 3"));
+check("the rank prompt carries the loops the hook should plant", HRP.includes("Which one of these actually replaces Notion?"));
+check("the rank prompt penalises the generic opener", /most people only use 10%/.test(HRP));
+check("the rank prompt refuses to judge SEO", /Do NOT score search value/.test(HRP));
+
+const HOOK_RANKED = parseHookRanking('{"scores":[{"hook":1,"virality":40,"why":"a","bestFor":"browse"},{"hook":2,"virality":85,"why":"b","bestFor":"search"},{"hook":3,"virality":85,"why":"c","bestFor":"mobile"}]}', SPLIT, KW);
+check("every hook gets a row", HOOK_RANKED.length === 3);
+check("the most watchable hook leads", HOOK_RANKED[0].virality === 85);
+check("search value breaks a virality tie", HOOK_RANKED[0].seo >= HOOK_RANKED[1].seo);
+check("the row keeps its original hook number", HOOK_RANKED.every((r) => [1, 2, 3].includes(r.hook)));
+check(
+  "a hook the model skipped still gets a row rather than vanishing",
+  parseHookRanking('{"scores":[{"hook":1,"virality":50}]}', SPLIT, KW).length === 3,
+);
+check(
+  "an unparseable ranking still returns the measured search scores",
+  parseHookRanking("no", SPLIT, KW).every((r) => r.virality === 0 && typeof r.seo === "number"),
+);
+check("an out-of-range score is clamped", parseHookRanking('{"scores":[{"hook":1,"virality":9000}]}', SPLIT, KW)[0].virality === 100);
+
+// ── The fifth hook, with no template ─────────────────────────────────────────
+// The four formulas are proven shapes, which also makes them the shapes every
+// other channel uses. This one is freed from them and ranked against them.
+
+const WITH_FREE = HOOKS_BLOCK + "\n" + OPEN_HOOK_HEADING + "\n\nYou already know your notes are a mess. Here is the version that fixed mine.\n";
+const SPLIT5 = splitHooks(WITH_FREE);
+check("the free hook is found alongside the formula hooks", SPLIT5.length === 4);
+check("the free hook keeps its own label", SPLIT5[3].label.startsWith("OPEN HOOK"));
+check("the free hook's text is captured", SPLIT5[3].text.includes("fixed mine"));
+check("the free hook is ranked with the rest", parseHookRanking('{"scores":[]}', SPLIT5, KW).length === 4);
+
+const OHP = openHookPrompt("7 Ways Claude Replaces Your Notes", "Claude for notes", "…outline…", LOOPS, KW);
+check("the free hook prompt refuses every template", /No template, no formula, no beat structure/.test(OHP));
+check("the free hook prompt carries the search language", /SEARCH LANGUAGE/.test(OHP) && OHP.includes("claude"));
+check("the free hook prompt warns against keyword stuffing", /A hook that lists keywords is worse/.test(OHP));
+check("the free hook prompt plants the loops", OHP.includes("Which one of these actually replaces Notion?"));
+check("the free hook prompt bans the generic opener", /no generic percentage opener/.test(OHP));
+check("the free hook prompt demands it be unreusable", /would work on any other video about this topic/.test(OHP));
+check("the free hook prompt asks for the hook alone", /Write only the hook/.test(OHP));
 
 console.log("");
 if (fail.length) {

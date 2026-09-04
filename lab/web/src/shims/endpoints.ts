@@ -635,6 +635,27 @@ export interface ScriptStages {
   claimAudit: ClaimAudit | null;
   /** What the claim-fix pass rewrote, and what it refused to. */
   claimFix: { applied: string[]; skipped: string[] } | null;
+  /** Stage 2.6 — the loops the hook opens and the sections close. */
+  openLoops: OpenLoop[] | null;
+  /** Stage 3.5 — the hooks ranked on virality (judged) and search value (measured). */
+  hookRanking: HookRank[] | null;
+}
+/** A question the hook plants and a named section pays off. */
+export interface OpenLoop {
+  question: string;
+  payoff: string;
+  closesInSection: number;
+  /** Checked against the owning section's text after it was written. */
+  closed?: boolean;
+}
+/** One hook, scored. Virality is judged; SEO is measured from the title and topic. */
+export interface HookRank {
+  hook: number;
+  label: string;
+  virality: number;
+  seo: number;
+  why: string;
+  bestFor: string;
 }
 export type ScriptRunStatus = "classifying" | "awaiting_confirmation" | "running" | "completed" | "failed";
 /** One turn of the post-generation paragraph-refinement chat. */
