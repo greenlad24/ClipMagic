@@ -25,6 +25,14 @@ import {
   pickSubtitleTracks,
   searchTopic,
   stamp,
+  QUERY_COUNT,
+  queriesPrompt,
+  parseQueries,
+  candidateBlock,
+  selectionPrompt,
+  parseSelection,
+  mechanicalRank,
+  type Candidate,
 } from "../scriptgen/videoResearch.js";
 
 let passed = 0;
@@ -483,6 +491,120 @@ check("a one-word topic passes through untouched", searchTopic("Blotato") === "B
 check("a long unpunctuated brief is capped at six words", searchTopic("how to build an automated content system with ai agents today").split(" ").length === 6);
 check("an empty topic yields an empty query", searchTopic("") === "");
 check("trailing punctuation is trimmed", searchTopic("Notion AI,") === "Notion AI");
+
+// ── Stage 1.6 search: several angles, then a real relevance judgement ────────
+// The run that prompted this searched one broad phrase and came back with three
+// videos about the same product doing something else.
+
+function cand(over: Partial<Candidate> & { title: string }): Candidate {
+  return {
+    videoId: over.videoId ?? over.title.slice(0, 11),
+    title: over.title,
+    channel: over.channel ?? "Some Channel",
+    publishedAt: over.publishedAt ?? "2026-08-01",
+    views: over.views ?? 1000,
+    seconds: over.seconds ?? 600,
+    url: over.url ?? "https://youtu.be/x",
+    haystack: over.haystack ?? over.title,
+    foundBy: over.foundBy ?? "claude note taking",
+  };
+}
+
+const QP = queriesPrompt("Claude as a note-taking app", "Projects and memory");
+check("the query prompt carries the topic", QP.includes("Claude as a note-taking app"));
+check("the query prompt carries the specific focus", QP.includes("Projects and memory"));
+check("the query prompt forbids the word the search appends", /Do NOT include the words tutorial/.test(QP));
+check("the query prompt asks for more than one angle", /different ANGLES/.test(QP));
+
+check(
+  "queries are read out of the model's JSON",
+  JSON.stringify(parseQueries('{"queries":["claude note taking","claude as a notes app"]}', "Claude")) ===
+    JSON.stringify(["claude note taking", "claude as a notes app"]),
+);
+check(
+  "the appended word is stripped so it can never appear twice",
+  parseQueries('{"queries":["claude note taking tutorial"]}', "Claude")[0] === "claude note taking",
+);
+check(
+  "a preamble around the JSON does not break parsing",
+  parseQueries('Sure!\n```json\n{"queries":["claude notes"]}\n```', "Claude")[0] === "claude notes",
+);
+check(
+  "duplicate angles are collapsed",
+  parseQueries('{"queries":["Claude Notes","claude notes","claude memory"]}', "Claude").length === 2,
+);
+check(
+  "more angles than allowed are capped",
+  parseQueries('{"queries":["a one","b two","c three","d four","e five"]}', "Claude").length === QUERY_COUNT,
+);
+check(
+  "an unparseable answer falls back to the mechanical query",
+  JSON.stringify(parseQueries("I could not help with that", "Claude Cowork")) === JSON.stringify(["Claude Cowork"]),
+);
+check(
+  "an empty query list falls back rather than searching for nothing",
+  parseQueries('{"queries":[]}', "Claude Cowork")[0] === "Claude Cowork",
+);
+check(
+  "a sentence-length query is rejected as a query",
+  parseQueries('{"queries":["how do i use claude to replace my note taking app in 2026"]}', "Blotato")[0] ===
+    "Blotato",
+);
+
+const CANDS = [
+  cand({ title: "Claude for Note-Taking: My Full Setup", views: 5000, videoId: "aaaaaaaaaaa" }),
+  cand({ title: "FULL Claude Code Tutorial For Beginners", views: 117452, videoId: "bbbbbbbbbbb" }),
+  cand({ title: "I Replaced Notion With Claude Projects", views: 900, videoId: "ccccccccccc" }),
+];
+const CB = candidateBlock(CANDS);
+check("candidates are numbered from one", CB.startsWith("[1] Claude for Note-Taking"));
+check("every candidate reaches the selector", CB.includes("[2]") && CB.includes("[3]"));
+check("view counts are readable in the list", CB.includes("117,452 views"));
+check(
+  "a long description is cut before it fills the window",
+  candidateBlock([cand({ title: "T", haystack: "T " + "x".repeat(900) })]).length < 400,
+);
+
+const SP = selectionPrompt("Claude as a note-taking app", CANDS, 4, "Projects and memory");
+check("the selection prompt carries the topic", SP.includes("Claude as a note-taking app"));
+check("the selection prompt lists the candidates", SP.includes("[3] I Replaced Notion"));
+check("the selection prompt allows an honest short answer", /Returning fewer than 4 is correct/.test(SP));
+check("the selection prompt ranks relevance over popularity", /They do not outrank relevance/.test(SP));
+
+const PICK = '{"picks":[{"n":3,"why":"replaces a notes app"},{"n":1,"why":"direct setup"}]}';
+check(
+  "picks come back in the model's own order, not the list's",
+  JSON.stringify(parseSelection(PICK, CANDS, 4).map((c) => c.videoId)) ===
+    JSON.stringify(["ccccccccccc", "aaaaaaaaaaa"]),
+);
+check("an out-of-range pick is ignored", parseSelection('{"picks":[{"n":9}]}', CANDS, 4).length === 0);
+check("a repeated pick is counted once", parseSelection('{"picks":[{"n":1},{"n":1}]}', CANDS, 4).length === 1);
+check(
+  "more picks than asked for are trimmed",
+  parseSelection('{"picks":[{"n":1},{"n":2},{"n":3}]}', CANDS, 2).length === 2,
+);
+check("an unparseable selection selects nothing, so the caller falls back", parseSelection("no", CANDS, 4).length === 0);
+
+// The fallback ranking still has to work: it is what runs when there is no model
+// client, when the call fails, and when the answer cannot be read.
+const RANKED = mechanicalRank(
+  [
+    cand({ title: "Claude Note Taking Deep Dive", views: 100, foundBy: "claude note taking" }),
+    cand({
+      title: "My Productivity Stack 2026",
+      haystack: "My Productivity Stack 2026 — includes claude note taking",
+      views: 90000,
+      foundBy: "claude note taking",
+    }),
+  ],
+  4,
+);
+check("a title match outranks a much bigger description match", RANKED[0].title === "Claude Note Taking Deep Dive");
+check("a description match still fills a spare slot", RANKED.length === 2);
+check(
+  "relevance is judged against the query that found the video",
+  mechanicalRank([cand({ title: "Kling AI Guide", foundBy: "claude note taking" })], 4).length === 0,
+);
 
 console.log("");
 if (fail.length) {

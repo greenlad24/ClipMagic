@@ -30,6 +30,40 @@ export const SEARCH_MONTHS = 3;
 export const VIDEO_COUNT = 4;
 
 /**
+ * How many searches to run. One query is one guess at how the topic is titled,
+ * and it is usually the product's name — which finds videos about the PRODUCT
+ * when the video is about a USE of it. A run on "Claude as a note-taking app"
+ * searched "Using Claude as a replacement for" and came back with Claude Code,
+ * Claude Design and a one-person-business video: all real Claude tutorials,
+ * none about note-taking. Two or three angles on the same topic cover it far
+ * better than one, and the searches are cheap next to the transcripts.
+ */
+export const QUERY_COUNT = 3;
+
+/**
+ * How many candidates the selector is allowed to see. The list is what it
+ * costs — 25 results per query, three queries, is enough titles to blow past
+ * the point where more of them help.
+ */
+const MAX_CANDIDATES = 30;
+
+/**
+ * The model client, injected rather than imported.
+ *
+ * This module is otherwise pure HTTP + parsing, and its unit tests import it
+ * directly under `--experimental-strip-types`; pulling `ai/claude.ts` in here
+ * would drag the whole client module graph into them. Injection also means the
+ * two model-backed steps below have a real fallback: no `chat`, and the search
+ * behaves exactly as it did before it existed.
+ */
+export type ChatFn = (p: {
+  prompt: string;
+  maxTokens: number;
+  thinking: boolean;
+  label: string;
+}) => Promise<string>;
+
+/**
  * Under four minutes there is no workflow in the video — it is a Short, a teaser
  * or a "what is X" explainer. Those out-rank real tutorials on views (an 8.3M-view
  * "What is Claude Code?" beat every walkthrough on the topic), so length is the
@@ -98,6 +132,161 @@ export function searchTopic(topic: string): string {
   return words.length > 6 ? words.slice(0, 6).join(" ") : t;
 }
 
+/**
+ * Ask for the two or three things a viewer would actually type to find this
+ * topic. Deliberately short: the point is coverage of the topic's ANGLES (the
+ * product's name, the job it is being used for, the thing it replaces), not
+ * three rewordings of one phrase.
+ *
+ * "tutorial" is banned from the output because every query gets it appended —
+ * see `searchOnce` — and "claude note taking tutorial tutorial" matches nothing.
+ */
+export function queriesPrompt(topic: string, focus?: string): string {
+  return [
+    "You are choosing what to search YouTube for, to find tutorials that SHOW this topic being done on screen.",
+    "",
+    `TOPIC: ${topic}`,
+    ...(focus ? [`SPECIFIC FOCUS: ${focus}`] : []),
+    "",
+    `Give ${QUERY_COUNT === 3 ? "2 or 3" : `up to ${QUERY_COUNT}`} short search queries — what a real person would type into the YouTube search box.`,
+    "",
+    "Rules:",
+    "- Each query is 2-5 words. Cover different ANGLES of the topic: the product's name, the job it is used for, the thing it replaces.",
+    "- Do NOT include the words tutorial, guide, walkthrough, how to, or a year. Those are added for you.",
+    "- No punctuation, no quotes, no boolean operators.",
+    "- If the topic is a single product with no particular use attached, one or two queries is the honest answer. Do not pad.",
+    "",
+    'Reply with JSON only: {"queries": ["...", "..."]}',
+  ].join("\n");
+}
+
+/** Strip the words the search adds back, so no query can carry them twice. */
+function stripAppendedWords(q: string): string {
+  return q
+    .replace(/\b(tutorial|guide|walkthrough|explained|how to)\b/gi, " ")
+    .replace(/[^a-z0-9.+\s-]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Read the queries back. A model that answers badly must not be able to empty
+ * this stage, so anything unusable falls back to the mechanical `searchTopic`,
+ * which is what ran before there were queries at all.
+ */
+export function parseQueries(text: string, fallback: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: unknown): void => {
+    if (typeof raw !== "string") return;
+    const q = stripAppendedWords(raw);
+    // A one-character query matches everything; a very long one matches nothing.
+    if (q.length < 3 || q.split(" ").length > 8) return;
+    const k = q.toLowerCase();
+    if (seen.has(k)) return;
+    seen.add(k);
+    out.push(q);
+  };
+  try {
+    const parsed = JSON.parse(extractJsonish(text)) as { queries?: unknown };
+    if (Array.isArray(parsed?.queries)) parsed.queries.forEach(push);
+  } catch {
+    // Unparseable is not exceptional — it is one more reason to use the fallback.
+  }
+  if (out.length === 0) push(fallback);
+  return out.slice(0, QUERY_COUNT);
+}
+
+/** The smallest JSON-looking substring, so a model preamble cannot break parsing. */
+function extractJsonish(text: string): string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  return start >= 0 && end > start ? text.slice(start, end + 1) : text;
+}
+
+export interface Candidate extends TutorialVideo {
+  /** Title + description, kept for the selector and never returned to the caller. */
+  haystack: string;
+  /** Which query surfaced it first — useful when a whole angle turns out to be junk. */
+  foundBy: string;
+}
+
+/**
+ * What the selector reads. Descriptions are cut hard: the first two lines carry
+ * what the video is, and everything after them is links and timestamps.
+ */
+export function candidateBlock(cands: Candidate[]): string {
+  return cands
+    .map((c, i) => {
+      const desc = c.haystack
+        .slice(c.title.length)
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 220);
+      return (
+        `[${i + 1}] ${c.title}\n` +
+        `    ${c.channel} · ${c.views.toLocaleString()} views · ${c.publishedAt} · ${stamp(c.seconds)}\n` +
+        (desc ? `    ${desc}\n` : "")
+      );
+    })
+    .join("");
+}
+
+/**
+ * Pick the videos that are actually about the topic.
+ *
+ * This replaces a word-overlap heuristic (`mentionsTopic`) that could not tell
+ * "Claude for note-taking" from "Claude Code" — both name Claude, and the
+ * heuristic allows one word to be missing because titles compress. Reading the
+ * title against the topic is a judgement, so it gets thinking and a model.
+ */
+export function selectionPrompt(topic: string, cands: Candidate[], count: number, focus?: string): string {
+  return [
+    "Pick the YouTube videos that would actually teach someone this topic by SHOWING it on screen.",
+    "",
+    `TOPIC: ${topic}`,
+    ...(focus ? [`SPECIFIC FOCUS: ${focus}`] : []),
+    "",
+    "CANDIDATES:",
+    candidateBlock(cands),
+    "",
+    `Choose at most ${count}, best first. What matters:`,
+    "- The video is about THIS topic, not about the same product used for something else. A video about the product's other features is the wrong video.",
+    "- It demonstrates a workflow: menus, clicks, settings, the order things happen in.",
+    "- Prefer the video that covers the topic directly over a longer one that touches it in passing.",
+    "- Views and recency break ties. They do not outrank relevance.",
+    "",
+    "Reject roundups that mention the topic in a list, reaction and news videos, and anything whose title promises money rather than a method.",
+    `Returning fewer than ${count} is correct when fewer are relevant. Returning none is correct when none are.`,
+    "",
+    'Reply with JSON only: {"picks": [{"n": 1, "why": "one short clause"}]}',
+  ].join("\n");
+}
+
+/**
+ * Read the picks back, by list position. Positions are used rather than video
+ * IDs because an 11-character ID is the one thing in this payload a model can
+ * plausibly get subtly wrong, and a wrong ID is a silently different video.
+ */
+export function parseSelection(text: string, cands: Candidate[], count: number): Candidate[] {
+  const out: Candidate[] = [];
+  const seen = new Set<string>();
+  try {
+    const parsed = JSON.parse(extractJsonish(text)) as { picks?: Array<{ n?: unknown }> };
+    for (const pick of parsed?.picks ?? []) {
+      const n = Number(pick?.n);
+      if (!Number.isInteger(n) || n < 1 || n > cands.length) continue;
+      const c = cands[n - 1];
+      if (seen.has(c.videoId)) continue;
+      seen.add(c.videoId);
+      out.push(c);
+    }
+  } catch {
+    // Falls back to the mechanical ranking in the caller.
+  }
+  return out.slice(0, count);
+}
+
 function isEnglish(lang: string | undefined): boolean {
   // Absent is common and not a reason to drop a video — only an explicit
   // non-English tag is. "en", "en-US" and "en-GB" all pass: they are English and
@@ -152,23 +341,12 @@ export function stamp(seconds: number): string {
  * behind Jake's back: a two-year-old click path presented as current is the exact
  * failure this whole feature exists to prevent.
  */
-export async function findTutorialVideos(
-  topic: string,
-  opts: { months?: number; count?: number } = {},
-): Promise<TutorialVideo[]> {
-  const key = getYoutubeDataApiKey();
-  if (!key) return [];
-  const months = opts.months ?? SEARCH_MONTHS;
-  const count = opts.count ?? VIDEO_COUNT;
-  // Everything below matches on the NAME, never on the brief it arrived in.
-  const query = searchTopic(topic);
-  if (!query) return [];
-
-  const after = new Date();
-  after.setMonth(after.getMonth() - months);
-
+/** One query, one round-trip pair: search for ids, then look those ids up. */
+async function searchOnce(query: string, key: string, after: Date): Promise<Candidate[]> {
   const search = new URLSearchParams({
     part: "snippet",
+    // "tutorial" is appended here, and stripped out of model-written queries, so
+    // it appears exactly once however the query was produced.
     q: `${query} tutorial`,
     type: "video",
     // RELEVANCE, not viewCount. Asking YouTube to sort by views returns whatever
@@ -219,7 +397,7 @@ export async function findTutorialVideos(
     }>;
   };
 
-  const candidates = (dj.items ?? [])
+  return (dj.items ?? [])
     .map((v) => ({
       videoId: v.id,
       title: v.snippet.title,
@@ -230,21 +408,103 @@ export async function findTutorialVideos(
       url: `https://www.youtube.com/watch?v=${v.id}`,
       lang: v.snippet.defaultAudioLanguage ?? v.snippet.defaultLanguage,
       haystack: `${v.snippet.title} ${v.snippet.description ?? ""}`,
+      foundBy: query,
     }))
+    // The three cheap, mechanical rejections. None of them is a judgement call,
+    // and each one removes something the selector should never have to read:
+    // Shorts and teasers, non-English audio, and income bait.
     .filter((v) => v.seconds >= MIN_SECONDS)
     .filter((v) => isEnglish(v.lang))
-    .filter((v) => !MONEY_BAIT.test(v.title))
-    .filter((v) => mentionsTopic(v.haystack, query));
+    .filter((v) => !MONEY_BAIT.test(v.title));
+}
 
-  // A video that names the topic in its TITLE is about the topic. One that only
-  // mentions it in the description is usually a roundup that lists the tool in
-  // passing — real for "Blotato", where three of four description-matches turned
-  // out to be videos about something else that mention it. Title matches go
-  // first, and descriptions only fill the slots left over.
+/**
+ * The pre-model ranking, kept as the fallback for every path where the selector
+ * cannot speak: no `chat` injected, a failed call, an unparseable answer.
+ *
+ * A video that names the topic in its TITLE is about the topic. One that only
+ * mentions it in the description is usually a roundup that lists the tool in
+ * passing — real for "Blotato", where three of four description-matches turned
+ * out to be videos about something else that mention it. Title matches go
+ * first, and descriptions only fill the slots left over.
+ */
+export function mechanicalRank(cands: Candidate[], count: number): Candidate[] {
   const byViews = (a: { views: number }, b: { views: number }) => b.views - a.views;
-  const titled = candidates.filter((v) => mentionsTopic(v.title, query)).sort(byViews);
-  const rest = candidates.filter((v) => !mentionsTopic(v.title, query)).sort(byViews);
-  return [...titled, ...rest].slice(0, count).map(({ haystack, ...v }) => v);
+  const onTopic = cands.filter((c) => mentionsTopic(c.haystack, c.foundBy));
+  const titled = onTopic.filter((c) => mentionsTopic(c.title, c.foundBy)).sort(byViews);
+  const rest = onTopic.filter((c) => !mentionsTopic(c.title, c.foundBy)).sort(byViews);
+  return [...titled, ...rest].slice(0, count);
+}
+
+export async function findTutorialVideos(
+  topic: string,
+  opts: {
+    months?: number;
+    count?: number;
+    /** The specific angle, where Stage 0 captured one. Shapes both model calls. */
+    focus?: string;
+    /** Injected model client. Without it this behaves exactly as it did before. */
+    chat?: ChatFn;
+    /** Filled with the queries actually searched, for the run log. */
+    sinkQueries?: string[];
+  } = {},
+): Promise<TutorialVideo[]> {
+  const key = getYoutubeDataApiKey();
+  if (!key) return [];
+  const months = opts.months ?? SEARCH_MONTHS;
+  const count = opts.count ?? VIDEO_COUNT;
+  // Everything below matches on the NAME, never on the brief it arrived in.
+  const fallbackQuery = searchTopic(topic);
+  if (!fallbackQuery) return [];
+
+  // ── Two or three angles, not one ──
+  let queries = [fallbackQuery];
+  if (opts.chat) {
+    const answer = await opts
+      .chat({
+        prompt: queriesPrompt(topic, opts.focus),
+        maxTokens: 600,
+        // Naming what to search for is recall, not judgement. Thinking bills as
+        // output at 5x input, and this is the one step in the stage that has a
+        // guaranteed-correct fallback.
+        thinking: false,
+        label: "stage1.6-queries",
+      })
+      .catch(() => "");
+    queries = parseQueries(answer, fallbackQuery);
+  }
+  opts.sinkQueries?.push(...queries);
+
+  const after = new Date();
+  after.setMonth(after.getMonth() - months);
+
+  // Deduped by video id: the angles overlap on purpose, and the video that shows
+  // up under two of them is usually the one both were reaching for.
+  const merged = new Map<string, Candidate>();
+  for (const q of queries) {
+    for (const c of await searchOnce(q, key, after)) {
+      if (!merged.has(c.videoId)) merged.set(c.videoId, c);
+    }
+  }
+  const candidates = [...merged.values()];
+  if (candidates.length === 0) return [];
+
+  const strip = ({ haystack, foundBy, ...v }: Candidate): TutorialVideo => v;
+  const ranked = mechanicalRank(candidates, count);
+  if (!opts.chat) return ranked.map(strip);
+
+  // ── Which of these is actually about the topic ──
+  const shortlist = [...candidates].sort((a, b) => b.views - a.views).slice(0, MAX_CANDIDATES);
+  const answer = await opts
+    .chat({
+      prompt: selectionPrompt(topic, shortlist, count, opts.focus),
+      maxTokens: 2000,
+      thinking: true,
+      label: "stage1.6-select",
+    })
+    .catch(() => "");
+  const picked = parseSelection(answer, shortlist, count);
+  return (picked.length > 0 ? picked : ranked).map(strip);
 }
 
 interface TranscriptSegment {
@@ -423,7 +683,13 @@ export function formatTranscript(segments: TranscriptSegment[]): string {
 /** The videos that had a transcript, in view order. Failures are skipped, not fatal. */
 export async function gatherTutorialTranscripts(
   topic: string,
-  opts: { months?: number; count?: number } = {},
+  opts: {
+    months?: number;
+    count?: number;
+    focus?: string;
+    chat?: ChatFn;
+    sinkQueries?: string[];
+  } = {},
 ): Promise<TranscribedVideo[]> {
   const videos = await findTutorialVideos(topic, opts);
   const out: TranscribedVideo[] = [];

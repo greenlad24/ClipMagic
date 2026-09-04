@@ -27,7 +27,6 @@ import { opusScriptChat, extractJson, scriptgenUsageTotal, resetScriptgenUsage }
 import { ZiteError } from "../zite/store.js";
 import {
   gatherTutorialTranscripts,
-  searchTopic,
   transcriptsBlock,
   videoResearchConfigured,
 } from "./videoResearch.js";
@@ -1135,7 +1134,27 @@ async function runScript(
     if (stages.videoWorkflows === undefined && videoResearchConfigured()) {
       progress(job, "Watching the newest tutorials…", PCT.videos);
       try {
-        const videos = await gatherTutorialTranscripts(setup.coreTopic);
+        // The queries and the shortlist are decided by the model, on the same
+        // cached system prefix as every other stage in the run — so both extra
+        // calls bill at cache-read rates for everything but their own prompt.
+        const queries: string[] = [];
+        const videos = await gatherTutorialTranscripts(setup.coreTopic, {
+          focus: setup.specificFocus || undefined,
+          sinkQueries: queries,
+          chat: (p) =>
+            opusScriptChat({
+              system: preamble(false),
+              systemExtra: briefExtra,
+              messages: [{ role: "user", content: p.prompt }],
+              maxTokens: p.maxTokens,
+              thinking: p.thinking,
+              label: p.label,
+              purpose: "scriptgen",
+            }),
+        });
+        // The SEARCH TERMS, not the brief — when this stage returns something
+        // odd the first question is always what it actually looked for.
+        const asked = queries.length ? queries.map((q) => `"${q}"`).join(" + ") : "(none)";
         if (videos.length === 0) {
           // Not an error. A tool that shipped last month has no tutorials yet, and
           // saying so is more useful than widening the window and quietly handing
@@ -1143,9 +1162,7 @@ async function runScript(
           stages.videoWorkflows = null;
           // The SEARCH TERM, not the brief — when this stage comes back empty the
           // first question is always what it actually looked for.
-          console.log(
-            `[scriptgen:videos] no recent tutorials found for "${searchTopic(setup.coreTopic)}"`,
-          );
+          console.log(`[scriptgen:videos] no recent tutorials found for ${asked}`);
         } else {
           stages.videoSources = videos.map((v) => ({
             title: v.title,
@@ -1167,7 +1184,7 @@ async function runScript(
             purpose: "scriptgen",
           });
           console.log(
-            `[scriptgen:videos] "${searchTopic(setup.coreTopic)}" → ` +
+            `[scriptgen:videos] ${asked} → ` +
               `${videos.length} transcript(s) → workflow sheet ` +
               `(${stages.videoWorkflows.length} chars): ` +
               videos.map((v) => `${v.title} [${v.views.toLocaleString()} views]`).join(" | "),
