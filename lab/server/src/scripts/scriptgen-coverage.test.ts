@@ -32,6 +32,8 @@ import {
   selectionPrompt,
   parseSelection,
   mechanicalRank,
+  wantsDeveloperWorkflow,
+  audienceRule,
   type Candidate,
 } from "../scriptgen/videoResearch.js";
 
@@ -604,6 +606,43 @@ check("a description match still fills a spare slot", RANKED.length === 2);
 check(
   "relevance is judged against the query that found the video",
   mechanicalRank([cand({ title: "Kling AI Guide", foundBy: "claude note taking" })], 4).length === 0,
+);
+
+// ── The audience gate ────────────────────────────────────────────────────────
+// Jake's audience is solopreneurs and small business owners who need guidance
+// "without tech jargon" (stage2-outline's AUDIENCE PROFILE). The most-watched
+// tutorial for an AI topic is very often aimed at developers, and a real run
+// inherited a CLI install, a Git URL and a trusted workspace into a note-taking
+// script because of it.
+
+check("a note-taking topic does not ask for a developer workflow", !wantsDeveloperWorkflow("Claude as a note-taking app"));
+check("a developer tool as the topic lifts the gate", wantsDeveloperWorkflow("Claude Code for beginners"));
+check("the terminal named in the topic lifts the gate", wantsDeveloperWorkflow("running Claude from the terminal"));
+check("asking for it in the BRIEF lifts the gate", wantsDeveloperWorkflow("Claude for notes", undefined, "show the CLI setup too"));
+check("the focus can lift it as well", wantsDeveloperWorkflow("Claude for notes", "connecting the API", undefined));
+check("an absent topic and brief do not lift it", !wantsDeveloperWorkflow(undefined, undefined, null));
+check("a near-miss word does not lift it", !wantsDeveloperWorkflow("Claude for apiary businesses"));
+
+check("the gate names the audience it protects", /solopreneurs and small business owners/.test(audienceRule(false)));
+check("the gate names the developer paths it rejects", /command-line|Git URL|IDE/.test(audienceRule(false)));
+check("the gate allows a developer video when nothing else covers the topic", /Only prefer a developer walkthrough when nothing else/.test(audienceRule(false)));
+check("an asked-for developer workflow removes the rule entirely", audienceRule(true) === "");
+
+check(
+  "the gate reaches the search queries",
+  queriesPrompt("Claude for notes", undefined, false).includes("AUDIENCE GATE"),
+);
+check(
+  "a developer topic searches without the gate",
+  !queriesPrompt("Claude Code", undefined, true).includes("AUDIENCE GATE"),
+);
+check(
+  "the gate reaches the selection pass",
+  selectionPrompt("Claude for notes", CANDS, 4, undefined, false).includes("AUDIENCE GATE"),
+);
+check(
+  "a developer topic selects without the gate",
+  !selectionPrompt("Claude Code", CANDS, 4, undefined, true).includes("AUDIENCE GATE"),
 );
 
 console.log("");

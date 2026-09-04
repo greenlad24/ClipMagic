@@ -133,6 +133,40 @@ export function searchTopic(topic: string): string {
 }
 
 /**
+ * Topics that ARE developer tools. When the topic is one of these, a terminal
+ * is the honest answer and the gate below has to get out of the way.
+ *
+ * Everything else is gated: Jake's audience is solopreneurs and small business
+ * owners who "need clear, step-by-step guidance without tech jargon"
+ * (stage2-outline's AUDIENCE PROFILE, stage-preamble's CONTENT RULES). A
+ * note-taking video that teaches a CLI install, a Git URL and a trusted
+ * workspace has answered a different question than the one the viewer clicked.
+ */
+const DEVELOPER_TOPIC =
+  /\b(claude code|codex|copilot|cli|command line|terminal|shell|sdk|api|github|git|vs ?code|vscode|cursor|npm|node|docker|self[- ]host(ed|ing)?|python|javascript|typescript|webhook|regex)\b/i;
+
+/** Did anyone actually ask for a developer workflow — the topic, the focus, or the brief? */
+export function wantsDeveloperWorkflow(...parts: Array<string | undefined | null>): boolean {
+  return DEVELOPER_TOPIC.test(parts.filter(Boolean).join(" "));
+}
+
+/**
+ * The audience gate, in the words the pipeline already uses for it.
+ *
+ * Returns "" when a developer workflow was asked for, so the rule is absent
+ * rather than negated — a prompt that says "normally avoid terminals, but this
+ * time allow them" reads as hesitancy about the thing the viewer came for.
+ */
+export function audienceRule(developerOk: boolean): string {
+  if (developerOk) return "";
+  return [
+    "AUDIENCE GATE — this video is for solopreneurs and small business owners who need step-by-step guidance without tech jargon.",
+    "A tutorial aimed at developers teaches the wrong path to them: installing a command-line tool, trusting a workspace, cloning a Git URL, editing config files, running commands, or using an IDE.",
+    "Reject those in favour of one that does the same job in the app's own interface. Only prefer a developer walkthrough when nothing else covers the topic at all.",
+  ].join("\n");
+}
+
+/**
  * Ask for the two or three things a viewer would actually type to find this
  * topic. Deliberately short: the point is coverage of the topic's ANGLES (the
  * product's name, the job it is being used for, the thing it replaces), not
@@ -141,12 +175,14 @@ export function searchTopic(topic: string): string {
  * "tutorial" is banned from the output because every query gets it appended —
  * see `searchOnce` — and "claude note taking tutorial tutorial" matches nothing.
  */
-export function queriesPrompt(topic: string, focus?: string): string {
+export function queriesPrompt(topic: string, focus?: string, developerOk = false): string {
+  const gate = audienceRule(developerOk);
   return [
     "You are choosing what to search YouTube for, to find tutorials that SHOW this topic being done on screen.",
     "",
     `TOPIC: ${topic}`,
     ...(focus ? [`SPECIFIC FOCUS: ${focus}`] : []),
+    ...(gate ? ["", gate] : []),
     "",
     `Give ${QUERY_COUNT === 3 ? "2 or 3" : `up to ${QUERY_COUNT}`} short search queries — what a real person would type into the YouTube search box.`,
     "",
@@ -240,7 +276,14 @@ export function candidateBlock(cands: Candidate[]): string {
  * heuristic allows one word to be missing because titles compress. Reading the
  * title against the topic is a judgement, so it gets thinking and a model.
  */
-export function selectionPrompt(topic: string, cands: Candidate[], count: number, focus?: string): string {
+export function selectionPrompt(
+  topic: string,
+  cands: Candidate[],
+  count: number,
+  focus?: string,
+  developerOk = false,
+): string {
+  const gate = audienceRule(developerOk);
   return [
     "Pick the YouTube videos that would actually teach someone this topic by SHOWING it on screen.",
     "",
@@ -257,6 +300,7 @@ export function selectionPrompt(topic: string, cands: Candidate[], count: number
     "- Views and recency break ties. They do not outrank relevance.",
     "",
     "Reject roundups that mention the topic in a list, reaction and news videos, and anything whose title promises money rather than a method.",
+    ...(gate ? ["", gate, ""] : []),
     `Returning fewer than ${count} is correct when fewer are relevant. Returning none is correct when none are.`,
     "",
     'Reply with JSON only: {"picks": [{"n": 1, "why": "one short clause"}]}',
@@ -443,6 +487,8 @@ export async function findTutorialVideos(
     count?: number;
     /** The specific angle, where Stage 0 captured one. Shapes both model calls. */
     focus?: string;
+    /** The brief, read only to decide whether a developer workflow was asked for. */
+    brief?: string;
     /** Injected model client. Without it this behaves exactly as it did before. */
     chat?: ChatFn;
     /** Filled with the queries actually searched, for the run log. */
@@ -456,13 +502,16 @@ export async function findTutorialVideos(
   // Everything below matches on the NAME, never on the brief it arrived in.
   const fallbackQuery = searchTopic(topic);
   if (!fallbackQuery) return [];
+  // Asked-for beats gated: the brief counts too, so "show me the CLI" in a
+  // brief lifts the gate the same way a developer topic does.
+  const developerOk = wantsDeveloperWorkflow(topic, opts.focus, opts.brief);
 
   // ── Two or three angles, not one ──
   let queries = [fallbackQuery];
   if (opts.chat) {
     const answer = await opts
       .chat({
-        prompt: queriesPrompt(topic, opts.focus),
+        prompt: queriesPrompt(topic, opts.focus, developerOk),
         maxTokens: 600,
         // Naming what to search for is recall, not judgement. Thinking bills as
         // output at 5x input, and this is the one step in the stage that has a
@@ -497,7 +546,7 @@ export async function findTutorialVideos(
   const shortlist = [...candidates].sort((a, b) => b.views - a.views).slice(0, MAX_CANDIDATES);
   const answer = await opts
     .chat({
-      prompt: selectionPrompt(topic, shortlist, count, opts.focus),
+      prompt: selectionPrompt(topic, shortlist, count, opts.focus, developerOk),
       maxTokens: 2000,
       thinking: true,
       label: "stage1.6-select",
@@ -687,6 +736,7 @@ export async function gatherTutorialTranscripts(
     months?: number;
     count?: number;
     focus?: string;
+    brief?: string;
     chat?: ChatFn;
     sinkQueries?: string[];
   } = {},

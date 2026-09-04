@@ -29,6 +29,7 @@ import {
   gatherTutorialTranscripts,
   transcriptsBlock,
   videoResearchConfigured,
+  wantsDeveloperWorkflow,
 } from "./videoResearch.js";
 import { createRun, updateRun, getRun } from "../db/scriptRuns.js";
 import { loadPrompt, fill, systemPreamble } from "./prompts.js";
@@ -642,7 +643,7 @@ function factSheetBlock(factSheet: string): string {
  * control lives and what it is called. The fact sheet is built from written
  * sources that describe a product; this is built from people using it on camera.
  */
-function workflowBlock(sheet: string): string {
+function workflowBlock(sheet: string, developerOk: boolean): string {
   return [
     "",
     "---",
@@ -658,6 +659,17 @@ function workflowBlock(sheet: string): string {
     "Where this sheet and the written research disagree, this wins — on what the product does, on how it behaves, and on every click path. Say what the videos show rather than averaging the two into a hedge. The one exception is a NUMBER: prices, tiers and limits come from the fact sheet, because tutorials quote figures from memory and go stale fastest.",
     "",
     "Use the steps. Never use the wording — every one of these came out of somebody else's video, and the script is Jake's.",
+    // The sheet is only as non-technical as the tutorials it came from, and the
+    // most-watched tutorial for an AI topic is very often aimed at developers.
+    // Left ungated, a note-taking script inherits a CLI install, a Git URL and a
+    // trusted workspace — a real run did exactly that — because those were the
+    // only click paths it had been handed.
+    ...(developerOk
+      ? []
+      : [
+          "",
+          "**This audience does not open a terminal.** Where the sheet's path runs through a command line, an install of a developer tool, a Git URL, a config file or an IDE, teach the same job the way it is done in the product's own interface instead. If the sheet shows no such path, say plainly that this part needs the developer tool rather than walking them into it — naming the limit is honest, and the walkthrough is for someone else.",
+        ]),
     "",
     sheet,
   ].join("\n");
@@ -989,10 +1001,21 @@ export async function finalReviewAndAssemble(opts: {
   sponsorName: string;
   brief: string;
   briefExtra: string[];
+  developerOk: boolean;
   stages: ScriptStages;
 }): Promise<string> {
-  const { runId, topPart, scriptBody, videoType, sponsored, sponsorName, brief, briefExtra, stages } =
-    opts;
+  const {
+    runId,
+    topPart,
+    scriptBody,
+    videoType,
+    sponsored,
+    sponsorName,
+    brief,
+    briefExtra,
+    developerOk,
+    stages,
+  } = opts;
   // Same system prefix the section stages used, built the same way — the whole
   // point of the shared block is that this call rides their cache rather than
   // paying to re-establish the rules.
@@ -1012,7 +1035,7 @@ export async function finalReviewAndAssemble(opts: {
     systemExtra: [
       ...briefExtra,
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
-      ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : []),
+      ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
       reviewFactUseBlock(),
     ],
     messages: [{ role: "user", content: s7 }],
@@ -1196,6 +1219,7 @@ export async function rerunFinalReview(
     sponsorName: sponsored ? run.setup.sponsorship?.sponsorName || "the sponsor" : "",
     brief,
     briefExtra: brief ? [briefBlock(brief)] : [],
+    developerOk: wantsDeveloperWorkflow(run.setup.coreTopic, run.setup.specificFocus, brief),
     stages,
   });
   const costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
@@ -1342,6 +1366,9 @@ async function runScript(
     // Competitor mentions are allowed on organic videos and banned on sponsored
     // ones — the single rule that flips per video rather than per writer.
     const sponsored = (setup.sponsorship?.mode ?? "organic") !== "organic";
+    // Asked-for beats gated, and it is decided ONCE: this flag rides the cached
+    // system prefix, so it has to be byte-stable for the whole run.
+    const developerOk = wantsDeveloperWorkflow(setup.coreTopic, setup.specificFocus, input.brief);
     const preamble = (withShrapnel: boolean) => systemPreamble(withShrapnel, sponsored);
     const targetLength = (setup.targetLength || "").trim() || "10–12 minutes minimum";
     const sponsorLabel = sponsorshipLabel(setup.sponsorship);
@@ -1376,6 +1403,7 @@ async function runScript(
         const queries: string[] = [];
         const videos = await gatherTutorialTranscripts(setup.coreTopic, {
           focus: setup.specificFocus || undefined,
+          brief: input.brief || undefined,
           sinkQueries: queries,
           chat: (p) =>
             opusScriptChat({
@@ -1462,7 +1490,7 @@ async function runScript(
       // they left rather than re-deriving the whole topic from scratch.
       systemExtra: [
         ...briefExtra,
-        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows), researchScopeBlock()] : []),
+        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk), researchScopeBlock()] : []),
       ],
       messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
       webSearch: true,
@@ -1518,7 +1546,7 @@ async function runScript(
       // drops, the video will not contain — so this is the stage that most needs
       // the brief, and the one that never had it. Same reasoning for the click
       // paths: a step that misses the outline cannot come back later.
-      systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : [])],
+      systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : [])],
       messages: [
         {
           role: "user",
@@ -1553,7 +1581,7 @@ async function runScript(
         system: preamble(false),
         messages: [{ role: "user", content: s25 }],
         maxTokens: 32000,
-        systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : [])],
+        systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : [])],
         label: "stage2.5-coverage",
         purpose: "scriptgen",
       });
@@ -1681,7 +1709,7 @@ async function runScript(
     const sectionExtra = [
       ...briefExtra,
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
-      ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows)] : []),
+      ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
       stepScaffoldBlock(),
     ];
     for (let i = alreadyDrafted; i < total; i++) {
@@ -1838,6 +1866,7 @@ async function runScript(
       sponsorName: sponsored ? setup.sponsorship?.sponsorName || "the sponsor" : "",
       brief: input.brief ?? "",
       briefExtra,
+      developerOk,
       stages,
     });
 
