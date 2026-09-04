@@ -91,26 +91,23 @@ function safeParse<T>(json: string | null): T | null {
 function hydrateStages(parsed: Partial<ScriptStages> | null): ScriptStages {
   const base = emptyStages();
   if (!parsed) return base;
+  // SPREAD, never a field-by-field list. This function used to name each field,
+  // and `videoWorkflows`/`videoSources` were added to ScriptStages long after it
+  // was written — so every read-modify-write through getRun + updateRun silently
+  // DELETED stage 1.6's workflow sheet and its video list. It also defeated the
+  // resume fix, which copies generically from a stages blob that had already
+  // been through here. A field added to ScriptStages is now carried by default;
+  // the explicit entries below are only the ones needing a shape guarantee.
+  //
+  // Runs that predate a given stage simply have none of it; the stages blob is a
+  // JSON column, so an added field needs no migration.
   return {
-    research: parsed.research ?? null,
+    ...base,
+    ...parsed,
     sources: Array.isArray(parsed.sources) ? parsed.sources : [],
-    factSheet: parsed.factSheet ?? null,
-    outline: parsed.outline ?? null,
-    // Runs that predate the outline-time coverage pass simply have none; the
-    // stages blob is a JSON column, so an added field needs no migration.
-    briefCoverage: parsed.briefCoverage ?? null,
-    hooks: parsed.hooks ?? null,
-    sponsorSegment: parsed.sponsorSegment ?? null,
     sections: Array.isArray(parsed.sections) ? parsed.sections : [],
-    outro: parsed.outro ?? null,
-    hooksWithCta: parsed.hooksWithCta ?? null,
-    ctaScript: parsed.ctaScript ?? null,
     ctaNotes: Array.isArray(parsed.ctaNotes) ? parsed.ctaNotes : [],
-    briefCheck: parsed.briefCheck ?? null,
     reviewNotes: Array.isArray(parsed.reviewNotes) ? parsed.reviewNotes : [],
-    reviewChecklist: parsed.reviewChecklist ?? null,
-    quality: parsed.quality ?? null,
-    claimAudit: parsed.claimAudit ?? null,
   };
 }
 
