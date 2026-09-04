@@ -720,7 +720,10 @@ export interface PlanRunResult {
   durationSec: number | null; plan: string | null; parsed: PlanLine[];
   measure: PlanMeasure | null;
   rounds: { round: number; penalty: number; measure: PlanMeasure; deviations: string[] }[];
-  beats: PlanBeat[]; research: string | null; costUsd: number; error: string | null;
+  beats: PlanBeat[]; research: string | null;
+  /** The motion-graphics stage. Null until it is first used. */
+  motion: PlanMotion | null;
+  costUsd: number; error: string | null;
   createdAt: number; updatedAt: number;
 }
 export interface PlanRunListItem {
@@ -730,11 +733,66 @@ export interface PlanRunListItem {
 export interface PlanJobSnapshot {
   runId: string; status: PlanRunStatus; stage: string; progress: number; error: string | null;
 }
+
+// Motion graphics for a finished plan: sample a look, approve one still, then
+// generate every full-screen card against it as the style reference.
+export interface GraphicSlot {
+  index: number; start: number; end: number; kind: string; text: string; durationSec: number;
+}
+export interface MotionSample { slotIndex: number; text: string; stillUrl: string; file: string }
+export interface MotionGraphicAsset {
+  index: number; start: number; end: number; text: string;
+  stillUrl: string; videoUrl: string;
+  /** Files in the run's motion dir. `file` is the clip cut to the slot's length. */
+  file: string; rawFile: string; durationSec: number;
+}
+export type MotionPhase =
+  | "idle" | "sampling" | "awaiting-approval" | "ready" | "generating" | "completed" | "failed";
+export interface PlanMotion {
+  phase: MotionPhase;
+  slots: GraphicSlot[];
+  samples: MotionSample[];
+  styleStillUrl: string | null;
+  styleExtra: string | null;
+  graphics: MotionGraphicAsset[];
+  stillsGenerated: number; clipsGenerated: number;
+  error: string | null; updatedAt: number;
+}
+export interface MotionJobSnapshot {
+  runId: string; phase: MotionPhase; stage: string; progress: number;
+  done: number; total: number; error: string | null;
+}
 export const plannerStatus =
   endpoint<Record<string, never>, { anthropicConfigured: boolean; groqConfigured: boolean; model: string }>("plannerStatus");
 /** Kick off a run; the work continues in the background. Poll planJobStatus. */
 export const startPlan = endpoint<PlanInput, { runId: string }>("startPlan");
 export const planJobStatus = endpoint<{ runId: string }, PlanJobSnapshot>("planJobStatus");
+
+/** Is Higgsfield configured server-side? Nothing below works without it. */
+export const motionStatus = endpoint<Record<string, never>, { higgsfieldConfigured: boolean }>("motionStatus");
+/** The stage's state, with the plan's card slots discovered from the plan. */
+export const getPlanMotion = endpoint<{ runId: string }, PlanMotion>("getPlanMotion");
+/**
+ * Generate a few STILLS of one card, so the look is judged before the other
+ * twenty are paid for. Poll motionJobStatus.
+ */
+export const startMotionSamples = endpoint<
+  { runId: string; slotIndex?: number; count?: number; styleExtra?: string },
+  { runId: string; slotIndex: number; count: number }
+>("startMotionSamples");
+/** Lock one sample in as the reference every other card is generated against. */
+export const approveMotionStyle = endpoint<
+  { runId: string; stillUrl: string; styleExtra?: string }, PlanMotion
+>("approveMotionStyle");
+/** Generate every card. Keeps what is already done unless `redo`. */
+export const startMotionGraphics = endpoint<
+  { runId: string; redo?: boolean }, { runId: string; total: number }
+>("startMotionGraphics");
+/** Redo ONE card. Runs inline — a single card is a full generation (~3 min). */
+export const regenerateMotionGraphic = endpoint<{ runId: string; index: number }, PlanMotion>(
+  "regenerateMotionGraphic",
+);
+export const motionJobStatus = endpoint<{ runId: string }, MotionJobSnapshot>("motionJobStatus");
 
 // ── Channel Audit ───────────────────────────────────────────────────────────
 // startAudit pauses at "awaiting-approval"; the page then calls

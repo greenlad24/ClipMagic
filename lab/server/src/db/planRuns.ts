@@ -14,6 +14,7 @@ import type {
   PlanMeasure,
   Beat,
   PlanCallUsage,
+  PlanMotion,
 } from "../planner/types.js";
 
 const now = () => Date.now();
@@ -31,6 +32,7 @@ interface PlanRunRow {
   calls_json: string | null;
   beats_json: string | null;
   research: string | null;
+  motion_json: string | null;
   cost_usd: number;
   error: string | null;
   created_at: number;
@@ -60,6 +62,7 @@ function hydrate(row: PlanRunRow): PlanRunResult {
     calls: parse<PlanCallUsage[]>(row.calls_json, []),
     beats: parse<Beat[]>(row.beats_json, []),
     research: row.research,
+    motion: parse<PlanMotion | null>(row.motion_json, null),
     costUsd: row.cost_usd ?? 0,
     error: row.error,
     createdAt: row.created_at,
@@ -86,6 +89,7 @@ export interface PlanRunPatch {
   calls?: PlanCallUsage[];
   beats?: Beat[];
   research?: string | null;
+  motion?: PlanMotion | null;
   costUsd?: number;
   error?: string | null;
 }
@@ -108,6 +112,7 @@ export function updateRun(id: string, patch: PlanRunPatch): void {
   if (patch.calls !== undefined) put("calls_json", JSON.stringify(patch.calls));
   if (patch.beats !== undefined) put("beats_json", JSON.stringify(patch.beats));
   if (patch.research !== undefined) put("research", patch.research);
+  if (patch.motion !== undefined) put("motion_json", patch.motion ? JSON.stringify(patch.motion) : null);
   if (patch.costUsd !== undefined) put("cost_usd", patch.costUsd);
   if (patch.error !== undefined) put("error", patch.error);
   if (!sets.length) return;

@@ -8,11 +8,23 @@ import {
   getPlanRun,
   listPlanRuns,
   deletePlanRun,
+  motionStatus,
+  getPlanMotion,
+  startMotionSamples,
+  approveMotionStyle,
+  startMotionGraphics,
+  regenerateMotionGraphic,
+  motionJobStatus,
   type PlanRunResult,
   type PlanRunListItem,
   type PlanJobSnapshot,
+  type PlanMotion,
+  type MotionJobSnapshot,
 } from 'zite-endpoints-sdk';
-import { ArrowLeft, Clapperboard, Copy, Loader2, Trash2, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
+import {
+  ArrowLeft, Clapperboard, Copy, Loader2, Trash2, AlertTriangle, CheckCircle2, Info,
+  Sparkles, RefreshCw, Check,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -314,6 +326,8 @@ export default function VideoPlannerPage() {
                   </div>
                 </div>
 
+                <MotionGraphics runId={run.runId} />
+
                 {run.research && (
                   <details className="rounded-lg border p-5">
                     <summary className="cursor-pointer text-sm font-medium">
@@ -361,6 +375,260 @@ export default function VideoPlannerPage() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The motion-graphics stage of a finished plan.
+ *
+ * Two steps on purpose, and the UI has to make the reason obvious: a plan
+ * carries ~20 generatable cards and each one costs credits, so the sample round
+ * generates STILLS of a single card, one gets approved, and that still is the
+ * reference the rest are generated against. Approving a look is what keeps
+ * twenty cards inside one visual world — the same words alone will not.
+ */
+function MotionGraphics({ runId }: { runId: string }) {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [motion, setMotion] = useState<PlanMotion | null>(null);
+  const [job, setJob] = useState<MotionJobSnapshot | null>(null);
+  const [styleExtra, setStyleExtra] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [redoing, setRedoing] = useState<number | null>(null);
+  const poll = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const asset = (file: string) => `/api/planner-motion/${runId}/${file}`;
+
+  const load = useCallback(async () => {
+    try {
+      const m = await getPlanMotion({ runId });
+      setMotion(m);
+      setStyleExtra((prev) => prev || m.styleExtra || '');
+      return m;
+    } catch { return null; }
+  }, [runId]);
+
+  const stop = () => { if (poll.current) { clearInterval(poll.current); poll.current = null; } };
+
+  const watch = useCallback(() => {
+    stop();
+    poll.current = setInterval(async () => {
+      try {
+        const snap = await motionJobStatus({ runId });
+        setJob(snap);
+        if (snap.phase !== 'sampling' && snap.phase !== 'generating') {
+          stop();
+          const m = await load();
+          if (snap.error) toast.error(snap.error);
+          else if (m?.phase === 'completed') toast.success(`${m.graphics.length} card(s) generated`);
+        }
+      } catch { stop(); }
+      // Cards take minutes each; polling faster only makes noise in the log.
+    }, 4000);
+  }, [runId, load]);
+
+  useEffect(() => {
+    motionStatus({}).then((r) => setConfigured(r.higgsfieldConfigured)).catch(() => setConfigured(null));
+    void load().then((m) => {
+      if (m && (m.phase === 'sampling' || m.phase === 'generating')) watch();
+    });
+    return stop;
+  }, [load, watch]);
+
+  const act = async (fn: () => Promise<unknown>, thenWatch = true) => {
+    setBusy(true);
+    try {
+      await fn();
+      if (thenWatch) watch();
+      await load();
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not start');
+    } finally { setBusy(false); }
+  };
+
+  const sample = () => act(() => startMotionSamples({ runId, styleExtra: styleExtra.trim() || undefined }));
+  const approve = (stillUrl: string) =>
+    act(() => approveMotionStyle({ runId, stillUrl, styleExtra: styleExtra.trim() || undefined }), false);
+  const generateAll = (redo = false) => act(() => startMotionGraphics({ runId, redo }));
+
+  const redo = async (index: number) => {
+    setRedoing(index);
+    try {
+      setMotion(await regenerateMotionGraphic({ runId, index }));
+      toast.success('Card regenerated');
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not regenerate');
+    } finally { setRedoing(null); }
+  };
+
+  if (!motion) return null;
+  const running = motion.phase === 'sampling' || motion.phase === 'generating';
+  const slots = motion.slots.length;
+
+  return (
+    <div className="rounded-lg border p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-medium">
+        <Sparkles className="h-4 w-4 text-[hsl(var(--chart-4))]" />
+        Motion graphics
+        <span className="font-normal text-muted-foreground">
+          {slots} full-screen card{slots === 1 ? '' : 's'} in this plan
+        </span>
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        The two text kinds only — a generated clip has no transparency, so it replaces the frame rather than
+        sitting over your footage. Screencasts, stock and talking head keep their real footage.
+      </p>
+
+      {configured === false && (
+        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 text-destructive" />
+          <span>
+            Higgsfield isn&apos;t configured, so nothing can be generated.{' '}
+            <Link to="/settings/postiz" className="underline">Add the API key and secret</Link>.
+          </span>
+        </div>
+      )}
+
+      {slots === 0 && (
+        <p className="text-sm text-muted-foreground">
+          This plan has no full-screen text cards, so there is nothing to generate.
+        </p>
+      )}
+
+      {configured && slots > 0 && (
+        <div className="space-y-4">
+          {/* ── style notes + the sample round ───────────────────────────── */}
+          {(motion.phase === 'idle' || motion.phase === 'awaiting-approval' || motion.phase === 'failed') && (
+            <div className="space-y-3">
+              <div>
+                <Label htmlFor="style">Style notes (optional)</Label>
+                <textarea
+                  id="style" rows={2} value={styleExtra} disabled={running || busy}
+                  onChange={(e) => setStyleExtra(e.target.value)}
+                  placeholder="Colours, type, anything the look must hit — carried into every card."
+                  className="mt-1.5 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <Button onClick={sample} disabled={running || busy} variant="outline" className="w-full">
+                {busy || running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                {motion.samples.length ? 'Generate new samples' : 'Generate style samples'}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Stills of your longest card only. You pick one, and it becomes the reference every other card is
+                generated against — so the look is settled before the rest are paid for.
+              </p>
+            </div>
+          )}
+
+          {/* ── progress ─────────────────────────────────────────────────── */}
+          {running && job && (
+            <div>
+              <div className="mb-2 flex items-center justify-between text-sm">
+                <span>{job.stage}</span>
+                <span className="text-muted-foreground">{job.done}/{job.total}</span>
+              </div>
+              <Progress value={job.progress * 100} />
+              <p className="mt-2 text-xs text-muted-foreground">
+                Each card is a still and then an animation of it — a few minutes each, two at a time. Finished
+                cards are saved as they land, so this can be left alone.
+              </p>
+            </div>
+          )}
+
+          {/* ── pick the look ────────────────────────────────────────────── */}
+          {motion.samples.length > 0 && motion.phase !== 'generating' && (
+            <div>
+              <div className="mb-2 text-xs font-medium text-muted-foreground">
+                {motion.styleStillUrl ? 'The approved look' : 'Pick the look — click the one that is right'}
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {motion.samples.map((sm) => {
+                  const chosen = motion.styleStillUrl === sm.stillUrl;
+                  return (
+                    <button
+                      key={sm.file} onClick={() => approve(sm.stillUrl)} disabled={busy}
+                      className={`relative overflow-hidden rounded-md border-2 transition ${
+                        chosen ? 'border-[hsl(var(--chart-3))]' : 'border-transparent hover:border-border'
+                      }`}
+                    >
+                      <img src={asset(sm.file)} alt={sm.text} className="aspect-video w-full object-cover" />
+                      {chosen && (
+                        <span className="absolute right-1.5 top-1.5 rounded-full bg-[hsl(var(--chart-3))] p-1">
+                          <Check className="h-3 w-3 text-background" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── generate the set ─────────────────────────────────────────── */}
+          {motion.styleStillUrl && !running && (
+            <Button onClick={() => generateAll(false)} disabled={busy} className="w-full">
+              {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {motion.graphics.length
+                ? `Generate the remaining ${slots - motion.graphics.length} card(s)`
+                : `Generate all ${slots} cards`}
+            </Button>
+          )}
+
+          {/* ── the cards ────────────────────────────────────────────────── */}
+          {motion.graphics.length > 0 && (
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <div className="text-xs font-medium text-muted-foreground">
+                  {motion.graphics.length} of {slots} generated
+                </div>
+                {motion.graphics.length === slots && (
+                  <Button size="sm" variant="ghost" onClick={() => generateAll(true)} disabled={busy}>
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" /> Redo all
+                  </Button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {motion.graphics.map((g) => (
+                  <div key={g.index} className="overflow-hidden rounded-md border">
+                    <video src={asset(g.file)} controls preload="metadata" className="aspect-video w-full bg-black" />
+                    <div className="flex items-start justify-between gap-2 px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="font-mono text-[11px] text-muted-foreground">
+                          [{mmss(g.start)} to {mmss(g.end)}] · {g.durationSec}s
+                        </div>
+                        <div className="truncate text-xs">{g.text}</div>
+                      </div>
+                      <button
+                        onClick={() => redo(g.index)} disabled={redoing !== null}
+                        title="Regenerate this card"
+                        className="mt-0.5 text-muted-foreground transition hover:text-foreground disabled:opacity-40"
+                      >
+                        {redoing === g.index
+                          ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          : <RefreshCw className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {motion.error && (
+            <pre className="whitespace-pre-wrap rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+              {motion.error}
+            </pre>
+          )}
+
+          {(motion.stillsGenerated > 0 || motion.clipsGenerated > 0) && (
+            <p className="text-xs text-muted-foreground">
+              {motion.stillsGenerated} still{motion.stillsGenerated === 1 ? '' : 's'} and{' '}
+              {motion.clipsGenerated} animation{motion.clipsGenerated === 1 ? '' : 's'} generated for this plan —
+              each one is billed by Higgsfield, including the samples and any redo.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

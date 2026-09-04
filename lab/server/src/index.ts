@@ -9,11 +9,13 @@ import { requireSession } from "./auth/middleware.js";
 import { youtubeOAuthRouter } from "./audit/oauthRoutes.js";
 import { whatsappProxy } from "./whatsappProxy.js";
 import { tutorialRouter } from "./tutorial/route.js";
+import { plannerMotionRouter } from "./routes/plannerMotion.js";
 import { startWorker } from "./render/worker.js";
 import { failInterruptedRuns } from "./db/bulkPreview.js";
 import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
+import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
 import { startMonitor } from "./engage/monitor.js";
 import { startReplyWorker } from "./engage/replyWorker.js";
 import { startEngageScheduler } from "./skool/engageSchedule.js";
@@ -157,6 +159,12 @@ app.use("/wa", whatsappProxy());
 // other tool; only the finished mp4 needs its own route (Range requests, so the
 // player can seek). After requireSession, like everything above.
 app.use("/api/tutorial", tutorialRouter());
+
+// Video Planner motion graphics — the generated cards for a plan run. A plain
+// route, not /api/fn, because the clips need Range requests to scrub; and not
+// express.static over the planner dir, because that dir also holds each run's
+// multi-gigabyte source narration. See routes/plannerMotion.ts.
+app.use("/api/planner-motion", plannerMotionRouter());
 
 // Serve a frontend. Preference order:
 //   1. A built Vite app at FRONTEND_DIR (the full ClipMagic UI), if present.

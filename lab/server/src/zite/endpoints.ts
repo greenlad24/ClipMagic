@@ -203,9 +203,19 @@ import {
 import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
 import { startPlan as runStartPlan, planJobStatus as getPlanSnapshot } from "../planner/run.js";
 import {
+  approveMotionStyle as approveMotionStyleState,
+  motionJobStatus as getMotionSnapshot,
+  motionStateFor,
+  regenerateGraphic,
+  startMotionGraphics as runStartMotionGraphics,
+  startMotionSamples as runStartMotionSamples,
+} from "../planner/motionRun.js";
+import { higgsfieldConfigured } from "../planner/higgsfield.js";
+import {
   startAudit as runStartAudit,
   resumeAudit as runResumeAudit,
   auditJobStatus as getAuditSnapshot,
+  skipAuditStage as runSkipAuditStage,
   withAuditUsage,
 } from "../audit/run.js";
 import {
@@ -3654,6 +3664,87 @@ const deletePlanRun: Handler = async (input) => {
   return { ok: true };
 };
 
+// ── Video Planner: motion graphics ──────────────────────────────────────────
+// A finished plan's full-screen text cards, generated. Two starts by design:
+// sample ONE card's look for a few credits, approve a still, then generate the
+// other twenty against it as the style reference. See planner/motionRun.ts.
+
+/** Turn a thrown message from the motion stage into a client error. */
+function motionError(err: unknown): never {
+  const message = err instanceof Error ? err.message : String(err);
+  const code = /not found/i.test(message) ? "NOT_FOUND" : "BAD_REQUEST";
+  throw new ZiteError({ code, message });
+}
+
+const requireRunId = (input: any): string => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return runId;
+};
+
+const motionStatus: Handler = async () => ({ higgsfieldConfigured: higgsfieldConfigured() });
+
+/** The stage's state for one run, with the plan's card slots discovered. */
+const getPlanMotion: Handler = async (input) => {
+  const state = motionStateFor(requireRunId(input));
+  if (!state) throw new ZiteError({ code: "NOT_FOUND", message: "Plan run not found." });
+  return state.motion;
+};
+
+const startMotionSamples: Handler = async (input) => {
+  try {
+    return runStartMotionSamples({
+      runId: requireRunId(input),
+      slotIndex: typeof input?.slotIndex === "number" ? input.slotIndex : undefined,
+      count: typeof input?.count === "number" ? input.count : undefined,
+      styleExtra: typeof input?.styleExtra === "string" ? input.styleExtra : undefined,
+    });
+  } catch (err) {
+    motionError(err);
+  }
+};
+
+const approveMotionStyle: Handler = async (input) => {
+  const stillUrl: string | undefined = input?.stillUrl;
+  if (!stillUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "Pick one of the generated stills." });
+  try {
+    return approveMotionStyleState({
+      runId: requireRunId(input),
+      stillUrl,
+      styleExtra: typeof input?.styleExtra === "string" ? input.styleExtra : undefined,
+    });
+  } catch (err) {
+    motionError(err);
+  }
+};
+
+const startMotionGraphics: Handler = async (input) => {
+  try {
+    return runStartMotionGraphics({ runId: requireRunId(input), redo: Boolean(input?.redo) });
+  } catch (err) {
+    motionError(err);
+  }
+};
+
+/** Redo one card. Slower than the others — a single card is a full generation. */
+const regenerateMotionGraphic: Handler = async (input) => {
+  const index = input?.index;
+  if (typeof index !== "number") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "index (the plan line) is required." });
+  }
+  try {
+    return await regenerateGraphic({ runId: requireRunId(input), index });
+  } catch (err) {
+    motionError(err);
+  }
+};
+
+const motionJobStatus: Handler = async (input) => {
+  const snap = getMotionSnapshot(requireRunId(input));
+  if (!snap) throw new ZiteError({ code: "NOT_FOUND", message: "Plan run not found." });
+  return snap;
+};
+
 // Post-generation paragraph refinement: rewrite ONE pasted paragraph per Jake's
 // instruction, grounded in the run's own research + fact sheet. Returns the full
 // updated (persisted) chat thread plus the cost of this one call.
@@ -7071,9 +7162,17 @@ export const HANDLERS: Record<string, Handler> = {
   getPlanRun,
   listPlanRuns,
   deletePlanRun,
+  motionStatus,
+  getPlanMotion,
+  startMotionSamples,
+  approveMotionStyle,
+  startMotionGraphics,
+  regenerateMotionGraphic,
+  motionJobStatus,
   auditStatus,
   startAudit,
   auditJobStatus,
+  skipAuditStep,
   approveAuditMarket,
   getAuditRun,
   listAuditRuns,

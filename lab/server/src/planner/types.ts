@@ -127,10 +127,98 @@ export interface PlanRunResult {
   beats: Beat[];
   /** The verified UI fact sheet the screencast instructions were grounded in. */
   research: string | null;
+  /**
+   * The generated full-screen cards, and where that stage got to. Null until
+   * the motion stage is first used — planning never touches it.
+   */
+  motion: PlanMotion | null;
   costUsd: number;
   error: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+// ── Motion graphics (the plan's full-screen cards, generated) ────────────────
+// Only the two text kinds can be generated: Higgsfield's output is opaque
+// video, so a clip can REPLACE a frame but never sit over Jake's own footage.
+
+/** One plan line that means "cut away to a full-screen card", so it can be generated. */
+export interface GraphicSlot {
+  /** Index into the plan's own line order, so a result can be put back in place. */
+  index: number;
+  start: number;
+  end: number;
+  kind: string;
+  /** The words that go ON the card. */
+  text: string;
+  durationSec: number;
+}
+
+/**
+ * One still generated during the sample round. Jake picks one of these and it
+ * becomes the style reference every other card is generated against — an
+ * approved frame is a more precise spec than any written style guide.
+ */
+export interface MotionSample {
+  slotIndex: number;
+  text: string;
+  /** Higgsfield's hosted still. This URL is what gets reused as the reference. */
+  stillUrl: string;
+  /** Local copy, relative to the run's motion directory. */
+  file: string;
+}
+
+/** A finished card: still, animation, and the clip cut to the slot's length. */
+export interface MotionGraphicAsset {
+  index: number;
+  start: number;
+  end: number;
+  text: string;
+  stillUrl: string;
+  videoUrl: string;
+  /** The slot-fitted clip — this is the one to cut into the timeline. */
+  file: string;
+  /** Higgsfield's own 5s/10s render, kept so a fit can be redone without paying again. */
+  rawFile: string;
+  durationSec: number;
+}
+
+export type MotionPhase =
+  | "idle"                // nothing generated yet
+  | "sampling"            // generating style samples
+  | "awaiting-approval"   // samples are ready; waiting for Jake to pick one
+  | "ready"               // a style is approved; the full set can be generated
+  | "generating"          // making every card against the approved reference
+  | "completed"
+  | "failed";
+
+/** Everything the motion-graphics stage knows about one plan run. */
+export interface PlanMotion {
+  phase: MotionPhase;
+  /** Every generatable slot in the plan, in plan order. */
+  slots: GraphicSlot[];
+  samples: MotionSample[];
+  /** The approved reference still. Generating the full set requires this. */
+  styleStillUrl: string | null;
+  /** Free-text style notes carried into every prompt alongside the reference. */
+  styleExtra: string | null;
+  graphics: MotionGraphicAsset[];
+  /** Honest count of what was actually generated, since each one costs credits. */
+  stillsGenerated: number;
+  clipsGenerated: number;
+  error: string | null;
+  updatedAt: number;
+}
+
+/** Live progress while a sample round or a full generation is in flight. */
+export interface MotionJobSnapshot {
+  runId: string;
+  phase: MotionPhase;
+  stage: string;
+  progress: number; // 0..1
+  done: number;
+  total: number;
+  error: string | null;
 }
 
 export interface PlanRunListItem {

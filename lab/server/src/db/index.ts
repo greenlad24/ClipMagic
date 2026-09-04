@@ -438,6 +438,11 @@ CREATE TABLE IF NOT EXISTS plan_runs (
   rounds_json   TEXT,                 -- per-round measurements from the repair loop
   beats_json    TEXT,                 -- Beat[] (pauses + emphasis)
   research      TEXT,                 -- verified UI fact sheet
+  -- PlanMotion: the generated full-screen cards + the approved style
+  -- reference. ⚠️ Also in the ALTER block below, which is what supplies it to
+  -- an existing database; this CREATE is the only thing that supplies it to a
+  -- fresh one.
+  motion_json   TEXT,
   cost_usd      REAL NOT NULL DEFAULT 0,
   error         TEXT,
   created_at    INTEGER NOT NULL,
@@ -1136,6 +1141,20 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   const cols = db.prepare("PRAGMA table_info(plan_runs)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "calls_json")) {
     db.exec("ALTER TABLE plan_runs ADD COLUMN calls_json TEXT");
+  }
+}
+
+/**
+ * Additive migration on plan_runs: the motion-graphics stage (PlanMotion) —
+ * the plan's generatable card slots, the style still Jake approved, and the
+ * clips generated against it. On the run row rather than a table of its own
+ * because it is read and written whole, always for one run, exactly like the
+ * rounds and the beat map beside it.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(plan_runs)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "motion_json")) {
+    db.exec("ALTER TABLE plan_runs ADD COLUMN motion_json TEXT");
   }
 }
 

@@ -94,6 +94,23 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // so with Gemini already set, kie.ai is the only new account required.
   { key: "SEGMIND_API_KEY", label: "Segmind API key", group: "Avatar Narrator", connects: "The Avatar Narrator's default engine — Segmind hosts Seedance 2.5 (portrait + narration -> generated presenter) at $0.1065/sec at 480p and $0.2389/sec at 720p, roughly 24% under kie.ai for the same ByteDance model. Create a key at segmind.com (console -> API keys), then paste it here. Server-only; never sent to the browser." },
 
+  // ── Video Planner motion graphics (LAB tool — the plan's full-screen cards) ─
+  // Higgsfield authenticates with a KEY AND A SECRET in a single
+  // `Authorization: Key <id>:<secret>` header, so one without the other cannot
+  // sign a request — getHiggsfieldCredentials() returns null unless both are
+  // set, and the tool reports itself unconfigured rather than offering to
+  // generate and then failing at submit time. Consumed by this lab server
+  // (planner/higgsfield.ts), never by the Postiz container, so both are in
+  // LAB_ONLY_KEYS and excluded from the emitted Postiz env file.
+  //
+  // These were in this registry once before, as one of the Avatar Narrator's
+  // alternative engines, and were removed with the rest of that cleanup on
+  // 2026-08-10. They are back because a different tool needs them: the Video
+  // Planner generates each full-screen text card as a still and then animates
+  // it, both through Higgsfield's public REST API.
+  { key: "HIGGSFIELD_API_KEY", label: "Higgsfield API key", group: "Video Planner motion graphics", connects: "Generates the plan's full-screen text cards — the still (nano-banana, which renders legible headlines) and the animation of it (Kling image-to-video). Create a key pair at higgsfield.ai (account -> API), then paste the key here and the secret below. Both are required. Server-only; never sent to the browser." },
+  { key: "HIGGSFIELD_API_SECRET", label: "Higgsfield API secret", group: "Video Planner motion graphics", connects: "The secret half of the Higgsfield key pair. Sent together as a single `Key <id>:<secret>` authorization header — a key on its own cannot sign a request, so the motion stage stays switched off until both are set. Server-only; never sent to the browser." },
+
   // ── Tutorial Studio (LAB tool — topic -> finished talking-head reel) ────────
   // apimart is a single account fronting three models the reel pipeline needs:
   // Qwen (script), GPT Image 2 (start frame) and Wan 3.0 (the talking clip, the
@@ -561,9 +578,10 @@ export function getElevenLabsApiKey(): string | null {
 }
 /**
  * Higgsfield credentials. Returned as a PAIR because the API authenticates with
- * HTTP Basic over `key:secret` — a key on its own cannot sign a request, so
- * "configured" has to mean both are present or the engine would offer itself
- * and then fail at submit time.
+ * both halves in one header — `Authorization: Key <id>:<secret>`. NOT HTTP
+ * Basic, as this comment used to say: base64-encoding the pair returns a 401.
+ * A key on its own cannot sign a request, so "configured" has to mean both are
+ * present or the tool would offer itself and then fail at submit time.
  */
 export function getHiggsfieldCredentials(): { key: string; secret: string } | null {
   const key = (process.env.HIGGSFIELD_API_KEY || "").trim() || readStore().HIGGSFIELD_API_KEY || "";
