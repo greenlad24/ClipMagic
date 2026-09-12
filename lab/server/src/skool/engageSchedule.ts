@@ -35,6 +35,7 @@ import {
   type Attachment,
   type Draft,
   type PostKind,
+  type PostRequest,
 } from "./engageGen.js";
 import { mentionMember, newMembers, recordWelcomed, type SkoolMember } from "./members.js";
 import { getSkoolSettings } from "../db/skool.js";
@@ -47,6 +48,7 @@ import { videosForSubject } from "./channelVideos.js";
 import { writeLessonForNewVideo } from "./videoLessons.js";
 import { runReplySweep } from "./engageReplies.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
+import { checkOutgoing, repairInstruction } from "./outgoing.js";
 
 /** Weekday keys as `Intl` reports them, lowercased. */
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
@@ -1153,6 +1155,42 @@ function updateSlot(slotKey: string, patch: Record<string, unknown>): void {
  *     slot keeps its place;
  *   • abandoned — attempts or the staleness limit ran out, recorded with why.
  */
+/**
+ * The refusal the previous attempt died on, handed to the next attempt's FIRST
+ * draft rather than only to its repair pass.
+ *
+ * ⚠️ IT IS THE CHEAP HALF OF NOT ABANDONING. A fresh attempt with no memory is
+ * free to make the same mistake — the 2026-09-06 post invented a classroom link,
+ * and nothing about the next day's identical request would have steered it away
+ * from inventing another. `repairInstruction` already writes the exact wording
+ * for this; the only reason it was not used here is that the string lives on the
+ * slot as a `last_error` rather than as an `OutgoingCheck`, so the note is
+ * rebuilt from what the row kept.
+ *
+ * Returns undefined unless the last attempt was refused by the check — a
+ * publish-step failure says nothing about the words, and telling a drafter to
+ * fix a draft that was fine is how a good post gets rewritten into a worse one.
+ */
+function priorRefusalNote(slot: Slot): string | undefined {
+  const last = (slot.lastError ?? "").trim();
+  if (slot.attempts < 1 || !last.startsWith("Refused by the outgoing check")) return undefined;
+  return [
+    "⚠️ AN EARLIER DRAFT OF THIS EXACT POST WAS REFUSED BY THE PRE-SEND CHECK, AND IT WAS NOT PUBLISHED.",
+    "You are writing it again from scratch. This instruction overrides anything above that conflicts with it.",
+    "",
+    "What the check said about that draft:",
+    last,
+    "",
+    "Write a complete post that does not do that. In particular:",
+    "- Never write a URL you cannot see in what you were given. If no link in your grounding teaches the",
+    "  thing you just named, say it in words and link nothing at all — a post with no link publishes, and a",
+    "  post with an invented one does not.",
+    "- Write only the post. Never write about the post, the check, the refusal, or a link you decided",
+    "  against — no \"wait\", no \"actually that link isn't one I can use\", nothing addressed to yourself.",
+    "  If you change your mind mid-sentence, delete the sentence.",
+  ].join("\n");
+}
+
 async function attemptSlot(
   communityUrl: string,
   slot: Slot,
@@ -1198,6 +1236,10 @@ async function attemptSlot(
           // attachment is part of that and must not be picked again.
           attachment: parseAttachment(slot.attachmentJson),
           cited: [],
+          // Empty for the same reason `cited` is: the grounding set existed only
+          // at draft time, and these stored words already passed the exact check
+          // then. A replay is covered by the backstop inside `createPost`.
+          shownUrls: [],
           // Replayed with everything else: a retry posts the comment that was
           // drafted, not a fresh line written by a second call.
           welcomeClose: slot.welcomeClose,
@@ -1208,7 +1250,10 @@ async function attemptSlot(
 
   if (!draft) {
     const feed = await readFeed(communityUrl, 1).catch(() => null);
-    const res = await draftPost({
+    // Held as a value rather than passed inline: the pre-send check below may
+    // need to ask for the same post again with the refusal attached, and a
+    // second literal would be a second chance to drift from this one.
+    const request: PostRequest = {
       communityUrl,
       // ⚠️ THE SAME VOICE PROMPT THE MANUAL ENDPOINTS USE, AND FOR THE SAME
       // REASON THE DRAFTER REFUSES WITHOUT ONE: a post signed "Jake Dawson"
@@ -1260,7 +1305,14 @@ async function attemptSlot(
       // register for the greeting.
       welcomeMessage: getSkoolSettings().welcomeMessageMd,
       voiceGuide: getSkoolSettings().voiceGuideMd,
-    }).catch((e) => ({ draft: null, error: e instanceof Error ? e.message : String(e) }));
+      // What the LAST attempt was refused for, if it was refused. Empty on a
+      // first attempt and on a retry that failed at the publish step.
+      repair: priorRefusalNote(slot),
+    };
+    const res = await draftPost(request).catch((e) => ({
+      draft: null,
+      error: e instanceof Error ? e.message : String(e),
+    }));
 
     if (res.error || !res.draft) {
       const msg = res.error ?? "The drafter returned nothing.";
@@ -1271,7 +1323,89 @@ async function attemptSlot(
         ? `${credentialLabel()} — still queued, attempt ${attempts}/${cfg.maxAttempts}, retrying in ${cfg.retryMinutes} min.`
         : `Draft failed (attempt ${attempts}/${cfg.maxAttempts}): ${msg}`;
     }
-    draft = res.draft;
+    // ⚠️⚠️ CHECKED HERE, ON THE FRESH DRAFT, BECAUSE THIS IS THE ONLY MOMENT THE
+    // GROUNDING SET EXISTS. A retry replays the stored words with `cited: []`,
+    // and an empty allow-list is not the same instruction as no allow-list —
+    // it would refuse every classroom link in a post that already passed. So
+    // the exact check runs once, on the words as written, and the backstop
+    // inside `createPost` covers every later attempt.
+    //
+    // ⚠️⚠️ IT USED TO ABANDON THE DAY, AND THAT WAS THE WRONG END OF THE
+    // TRADE-OFF. The reasoning was sound as far as it went — the stored words
+    // are replayed on retry, so twelve more attempts would refuse the identical
+    // text twelve more times — but the conclusion, "a day missed with its reason
+    // on the row is the honest outcome", assumed somebody reads the row. Jake,
+    // 2026-09-02: "I'm not checking the skool agent everyday — I want it to work
+    // automatically and never 'left for you'." A missed Tuesday is a promise to
+    // 73 members quietly broken.
+    //
+    // So the words are not replayed: ONE repair pass re-drafts with the refusal
+    // named (`repairInstruction`), and the fresh text is checked exactly the same
+    // way. One, not a loop — a second refusal after being told precisely what was
+    // wrong is a draft that is not going to come right, and a queue that spends
+    // $0.07 a turn forever is its own failure.
+
+    // The exact check, in one place, so the repaired draft is judged by the
+    // same rules and the same grounding set as the first one.
+    const checkPost = (d: Draft) =>
+      checkOutgoing(`${d.title}\n\n${d.body}`, {
+        surface: "post",
+        communityUrl,
+        // Shown, then cited — see the same widening in `engageReplies`. A lesson
+        // the drafter was handed is real whether or not it listed it.
+        allowedUrls: [...d.shownUrls, ...d.cited.map((c) => c.url)],
+      });
+
+    let candidate: Draft = res.draft;
+    let gate = checkPost(candidate);
+    if (!gate.ok) {
+      console.warn(`[skool:engage] ${slot.slotKey} refused, repairing once — ${gate.detail}`);
+      const repaired = await draftPost({ ...request, repair: repairInstruction(gate) }).catch((e) => ({
+        draft: null,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      if (repaired.draft) {
+        // The repaired text is what gets judged from here, pass or fail — the
+        // refusal a reader sees should name what the LAST draft did wrong.
+        gate = checkPost(repaired.draft);
+        if (gate.ok) candidate = repaired.draft;
+      } else if (repaired.error && isRateLimited(repaired.error)) {
+        // The window shutting between the two calls says nothing about the post.
+        // Stay queued and let the backoff bring the whole attempt round again.
+        updateSlot(slot.slotKey, { attempts, next_attempt_at: backoff, last_error: repaired.error });
+        return `${credentialLabel()} — refused draft could not be repaired yet, still queued, attempt ${attempts}/${cfg.maxAttempts}.`;
+      }
+    }
+    if (!gate.ok) {
+      // ⚠️⚠️ REFUSED TWICE ENDS THE ATTEMPT, NOT THE DAY. It used to abandon the
+      // slot here, and the reasoning was the one written above the repair pass:
+      // a third try would only "spend $0.07 a turn forever". But the words that
+      // were refused are NEVER STORED — `title`/`body` stay empty until a draft
+      // passes — so the next attempt is not the same draft again, it is a fresh
+      // one from the same subject, and it carries the refusal with it (see
+      // `priorRefusalNote`). Abandoning threw that away after ONE attempt out of
+      // twelve.
+      //
+      // Measured 2026-09-06, and it is why this changed: the Sunday video post
+      // for "7 Claude Skills That Actually Save Time" drafted a classroom link
+      // that was not in its grounding, and the repair came back with the link
+      // still there AND the model's own second-guessing typed into the body
+      // ("Wait — that lesson link isn't one I ca…"). Both drafts were correctly
+      // refused; the day was then abandoned with `attempts` at 1, and the video
+      // was never announced. Jake, 2026-09-02: "I want it to work automatically
+      // and never 'left for you'."
+      //
+      // `maxAttempts` and `maxSlotAgeHours` still bound it — twelve attempts at
+      // two drafts each, inside the staleness window, and then the ordinary
+      // exhaustion path abandons it with the last refusal on the row.
+      updateSlot(slot.slotKey, { attempts, next_attempt_at: backoff, last_error: gate.detail });
+      return (
+        `Refused twice, so nothing was published on this attempt — redrafting from scratch in ` +
+        `${cfg.retryMinutes} min (attempt ${attempts}/${cfg.maxAttempts}): ${gate.detail}`
+      );
+    }
+
+    draft = candidate;
     updateSlot(slot.slotKey, {
       title: draft.title,
       body: draft.body,

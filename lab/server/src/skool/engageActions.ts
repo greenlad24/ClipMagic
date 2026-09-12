@@ -34,6 +34,7 @@ import { attachToComposer } from "./attachments.js";
 import { typeMentions } from "./mentions.js";
 import type { SkoolMember } from "./members.js";
 import type { Attachment } from "./engageGen.js";
+import { checkOutgoing } from "./outgoing.js";
 
 export interface PostResult {
   ok: boolean;
@@ -300,6 +301,12 @@ async function pasteIntoReplyEditor(text: string): Promise<ActionResult> {
  * so the body is APPENDED and the blank-composer rule from `createPost` cannot
  * apply — the field is legitimately non-empty before we type.
  */
+/**
+ * Below this, a comment body is not distinctive enough to be looked for on its
+ * own — it needs the author's name beside it. See the join in `replyToComment`.
+ */
+const SHORT_SNIPPET = 12;
+
 export async function replyToComment(input: {
   communityUrl: string;
   slug: string;
@@ -322,17 +329,16 @@ export async function replyToComment(input: {
   const text = input.text.trim();
   if (!text) return { ok: false, detail: "An empty reply was not sent.", replyId: null };
 
+  // The same backstop as `createPost`, on the surface where a bad line is
+  // public. See the note there for why it lives in the write path.
+  const gate = checkOutgoing(text, { surface: "comment", communityUrl: input.communityUrl });
+  if (!gate.ok) return { ok: false, detail: gate.detail, replyId: null };
+
   // The join key. Long enough to be distinctive, short enough to survive the
   // whitespace and entity differences between the API's text and the DOM's.
   const snippet = input.commentBody.replace(/\s+/g, " ").trim().slice(0, 60);
-  if (snippet.length < 12) {
-    return {
-      ok: false,
-      detail:
-        `That comment is only ${snippet.length} characters, which is too short to locate reliably on the page. ` +
-        `Refusing rather than risk replying under somebody else's comment.`,
-      replyId: null,
-    };
+  if (!snippet) {
+    return { ok: false, detail: "That comment has no text to find it by on the page, so it was not answered.", replyId: null };
   }
 
   // ⚠️ CHECK SKOOL, NOT OUR OWN RECORD, IMMEDIATELY BEFORE WRITING. The worker
@@ -344,8 +350,31 @@ export async function replyToComment(input: {
   if (!target) return { ok: false, detail: `Comment ${input.commentId} is no longer on that post — it may have been deleted.`, replyId: null };
   if (target.answeredByMe) return { ok: false, detail: `That comment already has a reply from this account. Not answering it twice.`, replyId: null };
 
+  // ⚠️⚠️ THE AUTHOR'S NAME IS THE OTHER HALF OF THE JOIN, AND IT IS WHAT MAKES A
+  // ONE-WORD COMMENT ANSWERABLE. This used to refuse any comment under 12
+  // characters outright, on the grounds that a short body cannot be told apart
+  // from the same words inside a longer one. Jake, 2026-09-07: a comment reading
+  // "Claude" — six characters, and the answer to "which one do you use?" — was
+  // refused for that reason, and it was the comment that most needed answering.
+  // A Skool comment card carries the member's NAME as well as the body, so the
+  // smallest block containing BOTH pins "Claude" by Mathias exactly as well as
+  // it pins a paragraph. The ambiguity check below is unchanged and still
+  // refuses when two cards genuinely match, so nothing lands under the wrong
+  // member; a short comment simply stops being refused before it is even looked
+  // for.
+  const author = (target.authorName || "").replace(/\s+/g, " ").trim();
+  if (snippet.length < SHORT_SNIPPET && !author) {
+    return {
+      ok: false,
+      detail:
+        `That comment is only ${snippet.length} characters and carries no author name, so there is nothing left to ` +
+        `locate it by. Refusing rather than risk replying under somebody else's comment.`,
+      replyId: null,
+    };
+  }
+
   const opened = await withSkoolPage(async (page) => {
-    const found = await page.evaluate((want: string) => {
+    const found = await page.evaluate((arg: { want: string; author: string; shortAt: number }) => {
       const doc: any = (globalThis as any).document;
       const win: any = globalThis;
       const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
@@ -357,17 +386,36 @@ export async function replyToComment(input: {
         .filter((b) => norm(b.textContent).toLowerCase() === "reply")
         .filter(vis);
 
-      const hits: { btn: any; size: number }[] = [];
-      for (const btn of buttons) {
-        let node: any = btn;
-        for (let hop = 0; hop < 9 && node; hop++) {
-          node = node.parentElement;
-          if (!node) break;
-          if (norm(node.textContent).includes(want)) {
-            hits.push({ btn, size: (node.textContent || "").length });
+      // The smallest ancestor of each Reply button that contains what we are
+      // looking for. `needAuthor` demands the member's name in that SAME block:
+      // the walk keeps going outwards until one holds both, which is the comment
+      // card, so two members who wrote the same short line stay separable.
+      const collect = (needAuthor: boolean) => {
+        const found: { btn: any; size: number }[] = [];
+        for (const btn of buttons) {
+          let node: any = btn;
+          for (let hop = 0; hop < 9 && node; hop++) {
+            node = node.parentElement;
+            if (!node) break;
+            const t = norm(node.textContent);
+            if (!t.includes(arg.want)) continue;
+            if (needAuthor && !t.includes(arg.author)) continue;
+            found.push({ btn, size: (node.textContent || "").length });
             break;
           }
         }
+        return found;
+      };
+
+      // Author-scoped first, because it is strictly the more precise of the two.
+      // The body-only fallback is what every comment answered before this change
+      // used, and it stays for the case where Skool renders the name somewhere
+      // this cannot see it — but ONLY for a body long enough to stand alone. A
+      // short one gets no fallback: that is the whole reason the scoping exists.
+      let hits = arg.author ? collect(true) : [];
+      if (hits.length === 0) {
+        if (arg.want.length < arg.shortAt) return { ok: false, why: "not-found-short", count: 0 };
+        hits = collect(false);
       }
       if (hits.length === 0) return { ok: false, why: "not-found", count: 0 };
       // The smallest containing block is the comment itself; larger ones are the
@@ -386,7 +434,7 @@ export async function replyToComment(input: {
         return { ok: false, why: "offscreen", count: hits.length };
       }
       return { ok: true, x, y, count: hits.length };
-    }, snippet);
+    }, { want: snippet, author, shortAt: SHORT_SNIPPET });
 
     if (!found?.ok) return found;
     await page.mouse.click(found.x, found.y, { delay: 40 });
@@ -396,6 +444,7 @@ export async function replyToComment(input: {
   if (!opened?.ok) {
     const why: Record<string, string> = {
       "not-found": `No comment on that page contains "${snippet.slice(0, 40)}…", so its Reply button could not be found.`,
+      "not-found-short": `No comment on that page shows "${snippet}" under ${author}'s name, and at ${snippet.length} characters it is too short to look for on its own. Refusing rather than risk replying under somebody else's comment.`,
       ambiguous: `That comment's opening matches ${opened?.count ?? 2} separate blocks on the page. Refusing rather than guessing which member gets the reply.`,
       offscreen: "The Reply button would not come into view, so it was not clicked.",
     };
@@ -802,6 +851,17 @@ export async function createPost(input: CreatePostInput): Promise<PostResult> {
   const body = input.body.trim();
   if (!title) return FAIL("A post needs a title.");
   if (body.length < 50) return FAIL(`The body is only ${body.length} characters — refusing to publish that.`);
+
+  // ⚠️⚠️ THE BACKSTOP, AND IT IS HERE BECAUSE THIS IS THE DOOR EVERY CALLER GOES
+  // THROUGH. The scheduler runs the same check at draft time, where the
+  // grounding set still exists and a fabricated lesson link can be caught
+  // exactly. This one has no grounding set and catches what needs none: a
+  // leaked placeholder, an income claim, a price on the community, a shortener,
+  // a runaway length. The endpoints, the UI's Publish button and the retry path
+  // all arrive here, and a guard only the scheduler calls is one the other
+  // three walk past.
+  const gate = checkOutgoing(`${title}\n\n${body}`, { surface: "post", communityUrl: input.communityUrl });
+  if (!gate.ok) return FAIL(gate.detail);
 
   const log: string[] = [];
   const step = (s: string): void => {

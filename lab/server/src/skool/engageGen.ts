@@ -35,6 +35,8 @@ import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
 import { classroomOutline, retrieve, retrievePosts, type Retrieved, type RetrievedPost } from "./knowledge.js";
 import { allowedCourseSlugs, type Entitlement } from "./access.js";
 import { youtubeUrl, videosForSubject } from "./channelVideos.js";
+import { policyBlock } from "./safety.js";
+import { linksIn } from "./outgoing.js";
 
 /**
  * Something the composer attaches to a post, beyond its words.
@@ -81,6 +83,26 @@ export interface Draft {
   /** Lessons the draft was grounded in, for the audit trail and the read-back. */
   cited: { title: string; url: string }[];
   /**
+   * Every community URL the drafter was SHOWN — the retrieved lessons and posts,
+   * whether or not it declared them in `cited`.
+   *
+   * ⚠️⚠️ THIS EXISTS BECAUSE THE PRE-SEND CHECK WAS ASKING THE WRONG LIST. Its
+   * link rule refuses a community URL that "was not in what the drafter was
+   * shown" — and it was handed `cited`, which is what the drafter DECLARED. A
+   * model that writes a grounded lesson link into the body and forgets to repeat
+   * it in the JSON array therefore had a real, entitled, correctly-retrieved link
+   * refused as if it were invented. Measured live on 2026-09-02: a repair pass
+   * did exactly that and would have been refused a second time and left for Jake.
+   *
+   * ⚠️ IT DOES NOT WIDEN WHAT MAY BE LINKED. These URLs come from `retrieve`,
+   * which is already filtered by entitlement before it runs, so a paid lesson is
+   * not in here for a free member — the freemium rule stays structural. The only
+   * thing that changes is that a link the drafter was given no longer depends on
+   * the drafter's own bookkeeping to be recognised.
+   */
+  shownUrls: string[];
+
+  /**
    * The last line of the ask post's first comment — the one that follows the
    * @mentions ("welcome guys!").
    *
@@ -104,6 +126,25 @@ export interface ReplyDraft {
   /** A reply the model chose not to send, with its reason — never a silent skip. */
   skip: string | null;
   cited: { title: string; url: string }[];
+  /**
+   * Every community URL the drafter was SHOWN — the retrieved lessons and posts,
+   * whether or not it declared them in `cited`.
+   *
+   * ⚠️⚠️ THIS EXISTS BECAUSE THE PRE-SEND CHECK WAS ASKING THE WRONG LIST. Its
+   * link rule refuses a community URL that "was not in what the drafter was
+   * shown" — and it was handed `cited`, which is what the drafter DECLARED. A
+   * model that writes a grounded lesson link into the body and forgets to repeat
+   * it in the JSON array therefore had a real, entitled, correctly-retrieved link
+   * refused as if it were invented. Measured live on 2026-09-02: a repair pass
+   * did exactly that and would have been refused a second time and left for Jake.
+   *
+   * ⚠️ IT DOES NOT WIDEN WHAT MAY BE LINKED. These URLs come from `retrieve`,
+   * which is already filtered by entitlement before it runs, so a paid lesson is
+   * not in here for a free member — the freemium rule stays structural. The only
+   * thing that changes is that a link the drafter was given no longer depends on
+   * the drafter's own bookkeeping to be recognised.
+   */
+  shownUrls: string[];
   tokens: number | null;
 }
 
@@ -588,9 +629,14 @@ function communityNote(kind: "post" | "reply"): string {
 }
 
 function skoolReplyNote(firstName: string): string {
-  const greeting = firstName
-    ? `The first line begins exactly "Hey ${firstName}," and carries straight on`
-    : 'This member\'s first name is not known, so open with "Hey," and carry straight on';
+  // ⚠️ THE NAME IS STILL PASSED IN, AND IT IS NO LONGER AN OPENER. See OVERRIDE
+  // 4: a reply may use it once where it genuinely lands, so the model still has
+  // to be told which half of "Jason Davies" is the first name rather than guess.
+  const nameLine = firstName
+    ? `- Their first name is "${firstName}". You may use it ONCE inside the reply where it genuinely ` +
+      `lands — picking one person out of a busy thread, or softening a no — but that is the exception. ` +
+      `Most replies should not contain their name at all, and none should START with it.`
+    : "- This member's first name is not known. Do not guess at one and do not use a name at all.";
   return [
     "==========================================",
     "OVERRIDES TO THE STYLE GUIDE ABOVE — SKOOL ONLY",
@@ -647,13 +693,21 @@ function skoolReplyNote(firstName: string): string {
     "- This does NOT make the voice formal. Short sentences, contractions and the",
     "  same word choices — just capitalised the way anyone writes.",
     "",
-    "⚠️ OVERRIDE 4 — OPEN WITH A GREETING BY NAME. Jake, 2026-08-20: \"start each",
-    'reply with Hey {name}".',
-    greeting + " into the answer on the SAME line — not a greeting paragraph of",
-    "its own, and no \"hope you're well\".",
-    "- Their FIRST name only. Never the full name, never a nickname you invented.",
-    "- It replaces whatever opener PATTERN A/B/C or COMMENT TYPES would have",
-    "  chosen. Even a one-fragment praise reply gets it.",
+    "⚠️ OVERRIDE 4 — DO NOT OPEN WITH A GREETING, AND DO NOT OPEN WITH THEIR",
+    "NAME. Jake, 2026-09-07: \"I don't want it to start with hey [name] everytime",
+    '— for comments and DMs no need to say hey [name] everytime."',
+    "This REPLACES his 2026-08-20 instruction to begin every reply \"Hey {name},\",",
+    "which produced exactly that, on every reply, on both surfaces, until it read",
+    "as a template rather than a person. It also beats the welcome-message",
+    "examples in the voice guide above — those are a first hello to somebody who",
+    "just joined, not an answer to a question.",
+    "- Start with the ANSWER. The first words of the reply are the substance of",
+    "  what they asked, exactly as PATTERN A/B/C and COMMENT TYPES would have",
+    "  opened it.",
+    "- No \"Hey\", no \"Hi\", no \"Hey {name}\", no \"hope you're well\", no \"good",
+    "  question\" — on comments and on DMs alike.",
+    nameLine,
+    "- Do not sign off with a name either, and do not sign the reply.",
     "",
     "⚠️ OVERRIDE 5 — DO NOT OPEN WITH THE SAME WORD EVERY TIME. Jake,",
     '2026-08-20: "not every time say yeah as the first word."',
@@ -1225,6 +1279,35 @@ function citedFromShown(
   return shown.filter((s) => urls.includes(s.url));
 }
 
+/** Every community URL that was put in front of the drafter, declared or not. */
+function shownUrlsFrom(hits: Retrieved[], posts: RetrievedPost[] = []): string[] {
+  return [...hits.map((h) => h.url), ...posts.map((p) => p.url)].filter(Boolean);
+}
+
+/**
+ * The links inside the style examples — Jake's own published posts.
+ *
+ * ⚠️⚠️ THIS IS WHY THE SUNDAY POST NEVER WENT OUT, AND THE LINK WAS NEVER
+ * INVENTED. `styleBlock` puts four of his recent posts in the prompt in full,
+ * bodies and all, so the drafter can see what a post of his looks like. Those
+ * bodies contain real classroom links — and `shownUrls` only covered the
+ * retrieved lessons, so a URL the model copied out of a post Jake HIMSELF
+ * published was refused as unproven.
+ *
+ * Measured 2026-09-06: the "7 Claude Skills That Actually Save Time"
+ * announcement pointed at `/classroom/20abb1f4?md=3aec1274…` — "The AI Skills
+ * Worth Learning First", a real lesson, sitting in the 2026-08-30 post one
+ * example above it. Retrieval had scored six unrelated lessons for that subject,
+ * so the correct link was the one link it could not use. Both drafts were
+ * refused and the video was never announced.
+ *
+ * A page Jake already linked from a published post is proven by that post — it
+ * is the strongest evidence in the prompt, not the weakest.
+ */
+function urlsInStyleExamples(examples: { title: string; body: string }[]): string[] {
+  return examples.flatMap((e) => linksIn(`${e.title}\n${e.body}`).map((l) => l.url));
+}
+
 function parseDraft(raw: string): any {
   try {
     return JSON.parse(raw);
@@ -1360,6 +1443,15 @@ export interface PostRequest {
    * the only description of the voice, which is where this started.
    */
   voiceGuide?: string;
+  /**
+   * What the pre-send check refused about the previous attempt — see
+   * `repairInstruction` in `outgoing.ts`.
+   *
+   * Absent is the normal first attempt. Present means this is the repair pass,
+   * and the note is appended last so it overrides whatever produced the refused
+   * draft.
+   */
+  repair?: string;
 }
 
 /**
@@ -1433,6 +1525,20 @@ export function openingForMentions(body: string): string {
   return fixed === first ? body : fixed + rest;
 }
 
+/**
+ * The pre-send check's own words, appended LAST so they win.
+ *
+ * ⚠️ LAST IS NOT COSMETIC IN THIS FILE. Its founding lesson is that an unnamed
+ * contradiction gets resolved differently every run and that the later
+ * instruction wins — which is why `restrictions` sit after the upgrade block.
+ * A repair note contradicts something the draft already did on purpose, so it
+ * has to be the last thing read.
+ */
+function repairBlock(note: string | undefined): string {
+  const text = (note ?? "").trim();
+  return text ? `\n\n${text}` : "";
+}
+
 export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null; error: string | null }> {
   if (!req.voicePrompt.trim()) {
     // Same refusal as the Engagement Manager: with no voice stored, generation
@@ -1458,7 +1564,12 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
       : req.kind === "ask"
         ? askNote(req.newMembers ?? [], req.welcomeMessage ?? "")
         : "";
-  const extra = [communityNote("post"), POST_FORMAT_NOTE, kindNote].filter(Boolean).join("\n\n");
+  // ⚠️ THE POLICY IS IN THE POST PROMPT TOO, AND THE LIST DOES NOT GET SHORTER
+  // FOR THE SURFACE THAT REACHES MORE PEOPLE. A reply reaches one member; a
+  // post reaches all 73 and, once a week, their email inboxes.
+  const extra = [communityNote("post"), POST_FORMAT_NOTE, kindNote, policyBlock("post")]
+    .filter(Boolean)
+    .join("\n\n");
 
   const system = [
     req.voicePrompt,
@@ -1472,6 +1583,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     "",
     `CATEGORY: choose exactly one of: ${req.categories.join(" · ")}`,
     req.preferredCategory ? `Prefer "${req.preferredCategory}" unless the subject clearly belongs elsewhere.` : "",
+    repairBlock(req.repair),
   ].join("\n");
 
   const user = [
@@ -1523,6 +1635,8 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
       category,
       attachment: attachmentFrom(parsed.attach, req.videoCandidates ?? []),
       cited: citedFrom(parsed.cited, hits),
+      // Retrieval PLUS what his own posts already link — see `urlsInStyleExamples`.
+      shownUrls: [...shownUrlsFrom(hits), ...urlsInStyleExamples(req.styleExamples)],
       tokens: totalTokens(usage),
       model,
     },
@@ -1740,10 +1854,14 @@ export interface ReplyRequest {
   /** Who wrote it, and what they wrote. */
   authorName: string;
   /**
-   * Their first name, for the greeting.
+   * Their first name, for the one place a reply may still use it.
    *
-   * ⚠️ PASSED IN RATHER THAN LEFT TO THE MODEL TO SPLIT. "Hey Jason," is right
-   * and "Hey Jason Davies," is not — but guessing which half of a two-word
+   * ⚠️ NO LONGER A GREETING — see OVERRIDE 4 in `skoolReplyNote`. Replies stopped
+   * opening "Hey {name}," on 2026-09-07; the name survives only as an occasional
+   * mid-reply address, which is still worth getting right.
+   *
+   * ⚠️ PASSED IN RATHER THAN LEFT TO THE MODEL TO SPLIT. "Jason" is right and
+   * "Jason Davies" is not — but guessing which half of a two-word
    * handle is the given name is not something to do on a live message. The DM
    * payload already carries a real `memberFirstName`, so the caller supplies
    * what it knows, and an empty string means "greet without a name" rather
@@ -1790,6 +1908,23 @@ export interface ReplyRequest {
    * what they are allowed to be sent to.
    */
   posts?: { id: string; slug: string; title: string; body: string; createdAt: string }[];
+  /**
+   * Extra rules for THIS member, from the safety screen — currently the
+   * under-18 set in `safety.ts`.
+   *
+   * ⚠️ THEY ARE APPENDED LAST, AFTER THE UPGRADE BLOCK, AND THAT IS THE WHOLE
+   * DESIGN. This file's founding lesson is that an unnamed contradiction gets
+   * resolved differently every run and that the LATER instruction wins. The
+   * minor rules contradict the upgrade instruction deliberately, so they come
+   * after it and name what they are overriding.
+   */
+  restrictions?: string[];
+  /**
+   * What the pre-send check refused about the previous attempt — see
+   * `repairInstruction` in `outgoing.ts`. Absent on a first attempt; appended
+   * after everything else, restrictions included, on the repair pass.
+   */
+  repair?: string;
 }
 
 export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft | null; error: string | null }> {
@@ -1899,13 +2034,40 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
         // closing rule now defers to this block by name.
         upgrade,
         "",
-        "SET `skip` (and leave `text` empty) rather than replying at all when:",
-        "- the message needs Jake himself — money owed, refunds, complaints, anything legal or personal",
-        "- answering would need a fact you do not have",
-        "- it is spam",
-        "The style guide above decides everything else, including what deserves no reply.",
-      ].join("\n"),
+        // ⚠️⚠️ SKIPPING USED TO BE THE ESCALATION ROUTE, AND THERE IS NOBODY AT
+        // THE OTHER END OF IT. A skipped reply is recorded and shown as "Left
+        // for you"; Jake, 2026-09-02: "I'm not checking the skool agent
+        // everyday." So the money/refund/complaint class — the one this list
+        // used to hand back — is now ANSWERED as far as it honestly can be,
+        // with the part that is genuinely his acknowledged and left alone.
+        // Jake's call the same day: "answer what it can, hand off the rest."
+        "SET `skip` (and leave `text` empty) ONLY when the message is spam, or when the whole of it",
+        "could only be answered by inventing something. Skipping is not a way of passing a message to a",
+        "human — nobody reads these before the member does, and a skipped message is simply never answered.",
+        "",
+        "A message about money owed, a refund, a complaint, or anything legal or personal is NOT a skip:",
+        "- Answer the part you genuinely can help with, in full, exactly as you would any other message.",
+        "- Then acknowledge the rest in ONE line, in your own voice — something you would rather sort out",
+        "  properly than half-answer in a message thread. Warm, brief, and then stop.",
+        "- NEVER invent a policy, an amount, a date, a timescale or an outcome, and never say what will",
+        "  happen next or when. You do not know, and a member holds you to it.",
+        "- NEVER offer to look at their account, do the work, refund, comp, waive or let anyone in.",
+        "The style guide above decides everything else.",
+        "",
+        // ⚠️ THE STANDING POLICY GOES IN EVERY REPLY, not only the ones a screen
+        // flagged. `safety.ts` catches the message that ANNOUNCES itself as
+        // sensitive; this is for the ordinary question whose honest answer would
+        // have quoted a price, promised next week's video or offered to look at
+        // somebody's scenario.
+        policyBlock("reply"),
+        "",
+        // Last, so it wins: see `restrictions` on ReplyRequest.
+        (req.restrictions ?? []).join("\n"),
+      ].filter(Boolean).join("\n"),
     ),
+    // After the mechanics block entirely, because a repair note overrides the
+    // rule that produced the refused draft as well as everything else.
+    repairBlock(req.repair),
   ].join("\n");
 
   // His own uploads that might cover the question. Read live (memoised 30 min,
@@ -1993,6 +2155,7 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
       text: stripSearchMarkup(body),
       skip,
       cited: citedFromShown(parsed.cited, hits, postHits),
+      shownUrls: shownUrlsFrom(hits, postHits),
       tokens: totalTokens(usage),
     },
     error: null,

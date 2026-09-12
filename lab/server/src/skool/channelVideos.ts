@@ -25,7 +25,7 @@
  * it goes out to 65 inboxes at the same moment.
  */
 import { getSkoolSettings } from "../db/skool.js";
-import { recentVideoIds, resolveChannel } from "../engage/youtube.js";
+import { recentVideoIds, resolveChannel, videoDurations } from "../engage/youtube.js";
 
 export interface ChannelVideo {
   videoId: string;
@@ -33,7 +33,30 @@ export interface ChannelVideo {
   url: string;
   /** Epoch ms. 0 when YouTube did not say. */
   publishedAt: number;
+  /** Seconds. Null when YouTube did not answer — which is NOT zero. */
+  durationSec: number | null;
+  /**
+   * A Short, or unknown.
+   *
+   * ⚠️ UNKNOWN COUNTS AS A SHORT FOR EVERY POSTING DECISION. Jake, 2026-08-28:
+   * "never use shorts — only long form videos (if there isn't a new long form
+   * video just talk about a class)". The fallback he named is a lesson post, so
+   * the cost of being unsure is a perfectly good post about the classroom, and
+   * the cost of guessing wrong is announcing a 30-second clip as the week's
+   * video to 73 people and their inboxes.
+   */
+  isShort: boolean;
 }
+
+/**
+ * The line between a Short and a video, in seconds.
+ *
+ * YouTube caps Shorts at three minutes. Measured on Jake's channel 2026-08-28,
+ * nothing sits anywhere near the boundary: his Shorts were 35s and 30s and his
+ * long-form ran 557–1,118s, and the duration agreed with the /shorts/ URL test
+ * on all 20 uploads.
+ */
+export const SHORT_MAX_SEC = 180;
 
 /** A YouTube id is 11 characters of a known alphabet. Anything else is not one. */
 const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -80,8 +103,32 @@ export async function channelVideos(max = 25): Promise<ChannelVideo[]> {
       if (!VIDEO_ID.test(videoId) || !title || seen.has(videoId)) continue;
       seen.add(videoId);
       const ms = v.publishedAt ? Date.parse(v.publishedAt) : NaN;
-      videos.push({ videoId, title, url: youtubeUrl(videoId), publishedAt: Number.isFinite(ms) ? ms : 0 });
+      videos.push({
+        videoId,
+        title,
+        url: youtubeUrl(videoId),
+        publishedAt: Number.isFinite(ms) ? ms : 0,
+        durationSec: null,
+        isShort: true,
+      });
     }
+
+    // ⚠️ ONE MORE QUOTA UNIT, AND IT BUYS THE ONLY FIELD THAT SEPARATES A
+    // TUTORIAL FROM A SHORT. The uploads playlist does not carry duration, so
+    // without this every caller is choosing blind. A failure here leaves every
+    // video marked `isShort: true` — no announcement, and the lesson post Jake
+    // named as the fallback runs instead.
+    try {
+      const secs = await videoDurations(videos.map((v) => v.videoId));
+      for (const v of videos) {
+        const d = secs.get(v.videoId);
+        v.durationSec = typeof d === "number" ? d : null;
+        v.isShort = v.durationSec === null || v.durationSec <= SHORT_MAX_SEC;
+      }
+    } catch {
+      // Left as unknown, which reads as a Short everywhere it matters.
+    }
+
     videos.sort((a, b) => b.publishedAt - a.publishedAt);
     cache = { at: Date.now(), videos };
     return videos;
@@ -128,7 +175,11 @@ function words(s: string): string[] {
  * nearly every subject, so scoring on it ranks the catalogue by coincidence.
  */
 export async function videosForSubject(subject: string, limit = 12): Promise<ChannelVideo[]> {
-  const all = await channelVideos();
+  // ⚠️ SHORTS ARE NOT OFFERED AS ATTACHMENTS EITHER. Jake's rule is about which
+  // video a post points at, and an attached video IS what the post points at —
+  // the embed under the words. Filtering here rather than in the caller means
+  // there is one place a Short can enter a post, and it is closed.
+  const all = (await channelVideos()).filter((v) => !v.isShort);
   if (all.length === 0) return [];
 
   const want = new Set(words(subject));

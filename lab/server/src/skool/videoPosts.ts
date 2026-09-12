@@ -68,7 +68,8 @@ export function recordAnnounced(videoId: string, title: string, slotKey: string)
  * The newest upload that is genuinely new and has never been announced.
  *
  * Null is the ordinary answer and means "write about a lesson instead" — not an
- * error, and never a reason to skip a posting day.
+ * error, and never a reason to skip a posting day. Shorts are never the answer:
+ * see the loop below.
  */
 export async function nextVideoToAnnounce(now = Date.now()): Promise<ChannelVideo | null> {
   const videos = await channelVideos();
@@ -78,6 +79,16 @@ export async function nextVideoToAnnounce(now = Date.now()): Promise<ChannelVide
   // `channelVideos` is newest-first, so the first survivor is the right one.
   for (const v of videos) {
     if (!v.publishedAt || v.publishedAt < cutoff) break;
+    // ⚠️⚠️ SHORTS ARE NOT "THE NEW VIDEO". Jake, 2026-08-28: "when you're taking
+    // the last video, never use shorts — only long form videos (if there isn't
+    // a new long form video just talk about a class)." This is not hypothetical
+    // tidiness: measured the same day, his two most recent uploads were a 35s
+    // and a 30s Short, so the next announcement due would have told 73 members
+    // and their inboxes to go watch a thirty-second clip.
+    //
+    // Skipped rather than breaking the loop — a Short published on top of an
+    // unannounced tutorial must not hide it.
+    if (v.isShort) continue;
     if (!hasAnnounced(v.videoId)) return v;
   }
   return null;

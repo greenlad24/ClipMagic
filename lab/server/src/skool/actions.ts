@@ -26,7 +26,7 @@
  * checks the thing it expected actually appeared, and stops with a reason when
  * it did not.
  */
-import { blockToHtml, bodyToHtml, headingCount, parseBody, stripLeadingTitle, wantedStructure } from "./bodyHtml.js";
+import { blockToHtml, bodyToHtml, headingCount, parseBody, stripLeadingTitle, visibleLength, wantedStructure } from "./bodyHtml.js";
 import { withSkoolPage } from "./browser.js";
 import { classroomUrl, courseUrl, plainTextFromSkoolDoc } from "./classroom.js";
 import { clearFocusedField } from "./console.js";
@@ -1037,8 +1037,9 @@ async function pasteBody(
   const after = await bodyStructure();
   const gained = after.chars - before.chars;
   // Whitespace and rich-text normalisation move the count a little, so this is
-  // a proportion rather than an equality.
-  if (gained < text.length * 0.6) {
+  // a proportion rather than an equality. Measured against what the body will
+  // RENDER to, not its source length — see visibleLength.
+  if (gained < visibleLength(text) * 0.6) {
     return { outcome: gained > 40 ? "partial" : "nothing", structure: after };
   }
   // The text arrived. Did its SHAPE arrive with it? Measured against what the

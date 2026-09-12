@@ -42,6 +42,7 @@
  * They are typed as Shift+Enter instead.
  */
 import { withSkoolPage } from "./browser.js";
+import { checkOutgoing } from "./outgoing.js";
 
 /** Skool's own page asks for 30 threads. */
 const CHANNEL_LIMIT = 30;
@@ -547,6 +548,17 @@ export async function sendDm(input: {
     };
   }
   if (text.length < 5) return { ok: false, detail: `The message is only ${text.length} characters — not sending that.`, messageId: null };
+
+  // ⚠️ THE BACKSTOP, AND THIS IS THE SURFACE THAT NEEDS IT MOST: a DM is
+  // private, ENTER SENDS IT, and there is no button to withhold at the last
+  // moment. See `createPost` for why the check lives in the write path rather
+  // than in the caller.
+  const gate = checkOutgoing(text, {
+    surface: "dm",
+    communityUrl: input.communityUrl,
+    allowedMentions: [input.channel.memberFirstName, input.channel.memberName].filter(Boolean),
+  });
+  if (!gate.ok) return { ok: false, detail: gate.detail, messageId: null };
   if (!input.channel.memberFirstName) {
     return {
       ok: false,

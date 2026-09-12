@@ -57,6 +57,15 @@ export type Block =
 /** Markdown headings, once the lessons are authored with explicit structure. */
 const MD_HEADING = /^(#{1,3})\s+(.*)$/;
 
+/**
+ * `[label](url)`, and `![alt](url)` for an image.
+ *
+ * The URL must be http(s): a relative or `javascript:` target has no business
+ * arriving from a scraped body, and matching only absolute web URLs means a
+ * prompt template containing `[SUBJECT] (something)` cannot be read as a link.
+ */
+const MD_LINK = /(!)?\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
+
 /** A fenced code block: ``` on its own line, opening and closing. */
 const FENCE = /^\s*```/;
 
@@ -71,6 +80,16 @@ const FENCE = /^\s*```/;
  */
 function inline(s: string): string {
   return esc(s)
+    // ⚠️ LINKS BEFORE THE OTHER MARKERS, and only ever on ESCAPED text. A body
+    // imported from a Skool POST is mostly links — 208 of them across the 86
+    // Community Resources posts, and the blueprint download is the whole point
+    // of most of those pages. Without this the reader sees the literal
+    // characters `[Make.com](http://Make.com)` and the resource is unreachable.
+    // Bare URLs are deliberately NOT auto-linked: the authored lessons are full
+    // of prose that mentions a domain, and turning those into anchors is a
+    // change to 136 live pages nobody asked for.
+    .replace(MD_LINK, (_m, bang: string | undefined, label: string, url: string) =>
+      bang ? `<img src="${url}" alt="${label}">` : `<a href="${url}">${label || url}</a>`)
     .replace(/\*\*(\S(?:.*?\S)?)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^`])`([^`]+)`/g, "$1<code>$2</code>");
 }
@@ -271,6 +290,23 @@ export function bodyToHtml(text: string): string {
     }
   }
   return out.join("\n");
+}
+
+/**
+ * Roughly how many characters a body will PUT ON SCREEN.
+ *
+ * ⚠️ NOT `text.length`. A paste is verified by how far the editor's character
+ * count moved, and link syntax is source characters that render to little or
+ * nothing: `[label](url)` shows only the label, and `![alt](url)` shows no text
+ * at all. One imported page carrying eight images measured at 0.52 of its
+ * source length — under the 0.6 floor — so a complete, correct paste would have
+ * been rejected as truncated, and the retry would have failed the same way
+ * forever. Lives beside MD_LINK so the two cannot drift apart.
+ *
+ * A body with no links is unchanged by this, which is every authored lesson.
+ */
+export function visibleLength(text: string): number {
+  return text.replace(MD_LINK, (_m, bang: string | undefined, label: string) => (bang ? "" : label)).length;
 }
 
 /** How many headings the HTML carries, so a paste can be checked for structure. */

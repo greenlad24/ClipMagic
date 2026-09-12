@@ -31,9 +31,11 @@ import { getSettings as getEngageSettings } from "../engage/db.js";
 import { readComments, answerable, type SkoolComment } from "./comments.js";
 import { readChannels, readMessages, needingReply, sendDm, type DmChannel, type DmMessage } from "./dms.js";
 import { readFeed, type SkoolPost } from "./community.js";
-import { draftReply, firstNameOf } from "./engageGen.js";
+import { draftReply, firstNameOf, type ReplyRequest } from "./engageGen.js";
 import { ensureAccessFresh, entitlementFor, type Entitlement } from "./access.js";
 import { replyToComment } from "./engageActions.js";
+import { screenMember, declineLine, MINOR_RESTRICTIONS, type SafetyVerdict } from "./safety.js";
+import { checkOutgoing, repairInstruction } from "./outgoing.js";
 
 export type ReplySurface = "comment" | "dm";
 export type ReplyState = "drafted" | "sent" | "unconfirmed" | "skipped" | "failed";
@@ -645,11 +647,70 @@ async function draftOne(
   access: Entitlement,
   posts: SkoolPost[],
 ): Promise<{ id: string | null; detail: string }> {
+  const base0 = {
+    surface: target.surface,
+    targetId: target.targetId,
+    postSlug: target.postSlug,
+    channelId: target.channelId,
+    memberId: target.memberId,
+    memberName: target.memberName,
+    memberTier: access.member.unknown ? "unknown" : access.member.paid ? "paid" : "free",
+    memberLevel: access.member.level,
+    theirText: target.theirText,
+    tokens: 0,
+    cited: [] as { title: string; url: string }[],
+  };
+
+  // ⚠️⚠️ THE SCREEN COMES BEFORE THE DRAFTER, AND BEFORE THE MONEY. Jake,
+  // 2026-08-28: "if someone ask, comment, or write something is a controversy —
+  // avoid that controversy at all costs and if you are unsure don't respond".
+  // Reading the answer afterwards cannot do this job: the failure shape here is
+  // a fluent, well-grounded, perfectly-voiced reply about something Jake would
+  // never put in writing, and nothing in the text looks wrong.
+  //
+  // It reads the THREAD, not the message. On 2026-08-27 this member's last
+  // message was "dont know how" and her age was four messages earlier.
+  const verdict: SafetyVerdict = screenMember({
+    memberId: target.memberId,
+    memberName: target.memberName,
+    text: target.theirText,
+    context: target.context,
+  });
+
+  if (verdict.action === "escalate") {
+    // Jake answers this one. Recorded, never silent — a skipped row is the
+    // escalation queue, and the reason names what was seen.
+    insertReply({ ...base0, state: "skipped", skipReason: `NEEDS JAKE (${verdict.categories.join(", ")}) — ${verdict.reason}` });
+    return { id: null, detail: `${target.memberName}: skipped — needs Jake (${verdict.categories.join(", ")})` };
+  }
+
+  if (verdict.action === "decline") {
+    // ⚠️ A FIXED LINE, NOT A DRAFT, AND IT IS STILL A REAL REPLY. Jake, asked
+    // what to do when the agent is unsure: "say that there are things you
+    // rather not talk about". Silence would be safer still and he did not
+    // choose silence — a member who asks something off-limits gets an answer,
+    // it just is not about the subject.
+    const id = insertReply({
+      ...base0,
+      state: "drafted",
+      replyText: declineLine(),
+    });
+    return { id, detail: `${target.memberName}: declining politely (${verdict.categories.join(", ")})` };
+  }
+
+  const restrictions = verdict.categories.includes("minor") ? MINOR_RESTRICTIONS : [];
+
   // ⚠️ COMPUTED PER TARGET, NOT PER SWEEP. Two members can be at opposite ends
   // of this: one has never heard of the plans page and one was sent it an hour
   // ago by Jake himself.
   const nudge =
-    target.surface === "dm" && !access.member.paid && !access.member.unknown
+    // ⚠️ NO UPGRADE NUDGE AT A MINOR, EVER. The nudge is REQUIRED on a free
+    // member's first DM by an earlier decision of Jake's; this one is later and
+    // narrower, and selling to a 16-year-old is the thing being prevented. The
+    // suppression is here as well as in the prompt because a prompt rule and a
+    // computed `allowed: true` disagreeing is exactly how the lowercase leak
+    // happened.
+    restrictions.length === 0 && target.surface === "dm" && !access.member.paid && !access.member.unknown
       ? plansNudgeState(
           target.channelId,
           target.theirText,
@@ -658,7 +719,9 @@ async function draftOne(
         )
       : null;
 
-  const { reply, error } = await draftReply({
+  // Held as a value rather than passed inline: a refused draft is re-asked for
+  // with the refusal attached, and the second ask has to be the same request.
+  const request: ReplyRequest = {
     communityUrl,
     voicePrompt,
     surface: target.surface,
@@ -677,27 +740,19 @@ async function draftOne(
     access,
     nudge: nudge ? { allowed: nudge.allowed, asked: nudge.asked } : null,
     posts: posts.map((p) => ({ id: p.id, slug: p.slug, title: p.title, body: p.body, createdAt: p.createdAt })),
-  });
+    restrictions,
+  };
+  const { reply, error } = await draftReply(request);
   if (error || !reply) {
     // ⚠️ NOT RECORDED. See above — a rate-limited window is the common case
     // here and it is not a decision about this member's message.
     return { id: null, detail: `${target.memberName}: not drafted — ${error ?? "no draft came back"}` };
   }
-  const base = {
-    surface: target.surface,
-    targetId: target.targetId,
-    postSlug: target.postSlug,
-    channelId: target.channelId,
-    memberId: target.memberId,
-    memberName: target.memberName,
-    // Stored per reply, not looked up later: see the column comment. A member
-    // who upgrades tomorrow must not make today's answer look like a mistake.
-    memberTier: access.member.unknown ? "unknown" : access.member.paid ? "paid" : "free",
-    memberLevel: access.member.level,
-    theirText: target.theirText,
-    tokens: reply.tokens ?? 0,
-    cited: reply.cited,
-  };
+  // The same row shape the screen above already built, now carrying what the
+  // draft cost and what it cited. `memberTier` is stored rather than looked up
+  // later: a member who upgrades tomorrow must not make today's answer look
+  // like a mistake.
+  const base = { ...base0, tokens: reply.tokens ?? 0, cited: reply.cited };
   if (reply.skip) {
     // ⚠️ A SKIP IS RECORDED, WITH ITS REASON. The drafter is told to skip
     // anything needing Jake himself — money, refunds, complaints, anything
@@ -706,8 +761,68 @@ async function draftOne(
     insertReply({ ...base, state: "skipped", skipReason: reply.skip });
     return { id: null, detail: `${target.memberName}: skipped — ${reply.skip}` };
   }
-  const id = insertReply({ ...base, state: "drafted", replyText: reply.text });
-  return { id, detail: `${target.memberName}: drafted ${reply.text.length} chars` };
+  // ⚠️⚠️ THE LAST READ BEFORE A MEMBER SEES IT. `sendOne` runs this too, from
+  // inside the write path where nothing can go round it — but here the
+  // grounding set still exists, so a link the drafter was never shown can be
+  // caught exactly rather than guessed at.
+  //
+  // ⚠️⚠️ A REFUSAL REPAIRS ITSELF NOW. It used to be RECORDED and left — "the
+  // words would be identical next sweep, and the row is how Jake finds out" —
+  // which made the check a way of handing the message back to him. Jake,
+  // 2026-09-02: "I'm not checking the skool agent everyday — I want it to work
+  // automatically and never 'left for you'." Both refusals that ever happened
+  // were repairable in a sentence: one demonstrated a prompt containing
+  // `[your city]`, and one cited a classroom link nobody had shown it.
+  //
+  // So the words are not replayed — the drafter is told exactly what was wrong
+  // and writes them again, ONCE. A second refusal after being told is a message
+  // this agent is not going to get right, and that one is still recorded.
+  // ⚠️ SHOWN, THEN CITED. The link rule refuses a community URL that was not in
+  // what the drafter was SHOWN, and `cited` is only what it declared — a
+  // grounded lesson link written into the body and left out of the JSON array
+  // used to be refused as if it had been invented. Both lists are entitlement-
+  // filtered before retrieval, so this widens bookkeeping, not permission.
+  const gateFor = (d: { text: string; cited: { url: string }[]; shownUrls: string[] }) =>
+    checkOutgoing(d.text, {
+      surface: target.surface,
+      communityUrl,
+      allowedUrls: [
+        ...d.shownUrls,
+        ...d.cited.map((c) => c.url),
+        `${communityUrl.replace(/\/+$/, "")}/plans`,
+      ],
+      allowedMentions: [target.memberFirstName, target.memberName].filter(Boolean),
+    });
+
+  let text = reply.text;
+  let cited = reply.cited;
+  let tokens = reply.tokens ?? 0;
+  let gate = gateFor(reply);
+  if (!gate.ok) {
+    console.warn(`[skool:replies] ${target.memberName}: refused, repairing once — ${gate.detail}`);
+    const second = await draftReply({ ...request, repair: repairInstruction(gate) });
+    // A repair that comes back as a skip is the drafter deciding, on second
+    // look, that this one is not for it to answer — respected, not overridden.
+    if (second.reply && !second.reply.skip && second.reply.text.trim()) {
+      tokens += second.reply.tokens ?? 0;
+      const regate = gateFor(second.reply);
+      gate = regate;
+      if (regate.ok) {
+        text = second.reply.text;
+        cited = second.reply.cited;
+      }
+    }
+  }
+  // `base` was built from the first draft; the repaired one costs more tokens
+  // and may cite different pages, and the row has to say what was actually written.
+  const finalBase = { ...base, tokens, cited };
+  if (!gate.ok) {
+    insertReply({ ...finalBase, state: "skipped", skipReason: gate.detail, replyText: text });
+    return { id: null, detail: `${target.memberName}: skipped — refused twice — ${gate.detail}` };
+  }
+
+  const id = insertReply({ ...finalBase, state: "drafted", replyText: text });
+  return { id, detail: `${target.memberName}: drafted ${text.length} chars` };
 }
 
 /**
