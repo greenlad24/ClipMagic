@@ -69,18 +69,36 @@ Plain markdown, no preamble. Use exactly these headings, and omit a heading only
 
 ---
 
-## TWO SOURCES, AND WHICH ONE WINS
+## THREE SOURCES, AND THE ORDER THEY WIN IN
 
-You are given a workflow sheet built from recent video tutorials — people recorded doing the thing on screen — AND the written research. **The video sheet is the primary source. The written research supports it.**
+You are given three things, and they are not equal. In descending order of authority:
 
-An article describes a product from the outside, often written once and never revisited. A recording published this month shows the product as it is now. When both cover the same ground, build on the recording.
+**1. THE SCREENSHOT SHEET — what Jake photographed himself, today.**
+The newest evidence that exists in this run, and the only evidence of what the product looks like right now. **It wins over everything else on anything it actually shows** — labels, prices, tiers, limits, states, all of it. Where it disagrees with the videos or the research, it is right and they are out of date. Carry its `[S3]` citations onto the lines you build from it.
 
-- **What the product actually does, how a job runs start to finish, what happens at each step, click paths, menu names, button labels, the order of steps, values typed:** the video sheet wins. Copy its labels exactly, and carry its `[V2 @ 7:41]` citations through onto the step lines so they can be checked.
-- **Where the research contradicts something plainly shown on screen, the screen is right.** Say what the videos show and drop the written claim — do not average the two into a hedge.
-- **Prices, tiers, limits, statistics:** the written research wins. This is the one exception, and it is narrow: tutorials quote figures from memory and go stale fastest. A figure heard in a video is used only when the research has nothing, and then it is dated as what that video said, on its publish date.
-- **Where only one source has something:** use it, and let the line say where it came from.
+This is the one source whose numbers beat the written research. A price read off the live pricing page today is not a report of a price — it is the price.
 
-Anything the video sheet lists under NOT SHOWN stays unconfirmed here too — put it under DO NOT CLAIM rather than smoothing over it.
+**2. THE WORKFLOW SHEET — recent video tutorials, people recorded doing the thing.**
+An article describes a product from the outside, often written once and never revisited. A recording published this month shows the product as it was that month. Wins over the research on: what the product does, how a job runs start to finish, what happens at each step, click paths, menu names, button labels, the order of steps, values typed. Copy its labels exactly and carry its `[V2 @ 7:41]` citations.
+
+**3. THE WRITTEN RESEARCH.**
+Wins on prices, tiers, limits and statistics **only where the screenshots do not show them** — tutorials quote figures from memory and go stale fastest, so the written web outranks a video on a number. It never outranks a screenshot.
+
+**Where two sources disagree, the higher one is right. Say what it shows and drop the lower claim — never average them into a hedge.**
+
+Anything the screenshot sheet lists under WHAT THESE SHOTS DO NOT SHOW, and anything the video sheet lists under NOT SHOWN, stays unconfirmed here — put it under DO NOT CLAIM rather than smoothing over it. A gap in the screenshots is not evidence in either direction.
+
+**Where only one source has something:** use it, and let the line say where it came from.
+
+---
+
+## WHERE THE RESEARCH ACTUALLY CAME FROM
+
+[SOURCE PROVENANCE]
+
+A figure from a review site, a software directory or a roundup blog is **hearsay** — those pages are written once and have the year in the title updated for years afterwards, so they look current to a dated search and are not. A figure from the vendor's own pricing page, docs or changelog is a **primary source**. A figure from a screenshot is **what is on the screen**.
+
+Where the only support for a price or a limit is a review site, the line says so and names it: "$32/month (per TechBriefly, Aug 29 2026 — a review site, not the vendor)". That is a usable fact, spoken with what it rests on. What it is not is a statement of what the product costs today.
 
 ---
 
@@ -88,7 +106,10 @@ Anything the video sheet lists under NOT SHOWN stays unconfirmed here too — pu
 
 VIDEO TITLE: [INSERT TITLE]
 
-THE WORKFLOW SHEET (from recent video tutorials — the PRIMARY source for how the product works):
+THE SCREENSHOT SHEET (Jake's own screenshots, taken today — the HIGHEST authority here):
+[PASTE THE SCREENSHOT SHEET]
+
+THE WORKFLOW SHEET (from recent video tutorials — the primary source for how the product works):
 [PASTE THE VIDEO WORKFLOWS]
 
 THE RESEARCH:

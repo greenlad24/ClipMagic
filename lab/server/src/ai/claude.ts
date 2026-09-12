@@ -24,6 +24,20 @@ import { recordScopedUsage } from "./usageScope.js";
 interface Turn {
   role: "user" | "assistant";
   content: string;
+  /**
+   * Images to send ahead of `content` in this turn, each preceded by its label.
+   *
+   * Used by Stage 0.4, which reads the user's screenshots of the tool. They ride
+   * `opusScriptChat` rather than the sticker fit-review helper below because a
+   * screenshot sheet needs everything that helper does not have: the director
+   * model, adaptive thinking, markdown out instead of JSON, the cached system
+   * prefix every other stage shares, and the run's spend cap.
+   *
+   * Images go in a MESSAGE and never in the system prefix: the prefix is cached
+   * and must stay byte-stable across a run, and these are the most volatile
+   * thing in it.
+   */
+  images?: LabeledImage[];
 }
 
 /**
@@ -430,8 +444,9 @@ async function callClaude(opts: {
 }
 
 /**
- * Opus chat for the Jake Dawson Script Generator — always the latest Opus
- * (claude-opus-4-8 via the "director" tier), with an optional Anthropic
+ * Opus chat for the Jake Dawson Script Generator. The model comes from
+ * `aiConfig.scriptgenModels` — the thinking stages and the four mechanical
+ * ones are configured separately and may differ (see that config block), with an optional Anthropic
  * server-side web_search tool for the live-research stage. Larger default
  * max_tokens (script stages are long-form). Returns the concatenated text
  * blocks (server tool-use / search-result blocks are ignored).
@@ -494,7 +509,14 @@ export async function opusScriptChat(opts: {
   if (!anthropicConfigured()) {
     throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY to use the Script Generator.");
   }
-  const model = aiConfig.models.director; // latest Opus (claude-opus-4-8)
+  // Which model runs this stage depends on whether it thinks. The mechanical
+  // stages stay on 4.8 because `thinking: false` is implemented by OMITTING the
+  // field below, and an omitted `thinking` means "no thinking" on Opus 4.8 but
+  // "adaptive thinking ON" on Opus 5. See aiConfig.scriptgenModels.
+  const model =
+    opts.thinking === false
+      ? aiConfig.scriptgenModels.mechanical
+      : aiConfig.scriptgenModels.thinking;
   // One cache breakpoint, on the LAST system block: the whole system prefix is
   // cached together. Everything before it must be byte-stable across the batch.
   const texts = [opts.system, ...(opts.systemExtra ?? [])].filter((t) => t && t.trim());
@@ -512,7 +534,12 @@ export async function opusScriptChat(opts: {
     // `effort` lives inside output_config, not at the top level.
     ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
     ...(systemBlocks ? { system: systemBlocks } : {}),
-    messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+    // A turn with images becomes a content-block array; a plain turn stays a
+    // string, so every existing call sends exactly the bytes it sent before.
+    messages: opts.messages.map((m) => ({
+      role: m.role,
+      content: m.images?.length ? imageTurnBlocks(m) : m.content,
+    })),
   };
   if (opts.webSearch) {
     // Anthropic's server-executed web search tool. The _20260209 variant adds
@@ -559,18 +586,57 @@ export async function opusScriptChat(opts: {
         `and was cut off mid-answer. Whatever this stage produces is incomplete.`,
     );
   }
+  // Opus 5 can decline a request as a 200 with `stop_reason: "refusal"` and no
+  // text block. The text-only filter below would turn that into an empty
+  // string, which reads downstream as a truncated or bad generation rather than
+  // a refusal. Fail loudly instead — a stage is resumable, a silent blank is a
+  // corrupted run.
+  if ((json as { stop_reason?: string }).stop_reason === "refusal") {
+    const d = (json as { stop_details?: { category?: string; explanation?: string } }).stop_details;
+    throw new Error(
+      `Claude declined "${opts.label ?? "scriptgen"}" (${model}): ` +
+        `${d?.category ?? "no category"}${d?.explanation ? ` — ${d.explanation}` : ""}. ` +
+        `Nothing this run already paid for is lost — it can be resumed.`,
+    );
+  }
   if (opts.purpose) {
     recordAnthropicUsage({ model, purpose: opts.purpose, usage: json.usage, ms });
   }
   // recordAnthropicUsage no-ops outside a pipeline run (scriptgen has no active
   // run context), so the provider's own token counts were being dropped on the
   // floor. Log them: a script is ~28 Opus calls and the bill is worth seeing.
-  logScriptgenUsage(opts.label ?? "scriptgen", json.usage, ms);
+  logScriptgenUsage(opts.label ?? "scriptgen", json.usage, ms, model);
   if (opts.sinkSources) collectSources(json.content, opts.sinkSources);
   return (json.content || [])
     .filter((b) => b.type === "text")
     .map((b) => b.text || "")
     .join("");
+}
+
+/**
+ * Build the content blocks for a turn that carries images: the prompt first,
+ * then each image announced by its own label.
+ *
+ * PROMPT FIRST, IMAGES LAST — and this order is load-bearing, not a preference.
+ * Built the other way round, the first live run of Stage 0.4 came back with
+ * "No screenshots were received with this request", because its prompt ends
+ * "Each image below is preceded by its number" and there was nothing below it.
+ * The model was reading the turn correctly; the turn was assembled wrong. A
+ * prompt that introduces its attachments has to come before them.
+ *
+ * Label-before-image within each pair, never after: a label that arrives after
+ * the picture is a caption on something already interpreted.
+ */
+function imageTurnBlocks(turn: Turn): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [{ type: "text", text: turn.content }];
+  for (const im of turn.images ?? []) {
+    if (im.label) blocks.push({ type: "text", text: im.label });
+    blocks.push({
+      type: "image",
+      source: { type: "base64", media_type: im.mediaType, data: im.data },
+    });
+  }
+  return blocks;
 }
 
 /** A web page the research actually rested on. */
@@ -611,7 +677,11 @@ function collectSources(content: unknown, sink: ScriptSource[]): void {
 /** Running per-process tally so a finished script can report what it actually cost. */
 const scriptgenTally = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ms: 0 };
 
-/** Opus 4.8 list price, $/token. Output is 5x input — thinking bills as output. */
+/**
+ * Opus list price, $/token. Output is 5x input — thinking bills as output.
+ * Opus 5 and Opus 4.8 are priced IDENTICALLY ($5/$25 per MTok), so one table
+ * covers a run that mixes them and the $12 ceiling keeps its meaning.
+ */
 const OPUS_IN = 5 / 1_000_000;
 const OPUS_OUT = 25 / 1_000_000;
 
@@ -619,6 +689,7 @@ function logScriptgenUsage(
   label: string,
   usage: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } | undefined,
   ms: number,
+  model: string,
 ): void {
   const u = usage ?? {};
   const input = u.input_tokens ?? 0;
@@ -637,7 +708,7 @@ function logScriptgenUsage(
 
   const runningTotal = scriptgenUsageTotal().costUsd;
   console.log(
-    `[scriptgen:usage] ${label} in=${input} out=${output} cache_read=${cacheRead} cache_write=${cacheWrite} ` +
+    `[scriptgen:usage] ${label} [${model}] in=${input} out=${output} cache_read=${cacheRead} cache_write=${cacheWrite} ` +
       `$${cost.toFixed(4)} ${(ms / 1000).toFixed(1)}s | run total $${runningTotal.toFixed(2)} of $${SCRIPTGEN_MAX_USD.toFixed(2)}`,
   );
 }

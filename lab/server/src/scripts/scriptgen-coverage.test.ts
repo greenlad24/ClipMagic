@@ -6,6 +6,8 @@
  *     node --experimental-strip-types /t.ts
  */
 import {
+  AI_SLOP_PHRASES,
+  findSlopPhrases,
   CANONICAL_OUTRO,
   ensureCanonicalOutro,
   findBannedWords,
@@ -18,7 +20,21 @@ import {
   MIN_SECTION_WORDS,
   findSourceNames,
   applyBriefEdits,
+  demoDensity,
+  checkSectionDemo,
+  exemplarEchoes,
+  outlineSectionsMissingOnScreen,
+  insertOnScreenLines,
+  scriptQuality,
 } from "../scriptgen/edits.js";
+import {
+  auditSources,
+  classifySource,
+  firstPartyBlock,
+  hostOf,
+  toolName,
+  vendorHosts,
+} from "../scriptgen/sources.js";
 import {
   claimFixList,
   claimFixPrompt,
@@ -689,6 +705,7 @@ const AUDIT = {
   experienceClaims: ["I tested it for 30 days"],
   excessSponsorPlugs: ["third plug"],
   bannedWords: ['clipped question "Honestly?"'],
+  slopPhrases: ['"let that sink in" — …Forty thousand. Let that sink in.…'],
   sourceNames: ["Nate"],
   numbersChecked: 12,
 };
@@ -696,6 +713,8 @@ const FIXES = claimFixList(AUDIT);
 check("an unsupported number becomes a fix instruction", FIXES.some((f) => f.includes("90")));
 check("the fix forbids swapping in another number", FIXES.some((f) => /Do not substitute a different number/.test(f)));
 check("a banned word becomes a fix instruction", FIXES.some((f) => f.includes("Honestly?")));
+check("AI-register phrasing becomes a fix instruction", FIXES.some((f) => /AI-register phrasing/.test(f) && f.includes("let that sink in")));
+check("the slop fix forbids a synonym swap", FIXES.some((f) => /cut the phrase rather than swapping/.test(f)));
 check("an unbacked experience claim becomes a fix instruction", FIXES.some((f) => f.includes("30 days")));
 check("a source name becomes a fix instruction", FIXES.some((f) => f.includes("Nate")));
 check(
@@ -706,7 +725,7 @@ check(
   "an extra sponsor plug is reported but NOT auto-edited",
   !FIXES.some((f) => f.includes("third plug")),
 );
-check("a clean audit produces no pass at all", claimFixList({ ...AUDIT, unsupportedNumbers: [], bannedWords: [], experienceClaims: [], sourceNames: [] }).length === 0);
+check("a clean audit produces no pass at all", claimFixList({ ...AUDIT, unsupportedNumbers: [], bannedWords: [], slopPhrases: [], experienceClaims: [], sourceNames: [] }).length === 0);
 
 const CFP = claimFixPrompt("Some script text here.", ["Fix the 90."]);
 check("the fix prompt carries the script", CFP.includes("Some script text here."));
@@ -968,6 +987,226 @@ check(
   "a plain \"coming back to\" is left alone",
   findBannedWords("We're coming back to that in a minute.").length === 0,
 );
+
+// ── Demo density: is this a script read over a screen, or an essay? ──
+
+const SHOWS = "And look at that box. That's the same bottle.";
+const ESSAY = "The tool reaches into the page and builds a marketing clip for you.";
+
+check("an on-screen moment is counted", demoDensity(SHOWS).demoAnchors === 1);
+check("a paragraph that shows nothing counts none", demoDensity(ESSAY).demoAnchors === 0);
+check(
+  "instruction verbs alone are NOT anchors — the gap is always in showing the result",
+  demoDensity("Click the folder drop-down. Then type your name and paste the URL.").demoAnchors === 0,
+);
+check(
+  "a prompt read out loud is not silence — its interior is on screen to copy",
+  demoDensity('He types this. "Turn this messy transcript into a dated note with five sections and nothing else."').demoAnchors === 0,
+);
+check(
+  "a [VERIFY ON SCREEN] production note is not a spoken anchor",
+  demoDensity("Open the panel. [VERIFY ON SCREEN: the exact label of the control]").demoAnchors === 0,
+);
+check("scriptQuality carries the demo numbers", scriptQuality(SHOWS).demoAnchors === 1);
+
+check("a section that shows something passes", checkSectionDemo(SHOWS, "The bake-off").ok);
+const LECTURE = Array.from({ length: 30 }, () => ESSAY).join("\n\n");
+check("a demo section that never points at the screen fails", !checkSectionDemo(LECTURE, "The bake-off").ok);
+check(
+  "a trust beat is allowed to show nothing — that is what it is for",
+  checkSectionDemo(LECTURE, "What it costs").ok,
+);
+check(
+  "canned approval is caught even when the section shows something",
+  checkSectionDemo(`${SHOWS} That's a huge win.`, "x").genericApproval.length === 1,
+);
+check(
+  "a trust beat still may not close on canned approval",
+  !checkSectionDemo(`${SHOWS} That's a huge win.`, "What it costs").ok,
+);
+check(
+  "a canned-approval section does not pass",
+  !checkSectionDemo(`${SHOWS} That's a huge win.`, "x").ok,
+);
+check("pricing is a trust beat — no joke quota", checkSectionDemo(SHOWS, "What it costs").trustBeat);
+check("a demo section is not a trust beat", !checkSectionDemo(SHOWS, "The bake-off").trustBeat);
+
+// ── ON SCREEN lines are cast at outline time ──
+
+const OUTLINE_OK = `## The bake-off
+ON SCREEN: three clips play side by side, visibly different light in each
+Body text long enough to survive the outline parser's minimum-length filter, which drops near-empty headers.`;
+const OUTLINE_BARE = `## The bake-off
+Body text long enough to survive the outline parser's minimum-length filter, which drops near-empty headers.`;
+
+check("a section with an on-screen line is not flagged", outlineSectionsMissingOnScreen(OUTLINE_OK).length === 0);
+check("a section without one is flagged", outlineSectionsMissingOnScreen(OUTLINE_BARE).length === 1);
+check(
+  "the repair splices the line under the right header",
+  outlineSectionsMissingOnScreen(
+    insertOnScreenLines(OUTLINE_BARE, { "The bake-off": "three clips play side by side" }),
+  ).length === 0,
+);
+check(
+  "a section that already has one never gets a second",
+  insertOnScreenLines(OUTLINE_OK, { "The bake-off": "something else" }).match(/ON SCREEN:/g)?.length === 1,
+);
+check(
+  "a line for a section that doesn't exist is dropped, not appended",
+  insertOnScreenLines(OUTLINE_BARE, { "No such section": "x" }) === OUTLINE_BARE,
+);
+
+// ── Jake's published lines must not come back in a new script ──
+
+const EX = [
+  "Now I'm logging in with Google, because life's too short for another password. And we're in.",
+  "What used to be three hires is now three saved playbooks, and playbooks don't call in sick.",
+  "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI.",
+];
+
+check(
+  "a joke lifted word for word is caught",
+  exemplarEchoes("So you sign in. Now I'm logging in with Google, because life's too short for another password.", EX).length === 1,
+);
+check(
+  "the same joke rewritten is not caught",
+  exemplarEchoes("I'll sign in with Google here, because I'm not inventing another password today.", EX).length === 0,
+);
+check(
+  "ordinary shared phrasing does not trip it",
+  exemplarEchoes("So you can see what it does and then decide if you want it.", EX).length === 0,
+);
+check(
+  "boilerplate that is MEANT to repeat is allowed",
+  exemplarEchoes("Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI.", EX).length === 0,
+);
+check(
+  "one lifted passage is reported once, not once per word",
+  exemplarEchoes("What used to be three hires is now three saved playbooks, and playbooks don't call in sick.", EX).length === 1,
+);
+check("nothing to compare against finds nothing", exemplarEchoes("Any text at all here.", []).length === 0);
+
+// ── AI-register phrasing (the human-speak borrow) ─────────────────────────────
+//
+// The whole point of this list is that it fires on the model and NEVER on Jake.
+// Every entry was measured against his three exemplars plus two finished runs
+// (16,516 words) and appeared zero times. These checks lock in the exclusions —
+// the patterns that were deliberately NOT adopted because they are his voice.
+
+check("catches a manufactured reveal", findSlopPhrases("And here's the kicker, it runs while you sleep.").length === 1);
+check("catches reaction narration", findSlopPhrases("Forty thousand of them. Let that sink in.").length === 1);
+check("catches essay filler in a spoken script", findSlopPhrases("It's worth noting that the free tier caps out.").length === 1);
+check("catches inflation", findSlopPhrases("This is a total game-changer for solo founders.").length === 1);
+check("catches unsourced consensus", findSlopPhrases("Experts agree this is where the market is going.").length === 1);
+check("catches a recap ending", findSlopPhrases("In conclusion, that's the whole workflow.").length === 1);
+check("matches inflected forms", findSlopPhrases("It utilizes the same index and streamlines the whole thing.").length === 2);
+check(
+  "curly apostrophes are normalised, not missed",
+  findSlopPhrases("It\u2019s worth noting the price moved.").length === 1,
+);
+check("reports each hit with its context", /worth noting/.test(findSlopPhrases("It's worth noting the cap.")[0] ?? ""));
+check("a clean sentence is clean", findSlopPhrases("I hit go, and it wrote the file.").length === 0);
+
+// Exclusions — these MUST stay empty. Each one is a phrasing Jake actually uses
+// more than the generator does; banning them would edit him out of his own show.
+check("em dashes are not slop", findSlopPhrases("I opened it — and it just worked.").length === 0);
+check(
+  "just / actually / honestly / simply / literally are not slop",
+  findSlopPhrases("Honestly, I just wanted it to actually work, and it literally simply did.").length === 0,
+);
+check("the canonical welcome closer is not slop", findSlopPhrases("I'm Jake Dawson, and let's dive right in.").length === 0);
+check("\"unlock\" is not slop — it is in his own script", findSlopPhrases("That unlocks the whole workflow.").length === 0);
+check("\"what if I told you\" is not slop — he wrote it", findSlopPhrases("What if I told you it was free?").length === 0);
+check("\"in the world of\" is not slop — he wrote it", findSlopPhrases("In the world of AI video, that's rare.").length === 0);
+
+check("the list is non-trivial and deduped", AI_SLOP_PHRASES.length >= 40 && new Set(AI_SLOP_PHRASES).size === AI_SLOP_PHRASES.length);
+check(
+  "every entry compiles as a regex",
+  AI_SLOP_PHRASES.every((p) => {
+    try { new RegExp(p); return true; } catch { return false; }
+  }),
+);
+
+// ── Source provenance (scriptgen/sources.ts) ─────────────────────────────────
+// The run that motivated all of this: 21 sources, 19 of them review sites, and
+// the product's own pricing page never opened once. Every price in that script
+// was therefore somebody's summary of a page rather than the page.
+
+check("hostOf strips www and lowercases", hostOf("https://WWW.Predis.ai/pricing") === "predis.ai");
+check("hostOf survives junk", hostOf("not a url") === "");
+
+check("toolName keeps a bare product name", toolName("Predis.ai") === "Predis.ai");
+check("toolName drops a parenthetical", toolName("Twin.so (browser agent)") === "Twin.so");
+check("toolName cuts at a dash", toolName("Predis.ai — AI social media manager") === "Predis.ai");
+check("toolName caps at three words", toolName("Claude Cowork Desktop Beta Edition") === "Claude Cowork Desktop");
+
+check("a name that IS a domain is used as-is", vendorHosts("Predis.ai").join() === "predis.ai");
+check("a two-letter TLD is a domain too", vendorHosts("Twin.so").join() === "twin.so");
+check(
+  "a bare name becomes candidate domains",
+  vendorHosts("Notion").includes("notion.com") && vendorHosts("Notion").includes("notion.ai"),
+);
+check("no topic, no hosts", vendorHosts("").length === 0);
+
+const PREDIS = vendorHosts("Predis.ai");
+check("the vendor's own domain is first-party", classifySource("https://predis.ai/pricing", PREDIS) === "first-party");
+check("a vendor subdomain is first-party", classifySource("https://help.predis.ai/en/article/x", PREDIS) === "first-party");
+check(
+  "a hosted changelog under the vendor's name is first-party",
+  classifySource("https://predis.frill.co/announcements", PREDIS) === "first-party",
+);
+check(
+  "somebody else's frill board is NOT first-party",
+  classifySource("https://someoneelse.frill.co/announcements", PREDIS) !== "first-party",
+);
+check("a directory is an aggregator", classifySource("https://www.g2.com/products/x/reviews", PREDIS) === "aggregator");
+check("capterra is an aggregator", classifySource("https://www.capterra.com/p/1/x/", PREDIS) === "aggregator");
+check("reddit is community", classifySource("https://www.reddit.com/r/x/comments/y", PREDIS) === "community");
+check("github is community", classifySource("https://github.com/ghffee/Predis", PREDIS) === "community");
+// The long tail is NOT classified, on purpose: no list will ever enumerate
+// maxaeo / aitoolbeat / coldiq / oreateai, and guessing would be worse than
+// counting them honestly as unknown.
+check("an SEO blog is counted as other, never guessed at", classifySource("https://maxaeo.ai/ai-tools/tool/predis-ai/", PREDIS) === "other");
+
+// The real source list from run 4jeWHiyyuByZK3lNuauqE, in the order it was read.
+const REAL_RUN = [
+  "https://www.getapp.com/x", "https://www.capterra.com/x", "https://socialrails.com/x",
+  "https://www.shuttergen.com/x", "https://aiproductivity.ai/x", "https://aiproductivity.ai/y",
+  "https://fluxnote.io/x", "https://www.g2.com/x", "https://www.gethookd.ai/x",
+  "https://help.predis.ai/en/article/all-about-pricing", "https://discovermybusiness.co/x",
+  "https://github.com/ghffee/Predis", "https://predis.frill.co/announcements", "https://www.g2.com/y",
+  "https://techbriefly.com/x", "https://coldiq.com/x", "https://www.aisystemscommerce.com/x",
+  "https://aitoolbeat.com/x", "https://maxaeo.ai/x", "https://help.predis.ai/en/article/pricing-plans",
+  "https://www.oreateai.com/x",
+].map((url) => ({ url, title: url }));
+
+const realAudit = auditSources(REAL_RUN, PREDIS);
+check("the real run's 21 sources are all counted", realAudit.total === 21);
+check("its three vendor pages are found", realAudit.firstParty === 3);
+check("both vendor hosts are named", realAudit.firstPartyHosts.includes("help.predis.ai") && realAudit.firstPartyHosts.includes("predis.frill.co"));
+check("its four directory pages are found (GetApp, Capterra, G2 twice)", realAudit.aggregator === 4);
+check("its one github page is community", realAudit.community === 1);
+check("the real run is NOT flagged — it did open vendor pages, stale ones", realAudit.noFirstParty === false);
+
+// The flag fires on the case it is for: a whole run of third-party writing.
+const noVendor = auditSources(
+  ["https://maxaeo.ai/x", "https://www.g2.com/y", "https://coldiq.com/z"].map((url) => ({ url, title: url })),
+  PREDIS,
+);
+check("a run with no vendor page is flagged", noVendor.noFirstParty === true);
+check("...and says which domains it looked for", noVendor.vendorHosts.includes("predis.ai"));
+
+// A topic with no vendor must never be flagged — "how to price a course" has no
+// pricing page to miss, and crying wolf there makes the warning worthless.
+const noTopic = auditSources([{ url: "https://example.com/x", title: "x" }], []);
+check("a topic with no vendor is never flagged", noTopic.noFirstParty === false);
+check("an empty source list counts to zero", auditSources([], PREDIS).total === 0);
+
+const fpb = firstPartyBlock("Predis.ai", PREDIS);
+check("the first-party block names the real domain", fpb.includes("site:predis.ai pricing"));
+check("...and demands the changelog", /changelog/.test(fpb));
+check("...and says a review-site price is hearsay", /hearsay/.test(fpb));
+check("no vendor hosts means no block at all", firstPartyBlock("how to price a course", []) === "");
 
 console.log("");
 if (fail.length) {

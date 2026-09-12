@@ -10,6 +10,7 @@
  */
 import { nanoid } from "nanoid";
 import { db } from "./index.js";
+import { deleteEditTrailForRun } from "./scriptEdits.js";
 import type {
   ScriptInput,
   ScriptSetup,
@@ -152,6 +153,12 @@ export function updateRun(
     status?: ScriptRunStatus;
     setup?: ScriptSetup | null;
     stage0?: Stage0Result | null;
+    /**
+     * The run's input. Only ever patched to attach screenshots at the Stage 0
+     * checkpoint — the run is created before the user has been told the topic is
+     * thinly covered, which is exactly when they go and take some.
+     */
+    input?: ScriptInput;
     stages?: ScriptStages;
     finalDocument?: string | null;
   /** Jake's hand-edited script. Null clears the edit and restores the generated one. */
@@ -174,6 +181,10 @@ export function updateRun(
   if (patch.status !== undefined) {
     sets.push("status = ?");
     vals.push(patch.status);
+  }
+  if (patch.input !== undefined) {
+    sets.push("input_json = ?");
+    vals.push(JSON.stringify(patch.input));
   }
   if (patch.setup !== undefined) {
     sets.push("setup_json = ?");
@@ -273,4 +284,8 @@ export function listRuns(): ScriptRunListItem[] {
 
 export function deleteRun(id: string): void {
   db.prepare("DELETE FROM script_runs WHERE id = ?").run(id);
+  // The versions, the reviews and the lessons learned from them go with it —
+  // sqlite has no cascade here, and a lesson whose evidence points at a script
+  // that no longer exists cannot be judged by the person approving it.
+  deleteEditTrailForRun(id);
 }

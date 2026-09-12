@@ -32,7 +32,20 @@ import {
   wantsDeveloperWorkflow,
 } from "./videoResearch.js";
 import { createRun, updateRun, getRun, emptyStages } from "../db/scriptRuns.js";
-import { loadPrompt, fill, systemPreamble } from "./prompts.js";
+import {
+  addVersion,
+  getVersion,
+  latestBaseline,
+  listVersions,
+  listLessons,
+  setLessonState,
+  updateLessonRule,
+  deleteLesson,
+} from "../db/scriptEdits.js";
+import { analyseEdit, ensureGeneratedVersion, lastReviewFor } from "./lessons.js";
+import { applyRulesToScript, type RuleApplication } from "./applyRules.js";
+import type { ScriptEditReview, ScriptLesson, ScriptVersion } from "./types.js";
+import { loadPrompt, fill, systemPreamble, EXEMPLAR_SCRIPTS } from "./prompts.js";
 import {
   dateWindows,
   type DateWindows,
@@ -51,8 +64,12 @@ import {
   stripVerifyMarkers,
   extractPrompts,
   ensureCanonicalOutro,
+  checkSectionDemo,
+  exemplarEchoes,
+  outlineSectionsMissingOnScreen,
+  insertOnScreenLines,
 } from "./edits.js";
-import type { ContinuityLedger } from "./edits.js";
+import type { ContinuityLedger, SectionDemoCheck } from "./edits.js";
 import type {
   ScriptInput,
   ScriptSetup,
@@ -66,13 +83,17 @@ import type {
   ReviewChecklist,
   ScriptSource,
   ScriptStages,
+  SourceAudit,
   ScriptRunResult,
   ScriptJobSnapshot,
   ScriptRunStatus,
   ScriptMode,
   RefineMessage,
   VideoType,
+  ScreenshotRef,
 } from "./types.js";
+import { loadShot, shotExists } from "./shots.js";
+import { auditSources, auditLogLine, firstPartyBlock, vendorHosts } from "./sources.js";
 
 // ── Stage 2 research-paste block ──────────────────────────────────────────────
 // The exact bracketed instruction block in stage2-outline.md that we replace
@@ -172,6 +193,12 @@ export async function runStage0(input: ScriptInput): Promise<Stage0Result> {
       typeof parsed.itemCount === "number" && Number.isFinite(parsed.itemCount) && parsed.itemCount >= 3
         ? Math.round(parsed.itemCount)
         : null,
+    // Anything but the literal "thin" is normal. A missing or malformed value
+    // must not raise a warning nobody can act on — and this field rides a
+    // `thinking: false` call, where a fumbled key is likelier than a wrong
+    // judgement.
+    coverageRisk: parsed.coverageRisk === "thin" ? "thin" : "normal",
+    coverageNote: str(parsed.coverageNote, ""),
   };
 }
 
@@ -198,6 +225,34 @@ export async function startScript(input: ScriptInput): Promise<{ runId: string; 
     updateRun(runId, { status: "failed", error: msg });
     throw e;
   }
+}
+
+/**
+ * Attach screenshots to a run that is parked at the Stage 0 checkpoint.
+ *
+ * The checkpoint is where the user first learns the topic is thinly covered —
+ * Stage 0 judges that, and Stage 0 runs after the run row exists. Telling
+ * somebody "the web will not settle this one" and then not letting them do
+ * anything about it would be a worse feature than no warning at all.
+ *
+ * Refused once the pipeline is running: Stage 0.4 reads the shots before
+ * anything else, so a screenshot added mid-run would be paid for and ignored.
+ */
+export function attachScreenshots(runId: string, screenshots: ScreenshotRef[]): { count: number } {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  if (run.status !== "awaiting_confirmation") {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message:
+        run.status === "classifying"
+          ? "Still classifying — give it a second, then add the screenshots."
+          : "This run has already started. Screenshots are read before the research, so they have to be attached before you confirm the setup.",
+    });
+  }
+  const input: ScriptInput = { ...run.input, screenshots };
+  updateRun(runId, { input });
+  return { count: screenshots.length };
 }
 
 // ── In-memory job registry ────────────────────────────────────────────────────
@@ -639,6 +694,41 @@ function factSheetBlock(factSheet: string): string {
 }
 
 /**
+ * The screenshot sheet — what Jake's own screenshots showed, handed to every
+ * stage that decides what is TRUE or what the viewer SEES.
+ *
+ * THE TOP OF THE EVIDENCE ORDER. Not "another source to weigh": everything else
+ * in the run is older, and on a thinly-covered tool everything else is also
+ * wrong. A screen photographed this morning beats the vendor's own page (which
+ * can lag its product), beats a July tutorial, and beats every review site by a
+ * distance that is not worth arguing about.
+ *
+ * It wins on PRICES too, which is the one place the workflow sheet deliberately
+ * does not — a tutorial quotes a figure from memory, but a screenshot of the
+ * pricing page IS the pricing page.
+ */
+function screenshotBlock(sheet: string): string {
+  return [
+    "",
+    "---",
+    "",
+    "## WHAT JAKE'S OWN SCREENSHOTS SHOW — the newest evidence in this run",
+    "",
+    "Jake opened the product and photographed it. These shots were taken today; everything else you are given was written or recorded earlier, by somebody else.",
+    "",
+    "**This sheet outranks every other source on anything it shows** — the research, the tutorial sheet, the fact sheet, all of it. That includes prices, tiers and limits, where the tutorial sheet normally defers: a figure read off the live pricing page today settles what a review blog can only report second-hand. Where this sheet and another source disagree, this one is right and the other is out of date. Say what the screenshots show; never average the two into a hedge.",
+    "",
+    "**A label under EXACT UI LABELS here is confirmed.** Write it plainly, with no `[VERIFY ON SCREEN: …]` marker — Jake was looking at it.",
+    "",
+    "**Anything under WHAT THESE SHOTS DO NOT SHOW is still unconfirmed**, exactly as if the shots did not exist. It keeps its marker. Do not read a gap in the screenshots as evidence either way.",
+    "",
+    "The shots are cited `[S1]`, `[S2]` and so on. Carry those citations through onto any line you build from them, the same way the tutorial citations are carried.",
+    "",
+    sheet,
+  ].join("\n");
+}
+
+/**
  * The workflow sheet, handed to the stages that decide what the video SHOWS.
  *
  * It outranks the fact sheet on one specific thing and nothing else: where a
@@ -791,6 +881,7 @@ function scriptAndReviewsBlock(run: ScriptRunResult): string {
     const auditLines: string[] = [];
     if (a.unsupportedNumbers.length) auditLines.push(`Numbers with no source: ${a.unsupportedNumbers.join(", ")}`);
     if (a.bannedWords.length) auditLines.push(`Banned words/phrasings flagged: ${a.bannedWords.join("; ")}`);
+    if (a.slopPhrases.length) auditLines.push(`AI-register phrasing flagged: ${a.slopPhrases.join("; ")}`);
     if (a.experienceClaims.length) auditLines.push(`Invented first-person experience flagged: ${a.experienceClaims.join("; ")}`);
     if (a.excessSponsorPlugs.length) auditLines.push(`Over-promotion flagged (2 plugs allowed): ${a.excessSponsorPlugs.join("; ")}`);
     if (a.fencedTopicsMentioned.length) auditLines.push(`Fenced topics mentioned: ${a.fencedTopicsMentioned.join(", ")}`);
@@ -899,7 +990,12 @@ function continuityBlock(
  * additional call. It was previously doing that work blind: it saw neither what
  * the rest of the video had already said, nor what the research established.
  */
-function reviewGuardBlock(ledger: ContinuityLedger, hasFactSheet: boolean): string {
+function reviewGuardBlock(
+  ledger: ContinuityLedger,
+  hasFactSheet: boolean,
+  demo: SectionDemoCheck,
+  echoes: string[],
+): string {
   const lines: string[] = ["", "---", ""];
   const bullets = (items: string[]) => items.map((s) => `- ${s}`).join("\n");
 
@@ -925,6 +1021,45 @@ function reviewGuardBlock(ledger: ContinuityLedger, hasFactSheet: boolean): stri
   if (hasFactSheet) {
     lines.push(
       "Every price, number, version, and click path in this section must already appear in the FACT SHEET in your system prompt. If this section states a figure that isn't there, don't smooth it over — cut it, or replace it with the figure the fact sheet gives. Never round a price into a nicer number. Never name a button the fact sheet doesn't name.",
+      "",
+    );
+  }
+
+  if (echoes.length > 0) {
+    lines.push(
+      "LIFTED FROM JAKE'S PUBLISHED SCRIPTS — rewrite every one of these. They are word-for-word out of the exemplars in your system prompt, which are real videos his audience has already watched. A reused line reads as a rerun to exactly the people most likely to be watching, and a reused JOKE is the worst case. Keep what the line was doing; write it new, about the thing in front of you:",
+      ...echoes.map((e) => `- "…${e}…"`),
+      "",
+    );
+  }
+
+  // The measurement, handed to the pass that is about to rewrite this section
+  // anyway. Counted in code so the note is a fact rather than a hunch — and so
+  // the rewrite can be checked against the same number afterwards.
+  if (!demo.ok) {
+    lines.push("MEASURED ON THIS SECTION, and it has to be fixed in this rewrite:", "");
+    if (demo.demoAnchors < 1) {
+      lines.push(
+        "- This section never puts the viewer in front of anything. Not once does it say what appears on screen. Add at least one moment that points at the result — \"Look at that.\" / \"And there it is.\" / \"Five sections, nothing else.\" — and say what actually CHANGED, not what the feature is for.",
+      );
+    }
+    if (demo.genericApproval.length > 0) {
+      lines.push(
+        `- Generic approval that would fit any other tool's video: ${demo.genericApproval
+          .map((t) => `"${t}"`)
+          .join(", ")}. Replace each with what specifically changed on screen.`,
+      );
+    }
+    lines.push("");
+  }
+  if (!demo.trustBeat) {
+    lines.push(
+      "This section should carry something light — the room this teaches in is supposed to be a fun one, and that holds whatever kind of video this is. Jake's humour is almost always a wry clause of three to eight words riding INSIDE a sentence that was already doing a job, never a joke that stops the tutorial: \"logging in with Google, because life's too short for another password\", \"scroll, like, post a thing or two like a normal person\", \"so it doesn't hand me a plan I'll drown in\", \"then praying they actually talk to each other\". It lands best on the dead stretches — setup, installs, logins, waiting — or as the last line before the transition (\"playbooks don't call in sick\"). Never inside a prompt, never between an instruction and its result. Steal the move, not the sentence.",
+      "",
+    );
+  } else {
+    lines.push(
+      "This section is a trust beat — pricing, limits, or privacy. This is the ONE place the humour switches off: plain and straight is the right register, and a joke here reads as dodging the question.",
       "",
     );
   }
@@ -986,6 +1121,11 @@ function coerceChecklist(raw: unknown): ReviewChecklist | null {
     noSectionAnnouncement: b("noSectionAnnouncement"),
     toolNamedNotVague: b("toolNamedNotVague"),
     noStaleFacts: b("noStaleFacts"),
+    threeFunnyLines: b("threeFunnyLines"),
+    noSilentStretch: b("noSilentStretch"),
+    noGenericApproval: b("noGenericApproval"),
+    noLiftedLines: b("noLiftedLines"),
+    noSlopPhrasing: b("noSlopPhrasing"),
   };
 }
 
@@ -1008,6 +1148,11 @@ export function claimFixList(audit: ClaimAudit): string[] {
   }
   for (const w of audit.bannedWords) {
     out.push(`Banned phrasing: ${w} Rewrite that sentence so the rule is satisfied and the meaning survives.`);
+  }
+  for (const w of audit.slopPhrases) {
+    out.push(
+      `AI-register phrasing: ${w} No script Jake wrote uses this. Say the same thing in his words — state the fact, the mechanism or what changed on screen, and cut the phrase rather than swapping in a synonym for it.`,
+    );
   }
   for (const c of audit.experienceClaims) {
     out.push(
@@ -1497,6 +1642,9 @@ export async function finalReviewAndAssemble(opts: {
     systemExtra: [
       ...briefExtra,
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+      // Same position as in sectionExtra, so this call rides the section
+      // stages' cached prefix instead of paying to establish it again.
+      ...(stages.screenshotSheet ? [screenshotBlock(stages.screenshotSheet)] : []),
       ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
       reviewFactUseBlock(),
       wholeScriptGuard(),
@@ -1649,14 +1797,29 @@ export async function finalReviewAndAssemble(opts: {
     stages.claimAudit.fencedTopicsMentioned.length ||
     stages.claimAudit.experienceClaims.length ||
     stages.claimAudit.excessSponsorPlugs.length ||
-    stages.claimAudit.bannedWords.length
+    stages.claimAudit.bannedWords.length ||
+    stages.claimAudit.slopPhrases.length
   ) {
     console.warn(
       `[scriptgen:claims] unsupported=${JSON.stringify(stages.claimAudit.unsupportedNumbers)} ` +
         `fenced=${JSON.stringify(stages.claimAudit.fencedTopicsMentioned)} ` +
         `experience=${JSON.stringify(stages.claimAudit.experienceClaims)} ` +
         `excessPlugs=${stages.claimAudit.excessSponsorPlugs.length} ` +
-        `banned=${JSON.stringify(stages.claimAudit.bannedWords.slice(0, 6))}`,
+        `banned=${JSON.stringify(stages.claimAudit.bannedWords.slice(0, 6))} ` +
+        `slop=${JSON.stringify(stages.claimAudit.slopPhrases.slice(0, 6))}`,
+    );
+  }
+
+  // Did any of Jake's own published lines survive into the finished script? The
+  // exemplars ride in every system prompt, so copying them is the path of least
+  // resistance — and his instruction was explicit: steal the moves, not the
+  // sentences. Reported on the whole document because a line can also be lifted
+  // by the Stage 7 rewrite, after the per-section check has already passed.
+  const finalEchoes = exemplarEchoes(auditedBody, EXEMPLAR_SCRIPTS);
+  if (finalEchoes.length > 0) {
+    console.warn(
+      `[scriptgen:echo] ${finalEchoes.length} line(s) lifted verbatim from Jake's published scripts ` +
+        `survived into the final document: ${finalEchoes.map((e) => `"${e}"`).join("; ")}`,
     );
   }
 
@@ -1665,7 +1828,7 @@ export async function finalReviewAndAssemble(opts: {
   console.log(
     `[scriptgen:quality] words=${stages.quality.words} burstiness=${stages.quality.burstiness} ` +
       `repeatedPhrases=${stages.quality.repeatedPhraseCount} worst=${stages.quality.worstPhraseRepeats}x ` +
-      `"${stages.quality.worstPhrase ?? ""}"`,
+      `"${stages.quality.worstPhrase ?? ""}" demoAnchors=${stages.quality.demoAnchors ?? 0}`,
   );
   updateRun(runId, { stages, finalDocument });
   return finalDocument;
@@ -1715,6 +1878,154 @@ export function revertScriptEdit(runId: string): { ok: true } {
   const run = getRun(runId);
   if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
   updateRun(runId, { editedDocument: null });
+  return { ok: true };
+}
+
+/* ────────────────────────── the edit loop ────────────────────────── */
+
+/**
+ * "Done editing" — snapshot the script, diff it, and ask what to learn.
+ *
+ * ⚠️⚠️ THIS IS DELIBERATELY NOT WIRED TO THE AUTOSAVE, AND JAKE ASKED FOR THAT
+ * IN THOSE WORDS: "the conclusions should only happen after I clicked the done
+ * button (not while autosaving) so it does the diff once after each edit is
+ * done." The debounce fires every few seconds and mid-sentence — a diff taken
+ * there compares a finished script against a half-typed one and would conclude
+ * that Jake writes in fragments, at the price of an Opus call every time he
+ * stops to think.
+ *
+ * Version 1 of every run is what the pipeline wrote, snapshotted here on the
+ * first Done rather than at generation time, so runs that finished before this
+ * feature existed still get a real baseline to diff against.
+ */
+export async function finishScriptEdit(runId: string): Promise<ScriptEditReview> {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  const generated = run.finalDocument ?? "";
+  const edited = run.editedDocument ?? "";
+  if (!generated.trim()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This run has no generated script to compare against." });
+  }
+  if (!edited.trim()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing has been edited on this run yet." });
+  }
+  ensureGeneratedVersion(runId, generated);
+  const version = addVersion({ runId, source: "edit", text: edited, note: "Marked done" });
+  // ⚠️ THE BASELINE IS THE LAST THING THE MACHINE WROTE, WHICH IS NOT ALWAYS
+  // `finalDocument`. Once `applyRulesToRun` has rewritten the untouched parts of
+  // this script, diffing against the original would present the generator's own
+  // rewrite as Jake's editing and learn rules from it — the loop feeding on its
+  // own output. See the `source` note on ScriptVersion.
+  const baseline = latestBaseline(runId)?.text ?? generated;
+  return analyseEdit({ runId, runTitle: run.title, generated: baseline, edited, versionId: version.id });
+}
+
+/**
+ * "Apply the rules to the rest of this script."
+ *
+ * Jake, 2026-09-07: "it should fix the current script (all of the rest of the
+ * script not my edits) with the new rules and apply it for all of the next
+ * scripts as well." The second half needs no button — an approved rule is in
+ * `systemPreamble()` from the moment it is approved. This is the first half.
+ *
+ * ⚠️ EVERY STEP IS REVERSIBLE AND THE ORDER IS WHY. What is in the editor is
+ * snapshotted BEFORE the rewrite lands, so "Restore" on the version above it
+ * undoes the whole pass; `finalDocument` is untouched as always; and the result
+ * is snapshotted as a `rules` version so the learning loop knows the machine
+ * wrote it.
+ */
+export async function applyRulesToRun(runId: string): Promise<RuleApplication & { versionId: string | null }> {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  const generated = run.finalDocument ?? "";
+  if (!generated.trim()) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This run has no script to rewrite." });
+  }
+  const current = run.editedDocument?.trim() ? run.editedDocument : generated;
+  const sponsored = (run.setup?.sponsorship?.mode ?? "organic") !== "organic";
+
+  const result = await applyRulesToScript({ generated, current, title: run.title, sponsored, runId });
+  if (!result.rulesApplied) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "No rules are approved yet, so there is nothing to apply. Approve one first.",
+    });
+  }
+  if (result.text === current) return { ...result, versionId: null };
+
+  ensureGeneratedVersion(runId, generated);
+  addVersion({ runId, source: "edit", text: current, note: "Before rules applied" });
+  updateRun(runId, { editedDocument: result.text });
+  const saved = addVersion({
+    runId,
+    source: "rules",
+    text: result.text,
+    note: `${result.rulesApplied} rule${result.rulesApplied === 1 ? "" : "s"} applied`,
+  });
+  console.log(
+    `[scriptgen:rules] ${runId}: ${result.rewritten} rewritten, ${result.deleted} deleted, ` +
+      `${result.locked} of Jake's own left alone ($${result.costUsd})`,
+  );
+  return { ...result, versionId: saved.id };
+}
+
+/** Every snapshot of one run, oldest first, with the live text alongside. */
+export function scriptVersions(runId: string): { versions: ScriptVersion[]; review: ScriptEditReview | null } {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  return { versions: listVersions(runId), review: lastReviewFor(runId) };
+}
+
+/**
+ * Put an old version back in the editor.
+ *
+ * ⚠️ RESTORING SNAPSHOTS FIRST. Whatever is in the editor right now becomes a
+ * version of its own before it is replaced, so "restore" can never be the click
+ * that loses an afternoon's work.
+ */
+export function restoreScriptVersion(runId: string, versionId: string): { text: string; savedAt: number } {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  const version = getVersion(versionId);
+  if (!version || version.runId !== runId) {
+    throw new ZiteError({ code: "NOT_FOUND", message: "That version is not on this script." });
+  }
+  const live = run.editedDocument ?? "";
+  if (live.trim()) addVersion({ runId, source: "edit", text: live, note: "Before restore" });
+  updateRun(runId, { editedDocument: version.text });
+  return { text: version.text, savedAt: Date.now() };
+}
+
+/** The lesson bank behind the panel. `state` omitted means everything. */
+export function scriptLessons(state?: ScriptLesson["state"]): { lessons: ScriptLesson[] } {
+  return { lessons: listLessons(state) };
+}
+
+/**
+ * Approve, reject or retire one lesson — the click that decides whether it
+ * reaches the next generation. See the gate note in scriptgen/lessons.ts.
+ */
+export function decideScriptLesson(id: string, state: ScriptLesson["state"]): { lesson: ScriptLesson | null } {
+  const lesson = setLessonState(id, state);
+  if (!lesson) throw new ZiteError({ code: "NOT_FOUND", message: "That lesson no longer exists." });
+  console.log(`[scriptgen:lesson] ${state}: ${lesson.rule.slice(0, 120)}`);
+  return { lesson };
+}
+
+/** Reword a rule before (or after) approving it. The evidence is untouched. */
+export function editScriptLesson(id: string, rule: string): { lesson: ScriptLesson | null } {
+  const text = String(rule ?? "").trim();
+  if (text.length < 20) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "A rule needs to be a sentence the writer can follow." });
+  }
+  const lesson = updateLessonRule(id, text.slice(0, 800));
+  if (!lesson) throw new ZiteError({ code: "NOT_FOUND", message: "That lesson no longer exists." });
+  return { lesson };
+}
+
+/** Remove a lesson outright — for one that was never worth keeping. */
+export function removeScriptLesson(id: string): { ok: true } {
+  deleteLesson(id);
   return { ok: true };
 }
 
@@ -1817,6 +2128,79 @@ function buildOutlineDocument(
 
 // ── The full run (background, never throws) ───────────────────────────────────
 
+/**
+ * What the fact sheet is told about where its research came from.
+ *
+ * The fact sheet cannot see a URL — it reads a research document that has
+ * already flattened every source into prose. So the provenance has to be handed
+ * to it as a fact, computed in code, or it treats a price from an SEO farm and a
+ * price from the vendor's own page as equally good. They are not.
+ */
+function provenanceNote(audit: SourceAudit | undefined): string {
+  if (!audit || !audit.total) return "";
+  const lines = [
+    `The research opened ${audit.total} page(s): ` +
+      `${audit.firstParty} on the vendor's own domain` +
+      (audit.firstPartyHosts.length ? ` (${audit.firstPartyHosts.join(", ")})` : "") +
+      `, ${audit.aggregator} on review/directory sites, ${audit.community} community.`,
+  ];
+  if (audit.noFirstParty) {
+    lines.push(
+      "",
+      "**NOT ONE PAGE CAME FROM THE VENDOR ITSELF.** Every price, tier, quota and limit below is second-hand — somebody's summary of a pricing page, not the pricing page. Treat all of them as reported rather than confirmed: name the site and the date on the line, and list the ones the video depends on under DO NOT CLAIM or OLDER — SAY HOW OLD as their dates warrant. Do not write a flat statement of what the product costs today. Nothing here establishes that.",
+    );
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Stage 0.4 — read the uploaded screenshots into a sheet.
+ *
+ * The images ride in the MESSAGE, never the system prefix: the prefix is cached
+ * across the whole run and must stay byte-stable, and a dozen PNGs are the most
+ * volatile thing that could go in it.
+ *
+ * Each shot is announced by its citation number and Jake's note before the image
+ * itself, so `[S3]` in the sheet resolves to a picture the reader can open.
+ * Thinking stays ON — deciding what a screen does and does not establish is the
+ * judgement this stage exists for, and it is the judgement that keeps an invented
+ * button label out of the script.
+ */
+export async function readScreenshots(
+  shots: ScreenshotRef[],
+  opts: { topic: string; title: string; today: string; system: string; systemExtra: string[] },
+): Promise<string> {
+  const images = [];
+  for (let i = 0; i < shots.length; i++) {
+    const sh = shots[i];
+    const data = loadShot(sh);
+    // Checked by shotExists() before we got here, but a file can go between the
+    // two and a missing image must not take down the stage.
+    if (!data) continue;
+    const note = sh.note ? ` — Jake's note: ${sh.note}` : "";
+    images.push({
+      label: `[S${i + 1}] ${sh.name}${note}`,
+      data,
+      mediaType: sh.mediaType,
+    });
+  }
+  if (!images.length) throw new Error("none of the uploaded screenshots could be read from disk");
+
+  const prompt = fill(loadPrompt("stage0.4-screenshots"), {
+    "[TODAY'S DATE]": opts.today,
+    "[INSERT TOPIC]": opts.topic,
+    "[INSERT TITLE]": opts.title,
+  });
+  return opusScriptChat({
+    system: opts.system,
+    systemExtra: opts.systemExtra,
+    messages: [{ role: "user", content: prompt, images }],
+    maxTokens: 12000,
+    label: "stage0.4-screenshots",
+    purpose: "scriptgen",
+  });
+}
+
 async function runScript(
   jobId: string,
   runId: string,
@@ -1878,8 +2262,8 @@ async function runScript(
   // jumping to done.
   const PCT =
     mode === "outline"
-      ? { videos: 10, research: 26, facts: 42, outline: 62, coverage: 80 }
-      : { videos: 6, research: 14, facts: 22, outline: 30, coverage: 38 };
+      ? { shots: 4, videos: 12, research: 28, facts: 44, outline: 64, coverage: 80 }
+      : { shots: 3, videos: 7, research: 14, facts: 22, outline: 30, coverage: 38 };
 
   /** Close the job + the run row: same accounting whichever stage we stopped at. */
   const finish = (): void => {
@@ -1912,6 +2296,10 @@ async function runScript(
     // Asked-for beats gated, and it is decided ONCE: this flag rides the cached
     // system prefix, so it has to be byte-stable for the whole run.
     const developerOk = wantsDeveloperWorkflow(setup.coreTopic, setup.specificFocus, input.brief);
+    // The vendor's own domain(s), guessed from the topic once. A wrong guess can
+    // never invent a source — a candidate only ever MATCHES a page the search
+    // already returned — so guessing wide is free and guessing narrow is not.
+    const hosts = vendorHosts(setup.coreTopic, setup.specificFocus);
     const preamble = (withShrapnel: boolean) => systemPreamble(withShrapnel, sponsored);
     const targetLength = (setup.targetLength || "").trim() || "10–12 minutes minimum";
     const sponsorLabel = sponsorshipLabel(setup.sponsorship);
@@ -1932,6 +2320,48 @@ async function runScript(
     const brief = (input.brief || "").trim();
     const briefExtra = brief ? [briefBlock(brief)] : [];
 
+    // ── Stage 0.4 — SCREENSHOTS (runs before EVERYTHING: it is the newest evidence) ──
+    // Jake photographs the product, and those pixels outrank every source the run
+    // is about to buy. Reading them FIRST is the whole point: the tutorial search,
+    // the web research and the fact sheet all get to see what the thing actually
+    // looks like today, instead of being reconciled against it afterwards.
+    //
+    // This matters most exactly where the pipeline was weakest — a tool too new or
+    // too small for anyone to have written about accurately, where search returns
+    // pages that restamp last year's copy with this year's date.
+    const shots = (input.screenshots ?? []).filter((sh) => shotExists(sh));
+    const missingShots = (input.screenshots ?? []).length - shots.length;
+    if (missingShots > 0) {
+      // Never fatal: a run resumed long after the upload should still finish.
+      console.warn(`[scriptgen:shots] ${missingShots} uploaded screenshot(s) are no longer on disk; skipping those`);
+    }
+    if (stages.screenshotSheet === undefined && shots.length > 0) {
+      progress(job, `Reading your ${shots.length} screenshot${shots.length === 1 ? "" : "s"}…`, PCT.shots);
+      try {
+        stages.screenshotSheet = await readScreenshots(shots, {
+          topic: setup.coreTopic,
+          title,
+          today,
+          system: preamble(false),
+          systemExtra: briefExtra,
+        });
+        stages.screenshotRefs = shots;
+        console.log(
+          `[scriptgen:shots] ${shots.length} shot(s) → screenshot sheet ` +
+            `(${stages.screenshotSheet.length} chars): ` +
+            shots.map((sh) => sh.name).join(" | "),
+        );
+      } catch (e) {
+        // One unreadable image must not cost a run the research it is about to buy.
+        stages.screenshotSheet = null;
+        console.warn(`[scriptgen:shots] skipped: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      persist();
+    }
+    // Built once and reused by every stage below, so the cached system prefix
+    // stays byte-stable for the whole run.
+    const shotExtra = stages.screenshotSheet ? [screenshotBlock(stages.screenshotSheet)] : [];
+
     // ── Stage 0.6 — VIDEO WORKFLOWS (runs FIRST: it shapes everything after it) ──
     // Web research knows what a tool IS and not where its buttons are. Someone who
     // recorded themselves using it does. This runs once per run — the transcripts
@@ -1951,7 +2381,10 @@ async function runScript(
           chat: (p) =>
             opusScriptChat({
               system: preamble(false),
-              systemExtra: briefExtra,
+              // The shots say what the current UI looks like, so the shortlist
+              // can prefer a tutorial that matches it over one filmed on a
+              // version that is gone.
+              systemExtra: [...briefExtra, ...shotExtra],
               messages: [{ role: "user", content: p.prompt }],
               maxTokens: p.maxTokens,
               thinking: p.thinking,
@@ -1984,7 +2417,7 @@ async function runScript(
           });
           stages.videoWorkflows = await opusScriptChat({
             system: preamble(false),
-            systemExtra: briefExtra,
+            systemExtra: [...briefExtra, ...shotExtra],
             messages: [{ role: "user", content: s16 }],
             maxTokens: 16000,
             label: "stage1.6-workflows",
@@ -2033,21 +2466,61 @@ async function runScript(
       // they left rather than re-deriving the whole topic from scratch.
       systemExtra: [
         ...briefExtra,
+        // The shots go in FIRST: they tell the search what is already settled and
+        // what is still open, so it stops re-establishing a price Jake has
+        // already photographed and goes after the gaps instead.
+        ...shotExtra,
         ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk), researchScopeBlock(setup.specificFocus ?? "")] : []),
       ],
-      messages: [{ role: "user", content: `${researchDateBlock(windows)}\n\n---\n\n${s1}` }],
+      messages: [
+        {
+          role: "user",
+          content: [
+            researchDateBlock(windows),
+            // Named domains, not the idea of a domain. The prose version of this
+            // instruction lived in the prompt for months and was ignored — the
+            // run that motivated it read 19 review sites and never opened the
+            // product's own pricing page.
+            firstPartyBlock(setup.coreTopic, hosts),
+            "---",
+            s1,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        },
+      ],
       webSearch: true,
       // Half the sweep when the tutorials already answered how the product
       // works: the searches that remain are for prices, dates and the gaps the
       // sheet marks NOT SHOWN. With no sheet the written web is all there is,
       // so it keeps the full eight.
-      searchMaxUses: stages.videoWorkflows ? 4 : 8,
+      //
+      // The vendor's own pages now cost three REQUIRED searches (pricing, docs,
+      // changelog), so a topic that has a vendor gets two more rounds to pay for
+      // them. This is the most expensive dial in the pipeline — each round
+      // re-sends the conversation, so cost rises with the SQUARE of the rounds —
+      // and it is spent deliberately: the run this fixes bought 21 sources and
+      // not one of them was the product's own pricing page.
+      searchMaxUses: stages.videoWorkflows ? (hosts.length ? 6 : 4) : 8,
       maxTokens: 16000,
       label: "stage1-research",
       sinkSources: stages.sources,
       purpose: "scriptgen",
     });
     persist();
+    }
+    // Count where the facts came from, from the sources the search actually
+    // returned — never from what the model says it read. A run reported itself
+    // as having researched a product thoroughly on the strength of 19 review
+    // blogs and a help page from the previous September.
+    //
+    // OUTSIDE the stage guard on purpose: it is pure arithmetic over sources
+    // that are already persisted, so a resumed run — and every run that predates
+    // this audit — gets its count without re-buying the research.
+    if (!stages.sourceAudit && stages.sources.length) {
+      stages.sourceAudit = auditSources(stages.sources, hosts);
+      console.log(`[scriptgen:sources] ${auditLogLine(stages.sourceAudit)}`);
+      persist();
     }
 
     // ── Stage 1.5 — FACT SHEET ──
@@ -2060,9 +2533,11 @@ async function runScript(
       "[TODAY'S DATE]": today,
       "[RECENT WINDOW]": windows.recent,
       "[ONE YEAR AGO]": windows.oneYear,
+      "[PASTE THE SCREENSHOT SHEET]": stages.screenshotSheet ?? "(no screenshots were uploaded for this run)",
       "[PASTE THE VIDEO WORKFLOWS]": stages.videoWorkflows ?? "(no recent video tutorials were found for this topic)",
       "[INSERT TITLE]": title,
       "[PASTE THE RESEARCH]": stages.research ?? "",
+      "[SOURCE PROVENANCE]": provenanceNote(stages.sourceAudit),
     });
     stages.factSheet = await opusScriptChat({
       system: preamble(false),
@@ -2089,7 +2564,7 @@ async function runScript(
       // drops, the video will not contain — so this is the stage that most needs
       // the brief, and the one that never had it. Same reasoning for the click
       // paths: a step that misses the outline cannot come back later.
-      systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : [])],
+      systemExtra: [...briefExtra, ...shotExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : [])],
       messages: [
         {
           role: "user",
@@ -2124,7 +2599,7 @@ async function runScript(
         system: preamble(false),
         messages: [{ role: "user", content: s25 }],
         maxTokens: 32000,
-        systemExtra: [...briefExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : [])],
+        systemExtra: [...briefExtra, ...shotExtra, ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : [])],
         label: "stage2.5-coverage",
         purpose: "scriptgen",
       });
@@ -2163,6 +2638,59 @@ async function runScript(
         console.warn(`[scriptgen:coverage] ${stages.briefCoverage.verdict}`);
       }
       persist();
+    }
+
+    // ── Stage 2.55 — ON SCREEN ──
+    // Every content section has to say what the viewer WATCHES HAPPEN. This is
+    // cast at outline time or not at all: a section that reaches the writer with
+    // nothing to show gets written as an essay paragraph, and by then the only
+    // fix left is rewriting finished prose. Runs before the outline-only return,
+    // because the outline is the deliverable in that mode.
+    //
+    // The repair only ever ADDS one line under a header — it never re-emits the
+    // outline, so unlike the coverage pass it cannot silently truncate it.
+    {
+      const missing = outlineSectionsMissingOnScreen(stages.outline ?? "");
+      if (missing.length > 0) {
+        try {
+          const rawOnScreen = await opusScriptChat({
+            system: preamble(false),
+            systemExtra: [...briefExtra, ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : [])],
+            messages: [
+              {
+                role: "user",
+                content: fill(loadPrompt("stage2.55-onscreen"), {
+                  "[SECTION NAMES]": missing.map((n) => `- ${n}`).join("\n"),
+                  "[PASTE THE OUTLINE]": stages.outline ?? "",
+                }),
+              },
+            ],
+            maxTokens: 4000,
+            effort: "medium",
+            label: "stage2.55-onscreen",
+            purpose: "scriptgen",
+          });
+          const parsed = JSON.parse(extractJson(rawOnScreen)) as { lines?: Record<string, unknown> };
+          const lines: Record<string, string> = {};
+          for (const [k, v] of Object.entries(parsed.lines ?? {})) {
+            if (typeof v === "string" && v.trim()) lines[k] = v.trim();
+          }
+          stages.outline = insertOnScreenLines(stages.outline ?? "", lines);
+          const still = outlineSectionsMissingOnScreen(stages.outline);
+          console.log(
+            `[scriptgen:onscreen] ${missing.length} section(s) had no on-screen moment → ` +
+              `${missing.length - still.length} filled in` +
+              (still.length ? `, ${still.length} still missing: ${still.join(", ")}` : ""),
+          );
+          persist();
+        } catch (e) {
+          // Never fatal. A missing on-screen line costs the video some life; a
+          // failed run costs the whole video.
+          console.warn(
+            `[scriptgen:onscreen] skipped: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
     }
 
     // ── Outline-only runs stop here ──
@@ -2376,6 +2904,9 @@ async function runScript(
     const sectionExtra = [
       ...briefExtra,
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
+      // Above the workflow sheet: where a July tutorial and a screenshot taken
+      // today show different labels, the writer must reach for the screenshot.
+      ...shotExtra,
       ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
       // Every section carries the whole loop list, not just its own: a section
       // that does not own a loop still has to avoid answering it early.
@@ -2405,9 +2936,13 @@ async function runScript(
         label: `stage5-draft-${i + 1}`,
         purpose: "scriptgen",
       });
+      // Measured BEFORE the review call, so the rewrite that is about to happen
+      // gets the finding while it is still cheap to act on.
+      const demo = checkSectionDemo(draft, sec.name);
+      const echoes = exemplarEchoes(draft, EXEMPLAR_SCRIPTS);
       const reviewPrompt =
         fill(loadPrompt("stage5-review"), { "[PASTE SECTION]": draft }) +
-        reviewGuardBlock(ledger, Boolean(stages.factSheet));
+        reviewGuardBlock(ledger, Boolean(stages.factSheet), demo, echoes);
       const final = await opusScriptChat({
         system: preamble(false),
         // Same cached prefix as the draft call, so the fact sheet the review now
@@ -2419,6 +2954,26 @@ async function runScript(
         label: `stage5-review-${i + 1}`,
         purpose: "scriptgen",
       });
+      // Re-measure rather than assume the rewrite landed — the same discipline the
+      // claim audit uses. A section that still shows nothing is worth knowing about
+      // while the run is in flight.
+      const after = checkSectionDemo(final, sec.name);
+      const echoesAfter = exemplarEchoes(final, EXEMPLAR_SCRIPTS);
+      if (echoes.length > 0 || echoesAfter.length > 0) {
+        console.log(
+          `[scriptgen:echo] section ${i + 1}/${total} "${sec.name}" lifted lines ` +
+            `${echoes.length}→${echoesAfter.length}` +
+            (echoesAfter.length ? `: ${echoesAfter.map((e) => `"${e}"`).join("; ")}` : " (cleared)"),
+        );
+      }
+      if (!demo.ok || !after.ok) {
+        console.log(
+          `[scriptgen:demo] section ${i + 1}/${total} "${sec.name}" ` +
+            `on-screen moments ${demo.demoAnchors}→${after.demoAnchors}` +
+            (after.genericApproval.length ? `, generic approval still: ${after.genericApproval.join(", ")}` : "") +
+            (after.ok ? " (fixed)" : " (STILL FAILING)"),
+        );
+      }
       stages.sections.push({ name: sec.name, draft, final });
       persist();
     }

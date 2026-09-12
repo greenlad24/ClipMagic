@@ -25,6 +25,31 @@ export interface Sponsorship {
   sponsorName: string | null;
 }
 
+/**
+ * One screenshot of the tool as it is TODAY, uploaded by the user at setup.
+ *
+ * The bytes live on disk under DATA_DIR/scriptgen/shots (see scriptgen/shots.ts)
+ * rather than in the run row: a run carries a dozen PNGs of a dashboard, and
+ * `stages_json` is read and written back on every stage boundary.
+ *
+ * `note` is what the user typed about that shot ("this is the pricing page,
+ * logged in on the paid tier"). It is the only thing that tells the reader what
+ * they are looking at when the screen itself is ambiguous, and it is carried
+ * into the sheet verbatim.
+ */
+export interface ScreenshotRef {
+  id: string;
+  /** Original filename, shown in the UI and used as the shot's label. */
+  name: string;
+  /** image/png | image/jpeg | image/webp | image/gif — what Anthropic accepts. */
+  mediaType: string;
+  bytes: number;
+  /** Optional user note about what this screenshot shows. */
+  note?: string;
+  /** When it was uploaded. */
+  uploadedAt: number;
+}
+
 export interface ScriptInput {
   /** The plain-text video idea (required). */
   idea: string;
@@ -33,6 +58,16 @@ export interface ScriptInput {
   sponsorship?: Sponsorship;
   /** Defaults to "10–12 minutes minimum". */
   targetLength?: string;
+  /**
+   * Screenshots of the tool taken today. Optional, and the single highest
+   * authority in the run: a screen the user photographed this morning outranks
+   * the vendor's own page, a tutorial recorded in July, and every review blog.
+   *
+   * They matter most exactly where the web is weakest — a tool that launched
+   * last month, or one nobody has written about — which is also where a script
+   * built from search results goes stale or invents things.
+   */
+  screenshots?: ScreenshotRef[];
 }
 
 export type VideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
@@ -71,7 +106,31 @@ export interface Stage0Result {
    * brief. Null when the video isn't item-based. Never derived from the title.
    */
   itemCount: number | null;
+  /**
+   * How much current, trustworthy writing about this topic the web is likely to
+   * hold. Judged at classify-time, before a single search is bought, and used
+   * for one thing: telling the user at the checkpoint whether screenshots are
+   * optional or are about to be the only real source this run has.
+   *
+   * "thin" is the case that produced hedged scripts — a tool too new or too
+   * small for anyone to have written about it accurately, where search returns
+   * SEO pages that restamp year-old copy with the current year in the title.
+   *
+   * Null on runs that predate this field.
+   */
+  coverageRisk?: CoverageRisk | null;
+  /** One sentence on why, shown to the user next to the upload control. */
+  coverageNote?: string | null;
 }
+
+/**
+ * How well-covered a topic is by current writing on the open web.
+ *
+ *   "normal" — an established tool with real, dateable coverage.
+ *   "thin"   — new, niche, or renamed: expect stale aggregator copy and little
+ *              from the vendor. Screenshots do the heavy lifting here.
+ */
+export type CoverageRisk = "normal" | "thin";
 
 /** The user-confirmed setup after the Stage 0 checkpoint (drives Stages 1–7). */
 export interface ScriptSetup {
@@ -134,6 +193,17 @@ export interface ReviewChecklist {
   noSectionAnnouncement: boolean;
   toolNamedNotVague: boolean;
   noStaleFacts: boolean;
+  /**
+   * These four were asked for in stage7-review.md but never existed here, so
+   * coerceChecklist dropped them on every run — the review performed the check
+   * and the answer was discarded before it reached the artifact.
+   */
+  threeFunnyLines: boolean;
+  noSilentStretch: boolean;
+  noGenericApproval: boolean;
+  noLiftedLines: boolean;
+  /** No AI-register phrasing left in the script. */
+  noSlopPhrasing: boolean;
 }
 
 /** One hook, scored. Stage 3 writes four; this is how Jake chooses between them. */
@@ -181,6 +251,8 @@ export interface ClaimAudit {
   excessSponsorPlugs: string[];
   /** Banned words that survived into the finished script. */
   bannedWords: string[];
+  /** AI-register phrasings that survived — measured to appear in no reference script. */
+  slopPhrases: string[];
   /**
    * Names of the people whose tutorials fed the workflow sheet, found in the
    * script. A run said "that's the version Nate actually runs day to day" —
@@ -201,6 +273,8 @@ export interface ScriptQuality {
   worstPhraseRepeats: number;
   worstPhrase: string | null;
   discourseMarkerOpenings: number;
+  /** Optional: runs stored before these were measured don't carry them. */
+  demoAnchors?: number;
 }
 
 /** One brief request, and what the outline did with it (Stage 2.5). */
@@ -227,6 +301,37 @@ export interface BriefCoverage {
   outlineRevised: boolean;
 }
 
+/**
+ * Where the research's sources actually came from.
+ *
+ * Written after Stage 1 from the sources the search returned, NOT asked of the
+ * model — the run that motivated this one read 19 third-party review sites and
+ * two stale vendor help pages, and reported itself as having researched the
+ * product thoroughly. A count is not a judgement call.
+ *
+ *   firstParty  — pages on the vendor's own domain(s): pricing, docs, changelog.
+ *   community   — forums, Reddit, GitHub, Discord: people using the thing.
+ *   aggregator  — review farms and software directories. These restamp old copy
+ *                 with the current year, so they LOOK current to a date-anchored
+ *                 search and are the main way a stale price gets in.
+ */
+export interface SourceAudit {
+  total: number;
+  firstParty: number;
+  community: number;
+  aggregator: number;
+  /** The vendor hostnames this audit was judged against. */
+  vendorHosts: string[];
+  /** Hostnames counted as first-party, for the log line and the UI. */
+  firstPartyHosts: string[];
+  /**
+   * True when the research never opened a single page the vendor publishes.
+   * Not an error — some topics have no vendor — but on a tool walkthrough it is
+   * the strongest available signal that the prices in this run are hearsay.
+   */
+  noFirstParty: boolean;
+}
+
 export interface ScriptStages {
   research: string | null;
   /** Stage 1 — the sources the research rested on, so a price claim can be traced. */
@@ -238,6 +343,24 @@ export interface ScriptStages {
    * number or a button name that the outline happened to compress away.
    */
   factSheet: string | null;
+  /**
+   * Stage 0.4 — what the user's own screenshots show, read before anything is
+   * searched for. Exact labels, prices, tiers and states as of the day they were
+   * taken, plus what the shots do NOT cover so the research knows where to look.
+   *
+   * This is the top of the evidence order for the whole run. Undefined when the
+   * stage never ran (no screenshots uploaded); null when it ran and the images
+   * turned out to be unreadable.
+   */
+  screenshotSheet?: string | null;
+  /** Which screenshots that sheet was built from, for the deliverable's source list. */
+  screenshotRefs?: ScreenshotRef[];
+  /**
+   * Stage 1 — whether the research ever opened a page the vendor itself
+   * publishes, or spent the whole budget on third-party review sites. Undefined
+   * on runs that predate the audit.
+   */
+  sourceAudit?: SourceAudit;
   /**
    * What recent video tutorials actually show on screen: click paths, real UI
    * labels, values typed, and what they disagree about. Null when video research
@@ -360,4 +483,89 @@ export interface ScriptGenStatus {
   anthropicConfigured: boolean;
   /** The Opus model the tool runs on. */
   model: string;
+}
+
+/* ────────────────────────── the edit loop ────────────────────────── */
+
+/**
+ * A point Jake declared finished, kept so it can be restored and compared.
+ *
+ * ⚠️ SNAPSHOTTED ON "DONE", NOT ON AUTOSAVE. See the table comment in
+ * db/index.ts: the autosave column is the live text, a version is a decision.
+ */
+export interface ScriptVersion {
+  id: string;
+  runId: string;
+  /** 1-based within the run. Version 1 is always what the pipeline wrote. */
+  versionNo: number;
+  /**
+   * `generated` — the pipeline's own words. `edit` — Jake's. `rules` — the
+   * approved-rules pass rewriting the parts he had not touched.
+   *
+   * ⚠️ `generated` AND `rules` ARE BOTH LEARNING BASELINES, and that is what the
+   * third value is for. After a rules pass the machine's text is no longer
+   * `finalDocument`, so a later "Done" that diffed against `finalDocument` would
+   * read the machine's own rewrite as an edit by Jake and learn from it —
+   * a model teaching itself its own habits, one approval at a time.
+   */
+  source: "generated" | "edit" | "rules";
+  text: string;
+  note: string;
+  createdAt: number;
+  chars: number;
+  words: number;
+}
+
+/** Counts from the deterministic diff — see scriptgen/editDiff.ts. */
+export interface ScriptEditStats {
+  generatedParagraphs: number;
+  editedParagraphs: number;
+  kept: number;
+  rewritten: number;
+  cut: number;
+  added: number;
+  generatedWords: number;
+  editedWords: number;
+  keptRatio: number;
+  thirds: [number, number, number];
+}
+
+/** One before/after pair, straight out of the diff — never paraphrased. */
+export interface ScriptLessonEvidence {
+  before: string;
+  after: string;
+}
+
+/**
+ * Something the generator should do differently next time, proposed from a diff.
+ *
+ * ⚠️⚠️ INERT UNTIL APPROVED. Only `state === "approved"` reaches the system
+ * prompt; a pending lesson is a suggestion on a screen and nothing more.
+ */
+export interface ScriptLesson {
+  id: string;
+  runId: string;
+  reviewId: string;
+  rule: string;
+  rationale: string;
+  evidence: ScriptLessonEvidence[];
+  scope: "voice" | "structure" | "format" | "facts";
+  state: "pending" | "approved" | "rejected" | "retired";
+  createdAt: number;
+  decidedAt: number | null;
+  /** The script it was learned from, for the panel. Not stored — joined on read. */
+  runTitle?: string;
+}
+
+/** One "Done" click: the diff that was measured and what came out of it. */
+export interface ScriptEditReview {
+  id: string;
+  runId: string;
+  versionId: string;
+  stats: ScriptEditStats;
+  status: "ready" | "failed";
+  error: string | null;
+  costUsd: number;
+  createdAt: number;
+  lessons: ScriptLesson[];
 }
