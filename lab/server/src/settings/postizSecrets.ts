@@ -224,6 +224,14 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
 const ALLOWED_KEYS = new Set(POSTIZ_KEY_DEFS.map((d) => d.key));
 
 /**
+ * Prefix for the per-folder Google Docs sequence counter. Dynamic (the folder
+ * id is part of the key), so it is exempted from ALLOWED_KEYS by prefix in
+ * readStore rather than listed. Deliberately NOT exported to the env file:
+ * it is bookkeeping, not a credential.
+ */
+const GDOCS_SEQ_PREFIX = "GDOCS_SEQ_";
+
+/**
  * Keys consumed by THIS lab server (never by the Postiz container), so they're
  * EXCLUDED from the emitted Postiz env file: the Bulk Scheduler's posting-provider
  * keys (Postiz / PostPeer public APIs) and the Cloud sources credentials
@@ -300,7 +308,15 @@ function readStore(): SecretMap {
       // Keep only known keys with string values.
       const out: SecretMap = {};
       for (const [k, v] of Object.entries(parsed)) {
-        if (ALLOWED_KEYS.has(k) && typeof v === "string" && v.length > 0) out[k] = v;
+        // GDOCS_SEQ_<folderId> is a DYNAMIC key — one per export folder — so it
+        // cannot appear in the static ALLOWED_KEYS built from POSTIZ_KEY_DEFS.
+        // Without this prefix exemption the filter silently ate it on every
+        // read: setGoogleDocsHighWater wrote the number to disk and
+        // getGoogleDocsHighWater always read back 0, so the "never reuse a
+        // number" guarantee the doc numbering rests on did not hold, and the
+        // sequence could not be started at anything but 1.
+        const allowed = ALLOWED_KEYS.has(k) || k.startsWith(GDOCS_SEQ_PREFIX);
+        if (allowed && typeof v === "string" && v.length > 0) out[k] = v;
       }
       return out;
     }
@@ -879,14 +895,14 @@ export function setGoogleDocsFolder(folderId: string): void {
  */
 export function getGoogleDocsHighWater(folderId: string): number {
   const map = readStore();
-  const n = Number(map[`GDOCS_SEQ_${folderId}`] || 0);
+  const n = Number(map[`${GDOCS_SEQ_PREFIX}${folderId}`] || 0);
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 export function setGoogleDocsHighWater(folderId: string, n: number): void {
   const map = readStore();
   if (n > getGoogleDocsHighWater(folderId)) {
-    map[`GDOCS_SEQ_${folderId}`] = String(n);
+    map[`${GDOCS_SEQ_PREFIX}${folderId}`] = String(n);
     writeStore(map);
   }
 }

@@ -166,6 +166,63 @@ export function parseRecentVideos(json: any): RecentVideo[] {
   return out;
 }
 
+/**
+ * How long each video is, in seconds, via videos.list?part=contentDetails.
+ *
+ * ⚠️ THE ONLY WAY TO TELL A SHORT FROM A TUTORIAL. Nothing on the uploads
+ * playlist says which is which — same shape, same fields, newest first — so a
+ * caller reading that list alone cannot avoid announcing a 30-second clip as
+ * this week's video. Measured on Jake's channel 2026-08-28: his two most recent
+ * uploads were 35s and 30s and his long-form runs 557–1,118s, and the duration
+ * agreed with youtube.com/shorts/<id> (200 for a Short, 303 away for a normal
+ * video) on all 20.
+ *
+ * One quota unit per call, up to 50 ids at a time. Ids YouTube does not return
+ * are simply absent from the map — never guessed at.
+ */
+export async function videoDurations(videoIds: string[], fetchImpl?: FetchFn): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const ids = videoIds.filter((v) => typeof v === "string" && v.length > 0);
+  if (ids.length === 0) return out;
+  const key = getYoutubeDataApiKey();
+  if (!key) throw new Error("YouTube Data API key not configured.");
+  const doFetch = resolveFetch(fetchImpl);
+  for (let i = 0; i < ids.length; i += 50) {
+    const params = new URLSearchParams({ part: "contentDetails", id: ids.slice(i, i + 50).join(","), key });
+    const json = await ytGetJson(`${YT_BASE}/youtube/v3/videos?${params.toString()}`, doFetch);
+    for (const [id, secs] of parseVideoDurations(json)) out.set(id, secs);
+  }
+  return out;
+}
+
+/** Pure: map a videos.list response → id → seconds. Exported for tests. */
+export function parseVideoDurations(json: any): Map<string, number> {
+  const out = new Map<string, number>();
+  const items: any[] = Array.isArray(json?.items) ? json.items : [];
+  for (const it of items) {
+    const id = typeof it?.id === "string" ? it.id : "";
+    const secs = parseIsoDuration(it?.contentDetails?.duration);
+    if (id && secs !== null) out.set(id, secs);
+  }
+  return out;
+}
+
+/**
+ * "PT9M17S" → 557. Null when it is not a duration at all.
+ *
+ * ⚠️ NULL AND 0 ARE DIFFERENT ANSWERS. A video whose length could not be read
+ * must not read as zero seconds, which every "is this a Short?" test would
+ * answer YES to.
+ */
+export function parseIsoDuration(raw: unknown): number | null {
+  if (typeof raw !== "string") return null;
+  const m = /^P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/.exec(raw.trim());
+  if (!m) return null;
+  const [, d, h, mi, se] = m;
+  if (!d && !h && !mi && !se) return null;
+  return Number(d || 0) * 86400 + Number(h || 0) * 3600 + Number(mi || 0) * 60 + Math.round(Number(se || 0));
+}
+
 // ── engagement stats (subscribers · comments · likes) ─────────────────────────
 
 /** A channel's engagement snapshot (counts only; the DB stamps updatedAt). */
