@@ -31,6 +31,7 @@
  * lines in his own 70 posts start with a capital.
  */
 import { aiConfig } from "../ai/config.js";
+import { bannedWordsForPrompt } from "./voice.js";
 import { claudeJSONForPurposeWithUsage } from "../ai/claude.js";
 import { classroomOutline, retrieve, retrievePosts, type Retrieved, type RetrievedPost } from "./knowledge.js";
 import { allowedCourseSlugs, type Entitlement } from "./access.js";
@@ -246,6 +247,64 @@ function mechanics(kind: "post" | "reply", extra: string): string {
  * `styleBlock`. A half-right description is worse than none, because the wrong
  * half is indistinguishable from the right half at the point of reading it.
  */
+/**
+ * Jake's own word list, from the script generator, in the words of a rule.
+ *
+ * ⚠️⚠️ ONE VOICE, ONE LIST. Jake, 2026-09-12: "add the new language rules from
+ * the script generator to match Jake's voice." The scriptgen list was measured
+ * against 16,516 words of his own writing and every entry appears ZERO times in
+ * any of it — so these are not style preferences, they are words he does not
+ * use. `voice.ts` derives the Skool list from it and drops only what was shown
+ * to fire on his own approved Skool output; this block quotes that same derived
+ * list, so the rule the drafter is given and the rule it is checked against
+ * cannot come apart.
+ *
+ * ⚠️ AND THE CHECK IS THE BACKSTOP, NOT THIS. `findVoiceIssues` finds these in
+ * code because, as the scriptgen note puts it, a prompt instruction to never
+ * use X does not reliably hold — the model reaches for them anyway. The prompt
+ * is here to make the first draft right; the check is here for when it is not.
+ */
+function voiceWordsBlock(): string {
+  return [
+    "⚠️ WORDS JAKE DOES NOT WRITE. These were measured against 16,000 words of his own writing and",
+    "appear nowhere in it. Do not use any of them, in any tense or plural:",
+    bannedWordsForPrompt().map((w) => `"${w}"`).join(", ") + ".",
+    "The plain replacements: \"caveat\" is \"the catch is\" or \"one thing to know\"; \"clever\" is saying what",
+    "the thing actually does; \"genuinely useful\" is \"useful\"; \"whether\" is \"if\"; \"folks\" is \"everyone\".",
+    "",
+    "⚠️ \"which\" AS A JOIN, NOT AS A QUESTION. \"It runs on a schedule, which is handy\" becomes two",
+    "spoken sentences: \"It runs on a schedule. That's handy.\" A comma in front of \"which\" is the tell.",
+    "Asking a question with it is completely fine and is how half these posts open — \"Which AI do you",
+    "actually open every day?\" stays exactly as it is.",
+    "",
+    "⚠️ AI-REGISTER FILLER. None of these, ever: \"what nobody tells you\", \"here's the kicker\", \"let that",
+    "sink in\", \"it's worth noting\", \"at the end of the day\", \"in today's world\", \"delve into\",",
+    "\"game-changer\", \"this changes everything\", \"leverage\", \"utilise\", \"streamline\", \"robust\",",
+    "\"experts agree\", \"studies show\", \"in conclusion\". They are the register a model falls into when it",
+    "stops sounding like the person it is writing as.",
+    "",
+    "⚠️ DO NOT NARRATE YOUR OWN HONESTY. \"Quick honest bit first\", \"my real take\", \"honest thoughts\" —",
+    "cut the label and say the honest thing. A sentence whose only job is to describe the next sentence",
+    "gets deleted.",
+    "",
+    "⚠️ DO NOT ANNOUNCE THE PART YOU ARE ABOUT TO DO. Not \"let's talk money\" — just say what it costs.",
+    "The content is the signal that the subject turned.",
+    "",
+    "⚠️ NEVER PUNCH DOWN. No \"most people are using this wrong\", no \"you're probably making this",
+    "mistake\", no \"the average user\". The reader is your equal; the joke goes at Jake or at the",
+    "situation. Describing the world is fine — \"you've got a calendar, a CRM and a form tool that barely",
+    "speak to each other\" is the world, not the reader.",
+    "",
+    "⚠️ SAY \"Imagine …\", NEVER \"Picture …\", and do not drop clipped fragments. \"The result?\" and \"The",
+    "catch?\" read like ad copy — lead with the small word a person would say: \"So what do you end up",
+    "with?\", \"Here's the one thing to watch.\"",
+    "",
+    "⚠️ SAY EACH THING ONCE. The worst version explains an idea three times — the concept, then the",
+    "mechanism, then an example repeating both. Pick the framing that lands and cut the others. If two",
+    "paragraphs are circling the same point, they are one paragraph.",
+  ].join("\n");
+}
+
 const POST_FORMAT_NOTE = [
   "THIS IS A POST IN JAKE'S OWN SKOOL COMMUNITY — not a YouTube reply.",
   "The voice rules above (banned words, no hype, no invented claims) apply in",
@@ -721,6 +780,64 @@ function skoolReplyNote(firstName: string): string {
     "  if it is filler, cut it.",
     '- Do NOT swap one tic for another. "Ah", "right", "so", "honestly" on every',
     "  reply is the same failure wearing a different word.",
+    "",
+    "⚠️ OVERRIDE 6 — DO NOT OPEN BY SAYING THEIR OWN MESSAGE BACK TO THEM.",
+    'Jake, 2026-09-12: "in a DM thread I don\'t want the bot to repeat the idea',
+    "that the other person said in the first paragraph or at all in the next",
+    'message, just continue the conversation like normal people would do."',
+    "This is what `PATTERN A`'s [short acknowledgment] turns into once OVERRIDE 5",
+    "stops it collapsing to \"yeah\": instead of one filler word it becomes a whole",
+    "sentence summarising what they just told you, dressed up as agreement. Three",
+    "consecutive replies in one real thread opened this way — \"A video editor",
+    "getting into AI for outreach — that's a good spot to be in\", \"Love this —",
+    "fitness influencers are a smart niche to pick\", \"That's a strong hand to play",
+    "— 2.6M views with real clients is proper social proof\". Every one is",
+    "pleasant, and every one spends the opening telling somebody what they already",
+    "know about themselves.",
+    "- Do not restate their situation, their niche, their job, their tool or their",
+    "  plan before you answer. They wrote it. They know.",
+    "- Do not open by telling them their idea is good, smart, strong or the right",
+    "  call. If something they said genuinely changes the answer, show it by",
+    "  answering differently — not by awarding it a compliment first.",
+    "- START AT THE PART THEY DO NOT KNOW. The first sentence of the reply should",
+    "  be new information, the way it is when two people are actually talking.",
+    "- This is not about being cold. Warmth is in how the answer is written, not",
+    "  in a sentence of approval bolted to the front of it.",
+    "",
+    "⚠️⚠️ `PATTERN A: ACKNOWLEDGMENT + PIVOT` IS WITHDRAWN FOR THE FIRST SENTENCE",
+    "OF A REPLY. This is named because naming it is the only thing that works: the",
+    "patterns section says \"use one of these per sentence\", so an override that",
+    "merely describes the problem loses to a rule that assigns a shape. Measured",
+    "2026-09-12 — with the rule above but without this paragraph, the draft opened",
+    "\"The results-first pitch is the right instinct, honestly\" and the repaired",
+    "draft opened \"Keep leading with the results, that's the right call.\" Both are",
+    "PATTERN A, filled with her own words.",
+    "- PATTERN A is still fine INSIDE a reply. It is the opening it may no longer",
+    "  have. Open on PATTERN B or C, or on a plain sentence of substance.",
+    "- ⚠️ AND THE ACKNOWLEDGMENT DOES NOT COUNT AS 'VARIED' JUST BECAUSE IT IS NOT",
+    "  \"yeah\". OVERRIDE 5 asked for a different word, and the way that gets obeyed",
+    "  is by growing the acknowledgment into a whole sentence about what they",
+    "  said. That is worse, not better. The answer to both rules is the same: no",
+    "  acknowledgment at the front at all.",
+    "- `RULE 9` already bans \"Great question\", \"That's a fantastic point\" and",
+    "  \"I totally get it\". \"That's a smart niche to pick\" and \"that's the right",
+    "  call\" are the same move with their own words in it, and are banned for the",
+    "  same reason. A compliment is not less of a stock opener for being specific.",
+    "",
+    "⚠️ OVERRIDE 7 — NEVER SEND THE SAME THING TWICE IN ONE CONVERSATION.",
+    'Jake, 2026-09-12: "I don\'t want to include the same links twice in a thread."',
+    "In the thread that prompted this, the same classroom lesson was linked on two",
+    "consecutive days, and the same \"that video is a few months old, the menus",
+    "moved\" caveat came with it both times. You can see the whole conversation",
+    "above, so there is no excuse for it: what is in the transcript has been said.",
+    "- A link they have already been sent does not go in again. Not as a",
+    "  reminder, not \"as mentioned above\", not in a list of next steps.",
+    "- The same applies to a CAVEAT, a tip or an explanation you have already",
+    "  given them in this thread. Say it once.",
+    "- If the next step genuinely is the lesson they already have, say what to do",
+    "  with it — do not re-hand them the URL.",
+    "- ⚠️ A DIFFERENT lesson is not a repeat. Two links in the same course differ",
+    "  only after the `?md=`, and sending the second one is exactly right.",
     "",
     "⚠️ WHAT DOES NOT CHANGE, and it is what makes the overrides safe:",
     "- No invented numbers, prices, limits or results. If a search did not",
@@ -1567,7 +1684,10 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
   // ⚠️ THE POLICY IS IN THE POST PROMPT TOO, AND THE LIST DOES NOT GET SHORTER
   // FOR THE SURFACE THAT REACHES MORE PEOPLE. A reply reaches one member; a
   // post reaches all 73 and, once a week, their email inboxes.
-  const extra = [communityNote("post"), POST_FORMAT_NOTE, kindNote, policyBlock("post")]
+  // ⚠️ THE SAME WORD LIST ON BOTH SURFACES. The sweep found "clever" in three
+  // published posts, "folks" in one and the relative "which" in two — a post is
+  // no less Jake's writing than a reply, and Jake's instruction named neither.
+  const extra = [communityNote("post"), POST_FORMAT_NOTE, voiceWordsBlock(), kindNote, policyBlock("post")]
     .filter(Boolean)
     .join("\n\n");
 
@@ -1920,11 +2040,48 @@ export interface ReplyRequest {
    */
   restrictions?: string[];
   /**
+   * Links this account has already sent in this conversation — see OVERRIDE 7.
+   *
+   * ⚠️⚠️ PASSED AS DATA, NOT LEFT TO THE TRANSCRIPT. The whole conversation is
+   * already in the prompt, and the drafter still sent the same lesson link two
+   * days running — so "you can see what you sent" was demonstrably not enough.
+   * Spelling the URLs out turns a thing it has to notice into a thing it is
+   * told. The check in `outgoing.ts` then measures whether it held.
+   */
+  alreadySentUrls?: string[];
+  /**
    * What the pre-send check refused about the previous attempt — see
    * `repairInstruction` in `outgoing.ts`. Absent on a first attempt; appended
    * after everything else, restrictions included, on the repair pass.
    */
   repair?: string;
+}
+
+/**
+ * The links this person has already been handed, named one by one.
+ *
+ * ⚠️ LAST IN THE USER MESSAGE, WHERE THE GROUNDING LIST IS ALREADY FRESH. The
+ * grounding block offers lessons to link; this one takes some of them off the
+ * table, so it has to be read after them — the same precedence rule the whole
+ * of this file runs on.
+ *
+ * ⚠️ IT DOES NOT SAY "DO NOT LINK THESE LESSONS". A member who was sent a
+ * lesson may still need it discussed; what they do not need is the URL pasted
+ * at them twice. The distinction is written out, because a flat ban would make
+ * the drafter avoid the subject rather than avoid the link.
+ */
+function alreadySentBlock(urls: string[]): string {
+  const unique = [...new Set(urls.map((u) => u.trim()).filter(Boolean))];
+  if (!unique.length) return "";
+  return [
+    `ALREADY SENT TO THIS PERSON IN THIS CONVERSATION — ${unique.length} link${unique.length > 1 ? "s" : ""}.`,
+    "They have these. Do not put any of them in this reply, in any form.",
+    ...unique.map((u) => `- ${u}`),
+    "You may still talk about what is on those pages, and you should if it is what they asked about —",
+    "carry on from where they got to. What must not happen is the same URL arriving twice.",
+    "A DIFFERENT page is fine, including a different lesson in the same course: those URLs match up to",
+    "the `?md=` and differ after it, and only an exact repeat is the problem.",
+  ].join("\n");
 }
 
 export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft | null; error: string | null }> {
@@ -2023,6 +2180,13 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
         "",
         surfaceNote,
         "",
+        // ⚠️ AFTER THE VOICE GUIDE AND AFTER THE OVERRIDES, BECAUSE IT IS A
+        // NARROWING OF BOTH. The guide says how Jake sounds; this says which
+        // words are not his, measured rather than judged. It goes before the
+        // gate for the same reason `communityNote` does — how a sentence is
+        // written is settled before what it may link.
+        voiceWordsBlock(),
+        "",
         // ⚠️ INSIDE MECHANICS, NOT INSIDE THE VOICE GUIDE, AND THAT IS THE
         // PRECEDENCE THIS FILE ALREADY ESTABLISHED: the guide governs how a
         // reply SOUNDS and mechanics govern what it may CLAIM and link. Who can
@@ -2106,6 +2270,8 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     pastPostsBlock(postHits),
     "",
     ownVideosBlock(ownVideos),
+    "",
+    alreadySentBlock(req.alreadySentUrls ?? []),
   ].join("\n");
 
   // ⚠️ WEB SEARCH IS ON FOR REPLIES AND OFF FOR POSTS, AND THE ASYMMETRY IS THE

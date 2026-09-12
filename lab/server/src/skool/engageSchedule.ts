@@ -1368,7 +1368,11 @@ async function attemptSlot(
         // The repaired text is what gets judged from here, pass or fail — the
         // refusal a reader sees should name what the LAST draft did wrong.
         gate = checkPost(repaired.draft);
-        if (gate.ok) candidate = repaired.draft;
+        // ⚠️ THE REPAIRED DRAFT IS TAKEN WHENEVER IT IS NO LONGER BLOCKED, not
+        // only when it is spotless. A repair that removed an invented price and
+        // left one banned word in has done the job that mattered; demanding a
+        // clean sheet would throw it away and re-draft from scratch tomorrow.
+        if (!gate.blocked) candidate = repaired.draft;
       } else if (repaired.error && isRateLimited(repaired.error)) {
         // The window shutting between the two calls says nothing about the post.
         // Stay queued and let the backoff bring the whole attempt round again.
@@ -1376,7 +1380,17 @@ async function attemptSlot(
         return `${credentialLabel()} — refused draft could not be repaired yet, still queued, attempt ${attempts}/${cfg.maxAttempts}.`;
       }
     }
-    if (!gate.ok) {
+    // ⚠️⚠️ `blocked`, NOT `ok` — A WORD CHOICE MUST NOT COST THE DAY. A voice
+    // finding that survives its repair pass would otherwise take this branch,
+    // and this branch spends the whole attempt: twelve of them inside the
+    // staleness window and the slot is abandoned unposted. The community was
+    // promised a post on Tuesday; "genuinely" is not a reason to break that.
+    // The finding is logged so it is still visible, and `ADVISORY_RULES` in
+    // outgoing.ts is where the line between the two lives.
+    if (!gate.blocked && !gate.ok) {
+      console.warn(`[skool:engage] ${slot.slotKey} posting with voice findings — ${gate.detail}`);
+    }
+    if (gate.blocked) {
       // ⚠️⚠️ REFUSED TWICE ENDS THE ATTEMPT, NOT THE DAY. It used to abandon the
       // slot here, and the reasoning was the one written above the repair pass:
       // a third try would only "spend $0.07 a turn forever". But the words that

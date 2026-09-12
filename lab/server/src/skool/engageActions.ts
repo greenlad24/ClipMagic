@@ -332,7 +332,12 @@ export async function replyToComment(input: {
   // The same backstop as `createPost`, on the surface where a bad line is
   // public. See the note there for why it lives in the write path.
   const gate = checkOutgoing(text, { surface: "comment", communityUrl: input.communityUrl });
-  if (!gate.ok) return { ok: false, detail: gate.detail, replyId: null };
+  // ⚠️ `blocked`, NOT `ok`. This is the last door before a member reads it, and
+  // the only findings that may close it are the ones about harm. A voice
+  // finding at this point is a word in an already-approved draft that has run
+  // out of repair passes — refusing it here would strand the reply for the
+  // sake of "genuinely". See ADVISORY_RULES in outgoing.ts.
+  if (gate.blocked) return { ok: false, detail: gate.detail, replyId: null };
 
   // The join key. Long enough to be distinctive, short enough to survive the
   // whitespace and entity differences between the API's text and the DOM's.
@@ -861,7 +866,8 @@ export async function createPost(input: CreatePostInput): Promise<PostResult> {
   // all arrive here, and a guard only the scheduler calls is one the other
   // three walk past.
   const gate = checkOutgoing(`${title}\n\n${body}`, { surface: "post", communityUrl: input.communityUrl });
-  if (!gate.ok) return FAIL(gate.detail);
+  // `blocked`, not `ok` — see the same note on `replyToComment`.
+  if (gate.blocked) return FAIL(gate.detail);
 
   const log: string[] = [];
   const step = (s: string): void => {

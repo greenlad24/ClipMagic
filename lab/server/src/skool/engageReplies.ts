@@ -35,7 +35,7 @@ import { draftReply, firstNameOf, type ReplyRequest } from "./engageGen.js";
 import { ensureAccessFresh, entitlementFor, type Entitlement } from "./access.js";
 import { replyToComment } from "./engageActions.js";
 import { screenMember, declineLine, MINOR_RESTRICTIONS, type SafetyVerdict } from "./safety.js";
-import { checkOutgoing, repairInstruction } from "./outgoing.js";
+import { checkOutgoing, linksIn, repairInstruction } from "./outgoing.js";
 
 export type ReplySurface = "comment" | "dm";
 export type ReplyState = "drafted" | "sent" | "unconfirmed" | "skipped" | "failed";
@@ -416,6 +416,13 @@ export interface ReplyTarget {
   /** What the reply has to make sense inside: the post, or the conversation. */
   context: string;
   /**
+   * Links this account has already sent in this conversation — DMs only.
+   *
+   * Empty on a comment, which has no history to repeat itself across, and empty
+   * until `dmThread` fills it in below.
+   */
+  alreadySentUrls: string[];
+  /**
    * How many of their messages this reply answers — a DM run, unanswered.
    *
    * 1 for a comment and for the ordinary one-message DM. Higher when somebody
@@ -501,6 +508,8 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           memberFirstName: firstNameOf(c.authorName),
           theirText: c.body,
           context: `${post.title}\n\n${post.body}`.trim(),
+          // A comment thread carries no history of its own — see `alreadySentUrls`.
+          alreadySentUrls: [],
           unansweredCount: 1,
           createdAt: c.createdAt,
         });
@@ -538,6 +547,7 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           // that is known at collection time.
           theirText: ch.lastMessageBody,
           context: "",
+          alreadySentUrls: [],
           unansweredCount: 1,
           createdAt: ch.lastMessageAt,
         });
@@ -554,6 +564,22 @@ interface DmThread {
   transcript: string;
   /** Their messages since Jake last spoke — in order, oldest first. */
   unanswered: string[];
+  /**
+   * Every URL this account has already sent in this conversation.
+   *
+   * ⚠️ THE WHOLE THREAD, NOT THE `keep` WINDOW THE TRANSCRIPT USES. The
+   * transcript is bounded because old exchanges are context nobody needs; this
+   * is a fact about what the member has already been handed, and it does not
+   * stop being true because it scrolled out of the prompt. Jake, 2026-09-12:
+   * "I don't want to include the same links twice in a thread."
+   *
+   * ⚠️ AND IT IS TAKEN FROM `byMe`, NOT FROM THE TRANSCRIPT TEXT. A multi-line
+   * message only gets the "Jake:" prefix on its FIRST line, so attributing a URL
+   * by reading the transcript back would credit Jake with links the member sent
+   * — and a member who pastes a link deserves to be sent it back if it answers
+   * them. Only this account's own links count.
+   */
+  sentUrls: string[];
 }
 
 /**
@@ -577,9 +603,9 @@ interface DmThread {
  */
 async function dmThread(communityUrl: string, channelId: string, channels: DmChannel[]): Promise<DmThread> {
   const channel = channels.find((c) => c.id === channelId);
-  if (!channel) return { transcript: "", unanswered: [] };
+  if (!channel) return { transcript: "", unanswered: [], sentUrls: [] };
   const { messages, error } = await readMessages(communityUrl, channel);
-  if (error || !messages.length) return { transcript: "", unanswered: [] };
+  if (error || !messages.length) return { transcript: "", unanswered: [], sentUrls: [] };
   return splitAtLastReply(messages, channel.memberFirstName || channel.memberName);
 }
 
@@ -609,6 +635,10 @@ export function splitAtLastReply(
 
   return {
     unanswered: messages.slice(cut).map((m) => m.body.trim()).filter(Boolean),
+    // Every link this account has sent, over the whole thread — see `sentUrls`.
+    sentUrls: messages
+      .filter((m) => m.byMe)
+      .flatMap((m) => linksIn(m.body).map((l) => l.url)),
     transcript: messages
       .slice(0, cut)
       .slice(-keep)
@@ -741,6 +771,8 @@ async function draftOne(
     nudge: nudge ? { allowed: nudge.allowed, asked: nudge.asked } : null,
     posts: posts.map((p) => ({ id: p.id, slug: p.slug, title: p.title, body: p.body, createdAt: p.createdAt })),
     restrictions,
+    // See OVERRIDE 7 — told, not left to be noticed in the transcript.
+    alreadySentUrls: target.alreadySentUrls,
   };
   const { reply, error } = await draftReply(request);
   if (error || !reply) {
@@ -792,6 +824,15 @@ async function draftOne(
         `${communityUrl.replace(/\/+$/, "")}/plans`,
       ],
       allowedMentions: [target.memberFirstName, target.memberName].filter(Boolean),
+      // ⚠️ THE SAME LINK TWICE IN ONE THREAD, AND THE OPENING THAT HANDS THEM
+      // BACK THEIR OWN POINT. Jake, 2026-09-12, on a real DM thread: "in a DM
+      // thread I don't want the bot to repeat the idea that the other person
+      // said in the first paragraph or at all in the next message, just
+      // continue the conversation like normal people would do. Also I don't
+      // want to include the same links twice in a thread." Both are ADVISORY —
+      // one repair pass, then the reply goes out regardless.
+      alreadySentUrls: target.alreadySentUrls,
+      theirText: target.theirText,
     });
 
   let text = reply.text;
@@ -807,7 +848,10 @@ async function draftOne(
       tokens += second.reply.tokens ?? 0;
       const regate = gateFor(second.reply);
       gate = regate;
-      if (regate.ok) {
+      // Taken whenever it is no longer BLOCKED — a repair that removed the
+      // invented link and left one banned word behind has fixed the thing that
+      // mattered, and the first draft still has the link in it.
+      if (!regate.blocked) {
         text = second.reply.text;
         cited = second.reply.cited;
       }
@@ -816,9 +860,18 @@ async function draftOne(
   // `base` was built from the first draft; the repaired one costs more tokens
   // and may cite different pages, and the row has to say what was actually written.
   const finalBase = { ...base, tokens, cited };
-  if (!gate.ok) {
+  // ⚠️⚠️ `blocked`, NOT `ok`, AND THIS IS THE WHOLE POINT OF THE SPLIT. This
+  // branch writes `state: "skipped"`, which the UI renders as "Left for you" —
+  // a member waiting on a person who, by Jake's own account, is not checking.
+  // That is the right answer for an invented price and the wrong one for the
+  // word "genuinely" or a lesson link they were already sent. A voice finding
+  // has had its repair pass by here; it does not get to park the message.
+  if (gate.blocked) {
     insertReply({ ...finalBase, state: "skipped", skipReason: gate.detail, replyText: text });
     return { id: null, detail: `${target.memberName}: skipped — refused twice — ${gate.detail}` };
+  }
+  if (!gate.ok) {
+    console.warn(`[skool:replies] ${target.memberName}: sending with voice findings — ${gate.detail}`);
   }
 
   const id = insertReply({ ...finalBase, state: "drafted", replyText: text });
@@ -1133,10 +1186,16 @@ export async function runReplySweep(
       const thread = await dmThread(communityUrl, target.channelId, dmChannels).catch(() => ({
         transcript: "",
         unanswered: [] as string[],
+        // ⚠️ EMPTY MEANS "NOTHING KNOWN", NOT "NOTHING SENT", and that is the
+        // safe direction here: a thread that could not be re-read loses the
+        // repeat-link check for this one reply rather than refusing every link
+        // in it. The rule is advisory anyway — the prompt still carries it.
+        sentUrls: [] as string[],
       }));
       withContext = {
         ...target,
         context: thread.transcript,
+        alreadySentUrls: thread.sentUrls,
         // ⚠️ ALL OF THE RUN, NOT ITS LAST LINE — and it goes in `theirText`, so
         // the ledger and the review card show what was actually answered too.
         // Falls back to the collected message when the thread could not be

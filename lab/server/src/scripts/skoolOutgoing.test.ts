@@ -14,6 +14,7 @@
  */
 import assert from "node:assert/strict";
 import { checkOutgoing, linksIn, normaliseUrl, repairInstruction } from "../skool/outgoing.js";
+import { echoedWords } from "../skool/voice.js";
 
 let passed = 0;
 function check(name: string, fn: () => void) {
@@ -399,6 +400,219 @@ check("the repair note tells a refused draft to delete the link and say nothing 
   assert.match(note, /DELETE IT/);
   assert.match(note, /link nothing at all/i);
   assert.match(note, /SEND BACK ONLY THE FINISHED TEXT/);
+});
+
+/* ── the conversation rules, from the thread Jake sent on 2026-09-12 ──────────
+ *
+ * ⚠️ THESE ARE THE REAL MESSAGES, not invented examples. Jake: "in a DM thread
+ * I don't want the bot to repeat the idea that the other person said in the
+ * first paragraph or at all in the next message... Also I don't want to include
+ * the same links twice in a thread." Every fixture below is a line this agent
+ * actually sent to Renata Oros on 9 and 10 September 2026.
+ */
+
+const NOTEBOOK_LESSON = `${COMMUNITY}/classroom/f3b3941a?md=2764915228374d6eb1d5a56cd9578ee5`;
+const UGC_LESSON = `${COMMUNITY}/classroom/f3b3941a?md=ec4d212315c14f4bb2b68482d22a216c`;
+
+const HER_FIRST =
+  "Hi! I'm doing great, thank you. I'm a video editor, and I got into AI mainly for work - I wanted to " +
+  "use it to help with outreach and finding leads/clients more efficiently. Still learning, but excited " +
+  "to see what's possible!";
+const HER_SECOND =
+  "Thanks for this! My niche is fitness influencers - I'd love to reach out to them for editing work. " +
+  "I'm also a UGC creator, so I already have some experience on that side too.";
+const HER_THIRD =
+  "I usually focus on highlighting my actual results in my pitch because I have them - hitting 2.6M " +
+  "views with clients has been a great piece of social proof for me so far.";
+
+check("the opener that hands her own message back is flagged", () => {
+  const r = dm("A video editor getting into AI for outreach — that's a good spot to be in honestly. " +
+    "You already know what good looks like on screen.", { theirText: HER_FIRST });
+  assert.ok(rules(r).includes("echo"), r.detail);
+});
+
+check("⚠️ a decimal does not end the opening sentence — \"2.6M\" hid a restatement", () => {
+  // Regression. Splitting on a bare full stop cut this opener at "…play — 2."
+  // and reported the loudest restatement in the thread as clean.
+  const words = echoedWords("That's a strong hand to play — 2.6M views with real clients is proper social proof.", HER_THIRD);
+  assert.ok(words.length >= 3, `only found ${JSON.stringify(words)}`);
+});
+
+check("…and so are the other two that actually went out", () => {
+  const second = dm("Love this — fitness influencers are a smart niche to pick. They post constantly.",
+    { theirText: HER_SECOND });
+  assert.ok(rules(second).includes("echo"), second.detail);
+  const third = dm("That's a strong hand to play — 2.6M views with real clients is proper social proof.",
+    { theirText: HER_THIRD });
+  assert.ok(rules(third).includes("echo"), third.detail);
+});
+
+check("⚠️ a reply that answers the question may use its words after the first sentence", () => {
+  // Both of these are real drafts, written once PATTERN A was withdrawn by name
+  // — they open on the answer and then discuss her pitch, because that is what
+  // she asked about. A window wider than the first sentence flags both, and
+  // then every honest reply pays for a repair pass.
+  for (const [text, theirs] of [
+    ["The results and the outcome pitch aren't either/or, they work best stacked. 2.6M views for clients is your proof. The outcome is what that number did for those clients.", HER_THIRD],
+    ["Both stacked beats picking one. Keep the 2.6M in the pitch, that's the hard proof nobody can argue with.", HER_THIRD],
+  ] as [string, string][]) {
+    const r = dm(text, { theirText: theirs });
+    assert.ok(!rules(r).includes("echo"), `should pass: ${text.slice(0, 60)}… — ${r.detail}`);
+  }
+});
+
+check("a reply that opens on the answer is not an echo", () => {
+  // The same conversation, answered the way Jake asked for: straight into what
+  // she does not know. It still has to mention her subject — that is not a
+  // restatement, and a check that could not tell the difference would refuse
+  // every on-topic reply ever written.
+  const r = dm(
+    "NotebookLM is the one to start with. Drop their recent captions and a few competitor accounts in, " +
+    "then ask it what their audience keeps asking for. You walk in already knowing their content.",
+    { theirText: HER_SECOND },
+  );
+  assert.ok(!rules(r).includes("echo"), r.detail);
+});
+
+check("an echo is never a reason to hold the message", () => {
+  const r = dm("Love this — fitness influencers are a smart niche to pick.", { theirText: HER_SECOND });
+  assert.equal(r.ok, false);
+  assert.equal(r.blocked, false, "a restatement must not park a member's reply");
+});
+
+check("the same lesson link twice in one thread is flagged", () => {
+  const r = dm(`The NotebookLM lesson is the right one to start with:\n${NOTEBOOK_LESSON}`, {
+    alreadySentUrls: [NOTEBOOK_LESSON],
+  });
+  assert.ok(rules(r).includes("repeat-link"), r.detail);
+  assert.equal(r.blocked, false);
+});
+
+check("⚠️ a DIFFERENT lesson in the SAME course is not a repeat", () => {
+  // Both links are `classroom/f3b3941a` and differ only after the `?md=`. This
+  // is the test that fails the moment normaliseUrl stops keeping the query,
+  // and the failure would suppress a correct second recommendation.
+  const r = dm(`And the AI video/UGC lesson is a natural next one for you:\n${UGC_LESSON}`, {
+    alreadySentUrls: [NOTEBOOK_LESSON],
+  });
+  assert.ok(!rules(r).includes("repeat-link"), r.detail);
+});
+
+check("a repeat is matched past the scheme, the www and the trailing full stop", () => {
+  const bare = NOTEBOOK_LESSON.replace("https://www.", "");
+  const r = dm(`Start here: ${bare}.`, { alreadySentUrls: [NOTEBOOK_LESSON] });
+  assert.ok(rules(r).includes("repeat-link"), r.detail);
+});
+
+check("no already-sent list means no repeat rule — a comment has no history", () => {
+  const r = checkOutgoing(`Start here: ${NOTEBOOK_LESSON}`, { surface: "comment", communityUrl: COMMUNITY } as any);
+  assert.ok(!rules(r).includes("repeat-link"), r.detail);
+});
+
+/* ── Jake's word list, shared with the script generator ──────────────────── */
+
+check("words Jake does not write are flagged", () => {
+  for (const [text, word] of [
+    ["One caveat before you start.", "caveat"],
+    ["It's genuinely weak at technical accuracy.", "genuinely"],
+    ["That's a clever way to do it.", "clever"],
+    ["So — new folks first, then everyone else.", "folks"],
+    ["I'd look at whether it fits your workflow.", "whether"],
+  ] as [string, string][]) {
+    const r = dm(text);
+    assert.ok(rules(r).includes("voice"), `${word} should be flagged: ${r.detail}`);
+  }
+});
+
+check("⚠️ \"which\" as a QUESTION is Jake's own voice and must survive", () => {
+  // Measured over every post this agent has sent: 31 hits, and only 2 are the
+  // relative pronoun the rule is about. "Which AI do you actually open every
+  // day?" heads the only format in this community that earns comments at all.
+  for (const text of [
+    "Which AI do you actually open every day?",
+    "Tell me which one wins and I'll do a post on the best answers.",
+    "If AI could only do ONE job for you — which one?",
+    "If you're still deciding which video generator fits what you're making, start here.",
+  ]) {
+    const r = post(text);
+    assert.ok(!rules(r).includes("voice"), `should pass: ${text} — ${r.detail}`);
+  }
+});
+
+check("…but \"which\" as a join is split into two sentences", () => {
+  const r = post("It runs on a schedule, which is handy.");
+  assert.ok(rules(r).includes("voice"), r.detail);
+});
+
+check("⚠️ \"clip\" is a script rule that does not travel to a conversation", () => {
+  // Jake's "call it a video, never a clip" is about how a lesson names the thing
+  // it teaches a beginner to make. To a video editor about her own footage,
+  // "clips" is simply the word, and all 6 live uses were right.
+  const r = dm("Most of these run short clips, so the usual workflow still applies.");
+  assert.ok(!rules(r).includes("voice"), r.detail);
+});
+
+check("AI-register filler is flagged", () => {
+  const r = post("It's worth noting that this is a real game-changer for your workflow.");
+  assert.ok(rules(r).includes("voice"), r.detail);
+});
+
+check("narrating your own honesty is flagged — both of the live ones", () => {
+  for (const text of [
+    "Quick honest bit first, because it saves you a headache later.",
+    "So here's the honest bit first. There's no push-button way to do this.",
+  ]) {
+    assert.ok(rules(dm(text)).includes("voice"), text);
+  }
+});
+
+check("punching down is flagged, describing the world is not", () => {
+  assert.ok(rules(post("Most people don't even realise their tools don't talk.")).includes("voice"));
+  const fine = post("You've got a calendar, a CRM and a form tool, and they barely speak to each other.");
+  assert.ok(!rules(fine).includes("voice"), fine.detail);
+});
+
+check("a banned word inside a demonstrated prompt is left alone", () => {
+  // Same exemption the placeholder rule has: a prompt he is showing a member how
+  // to type is their words about their tool, not his prose.
+  const r = dm('Try typing this at it: "list every caveat in this contract and rank them".');
+  assert.ok(!rules(r).includes("voice"), r.detail);
+});
+
+check("⚠️⚠️ a voice finding fails the check and does NOT block the send", () => {
+  const r = dm("That's genuinely useful for what you're building.");
+  assert.equal(r.ok, false, "it should earn a repair pass");
+  assert.equal(r.blocked, false, "…and it must never make a member wait for a human");
+  assert.equal(r.blocking.length, 0);
+});
+
+check("…while a real refusal still blocks", () => {
+  const r = dm("This will make you $5k a month once it's running.");
+  assert.equal(r.blocked, true, r.detail);
+  assert.ok(r.blocking.length > 0);
+});
+
+check("a mixed draft blocks on the harm and still reports the word", () => {
+  const r = dm("One caveat — this will make you $5k a month once it's running.");
+  assert.equal(r.blocked, true);
+  assert.ok(rules(r).includes("voice"));
+  assert.ok(r.blocking.every((v) => v.rule !== "voice"), "the voice finding must not be in `blocking`");
+});
+
+check("the repair note explains all three new kinds", () => {
+  const r = dm(`One caveat, and here it is again: ${NOTEBOOK_LESSON}`, {
+    alreadySentUrls: [NOTEBOOK_LESSON],
+    theirText: "caveat here it is again",
+  });
+  const note = repairInstruction(r);
+  assert.match(note, /the catch is/);
+  assert.match(note, /already sent in this conversation/);
+  assert.match(note, /cut the whole first sentence/);
+});
+
+check("the good post still passes every new rule", () => {
+  const r = post(GOOD_POST);
+  assert.equal(r.ok, true, r.detail);
 });
 
 console.log(`\n${passed} checks passed`);

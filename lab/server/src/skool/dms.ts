@@ -558,7 +558,11 @@ export async function sendDm(input: {
     communityUrl: input.communityUrl,
     allowedMentions: [input.channel.memberFirstName, input.channel.memberName].filter(Boolean),
   });
-  if (!gate.ok) return { ok: false, detail: gate.detail, messageId: null };
+  // `blocked`, not `ok` — see the same note on `replyToComment` in
+  // engageActions.ts. A DM cannot be edited or deleted once Enter is pressed,
+  // which is an argument for the harm rules being strict here, not for a
+  // banned word holding up an answer.
+  if (gate.blocked) return { ok: false, detail: gate.detail, messageId: null };
   if (!input.channel.memberFirstName) {
     return {
       ok: false,

@@ -5584,6 +5584,14 @@ const skoolDraftReply: Handler = async (input) => {
         ? { allowed: input?.nudged !== true, asked: asksAboutUpgrading(text) }
         : null,
     posts: (posts ?? []).map((p) => ({ id: p.id, slug: p.slug, title: p.title, body: p.body, createdAt: p.createdAt })),
+    // ⚠️ THE BENCH CAN SHOW THE CONVERSATION RULES OR IT CANNOT TEST THEM. The
+    // sweep derives this from `byMe` on the real thread; the bench has no
+    // thread, so it takes the links directly. Absent means no history, which is
+    // right for a one-off draft and wrong for rehearsing a reply into an
+    // ongoing DM — see OVERRIDE 7 in `engageGen`.
+    alreadySentUrls: Array.isArray(input?.alreadySentUrls)
+      ? (input.alreadySentUrls as unknown[]).map(String).filter(Boolean)
+      : [],
   });
   return {
     reply,

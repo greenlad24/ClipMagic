@@ -264,6 +264,41 @@ async function main() {
     assert.equal(transcript, "Denise: morning\nJake: morning!");
   });
 
+  await check("every link Jake has sent in the thread comes back, and the member's do not", () => {
+    // ⚠️ THE WHOLE POINT IS `byMe`. Jake, 2026-09-12: "I don't want to include
+    // the same links twice in a thread." A link the MEMBER pasted is not one he
+    // has sent, and sending it back to them may be exactly the right answer —
+    // reading the transcript text instead would credit him with both, because a
+    // multi-line message only carries the "Jake:" prefix on its first line.
+    const lesson = "https://www.skool.com/ai-for-beginners/classroom/f3b3941a?md=2764915";
+    const ugc = "https://www.skool.com/ai-for-beginners/classroom/f3b3941a?md=ec4d212";
+    const { sentUrls } = splitAtLastReply(
+      [
+        say("what should I start with?"),
+        jake(`Start here:\n${lesson}\nThe tool it uses is NotebookLM.`),
+        say(`I also found this one — ${"https://example.com/their-own-link"}`),
+        jake(`Good find. And this is the natural next one:\n${ugc}`),
+        say("thanks!"),
+      ],
+      them,
+    );
+    assert.deepEqual(sentUrls, [lesson, ugc]);
+  });
+
+  await check("the sent-link history covers the WHOLE thread, not the transcript window", () => {
+    // `transcript` keeps the last `keep` lines because old exchanges are
+    // context nobody needs. What was already handed over is not context — it
+    // stays true after it scrolls out of the prompt, and this is the case the
+    // drafter cannot see for itself.
+    const old = "https://www.skool.com/ai-for-beginners/classroom/aaaa?md=1";
+    const messages = [jake(`Here you go: ${old}`)];
+    for (let i = 0; i < 20; i++) messages.push(say(`msg ${i}`), jake(`reply ${i}`));
+    messages.push(say("one more thing"));
+    const { transcript, sentUrls } = splitAtLastReply(messages, them, 12);
+    assert.ok(!transcript.includes(old), "the link has scrolled out of the transcript");
+    assert.ok(sentUrls.includes(old), "…and must still count as already sent");
+  });
+
   await check("Jake's own last word leaves nothing to answer, rather than re-answering the thread", () => {
     // Reachable: `needingReply` runs off the channel list, and the thread can
     // move between that read and this one. The caller keeps the message it

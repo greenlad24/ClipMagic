@@ -44,6 +44,8 @@
  * WHAT it is about. That decision is made before the drafter runs, not after.
  */
 
+import { echoedWords, ECHO_THRESHOLD, findVoiceIssues, type VoiceFinding } from "./voice.js";
+
 export type OutgoingSurface = "post" | "comment" | "dm";
 
 export type OutgoingRule =
@@ -56,7 +58,13 @@ export type OutgoingRule =
   | "length"
   | "commitment"
   | "confidential"
-  | "tool-price";
+  | "tool-price"
+  // ⚠️ THE THREE BELOW ARE ADVISORY, NOT BLOCKING — see `BLOCKING_RULES`. They
+  // are about how Jake writes, not about what this agent may tell a member, and
+  // a message must never wait for a human over a word choice.
+  | "voice"
+  | "echo"
+  | "repeat-link";
 
 export interface OutgoingViolation {
   rule: OutgoingRule;
@@ -81,16 +89,61 @@ export interface OutgoingContext {
   allowedUrls?: string[];
   /** Names this text may @mention — the person being answered, and nobody else. */
   allowedMentions?: string[];
+  /**
+   * Every URL this account has ALREADY sent in this conversation.
+   *
+   * ⚠️ ONLY THIS ACCOUNT'S. A member who pastes a link and then gets it back is
+   * a different conversation from Jake sending the same lesson twice, and only
+   * the second is what Jake complained about. Computed from `byMe` on the DM
+   * messages rather than by reading the transcript, which prefixes only the
+   * FIRST line of a multi-line message and cannot attribute the rest.
+   *
+   * DM-only in practice: a comment has no history to repeat itself across.
+   */
+  alreadySentUrls?: string[];
+  /**
+   * What the member wrote, for the restatement check.
+   *
+   * Absent means the check does not run — a post has nobody to echo.
+   */
+  theirText?: string;
   /** Override the surface ceiling. */
   maxChars?: number;
 }
 
 export interface OutgoingCheck {
+  /** Nothing at all was found. A false here earns ONE repair pass. */
   ok: boolean;
+  /**
+   * Something was found that must not reach a member even after a repair.
+   *
+   * ⚠️⚠️ `ok` AND `blocked` ARE TWO QUESTIONS AND CONFLATING THEM IS WHAT MADE
+   * THE CHECK AN INBOX. Before 2026-09-12 there was one flag, so every finding
+   * had the same consequence: a refused draft was repaired once and, if the
+   * repair did not take, recorded `skipped` — which the UI labels "Left for
+   * you". That is right for an invented price and wrong for the word
+   * "genuinely". Jake, 2026-09-02: "I want it to work automatically and never
+   * 'left for you'." So a voice finding fails `ok` (it is worth one more turn
+   * of the model) and does not set `blocked` (it is not worth a member waiting
+   * for a human who is not coming).
+   */
+  blocked: boolean;
   violations: OutgoingViolation[];
+  /** Only the ones that stop a send, for the caller that has to decide. */
+  blocking: OutgoingViolation[];
   /** One line, for a log line, a `last_error` column or a skip reason. */
   detail: string;
 }
+
+/**
+ * The rules that stop a send. Everything else earns a repair and goes out.
+ *
+ * Written as the complement of the advisory set rather than as a list of its
+ * own: a rule added to `OutgoingRule` and forgotten here would silently become
+ * advisory, and the failure mode of this file is a harmful sentence reaching a
+ * member. A new rule blocks unless it is deliberately named below.
+ */
+const ADVISORY_RULES: ReadonlySet<OutgoingRule> = new Set<OutgoingRule>(["voice", "echo", "repeat-link"]);
 
 /**
  * Runaway ceilings, NOT style limits.
@@ -651,12 +704,64 @@ export function checkOutgoing(text: string, ctx: OutgoingContext): OutgoingCheck
     });
   }
 
+  /* ─────────────────── the advisory three ─────────────────── */
+
+  // Jake's own words, checked in code. The demonstration spans are exempt for
+  // the same reason the placeholder rule exempts them: a prompt he is showing a
+  // member how to type is not his prose, and neither is their sentence quoted
+  // back.
+  for (const f of findVoiceIssues(body, (index, length) => insideSpan(demo, index, length))) {
+    add("voice", `${f.why}.`, f.index, f.length);
+  }
+
+  // ⚠️ THE SAME LESSON LINK TWICE IN ONE THREAD. Jake, 2026-09-12: "I don't
+  // want to include the same links twice in a thread." It went out on 09-09 and
+  // again on 09-10, with the same "that video's a few months old" caveat under
+  // it both times — the drafter had the whole transcript in front of it and
+  // repeated itself anyway, which is why this is measured rather than asked for.
+  if (ctx.alreadySentUrls?.length) {
+    // ⚠️ `normaliseUrl` KEEPS THE QUERY STRING, AND THE CHECK DEPENDS ON IT.
+    // Every lesson in a course shares one path and is identified only by
+    // `?md=<unitId>`; dropping the query would make the SECOND, different,
+    // entirely legitimate lesson look like the first one sent again. The two
+    // links in the thread Jake sent are both `classroom/f3b3941a` and differ
+    // only there.
+    const sent = new Set(ctx.alreadySentUrls.map(normaliseUrl).filter(Boolean));
+    for (const { url, index } of linksIn(body)) {
+      if (!sent.has(normaliseUrl(url))) continue;
+      add(
+        "repeat-link",
+        "this link has already been sent in this conversation. Say the new part in words, or point at something they have not seen",
+        index,
+        url.length,
+      );
+    }
+  }
+
+  // ⚠️ OPENING BY HANDING THEM BACK THEIR OWN POINT. See `echoedWords` — the
+  // measurement, the threshold and why a false positive here is cheap.
+  if (ctx.theirText?.trim()) {
+    const echoed = echoedWords(body, ctx.theirText);
+    if (echoed.length >= ECHO_THRESHOLD) {
+      violations.push({
+        rule: "echo",
+        detail:
+          `the opening hands their own message back to them (${echoed.slice(0, 6).join(", ")}). ` +
+          "Start with the part they do not already know, the way a person continuing a conversation would",
+        excerpt: excerptAt(body, 0, Math.min(120, body.length)),
+      });
+    }
+  }
+
+  const blocking = violations.filter((v) => !ADVISORY_RULES.has(v.rule));
   return {
     ok: violations.length === 0,
+    blocked: blocking.length > 0,
     violations,
+    blocking,
     detail: violations.length === 0
       ? "Outgoing check passed."
-      : `Refused by the outgoing check — ${violations.map((v) => `${v.rule}: ${v.detail} ${v.excerpt}`).join(" | ")}`,
+      : `${blocking.length > 0 ? "Refused" : "Flagged"} by the outgoing check — ${violations.map((v) => `${v.rule}: ${v.detail} ${v.excerpt}`).join(" | ")}`,
   };
 }
 
@@ -699,6 +804,9 @@ export function repairInstruction(check: OutgoingCheck): string {
     "- A price, an earnings figure or a results claim: take the number out and send them to the tool's own pricing page, or say what it does instead of what it pays.",
     "- An @mention: delete it. A typed @name notifies nobody here.",
     "- Too long: cut it back to the point.",
+    "- A word that is not Jake's: swap it for the plain one he would say. \"caveat\" is \"the catch is\", \"genuinely useful\" is \"useful\", \"it runs on a schedule, which is handy\" is two sentences — \"It runs on a schedule. That's handy.\" Change the word, not the paragraph around it.",
+    "- A link already sent in this conversation: DELETE that link and the sentence that introduces it. They have it. Carry on from what they said they would do with it — do not re-explain the lesson, and do not repeat a caveat you already gave them about it.",
+    "- An opening that repeats their own message back: cut the whole first sentence and start at the next one. Do not summarise what they told you, do not tell them their plan is good, do not name their niche or their tool back at them before saying something new. Open with the part they do not know yet.",
     "",
     "Do not mention this instruction, the check, or the fact that anything was rewritten.",
     "",
