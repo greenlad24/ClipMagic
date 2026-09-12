@@ -96,6 +96,9 @@ export type CallPurpose =
   // Keyword Research favorites: extract searchable keyword phrases from saved
   // YouTube titles (fast tier).
   | "keyword-extract"
+  // Tutorial Studio: reads a reference photograph into a written spec for a
+  // DIFFERENT, fictional person of the same type (vision, research tier).
+  | "tutorial-avatar-reference"
   // Skool Manager: designs the classroom spine (director tier), then places
   // every content item into it in disjoint batches.
   | "skool-spine"
@@ -130,6 +133,10 @@ export type CallPurpose =
   // Channel Audit: reads the catalogue and names the niche, the audience and a
   // competitor set for the operator to approve (research tier).
   | "audit-market"
+  // Channel Audit: judges whether a SAVED market can stand in for a competitor
+  // discovery that could not run (a search quota cap). Research tier, one call,
+  // and its answer is allowed to be "none of these" — see audit/recovery.ts.
+  | "audit-market-fallback"
   // Channel Audit: reads thumbnails and reports what is IN them — face, text,
   // colour, clutter. Deliberately the FAST tier: this is looking, not thinking,
   // and it runs on every thumbnail in the catalogue plus the market's, so the

@@ -16,12 +16,30 @@ import path from "node:path";
 import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects, ZiteError } from "./store.js";
 // Avatar Narrator (LAB tool)
 import * as avatarStore from "../db/avatar.js";
+// Hyperframes render queue (LAB tool) — control plane only; the systemd
+// worker on the host runs the renders. See hyperframes/jobs.ts.
+import * as hyperframes from "../hyperframes/jobs.js";
+import { apiKey as hyperframesApiKeyValue } from "../hyperframes/api.js";
+import {
+  listUploads as listHyperframesUploads,
+  deleteUpload as deleteHyperframesUpload,
+} from "../hyperframes/uploads.js";
+// Density check (LAB tool) — READ-ONLY. It reads the density.json that `hfp
+// density` produced on the host; it computes no density number of its own.
+import * as hyperframesDensity from "../hyperframes/density.js";
 // Tutorial Studio (LAB tool) — the Python reel sidecar.
 import * as tutorial from "../tutorial/client.js";
 import * as tutorialBatches from "../db/tutorialBatches.js";
 import * as tutorialAi from "../tutorial/apimart.js";
 import * as tutorialAccounts from "../tutorial/accounts.js";
 import { startScripting, isScripting, assignLooks } from "../tutorial/batchRunner.js";
+import {
+  VIDEO_MODELS,
+  DEFAULT_VIDEO_MODEL,
+  normalizeVideoModel,
+  targetSeconds,
+} from "../tutorial/videoModels.js";
+import * as persona from "../tutorial/persona.js";
 import { listProviders as listAvatarProviders } from "../avatar/providers.js";
 import {
   ttsConfigured,
@@ -87,6 +105,8 @@ import {
   restartPostiz as restartPostizContainer,
   dockerSocketAvailable,
   getDataForSeoCreds,
+  getGeminiApiKey,
+  getApimartApiKey,
 } from "../settings/postizSecrets.js";
 import {
   fullyScheduledRenders as bulkFullyScheduledRenders,
@@ -191,11 +211,20 @@ import type { ResearchInput, ResearchMode } from "../keyword/types.js";
 import { aiConfig } from "../ai/config.js";
 import {
   startScript as runStartScript,
+  attachScreenshots as runAttachScreenshots,
   continueScript as runContinueScript,
   getScriptSnapshot,
   refineParagraph as runRefineParagraph,
   saveScriptEdit as runSaveScriptEdit,
   revertScriptEdit as runRevertScriptEdit,
+  finishScriptEdit as runFinishScriptEdit,
+  scriptVersions as runScriptVersions,
+  restoreScriptVersion as runRestoreScriptVersion,
+  scriptLessons as runScriptLessons,
+  decideScriptLesson as runDecideScriptLesson,
+  editScriptLesson as runEditScriptLesson,
+  removeScriptLesson as runRemoveScriptLesson,
+  applyRulesToRun as runApplyRulesToRun,
 } from "../scriptgen/run.js";
 import {
   startQueue as runStartQueue,
@@ -224,7 +253,8 @@ import {
   listRuns as listScriptRunsDb,
   deleteRun as deleteScriptRunDb,
 } from "../db/scriptRuns.js";
-import type { ScriptInput, ScriptSetup } from "../scriptgen/types.js";
+import type { ScriptInput, ScriptSetup, ScreenshotRef } from "../scriptgen/types.js";
+import { saveShot, deleteShot, MAX_SHOTS_PER_RUN, MAX_SHOT_BYTES, acceptedMediaTypes } from "../scriptgen/shots.js";
 import { startPlan as runStartPlan, planJobStatus as getPlanSnapshot } from "../planner/run.js";
 import {
   approveMotionStyle as approveMotionStyleState,
@@ -250,6 +280,7 @@ import {
 import type { AuditInput, AuditRunResult, MarketProposal } from "../audit/types.js";
 import { ytAnalyticsConfigured, ytAnalyticsConnected } from "../audit/analytics.js";
 import { chatAboutAudit, refocusReport } from "../audit/chat.js";
+import { skipPlan, STAGE_META } from "../audit/recovery.js";
 import { buildSection } from "../audit/sections.js";
 import {
   browserAvailable as skoolBrowserAvailable,
@@ -3605,9 +3636,82 @@ const extractKeywordsFromTitles: Handler = async (input) => {
 const scriptGenStatus: Handler = async () => ({
   anthropicConfigured: anthropicConfigured(),
   model: aiConfig.models.director,
+  // The screenshot limits, so the picker can refuse a file before it spends
+  // thirty seconds base64-ing it across the wire to be told no.
+  screenshots: {
+    maxPerRun: MAX_SHOTS_PER_RUN,
+    maxBytes: MAX_SHOT_BYTES,
+    accept: acceptedMediaTypes(),
+  },
 });
 
 const startScript: Handler = async (input) => runStartScript(input as ScriptInput);
+
+/**
+ * Upload screenshots of the tool for a run that does not exist yet.
+ *
+ * They are picked alongside the idea, before Stage 0 mints a run id, so each
+ * shot is keyed by its own id from the moment it lands and the returned refs are
+ * what the caller puts in `ScriptInput.screenshots`.
+ *
+ * One bad file does not fail the batch: the good ones are saved and the
+ * rejections come back as messages the UI shows next to the picker. A user who
+ * dropped nine PNGs and one 12MB screenshot should get nine screenshots and one
+ * sentence, not an error.
+ */
+const uploadScriptShots: Handler = async (input) => {
+  const files: Array<{ name?: string; mediaType?: string; dataBase64?: string; note?: string }> =
+    Array.isArray(input?.files) ? input.files : [];
+  if (!files.length) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "No screenshots were sent." });
+  }
+  if (files.length > MAX_SHOTS_PER_RUN) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `${files.length} screenshots is more than one video needs. The limit is ${MAX_SHOTS_PER_RUN}.`,
+    });
+  }
+  const shots: ScreenshotRef[] = [];
+  const rejected: string[] = [];
+  for (const f of files) {
+    try {
+      shots.push(
+        saveShot({
+          name: (f.name || "screenshot").slice(0, 200),
+          mediaType: f.mediaType || "",
+          dataBase64: f.dataBase64 || "",
+          note: f.note,
+        }),
+      );
+    } catch (e) {
+      rejected.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  return { shots, rejected };
+};
+
+/**
+ * Attach screenshots to a run parked at the Stage 0 checkpoint — the point where
+ * the user is first told the topic is thinly covered and screenshots will be
+ * carrying it.
+ */
+const attachScriptShots: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  const shots: ScreenshotRef[] = Array.isArray(input?.screenshots) ? input.screenshots : [];
+  return runAttachScreenshots(runId, shots);
+};
+
+/** Drop one screenshot before the run starts (or after — the bytes are the run's). */
+const deleteScriptShot: Handler = async (input) => {
+  const id: string | undefined = input?.id;
+  const mediaType: string | undefined = input?.mediaType;
+  if (!id || !mediaType) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "id and mediaType are required." });
+  }
+  deleteShot({ id, mediaType });
+  return { ok: true };
+};
 
 const continueScript: Handler = async (input) => {
   const runId: string | undefined = input?.runId;
@@ -3740,6 +3844,83 @@ const revertScriptEdit: Handler = async (input) => {
 const deleteScriptRun: Handler = async (input) => {
   deleteScriptRunDb(input?.runId);
   return { ok: true };
+};
+
+/* ── The edit loop: versions, diffs, and what they taught the generator ──── */
+
+/**
+ * "Done editing". Snapshots a version, diffs it against the generated script and
+ * runs the conclusions pass — the one place any of that happens.
+ *
+ * Synchronous, like `refineScriptParagraph`: it is a single Opus call over a
+ * change list rather than a whole document, and the panel has nothing to show
+ * until it returns.
+ */
+const finishScriptEdit: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return runFinishScriptEdit(runId);
+};
+
+const scriptVersions: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return runScriptVersions(runId);
+};
+
+const restoreScriptVersion: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  const versionId: string | undefined = input?.versionId;
+  if (!runId || !versionId) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "runId and versionId are required." });
+  }
+  return runRestoreScriptVersion(runId, versionId);
+};
+
+const scriptLessons: Handler = async (input) => {
+  const state = input?.state ? String(input.state) : undefined;
+  const allowed = ["pending", "approved", "rejected", "retired"];
+  return runScriptLessons(state && allowed.includes(state) ? (state as "pending") : undefined);
+};
+
+/**
+ * ⚠️ THE ONLY WAY A LESSON EVER BECOMES ACTIVE. `approved` here is what puts a
+ * rule into every future system prompt; see scriptgen/lessons.ts for why that
+ * is a human click and not an outcome the pass can reach on its own.
+ */
+const decideScriptLesson: Handler = async (input) => {
+  const id: string | undefined = input?.lessonId;
+  const state = String(input?.state ?? "");
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "lessonId is required." });
+  if (!["pending", "approved", "rejected", "retired"].includes(state)) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: `"${state}" is not a lesson state.` });
+  }
+  return runDecideScriptLesson(id, state as "approved");
+};
+
+const editScriptLesson: Handler = async (input) => {
+  const id: string | undefined = input?.lessonId;
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "lessonId is required." });
+  return runEditScriptLesson(id, String(input?.rule ?? ""));
+};
+
+/**
+ * Rewrite the parts of this script Jake did not write, under the approved rules.
+ *
+ * Synchronous and slower than the other script endpoints — it is several Opus
+ * calls over one script — but there is nothing to show until it finishes, and
+ * the result replaces what is in the editor.
+ */
+const applyScriptRules: Handler = async (input) => {
+  const runId: string | undefined = input?.runId;
+  if (!runId) throw new ZiteError({ code: "BAD_REQUEST", message: "runId is required." });
+  return runApplyRulesToRun(runId);
+};
+
+const deleteScriptLesson: Handler = async (input) => {
+  const id: string | undefined = input?.lessonId;
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "lessonId is required." });
+  return runRemoveScriptLesson(id);
 };
 
 // ── Video Planner (LAB tool) ────────────────────────────────────────────────
@@ -3919,9 +4100,54 @@ const startAudit: Handler = async (input) => {
 };
 
 const auditJobStatus: Handler = async (input) => {
-  const snap = getAuditSnapshot(String(input?.runId ?? ""));
+  const runId = String(input?.runId ?? "");
+  const snap = getAuditSnapshot(runId);
   if (!snap) throw new ZiteError({ code: "NOT_FOUND", message: "Audit run not found." });
-  return snap;
+  if (snap.status !== "failed") return snap;
+  // A failed run carries its own way out: which step died, and what the report
+  // loses if it is skipped. Both are needed BEFORE the button is pressed —
+  // "carry on anyway" is an easy decision to make well and an easy one to
+  // regret, and the difference is knowing which section disappears.
+  const run = getAuditRunRow(runId);
+  const plan = run ? skipPlan(run) : null;
+  return {
+    ...snap,
+    skip:
+      plan?.ok
+        ? {
+            stage: plan.plan.stage,
+            action: plan.plan.action,
+            label: STAGE_META[plan.plan.stage].label,
+            consequence: STAGE_META[plan.plan.stage].consequence,
+            reusesThumbnails: plan.plan.reuseThumbnails,
+            reusesRenames: plan.plan.reuseRenames,
+            keepsMarket: Boolean(plan.plan.market),
+          }
+        : null,
+    skipBlocked: plan && !plan.ok ? plan.reason : null,
+  };
+};
+
+/**
+ * Carry a failed run past the step that killed it.
+ *
+ * The alternative on offer before this existed was re-running the whole audit
+ * tomorrow — an hour and several dollars to recover from a step that the report
+ * can perfectly well do without.
+ */
+const skipAuditStep: Handler = async (input) => {
+  const runId = String(input?.runId ?? "");
+  const r = runSkipAuditStage(runId);
+  if (!r.ok || !r.stage) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: r.reason || "This run cannot be carried on." });
+  }
+  return {
+    runId,
+    stage: r.stage,
+    action: r.action,
+    label: STAGE_META[r.stage].label,
+    consequence: STAGE_META[r.stage].consequence,
+  };
 };
 
 /** Confirm (or correct) the proposed market and let the expensive half proceed. */
@@ -4129,6 +4355,10 @@ async function auditChatBody(runId: string, run: AuditRunResult, message: string
     const enriched = {
       ...(built.videos ? { videos: built.videos } : {}),
       ...(built.marketVideos ? { marketVideos: built.marketVideos } : {}),
+      // A channel fetched to compare against is kept on the run whether or not
+      // the section worked: it cost quota, and the next question about the same
+      // channel should be free.
+      ...(built.guest ? { guests: [...(run.guests ?? []), built.guest] } : {}),
     };
 
     if (!built.section) {
@@ -6781,7 +7011,7 @@ function tutorialError(err: unknown): never {
 
 const tutorialStudioStatus: Handler = async () => {
   if (!tutorial.isConfigured()) {
-    return { configured: false, reachable: false, health: null };
+    return { configured: false, reachable: false, health: null, models: VIDEO_MODELS, ...personaCatalogue() };
   }
   try {
     const health = await tutorial.health();
@@ -6792,13 +7022,34 @@ const tutorialStudioStatus: Handler = async () => {
       configured: true,
       reachable: true,
       health: { ...health, has_apimart: tutorial.apimartAvailable(health.has_apimart) },
+      // The page renders its model picker from this rather than a copy of the
+      // table, so a model added on the server appears without a web rebuild.
+      models: VIDEO_MODELS,
+      ...personaCatalogue(),
     };
   } catch {
     // Configured but down (still building, restarting, crashed). The page shows
     // this as "unreachable" rather than throwing an error toast at the user.
-    return { configured: true, reachable: false, health: null };
+    return { configured: true, reachable: false, health: null, models: VIDEO_MODELS, ...personaCatalogue() };
   }
 };
+
+/**
+ * What the "make me an avatar" panel can offer: the engines, the capture looks,
+ * and honestly whether each engine's key is actually present. An engine listed
+ * without its key is a button that fails after the operator has typed a brief.
+ */
+function personaCatalogue() {
+  return {
+    engines: persona.PERSONA_ENGINES.map((e) => ({
+      ...e,
+      ready: e.key === "gemini" ? Boolean(getGeminiApiKey()) : Boolean(getApimartApiKey()),
+    })),
+    captures: persona.CAPTURE_LOOKS,
+    /** The description steps are Claude; without it there is no sentence path. */
+    canDescribe: anthropicConfigured(),
+  };
+}
 
 const tutorialStudioJobs: Handler = async () => {
   try {
@@ -6825,12 +7076,18 @@ const tutorialStudioStart: Handler = async (input) => {
   const topic = String(input?.topic || "").trim();
   if (!topic) throw new ZiteError({ code: "BAD_REQUEST", message: "A topic is required." });
   try {
+    const video = normalizeVideoModel(
+      String(input?.videoModel || DEFAULT_VIDEO_MODEL),
+      String(input?.videoResolution || ""),
+    );
     return await tutorial.startJob({
       topic,
       outfit: String(input?.outfit || "").trim() || undefined,
       scene: String(input?.scene || "").trim() || undefined,
       avatar_id: String(input?.avatarId || "").trim() || undefined,
       environment: String(input?.environment || "").trim() || undefined,
+      video_model: video.model,
+      video_resolution: video.resolution,
       reuse_base: Boolean(input?.reuseBase),
     });
   } catch (err) {
@@ -6859,8 +7116,19 @@ const tutorialAvatarCreate: Handler = async (input) => {
   const b64 = raw.includes(",") && raw.startsWith("data:") ? raw.slice(raw.indexOf(",") + 1) : raw;
   if (!b64) throw new ZiteError({ code: "BAD_REQUEST", message: "An image is required." });
   if (!name) throw new ZiteError({ code: "BAD_REQUEST", message: "Give the avatar a name." });
+  // The three-panel identity map, when one was built. Optional: an uploaded
+  // avatar has none, and the pipeline runs off the reference image either way.
+  const rawMap = String(input?.mapBase64 || "");
+  const map = rawMap.includes(",") && rawMap.startsWith("data:")
+    ? rawMap.slice(rawMap.indexOf(",") + 1)
+    : rawMap;
   try {
-    return await tutorial.createAvatar({ name, environment, image_b64: b64 });
+    return await tutorial.createAvatar({
+      name,
+      environment,
+      image_b64: b64,
+      map_b64: map || undefined,
+    });
   } catch (err) {
     tutorialError(err);
   }
@@ -6889,6 +7157,179 @@ const tutorialAvatarDelete: Handler = async (input) => {
   }
 };
 
+// ── Tutorial Studio: making an avatar instead of uploading one ─────────────
+// A sentence (and optionally a photo of the KIND of person wanted) becomes a
+// written spec, the spec becomes a portrait, and the portrait can be refined
+// for realism before it is saved. Each step is its own call because each one
+// costs money and the operator should see what they are buying.
+
+const tutorialAvatarSpec: Handler = async (input) => {
+  const sentence = String(input?.sentence || "").trim();
+  const environment = String(input?.environment || "").trim();
+  const rawRef = String(input?.referenceBase64 || "").trim();
+  if (!sentence && !rawRef) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Say who you want in a sentence, or add a reference photo.",
+    });
+  }
+  try {
+    const spec = rawRef
+      ? await persona.specFromReference({
+          ...persona.readImageInput(rawRef),
+          sentence,
+          environment,
+        })
+      : await persona.specFromSentence(sentence, environment);
+    return { spec, usedReference: Boolean(rawRef) };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Could not describe that person.",
+    });
+  }
+};
+
+const tutorialAvatarDraw: Handler = async (input) => {
+  const spec = persona.coerceSpec(input?.spec);
+  if (!persona.specIsUsable(spec)) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: "Describe the person first — at least their face and skin.",
+    });
+  }
+  const environment = String(input?.environment || "").trim();
+  const captureId = String(input?.captureId || "");
+  const engineId = String(input?.engineId || "");
+  const rawRef = String(input?.referenceBase64 || "").trim();
+  try {
+    // The reference rides along as a WEAK second input: cited in the prompt as
+    // a type reference, never as the face. Attached but uncited, an image model
+    // reads it as another view of the subject and copies it.
+    const ref = rawRef ? persona.readImageInput(rawRef) : null;
+    const prompt = ref
+      ? persona.buildReferencedPersonaPrompt({ spec, environment, captureId })
+      : persona.buildPersonaPrompt({ spec, environment, captureId });
+    const image = await persona.drawPersona({
+      prompt,
+      engineId,
+      images: ref ? [ref] : [],
+    });
+    return {
+      imageBase64: `data:${image.mimeType};base64,${image.base64}`,
+      mime: image.mimeType,
+      prompt: image.prompt,
+    };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Could not draw that person.",
+    });
+  }
+};
+
+const tutorialAvatarRefine: Handler = async (input) => {
+  const raw = String(input?.imageBase64 || "").trim();
+  if (!raw) throw new ZiteError({ code: "BAD_REQUEST", message: "Nothing to refine yet." });
+  const notes = String(input?.notes || "").trim();
+  try {
+    const source = persona.readImageInput(raw);
+    const prompt = persona.buildRealismRefinePrompt(notes);
+    const image = await persona.drawPersona({
+      prompt,
+      engineId: String(input?.engineId || ""),
+      images: [source],
+    });
+    return {
+      imageBase64: `data:${image.mimeType};base64,${image.base64}`,
+      mime: image.mimeType,
+      prompt: image.prompt,
+    };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Could not refine that image.",
+    });
+  }
+};
+
+/**
+ * Step 3 — the AVATAR MAP: three panels of the same person, from the portrait.
+ *
+ * Landscape on purpose. A three-panel sheet asked for in 9:16 comes back as
+ * three squashed slivers, and this is also why the aspect has to be explicit
+ * rather than inherited from the attached portrait.
+ */
+const tutorialAvatarMap: Handler = async (input) => {
+  const raw = String(input?.imageBase64 || "").trim();
+  if (!raw) throw new ZiteError({ code: "BAD_REQUEST", message: "Draw the person first." });
+  try {
+    const source = persona.readImageInput(raw);
+    const image = await persona.drawPersona({
+      prompt: persona.buildAvatarMapPrompt(),
+      engineId: String(input?.engineId || ""),
+      images: [source],
+      aspect: "16:9",
+    });
+    return {
+      imageBase64: `data:${image.mimeType};base64,${image.base64}`,
+      mime: image.mimeType,
+      prompt: image.prompt,
+    };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Could not build the avatar map.",
+    });
+  }
+};
+
+/**
+ * Step 4 — that exact person, in the room they will talk from.
+ *
+ * Identity comes from the map (or the portrait when there is no map yet), and
+ * the room either from a photograph of the real room or from its description.
+ * A photograph is much the better input: with one the lighting is INHERITED
+ * rather than described, which is the only way to get the room's real light
+ * instead of a plausible imitation.
+ */
+const tutorialAvatarScene: Handler = async (input) => {
+  const rawIdentity = String(input?.mapBase64 || input?.imageBase64 || "").trim();
+  if (!rawIdentity) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Build the map or the portrait first." });
+  }
+  const rawPlate = String(input?.plateBase64 || "").trim();
+  try {
+    const identity = persona.readImageInput(rawIdentity);
+    const plate = rawPlate ? persona.readImageInput(rawPlate) : null;
+    const prompt = persona.buildScenePrompt({
+      environment: String(input?.environment || ""),
+      captureId: String(input?.captureId || ""),
+      plate: Boolean(plate),
+    });
+    // Order is the contract: identity first, set second, both named in the
+    // prompt. Swapped or unnamed, the model reads the second as another view
+    // of the first and copies the wrong thing.
+    const image = await persona.drawPersona({
+      prompt,
+      engineId: String(input?.engineId || ""),
+      images: plate ? [identity, plate] : [identity],
+      aspect: "9:16",
+    });
+    return {
+      imageBase64: `data:${image.mimeType};base64,${image.base64}`,
+      mime: image.mimeType,
+      prompt: image.prompt,
+      usedPlate: Boolean(plate),
+    };
+  } catch (err) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: err instanceof Error ? err.message : "Could not put them in the room.",
+    });
+  }
+};
+
 // ── Tutorial Studio: batches ────────────────────────────────────────────────
 // Ideas -> scripts -> the operator approves or edits each one -> only then do
 // paid renders start. Everything up to approval is cheap text.
@@ -6914,6 +7355,10 @@ const tutorialBatchCreate: Handler = async (input) => {
   const theme = String(input?.theme || "").trim();
   if (!theme) throw new ZiteError({ code: "BAD_REQUEST", message: "A theme is required." });
   const target = Number(input?.targetCount);
+  const batchVideo = normalizeVideoModel(
+    String(input?.videoModel || DEFAULT_VIDEO_MODEL),
+    String(input?.videoResolution || ""),
+  );
   return {
     batch: tutorialBatches.createBatch({
       name: String(input?.name || "").trim().slice(0, 120) || theme.slice(0, 120),
@@ -6921,6 +7366,10 @@ const tutorialBatchCreate: Handler = async (input) => {
       avatarId: String(input?.avatarId || "").trim(),
       environment: String(input?.environment || "").trim().slice(0, 600),
       targetCount: Number.isFinite(target) ? Math.max(1, Math.min(60, Math.round(target))) : 30,
+      // Chosen at creation, before ideas or scripts exist: it decides how long
+      // every clip in the batch is, and so how long its scripts are written.
+      videoModel: batchVideo.model,
+      videoResolution: batchVideo.resolution,
     }),
   };
 };
@@ -6946,7 +7395,11 @@ const tutorialBatchIdeas: Handler = async (input) => {
     ? Math.max(1, Math.min(60, Math.round(count)))
     : Math.round(batch.targetCount * 1.5); // over-propose so there is room to reject
   try {
-    const ideas = await tutorialAi.generateIdeas(batch.theme, n);
+    const ideas = await tutorialAi.generateIdeas(
+      batch.theme,
+      n,
+      targetSeconds(batch.videoModel),
+    );
     if (!ideas.length) throw new tutorialAi.ApimartError("the model proposed no usable ideas.");
     const items = tutorialBatches.replaceItems(batch.id, ideas);
     tutorialBatches.updateBatch(batch.id, { status: "ideas", error: "" });
@@ -7005,7 +7458,10 @@ const tutorialBatchItemRescript: Handler = async (input) => {
   const item = tutorialBatches.getItem(id);
   if (!item) throw new ZiteError({ code: "BAD_REQUEST", message: "No such item." });
   try {
-    const script = await tutorialAi.generateScript(item.topic);
+    const script = await tutorialAi.generateScript(
+      item.topic,
+      targetSeconds(tutorialBatches.getBatch(item.batchId)?.videoModel || ""),
+    );
     return {
       item: tutorialBatches.updateItem(id, {
         script,
@@ -7038,6 +7494,10 @@ const tutorialBatchRender: Handler = async (input) => {
   // One outfit and one corner of the room per video, varied against each other.
   await assignLooks(batch.id);
 
+  // Settled once for the whole batch: every reel in it is the same length and
+  // the same engine, which is what the scripts were written for.
+  const batchVideo = normalizeVideoModel(batch.videoModel, batch.videoResolution);
+
   let queued = 0;
   const failures: Array<{ topic: string; error: string }> = [];
   for (const stale of approved) {
@@ -7051,6 +7511,8 @@ const tutorialBatchRender: Handler = async (input) => {
         environment: batch.environment || undefined,
         avatar_id: batch.avatarId || undefined,
         batch_id: batch.id,
+        video_model: batchVideo.model,
+        video_resolution: batchVideo.resolution,
         script: item.script,
       });
       tutorialBatches.updateItem(item.id, { jobId: job.id, status: "queued", error: "" });
@@ -7123,6 +7585,183 @@ const tutorialStudioCancel: Handler = async (input) => {
     return await tutorial.cancelJob(id);
   } catch (err) {
     tutorialError(err);
+  }
+};
+
+
+/* ────────────────────────── Hyperframes render queue ────────────────────────── */
+
+/**
+ * ⚠️ THESE HANDLERS NEVER RENDER ANYTHING. They read and write a job directory
+ * shared with the `hyperframes-worker` systemd service on the host, which owns
+ * Docker and the renders. The Lab container has no Docker socket on purpose.
+ */
+const hyperframesFail = (err: unknown): never => {
+  throw new ZiteError({
+    code: "BAD_REQUEST",
+    message: err instanceof Error ? err.message : "Render queue error.",
+  });
+};
+
+const hyperframesStatus: Handler = async () => {
+  try {
+    return await hyperframes.serviceStatus();
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesJobs: Handler = async () => {
+  try {
+    return { jobs: await hyperframes.listJobs() };
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesJob: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await hyperframes.getJob(id, Number(input?.logBytes) || 16000);
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesInbox: Handler = async () => {
+  try {
+    return { entries: await hyperframes.listInbox() };
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesCreateJob: Handler = async (input) => {
+  const source = String(input?.source || "").trim();
+  if (!source) throw new ZiteError({ code: "BAD_REQUEST", message: "source is required." });
+  try {
+    return { job: await hyperframes.createJob({
+      name: String(input?.name || source),
+      source,
+      outputName: input?.outputName ? String(input.outputName) : undefined,
+      fps: input?.fps ? Number(input.fps) : undefined,
+      quality: input?.quality as "draft" | "standard" | "high" | undefined,
+      workers: input?.workers ? Number(input.workers) : undefined,
+    }) };
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesCancelJob: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    await hyperframes.cancelJob(id);
+    return { ok: true };
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesRetryJob: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return { job: await hyperframes.retryJob(id) };
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+/**
+ * The render API key, for the signed-in operator to copy into ChatGPT.
+ *
+ * ⚠️ SESSION-AUTHENTICATED, WHICH IS THE WHOLE POINT: the key lets a machine in
+ * without signing in, so reading it must require signing in. It is never logged
+ * and never returned by the machine-facing router itself.
+ */
+const hyperframesApiKey: Handler = async () => {
+  return { key: hyperframesApiKeyValue(), baseUrl: "/api/hyperframes/v1" };
+};
+
+/**
+ * Asset buckets waiting to be attached to a render.
+ *
+ * ⚠️ VISIBLE HERE BECAUSE THEY ARE INVISIBLE EVERYWHERE ELSE. An upload that is
+ * never submitted holds its bytes for 24 hours with nothing in the UI to show
+ * for it — which on a box where disk is the binding constraint is exactly the
+ * kind of quiet leak that gets discovered by a render failing to start.
+ */
+const hyperframesUploads: Handler = async () => {
+  try {
+    return { uploads: await listHyperframesUploads() };
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesDeleteUpload: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await deleteHyperframesUpload(id);
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesDeleteJob: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await hyperframes.deleteJob(id, input?.keepOutput === true);
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+/* ────────────────────────── Density check (LAB tool) ────────────────────────── */
+
+/**
+ * ⚠️ THESE HANDLERS SPEND NOTHING AND WRITE NOTHING. They read one document,
+ * `density.json`, that the operator produced on the host with `hfp density`,
+ * and hand it to the browser untouched. Every threshold in it came from
+ * `hfp/density.py`, which this container cannot reach — so nothing here may
+ * ever re-derive, default or patch a density number. See hyperframes/density.ts.
+ */
+const hyperframesDensityIndex: Handler = async () => {
+  try {
+    return await hyperframesDensity.index();
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesDensityReport: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  try {
+    return await hyperframesDensity.report(id);
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hyperframesDensityNarration: Handler = async (input) => {
+  const id = String(input?.id || "").trim();
+  if (!id) throw new ZiteError({ code: "BAD_REQUEST", message: "id is required." });
+  // ⚠️ `padSeconds` keeps its undefined so the module's own default (1.5s)
+  // applies. Coercing it with `|| 0` here would silently make "no padding" the
+  // default and quietly change what every narration slice shows.
+  const pad = input?.padSeconds === undefined || input?.padSeconds === null
+    ? undefined
+    : Number(input.padSeconds);
+  try {
+    return await hyperframesDensity.narration(id, Number(input?.start), Number(input?.end), pad);
+  } catch (err) {
+    return hyperframesFail(err);
   }
 };
 
@@ -7278,6 +7917,9 @@ export const HANDLERS: Record<string, Handler> = {
   // Jake Dawson Script Generator (LAB tool)
   scriptGenStatus,
   startScript,
+  uploadScriptShots,
+  attachScriptShots,
+  deleteScriptShot,
   continueScript,
   scriptJobStatus,
   getScriptRun,
@@ -7286,6 +7928,14 @@ export const HANDLERS: Record<string, Handler> = {
   refineScriptParagraph,
   saveScriptEdit,
   revertScriptEdit,
+  finishScriptEdit,
+  scriptVersions,
+  restoreScriptVersion,
+  scriptLessons,
+  decideScriptLesson,
+  editScriptLesson,
+  deleteScriptLesson,
+  applyScriptRules,
   scriptDocsStatus,
   setScriptDocsFolder,
   exportScriptToDocs,
@@ -7454,6 +8104,11 @@ export const HANDLERS: Record<string, Handler> = {
   tutorialStudioStatus,
   tutorialAvatars,
   tutorialAvatarCreate,
+  tutorialAvatarSpec,
+  tutorialAvatarDraw,
+  tutorialAvatarRefine,
+  tutorialAvatarMap,
+  tutorialAvatarScene,
   tutorialAvatarUpdate,
   tutorialAvatarDelete,
   tutorialBatchList,
@@ -7472,6 +8127,22 @@ export const HANDLERS: Record<string, Handler> = {
   tutorialStudioJob,
   tutorialStudioStart,
   tutorialStudioCancel,
+  // Hyperframes render queue (LAB tool)
+  hyperframesStatus,
+  hyperframesJobs,
+  hyperframesJob,
+  hyperframesInbox,
+  hyperframesCreateJob,
+  hyperframesCancelJob,
+  hyperframesRetryJob,
+  hyperframesDeleteJob,
+  hyperframesApiKey,
+  hyperframesUploads,
+  hyperframesDeleteUpload,
+  // Density check (LAB tool)
+  hyperframesDensityIndex,
+  hyperframesDensityReport,
+  hyperframesDensityNarration,
 };
 
 void config;

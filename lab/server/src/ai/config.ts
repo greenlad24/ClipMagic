@@ -84,6 +84,33 @@ export const aiConfig = {
     fast: process.env.CLAUDE_FAST_MODEL || "claude-haiku-4-5",
   },
 
+  /**
+   * The Script Generator's own models, deliberately NOT the shared `director`
+   * tier — that one also drives the short-form beat planner and the thumbnail
+   * art-director, and a scriptwriting experiment must not silently swap the
+   * model under those.
+   *
+   * Two of them, because the judgement stages and the mechanical stages want
+   * different things:
+   *
+   *  - `scriptgen` runs every stage that thinks (research, outline, hooks,
+   *    sections, the reviews). This is the dial to move when trying a newer
+   *    Opus.
+   *  - `scriptgenMechanical` runs the four stages that pass `thinking: false`
+   *    (Stage 0 classify, fact-sheet extraction, the reading-level rewrite,
+   *    video selection). It is PINNED to 4.8 on purpose: `opusScriptChat`
+   *    turns thinking off by OMITTING the field, and omitting means "no
+   *    thinking" on Opus 4.8 but "adaptive thinking ON" on Opus 5 — so
+   *    pointing these at Opus 5 would silently start billing thinking tokens
+   *    as output ($25/MTok) on stages chosen for having nothing to reason
+   *    about. Keeping them here needs no `thinking: {type:"disabled"}` and no
+   *    behaviour change on a model already measured.
+   */
+  scriptgenModels: {
+    thinking: process.env.SCRIPTGEN_MODEL || "claude-opus-4-8",
+    mechanical: process.env.SCRIPTGEN_MECHANICAL_MODEL || "claude-opus-4-8",
+  },
+
   maxTokens: Number.parseInt(process.env.CLAUDE_MAX_TOKENS || "8192", 10),
 };
 

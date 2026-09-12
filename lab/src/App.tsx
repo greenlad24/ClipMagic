@@ -16,6 +16,7 @@ import BulkSchedulerPage from './pages/BulkSchedulerPage';
 import ThumbnailDesignerPage from './pages/ThumbnailDesignerPage';
 import ImageGeneratorPage from './pages/ImageGeneratorPage';
 import KeywordResearchPage from './pages/KeywordResearchPage';
+import RenderQueuePage from './pages/RenderQueuePage';
 import ScriptGeneratorPage from './pages/ScriptGeneratorPage';
 import EngagementManagerPage from './pages/EngagementManagerPage';
 import VideoPlannerPage from './pages/VideoPlannerPage';
@@ -25,6 +26,7 @@ import SkoolEngagePage from './pages/SkoolEngagePage';
 import EngagementRepliesPage from './pages/EngagementRepliesPage';
 import AvatarNarratorPage from './pages/AvatarNarratorPage';
 import TutorialStudioPage from './pages/TutorialStudioPage';
+import DensityCheckPage from './pages/DensityCheckPage';
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -46,6 +48,9 @@ export default function App() {
         <Route path="/bulk" element={<BulkPage />} />
         <Route path="/cutter" element={<CutterPage />} />
         <Route path="/meme" element={<MemePage />} />
+        <Route path="/render-queue" element={<RenderQueuePage />} />
+        <Route path="/density" element={<DensityCheckPage />} />
+        <Route path="/density/:id" element={<DensityCheckPage />} />
         <Route path="/settings/postiz" element={<PostizSettingsPage />} />
         <Route path="/bulk-scheduler" element={<BulkSchedulerPage />} />
         <Route path="/thumbnail-designer" element={<ThumbnailDesignerPage />} />

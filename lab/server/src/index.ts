@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { config, ensureDirs, authConfigured, oauthRedirectUri } from "./config.js";
 import { auth } from "./middleware.js";
 import authRouter from "./auth/routes.js";
@@ -16,6 +18,7 @@ import { remotionRuntimeAvailable } from "./motion/render.js";
 import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
 import { googleDocsOAuthRouter } from "./scriptgen/docsOauthRoutes.js";
+import { hyperframesApiRouter } from "./hyperframes/api.js";
 import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
 import { startMonitor } from "./engage/monitor.js";
@@ -85,6 +88,13 @@ app.use(PUBLIC_ASSET_ROUTE, (err: any, _req: express.Request, res: express.Respo
 // fallback) in one place. When Google creds aren't set, requireSession is a
 // pass-through and the app stays open (legacy behavior).
 app.use(authRouter);
+
+// ⚠️⚠️ THE RENDER API IS MOUNTED BEFORE THE SIGN-IN GATE ON PURPOSE — it is the
+// one machine-facing surface, so ChatGPT can reach it with a bearer token while
+// every page and every other endpoint stays behind Google Sign-In. Each route in
+// that router checks the API key itself; nothing here grants access.
+app.use("/api/hyperframes/v1", hyperframesApiRouter());
+
 app.use(requireSession);
 
 // Connecting a YouTube channel for the Channel Audit's paid/organic split.
@@ -120,6 +130,74 @@ app.use(
   "/api/thumbnail-backgrounds",
   auth,
   express.static(path.join(config.dataDir, "thumbnail-backgrounds"))
+);
+
+// The render API contract, readable from the Render queue page.
+//
+// Resolved relative to this module rather than the working directory, so the
+// same path works from `dist/` in the container and from `src/` in a dev run.
+// Served as text/plain so a browser shows it inline instead of downloading it.
+app.get("/api/hyperframes/docs", auth, (req, res) => {
+  const file = fileURLToPath(new URL("../assets/hyperframes-api.md", import.meta.url));
+  if (req.query.download !== undefined) {
+    // A real .md file to hand to ChatGPT as an upload. text/markdown rather than
+    // text/plain so it keeps its type wherever it lands.
+    res.type("text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="hyperframes-render-api.md"');
+  } else {
+    // Inline reading: text/plain is what makes a browser show it instead of
+    // downloading it.
+    res.type("text/plain; charset=utf-8");
+  }
+  res.sendFile(file);
+});
+
+// Hyperframes render queue — the editable project, as a stream.
+//
+// ⚠️ STREAMED, NEVER BUILT ON DISK OR IN MEMORY. A project carries the source
+// footage, so it can be gigabytes; writing a temporary tarball would need as
+// much free space again, and buffering it would take the server down. `tar`
+// writes to stdout and that is piped straight to the response, so the cost is
+// constant regardless of project size.
+app.get("/api/hyperframes/project/:id.tar.gz", auth, (req, res) => {
+  const id = String(req.params.id || "");
+  // Same guard as the endpoint handlers: the id is a directory name from a
+  // browser and must never be able to climb out of the jobs tree.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/.test(id)) {
+    res.status(400).json({ error: "Invalid job id." });
+    return;
+  }
+  const root = path.join(process.env.HYPERFRAMES_WORK || "/hyperframes-work", "jobs", id);
+  if (!fs.existsSync(path.join(root, "project"))) {
+    res.status(404).json({ error: "No project for that job." });
+    return;
+  }
+  res.setHeader("Content-Type", "application/gzip");
+  res.setHeader("Content-Disposition", `attachment; filename="${id}-project.tar.gz"`);
+  const tar = spawn("tar", ["-czf", "-", "-C", root, "project"], { stdio: ["ignore", "pipe", "ignore"] });
+  tar.stdout.pipe(res);
+  // A client that closes the tab must not leave tar running against a dead pipe.
+  res.on("close", () => tar.kill("SIGTERM"));
+  tar.on("error", () => res.destroy());
+});
+
+// Hyperframes render queue — finished MP4s, the editable project and the render
+// log, so a job's results can be downloaded from the browser.
+//
+// ⚠️ BEHIND `auth` LIKE EVERY OTHER MEDIA ROUTE, and read-only. It serves the
+// job directory tree, which is the user's own footage and output; there is no
+// upload or delete here (those go through the endpoint handlers, which validate
+// the job id). Renders can be gigabytes, so `express.static` handles the range
+// requests rather than anything buffering a file into memory.
+app.use(
+  "/api/hyperframes/files",
+  auth,
+  express.static(path.join(process.env.HYPERFRAMES_WORK || "/hyperframes-work", "jobs"), {
+    maxAge: 0,
+    // A finished render keeps its name; nothing here should be cached stale.
+    etag: true,
+    dotfiles: "ignore",
+  })
 );
 
 // AI Image Generator history — read-only images the generator saved under

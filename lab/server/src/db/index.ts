@@ -423,6 +423,63 @@ CREATE TABLE IF NOT EXISTS script_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_script_runs_created ON script_runs(created_at);
 
+-- ── The edit loop: versions, and what the generator learned from them ────────
+-- Jake, 2026-09-07: "I want the script generator to improve based on my edits —
+-- doing diffs to each script … and have an approve button for fixing it for the
+-- next generations."
+--
+-- ⚠️ A VERSION IS A SNAPSHOT ON "DONE", NOT ON AUTOSAVE. The editor saves every
+-- few seconds into script_runs.edited_document; that column is the LIVE text and
+-- keeps working exactly as before. A row here is a point Jake declared finished,
+-- which is the only kind of version worth restoring to and the only kind worth
+-- drawing a conclusion from — the autosave mid-sentence says nothing about how
+-- he writes.
+CREATE TABLE IF NOT EXISTS script_versions (
+  id           TEXT PRIMARY KEY,
+  run_id       TEXT NOT NULL,
+  version_no   INTEGER NOT NULL,       -- 1-based, per run
+  source       TEXT NOT NULL,          -- generated | edit
+  text         TEXT NOT NULL,
+  note         TEXT NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_script_versions_run ON script_versions(run_id, version_no);
+
+-- One row per "Done" click: the deterministic diff's counts, and whether the
+-- conclusions pass ran over it. Kept so the panel can be reopened without
+-- paying for the analysis twice.
+CREATE TABLE IF NOT EXISTS script_edit_reviews (
+  id           TEXT PRIMARY KEY,
+  run_id       TEXT NOT NULL,
+  version_id   TEXT NOT NULL,
+  stats_json   TEXT NOT NULL,          -- EditDiffStats
+  changes_json TEXT NOT NULL,          -- the aligned change list, as analysed
+  status       TEXT NOT NULL,          -- ready | failed
+  error        TEXT,
+  cost_usd     REAL NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_script_edit_reviews_run ON script_edit_reviews(run_id, created_at);
+
+-- ⚠️⚠️ A LESSON IS INERT UNTIL IT IS APPROVED, AND THAT IS THE WHOLE SAFETY OF
+-- THIS FEATURE. The state column starts 'pending'; only 'approved' reaches
+-- systemPreamble() and therefore the next script. A model drawing its own
+-- conclusions about how to write is exactly the thing that must not take effect
+-- on its own.
+CREATE TABLE IF NOT EXISTS script_lessons (
+  id            TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL,
+  review_id     TEXT NOT NULL,
+  rule          TEXT NOT NULL,         -- the instruction, as it would be read by the writer
+  rationale     TEXT NOT NULL DEFAULT '',
+  evidence_json TEXT NOT NULL DEFAULT '[]',  -- [{before, after}] straight out of the diff
+  scope         TEXT NOT NULL DEFAULT 'voice', -- voice | structure | format | facts
+  state         TEXT NOT NULL,         -- pending | approved | rejected | retired
+  created_at    INTEGER NOT NULL,
+  decided_at    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_script_lessons_state ON script_lessons(state, created_at);
+
 -- Video Planner: an edited narration in, a timestamped visual plan out.
 -- Deliberately separate from the long-form editor — this is the planning step,
 -- and the future editor builds on it.
@@ -466,6 +523,13 @@ CREATE TABLE IF NOT EXISTS audit_runs (
   videos_json     TEXT,            -- AuditVideo[] (scoring + thumbnail + rename)
   market_json     TEXT,            -- AuditVideo[] kept as market evidence
   findings_json   TEXT,            -- AuditFindings
+  -- Stages the run could not do (AuditGap[]), and the stage a failed run died
+  -- in. ⚠️ Both are ALSO in the ALTER block, because migrations run before this
+  -- schema does: the ALTERs add them to an existing database, this CREATE is
+  -- the only thing that supplies them on a fresh one.
+  gaps_json       TEXT,            -- AuditGap[]
+  guests_json     TEXT,            -- AuditGuestChannel[] (channels fetched to compare against)
+  failed_stage    TEXT,            -- AuditStage the run failed in
   calls_json      TEXT,            -- AuditCallUsage[]
   cost_usd        REAL NOT NULL DEFAULT 0,
   quota_units     INTEGER NOT NULL DEFAULT 0,
@@ -841,6 +905,20 @@ CREATE TABLE IF NOT EXISTS skool_course_gate (
   read_at          INTEGER NOT NULL
 );
 
+-- What is known about a member that must survive the thread it was said in.
+--
+-- A member says "I'm 16" once, in one message, and it is true in every later
+-- conversation — including the ones where the last message is three words long.
+-- The agent only ever ADDS rows here; a wrong flag is removed by a human.
+CREATE TABLE IF NOT EXISTS skool_member_flags (
+  member_id   TEXT NOT NULL,
+  member_name TEXT NOT NULL DEFAULT '',
+  flag        TEXT NOT NULL,
+  reason      TEXT NOT NULL DEFAULT '',
+  created_at  INTEGER NOT NULL,
+  PRIMARY KEY (member_id, flag)
+);
+
 CREATE TABLE IF NOT EXISTS skool_recipes (
   name        TEXT PRIMARY KEY,
   description TEXT NOT NULL DEFAULT '',
@@ -1129,6 +1207,16 @@ CREATE TABLE IF NOT EXISTS engage_settings (
   // the report, so they live beside the findings rather than inside them — a
   // refocus rewrites findings and must not take these with it.
   if (!has("sections_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN sections_json TEXT");
+  // What the run could NOT do. A stage that fails no longer sinks the audit —
+  // it is recorded here and the pipeline carries on — so the report has to be
+  // able to say which of its sections are missing and why.
+  if (!has("gaps_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN gaps_json TEXT");
+  // The stage a failed run died in, so "skip it and carry on" knows what it is
+  // skipping rather than inferring it from the artefacts left behind.
+  if (!has("failed_stage")) db.exec("ALTER TABLE audit_runs ADD COLUMN failed_stage TEXT");
+  // Channels fetched purely to compare against, on a report section's request.
+  // Kept whole (not outliers-only) so they can be compared like for like.
+  if (!has("guests_json")) db.exec("ALTER TABLE audit_runs ADD COLUMN guests_json TEXT");
 }
 
 /**
@@ -1311,6 +1399,8 @@ CREATE TABLE IF NOT EXISTS ts_batches (
   avatar_id    TEXT NOT NULL DEFAULT '',   -- sidecar avatar id ('' = packaged look)
   environment  TEXT NOT NULL DEFAULT '',   -- the one room every video is shot in
   target_count INTEGER NOT NULL DEFAULT 30,
+  video_model      TEXT NOT NULL DEFAULT '',  -- apimart model that speaks the clip
+  video_resolution TEXT NOT NULL DEFAULT '',  -- model-specific ('' = the model's own)
   status       TEXT NOT NULL,              -- ideas | scripting | review | rendering | done
   error        TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
@@ -1391,6 +1481,21 @@ CREATE INDEX IF NOT EXISTS idx_bulk_preview_created ON bulk_preview_runs(created
   const cols = db.prepare("PRAGMA table_info(bulk_captions)").all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === "voice_version")) {
     db.exec("ALTER TABLE bulk_captions ADD COLUMN voice_version INTEGER");
+  }
+}
+
+/**
+ * Additive: the apimart video model a Tutorial Studio batch renders with, and
+ * at what resolution. Stored on the BATCH because the model fixes the clip
+ * length (Wan 3.0 30s, MiniMax H3 15s) and therefore how long a script the
+ * batch's items are written for — a choice that has to be made before the
+ * scripting run, not at render time. Empty means the pipeline's own default.
+ */
+{
+  const cols = db.prepare("PRAGMA table_info(ts_batches)").all() as Array<{ name: string }>;
+  if (cols.length > 0 && !cols.some((c) => c.name === "video_model")) {
+    db.exec("ALTER TABLE ts_batches ADD COLUMN video_model TEXT NOT NULL DEFAULT ''");
+    db.exec("ALTER TABLE ts_batches ADD COLUMN video_resolution TEXT NOT NULL DEFAULT ''");
   }
 }
 

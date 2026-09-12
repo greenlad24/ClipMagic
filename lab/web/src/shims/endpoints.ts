@@ -534,15 +534,28 @@ export interface Sponsorship {
   mode: SponsorshipMode;
   sponsorName: string | null;
 }
+/** One screenshot of the tool as it is today. Bytes live on the server. */
+export interface ScreenshotRef {
+  id: string;
+  name: string;
+  mediaType: string;
+  bytes: number;
+  note?: string;
+  uploadedAt: number;
+}
 export interface ScriptInput {
   idea: string;
   brief?: string;
   sponsorship?: Sponsorship;
   targetLength?: string;
+  /** Screenshots taken today — the highest authority in the run. */
+  screenshots?: ScreenshotRef[];
 }
 export type ScriptVideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
 /** "outline" stops the run once the outline exists; "full" writes the video. */
 export type ScriptMode = "full" | "outline";
+/** How much current, trustworthy writing the open web holds on a topic. */
+export type CoverageRisk = "normal" | "thin";
 export interface Stage0Result {
   videoTypeDetailed: string;
   videoType: ScriptVideoType;
@@ -550,6 +563,9 @@ export interface Stage0Result {
   recommendedTitle: string;
   coreTopic: string;
   specificFocus: string;
+  /** "thin" means the web will not settle this one — screenshots will. */
+  coverageRisk?: CoverageRisk | null;
+  coverageNote?: string | null;
 }
 export interface ScriptSetup {
   videoType: ScriptVideoType;
@@ -608,10 +624,27 @@ export interface ScriptQuality {
   repeatedPhraseCount: number; worstPhraseRepeats: number; worstPhrase: string | null;
   discourseMarkerOpenings: number;
 }
+/** Where the research's sources actually came from. Counted, never asked. */
+export interface SourceAudit {
+  total: number;
+  firstParty: number;
+  community: number;
+  aggregator: number;
+  vendorHosts: string[];
+  firstPartyHosts: string[];
+  /** True when nothing came from the vendor itself — every price is second-hand. */
+  noFirstParty: boolean;
+}
 export interface ScriptStages {
   research: string | null;
   /** Stage 1 — the pages the research rested on. */
   sources: ScriptSource[];
+  /** Stage 0.4 — what Jake's own screenshots showed. Top of the evidence order. */
+  screenshotSheet?: string | null;
+  /** The screenshots that sheet was built from. */
+  screenshotRefs?: ScreenshotRef[];
+  /** Stage 1 — whether the research ever opened a vendor page. */
+  sourceAudit?: SourceAudit;
   /** Stage 1.5 — checkable facts distilled from the research, with verification dates. */
   factSheet: string | null;
   outline: string | null;
@@ -688,10 +721,10 @@ export interface ScriptRunListItem {
   id: string;
   title: string;
   videoType: ScriptVideoType | null;
-  status: ScriptRunStatus;
-  createdAt: number;
   /** What the run produced, so an outline isn't mistaken for a finished script. */
   mode: ScriptMode;
+  status: ScriptRunStatus;
+  createdAt: number;
   generationMs: number;
 }
 export interface ScriptJobSnapshot {
@@ -706,11 +739,27 @@ export interface ScriptJobSnapshot {
 export interface ScriptGenStatusOutput {
   anthropicConfigured: boolean;
   model: string;
+  /** Limits for the screenshot picker, so a bad file is refused before upload. */
+  screenshots?: { maxPerRun: number; maxBytes: number; accept: string[] };
 }
 export const scriptGenStatus =
   endpoint<Record<string, never>, ScriptGenStatusOutput>("scriptGenStatus");
 /** Stage 0: classify + propose titles; creates the run (status awaiting_confirmation). */
 export const startScript = endpoint<ScriptInput, { runId: string; stage0: Stage0Result }>("startScript");
+
+/** Upload screenshots before the run exists; returns the refs to put in ScriptInput. */
+export const uploadScriptShots =
+  endpoint<
+    { files: Array<{ name: string; mediaType: string; dataBase64: string; note?: string }> },
+    { shots: ScreenshotRef[]; rejected: string[] }
+  >("uploadScriptShots");
+
+/** Attach screenshots to a run parked at the Stage 0 checkpoint. */
+export const attachScriptShots =
+  endpoint<{ runId: string; screenshots: ScreenshotRef[] }, { count: number }>("attachScriptShots");
+
+export const deleteScriptShot =
+  endpoint<{ id: string; mediaType: string }, { ok: true }>("deleteScriptShot");
 /** Confirm the type/title checkpoint and kick off Stages 1–7 as a background job. */
 export const continueScript =
   endpoint<{ runId: string; setup: ScriptSetup }, { jobId: string; runId: string }>("continueScript");
@@ -723,6 +772,99 @@ export const saveScriptEdit =
   endpoint<{ runId: string; text: string }, { savedAt: number; chars: number }>("saveScriptEdit");
 /** Throw the hand edit away and go back to what the pipeline wrote. */
 export const revertScriptEdit = endpoint<{ runId: string }, { ok: true }>("revertScriptEdit");
+
+/* ── The edit loop ── */
+
+/** A point Jake declared finished. Version 1 is always what the pipeline wrote. */
+export interface ScriptVersion {
+  id: string;
+  runId: string;
+  versionNo: number;
+  /** `rules` is the approved-rules pass rewriting what Jake had not touched. */
+  source: "generated" | "edit" | "rules";
+  text: string;
+  note: string;
+  createdAt: number;
+  chars: number;
+  words: number;
+}
+/** Counts from the deterministic paragraph diff. */
+export interface ScriptEditStats {
+  generatedParagraphs: number;
+  editedParagraphs: number;
+  kept: number;
+  rewritten: number;
+  cut: number;
+  added: number;
+  generatedWords: number;
+  editedWords: number;
+  keptRatio: number;
+  thirds: [number, number, number];
+}
+export interface ScriptLessonEvidence {
+  before: string;
+  after: string;
+}
+/**
+ * Something the generator should do differently next time.
+ *
+ * ⚠️ Only `state === "approved"` reaches the prompt set. Everything else is a
+ * suggestion on a screen.
+ */
+export interface ScriptLesson {
+  id: string;
+  runId: string;
+  reviewId: string;
+  rule: string;
+  rationale: string;
+  evidence: ScriptLessonEvidence[];
+  scope: "voice" | "structure" | "format" | "facts";
+  state: "pending" | "approved" | "rejected" | "retired";
+  createdAt: number;
+  decidedAt: number | null;
+  runTitle?: string;
+}
+export interface ScriptEditReview {
+  id: string;
+  runId: string;
+  versionId: string;
+  stats: ScriptEditStats;
+  status: "ready" | "failed";
+  error: string | null;
+  costUsd: number;
+  createdAt: number;
+  lessons: ScriptLesson[];
+}
+/** "Done editing": snapshot, diff, and draw the conclusions. One Opus call. */
+export const finishScriptEdit = endpoint<{ runId: string }, ScriptEditReview>("finishScriptEdit");
+export const scriptVersions =
+  endpoint<{ runId: string }, { versions: ScriptVersion[]; review: ScriptEditReview | null }>("scriptVersions");
+export const restoreScriptVersion =
+  endpoint<{ runId: string; versionId: string }, { text: string; savedAt: number }>("restoreScriptVersion");
+export const scriptLessons =
+  endpoint<{ state?: ScriptLesson["state"] }, { lessons: ScriptLesson[] }>("scriptLessons");
+/** The click that puts a rule into (or out of) every future generation. */
+export const decideScriptLesson =
+  endpoint<{ lessonId: string; state: ScriptLesson["state"] }, { lesson: ScriptLesson }>("decideScriptLesson");
+export const editScriptLesson =
+  endpoint<{ lessonId: string; rule: string }, { lesson: ScriptLesson }>("editScriptLesson");
+export const deleteScriptLesson = endpoint<{ lessonId: string }, { ok: true }>("deleteScriptLesson");
+/** What one run of the approved rules over an existing script did. */
+export interface RuleApplication {
+  /** Paragraphs the pass was allowed to touch — Jake's own are never offered. */
+  offered: number;
+  rewritten: number;
+  deleted: number;
+  /** Paragraphs of Jake's own writing that were left alone. */
+  locked: number;
+  rulesApplied: number;
+  costUsd: number;
+  notes: string[];
+  text: string;
+  versionId: string | null;
+}
+/** Rewrite the parts of this script Jake did not write, under the approved rules. */
+export const applyScriptRules = endpoint<{ runId: string }, RuleApplication>("applyScriptRules");
 
 // ── Google Docs export ──
 export const scriptDocsStatus =
@@ -788,6 +930,8 @@ export interface PlanMeasure {
   shots: number; shotsPerMin: number;
   openingShotsPerMin: number | null; bodyShotsPerMin: number | null; hookBodyRatio: number | null;
   titles: number; titlesPerMin: number; altPct: number; maxScreencastRun: number;
+  /** Demonstrations left to run past 25s, and the share of runtime in them. */
+  longDemos: number; longDemoPct: number;
   longGradient: string[]; gradientFullStop: number; chars: number;
 }
 export interface PlanBeat {
@@ -883,6 +1027,15 @@ export const auditStatus = endpoint<void, { youtubeConfigured: boolean; anthropi
 export const startAudit = endpoint<any, { runId: string }>("startAudit");
 export const auditJobStatus = endpoint<{ runId: string }, any>("auditJobStatus");
 export const approveAuditMarket = endpoint<{ runId: string; market?: any }, { runId: string }>("approveAuditMarket");
+/**
+ * Carry a failed run past the step that killed it: the step is recorded as a
+ * gap in the report and everything that does not depend on it still runs.
+ * `auditJobStatus` describes the skip on offer while the run is failed.
+ */
+export const skipAuditStep = endpoint<
+  { runId: string },
+  { runId: string; stage: string; action: 'retry' | 'skip'; label: string; consequence: string }
+>("skipAuditStep");
 export const getAuditRun = endpoint<{ runId: string }, any>("getAuditRun");
 export const listAuditRuns = endpoint<{ limit?: number }, { runs: any[] }>("listAuditRuns");
 export const deleteAuditRun = endpoint<{ runId: string }, { deleted: boolean }>("deleteAuditRun");
@@ -2631,6 +2784,11 @@ export interface TutorialJob {
   avatar_id: string;
   /** Groups the reels of one batch ("" = a one-off). */
   batch_id: string;
+  /** apimart model that rendered and spoke the clip. */
+  video_model: string;
+  video_resolution: string;
+  /** Clip length, which the model decides: Wan 30s, MiniMax H3 15s. */
+  seconds: number;
   reuse_base: boolean;
   status: TutorialJobStatus;
   error: string;
@@ -2651,9 +2809,35 @@ export interface TutorialHealth {
   queued: number;
 }
 
+/**
+ * A talking-head model the reel can be rendered with. `seconds` is the ONE clip
+ * length it renders here, not a ceiling — picking the model picks the reel's
+ * length, and the script is written for it.
+ */
+export interface TutorialVideoModel {
+  id: string;
+  label: string;
+  seconds: number;
+  resolutions: string[];
+  defaultResolution: string;
+  note: string;
+}
+
 export const tutorialStudioStatus = endpoint<
   Record<string, never>,
-  { configured: boolean; reachable: boolean; health: TutorialHealth | null }
+  {
+    configured: boolean;
+    reachable: boolean;
+    health: TutorialHealth | null;
+    /** Served by the lab server, so the picker cannot offer what won't render. */
+    models: TutorialVideoModel[];
+    /** Image engines the avatar maker can draw on, with their key present or not. */
+    engines: TutorialPersonaEngine[];
+    /** How the portrait was "shot" — the single biggest realism lever. */
+    captures: TutorialCaptureLook[];
+    /** The sentence/reference steps are Claude; false means they are unavailable. */
+    canDescribe: boolean;
+  }
 >("tutorialStudioStatus");
 
 export const tutorialStudioJobs =
@@ -2673,6 +2857,9 @@ export const tutorialStudioStart = endpoint<
     avatarId?: string;
     /** The room to shoot in; normally the chosen avatar's own. */
     environment?: string;
+    /** Which apimart model speaks it; omitted = Wan 3.0. */
+    videoModel?: string;
+    videoResolution?: string;
     reuseBase?: boolean;
   },
   { job: TutorialJob }
@@ -2691,14 +2878,117 @@ export interface TutorialAvatar {
   environment: string;
   mime: string;
   bytes: number;
+  /** A three-panel identity map was saved with this avatar. */
+  has_map?: boolean;
   created_at: number | null;
+}
+
+/** An image engine the avatar maker can draw on. */
+export interface TutorialPersonaEngine {
+  id: string;
+  label: string;
+  hint: string;
+  key: 'gemini' | 'apimart';
+  /** False when that engine's API key is not set — the button would just fail. */
+  ready: boolean;
+}
+
+/** How the portrait is "shot". Phone matches the reels; camera is cleaner. */
+export interface TutorialCaptureLook {
+  id: string;
+  label: string;
+  hint: string;
+  spec: string;
+}
+
+/**
+ * A person, written down specifically enough to draw twice.
+ *
+ * Every field is a sentence rather than a label on purpose: an image model
+ * given adjectives averages them into a retouched magazine face, which is the
+ * most recognisable AI tell there is. It is returned editable so a face can be
+ * adjusted in words before spending another generation on it.
+ */
+export interface TutorialPersonaSpec {
+  age: string;
+  presenting: string;
+  heritage: string;
+  build: string;
+  /** Posture and energy — what kind of moment the photo is. */
+  demeanour: string;
+  face: string;
+  eyes: string;
+  hair: string;
+  skin: string;
+  wardrobe: string;
+  imperfections: string;
 }
 
 export const tutorialAvatars =
   endpoint<Record<string, never>, { avatars: TutorialAvatar[] }>("tutorialAvatars");
 
+/**
+ * Step 1 — a sentence and/or a reference photo becomes a written spec.
+ * A reference is read for TYPE only; the spec it produces is deliberately a
+ * different individual of the same kind.
+ */
+export const tutorialAvatarSpec = endpoint<
+  { sentence?: string; referenceBase64?: string; environment?: string },
+  { spec: TutorialPersonaSpec; usedReference: boolean }
+>("tutorialAvatarSpec");
+
+/** Step 2 — draw the person. The reference rides along as a weak second input. */
+export const tutorialAvatarDraw = endpoint<
+  {
+    spec: TutorialPersonaSpec;
+    environment?: string;
+    captureId?: string;
+    engineId?: string;
+    referenceBase64?: string;
+  },
+  { imageBase64: string; mime: string; prompt: string }
+>("tutorialAvatarDraw");
+
+/**
+ * The AVATAR MAP: three panels of one person — head-and-shoulders close-up,
+ * standing front full body, and the body from behind cropped at the neck.
+ * Landscape, because a three-panel sheet asked for vertically comes back as
+ * three squashed slivers.
+ */
+export const tutorialAvatarMap = endpoint<
+  { imageBase64: string; engineId?: string },
+  { imageBase64: string; mime: string; prompt: string }
+>("tutorialAvatarMap");
+
+/**
+ * That exact person, in the room they will talk from.
+ *
+ * Identity comes from the map; the room from a photograph of it when you have
+ * one, otherwise from its description. With a photograph the lighting is
+ * inherited rather than described, which is what makes it the real light.
+ */
+export const tutorialAvatarScene = endpoint<
+  {
+    /** The identity reference — the map, or the portrait if there is no map. */
+    mapBase64?: string;
+    imageBase64?: string;
+    /** A photograph of the actual room, if there is one. */
+    plateBase64?: string;
+    environment?: string;
+    captureId?: string;
+    engineId?: string;
+  },
+  { imageBase64: string; mime: string; prompt: string; usedPlate: boolean }
+>("tutorialAvatarScene");
+
+/** Step 3 — same person, better photograph. Identity is locked in the prompt. */
+export const tutorialAvatarRefine = endpoint<
+  { imageBase64: string; notes?: string; engineId?: string },
+  { imageBase64: string; mime: string; prompt: string }
+>("tutorialAvatarRefine");
+
 export const tutorialAvatarCreate = endpoint<
-  { name: string; environment: string; imageBase64: string },
+  { name: string; environment: string; imageBase64: string; mapBase64?: string },
   { avatar: TutorialAvatar }
 >("tutorialAvatarCreate");
 
@@ -2727,6 +3017,9 @@ export interface TutorialBatch {
   avatarId: string;
   environment: string;
   targetCount: number;
+  /** Fixed for the whole batch: it decides every clip's length. */
+  videoModel: string;
+  videoResolution: string;
   status: TutorialBatchStatus;
   error: string;
   createdAt: number;
@@ -2764,7 +3057,16 @@ export const tutorialBatchList =
   endpoint<Record<string, never>, { batches: TutorialBatch[] }>("tutorialBatchList");
 
 export const tutorialBatchCreate = endpoint<
-  { name?: string; theme: string; avatarId?: string; environment?: string; targetCount?: number },
+  {
+    name?: string;
+    theme: string;
+    avatarId?: string;
+    environment?: string;
+    targetCount?: number;
+    /** Chosen up front: the scripts are written for this model's clip length. */
+    videoModel?: string;
+    videoResolution?: string;
+  },
   { batch: TutorialBatch }
 >("tutorialBatchCreate");
 
@@ -2832,3 +3134,350 @@ export const tutorialStudioPost = endpoint<
   { jobId: string; channelIds: string[]; content: string; title?: string; when?: string },
   { posted: boolean }
 >("tutorialStudioPost");
+
+/* ── Hyperframes render queue (LAB tool) ─────────────────────────────────── */
+
+export interface HyperframesJob {
+  id: string;
+  name: string;
+  /** The API caller's own identifier, echoed back untouched. Null for Lab-queued jobs. */
+  clientRef: string | null;
+  state: "queued" | "running" | "done" | "failed" | "cancelled" | "unknown";
+  phase: string;
+  step: string;
+  framesCompleted: number | null;
+  totalFrames: number | null;
+  percent: number | null;
+  attempt: number;
+  message: string;
+  output: string | null;
+  outputBytes: number | null;
+  /** A joined video of the chunks that finished, when a render stopped early. */
+  partialOutput: string | null;
+  partialSeconds: number | null;
+  partialChunks: number | null;
+  bytes: number;
+  createdAt: number;
+  updatedAt: number | null;
+  elapsedSeconds: number | null;
+  estimatedMinutesRemaining: number | null;
+}
+
+export interface HyperframesInboxEntry {
+  name: string;
+  kind: "directory" | "archive";
+  bytes: number;
+  modifiedAt: number;
+}
+
+export const hyperframesStatus = endpoint<Record<string, never>, {
+  ready: boolean;
+  workerHealthy: boolean;
+  runtimeVersion: string | null;
+  jobs: number;
+  running: number;
+  queued: number;
+  diskFreeBytes: number;
+  workBytes: number;
+}>("hyperframesStatus");
+
+export const hyperframesJobs =
+  endpoint<Record<string, never>, { jobs: HyperframesJob[] }>("hyperframesJobs");
+
+export const hyperframesJob =
+  endpoint<{ id: string; logBytes?: number }, { job: HyperframesJob; log: string }>("hyperframesJob");
+
+export const hyperframesInbox =
+  endpoint<Record<string, never>, { entries: HyperframesInboxEntry[] }>("hyperframesInbox");
+
+export const hyperframesCreateJob = endpoint<{
+  name: string;
+  source: string;
+  outputName?: string;
+  fps?: number;
+  quality?: "draft" | "standard" | "high";
+  workers?: number;
+}, { job: HyperframesJob }>("hyperframesCreateJob");
+
+export const hyperframesCancelJob = endpoint<{ id: string }, { ok: boolean }>("hyperframesCancelJob");
+export const hyperframesRetryJob = endpoint<{ id: string }, { job: HyperframesJob }>("hyperframesRetryJob");
+export const hyperframesDeleteJob =
+  endpoint<{ id: string; keepOutput?: boolean }, { freedBytes: number }>("hyperframesDeleteJob");
+
+export interface HyperframesUpload {
+  id: string;
+  name: string;
+  createdAt: number;
+  bytes: number;
+  files: { path: string; bytes: number; sha256: string }[];
+}
+
+export const hyperframesUploads =
+  endpoint<Record<string, never>, { uploads: HyperframesUpload[] }>("hyperframesUploads");
+
+export const hyperframesDeleteUpload =
+  endpoint<{ id: string }, { freedBytes: number }>("hyperframesDeleteUpload");
+
+export const hyperframesApiKey =
+  endpoint<Record<string, never>, { key: string; baseUrl: string }>("hyperframesApiKey");
+
+/* ── Density check (LAB tool) ─────────────────────────────────────────────
+   Read-only. Every number below arrives as DATA out of `hfp density`, which
+   reads hfp/density.py. Nothing here may become a constant: no R-code union,
+   no finding-code enum, no default threshold, no fallback value. If a field is
+   missing the page says so — it never fills one in. See DensityCheckPage.tsx. */
+
+/** One scorecard row. `target` is a float on purpose; floor/ceiling are what judge. */
+export interface DensityElement {
+  code: string;
+  /** Human label out of density.NAMES — the package, never the UI, owns these. */
+  name: string;
+  actual: number;
+  /** null iff meaningGated. NEVER rounded. */
+  target: number | null;
+  floor: number | null;
+  ceiling: number | null;
+  referenceRate: number;
+  actualRate: number;
+  graphic: boolean;
+  meaningGated: boolean;
+  verdict: "below" | "ok" | "above" | "gated";
+  /** Every occurrence start, seconds, ascending. */
+  at: number[];
+}
+
+export interface DensitySpan {
+  start: number;
+  end: number;
+  seconds: number;
+}
+
+export interface DensityChain {
+  start: number;
+  end: number;
+  seconds: number;
+  spans: number;
+  motion: string;
+}
+
+export interface DensityMovementSpan {
+  start: number;
+  end: number;
+  motion: string;
+}
+
+export interface DensityBlock {
+  index: number;
+  id: string;
+  title: string;
+  start: number;
+  end: number;
+  seconds: number;
+  overMax: boolean;
+}
+
+/** The enforcing code's own words. `message` is rendered verbatim, never re-worded. */
+export interface DensityFinding {
+  code: string;
+  severity: "error" | "warn";
+  message: string;
+  where: string;
+  /** density.FINDING_SUBJECT — "element" | "graphics" | "movement" | "screencast". */
+  subject: string;
+  element: string | null;
+}
+
+export interface DensityThresholds {
+  floorFraction: number;
+  ceilingFraction: number;
+  ceilingOverride: Record<string, number>;
+  pushSpanMedianMaxSeconds: number;
+  /**
+   * Which motions the push rule actually covers. Read this — never hardcode
+   * 'R002'. On an edit whose commonest motion is not a push, picking the modal
+   * motion instead plots non-push spans against the push-median rule and
+   * disagrees with movement.pushCount.
+   */
+  pushMotions: string[];
+  screencastBlocksPerMin: number;
+  screencastBlockMedianMaxSeconds: number;
+  screencastBlockMaxSeconds: number;
+  referenceRate: Record<string, number>;
+  targetRate: Record<string, number>;
+  graphics: string[];
+  meaningGated: string[];
+  referenceVideos: number;
+  referenceMinutes: number;
+}
+
+/** The whole density.json document, passed through by the server unmodified. */
+export interface DensityScorecard {
+  schema: string;
+  generatedAt: string;
+  hfpVersion: string;
+  source: {
+    kind: string;
+    path: string;
+    artifacts: string[];
+    sha256: Record<string, string>;
+    /** Checks that genuinely could not run. Rendered grey, never as a green tick. */
+    missing: { check: string; reason: string }[];
+  };
+  edit: {
+    durationSeconds: number;
+    minutes: number;
+    /** null on a cue-sheet source — these four come from source-verification.json,
+        which a cue sheet does not carry. Never rendered as 0 or as an empty "×". */
+    fps: string | null;
+    width: number | null;
+    height: number | null;
+    words: number | null;
+  };
+  thresholds: DensityThresholds;
+  elements: DensityElement[];
+  graphics: {
+    actual: number;
+    floor: number;
+    verdict: string;
+    /** Longest first. */
+    gaps: DensitySpan[];
+    longestGap: DensitySpan | null;
+  };
+  movement: {
+    spanCount: number;
+    spans: DensityMovementSpan[];
+    chains: DensityChain[];
+    pushCount: number;
+    /** null when no push span exists at all — an absent measurement, never 0. */
+    pushMedianSeconds: number | null;
+    pushMaxSeconds: number | null;
+    verdict: "ok" | "warn";
+  };
+  screencast: {
+    blocks: number;
+    wantBlocks: number;
+    /** Inside the reference range on the shipped film — rendered as PASSING. */
+    share: number;
+    shareVerdict: string;
+    /** null when the edit has no screencast block at all. Never 0. */
+    medianSeconds: number | null;
+    maxSeconds: number | null;
+    blockList: DensityBlock[];
+  };
+  findings: DensityFinding[];
+  verdict: { ok: boolean; errors: number; warnings: number };
+  promptBlock: string;
+}
+
+/** Freshness by content hash, not mtime — mtime lies under a re-write. */
+export interface DensityArtifactCheck {
+  name: string;
+  present: boolean;
+  sha256: string | null;
+  expected: string | null;
+  matches: boolean;
+}
+
+export interface DensityReportOk {
+  state: "ok";
+  id: string;
+  name: string;
+  /** Which of the two lookup paths hit, relative to the job dir. */
+  path: string;
+  rawUrl: string;
+  stale: boolean;
+  artifacts: DensityArtifactCheck[];
+  scorecard: DensityScorecard;
+}
+
+export interface DensityReportAbsent {
+  state: "absent";
+  id: string;
+  name: string;
+  reason: string;
+  /** The exact command to run on the host. Shown in a <pre>, copyable. */
+  command: string;
+}
+
+export interface DensityReportUnreadable {
+  state: "unreadable";
+  id: string;
+  name: string;
+  reason: string;
+  command: string;
+}
+
+export interface DensityReportWrongSchema {
+  state: "wrong-schema";
+  id: string;
+  name: string;
+  reason: string;
+  found: string | null;
+  expected: string;
+  command: string;
+}
+
+export type DensityReport =
+  | DensityReportOk
+  | DensityReportAbsent
+  | DensityReportUnreadable
+  | DensityReportWrongSchema;
+
+export interface DensityIndexRow {
+  id: string;
+  name: string;
+  hasScorecard: boolean;
+  state: "ok" | "absent" | "unreadable" | "wrong-schema";
+  generatedAt: string | null;
+  hfpVersion: string | null;
+  durationSeconds: number | null;
+  /** null iff !hasScorecard — a job with no scorecard is a normal row, not an error. */
+  ok: boolean | null;
+  errors: number | null;
+  warnings: number | null;
+}
+
+export interface DensityIndexResponse {
+  jobs: DensityIndexRow[];
+}
+
+export interface NarrationWord {
+  word: string;
+  start: number;
+  end: number;
+  inSpan: boolean;
+}
+
+export interface NarrationSlice {
+  id: string;
+  window: { start: number; end: number; padSeconds: number };
+  words: NarrationWord[];
+  text: string;
+  truncated: boolean;
+  onScreen: {
+    template: string;
+    scene: string;
+    start: number;
+    end: number;
+    config: Record<string, unknown>;
+  } | null;
+  screencast: {
+    id: string;
+    title: string;
+    start: number;
+    end: number;
+    seconds: number;
+    narration: string;
+  } | null;
+}
+
+export const hyperframesDensityIndex =
+  endpoint<Record<string, never>, DensityIndexResponse>("hyperframesDensityIndex");
+
+export const hyperframesDensityReport =
+  endpoint<{ id: string }, DensityReport>("hyperframesDensityReport");
+
+export const hyperframesDensityNarration =
+  endpoint<{ id: string; start: number; end: number; padSeconds?: number }, NarrationSlice>(
+    "hyperframesDensityNarration",
+  );

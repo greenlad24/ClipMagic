@@ -109,6 +109,28 @@ services:
       # header so even the internal port refuses an un-tokened call.
       TUTORIAL_STUDIO_URL: ${TUTORIAL_STUDIO_URL:-http://tutorial-studio:3100}
       TUTORIAL_STUDIO_API_TOKEN: ${TUTORIAL_STUDIO_TOKEN:-}
+      # Script Generator runaway guard: the per-run Opus ceiling, checked before
+      # every call. A healthy full run is ~$4.60 (the research and transcript
+      # stages spend ~$3.10 before the first section is written), so this sits
+      # well above one script and still stops a loop. 0 disables it entirely.
+      SCRIPTGEN_MAX_USD: ${SCRIPTGEN_MAX_USD:-12}
+      # Which Opus writes the scripts. Deliberately NOT the shared
+      # CLAUDE_DIRECTOR_MODEL — that one also drives the short-form beat planner
+      # and the thumbnail art-director, and a scriptwriting experiment must not
+      # swap the model under those.
+      #   SCRIPTGEN_MODEL            — every stage that THINKS (research,
+      #     outline, hooks, sections, reviews). This is the A/B dial.
+      #   SCRIPTGEN_MECHANICAL_MODEL — the four stages that pass
+      #     `thinking: false` (classify, fact-sheet extract, reading-level
+      #     rewrite, video selection). PINNED to 4.8: those stages turn thinking
+      #     off by OMITTING the field, and an omitted `thinking` means "off" on
+      #     Opus 4.8 but "adaptive thinking ON" on Opus 5 — pointing them at
+      #     Opus 5 would silently bill thinking as output on stages picked for
+      #     having nothing to reason about.
+      # Both models are priced identically ($5/$25 per MTok), so a mixed run's
+      # cost accounting and the SCRIPTGEN_MAX_USD ceiling stay correct.
+      SCRIPTGEN_MODEL: ${SCRIPTGEN_MODEL:-claude-opus-4-8}
+      SCRIPTGEN_MECHANICAL_MODEL: ${SCRIPTGEN_MECHANICAL_MODEL:-claude-opus-4-8}
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data
@@ -125,6 +147,12 @@ services:
       # restart Postiz. Remove this mount to disable auto-restart (keys still
       # persist; restart Postiz manually on the server instead).
       - /var/run/docker.sock:/var/run/docker.sock
+      # Hyperframes render queue. The Lab is the CONTROL PLANE only: it writes
+      # job directories here and reads status.json back. The renders are run by
+      # the `hyperframes-worker` systemd service on the HOST, which owns the
+      # containers — the Lab never starts one, and cancellation is a `cancel`
+      # file the worker acts on rather than a container the web app kills.
+      - /opt/hyperframes-work:/hyperframes-work
 
   # ── WHATSAPP SCHEDULER: schedule WhatsApp messages via in-chat /s commands ──
   # A self-contained sidecar (its own container + persistent WhatsApp Web session
@@ -210,6 +238,29 @@ services:
     # compose `environment:` defaults below are already in the process env, its
     # values OVERRIDE those defaults. A plain restart re-runs this entrypoint and
     # re-sources the (possibly updated) file, so new keys apply on restart.
+      # OAuth refresh-token fix (2026-08-28): Postiz's OAuth callback loses the
+      # refresh token on a RECONNECT. In no.auth.integrations.controller.js the
+      # reconnect branch does `res({ ...newAuth, refreshToken: body.refresh })`,
+      # but `refresh` is read from REDIS while `body.refresh` is undefined -- so
+      # refreshToken is stored as '' and expiresIn as undefined, which the
+      # repository defaults to 999999999s => tokenExpiration in 2058. That date
+      # permanently excludes the channel from needsToBeRefreshed(), so the token
+      # is never renewed. YouTube access tokens live 1 hour, so every scheduled
+      # YouTube post after that hour fails with "Token expired or invalid,
+      # please reconnect your YouTube account." (Facebook/Instagram hide it
+      # behind ~60-day tokens.) The patch keeps the real values returned by
+      # authenticate(). Idempotent, fails safe -- watch "[yt-refresh-patch]".
+      # Facebook Reels fix (2026-09-01): FacebookProvider.post uploaded every mp4 to
+      # /{page}/videos and then hardcoded `finalUrl = facebook.com/reel/<videoId>`.
+      # Facebook only auto-classifies short vertical clips as reels, so the URL was a
+      # guess (it 404s for a 16:9 or >90s video), and nothing ever set video_state, so
+      # the publish state was left to Facebook's defaults. The patch routes mp4s through
+      # the real Reels API (video_reels start -> upload -> finish with
+      # video_state=PUBLISHED), falls back to /videos when Facebook rejects the clip as
+      # a reel, and reads permalink_url back from Graph instead of guessing. It refuses
+      # to fall back once the finish phase is reached, so a post can never be
+      # duplicated. Idempotent, anchor-based, fails safe — watch "[fb-reels-patch]".
+      # Source of truth: /opt/clipmagic/postiz-fb-reels/.
     entrypoint:
       - /bin/sh
       - -lc
@@ -223,7 +274,7 @@ services:
       # "[yt-scope-patch]" log line, which should read 2). Already-connected
       # channels keep working (checkScopes is a subset check); reconnect each
       # YouTube channel in Postiz to actually mint the reduced token.
-      - 'set -a; [ -f /config/postiz.env ] && . /config/postiz.env; set +a; for f in /app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js /app/apps/orchestrator/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js; do [ -f "$$f" ] && sed -i -e "\#googleapis.com/auth/youtube[^.p]#d" -e "\#googleapis.com/auth/youtube.force-ssl#d" -e "\#googleapis.com/auth/youtubepartner#d" "$$f"; done; echo "[yt-scope-patch] backend youtube-scope lines now: $$(grep -c googleapis.com/auth/youtube /app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js) (expect 2)"; exec sh -c "nginx && pnpm run pm2"'
+      - 'set -a; [ -f /config/postiz.env ] && . /config/postiz.env; set +a; for f in /app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js /app/apps/orchestrator/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js; do [ -f "$$f" ] && sed -i -e "\#googleapis.com/auth/youtube[^.p]#d" -e "\#googleapis.com/auth/youtube.force-ssl#d" -e "\#googleapis.com/auth/youtubepartner#d" "$$f"; done; echo "[yt-scope-patch] backend youtube-scope lines now: $$(grep -c googleapis.com/auth/youtube /app/apps/backend/dist/libraries/nestjs-libraries/src/integrations/social/youtube.provider.js) (expect 2)"; C=/app/apps/backend/dist/apps/backend/src/api/routes/no.auth.integrations.controller.js; [ -f "$$C" ] && sed -i "s#return res({ ...newAuth, refreshToken: body.refresh });#return res({ ...newAuth, refreshToken: auth.refreshToken, expiresIn: auth.expiresIn });#" "$$C"; echo "[yt-refresh-patch] buggy lines left: $$(grep -c "refreshToken: body.refresh" "$$C") (expect 0)"; sh /config/nginx-retry-patch.sh || echo "[retry-button] nginx patch skipped"; sh /config/fb-reels-patch.sh || echo "[fb-reels-patch] skipped"; exec sh -c "nginx && pnpm run pm2"'
     ports:
       # Host port → Postiz's internal port (the unified app image serves on
       # 5000). Override the host side with POSTIZ_PORT in .env; keep it in sync

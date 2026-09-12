@@ -1,4 +1,5 @@
 import {
+  Film,
   BookOpen,
   Search,
   Wand2,
@@ -18,6 +19,7 @@ import {
   Clapperboard,
   Bot,
   UserRound,
+  Gauge,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -69,6 +71,28 @@ export interface ToolDefinition {
 }
 
 export const TOOLS: ToolDefinition[] = [
+  {
+    id: 'render-queue',
+    title: 'Render queue',
+    description:
+      'Hyperframes renders that keep going after the tab closes — queue a project, watch frames land, download the MP4, delete the footage when you are done with it.',
+    icon: Film,
+    route: '/render-queue',
+    status: 'live',
+    accent: 'blue',
+    detail: '4K · runs on the server',
+  },
+  {
+    id: 'density-check',
+    title: 'Density check',
+    description:
+      'What fires how often, checked before you spend the render — every push-in, reset, board and screencast block counted against the videos that were measured.',
+    icon: Gauge,
+    route: '/density',
+    status: 'live',
+    accent: 'purple',
+    detail: '~14h render · check first',
+  },
   {
     id: 'tutorial-studio',
     title: 'Tutorial Studio',

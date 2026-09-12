@@ -84,6 +84,9 @@ FROM node:22-bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
        ffmpeg fonts-dejavu-core fontconfig ca-certificates \
+       # Hyperframes projects arrive as zips (that is what ChatGPT hands over);
+       # tar is already in the base image, unzip is not.
+       unzip \
        # Liberation Sans (metric-compatible Helvetica/Arial) — the DEFAULT font
        # for the contrarian-originals headline overlay. Override at runtime with
        # THUMBNAIL_FONT_PATH pointing to a mounted Helvetica .ttf/.otf.

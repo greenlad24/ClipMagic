@@ -12,8 +12,18 @@ import {
   refineScriptParagraph,
   saveScriptEdit,
   revertScriptEdit,
+  finishScriptEdit,
+  scriptVersions,
+  restoreScriptVersion,
+  scriptLessons,
+  decideScriptLesson,
+  editScriptLesson,
+  applyScriptRules,
   scriptDocsStatus,
   exportScriptToDocs,
+  uploadScriptShots,
+  attachScriptShots,
+  deleteScriptShot,
   createScriptQueue,
   listScriptQueues,
   getScriptQueue,
@@ -22,6 +32,7 @@ import {
   skipScriptQueueItem,
   type ScriptQueue,
   type ScriptInput,
+  type ScreenshotRef,
   type ScriptSetup,
   type ScriptRunResult,
   type ScriptRunListItem,
@@ -32,6 +43,10 @@ import {
   type SponsorshipMode,
   type Sponsorship,
   type RefineMessage,
+  type ScriptVersion,
+  type ScriptLesson,
+  type ScriptEditReview,
+  type RuleApplication,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -73,6 +88,12 @@ import {
   Wand2,
   ListTree,
   RotateCw,
+  GraduationCap,
+  Check,
+  Wrench,
+  X,
+  Undo2,
+  ImagePlus,
 } from 'lucide-react';
 
 /**
@@ -465,6 +486,441 @@ function BulkQueuePanel() {
   );
 }
 
+/* ── The edit loop: versions, and what the edits taught the generator ─────── */
+
+/**
+ * What one finished edit taught the generator, with the button that makes it
+ * count.
+ *
+ * ⚠️⚠️ NOTHING HERE IS ACTIVE UNTIL "USE THIS" IS PRESSED. A pending rule is a
+ * suggestion drawn by a model from a diff; an approved one is pasted verbatim
+ * into the system prompt of every future script. That gap is the entire safety
+ * of the feature, so the two states are never shown looking alike.
+ */
+function LessonCard({
+  lesson,
+  onDecide,
+  onReword,
+}: {
+  lesson: ScriptLesson;
+  onDecide: (state: ScriptLesson['state']) => void;
+  onReword: (rule: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(lesson.rule);
+  const approved = lesson.state === 'approved';
+
+  return (
+    <div
+      className={cn(
+        'rounded-lg border p-3 text-sm',
+        approved ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border bg-muted/30',
+      )}
+    >
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {lesson.scope}
+        </span>
+        {approved && (
+          <span className="flex items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+            <CheckCircle2 className="h-3 w-3" />
+            in every future script
+          </span>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="space-y-2">
+          <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={4} className="text-sm" />
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              onClick={() => {
+                onReword(draft);
+                setEditing(false);
+              }}
+            >
+              Save wording
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => { setDraft(lesson.rule); setEditing(false); }}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <p className="leading-relaxed text-foreground">{lesson.rule}</p>
+      )}
+
+      {lesson.rationale && !editing && (
+        <p className="mt-1.5 text-xs text-muted-foreground">{lesson.rationale}</p>
+      )}
+
+      {lesson.evidence.length > 0 && !editing && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+            From your edits ({lesson.evidence.length})
+          </summary>
+          <div className="mt-2 space-y-2">
+            {lesson.evidence.map((e, i) => (
+              <div key={i} className="rounded border border-border/60 bg-background/60 p-2 text-xs">
+                {e.before && (
+                  <p className="text-muted-foreground line-through decoration-destructive/50">{e.before}</p>
+                )}
+                {e.after && <p className="mt-1 text-foreground">{e.after}</p>}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {!editing && (
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          {lesson.state === 'pending' && (
+            <>
+              <Button size="sm" className="h-7 gap-1.5" onClick={() => onDecide('approved')}>
+                <Check className="h-3.5 w-3.5" />
+                Use this
+              </Button>
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5" onClick={() => onDecide('rejected')}>
+                <X className="h-3.5 w-3.5" />
+                No
+              </Button>
+            </>
+          )}
+          {approved && (
+            <Button variant="ghost" size="sm" className="h-7 gap-1.5" onClick={() => onDecide('retired')}>
+              <Undo2 className="h-3.5 w-3.5" />
+              Stop using
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className="h-7" onClick={() => setEditing(true)}>
+            Reword
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The one-line summary of what the diff actually measured. */
+function DiffSummary({ review }: { review: ScriptEditReview }) {
+  const s = review.stats;
+  const pct = (n: number): string => `${Math.round(n * 100)}%`;
+  const thirds = [
+    { label: 'opening', v: s.thirds[0] },
+    { label: 'middle', v: s.thirds[1] },
+    { label: 'ending', v: s.thirds[2] },
+  ].sort((a, b) => b.v - a.v);
+  return (
+    <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+      <p className="text-foreground">
+        <span className="font-medium tabular-nums">{s.kept}</span> of{' '}
+        <span className="tabular-nums">{s.generatedParagraphs}</span> paragraphs kept word for word ({pct(s.keptRatio)}).
+      </p>
+      <p className="mt-1 tabular-nums">
+        {s.rewritten} reworded · {s.cut} cut · {s.added} written by you · {s.generatedWords.toLocaleString()} →{' '}
+        {s.editedWords.toLocaleString()} words
+      </p>
+      {s.rewritten + s.cut + s.added > 0 && (
+        <p className="mt-1">
+          Most of the work was in the <span className="text-foreground">{thirds[0].label}</span> ({pct(thirds[0].v)} of
+          the changes).
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The panel beside the script: this edit's conclusions, the rules already in
+ * force, and the version history.
+ *
+ * It reloads on `reviewNonce` — bumped by the editor's Done button — rather than
+ * polling, because nothing here changes unless a person does something.
+ */
+function EditLearningPanel({
+  runId,
+  reviewNonce,
+  review,
+  busy,
+  onRestore,
+}: {
+  runId: string;
+  reviewNonce: number;
+  review: ScriptEditReview | null;
+  busy: boolean;
+  onRestore: (text: string) => void;
+}) {
+  const [versions, setVersions] = useState<ScriptVersion[]>([]);
+  const [stored, setStored] = useState<ScriptEditReview | null>(null);
+  const [active, setActive] = useState<ScriptLesson[]>([]);
+  const [pending, setPending] = useState<ScriptLesson[]>([]);
+  const [showActive, setShowActive] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [applied, setApplied] = useState<RuleApplication | null>(null);
+
+  const reload = useCallback(async (): Promise<void> => {
+    const [v, l] = await Promise.all([
+      scriptVersions({ runId }).catch(() => ({ versions: [], review: null })),
+      scriptLessons({}).catch(() => ({ lessons: [] as ScriptLesson[] })),
+    ]);
+    setVersions(v.versions);
+    setStored(v.review);
+    setActive(l.lessons.filter((x) => x.state === 'approved'));
+    setPending(l.lessons.filter((x) => x.state === 'pending'));
+  }, [runId]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload, reviewNonce]);
+
+  const shown = review ?? stored;
+  // Pending lessons from THIS run lead; anything still pending from an earlier
+  // script is listed under it rather than lost.
+  const mine = pending.filter((l) => l.runId === runId);
+  const others = pending.filter((l) => l.runId !== runId);
+
+  const decide = async (id: string, state: ScriptLesson['state']): Promise<void> => {
+    try {
+      await decideScriptLesson({ lessonId: id, state });
+      toast.success(
+        state === 'approved'
+          ? 'Added to the rules — every script from here on follows it.'
+          : state === 'retired'
+            ? 'Retired. New scripts stop following it.'
+            : 'Dismissed.',
+      );
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const reword = async (id: string, rule: string): Promise<void> => {
+    try {
+      await editScriptLesson({ lessonId: id, rule });
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const applyRules = async (): Promise<void> => {
+    if (
+      !window.confirm(
+        'Rewrite the parts of this script you have not edited, using the approved rules? Your own paragraphs are left alone and the current version is saved first.',
+      )
+    ) {
+      return;
+    }
+    setApplying(true);
+    try {
+      const res = await applyScriptRules({ runId });
+      setApplied(res);
+      if (res.rewritten + res.deleted > 0) {
+        onRestore(res.text);
+        toast.success(`${res.rewritten + res.deleted} paragraphs brought in line with the rules.`);
+      } else {
+        toast.success('Nothing to change — the rest of this script already follows the rules.');
+      }
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  const restore = async (versionId: string): Promise<void> => {
+    if (!window.confirm('Put this version back in the editor? What is there now is saved as a version first.')) return;
+    try {
+      const res = await restoreScriptVersion({ runId, versionId });
+      onRestore(res.text);
+      toast.success('Restored.');
+      await reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <GraduationCap className="h-4 w-4 text-muted-foreground" />
+        <h3 className="text-sm font-medium">What your edits taught it</h3>
+      </div>
+
+      {busy && (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Reading your edits…
+        </div>
+      )}
+
+      {!busy && shown && <DiffSummary review={shown} />}
+      {!busy && shown?.status === 'failed' && (
+        <p className="text-xs text-destructive">
+          The diff was saved, but the conclusions pass failed: {shown.error}
+        </p>
+      )}
+
+      {!busy && !shown && (
+        <p className="text-xs text-muted-foreground">
+          Edit the script, then press <span className="text-foreground">Done</span> — it compares your version with the
+          one it wrote and proposes what to change for next time.
+        </p>
+      )}
+
+      {mine.length > 0 && (
+        <div className="space-y-2">
+          {mine.map((l) => (
+            <LessonCard
+              key={l.id}
+              lesson={l}
+              onDecide={(state) => void decide(l.id, state)}
+              onReword={(rule) => void reword(l.id, rule)}
+            />
+          ))}
+        </div>
+      )}
+
+      {!busy && shown?.status === 'ready' && mine.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Nothing new to learn from this one — the changes were specific to this video.
+        </p>
+      )}
+
+      {others.length > 0 && (
+        <details className="rounded-lg border border-border p-3">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground">
+            {others.length} suggestion{others.length === 1 ? '' : 's'} from other scripts still waiting
+          </summary>
+          <div className="mt-2 space-y-2">
+            {others.map((l) => (
+              <div key={l.id} className="space-y-1">
+                {l.runTitle && <p className="text-[11px] text-muted-foreground">from “{l.runTitle}”</p>}
+                <LessonCard
+                  lesson={l}
+                  onDecide={(state) => void decide(l.id, state)}
+                  onReword={(rule) => void reword(l.id, rule)}
+                />
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      <div className="rounded-lg border border-border">
+        <button
+          type="button"
+          onClick={() => setShowActive((v) => !v)}
+          className="flex w-full items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <span>
+            Rules in force ({active.length})
+          </span>
+          <ChevronRight className={cn('h-4 w-4 transition-transform', showActive && 'rotate-90')} />
+        </button>
+        {showActive && (
+          <div className="space-y-2 border-t border-border p-3">
+            {active.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                None yet. Approving one puts it in the prompt for every script after that.
+              </p>
+            ) : (
+              active.map((l) => (
+                <LessonCard
+                  key={l.id}
+                  lesson={l}
+                  onDecide={(state) => void decide(l.id, state)}
+                  onReword={(rule) => void reword(l.id, rule)}
+                />
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ⚠️ THE BUTTON ONLY EXISTS ONCE A RULE IS APPROVED. Before that there is
+          nothing to apply, and an always-visible button that explains it cannot
+          run is a worse answer than not being there. */}
+      {active.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-border p-3">
+          <p className="text-xs text-muted-foreground">
+            New scripts already follow {active.length === 1 ? 'this rule' : `all ${active.length} rules`}. This one was
+            written before them.
+          </p>
+          <Button size="sm" className="w-full gap-1.5" disabled={applying} onClick={() => void applyRules()}>
+            {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wrench className="h-4 w-4" />}
+            {applying ? 'Rewriting…' : 'Apply the rules to this script'}
+          </Button>
+          <p className="text-[11px] text-muted-foreground">
+            Rewrites only the paragraphs the generator wrote and you left alone. Your own writing is never touched, and
+            the version before it is saved so you can restore it.
+          </p>
+          {applied && (
+            <div className="rounded border border-border bg-muted/40 p-2 text-[11px] text-muted-foreground">
+              <p className="text-foreground">
+                {applied.rewritten} rewritten
+                {applied.deleted > 0 ? `, ${applied.deleted} cut` : ''} of {applied.offered} it could touch.
+              </p>
+              <p>
+                {applied.locked > 0
+                  ? `${applied.locked} paragraph${applied.locked === 1 ? '' : 's'} of yours left exactly as ${
+                      applied.locked === 1 ? 'it was' : 'they were'
+                    }.`
+                  : "You haven't edited this one yet, so every paragraph in it was the generator's to fix."}
+              </p>
+              {applied.notes.map((n, i) => (
+                <p key={i} className="mt-1">
+                  {n}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border">
+        <button
+          type="button"
+          onClick={() => setShowHistory((v) => !v)}
+          className="flex w-full items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <span>Version history ({versions.length})</span>
+          <ChevronRight className={cn('h-4 w-4 transition-transform', showHistory && 'rotate-90')} />
+        </button>
+        {showHistory && (
+          <div className="space-y-1.5 border-t border-border p-3">
+            {versions.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No versions yet — the first one is saved when you press Done.
+              </p>
+            ) : (
+              [...versions].reverse().map((v) => (
+                <div key={v.id} className="flex items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <p className="truncate text-foreground">
+                      v{v.versionNo} · {v.source === 'generated' ? 'as generated' : v.note || 'edit'}
+                    </p>
+                    <p className="text-muted-foreground tabular-nums">
+                      {new Date(v.createdAt).toLocaleString()} · {v.words.toLocaleString()} words
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="sm" className="h-7 shrink-0" onClick={() => void restore(v.id)}>
+                    Restore
+                  </Button>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ScriptEditor({
   runId,
   generated,
@@ -483,6 +939,12 @@ function ScriptEditor({
   const [savedAt, setSavedAt] = useState<number | null>(editedAtInitial);
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // The edit loop. `review` is this session's result; `nonce` makes the panel
+  // reload the version list and the lesson bank after a Done.
+  const [review, setReview] = useState<ScriptEditReview | null>(null);
+  const [analysing, setAnalysing] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  const [panelOpen, setPanelOpen] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The last value actually persisted, so a flush can skip a no-op save and the
   // unmount path knows whether it still owes the server anything.
@@ -536,6 +998,42 @@ function ScriptEditor({
     };
   }, [runId]);
 
+  /**
+   * "Done" — the only thing that triggers a diff.
+   *
+   * ⚠️ IT FLUSHES THE SAVE FIRST AND WAITS FOR IT. The analysis reads the edited
+   * script from the database, so running it while the last keystrokes are still
+   * in the 1.2-second debounce would diff a version of the script that is one
+   * paragraph behind the one on screen — and draw its conclusions from the
+   * difference.
+   *
+   * Jake, 2026-09-07: "the conclusions should only happen after I clicked the
+   * done button (not while autosaving) so it does the diff once after each edit
+   * is done." The autosave stays exactly as it was; it just never analyses.
+   */
+  const done = async (): Promise<void> => {
+    if (timer.current) clearTimeout(timer.current);
+    await save(text);
+    setEditing(false);
+    // Nothing was changed, so there is nothing to learn — and no Opus call.
+    if (text.trim() === generated.trim()) return;
+    setPanelOpen(true);
+    setAnalysing(true);
+    try {
+      const res = await finishScriptEdit({ runId });
+      setReview(res);
+      setNonce((n) => n + 1);
+      const found = res.lessons.length;
+      if (res.status === 'failed') toast.error('Saved the version, but could not read the edits.');
+      else if (found > 0) toast.success(`${found} thing${found === 1 ? '' : 's'} it could learn from this.`);
+      else toast.success('Version saved. Nothing generalisable in this one.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnalysing(false);
+    }
+  };
+
   const revert = async (): Promise<void> => {
     if (!window.confirm("Throw away your edits and go back to the generated script?")) return;
     if (timer.current) clearTimeout(timer.current);
@@ -583,10 +1081,21 @@ function ScriptEditor({
         </div>
         <div className="flex items-center gap-2">
           {!editing ? (
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditing(true)}>
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Button>
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setPanelOpen((v) => !v)}
+              >
+                <GraduationCap className="h-4 w-4" />
+                {panelOpen ? 'Hide learning' : 'Learning'}
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditing(true)}>
+                <Pencil className="h-4 w-4" />
+                Edit
+              </Button>
+            </>
           ) : (
             <>
               {isEdited && (
@@ -606,7 +1115,8 @@ function ScriptEditor({
                 <Save className="h-4 w-4" />
                 Save
               </Button>
-              <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={() => void done()}>
+                <GraduationCap className="h-4 w-4" />
                 Done
               </Button>
             </>
@@ -614,18 +1124,43 @@ function ScriptEditor({
         </div>
       </div>
       {err && <p className="px-4 text-xs text-destructive">{err}</p>}
-      {editing ? (
-        <textarea
-          value={text}
-          onChange={(e) => onChange(e.target.value)}
-          spellCheck
-          className="h-[70vh] w-full resize-none border-0 bg-transparent px-4 py-2 font-mono text-[13px] leading-relaxed outline-none focus-visible:ring-0"
-        />
-      ) : (
-        <div className="max-h-[70vh] overflow-y-auto px-4 pb-4">
-          <TextBlock text={text} />
+      {/* The script and, once there is something to say about it, the panel
+          beside it. Stacks under the script on a narrow screen rather than
+          squeezing both. */}
+      <div className={cn('gap-4 px-4 pb-4', panelOpen ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_22rem]' : 'block')}>
+        <div className="min-w-0">
+          {editing ? (
+            <textarea
+              value={text}
+              onChange={(e) => onChange(e.target.value)}
+              spellCheck
+              className="h-[70vh] w-full resize-none border-0 bg-transparent py-2 font-mono text-[13px] leading-relaxed outline-none focus-visible:ring-0"
+            />
+          ) : (
+            <div className="max-h-[70vh] overflow-y-auto">
+              <TextBlock text={text} />
+            </div>
+          )}
         </div>
-      )}
+        {panelOpen && (
+          <aside className="mt-4 min-w-0 lg:mt-0 lg:max-h-[70vh] lg:overflow-y-auto">
+            <EditLearningPanel
+              runId={runId}
+              reviewNonce={nonce}
+              review={review}
+              busy={analysing}
+              onRestore={(restored) => {
+                setText(restored);
+                lastSaved.current = restored;
+                pending.current = null;
+                setSavedAt(Date.now());
+                setState('clean');
+                onSavedChange?.(restored.trim() ? restored : null);
+              }}
+            />
+          </aside>
+        )}
+      </div>
     </div>
   );
 }
@@ -836,6 +1371,201 @@ function RefineChat({ runId, initialMessages }: { runId: string; initialMessages
   );
 }
 
+/**
+ * Screenshots of the tool, taken today, uploaded with the idea.
+ *
+ * WHY THIS EXISTS
+ * The run that prompted it opened 21 pages about a product and not one of them
+ * was the product's own site: nineteen were review blogs that rewrite one
+ * article for years and put the current year in the title. The script came back
+ * honest but full of holes — fifteen `[VERIFY ON SCREEN: …]` markers, two of
+ * them sitting on the video's central claim.
+ *
+ * A screenshot settles in one second what a search cannot settle at all, and it
+ * matters most where the web is thinnest: a tool that launched last month, or
+ * one too small for anyone to have written about accurately.
+ *
+ * The preview is a local object URL, not a fetch back from the server — the
+ * bytes are already in the browser, and a round trip to look at a picture the
+ * user just chose would be silly.
+ */
+function ScreenshotPicker({
+  shots,
+  setShots,
+  limits,
+  disabled,
+}: {
+  shots: ScreenshotRef[];
+  setShots: (next: ScreenshotRef[]) => void;
+  limits: { maxPerRun: number; maxBytes: number; accept: string[] } | null;
+  disabled: boolean;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const fileRef = useRef<HTMLInputElement>(null);
+  const maxPerRun = limits?.maxPerRun ?? 20;
+  const accept = limits?.accept?.join(',') || 'image/png,image/jpeg,image/webp,image/gif';
+
+  // Object URLs are a real allocation; drop them when the component goes.
+  useEffect(() => {
+    return () => {
+      for (const url of Object.values(previews)) URL.revokeObjectURL(url);
+    };
+    // Intentionally on unmount only — the map is appended to, never rewritten,
+    // so revoking on every change would kill the thumbnail that was just added.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const readAsBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(new Error(`${file.name} could not be read`));
+      fr.readAsDataURL(file);
+    });
+
+  const onPick = async (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const picked = Array.from(list);
+    const room = maxPerRun - shots.length;
+    if (room <= 0) {
+      toast.error(`That's already ${maxPerRun} screenshots — more than one video needs.`);
+      return;
+    }
+    const taking = picked.slice(0, room);
+    if (taking.length < picked.length) {
+      toast.message(`Taking the first ${taking.length} — the limit is ${maxPerRun} per video.`);
+    }
+    setUploading(true);
+    try {
+      const files = [];
+      const localUrls: Record<string, string> = {};
+      for (const f of taking) {
+        files.push({ name: f.name, mediaType: f.type, dataBase64: await readAsBase64(f) });
+      }
+      const res = await uploadScriptShots({ files });
+      // The server returns refs in the order it accepted them, and it accepts in
+      // the order sent — so a ref lines up with the file that produced it.
+      res.shots.forEach((ref, i) => {
+        const src = taking[i];
+        if (src) localUrls[ref.id] = URL.createObjectURL(src);
+      });
+      setPreviews((p) => ({ ...p, ...localUrls }));
+      setShots([...shots, ...res.shots]);
+      // A rejection is per-file and never fails the batch: nine good screenshots
+      // and one oversized PNG should leave you with nine screenshots.
+      for (const why of res.rejected) toast.error(why);
+      if (res.shots.length) {
+        toast.success(`${res.shots.length} screenshot${res.shots.length === 1 ? '' : 's'} added`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const remove = async (ref: ScreenshotRef) => {
+    setShots(shots.filter((s) => s.id !== ref.id));
+    const url = previews[ref.id];
+    if (url) URL.revokeObjectURL(url);
+    setPreviews((p) => {
+      const next = { ...p };
+      delete next[ref.id];
+      return next;
+    });
+    // Best-effort: the ref is already out of the run, so a file left behind is
+    // a few hundred KB and not a correctness problem.
+    void deleteScriptShot({ id: ref.id, mediaType: ref.mediaType }).catch(() => {});
+  };
+
+  const setNote = (id: string, note: string) => {
+    setShots(shots.map((s) => (s.id === id ? { ...s, note: note || undefined } : s)));
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <Label>Screenshots of the tool (optional)</Label>
+        {shots.length > 0 && (
+          <span className="text-[11px] text-muted-foreground">
+            {shots.length}/{maxPerRun}
+          </span>
+        )}
+      </div>
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept={accept}
+        multiple
+        className="hidden"
+        onChange={(e) => void onPick(e.target.files)}
+      />
+
+      {shots.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {shots.map((sh, i) => (
+            <div key={sh.id} className="rounded-lg border border-border bg-background p-2 space-y-1.5">
+              <div className="relative">
+                {previews[sh.id] ? (
+                  <img
+                    src={previews[sh.id]}
+                    alt={sh.name}
+                    className="h-24 w-full rounded object-cover"
+                  />
+                ) : (
+                  <div className="flex h-24 w-full items-center justify-center rounded bg-muted text-[11px] text-muted-foreground">
+                    {sh.name}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void remove(sh)}
+                  disabled={disabled}
+                  className="absolute right-1 top-1 rounded bg-background/90 p-1 text-muted-foreground hover:text-destructive"
+                  aria-label={`Remove ${sh.name}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                <span className="absolute left-1 top-1 rounded bg-background/90 px-1 text-[10px] font-medium text-muted-foreground">
+                  S{i + 1}
+                </span>
+              </div>
+              <Input
+                value={sh.note ?? ''}
+                onChange={(e) => setNote(sh.id, e.target.value)}
+                placeholder="What is this? e.g. pricing page, annual toggle on"
+                className="h-7 text-[11px]"
+                disabled={disabled}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        disabled={disabled || uploading}
+        onClick={() => fileRef.current?.click()}
+      >
+        {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
+        {shots.length ? 'Add more' : 'Add screenshots'}
+      </Button>
+
+      <p className="text-[11px] text-muted-foreground">
+        Screenshots you took today beat every other source in the run — including the vendor's own page and every
+        review site. Best ones to grab: the pricing page, the main dashboard, and any screen the video walks through.
+        The note is what tells it what it's looking at.
+      </p>
+    </div>
+  );
+}
+
 export default function ScriptGeneratorPage() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [anthropicConfigured, setAnthropicConfigured] = useState(false);
@@ -847,6 +1577,11 @@ export default function ScriptGeneratorPage() {
   const [sponsorMode, setSponsorMode] = useState<SponsorshipMode>('organic');
   const [sponsorName, setSponsorName] = useState('');
   const [targetLength, setTargetLength] = useState('');
+  // Screenshots of the tool, uploaded before the run exists. They survive as
+  // refs on the input; the bytes are already on the server.
+  const [shots, setShots] = useState<ScreenshotRef[]>([]);
+  const [shotLimits, setShotLimits] =
+    useState<{ maxPerRun: number; maxBytes: number; accept: string[] } | null>(null);
   // Which button is in flight, so only the one that was clicked spins.
   const [starting, setStarting] = useState<ScriptMode | null>(null);
   // What the user asked for on the way in, so the checkpoint leads with it.
@@ -859,6 +1594,10 @@ export default function ScriptGeneratorPage() {
   const [loadingRun, setLoadingRun] = useState(false);
 
   // Checkpoint editable fields (seeded from stage0 on entry).
+  // Screenshots can still be added here — Stage 0.4 reads them before the first
+  // search, and the checkpoint is where the user first hears the topic is thin.
+  const [cpShots, setCpShots] = useState<ScreenshotRef[]>([]);
+  const [attachingShots, setAttachingShots] = useState(false);
   const [cpVideoType, setCpVideoType] = useState<ScriptVideoType>('Tutorial');
   const [cpTitle, setCpTitle] = useState('');
   const [cpCoreTopic, setCpCoreTopic] = useState('');
@@ -920,6 +1659,7 @@ export default function ScriptGeneratorPage() {
       .then((s) => {
         setAnthropicConfigured(!!s.anthropicConfigured);
         setModel(s.model || '');
+        setShotLimits(s.screenshots ?? null);
       })
       .catch(() => {
         setAnthropicConfigured(false);
@@ -941,6 +1681,9 @@ export default function ScriptGeneratorPage() {
     setCpTitle(setup?.title ?? s.recommendedTitle);
     setCpCoreTopic(setup?.coreTopic ?? s.coreTopic);
     setCpSpecificFocus(setup?.specificFocus ?? s.specificFocus);
+    // Whatever was uploaded on the way in, so the checkpoint shows it rather
+    // than looking like an empty picker on a run that already has shots.
+    setCpShots(run.input.screenshots ?? []);
   }, [run]);
 
   // ── Polling ────────────────────────────────────────────────────────────────
@@ -1018,6 +1761,7 @@ export default function ScriptGeneratorPage() {
     const input: ScriptInput = { idea: trimmed, sponsorship: buildSponsorship() };
     if (brief.trim()) input.brief = brief.trim();
     if (targetLength.trim()) input.targetLength = targetLength.trim();
+    if (shots.length) input.screenshots = shots;
 
     setStarting(mode);
     setRequestedMode(mode);
@@ -1025,6 +1769,7 @@ export default function ScriptGeneratorPage() {
     try {
       const { runId } = await startScript(input);
       seededRef.current = null; // force reseed for the new run
+      setShots([]); // the refs now belong to the run, not to the empty form
       const full = await getScriptRun({ runId });
       setRun(full);
       refreshRuns();
@@ -1067,6 +1812,18 @@ export default function ScriptGeneratorPage() {
     if (!setup) return;
     setContinuing(mode);
     try {
+      // Attach before continuing, never after: the run reads its screenshots out
+      // of the stored input the moment the job starts, so a race here is a run
+      // that quietly ignores the shots the user just added.
+      const attached = (run.input.screenshots ?? []).length;
+      if (cpShots.length !== attached) {
+        setAttachingShots(true);
+        try {
+          await attachScriptShots({ runId: run.runId, screenshots: cpShots });
+        } finally {
+          setAttachingShots(false);
+        }
+      }
       const { jobId } = await continueScript({ runId: run.runId, setup });
       // Optimistically flip into the running view, then poll the job.
       setRun((prev) => (prev ? { ...prev, status: 'running', setup } : prev));
@@ -1361,6 +2118,13 @@ export default function ScriptGeneratorPage() {
                       />
                     </div>
 
+                    <ScreenshotPicker
+                      shots={shots}
+                      setShots={setShots}
+                      limits={shotLimits}
+                      disabled={starting !== null}
+                    />
+
                     <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-1.5">
                         <Label>Sponsorship</Label>
@@ -1467,6 +2231,44 @@ export default function ScriptGeneratorPage() {
                         </span>
                       </p>
                     )}
+
+                    {/*
+                      The last moment screenshots can still be added — Stage 0.4
+                      reads them before anything is searched for. Shown on every
+                      run, and led with when Stage 0 judged the topic thin,
+                      because that is the case where the research comes back
+                      hedged and there is nothing to do about it afterwards.
+                    */}
+                    <div
+                      className={cn(
+                        'rounded-lg border p-3 space-y-2',
+                        run.stage0?.coverageRisk === 'thin'
+                          ? 'border-[hsl(var(--chart-4))]/40 bg-[hsl(var(--chart-4))]/5'
+                          : 'border-border bg-background',
+                      )}
+                    >
+                      {run.stage0?.coverageRisk === 'thin' && (
+                        <div className="flex items-start gap-2">
+                          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--chart-4))]" />
+                          <div className="space-y-0.5">
+                            <p className="text-xs font-medium text-foreground">
+                              The web won't settle this one
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {run.stage0.coverageNote ||
+                                'This topic has little current, trustworthy coverage — expect prices and limits to come back second-hand.'}{' '}
+                              Screenshots are the fix, and this is the last point they can be added.
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <ScreenshotPicker
+                        shots={cpShots}
+                        setShots={setCpShots}
+                        limits={shotLimits}
+                        disabled={continuing !== null || attachingShots}
+                      />
+                    </div>
 
                     <div className="space-y-1.5">
                       <Label>Video type</Label>
@@ -2013,6 +2815,86 @@ export default function ScriptGeneratorPage() {
                                 </span>
                               </li>
                             ))}
+                          </ul>
+                        </StagePanel>
+                      )}
+
+                      {/*
+                        Above the sources on purpose: what Jake photographed
+                        himself outranks everything the search found, and the
+                        panel order is the evidence order.
+                      */}
+                      {run.stages.screenshotSheet && (
+                        <StagePanel
+                          title="Your screenshots"
+                          hint={`${(run.stages.screenshotRefs ?? []).length} shot${
+                            (run.stages.screenshotRefs ?? []).length === 1 ? '' : 's'
+                          } · highest authority`}
+                        >
+                          {(run.stages.screenshotRefs ?? []).length > 0 && (
+                            <ul className="mb-2 space-y-1">
+                              {run.stages.screenshotRefs!.map((sh, i) => (
+                                <li key={sh.id} className="text-[11px] text-muted-foreground">
+                                  <span className="font-medium text-foreground">S{i + 1}</span> {sh.name}
+                                  {sh.note ? ` — ${sh.note}` : ''}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <TextBlock text={run.stages.screenshotSheet} />
+                        </StagePanel>
+                      )}
+
+                      {run.stages.sourceAudit && run.stages.sourceAudit.total > 0 && (
+                        <StagePanel
+                          title="Where the research came from"
+                          hint={
+                            run.stages.sourceAudit.noFirstParty
+                              ? 'no vendor page opened'
+                              : `${run.stages.sourceAudit.firstParty} first-party`
+                          }
+                        >
+                          {run.stages.sourceAudit.noFirstParty && (
+                            <div className="mb-2 flex items-start gap-2 rounded-lg border border-[hsl(var(--chart-4))]/40 bg-[hsl(var(--chart-4))]/5 p-2.5">
+                              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--chart-4))]" />
+                              <p className="text-[11px] text-muted-foreground">
+                                Nothing here came from the vendor's own site, so every price, tier and limit in this
+                                script is second-hand — somebody's summary of a pricing page rather than the page.
+                                A screenshot of the live pricing page settles it.
+                              </p>
+                            </div>
+                          )}
+                          <ul className="space-y-1 text-[11px] text-muted-foreground">
+                            <li>
+                              <span className="font-medium text-foreground">
+                                {run.stages.sourceAudit.firstParty}
+                              </span>{' '}
+                              from the vendor itself
+                              {run.stages.sourceAudit.firstPartyHosts.length
+                                ? ` (${run.stages.sourceAudit.firstPartyHosts.join(', ')})`
+                                : ''}
+                            </li>
+                            <li>
+                              <span className="font-medium text-foreground">
+                                {run.stages.sourceAudit.aggregator}
+                              </span>{' '}
+                              from review sites and software directories
+                            </li>
+                            <li>
+                              <span className="font-medium text-foreground">
+                                {run.stages.sourceAudit.community}
+                              </span>{' '}
+                              from forums, GitHub and video
+                            </li>
+                            <li>
+                              <span className="font-medium text-foreground">
+                                {run.stages.sourceAudit.total -
+                                  run.stages.sourceAudit.firstParty -
+                                  run.stages.sourceAudit.aggregator -
+                                  run.stages.sourceAudit.community}
+                              </span>{' '}
+                              from blogs and everything else
+                            </li>
                           </ul>
                         </StagePanel>
                       )}
