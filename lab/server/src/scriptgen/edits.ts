@@ -570,6 +570,251 @@ export interface ScriptQuality {
   worstPhrase: string | null;
   /** Sentences opening with a discourse marker — reported, never penalized. */
   discourseMarkerOpenings: number;
+  /** Times the script puts the viewer in front of something happening on screen. */
+  demoAnchors: number;
+
+}
+
+/**
+ * The phrasings that hand the viewer something to LOOK at.
+ *
+ * This is a script read aloud over a screen recording, not an essay. The
+ * difference is measurable: "you paste the link and it builds you a marketing
+ * clip" describes, while "and look at that box — that's the same bottle" points
+ * at the screen. Only the second one needs the video to exist.
+ *
+ * Deliberately NOT included: the instruction verbs (click, type, paste, open) —
+ * a script is never short of those, and the gap is always in showing the RESULT.
+ * Also dropped after a hand-check: "shows up", "lands in", "comes back with".
+ * They read as demonstrative but a run used all three explanatorily — "it shows
+ * up in the note as one line", "the finished note lands in the same place" — and
+ * they were the phrasings inflating a generated script's count over a
+ * hand-written one's.
+ */
+const DEMO_ANCHOR_RE =
+  /\b(?:look at (?:that|this|it)|and look\b|watch (?:this|that|what happens|it \w+)|check out what happens|and there (?:it|they) (?:is|are)|there (?:it|they) (?:is|are)\b|you(?:'ll| will| should)? see|you can see|see (?:that|how|what)\b|on screen|on the screen|pops? up|right there on|let me show you|i'll show you|let's run it)/i;
+
+/** A sentence that reads a prompt out loud is showing something too. */
+const PROMPT_LINE_RE = /^["“']|^\d+\.\s|^(?:here'?s the prompt|so here'?s the prompt)/i;
+
+/**
+ * Count the moments the script puts the viewer in front of something.
+ *
+ * A PER-SECTION FLOOR ONLY. Do not turn this into a score — it was checked
+ * against three finished scripts (one hand-written, two generated) and it does
+ * not rank them: 4.5 / 4.2 / 4.1 moments per 1000 words, and narrowing it to
+ * purely deictic phrasing only moved that to 2.9 / 1.6 / 2.5. The difference
+ * between a script that demonstrates and one that lectures is real, and this
+ * regex is not what measures it.
+ *
+ * Two richer versions were built and thrown away, both of which LOOKED like they
+ * worked: counting silent paragraphs measured the layout (single newlines vs
+ * blank lines), and counting silent WORDS ranked the hand-written script worst of
+ * the three. A third bug — an unbounded quoted-span blank that swallowed the
+ * narration between two prompts — manufactured a clean 4x gap out of nothing.
+ * Check any successor against a script known to be good before trusting it.
+ *
+ * What survives is the low bar that holds regardless: a section of a DEMO video
+ * that never once points at the screen was written as an essay.
+ */
+export function demoDensity(text: string): { demoAnchors: number } {
+  // Two things are blanked before counting. A prompt being read out is on screen
+  // for the viewer to copy — the most demonstrative thing the video does, and its
+  // interior is not narration. And `[VERIFY ON SCREEN: …]` is a note to Jake, not
+  // a line anybody says: left in, it scored a run three anchors that were all
+  // production notes.
+  // The canonical outro is byte-identical in every script, so its "you'll see
+  // exactly what I mean" was a constant +1 on every run — a moment nobody stages.
+  const spoken = stripVerifyMarkers(text.split(CANONICAL_OUTRO)[0] ?? text)
+    // Bounded, and never across a line break. The first version was
+    // /["“][^"”]{40,}["”]/ — with the straight and curly quotes a script actually
+    // mixes, one unclosed quote let that span thousands of characters and swallow
+    // the real narration between two prompts. It cut a script from 27 counted
+    // moments to 3 and looked like a clean result.
+    .replace(/["“][^"”\n]{40,600}["”]/g, " ")
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter(
+      (l) =>
+        l.length > 0 &&
+        !/^#{1,6}\s/.test(l) &&
+        !/^-{3,}$/.test(l) &&
+        !PROMPT_LINE_RE.test(l),
+    )
+    .join("\n");
+  const sentences = splitSentences(spoken);
+
+  // SENTENCES that point at the screen, not raw regex hits. "you can see it right
+  // there on screen" fires two alternatives and is one moment, not two.
+  let demoAnchors = 0;
+  for (const sen of sentences) {
+    if (new RegExp(DEMO_ANCHOR_RE, "i").test(sen)) demoAnchors++;
+  }
+  return { demoAnchors };
+}
+
+/**
+ * The passages that are SUPPOSED to be identical in every video, and so can
+ * never be reported as lifted: the canonical end-card outro, the welcome, the
+ * tagline, the promise line, the Skool plug, and the subscribe/like asks.
+ *
+ * Subtracted as SHINGLES, not matched as substrings. An eight-word window lands
+ * mid-phrase — "…jake dawson and i help business owners use…" — so a substring
+ * test against a tidy list of whole phrases misses almost all of it. The first
+ * version did exactly that and reported nine "lifted lines" per script, every
+ * one of them boilerplate.
+ */
+const BOILERPLATE_TEXT = [
+  CANONICAL_OUTRO,
+  "Thanks so much for hanging out with me today. Before you click away, here's a video you'll probably want to watch next — YouTube's pretty good at this, it'll line up the one video it thinks you'll love next. Just click the video to my left and you'll see exactly what I'm talking about. See you there.",
+  "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. Let's get into it. Let's dive right in.",
+  "Hey, if you're new here, I'm Jake Dawson, and I help solopreneurs and small business owners get this stuff actually working. If that sounds like you, hit subscribe and smash that like button so more of this finds you.",
+  "By the end of this video, you'll be able to, you'll know how to, so you can copy it for your own content, your marketing, or anything you need. Even if you've never done this before.",
+  "If you want to go deeper on any of this, I've got a free course inside my Skool community — the prompts from this video are in there as a doc you can copy straight out, and it costs you nothing. Link's in the description.",
+  "And if this video saved you some time and money, do me a favor and smash the like button and hit subscribe. I dig into this stuff every single week. Drop a comment down below. I read every one.",
+  "The link's in the description if you want to follow along.",
+].join("\n\n");
+
+/**
+ * Lines the script lifted verbatim out of Jake's published scripts.
+ *
+ * The three exemplars ride in every stage's system prompt, which makes copying
+ * them the path of least resistance — and a joke reused from a published video
+ * reads as a rerun to exactly the people most likely to be watching. Jake's
+ * instruction: steal the moves, never the sentences.
+ *
+ * Eight-word shingles: long enough that ordinary shared phrasing ("so you can
+ * see what it does") doesn't trip it, short enough to catch a lifted clause
+ * inside a rewritten sentence. Boilerplate that is meant to repeat is excluded.
+ */
+export function exemplarEchoes(script: string, exemplars: string[], shingle = 8): string[] {
+  const norm = (t: string) =>
+    t
+      .toLowerCase()
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[^a-z0-9' ]+/g, " ")
+      .split(/\s+/)
+      .filter(Boolean);
+
+  const shinglesOf = (t: string) => {
+    const w = norm(t);
+    const out = new Set<string>();
+    for (let i = 0; i + shingle <= w.length; i++) out.add(w.slice(i, i + shingle).join(" "));
+    return out;
+  };
+
+  const boilerplate = shinglesOf(BOILERPLATE_TEXT);
+  const seen = new Set<string>();
+  for (const ex of exemplars) {
+    for (const g of shinglesOf(ex)) if (!boilerplate.has(g)) seen.add(g);
+  }
+
+  const words = norm(script);
+  const matches = (i: number) => seen.has(words.slice(i, i + shingle).join(" "));
+
+  // Walk the maximal run of overlapping matches so a lifted sentence is reported
+  // ONCE, in full, rather than once per sliding window position.
+  const out: string[] = [];
+  for (let i = 0; i + shingle <= words.length; i++) {
+    if (!matches(i)) continue;
+    let j = i;
+    while (j + 1 + shingle <= words.length && matches(j + 1)) j++;
+    out.push(words.slice(i, j + shingle).join(" "));
+    i = j + shingle - 1;
+  }
+  return out.slice(0, 20);
+}
+
+/** The line Stage 2 must give every section: what the viewer watches happen. */
+export const ON_SCREEN_RE = /^\s*(?:[-*]\s*)?(?:\*\*)?ON SCREEN(?:\*\*)?\s*:/im;
+
+/**
+ * Which outline sections forgot to say what the viewer is looking at.
+ *
+ * Entertainment is cast at outline time, not rescued at Stage 5 — a section that
+ * reaches the writer with no on-screen moment gets written as an essay paragraph,
+ * and by then the cheapest fix left is a rewrite of finished prose. Checked here
+ * while a one-line repair is still enough.
+ */
+export function outlineSectionsMissingOnScreen(outline: string): string[] {
+  return parseOutlineSections(outline)
+    .filter((s) => !ON_SCREEN_RE.test(s.text))
+    .map((s) => s.name);
+}
+
+/**
+ * Splice ON SCREEN lines into an outline WITHOUT asking a model to re-emit it.
+ *
+ * The coverage pass re-emits the whole document and has to be length-checked
+ * because a truncated response silently deletes every section after the cut.
+ * A repair that only ever adds one line per header can't fail that way: the
+ * model returns the lines, the code puts them where they go.
+ */
+export function insertOnScreenLines(outline: string, lines: Record<string, string>): string {
+  const keyed = new Map(Object.entries(lines).map(([k, v]) => [k.trim().toLowerCase(), v.trim()]));
+  if (keyed.size === 0) return outline;
+
+  const src = outline.split("\n");
+  const out: string[] = [];
+  for (let i = 0; i < src.length; i++) {
+    out.push(src[i]);
+    if (!/^\s*#{2,4}\s/.test(src[i])) continue;
+    const name = cleanSectionName(src[i]).trim().toLowerCase();
+    const line = keyed.get(name);
+    if (!line) continue;
+    // Only if the section doesn't already have one — never a second copy.
+    const end = src.findIndex((l, j) => j > i && /^\s*#{2,4}\s/.test(l));
+    const body = src.slice(i + 1, end === -1 ? src.length : end).join("\n");
+    if (ON_SCREEN_RE.test(body)) continue;
+    out.push("", `ON SCREEN: ${line.replace(/^ON SCREEN:\s*/i, "")}`);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Generic approval that could be pasted into a video about any other tool.
+ *
+ * Slot 5 of the Stage 5 prompt used to OFFER these as approved phrasing, and a
+ * finished script closed five separate sections on "that's a huge win" — a
+ * reaction on a timer. The phrases are gone from the prompt; this catches the
+ * ones the model reaches for anyway.
+ */
+export const GENERIC_APPROVAL_RE =
+  /\b(?:that's a (?:huge|real|big) win|and that's nice|you love to see it|we love to see that|that's still a win|it's a really smart idea|that's interesting)\b/gi;
+
+/** A section whose job is trust, not entertainment — no joke quota applies. */
+const TRUST_BEAT_RE = /pricing|price|cost|money|plan|limit|honest|catch|privacy|security|downside|not for/i;
+
+export interface SectionDemoCheck {
+  demoAnchors: number;
+  genericApproval: string[];
+  /** Pricing / limits / privacy — where a joke reads as dodging the question. */
+  trustBeat: boolean;
+  ok: boolean;
+}
+
+/**
+ * Check ONE section, while it can still be rewritten cheaply.
+ *
+ * The whole-script quality numbers arrive at the end of a 25-minute run, by which
+ * point nothing is going to be rewritten. The same measurements taken per section
+ * can be handed straight back to the review pass that is about to rewrite it
+ * anyway — the deterministic finding does the pointing, the model does the
+ * writing. Same shape as the claim audit: measure, feed back, re-measure.
+ */
+export function checkSectionDemo(text: string, sectionName = ""): SectionDemoCheck {
+  const { demoAnchors } = demoDensity(text);
+  const genericApproval = [...new Set((text.match(GENERIC_APPROVAL_RE) || []).map((m) => m.toLowerCase()))];
+  const trustBeat = TRUST_BEAT_RE.test(sectionName);
+
+  return {
+    demoAnchors,
+    genericApproval,
+    trustBeat,
+    // A trust beat is allowed to show nothing — that is what it is for. It still
+    // may not close on canned approval.
+    ok: genericApproval.length === 0 && (trustBeat || demoAnchors >= 1),
+  };
 }
 
 /**
@@ -613,6 +858,8 @@ export function scriptQuality(text: string): ScriptQuality {
     return w.length > 0 && DISCOURSE_MARKERS.has(w[0]);
   }).length;
 
+  const { demoAnchors } = demoDensity(text);
+
   return {
     words: tokens.length,
     sentences: sentences.length,
@@ -622,6 +869,7 @@ export function scriptQuality(text: string): ScriptQuality {
     worstPhraseRepeats,
     worstPhrase,
     discourseMarkerOpenings,
+    demoAnchors,
   };
 }
 
@@ -649,6 +897,11 @@ export interface ClaimAudit {
   excessSponsorPlugs: string[];
   /** Banned words / phrasings that survived into the finished script. */
   bannedWords: string[];
+  /**
+   * AI-register phrasings that survived into the finished script. Measured to
+   * appear zero times in any reference script, so a hit is drift, not voice.
+   */
+  slopPhrases: string[];
   /**
    * Names of the presenters whose tutorials fed the workflow sheet, found in the
    * script. A run said "that's the version Nate actually runs day to day" — Nate
@@ -794,6 +1047,23 @@ export const BANNED_WORDS = [
   // script (3x) and reads as filler wherever it lands. The tense variants are
   // matched too — the entry is a fragment of the alternation, not a literal.
   "(?:keep|keeps|kept|keeping) coming back to",
+  // Jake, 2026-09-08. The approved rule is "call it an image, never a still;
+  // call it a video, never a clip" — the beginner noun, used the same way from
+  // the first mention to the export step. The rule alone kept losing to the
+  // model's own sense of variety, so it is enforced here as well.
+  "clip",
+  // ⚠️ "STILL" IS ONLY BANNED AS A NOUN, AND THE NARROWNESS IS DELIBERATE. The
+  // adverb is Jake's own voice — "it's still free", "still one prompt" — and he
+  // uses it more than the generator does; a whole-word ban would edit HIM out,
+  // which is the one thing this list must never do. So only the three shapes
+  // that cannot be the adverb are matched: the plural, "still image/frame/shot",
+  // and an ARTICLE directly in front of it. Demonstratives and numbers are
+  // deliberately NOT in that list — "that still counts", "all four still work"
+  // and "the same still applies" are the adverb, and flagging them would send
+  // the fix pass after Jake's own sentences.
+  "stills",
+  "still (?:image|images|frame|frames|shot|shots|photo|photos|picture|pictures)",
+  "(?:a|an|the|another|generated|single) still",
 ];
 
 /**
@@ -811,11 +1081,21 @@ export function findBannedWords(text: string): string[] {
   // Plurals count. "a few caveats" is the same word and was escaping the check
   // entirely, because \b after "caveat" fails against the "s".
   const bannedRe = new RegExp(`\\b(${BANNED_WORDS.join("|")})s?\\b`, "gi");
+  // ⚠️ COUNTED PER WORD, BECAUSE ONE WORD CAN EAT THE WHOLE REPORT. "clip" runs
+  // 30+ times in a video script about video, and with a single flat cap those
+  // 30 pushed the one "caveat" — the finding nobody can see for themselves —
+  // off the end of the list. Each word gets a few examples; the rule does the
+  // rest, in the script and in the prompt.
+  const perWord = new Map<string, number>();
   for (const s of sentences) {
     for (const m of s.matchAll(bannedRe)) {
+      const word = m[1].toLowerCase();
+      const seenOfThis = perWord.get(word) ?? 0;
+      if (seenOfThis >= MAX_PER_BANNED_WORD) continue;
+      perWord.set(word, seenOfThis + 1);
       const at = m.index ?? 0;
       const snippet = s.slice(Math.max(0, at - 24), at + m[0].length + 24).trim();
-      out.push(`"${m[1].toLowerCase()}" — …${snippet}…`);
+      out.push(`"${word}" — …${snippet}…`);
     }
     if (/^picture\b/i.test(s)) out.push(`"Picture …" opener (use "Imagine …") — ${s.slice(0, 46)}…`);
     // A 1–3 word sentence ending in "?" reads as a clipped fragment.
@@ -825,6 +1105,113 @@ export function findBannedWords(text: string): string[] {
     }
   }
   // Dedupe, cap.
+  return [...new Set(out)].slice(0, MAX_BANNED_FINDINGS);
+}
+
+/** Examples reported for any one banned word, so no word crowds out the rest. */
+const MAX_PER_BANNED_WORD = 6;
+/** …and the ceiling on the whole report. */
+const MAX_BANNED_FINDINGS = 60;
+
+/**
+ * AI-register phrasings that no human script in the reference set uses.
+ *
+ * Separate from BANNED_WORDS on purpose. That list is calibrated against Jake's
+ * voice and currently fires MORE on his own scripts than on generated ones, so
+ * it cannot be extended safely. This list is the opposite: every entry was
+ * measured against all three exemplars AND two finished runs (16,516 words) and
+ * appears ZERO times in any of them. It costs nothing today and catches the
+ * register the model reaches for when it drifts away from the exemplars.
+ *
+ * Deliberately EXCLUDED after measuring, because they are Jake's voice and a ban
+ * would edit him out:
+ *   - em dashes            — he uses 10.7-20.0 per 1,000 words, MORE than the
+ *                            generated scripts (6.6-11.4). They are his pause mark.
+ *   - just / actually / honestly / simply / literally — 11.6 / 8.0 / 10.7 per
+ *                            1,000 in his scripts vs 12.0 / 8.6 generated. No
+ *                            separation, and his humour is built from them.
+ *   - "let's dive in"      — the closer of his own canonical welcome line.
+ *   - "unlock", "what if I told you", "in the world of" — each appears in a
+ *                            script he wrote himself.
+ *
+ * Nothing goes in here that has not been checked against the exemplars first.
+ */
+export const AI_SLOP_PHRASES = [
+  // Secret-insight framing and manufactured reveals.
+  "what nobody tells you",
+  "nobody talks about this",
+  "what most people get wrong",
+  "the part (?:everyone|nobody) misses",
+  "here's the kicker",
+  "here's where it gets (?:crazy|wild|interesting)",
+  "the uncomfortable truth",
+  "that's when it clicked",
+  "plot twist",
+  // Telling the viewer how to react instead of letting the fact land.
+  "let that sink in",
+  "that just doesn't happen",
+  "that's just unheard of",
+  // Written-essay filler. Fine in a blog post, wrong in something spoken.
+  "it's worth noting",
+  "it's important to note",
+  "at the end of the day",
+  "in today's world",
+  "in the age of",
+  "going forward",
+  "with regard to",
+  "in terms of",
+  // Inflation: words that make a sentence sound bigger without saying more.
+  "delve into",
+  "paradigm shift",
+  "game.?changer",
+  "supercharges?",
+  "this changes everything",
+  "move the needle",
+  "stands as a testament",
+  "marks a pivotal",
+  "ever.?evolving",
+  "tapestry",
+  "multifaceted",
+  "meticulous(?:ly)?",
+  "paramount",
+  "transformative",
+  "cutting.?edge",
+  "utiliz(?:e|es|ed|ing)",
+  "streamlin(?:e|es|ed|ing)",
+  "leverag(?:e|es|ed|ing)",
+  "facilitat(?:e|es|ed|ing)",
+  "robust",
+  // Consensus nobody sourced.
+  "experts agree",
+  "studies show",
+  "industry reports suggest",
+  "widely regarded as",
+  // Endings that manufacture depth or just recap.
+  "in conclusion",
+  "the future isn't coming",
+  // Performing analysis instead of giving the consequence.
+  "underscor(?:e|es|ed|ing)",
+  "showcas(?:e|es|ed|ing)",
+];
+
+/**
+ * AI-register phrasings that survived into the finished script, with context.
+ *
+ * Curly apostrophes are normalised first — a model writes "it's worth noting"
+ * with U+2019 about as often as with an ASCII quote, and a list written one way
+ * would silently miss the other.
+ */
+export function findSlopPhrases(text: string): string[] {
+  const norm = text.replace(/[\u2018\u2019]/g, "'");
+  const re = new RegExp(`\\b(${AI_SLOP_PHRASES.join("|")})\\b`, "gi");
+  const out: string[] = [];
+  for (const s of splitSentences(norm)) {
+    for (const m of s.matchAll(re)) {
+      const at = m.index ?? 0;
+      const snippet = s.slice(Math.max(0, at - 24), at + m[0].length + 24).trim();
+      out.push(`"${m[1].toLowerCase()}" — …${snippet}…`);
+    }
+  }
   return [...new Set(out)].slice(0, 40);
 }
 
@@ -937,6 +1324,7 @@ export function auditClaims(
   );
   const excess = sponsorName ? excessSponsorPlugs(script, sponsorName) : [];
   const bannedWords = findBannedWords(script);
+  const slopPhrases = findSlopPhrases(script);
   if (!factSheet.trim()) {
     return {
       unsupportedNumbers: [],
@@ -944,6 +1332,7 @@ export function auditClaims(
       experienceClaims,
       excessSponsorPlugs: excess,
       bannedWords,
+      slopPhrases,
       sourceNames,
       numbersChecked: 0,
     };
@@ -986,6 +1375,7 @@ export function auditClaims(
     experienceClaims,
     excessSponsorPlugs: excess,
     bannedWords,
+    slopPhrases,
     sourceNames,
     numbersChecked: scriptNumbers.length,
   };

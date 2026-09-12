@@ -14,6 +14,7 @@
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { approvedLessonBlock } from "./lessons.js";
 
 const promptCache = new Map<string, string>();
 
@@ -36,6 +37,63 @@ function loadReference(name: string): string {
 export const SOUL = loadReference("SOUL");
 /** The credential/story fragment bank — added when a stage may weave one in. */
 export const SHRAPNEL = loadReference("story-shrapnel-bank");
+
+/**
+ * Three complete scripts Jake wrote himself, carried into EVERY stage.
+ *
+ * Everything else in this prompt set describes his voice — rules, slot lists,
+ * word-swap tables, 3,000 lines of it. None of it shows a finished script. These
+ * do, across three formats (listicle, tool review, build tutorial), and style
+ * transfers by example far better than by description.
+ *
+ * They also carry the one number no rule was enforcing: all three run 2,498-2,888
+ * words. Generated runs were landing at 3,913 and 4,538.
+ *
+ * They ride in the system prefix, which is byte-stable across a run, so they are
+ * written to the cache once and read from it for every subsequent call.
+ */
+const EXEMPLAR_FRAME = [
+  "# THREE FINISHED SCRIPTS BY JAKE — the target for everything you write",
+  "",
+  "Below are three complete videos Jake wrote and recorded himself: a listicle, a sponsored tool review, and a sponsored build tutorial. Every rule in this prompt set is an attempt to describe what these do. When a rule and these scripts disagree, THESE WIN — they are the artefact, the rules are the notes.",
+  "",
+  "Read them for:",
+  "- **Length.** 2,672 / 2,498 / 2,888 words. Seventeen to nineteen minutes. That is what a finished Jake video weighs, and it is a ceiling as much as a target.",
+  "- **How he demonstrates.** He points at the screen constantly, in his own voice, and says what CHANGED — not what a feature is for.",
+  "- **How he is funny while teaching.** Almost always a wry clause of a few words riding inside a sentence that was already doing a job. He does not stop to tell a joke.",
+  "- **How he handles the honest parts.** Pricing, limits and privacy are played completely straight in all three.",
+  "- **How rough real spoken script is.** Half-sentences, restarts, asides. Do not out-polish him.",
+  "",
+  "## THE ONE HARD RULE ABOUT THESE SCRIPTS",
+  "",
+  "**Steal the MOVES. Never the SENTENCES.** These are published videos and the audience has already heard every line in them. Reusing a phrase from these — a joke especially — is worse than writing nothing, because it reads as a rerun to the people most likely to be watching. If a line you are about to write appears in one of these scripts, it is the wrong line. Write a new one that does the same job about the thing in front of you.",
+  "",
+  "The boilerplate is the single exception: the welcome line, the Skool plug, the subscribe ask, and the canonical end-card outro are meant to be the same every video.",
+].join("\n");
+
+const EXEMPLAR_FILES = [
+  loadReference("exemplars/listicle-higgsfield"),
+  loadReference("exemplars/review-topview"),
+  loadReference("exemplars/tutorial-blotato"),
+];
+
+/**
+ * The three scripts as SPOKEN TEXT ONLY, for the verbatim-reuse check.
+ *
+ * Each file opens with a few lines about format, sponsorship and length, then a
+ * `---` rule. Those lines are not part of any video, and leaving them in made
+ * the checker report "minutes written by jake start to finish note" as a lifted
+ * line — my own header, quoted back at me.
+ */
+export const EXEMPLAR_SCRIPTS = EXEMPLAR_FILES.map((f) => {
+  const i = f.indexOf("\n---\n");
+  return i === -1 ? f : f.slice(i + 5);
+});
+
+export const EXEMPLARS =
+  EXEMPLAR_FRAME +
+  "\n\n---\n\n" +
+  EXEMPLAR_FILES.join("\n\n---\n\n");
 
 /**
  * Replace SPECIFIC known bracket tokens by exact string match. `vars` keys are
@@ -107,6 +165,16 @@ export function systemPreamble(includeShrapnel: boolean, sponsored: boolean): st
     SOUL +
     "\n\n---\n\n" +
     amendments +
-    (includeShrapnel ? "\n\n---\n\n" + SHRAPNEL : "")
+    // ⚠️ THE APPROVED EDIT LESSONS RIDE DIRECTLY BEHIND THE AMENDMENTS, and for
+    // the same reason the amendments ride behind SOUL: they are the most recent
+    // correction, and recency wins when a model reconciles two instructions.
+    // Empty until Jake approves his first one, so today's prompt is unchanged
+    // byte for byte. See scriptgen/lessons.ts for why nothing else reads them.
+    approvedLessonBlock() +
+    (includeShrapnel ? "\n\n---\n\n" + SHRAPNEL : "") +
+    // Last, and every stage gets them: the rules above describe these scripts,
+    // and where the two disagree the scripts are what Jake actually shipped.
+    "\n\n---\n\n" +
+    EXEMPLARS
   );
 }

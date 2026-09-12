@@ -57,6 +57,59 @@ The outline MUST incorporate these findings prominently and structure the video 
 
 ---
 
+## THIS OUTLINE IS FOR A VIDEO, NOT AN ARTICLE
+
+Whatever this outline drops, the finished video will not contain — and that
+includes the things the viewer is supposed to be LOOKING at. The section writers
+only ever see this document. If a section arrives without an on-screen moment, it
+gets written as an essay paragraph, and that is where viewers leave.
+
+So **every content section carries one extra line, first, before anything else:**
+
+```
+ON SCREEN: <what the viewer watches happen during this section — one line>
+```
+
+It is a physical description of a thing changing on a screen, not a topic.
+
+- ✅ `ON SCREEN: the three clips play side by side, same prompt, visibly different light and motion in each`
+- ✅ `ON SCREEN: the packaging mockup appears with the same bottle and the same logo from the two earlier images`
+- ✅ `ON SCREEN: the tidy dated journal file pops up in the vault's left panel, seconds after the messy paste`
+- ❌ `ON SCREEN: demonstration of the search feature` — that's a topic, not a moment
+- ❌ `ON SCREEN: Claude's response` — response to what, showing what changed?
+
+If a section genuinely has nothing to show — pricing, the honest limits, privacy —
+write `ON SCREEN: none — this is a trust beat, Jake to camera`. That is a real
+answer, and it tells the writer to keep it plain and short. But a video should
+have two or three of those at most. If you're writing it a fourth time, the
+outline has drifted into an essay and the sections need re-planning.
+
+## CAST THE DEMO — this is where entertainment is decided
+
+The single biggest driver of whether the finished video is watchable is not the
+writing. It is **what you chose to demonstrate**, and you choose it here.
+
+Given two examples that teach the same lesson equally well, pick the one that is
+more fun to watch:
+
+| Teaches the same thing | Sensible (dull) | Cast for watching |
+|---|---|---|
+| chained image consistency | "a product photo for a client" | a made-up brand — a matte black bottle called Northline, logo, then the box |
+| multi-shot generation | "a corporate explainer" | a tiny robot making breakfast, and the pan flip goes wrong |
+| summarising a transcript | "a 4,000-word client call" | the call where somebody says March at minute four and April at minute twenty |
+
+The rule: **concrete and slightly ridiculous beats professionally sensible.** A
+named thing beats a category. A specific failure beats a generic success. Nobody
+has ever rewound a video to see a well-chosen boring example again.
+
+Two more casting rules:
+- **Let one demo fail on purpose** where the video honestly has one. The fix is
+  more interesting than the win, and it's the moment the viewer starts trusting you.
+- **Escalate.** The last demo has to be the biggest. If the most impressive thing
+  lands third, re-order the sections until it lands last.
+
+---
+
 ## CONTENT STRUCTURE BY VIDEO TYPE:
 
 [The AI will use the appropriate structure based on the video type you selected above]

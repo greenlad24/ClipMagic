@@ -169,3 +169,15 @@ Every factual line in a Jake script is about the present: what the tool costs to
 - **What changed recently is the story, not a footnote.** If a price moved, a limit changed, a feature shipped, or the thing got rebuilt, that belongs in the script where it matters. Half the audience last touched this tool months ago; the video's job is partly to tell them what is different now.
 - **Speak dates like a person, and only when they earn it.** "As of right now it's twenty bucks a month" and "they changed this back in July" are how Jake talks. "Verified September 3, 2026" is not — the verification dates are bookkeeping for the writer, not lines to read out. Say the date out loud when it carries meaning: a recent change, a price that moved, a limit that is about to.
 - **Never hedge with your own ignorance.** "As of my last update", "at the time of writing", "I believe it's currently" — all banned. Either the fact sheet confirms it and you say it plainly, or it does not and you leave it out.
+
+---
+
+## 12. Make the smallest edit that fixes the problem, and leave the rest alone
+
+Jake's own scripts are not polished prose, and they are the target. The three exemplars contain a half-apology mid-sentence, a garbled aside, and long stretches of plain narration written on purpose. Those are not defects to be repaired — they are what makes a script sound like a person talking instead of a document being read.
+
+- **The amount of editing matches the amount of actual damage.** A pass that rewrites a section end to end because two sentences were weak has destroyed more than it fixed. Change the two sentences.
+- **Leave a strong human sentence alone**, even when you can think of a smoother one. Smoother is usually flatter.
+- **Rough edges stay when they read as intentional**: a fragment, a digression, a self-correction, an admission, an unglamorous word repeated because it is the right word. Repeating the correct noun beats rotating through synonyms to avoid repeating it.
+- **Never invent to fill a gap.** No fact, number, quote, source, experience or opinion that was not already there. Uncertainty in the source stays uncertain in the script — do not make Jake sound more sure than the material.
+- **Do not manufacture findings.** If a check comes back clean, say it came back clean. A review that invents work to look thorough is how a good script gets edited into an average one, and it is the most expensive failure in this pipeline because nothing downstream can tell the difference.

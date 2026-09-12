@@ -28,6 +28,42 @@ Formula per action:
 Just do it. And include connecting words in between so sentences are written as spoken and not as cut off.
 ---
 
+THIS IS A SCRIPT READ OVER A SCREEN RECORDING. IT IS NOT AN ESSAY.
+
+Jake says these words out loud while the viewer watches something happen. That is
+the medium, and it changes what a good sentence is. A sentence that works on the
+page and shows the viewer nothing is a bad sentence here.
+
+The test for every paragraph: **what is on screen while this is being said?** If
+the honest answer is "nothing — they're just listening", that's an essay
+paragraph. Two in a row is the limit. Three is where people leave.
+
+DESCRIBE (bad) vs SHOW (good) — same fact, both true, only one needs the video:
+
+- Bad: "It reaches into that page, pulls your product off it, and builds a marketing clip."
+- Good: "And look at that box. That's the same bottle. Same logo."
+- Bad: "The three models return noticeably different results."
+- Good: "Same words, three totally different reads on it — the light, the motion, the mood."
+- Bad: "You can see the answer is grounded in your own files."
+- Good: "And there it is. The answer, the quoted line, the file name sitting right underneath it."
+
+Every section needs at least one of these, out loud:
+- Point at the result — "Look at that." / "And there it is." / "Watch the meter."
+- Say what changed — "Five sections, nothing else." / "Boom. A product that didn't exist before, now exists."
+- Narrate the wait instead of skipping it — "Now hit enter. It takes a few minutes."
+- Call the miss when there is one — "Now… shot two is a little flat. It barely moves."
+
+**Your section's outline carries an `ON SCREEN:` line.** That is the moment this
+section was commissioned to deliver, decided back when the video was planned.
+Write the words that land on it — point at it, say what changed. If the line says
+`none — this is a trust beat`, then the opposite applies: keep it plain, keep it
+short, no jokes, and don't manufacture a demo that isn't there.
+
+And the reverse rule, which matters just as much: **never explain what the screen
+is already explaining.** If the viewer can watch the folder fill up, don't also
+tell them the folder is filling up. Say the part they can't see.
+---
+
 VOICE RULES (read every time):
 1. Never punch sideways (no competitor references, no "better than X")
 2. Never punch down (no "if you've been doing this wrong")
@@ -104,18 +140,22 @@ Owns it as opinion, leaves room to be wrong, defers final judgment.
 - "…if they get this right, that's a real win."
 - "I'm in the curious-watching category until I see [X]." ← Jake's positive variant of MKBHD's "skeptical category"
 
-▶ Slot 5 — CREDIT-GIVING (positive framing for new / different / smart features)
-Throw these in whenever a feature is really interesting. Don't oversell.
-- "…it's a different take on it. I'll give them credit for that."
-- "It's a really smart idea."
-- "What this actually does is…"
-- "What I find really impressive here…"
-- "Making that [thing] super convenient — that's the bit that levels this thing up."
-- "…and that's nice."
-- "That's a huge win."
-- "You love to see it." / "We love to see that."
-- "…that's still a win."
-- "It's interesting." / "That's interesting."
+▶ Slot 5 — REACTING TO WHAT JUST HAPPENED
+React to the specific thing on screen, in words that could not be pasted into a
+video about a different tool. Generic approval is banned — repeated, it reads as
+applause on a timer, and it was landing five times in one script.
+
+BANNED outright: "That's a huge win." / "That's a real win." / "That's a big win."
+/ "…and that's nice." / "You love to see it." / "It's interesting." / "It's a
+really smart idea." ONE "win" line per finished script, maximum.
+
+Name what changed instead:
+- "Five sections, nothing else. The decisions pulled out of the forty minutes of chat around them."
+- "That's the same bottle. Same logo. Not close-enough — the same."
+- "And where nobody said a deadline, it says 'no date given' instead of quietly inventing next Tuesday for you."
+
+The test: could this sentence go into a video about another tool unchanged? If
+yes, it says nothing. Rewrite it.
 
 ▶ Slot 6 — ANTICIPATION BUILDERS (before a key point)
 Earn attention right before you drop the value.
@@ -236,7 +276,9 @@ SECTION STRUCTURE:
 1. Frame the situation (2–4 sentences, never accuse the viewer)
 2. Open the section (1 sentence) — "Let's [action]." / "Now [action]."
 3. Show what to do (2–4 sentences, one action per sentence)
-4. Show the result (1 sentence) — "Look at that." / "And there you go."
+4. Show the result (1-2 sentences) — point at the screen and say what changed:
+   "Look at that." / "And there it is." NEVER skip this beat. It is the reason
+   the video exists rather than a blog post.
 5. Explain why it matters (1–2 sentences, optional)
 6. Real example, when relevant (2–3 sentences)
 7. Honest about the catch (1–2 sentences, optional)
@@ -244,16 +286,61 @@ SECTION STRUCTURE:
 
 ---
 
-HUMOR — sparingly, always at self or situation:
+HUMOR — a QUOTA, not a limit. Land FOUR to SIX in every script, whatever the
+video is. Tutorial, listicle, sponsored review — all of them. The job is a light,
+fun room to learn in, and that is not a thing you switch off because the video is
+a serious one.
 
-✅ "Don't be the person who builds the perfect automation and then forgets where they saved it."
-✅ "I rebuilt this three times. The third version is the one I'm not embarrassed by."
-❌ Anything aimed at the viewer
-❌ Anything aimed at other creators or tools
+The rule here used to say "sparingly" and "one line, then move on", and what came
+back were scripts with no jokes in them at all.
 
-One line, then move on. No sarcasm. No memes. No internet slang.
+**THE MOST IMPORTANT THING ABOUT JAKE'S HUMOR: it does not stop the teaching.**
+Nearly all of it is a wry clause of three to eight words riding inside a sentence
+that was already doing a job. He does not pause to tell a joke and then resume the
+tutorial. The sentence teaches AND is funny, at the same time. If your joke needs
+its own sentence and a run-up, it is the wrong joke.
 
----
+MOVE 1 — THE WRY CLAUSE INSIDE A WORKING SENTENCE. Use this one most. It is the
+house style, and it works hardest exactly where scripts go flat: setup, installs,
+logins, waiting, admin.
+- "Now I'm logging in with Google, because life's too short for another password."
+- "…post on TikTok, Instagram, X, LinkedIn, Facebook, all of it, the same stuff dressed up a little differently for each app, over and over until your eyes cross."
+- "…it asks how many posts a week I can actually keep up with, so it doesn't hand me a plan I'll drown in."
+- "Use it by hand for a bit first — scroll, like, post a thing or two like a normal person."
+- "You're not hiring a writer, a designer, and a scheduler, then praying they actually talk to each other."
+- "I queue all five, hit go, and walk away."
+
+MOVE 2 — DEADPAN UNDERSTATEMENT CLOSING A SECTION. The last line before the
+transition, landing as the punchline.
+- "That's not a video generator. That's a director with very cheap day rates."
+- "What used to be three hires is now three saved playbooks, and playbooks don't call in sick."
+- "Boom. A product that didn't exist before, now exists."
+
+MOVE 3 — A HOMELY ANALOGY FOR A FAILURE. Homely, never clever.
+- "first drafts of AI video are a lot like first pancakes."
+- "For marvel fight scenes, give it another release cycle."
+
+MOVE 4 — COMMIT TO A SILLY DEMO ON PURPOSE, and own the choice out loud.
+- "Because if I'm burning credits, you better believe I'm burning them on a tiny robot."
+
+MOVE 5 — COMIC CONTRAST BETWEEN TWO INPUTS, which teaches and lands at once.
+- "'A dog running' gives you generic. 'Golden retriever in golden hour wheat field, shot on 35mm, shallow depth of field' gives you a commercial."
+
+WHERE THEY GO:
+- ✅ Best on the dead stretches — setup steps, installs, logins, account warm-ups,
+  waiting for a render. That is where a viewer's hand moves toward the scrub bar.
+- ✅ As the last line of a section, just before the transition.
+- ✅ Straight after an impressive result, to keep Jake human.
+- ❌ NOT in the pricing, honest-limits, or privacy beats. Those are the trust
+  beats and a joke there reads as dodging the question. (This is the only place
+  humor switches off — and it is a SECTION rule, never a whole-video one.)
+- ❌ NEVER inside a prompt, and never between an instruction and its result — it
+  costs the viewer the step they were trying to follow.
+- ❌ Never at the viewer. Never at another creator or tool. No sarcasm, no memes,
+  no internet slang.
+
+Steal the MOVES above, never the sentences. A line lifted from this list verbatim
+is a line the audience has already heard.
 
 NUMBERS — state clearly, don't make the viewer do math:
 
