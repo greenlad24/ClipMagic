@@ -20,12 +20,14 @@ import {
   X,
   MessageSquare,
   Send,
+  SkipForward,
 } from 'lucide-react';
 import {
   auditStatus,
   startAudit,
   auditJobStatus,
   approveAuditMarket,
+  skipAuditStep,
   getAuditRun,
   listAuditRuns,
   deleteAuditRun,
@@ -311,6 +313,18 @@ export default function ChannelAuditPage() {
                 </div>
               )}
               {job?.error && <p className="mt-3 text-sm text-destructive">{job.error}</p>}
+              {status === 'failed' && (
+                <SkipStep
+                  runId={runId!}
+                  job={job}
+                  onSkipped={() => {
+                    setJob({ status: 'scanning', stage: 'Carrying on', progress: 0.22 });
+                    const id = runId!;
+                    setRunId(null); // restart the poller
+                    setTimeout(() => setRunId(id), 0);
+                  }}
+                />
+              )}
             </div>
           )}
 
@@ -386,6 +400,102 @@ export default function ChannelAuditPage() {
  * If the tool has misunderstood what the channel is about, that sentence is
  * where it shows, and it is far cheaper to catch here than in the report.
  */
+/**
+ * The way out of a failed run.
+ *
+ * A stopped audit used to leave exactly one option: run the whole thing again
+ * tomorrow, re-reading a catalogue and re-paying for every thumbnail, because
+ * one step could not finish. This carries the run past that step instead — and
+ * says, before the button is pressed, precisely which part of the report is
+ * lost and which expensive work is being kept.
+ */
+function SkipStep({ runId, job, onSkipped }: { runId: string; job: any; onSkipped: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const skip = job?.skip;
+
+  if (!skip) {
+    return job?.skipBlocked ? <p className="mt-3 text-xs text-muted-foreground">{job.skipBlocked}</p> : null;
+  }
+
+  const retrying = skip.action === 'retry';
+
+  return (
+    <div className="mt-4 rounded-md border bg-muted/40 p-3">
+      <p className="text-sm font-medium">Carry on from here?</p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">{skip.label}</span> is what stopped.{' '}
+        {retrying
+          ? 'That looks like it was a one-off, so it will be tried again — if it fails a second time the report carries on without it.'
+          : `That will fail again today, so it is skipped. ${skip.consequence}`}
+      </p>
+      {(skip.reusesThumbnails || skip.reusesRenames || skip.keepsMarket) && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Kept and not paid for again:{' '}
+          {[
+            skip.keepsMarket && 'the approved market',
+            skip.reusesThumbnails && 'the thumbnails already read',
+            skip.reusesRenames && 'the titles already written',
+          ]
+            .filter(Boolean)
+            .join(', ')}
+          .
+        </p>
+      )}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await skipAuditStep({ runId });
+            onSkipped();
+          } catch (e: any) {
+            setError(String(e?.message || e));
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="mt-3 inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
+      >
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4" />}
+        {retrying ? 'Try it again and finish the report' : 'Skip it and finish the report'}
+      </button>
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * What a finished report could not gather.
+ *
+ * Shown at the TOP, before any finding. A section that is thin because a stage
+ * was skipped looks exactly like a section that is thin because there was
+ * nothing to say, and only one of those is a result.
+ */
+function Gaps({ gaps }: { gaps: any[] }) {
+  if (!gaps?.length) return null;
+  return (
+    <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+        <AlertCircle className="h-4 w-4 text-amber-500" />
+        This report has {gaps.length === 1 ? 'a gap' : `${gaps.length} gaps`}
+      </div>
+      <ul className="space-y-2 text-xs text-muted-foreground">
+        {gaps.map((g: any) => (
+          <li key={g.stage}>
+            <span className="font-medium text-foreground">{g.label}</span> — {g.reason}{' '}
+            {g.automatic ? '(skipped automatically)' : '(you skipped it)'}
+            <br />
+            {g.consequence}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function MarketApproval({ run, onApproved }: { run: any; onApproved: () => void }) {
   const [market, setMarket] = useState<any>(run.proposal);
   const [adding, setAdding] = useState('');
@@ -419,6 +529,13 @@ function MarketApproval({ run, onApproved }: { run: any; onApproved: () => void 
         <CheckCircle2 className="h-4 w-4 text-primary" />
         Confirm the market before the expensive part runs
       </div>
+
+      {market.substitutionNote && (
+        <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+          <span className="font-medium">These competitors were not discovered for this channel.</span>{' '}
+          {market.substitutionNote}
+        </div>
+      )}
 
       <div className="mb-4 rounded-md bg-muted/50 p-3 text-sm">
         <p className="mb-1">
@@ -505,6 +622,8 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
 
   return (
     <div className="space-y-6">
+      <Gaps gaps={run.gaps} />
+
       {run.focus && <FocusBanner run={run} onChanged={onChanged} />}
 
       <ReportChat run={run} onChanged={onChanged} />
@@ -514,10 +633,15 @@ function Report({ run, onChanged }: { run: any; onChanged: () => void }) {
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Videos" value={fmt(run.videos?.length)} />
           <Stat label="Competitors" value={fmt(run.competitors?.length)} />
-          <Stat label="Rank by subs" value={`${f.position.subscriberRank} of ${f.position.competitorCount + 1}`} />
+          <Stat
+            label="Rank by subs"
+            value={f.position.competitorCount ? `${f.position.subscriberRank} of ${f.position.competitorCount + 1}` : '—'}
+          />
           <Stat
             label="Rank by median views"
-            value={`${f.position.medianViewsRank} of ${f.position.competitorCount + 1}`}
+            value={
+              f.position.competitorCount ? `${f.position.medianViewsRank} of ${f.position.competitorCount + 1}` : '—'
+            }
           />
         </div>
       </Card>

@@ -10,6 +10,9 @@ import { db } from "./index.js";
 import type {
   AuditChannel,
   AuditCallUsage,
+  AuditGap,
+  AuditGuestChannel,
+  AuditStage,
   AuditFindings,
   AuditInput,
   AuditReportSection,
@@ -39,6 +42,9 @@ interface AuditRunRow {
   chat_json: string | null;
   focus_json: string | null;
   base_findings_json: string | null;
+  gaps_json: string | null;
+  guests_json: string | null;
+  failed_stage: string | null;
   sections_json: string | null;
   calls_json: string | null;
   cost_usd: number;
@@ -70,6 +76,9 @@ function hydrate(row: AuditRunRow): AuditRunResult {
     videos: parse<AuditVideo[]>(row.videos_json, []),
     marketVideos: parse<AuditVideo[]>(row.market_json, []),
     findings: parse<AuditFindings | null>(row.findings_json, null),
+    gaps: parse<AuditGap[]>(row.gaps_json, []),
+    guests: parse<AuditGuestChannel[]>(row.guests_json, []),
+    failedStage: (row.failed_stage as AuditStage | null) || null,
     focus: parse<AuditFocus | null>(row.focus_json, null),
     baseFindings: parse<AuditFindings | null>(row.base_findings_json, null),
     chat: parse<AuditChatMessage[]>(row.chat_json, []),
@@ -81,6 +90,30 @@ function hydrate(row: AuditRunRow): AuditRunResult {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/**
+ * Mark audits that were mid-flight when the process stopped as failed.
+ *
+ * An audit's progress lives in memory (audit/run.ts keeps a `live` map), so a
+ * restart leaves the row in a working status with nothing working on it: the
+ * page spins for ever and no button can rescue it, because every recovery path
+ * starts from "failed". This makes the restart legible — and a failed run is
+ * exactly the state that can be carried on with one press of Skip, reusing the
+ * thumbnails and titles it had already paid for.
+ *
+ * Returns how many were marked.
+ */
+export function failInterruptedRuns(): number {
+  return db
+    .prepare(
+      `UPDATE audit_runs
+          SET status = 'failed',
+              error = 'The server restarted while this audit was running. Everything it had already gathered is kept — carry on from here to finish the report.',
+              updated_at = ?
+        WHERE status IN ('ingesting', 'proposing', 'scanning', 'analysing', 'renaming')`,
+    )
+    .run(now()).changes;
 }
 
 export function createRun(id: string, input: AuditInput): void {
@@ -101,6 +134,9 @@ export interface AuditRunPatch {
   videos?: AuditVideo[];
   marketVideos?: AuditVideo[];
   findings?: AuditFindings | null;
+  gaps?: AuditGap[];
+  guests?: AuditGuestChannel[];
+  failedStage?: AuditStage | null;
   focus?: AuditFocus | null;
   baseFindings?: AuditFindings | null;
   chat?: AuditChatMessage[];
@@ -129,6 +165,9 @@ export function updateRun(id: string, patch: AuditRunPatch): void {
   if (patch.videos !== undefined) json("videos_json", patch.videos);
   if (patch.marketVideos !== undefined) json("market_json", patch.marketVideos);
   if (patch.findings !== undefined) json("findings_json", patch.findings);
+  if (patch.gaps !== undefined) json("gaps_json", patch.gaps);
+  if (patch.guests !== undefined) json("guests_json", patch.guests);
+  if (patch.failedStage !== undefined) put("failed_stage", patch.failedStage);
   if (patch.focus !== undefined) json("focus_json", patch.focus);
   if (patch.baseFindings !== undefined) json("base_findings_json", patch.baseFindings);
   if (patch.chat !== undefined) json("chat_json", patch.chat);

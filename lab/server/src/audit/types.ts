@@ -34,6 +34,43 @@ export type AuditStatus =
   | "completed"
   | "failed";
 
+/**
+ * A stage of the pipeline, for recording what a run could not do.
+ *
+ * Only `ingest` is fatal — see audit/recovery.ts, which owns what each stage
+ * costs the report when it is missing.
+ */
+export type AuditStage =
+  | "ingest"
+  | "market"
+  | "thumbnails"
+  | "content"
+  | "topics"
+  | "renames"
+  | "report"
+  | "plan";
+
+/**
+ * A stage the run skipped, and what the report loses without it.
+ *
+ * Recorded whether the pipeline decided by itself (`automatic`) or the operator
+ * pressed Skip. Kept on the run and shown on the report, because a section that
+ * is absent because nothing could be gathered must never be mistaken for a
+ * section that had nothing to report.
+ */
+export interface AuditGap {
+  stage: AuditStage;
+  /** Human name for the stage, e.g. "The competitor market". */
+  label: string;
+  /** Why it could not run — the error, in the words the operator will see. */
+  reason: string;
+  /** What the report loses. Written for the operator, and given to the model. */
+  consequence: string;
+  /** False when the operator pressed Skip themselves. */
+  automatic: boolean;
+  at: number;
+}
+
 export interface AuditInput {
   /** Channel URL, @handle or raw channel id. */
   channel: string;
@@ -173,6 +210,13 @@ export interface RenameProposal {
 export interface MarketProposal {
   niche: string;
   nicheDescription: string;
+  /**
+   * Set when this market did not come from a discovery — when search quota was
+   * gone and a saved market was substituted instead. Shown on the approval
+   * panel, because a substituted comparison set is the one thing in a report
+   * the operator should always look at before it is spent against.
+   */
+  substitutionNote?: string;
   /** What this channel is actually about, in the tool's words — check this first. */
   subjectSummary: string;
   audience: string;
@@ -471,6 +515,25 @@ export interface AuditRunResult {
   /** Competitor videos kept as market evidence (their outliers). */
   marketVideos: AuditVideo[];
   findings: AuditFindings | null;
+  /**
+   * Stages this run could not do, and what each one costs the report.
+   *
+   * Empty on a clean run. A run that hit a daily quota cap mid-way finishes
+   * with a gap rather than a failure — the report is then honest about its own
+   * holes instead of silently missing a section.
+   */
+  gaps: AuditGap[];
+  /**
+   * Channels fetched to compare against, on a section's request. Kept on the
+   * run so a later section reuses one rather than paying to ingest it twice.
+   */
+  guests: AuditGuestChannel[];
+  /**
+   * The stage a failed run died in, so "skip it and carry on" knows what it is
+   * skipping. Null on runs that failed before this was recorded — recovery.ts
+   * infers it from the row instead.
+   */
+  failedStage: AuditStage | null;
   /** Set when the report has been narrowed via the chat. */
   focus?: AuditFocus | null;
   /**
@@ -507,6 +570,29 @@ export interface AuditRunListItem {
   videoCount: number;
   createdAt: number;
   updatedAt: number;
+}
+
+/**
+ * A channel fetched purely so the report can be compared against it.
+ *
+ * Asked for from the report chat ("add a comparison with @someone"), not part
+ * of the market. The distinction matters more than it looks: the market set is
+ * each competitor's OVER-PERFORMERS, so its numbers describe what good looks
+ * like over there and nothing else. A guest is ingested as a WHOLE catalogue,
+ * era-scored the same way the subject's is — so it is the one population in the
+ * run that can be compared like for like, including on the era multiple the
+ * market scopes have to refuse.
+ */
+export interface AuditGuestChannel {
+  channel: AuditChannel;
+  /** The whole catalogue, era-scored. Never an outliers-only subset. */
+  videos: AuditVideo[];
+  /** What the operator asked, which is why this channel is on the run. */
+  request: string;
+  /** True when only the most recent GUEST_MAX_VIDEOS uploads were taken. */
+  truncated: boolean;
+  quotaUnits: number;
+  at: number;
 }
 
 /** Live progress while a run is in flight. */

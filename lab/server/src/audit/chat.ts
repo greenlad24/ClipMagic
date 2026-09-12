@@ -51,6 +51,8 @@ You can also RE-AIM the report. Channels change: a catalogue full of 2024 tutori
 
 You can also ADD A SECTION to the report. When they ask for something the report does not currently cover — "add a part about my Shorts", "I want a section on posting frequency vs the market" — return the add-section action. A separate pass then measures it against their real data, draws the charts and writes it into the report. It costs a couple of Opus calls, and sometimes a little YouTube quota if it has to go and fetch data nobody has pulled yet.
 
+A section CAN compare this channel against ANOTHER NAMED CHANNEL — a URL, an @handle or a channel id — even one that is not in the audit's market. That channel is fetched whole (its most recent 300 uploads, scored against its own eras exactly as this one is) and measured beside this channel like for like. Costs a few quota units. When they ask for that, put the channel reference in the request verbatim so the fetch knows who to get.
+
 Return JSON:
 {
   "reply": "your answer, in plain prose",
@@ -71,6 +73,7 @@ Rules:
 - Prefer topics over dates when they name a subject, and dates when they name a period. Both together is fine.
 - Say in the reply what the refocus will do and roughly how many videos it will leave, so they can stop you if that is too few.
 - Add a section when they ask for the REPORT to cover something. If they just want to know a fact, answer it in the reply instead — a section is a permanent part of the document, not a way to reply.
+- NEVER say you are adding, have added, or will add a section unless you return the add-section action in the SAME reply. Prose is not an action: a reply that says "adding it" while returning action null promises something that will never happen, and they will come back later to find nothing there. If you are not returning the action, say plainly what you are doing instead.
 - When you add a section, keep the "request" specific about what to measure. "A section on Shorts" is weak; "how Shorts perform against long-form on this channel, and whether the market's Shorts do better" is what produces a good one.
 - Never invent a number. Every figure you quote must be one you were given.
 - Plain language. No hype.`;
@@ -121,7 +124,69 @@ export interface ChatResult {
   action: ChatAction | null;
 }
 
+/**
+ * Catch a reply that PROMISES a section while returning no action.
+ *
+ * This is not hypothetical. Asked to "add a comparison with @Jake.Dawson", the
+ * chat answered "Adding it. The section will fetch Jake Dawson's catalogue…"
+ * and returned action null — so nothing ran, nothing was added, and the only
+ * record was a reply saying the opposite. The prompt now forbids it; this makes
+ * the failure visible even when the prompt is ignored, because a promise the
+ * operator believes is worse than a refusal they can act on.
+ */
+const ADD_PROMISE =
+  /\b(adding it|i'?m adding|i'?ll add|i will add|i'?ve added|i have added|added it|will be added|re-?issuing|kicking it off|handing (?:it|that) off|requesting it)\b/i;
+
+/**
+ * Is this message asking for the REPORT to change, rather than asking a
+ * question about it?
+ *
+ * Used to decide whether an answer with no action is a failure worth retrying.
+ * Deliberately narrow: a question that merely mentions a comparison is not a
+ * request to add one, and re-asking the model costs a call.
+ */
+export function asksForASection(message: string): boolean {
+  return (
+    /\b(add|include|append|write|put)\b[^.?!]{0,60}\b(section|comparison|part|chapter|breakdown|chart)\b/i.test(message) ||
+    /\bsection\b[^.?!]{0,40}\b(about|on|comparing|covering|for)\b/i.test(message)
+  );
+}
+
+export function correctEmptyPromise(reply: string, action: ChatAction | null): string {
+  if (action || !ADD_PROMISE.test(reply)) return reply;
+  return (
+    `${reply}\n\n(Correction: nothing was actually added — no section pass ran, so the report is unchanged. ` +
+    `Tell me what you want it to measure and I will add it properly.)`
+  );
+}
+
 export async function chatAboutAudit(
+  run: AuditRunResult,
+  history: { role: "user" | "assistant"; content: string }[],
+  message: string,
+): Promise<ChatResult> {
+  const first = await askOnce(run, history, message);
+  // ── the rut ───────────────────────────────────────────────────────────────
+  // A thread that once answered a section request with prose instead of an
+  // action keeps doing it: the scrollback then contains the model promising to
+  // add something and later saying it cannot tell whether it did, and the next
+  // turn copies that shape. Observed on a real report — three consecutive
+  // "adding it" replies, no action, nothing added.
+  //
+  // So an add-request that produced no action is asked ONCE more with the
+  // history dropped. The report itself is the context that matters; the
+  // scrollback is what poisoned the answer.
+  if (!first.action && history.length && asksForASection(message)) {
+    const retry = await askOnce(run, [], message);
+    if (retry.action) {
+      console.log("[audit] chat returned no action for a section request; retried without history and got one");
+      return retry;
+    }
+  }
+  return first;
+}
+
+async function askOnce(
   run: AuditRunResult,
   history: { role: "user" | "assistant"; content: string }[],
   message: string,
@@ -166,7 +231,8 @@ export async function chatAboutAudit(
     if (request) action = { kind: "add-section" as const, request };
   }
 
-  return { reply: String(got?.reply ?? "").trim() || "(no answer)", action };
+  const reply = String(got?.reply ?? "").trim() || "(no answer)";
+  return { reply: correctEmptyPromise(reply, action), action };
 }
 
 /** Which videos survive a focus filter. */

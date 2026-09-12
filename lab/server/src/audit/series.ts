@@ -64,8 +64,16 @@ export type SeriesMeasure = (typeof SERIES_MEASURES)[number];
  * Which population. `compare` puts the channel and the market side by side on
  * the SAME measure — two series, one axis. Never two measures on two axes: a
  * dual axis can be made to show any relationship you like by choosing scales.
+ *
+ * `guest` and `compare-guest` are one named channel fetched for this run (see
+ * AuditGuestChannel). They exist because "how do I compare to that specific
+ * person" is the question a teardown provokes and the market scopes cannot
+ * answer: the market set is over-performers only, so it can be asked what good
+ * looks like but never what typical looks like. A guest is a whole catalogue,
+ * scored against its own eras exactly as the subject is, so the two populations
+ * are finally the same KIND of thing.
  */
-export const SERIES_SCOPES = ["own", "market", "compare"] as const;
+export const SERIES_SCOPES = ["own", "market", "compare", "guest", "compare-guest"] as const;
 export type SeriesScope = (typeof SERIES_SCOPES)[number];
 
 export interface SeriesFilter {
@@ -94,7 +102,7 @@ export interface SeriesPoint {
   value: number;
   /** Videos behind `value`. */
   n: number;
-  /** The market's figure on the same measure — `compare` scope only. */
+  /** The other population's figure on the same measure — `compare*` scopes only. */
   secondary?: number;
   nSecondary?: number;
 }
@@ -123,6 +131,8 @@ export interface SeriesContext {
   marketVideos: AuditVideo[];
   competitors: AuditChannel[];
   topics: { topic: string; videoIds?: string[]; marketVideoIds?: string[] }[];
+  /** The channel this section was asked to compare against, if any. */
+  guest?: { channel: AuditChannel; videos: AuditVideo[]; truncated?: boolean } | null;
   now?: number;
 }
 
@@ -317,21 +327,84 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
   const channelNames = new Map<string, string>();
   for (const c of ctx.competitors ?? []) channelNames.set(c.channelId, c.title);
   if (ctx.subject) channelNames.set(ctx.subject.channelId, ctx.subject.title);
+  if (ctx.guest) channelNames.set(ctx.guest.channel.channelId, ctx.guest.channel.title);
+
+  const guest = ctx.guest ?? null;
+  const guestName = guest?.channel.title || "the other channel";
+  const seriesLabels =
+    dim === "channel" && query.scope === "compare-guest"
+      ? ["Each channel"]
+      : query.scope === "compare"
+      ? ["This channel", "The market"]
+      : query.scope === "compare-guest"
+        ? ["This channel", guestName]
+        : query.scope === "market"
+          ? ["The market"]
+          : query.scope === "guest"
+            ? [guestName]
+            : ["This channel"];
 
   const base: AuditChartData = {
     points: [],
     measureLabel: MEASURE_LABEL[measure],
     groupLabel: DIMENSION_LABEL[dim],
-    seriesLabels: query.scope === "compare" ? ["This channel", "The market"] : [query.scope === "market" ? "The market" : "This channel"],
+    seriesLabels,
     dropped: [],
     note: "",
     parAtOne: measure === "medianEraMultiple",
   };
 
+  const usesGuest = query.scope === "guest" || query.scope === "compare-guest";
+  if (usesGuest && !guest) {
+    return {
+      ...base,
+      unavailable:
+        "No second channel has been fetched for this run, so there is nothing to compare against. Ask for the comparison by name and it will be fetched first.",
+    };
+  }
+  // Topic labels are this channel's clusters, with membership recorded per
+  // video id. A fetched channel was never clustered, so grouping its videos by
+  // topic would silently return nothing — or worse, match ids that are not its.
+  if (usesGuest && dim === "topic") {
+    return {
+      ...base,
+      unavailable: `Topics were only worked out for this channel and its market, not for ${guestName}. Group by title pattern, thumbnail, format or publish month instead.`,
+    };
+  }
+  // Grouping BY channel and measuring the era multiple is circular whatever the
+  // scope: every channel's era multiple is normalised against its own median,
+  // so each bar lands at about 1.0 by construction. It is a real comparison
+  // within a channel (does a numbered title beat that channel's own norm) and
+  // no comparison at all between them.
+  if (dim === "channel" && measure === "medianEraMultiple") {
+    return {
+      ...base,
+      unavailable:
+        "The era multiple is measured against each channel's own median, so comparing it channel by channel puts every " +
+        "channel at about 1.0 by definition. Compare median views or views per subscriber instead, or keep the era " +
+        "multiple and group by something inside a channel — a title pattern, a thumbnail attribute, a format.",
+    };
+  }
+
   // `channel` over the channel's own catalogue is a single bar of itself. It is
   // a market question, so it is answered as one rather than drawn as one bar.
-  if (dim === "channel" && query.scope === "own") {
-    return { ...base, unavailable: "Grouping by channel only means something across the market, not within one channel." };
+  if (dim === "channel" && (query.scope === "own" || query.scope === "guest")) {
+    return { ...base, unavailable: "Grouping by channel only means something across several channels, not within one." };
+  }
+  // Grouping by channel while ALSO splitting the populations into two series
+  // cannot work: each channel's videos live in one population, so the other
+  // series is empty for every bar and the chart quietly becomes single-sided.
+  // Against the market it is worse than useless — this channel's whole
+  // catalogue would be ranked beside competitors' best videos only, which is
+  // the over-performers distortion drawn as a league table.
+  if (dim === "channel" && query.scope === "compare") {
+    return {
+      ...base,
+      unavailable:
+        "Ranking channels against the market cannot be done fairly: only the competitors' over-performers were kept, " +
+        "so their bars would be their best work beside this channel's average. Use scope \"market\" to rank the " +
+        "competitors among themselves, or fetch a specific channel and compare against its whole catalogue.",
+    };
   }
 
   // ── the outlier trap ──────────────────────────────────────────────────────
@@ -346,6 +419,8 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
   // it produced a real section reading "competitors sit at 6.57 against your
   // 0.94" — a confident, wrong, entirely artefactual finding. So the query is
   // refused and the alternative is named.
+  // (The guest scopes are deliberately NOT here: a guest is a whole catalogue,
+  // unfiltered, so its era multiple means the same thing as this channel's.)
   if (measure === "medianEraMultiple" && (query.scope === "market" || query.scope === "compare")) {
     return {
       ...base,
@@ -359,15 +434,54 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
 
   const own = applyFilter(ctx.videos ?? [], query.filter, topicOf, now);
   const market = applyFilter(ctx.marketVideos ?? [], query.filter, marketTopicOf, now);
+  // A fetched channel has no topic membership of its own; the empty map is what
+  // makes a topic filter over it return nothing rather than borrow this
+  // channel's labels.
+  const guestVideos = applyFilter(guest?.videos ?? [], query.filter, new Map<string, string>(), now);
 
-  const wantOwn = query.scope === "own" || query.scope === "compare";
-  const wantMarket = query.scope === "market" || query.scope === "compare";
+  // One place decides which population is drawn and which is drawn beside it.
+  // Everything below works on primary/secondary and never asks again.
+  //
+  // Grouping BY channel is the exception: the two catalogues go into ONE
+  // population so each channel gets its own bar. That is only fair because both
+  // sides are whole catalogues — it is exactly what the market scope may not do.
+  const channelLeague = dim === "channel" && query.scope === "compare-guest";
+  const primary = channelLeague
+    ? [...own, ...guestVideos]
+    : query.scope === "market"
+      ? market
+      : query.scope === "guest"
+        ? guestVideos
+        : own;
+  const secondary = channelLeague
+    ? null
+    : query.scope === "compare"
+      ? market
+      : query.scope === "compare-guest"
+        ? guestVideos
+        : null;
+  const primaryTopics = query.scope === "market" ? marketTopicOf : query.scope === "guest" ? new Map<string, string>() : topicOf;
+  const secondaryTopics = query.scope === "compare" ? marketTopicOf : new Map<string, string>();
 
-  if (wantOwn && !own.length && !wantMarket) {
-    return { ...base, unavailable: "No videos on this channel match that filter." };
+  if (!primary.length) {
+    return {
+      ...base,
+      unavailable:
+        query.scope === "market"
+          ? "No market videos match that filter."
+          : query.scope === "guest"
+            ? `No videos on ${guestName} match that filter.`
+            : "No videos on this channel match that filter.",
+    };
   }
-  if (wantMarket && !market.length && !wantOwn) {
-    return { ...base, unavailable: "No market videos match that filter." };
+  if (secondary && !secondary.length) {
+    return {
+      ...base,
+      unavailable:
+        query.scope === "compare-guest"
+          ? `No videos on ${guestName} match that filter, so there is nothing to compare against.`
+          : "No market videos match that filter.",
+    };
   }
 
   const bucket = (vs: AuditVideo[], topics: Map<string, string>) => {
@@ -382,10 +496,10 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
     return groups;
   };
 
-  const ownGroups = wantOwn ? bucket(own, topicOf) : new Map<string, AuditVideo[]>();
-  const marketGroups = wantMarket ? bucket(market, marketTopicOf) : new Map<string, AuditVideo[]>();
+  const primaryGroups = bucket(primary, primaryTopics);
+  const secondaryGroups = secondary ? bucket(secondary, secondaryTopics) : new Map<string, AuditVideo[]>();
 
-  const labels = new Set<string>([...ownGroups.keys(), ...marketGroups.keys()]);
+  const labels = new Set<string>([...primaryGroups.keys(), ...secondaryGroups.keys()]);
   if (!labels.size) {
     return {
       ...base,
@@ -400,32 +514,31 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
 
   // The denominator for `shareOfVideos` is the whole filtered population, so a
   // share is a share of everything rather than of the groups that survived.
-  const ownTotal = own.length;
-  const marketTotal = market.length;
+  const primaryTotal = primary.length;
+  const secondaryTotal = secondary?.length ?? 0;
 
   const dropped: { label: string; n: number }[] = [];
   const points: SeriesPoint[] = [];
 
   for (const label of labels) {
-    const o = ownGroups.get(label) ?? [];
-    const m = marketGroups.get(label) ?? [];
-    // The sample floor applies to whichever side the chart is actually about.
-    const primaryN = query.scope === "market" ? m.length : o.length;
-    if (primaryN < floor) {
-      dropped.push({ label, n: primaryN });
+    const p = primaryGroups.get(label) ?? [];
+    const q = secondaryGroups.get(label) ?? [];
+    // The sample floor applies to the side the chart is actually about.
+    if (p.length < floor) {
+      dropped.push({ label, n: p.length });
       continue;
     }
-    const primary = measureOf(query.scope === "market" ? m : o, measure, query.scope === "market" ? marketTotal : ownTotal);
-    if (primary === null) {
-      dropped.push({ label, n: primaryN });
+    const value = measureOf(p, measure, primaryTotal);
+    if (value === null) {
+      dropped.push({ label, n: p.length });
       continue;
     }
-    const point: SeriesPoint = { label, value: primary, n: primaryN };
-    if (query.scope === "compare") {
-      const sec = measureOf(m, measure, marketTotal);
+    const point: SeriesPoint = { label, value, n: p.length };
+    if (secondary) {
+      const sec = measureOf(q, measure, secondaryTotal);
       if (sec !== null) {
         point.secondary = sec;
-        point.nSecondary = m.length;
+        point.nSecondary = q.length;
       }
     }
     points.push(point);
@@ -450,12 +563,25 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
   const kept = points.slice(0, limit);
   const overflow = points.length - kept.length;
 
-  const population =
-    query.scope === "compare"
-      ? `${ownTotal} of this channel's videos and ${marketTotal} market videos`
-      : query.scope === "market"
-        ? `${marketTotal} market videos`
-        : `${ownTotal} of this channel's videos`;
+  // A comparison where the second population produced no figure at all is not a
+  // comparison. It happens for real — asking for face-on-thumbnail against a
+  // channel whose images nobody has looked at — and a legend naming two series
+  // over one series of bars invites the reader to see a gap that was never
+  // measured. So the second name comes off and the chart says why.
+  const secondaryEmpty = Boolean(secondary) && !kept.some((p) => typeof p.secondary === "number");
+  const secondaryName = query.scope === "compare-guest" ? guestName : "the market";
+
+  const population = channelLeague
+    ? `${primaryTotal} videos across this channel and ${guestName}, both whole catalogues`
+    : query.scope === "compare"
+      ? `${primaryTotal} of this channel's videos and ${secondaryTotal} market videos`
+      : query.scope === "compare-guest"
+        ? `${primaryTotal} of this channel's videos and ${secondaryTotal} of ${guestName}'s`
+        : query.scope === "market"
+          ? `${primaryTotal} market videos`
+          : query.scope === "guest"
+            ? `${primaryTotal} of ${guestName}'s videos`
+            : `${primaryTotal} of this channel's videos`;
   const filterBits: string[] = [];
   if (query.filter?.format) filterBits.push(query.filter.format === "short" ? "Shorts only" : "long-form only");
   if (query.filter?.judgedOnly !== false) filterBits.push("old enough to judge");
@@ -471,6 +597,12 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
     query.scope === "market" || query.scope === "compare"
       ? "The market figures cover competitors' over-performers only — the audit keeps their best videos as evidence, not their whole catalogues — so read them as what good looks like there, not as their average."
       : "",
+    // The opposite warning, and it has to be said just as plainly: a guest is
+    // the whole catalogue, so its median is its TYPICAL video. Read beside a
+    // market bar — which is a best-of — the same number means something else.
+    usesGuest
+      ? `${guestName} is measured over ${guest?.truncated ? "its most recent uploads, in full" : "its whole catalogue"}, not its best videos — so these are its typical numbers and can be read against this channel's directly.`
+      : "",
     `Groups with fewer than ${floor} video${floor === 1 ? "" : "s"} are not shown.`,
     dropped.length ? `${dropped.length} group${dropped.length === 1 ? "" : "s"} dropped on that floor: ${dropped.slice(0, 6).map((d) => `${d.label} (${d.n})`).join(", ")}${dropped.length > 6 ? "…" : ""}.` : "",
     overflow > 0 ? `${overflow} further group${overflow === 1 ? "" : "s"} below the top ${limit} are not shown.` : "",
@@ -478,9 +610,17 @@ export function buildSeries(query: AuditSeriesQuery, ctx: SeriesContext): AuditC
 
   return {
     ...base,
+    seriesLabels: secondaryEmpty ? [base.seriesLabels[0]] : base.seriesLabels,
     points: kept,
     dropped: dropped.sort((a, b) => b.n - a.n),
-    note: noteBits.join(" "),
+    note: [
+      ...noteBits,
+      secondaryEmpty
+        ? `Nothing could be measured for ${secondaryName} on this, so only this channel is shown — read it as this channel's own pattern, not as a comparison.`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
   };
 }
 
@@ -497,7 +637,12 @@ export type ChartForm = "bars" | "grouped" | "diverging" | "line";
 
 export function formFor(query: AuditSeriesQuery, data: AuditChartData): ChartForm {
   if (ORDINAL.has(query.groupBy)) return "line";
-  if (query.scope === "compare" && data.points.some((p) => typeof p.secondary === "number")) return "grouped";
+  if (
+    (query.scope === "compare" || query.scope === "compare-guest") &&
+    data.points.some((p) => typeof p.secondary === "number")
+  ) {
+    return "grouped";
+  }
   if (data.parAtOne) return "diverging";
   return "bars";
 }
@@ -532,6 +677,12 @@ export function describeAvailableData(ctx: SeriesContext): string {
       ? `TOPICS (with real membership): ${topics.map((t) => `${t.topic} (${t.videoIds?.length ?? 0})`).join(", ")}`
       : `TOPICS: none with recorded membership on this run — do not group by topic.`,
     patterns.length ? `TITLE PATTERNS SEEN: ${patterns.join(", ")}` : `TITLE PATTERNS: none recorded.`,
+    ctx.guest
+      ? `ANOTHER CHANNEL ALREADY FETCHED FOR COMPARISON: ${ctx.guest.channel.title} — ${ctx.guest.videos.length} videos, its whole catalogue` +
+        `${ctx.guest.truncated ? " (most recent uploads)" : ""}. Use scope "guest" or "compare-guest" to measure against it; it needs no fetching again. ` +
+        `ITS THUMBNAILS READ: ${ctx.guest.videos.filter((v) => v.thumbnail).length}/${ctx.guest.videos.length}` +
+        `${ctx.guest.videos.some((v) => v.thumbnail) ? "." : " — so a thumbnail comparison against it needs \"thumbnails\" in gather, or its side of the chart will be empty."}`
+      : `NO OTHER CHANNEL FETCHED YET: comparing against a named channel means fetching it first (see what can be gathered).`,
   ];
   return lines.join("\n");
 }

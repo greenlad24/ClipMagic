@@ -25,6 +25,7 @@ import type {
   RenameProposal,
   ThumbnailAttributes,
   AuditFindings,
+  AuditGap,
   ContentFindings,
   GrowthArea,
 } from "./types.js";
@@ -39,6 +40,23 @@ function parse<T>(raw: string, fallback: T): T {
 }
 
 const clip = (s: string, n: number) => (s.length > n ? s.slice(0, n) + "…" : s);
+
+/**
+ * What this run could NOT gather, stated to the model.
+ *
+ * A stage that failed leaves an empty array behind, and an empty array is
+ * indistinguishable from a real absence of signal — the model then writes
+ * around the hole, and on this tool's own history eventually writes something
+ * confident and wrong about it (an outliers-only median presented as a market
+ * comparison). So the holes are named, with an explicit instruction not to
+ * reason across them.
+ */
+export function gapsBlock(gaps?: AuditGap[]): string {
+  if (!gaps?.length) return "";
+  return `\n\nWHAT THIS RUN COULD NOT GATHER — these are OUTAGES, not findings:\n${gaps
+    .map((g) => `- ${g.label}: ${g.reason}\n  Consequence: ${g.consequence}`)
+    .join("\n")}\nSay nothing about anything on this list, do not infer it from what IS here, and never present its absence as a result. If a section you were asked to write depends entirely on missing data, return an empty string for it rather than writing around it.`;
+}
 
 /**
  * Today's date, and the channel's recent publishing, stated as fact.
@@ -200,6 +218,19 @@ export async function pickCompetitors(
 
 // ── 2. What is actually in the thumbnails ───────────────────────────────────
 
+const MARKET_FIT_SYSTEM = `You decide whether a SAVED set of competitor channels can stand in as the market for a channel being audited.
+
+This is asked only because the audit could not search YouTube for competitors — a daily cap — and the alternative to a saved set is a report with no market section at all. That alternative is FINE. A report that says "no market data" is honest; a report comparing a channel to the wrong set of channels is wrong in every section that touches it, with no visible sign that anything is off.
+
+Accept a market only if it is the same question: the same audience being served, the same kind of video, the same promise made to a viewer. Similar subject matter is not enough — a channel teaching beginners to use a tool and a channel selling an agency service around that tool share vocabulary and share no market.
+
+Being roughly the right size matters too: a set of channels 50x bigger measures a different game.
+
+Return JSON:
+{ "marketId": "the id exactly as given, or null", "reason": "one line — for a rejection, what makes it a different market" }
+
+Return null unless you would defend the substitution to the channel's owner reading the finished report.`;
+
 const THUMB_SYSTEM = `You report what is visibly in YouTube thumbnails. You are a pair of eyes, not a critic: describe, do not advise, do not guess at quality.
 
 For each image, in the order given, return one object:
@@ -290,6 +321,7 @@ export async function clusterTopics(
   marketVideos: AuditVideo[],
   competitorNames: Map<string, string>,
   angle?: string,
+  gaps?: AuditGap[],
 ): Promise<{
   topics: { topic: string; videoIds: string[]; marketVideoIds: string[]; note: string }[];
   gaps: ContentFindings["gaps"];
@@ -310,7 +342,11 @@ export async function clusterTopics(
     messages: [
       {
         role: "user",
-        content: `SUBJECT CHANNEL: ${subject.title}\n\n${whenBlock(videos)}${angleBlock(angle)}\n\nIts catalogue:\n${own}\n\nTHE MARKET'S BEST PERFORMERS:\n${market}`,
+        content: `SUBJECT CHANNEL: ${subject.title}\n\n${whenBlock(videos)}${angleBlock(angle)}${gapsBlock(gaps)}\n\nIts catalogue:\n${own}\n\n${
+          market
+            ? `THE MARKET'S BEST PERFORMERS:\n${market}`
+            : "NO MARKET DATA WAS GATHERED for this run. Group this channel's own catalogue into topics and return an EMPTY gaps array — a market gap cannot be found without a market."
+        }`,
       },
     ],
   });
@@ -471,6 +507,8 @@ export async function writeReport(input: {
   computed: Omit<AuditFindings, "summary" | "growth" | "actionPlan"> & { growthHints?: string[] };
   videos?: AuditVideo[];
   angle?: string;
+  /** Stages this run could not do. Named to the model; see gapsBlock. */
+  gaps?: AuditGap[];
 }): Promise<{
   verdicts: { titles: string; thumbnails: string; content: string; position: string };
   strengths: string[];
@@ -488,7 +526,7 @@ export async function writeReport(input: {
         role: "user",
         content: `Channel: ${input.channel.title} (${input.channel.subscriberCount?.toLocaleString() ?? "?"} subs)
 Market: ${input.niche}
-${input.videos ? whenBlock(input.videos) : ""}${angleBlock(input.angle)}
+${input.videos ? whenBlock(input.videos) : ""}${angleBlock(input.angle)}${gapsBlock(input.gaps)}
 This report is written ${input.mode === "own" ? "FOR the channel's owner, who will act on it" : "ABOUT a competitor, as a diagnosis"}.
 
 TITLE PATTERNS (median multiple, sample size):
@@ -504,7 +542,11 @@ ${JSON.stringify(c.content.topics)}
 MARKET GAPS:
 ${JSON.stringify(c.content.gaps)}
 
-POSITION: rank ${c.position.subscriberRank} of ${c.position.competitorCount + 1} by subscribers, rank ${c.position.medianViewsRank} by median views.
+POSITION: ${
+          c.position.competitorCount
+            ? `rank ${c.position.subscriberRank} of ${c.position.competitorCount + 1} by subscribers, rank ${c.position.medianViewsRank} by median views.`
+            : "NO COMPETITOR WAS SCANNED. There is no rank. Do not write a positionVerdict, do not describe this channel as leading, trailing or mid-pack, and do not infer a market position from its own numbers."
+        }
 
 GROWTH SHAPE (median views by age):
 ${JSON.stringify(c.ageCurve)}`,
@@ -571,6 +613,59 @@ Rules that decide whether this is worth reading:
 - No hype. No "leverage", "unlock", "crush it".`;
 
 /** Turn the findings into what to actually do, per category. */
+/**
+ * Is a SAVED market a fair stand-in for a discovery that could not run?
+ *
+ * Search is the one call an audit cannot make on an exhausted daily cap, and it
+ * is the call that finds competitors. Rather than die there, the pipeline looks
+ * for a saved market covering the same ground — but "the same ground" cannot be
+ * decided on word overlap alone, and substituting the wrong set is worse than
+ * having none: every comparison in the report would then be against channels
+ * doing something else, presented with the same confidence as a real one.
+ *
+ * So the shortlist is picked by overlap (recovery.rankMarketFallbacks) and the
+ * ANSWER is a judgement: same audience, same kind of video, same promise. The
+ * model is told to refuse, and refusing is the safe outcome — the run then
+ * continues without a market and says so.
+ */
+export async function confirmMarketFit(input: {
+  channel: AuditChannel;
+  niche: string;
+  nicheDescription: string;
+  subjectSummary: string;
+  candidates: { id: string; name: string; niche: string; competitorTitles: string[] }[];
+}): Promise<{ marketId: string | null; reason: string }> {
+  if (!input.candidates.length) return { marketId: null, reason: "No saved market to fall back on." };
+  const raw = await claudeJSONForPurpose({
+    tier: "research",
+    purpose: "audit-market-fallback",
+    system: MARKET_FIT_SYSTEM,
+    messages: [
+      {
+        role: "user",
+        content: `THE CHANNEL BEING AUDITED: ${input.channel.title} (${input.channel.subscriberCount?.toLocaleString() ?? "?"} subscribers)
+Its market, as this run inferred it: ${input.niche}
+${input.nicheDescription}
+What the channel does: ${input.subjectSummary}
+
+SAVED MARKETS AVAILABLE:
+${input.candidates
+  .map((c) => `id: ${c.id}\nname: ${c.name}\nniche: ${c.niche}\nchannels: ${c.competitorTitles.slice(0, 12).join(", ")}`)
+  .join("\n\n")}`,
+      },
+    ],
+  });
+  const got = parse<{ marketId?: unknown; reason?: unknown }>(raw, {});
+  const id = typeof got.marketId === "string" ? got.marketId.trim() : "";
+  const known = input.candidates.some((c) => c.id === id);
+  return {
+    // A model naming a market that is not on the list is guessing, and a guess
+    // here silently becomes the comparison set for the whole report.
+    marketId: known ? id : null,
+    reason: String(got.reason ?? (known ? "" : "No saved market was a close enough match.")),
+  };
+}
+
 export async function writeActionPlan(input: {
   channel: AuditChannel;
   niche: string;
@@ -578,6 +673,8 @@ export async function writeActionPlan(input: {
   marketOutliers: { title: string; channelTitle: string; views: number }[];
   videos: AuditVideo[];
   angle?: string;
+  /** Stages this run could not do. Named to the model; see gapsBlock. */
+  gaps?: AuditGap[];
 }): Promise<AuditFindings["actionPlan"]> {
   const f = input.findings;
   const raw = await claudeJSONForPurpose({
@@ -589,7 +686,7 @@ export async function writeActionPlan(input: {
         role: "user",
         content: `Channel: ${input.channel.title} — ${input.channel.subscriberCount?.toLocaleString() ?? "?"} subscribers
 Market: ${input.niche}
-${whenBlock(input.videos)}${angleBlock(input.angle)}
+${whenBlock(input.videos)}${angleBlock(input.angle)}${gapsBlock(input.gaps)}
 
 WHAT THE AUDIT MEASURED
 
@@ -600,7 +697,11 @@ Thumbnail correlations on this channel (with vs without): ${JSON.stringify(f.thu
 What WINNING thumbnails look like across both sides — share of outliers carrying each attribute, NOT a cause: ${JSON.stringify(f.thumbnails.outlierProfile ?? [])}
 Topics (yours vs the market's coverage of the same topic): ${JSON.stringify(f.content.topics)}
 Market gaps: ${JSON.stringify(f.content.gaps)}
-Position: rank ${f.position.subscriberRank} of ${f.position.competitorCount + 1} by subscribers, ${f.position.medianViewsRank} by median views
+Position: ${
+          f.position.competitorCount
+            ? `rank ${f.position.subscriberRank} of ${f.position.competitorCount + 1} by subscribers, ${f.position.medianViewsRank} by median views`
+            : "not measured — no competitor was scanned, so there is no rank to cite and no market step to recommend"
+        }
 Strengths: ${JSON.stringify(f.position.strengths)}
 Weaknesses: ${JSON.stringify(f.position.weaknesses)}
 Growth areas already identified: ${JSON.stringify(f.growth)}

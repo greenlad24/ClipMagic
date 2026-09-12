@@ -35,6 +35,8 @@ import { CHAT_MODEL } from "./chat.js";
 import { fetchThumbnails } from "./images.js";
 import { readThumbnails, THUMBNAIL_BATCH } from "./ai.js";
 import { gatherContent, readContent, transcriptsAvailable } from "./content.js";
+import { ingestChannel } from "./ingest.js";
+import { titleFeatures } from "./analysis.js";
 import { outliers } from "./baseline.js";
 import {
   buildSeries,
@@ -53,6 +55,7 @@ import {
 import type {
   AuditChartData,
   AuditChartSpec,
+  AuditGuestChannel,
   AuditReportSection,
   AuditRunResult,
   AuditVideo,
@@ -67,6 +70,38 @@ const MAX_CHARTS = 3;
 
 /** Market videos read for content when a section asks for it. */
 const CONTENT_TOP_UP = 12;
+
+/**
+ * Uploads taken from a channel fetched to compare against.
+ *
+ * Enough that its medians are its medians, capped so one section cannot put a
+ * 2,000-video catalogue into a report row it will be loaded with for ever. The
+ * cap takes the most RECENT uploads, and the chart note says so — a truncated
+ * catalogue is still a fair population, but only if the reader knows which one.
+ */
+const GUEST_MAX_VIDEOS = 300;
+
+/**
+ * Channel references in what the operator actually typed.
+ *
+ * The planner is asked to name the channel it wants fetched, and usually does.
+ * This is the fallback for when it asks for a comparison and forgets to say
+ * against what — their own words are better evidence of who they meant than a
+ * decline is. Handles youtube.com URLs, bare @handles and raw channel ids.
+ */
+export function channelRefsIn(text: string): string[] {
+  const out: string[] = [];
+  const push = (v: string) => {
+    const t = v.trim().replace(/[.,;:)\]]+$/, "");
+    if (t && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t);
+  };
+  for (const m of text.matchAll(/https?:\/\/(?:www\.)?youtube\.com\/(?:@[\w.-]+|channel\/UC[\w-]{22}|c\/[\w.-]+|user\/[\w.-]+)/gi)) {
+    push(m[0]);
+  }
+  for (const m of text.matchAll(/(?:^|\s)(@[\w.-]{3,})/g)) push(m[1]);
+  for (const m of text.matchAll(/(?:^|\s)(UC[\w-]{22})(?:\s|$)/g)) push(m[1]);
+  return out;
+}
 
 /* ── what the section writer is allowed to go and fetch ──────────────────── */
 
@@ -94,6 +129,7 @@ Return JSON:
 {
   "title": "the section's heading, plain and specific",
   "gather": [],
+  "channels": [],
   "charts": [
     { "workingTitle": "what this chart shows", "query": { ... } }
   ],
@@ -102,7 +138,7 @@ Return JSON:
 
 A query is:
 {
-  "scope": "own" | "market" | "compare",
+  "scope": "own" | "market" | "compare" | "guest" | "compare-guest",
   "groupBy": <dimension>,
   "measure": <measure>,
   "filter": { "format": "long" | "short" | null, "judgedOnly": true, "sinceDays": null, "topics": null },
@@ -115,6 +151,10 @@ Rules:
 - Only use a dimension or measure from the lists below, spelled exactly.
 - Only group by something the DATA AVAILABLE block says exists. If it says no topic membership is recorded, do not group by topic.
 - "compare" puts this channel and the market side by side on the same measure. Use it for "am I behind on X" questions.
+- WHEN THE REQUEST NAMES ANOTHER CHANNEL — "how do I compare to @someone", a YouTube URL, a channel id — put that reference in "channels" and use "compare-guest" (this channel beside it) or "guest" (that channel alone). It is fetched before anything is measured: its whole catalogue, scored against its own eras exactly as this channel is.
+- A fetched channel is a WHOLE catalogue, unlike the market set, so "medianEraMultiple" IS allowed for the guest scopes — a title pattern that beats its own norm is a real finding about it. What is never allowed anywhere is grouping BY channel and measuring the era multiple: every channel sits at ~1.0 against its own median by definition. Compare channels on medianViews or medianViewsPerSub.
+- Topics were only clustered for this channel and its market. Never group a guest scope by topic; group it by title pattern, thumbnail attribute, format, duration or publish month.
+- Only put a channel in "channels" if the request actually names one. Never invent a channel, and never fetch a competitor that is already in the market.
 - THE MARKET SET IS ONLY THE COMPETITORS' OVER-PERFORMERS, not their whole catalogues. So "medianEraMultiple" is REFUSED for the market and compare scopes — those videos were selected for having a high era multiple, so measuring it there measures the selection. Compare on medianViews instead, and keep medianEraMultiple for this channel alone.
 - Prefer judgedOnly true. A video too young to judge is not evidence.
 - Keep minSampleSize at 3 or more unless grouping by video. A median over two videos is not a finding.
@@ -124,6 +164,8 @@ Rules:
 interface SectionPlan {
   title: string;
   gather: DataNeed[];
+  /** Channels named in the request, to be fetched and compared against. */
+  channels: string[];
   charts: { workingTitle: string; query: AuditSeriesQuery }[];
   decline: string | null;
 }
@@ -190,7 +232,7 @@ export async function planSection(run: AuditRunResult, request: string, ctx: Ser
   try {
     got = JSON.parse(raw);
   } catch {
-    return { title: "", gather: [], charts: [], decline: "I could not design that section — try asking for it differently." };
+    return { title: "", gather: [], channels: [], charts: [], decline: "I could not design that section — try asking for it differently." };
   }
 
   const decline = typeof got?.decline === "string" && got.decline.trim() ? got.decline.trim() : null;
@@ -199,11 +241,23 @@ export async function planSection(run: AuditRunResult, request: string, ctx: Ser
     query: coerceQuery(c?.query),
   }));
 
+  const named = (Array.isArray(got?.channels) ? got.channels : []).map((c: any) => String(c).trim()).filter(Boolean);
+  // A plan that asks to compare against a channel but names none is answered
+  // from the operator's own words rather than declined.
+  const wantsGuest = charts.some(
+    (c: { query: AuditSeriesQuery }) => c.query.scope === "guest" || c.query.scope === "compare-guest",
+  );
+  const channels = named.length ? named : wantsGuest ? channelRefsIn(request) : [];
+
   return {
     title: String(got?.title ?? "").trim() || "New section",
     gather: (Array.isArray(got?.gather) ? got.gather : [])
       .map((g: any) => String(g))
       .filter((g: string): g is DataNeed => (DATA_NEEDS as readonly string[]).includes(g)),
+    // One per section. Two fetched catalogues in one chart is a different
+    // feature, and a section that quietly picks one of two named channels is
+    // worse than one that says which it used.
+    channels: channels.slice(0, 1),
     charts,
     decline: decline ?? (charts.length ? null : "That question cannot be answered from this audit's data."),
   };
@@ -218,6 +272,8 @@ export interface GatherOutcome {
   /** Replacement videos, when a gatherer enriched them. */
   videos?: AuditVideo[];
   marketVideos?: AuditVideo[];
+  /** The fetched channel's videos, when a gatherer enriched those too. */
+  guestVideos?: AuditVideo[];
   /** Prose-only evidence, handed to the writer but not chartable. */
   contentNotes?: string[];
 }
@@ -230,7 +286,13 @@ export interface GatherOutcome {
  * correlations quietly went on with a hole in them.
  */
 async function gatherThumbnails(ctx: SeriesContext): Promise<GatherOutcome> {
-  const missing = [...ctx.videos, ...ctx.marketVideos].filter((v) => !v.thumbnail);
+  // The fetched channel's thumbnails are read too, and this is not optional:
+  // a section asked to compare face-on-thumbnail across two channels was built
+  // with one side empty because only the run's own images were considered. A
+  // comparison chart with nothing to compare is the failure this whole path
+  // exists to avoid.
+  const guestVideos = ctx.guest?.videos ?? [];
+  const missing = [...ctx.videos, ...ctx.marketVideos, ...guestVideos].filter((v) => !v.thumbnail);
   if (!missing.length) {
     return { notes: ["Every thumbnail on this run had already been read — nothing to fetch."], quotaUnits: 0 };
   }
@@ -247,14 +309,17 @@ async function gatherThumbnails(ctx: SeriesContext): Promise<GatherOutcome> {
     }
   }
   const fill = (v: AuditVideo): AuditVideo => (v.thumbnail ? v : { ...v, thumbnail: attributes.get(v.videoId) });
+  const guestRead = guestVideos.filter((v) => !v.thumbnail && attributes.has(v.videoId)).length;
   return {
     notes: [
       `Read ${attributes.size} thumbnail${attributes.size === 1 ? "" : "s"} that had not been looked at before` +
+        (guestRead ? `, ${guestRead} of them on ${ctx.guest?.channel.title}` : "") +
         (failed ? `; ${failed} batch(es) failed and those images are still unread.` : "."),
     ],
     quotaUnits: 0,
     videos: ctx.videos.map(fill),
     marketVideos: ctx.marketVideos.map(fill),
+    ...(guestVideos.length ? { guestVideos: guestVideos.map(fill) } : {}),
   };
 }
 
@@ -307,6 +372,58 @@ async function gatherContentForSection(ctx: SeriesContext): Promise<GatherOutcom
   };
 }
 
+/**
+ * Fetch a channel to compare against — or reuse one this run already has.
+ *
+ * The whole catalogue (capped at the most recent GUEST_MAX_VIDEOS), scored
+ * against its own eras by the same ingest the subject went through. That is the
+ * entire point: the market set cannot answer "how do I compare to that person"
+ * because it holds only their best videos, so a like-for-like comparison needs
+ * a like-for-like population.
+ *
+ * Costs a handful of quota units — channels.list, a page of uploads per fifty,
+ * and one videos.list per fifty for the stats. No search, which is the call a
+ * daily cap takes away first.
+ */
+export async function gatherGuestChannel(
+  ref: string,
+  run: AuditRunResult,
+  request: string,
+): Promise<{ guest: AuditGuestChannel; note: string; reused: boolean }> {
+  const wanted = ref.trim().replace(/^https?:\/\/(www\.)?youtube\.com\//i, "").replace(/^@/, "").toLowerCase();
+  const existing = (run.guests ?? []).find(
+    (g) =>
+      g.channel.channelId.toLowerCase() === wanted ||
+      (g.channel.handle ?? "").toLowerCase() === wanted ||
+      g.channel.title.toLowerCase() === wanted,
+  );
+  if (existing) {
+    return {
+      guest: existing,
+      reused: true,
+      note: `Compared against ${existing.channel.title}, already fetched for this report (${existing.videos.length} videos) — nothing was fetched again.`,
+    };
+  }
+
+  const { channel, videos, quotaUnits } = await ingestChannel(ref, { maxVideos: GUEST_MAX_VIDEOS });
+  const guest: AuditGuestChannel = {
+    channel,
+    videos: videos.map((v) => ({ ...v, titleFeatures: titleFeatures(v.title) })),
+    request,
+    truncated: (channel.videoCount ?? 0) > videos.length,
+    quotaUnits,
+    at: Date.now(),
+  };
+  return {
+    guest,
+    reused: false,
+    note:
+      `Fetched ${channel.title} — ${videos.length} videos` +
+      `${guest.truncated ? ` (its most recent, of ${channel.videoCount?.toLocaleString()})` : ", its whole catalogue"}, ` +
+      `scored against its own eras the same way this channel is. ${quotaUnits} quota units.`,
+  };
+}
+
 export async function gatherFor(needs: DataNeed[], ctx: SeriesContext): Promise<GatherOutcome> {
   const merged: GatherOutcome = { notes: [], quotaUnits: 0, contentNotes: [] };
   for (const need of needs) {
@@ -321,6 +438,10 @@ export async function gatherFor(needs: DataNeed[], ctx: SeriesContext): Promise<
       if (out.marketVideos) {
         merged.marketVideos = out.marketVideos;
         ctx = { ...ctx, marketVideos: out.marketVideos };
+      }
+      if (out.guestVideos && ctx.guest) {
+        merged.guestVideos = out.guestVideos;
+        ctx = { ...ctx, guest: { ...ctx.guest, videos: out.guestVideos } };
       }
       if (out.contentNotes?.length) merged.contentNotes!.push(...out.contentNotes);
     } catch (err: any) {
@@ -438,6 +559,12 @@ export interface BuiltSection {
   /** Enriched videos to persist, when a gatherer improved them. */
   videos?: AuditVideo[];
   marketVideos?: AuditVideo[];
+  /**
+   * A channel fetched for this section, to be kept on the run. Worth persisting
+   * even when the section itself failed: it was paid for, and the next question
+   * about the same channel should not pay again.
+   */
+  guest?: AuditGuestChannel;
 }
 
 /**
@@ -455,6 +582,9 @@ export async function buildSection(run: AuditRunResult, request: string): Promis
     marketVideos: run.marketVideos ?? [],
     competitors: run.competitors ?? [],
     topics: run.findings?.content.topics ?? [],
+    // A channel fetched for an earlier section is available to this one for
+    // free, and the planner is told so (describeAvailableData).
+    guest: (run.guests ?? [])[0] ?? null,
   };
 
   const plan = await planSection(run, request, baseCtx);
@@ -464,10 +594,56 @@ export async function buildSection(run: AuditRunResult, request: string): Promis
 
   let ctx = baseCtx;
   let gathered: GatherOutcome = { notes: [], quotaUnits: 0, contentNotes: [] };
-  if (plan.gather.length) {
-    gathered = await gatherFor(plan.gather, ctx);
+  let guest: AuditGuestChannel | undefined;
+
+  // The comparison channel first: everything else is measured against it.
+  if (plan.channels.length) {
+    try {
+      const got = await gatherGuestChannel(plan.channels[0], run, request);
+      guest = got.reused ? undefined : got.guest;
+      ctx = { ...ctx, guest: got.guest };
+      gathered.notes.push(got.note);
+      gathered.quotaUnits += got.reused ? 0 : got.guest.quotaUnits;
+    } catch (err: any) {
+      // Naming a channel that cannot be fetched is not a reason to lose the
+      // section — the charts that needed it come back unavailable and say so,
+      // and any chart that did not need it still stands.
+      gathered.notes.push(`Could not fetch ${plan.channels[0]} to compare against: ${String(err?.message || err)}.`);
+    }
+  }
+
+  // A thumbnail comparison against a channel whose images nobody has read is an
+  // empty half-chart, and the planner cannot be relied on to notice — it is told
+  // the run's own thumbnails are all read, which is true and beside the point.
+  // So the need is derived from what was actually asked for.
+  const needsGuestThumbs =
+    !!ctx.guest &&
+    !ctx.guest.videos.some((v) => v.thumbnail) &&
+    plan.charts.some(
+      (c) => c.query.groupBy.startsWith("thumbnail") && (c.query.scope === "guest" || c.query.scope === "compare-guest"),
+    );
+  const needs: DataNeed[] = needsGuestThumbs && !plan.gather.includes("thumbnails")
+    ? [...plan.gather, "thumbnails"]
+    : plan.gather;
+
+  if (needs.length) {
+    const more = await gatherFor(needs, ctx);
+    gathered = {
+      notes: [...gathered.notes, ...more.notes],
+      quotaUnits: gathered.quotaUnits + more.quotaUnits,
+      contentNotes: [...(gathered.contentNotes ?? []), ...(more.contentNotes ?? [])],
+      videos: more.videos,
+      marketVideos: more.marketVideos,
+      guestVideos: more.guestVideos,
+    };
     if (gathered.videos) ctx = { ...ctx, videos: gathered.videos };
     if (gathered.marketVideos) ctx = { ...ctx, marketVideos: gathered.marketVideos };
+    // Thumbnails read on the fetched channel are worth keeping for good: the
+    // next question about it should not pay to look at the same images twice.
+    if (gathered.guestVideos && ctx.guest) {
+      ctx = { ...ctx, guest: { ...ctx.guest, videos: gathered.guestVideos } };
+      if (guest) guest = { ...guest, videos: gathered.guestVideos };
+    }
   }
 
   const computed = plan.charts.map((c) => ({ ...c, data: buildSeries(c.query, ctx) }));
@@ -479,6 +655,7 @@ export async function buildSection(run: AuditRunResult, request: string): Promis
       declined: `I could not build that section — ${why}`,
       videos: gathered.videos,
       marketVideos: gathered.marketVideos,
+      guest,
     };
   }
 
@@ -517,5 +694,6 @@ export async function buildSection(run: AuditRunResult, request: string): Promis
     declined: null,
     videos: gathered.videos,
     marketVideos: gathered.marketVideos,
+    guest,
   };
 }
