@@ -19,9 +19,13 @@ const API = "https://api.apimart.ai/v1/chat/completions";
 /** Same default as the Python package's STUDIO_PLAN_MODEL. */
 const MODEL = process.env.STUDIO_PLAN_MODEL || "qwen3.8-max";
 
-/** ~30s of speech, matching TARGET_SECONDS/WORDS in make_tutorial_script.py. */
-const TARGET_SECONDS = 30;
-const WORDS = Math.round(TARGET_SECONDS * 2.6);
+/**
+ * How many words a second of speech is, matching WORDS_PER_SECOND in
+ * make_tutorial_script.py. The seconds themselves come from the video model the
+ * batch renders with (Wan 30s, MiniMax H3 15s) — see videoModels.ts.
+ */
+const WORDS_PER_SECOND = 2.6;
+const DEFAULT_SECONDS = 30;
 
 export class ApimartError extends Error {}
 
@@ -113,20 +117,24 @@ function extractJson<T>(text: string, opener: "{" | "["): T {
   }
 }
 
-const IDEAS_SYSTEM =
+const ideasSystem = (seconds: number) =>
   "You are a short-form content strategist for a talking-head tutorial channel. " +
   "Given a theme, propose distinct video ideas that each teach ONE concrete, " +
-  "practical thing in about 30 seconds. Every idea must be genuinely different — " +
+  `practical thing in about ${seconds} seconds. Every idea must be genuinely different — ` +
   "no rephrasings of the same tip, no overlapping tools. Prefer specific, " +
   "searchable topics over vague advice.\n" +
   'OUTPUT: STRICT JSON only, an array of {"topic":"...","hook":"..."} where topic ' +
   "is the full teachable topic (a phrase, not a sentence) and hook is the first " +
   "line the video would open on.";
 
-export async function generateIdeas(theme: string, count: number): Promise<TutorialIdea[]> {
+export async function generateIdeas(
+  theme: string,
+  count: number,
+  seconds = DEFAULT_SECONDS,
+): Promise<TutorialIdea[]> {
   const n = Math.max(1, Math.min(60, Math.round(count)));
   const raw = await chat(
-    IDEAS_SYSTEM,
+    ideasSystem(seconds),
     `Theme: ${theme}\nPropose exactly ${n} ideas. Return the JSON array now.`,
     Math.min(8000, 400 + n * 90),
   );
@@ -141,13 +149,14 @@ export async function generateIdeas(theme: string, count: number): Promise<Tutor
 }
 
 /**
- * Kept verbatim from scripts/make_tutorial_script.py — the pipeline reads the
- * result of this prompt, so the two must not drift apart.
+ * Kept verbatim from scripts/make_tutorial_script.py (build_system) — the
+ * pipeline reads the result of this prompt, so the two must not drift apart.
  */
-const SCRIPT_SYSTEM =
+const scriptSystem = (seconds: number) =>
   "You are a top English short-form UGC scriptwriter for talking-head tutorial reels. " +
-  `Write ONE continuous first-person spoken script for a single ~${TARGET_SECONDS}s clip ` +
-  `(about ${WORDS} words) that teaches the topic. It will be SPOKEN by an AI avatar, so ` +
+  `Write ONE continuous first-person spoken script for a single ~${seconds}s clip ` +
+  `(about ${Math.round(seconds * WORDS_PER_SECOND)} words) that teaches the topic. ` +
+  "It will be SPOKEN by an AI avatar, so " +
   "write only natural spoken words — no stage directions, emojis, or special characters.\n" +
   "STRUCTURE: 1) HOOK (first ~3s): open on the punch, no greeting. 2) VALUE: 2-3 concrete " +
   "steps. 3) CTA (last ~3s): one clear ask (comment a keyword / save / follow).\n" +
@@ -156,8 +165,15 @@ const SCRIPT_SYSTEM =
   'OUTPUT: STRICT JSON only: {"title_small":"...","title_main":"...","script":"...",' +
   '"cta":"...","keyword":"<one word to comment, else empty>"}';
 
-export async function generateScript(topic: string): Promise<TutorialScript> {
-  const raw = await chat(SCRIPT_SYSTEM, `Topic: ${topic}\nReturn the script JSON now.`, 5000);
+export async function generateScript(
+  topic: string,
+  seconds = DEFAULT_SECONDS,
+): Promise<TutorialScript> {
+  const raw = await chat(
+    scriptSystem(seconds),
+    `Topic: ${topic}\nReturn the script JSON now.`,
+    5000,
+  );
   const obj = extractJson<any>(raw, "{");
   const script = String(obj.script || "").trim();
   if (!script) throw new ApimartError("the model returned an empty script.");

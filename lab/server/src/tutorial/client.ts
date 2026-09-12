@@ -24,6 +24,11 @@ export interface TutorialJob {
   avatar_id: string;
   /** Groups the 30-odd jobs of one batch; "" for a one-off reel. */
   batch_id: string;
+  /** apimart model that rendered and spoke the clip (see videoModels.ts). */
+  video_model: string;
+  video_resolution: string;
+  /** Clip length, which the model decides: Wan 30s, MiniMax H3 15s. */
+  seconds: number;
   reuse_base: boolean;
   status: "queued" | "running" | "done" | "failed" | "cancelled" | "interrupted";
   error: string;
@@ -41,6 +46,8 @@ export interface TutorialAvatar {
   environment: string;
   mime: string;
   bytes: number;
+  /** A three-panel identity map was saved with this avatar. */
+  has_map?: boolean;
   created_at: number | null;
 }
 
@@ -137,6 +144,8 @@ export function createAvatar(input: {
   name: string;
   environment: string;
   image_b64: string;
+  /** Optional three-panel identity map, stored beside the reference image. */
+  map_b64?: string;
 }): Promise<{ avatar: TutorialAvatar }> {
   return json<{ avatar: TutorialAvatar }>("/api/avatars", { method: "POST", body: input });
 }
@@ -166,6 +175,9 @@ export function startJob(input: {
   batch_id?: string;
   /** An approved script — sending one skips the pipeline's own Qwen stage. */
   script?: Record<string, unknown>;
+  /** Which model speaks it; omitted leaves the sidecar on its default (Wan). */
+  video_model?: string;
+  video_resolution?: string;
   reuse_base?: boolean;
 }): Promise<{ job: TutorialJob }> {
   // The apimart key lives in the write-only settings store, not in the

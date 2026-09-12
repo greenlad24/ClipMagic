@@ -2,14 +2,19 @@
 """Tutorial Studio — one command, topic to finished reel.
 
     python run_reel.py "how to <thing> with <tool>"
-    python run_reel.py "..." --reuse-base        # skip the paid Wan step, reuse the last talking-head
+    python run_reel.py "..." --reuse-base        # skip the paid video step, reuse the last talking-head
+    python run_reel.py "..." --video-model MiniMax-H3 --video-resolution 768P
 
-Pipeline: script (Qwen) -> talking-head start frame (GPT Image 2) -> Wan 3.0 talking clip
+Pipeline: script (Qwen) -> talking-head start frame (GPT Image 2) -> talking clip
 (with its own voice) -> whisper word timings -> carousel (Claude API) -> slides + grid +
 prompt screenshot (headless browser) -> assemble overlays + memes + SFX -> reel.mp4.
 
+The talking clip is Wan 3.0 by default or MiniMax H3 (see scripts/video_models.py).
+The model decides the reel's length, so it is chosen BEFORE the script is written:
+H3 renders 15s clips, so it gets a 15s script, not a 30s one it would cut off.
+
 Run from the package root (so .media/tutorial/... paths resolve). Needs .env with
-APIMART_API_KEY + ANTHROPIC_API_KEY. The Wan step is the only large spend (~$2).
+APIMART_API_KEY + ANTHROPIC_API_KEY. The video step is the only large spend (~$2 on Wan).
 """
 
 from __future__ import annotations
@@ -18,6 +23,8 @@ import argparse
 import os
 import subprocess
 import sys
+
+from scripts.video_models import VIDEO_MODELS, DEFAULT_MODEL, normalize
 
 PY = sys.executable
 T = ".media/tutorial"
@@ -55,7 +62,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("topic")
     ap.add_argument("--reuse-base", action="store_true",
-                    help="reuse the existing talking-head clip (skip the paid Wan step)")
+                    help="reuse the existing talking-head clip (skip the paid video step)")
+    ap.add_argument("--video-model", default=DEFAULT_MODEL, choices=sorted(VIDEO_MODELS),
+                    help="which apimart model renders (and speaks) the talking-head clip")
+    ap.add_argument("--video-resolution", default="",
+                    help="model-specific (Wan 480P/720P/1080P, H3 768P/2K); "
+                         "defaults to the model's own")
     ap.add_argument("--outfit", default="a comfy cream knit sweater")
     ap.add_argument("--scene", default="a cozy living-room corner with a leafy plant, framed wall art and a warm lamp")
     ap.add_argument("--out", default=f"{T}/reel.mp4")
@@ -68,6 +80,7 @@ def main():
                          "Skips the Qwen scripting step.")
     a = ap.parse_args()
     os.makedirs(f"{T}/assets", exist_ok=True)
+    model, resolution, seconds = normalize(a.video_model, a.video_resolution)
 
     # 1. script — unless the caller brings one that has already been approved.
     if a.script_json:
@@ -81,9 +94,9 @@ def main():
             fh.write(obj["script"])
         print(f"\n$ (approved script: {len(obj['script'].split())} words — skipping Qwen)", flush=True)
     else:
-        run("scripts/make_tutorial_script.py", a.topic)
+        run("scripts/make_tutorial_script.py", a.topic, "--seconds", str(seconds))
 
-    # 2 & 3. talking-head: start frame -> Wan 3.0 (voice included). Skip with --reuse-base.
+    # 2 & 3. talking-head: start frame -> video model (voice included). Skip with --reuse-base.
     base = f"{T}/talkinghead2.mp4"
     if not (a.reuse_base and os.path.exists(base)):
         frame_args = ["scripts/make_talkinghead_frame.py", "--outfit", a.outfit,
@@ -95,7 +108,8 @@ def main():
         run(*frame_args)
         url = open(f"{T}/shots_in/start_url.txt").read().strip()
         run("scripts/make_tutorial_video.py", "--image-url", url,
-            "--script", f"{T}/script.txt", "--seconds", "30", "--out", "talkinghead2.mp4")
+            "--script", f"{T}/script.txt", "--seconds", str(seconds),
+            "--model", model, "--resolution", resolution, "--out", "talkinghead2.mp4")
 
     # 4. word timings (word-by-word captions + word-synced elements)
     transcribe(base)

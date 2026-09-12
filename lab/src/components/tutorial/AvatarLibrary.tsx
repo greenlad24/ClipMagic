@@ -6,12 +6,15 @@ import {
   tutorialAvatarUpdate,
   tutorialAvatarDelete,
   type TutorialAvatar,
+  type TutorialPersonaEngine,
+  type TutorialCaptureLook,
 } from 'zite-endpoints-sdk';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Trash2, Upload, Save } from 'lucide-react';
+import AvatarMaker from './AvatarMaker';
 
 /**
  * The avatar library: start images the operator made themselves.
@@ -29,11 +32,23 @@ export function avatarImageUrl(id: string): string {
   return `/api/tutorial/avatar/${encodeURIComponent(id)}.img`;
 }
 
+/** The three-panel identity map, for avatars that were built rather than uploaded. */
+export function avatarMapUrl(id: string): string {
+  return `/api/tutorial/avatar/${encodeURIComponent(id)}.map`;
+}
+
 export default function AvatarLibrary({
   onChange,
+  engines = [],
+  captures = [],
+  canDescribe = false,
 }: {
   /** Told after any create/delete so a parent picker can refresh. */
   onChange?: () => void;
+  /** The maker's catalogue, from tutorialStudioStatus (the page already has it). */
+  engines?: TutorialPersonaEngine[];
+  captures?: TutorialCaptureLook[];
+  canDescribe?: boolean;
 }) {
   const [avatars, setAvatars] = useState<TutorialAvatar[]>([]);
   const [loading, setLoading] = useState(true);
@@ -136,10 +151,22 @@ export default function AvatarLibrary({
 
   return (
     <div className="space-y-6">
+      {engines.length > 0 && (
+        <AvatarMaker
+          engines={engines}
+          captures={captures}
+          canDescribe={canDescribe}
+          onCreated={() => {
+            void load();
+            onChange?.();
+          }}
+        />
+      )}
+
       <div className="rounded-lg border border-border bg-card p-5">
-        <h3 className="mb-1 font-medium">Add an avatar</h3>
+        <h3 className="mb-1 font-medium">Or upload one</h3>
         <p className="mb-4 text-sm text-muted-foreground">
-          Upload a start image you made yourself. Her face is kept exactly as uploaded; the
+          A start image you made yourself. Her face is kept exactly as uploaded; the
           outfit and the corner of the room change on every video.
         </p>
         <div className="grid gap-4 sm:grid-cols-[160px_minmax(0,1fr)]">

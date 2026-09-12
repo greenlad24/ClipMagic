@@ -29,6 +29,13 @@ export interface Batch {
   avatarId: string;
   environment: string;
   targetCount: number;
+  /**
+   * The apimart model this batch's clips are rendered (and spoken) by, and at
+   * what resolution. '' = the pipeline's default. It is a BATCH-level choice
+   * because the model fixes the clip length, which the scripts are written for.
+   */
+  videoModel: string;
+  videoResolution: string;
   status: BatchStatus;
   error: string;
   createdAt: number;
@@ -61,6 +68,8 @@ function rowToBatch(r: any): Batch {
     avatarId: r.avatar_id ?? "",
     environment: r.environment ?? "",
     targetCount: r.target_count ?? 30,
+    videoModel: r.video_model ?? "",
+    videoResolution: r.video_resolution ?? "",
     status: r.status,
     error: r.error ?? "",
     createdAt: r.created_at,
@@ -104,13 +113,27 @@ export function createBatch(input: {
   avatarId: string;
   environment: string;
   targetCount: number;
+  videoModel?: string;
+  videoResolution?: string;
 }): Batch {
   const id = nanoid(12);
   const t = now();
   db.prepare(
-    `INSERT INTO ts_batches (id, name, theme, avatar_id, environment, target_count, status, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, 'ideas', ?, ?)`,
-  ).run(id, input.name, input.theme, input.avatarId, input.environment, input.targetCount, t, t);
+    `INSERT INTO ts_batches (id, name, theme, avatar_id, environment, target_count,
+                             video_model, video_resolution, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ideas', ?, ?)`,
+  ).run(
+    id,
+    input.name,
+    input.theme,
+    input.avatarId,
+    input.environment,
+    input.targetCount,
+    input.videoModel || "",
+    input.videoResolution || "",
+    t,
+    t,
+  );
   return getBatch(id)!;
 }
 

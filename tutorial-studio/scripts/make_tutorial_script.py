@@ -26,8 +26,11 @@ except Exception:  # noqa: BLE001
 
 API = "https://api.apimart.ai/v1/chat/completions"
 OUT = ".media/tutorial/script.json"
+# The clip the script is written for. 30s is the reel format Wan 3.0 renders;
+# --seconds lowers it when a shorter model is doing the talking (MiniMax H3 caps
+# a clip at 15s, and 30s of words on a 15s clip is a sentence cut in half).
 TARGET_SECONDS = 30
-WORDS = int(TARGET_SECONDS * 2.6)
+WORDS_PER_SECOND = 2.6
 
 
 def _env(key, default=""):
@@ -38,28 +41,37 @@ def _env(key, default=""):
     return os.environ.get(key, default)
 
 
-SYSTEM = (
-    "You are a top English short-form UGC scriptwriter for talking-head tutorial reels. "
-    f"Write ONE continuous first-person spoken script for a single ~{TARGET_SECONDS}s clip "
-    f"(about {WORDS} words) that teaches the topic. It will be SPOKEN by an AI avatar, so "
-    "write only natural spoken words — no stage directions, emojis, or special characters.\n"
-    "STRUCTURE: 1) HOOK (first ~3s): open on the punch, no greeting. 2) VALUE: 2-3 concrete "
-    "steps. 3) CTA (last ~3s): one clear ask (comment a keyword / save / follow).\n"
-    "Also produce a TWO-PART TITLE: a short lead-in (title_small, e.g. 'how to make') and "
-    "the main title (title_main, e.g. 'carousels with Claude'), plus a short CTA line.\n"
-    'OUTPUT: STRICT JSON only: {"title_small":"...","title_main":"...","script":"...",'
-    '"cta":"...","keyword":"<one word to comment, else empty>"}'
-)
+def build_system(seconds: int) -> str:
+    words = int(seconds * WORDS_PER_SECOND)
+    return (
+        "You are a top English short-form UGC scriptwriter for talking-head tutorial reels. "
+        f"Write ONE continuous first-person spoken script for a single ~{seconds}s clip "
+        f"(about {words} words) that teaches the topic. It will be SPOKEN by an AI avatar, so "
+        "write only natural spoken words — no stage directions, emojis, or special characters.\n"
+        "STRUCTURE: 1) HOOK (first ~3s): open on the punch, no greeting. 2) VALUE: 2-3 concrete "
+        "steps. 3) CTA (last ~3s): one clear ask (comment a keyword / save / follow).\n"
+        "Also produce a TWO-PART TITLE: a short lead-in (title_small, e.g. 'how to make') and "
+        "the main title (title_main, e.g. 'carousels with Claude'), plus a short CTA line.\n"
+        'OUTPUT: STRICT JSON only: {"title_small":"...","title_main":"...","script":"...",'
+        '"cta":"...","keyword":"<one word to comment, else empty>"}'
+    )
 
 
 def main() -> None:
-    topic = sys.argv[1] if len(sys.argv) > 1 else "how to turn Claude into a design machine for Instagram carousels"
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("topic", nargs="?",
+                    default="how to turn Claude into a design machine for Instagram carousels")
+    ap.add_argument("--seconds", type=int, default=TARGET_SECONDS,
+                    help="length of the clip this script will be spoken over")
+    args = ap.parse_args()
+    topic, seconds = args.topic, max(4, args.seconds)
     key = _env("APIMART_API_KEY")
     if not key:
         sys.exit("APIMART_API_KEY not set (.env or env)")
     model = _env("STUDIO_PLAN_MODEL", "qwen3.8-max")
     body = {"model": model, "stream": False, "max_tokens": 5000, "messages": [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": build_system(seconds)},
         {"role": "user", "content": f"Topic: {topic}\nReturn the script JSON now."}]}
     req = urllib.request.Request(API, headers={"Authorization": f"Bearer {key}",
         "Content-Type": "application/json"}, data=json.dumps(body).encode())
@@ -83,8 +95,8 @@ def main() -> None:
     print("===== TUTORIAL SCRIPT =====")
     print(f"title:  {obj.get('title_small')} / {obj.get('title_main')}")
     print(f"CTA:    {obj.get('cta')}   (keyword: {obj.get('keyword') or '-'})")
-    print(f"~words: {wc} (~{wc/2.6:.0f}s)")
-    print("\n--- SCRIPT (fed to Wan 3.0) ---\n" + obj.get("script", ""))
+    print(f"~words: {wc} (~{wc / WORDS_PER_SECOND:.0f}s of a {seconds}s clip)")
+    print("\n--- SCRIPT (fed to the video model) ---\n" + obj.get("script", ""))
     print(f"\nwrote {OUT} + .media/tutorial/script.txt")
 
 

@@ -11,6 +11,9 @@ import {
   type TutorialAvatar,
   type TutorialJob,
   type TutorialHealth,
+  type TutorialVideoModel,
+  type TutorialPersonaEngine,
+  type TutorialCaptureLook,
 } from 'zite-endpoints-sdk';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -28,7 +31,7 @@ import { Clapperboard, Loader2, RefreshCw, X } from 'lucide-react';
  * Tutorial Studio — topic in, finished 9:16 talking-head tutorial reel out.
  *
  * The eight-stage pipeline lives in a Python sidecar (script → start frame →
- * Wan talking clip → whisper timings → carousel → slides/prompt screenshots →
+ * talking clip → whisper timings → carousel → slides/prompt screenshots →
  * overlays + memes + SFX → ffmpeg composite). This page only starts jobs and
  * follows them: one runs at a time, and a fresh one costs ~$2.45, so the cost
  * is stated up front rather than discovered on the invoice.
@@ -36,9 +39,11 @@ import { Clapperboard, Loader2, RefreshCw, X } from 'lucide-react';
 
 const POLL_MS = 3000;
 
-/** The paid stage is Wan; reusing a previous clip is the ~$2 saving. */
+/** The paid stage is the talking clip; reusing a previous one is the ~$2 saving. */
 const COST_FRESH = '~$2.45';
 const COST_REUSE = '~$0.40';
+/** Everything except the talking clip — the only stage whose price varies. */
+const COST_WITHOUT_CLIP = '~$0.45';
 
 function statusTone(status: TutorialJob['status']): string {
   switch (status) {
@@ -70,6 +75,12 @@ export default function TutorialStudioPage() {
   const [outfit, setOutfit] = useState('');
   const [scene, setScene] = useState('');
   const [reuseBase, setReuseBase] = useState(false);
+  const [models, setModels] = useState<TutorialVideoModel[]>([]);
+  const [engines, setEngines] = useState<TutorialPersonaEngine[]>([]);
+  const [captures, setCaptures] = useState<TutorialCaptureLook[]>([]);
+  const [canDescribe, setCanDescribe] = useState(false);
+  const [videoModel, setVideoModel] = useState('');
+  const [videoResolution, setVideoResolution] = useState('');
   const [starting, setStarting] = useState(false);
   const [avatars, setAvatars] = useState<TutorialAvatar[]>([]);
   const [avatarId, setAvatarId] = useState('');
@@ -85,6 +96,13 @@ export default function TutorialStudioPage() {
       setConfigured(s.configured);
       setReachable(s.reachable);
       setHealth(s.health);
+      setModels(s.models || []);
+      setEngines(s.engines || []);
+      setCaptures(s.captures || []);
+      setCanDescribe(Boolean(s.canDescribe));
+      // First load picks the server's first model; a later refresh must not
+      // undo a choice the operator has already made.
+      setVideoModel((cur) => cur || s.models?.[0]?.id || '');
     } catch {
       setReachable(false);
     }
@@ -157,6 +175,13 @@ export default function TutorialStudioPage() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [log]);
 
+  const model = models.find((m) => m.id === videoModel) || models[0] || null;
+  const resolution = model
+    ? model.resolutions.includes(videoResolution)
+      ? videoResolution
+      : model.defaultResolution
+    : '';
+
   const selected = jobs.find((j) => j.id === selectedId) || null;
   const busy = jobs.some((j) => j.status === 'running' || j.status === 'queued');
 
@@ -174,6 +199,8 @@ export default function TutorialStudioPage() {
         scene: scene.trim() || undefined,
         avatarId: avatarId || undefined,
         environment: chosen?.environment || undefined,
+        videoModel: videoModel || undefined,
+        videoResolution: resolution || undefined,
         reuseBase,
       });
       setJobs((cur) => [job, ...cur]);
@@ -242,11 +269,16 @@ export default function TutorialStudioPage() {
           </TabsList>
 
           <TabsContent value="batches">
-            <BatchWorkspace />
+            <BatchWorkspace models={models} />
           </TabsContent>
 
           <TabsContent value="avatars">
-            <AvatarLibrary onChange={() => void refreshAvatars()} />
+            <AvatarLibrary
+              onChange={() => void refreshAvatars()}
+              engines={engines}
+              captures={captures}
+              canDescribe={canDescribe}
+            />
           </TabsContent>
 
           <TabsContent value="single">
@@ -324,11 +356,55 @@ export default function TutorialStudioPage() {
               </p>
             </div>
 
+            <div>
+              <Label>Talking-head model</Label>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {models.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setVideoModel(m.id)}
+                    className={`rounded-md border px-3 py-2 text-left text-xs ${
+                      model?.id === m.id ? 'border-primary bg-primary/10' : 'border-border'
+                    }`}
+                  >
+                    <div className="font-medium">{m.label}</div>
+                    <div className="text-muted-foreground">{m.seconds}s reel</div>
+                  </button>
+                ))}
+              </div>
+              {model && (
+                <>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Resolution</span>
+                    {model.resolutions.map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setVideoResolution(r)}
+                        className={`rounded-md border px-2 py-1 text-xs ${
+                          resolution === r ? 'border-primary bg-primary/10' : 'border-border'
+                        }`}
+                      >
+                        {r}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {reuseBase && health?.has_base_clip
+                      ? 'Not used this run — reusing the last talking-head skips the clip stage entirely.'
+                      : `${model.note} The script is written for that length, so the model is chosen before the words are.`}
+                  </p>
+                </>
+              )}
+            </div>
+
             <div className="flex items-start justify-between gap-4 rounded-md border border-border/60 bg-background/40 p-3">
               <div>
                 <div className="text-sm font-medium">Reuse the last talking-head</div>
                 <p className="text-xs text-muted-foreground">
-                  Skips the paid Wan stage and only swaps the teaching content.{' '}
+                  Skips the paid clip stage (whichever model) and only swaps the teaching
+                  content.{' '}
                   {health?.has_base_clip
                     ? `${COST_REUSE} instead of ${COST_FRESH}.`
                     : 'No previous clip yet — the first reel has to be a fresh one.'}
@@ -345,8 +421,16 @@ export default function TutorialStudioPage() {
               <span className="text-sm text-muted-foreground">
                 Cost:{' '}
                 <strong className="text-foreground">
-                  {reuseBase && health?.has_base_clip ? COST_REUSE : COST_FRESH}
+                  {reuseBase && health?.has_base_clip
+                    ? COST_REUSE
+                    : model && model.id !== 'wan3.0-video'
+                      ? `${COST_WITHOUT_CLIP} + the ${model.label} clip`
+                      : COST_FRESH}
                 </strong>
+                {!(reuseBase && health?.has_base_clip) &&
+                  model &&
+                  model.id !== 'wan3.0-video' &&
+                  ' — apimart publishes no rate for it, so the finished job reports what it charged.'}
               </span>
               <Button onClick={start} disabled={starting || !configured || !reachable}>
                 {starting ? (
@@ -385,6 +469,14 @@ export default function TutorialStudioPage() {
                   <span className="text-xs text-muted-foreground">
                     {when(selected.created_at)}
                   </span>
+                  {selected.video_model && (
+                    <span className="text-xs text-muted-foreground">
+                      {models.find((m) => m.id === selected.video_model)?.label ||
+                        selected.video_model}
+                      {selected.video_resolution ? ` · ${selected.video_resolution}` : ''}
+                      {selected.seconds ? ` · ${selected.seconds}s` : ''}
+                    </span>
+                  )}
                   {(selected.status === 'running' || selected.status === 'queued') && (
                     <Button
                       variant="ghost"

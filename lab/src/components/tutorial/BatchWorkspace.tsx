@@ -17,6 +17,7 @@ import {
   type TutorialBatch,
   type TutorialBatchItem,
   type TutorialJob,
+  type TutorialVideoModel,
 } from 'zite-endpoints-sdk';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +37,10 @@ import StudioPoster from './StudioPoster';
  * so it says so and counts what it is about to queue.
  */
 
+/** Wan 3.0's reel: ~$2 of clip plus ~$0.45 of everything around it. */
 const COST_PER_VIDEO = 2.45;
+/** What a reel costs BEFORE the talking clip — the only stage that varies. */
+const COST_WITHOUT_CLIP = 0.45;
 const POLL_MS = 4000;
 
 function itemTone(status: TutorialBatchItem['status']): string {
@@ -55,7 +59,7 @@ function itemTone(status: TutorialBatchItem['status']): string {
   }
 }
 
-export default function BatchWorkspace() {
+export default function BatchWorkspace({ models = [] }: { models?: TutorialVideoModel[] }) {
   const [batches, setBatches] = useState<TutorialBatch[]>([]);
   const [avatars, setAvatars] = useState<TutorialAvatar[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -70,6 +74,13 @@ export default function BatchWorkspace() {
   const [theme, setTheme] = useState('');
   const [avatarId, setAvatarId] = useState('');
   const [targetCount, setTargetCount] = useState(30);
+  const [videoModel, setVideoModel] = useState('');
+  const [videoResolution, setVideoResolution] = useState('');
+
+  useEffect(() => {
+    // Once, when the catalogue lands — never over a choice already made.
+    setVideoModel((cur) => cur || models[0]?.id || '');
+  }, [models]);
 
   // per-item script edits, kept local until saved
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -125,6 +136,16 @@ export default function BatchWorkspace() {
   }, [openId, scripting, items, loadBatch]);
 
   const avatar = avatars.find((a) => a.id === batch?.avatarId) || null;
+  // Two different models are in play: the one the OPEN batch was created with
+  // (fixed — its scripts were written for that clip length) and the one the NEW
+  // batch form is offering.
+  const batchModel = models.find((m) => m.id === batch?.videoModel) || models[0] || null;
+  const newModel = models.find((m) => m.id === videoModel) || models[0] || null;
+  const resolution = newModel
+    ? newModel.resolutions.includes(videoResolution)
+      ? videoResolution
+      : newModel.defaultResolution
+    : '';
   const picked = items.filter((i) => i.picked);
   const approved = items.filter((i) => i.approved);
   const scripted = picked.filter((i) => i.script);
@@ -149,6 +170,8 @@ export default function BatchWorkspace() {
         avatarId: avatarId || undefined,
         environment: chosen?.environment || undefined,
         targetCount,
+        videoModel: videoModel || undefined,
+        videoResolution: resolution || undefined,
       });
       setName('');
       setTheme('');
@@ -247,11 +270,18 @@ export default function BatchWorkspace() {
 
   async function render() {
     if (!batch || !renderable.length) return;
-    const cost = (renderable.length * COST_PER_VIDEO).toFixed(2);
+    // Only Wan has a published rate. For anything else, promising a number
+    // would be inventing one — say what is known instead.
+    const spend =
+      batchModel && batchModel.id !== 'wan3.0-video'
+        ? `at least $${(renderable.length * COST_WITHOUT_CLIP).toFixed(2)} plus ` +
+          `${renderable.length} ${batchModel.label} clip${renderable.length === 1 ? '' : 's'} ` +
+          '(apimart publishes no rate for it — the finished job reports what it charged)'
+        : `roughly $${(renderable.length * COST_PER_VIDEO).toFixed(2)}`;
     if (
       !window.confirm(
         `Render ${renderable.length} reel${renderable.length === 1 ? '' : 's'}?\n\n` +
-          `This spends roughly $${cost} and renders one at a time, so it will take a while.`,
+          `This spends ${spend} and renders one at a time, so it will take a while.`,
       )
     ) {
       return;
@@ -323,6 +353,41 @@ export default function BatchWorkspace() {
               placeholder="e.g. practical ChatGPT workflows for small e-commerce shops"
             />
           </div>
+          <div className="mt-3">
+            <Label>Talking-head model</Label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {models.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setVideoModel(m.id)}
+                  className={`rounded-md border px-3 py-2 text-left text-xs ${
+                    newModel?.id === m.id ? 'border-primary bg-primary/10' : 'border-border'
+                  }`}
+                >
+                  <div className="font-medium">{m.label}</div>
+                  <div className="text-muted-foreground">{m.seconds}s reels</div>
+                </button>
+              ))}
+              {newModel?.resolutions.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setVideoResolution(r)}
+                  className={`self-center rounded-md border px-2 py-1 text-xs ${
+                    resolution === r ? 'border-primary bg-primary/10' : 'border-border'
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              Fixed for the whole batch: it sets every clip's length, and the ideas and
+              scripts are written for that length. {newModel?.note}
+            </p>
+          </div>
+
           <div className="mt-3">
             <Label>Avatar</Label>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -566,7 +631,10 @@ export default function BatchWorkspace() {
             </div>
             <Button onClick={render} disabled={!renderable.length || busy === 'render'}>
               {busy === 'render' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Render {renderable.length} · ~${(renderable.length * COST_PER_VIDEO).toFixed(2)}
+              Render {renderable.length}
+              {batchModel && batchModel.id !== 'wan3.0-video'
+                ? ` · ${batchModel.label}`
+                : ` · ~$${(renderable.length * COST_PER_VIDEO).toFixed(2)}`}
             </Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">

@@ -11,6 +11,7 @@
  */
 import * as batches from "../db/tutorialBatches.js";
 import { generateScript, generateLooks, ApimartError } from "./apimart.js";
+import { targetSeconds } from "./videoModels.js";
 
 /** Batch ids currently being scripted, so a double-click cannot double-spend. */
 const scripting = new Set<string>();
@@ -37,11 +38,15 @@ export function startScripting(batchId: string): void {
       const todo = batches
         .listItems(batchId)
         .filter((i) => i.picked && !i.script);
+      // The batch's video model fixes how long a clip these get spoken over, so
+      // it is also how long a script to write. Read once: it cannot change
+      // under us mid-run, and 30 lookups would say the same thing.
+      const seconds = targetSeconds(batches.getBatch(batchId)?.videoModel || "");
       for (const item of todo) {
         // The operator may have deleted the batch while this was running.
         if (!batches.getBatch(batchId)) return;
         try {
-          const script = await generateScript(item.topic);
+          const script = await generateScript(item.topic, seconds);
           batches.updateItem(item.id, { script, status: "scripted", error: "" });
         } catch (err) {
           failures++;

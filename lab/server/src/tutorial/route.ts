@@ -64,7 +64,13 @@ export function tutorialRouter(): express.Router {
 
   // Avatar preview images. Same reasoning as the reel above: binary payload, so
   // it cannot ride /api/fn. No Range handling — these are small stills.
-  router.get("/avatar/:id.img", async (req, res) => {
+  // One handler, two assets: the reference image the pipeline renders from, and
+  // the optional three-panel identity map beside it. Registered twice rather
+  // than with an array path — a router path that silently fails to match is a
+  // 404 nobody notices until the image is missing on the page.
+  const serveAvatarImage =
+    (wantsMap: boolean) =>
+    async (req: express.Request, res: express.Response) => {
     if (!isConfigured()) {
       res.status(503).json({ error: "Tutorial Studio is not configured." });
       return;
@@ -77,7 +83,7 @@ export function tutorialRouter(): express.Router {
 
     let upstream: Response;
     try {
-      upstream = await call(`/api/avatars/${id}/image`);
+      upstream = await call(`/api/avatars/${id}/${wantsMap ? "map" : "image"}`);
     } catch (err) {
       const unavailable = err instanceof TutorialUnavailable;
       res.status(unavailable ? 503 : 502).json({
@@ -86,7 +92,9 @@ export function tutorialRouter(): express.Router {
       return;
     }
     if (!upstream.ok) {
-      res.status(upstream.status).json({ error: "No such avatar." });
+      res.status(upstream.status).json({
+        error: wantsMap ? "That avatar has no map." : "No such avatar.",
+      });
       return;
     }
 
@@ -103,7 +111,10 @@ export function tutorialRouter(): express.Router {
       return;
     }
     Readable.fromWeb(upstream.body as any).pipe(res);
-  });
+  };
+
+  router.get("/avatar/:id.img", serveAvatarImage(false));
+  router.get("/avatar/:id.map", serveAvatarImage(true));
 
   return router;
 }

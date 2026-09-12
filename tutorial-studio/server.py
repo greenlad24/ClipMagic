@@ -52,6 +52,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from queue import Queue
 from urllib.parse import urlparse, parse_qs
 
+from scripts.video_models import VIDEO_MODELS, DEFAULT_MODEL, normalize
+
 PKG = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 JOBS_DIR = os.path.join(DATA_DIR, "jobs")
@@ -136,10 +138,27 @@ def _avatar_meta(avatar_id: str) -> dict | None:
 
 def avatar_ref_path(avatar_id: str) -> str | None:
     """Absolute path of an avatar's reference image, or None if it is gone."""
+    return _avatar_file(avatar_id, "file")
+
+
+def avatar_map_path(avatar_id: str) -> str | None:
+    """The avatar MAP — the three-panel identity sheet, when one was saved.
+
+    Optional by design: an avatar uploaded by hand has no map, and everything
+    the pipeline does today runs off the single reference image. The map is
+    kept because it is what lets a later step draw this person from an angle
+    the reference never showed, without inventing a different face."""
+    return _avatar_file(avatar_id, "map_file")
+
+
+def _avatar_file(avatar_id: str, key: str) -> str | None:
     meta = _avatar_meta(avatar_id)
     if not meta:
         return None
-    path = os.path.join(avatar_dir(avatar_id), meta.get("file") or "")
+    name = meta.get(key) or ""
+    if not name:
+        return None
+    path = os.path.join(avatar_dir(avatar_id), name)
     return path if os.path.exists(path) else None
 
 
@@ -153,7 +172,8 @@ def list_avatars() -> list[dict]:
     return out
 
 
-def create_avatar(name: str, environment: str, raw: bytes) -> dict:
+def create_avatar(name: str, environment: str, raw: bytes,
+                  map_raw: bytes | None = None) -> dict:
     sniffed = _sniff_image(raw)
     if not sniffed:
         raise ValueError("that file is not a PNG, JPEG or WEBP image")
@@ -164,11 +184,23 @@ def create_avatar(name: str, environment: str, raw: bytes) -> dict:
     fname = f"ref.{ext}"
     with open(os.path.join(d, fname), "wb") as fh:
         fh.write(raw)
+    # The map is optional and sniffed the same way: a bad one is dropped rather
+    # than failing the avatar, because the reference image is what the pipeline
+    # actually needs and the map is an extra.
+    map_name = ""
+    if map_raw:
+        map_sniffed = _sniff_image(map_raw)
+        if map_sniffed:
+            map_name = f"map.{map_sniffed[0]}"
+            with open(os.path.join(d, map_name), "wb") as fh:
+                fh.write(map_raw)
     meta = {
         "id": avatar_id,
         "name": name[:120] or "Untitled avatar",
         "environment": environment[:600],
         "file": fname,
+        "map_file": map_name,
+        "has_map": bool(map_name),
         "mime": mime,
         "bytes": len(raw),
         "created_at": time.time(),
@@ -291,6 +323,10 @@ def _run(job_id: str) -> None:
         cmd += ["--scene", job["scene"]]
     if job.get("environment"):
         cmd += ["--environment", job["environment"]]
+    if job.get("video_model"):
+        cmd += ["--video-model", job["video_model"]]
+    if job.get("video_resolution"):
+        cmd += ["--video-resolution", job["video_resolution"]]
     # The avatar reference and the approved script were staged by _prepare.
     for name in os.listdir(d):
         if name.startswith("avatar_ref."):
@@ -422,11 +458,15 @@ class Handler(BaseHTTPRequestHandler):
         if parts == ["api", "avatars"]:
             self._json(200, {"avatars": list_avatars()})
             return
-        if len(parts) == 4 and parts[:2] == ["api", "avatars"] and parts[3] == "image":
+        if len(parts) == 4 and parts[:2] == ["api", "avatars"] and parts[3] in ("image", "map"):
             meta = _avatar_meta(parts[2])
-            path = avatar_ref_path(parts[2]) if meta else None
+            path = (avatar_ref_path(parts[2]) if parts[3] == "image"
+                    else avatar_map_path(parts[2])) if meta else None
             if not path:
-                self._json(404, {"error": "no such avatar"})
+                # A missing MAP is an ordinary state (an uploaded avatar has
+                # none), not a broken avatar — but 404 is still the honest
+                # answer to "give me the map" when there isn't one.
+                self._json(404, {"error": "no such avatar" if not meta else "no map for that avatar"})
                 return
             raw = open(path, "rb").read()
             self.send_response(200)
@@ -487,9 +527,24 @@ class Handler(BaseHTTPRequestHandler):
             if len(raw) > MAX_AVATAR_BYTES:
                 self._json(400, {"error": f"image is larger than {MAX_AVATAR_BYTES // (1024*1024)}MB"})
                 return
+            # The optional three-panel identity map. Same size cap; a map that
+            # will not decode is dropped rather than failing the avatar.
+            map_raw = None
+            map_b64 = body.get("map_b64") or ""
+            if map_b64:
+                try:
+                    candidate = base64.b64decode(map_b64, validate=True)
+                except (ValueError, binascii.Error):
+                    self._json(400, {"error": "map_b64 is not valid base64"})
+                    return
+                if len(candidate) > MAX_AVATAR_BYTES:
+                    self._json(400, {"error": f"map is larger than {MAX_AVATAR_BYTES // (1024*1024)}MB"})
+                    return
+                map_raw = candidate
             try:
                 meta = create_avatar((body.get("name") or "").strip(),
-                                     (body.get("environment") or "").strip(), raw)
+                                     (body.get("environment") or "").strip(), raw,
+                                     map_raw)
             except ValueError as exc:
                 self._json(400, {"error": str(exc)})
                 return
@@ -543,6 +598,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "no such avatar"})
                 return
 
+            # An unknown model is refused rather than normalized away: the Lab
+            # picked it from a list, so a mismatch is a drift between the two
+            # tables and should be visible, not silently rendered as Wan.
+            video_model = (body.get("video_model") or DEFAULT_MODEL).strip()
+            if video_model not in VIDEO_MODELS:
+                self._json(400, {"error": f"unknown video model {video_model!r} — "
+                                          f"expected one of {', '.join(sorted(VIDEO_MODELS))}"})
+                return
+            video_model, video_resolution, seconds = normalize(
+                video_model, (body.get("video_resolution") or "").strip())
+
             # A batch sends the script it already had approved; a one-off job
             # leaves this empty and the pipeline writes its own with Qwen.
             script = body.get("script")
@@ -560,6 +626,12 @@ class Handler(BaseHTTPRequestHandler):
                 "environment": (body.get("environment") or "").strip()[:600],
                 "avatar_id": avatar_id,
                 "batch_id": (body.get("batch_id") or "").strip()[:64],
+                # Which model speaks the script, and at what resolution. The
+                # model also fixes the clip length (H3 caps at 15s), so it is
+                # recorded per job rather than inferred later from the log.
+                "video_model": video_model,
+                "video_resolution": video_resolution,
+                "seconds": seconds,
                 "reuse_base": bool(body.get("reuse_base")) and os.path.exists(BASE_CLIP),
                 "status": "queued",
                 "created_at": time.time(),
@@ -643,8 +715,15 @@ def _public(job: dict) -> dict:
     """The record as the Lab sees it (no filesystem paths)."""
     out = {k: job.get(k) for k in
            ("id", "topic", "outfit", "scene", "environment", "avatar_id", "batch_id",
+            "video_model", "video_resolution", "seconds",
             "reuse_base", "status", "error",
             "created_at", "started_at", "finished_at", "size_bytes")}
+    # Records written before the model became a choice have none of these, and
+    # every one of them was a 30s Wan reel.
+    model, resolution, seconds = normalize(out.get("video_model") or DEFAULT_MODEL,
+                                           out.get("video_resolution") or "")
+    out["video_model"], out["video_resolution"] = model, resolution
+    out["seconds"] = out.get("seconds") or seconds
     out["has_reel"] = os.path.exists(
         os.path.join(job_dir(job["id"]), ".media", "tutorial", "reel.mp4"))
     return out
