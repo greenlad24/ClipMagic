@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import {
   scriptGenStatus,
   startScript,
+  importResearchPack,
   continueScript,
   scriptJobStatus,
   getScriptRun,
@@ -94,6 +95,8 @@ import {
   X,
   Undo2,
   ImagePlus,
+  Upload,
+  ExternalLink,
 } from 'lucide-react';
 
 /**
@@ -287,6 +290,200 @@ const AUTOSAVE_DEBOUNCE_MS = 1200;
  * process-global state zeroed per run, so two scripts at once would mis-report
  * every cost and trip the spend ceiling on their combined total.
  */
+/**
+ * Where the ChatGPT skill that builds research packs lives. The page describes
+ * the pack format and hosts the skill download, so the two never drift apart
+ * from what the importer on the server accepts.
+ */
+const RESEARCH_PACK_SKILL_URL = 'https://claude.ai/artifact/5Y3EsRHUhtzSH8EmXhh3F2';
+
+/**
+ * Start from a ChatGPT research pack instead of an idea.
+ *
+ * The pack is the research half of the methodology (UI check, newest tutorials,
+ * web research, fact sheet, outline) done in Jake's own ChatGPT account. The
+ * server writes it straight into the run's stages and parks at the usual
+ * checkpoint, so the run that follows starts at the hooks.
+ */
+function ImportPackPanel({ onImported }: { onImported: (runId: string) => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [pack, setPack] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [brief, setBrief] = useState('');
+  const [sponsorMode, setSponsorMode] = useState<SponsorshipMode>('organic');
+  const [sponsorName, setSponsorName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [errors, setErrors] = useState<string | null>(null);
+
+  const readFile = (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 2_000_000) {
+      toast.error('That file is over 2 MB — a research pack is plain text, usually under 150 KB.');
+      return;
+    }
+    const fr = new FileReader();
+    fr.onload = () => {
+      setPack(String(fr.result ?? ''));
+      setFileName(file.name);
+      setErrors(null);
+    };
+    fr.onerror = () => toast.error('Could not read that file');
+    fr.readAsText(file);
+  };
+
+  const submit = async () => {
+    setBusy(true);
+    setErrors(null);
+    try {
+      const sponsorship: Sponsorship =
+        sponsorMode === 'organic'
+          ? { mode: 'organic', sponsorName: null }
+          : { mode: sponsorMode, sponsorName: sponsorName.trim() || null };
+      const res = await importResearchPack({
+        pack,
+        ...(brief.trim() ? { brief: brief.trim() } : {}),
+        sponsorship,
+      });
+      toast.success(
+        res.warnings.length
+          ? `Pack imported with ${res.warnings.length} note${res.warnings.length === 1 ? '' : 's'} — check them before generating`
+          : 'Pack imported — confirm the setup to write the script',
+      );
+      setPack('');
+      setFileName('');
+      setBrief('');
+      setOpen(false);
+      await onImported(res.runId);
+    } catch (e) {
+      setErrors(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div className="mb-2">
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+          <Upload className="h-4 w-4" />
+          Import research from ChatGPT
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <section className="mb-4 rounded-xl border border-border bg-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="space-y-0.5">
+          <h2 className="text-sm font-medium">Import a research pack</h2>
+          <p className="text-xs text-muted-foreground">
+            Did the research in ChatGPT? Upload the pack it made. The research, fact sheet and outline are used
+            as they are, so the run starts at the hooks and doesn't pay for research again.
+          </p>
+          <a
+            href={RESEARCH_PACK_SKILL_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+          >
+            Get the ChatGPT skill
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={busy}>
+          Close
+        </Button>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="sg-pack-file">Research pack</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            id="sg-pack-file"
+            type="file"
+            accept=".md,.markdown,.txt,text/markdown,text/plain"
+            className="max-w-xs"
+            onChange={(e) => readFile(e.target.files?.[0])}
+            disabled={busy}
+          />
+          {fileName && <span className="text-xs text-muted-foreground">{fileName}</span>}
+        </div>
+        <Textarea
+          value={pack}
+          onChange={(e) => {
+            setPack(e.target.value);
+            setFileName('');
+            setErrors(null);
+          }}
+          placeholder={'…or paste it here. It starts with <<<CLIPMAGIC_RESEARCH_PACK v1>>>'}
+          rows={5}
+          className="font-mono text-xs"
+          disabled={busy}
+        />
+        {pack && (
+          <p className="text-[11px] text-muted-foreground">
+            {pack.length.toLocaleString()} characters
+          </p>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="sg-pack-brief">Brief (optional)</Label>
+        <Textarea
+          id="sg-pack-brief"
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+          placeholder="Anything the script has to land that the pack's outline doesn't already say"
+          rows={2}
+          disabled={busy}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Sponsorship</Label>
+        <Select value={sponsorMode} onValueChange={(v) => setSponsorMode(v as SponsorshipMode)}>
+          <SelectTrigger className="max-w-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SPONSOR_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {sponsorMode !== 'organic' && (
+          <Input
+            value={sponsorName}
+            onChange={(e) => setSponsorName(e.target.value)}
+            placeholder="Sponsor name"
+            className="mt-1.5 max-w-xs"
+          />
+        )}
+      </div>
+
+      {errors && (
+        <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          <p className="text-xs text-foreground">{errors}</p>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button onClick={() => void submit()} disabled={busy || !pack.trim()}>
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+          Import pack
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          Instant. Nothing is billed until you confirm the setup.
+        </span>
+      </div>
+    </section>
+  );
+}
+
 function BulkQueuePanel() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
@@ -2091,6 +2288,15 @@ export default function ScriptGeneratorPage() {
                 ) : !run ? (
                   /* ── View 1: Input ─────────────────────────────────────────── */
                   <>
+                  <ImportPackPanel
+                    onImported={async (runId) => {
+                      seededRef.current = null;
+                      setRequestedMode('full');
+                      setJob(null);
+                      setRun(await getScriptRun({ runId }));
+                      refreshRuns();
+                    }}
+                  />
                   <BulkQueuePanel />
                   <section className="rounded-xl border border-border bg-card p-4 space-y-4">
                     <div className="space-y-1.5">
@@ -2232,6 +2438,33 @@ export default function ScriptGeneratorPage() {
                       </p>
                     )}
 
+                    {run.stages?.imported && (
+                      <div className="rounded-lg border border-[hsl(var(--chart-2))]/40 bg-[hsl(var(--chart-2))]/5 p-3 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <Upload className="mt-0.5 h-4 w-4 shrink-0 text-[hsl(var(--chart-2))]" />
+                          <div className="space-y-0.5">
+                            <p className="text-xs font-medium text-foreground">
+                              Research imported from ChatGPT
+                              {run.stages.imported.researchedOn ? ` · researched ${run.stages.imported.researchedOn}` : ''}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                              Used as it is: the research, the fact sheet and the outline
+                              {run.stages.screenshotSheet ? ', the UI check' : ''}
+                              {run.stages.videoWorkflows ? ' and the tutorial walkthroughs' : ''}. The run starts at the
+                              hooks. Changing the title or type here doesn't rebuild the outline.
+                            </p>
+                          </div>
+                        </div>
+                        {run.stages.imported.warnings.length > 0 && (
+                          <ul className="ml-6 list-disc space-y-0.5 text-[11px] text-muted-foreground">
+                            {run.stages.imported.warnings.map((w, i) => (
+                              <li key={i}>{w}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+
                     {/*
                       The last moment screenshots can still be added — Stage 0.4
                       reads them before anything is searched for. Shown on every
@@ -2239,6 +2472,10 @@ export default function ScriptGeneratorPage() {
                       because that is the case where the research comes back
                       hedged and there is nothing to do about it afterwards.
                     */}
+                    {/* A pack that carried its own UI check fills the screenshot
+                        stage, so shots added here would be skipped — hide the
+                        picker rather than take uploads that do nothing. */}
+                    {!(run.stages?.imported && run.stages.screenshotSheet) && (
                     <div
                       className={cn(
                         'rounded-lg border p-3 space-y-2',
@@ -2269,6 +2506,7 @@ export default function ScriptGeneratorPage() {
                         disabled={continuing !== null || attachingShots}
                       />
                     </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <Label>Video type</Label>
@@ -2357,9 +2595,11 @@ export default function ScriptGeneratorPage() {
                         styled as the primary. Clicking the leading button out of habit
                         should never buy a full script when an outline was asked for. */}
                     <div className="flex flex-wrap items-center gap-3">
-                      {(requestedMode === 'outline'
-                        ? (['outline', 'full'] as const)
-                        : (['full', 'outline'] as const)
+                      {(run.stages?.imported
+                        ? (['full'] as const)
+                        : requestedMode === 'outline'
+                          ? (['outline', 'full'] as const)
+                          : (['full', 'outline'] as const)
                       ).map((m) => (
                         <Button
                           key={m}
@@ -2378,7 +2618,9 @@ export default function ScriptGeneratorPage() {
                         </Button>
                       ))}
                       <span className="text-xs text-muted-foreground">
-                        {requestedMode === 'outline'
+                        {run.stages?.imported
+                          ? 'Hooks, sections, outro and review — about 15 minutes. No research is bought.'
+                          : requestedMode === 'outline'
                           ? 'The outline stops when the outline is done — a few minutes. The full script takes about 20.'
                           : 'The full script takes about 20 minutes; the outline alone takes a few.'}
                       </span>

@@ -645,6 +645,8 @@ export interface ScriptStages {
   screenshotRefs?: ScreenshotRef[];
   /** Stage 1 — whether the research ever opened a vendor page. */
   sourceAudit?: SourceAudit;
+  /** Stage 1.6 — what the newest tutorials show on screen. Null when none were found. */
+  videoWorkflows?: string | null;
   /** Stage 1.5 — checkable facts distilled from the research, with verification dates. */
   factSheet: string | null;
   outline: string | null;
@@ -672,6 +674,14 @@ export interface ScriptStages {
   openLoops: OpenLoop[] | null;
   /** Stage 3.5 — the hooks ranked on virality (judged) and search value (measured). */
   hookRanking: HookRank[] | null;
+  /** Set when the research half came from a ChatGPT research pack. */
+  imported?: {
+    source: "chatgpt";
+    packVersion: string;
+    researchedOn: string | null;
+    importedAt: number;
+    warnings: string[];
+  };
 }
 /** A question the hook plants and a named section pays off. */
 export interface OpenLoop {
@@ -746,6 +756,12 @@ export const scriptGenStatus =
   endpoint<Record<string, never>, ScriptGenStatusOutput>("scriptGenStatus");
 /** Stage 0: classify + propose titles; creates the run (status awaiting_confirmation). */
 export const startScript = endpoint<ScriptInput, { runId: string; stage0: Stage0Result }>("startScript");
+
+/** Start from a ChatGPT research pack: skips research/fact sheet/outline; parks at the checkpoint. */
+export const importResearchPack = endpoint<
+  { pack: string; brief?: string; sponsorship?: Sponsorship; targetLength?: string },
+  { runId: string; stage0: Stage0Result; warnings: string[] }
+>("importResearchPack");
 
 /** Upload screenshots before the run exists; returns the refs to put in ScriptInput. */
 export const uploadScriptShots =

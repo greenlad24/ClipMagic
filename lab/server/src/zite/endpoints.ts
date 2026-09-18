@@ -211,6 +211,7 @@ import type { ResearchInput, ResearchMode } from "../keyword/types.js";
 import { aiConfig } from "../ai/config.js";
 import {
   startScript as runStartScript,
+  importResearchPack as runImportResearchPack,
   attachScreenshots as runAttachScreenshots,
   continueScript as runContinueScript,
   getScriptSnapshot,
@@ -3646,6 +3647,18 @@ const scriptGenStatus: Handler = async () => ({
 });
 
 const startScript: Handler = async (input) => runStartScript(input as ScriptInput);
+
+/**
+ * Start a run from a ChatGPT research pack (the research half done elsewhere).
+ * Parks at the same checkpoint as startScript, with no Opus call.
+ */
+const importResearchPack: Handler = async (input) =>
+  runImportResearchPack({
+    pack: String(input?.pack ?? ""),
+    brief: typeof input?.brief === "string" ? input.brief : undefined,
+    sponsorship: input?.sponsorship,
+    targetLength: typeof input?.targetLength === "string" ? input.targetLength : undefined,
+  });
 
 /**
  * Upload screenshots of the tool for a run that does not exist yet.
@@ -7925,6 +7938,7 @@ export const HANDLERS: Record<string, Handler> = {
   // Jake Dawson Script Generator (LAB tool)
   scriptGenStatus,
   startScript,
+  importResearchPack,
   uploadScriptShots,
   attachScriptShots,
   deleteScriptShot,

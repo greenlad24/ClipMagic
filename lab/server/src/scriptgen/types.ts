@@ -400,6 +400,23 @@ export interface ScriptStages {
   claimAudit: ClaimAudit | null;
   /** What the claim-fix pass rewrote, and what it refused to. Null when the audit found nothing. */
   claimFix: { applied: string[]; skipped: string[] } | null;
+  /**
+   * Set when the research half came from a ChatGPT research pack instead of this
+   * server. The pack filled research / fact sheet / outline (and the UI check and
+   * tutorial sheet when it had them), so those stages never run. Undefined on
+   * every normal run.
+   */
+  imported?: ImportedPackInfo;
+}
+
+/** Where an imported run's research came from, and what the import warned about. */
+export interface ImportedPackInfo {
+  source: "chatgpt";
+  packVersion: string;
+  /** The date the pack says the research was done (YYYY-MM-DD), when it says. */
+  researchedOn: string | null;
+  importedAt: number;
+  warnings: string[];
 }
 
 /**

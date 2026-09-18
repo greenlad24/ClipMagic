@@ -94,6 +94,7 @@ import type {
 } from "./types.js";
 import { loadShot, shotExists } from "./shots.js";
 import { auditSources, auditLogLine, firstPartyBlock, vendorHosts } from "./sources.js";
+import { parseResearchPack } from "./researchPack.js";
 
 // ── Stage 2 research-paste block ──────────────────────────────────────────────
 // The exact bracketed instruction block in stage2-outline.md that we replace
@@ -253,6 +254,96 @@ export function attachScreenshots(runId: string, screenshots: ScreenshotRef[]): 
   const input: ScriptInput = { ...run.input, screenshots };
   updateRun(runId, { input });
   return { count: screenshots.length };
+}
+
+/**
+ * Start a run from a ChatGPT research pack instead of from an idea.
+ *
+ * The pack IS stages 0.4 → 2: the UI check, the tutorial sheet, the web
+ * research, the fact sheet and the outline, done in Jake's ChatGPT account. They
+ * are written straight into the run's stages, and runScript's own guards — every
+ * one is `if (!stages.x)` — then skip each stage that is already filled. Nothing
+ * here re-implements the pipeline; it only pre-pays it.
+ *
+ * Two stages need an explicit "done" rather than a value:
+ * - the tutorial sheet is set to null when the pack had none, because undefined
+ *   means "never ran" and would buy the Apify transcripts;
+ * - Stage 2.5 (brief coverage) re-emits the outline, so it is gated on
+ *   `stages.imported` in runScript — an imported outline is used as written.
+ *
+ * No Opus call: the setup comes from the pack, so the run parks at the same
+ * checkpoint a normal run does, for the sponsorship, length and a final look.
+ */
+export function importResearchPack(input: {
+  pack: string;
+  brief?: string;
+  sponsorship?: Sponsorship;
+  targetLength?: string;
+}): { runId: string; stage0: Stage0Result; warnings: string[] } {
+  const parsed = parseResearchPack(String(input?.pack ?? ""));
+  if (!parsed.ok) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `That research pack can't be used yet: ${parsed.errors.join(" ")}`,
+    });
+  }
+  const { pack } = parsed;
+  const brief = (input.brief || "").trim();
+  const runInput: ScriptInput = {
+    // The idea is what the history and the edit tools show; the title is the
+    // most honest one-line summary of a pack.
+    idea: pack.setup.title,
+    ...(brief ? { brief } : {}),
+    sponsorship: input.sponsorship ?? { mode: "organic", sponsorName: null },
+    ...(input.targetLength?.trim() ? { targetLength: input.targetLength.trim() } : {}),
+  };
+  const runId = createRun(runInput);
+
+  const stage0: Stage0Result = {
+    videoTypeDetailed: `${pack.setup.videoTypeRaw} — imported from ChatGPT research pack`,
+    videoType: pack.setup.videoType,
+    titleOptions: [pack.setup.title],
+    recommendedTitle: pack.setup.title,
+    coreTopic: pack.setup.coreTopic,
+    specificFocus: pack.setup.specificFocus,
+    itemCount: pack.setup.itemCount,
+    coverageRisk: "normal",
+    coverageNote: "",
+  };
+
+  const stages = emptyStages();
+  stages.research = pack.research;
+  stages.sources = pack.sources;
+  stages.factSheet = pack.factSheet;
+  stages.outline = pack.outline;
+  // Left undefined when absent, so screenshots attached at the checkpoint are
+  // still read by Stage 0.4. A pack that did carry a UI check fills it, and the
+  // checkpoint hides the picker — the shots would be skipped otherwise.
+  if (pack.uiVerification) stages.screenshotSheet = pack.uiVerification;
+  stages.videoWorkflows = pack.videoWorkflows;
+  if (pack.videoSources.length) stages.videoSources = pack.videoSources;
+  stages.imported = {
+    source: "chatgpt",
+    packVersion: pack.version,
+    researchedOn: pack.setup.researchedOn,
+    importedAt: Date.now(),
+    warnings: pack.warnings,
+  };
+
+  updateRun(runId, {
+    stage0,
+    stages,
+    title: pack.setup.title,
+    videoType: pack.setup.videoType,
+    status: "awaiting_confirmation",
+  });
+  console.log(
+    `[scriptgen:import] ${runId} "${pack.setup.title}" (${pack.setup.videoType}) — ` +
+      `research ${pack.research.length}c, facts ${pack.factSheet.length}c, outline ${pack.outline.length}c, ` +
+      `ui=${pack.uiVerification ? "yes" : "no"}, videos=${pack.videoSources.length}, sources=${pack.sources.length}, ` +
+      `${pack.warnings.length} warning(s)`,
+  );
+  return { runId, stage0, warnings: pack.warnings };
 }
 
 // ── In-memory job registry ────────────────────────────────────────────────────
@@ -2588,7 +2679,9 @@ async function runScript(
     // given its own section. Stage 6.5 asks the same question of the finished
     // script and can only reach for a scalpel — it scored the Expertise run
     // 48/100, said three requests "need their own section", and shipped anyway.
-    if (brief && !stages.briefCoverage) {
+    // An imported outline is used exactly as the pack wrote it: this pass
+    // re-emits the whole outline, which is the step the pack exists to skip.
+    if (brief && !stages.briefCoverage && !stages.imported) {
       progress(job, "Checking the outline against the brief…", PCT.coverage);
       const s25 = fill(loadPrompt("stage2.5-coverage"), {
         "[INSERT TITLE]": title,
