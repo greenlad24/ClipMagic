@@ -1,0 +1,56 @@
+/*
+ * ⚠️ THE SCRIPT FONT IS SELF-HOSTED, AND THAT IS THE WHOLE POINT. Any
+ * platform-resolved stack — system-ui, or even Arial, which Android maps to
+ * Roboto — is a different set of glyph widths on a different device, so the
+ * same script wraps at different words and two screens show different lines
+ * while their scroll positions agree perfectly. One font file, served from
+ * this origin, is the only way every screen breaks the text identically.
+ *
+ * Inter, variable weight, latin subset, OFL. Served from /news-fonts, which is
+ * public because the follower page is.
+ */
+@font-face {
+  font-family: 'NewsScript';
+  src: url('/news-fonts/inter-var.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  /* swap: the show must start even if the font is slow — it reflows once. */
+  font-display: swap;
+}
+
+/*
+ * AI News Stream — the app's own light palette. Applied to the whole document
+ * (so dialogs and toasts, which render outside the page, match too) only while
+ * one of its pages is open; the Lab's dark theme is restored on the way out.
+ */
+:root.news-theme {
+  --background: 0 0% 100%;
+  --foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 47.4% 11.2%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 100% 50%;
+  --destructive-foreground: 210 40% 98%;
+  --ring: 215 20.2% 65.1%;
+  --radius: 0.5rem;
+  --chart-1: 221 83% 53%;
+  --chart-2: 212 95% 68%;
+  --chart-3: 216 92% 60%;
+  --chart-4: 210 98% 78%;
+  --chart-5: 212 97% 87%;
+  --shadow-y: 1px;
+  --shadow-blur: 4px;
+  --shadow-opacity: 0.2;
+  color-scheme: light;
+}

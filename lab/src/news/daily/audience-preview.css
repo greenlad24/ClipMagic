@@ -1,0 +1,39 @@
+/*
+ * The audience look, scoped. The dashboard uses the Lab's dark tokens, but the
+ * audience/display screens are light (theme.css, applied by useNewsTheme on the
+ * presentation pages only). Wrapping the preview's ArticleView/TweetView in
+ * .news-audience-preview gives them the same palette as the real screen, so the
+ * preview stays honest. Values copied from theme.css — keep them in step.
+ */
+.news-audience-preview {
+  --background: 0 0% 100%;
+  --foreground: 222.2 47.4% 11.2%;
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 47.4% 11.2%;
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 47.4% 11.2%;
+  --primary: 222.2 47.4% 11.2%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+  --destructive: 0 100% 50%;
+  --destructive-foreground: 210 40% 98%;
+  --ring: 215 20.2% 65.1%;
+  --radius: 0.5rem;
+  --chart-1: 221 83% 53%;
+  --chart-2: 212 95% 68%;
+  --chart-3: 216 92% 60%;
+  --chart-4: 210 98% 78%;
+  --chart-5: 212 97% 87%;
+  --shadow-y: 1px;
+  --shadow-blur: 4px;
+  --shadow-opacity: 0.2;
+  color-scheme: light;
+  color: hsl(var(--foreground));
+}

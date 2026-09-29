@@ -1,0 +1,903 @@
+import { useNewsTheme } from '../useNewsTheme';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth';
+import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
+import { connectLiveSync, type LiveSync } from '../liveSync';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
+
+type SlideType = GetSlidesOutputType['slides'][0];
+
+type BCMsg =
+  | { type: 'slide'; slide: SlideType; idx: number; total: number }
+  | { type: 'blackout'; value: boolean }
+  | { type: 'end' }
+  | { type: 'ping' }
+  | { type: 'pong' };
+
+const CHANNEL = 'ng-presenter';
+
+
+const D = {
+  bg: '#0a0a0a', panel: '#111', card: '#1c1c1c', border: '#2a2a2a',
+  text: '#f0f0f0', muted: '#777', faint: '#3a3a3a',
+  blue: '#60a5fa', red: '#ef4444', orange: '#f97316', green: '#22c55e',
+};
+
+function NoteCard({ title, text, keyPoints }: { title: string; text?: string | null; keyPoints?: string[] }) {
+  return (
+    <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 10, padding: '12px 14px', overflow: 'auto' }}>
+      <p style={{ fontSize: 10, fontWeight: 700, color: D.muted, marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>{title}</p>
+      {keyPoints !== undefined ? (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column' as const, gap: 7 }}>
+          {keyPoints.map((pt, i) => (
+            <li key={i} style={{ fontSize: 14, lineHeight: 1.5, color: D.text, paddingLeft: 14, position: 'relative' as const }}>
+              <span style={{ position: 'absolute' as const, left: 0, color: D.blue }}>•</span>{pt}
+            </li>
+          ))}
+          {!keyPoints.length && <li style={{ fontSize: 13, color: D.faint }}>—</li>}
+        </ul>
+      ) : (
+        <p style={{ fontSize: 14, lineHeight: 1.65, color: D.text, margin: 0 }}>{text || '—'}</p>
+      )}
+    </div>
+  );
+}
+
+export default function NotesPage() {
+  useNewsTheme();
+  const navigate = useNavigate();
+  const { user, isLoading: authLoading, loginWithRedirect } = useAuth();
+
+  // Data
+  const [slides, setSlides] = useState<SlideType[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Presentation state
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [blackout, setBlackout] = useState(false);
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [ended, setEnded] = useState(false);
+  const [gMode, setGMode] = useState(false);
+  const [gBuffer, setGBuffer] = useState('');
+
+  // Connection status
+  const [displayConnected, setDisplayConnected] = useState(false);
+
+  // Source tab — latched on/off, survives reloads
+  const [sourceEnabled, setSourceEnabled] = useState(() => localStorage.getItem('tp2-source-enabled') === 'true');
+  const [sourceBlocked, setSourceBlocked] = useState(false);
+
+  // Source tab debug mode
+  const [sourceDebug, setSourceDebug] = useState(false);
+  const [sourceLog, setSourceLog] = useState<Array<{ time: string; msg: string; type: 'info' | 'error' | 'warn' }>>([]);
+
+  // Teleprompter mode — synced settings come from session, mirror is local-only
+  // Presentation opens on the TELEPROMPTER — it is what Jake reads from on
+  // air, so landing on notes meant one extra click at the top of every show.
+  const [viewMode, setViewMode] = useState<'notes' | 'teleprompter'>('teleprompter');
+  const [teleprompterPaused, setTeleprompterPaused] = useState(true);
+  // SYNCED settings (populated from session polling)
+  const [tpSpeed, setTpSpeed] = useState(2.5);
+  const [tpFontSize, setTpFontSize] = useState(32);
+  const [tpLineHeight, setTpLineHeight] = useState(1.9);
+  const [tpWidth, setTpWidth] = useState<'wide' | 'medium' | 'narrow'>('medium');
+  // LOCAL-ONLY setting
+  const tpMirror = localStorage.getItem('tp2-mirror') === 'true';
+
+  // Multi-device sync
+  const [remoteSynced, setRemoteSynced] = useState(false); // shows "Synced from device" briefly
+
+  // Refs
+  const slideStartRef = useRef(Date.now());
+  const streamStartRef = useRef(Date.now());
+  const navOrderRef = useRef(0);
+  const gTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const lastPongRef = useRef(0);
+  const lastLocalNavTimeRef = useRef(0); // ms timestamp of last local navigation (used to suppress remote sync noise)
+  const channelRef = useRef<BroadcastChannel | null>(null);
+  const sourceWindowRef = useRef<Window | null>(null);
+  const teleprompterRef = useRef<HTMLDivElement>(null);
+  const scrollAnimRef = useRef<number | undefined>();
+  const ctxRef = useRef({ currentIdx: 0, slides: [] as SlideType[], sessionId: '', blackout: false });
+  // Set around our OWN programmatic scrolls, so the scrub listener can tell a
+  // user dragging from the animation loop moving the element itself. Without
+  // it every rendered frame looks like a seek and re-anchors the whole room.
+  const ignoreScrollUntilRef = useRef(0);
+  // ⚠️ THE ONLY RELIABLE WAY TO TELL OUR OWN SCROLL FROM THE USER'S. A time
+  // window cannot do it: while playing we write scrollTop every frame, so any
+  // drag would land inside the window and be discarded. Comparing against the
+  // value we last wrote works in both states.
+  const lastProgScrollRef = useRef(-1);
+
+  useEffect(() => {
+    ctxRef.current = { currentIdx, slides, sessionId: sessionId || '', blackout };
+  }, [currentIdx, slides, sessionId, blackout]);
+
+  useEffect(() => {
+    if (!authLoading && !user) loginWithRedirect({ redirectUrl: window.location.href });
+  }, [authLoading, user, loginWithRedirect]);
+
+  // Persist source-tab latch
+  useEffect(() => { localStorage.setItem('tp2-source-enabled', String(sourceEnabled)); }, [sourceEnabled]);
+
+  // Load slides + start/join session
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      try {
+        const data = await getSlides({});
+        if (!data.deck || data.slides.length === 0) { toast.error('No deck found. Build a deck first.'); return; }
+        setSlides(data.slides);
+        const sess = await startSession({ deckId: data.deck.id, controllerId: window.localStorage.getItem('tp2-device-id') || undefined } as any);
+        setSessionId(sess.sessionId);
+        // Joining an existing session — sync to wherever the other device is
+        if (!sess.isNew) {
+          const state = await getSession({ sessionId: sess.sessionId });
+          const remoteIdx = typeof state.session?.currentSlideIndex === 'number' ? state.session.currentSlideIndex : 0;
+          if (remoteIdx > 0) setCurrentIdx(remoteIdx);
+          // Mark as "just synced remotely" so the poller doesn't immediately overwrite
+          lastLocalNavTimeRef.current = Date.now() - 5000;
+        }
+      } catch { toast.error('Failed to load presentation'); }
+      finally { setLoading(false); }
+    })();
+  }, [user]);
+
+  // BroadcastChannel — receive pongs from Display tab
+  useEffect(() => {
+    const ch = new BroadcastChannel(CHANNEL);
+    channelRef.current = ch;
+    ch.onmessage = (e) => {
+      const msg: BCMsg = e.data;
+      if (msg.type === 'pong') {
+        lastPongRef.current = Date.now();
+        setDisplayConnected(true);
+        const { slides: sls, currentIdx: ci, blackout: bo } = ctxRef.current;
+        if (sls[ci]) ch.postMessage({ type: 'slide', slide: sls[ci], idx: ci, total: sls.length } satisfies BCMsg);
+        if (bo) ch.postMessage({ type: 'blackout', value: bo } satisfies BCMsg);
+      }
+    };
+    return () => ch.close();
+  }, []);
+
+  // Ping Display tab every 1s
+  useEffect(() => {
+    const iv = setInterval(() => {
+      channelRef.current?.postMessage({ type: 'ping' } satisfies BCMsg);
+      setDisplayConnected(Date.now() - lastPongRef.current < 5000);
+    }, 1000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Cross-device sync — poll session every 1.5s and apply changes from other devices
+  useEffect(() => {
+    if (!sessionId) return;
+    const iv = setInterval(async () => {
+      try {
+        const state = await getSession({ sessionId });
+        if (!state.session) return;
+        const remoteIdx = typeof state.session.currentSlideIndex === 'number' ? state.session.currentSlideIndex : 0;
+        const timeSinceLocalNav = Date.now() - lastLocalNavTimeRef.current;
+        const localIdx = ctxRef.current.currentIdx;
+        // Only apply remote change if this device hasn't navigated in the last 2s
+        // (prevents the two devices from fighting each other)
+        if (remoteIdx !== localIdx && timeSinceLocalNav > 2000) {
+          setCurrentIdx(remoteIdx);
+          const sls = ctxRef.current.slides;
+          if (channelRef.current && sls[remoteIdx]) {
+            channelRef.current.postMessage({ type: 'slide', slide: sls[remoteIdx], idx: remoteIdx, total: sls.length } satisfies BCMsg);
+          }
+          setRemoteSynced(true);
+          setTimeout(() => setRemoteSynced(false), 2000);
+        }
+        // Pick up synced teleprompter settings from session
+        if (typeof state.session.tpSpeed === 'number') setTpSpeed(state.session.tpSpeed);
+        if (typeof state.session.tpFontSize === 'number') setTpFontSize(state.session.tpFontSize);
+        if (typeof state.session.tpLineHeight === 'number') setTpLineHeight(state.session.tpLineHeight);
+        if (state.session.tpWidth && ['wide', 'medium', 'narrow'].includes(state.session.tpWidth)) setTpWidth(state.session.tpWidth as 'wide' | 'medium' | 'narrow');
+      } catch { /* silent — polling failure shouldn't disrupt the show */ }
+    }, 1500);
+    return () => clearInterval(iv);
+  }, [sessionId]);
+
+  // Reset teleprompter scroll on slide change — start paused so presenter controls when scrolling begins
+  useEffect(() => {
+    if (teleprompterRef.current) teleprompterRef.current.scrollTop = 0;
+    setTeleprompterPaused(true);
+
+    // Sync source tab if latched on — navigate the existing tab, never reopen
+    if (sourceEnabled) {
+      const url = slides[currentIdx]?.bestSourceUrl;
+      if (url) {
+        const existing = sourceWindowRef.current;
+        if (existing && !existing.closed) {
+          // Tab is still open — navigate it in place without stealing focus
+          try {
+            existing.location.href = url;
+            logSource(`slide→tab: reused → ${url.slice(0, 60)}`);
+          } catch {
+            logSource('slide→tab: cross-origin nav failed', 'warn');
+          }
+          // Keep presenter window focused
+          window.focus();
+        } else {
+          // Tab was closed — turn source off silently, don't pop a new window
+          sourceWindowRef.current = null;
+          setSourceEnabled(false);
+          logSource('slide→tab: tab was closed — source off');
+        }
+      }
+    }
+  }, [currentIdx]);
+
+  // Claim teleprompter control when switching to teleprompter tab
+  useEffect(() => {
+    if (viewMode !== 'teleprompter') return;
+    const sid = ctxRef.current.sessionId;
+    if (!sid) return;
+    const deviceId = window.localStorage.getItem('tp2-device-id') || undefined;
+    updateSession({ sessionId: sid, deviceId, tpControllerId: deviceId } as any).catch(() => {});
+  }, [viewMode, sessionId]);
+
+  // Teleprompter auto-scroll — uses tp2-* settings from TeleprompterPage
+  useEffect(() => {
+    if (viewMode !== 'teleprompter') {
+      if (scrollAnimRef.current) cancelAnimationFrame(scrollAnimRef.current);
+      return;
+    }
+    let lastTs: number | null = null;
+    let renderPos = teleprompterRef.current ? teleprompterRef.current.scrollTop : 0;
+
+    const tick = (t: number) => {
+      const el = teleprompterRef.current;
+      const sync = syncRef.current;
+      if (el && sync) {
+        const max = el.scrollHeight - el.clientHeight;
+        tpMaxRef.current = max;
+        if (max > 0 && sync.state().isPlaying) {
+          const target = sync.positionNow() * max;
+          const diff = target - renderPos;
+          // A big correction is a join, a seek or a slide change: snap. A small
+          // one is drift or a heartbeat: ease, so the pull is invisible.
+          if (Math.abs(diff) > 150) {
+            renderPos = target;
+          } else {
+            const dt = lastTs == null ? 16 : Math.min(100, t - lastTs);
+            renderPos += diff * (1 - Math.exp(-dt / 120));
+          }
+          lastProgScrollRef.current = renderPos;
+          el.scrollTop = renderPos;
+        } else {
+          renderPos = el.scrollTop;
+        }
+      }
+      lastTs = t;
+      scrollAnimRef.current = requestAnimationFrame(tick);
+    };
+    scrollAnimRef.current = requestAnimationFrame(tick);
+    return () => { if (scrollAnimRef.current) cancelAnimationFrame(scrollAnimRef.current); };
+  }, [viewMode]);
+
+  // A manual scrub moves EVERY screen — WHILE PLAYING AS WELL AS PAUSED.
+  // Dragging one screen and watching the other ignore you is the single most
+  // obvious way for a sync to look broken, and "paused only" is an arbitrary
+  // line: the presenter nudges the script mid-read.
+  // ⚠️ `loading` IS IN THE DEPS BECAUSE THE ELEMENT DOES NOT EXIST YET ON MOUNT.
+  // The page renders a loading screen first, so `teleprompterRef.current` is
+  // null when this effect first runs; without a dep that changes afterwards the
+  // listener is never attached and this screen's scrubs are never published —
+  // silently, since everything else about the sync keeps working.
+  useEffect(() => {
+    if (viewMode !== 'teleprompter' || loading) return;
+    const el = teleprompterRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      // Within a couple of pixels of what we last wrote → it was us.
+      if (Math.abs(el.scrollTop - lastProgScrollRef.current) <= 2) return;
+      const max = el.scrollHeight - el.clientHeight;
+      if (max <= 0) return;
+      syncRef.current?.seek(Math.max(0, Math.min(1, el.scrollTop / max)));
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => { el.removeEventListener('scroll', onScroll); };
+  }, [viewMode, loading]);
+
+  const logSource = useCallback((msg: string, type: 'info' | 'error' | 'warn' = 'info') => {
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setSourceLog(prev => [...prev.slice(-4), { time, msg, type }]);
+  }, []);
+
+  const navigateTo = useCallback(async (idx: number) => {
+    const { currentIdx: cur, slides: sls, sessionId: sid } = ctxRef.current;
+    if (idx < 0 || idx >= sls.length) return;
+    lastLocalNavTimeRef.current = Date.now(); // suppress remote sync for 2s after local nav
+    const spent = Math.floor((Date.now() - slideStartRef.current) / 1000);
+    if (sid && sls[cur]) {
+      navOrderRef.current += 1;
+      logSlideStats({ sessionId: sid, slideId: sls[cur].id, timeSpentSeconds: spent, navigationOrder: navOrderRef.current }).catch(() => {});
+      const deviceId = window.localStorage.getItem('tp2-device-id') || undefined;
+      updateSession({ sessionId: sid, deviceId, currentSlideIndex: idx, tpScrollPct: 0, tpPaused: true, tpAutoscroll: false } as any).catch(() => {});
+      // The socket carries the slide for the live screens; the session write
+      // above stays as the durable record the next reload reads.
+      syncRef.current?.setSlide(idx);
+    }
+    slideStartRef.current = Date.now();
+    setCurrentIdx(idx);
+    if (channelRef.current && sls[idx]) {
+      channelRef.current.postMessage({ type: 'slide', slide: sls[idx], idx, total: sls.length } satisfies BCMsg);
+    }
+    // Source tab auto-navigation is handled by the currentIdx effect
+  }, [logSource]);
+
+  const handleOpenSource = useCallback(() => {
+    if (sourceEnabled) {
+      // Toggle off
+      setSourceEnabled(false);
+      logSource('source following turned off');
+      return;
+    }
+    // Toggle on — open source for current slide
+    const url = ctxRef.current.slides[ctxRef.current.currentIdx]?.bestSourceUrl;
+    if (!url) { logSource('button: no URL for this slide', 'warn'); return; }
+    const win = window.open(url, 'ng-source-tab');
+    if (win) {
+      sourceWindowRef.current = win;
+      setSourceEnabled(true);
+      setSourceBlocked(false);
+      logSource(`button: opened ${url.slice(0, 70)}`);
+      // Keep presenter window focused
+      setTimeout(() => window.focus(), 100);
+    } else {
+      setSourceBlocked(true);
+      logSource('button: window.open blocked — popup blocker?', 'error');
+    }
+  }, [logSource, sourceEnabled]);
+
+  const toggleBlackout = useCallback(async () => {
+    const { sessionId: sid, blackout: bo } = ctxRef.current;
+    const next = !bo;
+    setBlackout(next);
+    if (sid) updateSession({ sessionId: sid, blackout: next }).catch(() => {});
+    channelRef.current?.postMessage({ type: 'blackout', value: next } satisfies BCMsg);
+  }, []);
+
+  const doEndStream = useCallback(async () => {
+    const { sessionId: sid } = ctxRef.current;
+    if (sid) await endSession({ sessionId: sid, totalDurationSeconds: Math.floor((Date.now() - streamStartRef.current) / 1000) }).catch(() => {});
+    channelRef.current?.postMessage({ type: 'end' } satisfies BCMsg);
+    setEnded(true);
+    navigate('/news-gatherer/dashboard');
+  }, [navigate]);
+
+  // Keyboard shortcuts
+  const viewModeRef = useRef(viewMode);
+  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  // ── Live sync ────────────────────────────────────────────────────────────
+  // ⚠️ THE PRESENTER NO LONGER PUBLISHES ITS POSITION — IT SOLVES THE SAME
+  // ANCHOR AS EVERY OTHER SCREEN. The old loop scrolled locally and pushed its
+  // scrollTop 4×/sec; every follower was therefore always one network hop
+  // behind, by a different amount per device. Now whoever presses play sets an
+  // anchor and all screens render from it, so "in sync" is a property of the
+  // arithmetic rather than something maintained by constant correction.
+  const syncRef = useRef<LiveSync | null>(null);
+  const tpMaxRef = useRef(0);
+
+  /**
+   * The anchor's slope, in fraction-of-script per millisecond.
+   *
+   * ⚠️ DERIVED FROM THIS SCREEN'S OWN SCROLL HEIGHT. A pixels-per-second speed
+   * means something different on a phone than on a monitor; a fraction per
+   * millisecond means the same thing everywhere, which is what lets the two
+   * screens stay on the same words.
+   */
+  const rateFor = useCallback((speed: number): number => {
+    const el = teleprompterRef.current;
+    const max = el ? el.scrollHeight - el.clientHeight : 0;
+    if (max <= 0) return 0;
+    return (speed * 8) / max / 1000;
+  }, []);
+
+  useEffect(() => {
+    const sid = sessionId;
+    if (!sid) return;
+    const sync = connectLiveSync(sid);
+    syncRef.current = sync;
+    sync.onSync((snap) => {
+      // The authoritative event drives the UI, including for the screen that
+      // asked for the change — a local guess can disagree with the broadcast.
+      setTeleprompterPaused(!snap.isPlaying);
+      // ⚠️ A PAUSED SCREEN MUST STILL FOLLOW. The render loop only writes
+      // scrollTop while playing, so without this a seek — someone scrubbing the
+      // other screen, or a jump to the top — left this one exactly where it was
+      // and the two silently parted. Scrolling while paused is the case where
+      // that is most obvious: you drag one screen and the other ignores you.
+      if (!snap.isPlaying) {
+        const el = teleprompterRef.current;
+        if (el) {
+          const max = el.scrollHeight - el.clientHeight;
+          if (max > 0) {
+            // Marked as ours, or the scrub listener reads it back as a user
+            // drag and echoes it to everyone in a loop.
+            lastProgScrollRef.current = snap.position * max;
+            el.scrollTop = snap.position * max;
+          }
+        }
+      }
+      if (typeof snap.scrollSpeed === 'number') setTpSpeed(snap.scrollSpeed);
+      if (typeof snap.idx === 'number' && snap.idx !== ctxRef.current.currentIdx) {
+        const n = ctxRef.current.slides.length;
+        setCurrentIdx(Math.max(0, Math.min(n > 0 ? n - 1 : 0, snap.idx)));
+      }
+    });
+    // Appearance changed on another screen — apply it here.
+    sync.onAppearance((a) => {
+      if (typeof a.textSize === 'number') setTpFontSize(a.textSize);
+      if (typeof a.lineHeight === 'number') setTpLineHeight(a.lineHeight);
+      if (a.textWidth && ['wide', 'medium', 'narrow'].includes(a.textWidth)) {
+        setTpWidth(a.textWidth as 'wide' | 'medium' | 'narrow');
+      }
+    });
+    return () => { sync.close(); syncRef.current = null; };
+  }, [sessionId]);
+
+  const tpPausedRef = useRef(teleprompterPaused);
+  useEffect(() => { tpPausedRef.current = teleprompterPaused; }, [teleprompterPaused]);
+  const tpSpeedRef = useRef(tpSpeed);
+  useEffect(() => { tpSpeedRef.current = tpSpeed; }, [tpSpeed]);
+  const tpFontSizeRef = useRef(tpFontSize);
+  useEffect(() => { tpFontSizeRef.current = tpFontSize; }, [tpFontSize]);
+  const tpLineHeightRef = useRef(tpLineHeight);
+  useEffect(() => { tpLineHeightRef.current = tpLineHeight; }, [tpLineHeight]);
+
+  /**
+   * ⚠️ ARROW KEYS JUMP THE SCRIPT AND THE JUMP IS PUBLISHED, so both screens
+   * land in the same place. Three lines of the CURRENT type size, expressed as
+   * a fraction — it feels the same at 18px and 56px, and means the same thing
+   * on a phone as on the monitor.
+   */
+  const nudge = useCallback((direction: 1 | -1) => {
+    const el = teleprompterRef.current;
+    const sync = syncRef.current;
+    if (!el || !sync) return;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max <= 0) return;
+    const stepPx = tpFontSizeRef.current * tpLineHeightRef.current * 3;
+    sync.seek(Math.max(0, Math.min(1, sync.positionNow() + direction * (stepPx / max))));
+  }, []);
+
+  const toggleTpPlayPause = useCallback(() => {
+    const nextPaused = !tpPausedRef.current;
+    const sync = syncRef.current;
+    if (!sync) { setTeleprompterPaused(nextPaused); return; }
+    // Starting: publish the slope first, computed from THIS screen's geometry,
+    // so the anchor the others receive is already complete. Then play — and let
+    // the returning broadcast be what flips the UI, here and everywhere else.
+    if (!nextPaused) sync.setSpeed(tpSpeedRef.current, rateFor(tpSpeedRef.current));
+    sync.playPause(!nextPaused);
+  }, [rateFor]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const { currentIdx: ci } = ctxRef.current;
+      if (e.key === 'ArrowRight') { e.preventDefault(); navigateTo(ci + 1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); navigateTo(ci - 1); }
+      // Up/down move through the SCRIPT; left/right move between SLIDES.
+      else if (e.key === 'ArrowDown' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(1); }
+      else if (e.key === 'ArrowUp' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(-1); }
+      else if (e.key === ' ') {
+        e.preventDefault();
+        if (viewModeRef.current === 'teleprompter') {
+          toggleTpPlayPause();
+        } else {
+          navigateTo(ci + 1);
+        }
+      }
+      else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
+      else if (e.key === 't' || e.key === 'T') setViewMode(v => v === 'notes' ? 'teleprompter' : 'notes');
+      else if (e.key === 'D' && e.shiftKey) { e.preventDefault(); setSourceDebug(d => !d); }
+      else if (e.key === 'g' || e.key === 'G') { setGMode(true); setGBuffer(''); }
+      else if (gMode && /^\d$/.test(e.key)) {
+        const buf = gBuffer + e.key;
+        setGBuffer(buf);
+        clearTimeout(gTimerRef.current);
+        gTimerRef.current = setTimeout(() => { navigateTo(parseInt(buf) - 1); setGMode(false); setGBuffer(''); }, 600);
+      } else if (!gMode && /^[1-9]$/.test(e.key)) navigateTo(parseInt(e.key) - 1);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge]);
+
+  // ── Guards ─────────────────────────────────────────────────────────────────
+
+  if (authLoading || !user || loading) return (
+    <div style={{ height: '100vh', background: D.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <p style={{ color: D.muted }}>Loading…</p>
+    </div>
+  );
+
+  if (ended) return (
+    <div style={{ height: '100vh', background: D.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <p style={{ color: D.muted }}>Stream ended.</p>
+    </div>
+  );
+
+  if (blackout) return <div style={{ position: 'fixed', inset: 0, background: '#000' }} />;
+
+  if (slides.length === 0) return (
+    <div style={{ height: '100vh', background: D.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <p style={{ color: D.muted }}>No slides found. Build a deck first.</p>
+    </div>
+  );
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+
+  const slide = slides[currentIdx];
+  const keyPoints: string[] = (() => { try { return JSON.parse(slide?.keyPoints || '[]'); } catch { return []; } })();
+  const sourceUrl = slide?.bestSourceUrl || '';
+  const sourceName = slide?.bestSourceName || 'Unknown';
+  const sourceHost = sourceUrl ? (() => { try { return new URL(sourceUrl).hostname.replace('www.', ''); } catch { return ''; } })() : '';
+  const upNext = slides.slice(currentIdx + 1, currentIdx + 3);
+  const isTeleprompter = viewMode === 'teleprompter';
+
+  return (
+    <div style={{ height: '100vh', background: D.bg, color: D.text, display: 'flex', flexDirection: 'column', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
+
+      {/* ── Header bar ─────────────────────────────────────────────────── */}
+      <header style={{ background: D.panel, borderBottom: `1px solid ${D.border}`, padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+
+        {/* Nav buttons */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <button onClick={() => navigateTo(currentIdx - 1)} disabled={currentIdx === 0}
+            style={{ background: D.card, border: `1px solid ${D.border}`, color: currentIdx === 0 ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: currentIdx === 0 ? 'not-allowed' : 'pointer', fontSize: 13 }}>‹
+          </button>
+          <span style={{ fontSize: 13, fontWeight: 600, color: D.text, whiteSpace: 'nowrap' }}>
+            {currentIdx + 1} / {slides.length}
+            {gMode && gBuffer && <span style={{ marginLeft: 6, fontSize: 11, color: D.blue }}>→ {gBuffer}</span>}
+          </span>
+          <button onClick={() => navigateTo(currentIdx + 1)} disabled={currentIdx === slides.length - 1}
+            style={{ background: D.card, border: `1px solid ${D.border}`, color: currentIdx === slides.length - 1 ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: currentIdx === slides.length - 1 ? 'not-allowed' : 'pointer', fontSize: 13 }}>›
+          </button>
+        </div>
+
+        {/* Topic label */}
+        <p style={{ flex: 1, fontSize: 12, color: D.muted, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+          — {slide?.topicLabel}
+        </p>
+
+        {/* Right controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+
+          {/* Notes / Teleprompter toggle */}
+          <div style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 11 }}>
+            <button
+              onClick={() => setViewMode('notes')}
+              style={{ padding: '2px 10px', background: !isTeleprompter ? D.card : 'transparent', color: !isTeleprompter ? D.text : D.muted, cursor: 'pointer', border: 'none' }}>
+              Notes
+            </button>
+            <button
+              onClick={() => setViewMode('teleprompter')}
+              style={{ padding: '2px 10px', background: isTeleprompter ? 'rgba(96,165,250,0.12)' : 'transparent', color: isTeleprompter ? D.blue : D.muted, cursor: 'pointer', border: 'none', borderLeft: `1px solid ${D.border}` }}>
+              Teleprompter
+            </button>
+          </div>
+
+          <div style={{ width: 1, height: 14, background: D.border }} />
+
+          {/* Mirror on device */}
+          <button
+            onClick={() => {
+              const sid = ctxRef.current.sessionId;
+              const url = sid
+                ? `${window.location.origin}/news-gatherer/present/teleprompter?follow=1&session=${sid}`
+                : window.location.href;
+              navigator.clipboard.writeText(url).then(() => {
+                toast.success('Follower link copied! Open it on your phone or iPad.');
+              });
+            }}
+            title="Copy a follower link — read-only, follows this monitor"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 5,
+              background: remoteSynced ? 'rgba(96,165,250,0.12)' : D.card,
+              border: `1px solid ${remoteSynced ? 'rgba(96,165,250,0.4)' : D.border}`,
+              borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
+              color: remoteSynced ? D.blue : D.muted, whiteSpace: 'nowrap',
+              transition: 'all 0.3s',
+            }}>
+            <span style={{ fontSize: 10 }}>{remoteSynced ? '\u27f3' : '\ud83d\udcf1'}</span>
+            {remoteSynced ? 'Synced' : 'Follower link'}
+          </button>
+
+          <div style={{ width: 1, height: 14, background: D.border }} />
+
+          {/* Source tab */}
+          {sourceUrl && (
+            <button
+              onClick={handleOpenSource}
+              title={sourceEnabled ? 'Source tab is following — click to turn off' : 'Open source article in a controlled tab'}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                background: sourceBlocked ? 'rgba(239,68,68,0.08)' : sourceEnabled ? 'rgba(96,165,250,0.08)' : D.card,
+                border: `1px solid ${sourceBlocked ? 'rgba(239,68,68,0.35)' : sourceEnabled ? 'rgba(96,165,250,0.35)' : D.border}`,
+                borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
+                color: sourceBlocked ? D.red : sourceEnabled ? D.blue : D.muted, whiteSpace: 'nowrap',
+              }}>
+              <span style={{ fontSize: 7 }}>{'\u25cf'}</span>
+              {sourceBlocked ? 'Source blocked' : sourceEnabled ? 'Source following' : '\u2197 Source'}
+            </button>
+          )}
+
+          <button onClick={() => setConfirmEnd(true)}
+            style={{ background: '#7f1d1d', border: '1px solid #991b1b', color: '#fecaca', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>
+            E End
+          </button>
+        </div>
+      </header>
+
+      {/* ── Main content ───────────────────────────────────────────────── */}
+      {isTeleprompter ? (
+        // ── TELEPROMPTER VIEW ───────────────────────────────────────────
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div
+            ref={teleprompterRef}
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', position: 'relative', scrollbarWidth: 'thin', scrollbarColor: `${D.faint} transparent` }}
+          >
+            {/* Scroll state indicator */}
+            <div style={{ position: 'sticky', top: 10, zIndex: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
+              <div style={{
+                background: 'rgba(17,17,17,0.85)', border: `1px solid ${teleprompterPaused ? D.border : 'rgba(96,165,250,0.35)'}`,
+                borderRadius: 20, padding: '3px 14px', fontSize: 11,
+                color: teleprompterPaused ? D.muted : D.blue,
+                transition: 'all 0.2s',
+              }}>
+                {teleprompterPaused ? '⏸ Paused' : '▶ Scrolling'}
+              </div>
+            </div>
+
+            <div style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
+
+              {/* Slide label */}
+              <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
+                {currentIdx + 1} / {slides.length} · {sourceName}{sourceHost ? ` · ${sourceHost}` : ''}
+              </p>
+
+              {slide?.teleprompterScript ? (
+                slide.teleprompterScript.split('\n\n').map((para, i) =>
+                  para.trim() ? (
+                    <p key={i} style={{
+                      fontSize: tpFontSize,
+                      lineHeight: tpLineHeight,
+                      color: '#ffffff',
+                      fontWeight: 400,
+                      margin: `0 0 ${Math.round(tpFontSize * 0.8)}px`,
+                      // ⚠️ THESE THREE VALUES ARE SHARED WITH THE FOLLOWER PAGE
+                      // AND THE STANDALONE TELEPROMPTER. This is the screen Jake
+                      // presents from; the follower is what a second screen sees.
+                      // A different font (system-ui resolves per platform) or a
+                      // different letter-spacing wraps the same script at
+                      // different words, so the two screens show different lines
+                      // while their scroll positions agree perfectly.
+                      letterSpacing: '0.012em',
+                      fontFamily: "'NewsScript', Arial, Helvetica, sans-serif",
+                      WebkitTextSizeAdjust: '100%',
+                    } as React.CSSProperties}>
+                      {para.trim()}
+                    </p>
+                  ) : null
+                )
+              ) : (
+                <div style={{ textAlign: 'center', marginTop: 60 }}>
+                  <p style={{ fontSize: 18, color: D.muted, marginBottom: 8 }}>No script for this slide.</p>
+                  <p style={{ fontSize: 13, color: D.faint }}>Rebuild the deck to generate teleprompter scripts.</p>
+                </div>
+              )}
+
+              {/* Bottom spacer so last line can scroll to top */}
+              <div style={{ height: '70vh' }} />
+            </div>
+          </div>
+
+          {/* ── Teleprompter Controls (simple — configure on standalone page) */}
+          <div style={{ background: D.panel, borderTop: `1px solid ${D.border}`, flexShrink: 0, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            {/* Play / Pause */}
+            <button
+              // ONE path for play/pause — the space bar and this button must not
+              // be able to disagree about what "playing" means.
+              onClick={toggleTpPlayPause}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0,
+                background: teleprompterPaused ? 'rgba(96,165,250,0.15)' : 'rgba(34,197,94,0.12)',
+                border: `1px solid ${teleprompterPaused ? 'rgba(96,165,250,0.4)' : 'rgba(34,197,94,0.35)'}`,
+                borderRadius: 6, padding: '4px 14px', cursor: 'pointer',
+                color: teleprompterPaused ? D.blue : D.green,
+                fontSize: 13, fontWeight: 600, letterSpacing: '0.02em',
+                transition: 'all 0.15s',
+              }}
+            >
+              <span style={{ fontSize: 15 }}>{teleprompterPaused ? '▶' : '⏸'}</span>
+              {teleprompterPaused ? 'Play' : 'Pause'}
+            </button>
+
+            <span style={{ fontSize: 11, color: D.faint, marginRight: 4 }}>Speed</span>
+            <input type="range" min={0.5} max={6} step={0.5} value={tpSpeed}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                setTpSpeed(v);
+                const sid = ctxRef.current.sessionId;
+                if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpSpeed: v } as any).catch(() => {}); }
+                // Re-anchor at the new slope, or the change applies retroactively.
+                syncRef.current?.setSpeed(v, rateFor(v));
+              }}
+              style={{ width: 70, accentColor: D.blue }} />
+            <span style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', minWidth: 30 }}>{tpSpeed.toFixed(1)}×</span>
+
+            <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
+
+            <span style={{ fontSize: 11, color: D.faint, marginRight: 4 }}>Size</span>
+            <input type="range" min={18} max={56} step={2} value={tpFontSize}
+              onChange={e => {
+                const v = parseInt(e.target.value);
+                setTpFontSize(v);
+                const sid = ctxRef.current.sessionId;
+                if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpFontSize: v } as any).catch(() => {}); }
+                syncRef.current?.setTextSize(v);
+              }}
+              style={{ width: 70, accentColor: D.blue }} />
+            <span style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', minWidth: 30 }}>{tpFontSize}px</span>
+
+            <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
+
+            <div style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 10 }}>
+              {(['narrow', 'medium', 'wide'] as const).map(w => (
+                <button key={w} onClick={() => {
+                  setTpWidth(w);
+                  const sid = ctxRef.current.sessionId;
+                  if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpWidth: w } as any).catch(() => {}); }
+                  syncRef.current?.setTextWidth(w);
+                }} style={{
+                  padding: '2px 8px', border: 'none', cursor: 'pointer',
+                  background: tpWidth === w ? 'rgba(96,165,250,0.15)' : 'transparent',
+                  color: tpWidth === w ? D.blue : D.muted,
+                  borderLeft: w !== 'narrow' ? `1px solid ${D.border}` : 'none',
+                }}>{w[0].toUpperCase() + w.slice(1)}</button>
+              ))}
+            </div>
+
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 10, color: D.faint }}>Followers see this tab</span>
+          </div>
+        </div>
+      ) : (
+        // ── NOTES VIEW ─────────────────────────────────────────────────
+        <>
+          {/* Title + source */}
+          <div style={{ padding: '14px 18px 6px', flexShrink: 0 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: '#fff', margin: 0, lineHeight: 1.3 }}>{slide?.topicLabel}</h1>
+            <p style={{ fontSize: 12, color: D.muted, margin: '4px 0 0' }}>
+              {sourceName}{sourceHost ? ` · ${sourceHost}` : ''}
+            </p>
+          </div>
+
+          {/* Notes grid */}
+          <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, alignContent: 'start' }}>
+            <NoteCard title="🎯 Why It Matters" text={slide?.whyItMatters} />
+            <NoteCard title="🔑 Key Points" keyPoints={keyPoints} />
+            <NoteCard title="💡 Talking Angle" text={slide?.talkingAngle} />
+          </div>
+
+          {/* Up Next */}
+          {upNext.length > 0 && (
+            <div style={{ padding: '6px 16px 12px', flexShrink: 0 }}>
+              <p style={{ fontSize: 10, fontWeight: 700, color: D.muted, letterSpacing: '0.06em', textTransform: 'uppercase', margin: '0 0 6px' }}>Up Next</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {upNext.map((s, i) => (
+                  <button
+                    key={s.id}
+                    onClick={() => navigateTo(currentIdx + 1 + i)}
+                    style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 6, padding: '7px 11px', flex: 1, textAlign: 'left', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                    onMouseEnter={e => (e.currentTarget.style.borderColor = D.blue)}
+                    onMouseLeave={e => (e.currentTarget.style.borderColor = D.border)}
+                  >
+                    <p style={{ fontSize: 12, color: D.text, margin: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {currentIdx + 2 + i}. {s.topicLabel}
+                    </p>
+                    <p style={{ fontSize: 11, color: D.muted, margin: '2px 0 0' }}>
+                      {s.bestSourceName}{s.suggestedTimeSeconds ? ` · ${s.suggestedTimeSeconds}s` : ''}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ── Source Tab Debug Overlay (Shift+D) ────────────────────────── */}
+      {sourceDebug && (() => {
+        const refExists = !!sourceWindowRef.current;
+        const refOpen = refExists && !sourceWindowRef.current!.closed;
+        const currentUrl = slides[currentIdx]?.bestSourceUrl || '\u2014';
+        return (
+          <div style={{
+            position: 'fixed', bottom: 60, left: 12, zIndex: 9999,
+            background: 'rgba(10,10,10,0.96)', border: `1px solid ${D.blue}`,
+            borderRadius: 8, padding: '10px 14px', width: 380,
+            fontFamily: 'ui-monospace, monospace', fontSize: 11,
+            boxShadow: '0 4px 24px rgba(0,0,0,0.7)',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: D.blue, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{'\u2b1b'} Source Tab Debug</span>
+              <span style={{ fontSize: 9, color: D.muted }}>Shift+D to close</span>
+            </div>
+
+            {/* Ref status */}
+            <div style={{ background: D.card, borderRadius: 5, padding: '6px 8px', marginBottom: 7 }}>
+              <div style={{ display: 'flex', gap: 16, marginBottom: 3 }}>
+                <span style={{ color: D.muted }}>enabled:</span>
+                <span style={{ color: sourceEnabled ? D.green : D.muted }}>{sourceEnabled ? '\u2713 on' : '\u2717 off'}</span>
+                <span style={{ color: D.muted }}>ref:</span>
+                <span style={{ color: refExists ? D.green : D.red }}>{refExists ? '\u2713 exists' : '\u2717 null'}</span>
+                <span style={{ color: D.muted }}>tab:</span>
+                <span style={{ color: refOpen ? D.green : D.red }}>{!refExists ? 'n/a' : refOpen ? '\u2713 open' : '\u2717 closed'}</span>
+              </div>
+              <div style={{ color: D.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                url: <span style={{ color: D.text }}>{currentUrl.length > 55 ? currentUrl.slice(0, 55) + '…' : currentUrl}</span>
+              </div>
+            </div>
+
+            {/* Action log */}
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', margin: '0 0 4px' }}>Action Log</p>
+              {sourceLog.length === 0
+                ? <p style={{ color: D.faint, fontSize: 10, margin: 0 }}>No actions yet — navigate a slide or click Source</p>
+                : [...sourceLog].reverse().map((entry, i) => (
+                  <div key={i} style={{
+                    display: 'flex', gap: 7, marginBottom: 3,
+                    opacity: i === 0 ? 1 : 0.55 + (0.15 * (sourceLog.length - 1 - i)),
+                  }}>
+                    <span style={{ color: D.faint, flexShrink: 0 }}>{entry.time}</span>
+                    <span style={{
+                      color: entry.type === 'error' ? D.red : entry.type === 'warn' ? D.orange : D.green,
+                      flexShrink: 0, fontSize: 10,
+                    }}>
+                      {entry.type === 'error' ? '✗' : entry.type === 'warn' ? '⚠' : '✓'}
+                    </span>
+                    <span style={{ color: entry.type === 'error' ? '#fca5a5' : entry.type === 'warn' ? '#fdba74' : D.text, lineHeight: 1.4 }}>
+                      {entry.msg}
+                    </span>
+                  </div>
+                ))
+              }
+            </div>
+
+            {/* Clear button */}
+            {sourceLog.length > 0 && (
+              <button
+                onClick={() => setSourceLog([])}
+                style={{ marginTop: 6, fontSize: 9, color: D.muted, background: 'none', border: `1px solid ${D.faint}`, borderRadius: 3, padding: '1px 7px', cursor: 'pointer' }}
+              >
+                clear log
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      <AlertDialog open={confirmEnd} onOpenChange={setConfirmEnd}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>End the stream?</AlertDialogTitle>
+            <AlertDialogDescription>This will archive session stats and end the presentation.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={doEndStream}>End stream</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

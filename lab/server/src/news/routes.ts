@@ -1,0 +1,428 @@
+/**
+ * AI News Stream — HTTP surface.
+ *
+ *   POST /api/news/<fn>          JSON in, JSON out (behind the Lab sign-in)
+ *   POST /api/news/<fn>          for collectNews / buildDeckFromStories the
+ *                                response is NDJSON: {"chunk": "<progress>"}
+ *                                lines while it runs, then one {"result": …}
+ *                                or {"error": "…"} line.
+ *   GET  /news-follow/state      PUBLIC — a follower device's read of ONE live
+ *                                session (see `followerRouter`).
+ *
+ * Each handler mirrors one of the app's original functions, with the same
+ * inputs, outputs and rules (controller enforcement, server-stamped revisions).
+ */
+import express, { type Request, type Response } from "express";
+import {
+  stories,
+  decks,
+  slides,
+  sessions,
+  slideStats,
+  sourceCache,
+  latestOpenSession,
+  lastTeleprompterSettings,
+  todayDate,
+  type SessionRecord,
+} from "./db.js";
+import { collectNews } from "./collect.js";
+import { anthropicConfigured } from "../ai/claude.js";
+import { getBraveSearchApiKey, getNewsApiOrgKey, getGNewsApiKey, getDataForSeoCreds } from "../settings/postizSecrets.js";
+import { buildDeckFromStories } from "./deck.js";
+
+type Handler = (input: any) => Promise<unknown> | unknown;
+
+const bool = (v: unknown) => v === true;
+const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+function need(v: string | undefined, name: string): string {
+  if (!v) throw Object.assign(new Error(`${name} is required.`), { status: 400 });
+  return v;
+}
+
+/* ── stories ──────────────────────────────────────────────────────────────── */
+
+const getStories: Handler = (input) => {
+  const today = str(input?.date) ?? todayDate();
+  const records = stories.where("deck_date = ?", today);
+  const sorted = [...records].sort((a, b) => (b.compositeScore ?? 0) - (a.compositeScore ?? 0));
+  const list = sorted.map((r) => {
+    let blogSources: { company: string; url: string; title: string; isOfficial: boolean }[] = [];
+    let articleSources: { outlet: string; url: string; title: string }[] = [];
+    try { blogSources = JSON.parse(r.blogSources || "[]"); } catch {}
+    try { articleSources = JSON.parse(r.articleSources || "[]"); } catch {}
+    return {
+      id: r.id,
+      headline: r.headline || "",
+      status: r.status || "Unconfirmed",
+      compositeScore: r.compositeScore ?? 0,
+      majorOutletCount: r.sourceCount ?? 0, // sourceCount stores the major-outlet count
+      sourceCount: r.sourceCount ?? 0,
+      firstSeenAt: r.firstSeenAt || new Date().toISOString(),
+      summary: r.summary || "",
+      hasOfficialBlog: r.hasOfficialBlog ?? false,
+      blogSources,
+      articleSources,
+      addedToDeck: r.addedToDeck ?? false,
+      deckDate: r.deckDate || today,
+      category: r.category || "",
+    };
+  });
+  return {
+    stories: list,
+    meta: {
+      total: list.length,
+      verified: list.filter((s) => s.status === "Verified").length,
+      likely: list.filter((s) => s.status === "Likely").length,
+      unconfirmed: list.filter((s) => s.status === "Unconfirmed" || s.status === "Single Source").length,
+      addedToDeck: list.filter((s) => s.addedToDeck).length,
+      deckDate: today,
+    },
+  };
+};
+
+/** The teleprompter settings the next show will open with (for the dashboard to show). */
+const getTeleprompterSettings: Handler = () => {
+  const s = lastTeleprompterSettings();
+  return { fontSize: s.tpFontSize, lineHeight: s.tpLineHeight, width: s.tpWidth, speed: s.tpSpeed };
+};
+
+const toggleStoryInDeck: Handler = (input) => {
+  const storyId = need(str(input?.storyId), "storyId");
+  const addedToDeck = bool(input?.addedToDeck);
+  stories.update(storyId, { addedToDeck });
+  return { success: true, storyId, addedToDeck };
+};
+
+const clearCache: Handler = () => ({ success: true, cleared: sourceCache.clear() });
+
+/* ── deck + slides ────────────────────────────────────────────────────────── */
+
+const getSlides: Handler = (input) => {
+  const deckId = str(input?.deckId);
+  const deck = deckId
+    ? decks.get(deckId)
+    : decks.where("deck_date = ? ORDER BY created_at DESC LIMIT 1", todayDate())[0];
+  if (!deck) return { deck: null, slides: [] };
+  const list = slides
+    .where("deck_id = ? AND (deleted IS NULL OR deleted = 0)", deck.id)
+    .sort((a, b) => (a.position || 0) - (b.position || 0));
+  return { deck, slides: list };
+};
+
+const updateSlide: Handler = (input) => {
+  const slideId = need(str(input?.slideId), "slideId");
+  const record: Record<string, unknown> = {};
+  if (input.favorited !== undefined) record.favorited = bool(input.favorited);
+  if (input.deleted !== undefined) record.deleted = bool(input.deleted);
+  if (input.whyItMatters !== undefined) record.whyItMatters = String(input.whyItMatters);
+  if (input.keyPoints !== undefined) record.keyPoints = String(input.keyPoints);
+  if (input.talkingAngle !== undefined) record.talkingAngle = String(input.talkingAngle);
+  if (num(input.suggestedTimeSeconds) !== undefined) record.suggestedTimeSeconds = input.suggestedTimeSeconds;
+  if (num(input.position) !== undefined) record.position = input.position;
+  const notesChanged = input.whyItMatters !== undefined || input.keyPoints !== undefined || input.talkingAngle !== undefined;
+  if (notesChanged) record.notesEditedAt = new Date().toISOString();
+  if (Object.keys(record).length > 0) slides.update(slideId, record);
+  return { success: true };
+};
+
+const reorderSlides: Handler = (input) => {
+  const ids: string[] = Array.isArray(input?.slideIds) ? input.slideIds.map(String) : [];
+  ids.forEach((id, index) => slides.update(id, { position: index + 1 }));
+  return { success: true };
+};
+
+/* ── live session ─────────────────────────────────────────────────────────── */
+
+const startSession: Handler = (input) => {
+  const deckId = need(str(input?.deckId), "deckId");
+  const controllerId = str(input?.controllerId);
+  const serverTime = Date.now();
+
+  const open = latestOpenSession(deckId);
+  if (open) {
+    // Claim control if no controller is set yet.
+    if (controllerId && !open.tpControllerId) sessions.update(open.id, { tpControllerId: controllerId });
+    return { sessionId: open.id, isNew: false, serverTime };
+  }
+
+  // New session — autoscroll OFF, paused, scroll at top; look and speed carry
+  // over from the last show.
+  const carried = lastTeleprompterSettings();
+  const session = sessions.insert({
+    startedAt: new Date().toISOString(),
+    deck: deckId,
+    currentSlideIndex: 0,
+    blackout: false,
+    tpPaused: true,
+    tpAutoscroll: false,
+    tpScrollPct: 0,
+    tpSpeed: carried.tpSpeed,
+    tpRevision: 0,
+    tpAnchorAt: serverTime,
+    tpControllerId: controllerId || null,
+    tpFontSize: carried.tpFontSize,
+    tpLineHeight: carried.tpLineHeight,
+    tpWidth: carried.tpWidth,
+    tpCountdown: 3,
+  });
+  return { sessionId: session.id, isNew: true, serverTime };
+};
+
+const getSession: Handler = (input) => {
+  const serverTime = Date.now();
+  const sessionId = str(input?.sessionId);
+  if (sessionId) return { session: sessions.get(sessionId) ?? null, serverTime };
+  return { session: latestOpenSession(str(input?.deckId)) ?? null, serverTime };
+};
+
+const SESSION_FIELDS = [
+  ["currentSlideIndex", "num"],
+  ["blackout", "bool"],
+  ["tpScrollPct", "num"],
+  ["tpSpeed", "num"],
+  ["tpPaused", "bool"],
+  ["tpFontSize", "num"],
+  ["tpLineHeight", "num"],
+  ["tpWidth", "str"],
+  ["tpCountdown", "num"],
+  ["tpAutoscroll", "bool"],
+  ["tpControllerId", "str"],
+] as const;
+
+const updateSession: Handler = (input) => {
+  const serverTime = Date.now();
+  const sessionId = need(str(input?.sessionId), "sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return { success: false, serverTime };
+
+  // Controller enforcement — reject writes from non-controller devices.
+  // Exception: tpControllerId claims ("take control") are always allowed.
+  const deviceId = str(input?.deviceId);
+  const isControlClaim = input?.tpControllerId !== undefined;
+  if (!isControlClaim && deviceId && session.tpControllerId && session.tpControllerId !== deviceId) {
+    return { success: false, serverTime };
+  }
+
+  const record: Record<string, unknown> = {};
+  for (const [field, kind] of SESSION_FIELDS) {
+    const v = input?.[field];
+    if (v === undefined) continue;
+    if (kind === "num" && num(v) !== undefined) record[field] = v;
+    else if (kind === "bool" && typeof v === "boolean") record[field] = v;
+    else if (kind === "str" && typeof v === "string") record[field] = v;
+  }
+
+  // The server stamps every write: monotonic seq + anchor time.
+  const newSeq = (typeof session.tpRevision === "number" ? session.tpRevision : 0) + 1;
+  record.tpRevision = newSeq;
+  record.tpAnchorAt = serverTime;
+  record.tpUpdatedAt = String(serverTime);
+  if (deviceId) record.tpActorId = deviceId;
+
+  sessions.update(sessionId, record);
+  return { success: true, seq: newSeq, serverTime };
+};
+
+const endSession: Handler = (input) => {
+  const sessionId = need(str(input?.sessionId), "sessionId");
+  const session = sessions.get(sessionId);
+  if (!session) return { success: false };
+  sessions.update(sessionId, { endedAt: new Date().toISOString(), blackout: false });
+  if (session.deck) {
+    decks.update(session.deck, {
+      presentedAt: new Date().toISOString(),
+      totalDurationSeconds: num(input?.totalDurationSeconds) ?? 0,
+    });
+  }
+  return { success: true };
+};
+
+const logSlideStats: Handler = (input) => {
+  slideStats.insert({
+    recordedAt: new Date().toISOString(),
+    slide: need(str(input?.slideId), "slideId"),
+    session: need(str(input?.sessionId), "sessionId"),
+    timeSpentSeconds: num(input?.timeSpentSeconds) ?? 0,
+    navigationOrder: num(input?.navigationOrder) ?? 0,
+  });
+  return { success: true };
+};
+
+/**
+ * What the show is actually wired to, read live.
+ *
+ * ⚠️ THE SETTINGS PAGE USED TO STATE THIS FROM MEMORY, AND IT WAS WRONG. It
+ * listed Gemini and a Nitter scraper as connected, with a green tick on each;
+ * the app used neither. A status panel that cannot be wrong about a key being
+ * missing is the whole point of having one — the first run of this tool
+ * produced sixty single-source headlines precisely because nothing on screen
+ * said the model was unreachable.
+ *
+ * Reports presence only. No key value ever leaves the server.
+ */
+const getConnections: Handler = () => ({
+  connections: [
+    {
+      name: "Claude (clustering · summaries · notes · teleprompter scripts)",
+      configured: anthropicConfigured(),
+      detail: anthropicConfigured()
+        ? "Uses the Lab's own Anthropic credentials — no separate key for this app."
+        : "No Anthropic credentials on the server. Every AI stage will fall back to raw headlines.",
+    },
+    {
+      name: "Brave Search (widens discovery · corroborating outlets)",
+      configured: Boolean(getBraveSearchApiKey()),
+      detail: getBraveSearchApiKey()
+        ? "Adds ~40 news queries a run on top of the feeds."
+        : "Optional. Without it collection still runs on RSS + Google News, but stories are likelier to stay Single Source. Add BRAVE_SEARCH_API_KEY on the Lab's Settings page.",
+    },
+    {
+      name: "NewsAPI.org (extra outlets)",
+      configured: Boolean(getNewsApiOrgKey()),
+      detail: getNewsApiOrgKey()
+        ? "Searched alongside every other source."
+        : "Optional. Adds a search across ~150,000 outlets. Their free plan is 100 requests/day on a 24-hour delay.",
+    },
+    {
+      name: "GNews.io (Google News results via API)",
+      configured: Boolean(getGNewsApiKey()),
+      detail: getGNewsApiKey()
+        ? "Searched alongside every other source."
+        : "Optional. Google publishes no news API of its own; GNews resells its results. Free tier is 100 requests/day.",
+    },
+    {
+      name: "DataForSEO (Google News SERP)",
+      configured: Boolean(getDataForSeoCreds()),
+      detail: getDataForSeoCreds()
+        ? "Credentials are set — this runs on the same account as the Keyword tool, so it needs a positive balance to return anything."
+        : "Optional. Already shares the Keyword tool's login when one is set.",
+    },
+    {
+      name: "Company newsrooms + publication RSS",
+      configured: true,
+      detail: "Built in — 19 official blogs and 20 publications, no key needed.",
+    },
+    {
+      name: "Google News topic feeds",
+      configured: true,
+      detail: "Built in — 16 topic feeds, no key needed. Article links are resolved to the publisher.",
+    },
+  ],
+});
+
+/* ── routing ──────────────────────────────────────────────────────────────── */
+
+const HANDLERS: Record<string, Handler> = {
+  getConnections,
+  getStories,
+  getTeleprompterSettings,
+  toggleStoryInDeck,
+  clearCache,
+  getSlides,
+  updateSlide,
+  reorderSlides,
+  startSession,
+  getSession,
+  updateSession,
+  endSession,
+  logSlideStats,
+};
+
+type Streamer = (write: (chunk: string) => void) => Promise<unknown>;
+const STREAMERS: Record<string, Streamer> = {
+  collectNews,
+  buildDeckFromStories,
+};
+
+/**
+ * One run of each long job at a time. A second click (or a second tab) while
+ * collection is running would delete and re-insert today's stories underneath
+ * the first run.
+ */
+const running = new Set<string>();
+
+export const newsRouter = express.Router();
+
+newsRouter.post("/:fn", express.json({ limit: "2mb" }), async (req: Request, res: Response) => {
+  const fn = req.params.fn;
+  const streamer = STREAMERS[fn];
+  if (streamer) {
+    res.status(200);
+    res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("X-Accel-Buffering", "no");
+    res.flushHeaders?.();
+    const line = (obj: unknown) => res.write(JSON.stringify(obj) + "\n");
+    if (running.has(fn)) {
+      line({ error: "Already running — wait for the current run to finish." });
+      res.end();
+      return;
+    }
+    running.add(fn);
+    try {
+      const result = await streamer((chunk) => line({ chunk }));
+      line({ result });
+    } catch (err) {
+      console.error(`[news] ${fn} failed:`, err);
+      line({ error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      running.delete(fn);
+      res.end();
+    }
+    return;
+  }
+
+  const handler = HANDLERS[fn];
+  if (!handler) {
+    res.status(404).json({ error: { code: "NOT_FOUND", message: `Unknown function ${fn}` } });
+    return;
+  }
+  try {
+    res.json(await handler(req.body ?? {}));
+  } catch (err: any) {
+    const status = typeof err?.status === "number" ? err.status : 500;
+    if (status >= 500) console.error(`[news] ${fn} failed:`, err);
+    res.status(status).json({ error: { code: status === 400 ? "BAD_REQUEST" : "INTERNAL_ERROR", message: err?.message ?? String(err) } });
+  }
+});
+
+/* ── public follower feed ─────────────────────────────────────────────────── */
+
+/**
+ * What a follower device (phone/tablet teleprompter) may read, WITHOUT signing
+ * in — the app has always treated the follower link as its own key.
+ *
+ * Deliberately narrow: ONE session, found by its id (a random UUID, so the link
+ * cannot be guessed), and only while it is live. It returns the session's
+ * display state and the scripts of that session's own deck — never stories,
+ * notes, sources or any other deck — and it is read-only.
+ */
+const FOLLOWER_SESSION_FIELDS: (keyof SessionRecord)[] = [
+  "id", "currentSlideIndex", "endedAt", "tpRevision", "tpScrollPct", "tpSpeed", "tpPaused",
+  "tpFontSize", "tpLineHeight", "tpWidth", "tpCountdown", "tpAutoscroll",
+];
+
+export const followerRouter = express.Router();
+
+followerRouter.get("/state", (req: Request, res: Response) => {
+  const id = String(req.query.session ?? "");
+  const withSlides = req.query.slides === "1";
+  const session = /^[0-9a-f-]{36}$/i.test(id) ? sessions.get(id) : undefined;
+  res.setHeader("Cache-Control", "no-store");
+  if (!session || session.endedAt) {
+    res.status(404).json({ session: null, serverTime: Date.now() });
+    return;
+  }
+  const safe: Record<string, unknown> = {};
+  for (const k of FOLLOWER_SESSION_FIELDS) if (session[k] !== undefined) safe[k] = session[k];
+  const out: Record<string, unknown> = { session: safe, serverTime: Date.now() };
+  if (withSlides && session.deck) {
+    out.slides = slides
+      .where("deck_id = ? AND (deleted IS NULL OR deleted = 0)", session.deck)
+      .sort((a, b) => (a.position || 0) - (b.position || 0))
+      .map((s) => ({ id: s.id, bestSourceName: s.bestSourceName ?? "", teleprompterScript: s.teleprompterScript ?? "" }));
+  }
+  res.json(out);
+});
