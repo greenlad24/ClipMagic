@@ -417,6 +417,12 @@ export interface ImportedPackInfo {
   researchedOn: string | null;
   importedAt: number;
   warnings: string[];
+  /**
+   * The pack's own outline, kept when it wasn't in the stage 2 format. Stage 2
+   * then runs as a REBUILD of it (analyse, then rewrite in the template) instead
+   * of being skipped. Absent when the pack's outline was used as written.
+   */
+  packOutline?: string;
 }
 
 /**

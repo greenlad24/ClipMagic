@@ -67,6 +67,12 @@ export interface ParsedPack {
   research: string;
   factSheet: string;
   outline: string;
+  /**
+   * True when the outline has no `##`–`####` sections the writer can split on.
+   * The import keeps it as the source and the run rebuilds it in the stage 2
+   * format before anything is written from it.
+   */
+  outlineNeedsRebuild: boolean;
   /** Null when the pack carried no UI check (e.g. the product needed a login). */
   uiVerification: string | null;
   /** Null when the pack found no recent tutorials. */
@@ -300,11 +306,17 @@ export function parseResearchPack(text: string, now: Date = new Date()): PackRes
   }
 
   const outline = get("OUTLINE");
+  let outlineNeedsRebuild = false;
   if (outline) {
     const secs = parseOutlineSections(outline);
     if (secs.length < 2) {
-      errors.push(
-        "The outline has fewer than two content sections the writer can find. Sections must be `##`–`####` headings (the stage 2 template's `#### ⏱️ SECTION (timestamp)` format).",
+      // Not a refusal: the pack's outline is the thinking that the research led
+      // to, and re-buying the pack over its heading style wastes it. Opus reads
+      // it at the start of the run and rewrites it in the stage 2 template, so
+      // the section writer gets the structure it can split on.
+      outlineNeedsRebuild = true;
+      warnings.push(
+        "The outline isn't in the writer's section format (`#### ⏱️ SECTION (timestamp)` headings). Opus will analyse it and rebuild it in that format before the hooks — its sections, order and content are kept (one outline-stage call, a few minutes).",
       );
     } else {
       const noScreen = secs.filter((s) => !ON_SCREEN_RE.test(s.text)).length;
@@ -368,6 +380,7 @@ export function parseResearchPack(text: string, now: Date = new Date()): PackRes
       research,
       factSheet,
       outline,
+      outlineNeedsRebuild,
       uiVerification,
       videoWorkflows,
       videoSources,

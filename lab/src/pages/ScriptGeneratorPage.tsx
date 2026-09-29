@@ -2448,10 +2448,22 @@ export default function ScriptGeneratorPage() {
                               {run.stages.imported.researchedOn ? ` · researched ${run.stages.imported.researchedOn}` : ''}
                             </p>
                             <p className="text-[11px] text-muted-foreground">
-                              Used as it is: the research, the fact sheet and the outline
-                              {run.stages.screenshotSheet ? ', the UI check' : ''}
-                              {run.stages.videoWorkflows ? ' and the tutorial walkthroughs' : ''}. The run starts at the
-                              hooks. Changing the title or type here doesn't rebuild the outline.
+                              {run.stages.imported.packOutline ? (
+                                <>
+                                  Used as it is: the research and the fact sheet
+                                  {run.stages.screenshotSheet ? ', the UI check' : ''}
+                                  {run.stages.videoWorkflows ? ' and the tutorial walkthroughs' : ''}. The outline
+                                  isn't in the writer's format, so Opus analyses it first and rebuilds it in the
+                                  template — same sections, same order — then the run goes on to the hooks.
+                                </>
+                              ) : (
+                                <>
+                                  Used as it is: the research, the fact sheet and the outline
+                                  {run.stages.screenshotSheet ? ', the UI check' : ''}
+                                  {run.stages.videoWorkflows ? ' and the tutorial walkthroughs' : ''}. The run starts at the
+                                  hooks. Changing the title or type here doesn't rebuild the outline.
+                                </>
+                              )}
                             </p>
                           </div>
                         </div>
@@ -2619,7 +2631,9 @@ export default function ScriptGeneratorPage() {
                       ))}
                       <span className="text-xs text-muted-foreground">
                         {run.stages?.imported
-                          ? 'Hooks, sections, outro and review — about 15 minutes. No research is bought.'
+                          ? run.stages.imported.packOutline
+                            ? 'Outline rebuild, hooks, sections, outro and review — about 20 minutes. No research is bought.'
+                            : 'Hooks, sections, outro and review — about 15 minutes. No research is bought.'
                           : requestedMode === 'outline'
                           ? 'The outline stops when the outline is done — a few minutes. The full script takes about 20.'
                           : 'The full script takes about 20 minutes; the outline alone takes a few.'}

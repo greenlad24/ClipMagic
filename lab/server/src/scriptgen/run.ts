@@ -257,6 +257,41 @@ export function attachScreenshots(runId: string, screenshots: ScreenshotRef[]): 
 }
 
 /**
+ * The instruction that turns Stage 2 into a rebuild of a pack's outline.
+ *
+ * A ChatGPT outline that the section splitter can't read still carries the
+ * research's conclusions — which sections, in what order, which click paths and
+ * numbers go where. Writing a fresh outline would throw that away; pasting it in
+ * as-is would draft the whole video as one section. So Opus reads it first, then
+ * re-expresses it in the template above, changing only what the format needs.
+ */
+export function packOutlineRebuildBlock(packOutline: string, factSheet: string): string {
+  return [
+    "## THIS RUN IS A REBUILD — THE OUTLINE ALREADY EXISTS",
+    "",
+    "The research for this video was done in ChatGPT, and it produced the outline below. It is the plan for this video. Its problem is its FORMAT: its sections aren't `##`–`####` headings, so the section writer can't split it into sections.",
+    "",
+    "Before you write anything, analyse it:",
+    "1. List its sections in order, and what each one is for in the video.",
+    "2. Note every concrete thing it commits to — each step and click path, number, price, feature, example, tool, comparison and on-screen moment — and which section it belongs to.",
+    "3. Note what the template above requires that it lacks (timestamps, ON SCREEN lines, the fields each section block asks for), and anything in it the fact sheet contradicts or fences off under DO NOT CLAIM.",
+    "",
+    "Then write the outline in the template's exact format — every content section its own `#### ⏱️ SECTION NAME (timestamp)` heading, with the fields the template asks for.",
+    "",
+    "Rules for the rebuild:",
+    "- Keep its sections, their order and every concrete item from step 2. You are converting this plan, not replacing it. Do not drop a section or a step because the template has no slot for it — give it one.",
+    "- Fill what the template needs and it lacks from the research and the fact sheet, never from memory.",
+    "- Where it contradicts the fact sheet, the fact sheet wins; change that item and nothing else.",
+    "- Output ONLY the finished outline. Your analysis stays in your thinking.",
+    "",
+    "=== THE CHATGPT OUTLINE ===",
+    packOutline.trim(),
+    "=== END OF THE CHATGPT OUTLINE ===",
+    ...(factSheet.trim() ? ["", "=== THE FACT SHEET ===", factSheet.trim(), "=== END OF THE FACT SHEET ==="] : []),
+  ].join("\n");
+}
+
+/**
  * Start a run from a ChatGPT research pack instead of from an idea.
  *
  * The pack IS stages 0.4 → 2: the UI check, the tutorial sheet, the web
@@ -315,7 +350,9 @@ export function importResearchPack(input: {
   stages.research = pack.research;
   stages.sources = pack.sources;
   stages.factSheet = pack.factSheet;
-  stages.outline = pack.outline;
+  // An outline the writer can't split is kept as the source, and stages.outline
+  // stays empty so Stage 2 runs — as a rebuild of it, not a fresh outline.
+  if (!pack.outlineNeedsRebuild) stages.outline = pack.outline;
   // Left undefined when absent, so screenshots attached at the checkpoint are
   // still read by Stage 0.4. A pack that did carry a UI check fills it, and the
   // checkpoint hides the picker — the shots would be skipped otherwise.
@@ -328,6 +365,7 @@ export function importResearchPack(input: {
     researchedOn: pack.setup.researchedOn,
     importedAt: Date.now(),
     warnings: pack.warnings,
+    ...(pack.outlineNeedsRebuild ? { packOutline: pack.outline } : {}),
   };
 
   updateRun(runId, {
@@ -340,7 +378,7 @@ export function importResearchPack(input: {
   console.log(
     `[scriptgen:import] ${runId} "${pack.setup.title}" (${pack.setup.videoType}) — ` +
       `research ${pack.research.length}c, facts ${pack.factSheet.length}c, outline ${pack.outline.length}c, ` +
-      `ui=${pack.uiVerification ? "yes" : "no"}, videos=${pack.videoSources.length}, sources=${pack.sources.length}, ` +
+      `outline=${pack.outlineNeedsRebuild ? "rebuild" : "as-is"}, ui=${pack.uiVerification ? "yes" : "no"}, videos=${pack.videoSources.length}, sources=${pack.sources.length}, ` +
       `${pack.warnings.length} warning(s)`,
   );
   return { runId, stage0, warnings: pack.warnings };
@@ -2643,7 +2681,8 @@ async function runScript(
 
     // ── Stage 2 — OUTLINE ──
     if (!stages.outline) {
-    progress(job, "Building the outline…", PCT.outline);
+    const packOutline = stages.imported?.packOutline;
+    progress(job, packOutline ? "Rebuilding the ChatGPT outline in the writer's format…" : "Building the outline…", PCT.outline);
     const s2 = fill(loadPrompt("stage2-outline"), {
       "[SELECT ONE: Tutorial / List/Roundup / Tool Review / Business Guide / Opinion]": videoType,
       "[INSERT VIDEO TITLE HERE]": title,
@@ -2664,13 +2703,27 @@ async function runScript(
             outlineFidelityBlock(windows, budget),
             stepScaffoldBlock(),
             s2,
+            ...(packOutline ? [packOutlineRebuildBlock(packOutline, stages.factSheet ?? "")] : []),
           ].join("\n\n---\n\n"),
         },
       ],
       maxTokens: 16000,
-      label: "stage2-outline",
+      label: packOutline ? "stage2-outline-rebuild" : "stage2-outline",
       purpose: "scriptgen",
     });
+    if (packOutline) {
+      // The rebuild exists to produce sections the writer can split on. If it
+      // didn't, writing from it would draft the whole video as one "Main
+      // content" block — stop here instead, with the pack still intact.
+      const secs = parseOutlineSections(stages.outline ?? "");
+      if (secs.length < 2) {
+        stages.outline = null;
+        throw new Error(
+          `The rebuilt outline still has ${secs.length} section(s) the writer can find; nothing was written from it. Try again, or ask ChatGPT for the outline in the template's #### ⏱️ SECTION (timestamp) format.`,
+        );
+      }
+      console.log(`[scriptgen:import] rebuilt the pack outline into ${secs.length} sections: ${secs.map((x) => x.name).join(" | ")}`);
+    }
     persist();
     }
 

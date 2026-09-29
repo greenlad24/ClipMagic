@@ -98,7 +98,22 @@ check("a stub RESEARCH is refused", !stub.ok && stub.errors.some((e) => /RESEARC
 const noTitle = parseResearchPack(pack({ SETUP: "video_type: Tutorial\ncore_topic: Blotato" }), NOW);
 check("missing title is refused", !noTitle.ok && noTitle.errors.some((e) => e.includes("title")));
 const flat = parseResearchPack(pack({ OUTLINE: "Just a paragraph of outline with no headings. ".repeat(30) }), NOW);
-check("an outline with no headings is refused", !flat.ok && flat.errors.some((e) => /fewer than two/.test(e)));
+check("an outline with no headings still imports", flat.ok);
+if (flat.ok) {
+  check("...flagged for an Opus rebuild", flat.pack.outlineNeedsRebuild === true);
+  check("...kept verbatim as the rebuild's source", flat.pack.outline.startsWith("Just a paragraph"));
+  check("...and says so in a warning", flat.pack.warnings.some((w) => /rebuild it/.test(w)));
+}
+// The shape ChatGPT actually hands back: bold lines and numbered sections, no `#`.
+const bold = parseResearchPack(
+  pack({
+    OUTLINE: ["**HOOK (0:00-0:30)**", "Open on the result.", "", "**1. Connect the account (0:30-2:00)**", "Click Settings, then API. ".repeat(20), "", "**2. Schedule the first post (2:00-4:00)**", "Open the calendar and drag a slot. ".repeat(20)].join("\n"),
+  }),
+  NOW,
+);
+check("a bold-line outline imports with a rebuild", bold.ok && bold.pack.outlineNeedsRebuild);
+const stub2 = parseResearchPack(pack({ OUTLINE: "too short" }), NOW);
+check("a stub outline is still refused, rebuild or not", !stub2.ok && stub2.errors.some((e) => /OUTLINE is only/.test(e)));
 const notAPack = parseResearchPack("Here is your research!\n\n## Research\nlots of text", NOW);
 check("a chat transcript with no markers is refused", !notAPack.ok && notAPack.errors[0].includes("No <<<SECTION>>> markers"));
 check("empty input is refused", !parseResearchPack("   ", NOW).ok);
