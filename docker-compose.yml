@@ -153,6 +153,12 @@ services:
       # containers — the Lab never starts one, and cancellation is a `cancel`
       # file the worker acts on rather than a container the web app kills.
       - /opt/hyperframes-work:/hyperframes-work
+      # Video Editor (hfp). Same control-plane split as the render queue: the
+      # Lab writes run requests and answers here and reads progress back; the
+      # `hfp-worker` systemd service on the HOST executes the pipeline. A
+      # separate tree on purpose — the pipeline's guard refuses to write under
+      # /opt/hyperframes-work, and renders reach the queue only via its API.
+      - /opt/hfp-lab:/hfp-lab
 
   # ── WHATSAPP SCHEDULER: schedule WhatsApp messages via in-chat /s commands ──
   # A self-contained sidecar (its own container + persistent WhatsApp Web session

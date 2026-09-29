@@ -30,6 +30,7 @@ import {
   hyperframesCancelJob,
   hyperframesRetryJob,
   hyperframesDeleteJob,
+  hyperframesDeleteJobs,
   hyperframesApiKey,
   hyperframesUploads,
   hyperframesDeleteUpload,
@@ -100,6 +101,11 @@ export default function RenderQueuePage() {
   const [uploads, setUploads] = useState<HyperframesUpload[]>([]);
   const [status, setStatus] = useState<Awaited<ReturnType<typeof hyperframesStatus>> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // ⚠️ SEPARATE FROM `selected`, WHICH OPENS A LOG. Ticking a row and reading a
+  // row are different intentions, and sharing one piece of state would mean
+  // opening a log to delete something.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
   const [log, setLog] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(null);
@@ -116,6 +122,15 @@ export default function RenderQueuePage() {
         hyperframesUploads({}),
       ]);
       setJobs(j.jobs);
+      // ⚠️ A TICK MUST NOT OUTLIVE ITS ROW. Jobs also disappear from under this
+      // page — the API deletes them, another tab does — and a stale id left in
+      // the set would make "12 selected" mean eleven rows and one ghost.
+      setCheckedIds((prev) => {
+        if (prev.size === 0) return prev;
+        const alive = new Set(j.jobs.map((x) => x.id));
+        const next = new Set([...prev].filter((id) => alive.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
       setStatus(s);
       setInbox(i.entries);
       setUploads(u.uploads);
@@ -182,6 +197,140 @@ export default function RenderQueuePage() {
       const { freedBytes } = await hyperframesDeleteUpload({ id: upload.id });
       toast.success(`Deleted “${upload.name}”`, { description: `Freed ${human(freedBytes)}` });
     });
+
+  const toggleCheck = (id: string) =>
+    setCheckedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const allChecked = jobs.length > 0 && jobs.every((j) => checkedIds.has(j.id));
+  /**
+   * The ticked jobs IN THE ORDER THEY WERE TICKED — Jake, 2026-09-20: "I want it
+   * to write the links in the order I selected".
+   *
+   * ⚠️ IT IS THE SET THAT REMEMBERS, NOT A SEPARATE LIST. A JS Set iterates in
+   * insertion order, so the order is already here for free — but only as long as
+   * it is read from `checkedIds`. Filtering `jobs` (the obvious way to write
+   * this) silently re-imposes the order of the table, which is what it did
+   * before. Everything downstream reads this one value so there is no second,
+   * unordered version to pick by accident.
+   *
+   * Unticking and re-ticking moves a row to the end, which is the honest answer
+   * to "when did you select it". Select-all has no user order to preserve, so it
+   * takes the table's.
+   */
+  const byId = new Map(jobs.map((j) => [j.id, j]));
+  const checkedJobs = [...checkedIds]
+    .map((id) => byId.get(id))
+    .filter((j): j is HyperframesJob => j !== undefined);
+  /** Where a row sits in that order, 1-based; 0 when it is not selected. */
+  const pickOrder = (id: string) => checkedJobs.findIndex((j) => j.id === id) + 1;
+  const checkedBytes = checkedJobs.reduce((n, j) => n + (j.bytes ?? 0), 0);
+
+  const toggleAll = () =>
+    setCheckedIds(allChecked ? new Set() : new Set(jobs.map((j) => j.id)));
+
+  /**
+   * Delete everything ticked.
+   *
+   * ⚠️ THE SERVER DELETES THEM, NOT A LOOP IN HERE. One request per row would
+   * half-finish on a dropped connection or a closed tab, and would report
+   * whichever call happened to fail rather than what is actually left on disk.
+   * The endpoint attempts every id, verifies each directory is gone, and returns
+   * three lists — so this function's only job is to say the truth out loud.
+   */
+  /**
+   * Every ticked render's MP4 address, one per line, on the clipboard.
+   *
+   * ⚠️ BARE URLS, NOTHING ELSE ON THE LINE. These get pasted into a chat, a
+   * script or a download list, and a name or a bullet in front of each one
+   * means whatever reads them next has to strip it back off.
+   *
+   * ⚠️ FINISHED RENDERS ONLY, AND THE REST ARE COUNTED OUT LOUD. A partial or a
+   * queued job has no address worth handing anyone, and quietly dropping it
+   * would hand over nine links for twelve ticks with nothing saying so.
+   */
+  const copyCheckedLinks = () => {
+    const ready = checkedJobs.filter((j) => j.state === 'done' && j.output);
+    const text = ready
+      .map((j) => `${window.location.origin}${fileUrl(j, `output/${j.output}`)}`)
+      .join('\n');
+    const short = checkedJobs.length - ready.length;
+    const note = short > 0 ? `${short} of them has no finished video yet.` : undefined;
+    if (ready.length === 0) {
+      toast.error('Nothing to copy', {
+        description: 'None of the selected renders has finished yet.',
+      });
+      return;
+    }
+    const clip = navigator.clipboard;
+    if (!clip) {
+      toast.message('Copy them from here', { description: text, duration: 60_000 });
+      return;
+    }
+    void clip.writeText(text).then(
+      () =>
+        toast.success(`Copied ${ready.length} link${ready.length === 1 ? '' : 's'} in the order you selected`, {
+          // The finished MP4s are public (see isPublicRenderOutput) — worth
+          // saying, because these get pasted where a sign-in wall would break
+          // them, and because it means the link is as shareable as it looks.
+          description: [note, 'Render links open without signing in.'].filter(Boolean).join(' '),
+        }),
+      () => toast.message('Copy them from here', { description: text, duration: 60_000 }),
+    );
+  };
+
+  const removeChecked = async () => {
+    const ids = checkedJobs.map((j) => j.id);
+    if (ids.length === 0) return;
+    const names = checkedJobs.slice(0, 8).map((j) => `• ${j.name || j.id}`).join('\n');
+    const more = ids.length > 8 ? `\n…and ${ids.length - 8} more` : '';
+    if (
+      !window.confirm(
+        `Delete ${ids.length} render${ids.length === 1 ? '' : 's'} completely?\n\n${names}${more}\n\n` +
+          `This frees about ${human(checkedBytes)} and removes each project, its footage, its frame ` +
+          `cache, the finished video and the log. There is no other copy.`,
+      )
+    ) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const r = await hyperframesDeleteJobs({ ids });
+      // Whatever went is no longer a row, so it is no longer a tick. Anything
+      // still cancelling or failed KEEPS its tick — it is the selection you
+      // still have to do something about.
+      setCheckedIds(new Set([...r.cancelling, ...r.failed.map((f) => f.id)]));
+      if (selected && r.deleted.includes(selected)) setSelected(null);
+      if (r.deleted.length > 0) {
+        toast.success(`Deleted ${r.deleted.length} render${r.deleted.length === 1 ? '' : 's'}`, {
+          description: `Freed ${human(r.freedBytes)}.`,
+        });
+      }
+      if (r.cancelling.length > 0) {
+        toast.info(`${r.cancelling.length} still rendering — cancelling`, {
+          description: 'They are stopping now. Delete them again in a moment.',
+        });
+      }
+      if (r.failed.length > 0) {
+        toast.error(`${r.failed.length} could not be deleted`, {
+          description: r.failed.map((f) => `${f.id}: ${f.error}`).join('\n'),
+          duration: 15000,
+        });
+      }
+      if (r.deleted.length === 0 && r.cancelling.length === 0 && r.failed.length === 0) {
+        toast.info('Nothing was deleted — those jobs were already gone.');
+      }
+    } catch (err) {
+      toast.error('Delete failed', { description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBulkBusy(false);
+      await refresh();
+    }
+  };
 
   const remove = (job: HyperframesJob, keepOutput: boolean) =>
     act(job.id, 'Delete', async () => {
@@ -272,7 +421,26 @@ export default function RenderQueuePage() {
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Jobs on disk</p>
-            <p className="mt-1 text-sm font-medium text-foreground">{human(status?.workBytes)}</p>
+            {/* ⚠️ THE REAL FOOTPRINT IS THE HEADLINE, and the sum of the job
+                sizes is the footnote — not the other way round. Shared sources
+                are hard-linked into every job that uses them, so adding the
+                directories up counted one 4.9GB master sixteen times and read
+                as 95GB on a disk with 54GB free. That is a number someone
+                deletes finished work over. */}
+            <p className="mt-1 text-sm font-medium text-foreground">
+              {human((status?.workBytes ?? 0) - (status?.sharedSavingBytes ?? 0))}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {status?.sharedSavingBytes
+                ? `${human(status.workBytes)} counted per job — ${human(
+                    status.sharedSavingBytes,
+                  )} of that is ${status.cacheFiles} shared source${
+                    status.cacheFiles === 1 ? '' : 's'
+                  } re-counted, downloaded once`
+                : status?.cacheFiles
+                  ? `incl. ${human(status.cacheBytes)} of shared footage, downloaded once`
+                  : 'no shared footage cached yet'}
+            </p>
           </div>
           <div className="rounded-lg border border-border p-3">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Free space</p>
@@ -384,7 +552,28 @@ export default function RenderQueuePage() {
         {/* Jobs */}
         <div className="rounded-lg border border-border">
           <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-            <h2 className="text-sm font-medium text-foreground">Jobs</h2>
+            <div className="flex items-center gap-2.5">
+              {jobs.length > 0 && (
+                <label
+                  className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
+                  title="Select every render"
+                >
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    // Some-but-not-all has to LOOK different from none, or the
+                    // box reads as "nothing is selected" while twelve rows are.
+                    ref={(el) => {
+                      if (el) el.indeterminate = checkedIds.size > 0 && !allChecked;
+                    }}
+                    onChange={toggleAll}
+                    className="h-3.5 w-3.5 cursor-pointer accent-[hsl(var(--primary))]"
+                  />
+                  All
+                </label>
+              )}
+              <h2 className="text-sm font-medium text-foreground">Jobs</h2>
+            </div>
             <div className="flex items-center gap-1">
               <a href="/api/hyperframes/docs" target="_blank" rel="noreferrer">
                 <Button variant="ghost" size="sm" className="gap-1.5">
@@ -409,6 +598,52 @@ export default function RenderQueuePage() {
               </Button>
             </div>
           </div>
+
+          {checkedIds.size > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-4 py-2">
+              <p className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {checkedIds.size} selected
+                </span>{' '}
+                · {human(checkedBytes)} on disk
+              </p>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={bulkBusy}
+                  onClick={() => setCheckedIds(new Set())}
+                >
+                  Clear
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  disabled={bulkBusy}
+                  title="Copy the MP4 link of every selected render, one per line"
+                  onClick={() => copyCheckedLinks()}
+                >
+                  <Link2 className="h-4 w-4" />
+                  Copy links
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={bulkBusy}
+                  className="gap-1.5 text-red-400 hover:text-red-300"
+                  onClick={() => void removeChecked()}
+                >
+                  {bulkBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  {bulkBusy ? 'Deleting…' : 'Delete selected'}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {apiKey && (
             <div className="border-b border-border bg-muted/30 px-4 py-3">
@@ -474,6 +709,27 @@ export default function RenderQueuePage() {
                 return (
                   <div key={job.id} className="px-4 py-3">
                     <div className="flex flex-wrap items-start gap-3">
+                      <div className="mt-1 flex shrink-0 items-center gap-1">
+                        <input
+                          type="checkbox"
+                          checked={checkedIds.has(job.id)}
+                          onChange={() => toggleCheck(job.id)}
+                          disabled={bulkBusy}
+                          title="Select this render"
+                          className="h-3.5 w-3.5 cursor-pointer accent-[hsl(var(--primary))]"
+                        />
+                        {/* The copied links come out in this order, so it is
+                            shown rather than left to be trusted. Only past one
+                            tick — a lone "1" is noise. */}
+                        {checkedIds.size > 1 && checkedIds.has(job.id) && (
+                          <span
+                            className="w-4 text-[10px] tabular-nums text-muted-foreground"
+                            title="Where this sits in the order you selected"
+                          >
+                            {pickOrder(job.id)}
+                          </span>
+                        )}
+                      </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span

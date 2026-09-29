@@ -91,6 +91,21 @@ export interface HyperframesServiceStatus {
   queued: number;
   diskFreeBytes: number;
   workBytes: number;
+  /**
+   * The shared download cache — one copy of each source, hard-linked into every
+   * job that uses it (the worker's `fetch_source`).
+   *
+   * ⚠️ THESE BYTES ARE ALSO COUNTED INSIDE `workBytes`, because that is what
+   * each job's directory weighs. They are shown separately rather than
+   * subtracted: the cache is what a job's footage IS, not a second copy of it.
+   */
+  cacheBytes: number;
+  cacheFiles: number;
+  /**
+   * How much of `workBytes` is one file counted more than once, because several
+   * jobs hard-link the same source. Subtract it for the real footprint.
+   */
+  sharedSavingBytes: number;
 }
 
 /* ────────────────────────── paths, guarded ────────────────────────── */
@@ -121,8 +136,13 @@ async function readJson<T>(file: string, fallback: T): Promise<T> {
   }
 }
 
-/** Recursive size. Used for "what is this costing me in disk". */
-async function dirBytes(dir: string): Promise<number> {
+/**
+ * Recursive size. Used for "what is this costing me in disk".
+ *
+ * `exclusiveOnly` counts only files this job is the last holder of — see
+ * `deleteJob`, which is the only caller that needs the distinction.
+ */
+async function dirBytes(dir: string, exclusiveOnly = false): Promise<number> {
   let total = 0;
   let entries: fs.Dirent[];
   try {
@@ -132,10 +152,12 @@ async function dirBytes(dir: string): Promise<number> {
   }
   for (const e of entries) {
     const full = path.join(dir, e.name);
-    if (e.isDirectory()) total += await dirBytes(full);
+    if (e.isDirectory()) total += await dirBytes(full, exclusiveOnly);
     else if (e.isFile()) {
       try {
-        total += (await fsp.stat(full)).size;
+        const st = await fsp.stat(full);
+        if (exclusiveOnly && st.nlink > 1) continue;
+        total += st.size;
       } catch {
         /* raced with a delete */
       }
@@ -264,6 +286,51 @@ export async function listInbox(): Promise<InboxEntry[]> {
   return out.sort((a, b) => b.modifiedAt - a.modifiedAt);
 }
 
+/**
+ * What the worker's shared source cache is holding, and how much of the jobs'
+ * apparent size is the same bytes counted again. Read-only; the worker owns it.
+ *
+ * ⚠️⚠️ WITHOUT `sharedSavingBytes` THE DASHBOARD LIES BY TENS OF GIGABYTES.
+ * Sources are hard-linked into every job that uses them, and a per-directory
+ * size walk counts the same inode once per job: 16 renders of one 4.93 GB
+ * master read as 79 GB of footage that does not exist. Measured live on
+ * 2026-09-20 — "Jobs on disk 95GB" against 54GB free on a 233GB disk, which is
+ * the kind of number someone deletes finished work over.
+ *
+ * The correction is exact and costs one `stat` per cached file: the cache holds
+ * one link itself, so `nlink - 1` is the number of JOBS pointing at it, and
+ * every link past the first is a duplicate in the total.
+ *
+ * ⚠️ It under-corrects (never over-corrects) for a source that has been pruned
+ * from the cache while jobs still hold it — there is no entry left to measure.
+ */
+async function sourceCacheSize(): Promise<{
+  cacheBytes: number;
+  cacheFiles: number;
+  sharedSavingBytes: number;
+}> {
+  const dir = process.env.HYPERFRAMES_SOURCE_CACHE || path.join(WORK, "cache", "sources");
+  let cacheBytes = 0;
+  let cacheFiles = 0;
+  let sharedSavingBytes = 0;
+  try {
+    for (const name of await fsp.readdir(dir)) {
+      if (!name.endsWith(".bin")) continue;
+      try {
+        const st = await fsp.stat(path.join(dir, name));
+        cacheBytes += st.size;
+        cacheFiles += 1;
+        sharedSavingBytes += st.size * Math.max(0, st.nlink - 2);
+      } catch {
+        /* raced with a prune */
+      }
+    }
+  } catch {
+    /* no cache yet */
+  }
+  return { cacheBytes, cacheFiles, sharedSavingBytes };
+}
+
 export async function serviceStatus(): Promise<HyperframesServiceStatus> {
   const jobs = await listJobs();
   const running = jobs.filter((j) => j.state === "running");
@@ -287,7 +354,10 @@ export async function serviceStatus(): Promise<HyperframesServiceStatus> {
     running: running.length,
     queued,
     diskFreeBytes,
+    // The sum of what each job directory weighs — shared sources included, once
+    // per job. `sharedSavingBytes` says how much of that is the same bytes.
     workBytes: jobs.reduce((n, j) => n + j.bytes, 0),
+    ...(await sourceCacheSize()),
   };
 }
 
@@ -388,6 +458,13 @@ export async function retryJob(id: string): Promise<HyperframesJob> {
 }
 
 /**
+ * What "Free space" leaves behind: the finished video and the two files that
+ * keep the job listed at all. Named once because `deleteJobs` verifies against
+ * the same list, and a second copy of it would drift.
+ */
+const KEPT_BY_FREE_SPACE = new Set(["output", "status.json", "job.json"]);
+
+/**
  * Delete a job's files.
  *
  * ⚠️ A RUNNING JOB IS CANCELLED, NOT DELETED UNDERNEATH ITSELF — removing the
@@ -397,7 +474,12 @@ export async function retryJob(id: string): Promise<HyperframesJob> {
 export async function deleteJob(id: string, keepOutput = false): Promise<{ freedBytes: number }> {
   const dir = jobDir(id);
   if (!fs.existsSync(dir)) throw new Error("No such job.");
-  const before = await dirBytes(dir);
+  // ⚠️ WHAT WILL ACTUALLY LEAVE THE DISK, NOT WHAT THE DIRECTORY WEIGHS. Source
+  // footage is hard-linked in from the shared download cache (see the worker's
+  // `fetch_source`), so a 4.9 GB master that four other jobs also point at frees
+  // nothing when this one goes. Reporting the full size would promise back
+  // gigabytes that are still there.
+  const before = await dirBytes(dir, true);
   const job = await toJob(id, false);
   if (job.state === "running") {
     await cancelJob(id);
@@ -405,13 +487,72 @@ export async function deleteJob(id: string, keepOutput = false): Promise<{ freed
   }
   if (keepOutput) {
     for (const child of await fsp.readdir(dir)) {
-      if (child === "output" || child === "status.json" || child === "job.json") continue;
+      if (KEPT_BY_FREE_SPACE.has(child)) continue;
       await fsp.rm(path.join(dir, child), { recursive: true, force: true });
     }
-    return { freedBytes: before - (await dirBytes(dir)) };
+    return { freedBytes: before - (await dirBytes(dir, true)) };
   }
   await fsp.rm(dir, { recursive: true, force: true });
   return { freedBytes: before };
+}
+
+export interface BulkDeleteResult {
+  /** Ids whose directory is GONE — checked, not assumed. See below. */
+  deleted: string[];
+  freedBytes: number;
+  /** Were still rendering. Cancelled, not deleted — ask again in a moment. */
+  cancelling: string[];
+  failed: { id: string; error: string }[];
+}
+
+/**
+ * Delete several jobs in one call.
+ *
+ * ⚠️⚠️ EVERY ID IS ATTEMPTED, WHATEVER THE ONE BEFORE IT DID. The whole point of
+ * selecting twenty rows is not having to find out which of them worked: a single
+ * `Promise.all` rejects on the first bad id and a plain loop stops there, and
+ * either way the rest of the selection is silently left on disk while the UI
+ * shows an error. So each id gets its own try/catch and its own line in the
+ * result.
+ *
+ * ⚠️ "DELETED" IS RE-CHECKED AGAINST THE DISK, NEVER TAKEN FROM THE CALL.
+ * `fsp.rm(force: true)` resolves happily when it removed nothing, so trusting it
+ * would report a clean sweep over files that are still there — exactly the
+ * failure this was asked to fix. Whole delete: the directory must be gone.
+ * `keepOutput`: nothing may be left in it but the three things that were meant
+ * to survive.
+ *
+ * ⚠️ SEQUENTIAL, DELIBERATELY. These directories run to several GB and both the
+ * size walk and the removal are disk-bound; twenty of them in parallel makes the
+ * box crawl while a render is running, and buys nothing a human is waiting on.
+ */
+export async function deleteJobs(ids: string[], keepOutput = false): Promise<BulkDeleteResult> {
+  const out: BulkDeleteResult = { deleted: [], freedBytes: 0, cancelling: [], failed: [] };
+  // A duplicate id would otherwise come back as one success and one "No such
+  // job" — an error about nothing.
+  for (const id of [...new Set(ids.map((i) => String(i || "").trim()).filter(Boolean))]) {
+    try {
+      const { freedBytes } = await deleteJob(id, keepOutput);
+      const left = keepOutput
+        ? (await fsp.readdir(jobDir(id))).filter((c) => !KEPT_BY_FREE_SPACE.has(c))
+        : fs.existsSync(jobDir(id))
+          ? ["the job directory"]
+          : [];
+      if (left.length > 0) {
+        out.failed.push({ id, error: `Still on disk after the delete: ${left.join(", ")}.` });
+        continue;
+      }
+      out.deleted.push(id);
+      out.freedBytes += freedBytes;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // The running case is not a failure — `deleteJob` has just asked it to
+      // stop, and a second go in a few seconds finishes the job off.
+      if (/still going/i.test(message)) out.cancelling.push(id);
+      else out.failed.push({ id, error: message });
+    }
+  }
+  return out;
 }
 
 
