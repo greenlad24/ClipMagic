@@ -6,6 +6,7 @@ import {
   Video, Music, AudioLines, Film, Clapperboard, MonitorPlay, Image as ImageIcon, Type, Sticker,
   Database, FolderClock, UserSquare, Palette, Scissors, Sparkles, Chrome,
   FileVideo, Images, MessageSquare, GraduationCap, HelpCircle,
+  UserRound, Camera, Globe, Volume2, FileQuestion,
   // "outside The Lab" bucket icons
   Layers, Hammer, Boxes, Container,
   type LucideIcon,
@@ -38,7 +39,7 @@ interface StorageArea {
   label: string;
   hint: string;
   icon: string;
-  group: 'content' | 'cache' | 'system';
+  group: 'content' | 'cache' | 'leftovers' | 'system';
   cache: boolean;
   danger: boolean;
   folderOnly: boolean;
@@ -76,6 +77,7 @@ const ICONS: Record<string, LucideIcon> = {
   Video, Music, AudioLines, Film, Clapperboard, MonitorPlay, Image: ImageIcon, Type, Sticker,
   Database, FolderClock, UserSquare, Palette, Scissors, Sparkles, Chrome, HardDrive,
   FileVideo, Images, MessageSquare, GraduationCap, HelpCircle,
+  UserRound, Camera, Globe, Volume2, FileQuestion,
   Layers, Hammer, Boxes, Container,
 };
 const iconOf = (name: string): LucideIcon => ICONS[name] ?? HardDrive;
@@ -89,9 +91,10 @@ const fmtBytes = (n: number) => {
 const fmtDate = (ms: number) => new Date(ms).toLocaleString();
 const keyOf = (it: StorageItem) => `${it.category}/${it.name}`;
 
-const GROUPS: { group: 'content' | 'cache' | 'system'; title: string; blurb: string }[] = [
+const GROUPS: { group: 'content' | 'cache' | 'leftovers' | 'system'; title: string; blurb: string }[] = [
   { group: 'content', title: 'Your media', blurb: 'Uploads, ingests and finished renders. Deleting is per-file and permanent.' },
   { group: 'cache', title: 'Regenerable cache', blurb: 'Everything here is rebuilt on demand — safe to clear to reclaim space.' },
+  { group: 'leftovers', title: 'Leftovers', blurb: 'Files nothing produced on purpose \u2014 debug scripts, run logs and scratch folders written straight into the data volume. Every real area is filtered out and cannot be selected here, so anything listed is safe to delete.' },
   { group: 'system', title: 'Counted, not deletable', blurb: 'Shown so the totals add up to the volume exactly. Nothing here can be removed from this page.' },
 ];
 

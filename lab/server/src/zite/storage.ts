@@ -75,6 +75,16 @@ export type Category =
   | "motionBundle"
   | "engageBrowser"
   | "skoolBrowser"
+  | "avatar"
+  | "memeSfx"
+  | "scriptgenShots"
+  | "publicAssets"
+  /**
+   * Direct children of DATA_DIR that no other card claims — loose files and
+   * one-off directories left behind by hand-debugging. Listed and deletable,
+   * unlike `unaccounted`, which is only ever a number.
+   */
+  | "dataRoot"
   | "db"
   /** Synthetic: the DATA_DIR bytes no other card claims. Has no directory. */
   | "unaccounted";
@@ -100,6 +110,11 @@ const DIRS: Partial<Record<Category, string>> = {
   motionBundle: config.motionBundleDir,
   engageBrowser: config.engageBrowserDir,
   skoolBrowser: config.skoolBrowserDir,
+  avatar: config.avatarDir,
+  memeSfx: path.join(config.outputsDir, "sfx"),
+  scriptgenShots: path.join(config.dataDir, "scriptgen", "shots"),
+  publicAssets: config.publicAssetsDir,
+  dataRoot: config.dataDir,
   db: path.dirname(config.dbPath),
 };
 
@@ -109,6 +124,56 @@ const DIRS: Partial<Record<Category, string>> = {
  * (its bytes are real) but no code path here can touch it.
  */
 const PROTECTED = new Set<Category>(["db", "unaccounted"]);
+
+/**
+ * The direct children of `dir` that belong to a DIFFERENT card, by name.
+ *
+ * ⚠️ THIS IS WHAT KEEPS THE CARDS A PARTITION, AND WHAT MAKES `dataRoot` SAFE.
+ *
+ * Two jobs, one rule. Areas nest inside each other — `outputs/` contains the
+ * thumbnails, sticker and SFX cards; `tmp/` contains the chunked-upload card;
+ * DATA_DIR contains everything. So whenever an area lists or sizes its own
+ * directory it has to skip the children another card already claims, or those
+ * bytes get counted twice and the totals stop meaning anything.
+ *
+ * The second job is the dangerous one. `dataRoot` points at DATA_DIR itself,
+ * whose direct children include `uploads` (35 GB of source media) and `db` (the
+ * entire application state). `resolveSafe`'s ordinary "must be a direct child"
+ * rule is no protection there — it is satisfied by `uploads`. So the same set
+ * also gates deletion, and a name in it cannot be listed, selected or removed.
+ *
+ * DERIVED FROM DIRS, never hand-listed: an area added to the registry is
+ * excluded here the moment it exists. A hand-maintained copy of this list would
+ * be one forgotten line away from a card that deletes the database.
+ */
+function reservedChildrenOf(dir: string, self: Category): Set<string> {
+  const base = path.resolve(dir);
+  const names = new Set<string>();
+  for (const [cat, other] of Object.entries(DIRS) as Array<[Category, string]>) {
+    if (cat === self || !other) continue;
+    const resolved = path.resolve(other);
+    if (resolved === base) continue;
+    const rel = path.relative(base, resolved);
+    // Only children. A sibling or a parent resolves to "../…" and is not ours
+    // to skip. The FIRST segment is what a delete at this level would remove:
+    // `outputs/sfx` reserves `sfx` when seen from `outputs`.
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) continue;
+    names.add(rel.split(path.sep)[0]);
+  }
+  return names;
+}
+
+/** Memoised per category — DIRS is fixed at module load, so this is computed once. */
+const RESERVED_CACHE = new Map<Category, Set<string>>();
+function reservedFor(category: Category): Set<string> {
+  let hit = RESERVED_CACHE.get(category);
+  if (!hit) {
+    const dir = DIRS[category];
+    hit = dir ? reservedChildrenOf(dir, category) : new Set<string>();
+    RESERVED_CACHE.set(category, hit);
+  }
+  return hit;
+}
 
 /**
  * Pure-cache areas: every file regenerates on demand, so the whole area is safe
@@ -126,6 +191,7 @@ const CACHE_CATEGORIES = new Set<Category>([
   "motionBundle",
   "engageBrowser",
   "skoolBrowser",
+  "memeSfx",
 ]);
 
 /**
@@ -152,6 +218,13 @@ const FOLDER_ONLY = new Set<Category>([
  * ingests, delete the six you're done with".
  */
 const DIR_ENTRY = new Set<Category>(["planner"]);
+
+// NOTE: this set no longer selects a different lister. `listDir` handles files
+// and folders alike — a folder is one row, sized recursively — so the planner's
+// sessions list exactly as they always did, and the loose files sitting beside
+// them (59 KB that no card claimed, because the old subdirectory-only lister
+// could not see a file) are now listed too. The set is kept because the UI reads
+// it as "the unit of work here is a folder".
 
 /**
  * Serve-URL prefix per category, so a listed file gets a preview/download link.
@@ -181,7 +254,13 @@ export interface AreaDef {
   label: string;
   hint: string;
   icon: string;
-  group: "content" | "cache" | "system";
+  /**
+   * content   — your media, deleted per file
+   * cache     — regenerates on demand, safe to Clear wholesale
+   * leftovers — debris nothing produced on purpose; deletable, but not "yours"
+   * system    — counted so the totals are honest, never deletable
+   */
+  group: "content" | "cache" | "leftovers" | "system";
   danger?: boolean;
   filter?: (it: StorageItem) => boolean;
 }
@@ -191,43 +270,43 @@ const AREAS: AreaDef[] = [
   {
     key: "narratorVideos", category: "uploads", group: "content", danger: true,
     icon: "Video", label: "Narrator videos",
-    hint: "Source narration videos you uploaded (not music or promo). Deleting one breaks any project that uses it.",
+    hint: "The narration videos you uploaded. Deleting one does NOT touch any render already made from it — a finished export is its own file — and does NOT affect a scheduled post. What you lose is the ability to re-render or re-edit the project that used it: the render would fail with \"Unknown file id\". Delete once you are happy with the export.",
     filter: (it) => it.kind === "narrator",
   },
   {
     key: "backgroundMusic", category: "uploads", group: "content", danger: true,
     icon: "Music", label: "Background music",
-    hint: "Music tracks in your library (used as background music). Deleting one removes it from projects using it.",
+    hint: "Music tracks in your library. Already-rendered videos keep the music — it is mixed into the file. Deleting removes the track from the library and from any future re-render of a project that used it.",
     filter: (it) => it.kind === "music",
   },
   {
     key: "separatedAudio", category: "uploads", group: "content", danger: true,
     icon: "AudioLines", label: "Audio from videos",
-    hint: "Audio files that aren't in your music library — e.g. audio separated/extracted from videos, or standalone narration audio. Deleting one breaks any project that uses it.",
+    hint: "Audio that isn't in your music library — separated/extracted from a video, or standalone narration audio. Same rule as the narration videos: finished renders and scheduled posts are unaffected, only a re-render of the project that used it would fail.",
     filter: (it) => it.kind === "audio",
   },
   {
     key: "promoVideos", category: "uploads", group: "content", danger: true,
     icon: "Film", label: "Promo videos",
-    hint: "Promo-library videos. Deleting one removes it from the AI director's footage pool.",
+    hint: "Promo-library videos — the AI director's footage pool. Renders that already used a clip keep it. Deleting only removes it from future renders.",
     filter: (it) => it.kind === "promo",
   },
   {
     key: "renderOutputs", category: "outputs", group: "content",
     icon: "Clapperboard", label: "Render outputs",
-    hint: "Finished export videos. Safe to delete — you can re-export.",
+    hint: "Finished export videos — the actual deliverables. A post already scheduled through the Bulk Scheduler is SAFE: the bytes were uploaded into Postiz at schedule time and the post points at Postiz's own copy, so it publishes (and retries) normally with the file gone from here. What you cannot do afterwards is schedule that file, or hand it to anything else — and you can only re-export it if its source narration, music and promos are still here.",
     filter: (it) => it.kind !== "screencast",
   },
   {
     key: "screencastCaptures", category: "outputs", group: "content",
     icon: "MonitorPlay", label: "Screencast captures",
-    hint: "Recorded website screencasts used as B-roll. Re-captured on demand.",
+    hint: "Recorded website screencasts used as B-roll. These are also RENDER INPUTS — a project can pull one in by name — so deleting one can break a re-render, not just the capture. Re-captured on demand.",
     filter: (it) => it.kind === "screencast",
   },
   {
     key: "thumbnailRenders", category: "thumbnails", group: "content",
     icon: "Image", label: "Thumbnail renders",
-    hint: "Finished thumbnail images you generated. Safe to delete — you can re-generate.",
+    hint: "Finished thumbnail images. A thumbnail already set on a YouTube video lives on YouTube, so deleting the local copy changes nothing there. Re-generatable.",
   },
   {
     key: "thumbnailFonts", category: "thumbnailFonts", group: "content", danger: true,
@@ -243,6 +322,27 @@ const AREAS: AreaDef[] = [
     key: "imageHistory", category: "imageHistory", group: "content",
     icon: "Images", label: "AI image history",
     hint: "Images kept from the AI Image Generator. Deleting one removes it from that tool's history.",
+  },
+  {
+    key: "avatarAssets", category: "avatar", group: "content", danger: true,
+    icon: "UserRound", label: "Avatar narrator assets",
+    hint: "Presenter stills, generated narration clips and voice segments for the synthetic-presenter videos. Finished narration videos are already assembled and unaffected; deleting a piece means that video cannot be re-assembled without paying to generate it again.",
+  },
+  {
+    key: "scriptgenShots", category: "scriptgenShots", group: "content", danger: true,
+    icon: "Camera", label: "Script generator screenshots",
+    hint: "Screenshots you uploaded so the Script Generator could read a tool's current prices and UI off the screen. The sheet it wrote from them is saved in the run, and the finished script is unaffected — deleting one only means the [S3] citations in that run can no longer be checked against the original picture.",
+  },
+  {
+    key: "publicAssets", category: "publicAssets", group: "content",
+    icon: "Globe", label: "Public assets",
+    hint: "Files served publicly by URL — anything the app had to expose to an outside service. Small, but deleting one breaks whatever links to it.",
+  },
+  // ── Cache: regenerates on demand (safe to Clear) ────────────────────────────
+  {
+    key: "memeSfx", category: "memeSfx", group: "cache",
+    icon: "Volume2", label: "Meme sound-effect cache",
+    hint: "Sound effects cut for the sticker/meme editor. Pure cache — re-cut from the source on demand.",
   },
   // ── Cache: regenerates on demand (safe to Clear) ────────────────────────────
   {
@@ -297,6 +397,11 @@ const AREAS: AreaDef[] = [
   },
   // ── Accounted-for but not yours to delete / not yet named ───────────────────
   {
+    key: "dataRoot", category: "dataRoot", group: "leftovers",
+    icon: "FileQuestion", label: "Loose files in the data volume",
+    hint: "Files and one-off folders written straight into the root of the data volume rather than into any tool's own directory — debug scripts, run logs, probe images, scratch transcripts and JSON backups left over from hand-debugging. None of it is produced by the app, and nothing reads it. Every registered area is filtered out and cannot be selected here, so anything on this list is safe to delete.",
+  },
+  {
     key: "database", category: "db", group: "system",
     icon: "Database", label: "Database",
     hint: "The sqlite file holding every project, music track, promo and setting. Counted here so the totals are honest — it can never be deleted from this page.",
@@ -304,7 +409,7 @@ const AREAS: AreaDef[] = [
   {
     key: "unaccounted", category: "unaccounted", group: "system",
     icon: "HelpCircle", label: "Everything else in the data volume",
-    hint: "Bytes in the data volume that no card above claims — a directory a newer tool writes to that hasn't been given a name here yet. This line is measured as the remainder, so it can never hide anything: if it's large, something new needs a registry entry.",
+    hint: "Bytes in the data volume that no card above claims. Measured as the remainder rather than walked, so it can never hide anything. It should now sit at or near zero — every directory and every loose file has a card of its own. If this grows, a new tool has started writing somewhere that needs a registry entry.",
   },
 ];
 
@@ -317,6 +422,15 @@ export interface StorageItem {
   size: number;        // bytes
   mtime: number;       // epoch ms
   url?: string;        // serve URL (for preview/download)
+  /**
+   * For a DIRECTORY row, how many files it holds recursively. Absent on files,
+   * where it is always 1.
+   *
+   * It exists so the `unaccounted` remainder can subtract a true file count
+   * rather than counting a folder of 400 files as one — which is how the
+   * remainder came to claim 285 phantom files while holding 59 KB.
+   */
+  files?: number;
   /** Sub-role used to split a physical area into cards (see AREAS). */
   kind?: "music" | "audio" | "promo" | "narrator" | "render" | "screencast";
 }
@@ -332,7 +446,7 @@ export interface StorageArea {
   label: string;
   hint: string;
   icon: string;               // lucide-react icon name
-  group: "content" | "cache" | "system";
+  group: "content" | "cache" | "leftovers" | "system";
   cache: boolean;             // clearable wholesale via deleteStorageArea
   danger: boolean;            // deleting can break projects
   folderOnly: boolean;        // no per-file list; Clear-all only
@@ -438,20 +552,39 @@ function referencedUploads(): {
 export function resolveSafe(category: Category, name: string): string | null {
   const dir = DIRS[category];
   if (!dir || PROTECTED.has(category) || typeof name !== "string" || !name) return null;
+  // A child that belongs to another card is never this card's to delete. It
+  // matters most for `dataRoot`, where `uploads` and `db` are direct children,
+  // but it is equally true of `tmp` vs the chunked-upload area.
+  if (reservedFor(category).has(name)) return null;
   const resolved = path.resolve(dir, name);
   // Must be a direct child of the category dir (no subdirs, no "..").
   if (path.dirname(resolved) !== path.resolve(dir)) return null;
   return resolved;
 }
 
+function listDataRoot(): StorageItem[] {
+  return listDir("dataRoot");
+}
+
 /**
- * List the SUBDIRECTORIES of a category as items, each sized recursively — for
- * areas where the unit of work is a folder (see DIR_ENTRY). deleteStorageFiles
- * already removes directories recursively, so these delete like any other item.
+ * The direct children of a category's directory as items — files, and folders
+ * sized recursively.
+ *
+ * FOLDERS ARE ITEMS, NOT SKIPPED. This used to list files only, which quietly
+ * broke the partition every time a tool wrote into a subfolder: `avatar/` had
+ * 2.8 MB in a subdirectory and `tmp/` had 7.4 MB across `sfxprev` and
+ * `slapprev`, none of it claimed by the card that owns the directory, all of it
+ * silently reappearing in the `unaccounted` remainder as bytes with no home.
+ * A folder now shows up as one deletable row — `deleteStorageFiles` already
+ * removes recursively, so it deletes like any other item.
+ *
+ * Children belonging to another card are skipped, or `tmp` would count the
+ * chunked-upload area a second time. See reservedChildrenOf.
  */
-function listDirEntries(category: Category): StorageItem[] {
+function listDir(category: Category): StorageItem[] {
   const dir = DIRS[category];
   if (!dir) return [];
+  const reserved = reservedFor(category);
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -460,43 +593,24 @@ function listDirEntries(category: Category): StorageItem[] {
   }
   const out: StorageItem[] = [];
   for (const ent of entries) {
-    if (ent.name.startsWith(".") || !ent.isDirectory()) continue;
+    if (ent.name.startsWith(".") || reserved.has(ent.name)) continue;
     const full = path.join(dir, ent.name);
     try {
       const st = fs.statSync(full);
-      const sub = dirStats(full);
-      out.push({
-        category,
-        name: ent.name,
-        size: sub.size,
-        mtime: Math.round(st.mtimeMs),
-        // The folder is the item; say how many files it holds so the row reads
-        // as "a session with 3 files", not a mystery name.
-        original: `${ent.name} · ${sub.count} file${sub.count !== 1 ? "s" : ""}`,
-      });
-    } catch {
-      /* skip unreadable entries */
-    }
-  }
-  return out;
-}
-
-function listDir(category: Category): StorageItem[] {
-  const dir = DIRS[category];
-  if (!dir) return [];
-  let names: string[] = [];
-  try {
-    names = fs.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const out: StorageItem[] = [];
-  for (const name of names) {
-    if (name.startsWith(".")) continue;
-    try {
-      const st = fs.statSync(path.join(dir, name));
-      if (!st.isFile()) continue;
-      out.push({ category, name, size: st.size, mtime: Math.round(st.mtimeMs) });
+      if (st.isDirectory()) {
+        const sub = dirStats(full);
+        out.push({
+          category,
+          name: ent.name,
+          size: sub.size,
+          mtime: Math.round(st.mtimeMs),
+          files: sub.count,
+          original: `${ent.name}/ · ${sub.count} file${sub.count !== 1 ? "s" : ""}`,
+        });
+      } else if (st.isFile()) {
+        out.push({ category, name: ent.name, size: st.size, mtime: Math.round(st.mtimeMs) });
+      }
+      // skip symlinks / sockets / fifos
     } catch {
       /* skip unreadable entries */
     }
@@ -582,6 +696,7 @@ export async function listStorage() {
   const LISTABLE: Category[] = [
     "thumbnails", "thumbnailFonts", "tmp", "stickers",
     "thumbnailCharacters", "thumbnailBackgrounds", "thumbnailCutouts", "imageHistory",
+    "avatar", "memeSfx", "scriptgenShots", "publicAssets",
   ];
   for (const cat of LISTABLE) {
     const items = listDir(cat);
@@ -589,8 +704,11 @@ export async function listStorage() {
     if (base) for (const f of items) f.url = `${base}${encodeURIComponent(f.name)}`;
     filesByCategory[cat] = items;
   }
-  // Directory-per-unit categories (planner sessions): each subdir is one item.
-  for (const cat of DIR_ENTRY) filesByCategory[cat] = listDirEntries(cat);
+  // Directory-per-unit categories (planner sessions): each subdir is one item,
+  // and any file dropped beside them is another.
+  for (const cat of DIR_ENTRY) filesByCategory[cat] = listDir(cat);
+  // The leftovers at the root of the volume — files and stray dirs alike.
+  filesByCategory.dataRoot = listDataRoot();
 
   // Folder-only categories (nested bundles / part-dirs): recursive stats, no list.
   // `unaccounted` is the computed remainder and is filled in below, not walked.
@@ -646,8 +764,17 @@ export async function listStorage() {
   const claimed = areas.reduce((s, a) => s + a.size, 0);
   const remainder = areas.find((a) => a.category === "unaccounted")!;
   remainder.size = Math.max(0, volume.size - claimed);
-  // Best-effort file count for the remainder; negative would mean overlap, so floor it.
-  remainder.count = Math.max(0, volume.count - areas.reduce((s, a) => s + (a.category === "unaccounted" ? 0 : a.count), 0));
+  // The remainder's file count, against the TRUE number of files the cards hold.
+  // A card's `count` is its number of ROWS, and a row may be a folder holding
+  // hundreds of files — so subtracting row counts left the remainder claiming
+  // hundreds of files it did not have. `files` carries the recursive count for
+  // exactly this subtraction.
+  const claimedFiles = areas.reduce((s, a) => {
+    if (a.category === "unaccounted") return s;
+    if (a.folderOnly) return s + a.count;
+    return s + a.items.reduce((n, it) => n + (it.files ?? 1), 0);
+  }, 0);
+  remainder.count = Math.max(0, volume.count - claimedFiles);
 
   const all = volume.size;
   const cacheTotal = areas.reduce((s, a) => s + (a.cache ? a.size : 0), 0);

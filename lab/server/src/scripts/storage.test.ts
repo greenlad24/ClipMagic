@@ -233,11 +233,23 @@ async function main() {
     assert.equal(cards, volume.size, "cards, including the remainder, add up exactly");
   });
 
-  await check("listStorage: an unregistered directory surfaces as `unaccounted`", async () => {
+  // This used to assert the opposite — that an unregistered directory showed up
+  // as an anonymous lump in `unaccounted`. That WAS the guarantee, and it was a
+  // weak one: it proved bytes could not hide, but it left the operator with a
+  // number and nothing to click. The dataRoot card now lists those same bytes by
+  // name, so the stronger statement is that the remainder has nothing left to
+  // report. `unaccounted` stays, and stays honest, as the check on the registry.
+  await check("listStorage: an unregistered directory is NAMED, not lumped", async () => {
     const res = await listStorage();
+    const root = res.areas.find((a: any) => a.category === "dataRoot");
+    assert.ok(root, "the leftovers card always exists");
+    const stray = root.items.find((i: any) => i.name === "a-tool-nobody-registered");
+    assert.ok(stray, "the unregistered directory is listed by name");
+    assert.ok(stray.size >= 4321, `sized recursively (got ${stray.size})`);
+
     const other = res.areas.find((a: any) => a.category === "unaccounted");
     assert.ok(other, "the remainder card always exists");
-    assert.ok(other.size >= 4321, `unregistered bytes are reported (got ${other.size})`);
+    assert.equal(other.size, 0, "nothing is left over once every child is claimed");
     assert.equal(other.group, "system");
     assert.equal(other.cache, false, "never offered as clearable");
   });
@@ -314,6 +326,69 @@ async function main() {
     assert.ok(res.system, "a system breakdown is always present");
     // No Docker socket in the test env — it must degrade with a reason, not throw.
     if (!res.system.available) assert.ok(res.system.reason, "explains why it's missing");
+  });
+
+  // ── The dataRoot card, and the guard that makes it safe to exist ───────────
+  // This card points at DATA_DIR itself, where the direct children include
+  // `uploads` and `db`. Without ROOT_RESERVED the ordinary "must be a direct
+  // child" rule would let one request delete the entire application state, so
+  // these checks are the ones that must never be allowed to go green by accident.
+  await check("dataRoot refuses every registered area by name", () => {
+    for (const name of [
+      "uploads", "outputs", "db", "planner", "image-history", "tmp",
+      "engage-browser", "skool-browser", "avatar", "scriptgen", "public-assets",
+      "motion-bundle", "thumbnail-fonts", "thumbnail-characters",
+      "thumbnail-backgrounds", "thumbnail-cutouts", ".remotion-chromium",
+    ]) {
+      assert.equal(resolveSafe("dataRoot", name), null, `dataRoot must refuse ${name}`);
+    }
+  });
+
+  await check("dataRoot reaches the leftovers it exists for", () => {
+    for (const name of ["verify9b.cjs", "run-fb.log", "tr-abc.txt", "plan4-backup.json"]) {
+      assert.equal(resolveSafe("dataRoot", name), path.join(dataDir, name));
+    }
+  });
+
+  await check("dataRoot still refuses traversal and nesting", () => {
+    assert.equal(resolveSafe("dataRoot", "../etc/passwd"), null);
+    assert.equal(resolveSafe("dataRoot", "uploads/clip.mp4"), null);
+    assert.equal(resolveSafe("dataRoot", "/etc/passwd"), null);
+    assert.equal(resolveSafe("dataRoot", ""), null);
+  });
+
+  await check("a loose file is listed, a registered directory is not", async () => {
+    write(path.join(dataDir, "probe7.cjs"), 400);
+    fs.mkdirSync(path.join(dataDir, "scratch-run"), { recursive: true });
+    write(path.join(dataDir, "scratch-run", "out.log"), 600);
+    const res = await storage.listStorage();
+    const card = res.areas.find((a: any) => a.category === "dataRoot");
+    assert.ok(card, "the dataRoot card exists");
+    const names = card.items.map((i: any) => i.name);
+    assert.ok(names.includes("probe7.cjs"), "the loose file is listed");
+    assert.ok(names.includes("scratch-run"), "the stray directory is listed");
+    assert.ok(!names.includes("uploads"), "a registered area is never listed here");
+    assert.ok(!names.includes("db"), "the database is never listed here");
+    // The stray directory is sized recursively, not reported as zero.
+    const stray = card.items.find((i: any) => i.name === "scratch-run");
+    assert.ok(stray, "the stray directory is present");
+    assert.equal(stray.size, 600);
+  });
+
+  await check("deleting a loose file frees its bytes; the volume keeps its own", async () => {
+    write(path.join(dataDir, "junk.log"), 1234);
+    const del = await deleteStorageFiles({ items: [{ category: "dataRoot", name: "junk.log" }] });
+    assert.equal(del.deleted, 1);
+    assert.equal(del.freed, 1234);
+    assert.ok(fs.existsSync(uploadsDir), "uploads survived a dataRoot delete");
+  });
+
+  await check("a delete aimed at uploads through dataRoot is refused, not performed", async () => {
+    write(path.join(uploadsDir, "keep-me.mp4"), 900);
+    const del = await deleteStorageFiles({ items: [{ category: "dataRoot", name: "uploads" }] });
+    assert.equal(del.deleted, 0, "nothing was deleted");
+    assert.equal(del.errors.length, 1, "it reported the refusal");
+    assert.ok(fs.existsSync(path.join(uploadsDir, "keep-me.mp4")), "the upload is still there");
   });
 
   // Cleanup.

@@ -30,7 +30,41 @@
  * Tagged-but-unused images are reported and never touched — on this box they
  * are deliberate `backup-pre-*` / `candidate-*` rollback tags.
  */
+import fs from "node:fs";
+import path from "node:path";
 import http from "node:http";
+
+/**
+ * Recursive size + count for a directory outside the data volume. Local rather
+ * than imported from storage.ts, which imports this module — a cycle between
+ * the two would be a worse trade than eight lines.
+ */
+function measureDir(dir: string): { size: number; count: number } {
+  let size = 0;
+  let count = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return { size: 0, count: 0 };
+  }
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    try {
+      if (ent.isDirectory()) {
+        const sub = measureDir(full);
+        size += sub.size;
+        count += sub.count;
+      } else if (ent.isFile()) {
+        size += fs.statSync(full).size;
+        count += 1;
+      }
+    } catch {
+      /* unreadable entry — skip */
+    }
+  }
+  return { size, count };
+}
 
 const DOCKER_SOCKET = process.env.DOCKER_SOCKET || "/var/run/docker.sock";
 
@@ -132,6 +166,12 @@ export async function readSystemUsage(dataDirBytes: number): Promise<SystemUsage
 
   const volumeBytes = volumes.reduce((s, v) => s + (v.UsageData?.Size ?? 0), 0);
   const containerBytes = containers.reduce((s, c) => s + (c.SizeRw ?? 0), 0);
+  // Hyperframes stages its uploads on a mount of its own. It is NOT in the data
+  // volume, so it must never be an area card there — a card would inflate what
+  // the volume claims and shrink the `unaccounted` remainder by the same amount,
+  // which is precisely the kind of quiet miscount the remainder exists to catch.
+  // It shares the disk, though, so it belongs in this section.
+  const hyperframes = measureDir(process.env.HYPERFRAMES_WORK || "/hyperframes-work");
 
   const buckets: SystemBucket[] = [
     {
@@ -163,6 +203,15 @@ export async function readSystemUsage(dataDirBytes: number): Promise<SystemUsage
       icon: "Boxes",
       size: Math.max(0, volumeBytes - dataDirBytes),
       count: Math.max(0, volumes.length - 1),
+      reclaimable: 0,
+    },
+    {
+      key: "hyperframesWork",
+      label: "Hyperframes staging",
+      hint: "Upload buckets the Hyperframes render machine stages before a render. It has its own mount rather than living in the data volume, but shares this disk — so it belongs here, not in the app's own totals. Buckets are swept automatically after a day.",
+      icon: "Layers",
+      size: hyperframes.size,
+      count: hyperframes.count,
       reclaimable: 0,
     },
     {
