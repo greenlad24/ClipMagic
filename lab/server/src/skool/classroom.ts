@@ -138,8 +138,12 @@ export async function readClassroom(communityUrl: string): Promise<SkoolClassroo
 
   // Skool tells us how many there should be. If the walk disagrees, say so
   // rather than returning a plausible-looking short list.
+  //
+  // ⚠️ SKOOL'S COUNT LEAVES OUT DRAFTS; THE ADMIN WALK DOES NOT. With one draft
+  // course the read was "19 expected, 20 read" and every gate refresh failed
+  // (2026-09-28), so a match on the PUBLISHED count is also a full read.
   const error =
-    expected != null && expected !== courses.length
+    expected != null && expected !== courses.length && expected !== courses.filter((c) => c.published).length
       ? `Skool reports ${expected} courses but only ${courses.length} could be read.`
       : null;
 

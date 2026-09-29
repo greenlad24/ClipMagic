@@ -28,16 +28,39 @@
 import { db } from "../db/index.js";
 import { getSkoolSettings } from "../db/skool.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
-import { readComments, answerable, type SkoolComment } from "./comments.js";
+import {
+  answeredAfter,
+  readComments,
+  waiting,
+  type CommentRead,
+  type SkoolComment,
+} from "./comments.js";
 import { readChannels, readMessages, needingReply, sendDm, type DmChannel, type DmMessage } from "./dms.js";
 import { readFeed, type SkoolPost } from "./community.js";
 import { draftReply, firstNameOf, type ReplyRequest } from "./engageGen.js";
 import { ensureAccessFresh, entitlementFor, type Entitlement } from "./access.js";
-import { replyToComment } from "./engageActions.js";
+import { replyToComment, type IntroChip, type ReplyResult } from "./engageActions.js";
+import { commentOnMemberPost } from "./postComment.js";
+import {
+  findConnection,
+  placeIntro,
+  renderIntro,
+  recordIntroduction,
+  markIntroduction,
+  readStoredIntro,
+  introMember,
+  refreshProfiles,
+  type Connection,
+  type StoredIntro,
+} from "./connections.js";
 import { screenMember, declineLine, MINOR_RESTRICTIONS, type SafetyVerdict } from "./safety.js";
 import { checkOutgoing, linksIn, repairInstruction } from "./outgoing.js";
 
-export type ReplySurface = "comment" | "dm";
+/**
+ * `comment` answers a comment under one of Jake's posts; `post` comments under
+ * a post a MEMBER wrote; `dm` answers a direct message.
+ */
+export type ReplySurface = "comment" | "dm" | "post";
 export type ReplyState = "drafted" | "sent" | "unconfirmed" | "skipped" | "failed";
 
 /* ────────────────────────── settings ────────────────────────── */
@@ -88,6 +111,39 @@ export interface ReplyConfig {
    * re-read is exact.
    */
   maxSendAttempts: number;
+  /**
+   * Comment under posts MEMBERS write, not just answer comments on Jake's own.
+   * Jake, 2026-09-19: "it should also comment on members posts".
+   *
+   * ⚠️ ITS OWN SWITCH, OFF UNTIL ARMED. Starting a conversation under somebody
+   * else's post is a different act from answering one under your own.
+   */
+  memberPosts: boolean;
+  /**
+   * How old a member's post may be and still get a first comment. Much shorter
+   * than `maxAgeDays`: a reply to a question weeks old is late but welcome, a
+   * first comment on a stale post reads as a bot working through a backlog.
+   */
+  memberPostMaxAgeDays: number;
+  /**
+   * Point a member at one other member who has done the thing they are asking
+   * about — learned from DMs, never repeating them. See `connections.ts`.
+   */
+  introductions: boolean;
+  /** DM threads distilled into experience per sweep, when introductions are on. */
+  profilesPerSweep: number;
+  /**
+   * Ask a member who has just thanked you to review the community.
+   * Jake, 2026-09-20. See `reviewNudgeState`.
+   *
+   * ⚠️ DEFAULTS ON, WHICH IS THE OPPOSITE OF `memberPosts` AND `introductions`
+   * ABOVE — DELIBERATELY. Those two default off because a database that
+   * upgrades into a NEW outbound behaviour must not start doing it unasked.
+   * This behaviour was asked for and shipped live before the switch existed, so
+   * defaulting it off would silently turn off a working feature on deploy. The
+   * switch is here to stop it, not to arm it. (Jake's call, same day.)
+   */
+  reviewNudge: boolean;
 }
 
 const DEFAULTS: ReplyConfig = {
@@ -109,6 +165,15 @@ const DEFAULTS: ReplyConfig = {
   maxAgeDays: 30,
   postsToScan: 5,
   maxSendAttempts: 3,
+  // ⚠️ BOTH OFF, so a database that upgrades into them changes nothing until a
+  // human arms them — the same rule as `enabled` and `dryRun` above.
+  memberPosts: false,
+  memberPostMaxAgeDays: 3,
+  introductions: false,
+  profilesPerSweep: 5,
+  // ⚠️ ON — see the field's comment. It is already live; this switch turns it
+  // OFF, and a default of false would disable it the moment this ships.
+  reviewNudge: true,
 };
 
 function readJson<T>(raw: string | null | undefined, fallback: T): T {
@@ -137,6 +202,11 @@ export function setReplyConfig(patch: Partial<ReplyConfig>): ReplyConfig {
   next.maxAgeDays = Math.max(1, Math.min(365, Math.floor(next.maxAgeDays)));
   next.postsToScan = Math.max(1, Math.min(25, Math.floor(next.postsToScan)));
   next.maxSendAttempts = Math.max(1, Math.min(10, Math.floor(next.maxSendAttempts)));
+  next.memberPostMaxAgeDays = Math.max(1, Math.min(30, Math.floor(next.memberPostMaxAgeDays)));
+  next.profilesPerSweep = Math.max(0, Math.min(40, Math.floor(next.profilesPerSweep)));
+  next.memberPosts = !!next.memberPosts;
+  next.introductions = !!next.introductions;
+  next.reviewNudge = next.reviewNudge !== false;
   db
     .prepare("UPDATE skool_settings SET engage_replies_json = ?, updated_at = ? WHERE id = 1")
     .run(JSON.stringify(next), Date.now());
@@ -170,6 +240,8 @@ export interface ReplyRow {
   attempts: number;
   lastError: string;
   steps: string;
+  /** The member this reply introduces them to, if any. */
+  intro: StoredIntro | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -179,7 +251,7 @@ const text = (v: unknown): string => (v == null ? "" : String(v));
 
 const rowToReply = (r: any): ReplyRow => ({
   id: String(r.id),
-  surface: r.surface === "dm" ? "dm" : "comment",
+  surface: r.surface === "dm" ? "dm" : r.surface === "post" ? "post" : "comment",
   targetId: String(r.target_id),
   postSlug: String(r.post_slug ?? ""),
   channelId: String(r.channel_id ?? ""),
@@ -197,6 +269,7 @@ const rowToReply = (r: any): ReplyRow => ({
   attempts: Number(r.attempts ?? 0),
   lastError: String(r.last_error ?? ""),
   steps: String(r.steps ?? ""),
+  intro: readStoredIntro(String(r.connect_json ?? "")),
   createdAt: Number(r.created_at ?? 0),
   updatedAt: Number(r.updated_at ?? 0),
 });
@@ -337,6 +410,111 @@ export function asksAboutUpgrading(text: string): boolean {
   return false;
 }
 
+/**
+ * Are they thanking this account for actually helping them?
+ *
+ * Jake, 2026-09-20: *"if a member in a DM say 'thank you for your help' or
+ * showing appreciation nudge them into giving a positive review."*
+ *
+ * ⚠️⚠️ NARROW ON PURPOSE, AND A MISS IS THE SAFE DIRECTION — the same rule as
+ * `asksAboutUpgrading`. There is exactly ONE review ask per member for the life
+ * of the relationship, so a false positive spends it on somebody who was being
+ * polite about something else, and there is no second chance to ask the person
+ * who really meant it. A miss costs nothing: they thank you again next time.
+ *
+ * ⚠️ AND "THANKS" IS NOT ALWAYS THANKS. "No thanks", "thanks but it still
+ * doesn't work" and "thanks for nothing" all contain the word and none of them
+ * is a moment to ask for a five-star review. A sentence carrying a complaint,
+ * a refusal or a "but" is dropped before anything else is tested.
+ */
+export function showsAppreciation(text: string): boolean {
+  const SOUR =
+    /\b(?:but|however|still (?:not|does ?n.t|isn.t|won.t)|does ?n.t work|did ?n.t work|not working|no thanks|nothing|useless|wrong|confus(?:ed|ing)|unfortunately|sadly|anyway)\b/;
+  // Gratitude aimed at a PERSON for something done, not "thanks" as a sign-off
+  // on a request ("send it over, thanks").
+  const THANKS =
+    // ⚠️ NO BARE "ty". It is a real abbreviation for thank-you and it is also a
+    // name, and "my nephew Ty uses AI" is not a member thanking anybody — the
+    // test carries that exact line. With one ask per member to spend, an
+    // abbreviation this short is not worth the person it misfires on.
+    /\b(?:thank you|thanks|thankyou|thx|cheers|much appreciated|appreciate (?:it|that|you|your)|grateful)\b/;
+  const PRAISE =
+    /\b(?:this (?:really )?help(?:ed|s)|that (?:really )?help(?:ed|s)|you(?:'| a)?re (?:a )?(?:legend|star|the best|amazing|awesome|brilliant|great)|so helpful|really helpful|life ?saver|exactly what i needed|worked (?:perfectly|great|a treat)|sorted(?: it)?|nailed it|love (?:this|the) (?:community|group|classroom))\b/;
+
+  // ⚠️ A QUESTION ANYWHERE IN THE MESSAGE CANCELS IT, NOT MERELY IN THE SAME
+  // SENTENCE. "Thanks, that worked! Is there a course on this?" is help still in
+  // progress, and answering it with a request for a favour interrupts somebody
+  // mid-conversation. They thank you again when it is actually finished, which
+  // is the whole reason a miss here is cheap.
+  const whole = String(text ?? "").toLowerCase();
+  const STILL_ASKING =
+    /\?|\b(?:can you|could you|would you|how do i|how can i|what about|one more|another question)\b/;
+  if (STILL_ASKING.test(whole)) return false;
+
+  for (const raw of whole.split(/[.!\n]+/)) {
+    const sentence = raw.trim();
+    if (!sentence) continue;
+    if (SOUR.test(sentence)) continue;
+    if (THANKS.test(sentence) || PRAISE.test(sentence)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether this DM may ask them to review the community, and why.
+ *
+ * ⚠️⚠️ COUNTED, NOT REQUESTED — the identical lesson to `plansNudgeState`, and
+ * it bites harder here. The drafter has never seen its own previous replies, so
+ * "ask for a review only once" written in a prompt means "ask every time they
+ * say thanks", and a member who thanks you three weeks running gets asked three
+ * times. That is not a nudge, it is nagging the friendliest people in the
+ * community.
+ *
+ * ⚠️ ONCE PER MEMBER, EVER — not once per conversation like the plans page. A
+ * review is a thing somebody does once; a second ask can only annoy someone who
+ * already decided. So the ledger is searched across the WHOLE channel history
+ * and the thread is searched too, because Jake asks people himself.
+ */
+export function reviewNudgeState(
+  communityUrl: string,
+  channelId: string,
+  theirText: string,
+  transcript: string,
+): { allowed: boolean; thanked: boolean; seen: number; url: string; why: string } {
+  const url = `${communityUrl.replace(/\/+$/, "")}/about`;
+  // ⚠️ THE COMMUNITY'S OWN /about, NOT THE STRING "/about". Jake's YouTube
+  // channel link ends in /about too, and matching that would silently retire the
+  // review ask for anyone he had ever sent to his channel.
+  const needle = `${new URL(url).pathname.replace(/\/+$/, "")}`;
+  const thanked = showsAppreciation(theirText);
+
+  let seen = 0;
+  if (channelId) {
+    const rows = db
+      .prepare(
+        `SELECT reply_text FROM skool_reply_log
+          WHERE surface = 'dm' AND channel_id = ?
+            AND state IN ('sent', 'unconfirmed', 'drafted')`,
+      )
+      .all(channelId) as { reply_text: string }[];
+    seen += rows.filter((r) => String(r.reply_text ?? "").includes(needle)).length;
+  }
+  if (transcript.includes(needle)) seen += 1;
+
+  const allowed = thanked && seen === 0;
+  return {
+    allowed,
+    thanked,
+    seen,
+    url,
+    why: !thanked
+      ? "They have not said anything that reads as thanks, so there is nothing to follow."
+      : seen > 0
+        ? `The about page has already come up in this conversation (${seen}), so they have been asked once and that is the limit.`
+        : "They thanked this account and have never been asked, so one review nudge is allowed.",
+  };
+}
+
 function insertReply(row: {
   surface: ReplySurface;
   targetId: string;
@@ -353,6 +531,7 @@ function insertReply(row: {
   cited?: { title: string; url: string }[];
   tokens?: number;
   lastError?: string;
+  intro?: StoredIntro | null;
 }): string {
   const id = keyFor(row.surface, row.targetId);
   const now = Date.now();
@@ -365,14 +544,15 @@ function insertReply(row: {
         `INSERT INTO skool_reply_log
            (id, surface, target_id, post_slug, channel_id, member_id, member_name, member_tier, member_level,
             their_text, state, reply_text, skip_reason, cited_json, reply_id, tokens, attempts, last_error, steps,
-            created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, 0, ?, '', ?, ?)`,
+            connect_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, 0, ?, '', ?, ?, ?)`,
       )
       .run(
         id, row.surface, row.targetId, text(row.postSlug), text(row.channelId), text(row.memberId),
         text(row.memberName), text(row.memberTier), Number(row.memberLevel ?? 0),
         text(row.theirText), row.state, text(row.replyText), text(row.skipReason),
-        JSON.stringify(row.cited ?? []), Number(row.tokens ?? 0), text(row.lastError), now, now,
+        JSON.stringify(row.cited ?? []), Number(row.tokens ?? 0), text(row.lastError),
+        row.intro ? JSON.stringify(row.intro) : "", now, now,
       );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -397,6 +577,9 @@ function updateReply(id: string, patch: Record<string, unknown>): void {
  * strict enough to strand a message a crash interrupted.
  */
 export function forgetReply(id: string): boolean {
+  // An introduction that never went out must stop counting against the pair
+  // and the limits, or forgetting the reply would still block the next one.
+  markIntroduction(id, "dropped");
   return db.prepare("DELETE FROM skool_reply_log WHERE id = ?").run(id).changes > 0;
 }
 
@@ -423,22 +606,53 @@ export interface ReplyTarget {
    */
   alreadySentUrls: string[];
   /**
-   * How many of their messages this reply answers — a DM run, unanswered.
+   * How many of their messages this reply answers — an unanswered run.
    *
-   * 1 for a comment and for the ordinary one-message DM. Higher when somebody
-   * sent two or three in a row before anyone got to them, which is the case
-   * this exists for: they get ONE reply and it has to cover all of it.
+   * 1 for the ordinary single comment or DM. Higher when somebody sent two or
+   * three in a row before anyone got to them, which is the case this exists
+   * for: they get ONE reply and it has to cover all of it.
    */
   unansweredCount: number;
+  /**
+   * The comment thread so far, oldest first, when this reply continues one.
+   *
+   * ⚠️ EMPTY ON A FIRST ANSWER, AND THAT IS THE DIFFERENCE THAT MATTERS. A
+   * follow-up under Jake's own comment has to be answered as a CONVERSATION —
+   * the drafter has never seen what it already told this person, and "Cheers
+   * man!" answered as if it were a fresh question is how a thread starts
+   * repeating itself. A DM carries the same history in `context`; a comment
+   * keeps them apart because it has a post to sit under as well.
+   */
+  thread: string;
   createdAt: string;
 }
 
 export interface Collected {
   targets: ReplyTarget[];
   /** What was looked at, so "nothing to answer" and "nothing was read" differ. */
-  scanned: { posts: number; postsWithComments: number; comments: number; dmThreads: number; dmTheySpokeLast: number };
+  scanned: {
+    posts: number;
+    postsWithComments: number;
+    comments: number;
+    dmThreads: number;
+    dmTheySpokeLast: number;
+    /** Recent posts by members, looked at for a first comment. */
+    memberPosts: number;
+  };
   notes: string[];
   error: string | null;
+}
+
+/**
+ * Members who are Jake — his two admin accounts both read "Jake Dawson" — or
+ * anyone else Skool marks as an admin. Never commented on as if a member.
+ */
+export function adminIds(): Set<string> {
+  return new Set(
+    (db.prepare("SELECT user_id FROM skool_member_access WHERE role != 'member'").all() as { user_id: string }[]).map(
+      (r) => r.user_id,
+    ),
+  );
 }
 
 const olderThan = (iso: string, days: number): boolean => {
@@ -463,28 +677,84 @@ const olderThan = (iso: string, days: number): boolean => {
 export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Promise<Collected> {
   const out: Collected = {
     targets: [],
-    scanned: { posts: 0, postsWithComments: 0, comments: 0, dmThreads: 0, dmTheySpokeLast: 0 },
+    scanned: { posts: 0, postsWithComments: 0, comments: 0, dmThreads: 0, dmTheySpokeLast: 0, memberPosts: 0 },
     notes: [],
     error: null,
   };
   const engaged = engagedIds();
 
-  if (cfg.comments) {
+  // One feed read serves both surfaces that live on the feed.
+  let feedPosts: SkoolPost[] = [];
+  if (cfg.comments || cfg.memberPosts) {
     const feed = await readFeed(communityUrl, 1);
     if (feed.error) {
       out.error = `Could not read the feed: ${feed.error}`;
       return out;
     }
     out.scanned.posts = feed.posts.length;
+    feedPosts = feed.posts;
+  }
+
+  // ⚠️ ONE READ PER POST, SHARED BY BOTH BRANCHES BELOW. Both of them open a
+  // member's post for a different reason — "has anybody answered in here?" and
+  // "have we commented on this at all?" — and that is the same navigation
+  // twice, against the one browser the poster also needs. The read is a page
+  // load plus an API call and nothing about it writes, so memoising it for the
+  // length of one sweep is free.
+  const reads = new Map<string, CommentRead>();
+  const readFor = async (slug: string): Promise<CommentRead> => {
+    const had = reads.get(slug);
+    if (had) return had;
+    const read = await readComments(communityUrl, slug);
+    reads.set(slug, read);
+    return read;
+  };
+
+  if (cfg.comments) {
+    // ⚠️ BOTH OF JAKE'S ACCOUNTS COUNT AS ANSWERING. They are both called "Jake
+    // Dawson" and only one is signed in, so a thread the other one answered
+    // reads as unanswered from here — and "always answer" must not turn into
+    // "answer twice, once per account". See `AnswerOptions.usIds`.
+    const admins = adminIds();
+    // ⚠️⚠️ MEMBERS' POSTS ARE SCANNED FOR COMMENTS TOO, AND THAT IS THE FIX.
+    // Jake, 2026-09-26: *"we have a post that someone else wrote, Jake wrote a
+    // comment, then that person wrote a comment, then Jake never answered — I
+    // want Jake to always answer."* This filter was `p.byMe`, so the post that
+    // conversation happens on was never opened by this branch at all, and the
+    // `memberPosts` branch below opens it only to decide NOT to comment twice.
+    // Between them the follow-up had nowhere to be found.
+    //
+    // ⚠️ AND ON A MEMBER'S POST IT IS FOLLOW-UPS ONLY — `followUpsOnly`.
+    // Finishing a conversation Jake started under somebody's post is what he
+    // asked for; walking into a thread between two other members is a new
+    // outbound behaviour, and `memberPosts` is the switch that decides whether
+    // this agent speaks under a member's post at all.
+    //
     // ⚠️ ONLY POSTS THAT ACTUALLY HAVE COMMENTS, AND THE FEED ALREADY SAYS SO.
     // `commentCount` comes free with the feed read, so opening a post with none
-    // is a browser navigation spent to learn what we were already told.
-    const mine = feed.posts
-      .filter((p) => p.byMe && p.commentCount > 0 && p.slug)
-      .slice(0, cfg.postsToScan);
-    out.scanned.postsWithComments = mine.length;
-    for (const post of mine) {
-      const read = await readComments(communityUrl, post.slug);
+    // is a browser navigation spent to learn what we were already told. Feed
+    // order is kept rather than sorted by date: Skool bumps a post when someone
+    // comments, which puts the threads with something new in them first — which
+    // is exactly what `postsToScan` should be spent on.
+    //
+    // ⚠️⚠️ "HIS OWN POST" MEANS EITHER ACCOUNT, AND `byMe` ALONE GETS THE MOST
+    // IMPORTANT POST IN THE COMMUNITY WRONG. `/start-here` — 47 comments, the
+    // first thing every new member reads — was written by Jake's OTHER admin
+    // account, so `byMe` is false on it. That put it in the members' half here
+    // AND excluded it from the `memberPosts` branch below (which correctly skips
+    // anything an admin wrote), so nothing in this file ever answered a comment
+    // on it. Live proof, 2026-09-26: a member's introduction from 2026-09-01 sat
+    // there with no reply at all, inside every window this agent works to.
+    const own = (p: SkoolPost): boolean => p.byMe || (!!p.authorId && admins.has(p.authorId));
+    const withComments = (mine: boolean) =>
+      feedPosts.filter((p) => own(p) === mine && p.commentCount > 0 && p.slug).slice(0, cfg.postsToScan);
+    const scan = [
+      ...withComments(true).map((post) => ({ post, followUpsOnly: false })),
+      ...withComments(false).map((post) => ({ post, followUpsOnly: true })),
+    ];
+    out.scanned.postsWithComments = scan.length;
+    for (const { post, followUpsOnly } of scan) {
+      const read = await readFor(post.slug);
       if (read.error) {
         out.notes.push(`${post.slug}: ${read.error}`);
         continue;
@@ -494,9 +764,18 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
       // fewer than Skool declared; an unanswered comment past the cut is
       // invisible here and saying so is the only honest option.
       if (read.short) out.notes.push(`${post.slug}: read ${read.comments.length} of ${read.declared} comments.`);
-      for (const c of answerable(read.comments)) {
-        if (engaged.has(keyFor("comment", c.id))) continue;
+      for (const w of waiting(read.comments, { usIds: admins, followUpsOnly })) {
+        const c = w.comment;
+        // ⚠️⚠️ KEYED ON THE WHOLE UNANSWERED RUN, NOT ON THE COMMENT. A member
+        // who adds a second comment while the first one's reply is still
+        // drafted moves the target to the newer id — and answering both is two
+        // replies to one conversation, which reads worse than answering
+        // neither. Anything already engaged with inside the run parks it; the
+        // comments BEFORE the run are deliberately not tested, because the one
+        // we answered last time is in there and would park the thread forever.
+        if (w.run.some((r) => engaged.has(keyFor("comment", r.id)))) continue;
         if (olderThan(c.createdAt, cfg.maxAgeDays)) continue;
+        const them = firstNameOf(c.authorName) || c.authorName || "them";
         out.targets.push({
           surface: "comment",
           targetId: c.id,
@@ -506,14 +785,94 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           memberId: c.authorId,
           memberName: c.authorName,
           memberFirstName: firstNameOf(c.authorName),
-          theirText: c.body,
+          // ⚠️ `plain`, NOT `body`, ALL THE WAY THROUGH. The drafter should read
+          // what the member reads, and the raw form of "@Jake thanks!" is
+          // `[@Jake Dawson](obj://user/86f055a8…) thanks!` — a user id in front
+          // of every quoted line. The write path needs the same text to find the
+          // card on the page, and this is the value the ledger row keeps.
+          theirText: w.run.map((r) => r.plain).filter(Boolean).join("\n\n"),
           context: `${post.title}\n\n${post.body}`.trim(),
-          // A comment thread carries no history of its own — see `alreadySentUrls`.
-          alreadySentUrls: [],
-          unansweredCount: 1,
+          // The thread above the run, in the same shape a DM transcript uses.
+          // ⚠️ THE EMPTY ONES GO BEFORE THE LABEL IS ATTACHED, not after. Judging
+          // a rendered line by its length has to know how long the name in front
+          // of it is, and gets "Jake: ok" wrong the moment the member's name is
+          // longer than the reply — which is a real comment, thrown away.
+          thread: w.before
+            .filter((x) => x.plain.trim().length > 0)
+            .map((x) => `${x.byMe || admins.has(x.authorId) ? "Jake" : them}: ${x.plain}`)
+            .join("\n"),
+          // ⚠️ A COMMENT THREAD DOES HAVE A HISTORY NOW, so the "same link
+          // twice in one thread" rule finally has something to work from here —
+          // it was written for DMs because a comment had no history to repeat
+          // itself across, and a follow-up is precisely where it would.
+          // `linksIn` reads the RAW body: `plain` has thrown the URL away and
+          // kept the label.
+          alreadySentUrls: w.before
+            .filter((x) => x.byMe || admins.has(x.authorId))
+            .flatMap((x) => linksIn(x.body).map((l) => l.url)),
+          unansweredCount: Math.max(w.run.length, 1),
           createdAt: c.createdAt,
         });
       }
+    }
+  }
+
+  if (cfg.memberPosts) {
+    const admins = adminIds();
+    // Its own `admins` because this branch runs whether `comments` is on or not.
+    // ⚠️ THE FILTER IS THE SAFETY — the same rule as `answerable()`. Jake's own
+    // posts (either account), pinned announcements, anything too old for a
+    // first comment to read as anything but a backlog, and anything already
+    // engaged with never reach the drafter.
+    const theirs = feedPosts
+      .filter(
+        (p) =>
+          !p.byMe &&
+          !p.pinned &&
+          p.slug &&
+          p.authorId &&
+          !admins.has(p.authorId) &&
+          !engaged.has(keyFor("post", p.id)) &&
+          !olderThan(p.createdAt, cfg.memberPostMaxAgeDays),
+      )
+      .slice(0, cfg.postsToScan);
+    out.scanned.memberPosts = theirs.length;
+    for (const post of theirs) {
+      // ⚠️ ALREADY COMMENTED ON BY THIS ACCOUNT — Jake by hand, most likely — is
+      // checked on Skool, not in the ledger. A post with no comments needs no
+      // navigation to know that.
+      if (post.commentCount > 0) {
+        const read = await readFor(post.slug);
+        if (read.error) {
+          out.notes.push(`${post.slug}: ${read.error}`);
+          continue;
+        }
+        // ⚠️ EITHER JAKE, NOT JUST THE SIGNED-IN ONE — the same correction as in
+        // the comments branch. A post his other admin account greeted is a post
+        // that has been greeted, and a second welcome under it from "Jake
+        // Dawson" is the most visible way this agent could look like a bot.
+        if (read.comments.some((c) => c.depth === 0 && (c.byMe || admins.has(c.authorId)))) continue;
+      }
+      const words = `${post.title}\n\n${post.body}`.trim();
+      if (words.replace(/\s+/g, "").length < 12) continue;
+      out.targets.push({
+        surface: "post",
+        targetId: post.id,
+        postSlug: post.slug,
+        postTitle: post.title,
+        channelId: "",
+        memberId: post.authorId,
+        memberName: post.authorName ?? "",
+        memberFirstName: firstNameOf(post.authorName ?? ""),
+        theirText: words,
+        // Their post IS the message; there is nothing it sits under.
+        context: "",
+        // And nothing said before it — this is the first word on the post.
+        thread: "",
+        alreadySentUrls: [],
+        unansweredCount: 1,
+        createdAt: post.createdAt,
+      });
     }
   }
 
@@ -547,6 +906,9 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
           // that is known at collection time.
           theirText: ch.lastMessageBody,
           context: "",
+          // A DM's history goes in `context` once the thread is read, because a
+          // DM has no post to sit under — see `ReplyTarget.thread`.
+          thread: "",
           alreadySentUrls: [],
           unansweredCount: 1,
           createdAt: ch.lastMessageAt,
@@ -676,6 +1038,11 @@ async function draftOne(
   voicePrompt: string,
   access: Entitlement,
   posts: SkoolPost[],
+  introductions = false,
+  // ⚠️ DEFAULTS TRUE, matching `ReplyConfig.reviewNudge` — see its comment. The
+  // manual draft bench calls this without the flag, and a default of false
+  // there would quietly write a different reply than the sweep does.
+  reviewNudge = true,
 ): Promise<{ id: string | null; detail: string }> {
   const base0 = {
     surface: target.surface,
@@ -749,6 +1116,33 @@ async function draftOne(
         )
       : null;
 
+  // ⚠️ SAME GATE AS THE UPGRADE NUDGE, AND FOR THE SAME REASON. Never at a minor
+  // and never on anything the screen did not wave through: a member who is angry
+  // enough to have been escalated is the last person to invite to review the
+  // community, and a restricted conversation is not a satisfied customer.
+  const review =
+    reviewNudge && restrictions.length === 0 && verdict.action === "answer" && target.surface === "dm"
+      ? reviewNudgeState(communityUrl, target.channelId, target.theirText, target.context)
+      : null;
+
+  // ⚠️⚠️ NEVER BOTH IN ONE MESSAGE. "Thanks for your help!" answered with the
+  // plans page AND a request for a five-star review is the salesy stack Jake
+  // ruled out for the plans page on its own. The review wins the moment they are
+  // grateful, and the plans nudge loses nothing by waiting: it is counted from
+  // what was actually SENT, so it is still available next time.
+  const nudgeToUse = review?.allowed ? null : nudge;
+
+  // ⚠️⚠️ AN INTRODUCTION ONLY FOR A PLAIN ANSWER. Anything the screen restricted
+  // (a minor above all), declined or escalated is not a conversation to bring a
+  // second member into. `findConnection` has its own exclusions on top.
+  let connection: Connection | null = null;
+  let connectTokens = 0;
+  if (introductions && verdict.action === "answer" && restrictions.length === 0) {
+    const found = await findConnection({ id: target.memberId, name: target.memberName, text: target.theirText });
+    connection = found.connection;
+    connectTokens = found.tokens;
+  }
+
   // Held as a value rather than passed inline: a refused draft is re-asked for
   // with the refusal attached, and the second ask has to be the same request.
   const request: ReplyRequest = {
@@ -759,6 +1153,9 @@ async function draftOne(
     authorFirstName: target.memberFirstName,
     text: target.theirText,
     context: target.context,
+    // The comment thread this answer lands in, when it continues one — see
+    // `ReplyRequest.thread`.
+    thread: target.thread,
     unansweredCount: target.unansweredCount,
       // Jake, 2026-08-27: the bar-Jake voice goes into anything the Skool agent
     // does — the replies as much as the posts.
@@ -768,11 +1165,15 @@ async function draftOne(
     // so a missing entitlement on this path would be a bug, not a member the
     // rule does not apply to.
     access,
-    nudge: nudge ? { allowed: nudge.allowed, asked: nudge.asked } : null,
+    nudge: nudgeToUse ? { allowed: nudgeToUse.allowed, asked: nudgeToUse.asked } : null,
+    // Whether, and where to send them — see `ReplyRequest.review`.
+    review: review?.allowed ? { url: review.url } : null,
     posts: posts.map((p) => ({ id: p.id, slug: p.slug, title: p.title, body: p.body, createdAt: p.createdAt })),
     restrictions,
     // See OVERRIDE 7 — told, not left to be noticed in the transcript.
     alreadySentUrls: target.alreadySentUrls,
+    // Whether, never who — see `ReplyRequest.connect`.
+    connect: connection !== null,
   };
   const { reply, error } = await draftReply(request);
   if (error || !reply) {
@@ -784,7 +1185,7 @@ async function draftOne(
   // draft cost and what it cited. `memberTier` is stored rather than looked up
   // later: a member who upgrades tomorrow must not make today's answer look
   // like a mistake.
-  const base = { ...base0, tokens: reply.tokens ?? 0, cited: reply.cited };
+  const base = { ...base0, tokens: (reply.tokens ?? 0) + connectTokens, cited: reply.cited };
   if (reply.skip) {
     // ⚠️ A SKIP IS RECORDED, WITH ITS REASON. The drafter is told to skip
     // anything needing Jake himself — money, refunds, complaints, anything
@@ -814,16 +1215,50 @@ async function draftOne(
   // grounded lesson link written into the body and left out of the JSON array
   // used to be refused as if it had been invented. Both lists are entitlement-
   // filtered before retrieval, so this widens bookkeeping, not permission.
-  const gateFor = (d: { text: string; cited: { url: string }[]; shownUrls: string[] }) =>
+  //
+  // ⚠️ THE INTRODUCTION IS SHAPED BEFORE THE GATE, SO THE GATE READS WHAT A
+  // MEMBER WILL. `placeIntro` pulls the `{{connect}}` sentence out, refuses it
+  // if it describes the other person or strays from the asker's own words, and
+  // puts it last; a refused one is DROPPED and the answer goes without it —
+  // never repaired, because a second attempt at describing somebody is not
+  // what is wanted either.
+  const shape = (draftText: string): { text: string; intro: StoredIntro | null; note: string } => {
+    if (!connection) return { text: draftText, intro: null, note: "" };
+    const placed = placeIntro(draftText, target.theirText);
+    if (!placed.sentence) {
+      return { text: placed.body, intro: null, note: placed.dropped || "The drafter did not write the introduction." };
+    }
+    const m = connection.member;
+    // A DM is plain text and cannot carry a chip; a comment's is typed on send.
+    const marker = target.surface === "dm" ? m.displayName : `@${m.displayName}`;
+    return {
+      text: renderIntro(placed.body, placed.sentence, marker),
+      intro: {
+        userId: m.userId,
+        handle: m.handle,
+        displayName: m.displayName,
+        firstName: m.firstName,
+        marker,
+        withoutIntro: placed.body,
+      },
+      note: "",
+    };
+  };
+  const gateFor = (d: { text: string; cited: { url: string }[]; shownUrls: string[] }, intro: StoredIntro | null) =>
     checkOutgoing(d.text, {
-      surface: target.surface,
+      // A comment under a member's post is a comment, as far as what it may say.
+      surface: target.surface === "dm" ? "dm" : "comment",
       communityUrl,
       allowedUrls: [
         ...d.shownUrls,
         ...d.cited.map((c) => c.url),
         `${communityUrl.replace(/\/+$/, "")}/plans`,
       ],
-      allowedMentions: [target.memberFirstName, target.memberName].filter(Boolean),
+      allowedMentions: [
+        target.memberFirstName,
+        target.memberName,
+        ...(intro ? [intro.displayName, intro.firstName] : []),
+      ].filter(Boolean),
       // ⚠️ THE SAME LINK TWICE IN ONE THREAD, AND THE OPENING THAT HANDS THEM
       // BACK THEIR OWN POINT. Jake, 2026-09-12, on a real DM thread: "in a DM
       // thread I don't want the bot to repeat the idea that the other person
@@ -835,10 +1270,12 @@ async function draftOne(
       theirText: target.theirText,
     });
 
-  let text = reply.text;
+  let shaped = shape(reply.text);
+  let text = shaped.text;
+  let intro = shaped.intro;
   let cited = reply.cited;
-  let tokens = reply.tokens ?? 0;
-  let gate = gateFor(reply);
+  let tokens = (reply.tokens ?? 0) + connectTokens;
+  let gate = gateFor({ ...reply, text }, intro);
   if (!gate.ok) {
     console.warn(`[skool:replies] ${target.memberName}: refused, repairing once — ${gate.detail}`);
     const second = await draftReply({ ...request, repair: repairInstruction(gate) });
@@ -846,16 +1283,22 @@ async function draftOne(
     // look, that this one is not for it to answer — respected, not overridden.
     if (second.reply && !second.reply.skip && second.reply.text.trim()) {
       tokens += second.reply.tokens ?? 0;
-      const regate = gateFor(second.reply);
+      const reshaped = shape(second.reply.text);
+      const regate = gateFor({ ...second.reply, text: reshaped.text }, reshaped.intro);
       gate = regate;
       // Taken whenever it is no longer BLOCKED — a repair that removed the
       // invented link and left one banned word behind has fixed the thing that
       // mattered, and the first draft still has the link in it.
       if (!regate.blocked) {
-        text = second.reply.text;
+        shaped = reshaped;
+        text = reshaped.text;
+        intro = reshaped.intro;
         cited = second.reply.cited;
       }
     }
+  }
+  if (connection && !intro) {
+    console.warn(`[skool:replies] ${target.memberName}: introduction to ${connection.member.displayName} dropped — ${shaped.note}`);
   }
   // `base` was built from the first draft; the repaired one costs more tokens
   // and may cite different pages, and the row has to say what was actually written.
@@ -874,8 +1317,24 @@ async function draftOne(
     console.warn(`[skool:replies] ${target.memberName}: sending with voice findings — ${gate.detail}`);
   }
 
-  const id = insertReply({ ...finalBase, state: "drafted", replyText: text });
-  return { id, detail: `${target.memberName}: drafted ${text.length} chars` };
+  const id = insertReply({ ...finalBase, state: "drafted", replyText: text, intro });
+  if (intro && connection) {
+    recordIntroduction({
+      replyId: id,
+      surface: target.surface,
+      askerId: target.memberId,
+      askerName: target.memberName,
+      introducedId: intro.userId,
+      introducedName: intro.displayName,
+      why: connection.why,
+    });
+  }
+  const introNote = intro
+    ? ` — introducing ${intro.displayName}`
+    : connection
+      ? ` — introduction dropped (${shaped.note})`
+      : "";
+  return { id, detail: `${target.memberName}: drafted ${text.length} chars${introNote}` };
 }
 
 /**
@@ -887,18 +1346,42 @@ async function draftOne(
  */
 async function sendOne(communityUrl: string, row: ReplyRow, dryRun: boolean): Promise<{ state: ReplyState; detail: string }> {
   updateReply(row.id, { attempts: row.attempts + 1 });
-  if (row.surface === "comment") {
-    const r = await replyToComment({
-      communityUrl,
-      slug: row.postSlug,
-      commentId: row.targetId,
-      commentBody: row.theirText,
-      text: row.replyText,
-      dryRun,
-    });
+  if (row.surface === "comment" || row.surface === "post") {
+    const write = (text: string, intro: IntroChip | null): Promise<ReplyResult> =>
+      row.surface === "post"
+        ? commentOnMemberPost({ communityUrl, slug: row.postSlug, text, intro, dryRun })
+        : replyToComment({
+            communityUrl,
+            slug: row.postSlug,
+            commentId: row.targetId,
+            // The row's copy, kept only as a fallback: the write path re-reads
+            // the comment and joins on what the page shows today.
+            commentBody: row.theirText,
+            text,
+            intro,
+            dryRun,
+            // ⚠️ SO THE LAST-SECOND "already answered" CHECK SEES BOTH OF JAKE'S
+            // ACCOUNTS. Without them a thread he answered by hand from his other
+            // account gets a second answer from this one.
+            usIds: [...adminIds()],
+          });
+    let r = await write(row.replyText, row.intro ? { member: introMember(row.intro), marker: row.intro.marker } : null);
+    // ⚠️ A CHIP THAT WOULD NOT TYPE MEANS NOTHING WAS SUBMITTED — the editor was
+    // emptied before returning — so the reply goes again at once WITHOUT the
+    // introduction. The member still gets their answer; the introduction is
+    // the part that is optional. The row is rewritten first so a crash between
+    // the two cannot send the introduction later from a stale row.
+    if (!r.ok && r.introFailed && row.intro) {
+      const note = r.detail;
+      updateReply(row.id, { reply_text: row.intro.withoutIntro, connect_json: "" });
+      markIntroduction(row.id, "dropped");
+      r = await write(row.intro.withoutIntro, null);
+      r = { ...r, detail: `Introduction dropped (${note}) · ${r.detail}` };
+    }
     if (dryRun) return { state: "drafted", detail: r.detail };
     if (r.ok && r.replyId) {
       updateReply(row.id, { state: "sent", reply_id: r.replyId, steps: r.detail, last_error: "" });
+      markIntroduction(row.id, "sent");
       return { state: "sent", detail: r.detail };
     }
     // ⚠️ "Submitted and not found" IS `unconfirmed`, NOT `failed`, AND THE
@@ -933,6 +1416,7 @@ async function sendOne(communityUrl: string, row: ReplyRow, dryRun: boolean): Pr
   if (dryRun) return { state: "drafted", detail: r.detail };
   if (r.ok && r.messageId) {
     updateReply(row.id, { state: "sent", reply_id: r.messageId, steps: r.detail, last_error: "" });
+    markIntroduction(row.id, "sent");
     return { state: "sent", detail: r.detail };
   }
   const unconfirmed = /UNCONFIRMED/i.test(r.detail);
@@ -957,10 +1441,21 @@ async function findLanded(
   communityUrl: string,
   row: ReplyRow,
 ): Promise<{ landed: boolean; replyId: string; error: string | null }> {
-  if (row.surface === "comment") {
+  if (row.surface === "comment" || row.surface === "post") {
     const read = await readComments(communityUrl, row.postSlug);
     if (read.error) return { landed: false, replyId: "", error: read.error };
-    const mine = read.comments.find((c) => c.parentId === row.targetId && c.byMe);
+    // On a member's post, ANY top-level comment from this account is the answer.
+    //
+    // ⚠️⚠️ ON A COMMENT IT IS THE THREAD THAT ANSWERS THIS, NOT THE COMMENT'S
+    // CHILDREN. A reply to a reply is filed as a SIBLING (see `CommentThread`),
+    // so `parentId === row.targetId` finds nothing after a reply that landed
+    // perfectly — and this function's whole job is to stop that becoming a
+    // second reply to the same member. `answeredAfter` asks the question by
+    // position instead, and counts either of Jake's accounts.
+    const mine =
+      row.surface === "post"
+        ? read.comments.find((c) => c.depth === 0 && (c.byMe || adminIds().has(c.authorId)))
+        : answeredAfter(read.comments, row.targetId, { usIds: adminIds() });
     return { landed: Boolean(mine), replyId: mine?.id ?? "", error: null };
   }
   const channels = await readChannels(communityUrl);
@@ -1020,6 +1515,7 @@ async function reconcileUnfinished(
     }
     if (check.landed) {
       updateReply(row.id, { state: "sent", reply_id: check.replyId, last_error: "" });
+      markIntroduction(row.id, "sent");
       out.handled.push(`${row.memberName} (${row.surface}): it had landed after all — recorded as sent.`);
       out.sent++;
       continue;
@@ -1062,7 +1558,7 @@ export async function runReplySweep(
   const out: SweepResult = {
     ran: false,
     skipped: null,
-    scanned: { posts: 0, postsWithComments: 0, comments: 0, dmThreads: 0, dmTheySpokeLast: 0 },
+    scanned: { posts: 0, postsWithComments: 0, comments: 0, dmThreads: 0, dmTheySpokeLast: 0, memberPosts: 0 },
     notes: [],
     handled: [],
     drafted: 0,
@@ -1074,8 +1570,8 @@ export async function runReplySweep(
     out.skipped = "The reply agent is switched off.";
     return out;
   }
-  if (!cfg.comments && !cfg.dms) {
-    out.skipped = "Neither comments nor DMs are switched on, so there is nothing to sweep.";
+  if (!cfg.comments && !cfg.dms && !cfg.memberPosts) {
+    out.skipped = "Neither comments, members' posts nor DMs are switched on, so there is nothing to sweep.";
     return out;
   }
   const health = readReplyHealth();
@@ -1214,6 +1710,8 @@ export async function runReplySweep(
       // paid you can recommend anything" includes a post. Empty on a sweep with
       // no free member in it, because the feed was never read.
       recentPosts,
+      cfg.introductions,
+      cfg.reviewNudge,
     );
     if (!id) {
       out.handled.push(detail);
@@ -1231,6 +1729,24 @@ export async function runReplySweep(
     if (sent.state === "sent") out.sent++;
     else if (sent.state === "failed" || sent.state === "unconfirmed") out.failed++;
     out.handled.push(`${target.memberName} (${target.surface}): ${sent.detail}`);
+  }
+
+  // ⚠️ AFTER THE ANSWERS, NEVER BEFORE THEM. Learning who knows what is
+  // background work; a member waiting on a reply is not. A few threads a sweep,
+  // and only the ones that have changed — see `refreshProfiles`.
+  if (cfg.introductions && cfg.profilesPerSweep > 0) {
+    try {
+      const pr = await refreshProfiles(communityUrl, { max: cfg.profilesPerSweep });
+      if (pr.read) {
+        out.notes.push(
+          `Introductions: read ${pr.read} DM thread(s) — ${pr.ok} with a profile, ${pr.thin} too short, ` +
+            `${pr.excluded} excluded, ${pr.failed} failed; ${pr.remaining} still to read.`,
+        );
+      }
+      out.notes.push(...pr.notes);
+    } catch (e) {
+      out.notes.push(`Introductions: profiles could not be refreshed — ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   const outcome = out.handled.length

@@ -218,10 +218,23 @@ async function backspace(times: number): Promise<void> {
  * full of the body's own `@`-free prose — but with the caret parked wherever the
  * paste left it, which is not somewhere worth guessing about.
  */
-export async function typeMentions(members: SkoolMember[]): Promise<MentionResult> {
+export async function typeMentions(
+  members: SkoolMember[],
+  opts: {
+    /**
+     * Type at the caret where it already is, without clicking the editor first.
+     *
+     * ⚠️ FOR A CHIP AFTER PASTED TEXT — an introduction at the end of a reply.
+     * `focusBody` CLICKS near the top of the tallest editor, which drops the
+     * caret into the middle of the first line of whatever was just pasted, and
+     * the chip would land there. The paste leaves the caret at the end already.
+     */
+    keepCaret?: boolean;
+  } = {},
+): Promise<MentionResult> {
   if (!members.length) return { mentioned: [], skipped: [], detail: "No members to mention." };
 
-  if (!(await focusBody())) {
+  if (!opts.keepCaret && !(await focusBody())) {
     return { mentioned: [], skipped: [], detail: "⚠ Mentions SKIPPED — no composer body on screen." };
   }
 

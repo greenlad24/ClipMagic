@@ -1213,7 +1213,12 @@ const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
  * The two fields carry real aria-labels ("Course name", "Course description"),
  * which makes this the one Skool dialog that can be addressed directly.
  */
-export async function createCourse(communityUrl: string, name: string, description: string): Promise<ActionResult> {
+export async function createCourse(
+  communityUrl: string,
+  name: string,
+  description: string,
+  opts: { paidOnly?: boolean } = {},
+): Promise<ActionResult> {
   const before = await readGrid(communityUrl);
   if (before.error) return FAIL(`The classroom could not be read, so a course cannot be added to it: ${before.error}`);
   if (before.courses.some((c) => norm(c.title) === norm(name))) {
@@ -1225,11 +1230,226 @@ export async function createCourse(communityUrl: string, name: string, descripti
     () => clickButton("New course"),
     () => fillField("Course name", name),
     ...(description ? [() => fillField("Course description", description)] : []),
+    // ⚠️ SKOOL'S DEFAULT IS "Open" — EVERY MEMBER, FREE INCLUDED. Set before
+    // "Add", never after, so the course never exists open for even a moment.
+    ...(opts.paidOnly ? [() => setPaidAccessInCourseDialog()] : []),
     () => clickButton("Add"),
     // Verified by the course existing, not by the click landing. The dialog
     // closing looks the same whether Skool accepted it or rejected the name.
     () => courseExists(communityUrl, name),
   ]);
+}
+
+/**
+ * The access every paid course in this classroom already has, set in the open
+ * Add/Edit course dialog: **Level unlock, level 9, + "Or members on/above
+ * Premium tier"**. Read off *Community Resources* 2026-09-28; Skool reports it
+ * back as `minTier 2, minAccessLevel 9` — which is how the caller verifies it.
+ *
+ * Jake, 2026-09-28: auto-created classes are paid members only. Skool's
+ * default for a new course is "Open", i.e. free to 114 free members.
+ *
+ * Every control is found by its TEXT inside the dialog and clicked with the
+ * real mouse. Coordinates are useless here: the level list is a portal that
+ * overlays the tier row, and a coordinate click aimed at the tier picker lands
+ * on "4" in the level list instead (it did, while this was being mapped).
+ *
+ * The switch has no text and no label of its own; it is the small text-less
+ * control in the same row as "Or members on/above". Its state is not trusted
+ * from the DOM — the caller verifies the created course's gate from Skool's
+ * own payload, which is the only check that cannot be fooled by the render.
+ */
+export async function setPaidAccessInCourseDialog(): Promise<ActionResult> {
+  type Target =
+    | { kind: "text"; text: string; exact: boolean }
+    | { kind: "option"; text: string }
+    | { kind: "switchBeside"; label: string };
+
+  const locate = async (t: Target) =>
+    (await withSkoolPage(async (page) =>
+      page.evaluate((t: Target) => {
+        const doc: any = (globalThis as any).document;
+        const win: any = globalThis;
+        const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim().toLowerCase();
+        const visible = (el: any) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0;
+        };
+        const pointer = (el: any) =>
+          win.getComputedStyle?.(el)?.cursor === "pointer" || el.tagName === "BUTTON" || el.tagName === "INPUT";
+        // The dialog: the smallest visible element holding both the access
+        // options and the Published switch.
+        const dialogs = (Array.from(doc.querySelectorAll("div")) as any[]).filter((el) => {
+          const x = norm(el.textContent);
+          return visible(el) && x.includes("level unlock") && x.includes("published");
+        });
+        dialogs.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+        const dialog = dialogs[0];
+        if (!dialog) return { ok: false, why: "no course dialog is open" };
+
+        let el: any = null;
+        if (t.kind === "text") {
+          const want = norm(t.text);
+          const c = (Array.from(dialog.querySelectorAll("*")) as any[]).filter(
+            (e) => visible(e) && pointer(e) && (t.exact ? norm(e.textContent) === want : norm(e.textContent).includes(want)),
+          );
+          c.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+          el = c[0];
+        } else if (t.kind === "option") {
+          // Dropdown options render in a portal outside the dialog, and not
+          // every picker uses the same class — fall back to any visible
+          // clickable element OUTSIDE the dialog with exactly this text.
+          const want = norm(t.text);
+          const c = (Array.from(doc.querySelectorAll("[class*='skool-ui-dropdown-option']")) as any[]).filter(
+            (e) => visible(e) && norm(e.textContent) === want,
+          );
+          const loose = (Array.from(doc.querySelectorAll("*")) as any[]).filter(
+            (e) => visible(e) && pointer(e) && norm(e.textContent) === want && !dialog.contains(e),
+          );
+          loose.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+          el = c[0] ?? loose[0] ?? null;
+        } else {
+          // The label is a bare TEXT NODE sharing its element with the tier
+          // picker ("Or members on/above" + "Standard tier"), so no element's
+          // text equals it. Find the text node, measure it, and take the
+          // text-less switch-sized box to its LEFT in the same row.
+          const walker = doc.createTreeWalker(dialog, 4 /* SHOW_TEXT */);
+          let node: any = null;
+          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+            if (norm(n.nodeValue).includes(norm(t.label))) {
+              node = n;
+              break;
+            }
+          }
+          if (node) {
+            const range = doc.createRange();
+            range.selectNodeContents(node);
+            const lr = range.getBoundingClientRect();
+            let row = node.parentElement;
+            for (let i = 0; row && i < 5 && !el; i++, row = row.parentElement) {
+              const sw = (Array.from(row.querySelectorAll("*")) as any[]).filter((e) => {
+                if (!visible(e) || norm(e.textContent) !== "") return false;
+                const r = e.getBoundingClientRect();
+                const midY = r.y + r.height / 2;
+                return (
+                  r.width >= 24 && r.width <= 80 && r.height >= 12 && r.height <= 44 &&
+                  r.right <= lr.left + 4 && midY >= lr.top - 6 && midY <= lr.bottom + 6
+                );
+              });
+              // The outermost text-less box of switch size is the track.
+              sw.sort((a, b) => b.getBoundingClientRect().width - a.getBoundingClientRect().width);
+              el = sw[0] ?? null;
+            }
+          }
+        }
+        if (!el) {
+          // Say what WAS there, so a changed switch can be re-mapped from the log.
+          const lab = t.kind === "switchBeside"
+            ? (Array.from(dialog.querySelectorAll("*")) as any[])
+                .filter((e) => norm(e.textContent).includes(norm(t.label)))
+                .sort((a, b) => (a.textContent || "").length - (b.textContent || "").length)[0]
+            : null;
+          const row = lab?.parentElement?.parentElement?.parentElement;
+          return { ok: false, why: "not found" + (row ? `; row: ${String(row.outerHTML).replace(/class="[^"]*"/g, "").slice(0, 900)}` : "") };
+        }
+        try {
+          el.scrollIntoView({ block: "center", inline: "nearest" });
+        } catch {
+          /* the viewport check guards the click */
+        }
+        const r = el.getBoundingClientRect();
+        const x = Math.round(r.x + r.width / 2);
+        const y = Math.round(r.y + r.height / 2);
+        return { ok: x >= 0 && y >= 0 && x <= win.innerWidth && y <= win.innerHeight, x, y, why: "off screen" };
+      }, t),
+    )) as { ok: boolean; x?: number; y?: number; why?: string } | null;
+
+  const click = async (t: Target, what: string): Promise<ActionResult> => {
+    const at = await locate(t);
+    if (!at?.ok) return FAIL(`Could not find ${what} in the course dialog (${at?.why ?? "browser unavailable"}).`);
+    await withSkoolPage(async (page) => page.mouse.click(at.x!, at.y!, { delay: 40 }));
+    await settle();
+    return OK(`Clicked ${what}.`);
+  };
+
+  /** What the dialog now SAYS for level and tier — the controls show their value as text. */
+  const readBack = async () =>
+    (await withSkoolPage(async (page) =>
+      page.evaluate(() => {
+        const doc: any = (globalThis as any).document;
+        const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
+        const btns = Array.from(doc.querySelectorAll("button")) as any[];
+        const level = btns.find((b) => norm(b.textContent).includes("Access starts at level"));
+        const tier = (Array.from(doc.querySelectorAll("*")) as any[]).filter((e) =>
+          /^\w+ tier$/i.test(norm(e.textContent)),
+        );
+        tier.sort((a, b) => (a.textContent || "").length - (b.textContent || "").length);
+        return {
+          level: level ? norm(level.textContent).replace(/Access starts at level/g, "").trim() : null,
+          tier: tier[0] ? norm(tier[0].textContent) : null,
+        };
+      }),
+    )) as { level: string | null; tier: string | null } | null;
+
+  const steps: (() => Promise<ActionResult>)[] = [
+    () => click({ kind: "text", text: "Level unlock", exact: false }, '"Level unlock"'),
+    () => click({ kind: "text", text: "Access starts at level", exact: false }, "the level picker"),
+    () => click({ kind: "option", text: "9" }, "level 9"),
+    async () => {
+      const r = await readBack();
+      return r?.level === "9" ? OK("Level reads 9.") : FAIL(`The level picker reads "${r?.level ?? "?"}", not 9.`);
+    },
+    () => click({ kind: "switchBeside", label: "Or members on/above" }, 'the "Or members on/above" switch'),
+    // The tier picker shows its current value ("Standard tier" by default).
+    async () => {
+      const r = await readBack();
+      if (!r?.tier) return FAIL("The tier picker could not be found.");
+      if (/^premium tier$/i.test(r.tier)) return OK("Tier already reads Premium.");
+      const open = await click({ kind: "text", text: r.tier, exact: true }, `the tier picker ("${r.tier}")`);
+      if (!open.ok) return open;
+      // The list says "Premium"; the picker then reads "Premium tier". The list
+      // is Standard / Premium / VIP, and STANDARD IS THE FREE TIER here — the
+      // paid courses read back minTier 2 on Premium — so this is not cosmetic.
+      return click({ kind: "option", text: "Premium" }, '"Premium"');
+    },
+    async () => {
+      const r = await readBack();
+      return r?.tier && /^premium tier$/i.test(r.tier)
+        ? OK("Tier reads Premium.")
+        : FAIL(`The tier picker reads "${r?.tier ?? "?"}", not Premium tier.`);
+    },
+  ];
+  return sequence(steps);
+}
+
+/**
+ * Dry-run the access step: open "New course", fill a throwaway name, set paid
+ * access, screenshot, then CANCEL. Creates nothing — for proving the dialog
+ * automation against the live page before it is trusted with a real course.
+ */
+export async function probePaidAccessDialog(communityUrl: string): Promise<ActionResult & { image?: string }> {
+  const grid = await readGrid(communityUrl);
+  if (grid.error) return FAIL(`The classroom could not be read: ${grid.error}`);
+  const done = await sequence([
+    () => openClassroom(communityUrl, grid.pages),
+    () => clickButton("New course"),
+    () => fillField("Course name", "access probe - not saved"),
+    () => setPaidAccessInCourseDialog(),
+  ]);
+  const image = (await withSkoolPage(async (page) =>
+    Buffer.from(await page.screenshot({ type: "jpeg", quality: 70 })).toString("base64"),
+  )) as string | null;
+  // Always cancel, whatever happened above. Escape first closes an open picker.
+  await withSkoolPage(async (page) => page.keyboard.press("Escape"));
+  await settle(400);
+  const cancelled = await clickButton("Cancel");
+  const after = await readGrid(communityUrl);
+  const leaked = after.courses.some((c) => norm(c.title) === norm("access probe - not saved"));
+  return {
+    ok: done.ok && !leaked,
+    detail: `${done.detail} → ${cancelled.detail}${leaked ? " → ⚠️ A PROBE COURSE WAS CREATED — delete it." : ""}`,
+    image: image ?? undefined,
+  };
 }
 
 /** Confirm a course of this name is in the classroom, whichever grid page it is on. */
@@ -1351,6 +1571,9 @@ export async function pagesInOpenCourse(): Promise<OpenCoursePage[] | null> {
 /** What Skool calls a page it has just made for you. */
 const SEEDED_PAGE_TITLE = "New page";
 
+/** Skool's limit on a page title; SAVE is disabled past it. */
+export const PAGE_TITLE_MAX = 50;
+
 /**
  * Add a page to the course currently open, with its video and its body.
  *
@@ -1375,6 +1598,14 @@ export async function addPageToOpenCourse(page: {
   videoUrl?: string | null;
   body?: string;
 }): Promise<ActionResult> {
+  // ⚠️ SKOOL CAPS A PAGE TITLE AT 50 CHARACTERS AND DISABLES SAVE PAST IT —
+  // silently: "Page title is 56/50" in small red text, SAVE greyed out, the
+  // click lands on nothing. The page "Add page" already created stays behind
+  // as an empty "New page". Two Seedance attempts (62 and 56 chars) left two
+  // such husks in Make Videos with AI, 2026-09-27/28. Refuse before creating.
+  if (page.title.trim().length > PAGE_TITLE_MAX) {
+    return FAIL(`"${page.title}" is ${page.title.trim().length} characters; Skool allows ${PAGE_TITLE_MAX}, and will not save it.`);
+  }
   const existing = await pagesInOpenCourse();
   if (!existing) {
     return FAIL("The open course's contents could not be read, so a page cannot safely be added to it.");
@@ -1387,9 +1618,20 @@ export async function addPageToOpenCourse(page: {
 
   // A seeded course already displays its one blank page, so there is nothing to
   // create and nothing to select — the editor opens straight onto it.
+  //
+  // A course holding a "New page" husk (a failed save leaves one) gets that
+  // page FILLED rather than another one added beside it — otherwise every
+  // retry of a failing write adds a husk. `bodyMustBeEmpty` below is the guard
+  // that this really is empty: it reads the live editor, not the payload.
+  const husk = !seeded && existing.some((p) => norm(p.title) === norm(SEEDED_PAGE_TITLE));
   const steps: (() => Promise<ActionResult>)[] = seeded
     ? [async () => OK(`Reusing the empty "${SEEDED_PAGE_TITLE}" this course was created with.`)]
-    : [() => openMenuOffering("Add page"), () => chooseMenuItem("Add page")];
+    : husk
+      ? [
+          () => openPageByTitle(SEEDED_PAGE_TITLE),
+          async () => OK(`Filling an empty "${SEEDED_PAGE_TITLE}" left by an earlier failed save, instead of adding another.`),
+        ]
+      : [() => openMenuOffering("Add page"), () => chooseMenuItem("Add page")];
 
   steps.push(
     () => openPageEditor(),

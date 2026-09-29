@@ -26,7 +26,7 @@
 import { clickButton, clickVisibleText, fillField, appendBody, type ActionResult } from "./actions.js";
 import { withSkoolPage } from "./browser.js";
 import { communityFeedUrl, readFeed, type SkoolPost } from "./community.js";
-import { readComments } from "./comments.js";
+import { answeredAfter, plainBody, readComments, replyParentOf } from "./comments.js";
 import { getRecipe, type RecipeStep } from "./recipes.js";
 import { isSemanticClass, placeholdersIn, replaySteps, type ReplayResult } from "./replay.js";
 import { confirmEmailDialog, setEmailNotify } from "./emailNotify.js";
@@ -182,6 +182,19 @@ export interface ReplyResult {
   detail: string;
   /** The reply as read back from Skool's own API, when it was found. */
   replyId: string | null;
+  /**
+   * The introduction's mention chip could not be typed, so NOTHING was
+   * submitted. Safe to retry at once with the reply that has no introduction —
+   * see `StoredIntro.withoutIntro`.
+   */
+  introFailed?: boolean;
+}
+
+/** An introduction to type as a real mention chip at the end of a reply. */
+export interface IntroChip {
+  member: SkoolMember;
+  /** What stands for them in the text — "@Jason Davies". Must occur exactly once. */
+  marker: string;
 }
 
 /**
@@ -210,7 +223,7 @@ export interface ReplyResult {
  * carry no headings and no lists — so offering text/html would invite the editor
  * to build structure that none of the community's replies have.
  */
-async function pasteIntoReplyEditor(text: string): Promise<ActionResult> {
+export async function pasteIntoReplyEditor(text: string): Promise<ActionResult> {
   const measure = async (): Promise<number> =>
     (await withSkoolPage(async (page) =>
       page.evaluate(() => {
@@ -273,6 +286,89 @@ async function pasteIntoReplyEditor(text: string): Promise<ActionResult> {
   return { ok: true, detail: `Pasted ${gained} characters after the mention.` };
 }
 
+/** The visible Skool editor's text, whichever editor the paste went into. */
+async function replyEditorText(): Promise<string> {
+  const t = await withSkoolPage(async (page) =>
+    page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const ed = (Array.from(doc.querySelectorAll(".skool-editor[contenteditable='true']")) as any[]).find(
+        (el) => el.getBoundingClientRect().height > 0,
+      );
+      return ed ? String(ed.textContent ?? "") : "";
+    }),
+  );
+  return typeof t === "string" ? t : "";
+}
+
+/**
+ * Write a reply into the open editor — pasted, with an introduction's mention
+ * chip TYPED at the end when there is one.
+ *
+ * ⚠️⚠️ A PASTED "@Name" NOTIFIES NOBODY. The introduction only reaches the
+ * person it names as a real mention node, and a node can only come from the
+ * autocomplete — see `mentions.ts`. So the reply is split at the marker: the
+ * text before it is pasted, the chip is typed at the caret the paste left at
+ * the end, and the few words after it are typed. That is why `placeIntro`
+ * makes the introduction the LAST sentence and refuses one with a line break
+ * after the name.
+ *
+ * ⚠️ A CHIP THAT DOES NOT LAND STOPS THE WRITE, IT DOES NOT SEND AROUND IT.
+ * "You should talk with  about it" is worse than no introduction. The caller
+ * gets `introFailed` with nothing submitted, clears the editor, and sends the
+ * reply without the introduction instead.
+ */
+export async function writeReplyText(
+  text: string,
+  intro?: IntroChip | null,
+): Promise<ActionResult & { introFailed?: boolean }> {
+  if (!intro) return pasteIntoReplyEditor(text);
+
+  const at = text.indexOf(intro.marker);
+  if (at < 0 || text.lastIndexOf(intro.marker) !== at) {
+    return { ok: false, introFailed: true, detail: `The introduction marker "${intro.marker}" is not in the reply exactly once.` };
+  }
+  const head = text.slice(0, at).trimEnd();
+  const tail = text.slice(at + intro.marker.length).replace(/^[ \t]+/, "");
+  if (/\n/.test(tail) || tail.length > 240) {
+    return { ok: false, introFailed: true, detail: "The introduction is not the last line of the reply, so its chip cannot be typed." };
+  }
+
+  const pasted = await pasteIntoReplyEditor(head);
+  if (!pasted.ok) return pasted;
+
+  await withSkoolPage(async (page) => {
+    try {
+      await page.keyboard.type(" ", { delay: 20 });
+    } catch {
+      /* the chip check below decides */
+    }
+  });
+  const chip = await typeMentions([intro.member], { keepCaret: true });
+  if (!chip.mentioned.length) {
+    return { ok: false, introFailed: true, detail: `The introduction's mention could not be typed — ${chip.detail}` };
+  }
+
+  if (tail) {
+    await withSkoolPage(async (page) => {
+      try {
+        // Skool puts a space after a committed chip itself; punctuation must
+        // sit against the name, not after that space.
+        if (/^[,.;:!?)]/.test(tail)) await page.keyboard.press("Backspace");
+        await page.keyboard.type(tail, { delay: 15 });
+      } catch {
+        /* checked below */
+      }
+    });
+    await settle(400);
+    const now = (await replyEditorText()).replace(/\s+/g, " ");
+    const want = tail.replace(/\s+/g, " ").trim().slice(0, 16);
+    if (want && !now.includes(want)) {
+      return { ok: false, introFailed: true, detail: "The words after the introduction's mention did not reach the editor." };
+    }
+  }
+  return { ok: true, detail: `${pasted.detail} · ${chip.detail}` };
+}
+
 /**
  * Reply to one comment.
  *
@@ -311,9 +407,25 @@ export async function replyToComment(input: {
   communityUrl: string;
   slug: string;
   commentId: string;
-  /** The comment's own text — the only handle the DOM shares with the API. */
+  /**
+   * The comment's own text — the only handle the DOM shares with the API.
+   *
+   * ⚠️ A FALLBACK NOW, NOT THE JOIN KEY. What is actually looked for is the
+   * comment as Skool renders it TODAY, re-read here a second before the write
+   * (`target.plain`) — the caller's copy may be hours old, and if it came from
+   * a ledger row it is the raw API body, whose mention markup matches nothing
+   * on the page. See `plainBody`.
+   */
   commentBody: string;
   text: string;
+  /**
+   * Other user ids that count as this account — Jake's second admin account.
+   * See `AnswerOptions.usIds`; without it, a thread the other Jake answered
+   * looks unanswered and the member is answered twice.
+   */
+  usIds?: string[];
+  /** An introduction to type as a chip at the end — see `writeReplyText`. */
+  intro?: IntroChip | null;
   /**
    * Do everything except the final click.
    *
@@ -331,7 +443,12 @@ export async function replyToComment(input: {
 
   // The same backstop as `createPost`, on the surface where a bad line is
   // public. See the note there for why it lives in the write path.
-  const gate = checkOutgoing(text, { surface: "comment", communityUrl: input.communityUrl });
+  const gate = checkOutgoing(text, {
+    surface: "comment",
+    communityUrl: input.communityUrl,
+    // The introduction's chip is the one @name a reply may carry.
+    allowedMentions: input.intro ? [input.intro.member.displayName, input.intro.member.firstName] : undefined,
+  });
   // ⚠️ `blocked`, NOT `ok`. This is the last door before a member reads it, and
   // the only findings that may close it are the ones about harm. A voice
   // finding at this point is a word in an already-approved draft that has run
@@ -339,21 +456,38 @@ export async function replyToComment(input: {
   // sake of "genuinely". See ADVISORY_RULES in outgoing.ts.
   if (gate.blocked) return { ok: false, detail: gate.detail, replyId: null };
 
-  // The join key. Long enough to be distinctive, short enough to survive the
-  // whitespace and entity differences between the API's text and the DOM's.
-  const snippet = input.commentBody.replace(/\s+/g, " ").trim().slice(0, 60);
-  if (!snippet) {
-    return { ok: false, detail: "That comment has no text to find it by on the page, so it was not answered.", replyId: null };
-  }
-
   // ⚠️ CHECK SKOOL, NOT OUR OWN RECORD, IMMEDIATELY BEFORE WRITING. The worker
   // retries, and Jake answers comments himself; either can have happened since
-  // the queue was built.
+  // the queue was built. It also supplies the join key below, which is why it
+  // comes before it and not after.
   const before = await readComments(input.communityUrl, input.slug);
   if (before.error) return { ok: false, detail: `Could not read the comments first, so nothing was sent: ${before.error}`, replyId: null };
   const target = before.comments.find((c) => c.id === input.commentId);
   if (!target) return { ok: false, detail: `Comment ${input.commentId} is no longer on that post — it may have been deleted.`, replyId: null };
-  if (target.answeredByMe) return { ok: false, detail: `That comment already has a reply from this account. Not answering it twice.`, replyId: null };
+  // ⚠️ THE THREAD, NOT THE COMMENT'S CHILDREN — `target.answeredByMe` used to
+  // hold this door and it cannot: a reply's answer is its SIBLING, so the flag
+  // reads false forever on the surface this agent now works. See `answeredAfter`.
+  const already = answeredAfter(before.comments, input.commentId, { usIds: input.usIds });
+  if (already) {
+    return {
+      ok: false,
+      detail:
+        `That comment has already been answered from this account (${already.authorName}: ` +
+        `"${already.plain.slice(0, 60)}"). Not answering it twice.`,
+      replyId: null,
+    };
+  }
+
+  // The join key. Long enough to be distinctive, short enough to survive the
+  // whitespace and entity differences between the API's text and the DOM's.
+  //
+  // ⚠️ FROM `plain`, AND FROM THE READ ABOVE RATHER THAN FROM THE CALLER. The
+  // raw body of a threaded reply opens with `[@Name](obj://user/<id>)` and the
+  // page shows `@Name` — measured, refused, and fixed in `plainBody`.
+  const snippet = (target.plain || plainBody(input.commentBody)).replace(/\s+/g, " ").trim().slice(0, 60);
+  if (!snippet) {
+    return { ok: false, detail: "That comment has no text to find it by on the page, so it was not answered.", replyId: null };
+  }
 
   // ⚠️⚠️ THE AUTHOR'S NAME IS THE OTHER HALF OF THE JOIN, AND IT IS WHAT MAKES A
   // ONE-WORD COMMENT ANSWERABLE. This used to refuse any comment under 12
@@ -458,10 +592,10 @@ export async function replyToComment(input: {
   await settle(1800);
 
   // Append: Skool has already put the @mention in, and it belongs there.
-  const written = await pasteIntoReplyEditor(text);
+  const written = await writeReplyText(text, input.intro);
   if (!written.ok) {
     await clickButton("Cancel").catch(() => undefined);
-    return { ok: false, detail: `The reply was not written: ${written.detail}`, replyId: null };
+    return { ok: false, detail: `The reply was not written: ${written.detail}`, replyId: null, introFailed: written.introFailed };
   }
   await settle(800);
 
@@ -558,13 +692,20 @@ export async function replyToComment(input: {
   await settle(3500);
 
   // ⚠️ THE ONLY EVIDENCE THAT COUNTS, and here it is exact rather than fuzzy:
-  // re-read the API and look for a NEW child of this comment written by us.
+  // re-read the API and look for a NEW comment of ours in this thread.
   const after = await readComments(input.communityUrl, input.slug);
   if (after.error) {
     return { ok: false, detail: `Submitted, but the comments could not be re-read, so the reply is UNCONFIRMED: ${after.error}`, replyId: null };
   }
   const seen = new Set(before.comments.map((c) => c.id));
-  const landed = after.comments.find((c) => c.parentId === input.commentId && c.byMe && !seen.has(c.id));
+  // ⚠️⚠️ THE PARENT IS THE THREAD'S TOP-LEVEL COMMENT, WHICH IS NOT THE COMMENT
+  // BEING ANSWERED WHEN THAT COMMENT IS ITSELF A REPLY. Skool files a reply to a
+  // reply as another child of the root (measured — see `CommentThread`), so
+  // looking for a child of `commentId` would find nothing after a reply that
+  // landed perfectly, report "every click worked and nothing appeared", and
+  // hand a member's answered question to the retry queue.
+  const parentId = replyParentOf(before.comments, input.commentId);
+  const landed = after.comments.find((c) => c.parentId === parentId && c.byMe && !seen.has(c.id));
   if (!landed) {
     return {
       ok: false,

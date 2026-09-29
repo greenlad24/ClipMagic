@@ -24,6 +24,13 @@
  *     rather than a new course. Same bargain as the video attachment: the model
  *     picks from a list it was shown, and anything else is discarded.
  *
+ * ⚠️ JAKE'S VOCABULARY: a SERIES is a Skool course, a CLASS is a lesson page.
+ * 2026-09-28: "not a new series — a new class in an existing series". Every
+ * new long-form video gets a page in the BEST EXISTING course, even when no
+ * course is about its exact subject (the Claude Cowork upload was skipped for
+ * that reason). A new course is never created here — a version that did so was
+ * built, run once, and reverted the same day at his instruction.
+ *
  * ⚠️ THE LEDGER ROW IS WRITTEN WHEN THE PAGE LANDS, NEVER AT DRAFT TIME. A run
  * that drafts and then fails to place the page must be able to try again; a row
  * written early burns the video and it never gets its page. This is the third
@@ -37,7 +44,7 @@ import { channelVideos, youtubeUrl, type ChannelVideo } from "./channelVideos.js
 import { fetchFreeCaptions, getTranscript, rememberTranscript, youtubeIdFrom } from "./transcripts.js";
 import { transcriptFor } from "./lessons.js";
 import { indexedCourses, allLessons } from "./knowledge.js";
-import { openCourse, addPageToOpenCourse } from "./actions.js";
+import { openCourse, addPageToOpenCourse, PAGE_TITLE_MAX } from "./actions.js";
 
 /**
  * How recent an upload has to be to earn a page.
@@ -95,15 +102,30 @@ export function recordVideoLesson(videoId: string, courseSlug: string, pageTitle
  * the course in order should meet them the way they happened.
  */
 export async function nextVideoNeedingLesson(communityUrl: string): Promise<ChannelVideo | null> {
+  return (await videosNeedingLessons(communityUrl))[0] ?? null;
+}
+
+/**
+ * Every upload that is due a page, oldest first.
+ *
+ * ⚠️ ALL OF THEM, NOT ONE. The scheduler used to take only the oldest, so one
+ * video whose page kept failing (the Seedance upload, 2026-09-27) sat at the
+ * head of the queue and the Cowork upload behind it never got its turn.
+ *
+ * ⚠️ SHORTS NEVER GET A PAGE — same rule as the announcements (Jake,
+ * 2026-08-28: "never use shorts — only long form videos"). Unknown counts as a
+ * Short. Without this the queue was six 30-second clips deep.
+ */
+export async function videosNeedingLessons(communityUrl: string): Promise<ChannelVideo[]> {
   const cutoff = Date.now() - NEW_LESSON_DAYS * 24 * 3600_000;
-  const recent = (await channelVideos(25)).filter((v) => v.publishedAt > 0 && v.publishedAt >= cutoff);
+  const recent = (await channelVideos(25)).filter((v) => !v.isShort && v.publishedAt > 0 && v.publishedAt >= cutoff);
   // ⚠️ `publishedAt > 0` MATTERS. `channelVideos` records 0 when YouTube did not
   // say when a video went up, and 0 is not recent — but `0 >= cutoff` is false
   // only by luck of the epoch being in the past. Stated so it cannot be
   // "simplified" into a bug that writes pages for the whole channel.
   const eligible = recent.filter((v) => !videoHasLesson(v.videoId) && !classroomHasPageFor(communityUrl, v.videoId));
   eligible.sort((a, b) => a.publishedAt - b.publishedAt);
-  return eligible[0] ?? null;
+  return eligible;
 }
 
 /**
@@ -167,19 +189,34 @@ export async function transcriptForVideo(videoId: string): Promise<string> {
 const COURSE_SYSTEM = `You file one new lesson page into an existing classroom.
 
 You are given a video's title, what it teaches (from its transcript), and the
-list of courses that exist. Choose the ONE course this page belongs in.
+list of courses that exist. Every new video becomes ONE page inside ONE of
+these courses. Choose the course a member would most naturally open to find
+it. When no course is about the video's exact subject (a new tool, say), choose
+the closest home — the course whose theme it fits best — rather than none.
 
 ⚠️ CHOOSE A SLUG FROM THE LIST EXACTLY. Never invent a course, never adjust a
-slug, never propose a new one. If no course is a genuine home for this video —
-not merely the same broad topic, but the place a member would look for it —
-return null. A page filed in the wrong course is worse than a page not filed:
-members navigate by course, and it is invisible in the wrong one.
+slug, never propose a new one. Return null ONLY when the video teaches nothing
+a member could follow (pure opinion, a vlog).
 
 Also choose the page's TITLE: what a member scanning the course contents would
 click. Say what they will be able to DO, not what the video is called. No
-episode numbers, no "Part 2", no clickbait.
+episode numbers, no "Part 2", no clickbait. ⚠️ MAX 45 CHARACTERS — Skool will
+not save a page title over 50.
 
 Return JSON only: {"slug": string|null, "pageTitle": string, "why": string}`;
+
+/**
+ * Fit a title into Skool's 50-character page limit, at a word boundary.
+ * The prompt asks for 45; this is the backstop, because a title over the limit
+ * does not fail loudly — Skool greys out SAVE and leaves an empty page behind.
+ */
+export function fitTitle(t: string): string {
+  const clean = t.replace(/\s+/g, " ").trim();
+  if (clean.length <= PAGE_TITLE_MAX) return clean;
+  const cut = clean.slice(0, PAGE_TITLE_MAX + 1);
+  const at = cut.lastIndexOf(" ");
+  return (at > 20 ? cut.slice(0, at) : clean.slice(0, PAGE_TITLE_MAX)).replace(/[\s,:;–—-]+$/, "");
+}
 
 export interface CourseChoice {
   slug: string;
@@ -250,7 +287,7 @@ export async function chooseCourseFor(
     // rule the video attachment follows, for the same reason.
     if (!course) return { choice: null, error: `The chosen course "${slug}" is not one of the classroom's courses.` };
 
-    const pageTitle = String(parsed.pageTitle ?? "").trim() || video.title;
+    const pageTitle = fitTitle(String(parsed.pageTitle ?? "").trim() || video.title);
     return {
       choice: { slug, courseTitle: course.title, pageTitle, why: String(parsed.why ?? "") },
       error: null,
@@ -462,6 +499,26 @@ export async function writeLessonForNewVideo(
     detail: `"${choice.pageTitle}" is in ${choice.courseTitle}, built from ${video.title}.`,
     steps,
   };
+}
+
+/**
+ * Every due upload, each on its own — one failing page never blocks the rest.
+ * Capped, because each one is a model call and possibly a paid transcript.
+ */
+export async function writeLessonsForNewVideos(communityUrl: string, max = 3): Promise<VideoLessonResult[]> {
+  const due = (await videosNeedingLessons(communityUrl)).slice(0, max);
+  const out: VideoLessonResult[] = [];
+  for (const v of due) {
+    out.push(
+      await writeLessonForNewVideo(communityUrl, { videoId: v.videoId }).catch((e) => ({
+        wrote: false,
+        videoId: v.videoId,
+        detail: `failed: ${e instanceof Error ? e.message : String(e)}`,
+        steps: [],
+      })),
+    );
+  }
+  return out;
 }
 
 /** Used by the reader that maps a Skool page back to the upload it came from. */

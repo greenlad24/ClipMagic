@@ -924,6 +924,44 @@ export function voiceGuideBlock(guide: string): string {
   ].join("\n");
 }
 
+/**
+ * Who Jake is — the only biography this agent may use.
+ *
+ * Jake, 2026-09-26: "the background of Jake is that he's from Austin, Texas.
+ * He's American and have been around technology for the past 7-8 years."
+ *
+ * ⚠️ THESE ARE FACTS, SO THEY SIT UNDER THE FACT RULES, NOT THE VOICE GUIDE. A
+ * model handed three lines of biography will happily grow them into a story —
+ * a first job, a city he "still misses", a client from 2019. Each of those is
+ * an invented first-hand claim, the exact class of draft already flagged once
+ * ("one heads up from experience…"). So the block says what is known and, just
+ * as plainly, that nothing else is.
+ *
+ * ⚠️ "FROM", NOT "LIVES IN". Austin is where he is from; where he lives now is
+ * not stated here and is not the agent's to say.
+ */
+export function aboutJakeBlock(): string {
+  return [
+    "",
+    "==========================================",
+    "WHO YOU ARE — THE ONLY BACKGROUND YOU MAY USE",
+    "==========================================",
+    "",
+    "- You are from Austin, Texas. You are American.",
+    "- You have been around technology for the past 7-8 years.",
+    "",
+    "Use this only when it is relevant — a member asks where you are from, how long",
+    "you have been doing this, or a sentence genuinely needs it. Do not open with it",
+    "and do not work it into replies that did not ask.",
+    "",
+    "⚠️ THAT IS THE WHOLE BIOGRAPHY. Do not add to it: no past jobs, employers,",
+    "clients, projects, education, family, age, where you live now, or stories",
+    "about things you personally did or saw. Say \"7-8 years\" or \"the last several",
+    "years\" — never a more exact number. If asked something about yourself that is",
+    "not written here, keep it short and do not make it up.",
+  ].join("\n");
+}
+
 const MCP_NOTE = [
   "THIS IS THE TUESDAY POST AND IT HAS A FIXED JOB: one MCP automation idea.",
   "",
@@ -1257,9 +1295,56 @@ function accessBlock(ent: Entitlement | null, postCount: number): string {
  * person has actually been sent and this block states the verdict — allowed or
  * forbidden — which is a thing a model can obey in one turn.
  */
+/**
+ * Ask a grateful member to review the community.
+ *
+ * Jake, 2026-09-20: *"if a member in a DM say 'thank you for your help' or
+ * showing appreciation nudge them into giving a positive review on the skool
+ * community at <about page> (scrolling down they can review it)."*
+ *
+ * ⚠️ THE "SCROLL DOWN" IS LOAD-BEARING, NOT COLOUR. The about page does not
+ * open on a review box — it is below the fold — so a bare link sends somebody
+ * who wanted to help to a page where they cannot find the thing they were asked
+ * for, and they close it. Telling them where to look is the difference between
+ * a review and a dead link.
+ *
+ * ⚠️ IT ASKS FOR A REVIEW, NEVER FOR A GOOD ONE. Jake said "a positive review",
+ * and the honest way to act on that is to ask the people who are already
+ * pleased — which is exactly what the appreciation trigger does — and then let
+ * them write what they think. Coaching the wording, or asking for five stars, is
+ * review-gating: against Skool's own interest, obvious to the member, and it
+ * turns a compliment into a transaction.
+ */
+function reviewBlock(
+  surface: "comment" | "dm" | "post",
+  review: { url: string } | null | undefined,
+): string {
+  // DMs only. A public comment saying "please go and review us" is an advert
+  // under an answer, and it is read by everyone who was not thanking anybody.
+  if (!review || surface !== "dm") return "";
+  return [
+    "==========================================",
+    "THEY JUST THANKED YOU",
+    "==========================================",
+    "",
+    "They are pleased with the help they got, and they have never been asked to review the",
+    "community. END THIS REPLY BY ASKING THEM TO LEAVE ONE — once, lightly, and only here.",
+    "",
+    "- Answer whatever else they said FIRST. The ask is the last thing in the message, not the point of it.",
+    "- One sentence, in Jake's own voice, sounding like a person who is pleased rather than a form:",
+    `  it helps the community get found, and it takes a minute — ${review.url}`,
+    "- ⚠️ TELL THEM TO SCROLL DOWN on that page — the reviews are below the fold and they will not",
+    "  see the box otherwise.",
+    "- ⚠️ ASK FOR A REVIEW, NOT FOR A GOOD ONE. Never say positive, five-star, glowing or nice, never",
+    "  suggest what to write, and never make it a favour they owe you for the help.",
+    "- If they say no, or ignore it, that is the end of it — it is never raised again.",
+    "- Do not thank them for thanking you twice over, and do not open with 'so glad I could help'.",
+  ].join("\n");
+}
+
 function upgradeBlock(
   ent: Entitlement | null,
-  surface: "comment" | "dm",
+  surface: "comment" | "dm" | "post",
   nudge: { allowed: boolean; asked: boolean } | null,
   plansUrl: string,
 ): string {
@@ -1697,6 +1782,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     // borrowed YouTube voice describes SOUNDING, and the mechanics that follow
     // re-state the factual rules it must not touch.
     voiceGuideBlock(req.voiceGuide ?? ""),
+    aboutJakeBlock(),
     styleBlock(req.styleExamples),
     mechanics("post", extra),
     attachmentNote(req.videoCandidates ?? []),
@@ -1967,10 +2053,58 @@ function totalTokens(usage: { input_tokens?: number; output_tokens?: number } | 
   return Number(usage.input_tokens ?? 0) + Number(usage.output_tokens ?? 0);
 }
 
+/**
+ * Does this member's post read as an advert for their own services rather than
+ * something to answer?
+ *
+ * Jake, 2026-09-20, on the first member post the agent was ever going to
+ * comment on — a Tokyo dev shop listing its stack and asking for clients:
+ * "welcome, don't engage the pitch". His comment is the first thing anyone
+ * reads under a post, so a normal warm reply to a solicitation is an
+ * endorsement of it, whatever the words say.
+ *
+ * ⚠️ THE BRANCH IT PICKS IS ALMOST THE WELCOME ONE, AND THAT IS WHY A HEURISTIC
+ * IS ENOUGH HERE. A false positive costs a welcome that skips one sentence about
+ * their offer; a false negative is just today's behaviour. Neither is a reply
+ * nobody should have sent, so this does not need a model call on the send path.
+ *
+ * ⚠️ A CATALOGUE ALONE IS NOT A PITCH. Members post bullet lists of the tools
+ * they used all the time, and "I'm a freelance designer, excited to be here" is
+ * an introduction, not an advert. It takes the shape AND the intent: a list of
+ * what they sell plus either an ask for work or a seller's self-description —
+ * or, for the short pitches that carry no list, both of those together.
+ */
+const PITCH_OFFERING =
+  /\b(?:dm me|message me|pm me|reach out|get in touch|contact me|hit me up|let'?s connect|book a call|available for|open to (?:work|projects|opportunities|new opportunities)|taking on (?:new )?(?:clients|projects|work)|looking for (?:clients|projects|work)|hire me|for hire|my rates|rate card|portfolio|send me a (?:message|dm))\b/i;
+
+const PITCH_PROVIDER =
+  /\b(?:my (?:agency|team|studio|company|firm)|our (?:agency|team|studio|company|firm)|we (?:build|develop|deliver|provide|offer|specialis[ez]e)|freelanc(?:e|er|ing)|consultan(?:t|cy)|(?:my|global|international|overseas) clients|work(?:ing)? with clients|client work|years of experience|i (?:build|develop|deliver|provide|offer) [^.\n]{0,60}\bfor (?:clients|businesses|companies|founders|startups|brands))\b/i;
+
+const PITCH_CATALOGUE =
+  /(?:^|\n)\s*(?:main areas|areas i work in|services|what i (?:do|offer|can help with)|i can (?:also )?help with|typical (?:tech )?stack|tech stack|my stack|skills?|expertise|specialit(?:y|ies))\b[^\n]{0,40}:/i;
+
+/** A run of list lines — the "everything I sell" block, however it is bulleted. */
+function listLines(text: string): number {
+  return text.split(/\n/).filter((l) => /^\s*(?:[-•*·‣▪]|\d+[.)])\s+\S/.test(l)).length;
+}
+
+export function looksLikeServicesPitch(text: string): boolean {
+  const t = (text || "").trim();
+  if (!t) return false;
+  const offering = PITCH_OFFERING.test(t);
+  const provider = PITCH_PROVIDER.test(t);
+  const catalogue = PITCH_CATALOGUE.test(t) || listLines(t) >= 6;
+  return (catalogue && (offering || provider)) || (offering && provider);
+}
+
 export interface ReplyRequest {
   communityUrl: string;
   voicePrompt: string;
-  surface: "comment" | "dm";
+  /**
+   * `post` is a comment under a post a MEMBER wrote — the reply is the first
+   * word from Jake on it, not an answer inside a thread he started.
+   */
+  surface: "comment" | "dm" | "post";
   /** Who wrote it, and what they wrote. */
   authorName: string;
   /**
@@ -1991,6 +2125,24 @@ export interface ReplyRequest {
   text: string;
   /** The post the comment sits under, when there is one. */
   context: string;
+  /**
+   * The comment thread so far, oldest first, when this reply continues one.
+   *
+   * ⚠️⚠️ A FOLLOW-UP IS A CONVERSATION AND MUST BE PROMPTED AS ONE. Jake,
+   * 2026-09-26, on a member answering his comment and getting nothing back: *"I
+   * want Jake to always answer."* Answering is half of it — the other half is
+   * answering the RIGHT thing, and a drafter handed "Cheers man!" with only the
+   * post underneath it will re-explain the post. Every rule the DM surface
+   * learned about this (don't repeat advice, don't re-greet, several messages
+   * are one question) applies word for word; `CONVERSATION_RULES` is now shared
+   * rather than written twice.
+   *
+   * ⚠️ SEPARATE FROM `context` BECAUSE A COMMENT HAS BOTH. A DM's thread IS its
+   * context; a comment thread sits under a post that also has to be in the
+   * prompt, and collapsing them would present the post as something already
+   * said to this person.
+   */
+  thread?: string;
   /** The operator's own voice guide — see `voiceGuideBlock`. */
   voiceGuide?: string;
   /**
@@ -2019,6 +2171,17 @@ export interface ReplyRequest {
    * every comment get. The sweep passes one for every DM.
    */
   nudge?: { allowed: boolean; asked: boolean } | null;
+  /**
+   * They have just thanked this account, and have never been asked to review
+   * the community — so this reply may end by pointing them at the about page.
+   *
+   * ⚠️ PRESENT MEANS ALLOWED. `reviewNudgeState` does the deciding (it counts
+   * what this person has already been sent, which no prompt can know), and the
+   * sweep passes nothing at all when the answer is no. A drafter handed
+   * `{allowed: false}` is a drafter that has been told about a review link it
+   * must not use, which is a worse prompt than one that never heard of it.
+   */
+  review?: { url: string } | null;
   /**
    * Recent community posts to choose a recommendation from.
    *
@@ -2050,11 +2213,51 @@ export interface ReplyRequest {
    */
   alreadySentUrls?: string[];
   /**
+   * There is one other member worth introducing them to — see `connections.ts`.
+   *
+   * ⚠️⚠️ A BOOLEAN, AND THAT IS THE PRIVACY RULE. The drafter is never told
+   * who, or why: not a name, not what they do, not what they said. It writes
+   * `{{connect}}` where the name goes and the send path fills it in. A model
+   * cannot repeat what another member told Jake if it was never shown it.
+   */
+  connect?: boolean;
+  /**
    * What the pre-send check refused about the previous attempt — see
    * `repairInstruction` in `outgoing.ts`. Absent on a first attempt; appended
    * after everything else, restrictions included, on the repair pass.
    */
   repair?: string;
+}
+
+/**
+ * The introduction, as the drafter sees it: that one exists, and nothing else.
+ *
+ * Jake, 2026-09-19: "never tell what another person told me. Just say 'you
+ * should talk with about it...'". The sentence's words are then checked by
+ * `introSentenceOk` — only the member's own words, nothing describing the other
+ * person — and a sentence that fails is dropped, not repaired.
+ */
+function connectBlock(on: boolean): string {
+  if (!on) return "";
+  return [
+    "==========================================",
+    "AN INTRODUCTION",
+    "==========================================",
+    "There is another member of the community this person should talk to about what they wrote.",
+    "You do not know who it is and you must not guess. End the reply with ONE sentence pointing them",
+    `there, with the exact text ${"{{connect}}"} where the person's name goes — it is filled in later:`,
+    "",
+    `  You should talk with {{connect}} about it.`,
+    `  Worth talking with {{connect}} about the <their own words for their thing>.`,
+    "",
+    "- It is the LAST sentence of the reply, on its own line, and nothing comes after it.",
+    "- Say NOTHING about that person: not who they are, what they do, know, built or went through, not",
+    "  that they are good at it, not that they have 'been there', not he/she/they/their. Only that the",
+    "  two should talk.",
+    "- Describe the subject only in THIS member's own words, or just say 'about it'.",
+    "- Exactly one {{connect}}, never a name, never an @.",
+    "- Still answer them properly first. The introduction is an extra, not the answer.",
+  ].join("\n");
 }
 
 /**
@@ -2115,8 +2318,88 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
       "earlier rule disagree about that, the guide wins. The earlier rules keep " +
       "everything about facts, links and when to skip."
     : "";
+  // ⚠️ DECIDED HERE, NOT BY THE CALLER. Every path that drafts a comment under a
+  // member's post — the sweep, a retry, the manual bench — reads the same post
+  // text, so a flag passed in is a flag one of them can forget to pass.
+  const pitchPost = req.surface === "post" && looksLikeServicesPitch(req.text);
+  // ⚠️ ONE COPY, TWO SURFACES. Learned on DMs (Jake, 2026-08-27: the agent must
+  // have "the context of the whole thread (not just the last message) so he
+  // doesn't repeat advice it already gave") and true word for word of a comment
+  // thread, which is the same conversation in public. Written twice it would
+  // drift, and the copy that drifts is the one nobody is looking at.
+  const CONVERSATION_RULES = [
+    "- Do not repeat advice that is already in the thread. Do not re-explain a",
+    "  tool you have explained, re-list steps you have listed, or re-send a link",
+    "  that is already up there.",
+    "- If they are asking again, the first answer did not land. Say the NEXT",
+    "  thing — more specific, or the part they are stuck on — never the same",
+    "  thing again in the same words.",
+    "- Do not re-introduce yourself or re-greet someone mid-conversation.",
+    "- Several messages in a row are ONE question in pieces. Answer all of it in",
+    "  one reply; answering only the last line leaves the rest hanging.",
+    "- Where two of their messages disagree, the LATEST one is what they mean.",
+  ];
+  const threadSoFar = (req.thread ?? "").trim();
   const surfaceNote =
-    req.surface === "comment"
+    pitchPost
+      ? [
+          "THIS IS A COMMENT UNDER A POST A MEMBER WROTE IN JAKE'S SKOOL COMMUNITY, AND THE POST IS AN",
+          "ADVERT: they are describing the work they sell and looking for clients.",
+          "",
+          "⚠️⚠️ JAKE'S COMMENT IS THE FIRST THING ANYONE READS UNDER IT, so a normal enthusiastic reply",
+          "reads as him recommending them to his own members. Write a welcome, and let the offer pass.",
+          "- Welcome them to the community, warmly and briefly, the way you would welcome anyone new.",
+          "- Pick up ONE real detail they gave — where they are, something they have actually built, the",
+          "  kind of work they like — and say something human about it, or ask one easy question back.",
+          "- Point them at the community if there is somewhere obvious: the classroom, or a post worth",
+          "  reading. The link rules above apply unchanged.",
+          "⚠️ SAY NOTHING ABOUT THE OFFER. Not 'sounds great', not 'the community could use this', not",
+          "  'keep me in mind', not 'I'll send people your way' — nothing about hiring, rates, clients,",
+          "  availability or what they charge, no hint that anyone here should work with them, and never",
+          "  repeat their contact details.",
+          "- Do NOT tell them off, do not mention promotion rules, do not ask them to post it elsewhere.",
+          "  It is a welcome. The offer is simply not the thing you are responding to.",
+          "Reply length as for a comment. These are his own members, not strangers.",
+          deferToGuide,
+        ].filter(Boolean).join("\n")
+      : req.surface === "post"
+      ? [
+          "THIS IS A COMMENT UNDER A POST A MEMBER WROTE IN JAKE'S SKOOL COMMUNITY.",
+          "They started this thread; you are the first word from Jake on it, and the whole community can",
+          "read it. React to what THEY posted:",
+          "- A question or a problem: answer it, as completely as a comment reply would.",
+          "- A win, a build or something they made: say specifically what is good about it, and add one",
+          "  thing that would take it further. No generic 'great job'.",
+          "- An introduction: welcome them, pick up one real detail from what they said, and ask one",
+          "  easy question back or point them at where to start.",
+          "- An opinion or a discussion: add your actual take, briefly.",
+          "Do not hijack their post, do not turn it into a pitch, and do not summarise it back to them.",
+          "Reply length as for a comment. These are his own members, not strangers.",
+          deferToGuide,
+        ].filter(Boolean).join("\n")
+      : req.surface === "comment" && threadSoFar
+      ? [
+          "THIS IS A REPLY INSIDE A COMMENT THREAD IN JAKE'S OWN SKOOL COMMUNITY,",
+          "and Jake is ALREADY IN IT — they are answering something he said.",
+          "Close enough to a YouTube comment that the rules above apply as written,",
+          "including reply length. These are his own members, not strangers.",
+          "",
+          // ⚠️ THE THREAD WAS NEVER IN THIS PROMPT AT ALL BEFORE — not mislabelled
+          // as it was on the DM surface, simply absent, because the collector
+          // only ever offered top-level comments and a top-level comment has no
+          // history. Saying what it is matters as much as including it: Jake's
+          // own earlier lines are things this person has ALREADY been told, not
+          // source material to draw on.
+          "⚠️ YOU ARE CONTINUING A CONVERSATION, NOT ANSWERING A FRESH COMMENT. The",
+          "thread so far is below, oldest first, and every line marked Jake is",
+          "something you have ALREADY said to this person, in public, under this post.",
+          ...CONVERSATION_RULES,
+          "- It is one thread on a post: keep it a reply, not a second post. If they",
+          "  just said thanks and there is nothing left to answer, a short warm line",
+          "  is the whole reply — do not find something new to teach them.",
+          deferToGuide,
+        ].filter(Boolean).join("\n")
+      : req.surface === "comment"
       ? [
           "THIS IS A COMMENT ON A POST IN JAKE'S OWN SKOOL COMMUNITY.",
           "Close enough to a YouTube comment that the rules above apply as written,",
@@ -2140,20 +2423,12 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
           "⚠️ YOU ARE ANSWERING A CONVERSATION, NOT A MESSAGE. The thread so far is",
           "below, oldest first, and every line marked Jake is something you have",
           "ALREADY said to this person.",
-          "- Do not repeat advice that is already in the thread. Do not re-explain a",
-          "  tool you have explained, re-list steps you have listed, or re-send a link",
-          "  that is already up there.",
-          "- If they are asking again, the first answer did not land. Say the NEXT",
-          "  thing — more specific, or the part they are stuck on — never the same",
-          "  thing again in the same words.",
-          "- Do not re-introduce yourself or re-greet someone mid-conversation.",
-          "- Several messages in a row are ONE question in pieces. Answer all of it in",
-          "  one reply; answering only the last line leaves the rest hanging.",
-          "- Where two of their messages disagree, the LATEST one is what they mean.",
+          ...CONVERSATION_RULES,
           deferToGuide,
         ].filter(Boolean).join("\n");
 
   const gate = accessBlock(access, postHits.length);
+  const review = reviewBlock(req.surface, req.review);
   const upgrade = upgradeBlock(
     access,
     req.surface,
@@ -2167,6 +2442,7 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     // agent does" — the posts AND the replies. Same block, same precedence: it
     // decides how a reply sounds, never what it is allowed to claim.
     voiceGuideBlock(req.voiceGuide ?? ""),
+    aboutJakeBlock(),
     mechanics(
       "reply",
       [
@@ -2198,6 +2474,14 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
         // closing rule now defers to this block by name.
         upgrade,
         "",
+        // ⚠️ AFTER THE UPGRADE BLOCK, AND THE SWEEP NEVER SENDS BOTH. When a
+        // member is grateful the plans nudge is withheld for that message
+        // (`nudgeToUse` in engageReplies), so these two cannot stack into
+        // "thanks for the thanks — here's where to pay, and please review us".
+        // Ordering still matters: a later instruction wins, and this one asks
+        // for the last sentence of the reply.
+        review,
+        "",
         // ⚠️⚠️ SKIPPING USED TO BE THE ESCALATION ROUTE, AND THERE IS NOBODY AT
         // THE OTHER END OF IT. A skipped reply is recorded and shown as "Left
         // for you"; Jake, 2026-09-02: "I'm not checking the skool agent
@@ -2225,6 +2509,10 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
         // somebody's scenario.
         policyBlock("reply"),
         "",
+        // Before the restrictions, which must still win — and a restricted
+        // member is never offered an introduction in the first place.
+        connectBlock(req.connect === true),
+        "",
         // Last, so it wins: see `restrictions` on ReplyRequest.
         (req.restrictions ?? []).join("\n"),
       ].filter(Boolean).join("\n"),
@@ -2248,9 +2536,14 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     text.length <= max ? text : `…\n${text.slice(text.length - max)}`;
 
   const unanswered = req.unansweredCount ?? 0;
+  // ⚠️ A RUN HAPPENS IN A COMMENT THREAD TOO, not just in a DM. Two comments in a
+  // row from the same member get ONE reply — see `Waiting.comment` — so the
+  // drafter has to be told it is answering both, or it answers the last line.
   const heading =
-    req.surface === "dm" && unanswered > 1
-      ? `${req.authorName} sent these ${unanswered} messages one after another, and none of them has been answered yet. Answer all of them, in one reply:`
+    unanswered > 1 && (req.surface === "dm" || req.surface === "comment")
+      ? `${req.authorName} ${req.surface === "dm" ? "sent these" : "left these"} ${unanswered} ${
+          req.surface === "dm" ? "messages" : "comments"
+        } one after another, and none of them has been answered yet. Answer all of them, in one reply:`
       : `${req.authorName} wrote:`;
 
   const user = [
@@ -2259,11 +2552,26 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
     heading,
     req.text,
     "",
-    req.context
-      ? req.surface === "dm"
+    req.surface === "post"
+      ? "(That is their whole post, title first. There is no thread before it.)"
+      : req.surface === "dm"
+      ? req.context
         ? `THE CONVERSATION SO FAR, oldest first — everything said BEFORE the message${unanswered > 1 ? "s" : ""} above.\nLines marked Jake are what this person has already been told:\n${threadTail(req.context, 6000)}`
-        : `CONTEXT — the post this sits under:\n${req.context.slice(0, 2500)}`
-      : "",
+        : ""
+      : // ⚠️ THE THREAD FIRST AND THE POST SECOND, AND BOTH CUT FROM THE RIGHT
+        // END. A comment thread is the conversation (so it keeps its TAIL — the
+        // most recent exchange is the one being answered) and the post is the
+        // subject (so it keeps its HEAD, which is what `threadTail` above says
+        // about the asymmetry). The post is also cut harder here: on a follow-up
+        // it is background, and the exchange is the thing.
+        [
+          threadSoFar
+            ? `THE THREAD SO FAR, oldest first — everything said BEFORE the comment${unanswered > 1 ? "s" : ""} above.\nLines marked Jake are what this person has already been told, in public:\n${threadTail(threadSoFar, 4000)}`
+            : "",
+          req.context
+            ? `${threadSoFar ? "And the post the whole thread sits under" : "CONTEXT — the post this sits under"}:\n${req.context.slice(0, threadSoFar ? 1200 : 2500)}`
+            : "",
+        ].filter(Boolean).join("\n\n"),
     "",
     groundingBlock(hits),
     "",

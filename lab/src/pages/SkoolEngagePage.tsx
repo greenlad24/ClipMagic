@@ -23,7 +23,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle, Check, Clock, ExternalLink, Loader2, MessageSquare, PauseCircle, PlayCircle,
-  RefreshCw, Send, Sparkles, Trash2, X,
+  RefreshCw, Send, Sparkles, Trash2, Users, X,
 } from 'lucide-react';
 import {
   skoolStatus,
@@ -48,6 +48,10 @@ import {
   skoolRepliesSend,
   skoolRepliesRetry,
   skoolRepliesForget,
+  skoolConnections,
+  skoolConnectionsRefresh,
+  skoolConnectionOptOut,
+  type SkoolConnectionsStatus,
   type SkoolReplyConfig,
   type SkoolReplyRow,
   type SkoolReplyState,
@@ -363,7 +367,7 @@ export default function SkoolEngagePage() {
                 onToggle={(patch, key) => configureReplies(patch, key)}
                 onEdit={(patch) => { setReplyDirty(true); setReplyConfig((p) => (p ? { ...p, ...patch } : p)); }}
                 onSave={() => {
-                  const { enabled, dryRun, comments, dms, ...rest } = replyConfig;
+                  const { enabled, dryRun, comments, dms, memberPosts, introductions, reviewNudge, ...rest } = replyConfig;
                   return configureReplies(rest, 'r-save', 'Saved.');
                 }}
                 onSweep={() =>
@@ -1230,7 +1234,14 @@ function RepliesPanel({
   const [confirmLive, setConfirmLive] = useState(false);
   const [showSent, setShowSent] = useState(false);
   const live = config.enabled && !config.dryRun;
-  const surfaces = [config.comments ? 'comments' : null, config.dms ? 'DMs' : null].filter(Boolean).join(' and ');
+  const surfaces = [
+    config.comments ? 'comments' : null,
+    config.memberPosts ? "members' posts" : null,
+    config.dms ? 'DMs' : null,
+  ]
+    .filter(Boolean)
+    .join(', ')
+    .replace(/, ([^,]*)$/, ' and $1');
   /**
    * ⚠️ A SENT ROW IS AN ARCHIVE, NOT A QUEUE ITEM, AND MIXING THEM MADE DONE
    * WORK LOOK OUTSTANDING. Jake, 2026-08-20: "if the DM worked why is it still
@@ -1301,6 +1312,31 @@ function RepliesPanel({
             >
               {config.dms ? '✓ ' : ''}DMs
             </button>
+            {/* Jake, 2026-09-19: "it should also comment on members posts". */}
+            <button
+              type="button" disabled={!!busy}
+              onClick={() => onToggle({ memberPosts: !config.memberPosts }, 'r-memberposts')}
+              className={`rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${config.memberPosts ? 'border-primary text-primary' : 'text-muted-foreground'}`}
+            >
+              {config.memberPosts ? '✓ ' : ''}Members&apos; posts
+            </button>
+            <button
+              type="button" disabled={!!busy}
+              onClick={() => onToggle({ introductions: !config.introductions }, 'r-intros')}
+              className={`rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${config.introductions ? 'border-primary text-primary' : 'text-muted-foreground'}`}
+            >
+              {config.introductions ? '✓ ' : ''}Introductions
+            </button>
+            {/* ⚠️ THIS ONE IS ON BY DEFAULT, unlike the two above — it shipped
+                before its switch existed, so the switch is how you STOP it. */}
+            <button
+              type="button" disabled={!!busy}
+              title="When a member thanks you in a DM, end the reply by asking them to review the community. Once per member, ever."
+              onClick={() => onToggle({ reviewNudge: !config.reviewNudge }, 'r-review')}
+              className={`rounded-md border px-3 py-1.5 text-xs disabled:opacity-50 ${config.reviewNudge ? 'border-primary text-primary' : 'text-muted-foreground'}`}
+            >
+              {config.reviewNudge ? '✓ ' : ''}Review nudge
+            </button>
 
             {config.dryRun ? (
               confirmLive ? (
@@ -1370,7 +1406,16 @@ function RepliesPanel({
                 onChange={(e) => onEdit({ postsToScan: Number(e.target.value) })}
                 className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
             </Field>
+            {config.memberPosts ? (
+              <Field label="Members' posts newer than (days)">
+                <input type="number" min={1} max={30} value={config.memberPostMaxAgeDays}
+                  onChange={(e) => onEdit({ memberPostMaxAgeDays: Number(e.target.value) })}
+                  className="w-full rounded-md border bg-background px-2 py-1.5 text-sm" />
+              </Field>
+            ) : null}
           </div>
+
+          {config.introductions ? <IntroductionsPanel busy={busy} /> : null}
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <span>
@@ -1436,6 +1481,122 @@ function RepliesPanel({
   );
 }
 
+/**
+ * What the introduction layer has learned from DMs and who it has pointed at
+ * whom — with the matcher's reason, which is for Jake and never for a member.
+ *
+ * ⚠️ OPT-OUT IS PER MEMBER AND STICKS. A re-read of their thread does not undo
+ * it; see `setNoIntro` on the server.
+ */
+function IntroductionsPanel({ busy }: { busy: string | null }) {
+  const [status, setStatus] = useState<SkoolConnectionsStatus | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setStatus(await skoolConnections({ profiles: true }));
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const refresh = async () => {
+    setWorking('refresh');
+    try {
+      const r = await skoolConnectionsRefresh({ max: 25 });
+      setNote(
+        r.read
+          ? `Read ${r.read} DM thread(s): ${r.ok} profiled, ${r.thin} too short, ${r.excluded} excluded, ${r.failed} failed. ${r.remaining} still to read.`
+          : `Nothing new to read — every thread is up to date.${r.notes.length ? ` ${r.notes.join(' ')}` : ''}`,
+      );
+      await load();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const optOut = async (memberId: string, noIntro: boolean) => {
+    setWorking(memberId);
+    try {
+      await skoolConnectionOptOut({ memberId, noIntro });
+      await load();
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const p = status?.profiles;
+  const known = (status?.profiles_list ?? []).filter((m) => m.experience.some((e) => e.strength === 'demonstrated'));
+
+  return (
+    <div className="mt-4 rounded-md border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-xs font-semibold">
+          <Users className="h-3.5 w-3.5" /> Introductions
+        </h3>
+        <button type="button" disabled={!!busy || !!working} onClick={refresh}
+          className="inline-flex items-center gap-2 rounded-md border px-2 py-1 text-[11px] disabled:opacity-50">
+          {working === 'refresh' ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          Read more DM threads
+        </button>
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        It suggests &ldquo;you should talk with @someone about it&rdquo; only when it is certain, and never says why or
+        what the other person told you. It learns what people have <em>done</em> from their DMs — never what they
+        are stuck on. At most {status?.limits.perDay ?? 3} a day, one per member a week, and nobody is pointed at more
+        than {status?.limits.perIntroducedPer14Days ?? 2} times in 14 days.
+      </p>
+      {p ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          {p.total} DM threads read · {p.withExperience} members with first-hand experience on file · {p.thin} too short ·{' '}
+          {p.excluded} excluded{p.failed ? ` · ${p.failed} failed` : ''}{p.optedOut ? ` · ${p.optedOut} opted out` : ''}
+        </p>
+      ) : null}
+      {note ? <p className="mt-2 text-[11px]">{note}</p> : null}
+
+      {status?.introductions.length ? (
+        <div className="mt-3 space-y-1.5">
+          {status.introductions.map((i) => (
+            <div key={i.id} className="text-[11px]">
+              <span className="font-medium">{i.askerName}</span> → <span className="font-medium">{i.introducedName}</span>{' '}
+              <span className="text-muted-foreground">({i.state}, {i.surface}, {new Date(i.createdAt).toLocaleDateString()})</span>
+              {i.why ? <span className="block text-muted-foreground">Why: {i.why}</span> : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-muted-foreground">No introductions yet.</p>
+      )}
+
+      {known.length ? (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-[11px] text-muted-foreground">
+            Who it could introduce ({known.length}) — only you see this
+          </summary>
+          <div className="mt-2 space-y-1.5">
+            {known.map((m) => (
+              <div key={m.memberId} className="flex items-start justify-between gap-2 text-[11px]">
+                <span className={m.noIntro ? 'text-muted-foreground line-through' : ''}>
+                  <span className="font-medium">{m.memberName}</span> —{' '}
+                  {m.experience.filter((e) => e.strength === 'demonstrated').map((e) => e.topic).join('; ')}
+                </span>
+                <button type="button" disabled={!!working} onClick={() => optOut(m.memberId, !m.noIntro)}
+                  className="shrink-0 rounded border px-1.5 py-0.5 disabled:opacity-50">
+                  {working === m.memberId ? '…' : m.noIntro ? 'Allow' : 'Never introduce'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 function ReplyRowCard({
   row, busy, communityUrl, onSend, onRetry, onForget,
 }: {
@@ -1449,7 +1610,7 @@ function ReplyRowCard({
   // A comment links to its post; a DM has no URL at all — Skool's chat is a
   // panel, not a page (`skool.com/chat` redirects to the group), so there is
   // deliberately no link rather than a broken one.
-  const link = row.surface === 'comment' && communityUrl && row.postSlug
+  const link = row.surface !== 'dm' && communityUrl && row.postSlug
     ? `${communityUrl.replace(/\/+$/, '')}/${row.postSlug}`
     : null;
 
@@ -1469,12 +1630,17 @@ function ReplyRowCard({
           </span>
         ) : null}
         <span className="text-[11px] text-muted-foreground">
-          {row.surface === 'dm' ? 'direct message' : 'comment'} · {new Date(row.createdAt).toLocaleString()}
+          {row.surface === 'dm' ? 'direct message' : row.surface === 'post' ? 'their post' : 'comment'} · {new Date(row.createdAt).toLocaleString()}
         </span>
         {link ? (
           <a href={link} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-primary">
             open <ExternalLink className="h-3 w-3" />
           </a>
+        ) : null}
+        {row.intro ? (
+          <span className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]">
+            <Users className="h-3 w-3" /> introduces {row.intro.displayName}
+          </span>
         ) : null}
       </div>
 

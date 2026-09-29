@@ -222,8 +222,14 @@ export interface GateRefresh {
 
 /** Re-read every course's two gates. One navigation per 30 courses. */
 export async function refreshCourseGates(communityUrl: string): Promise<GateRefresh> {
-  const classroom = await readClassroom(communityUrl);
-  if (classroom.error) return { courses: 0, freeToEveryone: [], readAt: 0, error: classroom.error };
+  const read = await readClassroom(communityUrl);
+  if (read.error) return { courses: 0, freeToEveryone: [], readAt: 0, error: read.error };
+  // ⚠️ DRAFTS ARE NOT LIVE. The admin session sees unpublished courses; members
+  // do not. This table is the index's admission list ("still there"), so a
+  // draft in it would be taught from and linked — a link no member can open.
+  // Verified 2026-09-28: `published` is true for all 19 live courses and false
+  // for the one draft.
+  const classroom = { ...read, courses: read.courses.filter((c) => c.published) };
   // A classroom that reads as empty is not a reason to forget the gates: same
   // rule as the member cache above.
   if (!classroom.courses.length) {

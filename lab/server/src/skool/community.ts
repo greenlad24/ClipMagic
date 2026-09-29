@@ -54,6 +54,8 @@ export interface SkoolPost {
   body: string;
   category: string | null;
   authorName: string | null;
+  /** Skool's user id for the author. Empty when the payload carried none. */
+  authorId: string;
   /** Whether this post was written by the signed-in account. */
   byMe: boolean;
   commentCount: number;
@@ -188,6 +190,7 @@ async function readFeedPage(communityUrl: string, pageNo: number): Promise<FeedP
       body: p.body,
       category: p.category,
       authorName: p.authorName,
+      authorId: String(p.authorId ?? ""),
       byMe: !!selfId && p.authorId === selfId,
       commentCount: p.commentCount,
       likeCount: p.likeCount,

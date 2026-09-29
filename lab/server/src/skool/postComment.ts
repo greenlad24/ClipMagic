@@ -28,6 +28,8 @@ import { withSkoolPage } from "./browser.js";
 import { focusBody } from "./actions.js";
 import { typeMentions } from "./mentions.js";
 import type { SkoolMember } from "./members.js";
+import { writeReplyText, type IntroChip, type ReplyResult } from "./engageActions.js";
+import { checkOutgoing } from "./outgoing.js";
 
 const settle = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -333,6 +335,114 @@ export async function commentOnPost(input: CommentInput): Promise<CommentResult>
     text: written.text,
     buttons: names,
   };
+}
+
+/* ────────────────────────── a comment on a member's post ────────────────────────── */
+
+/**
+ * Comment under a post a MEMBER wrote — the reply agent's third surface.
+ *
+ * Jake, 2026-09-19: "it should also comment on members posts". Same editor as
+ * the welcome comment above and the same Ctrl+Enter submit, but the text is the
+ * drafted reply, PASTED (it is multi-paragraph markdown, and typing it would
+ * leave literal `**` on the page), with an introduction chip typed at the end
+ * when there is one — see `writeReplyText`.
+ *
+ * ⚠️ ONE TOP-LEVEL COMMENT FROM THIS ACCOUNT PER POST, EVER, checked on Skool
+ * rather than in our ledger: if Jake already commented by hand, the member has
+ * heard from him, and that is recorded as the answer rather than adding a second.
+ */
+export async function commentOnMemberPost(input: {
+  communityUrl: string;
+  slug: string;
+  text: string;
+  intro?: IntroChip | null;
+  /** Everything except Ctrl+Enter, then the editor is emptied. */
+  dryRun?: boolean;
+}): Promise<ReplyResult> {
+  const text = input.text.trim();
+  if (!text) return { ok: false, detail: "An empty comment was not posted.", replyId: null };
+  if (!input.slug.trim()) return { ok: false, detail: "No post slug, so there is nothing to comment on.", replyId: null };
+
+  // The send-time backstop, as on every other write path.
+  const gate = checkOutgoing(text, {
+    surface: "comment",
+    communityUrl: input.communityUrl,
+    allowedMentions: input.intro ? [input.intro.member.displayName, input.intro.member.firstName] : undefined,
+  });
+  if (gate.blocked) return { ok: false, detail: gate.detail, replyId: null };
+
+  // Also navigates to the post, which is the page the editor is on.
+  const before = await readComments(input.communityUrl, input.slug);
+  if (before.error) return { ok: false, detail: `Could not read the post's comments first, so nothing was posted: ${before.error}`, replyId: null };
+  const mine = before.comments.find((c) => c.depth === 0 && c.byMe);
+  if (mine) {
+    return { ok: true, detail: "This account already has a comment on that post — not commenting twice.", replyId: mine.id };
+  }
+  await settle(1500);
+
+  const empty = await editorState();
+  if (!empty.present) {
+    return { ok: false, detail: "No comment editor on the post page — Skool may have bounced the session to a login.", replyId: null };
+  }
+  if (empty.text.trim()) {
+    return {
+      ok: false,
+      detail: `The comment box already holds a draft (${empty.text.trim().slice(0, 60)}…). Refusing to type into it.`,
+      replyId: null,
+    };
+  }
+  if (!(await focusBody())) return { ok: false, detail: "Could not put the caret in the comment box.", replyId: null };
+
+  const written = await writeReplyText(text, input.intro);
+  if (!written.ok) {
+    await clearEditor();
+    return { ok: false, detail: `The comment was not written: ${written.detail}`, replyId: null, introFailed: written.introFailed };
+  }
+  await settle(600);
+
+  if (input.dryRun) {
+    const held = (await editorState()).text.trim();
+    await clearEditor();
+    const left = (await editorState()).text.trim();
+    return {
+      ok: true,
+      detail:
+        `DRY RUN — ${written.detail}. The comment box held ${held.length} characters; it was NOT submitted` +
+        `${left ? ` (⚠ ${left.slice(0, 40)} left behind)` : ", and the box was emptied"}.`,
+      replyId: null,
+    };
+  }
+
+  // Ctrl+Enter — see `commentOnPost` for the three things measured to get here.
+  await withSkoolPage(async (page) => {
+    try {
+      await page.keyboard.down("Control");
+      await page.keyboard.press("Enter");
+      await page.keyboard.up("Control");
+    } catch {
+      /* the read-back decides */
+    }
+  });
+  await settle(3000);
+
+  const after = await readComments(input.communityUrl, input.slug);
+  if (after.error) {
+    return { ok: false, detail: `Submitted, but the comments could not be re-read, so the comment is UNCONFIRMED: ${after.error}`, replyId: null };
+  }
+  const seen = new Set(before.comments.map((c) => c.id));
+  const landed = after.comments.find((c) => c.depth === 0 && c.byMe && !seen.has(c.id));
+  if (!landed) {
+    await clearEditor();
+    return {
+      ok: false,
+      detail:
+        "Every click worked and no new comment from this account is on the post. Treat it as not sent — " +
+        "but check the post before retrying, because one that landed late would duplicate.",
+      replyId: null,
+    };
+  }
+  return { ok: true, detail: `Commented on the post: ${landed.body.trim().length} characters.`, replyId: landed.id };
 }
 
 /* ────────────────────────── the diagnostic ────────────────────────── */

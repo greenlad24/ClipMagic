@@ -115,7 +115,7 @@ function stem(word: string): string {
   return w;
 }
 
-function terms(text: string): string[] {
+export function terms(text: string): string[] {
   return String(text ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9.\s-]/g, " ")

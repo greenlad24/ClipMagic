@@ -45,7 +45,7 @@ import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
 import { videosForSubject } from "./channelVideos.js";
-import { writeLessonForNewVideo } from "./videoLessons.js";
+import { writeLessonsForNewVideos } from "./videoLessons.js";
 import { runReplySweep } from "./engageReplies.js";
 import { getSettings as getEngageSettings } from "../engage/db.js";
 import { checkOutgoing, repairInstruction } from "./outgoing.js";
@@ -994,8 +994,11 @@ export async function runScheduleTick(communityUrl: string, trigger: string): Pr
   // and its failure is not the tick's.
   if (out.enqueued && !cfg.dryRun) {
     try {
-      const lesson = await writeLessonForNewVideo(communityUrl, {});
-      if (lesson.wrote || lesson.videoId) out.processed.push(`classroom page: ${lesson.detail}`);
+      // Every due upload, not just the oldest: one page that keeps failing must
+      // not starve the videos behind it (Cowork waited behind Seedance).
+      for (const lesson of await writeLessonsForNewVideos(communityUrl)) {
+        out.processed.push(`classroom page: ${lesson.detail} [${lesson.steps.join(" → ")}]`);
+      }
     } catch (e) {
       out.processed.push(`classroom page failed: ${e instanceof Error ? e.message : String(e)}`);
     }
