@@ -681,6 +681,8 @@ export interface ScriptStages {
     researchedOn: string | null;
     importedAt: number;
     warnings: string[];
+    /** The pack's outline when it wasn't in the writer's format; Stage 2 rebuilds it. */
+    packOutline?: string;
   };
 }
 /** A question the hook plants and a named section pays off. */
@@ -1463,7 +1465,8 @@ export const skoolEngageSubject = endpoint<
 
 /* ────────────────────────── the reply agent ────────────────────────── */
 
-export type SkoolReplySurface = "comment" | "dm";
+/** `post` = a first comment under a post a MEMBER wrote. */
+export type SkoolReplySurface = "comment" | "dm" | "post";
 /**
  * ⚠️ FIVE STATES, NOT OK/FAILED. `unconfirmed` means the click went in and the
  * read-back did not find it — a retry from there could answer someone twice,
@@ -1482,6 +1485,25 @@ export interface SkoolReplyConfig {
   maxPerDay: number;
   maxAgeDays: number;
   postsToScan: number;
+  /** Comment under posts members write. */
+  memberPosts: boolean;
+  /** How old a member's post may be and still get a first comment. */
+  memberPostMaxAgeDays: number;
+  /** Introduce members to each other, learned from DMs — never repeating them. */
+  introductions: boolean;
+  profilesPerSweep: number;
+  /** Ask a member who thanks you in a DM to review the community. On by default. */
+  reviewNudge: boolean;
+}
+
+/** The member a reply introduces, as stored on the row. */
+export interface SkoolReplyIntro {
+  userId: string;
+  handle: string;
+  displayName: string;
+  firstName: string;
+  marker: string;
+  withoutIntro: string;
 }
 
 export interface SkoolReplyRow {
@@ -1510,6 +1532,7 @@ export interface SkoolReplyRow {
   attempts: number;
   lastError: string;
   steps: string;
+  intro: SkoolReplyIntro | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -1520,6 +1543,7 @@ export interface SkoolReplyScan {
   comments: number;
   dmThreads: number;
   dmTheySpokeLast: number;
+  memberPosts?: number;
 }
 
 export interface SkoolReplyTarget {
@@ -1579,6 +1603,53 @@ export const skoolRepliesSend = endpoint<{ id: string }, { ok: boolean; detail: 
  * again only if it genuinely did not — so pressing it twice cannot double-answer.
  */
 export const skoolRepliesRetry = endpoint<{ id: string }, { ok: boolean; detail: string }>("skoolRepliesRetry");
+
+export interface SkoolIntroduction {
+  id: number;
+  replyId: string;
+  surface: string;
+  askerId: string;
+  askerName: string;
+  introducedId: string;
+  introducedName: string;
+  /** Why the matcher was certain — for Jake only, never sent to anyone. */
+  why: string;
+  state: "drafted" | "sent" | "dropped";
+  createdAt: number;
+}
+
+export interface SkoolConnectionsStatus {
+  profiles: { total: number; ok: number; withExperience: number; thin: number; excluded: number; failed: number; optedOut: number };
+  introductions: SkoolIntroduction[];
+  limits: { perIntroducedPer14Days: number; perAskerPer7Days: number; perDay: number };
+  profiles_list?: {
+    memberId: string;
+    memberName: string;
+    experience: { topic: string; strength: "demonstrated" | "claimed" }[];
+    noIntro: boolean;
+    readAt: number;
+  }[];
+}
+
+/** What the introduction layer knows (from DMs — Jake's eyes only) and has done. */
+export const skoolConnections = endpoint<{ profiles?: boolean } | void, SkoolConnectionsStatus>("skoolConnections");
+
+/** Read more DM threads into profiles. Spends one model call per changed thread. */
+export const skoolConnectionsRefresh = endpoint<
+  { max?: number },
+  { threads: number; read: number; ok: number; thin: number; excluded: number; failed: number; remaining: number; notes: string[] }
+>("skoolConnectionsRefresh");
+
+/** Never introduce this member to anybody — or undo that. */
+export const skoolConnectionOptOut = endpoint<{ memberId: string; noIntro?: boolean }, { changed: boolean }>(
+  "skoolConnectionOptOut",
+);
+
+/** Who a message would be introduced to, without drafting or sending. One model call at most. */
+export const skoolConnectionTest = endpoint<
+  { text: string; memberId?: string; memberName?: string },
+  { introduced: string | null; why: string; tokens: number }
+>("skoolConnectionTest");
 
 /** Forget a message so it can be offered again. Does NOT unsend anything. */
 export const skoolRepliesForget = endpoint<
@@ -3195,6 +3266,9 @@ export const hyperframesStatus = endpoint<Record<string, never>, {
   queued: number;
   diskFreeBytes: number;
   workBytes: number;
+  cacheBytes: number;
+  cacheFiles: number;
+  sharedSavingBytes: number;
 }>("hyperframesStatus");
 
 export const hyperframesJobs =
@@ -3219,6 +3293,20 @@ export const hyperframesCancelJob = endpoint<{ id: string }, { ok: boolean }>("h
 export const hyperframesRetryJob = endpoint<{ id: string }, { job: HyperframesJob }>("hyperframesRetryJob");
 export const hyperframesDeleteJob =
   endpoint<{ id: string; keepOutput?: boolean }, { freedBytes: number }>("hyperframesDeleteJob");
+
+/**
+ * Bulk delete. Resolves even when some ids failed — read the arrays, not the
+ * absence of a throw.
+ */
+export const hyperframesDeleteJobs = endpoint<
+  { ids: string[]; keepOutput?: boolean },
+  {
+    deleted: string[];
+    freedBytes: number;
+    cancelling: string[];
+    failed: { id: string; error: string }[];
+  }
+>("hyperframesDeleteJobs");
 
 export interface HyperframesUpload {
   id: string;
@@ -3497,3 +3585,190 @@ export const hyperframesDensityNarration =
   endpoint<{ id: string; start: number; end: number; padSeconds?: number }, NarrationSlice>(
     "hyperframesDensityNarration",
   );
+
+/* ── Video Editor (LAB tool) ──────────────────────────────────────────────
+   The JakeDawson Hyperframes skill run as software (`hfp`). Control plane
+   only: the hfp-worker service on the host runs the pipeline, and it — not
+   this page — stops every run before the render until it is approved.
+   Shapes mirror server/src/hyperframes/editor.ts. */
+
+export type HfpStageStatus = "pending" | "running" | "done" | "blocked" | "awaiting" | "cached";
+
+export interface HfpStage {
+  id: string;
+  title: string;
+  klass: string;
+  phase: string;
+  status: HfpStageStatus;
+  note: string | null;
+  reason: string | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+}
+
+export interface HfpRunSummary {
+  id: string;
+  name: string;
+  link: string;
+  createdAt: number;
+  title: string | null;
+  durationSeconds: number | null;
+  worker: "queued" | "running" | "idle" | "new";
+  outcome: string | null;
+  lastStage: string | null;
+  reason: string | null;
+  doneStages: number;
+  renderApproved: boolean;
+  waitingFor: string | null;
+  updatedAt: number | null;
+}
+
+export interface HfpFinding {
+  code: string;
+  severity: string;
+  message: string;
+  where?: string;
+}
+
+export interface HfpPending {
+  kind:
+    | "model-answer" | "rejected-answer" | "composition" | "handoff-tasks"
+    | "generations" | "attestation" | "render-approval" | "rendering" | "blocked" | "interrupted";
+  stage: string | null;
+  message: string;
+  jobId?: string | null;
+  nextCheckAt?: number | null;
+  estimateUsd?: number | null;
+  inputTokens?: number | null;
+  promptSha256?: string | null;
+  findings?: HfpFinding[];
+  candidates?: { id: string; name: string | null; duration_seconds: number | null }[];
+  attestation?: {
+    cues?: Record<string, { verdict: string; note: string }>;
+    subjective_checks?: Record<string, { verdict: string; note: string }>;
+  } | null;
+  renderSha256?: string | null;
+  videoUrl?: string | null;
+  framesEstimate?: number | null;
+  durationSeconds?: number | null;
+  preflightVerdict?: string | null;
+}
+
+export interface HfpRequest {
+  id: string;
+  name: string;
+  link: string;
+  cadence: string;
+  editorial_mode: "offline" | "live";
+  accept_long_context_reprice: boolean;
+  render_approved: boolean;
+  render_approved_at?: number;
+  unattended: boolean;
+  created_at: number;
+}
+
+export interface HfpRunDetail {
+  run: HfpRunSummary;
+  request: HfpRequest;
+  share: {
+    title: string | null; width: number | null; height: number | null;
+    duration_seconds: number | null; word_count?: number; share_url: string;
+  } | null;
+  worker: {
+    state: string; started_at?: number; finished_at?: number; updated_at?: number;
+    outcome?: string; last_stage?: string; reason?: string; exit_code?: number | null;
+    action?: { reason?: string };
+  } | null;
+  stages: HfpStage[];
+  pending: HfpPending | null;
+  crashTraceback: string | null;
+  artifacts: { path: string; bytes: number; modifiedAt: number }[];
+  log: string;
+}
+
+export const hfpEditorStatus = endpoint<Record<string, never>, {
+  root: string;
+  workerAlive: boolean;
+  workerSeenAt: number | null;
+  stages: { id: string; title: string; klass: string; phase: string }[];
+}>("hfpEditorStatus");
+
+export const hfpEditorRuns =
+  endpoint<Record<string, never>, { runs: HfpRunSummary[] }>("hfpEditorRuns");
+
+export const hfpEditorRun =
+  endpoint<{ id: string; logBytes?: number }, HfpRunDetail>("hfpEditorRun");
+
+export const hfpEditorArtifact = endpoint<{ id: string; path: string }, {
+  path: string; bytes: number; truncated: boolean; text: string;
+}>("hfpEditorArtifact");
+
+export const hfpEditorCreate = endpoint<{
+  name: string;
+  link: string;
+  cadence?: string;
+  editorialMode?: "offline" | "live";
+  acceptLongContextReprice?: boolean;
+  unattended?: boolean;
+}, { run: HfpRunSummary }>("hfpEditorCreate");
+
+export const hfpEditorSettings = endpoint<{
+  id: string;
+  name?: string;
+  cadence?: string;
+  editorialMode?: "offline" | "live";
+  acceptLongContextReprice?: boolean;
+  unattended?: boolean;
+}, { request: HfpRequest }>("hfpEditorSettings");
+
+export const hfpEditorContinue = endpoint<{
+  id: string;
+  force?: string[];
+  refreshShare?: boolean;
+  statusRequest?: boolean;
+  stopAfter?: string;
+}, { run: HfpRunSummary }>("hfpEditorContinue");
+
+export const hfpEditorAskModel = endpoint<{ id: string }, { run: HfpRunSummary }>("hfpEditorAskModel");
+export const hfpEditorApproveRender =
+  endpoint<{ id: string }, { run: HfpRunSummary }>("hfpEditorApproveRender");
+export const hfpEditorCancel = endpoint<{ id: string }, { ok: boolean; stopped: string }>("hfpEditorCancel");
+export const hfpEditorDelete =
+  endpoint<{ id: string }, { ok: boolean; renderJobId: string | null }>("hfpEditorDelete");
+export const hfpEditorSubmitAnswer = endpoint<{ id: string; stage: string; content: string }, {
+  run: HfpRunSummary;
+}>("hfpEditorSubmitAnswer");
+export const hfpEditorDiscardAnswer =
+  endpoint<{ id: string; stage: string }, { ok: boolean }>("hfpEditorDiscardAnswer");
+export const hfpEditorChooseComposition = endpoint<{ id: string; compositionId: string }, {
+  run: HfpRunSummary;
+}>("hfpEditorChooseComposition");
+export const hfpEditorHandoffTasks =
+  endpoint<{ id: string; json: string }, { run: HfpRunSummary }>("hfpEditorHandoffTasks");
+export const hfpEditorAttest = endpoint<{
+  id: string;
+  attestation: {
+    reviewer: string;
+    watched_with_sound: boolean;
+    cues: Record<string, { verdict: string; note: string }>;
+    subjective_checks: Record<string, { verdict: string; note: string }>;
+    verdict: "pass" | "fail";
+  };
+}, { run: HfpRunSummary }>("hfpEditorAttest");
+
+/* ── Code Import (staging area for code brought in from Zite / repos) ───── */
+export interface CodeImportSummary { name: string; files: number; bytes: number; updatedAt: number; hasNotes: boolean }
+export interface CodeImportDetail { name: string; files: { path: string; bytes: number }[]; notes: string; hostPath: string }
+export interface CodeImportFileIn { path: string; content: string; encoding?: "utf8" | "base64" }
+export interface CodeImportSaveResult { saved: number; skipped: string[]; bytes: number; stripped?: string | null }
+export const codeImportList = endpoint<Record<string, never>, { imports: CodeImportSummary[] }>("codeImportList");
+export const codeImportGet = endpoint<{ name: string }, CodeImportDetail>("codeImportGet");
+export const codeImportReadFile =
+  endpoint<{ name: string; path: string }, { path: string; content: string; binary: boolean; bytes: number }>("codeImportReadFile");
+export const codeImportSaveFiles =
+  endpoint<{ name: string; files: CodeImportFileIn[]; replace?: boolean }, CodeImportSaveResult>("codeImportSaveFiles");
+export const codeImportUploadZip =
+  endpoint<{ name: string; zipBase64: string; replace?: boolean }, CodeImportSaveResult>("codeImportUploadZip");
+export const codeImportDeleteFile = endpoint<{ name: string; path: string }, { ok: boolean }>("codeImportDeleteFile");
+export const codeImportDelete = endpoint<{ name: string }, { ok: boolean }>("codeImportDelete");
+export const codeImportSaveNotes = endpoint<{ name: string; notes: string }, { ok: boolean }>("codeImportSaveNotes");

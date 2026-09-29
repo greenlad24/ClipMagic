@@ -122,6 +122,10 @@ export type CallPurpose =
   // is opt-in on that basis, so these must never be billed.
   | "skool-post"
   | "skool-engage-reply"
+  // The introduction layer (skool/connections.ts): distils a member's DM thread
+  // into first-hand experience, and decides whether an asker should be pointed
+  // at one other member. Same credential as the replies (SKOOL_AI_AUTH).
+  | "skool-connect"
   // Jake Dawson Script Generator: every stage (classify/research/outline/hooks/
   // sponsor/section/review/outro) runs on Opus (director tier).
   | "scriptgen"
@@ -164,7 +168,15 @@ export type CallPurpose =
   // Channel Audit: reads competitor transcripts + comments to extract hooks,
   // structure and what viewers asked for. FAST tier — extraction, not judgement,
   // across thirty videos a run.
-  | "audit-content";
+  | "audit-content"
+  // AI News Stream. Four purposes rather than one because a run's cost is
+  // dominated by clustering — 400+ headlines a batch, several batches — while
+  // the on-air script is the part whose quality decides whether the show is
+  // watchable. Billed apart, they can be tuned apart.
+  | "news-cluster"
+  | "news-summary"
+  | "news-notes"
+  | "news-script";
 
 export interface AiCallRecord {
   /** "segmind" appears only on image-generation calls (the sticker generator). */

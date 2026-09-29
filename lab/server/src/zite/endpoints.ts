@@ -27,6 +27,9 @@ import {
 // Density check (LAB tool) — READ-ONLY. It reads the density.json that `hfp
 // density` produced on the host; it computes no density number of its own.
 import * as hyperframesDensity from "../hyperframes/density.js";
+// Video Editor (LAB tool) — control plane for `hfp`, the Hyperframes skill as
+// software. The `hfp-worker` systemd service on the host runs the pipeline.
+import * as hfpEditor from "../hyperframes/editor.js";
 // Tutorial Studio (LAB tool) — the Python reel sidecar.
 import * as tutorial from "../tutorial/client.js";
 import * as tutorialBatches from "../db/tutorialBatches.js";
@@ -320,6 +323,8 @@ import {
 import { isChannelVideo, youtubeUrl } from "../skool/channelVideos.js";
 import * as skoolConsole from "../skool/console.js";
 import * as skoolActions from "../skool/actions.js";
+import { appendToPost } from "../skool/editPost.js";
+import * as codeImports from "../imports/codeImports.js";
 import { writePlanLessons } from "../skool/lessons.js";
 import { buildRebuild } from "../skool/rebuild.js";
 import { deleteRecipe, getRecipe, listRecipes, saveRecipe, type RecipeStep } from "../skool/recipes.js";
@@ -359,6 +364,7 @@ import {
 import { firstNameOf } from "../skool/engageGen.js";
 import { mentionMember, newMembers as readNewMembers, readMembers, recordWelcomed } from "../skool/members.js";
 import {
+  adminIds as skoolAdminIds,
   asksAboutUpgrading,
   getReplyConfig,
   setReplyConfig,
@@ -370,6 +376,13 @@ import {
   forgetReply,
   listReplies,
 } from "../skool/engageReplies.js";
+import {
+  connectionsStatus,
+  listProfiles as listConnectionProfiles,
+  refreshProfiles as refreshConnectionProfiles,
+  setNoIntro,
+  findConnection,
+} from "../skool/connections.js";
 import {
   saveMarket as saveAuditMarket,
   listMarkets as listAuditMarkets,
@@ -5367,14 +5380,20 @@ const skoolReadPost: Handler = async (input) => {
  * A post's comments, with their real ids, over Skool's own API.
  *
  * Distinct from `skoolReadPost`, which scrapes the DOM and cannot see an id.
- * `answerable` is what a reply worker acts on: top-level, not ours, not already
- * answered by us.
+ * `answerable` is what a reply worker acts on: ONE comment per thread — the
+ * top-level comment of a thread nobody here has touched, or, in a thread this
+ * account is already in, the last thing the member said after our last word.
+ * Not ours, and never one we have already answered.
+ *
+ * ⚠️ AND IT COUNTS BOTH OF JAKE'S ADMIN ACCOUNTS AS "US", the same as the sweep.
+ * A bench that showed a thread as unanswered because the other Jake answered it
+ * would be showing work that will never be done.
  */
 const skoolReadComments: Handler = async (input) => {
   const slug = String(input?.slug ?? "").trim();
   if (!slug) throw new ZiteError({ code: "BAD_REQUEST", message: "Which post? Pass its slug." });
   const read = await readComments(communityUrlOrThrow(), slug);
-  return { ...read, answerable: answerable(read.comments) };
+  return { ...read, answerable: answerable(read.comments, { usIds: skoolAdminIds() }) };
 };
 
 const skoolUnreadChats: Handler = async () => {
@@ -5584,6 +5603,12 @@ const skoolDraftReply: Handler = async (input) => {
     authorFirstName: String(input?.authorFirstName ?? "") || firstNameOf(String(input?.authorName ?? "")),
     text,
     context: String(input?.context ?? ""),
+    // ⚠️ FORWARDED IN THE SAME COMMIT THAT ADDED IT — see the list of options
+    // this file has silently dropped before (`captureRequests` on the probe,
+    // twice). Without this line the bench cannot rehearse a reply into a comment
+    // THREAD at all: it would draft as if the member had said the only thing
+    // ever said, which is the exact failure the field was added to fix.
+    thread: String(input?.thread ?? ""),
       voiceGuide: getSkoolSettings().voiceGuideMd,
     access: gated,
     // ⚠️ THE BENCH ALWAYS ALLOWS IT, AND SAYS SO IN THE RESPONSE. It has no
@@ -5893,7 +5918,61 @@ const skoolRepliesConfigure: Handler = async (input) => {
   if (input?.maxPerDay !== undefined) patch.maxPerDay = Number(input.maxPerDay);
   if (input?.maxAgeDays !== undefined) patch.maxAgeDays = Number(input.maxAgeDays);
   if (input?.postsToScan !== undefined) patch.postsToScan = Number(input.postsToScan);
+  if (input?.memberPosts !== undefined) patch.memberPosts = !!input.memberPosts;
+  if (input?.memberPostMaxAgeDays !== undefined) patch.memberPostMaxAgeDays = Number(input.memberPostMaxAgeDays);
+  if (input?.introductions !== undefined) patch.introductions = !!input.introductions;
+  if (input?.profilesPerSweep !== undefined) patch.profilesPerSweep = Number(input.profilesPerSweep);
   return { config: setReplyConfig(patch as any) };
+};
+
+/* ────────────────────────── introductions ────────────────────────── */
+
+/**
+ * What the introduction layer knows and has done.
+ *
+ * ⚠️ PROFILES ARE RETURNED TO THE OPERATOR, AND ONLY TO THE OPERATOR. They are
+ * distilled from private DMs; this screen is Jake's own, behind the sign-in
+ * gate. Nothing here is ever given to the reply drafter — see connections.ts.
+ */
+const skoolConnections: Handler = async (input) => ({
+  ...connectionsStatus(),
+  profiles_list: input?.profiles
+    ? listConnectionProfiles()
+        .filter((p) => p.status === "ok" && p.experience.length)
+        .map((p) => ({ memberId: p.memberId, memberName: p.memberName, experience: p.experience, noIntro: p.noIntro, readAt: p.readAt }))
+    : undefined,
+});
+
+/** Read more DM threads into profiles now. Spends one model call per changed thread. */
+const skoolConnectionsRefresh: Handler = async (input) => {
+  const max = Math.max(1, Math.min(200, Number(input?.max ?? 20)));
+  return refreshConnectionProfiles(communityUrlOrThrow(), { max });
+};
+
+/** A human's switch: never introduce this member to anybody (or undo it). */
+const skoolConnectionOptOut: Handler = async (input) => {
+  const memberId = String(input?.memberId ?? "").trim();
+  if (!memberId) throw new ZiteError({ code: "BAD_REQUEST", message: "Which member? Pass memberId." });
+  return { changed: setNoIntro(memberId, input?.noIntro !== false) };
+};
+
+/**
+ * Who, if anyone, this message would be introduced to — without drafting or
+ * sending anything. The bench for "is the matcher too eager?".
+ */
+const skoolConnectionTest: Handler = async (input) => {
+  const text = String(input?.text ?? "").trim();
+  if (!text) throw new ZiteError({ code: "BAD_REQUEST", message: "Pass the member's message as text." });
+  const found = await findConnection({
+    id: String(input?.memberId ?? "bench"),
+    name: String(input?.memberName ?? "bench"),
+    text,
+  });
+  return {
+    introduced: found.connection ? found.connection.member.displayName : null,
+    why: found.connection?.why ?? found.reason,
+    tokens: found.tokens,
+  };
 };
 
 /**
@@ -6314,6 +6393,48 @@ const skoolWriteVideoLesson: Handler = async (input) => {
     }),
   };
 };
+
+/**
+ * Prove the paid-access step of "New course" against the live dialog, then
+ * CANCEL. Creates nothing; returns what it set and a screenshot of the dialog.
+ */
+/**
+ * Append a paragraph to one of OUR published posts (never replaces the body).
+ * `mustContain` makes it idempotent and is the read-back check. `dryRun`
+ * appends in the editor, screenshots, and cancels.
+ */
+const skoolAppendToPost: Handler = async (input) =>
+  appendToPost(communityUrlOrThrow(), String(input?.slug ?? ""), String(input?.text ?? ""), {
+    dryRun: input?.dryRun === true,
+    mustContain: input?.mustContain ? String(input.mustContain) : undefined,
+  });
+
+/* ── Code Import: staging area for code brought in from Zite/repos ──────────
+   A bad name or path is the caller's mistake, so it surfaces as BAD_REQUEST
+   with the module's own sentence rather than a 500. */
+const importing = <T>(fn: () => T | Promise<T>): Promise<T> =>
+  Promise.resolve()
+    .then(fn)
+    .catch((e) => {
+      if (e instanceof codeImports.ImportError) throw new ZiteError({ code: "BAD_REQUEST", message: e.message });
+      throw e;
+    });
+const codeImportList: Handler = async () => importing(() => ({ imports: codeImports.listImports() }));
+const codeImportGet: Handler = async (input) => importing(() => codeImports.getImport(String(input?.name ?? "")));
+const codeImportReadFile: Handler = async (input) =>
+  importing(() => codeImports.readImportFile(String(input?.name ?? ""), String(input?.path ?? "")));
+const codeImportSaveFiles: Handler = async (input) =>
+  importing(() => codeImports.saveFiles(String(input?.name ?? ""), input?.files ?? [], { replace: input?.replace === true }));
+const codeImportUploadZip: Handler = async (input) =>
+  importing(() => codeImports.saveZip(String(input?.name ?? ""), String(input?.zipBase64 ?? ""), { replace: input?.replace === true }));
+const codeImportDeleteFile: Handler = async (input) =>
+  importing(() => (codeImports.deleteImportFile(String(input?.name ?? ""), String(input?.path ?? "")), { ok: true }));
+const codeImportDelete: Handler = async (input) =>
+  importing(() => (codeImports.deleteImport(String(input?.name ?? "")), { ok: true }));
+const codeImportSaveNotes: Handler = async (input) =>
+  importing(() => (codeImports.saveNotes(String(input?.name ?? ""), String(input?.notes ?? "")), { ok: true }));
+
+const skoolProbeCourseAccess: Handler = async () => skoolActions.probePaidAccessDialog(communityUrlOrThrow());
 
 /** What would get a page next, and what already has one. Free, and writes nothing. */
 const skoolVideoLessonStatus: Handler = async () => {
@@ -7743,6 +7864,29 @@ const hyperframesDeleteJob: Handler = async (input) => {
   }
 };
 
+/**
+ * Delete a selection of jobs.
+ *
+ * ⚠️ IT DOES NOT THROW ON A BAD ID, AND THAT IS THE CONTRACT. A bulk delete that
+ * rejects tells the browser nothing about the other nineteen; this always
+ * resolves and the per-id verdicts are in the body, so the page can say what
+ * actually went and what did not. The only thrown errors are "you sent me
+ * nothing" and a failure of the call itself.
+ */
+const hyperframesDeleteJobs: Handler = async (input) => {
+  const raw = Array.isArray(input?.ids) ? input.ids : [];
+  const ids = raw.map((i: unknown) => String(i || "").trim()).filter(Boolean);
+  if (ids.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "ids is required." });
+  // A cap, because this loops over multi-GB directories one at a time and the
+  // HTTP call is holding a person's browser open while it does.
+  if (ids.length > 100) throw new ZiteError({ code: "BAD_REQUEST", message: "Too many at once — 100 max." });
+  try {
+    return await hyperframes.deleteJobs(ids, input?.keepOutput === true);
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
 /* ────────────────────────── Density check (LAB tool) ────────────────────────── */
 
 /**
@@ -7785,6 +7929,54 @@ const hyperframesDensityNarration: Handler = async (input) => {
     return hyperframesFail(err);
   }
 };
+
+/* ────────────────────────── Video Editor (hfp) ────────────────────────── */
+
+/**
+ * ⚠️ THESE HANDLERS NEVER RUN THE PIPELINE. They read and write run
+ * directories shared with the `hfp-worker` systemd service on the host, which
+ * executes `hfp run`. The render gate is enforced by that worker too — see
+ * hyperframes/editor.ts — so nothing here can start a render by omission.
+ */
+const editorCall = (fn: (input: any) => Promise<unknown>): Handler => async (input) => {
+  try {
+    return await fn(input ?? {});
+  } catch (err) {
+    return hyperframesFail(err);
+  }
+};
+
+const hfpEditorStatus = editorCall(() => hfpEditor.serviceStatus());
+const hfpEditorRuns = editorCall(async () => ({ runs: await hfpEditor.listRuns() }));
+const hfpEditorRun = editorCall((i) => hfpEditor.getRun(i.id, Number(i.logBytes) || 20000));
+const hfpEditorArtifact = editorCall((i) => hfpEditor.readArtifact(i.id, i.path));
+const hfpEditorCreate = editorCall(async (i) => ({ run: await hfpEditor.createRun(i) }));
+const hfpEditorSettings = editorCall(async (i) => ({ request: await hfpEditor.updateSettings(i.id, i) }));
+const hfpEditorContinue = editorCall(async (i) => ({
+  run: await hfpEditor.continueRun(i.id, {
+    force: Array.isArray(i.force) ? i.force.map(String) : undefined,
+    refreshShare: i.refreshShare === true,
+    statusRequest: i.statusRequest === true,
+    stopAfter: i.stopAfter,
+  }),
+}));
+const hfpEditorAskModel = editorCall(async (i) => ({ run: await hfpEditor.askModel(i.id) }));
+const hfpEditorApproveRender = editorCall(async (i) => ({ run: await hfpEditor.approveRender(i.id) }));
+const hfpEditorCancel = editorCall((i) => hfpEditor.cancelRun(i.id));
+const hfpEditorDelete = editorCall((i) => hfpEditor.deleteRun(i.id));
+const hfpEditorSubmitAnswer = editorCall(async (i) => ({
+  run: await hfpEditor.submitAnswer(i.id, i.stage, i.content),
+}));
+const hfpEditorDiscardAnswer = editorCall((i) => hfpEditor.discardAnswer(i.id, i.stage));
+const hfpEditorChooseComposition = editorCall(async (i) => ({
+  run: await hfpEditor.chooseComposition(i.id, i.compositionId),
+}));
+const hfpEditorHandoffTasks = editorCall(async (i) => ({
+  run: await hfpEditor.saveHandoffTasks(i.id, i.json),
+}));
+const hfpEditorAttest = editorCall(async (i) => ({
+  run: await hfpEditor.submitAttestation(i.id, i.attestation),
+}));
 
 export const HANDLERS: Record<string, Handler> = {
   // data
@@ -8010,6 +8202,16 @@ export const HANDLERS: Record<string, Handler> = {
   skoolDryPublish,
   skoolWriteVideoLesson,
   skoolVideoLessonStatus,
+  skoolProbeCourseAccess,
+  skoolAppendToPost,
+  codeImportList,
+  codeImportGet,
+  codeImportReadFile,
+  codeImportSaveFiles,
+  codeImportUploadZip,
+  codeImportDeleteFile,
+  codeImportDelete,
+  codeImportSaveNotes,
   skoolConsoleFrame,
   skoolConsoleNavigate,
   skoolConsoleHover,
@@ -8030,6 +8232,10 @@ export const HANDLERS: Record<string, Handler> = {
   skoolRepliesSend,
   skoolRepliesRetry,
   skoolRepliesForget,
+  skoolConnections,
+  skoolConnectionsRefresh,
+  skoolConnectionOptOut,
+  skoolConnectionTest,
   skoolUnreadChats,
   skoolKnowledge,
   skoolBackfillTranscripts,
@@ -8158,6 +8364,7 @@ export const HANDLERS: Record<string, Handler> = {
   hyperframesCancelJob,
   hyperframesRetryJob,
   hyperframesDeleteJob,
+  hyperframesDeleteJobs,
   hyperframesApiKey,
   hyperframesUploads,
   hyperframesDeleteUpload,
@@ -8165,6 +8372,23 @@ export const HANDLERS: Record<string, Handler> = {
   hyperframesDensityIndex,
   hyperframesDensityReport,
   hyperframesDensityNarration,
+  // Video Editor (LAB tool)
+  hfpEditorStatus,
+  hfpEditorRuns,
+  hfpEditorRun,
+  hfpEditorArtifact,
+  hfpEditorCreate,
+  hfpEditorSettings,
+  hfpEditorContinue,
+  hfpEditorAskModel,
+  hfpEditorApproveRender,
+  hfpEditorCancel,
+  hfpEditorDelete,
+  hfpEditorSubmitAnswer,
+  hfpEditorDiscardAnswer,
+  hfpEditorChooseComposition,
+  hfpEditorHandoffTasks,
+  hfpEditorAttest,
 };
 
 void config;

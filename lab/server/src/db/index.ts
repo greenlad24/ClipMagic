@@ -291,6 +291,11 @@ CREATE INDEX IF NOT EXISTS idx_items_batch       ON batch_items(batch_id);
   if (cols.length > 0 && !cols.some((c) => c.name === "member_level")) {
     db.exec("ALTER TABLE skool_reply_log ADD COLUMN member_level INTEGER NOT NULL DEFAULT 0");
   }
+  // The member this reply introduces, if any — see skool/connections.ts. Also in
+  // the CREATE below; a column in only one of the two is missing on half the installs.
+  if (cols.length > 0 && !cols.some((c) => c.name === "connect_json")) {
+    db.exec("ALTER TABLE skool_reply_log ADD COLUMN connect_json TEXT NOT NULL DEFAULT ''");
+  }
 }
 
 export type JobStatus = "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
@@ -863,11 +868,60 @@ CREATE TABLE IF NOT EXISTS skool_reply_log (
   -- that exists in only one of the two places is missing on half the installs.
   member_tier  TEXT NOT NULL DEFAULT '',
   member_level INTEGER NOT NULL DEFAULT 0,
+  -- The member this reply introduces them to, as JSON, or '' for none. Also
+  -- added by an ALTER above.
+  connect_json TEXT NOT NULL DEFAULT '',
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_skool_reply_log_state ON skool_reply_log(state, created_at);
 CREATE INDEX IF NOT EXISTS idx_skool_reply_log_sent ON skool_reply_log(updated_at);
+
+-- WHAT EACH MEMBER HAS TOLD JAKE THEY CAN DO, distilled from their DM thread —
+-- the connector's only source. See skool/connections.ts.
+--
+-- ⚠️ EXPERIENCE ONLY, NEVER STRUGGLES. A row lists things the member says they
+-- have done or do for a living, phrased as short generic topics. What they are
+-- stuck on, their money, health, age or clients is never extracted, because a
+-- topic here can end up as the reason somebody is pointed at them.
+--
+-- ⚠️ NOTHING IN THIS TABLE IS EVER SHOWN TO THE REPLY DRAFTER. The matcher
+-- reads it; the drafter is told only that a connection exists.
+CREATE TABLE IF NOT EXISTS skool_member_profiles (
+  member_id        TEXT PRIMARY KEY,
+  member_name      TEXT NOT NULL DEFAULT '',
+  channel_id       TEXT NOT NULL DEFAULT '',
+  -- The thread's last message id when this was read; a new one means re-read.
+  last_message_id  TEXT NOT NULL DEFAULT '',
+  -- ok | thin (too little said to know anything) | excluded (flagged) | failed
+  status           TEXT NOT NULL DEFAULT 'ok',
+  experience_json  TEXT NOT NULL DEFAULT '[]',
+  -- Set by a human: never introduce this member to anybody.
+  no_intro         INTEGER NOT NULL DEFAULT 0,
+  note             TEXT NOT NULL DEFAULT '',
+  tokens           INTEGER NOT NULL DEFAULT 0,
+  read_at          INTEGER NOT NULL
+);
+
+-- EVERY INTRODUCTION THE AGENT HAS MADE OR DRAFTED. The pair rules (never the
+-- same two twice, never one member pointed at too often) are counted here.
+CREATE TABLE IF NOT EXISTS skool_introductions (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  reply_id        TEXT NOT NULL DEFAULT '',   -- skool_reply_log.id
+  surface         TEXT NOT NULL DEFAULT '',
+  asker_id        TEXT NOT NULL DEFAULT '',
+  asker_name      TEXT NOT NULL DEFAULT '',
+  introduced_id   TEXT NOT NULL DEFAULT '',
+  introduced_name TEXT NOT NULL DEFAULT '',
+  -- Why the matcher was certain, for Jake to audit. NEVER sent to a member.
+  why             TEXT NOT NULL DEFAULT '',
+  -- drafted | sent | dropped
+  state           TEXT NOT NULL DEFAULT 'drafted',
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_skool_introductions_pair ON skool_introductions(asker_id, introduced_id);
+CREATE INDEX IF NOT EXISTS idx_skool_introductions_introduced ON skool_introductions(introduced_id, created_at);
 
 -- WHAT EACH MEMBER PAYS, AND HOW FAR THEY HAVE LEVELLED — the cache the reply
 -- agent judges a recommendation against. Written whole by a members-page read;

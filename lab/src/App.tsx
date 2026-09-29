@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import BackgroundJobs from './components/BackgroundJobs';
 import HomePage from './pages/HomePage';
@@ -27,6 +27,22 @@ import EngagementRepliesPage from './pages/EngagementRepliesPage';
 import AvatarNarratorPage from './pages/AvatarNarratorPage';
 import TutorialStudioPage from './pages/TutorialStudioPage';
 import DensityCheckPage from './pages/DensityCheckPage';
+import VideoEditorPage from './pages/VideoEditorPage';
+import CodeImportPage from './pages/CodeImportPage';
+import NewsDashboardPage from './news/pages/DashboardPage';
+import NewsAudiencePage from './news/pages/AudiencePage';
+import NewsNotesPage from './news/pages/NotesPage';
+import NewsDisplayPage from './news/pages/DisplayPage';
+import NewsTeleprompterPage from './news/pages/TeleprompterPage';
+import NewsSettingsPage from './news/pages/SettingsPage';
+
+// The Lab's floating Jobs panel, except on the AI News Stream pages — those
+// are full-screen presenter/teleprompter views with their own bottom bars.
+function LabJobs() {
+  const { pathname } = useLocation();
+  if (pathname.startsWith('/news-gatherer')) return null;
+  return <BackgroundJobs />;
+}
 
 // Redirect /project/:id/preview → /project/:id/timeline
 function PreviewRedirect() {
@@ -51,6 +67,8 @@ export default function App() {
         <Route path="/render-queue" element={<RenderQueuePage />} />
         <Route path="/density" element={<DensityCheckPage />} />
         <Route path="/density/:id" element={<DensityCheckPage />} />
+        <Route path="/video-editor" element={<VideoEditorPage />} />
+        <Route path="/video-editor/:id" element={<VideoEditorPage />} />
         <Route path="/settings/postiz" element={<PostizSettingsPage />} />
         <Route path="/bulk-scheduler" element={<BulkSchedulerPage />} />
         <Route path="/thumbnail-designer" element={<ThumbnailDesignerPage />} />
@@ -65,8 +83,17 @@ export default function App() {
         <Route path="/skool/agent" element={<SkoolEngagePage />} />
         <Route path="/engagement" element={<EngagementManagerPage />} />
         <Route path="/engagement/replies" element={<EngagementRepliesPage />} />
+        <Route path="/code-import" element={<CodeImportPage />} />
+        <Route path="/news-gatherer" element={<Navigate to="/news-gatherer/dashboard" replace />} />
+        <Route path="/news-gatherer/dashboard" element={<NewsDashboardPage />} />
+        <Route path="/news-gatherer/curate" element={<Navigate to="/news-gatherer/dashboard" replace />} />
+        <Route path="/news-gatherer/present/audience" element={<NewsAudiencePage />} />
+        <Route path="/news-gatherer/present/notes" element={<NewsNotesPage />} />
+        <Route path="/news-gatherer/present/display" element={<NewsDisplayPage />} />
+        <Route path="/news-gatherer/present/teleprompter" element={<NewsTeleprompterPage />} />
+        <Route path="/news-gatherer/settings" element={<NewsSettingsPage />} />
       </Routes>
-      <BackgroundJobs />
+      <LabJobs />
       <Toaster theme="dark" />
     </BrowserRouter>
   );

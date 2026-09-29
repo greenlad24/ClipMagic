@@ -20,6 +20,8 @@ import {
   Bot,
   UserRound,
   Gauge,
+  FileCode2,
+  Newspaper,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -71,6 +73,17 @@ export interface ToolDefinition {
 }
 
 export const TOOLS: ToolDefinition[] = [
+  {
+    id: 'video-editor',
+    title: 'Video Editor',
+    description:
+      'Your Hyperframes editing skill as a tool — paste a Descript link and follow it stage by stage: transcript, editorial plan, templates, preflight, render approval and the review with sound.',
+    icon: Clapperboard,
+    route: '/video-editor',
+    status: 'live',
+    accent: 'pink',
+    detail: 'Descript link in · nothing renders until you approve',
+  },
   {
     id: 'render-queue',
     title: 'Render queue',
@@ -333,6 +346,28 @@ export const TOOLS: ToolDefinition[] = [
     icon: FileText,
     status: 'coming-soon',
     accent: 'blue',
+  },
+  {
+    id: 'ai-news-stream',
+    title: 'AI News Stream',
+    description:
+      "Run the live AI news show: collect and cluster the day's AI news, pick the stories, build a deck with presenter notes and teleprompter scripts, then present with synced Display, Source and Teleprompter views.",
+    icon: Newspaper,
+    route: '/news-gatherer/dashboard',
+    status: 'live',
+    accent: 'blue',
+    detail: 'News desk · deck builder · live teleprompter',
+  },
+  {
+    id: 'code-import',
+    title: 'Code import',
+    description:
+      'Bring a tool in from Zite or a repo — drop a zip or folder, or paste files. The code is staged here, ready to be rebuilt as a Lab tool and extended.',
+    icon: FileCode2,
+    route: '/code-import',
+    status: 'live',
+    accent: 'blue',
+    detail: 'Zip · folder · paste — nothing is deployed',
   },
 ];
 

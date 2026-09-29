@@ -226,6 +226,39 @@ function isLoopbackRebuildCall(req: Request): boolean {
   return isLoopbackPeer(req) && LOOPBACK_FN_EXACT.has(req.path);
 }
 
+/**
+ * A FINISHED RENDER from the render queue is public: exactly
+ * `/api/hyperframes/files/<job-id>/output/<file>.mp4|mov|webm|mkv`, GET/HEAD only,
+ * so a render link can be handed to anyone (Jake's call, 2026-09-14).
+ *
+ * ⚠️ ONLY THE `output/` FILES, NOT THE JOB DIRECTORY. The same static route also
+ * serves `project/` (the source footage), `render.log`, `job.json` and the chunk
+ * and frame caches — those stay behind sign-in.
+ *
+ * ⚠️ SEGMENT-EXACT ON THE DECODED PATH, NEVER A PREFIX. `req.path` is not
+ * normalised, and express.static resolves `..` inside its root, so a prefix test
+ * would pass `<job>/output/../job.json` (or `%2e%2e`) straight to the job file.
+ * Each segment is decoded and must match the render API's filename grammar, which
+ * no `..`, dotfile, encoded slash or backslash can satisfy — and one more segment
+ * (`output/work-<uuid>/…`, an in-progress render's scratch) fails the count.
+ */
+const PUBLIC_RENDER_PREFIX = "/api/hyperframes/files/";
+const RENDER_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,200}$/;
+const RENDER_VIDEO = /\.(mp4|mov|webm|mkv)$/i;
+
+function isPublicRenderOutput(req: Request): boolean {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  if (!req.path.startsWith(PUBLIC_RENDER_PREFIX)) return false;
+  let parts: string[];
+  try {
+    parts = req.path.slice(PUBLIC_RENDER_PREFIX.length).split("/").map(decodeURIComponent);
+  } catch {
+    return false; // malformed percent-encoding
+  }
+  if (parts.length !== 3 || parts[1] !== "output") return false;
+  return parts.every((s) => RENDER_SEGMENT.test(s)) && RENDER_VIDEO.test(parts[2]);
+}
+
 function isOpenPath(p: string): boolean {
   if (OPEN_EXACT.has(p)) return true;
   return OPEN_PREFIXES.some((pre) => p === pre || p.startsWith(pre));
@@ -262,6 +295,10 @@ export function requireSession(req: AuthedRequest, res: Response, next: NextFunc
     LOOPBACK_MEDIA_PREFIXES.some((prefix) => req.path.startsWith(prefix)) &&
     hasValidMediaSignature(req.path, req.query as Record<string, unknown>)
   ) {
+    next();
+    return;
+  }
+  if (isPublicRenderOutput(req)) {
     next();
     return;
   }

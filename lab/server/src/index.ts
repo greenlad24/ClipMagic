@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import express from "express";
 import cors from "cors";
 import fs from "node:fs";
@@ -8,6 +9,9 @@ import { config, ensureDirs, authConfigured, oauthRedirectUri } from "./config.j
 import { auth } from "./middleware.js";
 import authRouter from "./auth/routes.js";
 import { requireSession } from "./auth/middleware.js";
+import { newsRouter, followerRouter } from "./news/routes.js";
+import { FOLLOWER_PAGE } from "./news/followerPage.js";
+import { attachNewsLiveSync } from "./news/liveSync.js";
 import { youtubeOAuthRouter } from "./audit/oauthRoutes.js";
 import { whatsappProxy } from "./whatsappProxy.js";
 import { tutorialRouter } from "./tutorial/route.js";
@@ -95,7 +99,37 @@ app.use(authRouter);
 // that router checks the API key itself; nothing here grants access.
 app.use("/api/hyperframes/v1", hyperframesApiRouter());
 
+// ── AI News Stream follower view (the second route outside the gate) ────────
+// A phone or tablet following the teleprompter opens a link with no Google
+// session — the link is the key. Only the follower page itself (when the URL
+// says follow=1) and a read of ONE live session by its random id are served
+// here; see news/routes.ts `followerRouter` for exactly what that read exposes.
+// Without follow=1 the same path falls through to the gate like any page.
+// The teleprompter's webfont, PUBLIC on purpose — same reason as the follower
+// page itself. A phone on the follower link has no Google session, and a font
+// it cannot fetch falls back to the platform default, which is the exact
+// divergence the hosted font exists to remove. Immutable + long-lived: the
+// filename changes when the font does.
+app.use(
+  "/news-fonts",
+  express.static(path.join(config.frontendDir, "news-fonts"), {
+    index: false,
+    dotfiles: "deny",
+    maxAge: "1y",
+    immutable: true,
+  })
+);
+
+app.use("/news-follow", followerRouter);
+app.get("/news-gatherer/present/teleprompter", (req, res, next) => {
+  if (req.query.follow !== "1") return next();
+  res.setHeader("Cache-Control", "no-store");
+  res.type("html").send(FOLLOWER_PAGE);
+});
+
 app.use(requireSession);
+
+app.use("/api/news", newsRouter);
 
 // Connecting a YouTube channel for the Channel Audit's paid/organic split.
 // AFTER requireSession on purpose: only a signed-in operator may start an OAuth
@@ -184,7 +218,10 @@ app.get("/api/hyperframes/project/:id.tar.gz", auth, (req, res) => {
 // Hyperframes render queue — finished MP4s, the editable project and the render
 // log, so a job's results can be downloaded from the browser.
 //
-// ⚠️ BEHIND `auth` LIKE EVERY OTHER MEDIA ROUTE, and read-only. It serves the
+// ⚠️ BEHIND `auth` LIKE EVERY OTHER MEDIA ROUTE, and read-only — EXCEPT the
+// finished videos in `<job>/output/`, which the sign-in gate lets through with no
+// session (isPublicRenderOutput in auth/middleware.ts) so a render link can be
+// shared. It serves the
 // job directory tree, which is the user's own footage and output; there is no
 // upload or delete here (those go through the endpoint handlers, which validate
 // the job id). Renders can be gigabytes, so `express.static` handles the range
@@ -197,6 +234,22 @@ app.use(
     // A finished render keeps its name; nothing here should be cached stale.
     etag: true,
     dotfiles: "ignore",
+  })
+);
+
+// Video Editor (hfp) — a run's files: the downloaded render for the S17 review
+// with sound, the project, the plans. Read-only and behind `auth`, like the
+// render queue's route above; express.static serves the range requests a
+// player needs to seek a multi-GB MP4. ⚠️ `dotfiles: "deny"` keeps the
+// pipeline's `.pipeline.lock` and any dot-directory out of reach.
+app.use(
+  "/api/hfp-editor/files",
+  auth,
+  express.static(path.join(process.env.HFP_LAB || "/hfp-lab", "runs"), {
+    maxAge: 0,
+    etag: true,
+    dotfiles: "deny",
+    index: false,
   })
 );
 
@@ -318,7 +371,14 @@ app.use(
   }
 );
 
-app.listen(config.port, config.host, () => {
+// ⚠️ A SOCKET NEEDS A SERVER TO ATTACH TO, and `app.listen` does not hand one
+// back in a form the teleprompter can use. Express's listen creates the HTTP
+// server internally; creating it here changes nothing about how requests are
+// served and gives the live teleprompter an upgrade path to hang off.
+const httpServer = createServer(app);
+attachNewsLiveSync(httpServer);
+
+httpServer.listen(config.port, config.host, () => {
   console.log(`[server] listening on http://${config.host}:${config.port}`);
   console.log(`[server] data dir: ${config.dataDir}`);
   // Script-generator jobs live in memory; a restart strands any run that was

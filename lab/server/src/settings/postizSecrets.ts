@@ -178,6 +178,16 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // an actor run fails or returns nothing. LAB_ONLY, read internally via
   // getRapidApiKey(), same write-only guarantee as the rest.
   { key: "RAPIDAPI_KEY", label: "RapidAPI key (yt-api)", group: "Script Generator", connects: "A RapidAPI key subscribed to yt-api (yt-api.p.rapidapi.com), used as the FALLBACK transcript source when Apify fails. The script generator reads the newest tutorials on a topic to learn a tool's real menu names and click paths. Server-only; never sent to the browser." },
+  // ── AI News Stream — the one key the show still needs ──────────────────────
+  // Everything else it uses is already here: the model calls go through the
+  // lab's own Anthropic credentials, and discovery works off RSS + Google News
+  // without any key at all. Brave is the widening layer — 40 news queries a run
+  // that the feeds alone do not surface — and, because it returns several
+  // outlets per story, it is most of what decides whether a story is marked
+  // corroborated or Single Source.
+  { key: "BRAVE_SEARCH_API_KEY", label: "Brave Search API key (optional)", group: "AI News Stream", connects: "OPTIONAL. The AI News Stream collects from company newsrooms, publication RSS and Google News without it. Adding a Brave Search key (api.search.brave.com — the free tier covers a daily show) widens discovery by ~40 news queries a run and gives stories the second and third outlet that moves them off 'Single Source'. Server-only; never sent to the browser." },
+  { key: "NEWSAPI_ORG_KEY", label: "NewsAPI.org key (optional)", group: "AI News Stream", connects: "OPTIONAL, and additive — every source the show has runs together. A newsapi.org key adds a search across ~150,000 outlets. Note their free Developer plan is non-commercial, rate-limited to 100 requests/day and serves articles on a 24-hour delay, which is usually fine for a daily show but will not break a story. Server-only; never sent to the browser." },
+  { key: "GNEWS_API_KEY", label: "GNews.io key (optional)", group: "AI News Stream", connects: "OPTIONAL, and additive. GNews.io resells Google News results through a clean API — the closest thing to a 'Google News API', since Google does not publish one. Free tier is 100 requests/day. Server-only; never sent to the browser." },
   // ── Channel Audit — YouTube Analytics (paid vs organic views) ──────────────
   // A SEPARATE OAuth client from the sign-in one. Signing in to the lab must
   // never be able to read anyone's YouTube analytics, so the identity client
@@ -273,6 +283,10 @@ const LAB_ONLY_KEYS = new Set([
   "APIFY_TOKEN",
   // Script Generator — transcript fallback (lab server only).
   "RAPIDAPI_KEY",
+  // AI News Stream — read by the lab server only, never Postiz config.
+  "BRAVE_SEARCH_API_KEY",
+  "NEWSAPI_ORG_KEY",
+  "GNEWS_API_KEY",
   // Channel Audit — YouTube Analytics OAuth (lab server only).
   "YT_ANALYTICS_CLIENT_ID",
   "YT_ANALYTICS_CLIENT_SECRET",
@@ -599,6 +613,15 @@ export function getKieApiKey(): string | null {
 }
 export function getSegmindApiKey(): string | null {
   return (process.env.SEGMIND_API_KEY || "").trim() || readStore().SEGMIND_API_KEY || null;
+}
+export function getBraveSearchApiKey(): string | null {
+  return (process.env.BRAVE_SEARCH_API_KEY || "").trim() || readStore().BRAVE_SEARCH_API_KEY || null;
+}
+export function getNewsApiOrgKey(): string | null {
+  return (process.env.NEWSAPI_ORG_KEY || "").trim() || readStore().NEWSAPI_ORG_KEY || null;
+}
+export function getGNewsApiKey(): string | null {
+  return (process.env.GNEWS_API_KEY || "").trim() || readStore().GNEWS_API_KEY || null;
 }
 export function getWaveSpeedApiKey(): string | null {
   return (process.env.WAVESPEED_API_KEY || "").trim() || readStore().WAVESPEED_API_KEY || null;
