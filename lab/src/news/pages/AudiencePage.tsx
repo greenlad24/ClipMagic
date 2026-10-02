@@ -4,6 +4,8 @@ import { useAuth } from '../auth';
 import { getSession, getSlides, GetSlidesOutputType } from '../api';
 import TweetView from '../components/TweetView';
 import ArticleView from '../components/ArticleView';
+import VideoEmbed from '../components/VideoEmbed';
+import { slideMedia } from '../api';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
@@ -20,6 +22,10 @@ export default function AudiencePage() {
   const [ready, setReady] = useState(false);
   const [bgColor, setBgColor] = useState(() => localStorage.getItem(BG_KEY) || '#ffffff');
   const [scrollPct, setScrollPct] = useState(0);
+  // Article, then (on a slide that has one) the official video — from the live session.
+  const [mediaView, setMediaView] = useState<'article' | 'video'>('article');
+  // A same-browser presenter message is newer than any poll still in flight.
+  const lastBcMediaRef = useRef(0);
   const contentRef = useRef<HTMLDivElement>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>();
   const prevIdxRef = useRef(0);
@@ -50,6 +56,9 @@ export default function AudiencePage() {
           setScrollPct(0);
           contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
         }
+        setMediaView(msg.media === 'video' ? 'video' : 'article');
+      } else if (msg.type === 'media') {
+        if (msg.idx === prevIdxRef.current) { lastBcMediaRef.current = Date.now(); setMediaView(msg.view === 'video' ? 'video' : 'article'); }
       } else if (msg.type === 'blackout') {
         setBlackout(!!msg.value);
       } else if (msg.type === 'end') {
@@ -88,6 +97,7 @@ export default function AudiencePage() {
         setScrollPct(0);
         contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
       }
+      if (Date.now() - lastBcMediaRef.current > 1500) setMediaView(session.mediaView === 'video' ? 'video' : 'article');
     } catch {}
   }, [deckId]);
 
@@ -189,6 +199,9 @@ export default function AudiencePage() {
           style={{ height: `${scrollPct * 100}%`, backgroundColor: 'rgba(128,128,128,0.5)' }}
         />
       </div>
+
+      {/* Official video: loaded behind the article, shown full screen when the presenter switches to it */}
+      {(() => { const m = slideMedia(slide); return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null; })()}
     </div>
   );
 }

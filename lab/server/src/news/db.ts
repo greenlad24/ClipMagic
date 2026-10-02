@@ -127,6 +127,13 @@ CREATE TABLE IF NOT EXISTS news_source_cache (
 const hasColumn = (table: string, col: string): boolean =>
   (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
 if (!hasColumn("news_stories", "category")) db.exec(`ALTER TABLE news_stories ADD COLUMN category TEXT`);
+// The story's official release video (see video.ts) and which half of the slide
+// the audience screen is showing (article → video). Additive only.
+for (const col of ["video_id", "video_title", "video_channel", "video_reason", "video_checked_at", "video_kind", "video_url", "video_tier"]) {
+  if (!hasColumn("news_slides", col)) db.exec(`ALTER TABLE news_slides ADD COLUMN ${col} TEXT`);
+}
+if (!hasColumn("news_slides", "video_proxy")) db.exec(`ALTER TABLE news_slides ADD COLUMN video_proxy INTEGER`);
+if (!hasColumn("news_live_sessions", "media_view")) db.exec(`ALTER TABLE news_live_sessions ADD COLUMN media_view TEXT`);
 if (!hasColumn("news_source_cache", "first_seen_date")) {
   db.exec(`ALTER TABLE news_source_cache ADD COLUMN first_seen_date TEXT`);
   // Backfill with the SHOW-TIMEZONE date of the last sighting — the UTC date
@@ -174,7 +181,7 @@ function toColumnValues(record: Record<string, unknown>, cols: Columns): Record<
   return out;
 }
 
-function makeTable<T extends { id: string }>(table: string, cols: Columns, extra: Record<string, () => unknown> = {}) {
+export function makeTable<T extends { id: string }>(table: string, cols: Columns, extra: Record<string, () => unknown> = {}) {
   const insert = (record: Record<string, unknown>): T => {
     const id = randomUUID();
     const values: Record<string, unknown> = { ...toColumnValues(record, cols) };
@@ -250,6 +257,21 @@ export interface SlideRecord {
   favorited?: boolean;
   deleted?: boolean;
   notesEditedAt?: string;
+  /** YouTube id when the slide's video is on YouTube (videoKind "youtube"). */
+  videoId?: string;
+  /** "youtube" | "vimeo" | "file" — unset = no video. */
+  videoKind?: string;
+  /** Vimeo player URL (with its hash) or the direct file URL. */
+  videoUrl?: string;
+  /** "official" (the company's own) | "outlet" (a big outlet's own footage) | "manual". */
+  videoTier?: string;
+  /** A file whose CDN refuses the Lab as referer: played through /api/news/video-file/<slide>. */
+  videoProxy?: boolean;
+  videoTitle?: string;
+  videoChannel?: string;
+  /** Why this video (or why none) — shown on the dashboard. */
+  videoReason?: string;
+  videoCheckedAt?: string;
 }
 
 export interface SessionRecord {
@@ -272,6 +294,8 @@ export interface SessionRecord {
   tpAutoscroll?: boolean;
   tpAnchorAt?: number;
   tpControllerId?: string;
+  /** What the audience screen shows for the current slide: "article" (default) or "video". */
+  mediaView?: string;
 }
 
 export interface SlideStatRecord {
@@ -341,6 +365,15 @@ export const slides = makeTable<SlideRecord>(
     favorited: ["favorited", "bool"],
     deleted: ["deleted", "bool"],
     notesEditedAt: ["notes_edited_at", "text"],
+    videoId: ["video_id", "text"],
+    videoKind: ["video_kind", "text"],
+    videoUrl: ["video_url", "text"],
+    videoTier: ["video_tier", "text"],
+    videoProxy: ["video_proxy", "bool"],
+    videoTitle: ["video_title", "text"],
+    videoChannel: ["video_channel", "text"],
+    videoReason: ["video_reason", "text"],
+    videoCheckedAt: ["video_checked_at", "text"],
   },
   { created_at: now },
 );
@@ -364,6 +397,7 @@ export const sessions = makeTable<SessionRecord>("news_live_sessions", {
   tpAutoscroll: ["tp_autoscroll", "bool"],
   tpAnchorAt: ["tp_anchor_at", "num"],
   tpControllerId: ["tp_controller_id", "text"],
+  mediaView: ["media_view", "text"],
 });
 
 export const slideStats = makeTable<SlideStatRecord>("news_slide_stats", {

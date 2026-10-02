@@ -3,7 +3,8 @@
  * filters, and the story list with its empty/loading states.
  */
 import { useState } from 'react';
-import { Clock, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Clock, RefreshCw, ShieldCheck, Telescope } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import RunLog from './RunLog';
@@ -97,7 +98,13 @@ export default function StoriesPane({ show, filter, onFilter }: Props) {
           </div>
         ) : (
           filtered.map(story => (
-            <StoryItem key={story.id} story={story} onToggle={show.toggleStory} toggling={togglingId === story.id} />
+            <StoryItem key={story.id} story={story} onToggle={show.toggleStory} toggling={togglingId === story.id}
+              actions={
+                <Link to={`/news-gatherer/deep-dive?story=${encodeURIComponent(story.id)}`} title="Make a ~10-minute deep dive on this story"
+                  className="flex min-h-8 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/60 hover:text-primary">
+                  <Telescope className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Deep dive</span>
+                </Link>
+              } />
           ))
         )}
       </div>

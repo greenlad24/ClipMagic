@@ -2,8 +2,8 @@
  * One story in the Stories pane: status, score, age, headline, summary, the
  * outlet/blog signals, the Add/In-rundown toggle, and an expandable source list.
  *
- * `actions` is the extension slot for per-story actions from other modes
- * (e.g. a future "Deep dive" on this story); nothing uses it today.
+ * `actions` is the extension slot for per-story actions from other modes —
+ * the Stories pane puts the "Deep dive" link there.
  */
 import { useState, type ReactNode } from 'react';
 import { ChevronDown, ChevronUp, Plus, Check, ExternalLink, Newspaper, Rss } from 'lucide-react';

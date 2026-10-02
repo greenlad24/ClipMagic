@@ -67,7 +67,15 @@ so the preview still shows what the audience will see. `theme.css` and
 Removed (only the old dashboard used them): `components/NavHeader, StoryCard,
 SlideRow, SlidePreviewModal, LogsPanel, CollectionProgress, EditNotesInline`.
 
-## Where Deep Dive plugs in (future, NOT built)
+## Deep Dive (BUILT 2026-10-01 — the plan below is what was followed)
+Code: `src/news/deepdive/` (list, editor, stage `/present`, presenter `/presenter`,
+`Scene.tsx` renderer + `deepdive.css`) and `server/src/news/deepDive.ts`
+(tables `news_deep_dives` + `news_deep_dive_sections`, streamed `generateDeepDive`).
+Live sync reuses `news_live_sessions` with `deck_id` = the deep dive's id.
+Keys: ←/→ (+ PageUp/PageDown) = sections; ↑/↓ = teleprompter only; the mouse
+wheel on the stage steps sections like scrolling a website.
+
+### Original plan
 "Deep Dive" = pick one topic → generate an animated, scroll/arrow-key driven
 presentation website. Adding it is additive:
 1. **Mode tab** — append `{ id: 'deep-dive', label: 'Deep Dive', path: '/news-gatherer/deep-dive', icon }`

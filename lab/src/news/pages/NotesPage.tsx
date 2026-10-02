@@ -3,14 +3,17 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
-import { connectLiveSync, type LiveSync } from '../liveSync';
+import { connectLiveSync, type LiveSync, type MediaView } from '../liveSync';
+import { slideMedia, slideHasVideo } from '../api';
+import { videoPageUrl } from './VideoPage';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
 type BCMsg =
-  | { type: 'slide'; slide: SlideType; idx: number; total: number }
+  | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: MediaView }
+  | { type: 'media'; idx: number; view: MediaView }
   | { type: 'blackout'; value: boolean }
   | { type: 'end' }
   | { type: 'ping' }
@@ -90,6 +93,17 @@ export default function NotesPage() {
   // Multi-device sync
   const [remoteSynced, setRemoteSynced] = useState(false); // shows "Synced from device" briefly
 
+  // Article → official video, on a slide that has one. Shared with every
+  // screen (socket + session row) but deliberately NOT part of the teleprompter
+  // state: switching it never touches the script, its scroll or play/pause.
+  const [mediaView, setMediaViewState] = useState<MediaView>('article');
+  const mediaViewRef = useRef<MediaView>('article');
+  const lastLocalMediaTimeRef = useRef(0);
+  // A media update for a slide this screen has not switched to yet (a join or
+  // a remote slide change racing the media event) — applied when it arrives.
+  const pendingMediaRef = useRef<{ idx: number; media: MediaView } | null>(null);
+  const applyMediaView = (m: MediaView) => { mediaViewRef.current = m; setMediaViewState(m); };
+
   // Refs
   const slideStartRef = useRef(Date.now());
   const streamStartRef = useRef(Date.now());
@@ -156,7 +170,7 @@ export default function NotesPage() {
         lastPongRef.current = Date.now();
         setDisplayConnected(true);
         const { slides: sls, currentIdx: ci, blackout: bo } = ctxRef.current;
-        if (sls[ci]) ch.postMessage({ type: 'slide', slide: sls[ci], idx: ci, total: sls.length } satisfies BCMsg);
+        if (sls[ci]) ch.postMessage({ type: 'slide', slide: sls[ci], idx: ci, total: sls.length, media: mediaViewRef.current } satisfies BCMsg);
         if (bo) ch.postMessage({ type: 'blackout', value: bo } satisfies BCMsg);
       }
     };
@@ -192,6 +206,14 @@ export default function NotesPage() {
           }
           setRemoteSynced(true);
           setTimeout(() => setRemoteSynced(false), 2000);
+        }
+        // Article/video for the slide both devices are on — unless this device just changed it.
+        const remoteMedia: MediaView = state.session.mediaView === 'video' ? 'video' : 'article';
+        if (remoteIdx === ctxRef.current.currentIdx && remoteMedia !== mediaViewRef.current
+            && Date.now() - lastLocalMediaTimeRef.current > 2000 && timeSinceLocalNav > 2000
+            && (remoteMedia === 'article' || slideHasVideo(ctxRef.current.slides[remoteIdx]))) {
+          applyMediaView(remoteMedia);
+          channelRef.current?.postMessage({ type: 'media', idx: remoteIdx, view: remoteMedia } satisfies BCMsg);
         }
         // Pick up synced teleprompter settings from session
         if (typeof state.session.tpSpeed === 'number') setTpSpeed(state.session.tpSpeed);
@@ -319,7 +341,7 @@ export default function NotesPage() {
       navOrderRef.current += 1;
       logSlideStats({ sessionId: sid, slideId: sls[cur].id, timeSpentSeconds: spent, navigationOrder: navOrderRef.current }).catch(() => {});
       const deviceId = window.localStorage.getItem('tp2-device-id') || undefined;
-      updateSession({ sessionId: sid, deviceId, currentSlideIndex: idx, tpScrollPct: 0, tpPaused: true, tpAutoscroll: false } as any).catch(() => {});
+      updateSession({ sessionId: sid, deviceId, currentSlideIndex: idx, tpScrollPct: 0, tpPaused: true, tpAutoscroll: false, mediaView: 'article' } as any).catch(() => {});
       // The socket carries the slide for the live screens; the session write
       // above stays as the durable record the next reload reads.
       syncRef.current?.setSlide(idx);
@@ -327,7 +349,7 @@ export default function NotesPage() {
     slideStartRef.current = Date.now();
     setCurrentIdx(idx);
     if (channelRef.current && sls[idx]) {
-      channelRef.current.postMessage({ type: 'slide', slide: sls[idx], idx, total: sls.length } satisfies BCMsg);
+      channelRef.current.postMessage({ type: 'slide', slide: sls[idx], idx, total: sls.length, media: 'article' } satisfies BCMsg);
     }
     // Source tab auto-navigation is handled by the currentIdx effect
   }, [logSource]);
@@ -432,6 +454,16 @@ export default function NotesPage() {
         setCurrentIdx(Math.max(0, Math.min(n > 0 ? n - 1 : 0, snap.idx)));
       }
     });
+    // Article/video changed (here or on another screen) — the broadcast is authoritative.
+    sync.onMedia((m) => {
+      const media: MediaView = m.media === 'video' ? 'video' : 'article';
+      if (m.idx !== ctxRef.current.currentIdx) { pendingMediaRef.current = { idx: m.idx, media }; return; }
+      if (media === 'video' && !slideHasVideo(ctxRef.current.slides[m.idx])) return;
+      if (media !== mediaViewRef.current) {
+        applyMediaView(media);
+        channelRef.current?.postMessage({ type: 'media', idx: m.idx, view: media } satisfies BCMsg);
+      }
+    });
     // Appearance changed on another screen — apply it here.
     sync.onAppearance((a) => {
       if (typeof a.textSize === 'number') setTpFontSize(a.textSize);
@@ -468,6 +500,52 @@ export default function NotesPage() {
     sync.seek(Math.max(0, Math.min(1, sync.positionNow() + direction * (stepPx / max))));
   }, []);
 
+  /**
+   * Article ↔ official video on the CURRENT slide. Socket only: the server
+   * persists it to the session row itself. ⚠️ NOT updateSession — that stamps
+   * a new tpRevision, and the legacy follower mode re-applies the row's scroll
+   * position on every revision, which would jump the script on a toggle.
+   */
+  const setMedia = useCallback((next: MediaView) => {
+    const { currentIdx: ci, slides: sls } = ctxRef.current;
+    if (next === 'video' && !slideHasVideo(sls[ci])) return;
+    if (next === mediaViewRef.current) return;
+    lastLocalMediaTimeRef.current = Date.now();
+    applyMediaView(next);
+    syncRef.current?.setMedia(ci, next);
+    channelRef.current?.postMessage({ type: 'media', idx: ci, view: next } satisfies BCMsg);
+  }, []);
+
+  // A new slide always opens on its article (or on what the room says, when a
+  // media update for this slide arrived before the slide did).
+  useEffect(() => {
+    const p = pendingMediaRef.current;
+    pendingMediaRef.current = null;
+    const m: MediaView = p && p.idx === currentIdx && p.media === 'video' && slideHasVideo(slides[currentIdx]) ? 'video' : 'article';
+    applyMediaView(m);
+  }, [currentIdx]);
+
+  // The latched source tab follows the media view too: the video plays in it
+  // full window, and going back to the article puts the article back.
+  const sourceTabRef = useRef<{ idx: number; url: string }>({ idx: -1, url: '' });
+  useEffect(() => {
+    // The ref, not the state: on a slide change the reset effect above has
+    // already set it to 'article' while this render still holds the old state.
+    const media = mediaViewRef.current;
+    const sl = slides[currentIdx];
+    // Video view: the Lab's full-window player page, not the raw video URL (a bare file opens paused in the browser's viewer).
+    const url = sl ? (media === 'video' && slideHasVideo(sl) ? videoPageUrl(slideMedia(sl)!) : sl.bestSourceUrl || '') : '';
+    const prev = sourceTabRef.current;
+    sourceTabRef.current = { idx: currentIdx, url };
+    // A slide change lands on the article, and the currentIdx effect has already navigated the tab there.
+    if (prev.idx !== currentIdx && media === 'article') return;
+    if (!sourceEnabled || !url || url === prev.url) return;
+    const win = sourceWindowRef.current;
+    if (!win || win.closed) return;
+    try { win.location.href = url; } catch { /* cross-origin nav refused */ }
+    window.focus();
+  }, [mediaView, currentIdx]);
+
   const toggleTpPlayPause = useCallback(() => {
     const nextPaused = !tpPausedRef.current;
     const sync = syncRef.current;
@@ -482,8 +560,18 @@ export default function NotesPage() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const { currentIdx: ci } = ctxRef.current;
-      if (e.key === 'ArrowRight') { e.preventDefault(); navigateTo(ci + 1); }
-      else if (e.key === 'ArrowLeft') { e.preventDefault(); navigateTo(ci - 1); }
+      // A slide with an official video is article → video → next slide, and
+      // back the same way. Without a video, left/right are exactly as before.
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (slideHasVideo(ctxRef.current.slides[ci]) && mediaViewRef.current === 'article') setMedia('video');
+        else navigateTo(ci + 1);
+      }
+      else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (mediaViewRef.current === 'video') setMedia('article');
+        else navigateTo(ci - 1);
+      }
       // Up/down move through the SCRIPT; left/right move between SLIDES.
       else if (e.key === 'ArrowDown' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(1); }
       else if (e.key === 'ArrowUp' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(-1); }
@@ -508,7 +596,7 @@ export default function NotesPage() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge]);
+  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge, setMedia]);
 
   // ── Guards ─────────────────────────────────────────────────────────────────
 
@@ -764,6 +852,24 @@ export default function NotesPage() {
                 }}>{w[0].toUpperCase() + w.slice(1)}</button>
               ))}
             </div>
+
+            {/* Article / Video — only on a slide that has an official video. Same as → / ←. */}
+            {slideHasVideo(slide) && (
+              <>
+                <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
+                <div data-media-toggle style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 10 }}
+                  title={`${slide!.videoTier === 'product' ? 'Product demo' : 'Launch video'}: ${slide!.videoTitle || ''}${slide!.videoChannel ? ` (${slide!.videoChannel})` : ''}`}>
+                  {(['article', 'video'] as const).map(m => (
+                    <button key={m} data-media={m} onClick={() => setMedia(m)} style={{
+                      padding: '2px 8px', border: 'none', cursor: 'pointer',
+                      background: mediaView === m ? (m === 'video' ? 'rgba(239,68,68,0.15)' : 'rgba(96,165,250,0.15)') : 'transparent',
+                      color: mediaView === m ? (m === 'video' ? '#fca5a5' : D.blue) : D.muted,
+                      borderLeft: m === 'video' ? `1px solid ${D.border}` : 'none',
+                    }}>{m === 'article' ? 'Article' : '▶ Video'}</button>
+                  ))}
+                </div>
+              </>
+            )}
 
             <span style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: D.faint }}>Followers see this tab</span>

@@ -7,14 +7,15 @@
  */
 import { stories, decks, slides, todayDate, type SlideRecord } from './db.js';
 import { callNewsModel } from './ai.js';
-import { pickBestSource } from './outlets.js';
+import { pickReadableSource } from './access.js';
+import { findVideoForStory, slideVideoFields, uniqueVideos, type VideoResult } from './video.js';
 
 // Official/company blog sources of a story
 interface BlogSource { company: string; url: string; title: string; isOfficial: boolean; }
 interface ArticleSource { outlet: string; url: string; title: string; }
 
 // ── Jake Dawson Script Style Guide (full) ─────────────────────────────────────
-const JAKE_STYLE_GUIDE = `You write scripts that Jake Dawson reads out loud on camera. Jake runs a YouTube channel about AI tools and how to use them. His audience is regular people who are curious about AI: some are just starting out with ChatGPT, Claude or Gemini, others already make images, videos or apps with AI. They are NOT engineers and they are not reading tech news all day. The news show is where he tells them what happened in AI and robotics and what it means for them.
+export const JAKE_STYLE_GUIDE = `You write scripts that Jake Dawson reads out loud on camera. Jake runs a YouTube channel about AI tools and how to use them. His audience is regular people who are curious about AI: some are just starting out with ChatGPT, Claude or Gemini, others already make images, videos or apps with AI. They are NOT engineers and they are not reading tech news all day. The news show is where he tells them what happened in AI and robotics and what it means for them.
 
 THE TOP RULE: conversational American English a 14-year-old can follow.
 This rule sits above every other style rule. Only accuracy ranks higher.
@@ -101,8 +102,8 @@ STORY LOOP (each main story):
 3. A concrete example from everyday life. "Let's say you're selling your old bike online…"
 4. Why it matters (or doesn't) for the viewer. Be honest.
 5. Caveat. What we don't know yet, what it costs, what's limited.
-6. Jake's take. Short, owned as opinion, positive with some realism.
-7. What to do. One line: try it, wait, ignore, or keep an eye on it.
+6. Jake's take. Short, owned as opinion, positive with some realism. It can sit anywhere after the facts, not only at the end.
+7. The ending. Different every story (each segment is assigned its own ending shape). Never the same "my take → don't act yet → keep an eye on it" close.
 
 CONVERSATIONAL PHRASE MENU (use 4-8 per episode, from 4-6 different slots, never repeat, never stack two in a row):
 
@@ -142,13 +143,49 @@ OUTPUT FORMAT:
 - Plain text only. Natural speech. Contractions throughout. Em dashes and ellipses where natural.
 - Only use facts from the source material provided.`;
 
+// ── Endings (Jake 2026-10-01) ─────────────────────────────────────────────────
+// Every segment used to close the same way: "My take… don't act yet… keep an eye
+// on it." Scripts are written in parallel, so they can't see each other — each
+// story is ASSIGNED a different ending shape and opinion marker by its position
+// in the deck, and the stock closers are banned outright.
+export const SCRIPT_ENDINGS = [
+  'TRY IT: end on one concrete thing the viewer can actually do with it today (where to find it, what to type, who gets it). Only if it is really available; otherwise use the next shape.',
+  'SURPRISING FACT: end on the single most surprising number or detail in the story, said plainly, then stop. No lesson after it.',
+  'OPEN QUESTION: end on the one honest question this raises — a real question Jake is curious about, not a rhetorical "what do you think?"',
+  'WHAT HAPPENS NEXT: end on who has to respond now or what this sets up (a rival, a regulator, a next launch), stated concretely.',
+  'PUNCHY VERDICT: end on a short, confident one-line verdict. No hedging, no "but we\'ll see".',
+  'CALLBACK: end by calling back to the first detail of the segment with a small twist or a light joke.',
+  'WHO IT\'S FOR: end on who this is great for and who can safely ignore it, in one line.',
+  'EVERYDAY COMPARISON: end on a quick comparison to something familiar from everyday life that makes the point stick.',
+];
+
+const TAKE_MARKERS = [
+  'Signal the opinion with "I think…"',
+  'Signal the opinion with "Honestly…"',
+  'Signal the opinion with "Here\'s what gets me…"',
+  'Signal the opinion with "If you ask me…"',
+  'Give the opinion without any marker — just say it.',
+  'Signal the opinion with "The part I like…" or "The part that bugs me…"',
+];
+
+const BANNED_CLOSERS = `BANNED ENDINGS (never end a segment with any of these or a close variant): "keep an eye on it", "worth keeping an eye on", "watch this space", "wait and see", "we'll see", "time will tell", "I'd wait", "let other people go first", "don't rush", "nothing to act on (yet)", "for now, nothing changes", "only time will tell", "stay tuned". Do not open the opinion with "My take" — that phrase is overused on this show.`;
+
+/** The ending + opinion-marker block for the story at `index` in the deck. */
+export function endingRule(index: number): string {
+  const ending = SCRIPT_ENDINGS[((index % SCRIPT_ENDINGS.length) + SCRIPT_ENDINGS.length) % SCRIPT_ENDINGS.length];
+  const marker = TAKE_MARKERS[((index * 5 + 2) % TAKE_MARKERS.length + TAKE_MARKERS.length) % TAKE_MARKERS.length];
+  return `ENDING FOR THIS SEGMENT (assigned so every story in the show ends differently): ${ending}\nOPINION: ${marker}\n${BANNED_CLOSERS}`;
+}
+
 // ── Script generator ──────────────────────────────────────────────────────────
 export async function generateScriptForStory(
   headline: string,
   blogSources: BlogSource[],
   articleSources: ArticleSource[],
   sourceName: string,
+  index = 0,
 ): Promise<string> {
+  const ending = endingRule(index);
   const sourceLines = [
     ...blogSources.map(b => `${b.isOfficial ? '[OFFICIAL]' : '[BLOG]'} ${b.company}: ${b.title}`),
     ...articleSources.map(a => `[ARTICLE] ${a.outlet}: ${a.title}`),
@@ -169,6 +206,9 @@ SEGMENT-SPECIFIC RULES (non-negotiable):
 - NO FILLER CLOSERS. No "stay tuned," "that's all for today," or any sign-off. This is one segment in a longer show.
 - NEVER SAY "folks". Prefer not addressing the audience directly.
 - Use 1-2 phrases from the conversational phrase menu — no more for a single segment.
+- The last beat is NOT automatically "what to do". Use the ending below.
+
+${ending}
 
 TOPIC: "${headline}"
 SOURCE: ${sourceName || 'Unknown'}
@@ -191,14 +231,14 @@ Write the script now. Plain text only. No formatting. No markdown. No headers. N
   // ("benchmarks — those are the tests…"); this pass cuts it instead. If the
   // review fails, the draft still goes on air rather than an empty slide.
   try {
-    const reviewed = await callNewsModel(buildReviewPrompt(draft, headline, sourceLines), 'news-script', 'director');
+    const reviewed = await callNewsModel(buildReviewPrompt(draft, headline, sourceLines, ending), 'news-script', 'director');
     return reviewed || draft;
   } catch {
     return draft;
   }
 }
 
-function buildReviewPrompt(draft: string, headline: string, sourceLines: string): string {
+function buildReviewPrompt(draft: string, headline: string, sourceLines: string, ending: string): string {
   return `${JAKE_STYLE_GUIDE}
 
 ---
@@ -211,6 +251,10 @@ Check every sentence:
 3. Is the example about running a business or agency? Swap it for an everyday situation a regular person has.
 4. Could a 14-year-old repeat this story to a friend tomorrow? If not, simplify.
 5. Read it out loud in your head. Does it sound like a normal American talking to a friend — not a news anchor, not a press release, not an article being read? Anything stiff, written-sounding or formal gets rewritten the way a person would actually say it: contractions, everyday American phrasing ("pretty much," "kind of," "here's the thing"), short spoken sentences, numbers said the way people say them ("thirty percent," "twenty bucks a month").
+
+6. Does the ending follow the assigned shape below and avoid every banned ending? If it ends on "keep an eye on it", "wait and see", "I'd wait" or anything like it, rewrite the last two sentences to the assigned shape. If the opinion starts with "My take", reword it as the OPINION line says.
+
+${ending}
 
 Do NOT change: the facts, the attributions, rumor/unconfirmed labels, Jake's voice, or the order of the story. Do not add facts that aren't in the source material. Stay between 120 and 200 words.
 
@@ -302,34 +346,44 @@ export async function buildDeckFromStories(
     await prog(`Deck ready. Generating presenter notes + scripts for ${sorted.length} stories…`, 18);
 
     const slideRecords: Partial<SlideRecord>[] = [];
+    // Each slide's video as found, aligned with slideRecords — made unique across the deck below.
+    const videoFound: { story: (typeof sorted)[number]; result: VideoResult | null }[] = [];
     const NOTE_BATCH = 4;
 
     for (let i = 0; i < sorted.length; i += NOTE_BATCH) {
       const batch = sorted.slice(i, i + NOTE_BATCH);
 
       // Generate notes AND teleprompter scripts in parallel per story
-      const resultsArr = await Promise.all(batch.map(async story => {
+      const resultsArr = await Promise.all(batch.map(async (story, j) => {
         let blogSources: BlogSource[] = [];
         let articleSources: ArticleSource[] = [];
         try { blogSources = JSON.parse(story.blogSources || '[]'); } catch {}
         try { articleSources = JSON.parse(story.articleSources || '[]'); } catch {}
 
-        // The biggest outlet that ran it (see outlets.ts) — what the script credits.
-        const sourceName = pickBestSource(blogSources, articleSources, story.headline || '')?.name ?? '';
+        // The biggest outlet that ran it AND that a logged-out viewer can read
+        // (access.ts — no sign-in/subscription walls on screen, Jake 2026-10-02).
+        // The same pick is what the script credits and what the source tab opens.
+        const pick = await pickReadableSource(blogSources, articleSources, story.headline || '');
+        if (pick.skipped.length) {
+          console.log(`[news:sources] "${(story.headline || '').slice(0, 60)}": skipped ${pick.skipped.map(x => `${x.name} (${x.reason})`).join('; ')} → ${pick.best?.name ?? 'no readable source'}`);
+        }
+        const sourceName = pick.best?.name ?? '';
 
-        const [notes, teleprompterScript] = await Promise.all([
+        const [notes, teleprompterScript, video] = await Promise.all([
           generateNotesForStory(story.headline || '', story.status || '', blogSources, articleSources),
-          generateScriptForStory(story.headline || '', blogSources, articleSources, sourceName),
+          generateScriptForStory(story.headline || '', blogSources, articleSources, sourceName, i + j),
+          // The official release video (video.ts). Never fails the deck.
+          findVideoForStory(story).catch(() => null),
         ]);
 
-        return { notes, teleprompterScript, blogSources, articleSources };
+        return { notes, teleprompterScript, blogSources, articleSources, video, best: pick.best };
       }));
 
       batch.forEach((story, j) => {
-        const { notes, teleprompterScript, blogSources, articleSources } = resultsArr[j];
+        const { notes, teleprompterScript, blogSources, articleSources, video, best } = resultsArr[j];
+        videoFound.push({ story, result: video });
 
         const officialBlog = blogSources.find(b => b.isOfficial) ?? blogSources[0];
-        const best = pickBestSource(blogSources, articleSources, story.headline || '');
 
         const allSources = [
           ...blogSources.map(b => ({ url: b.url, source: b.company, type: 'blog', official: b.isOfficial })),
@@ -363,6 +417,7 @@ export async function buildDeckFromStories(
           teleprompterScript,
           favorited: false,
           deleted: false,
+          ...slideVideoFields(video),
         });
       });
 
@@ -372,6 +427,11 @@ export async function buildDeckFromStories(
       );
     }
 
+    // No video twice in one deck (video.ts `uniqueVideos`): an earlier slide
+    // keeps its pick, a later clashing one gets the next-best fit or none.
+    const unique = await uniqueVideos(videoFound);
+    unique.forEach((r, k) => { if (r !== videoFound[k].result) Object.assign(slideRecords[k], slideVideoFields(r)); });
+
     // Bulk create slides
     slides.insertMany(slideRecords as Record<string, unknown>[]);
     decks.update(deck!.id, { totalSlides: slideRecords.length });
@@ -379,3 +439,4 @@ export async function buildDeckFromStories(
     await prog(`Done! ${slideRecords.length} slides built with presenter notes and teleprompter scripts.`, 100);
     return { success: true, slidesCreated: slideRecords.length, deckId: deck!.id, message: `Created ${slideRecords.length} slides` };
 }
+

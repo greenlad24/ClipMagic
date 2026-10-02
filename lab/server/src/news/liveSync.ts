@@ -60,6 +60,13 @@ interface SyncState {
   textSize: number;
   lineHeight: number;
   textWidth: string;
+  /**
+   * What the audience screen shows for the current slide: the article, then
+   * (on a slide that has one) the official release video. ⚠️ Deliberately NOT
+   * part of the scroll anchor and never sent in `scroll-sync`: switching it
+   * must not move, pause or re-anchor the teleprompter on any screen.
+   */
+  media: "article" | "video";
 }
 
 const DEFAULTS: Omit<SyncState, "anchorTime"> = {
@@ -71,6 +78,7 @@ const DEFAULTS: Omit<SyncState, "anchorTime"> = {
   textSize: 32,
   lineHeight: 1.9,
   textWidth: "medium",
+  media: "article",
 };
 
 /**
@@ -102,6 +110,7 @@ function stateFor(sessionId: string): SyncState {
     // scroll broadcast that 12 to every screen, snapping the presenter's speed
     // meter to 12× (and saving it) the moment Jake touched the script.
     scrollSpeed: typeof (row as any)?.tpSpeed === "number" ? (row as any).tpSpeed : DEFAULTS.scrollSpeed,
+    media: (row as any)?.mediaView === "video" ? "video" : "article",
     anchorTime: Date.now(),
   };
   live.set(sessionId, fresh);
@@ -192,6 +201,7 @@ export function attachNewsLiveSync(server: HttpServer): Server {
         textSize: s.textSize,
         lineHeight: s.lineHeight,
         textWidth: s.textWidth,
+        media: s.media,
       });
     });
 
@@ -237,19 +247,49 @@ export function attachNewsLiveSync(server: HttpServer): Server {
 
     // ── Moving to another slide resets the scroll: a new script starts at the
     //    top, and carrying the old offset would open it part-way down.
-    socket.on("slide-index", (idx: unknown) => {
+    // Deep Dive v2 (Jake, 2026-10-02): its index is a BEAT, and stepping
+    // between beats of one chapter must NOT move the teleprompter — it sends
+    // { idx, keepScroll: true }. The Daily Show sends a bare number, as before.
+    socket.on("slide-index", (payload: unknown) => {
       const s = stateFor(sessionId);
-      const next = Math.max(0, Math.round(num(idx, s.idx)));
+      const obj = payload && typeof payload === "object" ? (payload as { idx?: unknown; keepScroll?: unknown }) : null;
+      const next = Math.max(0, Math.round(num(obj ? obj.idx : payload, s.idx)));
       if (next === s.idx) return;
       s.idx = next;
+      if (obj?.keepScroll === true) {
+        broadcast();
+        try { sessions.update(sessionId, { currentSlideIndex: next } as any); } catch { /* bookkeeping only */ }
+        return;
+      }
       s.position = 0;
       s.anchorTime = Date.now();
+      // A new slide always opens on its article.
+      s.media = "article";
       broadcast();
+      ns.to(room).emit("media-view", { idx: s.idx, media: s.media });
       // The slide is the one piece of this worth surviving a restart.
       try {
-        sessions.update(sessionId, { currentSlideIndex: next } as any);
+        sessions.update(sessionId, { currentSlideIndex: next, mediaView: "article" } as any);
       } catch {
         /* the show matters more than the bookkeeping */
+      }
+    });
+
+    // ── Article ↔ video on the current slide. Its own event, NOT a scroll-sync:
+    //    the anchor is untouched, so no screen's teleprompter can move. Persisted
+    //    for the same reason as appearance — the presenter's 1.5s poll and the
+    //    audience page read the row.
+    socket.on("media-view", (payload: unknown) => {
+      const s = stateFor(sessionId);
+      const p = (payload ?? {}) as { idx?: unknown; media?: unknown };
+      // A toggle aimed at a slide this room has already left is stale; drop it.
+      if (typeof p.idx === "number" && p.idx !== s.idx) return;
+      s.media = p.media === "video" ? "video" : "article";
+      ns.to(room).emit("media-view", { idx: s.idx, media: s.media });
+      try {
+        sessions.update(sessionId, { mediaView: s.media } as any);
+      } catch {
+        /* best effort */
       }
     });
 

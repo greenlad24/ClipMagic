@@ -70,6 +70,21 @@ export interface Slide {
   favorited?: boolean;
   deleted?: boolean;
   notesEditedAt?: string;
+  /** YouTube id when the slide's video is on YouTube. Use `slideMedia()` rather than reading these directly. */
+  videoId?: string;
+  /** "youtube" | "vimeo" | "file" — unset = no video. */
+  videoKind?: string;
+  /** Vimeo player URL (with its hash) or the direct file URL. */
+  videoUrl?: string;
+  /** "official" (the launch video for this news) | "product" (the company's own demo of the product) | "manual". */
+  videoTier?: string;
+  /** File whose host blocks hotlinking — played through the Lab's proxy. */
+  videoProxy?: boolean;
+  videoTitle?: string;
+  videoChannel?: string;
+  /** Why this video, or why none. */
+  videoReason?: string;
+  videoCheckedAt?: string;
 }
 
 export interface GetSlidesOutputType { deck: Deck | null; slides: Slide[] }
@@ -94,6 +109,8 @@ export interface LiveSession {
   tpAutoscroll?: boolean;
   tpAnchorAt?: number;
   tpControllerId?: string;
+  /** What the audience screen shows for the current slide. Unset = 'article'. */
+  mediaView?: string;
 }
 
 export interface UpdateSessionInput {
@@ -110,9 +127,10 @@ export interface UpdateSessionInput {
   tpCountdown?: number;
   tpAutoscroll?: boolean;
   tpControllerId?: string;
+  mediaView?: 'article' | 'video';
 }
 
-async function call<T>(fn: string, input: unknown): Promise<T> {
+export async function call<T>(fn: string, input: unknown): Promise<T> {
   const res = await fetch(`/api/news/${fn}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -133,7 +151,7 @@ export interface ProgressStream<R> extends AsyncIterable<string> {
   result: Promise<R>;
 }
 
-function streamingCall<R>(fn: string, input: unknown): ProgressStream<R> {
+export function streamingCall<R>(fn: string, input: unknown): ProgressStream<R> {
   const queue: string[] = [];
   let wake: (() => void) | null = null;
   let finished = false;
@@ -229,6 +247,55 @@ export const endSession = (input: { sessionId: string; totalDurationSeconds: num
   call<{ success: boolean }>('endSession', input);
 export const logSlideStats = (input: { sessionId: string; slideId: string; timeSpentSeconds: number; navigationOrder: number }) =>
   call<{ success: boolean }>('logSlideStats', input);
+
+/** Official release video: re-run the search for one slide / a whole deck, or set/clear it by hand. */
+export interface VideoCandidate { key: string; kind: string; tier: string; title: string; channel: string; seconds: number; publishedAt: string; source: string }
+export const findSlideVideo = (input: { slideId: string }) =>
+  call<{ slide: Slide; videoId: string | null; kind: string | null; tier: string | null; reason: string; checked: boolean; candidates: VideoCandidate[]; quotaUnits: number }>('findSlideVideo', input);
+export const findDeckVideos = (input: { deckId?: string }) =>
+  call<{ found: number; checked: number; units: number }>('findDeckVideos', input);
+/** `videoId`: a YouTube id/link, a Vimeo link or a direct .mp4/.webm link; null removes the video. */
+export const setSlideVideo = (input: { slideId: string; videoId: string | null }) =>
+  call<{ success: boolean; slide: Slide }>('setSlideVideo', input);
+
+/** YouTube embed for the audience screens: muted, looping, autoplay, as little chrome as YouTube allows. */
+export function youtubeEmbedUrl(videoId: string, opts: { autoplay?: boolean; jsApi?: boolean } = {}): string {
+  const q = new URLSearchParams({
+    autoplay: opts.autoplay === false ? '0' : '1',
+    mute: '1',
+    controls: '0',
+    loop: '1',
+    playlist: videoId, // loop=1 only loops a playlist; a one-video playlist is the documented way
+    modestbranding: '1',
+    rel: '0',
+    playsinline: '1',
+    iv_load_policy: '3',
+    cc_load_policy: '0', // no captions (Jake); VideoEmbed also unloads the captions module
+    disablekb: '1',
+    fs: '0',
+  });
+  if (opts.jsApi) { q.set('enablejsapi', '1'); q.set('origin', window.location.origin); }
+  return `https://www.youtube-nocookie.com/embed/${videoId}?${q}`;
+}
+
+/** Vimeo's background player: autoplay, muted, looping, no controls or title. */
+export function vimeoBackgroundUrl(playerUrl: string): string {
+  const u = new URL(playerUrl);
+  for (const [k, v] of Object.entries({ background: '1', autoplay: '1', loop: '1', muted: '1', autopause: '0', dnt: '1' })) u.searchParams.set(k, v);
+  return u.toString();
+}
+
+/** What a slide's second screen plays, whatever kind it is — or null when the slide has no video. */
+export interface SlideMedia { kind: 'youtube' | 'vimeo' | 'file'; key: string; src: string }
+export function slideMedia(s: Slide | null | undefined): SlideMedia | null {
+  if (!s) return null;
+  const kind = s.videoKind || (s.videoId ? 'youtube' : '');
+  if (kind === 'youtube' && s.videoId) return { kind, key: `yt:${s.videoId}`, src: youtubeEmbedUrl(s.videoId) };
+  if (kind === 'vimeo' && s.videoUrl) return { kind, key: `vimeo:${s.videoUrl}`, src: vimeoBackgroundUrl(s.videoUrl) };
+  if (kind === 'file' && s.videoUrl) return { kind, key: `file:${s.videoUrl}`, src: s.videoProxy ? `${window.location.origin}/api/news/video-file/${encodeURIComponent(s.id)}` : s.videoUrl };
+  return null;
+}
+export const slideHasVideo = (s: Slide | null | undefined): boolean => slideMedia(s) !== null;
 
 /** What the show is wired to right now, read from the server (presence only). */
 export interface NewsConnection { name: string; configured: boolean; detail: string }

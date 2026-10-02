@@ -29,6 +29,33 @@ import { collectNews } from "./collect.js";
 import { anthropicConfigured } from "../ai/claude.js";
 import { getBraveSearchApiKey, getNewsApiOrgKey, getGNewsApiKey, getDataForSeoCreds } from "../settings/postizSecrets.js";
 import { buildDeckFromStories } from "./deck.js";
+import { findSlideVideo as findSlideVideoFor, findDeckVideos as findDeckVideosFor, setSlideVideo as setSlideVideoFor, streamSlideVideo } from "./video.js";
+import { Readable } from "node:stream";
+import { db } from "../db/index.js";
+import {
+  deepDives,
+  deepDiveSections,
+  sectionsOf,
+  sectionOut,
+  deepDiveOut,
+  reconcile,
+  isGenerating,
+  normalizeData,
+  generateDeepDive as generateDeepDiveV1,
+  setSectionVideo,
+  SECTION_KINDS,
+  NO_VISUAL,
+  type SectionKind,
+} from "./deepDive.js";
+import { assetDir, removeAssets, ASSET_FILE_RE, type Visual } from "./deepDiveVisuals.js";
+import { MEDIA_FILE_RE } from "./deepDiveMedia.js";
+import { generateDeepDiveV2, mediaChoices, editChapter } from "./deepDiveV2.js";
+import { startDemoJob, latestDemoJob, liveDemoState, attachDemoToDive } from "./deepDiveDemo.js";
+
+/** v2 dives (format "v2") build the demo-first chapter show; v1 dives keep the slide deck. */
+const generateDeepDive = (write: (chunk: string) => void | Promise<void>, input: { id?: string; fresh?: boolean }) =>
+  (deepDives.get(String(input?.id ?? ""))?.format === "v2" ? generateDeepDiveV2(write, input) : generateDeepDiveV1(write, input));
+import path from "node:path";
 
 type Handler = (input: any) => Promise<unknown> | unknown;
 
@@ -133,6 +160,29 @@ const reorderSlides: Handler = (input) => {
   return { success: true };
 };
 
+/* ── official release video (video.ts) ─────────────────────────────────────── */
+
+/** Re-run the search for one slide. */
+const findSlideVideo: Handler = async (input) => {
+  const { slide, result } = await findSlideVideoFor(need(str(input?.slideId), "slideId"));
+  return { slide, videoId: result.videoId, kind: result.kind ?? null, tier: result.tier ?? null, reason: result.reason, checked: result.checked, candidates: result.candidates, quotaUnits: result.units };
+};
+
+/** Re-run it for every slide of a deck (default: today's). */
+const findDeckVideos: Handler = async (input) => {
+  const deckId = str(input?.deckId) ?? decks.where("deck_date = ? ORDER BY created_at DESC LIMIT 1", todayDate())[0]?.id;
+  if (!deckId) return { found: 0, checked: 0, units: 0 };
+  return findDeckVideosFor(deckId);
+};
+
+/** Jake's override: `videoId` = a YouTube id/link, a Vimeo link or a direct .mp4/.webm link; null removes the video. */
+const setSlideVideo: Handler = async (input) => {
+  const slideId = need(str(input?.slideId), "slideId");
+  const v = input?.videoId;
+  const slide = await setSlideVideoFor(slideId, typeof v === "string" ? v : null);
+  return { success: true, slide };
+};
+
 /* ── live session ─────────────────────────────────────────────────────────── */
 
 const startSession: Handler = (input) => {
@@ -189,6 +239,7 @@ const SESSION_FIELDS = [
   ["tpCountdown", "num"],
   ["tpAutoscroll", "bool"],
   ["tpControllerId", "str"],
+  ["mediaView", "str"],
 ] as const;
 
 const updateSession: Handler = (input) => {
@@ -213,6 +264,7 @@ const updateSession: Handler = (input) => {
     else if (kind === "bool" && typeof v === "boolean") record[field] = v;
     else if (kind === "str" && typeof v === "string") record[field] = v;
   }
+  if (record.mediaView !== undefined && record.mediaView !== "video") record.mediaView = "article";
 
   // The server stamps every write: monotonic seq + anchor time.
   const newSeq = (typeof session.tpRevision === "number" ? session.tpRevision : 0) + 1;
@@ -312,9 +364,147 @@ const getConnections: Handler = () => ({
   ],
 });
 
+/* ── deep dive (deepDive.ts) ───────────────────────────────────────────────── */
+
+const listDeepDives: Handler = () => {
+  const rows = deepDives.where("1 = 1 ORDER BY created_at DESC LIMIT 200").map((d) => reconcile(d)!);
+  const counts = new Map(
+    (db.prepare(`SELECT deep_dive_id AS id, COUNT(*) AS n FROM news_deep_dive_sections GROUP BY deep_dive_id`).all() as { id: string; n: number }[])
+      .map((r) => [r.id, r.n]),
+  );
+  return { deepDives: rows.map((d) => ({ ...deepDiveOut(d), sectionCount: counts.get(d.id) ?? 0 })) };
+};
+
+const getDeepDive: Handler = (input) => {
+  const id = need(str(input?.id), "id");
+  const d = reconcile(deepDives.get(id));
+  if (!d) throw Object.assign(new Error("Deep dive not found."), { status: 404 });
+  const dj = d.format === "v2" && d.demoAgent ? latestDemoJob(id) : null;
+  return {
+    deepDive: deepDiveOut(d), sections: sectionsOf(id).map((r) => sectionOut(r, d.format === "v2")), running: isGenerating(id),
+    demoJob: dj ? { id: dj.id, status: dj.status, error: dj.error, finishedAt: dj.finishedAt } : null,
+  };
+};
+
+const createDeepDive: Handler = (input) => {
+  const storyId = str(input?.storyId);
+  const story = storyId ? stories.get(storyId) : undefined;
+  const topic = (str(input?.topic)?.trim() || story?.headline || "").slice(0, 300);
+  if (!topic) throw Object.assign(new Error("Type a topic first."), { status: 400 });
+  const d = deepDives.insert({
+    topic,
+    angle: (str(input?.angle) ?? "").trim().slice(0, 2000),
+    story: story?.id,
+    title: topic,
+    status: "draft",
+    // v2 = the demo-first chapter show (Jake, 2026-10-02) — the default for new dives.
+    format: input?.format === "v1" ? "" : "v2",
+    demoAgent: input?.demoAgent === true ? 1 : 0,
+    demoUrl: (str(input?.demoUrl) ?? "").trim().slice(0, 500),
+    updatedAt: new Date().toISOString(),
+  });
+  return { deepDive: deepDiveOut(d) };
+};
+
+const updateDeepDive: Handler = (input) => {
+  const id = need(str(input?.id), "id");
+  const patch: Record<string, unknown> = {};
+  for (const [k, max] of [["title", 120], ["subtitle", 200], ["topic", 300], ["angle", 2000]] as const) {
+    const v = str(input?.[k]);
+    if (v !== undefined) patch[k] = v.slice(0, max);
+  }
+  if (typeof input?.demoAgent === "boolean") patch.demoAgent = input.demoAgent ? 1 : 0;
+  if (str(input?.demoUrl) !== undefined) patch.demoUrl = String(input.demoUrl).trim().slice(0, 500);
+  if (input?.format === "v1" || input?.format === "v2") patch.format = input.format === "v2" ? "v2" : "";
+  if (Object.keys(patch).length) deepDives.update(id, { ...patch, updatedAt: new Date().toISOString() });
+  return { success: true };
+};
+
+const deleteDeepDive: Handler = (input) => {
+  const id = need(str(input?.id), "id");
+  if (isGenerating(id)) throw Object.assign(new Error("Wait for the generation to finish first."), { status: 400 });
+  for (const sec of sectionsOf(id)) deepDiveSections.remove(sec.id);
+  deepDives.remove(id);
+  removeAssets(id);
+  return { success: true };
+};
+
+const updateDeepDiveSection: Handler = (input) => {
+  const sectionId = need(str(input?.sectionId), "sectionId");
+  const sec = deepDiveSections.get(sectionId);
+  if (!sec) throw Object.assign(new Error("Section not found."), { status: 404 });
+  const patch: Record<string, unknown> = {};
+  if (str(input?.heading) !== undefined) patch.heading = input.heading.slice(0, 120);
+  if (str(input?.eyebrow) !== undefined) patch.eyebrow = input.eyebrow.slice(0, 40);
+  if (str(input?.script) !== undefined) patch.script = input.script.slice(0, 20000);
+  if (input?.data !== undefined && deepDives.get(sec.deepDive ?? "")?.format !== "v2") {
+    const kind = (SECTION_KINDS as readonly string[]).includes(sec.kind ?? "") ? (sec.kind as SectionKind) : "statement";
+    patch.dataJson = JSON.stringify(normalizeData(kind, input.data));
+  }
+  // A visual from the dive's own pool ("" removes it).
+  if (str(input?.visualId) !== undefined) {
+    if (!input.visualId) patch.visualJson = "";
+    else {
+      if (NO_VISUAL.has(sec.kind as SectionKind)) throw Object.assign(new Error("This kind of section has no room for a visual."), { status: 400 });
+      let pool: Visual[] = [];
+      try { pool = JSON.parse(deepDives.get(sec.deepDive ?? "")?.visualsJson || "[]"); } catch { /* none */ }
+      const v = pool.find((x) => x.id === input.visualId);
+      if (!v) throw Object.assign(new Error("That visual isn't in this deep dive's pool."), { status: 400 });
+      patch.visualJson = JSON.stringify(v);
+    }
+  }
+  if (Object.keys(patch).length) {
+    deepDiveSections.update(sectionId, patch);
+    if (sec.deepDive) deepDives.update(sec.deepDive, { updatedAt: new Date().toISOString() });
+  }
+  const out = deepDiveSections.get(sectionId)!;
+  return { section: sectionOut(out, deepDives.get(out.deepDive ?? "")?.format === "v2") };
+};
+
+const deleteDeepDiveSection: Handler = (input) => {
+  const sectionId = need(str(input?.sectionId), "sectionId");
+  deepDiveSections.remove(sectionId);
+  return { success: true };
+};
+
+const reorderDeepDiveSections: Handler = (input) => {
+  const ids: string[] = Array.isArray(input?.sectionIds) ? input.sectionIds.map(String) : [];
+  db.transaction(() => ids.forEach((id, i) => deepDiveSections.update(id, { position: i + 1 })))();
+  return { success: true };
+};
+
+const setDeepDiveSectionVideo: Handler = (input) => {
+  const sectionId = need(str(input?.sectionId), "sectionId");
+  const v = input?.video;
+  const sec = setSectionVideo(sectionId, typeof v === "string" ? v : null);
+  return { section: sec ? sectionOut(sec) : null };
+};
+
 /* ── routing ──────────────────────────────────────────────────────────────── */
 
+/** v2 demo agent: record again now (toggle on), run it live from the stage, watch a run. */
+const recordDeepDiveDemo: Handler = (input) => ({ jobId: startDemoJob(need(str(input?.id), "id")).id });
+const startLiveDeepDiveDemo: Handler = (input) => ({ jobId: startDemoJob(need(str(input?.id), "id"), true).id });
+const getLiveDeepDiveDemo: Handler = (input) => liveDemoState(need(str(input?.jobId), "jobId"));
+const attachDeepDiveDemo: Handler = async (input) => {
+  const id = need(str(input?.id), "id");
+  const job = latestDemoJob(id);
+  if (!job || job.status !== "done") throw Object.assign(new Error("No finished demo recording for this deep dive yet."), { status: 400 });
+  return attachDemoToDive(id, job.id);
+};
+
 const HANDLERS: Record<string, Handler> = {
+  getDeepDiveMedia: (input) => mediaChoices(need(str(input?.id), "id")),
+  editDeepDiveChapter: async (input) => {
+    const sectionId = need(str(input?.sectionId), "sectionId");
+    await editChapter(sectionId, input?.edit);
+    const sec = deepDiveSections.get(sectionId)!;
+    return { section: sectionOut(sec, true) };
+  },
+  recordDeepDiveDemo,
+  startLiveDeepDiveDemo,
+  getLiveDeepDiveDemo,
+  attachDeepDiveDemo,
   getConnections,
   getStories,
   getTeleprompterSettings,
@@ -328,12 +518,25 @@ const HANDLERS: Record<string, Handler> = {
   updateSession,
   endSession,
   logSlideStats,
+  findSlideVideo,
+  findDeckVideos,
+  setSlideVideo,
+  listDeepDives,
+  getDeepDive,
+  createDeepDive,
+  updateDeepDive,
+  deleteDeepDive,
+  updateDeepDiveSection,
+  deleteDeepDiveSection,
+  reorderDeepDiveSections,
+  setDeepDiveSectionVideo,
 };
 
-type Streamer = (write: (chunk: string) => void) => Promise<unknown>;
+type Streamer = (write: (chunk: string) => void, input: any) => Promise<unknown>;
 const STREAMERS: Record<string, Streamer> = {
   collectNews,
   buildDeckFromStories,
+  generateDeepDive,
 };
 
 /**
@@ -345,6 +548,43 @@ const running = new Set<string>();
 
 export const newsRouter = express.Router();
 
+/**
+ * A slide's video FILE, streamed through the Lab when its CDN blocks
+ * hotlinking. Serves only the URL stored on that slide (see
+ * `streamSlideVideo`) — not an open proxy — and sits behind the sign-in like
+ * every /api/news route. Range requests pass through so the player can loop.
+ */
+newsRouter.get("/video-file/:slideId", async (req: Request, res: Response) => {
+  const ac = new AbortController();
+  res.on("close", () => ac.abort());
+  try {
+    const out = await streamSlideVideo(String(req.params.slideId), req.headers.range, ac.signal);
+    if ("error" in out) { res.status(out.status).json({ error: { message: out.error } }); return; }
+    res.status(out.status);
+    for (const [k, v] of Object.entries(out.headers)) res.setHeader(k, v);
+    if (!out.body) { res.end(); return; }
+    Readable.fromWeb(out.body as any).on("error", () => res.destroy()).pipe(res);
+  } catch (err) {
+    if (!res.headersSent) res.status(502).json({ error: { message: err instanceof Error ? err.message : String(err) } });
+    else res.destroy();
+  }
+});
+
+/**
+ * A deep dive's stored visual (screenshot, GIF, video file) — see
+ * deepDiveVisuals.ts. Signed-in like every /api/news route; only names the
+ * gatherer itself writes are served, so no path can leave the dive's folder.
+ */
+newsRouter.get("/dd-asset/:dive/:file", (req: Request, res: Response) => {
+  const dive = String(req.params.dive);
+  const file = String(req.params.file);
+  if (!/^[0-9a-f-]{36}$/i.test(dive) || !(ASSET_FILE_RE.test(file) || MEDIA_FILE_RE.test(file))) { res.status(404).end(); return; }
+  res.setHeader("Cache-Control", "private, max-age=86400");
+  // sendFile answers Range requests (206) itself — the clip player seeks.
+  const type = file.endsWith(".mp4") ? "video/mp4" : file.endsWith(".webm") ? "video/webm" : file.endsWith(".gif") ? "image/gif" : "image/jpeg";
+  res.sendFile(path.join(assetDir(dive), file), { headers: { "Content-Type": type, "Accept-Ranges": "bytes" } }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
+});
+
 newsRouter.post("/:fn", express.json({ limit: "2mb" }), async (req: Request, res: Response) => {
   const fn = req.params.fn;
   const streamer = STREAMERS[fn];
@@ -355,20 +595,22 @@ newsRouter.post("/:fn", express.json({ limit: "2mb" }), async (req: Request, res
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
     const line = (obj: unknown) => res.write(JSON.stringify(obj) + "\n");
-    if (running.has(fn)) {
+    // Deep dives are one run per dive, not one run overall.
+    const key = fn === "generateDeepDive" ? `${fn}:${String(req.body?.id ?? "")}` : fn;
+    if (running.has(key)) {
       line({ error: "Already running — wait for the current run to finish." });
       res.end();
       return;
     }
-    running.add(fn);
+    running.add(key);
     try {
-      const result = await streamer((chunk) => line({ chunk }));
+      const result = await streamer((chunk) => line({ chunk }), req.body ?? {});
       line({ result });
     } catch (err) {
       console.error(`[news] ${fn} failed:`, err);
       line({ error: err instanceof Error ? err.message : String(err) });
     } finally {
-      running.delete(fn);
+      running.delete(key);
       res.end();
     }
     return;

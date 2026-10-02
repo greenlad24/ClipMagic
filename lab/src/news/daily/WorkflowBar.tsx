@@ -89,7 +89,7 @@ export default function WorkflowBar({ show, onBuild, onShowSelected }: Props) {
       }>
         <Button size="sm" variant={buildState === 'next' ? 'default' : 'outline'} onClick={onBuild}
           disabled={building || selectedCount === 0} className="gap-1.5"
-          title={hasSlides ? 'Replaces the current slides with a fresh build from the selected stories' : undefined}>
+          title={hasSlides ? 'Replaces the current slides with a fresh build from the selected stories (sources behind a sign-in or subscription wall are skipped)' : 'Sources behind a sign-in or subscription wall are skipped'}>
           <Layers className={`h-3.5 w-3.5 ${building ? 'animate-pulse' : ''}`} />
           {building ? 'Building…' : hasSlides ? 'Rebuild deck' : 'Build presentation'}
         </Button>
@@ -103,3 +103,4 @@ export default function WorkflowBar({ show, onBuild, onShowSelected }: Props) {
     </ol>
   );
 }
+

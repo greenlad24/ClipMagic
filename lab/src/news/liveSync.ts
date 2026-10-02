@@ -40,8 +40,16 @@ export interface LiveSync {
   setTextWidth(w: string): void;
   onSync(fn: (s: SyncSnapshot) => void): void;
   onAppearance(fn: (a: { textSize?: number; lineHeight?: number; textWidth?: string }) => void): void;
+  /**
+   * Article ↔ official video on slide `idx`. Its own event, never part of the
+   * scroll anchor, so it cannot move any screen's teleprompter.
+   */
+  setMedia(idx: number, media: MediaView): void;
+  onMedia(fn: (m: { idx: number; media: MediaView }) => void): void;
   close(): void;
 }
+
+export type MediaView = 'article' | 'video';
 
 const EMPTY: SyncSnapshot = { idx: 0, position: 0, anchorTime: 0, isPlaying: false, rate: 0, scrollSpeed: 2.5 };
 
@@ -57,6 +65,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   let bestRtt = Infinity;
   const syncHandlers: ((s: SyncSnapshot) => void)[] = [];
   const appearanceHandlers: ((a: any) => void)[] = [];
+  const mediaHandlers: ((m: { idx: number; media: MediaView }) => void)[] = [];
 
   const syncClock = () => socket.emit('time-ping', Date.now());
   const burstSyncClock = () => {
@@ -87,6 +96,9 @@ export function connectLiveSync(sessionId: string): LiveSync {
   socket.on('scroll-sync', apply);
   socket.on('current-state', (s: any) => {
     apply(s);
+    if (s.media === 'article' || s.media === 'video') {
+      for (const fn of mediaHandlers) fn({ idx: s.idx, media: s.media });
+    }
     for (const fn of appearanceHandlers) {
       fn({ textSize: s.textSize, lineHeight: s.lineHeight, textWidth: s.textWidth });
     }
@@ -94,6 +106,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   socket.on('text-size', (v: number) => appearanceHandlers.forEach((fn) => fn({ textSize: v })));
   socket.on('line-height', (v: number) => appearanceHandlers.forEach((fn) => fn({ lineHeight: v })));
   socket.on('text-width', (v: string) => appearanceHandlers.forEach((fn) => fn({ textWidth: v })));
+  socket.on('media-view', (m: { idx: number; media: MediaView }) => mediaHandlers.forEach((fn) => fn(m)));
 
   const clockSyncTimer = setInterval(burstSyncClock, 15000);
 
@@ -146,6 +159,12 @@ export function connectLiveSync(sessionId: string): LiveSync {
     },
     onAppearance(fn) {
       appearanceHandlers.push(fn);
+    },
+    setMedia(idx, media) {
+      socket.emit('media-view', { idx, media });
+    },
+    onMedia(fn) {
+      mediaHandlers.push(fn);
     },
     close() {
       clearInterval(clockSyncTimer);

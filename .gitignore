@@ -40,3 +40,7 @@ lab/server/src/scripts/dev-*.ts
 # Volume snapshots taken before risky migrations. Large, and the WhatsApp one
 # contains a linked-device profile — session credentials, contacts, chat store.
 backups/
+
+# UX Scout runner: per-job transcripts and scratch dirs (runtime data)
+scout-runner/logs/
+scout-runner/work/

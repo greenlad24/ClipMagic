@@ -8,30 +8,37 @@
  * "official blog first, else the first article" rule produced, because Zapier's
  * blog sits on the company-blog list — is exactly what must not happen.
  *
- * Order: the major outlets by reach, then the AI labs' own announcements (a
- * primary source, not a small blog), then a second tier of recognizable news
- * sites, then anything else. Only when nothing better exists does a small site
+ * Order (2026-10-01): tech outlets, then big general news, then the AI labs' own
+ * announcements (a primary source, not a small blog), then the financial press
+ * and other recognizable sites, then anything else. Only when nothing better exists does a small site
  * win, because there is nothing else to show.
  */
 
-/** Biggest first. Names match the spellings collect.ts normalizes to. */
+/**
+ * Jake (2026-10-01): sources from the TECH side, not the financial side. So the
+ * order is tech outlets first (biggest first), then big general news, and the
+ * financial/business press only after the lab's own announcement (tier 2).
+ * Names match the spellings collect.ts normalizes to.
+ */
 export const OUTLET_RANK = [
-  'Reuters', 'Bloomberg', 'Associated Press', 'The New York Times', 'WSJ',
-  'Financial Times', 'The Washington Post', 'BBC', 'CNBC', 'The Guardian',
-  'The Verge', 'TechCrunch', 'Wired', 'Axios', 'The Information', 'CNET',
-  'Ars Technica', 'Business Insider', 'Fortune', 'Engadget', 'VentureBeat',
-  'ZDNET', 'MIT Technology Review', 'IEEE Spectrum', 'Semafor',
-  '9to5Mac', '9to5Google',
+  // Tech press
+  'The Verge', 'TechCrunch', 'Wired', 'Ars Technica', 'Engadget', 'The Information',
+  'MIT Technology Review', 'CNET', 'VentureBeat', 'ZDNET', 'IEEE Spectrum',
+  '9to5Mac', '9to5Google', 'Gizmodo', 'TechRadar', "Tom's Guide", 'Mashable', 'PCMag',
+  'MacRumors', 'Android Authority', 'Digital Trends', 'The Next Web', 'The Register',
+  "Tom's Hardware", 'Windows Central',
+  // Big general news (when no tech outlet covered it)
+  'BBC', 'Reuters', 'Associated Press', 'The New York Times', 'The Washington Post', 'The Guardian', 'Axios',
 ];
 
-/** Recognizable, but below a lab's own announcement. Biggest first. */
+/** Below a lab's own announcement: the financial/business press, then other recognizable sites. */
 export const OUTLET_RANK_2 = [
+  'Bloomberg', 'WSJ', 'Financial Times', 'CNBC', 'Business Insider', 'Fortune', 'Semafor',
   'CNN', 'NBC News', 'Forbes', 'Newsweek', 'Yahoo', 'MarketWatch',
+  'SiliconANGLE', 'Interesting Engineering', 'BleepingComputer', 'Neowin', 'Futurism',
+  'Thurrott', 'Android Headlines', 'Decrypt',
   'The Times of India', 'Economic Times', 'Business Standard', 'Business Today',
-  'International Business Times', 'Gizmodo', 'Mashable', 'TechRadar', "Tom's Guide",
-  "Tom's Hardware", 'PCMag', 'The Register', 'The Next Web', 'SiliconANGLE',
-  'Digital Trends', 'Android Authority', 'Interesting Engineering', 'BleepingComputer',
-  'MacRumors', 'Windows Central', 'Neowin', 'Futurism', 'Decrypt', 'Thurrott', 'Android Headlines',
+  'International Business Times',
 ];
 
 /**
@@ -116,11 +123,16 @@ function publisherOf(a: { outlet: string; title?: string }): string {
 
 export interface BestSource { name: string; url: string; kind: 'outlet' | 'lab' | 'other' }
 
-export function pickBestSource(
+/**
+ * Every candidate source in priority order (the order pickBestSource used to
+ * stop at the first of): tier-1 outlets by reach → the subject lab's own post
+ * → tier-2 outlets → other articles → other blogs → anything. Deduped by URL.
+ */
+export function rankBestSources(
   blogSources: { company: string; url: string; isOfficial?: boolean }[],
   articleSources: { outlet: string; url: string; title?: string }[],
   headline = '',
-): BestSource | null {
+): BestSource[] {
   // A Google News redirect breaks the source tab (it navigates cross-origin
   // and the window handle is lost), so a direct link always beats one.
   const direct = (url: string) => !!url && !url.includes('news.google.com');
@@ -132,8 +144,8 @@ export function pickBestSource(
     .map(a => ({ ...a, rank: rankOf(a.name) }))
     .filter(a => a.rank !== Infinity)
     .sort((x, y) => x.rank - y.rank);
-  const top = ranked[0];
-  if (top && top.rank < 1000) return { name: OUTLET_RANK[top.rank], url: top.url, kind: 'outlet' };
+  const out: BestSource[] = [];
+  for (const r of ranked.filter(r => r.rank < 1000)) out.push({ name: OUTLET_RANK[r.rank], url: r.url, kind: 'outlet' });
 
   // The SUBJECT is the lab named first: "Leaked Gemini 4 Pro Beats GPT-6" is
   // Google's story even though it names OpenAI's model too.
@@ -143,14 +155,21 @@ export function pickBestSource(
   };
   const subjectAt = Math.min(...Object.keys(AI_LABS).map(firstAt));
   const lab = blogSources.find(b => b.isOfficial && direct(b.url) && firstAt(b.company) !== Infinity && firstAt(b.company) === subjectAt);
-  if (lab) return { name: lab.company, url: lab.url, kind: 'lab' };
+  if (lab) out.push({ name: lab.company, url: lab.url, kind: 'lab' });
 
-  if (top) return { name: OUTLET_RANK_2[top.rank - 1000], url: top.url, kind: 'outlet' };
+  for (const r of ranked.filter(r => r.rank >= 1000)) out.push({ name: OUTLET_RANK_2[r.rank - 1000], url: r.url, kind: 'outlet' });
+  for (const a of articles) out.push({ ...a, kind: 'other' });
+  for (const b of blogSources.filter(b => direct(b.url))) out.push({ name: b.company, url: b.url, kind: 'other' });
+  for (const a of articleSources) out.push({ name: publisherOf(a), url: a.url, kind: 'other' });
 
-  if (articles[0]) return { ...articles[0], kind: 'other' };
-  const blog = blogSources.find(b => direct(b.url));
-  if (blog) return { name: blog.company, url: blog.url, kind: 'other' };
+  const seen = new Set<string>();
+  return out.filter(b => b.url && !seen.has(b.url) && (seen.add(b.url), true));
+}
 
-  const any = articleSources[0] ?? null;
-  return any ? { name: publisherOf(any), url: any.url, kind: 'other' } : null;
+export function pickBestSource(
+  blogSources: { company: string; url: string; isOfficial?: boolean }[],
+  articleSources: { outlet: string; url: string; title?: string }[],
+  headline = '',
+): BestSource | null {
+  return rankBestSources(blogSources, articleSources, headline)[0] ?? null;
 }

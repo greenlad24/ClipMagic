@@ -7,6 +7,7 @@ import { formatDistanceToNow } from 'date-fns';
 import { Star, X, Eye, Pencil, GripVertical, ArrowUp, ArrowDown } from 'lucide-react';
 import NotesEditor, { parseKeyPoints } from './NotesEditor';
 import type { Slide } from './useDailyShow';
+import { slideHasVideo } from '../api';
 
 interface Props {
   slide: Slide;
@@ -57,6 +58,12 @@ export default function RundownItem({
             <span className={`mr-1.5 rounded px-1 py-px ${isArticle ? 'bg-blue-500/15 text-blue-300' : 'bg-sky-500/15 text-sky-300'}`}>
               {isArticle ? 'Article' : 'Tweet'}
             </span>
+            {slideHasVideo(slide) && (
+              <span className={`mr-1.5 rounded px-1 py-px ${slide.videoTier === 'product' ? 'bg-violet-500/15 text-violet-300' : 'bg-red-500/15 text-red-300'}`} data-video-badge={slide.videoTier || 'official'}
+                title={`${slide.videoTier === 'product' ? "The company's own demo of the product (no launch video for this news)" : slide.videoTier === 'manual' ? 'Video set by hand' : "The company's launch video for this news"}: ${slide.videoTitle || ''}${slide.videoChannel ? ` · ${slide.videoChannel}` : ''}`}>
+                {slide.videoTier === 'product' ? '▶ product demo' : slide.videoTier === 'manual' ? '▶ video' : '▶ launch video'}
+              </span>
+            )}
             Best: {sourceLabel}{timeAgo && ` · ${timeAgo}`}
             {slide.suggestedTimeSeconds ? ` · ${slide.suggestedTimeSeconds}s` : ''}
             {slide.sourcesCount ? ` · ${slide.sourcesCount} source${slide.sourcesCount > 1 ? 's' : ''}` : ''}

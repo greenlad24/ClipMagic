@@ -4,11 +4,14 @@ import { useAuth } from '../auth';
 import { GetSlidesOutputType } from '../api';
 import TweetView from '../components/TweetView';
 import ArticleView from '../components/ArticleView';
+import VideoEmbed from '../components/VideoEmbed';
+import { slideMedia } from '../api';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
 type BCMsg =
-  | { type: 'slide'; slide: SlideType; idx: number; total: number }
+  | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: 'article' | 'video' }
+  | { type: 'media'; idx: number; view: 'article' | 'video' }
   | { type: 'blackout'; value: boolean }
   | { type: 'end' }
   | { type: 'ping' }
@@ -25,6 +28,9 @@ export default function DisplayPage() {
   const [total, setTotal] = useState(0);
   const [blackout, setBlackout] = useState(false);
   const [ended, setEnded] = useState(false);
+  // Article, then (on a slide that has one) the official video — driven by the presenter.
+  const [mediaView, setMediaView] = useState<'article' | 'video'>('article');
+  const idxRef = useRef(0);
   const [bgColor] = useState(() => localStorage.getItem(BG_KEY) || '#ffffff');
   const channelRef = useRef<BroadcastChannel | null>(null);
 
@@ -43,8 +49,12 @@ export default function DisplayPage() {
       } else if (msg.type === 'slide') {
         setSlide(msg.slide);
         setIdx(msg.idx);
+        idxRef.current = msg.idx;
         setTotal(msg.total);
         setBlackout(false);
+        setMediaView(msg.media === 'video' ? 'video' : 'article');
+      } else if (msg.type === 'media') {
+        if (msg.idx === idxRef.current) setMediaView(msg.view === 'video' ? 'video' : 'article');
       } else if (msg.type === 'blackout') {
         setBlackout(msg.value);
       } else if (msg.type === 'end') {
@@ -151,6 +161,9 @@ export default function DisplayPage() {
           )}
         </div>
       </div>
+
+      {/* Official video: loaded behind the article, shown full screen on the presenter's → */}
+      {(() => { const m = slideMedia(slide); return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null; })()}
     </div>
   );
 }
