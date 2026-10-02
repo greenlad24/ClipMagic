@@ -35,8 +35,14 @@ function loadReference(name: string): string {
 
 /** Jake's persona ("who you are") — woven into the system prompt every stage. */
 export const SOUL = loadReference("SOUL");
-/** The credential/story fragment bank — added when a stage may weave one in. */
+/**
+ * The credential/story fragment bank. ⚠️ NO LONGER INJECTED (Jake 2026-10-02,
+ * writing study P6): no backstory, credentials or past ventures in ANY video —
+ * he deleted every shrapnel line the generator ever placed. The file stays in
+ * reference/ (it is his), and this switch is the one place to turn it back on.
+ */
 export const SHRAPNEL = loadReference("story-shrapnel-bank");
+export const SHRAPNEL_IN_SCRIPTS = false;
 
 /**
  * Three complete scripts Jake wrote himself, carried into EVERY stage.
@@ -55,7 +61,9 @@ export const SHRAPNEL = loadReference("story-shrapnel-bank");
 const EXEMPLAR_FRAME = [
   "# THREE FINISHED SCRIPTS BY JAKE — the target for everything you write",
   "",
-  "Below are three complete videos Jake wrote and recorded himself: a listicle, a sponsored tool review, and a sponsored build tutorial. Every rule in this prompt set is an attempt to describe what these do. When a rule and these scripts disagree, THESE WIN — they are the artefact, the rules are the notes.",
+  "Below are three complete videos Jake wrote and recorded himself: a listicle, a sponsored tool review, and a sponsored build tutorial. Every rule in this prompt set is an attempt to describe what these do. On HOW to explain, demonstrate and joke, THESE WIN — they are the artefact, the rules are the notes.",
+  "",
+  "**On what comes after the demo, the LEARNED FROM JAKE'S OWN EDITS rules win.** These scripts are older than his newest edits, and he has since cut things they still contain. Do NOT copy: the recap and the 'keep just one habit' close, 'honest take after a few weeks of using it', 'pause this right now… don't overthink it', 'one honest thing, though', 'go read the live page yourself', 'that's a real win', the opener credential ('for the past couple of years I've been…'), and the words 'clips' and 'which'. Copy how they explain, demonstrate and joke; take the shape of what follows the demo from the learned rules.",
   "",
   "Read them for:",
   "- **Length.** 2,672 / 2,498 / 2,888 words. Seventeen to nineteen minutes. That is what a finished Jake video weighs, and it is a ceiling as much as a target.",
@@ -171,7 +179,7 @@ export function systemPreamble(includeShrapnel: boolean, sponsored: boolean): st
     // Empty until Jake approves his first one, so today's prompt is unchanged
     // byte for byte. See scriptgen/lessons.ts for why nothing else reads them.
     approvedLessonBlock() +
-    (includeShrapnel ? "\n\n---\n\n" + SHRAPNEL : "") +
+    (includeShrapnel && SHRAPNEL_IN_SCRIPTS ? "\n\n---\n\n" + SHRAPNEL : "") +
     // Last, and every stage gets them: the rules above describe these scripts,
     // and where the two disagree the scripts are what Jake actually shipped.
     "\n\n---\n\n" +

@@ -211,3 +211,51 @@ export function applyPaidSplit<T extends { videoId: string; views: number }>(
     return { videoId: v.videoId, views: v.views, paidViews: paid, organicViews: Math.max(0, v.views - paid) };
   });
 }
+
+/**
+ * The ONE standard audience snapshot the Deal Organizer shares with sponsors
+ * (rulebook #66): top countries, age range, gender. Same read-only token, same
+ * allow-listed GET — it never shares past sponsors' results, conversions or
+ * clicks, and the API couldn't give "share of business owners" anyway (that
+ * number is Jake's own, from the rulebook, not from YouTube).
+ */
+export interface AudienceSnapshot {
+  from: string;
+  to: string;
+  totalViews: number;
+  countries: Array<{ country: string; views: number; share: number }>;
+  ageGroups: Array<{ ageGroup: string; percent: number }>;
+  gender: Array<{ gender: string; percent: number }>;
+}
+
+export async function fetchAudienceSnapshot(days = 90): Promise<AudienceSnapshot> {
+  const token = await accessToken();
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+  const report = async (extra: Record<string, string>) => {
+    const params = new URLSearchParams({ ids: "channel==MINE", startDate: from, endDate: to, ...extra });
+    const r = await analyticsGet(`${REPORTS_ENDPOINT}?${params}`, token);
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(`YouTube Analytics error ${r.status}: ${j?.error?.message || "unknown"}`);
+    return (Array.isArray(j?.rows) ? j.rows : []) as any[][];
+  };
+  const [total, byCountry, byAge, byGender] = await Promise.all([
+    report({ metrics: "views" }),
+    report({ metrics: "views", dimensions: "country", sort: "-views", maxResults: "10" }),
+    report({ metrics: "viewerPercentage", dimensions: "ageGroup" }),
+    report({ metrics: "viewerPercentage", dimensions: "gender" }),
+  ]);
+  const totalViews = Number(total[0]?.[0]) || 0;
+  return {
+    from,
+    to,
+    totalViews,
+    countries: byCountry.map(([country, views]) => ({
+      country: String(country),
+      views: Number(views) || 0,
+      share: totalViews ? Math.round((Number(views) / totalViews) * 1000) / 10 : 0,
+    })),
+    ageGroups: byAge.map(([ageGroup, percent]) => ({ ageGroup: String(ageGroup).replace(/^age/, ""), percent: Number(percent) || 0 })),
+    gender: byGender.map(([gender, percent]) => ({ gender: String(gender), percent: Number(percent) || 0 })),
+  };
+}

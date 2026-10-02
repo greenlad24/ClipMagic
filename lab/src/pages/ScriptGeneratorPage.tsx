@@ -21,6 +21,8 @@ import {
   editScriptLesson,
   applyScriptRules,
   scriptDocsStatus,
+  scriptDocsPicker,
+  setScriptDocsFolder,
   exportScriptToDocs,
   uploadScriptShots,
   attachScriptShots,
@@ -65,6 +67,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import UxScoutPanel from '@/scout/UxScoutPanel';
+import UxFindingsDrawer from '@/scout/UxFindingsDrawer';
+import { pickDriveFolder } from '@/scriptgen/drivePicker';
+import SponsorDealPicker, { type SponsorDealSelection } from '@/scriptgen/SponsorDealPicker';
 import {
   PenLine,
   KeyRound,
@@ -72,6 +78,7 @@ import {
   AlertTriangle,
   Loader2,
   Sparkles,
+  FolderOpen,
   Copy,
   Download,
   Pencil,
@@ -1766,11 +1773,14 @@ function ScreenshotPicker({
 export default function ScriptGeneratorPage() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [anthropicConfigured, setAnthropicConfigured] = useState(false);
-  const [model, setModel] = useState('');
 
   // Input form.
   const [idea, setIdea] = useState('');
   const [brief, setBrief] = useState('');
+  // Sponsored video built from a Deal Organizer deal (deal + read + chosen angle).
+  const [sponsorDeal, setSponsorDeal] = useState<SponsorDealSelection | null>(null);
+  const autoIdeaRef = useRef('');
+  const autoBriefRef = useRef('');
   const [sponsorMode, setSponsorMode] = useState<SponsorshipMode>('organic');
   const [sponsorName, setSponsorName] = useState('');
   const [targetLength, setTargetLength] = useState('');
@@ -1795,6 +1805,10 @@ export default function ScriptGeneratorPage() {
   // search, and the checkpoint is where the user first hears the topic is thin.
   const [cpShots, setCpShots] = useState<ScreenshotRef[]>([]);
   const [attachingShots, setAttachingShots] = useState(false);
+  // A UX Scout is queued/running for this run: hold the Write buttons until it lands.
+  const [scoutActive, setScoutActive] = useState(false);
+  // A finished UX Scout report is attached — the script is built on it (Jake 2026-10-02).
+  const [scoutReport, setScoutReport] = useState(false);
   const [cpVideoType, setCpVideoType] = useState<ScriptVideoType>('Tutorial');
   const [cpTitle, setCpTitle] = useState('');
   const [cpCoreTopic, setCpCoreTopic] = useState('');
@@ -1803,16 +1817,55 @@ export default function ScriptGeneratorPage() {
   // History.
   const [runs, setRuns] = useState<ScriptRunListItem[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [docs, setDocs] = useState<{ configured: boolean; connected: boolean; folderId: string } | null>(null);
+  const [docs, setDocs] = useState<{ configured: boolean; connected: boolean; folderId: string; folderName?: string; pickerReady?: boolean; connectUrl?: string } | null>(null);
+  const [pickingFolder, setPickingFolder] = useState(false);
   const [exportingDoc, setExportingDoc] = useState(false);
 
   // Whether the Google Docs connection exists at all. Asked once: it is a
   // settings-level fact, not something that changes while a script is read.
-  useEffect(() => {
+  const loadDocsStatus = useCallback(() => {
     void scriptDocsStatus({})
       .then(setDocs)
       .catch(() => setDocs(null));
   }, []);
+  // Google's Drive Picker on the CONNECTED account's Drive; picking the folder
+  // is also what lets the export write into it (drivePicker.ts).
+  const chooseDocsFolder = useCallback(async () => {
+    setPickingFolder(true);
+    try {
+      const cfg = await scriptDocsPicker({});
+      const picked = await pickDriveFolder(cfg);
+      if (!picked) return;
+      const saved = await setScriptDocsFolder({ folderId: picked.id, name: picked.name });
+      setDocs((d) => (d ? { ...d, folderId: saved.folderId, folderName: saved.folderName ?? picked.name } : d));
+      toast.success(`Scripts will be exported to “${picked.name}”`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPickingFolder(false);
+    }
+  }, []);
+  useEffect(() => {
+    loadDocsStatus();
+    // Back from Google's sign-in (docsOauthRoutes.ts redirects with ?gdocs=…).
+    const params = new URLSearchParams(window.location.search);
+    const g = params.get('gdocs');
+    if (g) {
+      const msg: Record<string, [boolean, string]> = {
+        connected: [true, 'Google Docs connected — the Google Doc button exports into your scripts folder.'],
+        denied: [false, 'Google Docs was not connected (permission was declined).'],
+        norefresh: [false, 'Google did not return a lasting sign-in. Remove ClipMagic from your Google account’s third-party access, then connect again.'],
+        scope: [false, 'Refused: Google offered wider Drive access than this needs. Connect again and allow only the Docs export.'],
+        failed: [false, 'Connecting Google Docs failed. Try again.'],
+        disconnected: [true, 'Google Docs disconnected.'],
+      };
+      const [ok, text] = msg[g] ?? [false, `Google Docs: ${g}`];
+      (ok ? toast.success : toast.error)(text);
+      params.delete('gdocs');
+      const qs = params.toString();
+      window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : '') + window.location.hash);
+    }
+  }, [loadDocsStatus]);
 
   const exportToDocs = useCallback(async () => {
     if (!run) return;
@@ -1827,10 +1880,12 @@ export default function ScriptGeneratorPage() {
       });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
+      // A dead sign-in is cleared on the server; re-read so "Connect" shows.
+      loadDocsStatus();
     } finally {
       setExportingDoc(false);
     }
-  }, [run]);
+  }, [run, loadDocsStatus]);
   const [historyOpen, setHistoryOpen] = useState(false); // mobile drawer
 
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1855,7 +1910,6 @@ export default function ScriptGeneratorPage() {
     scriptGenStatus({})
       .then((s) => {
         setAnthropicConfigured(!!s.anthropicConfigured);
-        setModel(s.model || '');
         setShotLimits(s.screenshots ?? null);
       })
       .catch(() => {
@@ -1956,6 +2010,7 @@ export default function ScriptGeneratorPage() {
       return;
     }
     const input: ScriptInput = { idea: trimmed, sponsorship: buildSponsorship() };
+    if (sponsorMode !== 'organic' && sponsorDeal) input.sponsorDeal = { dealId: sponsorDeal.dealId, briefId: sponsorDeal.briefId, angle: sponsorDeal.angle };
     if (brief.trim()) input.brief = brief.trim();
     if (targetLength.trim()) input.targetLength = targetLength.trim();
     if (shots.length) input.screenshots = shots;
@@ -2007,6 +2062,19 @@ export default function ScriptGeneratorPage() {
     if (!run) return;
     const setup = setupFor(mode);
     if (!setup) return;
+    // The script is built on the tester's report (Jake 2026-10-02). Without one,
+    // every step can only come from screenshots and the research, and much of the
+    // walkthrough ends up as production notes — so ask before spending a run on it.
+    if (
+      !run.stages?.imported &&
+      !scoutReport &&
+      !run.input.uxScoutJobId &&
+      !window.confirm(
+        'No UX Scout report is attached. Scripts are built on the tester’s report — without it the steps can only come from your screenshots and stay unconfirmed.\n\nGenerate anyway?',
+      )
+    ) {
+      return;
+    }
     setContinuing(mode);
     try {
       // Attach before continuing, never after: the run reads its screenshots out
@@ -2115,6 +2183,8 @@ export default function ScriptGeneratorPage() {
 
   return (
     <Layout breadcrumb="Script Generator">
+      {/* The UX test the selected script was built on, in a panel on the right. */}
+      {run && <UxFindingsDrawer key={run.runId} runId={run.runId} jobId={run.input.uxScoutJobId ?? null} />}
       <div className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
         <header className="mb-5 flex flex-wrap items-center gap-2">
           <div className="rounded-md bg-primary/10 p-2 text-primary">
@@ -2129,12 +2199,6 @@ export default function ScriptGeneratorPage() {
               formulas and a section-by-section draft. Or stop at the outline.
             </p>
           </div>
-          {!loadingStatus && anthropicConfigured && model && (
-            <Badge variant="secondary" className="ml-auto gap-1">
-              <Sparkles className="h-3 w-3" />
-              Running on {model}
-            </Badge>
-          )}
         </header>
 
         {loadingStatus ? (
@@ -2350,12 +2414,35 @@ export default function ScriptGeneratorPage() {
                           </SelectContent>
                         </Select>
                         {sponsorMode !== 'organic' && (
-                          <Input
-                            value={sponsorName}
-                            onChange={(e) => setSponsorName(e.target.value)}
-                            placeholder="Sponsor name"
-                            className="mt-1.5"
-                          />
+                          <>
+                            <SponsorDealPicker
+                              idea={idea}
+                              value={sponsorDeal}
+                              disabled={starting !== null}
+                              onChange={(sel) => {
+                                setSponsorDeal(sel);
+                                if (sel) {
+                                  setSponsorName(sel.brand);
+                                  if (!idea.trim() || idea === autoIdeaRef.current) {
+                                    autoIdeaRef.current = `${sel.angleInfo.title} — ${sel.angleInfo.premise}`;
+                                    setIdea(autoIdeaRef.current);
+                                  }
+                                  // The Brief box gets the video brief for this angle (editable). It replaces
+                                  // an earlier auto-filled one, never text Jake typed himself.
+                                  if (sel.videoBrief && (!brief.trim() || brief === autoBriefRef.current)) {
+                                    autoBriefRef.current = sel.videoBrief;
+                                    setBrief(sel.videoBrief);
+                                  }
+                                }
+                              }}
+                            />
+                            <Input
+                              value={sponsorName}
+                              onChange={(e) => setSponsorName(e.target.value)}
+                              placeholder="Sponsor name"
+                              className="mt-1.5"
+                            />
+                          </>
                         )}
                       </div>
 
@@ -2484,6 +2571,27 @@ export default function ScriptGeneratorPage() {
                       because that is the case where the research comes back
                       hedged and there is nothing to do about it afterwards.
                     */}
+                    {/* The UX Scout: the tool used for real before anything is written.
+                        Its report is attached to the run and its key screenshots join
+                        the screenshots below. Not for imported packs (their research
+                        is already done). */}
+                    {!run.stages?.imported && (
+                      <UxScoutPanel
+                        runId={run.runId}
+                        // Sponsored run: test exactly what the brief's angle needs, on the sponsor's tool.
+                        defaultGoal={(run.input.sponsorDeal && run.input.brief?.match(/^- Product moment: (.+)$/m)?.[1]) || cpCoreTopic || cpTitle}
+                        preferTool={run.input.sponsorDeal ? run.setup?.sponsorship?.sponsorName ?? run.input.sponsorship?.sponsorName ?? undefined : undefined}
+                        context={[`Working title: ${cpTitle}`, cpCoreTopic && `Core topic: ${cpCoreTopic}`, cpSpecificFocus && `Specific focus: ${cpSpecificFocus}`, run.input.brief && `Brief:\n${run.input.brief}`].filter(Boolean).join('\n')}
+                        onKeyShots={(refs) => setCpShots((prev) => {
+                          const have = new Set(prev.map((p) => p.id));
+                          return [...prev, ...refs.filter((r) => !have.has(r.id))].slice(0, 20);
+                        })}
+                        onActiveChange={setScoutActive}
+                        onReportChange={setScoutReport}
+                        disabled={continuing !== null}
+                      />
+                    )}
+
                     {/* A pack that carried its own UI check fills the screenshot
                         stage, so shots added here would be skipped — hide the
                         picker rather than take uploads that do nothing. */}
@@ -2617,7 +2725,8 @@ export default function ScriptGeneratorPage() {
                           key={m}
                           variant={m === requestedMode ? 'default' : 'outline'}
                           onClick={() => void confirmSetup(m)}
-                          disabled={continuing !== null || !cpTitle.trim()}
+                          disabled={continuing !== null || !cpTitle.trim() || scoutActive}
+                          title={scoutActive ? 'The UX Scout is still running — wait for its report (or stop it)' : undefined}
                         >
                           {continuing === m ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -2795,15 +2904,15 @@ export default function ScriptGeneratorPage() {
                             size="sm"
                             className="gap-1.5"
                             onClick={() => void exportToDocs()}
-                            disabled={!run.finalDocument || exportingDoc || !docs?.connected}
+                            disabled={!run.finalDocument || exportingDoc || !docs?.connected || !docs?.folderId}
                             title={
                               !docs?.configured
                                 ? "Add the Google Docs client ID and secret in Settings first"
                                 : !docs?.connected
-                                  ? "Connect Google Docs in Settings first"
+                                  ? "Connect Google Docs first"
                                   : docs.folderId
-                                    ? "Creates a numbered Google Doc from what is in the editor"
-                                    : "Choose the export folder in Settings first"
+                                    ? `Creates a numbered Google Doc in “${docs.folderName || 'the chosen folder'}” from what is in the editor`
+                                    : "Choose the export folder first"
                             }
                           >
                             {exportingDoc ? (
@@ -2813,6 +2922,36 @@ export default function ScriptGeneratorPage() {
                             )}
                             Google Doc
                           </Button>
+                          {docs?.configured && (
+                            <Button
+                              variant={docs.connected ? 'ghost' : 'default'}
+                              size="sm"
+                              className="gap-1.5"
+                              onClick={() => {
+                                window.location.href = docs.connectUrl ?? '/api/gdocs-oauth/start';
+                              }}
+                              title="Sign in to Google so scripts can be exported as Docs"
+                            >
+                              {docs.connected ? 'Reconnect Docs' : 'Connect Google Docs'}
+                            </Button>
+                          )}
+                          {docs?.connected && !docs.folderId && (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="max-w-[260px] gap-1.5"
+                              onClick={() => void chooseDocsFolder()}
+                              disabled={pickingFolder || !docs.pickerReady}
+                              title={
+                                docs.pickerReady
+                                  ? 'Browse the connected Google account’s Drive and pick the export folder'
+                                  : 'Add the Google Picker API key in Settings → Script Generator first'
+                              }
+                            >
+                              {pickingFolder ? <Loader2 className="h-4 w-4 animate-spin" /> : <FolderOpen className="h-4 w-4" />}
+                              <span className="truncate">{docs.folderId ? (docs.folderName ? `Folder: ${docs.folderName}` : 'Change folder') : 'Choose folder'}</span>
+                            </Button>
+                          )}
                         </div>
                       </div>
                       {run.finalDocument ? (

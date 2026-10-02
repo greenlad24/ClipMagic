@@ -10,7 +10,7 @@ Before finalizing the full script:
 - [ ] Short hook?
 - [ ] Short intro?
 - [ ] Large meat part with verified, current, step-by-step data?
-- [ ] Honest thoughts included?
+- [ ] Limits stated inside the step, no post-demo review (no verdict, recap, "what impressed me" or homework)?
 - [ ] Short call to action?
 - [ ] Whole script readable by a 14-year-old?
 
@@ -18,9 +18,8 @@ Before finalizing the full script:
 - [ ] No punch-sideways (no competitor / other-YouTuber / "better than X" references)?
 - [ ] No punch-down (no "if you've been doing this wrong")?
 - [ ] Humor at self or situation, never at viewer?
-- [ ] At most one story-shrapnel line (from `story-shrapnel-bank.md`)?
-- [ ] No credential monologue anywhere?
-- [ ] Welcome line ("Hey everyone, welcome back to the channel, I'm Jake Dawson, and let's dive right in.") at the END of the hook?
+- [ ] No backstory and no credential line anywhere (no past ventures, past jobs, track record)?
+- [ ] Welcome line ("Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it.") at the END of the hook? (It is fixed in code; the hooks are not in this script.)
 
 **Craft:**
 - [ ] Does the hook grab attention with drama / strong opening?
@@ -58,8 +57,8 @@ Before finalizing the full script:
 
 - **NO income claims** — no "$X/month," no "make money," no financial promises
 - **Broad audience** — solopreneurs + small business owners. Universal use cases whenever possible.
-- **"Exact prompts" format** — show the literal prompt, not just the concept. This is what gets views.
-- **Honest pros & cons** — Jake's brand is trust. Never oversell a tool.
+- **"Exact prompts" format** — show the literal prompt, not just the concept. This is what gets views. In the script it is short and conversational — one to three plain sentences naming the outcome.
+- **Honest pros & cons** — Jake's brand is trust. Never oversell a tool. Limits go inside the step, in one clause.
 - **No competitor mentions, ever** — no "better than [tool X]," no "unlike other [thing]." Talk about what *this* does.
 
 ---
@@ -68,13 +67,19 @@ Before finalizing the full script:
 
 These came from Jake's audits of real generated scripts he then edited by hand. Each names the rule it enforces.
 
-- **No credential in the opener.** One short line max, landing during the video, never at the top, never a monologue. (Rule 4.)
+- **No credential and no backstory, anywhere.** Not in the opener, not as a throwaway line mid-video, in any kind of video. Cut it and stitch the sentences. (Rule 4.)
+- **Nothing bracketed in the narration.** No `[VERIFY ON SCREEN: …]`, no `[SHOOT DAY: …]`, no "stopwatch this", no note to Jake. If a step names a control no source confirms, write it around the control ("click the button that creates your avatar") — never guess a button name. (Rule 13.)
+- **After the last result plays back: pricing (if any) → link line → one specific question + "Leave a comment down below — I read every one of them."** No verdict, recap, "what impressed me", "where it struggles", alternatives, "steal one habit", homework or "test it for a few more weeks" — cut them. (Rule 13.)
+- **Paragraphs end on the instruction or the fact.** Cut a closing tagline that restates it ("That's the whole trick.", "Done.", "Nothing spent.", "X, not Y."). (Rule 13.)
+- **A technical word the viewer must act on is named, defused and translated once** ("Now, that sounds scary. It's not. It's just…"), then called by its plain word. (Rule 7.)
+- **One protective tip per tool**, framed as a benefit; no stacked "check this, verify that" paragraphs, and no dramatised confusing step ("It's confident. It's wrong.") — flag it once with the exact label. (Rule 13.)
+- **No citing the vendor's pages** ("the page says", "their docs say", "let's open their pricing page") — say the fact. (Rule 11.)
 - **No banned word survives, in any form.** "caveat"/"caveats" (say "one thing to know" or "the catch"), "clever", "neat", "genuinely", "real deal", "which" (split the sentence or use "that"), "whether" (say "if"). Singular or plural, they get rewritten — not softened, removed. Also "Picture …" as an opener (Jake says "Imagine …"). (Rule 8.)
 - **"still" and "clip" are banned as nouns.** What the tool makes is an **image** and a **video** — the plain beginner noun, the same one every time, from the first mention to the export step. Never "a still", "four stills", "a still image", never "the clip" or "clips" for the finished file. The ADVERB "still" is fine and is Jake's own voice ("it's still free") — do not touch it. (Rule 8.)
 - **Is the tool called by its NAME after the hook** — never "this thing" / "the thing" once it's been named? (Rule 8. Fix by naming the tool, or the concrete noun: "the website", "the page".)
 - **The open after the hook is lean — it does NOT re-run the hook.** No roadmap-of-the-video preview, no second welcome or second credential, no separate "who this is for" list restating the audience the hook already named, and the tool's job explained ONCE, not three times. If a viewer could skip the whole stretch between the hook and the first real thing and miss nothing, cut it down until they couldn't. (Rule 9.)
 - **No section-announcements** ("let's talk money, this is the part everyone wants to know about") and no self-narrated honesty ("my real take, said once") — cut the label, keep the content. (Rule 10.)
-- **The newest figure won, and none of the bookkeeping leaked.** (Rule 11.) Four things to catch: the script using an older figure where the fact sheet has a newer one (swap it — newer always wins); a figure the fact sheet listed under OLDER — SAY HOW OLD spoken flat, as if it were today's (don't cut it, date it — "last published price was $10, back in early 2025"); a verification date read out loud as if it were dialogue — "twenty euros a month, verified September 2026" — that's a note to the writer, not a line to record (cut the parenthetical, keep the fact, unless the date itself is the point); and any hedge that dates the SPEAKER instead of the fact — "as of my last update", "at the time of writing", "I believe it's currently" (say it plainly or cut it).
+- **The newest figure won, and none of the bookkeeping leaked.** (Rule 11.) Four things to catch: the script using an older figure where the fact sheet has a newer one (swap it — newer always wins); a figure the fact sheet listed under OLDER — SAY HOW OLD spoken in the narration at all (cut it — Jake removes "last I could find…" lines; an older figure is left out rather than spoken with its age); a verification date read out loud as if it were dialogue — "twenty euros a month, verified September 2026" — that's a note to the writer, not a line to record (cut the parenthetical, keep the fact, unless the date itself is the point); and any hedge that dates the SPEAKER instead of the fact — "as of my last update", "at the time of writing", "I believe it's currently" (say it plainly or cut it).
 - **No AI-register phrasing.** These are measured against Jake's own scripts and appear in none of them: "what nobody tells you", "nobody talks about this", "here's the kicker", "here's where it gets crazy/wild", "the uncomfortable truth", "plot twist", "let that sink in", "it's worth noting", "it's important to note", "at the end of the day", "in today's world", "going forward", "in terms of", "delve into", "paradigm shift", "game-changer", "supercharge", "this changes everything", "move the needle", "ever-evolving", "multifaceted", "meticulous", "paramount", "transformative", "cutting-edge", "utilize", "streamline", "leverage", "facilitate", "robust", "experts agree", "studies show", "in conclusion", "underscores", "showcases". Cut the phrase and state the fact, the mechanism, or what changed on screen. Do not swap in a fancier synonym. (Rule 12.)
   NOTE what is NOT on that list and must NOT be "fixed": em dashes, and the words "just", "actually", "honestly", "simply" and "literally". Jake uses all of them more than the generator does. They are his voice, not slop.
 - **Smallest edit that does the job.** (Rule 12.) The amount of editing matches the amount of actual damage. Leave strong human sentences alone; keep fragments, digressions, self-corrections and repeated plain nouns when they read as deliberate. Invent nothing — no fact, number, quote or opinion that was not already there. And do not manufacture findings: if a check is clean, report it clean. A review that invents work to look thorough makes the script worse and nothing downstream can tell.
@@ -99,7 +104,7 @@ Respond as STRICT JSON only (no markdown):
     "noLiftedLines": boolean,       // nothing copied verbatim from the exemplar scripts (boilerplate aside)
     "noSectionAnnouncement": boolean, // no "let's talk money…" / "my real take, said once" (rule 10)
     "toolNamedNotVague": boolean,   // tool called by name after the hook, not "this thing" (rule 8)
-    "noStaleFacts": boolean,        // newest figure used where one exists, older ones spoken with their age, no verification dates read aloud (rule 11)
+    "noStaleFacts": boolean,        // newest figure used where one exists, older ones left out, no verification dates read aloud (rule 11)
     "noSlopPhrasing": boolean       // no AI-register phrasing left (rule 12) — em dashes and "just"/"actually"/"honestly" are NOT slop
   }
 }

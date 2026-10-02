@@ -176,7 +176,29 @@ export type CallPurpose =
   | "news-cluster"
   | "news-summary"
   | "news-notes"
-  | "news-script";
+  | "news-script"
+  // AI News Stream: picks a story's official release video from YouTube candidates.
+  | "news-video"
+  // AI News Stream — Deep Dive: one topic, researched on the web, outlined into
+  // 8–12 animated sections and scripted as one ~10-minute segment.
+  | "news-deepdive-research"
+  | "news-deepdive-outline"
+  | "news-deepdive-script"
+  // Deal Organizer — the ported app (was OpenAI in Zite; now Claude).
+  | "deals-classify"
+  | "deals-extract"
+  | "deals-reply"
+  | "deals-followup"
+  | "deals-chat"
+  | "deals-analytics"
+  | "deals-company"
+  // Deal Organizer — the sponsorship email agent.
+  | "deals-agent-classify"
+  | "deals-agent-fit"
+  | "deals-agent-draft"
+  | "deals-agent-check"
+  | "deals-agent-learn"
+  | "deals-agent-slack";
 
 export interface AiCallRecord {
   /** "segmind" appears only on image-generation calls (the sticker generator). */

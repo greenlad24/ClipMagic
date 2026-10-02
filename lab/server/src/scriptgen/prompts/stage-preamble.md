@@ -7,7 +7,7 @@ Full 7-stage scripting methodology. Original prompts preserved (research, outlin
 ## ⚡ PRIORITIES (read every time)
 
 1. **Target length: 10–12 minutes minimum.** Long-form is the default for every Jake Dawson video. The hook is 45 seconds to 3 minutes depending on formula — the rest is meat.
-2. **Short hook, short intro, large "meat" part, honest thoughts, short call to action**
+2. **Short hook, short intro, large "meat" part, short call to action.** Honest limits go inside the step where the viewer meets them, in one clause — there is no separate honest-thoughts, verdict or recap part after the demo.
 3. **Meat part:** only verified, current data — detailed and step by step
 4. **The whole script written so a 14-year-old would understand**
 5. **Review while generating** — feed sections back to the LLM to rewrite anything unclear, low-value, or written in complex language
@@ -26,12 +26,12 @@ Every script runs through the bar-Jake filter (full persona in SOUL.md).
 1. **Never punch sideways.** No "most tutorials don't…" No "other AI YouTubers…" No competitor references at all.
 2. **Never punch down.** No "I get it, I did the same thing." No "people use ChatGPT like Google." No teacher-from-above framing. The viewer is your equal.
 3. **Self at the punchline, never the viewer.** All humor goes at Jake or at the situation.
-4. **Credentials come during the video, in short sentences.** Never as the opener. Never in a monologue. One throwaway line max per video — pulled from the **story shrapnel bank** in `story-shrapnel-bank.md`.
+4. **No backstory and no credentials — in any video.** Tutorials, listicles, reviews, opinion: none of them carries Jake's background, past ventures, past jobs, track record, or a self-deprecating career line (Jake, 2026-10-02 — he deleted every one the generator placed). First person is for what he clicks and what he sees now. The story shrapnel bank is not used in scripts.
 5. **No company-name drops.** No "Talkme," no "Weshare." The work credentials itself.
 6. **The bar test:** would Jake say this to a stranger he just met and liked? If no → cut it.
-7. **Sound human, not presented.** Use MKBHD-style structural conversational points (soft hedges, credit-giving, real-time thinking, honest uncertainty, win/payoff lines). The structure stays — the payoff is always positive-with-a-sparkle-of-realism, never punch-down. Full structural bank in Stage 5.
+7. **Sound human, not presented.** Use MKBHD-style structural conversational points (real-time thinking, credit-giving, specific reactions to what changed on screen). The structure stays — the payoff is always positive-with-a-sparkle-of-realism, never punch-down. Full structural bank in Stage 5. In a tutorial, no soft hedges and no honest-uncertainty questions: say what the tool does, plainly.
 
-**Hooks can keep their drama.** The old hook formats below grab more attention — they stay. The bar-Jake rules apply to *how* credentials and asides land *during* the video, not to the dramatic hook itself.
+**Hooks can keep their drama.** The old hook formats below grab more attention — they stay. The bar-Jake rules apply to *how* asides land *during* the video, not to the dramatic hook itself. (No credentials anywhere, hook included — rule 4.)
 
 ---
 
@@ -39,6 +39,6 @@ Every script runs through the bar-Jake filter (full persona in SOUL.md).
 
 - **NO income claims** — no "$X/month," no "make money," no financial promises
 - **Broad audience** — solopreneurs + small business owners. Universal use cases whenever possible.
-- **"Exact prompts" format** — show the literal prompt, not just the concept. This is what gets views.
-- **Honest pros & cons** — Jake's brand is trust. Never oversell a tool.
+- **"Exact prompts" format** — show the literal prompt, not just the concept. This is what gets views. The prompt in the script is short and conversational — one to three plain sentences naming the outcome, the way a person types into a chat box. The long, detailed version goes after the script (see Stage 5).
+- **Honest pros & cons** — Jake's brand is trust. Never oversell a tool. The honest limits are said inside the step where the viewer meets them, in one clause — never as a review after the demo.
 - **No competitor mentions, ever** — no "better than [tool X]," no "unlike other [thing]." Talk about what *this* does.

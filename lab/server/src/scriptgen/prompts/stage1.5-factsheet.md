@@ -29,7 +29,7 @@ Every price, tier, version, and statistic gets a verification date in parenthese
 
 - Dated **[RECENT WINDOW]** or later → current. It goes under its normal heading and the script may state it flatly.
 - Dated between **[ONE YEAR AGO]** and **[RECENT WINDOW]** → same headings, and the date is not optional on that line.
-- Dated **before [ONE YEAR AGO]**, or undated and clearly old → it still goes under its normal heading, and it ALSO gets listed under OLDER — SAY HOW OLD, so the writer knows to speak it with its age.
+- Dated **before [ONE YEAR AGO]**, or undated and clearly old → it still goes under its normal heading, and it ALSO gets listed under OLDER — SAY HOW OLD, so the writer knows it is old and leaves it out of the narration.
 
 **Where you have two figures for the same thing, the newer one is the fact and the older one is the history.** Put the newer under the normal heading; mention the older on the same line where the change is worth knowing ("$29/month (July 2026) — was $19 (November 2025)"). Never let an older figure sit above a newer one.
 
@@ -73,20 +73,20 @@ Plain markdown, no preamble. Use exactly these headings, and omit a heading only
 
 You are given three things, and they are not equal. In descending order of authority:
 
-**1. THE SCREENSHOT SHEET — what Jake photographed himself, today.**
-The newest evidence that exists in this run, and the only evidence of what the product looks like right now. **It wins over everything else on anything it actually shows** — labels, prices, tiers, limits, states, all of it. Where it disagrees with the videos or the research, it is right and they are out of date. Carry its `[S3]` citations onto the lines you build from it.
+**1. THE UX SCOUT REPORT AND THE SCREENSHOT SHEET — the tool used and photographed on Jake's account, today.**
+The newest evidence that exists in this run, and the only evidence of what the product does right now. **It wins over everything else on anything it covers** — the path, labels, settings, timings, results, paywalls, prices, tiers, limits, all of it. Where it disagrees with the research or the tutorials, it is right and they are out of date. Carry its `[K3]` / `[S3]` citations onto the lines you build from it.
 
-This is the one source whose numbers beat the written research. A price read off the live pricing page today is not a report of a price — it is the price.
+A price read off the live pricing page today is not a report of a price — it is the price. **Where the Scout read a page today and says something is NOT stated or unclear** (which plan is the minimum for a feature, what a credit buys), that stays open: put it under DO NOT CLAIM even if an older page in the research seems to answer it.
 
-**2. THE WORKFLOW SHEET — recent video tutorials, people recorded doing the thing.**
-An article describes a product from the outside, often written once and never revisited. A recording published this month shows the product as it was that month. Wins over the research on: what the product does, how a job runs start to finish, what happens at each step, click paths, menu names, button labels, the order of steps, values typed. Copy its labels exactly and carry its `[V2 @ 7:41]` citations.
+**2. THE WRITTEN RESEARCH.**
+Only for what a hands-on test cannot see: company facts, dates, what changed recently, and numbers the Scout and the screenshots do not show. It never outranks the Scout or a screenshot. Drop anything about a different product that merely shares the name.
 
-**3. THE WRITTEN RESEARCH.**
-Wins on prices, tiers, limits and statistics **only where the screenshots do not show them** — tutorials quote figures from memory and go stale fastest, so the written web outranks a video on a number. It never outranks a screenshot.
+**3. THE TUTORIAL SHEET — angles and product insights from tutorials about this exact product.**
+It never supplies a step, a label, a price or a number. Its insights marked CONFIRMED BY THE SCOUT may be listed as facts; NOT CHECKED ones go under DO NOT CLAIM; CONTRADICTED ones are dropped.
 
 **Where two sources disagree, the higher one is right. Say what it shows and drop the lower claim — never average them into a hedge.**
 
-Anything the screenshot sheet lists under WHAT THESE SHOTS DO NOT SHOW, and anything the video sheet lists under NOT SHOWN, stays unconfirmed here — put it under DO NOT CLAIM rather than smoothing over it. A gap in the screenshots is not evidence in either direction.
+Anything the Scout lists under NOT TESTED / COULD NOT CONFIRM, and anything the screenshot sheet lists under WHAT THESE SHOTS DO NOT SHOW, stays unconfirmed here — put it under DO NOT CLAIM rather than smoothing over it. A gap in the screenshots is not evidence in either direction.
 
 **Where only one source has something:** use it, and let the line say where it came from.
 
@@ -109,7 +109,7 @@ VIDEO TITLE: [INSERT TITLE]
 THE SCREENSHOT SHEET (Jake's own screenshots, taken today — the HIGHEST authority here):
 [PASTE THE SCREENSHOT SHEET]
 
-THE WORKFLOW SHEET (from recent video tutorials — the primary source for how the product works):
+THE TUTORIAL SHEET (angles and product insights only — never a step, label or number):
 [PASTE THE VIDEO WORKFLOWS]
 
 THE RESEARCH:

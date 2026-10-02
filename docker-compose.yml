@@ -122,15 +122,13 @@ services:
       #     outline, hooks, sections, reviews). This is the A/B dial.
       #   SCRIPTGEN_MECHANICAL_MODEL — the four stages that pass
       #     `thinking: false` (classify, fact-sheet extract, reading-level
-      #     rewrite, video selection). PINNED to 4.8: those stages turn thinking
-      #     off by OMITTING the field, and an omitted `thinking` means "off" on
-      #     Opus 4.8 but "adaptive thinking ON" on Opus 5 — pointing them at
-      #     Opus 5 would silently bill thinking as output on stages picked for
-      #     having nothing to reason about.
-      # Both models are priced identically ($5/$25 per MTok), so a mixed run's
-      # cost accounting and the SCRIPTGEN_MAX_USD ceiling stay correct.
-      SCRIPTGEN_MODEL: ${SCRIPTGEN_MODEL:-claude-opus-4-8}
-      SCRIPTGEN_MECHANICAL_MODEL: ${SCRIPTGEN_MECHANICAL_MODEL:-claude-opus-4-8}
+      #     rewrite, video selection). Opus 5.5 cannot switch thinking off, so
+      #     opusScriptChat sends those stages effort LOW (and every thinking
+      #     stage effort HIGH — 5.5 defaults to medium).
+      # Both on Opus 5.5 since 2026-10-02 (Jake). The scriptgen cost tally and
+      # the SCRIPTGEN_MAX_USD ceiling price each model (ai/claude.ts rateFor).
+      SCRIPTGEN_MODEL: ${SCRIPTGEN_MODEL:-claude-opus-5-5}
+      SCRIPTGEN_MECHANICAL_MODEL: ${SCRIPTGEN_MECHANICAL_MODEL:-claude-opus-5-5}
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data

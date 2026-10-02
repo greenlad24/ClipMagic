@@ -38,6 +38,13 @@ interface Turn {
    * thing in it.
    */
   images?: LabeledImage[];
+  /**
+   * PDF documents read by Claude itself (Jake 2026-10-02: the sponsor-deal
+   * reader scans contracts and briefs; no PDF library on the box, and Claude
+   * reads scanned pages too). Same placement as images: after the prompt, each
+   * announced by its label.
+   */
+  documents?: Array<{ label?: string; mediaType: "application/pdf"; data: string }>;
 }
 
 /**
@@ -348,8 +355,19 @@ function backoff(attempt: number): number {
 async function callClaude(opts: {
   model: string;
   system: string;
+  /**
+   * Uncached system text sent AFTER the cached `system` block. Use it for the
+   * part that varies between otherwise-identical calls (e.g. per-stage notes),
+   * so the large shared prefix keeps hitting the prompt cache.
+   */
+  systemTail?: string;
   messages: Turn[];
   jsonMode?: boolean;
+  /**
+   * `output_config.effort`. Needed on Claude Sonnet 5.5 / Opus 5.5, where thinking
+   * is ON by default (billed as output) — set it low for classification/extraction.
+   */
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Purpose for per-run accounting (so the optimization report can attribute cost). */
   purpose?: CallPurpose;
   /**
@@ -370,6 +388,10 @@ async function callClaude(opts: {
    * keep it alive — the same trap the scriptgen research stage already hit.
    */
   webSearch?: boolean;
+  /** How many searches a web-search call may run. Defaults to 4. */
+  searchMaxUses?: number;
+  /** Cap on the answer length. Defaults to the lab-wide aiConfig.maxTokens. */
+  maxTokens?: number;
 }): Promise<string> {
   const auth: AuthMode = opts.auth ?? "api";
   if (auth === "subscription" && !anthropicSubscriptionConfigured()) {
@@ -386,25 +408,30 @@ async function callClaude(opts: {
     );
   }
 
-  const system = opts.jsonMode
-    ? `${opts.system}\n\nIMPORTANT: Respond with ONLY the raw JSON object. No markdown, no code fences, no commentary.`
-    : opts.system;
+  const jsonNote = "\n\nIMPORTANT: Respond with ONLY the raw JSON object. No markdown, no code fences, no commentary.";
+  const tail = opts.systemTail?.trim() ? opts.systemTail : undefined;
+  // With a tail, the JSON note goes at the very end so the cached prefix stays byte-stable.
+  const system = opts.jsonMode && !tail ? `${opts.system}${jsonNote}` : opts.system;
 
-  // Prompt-cache the (large, reused) system prompt.
+  // Prompt-cache the (large, reused) system prompt; an uncached tail follows it.
   const systemBlocks = system
-    ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+    ? [
+        { type: "text", text: system, cache_control: { type: "ephemeral" } },
+        ...(tail ? [{ type: "text", text: opts.jsonMode ? `${tail}${jsonNote}` : tail }] : []),
+      ]
     : undefined;
 
   const body: Record<string, unknown> = {
     model: opts.model,
-    max_tokens: aiConfig.maxTokens,
+    max_tokens: opts.maxTokens ?? aiConfig.maxTokens,
     ...(systemBlocks ? { system: systemBlocks } : {}),
     messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
+    ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
   };
   if (opts.webSearch) {
     // Four, not scriptgen's eight: this is one member's question, not a tool
     // review that has to price every tier, and every search is billed and slow.
-    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 4 }];
+    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: opts.searchMaxUses ?? 4 }];
   }
 
   const t0 = Date.now();
@@ -496,6 +523,8 @@ export async function opusScriptChat(opts: {
   effort?: "low" | "medium" | "high" | "xhigh" | "max";
   /** Shows up in the [scriptgen:usage] log line. */
   label?: string;
+  /** Throw (instead of returning the cut-off text) when the answer hits maxTokens. */
+  failOnTruncation?: boolean;
   /**
    * If provided, web-search sources are appended here (deduped by URL). The
    * server-side search returns its results in `web_search_tool_result` blocks
@@ -509,14 +538,20 @@ export async function opusScriptChat(opts: {
   if (!anthropicConfigured()) {
     throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY to use the Script Generator.");
   }
-  // Which model runs this stage depends on whether it thinks. The mechanical
-  // stages stay on 4.8 because `thinking: false` is implemented by OMITTING the
-  // field below, and an omitted `thinking` means "no thinking" on Opus 4.8 but
-  // "adaptive thinking ON" on Opus 5. See aiConfig.scriptgenModels.
+  // Which model runs this stage depends on whether it thinks. `thinking: false`
+  // is implemented by OMITTING the field below: "no thinking" on Opus 4.8, but
+  // "adaptive thinking ON" on Opus 5 / 5.5. See aiConfig.scriptgenModels.
   const model =
     opts.thinking === false
       ? aiConfig.scriptgenModels.mechanical
       : aiConfig.scriptgenModels.thinking;
+  // Opus 5.5 (Jake 2026-10-02: the generator runs on it) cannot turn thinking
+  // off at all — `thinking: {type: "disabled"}` is a 400 — and its default
+  // effort is MEDIUM, one below the HIGH every stage was tuned at on Opus 5.
+  // So: mechanical stages ask for LOW effort (as close to "no thinking" as it
+  // goes), and thinking stages that don't name an effort keep HIGH.
+  const opus55 = /^claude-opus-5-5\b/.test(model);
+  const effort = opts.effort ?? (opus55 ? (opts.thinking === false ? "low" : "high") : undefined);
   // One cache breakpoint, on the LAST system block: the whole system prefix is
   // cached together. Everything before it must be byte-stable across the batch.
   const texts = [opts.system, ...(opts.systemExtra ?? [])].filter((t) => t && t.trim());
@@ -532,13 +567,13 @@ export async function opusScriptChat(opts: {
     max_tokens: opts.maxTokens ?? 16000,
     ...(opts.thinking === false ? {} : { thinking: { type: "adaptive" } }),
     // `effort` lives inside output_config, not at the top level.
-    ...(opts.effort ? { output_config: { effort: opts.effort } } : {}),
+    ...(effort ? { output_config: { effort } } : {}),
     ...(systemBlocks ? { system: systemBlocks } : {}),
     // A turn with images becomes a content-block array; a plain turn stays a
     // string, so every existing call sends exactly the bytes it sent before.
     messages: opts.messages.map((m) => ({
       role: m.role,
-      content: m.images?.length ? imageTurnBlocks(m) : m.content,
+      content: m.images?.length || m.documents?.length ? imageTurnBlocks(m) : m.content,
     })),
   };
   if (opts.webSearch) {
@@ -581,6 +616,14 @@ export async function opusScriptChat(opts: {
   // the truncated text and the run carries on without that pass. That is a
   // silent quality loss unless it is said out loud here.
   if ((json as { stop_reason?: string }).stop_reason === "max_tokens") {
+    // A stage whose output is a PLAN for everything after it (the outline) must
+    // not be carried forward half-written: on 2026-10-02 a cut-off outline ended
+    // at "## ⏱️ SETUP F" and the run went on to draft a script from it.
+    if (opts.failOnTruncation) {
+      throw new Error(
+        `${opts.label ?? "scriptgen"} hit its ${opts.maxTokens ?? 16000}-token output cap before finishing — nothing was kept. Resume the run to try again.`,
+      );
+    }
     console.warn(
       `[scriptgen:truncated] ${opts.label ?? "scriptgen"} hit its ${opts.maxTokens ?? 16000}-token output cap ` +
         `and was cut off mid-answer. Whatever this stage produces is incomplete.`,
@@ -636,6 +679,10 @@ function imageTurnBlocks(turn: Turn): Array<Record<string, unknown>> {
       source: { type: "base64", media_type: im.mediaType, data: im.data },
     });
   }
+  for (const doc of turn.documents ?? []) {
+    if (doc.label) blocks.push({ type: "text", text: doc.label });
+    blocks.push({ type: "document", source: { type: "base64", media_type: doc.mediaType, data: doc.data } });
+  }
   return blocks;
 }
 
@@ -684,6 +731,16 @@ const scriptgenTally = { calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite
  */
 const OPUS_IN = 5 / 1_000_000;
 const OPUS_OUT = 25 / 1_000_000;
+/**
+ * Per-model $/token for the scriptgen tally (Jake 2026-10-02: the generator runs
+ * on Opus 5.5, which is cheaper: $4/$20, cache reads $0.20, writes $5). Unknown
+ * models fall back to the Opus 5 / 4.8 price, so the $12 ceiling can only err
+ * on the cautious side.
+ */
+const SCRIPTGEN_RATES: Record<string, { in: number; out: number; cacheRead: number; cacheWrite: number }> = {
+  "claude-opus-5-5": { in: 4 / 1e6, out: 20 / 1e6, cacheRead: 0.2 / 1e6, cacheWrite: 5 / 1e6 },
+};
+const rateFor = (model: string) => SCRIPTGEN_RATES[model] ?? { in: OPUS_IN, out: OPUS_OUT, cacheRead: OPUS_IN * 0.1, cacheWrite: OPUS_IN * 1.25 };
 
 function logScriptgenUsage(
   label: string,
@@ -696,8 +753,8 @@ function logScriptgenUsage(
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
-  // Cache reads bill at ~0.1x input, writes at ~1.25x.
-  const cost = input * OPUS_IN + output * OPUS_OUT + cacheRead * OPUS_IN * 0.1 + cacheWrite * OPUS_IN * 1.25;
+  const r = rateFor(model);
+  const cost = input * r.in + output * r.out + cacheRead * r.cacheRead + cacheWrite * r.cacheWrite;
 
   scriptgenTally.calls++;
   scriptgenTally.input += input;
@@ -811,11 +868,16 @@ export async function claudeJSONWithModel(opts: {
   model: string;
   purpose: CallPurpose;
   system: string;
+  /** Uncached system text after the cached `system` block (see callClaude). */
+  systemTail?: string;
   messages: Turn[];
+  effort?: "low" | "medium" | "high" | "xhigh" | "max";
 }): Promise<string> {
   const raw = await callClaude({
     model: opts.model,
     system: opts.system,
+    systemTail: opts.systemTail,
+    effort: opts.effort,
     messages: opts.messages,
     jsonMode: true,
     purpose: opts.purpose,
@@ -864,6 +926,11 @@ export async function claudeTextForPurpose(opts: {
   system: string;
   messages: Turn[];
   auth?: AuthMode;
+  /** Optional answer-length cap (e.g. the Deal Organizer chat keeps Zite's 2,500). */
+  maxTokens?: number;
+  /** Server-side web search before answering (streams; never retried). */
+  webSearch?: boolean;
+  searchMaxUses?: number;
 }): Promise<string> {
   return await callClaude({
     model: modelForTier(opts.tier),
@@ -871,6 +938,9 @@ export async function claudeTextForPurpose(opts: {
     messages: opts.messages,
     purpose: opts.purpose,
     auth: opts.auth,
+    maxTokens: opts.maxTokens,
+    webSearch: opts.webSearch,
+    searchMaxUses: opts.searchMaxUses,
   });
 }
 
@@ -1114,4 +1184,163 @@ export function extractJson(text: string): string {
     if (end > start) t = t.slice(start, end + 1);
   }
   return t;
+}
+
+/* ── Streaming tool-use turn (additive — Deal Organizer chat, 2026-09-30) ──────
+ *
+ * ONE Messages API call with client-side tools, streamed: text deltas go to
+ * `onText` as they arrive, tool_use blocks come back with their input parsed.
+ * The caller runs the tools and loops (see deals/chatAgent.ts). Nothing above
+ * this line was changed; existing helpers behave exactly as before.
+ *
+ *   - system: text blocks; `cache: true` puts a cache_control breakpoint on it
+ *     (tools + that prefix are cached together).
+ *   - cacheLastMessage: a second breakpoint on the last message block, so the
+ *     growing conversation is cached across the rounds of one turn.
+ *   - toolChoice "none": the model must answer in text (final round / budget).
+ *
+ * Retried once only when the request is refused before anything streamed
+ * (429/529/5xx — nothing billed yet); a stream that breaks mid-way is not.
+ */
+export type ToolTurnBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
+
+export interface ToolTurnResult {
+  content: ToolTurnBlock[];
+  stopReason?: string;
+  usage: AnthropicUsage;
+  ms: number;
+}
+
+export async function claudeToolStreamTurn(opts: {
+  model: string;
+  purpose: CallPurpose;
+  system: Array<{ text: string; cache?: boolean }>;
+  tools: Array<{ name: string; description: string; input_schema: Record<string, unknown> }>;
+  messages: Array<{ role: "user" | "assistant"; content: unknown }>;
+  maxTokens?: number;
+  toolChoice?: "auto" | "none";
+  cacheLastMessage?: boolean;
+  onText?: (delta: string) => void;
+}): Promise<ToolTurnResult> {
+  if (!anthropicConfigured()) {
+    throw new Error("No Anthropic credentials set. Add ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN).");
+  }
+  const messages = opts.messages.map((m) => ({ role: m.role, content: m.content }));
+  if (opts.cacheLastMessage && messages.length) {
+    const last = messages[messages.length - 1];
+    const blocks: Array<Record<string, unknown>> = typeof last.content === "string"
+      ? [{ type: "text", text: last.content }]
+      : (Array.isArray(last.content) ? (last.content as Array<Record<string, unknown>>).map((b) => ({ ...b })) : []);
+    if (blocks.length) {
+      blocks[blocks.length - 1] = { ...blocks[blocks.length - 1], cache_control: { type: "ephemeral" } };
+      messages[messages.length - 1] = { role: last.role, content: blocks };
+    }
+  }
+  const body: Record<string, unknown> = {
+    model: opts.model,
+    max_tokens: opts.maxTokens ?? 4096,
+    system: opts.system.map((s) => ({ type: "text", text: s.text, ...(s.cache ? { cache_control: { type: "ephemeral" } } : {}) })),
+    messages,
+    stream: true,
+  };
+  if (opts.tools.length) {
+    body.tools = opts.tools;
+    body.tool_choice = { type: opts.toolChoice ?? "auto" };
+  }
+
+  const label = "Claude tool-stream API error";
+  const t0 = Date.now();
+  let res: Response | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      res = await fetch(`${aiConfig.anthropicBaseUrl}/v1/messages`, {
+        method: "POST",
+        headers: anthropicHeaders("api"),
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      throw new Error(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (res.ok && res.body) break;
+    const retryable = res.status === 429 || res.status === 529 || (res.status >= 500 && res.status < 600);
+    if (retryable && attempt < 2) {
+      await res.text().catch(() => "");
+      await sleep(backoff(attempt) + 1000);
+      continue;
+    }
+    const json = (await res.json().catch(() => ({}))) as AnthropicResponse;
+    throw new Error(`${label} (${res.status}): ${json?.error?.message || JSON.stringify(json)}`);
+  }
+  if (!res || !res.body) throw new Error(`${label}: no response body`);
+
+  const blocks: Array<Record<string, any>> = [];
+  const partialJson: Record<number, string> = {};
+  let usage: AnthropicUsage = {};
+  let stopReason: string | undefined;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split("\n");
+    buf = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      let ev: Record<string, any>;
+      try { ev = JSON.parse(payload); } catch { continue; }
+      switch (ev.type) {
+        case "message_start":
+          usage = { ...usage, ...(ev.message?.usage ?? {}) };
+          break;
+        case "content_block_start": {
+          const b = { ...(ev.content_block ?? {}) };
+          if (b.type === "text" && typeof b.text !== "string") b.text = "";
+          if (b.type === "tool_use") partialJson[ev.index] = "";
+          blocks[ev.index] = b;
+          break;
+        }
+        case "content_block_delta": {
+          const b = blocks[ev.index];
+          if (!b) break;
+          if (ev.delta?.type === "text_delta") {
+            const d = String(ev.delta.text ?? "");
+            b.text = `${b.text ?? ""}${d}`;
+            if (d) { try { opts.onText?.(d); } catch { /* a closed client never breaks the stream */ } }
+          } else if (ev.delta?.type === "input_json_delta") {
+            partialJson[ev.index] = `${partialJson[ev.index] ?? ""}${ev.delta.partial_json ?? ""}`;
+          }
+          break;
+        }
+        case "content_block_stop": {
+          const b = blocks[ev.index];
+          if (b?.type === "tool_use") {
+            const raw = partialJson[ev.index] ?? "";
+            try { b.input = raw.trim() ? JSON.parse(raw) : {}; } catch { b.input = {}; }
+          }
+          break;
+        }
+        case "message_delta":
+          usage = { ...usage, ...(ev.usage ?? {}) };
+          stopReason = ev.delta?.stop_reason ?? stopReason;
+          break;
+        case "error":
+          throw new Error(`${label}: ${ev.error?.message ?? "stream error"}`);
+      }
+    }
+  }
+  const ms = Date.now() - t0;
+  recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage, ms });
+  recordScopedUsage({ model: opts.model, purpose: opts.purpose, usage, ms });
+  const content: ToolTurnBlock[] = [];
+  for (const b of blocks.filter(Boolean)) {
+    if (b.type === "text") content.push({ type: "text", text: String(b.text ?? "") });
+    else if (b.type === "tool_use") content.push({ type: "tool_use", id: String(b.id), name: String(b.name), input: (b.input ?? {}) as Record<string, unknown> });
+  }
+  return { content, stopReason, usage, ms };
 }

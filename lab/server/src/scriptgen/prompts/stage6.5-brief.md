@@ -29,7 +29,7 @@ Every sentence you write must survive Jake's rules. The brief NEVER overrides th
 - Humor at self or the situation only.
 - No income claims ("$X/month," "make money"). No company-name drops.
 - 14-year-old reading level. Contractions. Short sentences.
-- At most one story-shrapnel line in the whole script; never add a credential monologue.
+- No backstory or credentials anywhere in the script; never add one.
 - Never add or move a call to action. The CTAs are already placed and are not yours to touch.
 
 ---

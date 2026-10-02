@@ -106,9 +106,12 @@ export const aiConfig = {
    *    about. Keeping them here needs no `thinking: {type:"disabled"}` and no
    *    behaviour change on a model already measured.
    */
+  // Both on Opus 5.5 since 2026-10-02 (Jake: "the script generator should run
+  // on Opus 5.5"). On 5.5 the mechanical stages can't switch thinking off, so
+  // opusScriptChat asks them for LOW effort instead (see there).
   scriptgenModels: {
-    thinking: process.env.SCRIPTGEN_MODEL || "claude-opus-4-8",
-    mechanical: process.env.SCRIPTGEN_MECHANICAL_MODEL || "claude-opus-4-8",
+    thinking: process.env.SCRIPTGEN_MODEL || "claude-opus-5-5",
+    mechanical: process.env.SCRIPTGEN_MECHANICAL_MODEL || "claude-opus-5-5",
   },
 
   maxTokens: Number.parseInt(process.env.CLAUDE_MAX_TOKENS || "8192", 10),

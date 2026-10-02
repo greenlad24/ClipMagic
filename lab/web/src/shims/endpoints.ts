@@ -550,6 +550,10 @@ export interface ScriptInput {
   targetLength?: string;
   /** Screenshots taken today — the highest authority in the run. */
   screenshots?: ScreenshotRef[];
+  /** A finished UX Scout job whose report the run is built on. */
+  uxScoutJobId?: string;
+  /** A sponsored video built from a Deal Organizer deal + the angle Jake picked. */
+  sponsorDeal?: { dealId: string; briefId: string; angle: number };
 }
 export type ScriptVideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
 /** "outline" stops the run once the outline exists; "full" writes the video. */
@@ -641,6 +645,8 @@ export interface ScriptStages {
   sources: ScriptSource[];
   /** Stage 0.4 — what Jake's own screenshots showed. Top of the evidence order. */
   screenshotSheet?: string | null;
+  /** The UX Scout report the run was built on (null = attached but unreadable). */
+  uxReport?: string | null;
   /** The screenshots that sheet was built from. */
   screenshotRefs?: ScreenshotRef[];
   /** Stage 1 — whether the research ever opened a vendor page. */
@@ -776,6 +782,25 @@ export const uploadScriptShots =
 export const attachScriptShots =
   endpoint<{ runId: string; screenshots: ScreenshotRef[] }, { count: number }>("attachScriptShots");
 
+/* Sponsored scripts from a Deal Organizer deal */
+export interface SponsorDealOption { id: string; name: string; client: string; brand: string | null; stage: string; updatedAt: string | null }
+export interface DealAngle { title: string; premise: string; hook: string; productMoment: string; why: string; risk: string; bestFor: string }
+/** The read as the UI sees it: only what is about the video (no fee, dates, people or negotiation). */
+export interface DealBrief {
+  /** The brand's own brief as they sent it (null when they never sent one). */
+  brandBrief: string | null;
+  sponsor: { brand: string; product: string; website: string | null; whatItDoes: string; offer: string | null; links: string[]; codes: string[] };
+  brief: { keyMessages: string[]; mustSay: string[]; mustShow: string[]; mustNotSay: string[]; cta: string | null; disclosure: string | null; targetAudience: string | null; tone: string | null };
+  contentRules: string[]; gaps: string[]; summary: string; angles: DealAngle[];
+  /** Per angle: the ready-to-edit video brief for the form's Brief field. */
+  videoBriefs: string[];
+}
+export interface DealBriefSource { kind: string; label: string; read: boolean; note?: string }
+export interface DealBriefJob { id: string; dealId: string; status: 'running' | 'done' | 'failed'; progress: string | null; result: DealBrief | null; sources: DealBriefSource[]; error: string | null; createdAt: string; finishedAt: string | null }
+export const searchSponsorDeals = endpoint<{ q?: string }, { deals: SponsorDealOption[] }>("searchSponsorDeals");
+export const startDealBrief = endpoint<{ dealId: string; idea?: string; fresh?: boolean }, { briefId: string; reused: boolean }>("startDealBrief");
+export const getDealBrief = endpoint<{ briefId: string }, DealBriefJob>("getDealBrief");
+
 export const deleteScriptShot =
   endpoint<{ id: string; mediaType: string }, { ok: true }>("deleteScriptShot");
 /** Confirm the type/title checkpoint and kick off Stages 1–7 as a background job. */
@@ -886,9 +911,11 @@ export const applyScriptRules = endpoint<{ runId: string }, RuleApplication>("ap
 
 // ── Google Docs export ──
 export const scriptDocsStatus =
-  endpoint<Record<string, never>, { configured: boolean; connected: boolean; folderId: string }>("scriptDocsStatus");
+  endpoint<Record<string, never>, { configured: boolean; connected: boolean; folderId: string; folderName?: string; pickerReady?: boolean; connectUrl?: string }>("scriptDocsStatus");
+export const scriptDocsPicker =
+  endpoint<Record<string, never>, { accessToken: string; apiKey: string; appId: string }>("scriptDocsPicker");
 export const setScriptDocsFolder =
-  endpoint<{ folderId: string }, { folderId: string }>("setScriptDocsFolder");
+  endpoint<{ folderId: string; name?: string }, { folderId: string; folderName?: string }>("setScriptDocsFolder");
 /** Exports whatever is in the editor — hand-edited if it exists, generated otherwise. */
 export const exportScriptToDocs =
   endpoint<{ runId: string; folderId?: string }, { docId: string; docUrl: string; name: string; number: number }>(

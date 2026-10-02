@@ -1,0 +1,356 @@
+/*
+ * ═══════════════════════════════════════════════════════════════
+ *  MOBILE STYLES — Deal Organizer (every selector scoped to :root.dealorg for the Lab port)
+ *  Responsive overrides for screens ≤ 767px
+ *  All features remain accessible; layout is optimised for touch.
+ * ═══════════════════════════════════════════════════════════════
+ */
+
+/* ── Safe-area meta helper — mobile only ── */
+@media (max-width: 767px) {
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    :root.dealorg #mobile-tab-bar {
+      padding-bottom: env(safe-area-inset-bottom);
+      height: calc(60px + env(safe-area-inset-bottom)) !important;
+    }
+    :root.dealorg #app-main-content {
+      padding-bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+    }
+  }
+}
+
+@media (max-width: 767px) {
+
+  /* ─────────────────────────────────────────────────────────────
+     BASE
+  ───────────────────────────────────────────────────────────── */
+
+  /* Remove tap highlight on interactive elements only */
+  :root.dealorg button, :root.dealorg a, :root.dealorg [role="button"], :root.dealorg input, :root.dealorg select, :root.dealorg textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     APP SHELL
+  ───────────────────────────────────────────────────────────── */
+
+  /* Hide desktop sidebar — replaced by bottom tab bar */
+  :root.dealorg #app-sidebar-wrapper {
+    display: none !important;
+  }
+
+  /* Main content full-width + space for bottom tab bar */
+  :root.dealorg #app-main-content {
+    padding-bottom: 60px;
+    width: 100% !important;
+  }
+
+  /* Show mobile bottom tab bar (hidden on desktop via inline style) */
+  :root.dealorg #mobile-tab-bar {
+    display: flex !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     BOTTOM TAB BAR
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg #mobile-tab-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 60px;
+    z-index: 200;
+    background: hsl(var(--card));
+    border-top: 1px solid hsl(var(--border));
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.08);
+    align-items: stretch;
+    justify-content: space-around;
+  }
+
+  :root.dealorg #mobile-tab-bar a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    flex: 1;
+    text-decoration: none;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    color: hsl(var(--muted-foreground));
+    transition: color 0.15s;
+    padding: 0 4px;
+  }
+
+  :root.dealorg #mobile-tab-bar a.mobile-tab-active {
+    color: hsl(var(--primary));
+  }
+
+  :root.dealorg #mobile-tab-bar a svg {
+    width: 21px;
+    height: 21px;
+    flex-shrink: 0;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     TOP NAV BARS
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .glass-nav {
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    height: 52px !important;
+    gap: 8px !important;
+    flex-wrap: nowrap !important;
+  }
+
+  :root.dealorg .glass-nav h1 {
+    font-size: 17px !important;
+  }
+
+  /* Search bar — fill remaining space on mobile */
+  :root.dealorg .mobile-search-wrap {
+    flex: 1 !important;
+    min-width: 0 !important;
+    width: auto !important;
+    margin-left: 6px !important;
+  }
+
+  :root.dealorg .mobile-search-wrap input {
+    height: 36px !important;
+    font-size: 13px !important;
+  }
+
+  /* Hide keyboard shortcut badge on mobile */
+  :root.dealorg .search-cmd-badge {
+    display: none !important;
+  }
+
+  /* Reduce gap in button groups on mobile */
+  :root.dealorg .glass-nav > div.flex {
+    gap: 6px !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     HOME PAGE
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .home-page-root {
+    padding: 16px !important;
+  }
+
+  :root.dealorg .home-page-root > div {
+    max-width: 100% !important;
+  }
+
+  /* Stat cards — always 2 columns on mobile */
+  :root.dealorg .home-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 10px !important;
+  }
+
+  :root.dealorg .home-stats-grid > div {
+    padding: 14px !important;
+  }
+
+  /* Stage label width in pipeline breakdown */
+  :root.dealorg .home-stage-label {
+    width: 72px !important;
+    font-size: 10px !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DEALS PAGE — KANBAN BOARD
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .kanban-board-area {
+    padding: 10px 14px !important;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+    scroll-padding-left: 14px;
+  }
+
+  /* Kanban columns slightly narrower on mobile, with snap */
+  :root.dealorg [data-stage] {
+    min-width: 218px !important;
+    width: 218px !important;
+    scroll-snap-align: start;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DEADLINES PAGE
+  ───────────────────────────────────────────────────────────── */
+
+  /* Hide pipeline progress dots on small screens */
+  :root.dealorg .pipeline-progress-dots {
+    display: none !important;
+  }
+
+  /* Estimated value — hidden on very small screens to avoid overflow */
+  :root.dealorg .deadline-value-cell {
+    display: none !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     EMAIL PAGE
+  ───────────────────────────────────────────────────────────── */
+
+  /* Reflow from row → column */
+  :root.dealorg .email-area {
+    flex-direction: column !important;
+  }
+
+  /* Left panel becomes horizontal folder tab bar */
+  :root.dealorg .email-nav-panel {
+    width: 100% !important;
+    min-height: 52px !important;
+    max-height: 52px !important;
+    height: 52px !important;
+    flex-direction: row !important;
+    border-right: none !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    overflow: hidden !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* Hide accounts section — manage accounts in Settings */
+  :root.dealorg .email-accounts-section {
+    display: none !important;
+  }
+
+  /* Hide add-account shortcut — use Settings instead */
+  :root.dealorg .email-add-account-btn {
+    display: none !important;
+  }
+
+  /* Folders as horizontal pill tabs */
+  :root.dealorg .email-nav-folders {
+    display: flex !important;
+    flex-direction: row !important;
+    flex: 1 !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    height: 100% !important;
+    align-items: center !important;
+    padding: 0 10px !important;
+    gap: 4px !important;
+    /* Hide scrollbar for clean look */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  :root.dealorg .email-nav-folders::-webkit-scrollbar {
+    display: none;
+  }
+
+  :root.dealorg .email-nav-folders button {
+    flex-shrink: 0 !important;
+    white-space: nowrap !important;
+    width: auto !important;
+    min-width: unset !important;
+    height: 34px !important;
+    padding: 0 12px !important;
+    font-size: 12px !important;
+    border-radius: 17px !important;
+    border-left: none !important;
+    margin: 0 !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     DEAL DRAWER HEADER (already full-screen, just tighten padding)
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .deal-drawer-controls-row {
+    gap: 6px !important;
+    flex-wrap: wrap !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     SETTINGS PAGE
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .settings-page-root {
+    padding: 16px !important;
+  }
+
+  :root.dealorg .settings-page-root > div {
+    max-width: 100% !important;
+  }
+
+  :root.dealorg .settings-page-root .glass-card {
+    padding: 16px !important;
+  }
+
+  :root.dealorg .settings-account-row {
+    flex-wrap: wrap !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     EMAIL THREAD LIST — remove right border in column layout
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .email-thread-panel {
+    border-right: none !important;
+    border-bottom: 1px solid var(--border-color) !important;
+    max-height: 100% !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     MODALS — bottom-sheet style on mobile
+  ───────────────────────────────────────────────────────────── */
+
+  /* Framer-motion modal wrapper — align to bottom */
+  :root.dealorg .fixed.inset-0.flex.items-center.justify-center.p-4 {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+
+  :root.dealorg .mobile-modal-card {
+    border-radius: 20px 20px 0 0 !important;
+    max-width: 100% !important;
+    max-height: 88vh !important;
+  }
+
+  /* shadcn Dialog content — also bottom sheet on mobile */
+  :root.dealorg [role="dialog"][data-state="open"] {
+    border-radius: 20px 20px 0 0 !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    transform: none !important;
+    max-width: 100% !important;
+    max-height: 90vh !important;
+    margin: 0 !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     SHADCN DROPDOWN MENUS — bigger tap targets
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg [data-dm-floating] [role="menuitem"] {
+    min-height: 40px !important;
+    font-size: 13px !important;
+    padding: 8px 12px !important;
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     ANALYTICS PAGE
+  ───────────────────────────────────────────────────────────── */
+
+  :root.dealorg .analytics-page-root {
+    padding: 24px 16px !important;
+  }
+
+}
+
+/* Chat thread panel (ChatThreadPanel): full-screen on a phone, but above the
+   bottom tab bar so the reply box's AI Draft / Send buttons stay visible. */
+@media (max-width: 767px) {
+  :root.dealorg #chat-thread-panel {
+    bottom: calc(60px + env(safe-area-inset-bottom, 0px));
+  }
+}

@@ -67,6 +67,9 @@ export interface EditDiff {
 /* ────────────────────────── extracting the spoken script ────────────────────────── */
 
 const SCRIPT_HEADING = "## SCRIPT";
+/** The appendices the assembler writes after the script (see edits.ts APPENDIX_HEADING_RE). */
+const APPENDIX_RE = /^## (?:PROMPT SUMMARY|FULL PROMPTS|PRODUCTION NOTES|OTHER OPENINGS)\b/m;
+const APPENDIX_LINE_RE = /^## (?:PROMPT SUMMARY|FULL PROMPTS|PRODUCTION NOTES|OTHER OPENINGS)\b/;
 
 /**
  * The spoken half of a deliverable.
@@ -83,8 +86,10 @@ export function spokenScript(doc: string): string {
   let body = at === -1 ? stripTitle(text) : text.slice(at + SCRIPT_HEADING.length);
   // The appendix is generated FROM the script; diffing it would count every
   // prompt twice and report the copy as a change of its own.
-  const appendix = body.indexOf("## PROMPT SUMMARY");
-  if (appendix !== -1) body = body.slice(0, appendix);
+  // Same for the full prompts and the production notes after it (2026-10-02):
+  // none of the three is spoken, so the diff stops at the first of them.
+  const appendix = body.search(APPENDIX_RE);
+  if (appendix !== -1) body = body.slice(0, appendix).replace(/\n*-{3,}\s*$/, ""); // and the --- rule that introduces it
   return body.replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -143,7 +148,7 @@ export interface SpokenLine {
 export function spokenLines(doc: string): SpokenLine[] {
   const lines = (doc ?? "").replace(/\r\n/g, "\n").split("\n");
   const headingAt = lines.findIndex((l) => l.trim().startsWith(SCRIPT_HEADING));
-  const appendixAt = lines.findIndex((l) => l.trim().startsWith("## PROMPT SUMMARY"));
+  const appendixAt = lines.findIndex((l) => APPENDIX_LINE_RE.test(l.trim()));
   const from = headingAt === -1 ? 0 : headingAt + 1;
   const to = appendixAt === -1 ? lines.length : appendixAt;
   const out: SpokenLine[] = [];

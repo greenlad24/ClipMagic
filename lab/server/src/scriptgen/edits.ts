@@ -203,7 +203,28 @@ function headerTargetWords(header: string): number | null {
  * each took a full share of the word budget on the way past.
  */
 const APPARATUS_HEADER =
-  /writer.?critical|flags?\b|fact.?sheet|research (?:summary|notes)|sources?\b|video outline|production notes?|thumbnail|title options?|word count|budget|📹/i;
+  /writer.?critical|flags?\b|fact.?sheet|research (?:summary|notes)|sources?\b|video outline|production notes?|thumbnail|title options?|word count|budget|📹|read (?:this |before|first)|before writing|guardrails?|constraints?|briefing|notes? to jake|spine of (?:this|the) video|vocabulary|\bthe cast\b|cast and locked|writer'?s?\b|after the script|full prompts?\b|long version|prompt summary|copy-paste version/i;
+// ↑ 2026-10-02: an outline planned "AFTER THE SCRIPT — the long version of the
+// prompt" and it was drafted as a spoken section. The long prompts are written
+// inline (<<<FULL PROMPT>>>) and moved after the script by code.
+// ↑ 2026-10-02: the last eight runs' first "sections" were briefings for the
+// writer ("🔒 READ BEFORE WRITING A SINGLE LINE", "WRITER GUARDRAILS", "NOTES TO
+// JAKE BEFORE RECORDING", "THE CAST", "VOCABULARY — use these words") and the
+// section writer turned each into a SECOND cold open, which Jake deleted by hand
+// in every run. They are still in the outline every section writer reads.
+
+/**
+ * The video's opening, planned as an outline section: "SECTION 0 — Opening",
+ * "Cold open", "Intro + welcome", "SECTION 1 — Welcome + the tool, named with its
+ * offer". Stage 3 writes the opening (and code locks the welcome line), so a
+ * section like this was drafted as a SECOND opening — the Linearity run of
+ * 2026-10-02 shipped the chosen hook, then another "Look at this… / By the end of
+ * this video… / welcome" straight under `## SCRIPT`. Matched on the start of the
+ * name (after any "SECTION n —" prefix), so "Opening the app" style steps are
+ * only dropped when the name is the opening itself.
+ */
+const OPENING_SECTION =
+  /^(?:(?:section|part|beat)\s*\d+\s*[—–:.-]\s*)?(?:the\s+)?(?:opening(?!\s+(?:the|a|an|your|it|up)\b)|cold[- ]open|intro(?:duction)?\s*(?:\+|&|and)\s*welcome|welcome\b)/i;
 
 /**
  * Split the Stage 2 outline into draftable sections by its markdown headers,
@@ -258,6 +279,7 @@ export function parseOutlineSections(outline: string): OutlineSection[] {
   // headers.
   const droppable = (s: (typeof raw)[number], i: number): boolean =>
     /hook/i.test(s.name) ||
+    OPENING_SECTION.test(s.name) ||
     APPARATUS_HEADER.test(s.name) ||
     s.name.startsWith('"') ||
     s.bodyLen < 40 ||
@@ -340,6 +362,17 @@ export function allocateSectionWords(sections: { targetWords: number | null }[],
 export const VERIFY_MARKER_RE = /\[VERIFY[^\]\n]{0,160}\]/gi;
 
 /**
+ * Every bracketed note a writer leaves for Jake: `[VERIFY ON SCREEN: …]` and
+ * `[SHOOT DAY: …]`. ⚠️ NONE OF THESE MAY REACH THE NARRATION (Jake 2026-10-02,
+ * P1 of the writing study: he deleted 60 of them by hand across six runs, and
+ * the approved lesson against them lost to the prompts that required them).
+ * They are parked by toCleanProse so the bracket sweep cannot silently delete a
+ * flag, then MOVED by extractProductionNotes into the PRODUCTION NOTES appendix
+ * after the script — never left in the prose.
+ */
+export const PRODUCTION_MARKER_RE = /\[(?:VERIFY|SHOOT[ _-]?DAY)\b[^\]\n]{0,300}\]/gi;
+
+/**
  * Private-use code points, used only inside toCleanProse to hold a marker's place
  * while the bracket sweep runs. Nothing a model writes and nothing Jake reads can
  * contain these, which is the whole requirement — see toCleanProse.
@@ -371,10 +404,12 @@ export function stripVerifyMarkers(text: string): string {
  * artifact look like a spec rather than a script — and polluted the claim audit,
  * because "Beat 4 (1:10–1:35)" contributes the numbers 1, 10, 1 and 35.
  *
- * [VERIFY ...] markers are the one bracket that survives: they are the whole
- * point of the step scaffold, and stripping them here would silently delete every
- * flag the writer raised — handing Jake a confident-sounding click path with no
- * hint that a control in it was never confirmed. That is worse than no steps.
+ * [VERIFY ...] / [SHOOT DAY ...] markers are the one bracket that survives this
+ * function: stripping them here would silently delete every flag the writer
+ * raised — handing Jake a confident-sounding click path with no hint that a
+ * control in it was never confirmed. They survive ONLY so that
+ * extractProductionNotes can move them out of the narration into the
+ * PRODUCTION NOTES appendix; the final assembly never leaves one in the prose.
  *
  * Paragraph breaks survive. Nothing else structural does.
  */
@@ -384,7 +419,7 @@ export function toCleanProse(text: string): string {
   // something the prose can never legitimately contain: a bare digit placeholder
   // would be indistinguishable from a real number, and restoring it would delete
   // "50 images" as readily as a parked marker.
-  const parked = text.replace(VERIFY_MARKER_RE, (m) => {
+  const parked = text.replace(PRODUCTION_MARKER_RE, (m) => {
     markers.push(m);
     return `${PARK_OPEN}${markers.length - 1}${PARK_CLOSE}`;
   });
@@ -424,7 +459,11 @@ const PROMPT_VERBS =
   "create|design|write|make|generate|build|draw|translate|summarize|summarise|analyze|analyse|" +
   "explain|rewrite|edit|plot|compare|outline|suggest|give me|act as|help me|show|remove|change|add|" +
   "clean|check|go through|read|search|pull|package|run|find|sort|organize|organise|group|tag|" +
-  "turn|take|put|draft|list|extract|split|merge|rename|move|save|update|review|scan|look";
+  "turn|take|put|draft|list|extract|split|merge|rename|move|save|update|review|scan|look|" +
+  // The conversational openers a person types into a chat box (P20): "Can you
+  // make…", "I want five…", "Use my notes to…". Short prompts are written this
+  // way now, and the summary has to keep finding them.
+  "can you|could you|please|i want|i need|use|tell me|plan|schedule|post|send|connect|turn this";
 
 /**
  * Pull the exact prompts a script tells the viewer to copy.
@@ -442,8 +481,13 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
   const out: ExtractedPrompt[] = [];
   const seen = new Set<string>();
   // Optionally preceded by one short clause — "Before organizing, build me an
-  // index file…" is a prompt whose first word is not its verb.
-  const verb = new RegExp(`^\\s*(?:[^,.]{0,40},\\s*)?(?:${PROMPT_VERBS})\\b`, "i");
+  // index file…" is a prompt whose first word is not its verb — or by one short
+  // sentence that hands over the material: "Here's my product. Make five short
+  // videos for it." is the exemplar shape of a beginner's prompt (P20).
+  const verb = new RegExp(
+    `^\\s*(?:[^.!?"]{1,60}[.!?]\\s+)?(?:[^,.]{0,40},\\s*)?(?:${PROMPT_VERBS})\\b`,
+    "i",
+  );
 
   // Pair the quotes BY POSITION. A regex that searches for "…" will let a short,
   // rejected quote ("a dog in a field") swallow the opening quote of the real
@@ -451,6 +495,16 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
   const parts = clean.split('"');
   for (let i = 1; i < parts.length; i += 2) {
     const text = parts[i].trim();
+    // "THE PROMPT: "…"" is the section writer's own marker for a prompt on
+    // screen — the Linearity script's "A spring sale campaign for our coffee
+    // shop: …" opens with no verb, was missed here, and the summary then quoted
+    // a stale version of it instead of what the script says.
+    const marked = /\bTHE PROMPT\s*:\s*\**\s*$/i.test(parts[i - 1]);
+    if (marked && text.split(/\s+/).length >= 4 && text.length <= 900 && !seen.has(text.toLowerCase())) {
+      seen.add(text.toLowerCase());
+      out.push({ label: promptLabel(parts[i - 1].replace(/\**\s*THE PROMPT\s*:\s*\**\s*$/i, ""), out.length), text });
+      continue;
+    }
     // 30 characters let a UI label through: "generate memory from chat history"
     // is a settings toggle Jake reads aloud, not a prompt anyone would copy, and
     // it shipped in the appendix under the heading "Prompt". A real prompt tells
@@ -462,32 +516,41 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
     if (seen.has(key)) continue;
     seen.add(key);
 
-    // Label from the sentence just before the quote ("Here's a prompt for a poster.")
-    const before = parts[i - 1];
-    const lastSentence = before.split(/(?<=[.!?])\s+/).filter(Boolean).pop() ?? "";
-    const label = lastSentence
-      .replace(/^(?:so|and|now|alright|okay|ok|then)\b[,\s]*/i, "")
-      .replace(/\bI(?:'ll)?\s+type\b[:\s]*$/i, "")
-      .replace(/\byou can say\b[:\s]*$/i, "")
-      .replace(/[:\-–—\s]+$/, "")
-      .trim();
-
-    // A scavenged sentence is only a label if it describes the prompt. The
-    // sentence before a prompt is very often the hand-off itself — "you can do
-    // this:", "and then this" — which labelled the appendix with the connective
-    // instead of the subject. Where it fails, number the prompt: a plain
-    // "Prompt 3" is more use than a misleading name.
-    const usable =
-      label.length >= 8 &&
-      label.length <= 80 &&
-      // Only the contentless hand-offs. "Here is the morning brief prompt" is a
-      // real label; "you can do this" is the sentence that hands over to it.
-      !/^(?:you can (?:do|say|type|use)|and then this|then this|like this|watch this|here goes|this|it|so)\b/i.test(
-        label,
-      );
-    out.push({ label: usable ? label : `Prompt ${out.length + 1}`, text });
+    out.push({ label: promptLabel(parts[i - 1], out.length), text });
   }
   return out;
+}
+
+/**
+ * A prompt's label, from the sentence just before it ("Here's a prompt for a
+ * poster."), or "Prompt n" when that sentence is only the hand-off.
+ */
+function promptLabel(before: string, index: number): string {
+  const lastSentence = before.split(/(?<=[.!?])\s+/).filter(Boolean).pop() ?? "";
+  const label = lastSentence
+    .replace(/^(?:so|and|now|alright|okay|ok|then)\b[,\s]*/i, "")
+    .replace(/\bI(?:'ll)?\s+type\b[:\s]*$/i, "")
+    .replace(/\byou can say\b[:\s]*$/i, "")
+    .replace(/[:\-–—\s]+$/, "")
+    .trim();
+
+  // A scavenged sentence is only a label if it describes the prompt. The
+  // sentence before a prompt is very often the hand-off itself — "you can do
+  // this:", "and then this" — which labelled the appendix with the connective
+  // instead of the subject. Where it fails, number the prompt: a plain
+  // "Prompt 3" is more use than a misleading name.
+  const usable =
+    label.length >= 8 &&
+    label.length <= 80 &&
+    // Only the contentless hand-offs. "Here is the morning brief prompt" is a
+    // real label; "you can do this" is the sentence that hands over to it.
+    !/^(?:you can (?:do|say|type|use)|and then this|then this|like this|watch this|here goes|this|it|so)\b/i.test(
+      label,
+    ) &&
+    // "Here's the one I'm using." / "Just open Claude and type this." — more
+    // hand-offs that labelled the Linearity summary.
+    !/^(?:here'?s (?:the one|mine|what)|here is (?:the one|mine)|.*\b(?:type|paste|say|use|send) (?:this|it|that)\.?$)/i.test(label);
+  return usable ? label : `Prompt ${index + 1}`;
 }
 
 // ── Canonical outro ───────────────────────────────────────────────────────────
@@ -503,9 +566,13 @@ export function extractPrompts(script: string): ExtractedPrompt[] {
  * productivity" is true of anything on the channel, so it survives whatever
  * YouTube queues next. Naming an actual follow-up video would be wrong on every
  * script where that is not the one that plays.
+ *
+ * "short videos", not "short clips" (2026-10-02, P7): "clip" is in BANNED_WORDS,
+ * and the code was re-inserting a banned word into every script — the rules
+ * pass then "fixed" Jake's own boilerplate.
  */
 export const CANONICAL_OUTRO =
-  "Oh and by the way, follow me on TikTok and Instagram, because I post short clips there I usually don't put up here, and honestly... well, go over there and see for yourself. The links are down in the description. And I'm starting a new live show on this channel — so click that notification bell to catch the latest show or video the second it goes up. That's the place where you can ask me questions and actually connect with me.\n\nThank you so much for hanging out with me today, and I'll see you in the next video, where we're going to take this even further into AI powered productivity. Just click the video to my left and you'll see exactly what I mean. See you there.";
+  "Oh and by the way, follow me on TikTok and Instagram, because I post short videos there I usually don't put up here, and honestly... well, go over there and see for yourself. The links are down in the description. And I'm starting a new live show on this channel — so click that notification bell to catch the latest show or video the second it goes up. That's the place where you can ask me questions and actually connect with me.\n\nThank you so much for hanging out with me today, and I'll see you in the next video, where we're going to take this even further into AI powered productivity. Just click the video to my left and you'll see exactly what I mean. See you there.";
 
 /** The phrases that mark where the model's own sign-off / next-video tease begins. */
 const SIGN_OFF_TRIGGERS = [
@@ -553,6 +620,777 @@ export function ensureCanonicalOutro(body: string): string {
   const keepTail = lastStop >= 0 ? beforeTrigger.slice(0, lastStop + 1) : "";
   const kept = `${head}${keepTail}`.replace(/\s+$/, "");
   return `${kept}\n\n${CANONICAL_OUTRO}`;
+}
+
+// ── Canonical welcome ─────────────────────────────────────────────────────────
+
+/**
+ * Jake's welcome + subscribe line, word for word (ruled 2026-10-02, P8 of the
+ * writing study). He re-worded the free-written welcome in 7 of 8 edited runs,
+ * always converging on this; so it is locked in code the same way the outro is.
+ * Every hook option carries it verbatim — see ensureCanonicalWelcome.
+ */
+export const CANONICAL_WELCOME =
+  "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it.";
+
+/** Where a welcome starts: the greeting, or the self-introduction. */
+const WELCOME_START_RE =
+  /\b(?:hey(?:\s+(?:everyone|everybody|guys|there|folks|all))?\s*[,!—–-]*\s*(?:and\s+)?(?:welcome back|if you'?re new here|i'?m jake)|welcome back to the channel|i'?m jake dawson)/i;
+
+/** A sentence that still belongs to the welcome stretch (identity, the ask, the hand-off). */
+const WELCOME_PART_RE =
+  /jake dawson|welcome back|subscribe|like button|smash|hit (?:that|the) like|if that sounds like you|let'?s (?:get into it|dive|go\b|get to work|get started|jump in)|^\W*alright\W*$/i;
+
+/** Sentences of one line, each with its [start, end) offsets. */
+function sentenceSpans(line: string, from: number): Array<{ start: number; end: number; text: string }> {
+  const out: Array<{ start: number; end: number; text: string }> = [];
+  const re = /[^.!?]*(?:[.!?]+["'”’)]*|$)/g;
+  re.lastIndex = from;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (m[0].length === 0) {
+      if (re.lastIndex >= line.length) break;
+      re.lastIndex++;
+      continue;
+    }
+    out.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+    if (re.lastIndex >= line.length) break;
+  }
+  return out;
+}
+
+/**
+ * Put the canonical welcome into ONE hook option.
+ *
+ * Finds the welcome stretch (the greeting or "I'm Jake Dawson" sentence, plus
+ * the sentences right after it that are still the welcome — the subscribe ask,
+ * "Let's get into it") on the line where it starts, and swaps the whole stretch
+ * for CANONICAL_WELCOME. Everything around it — the beat labels, the promise
+ * before it, the Skool plug after it — is left alone. A hook with no welcome
+ * gets one appended after its last spoken line (before any trailing "JAKE:" or
+ * "====" bookkeeping line). Returns the text unchanged when it already carries
+ * the canonical line exactly.
+ */
+export function ensureCanonicalWelcome(hook: string): { text: string; changed: boolean } {
+  if (hook.includes(CANONICAL_WELCOME)) return { text: hook, changed: false };
+  const lines = hook.split("\n");
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li];
+    const m = WELCOME_START_RE.exec(line);
+    if (!m) continue;
+    const spans = sentenceSpans(line, 0);
+    const first = spans.findIndex((sp) => m.index >= sp.start && m.index < sp.end);
+    if (first === -1) continue;
+    // Start at the greeting itself when it sits mid-sentence after a dash or a
+    // comma ("…in your life — hey everyone…"); otherwise at the sentence start.
+    const sp0 = spans[first];
+    const lead = line.slice(sp0.start, m.index);
+    const start = /[—–-]\s*$|,\s*$/.test(lead) || /^\s*$/.test(lead) || /["“'‘]\s*$/.test(lead)
+      ? m.index
+      : sp0.start + (line.slice(sp0.start).length - line.slice(sp0.start).trimStart().length);
+    let end = sp0.end;
+    for (let k = first + 1; k < spans.length; k++) {
+      if (!WELCOME_PART_RE.test(spans[k].text.trim())) break;
+      end = spans[k].end;
+    }
+    // Keep a closing quote / bracket that ended the beat.
+    let tail = line.slice(start, end);
+    const closer = tail.match(/["”’)\]]+\s*$/);
+    if (closer) end -= closer[0].length;
+    tail = line.slice(start, end);
+    let before = line.slice(0, start);
+    // The line is verbatim, capital H and all — so a sentence that ran into it
+    // ("…on screen — hey everyone…") is closed with a full stop instead.
+    if (/\S\s*[,—–-]\s*$/.test(before)) before = before.replace(/\s*[,—–-]\s*$/, ". ");
+    const sep = before.length && !/[\s"“'‘(]$/.test(before) ? " " : "";
+    lines[li] = `${before}${sep}${CANONICAL_WELCOME}${line.slice(end)}`;
+    return { text: lines.join("\n"), changed: true };
+  }
+  // No welcome at all: append after the last spoken line.
+  let at = lines.length;
+  while (at > 0 && (!lines[at - 1].trim() || /^\s*(?:JAKE:|={3,}|-{3,})/.test(lines[at - 1]))) at--;
+  lines.splice(at, 0, "", CANONICAL_WELCOME);
+  return { text: lines.join("\n"), changed: true };
+}
+
+/**
+ * The same, across the whole hooks block: every hook option (the four formulas
+ * and the free hook) gets the canonical welcome. Splits on the same headings as
+ * splitHooks in run.ts and rewrites each option's text in place.
+ */
+export function lockWelcomeInHooks(hooks: string): { text: string; changed: number } {
+  const heading = /^#{0,4}\s*\**\s*(?:FORMULA\s+[A-Z][A-Z0-9-]*\b|OPEN HOOK\b)/i;
+  const lines = (hooks || "").split("\n");
+  const starts: number[] = [];
+  lines.forEach((l, i) => {
+    if (heading.test(l)) starts.push(i);
+  });
+  if (starts.length === 0) return { text: hooks, changed: 0 };
+  const out: string[] = lines.slice(0, starts[0]);
+  let changed = 0;
+  for (let k = 0; k < starts.length; k++) {
+    const from = starts[k];
+    const to = k + 1 < starts.length ? starts[k + 1] : lines.length;
+    const head = lines[from];
+    let body = lines.slice(from + 1, to);
+    // The trailing "JAKE: pick the formula…" line belongs to the block, not to
+    // the last hook — keep it out of the welcome search.
+    const jakeAt = body.findIndex((l) => /^\s*JAKE:/.test(l));
+    const trailer = jakeAt === -1 ? [] : body.slice(jakeAt);
+    if (jakeAt !== -1) body = body.slice(0, jakeAt);
+    // A separator rule ("=====") between hooks also stays where it is.
+    let sepAt = body.length;
+    while (sepAt > 0 && (!body[sepAt - 1].trim() || /^\s*={3,}\s*$/.test(body[sepAt - 1]))) sepAt--;
+    const spoken = body.slice(0, sepAt).join("\n");
+    const rest = body.slice(sepAt);
+    if (!spoken.trim()) {
+      out.push(head, ...body, ...trailer);
+      continue;
+    }
+    const r = ensureCanonicalWelcome(spoken);
+    if (r.changed) changed++;
+    out.push(head, ...r.text.split("\n"), ...rest, ...trailer);
+  }
+  return { text: out.join("\n"), changed };
+}
+
+// ── Production notes (out of the narration) ──────────────────────────────────
+
+/** A line the writer was told to use for an open item: `PRODUCTION NOTE: …`. */
+const PRODUCTION_NOTE_LINE_RE = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*)?PRODUCTION NOTE(?:\*\*)?[ \t]*:[ \t]*(.+?)[ \t]*$/gim;
+
+/**
+ * Move every note-to-Jake out of the spoken script (P1).
+ *
+ * Inline `[VERIFY ON SCREEN: …]` / `[SHOOT DAY: …]` markers are cut out of the
+ * sentence they sat in (the sentence is tidied around the gap) and become one
+ * note each, quoting a little of the sentence so Jake can find the spot; whole
+ * `PRODUCTION NOTE: …` lines are lifted out as they are. The returned body has
+ * no bracketed note left in it. Notes are de-duplicated, order kept.
+ */
+export function extractProductionNotes(body: string): { body: string; notes: string[] } {
+  const notes: string[] = [];
+  const push = (n: string) => {
+    const t = n.replace(/\s+/g, " ").trim();
+    if (t && !notes.includes(t)) notes.push(t);
+  };
+  let text = body.replace(PRODUCTION_NOTE_LINE_RE, (_m, note: string) => {
+    push(note);
+    return "";
+  });
+  const lines = text.split("\n").map((line) => {
+    if (!new RegExp(PRODUCTION_MARKER_RE.source, "i").test(line)) return line;
+    const found: string[] = [];
+    let cleaned = line.replace(new RegExp(PRODUCTION_MARKER_RE.source, "gi"), (m) => {
+      const inner = m.slice(1, -1).trim();
+      found.push(inner);
+      // A VERIFY marker usually names the control by what it does — "[VERIFY
+      // ON SCREEN: the button that starts a new skill]". That description IS the
+      // "write the step around it" wording, so it stays in the sentence; a
+      // question ("is the trial 14 days?") or a shoot note just comes out.
+      const desc = inner.replace(/^[^:]*:\s*/, "");
+      const keep =
+        /^VERIFY/i.test(inner) &&
+        /^(?:the|a|an|your|its|their)\s/i.test(desc) &&
+        !/[?]/.test(desc) &&
+        desc.length <= 80 &&
+        !/\b(?:exact|name|label|called|wording|path)\b/i.test(desc);
+      return keep ? ` ${desc} ` : " ";
+    });
+    cleaned = cleaned
+      .replace(/[ \t]+/g, " ")
+      .replace(/ +([.,;:!?])/g, "$1")
+      .replace(/([.,;:!?])\1+/g, "$1")
+      .trim();
+    const where = cleaned.length > 110 ? `${cleaned.slice(0, 107)}…` : cleaned;
+    for (const f of found) push(where ? `${f} — near: "${where}"` : f);
+    return cleaned;
+  });
+  text = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return { body: text, notes };
+}
+
+/**
+ * Anything that still reads as a note to Jake inside the spoken script — the
+ * check that runs AFTER extraction. Should always come back empty; when it does
+ * not, the run says so loudly (the narration must never carry one).
+ */
+export function findProductionNotesInProse(text: string): string[] {
+  const out: string[] = [];
+  const res = [
+    /\[(?:VERIFY|SHOOT|TODO|TBD|CHECK|CONFIRM|NOTE)\b[^\]\n]{0,120}\]?/gi,
+    /\bSHOOT DAY\b[^.\n]{0,80}/g,
+    /\bstopwatch this\b[^.\n]{0,40}/gi,
+    /^[ \t]*PRODUCTION NOTE[ \t]*:.{0,80}/gim,
+    /<<<\s*(?:END\s+)?FULL PROMPT[^>\n]*>>>/gi,
+  ];
+  for (const re of res) for (const m of text.matchAll(re)) out.push(m[0].trim());
+  return [...new Set(out)].slice(0, 20);
+}
+
+/** The appendix block Jake reads after the script. Empty string when there is nothing. */
+export const PRODUCTION_NOTES_HEADING = "## PRODUCTION NOTES (for Jake — not part of the narration)";
+export interface NoteGroup {
+  heading: string;
+  notes: string[];
+}
+
+export function productionNotesAppendix(notes: string[], groups?: NoteGroup[] | null): string {
+  if (notes.length === 0) return "";
+  const body = groups?.length
+    ? groups
+        .filter((g) => g.notes.length)
+        .map((g) => `### ${g.heading}\n\n${g.notes.map((n) => `- ${n}`).join("\n")}`)
+        .join("\n\n")
+    : notes.map((n) => `- ${n}`).join("\n");
+  return (
+    `\n\n---\n\n${PRODUCTION_NOTES_HEADING}\n\n` +
+    "Open items the writer could not confirm. Check each one on screen while recording; none of them is read aloud.\n\n" +
+    body
+  );
+}
+
+/**
+ * Notes as a list a person can use. Every section writer adds its own, so the
+ * same item arrives several times in different words — the Linearity run listed
+ * the missing tracking link three times and "don't show the Blue Bottle test
+ * brand" four. This is the deterministic half: sentence-case each note, and drop
+ * one whose words are mostly another's (keeping the longer, which usually says
+ * what to do as well as what is wrong).
+ */
+export function dedupeNotes(notes: string[]): string[] {
+  const clean = notes
+    .map((n) => n.replace(/^\s*(?:PRODUCTION NOTE\s*:\s*)/i, "").trim())
+    .filter(Boolean)
+    .map((n) => n.charAt(0).toUpperCase() + n.slice(1));
+  const kept: string[] = [];
+  for (const n of clean) {
+    const dup = kept.findIndex((k) => overlap(k, n) >= 0.7);
+    if (dup === -1) kept.push(n);
+    else if (n.length > kept[dup].length) kept[dup] = n;
+  }
+  return kept;
+}
+
+/** The model half: merge what still says the same thing, and group by when Jake needs it. */
+export function notesMergePrompt(notes: string[]): string {
+  return [
+    "Below are the production notes for one YouTube script: open items for Jake to check before or while recording, or at upload. They were written section by section, so several say the same thing in different words.",
+    "",
+    "Do two things:",
+    "1. **Merge duplicates.** Notes about the same item become ONE note that keeps every concrete detail any of them had (a label, a number, a fix). Do not merge notes about different items.",
+    "2. **Group them** under exactly these headings, in this order, leaving out an empty one: \"Before the shoot\", \"On the shoot\", \"At upload\".",
+    "",
+    "Rules: never add an item, a fact or a recommendation that is not in the notes. Keep Jake's words where you can. Each note is one or two plain sentences, starting with a capital letter. Shorter is better.",
+    "",
+    'Reply with JSON only: {"groups": [{"heading": "Before the shoot", "notes": ["…"]}]}',
+    "",
+    "NOTES:",
+    ...notes.map((n, i) => `${i + 1}. ${n}`),
+  ].join("\n");
+}
+
+/**
+ * Read the merge back, or null when it cannot be trusted: more notes than went
+ * in, an unknown heading, or a note that shares too few words with every input
+ * (an invented item).
+ */
+export function parseNotesMerge(text: string, input: string[]): NoteGroup[] | null {
+  try {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) return null;
+    const parsed = JSON.parse(m[0]) as { groups?: Array<{ heading?: unknown; notes?: unknown }> };
+    const allowed = ["Before the shoot", "On the shoot", "At upload"];
+    const groups: NoteGroup[] = [];
+    let count = 0;
+    for (const g of parsed.groups ?? []) {
+      const heading = typeof g.heading === "string" ? allowed.find((a) => a.toLowerCase() === g.heading!.toString().trim().toLowerCase()) : undefined;
+      if (!heading || !Array.isArray(g.notes)) return null;
+      const notes = g.notes.filter((n): n is string => typeof n === "string" && n.trim().length > 0).map((n) => n.trim());
+      for (const n of notes) if (!input.some((i) => overlap(i, n) >= 0.4)) return null;
+      count += notes.length;
+      groups.push({ heading, notes });
+    }
+    if (count === 0 || count > input.length) return null;
+    return allowed.map((h) => groups.filter((g) => g.heading === h).flatMap((g) => g.notes)).flatMap((notes, i) => (notes.length ? [{ heading: allowed[i], notes }] : []));
+  } catch {
+    return null;
+  }
+}
+
+// ── Full prompts (the long copy-paste versions, after the script) ────────────
+
+/**
+ * Jake, 2026-10-02: "the short versions should be in the script and the long
+ * versions after the script, in a separate section". The spoken/on-screen prompt
+ * stays one to three plain sentences (P20); the section writer ALSO writes the
+ * comprehensive version straight after it, fenced so code can lift it out:
+ *
+ *     <<<FULL PROMPT>>>
+ *     …the long, structured version…
+ *     <<<END FULL PROMPT>>>
+ *
+ * The blocks never reach the narration, the review passes or any word count:
+ * they are lifted out before Stage 7 and re-attached as the FULL PROMPTS
+ * appendix, each numbered to match its short version in the PROMPT SUMMARY.
+ */
+export interface FullPromptBlock {
+  /** The short prompt it belongs to — the last quoted prompt before the block. */
+  short: string;
+  /** Optional label written on the fence: `<<<FULL PROMPT: Weekly report>>>`. */
+  label: string;
+  text: string;
+}
+
+/** A properly fenced block. It may not swallow the next block's opening fence. */
+const FULL_PROMPT_RE =
+  /^[ \t]*<<<\s*FULL PROMPT\b[ \t]*:?[ \t]*([^>\n]*?)[ \t]*>>>[ \t]*\n((?:(?!<<<\s*FULL PROMPT)[\s\S])*?)\n[ \t]*<<<\s*END\s+FULL PROMPT\s*>>>[ \t]*$/gim;
+/** An opening fence whose END was lost: the block runs to the next blank line. */
+const FULL_PROMPT_OPEN_RE =
+  /^[ \t]*<<<\s*FULL PROMPT\b[ \t]*:?[ \t]*([^>\n]*?)[ \t]*>>>[ \t]*\n([\s\S]*?)(?=\n[ \t]*\n|(?![\s\S]))/gim;
+
+/** The last quoted span (≥ 20 chars) in a stretch of text. */
+function lastQuoted(text: string): string {
+  const clean = text.replace(/[“”]/g, '"');
+  const parts = clean.split('"');
+  for (let i = parts.length - 2; i >= 1; i -= 1) {
+    if (i % 2 === 1 && parts[i].trim().length >= 20) return parts[i].trim();
+  }
+  return "";
+}
+
+/** Lift the fenced full-prompt blocks out of a body. */
+export function extractFullPrompts(body: string): { body: string; blocks: FullPromptBlock[] } {
+  const blocks: FullPromptBlock[] = [];
+  const lift = (label: string, inner: string, offset: number, whole: string): string => {
+    const before = whole.slice(Math.max(0, offset - 1500), offset);
+    const text = inner.replace(/^\s*\n/, "").replace(/\s+$/, "");
+    if (text.trim()) blocks.push({ short: lastQuoted(before), label: (label || "").trim(), text });
+    return "";
+  };
+  const out = (body || "")
+    .replace(FULL_PROMPT_RE, (_m, label: string, inner: string, offset: number, whole: string) =>
+      lift(label, inner, offset, whole),
+    )
+    .replace(FULL_PROMPT_OPEN_RE, (_m, label: string, inner: string, offset: number, whole: string) =>
+      lift(label, inner, offset, whole),
+    )
+    // A stray END fence with nothing to close.
+    .replace(/^[ \t]*<<<\s*END\s+FULL PROMPT\s*>>>[ \t]*$/gim, "");
+  return { body: out.replace(/\n{3,}/g, "\n\n").trim(), blocks };
+}
+
+/** Remove the blocks without keeping them — for measuring a section's spoken words. */
+export function stripFullPromptBlocks(body: string): string {
+  return extractFullPrompts(body).body;
+}
+
+const wordSet = (t: string) =>
+  new Set((t.toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((w) => w.length > 2));
+
+function overlap(a: string, b: string): number {
+  const A = wordSet(a);
+  const B = wordSet(b);
+  if (!A.size || !B.size) return 0;
+  let n = 0;
+  for (const w of A) if (B.has(w)) n++;
+  return n / Math.min(A.size, B.size);
+}
+
+/** The quoted span in the spoken script that is closest to `short` (≥ 50% word overlap), verbatim. */
+export function spokenQuoteFor(spokenBody: string, short: string): string | null {
+  const parts = spokenBody.replace(/[“”]/g, '"').split('"');
+  let best: string | null = null;
+  let bestScore = 0;
+  for (let i = 1; i < parts.length; i += 2) {
+    const q = parts[i].trim();
+    if (q.split(/\s+/).length < 4) continue;
+    const sc = overlap(short, q);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = q;
+    }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
+export const PROMPT_SUMMARY_HEADING = "## PROMPT SUMMARY (for the description / pinned comment)";
+export const FULL_PROMPTS_HEADING = "## FULL PROMPTS (copy-paste versions — not read aloud)";
+
+/**
+ * The two prompt appendices, numbered so each full version matches its short one.
+ *
+ * Builds on extractPrompts: the short prompts it finds in the spoken script are
+ * numbered 1…n in the PROMPT SUMMARY. Each full block is paired with the short
+ * prompt it was written after (by word overlap, so a light edit by the review
+ * pass still pairs), and takes that number and label. A block whose short
+ * version extractPrompts could not find (an unquoted prompt — the known blind
+ * spot) adds its short text to the summary under the next number, so the two
+ * lists always line up.
+ */
+export function promptAppendices(spokenBody: string, blocks: FullPromptBlock[]): {
+  text: string;
+  shortCount: number;
+  fullCount: number;
+} {
+  const shorts = extractPrompts(spokenBody).map((p) => ({ label: p.label, text: p.text }));
+  const fullFor = new Map<number, string[]>();
+  for (const b of blocks) {
+    let best = -1;
+    let bestScore = 0;
+    shorts.forEach((s, i) => {
+      const sc = b.short ? overlap(b.short, s.text) : 0;
+      if (sc > bestScore) {
+        bestScore = sc;
+        best = i;
+      }
+    });
+    if (best === -1 || bestScore < 0.5) {
+      // The short version as the SCRIPT says it, not as the writer first wrote
+      // it: a later pass can edit the spoken prompt, and the summary has to
+      // match what the viewer sees on screen word for word.
+      const spoken = b.short ? spokenQuoteFor(spokenBody, b.short) : null;
+      // A long version whose short prompt is no longer in the script at all
+      // belongs to nothing the viewer sees — the Linearity rerun shipped a
+      // "Prompt 2 — full version" for a prompt the review had cut. Drop it.
+      if (!spoken && !(b.short && spokenBody.includes(b.short))) continue;
+      shorts.push({ label: b.label || `Prompt ${shorts.length + 1}`, text: spoken ?? b.short });
+      best = shorts.length - 1;
+    }
+    fullFor.set(best, [...(fullFor.get(best) ?? []), b.text]);
+  }
+  const listed = shorts.filter((s) => s.text);
+  let text = "";
+  if (listed.length > 0) {
+    text +=
+      `\n\n---\n\n${PROMPT_SUMMARY_HEADING}\n\n` +
+      shorts
+        .map((p, i) => (p.text ? `**${i + 1}. ${p.label}:** "${p.text}"` : ""))
+        .filter(Boolean)
+        .join("\n\n");
+  }
+  let fullCount = 0;
+  if (fullFor.size > 0) {
+    const parts: string[] = [];
+    [...fullFor.keys()].sort((a, b) => a - b).forEach((i) => {
+      for (const full of fullFor.get(i) ?? []) {
+        fullCount++;
+        parts.push(`**${i + 1}. ${shorts[i].label} — full version**\n\n${full}`);
+      }
+    });
+    text +=
+      `\n\n---\n\n${FULL_PROMPTS_HEADING}\n\n` +
+      "The long version of each prompt, for anyone who wants every detail. The number matches the short prompt in the script and in the summary above.\n\n" +
+      parts.join("\n\n");
+  }
+  return { text, shortCount: listed.length, fullCount };
+}
+
+/**
+ * The headings that start the after-the-script appendices. Everything from the
+ * first of these on is NOT spoken: word counts, diffs, the rules pass and the
+ * review re-run all stop there.
+ */
+export const APPENDIX_HEADING_RE = /^## (?:PROMPT SUMMARY|FULL PROMPTS|PRODUCTION NOTES|OTHER OPENINGS)\b/m;
+
+/** Split the `## SCRIPT` section into the spoken body and the appendix text after it. */
+export function splitScriptAppendices(section: string): { body: string; appendix: string } {
+  const m = APPENDIX_HEADING_RE.exec(section);
+  if (!m) return { body: section, appendix: "" };
+  let cut = m.index;
+  // Take the `---` rule that introduces the first appendix with it.
+  const before = section.slice(0, cut);
+  const rule = before.match(/\n*-{3,}\s*\n*$/);
+  if (rule) cut -= rule[0].length;
+  return { body: section.slice(0, cut).replace(/\s+$/, ""), appendix: section.slice(cut) };
+}
+
+/** One appendix's lines back out of a stored document (for the review re-run). */
+export function appendixSection(appendix: string, heading: string): string {
+  const at = appendix.indexOf(heading);
+  if (at === -1) return "";
+  const rest = appendix.slice(at + heading.length);
+  const next = rest.search(/\n-{3,}\s*\n+## /);
+  return (next === -1 ? rest : rest.slice(0, next)).trim();
+}
+
+/**
+ * Read the stored appendices back into what the assembly needs, so a review
+ * re-run keeps the full prompts and the production notes it cannot regenerate
+ * (the full prompts were written by the section stage, which a re-run does not
+ * call). Each full prompt is re-paired with the short prompt that carried its
+ * number in the stored PROMPT SUMMARY.
+ */
+export function parseStoredAppendices(appendix: string): { blocks: FullPromptBlock[]; notes: string[]; otherOpenings: string } {
+  const summary = appendixSection(appendix, PROMPT_SUMMARY_HEADING);
+  const shortByNo = new Map<number, string>();
+  for (const m of summary.matchAll(/^\*\*(\d+)\.\s[^*]*:\*\*\s*"([\s\S]*?)"\s*$/gm)) {
+    shortByNo.set(Number(m[1]), m[2]);
+  }
+  const full = appendixSection(appendix, FULL_PROMPTS_HEADING);
+  const blocks: FullPromptBlock[] = [];
+  const heads = [...full.matchAll(/^\*\*(\d+)\.\s(.*?) — full version\*\*\s*$/gm)];
+  heads.forEach((h, i) => {
+    const from = (h.index ?? 0) + h[0].length;
+    const to = i + 1 < heads.length ? heads[i + 1].index ?? full.length : full.length;
+    const text = full.slice(from, to).trim();
+    if (text) blocks.push({ short: shortByNo.get(Number(h[1])) ?? "", label: h[2].trim(), text });
+  });
+  const notesText = appendixSection(appendix, PRODUCTION_NOTES_HEADING);
+  const notes = notesText
+    .split("\n")
+    .filter((l) => /^\s*-\s+/.test(l))
+    .map((l) => l.replace(/^\s*-\s+/, "").trim())
+    .filter(Boolean);
+  const otherOpenings = appendixSection(appendix, OTHER_OPENINGS_HEADING);
+  return { blocks, notes, otherOpenings };
+}
+
+// ── One opening in the script, the alternatives after it (Jake 2026-10-02) ──
+
+export const OPENING_HEADING = "## OPENING";
+export const OTHER_OPENINGS_HEADING = "## OTHER OPENINGS (alternatives — swap one in if you prefer; not part of the script)";
+const HOOKS_HEADING_RE = /^## HOOKS\b.*$/m;
+// Case-SENSITIVE on purpose: Stage 3 writes these labels in capitals, and a hook line
+// that merely starts \"Open hook…\" or \"Formula one…\" must not split an option.
+const OPTION_LABEL_RE = /^#{0,4}\s*\**\s*((?:FORMULA\s+[A-Z][A-Z0-9-]*\b|OPEN HOOK\b)[^*\n]*)/;
+
+/** The hook options of a `## HOOKS — pick one` block, each with its label. */
+export function hookOptions(hooksText: string): Array<{ label: string; text: string }> {
+  const out: Array<{ label: string; text: string }> = [];
+  let cur: { label: string; text: string } | null = null;
+  for (const line of (hooksText || "").split("\n")) {
+    const m = line.match(OPTION_LABEL_RE);
+    if (m) {
+      if (cur) out.push(cur);
+      cur = { label: m[1].replace(/\s*[*_]+\s*$/, "").trim(), text: "" };
+    } else if (cur) cur.text += line + "\n";
+  }
+  if (cur) out.push(cur);
+  return out.map((h) => ({ label: h.label, text: h.text.trim() })).filter((h) => h.text.length > 0);
+}
+
+/**
+ * One option as it is SPOKEN: without the formula apparatus around it (the ====
+ * rules, "Best for:", "Sub-conversion:", the "**Beat 2 (0:08–0:25)**" labels and
+ * the "JAKE: pick the formula…" note). Screen directions stay.
+ */
+export function spokenHook(text: string): string {
+  return text
+    .split("\n")
+    .filter((l) => !/^\s*=+\s*$/.test(l))
+    .filter((l) => !/^\s*(?:Best for|Sub-conversion|Retention|Runtime|Length)\s*:/i.test(l))
+    .filter((l) => !/^\s*\**\s*Beat\s+\d+[^\n]*\**\s*$/i.test(l))
+    .filter((l) => !/^\s*JAKE\s*:/.test(l))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+const labelKey = (s: string) => (s.match(/FORMULA\s+[A-Z][A-Z0-9-]*|OPEN HOOK/i)?.[0] ?? s).toUpperCase().replace(/\s+/g, " ");
+
+/**
+ * Jake deleted four of the five hook options by hand in every script (2026-10-02
+ * study: 44 of the 93 paragraphs he cut were duplicates, nearly all of them the
+ * other openings). So the assembled document now carries ONE opening — the
+ * top-ranked hook (`hookRanking[0]`, best virality then SEO), falling back to
+ * A-Compressed, his own opening shape, then the first — under `## OPENING`, and
+ * the others go after the script under OTHER OPENINGS, where nothing counts them.
+ *
+ * `top` is the assembled top part (`# title` → `## HOOKS — pick one` → options →
+ * optional `## SPONSOR SEGMENT`). A top part with no HOOKS block (a review re-run
+ * of a document already in this format) is returned unchanged, with the stored
+ * alternatives carried through.
+ */
+export function arrangeOpenings(
+  top: string,
+  ranking: Array<{ hook: number; label: string }> | null | undefined,
+  carriedOther = "",
+  /**
+   * Tutorials: take the best-RANKED option that passes Jake's opening shape
+   * (openingShapeIssues). The Linearity run's top-ranked hook was the free OPEN
+   * HOOK at 216 words and two questions before the welcome — flagged by the
+   * check, used anyway — while A-Compressed, in his exact shape, sat unused.
+   */
+  preferShape = false,
+): { top: string; otherAppendix: string; chosen: string | null } {
+  const wrap = (body: string) => (body.trim() ? `\n\n---\n\n${OTHER_OPENINGS_HEADING}\n\n${body.trim()}\n` : "");
+  const h = HOOKS_HEADING_RE.exec(top);
+  if (!h) return { top, otherAppendix: wrap(carriedOther), chosen: null };
+  const afterHeading = h.index + h[0].length;
+  const seg = top.indexOf("## SPONSOR SEGMENT", afterHeading);
+  const hooksText = top.slice(afterHeading, seg === -1 ? undefined : seg);
+  const options = hookOptions(hooksText);
+  if (options.length === 0) return { top, otherAppendix: wrap(carriedOther), chosen: null };
+  // Every option, in ranked order (unranked ones after, in document order).
+  const order: number[] = [];
+  for (const r of ranking ?? []) {
+    let i = options.findIndex((o) => labelKey(o.label) === labelKey(r.label));
+    if (i === -1 && r.hook >= 1 && r.hook <= options.length) i = r.hook - 1;
+    if (i !== -1 && !order.includes(i)) order.push(i);
+  }
+  const compressed = options.findIndex((o) => /A-COMPRESSED/i.test(o.label));
+  if (!ranking?.length && compressed !== -1) order.push(compressed);
+  options.forEach((_, i) => {
+    if (!order.includes(i)) order.push(i);
+  });
+  let pick = order[0] ?? 0;
+  if (preferShape) {
+    const shaped = order.find((i) => openingShapeIssues(spokenHook(options[i].text)).length === 0);
+    if (shaped !== undefined) pick = shaped;
+    else if (compressed !== -1) pick = compressed;
+  }
+  const chosen = options[pick];
+  const others = options.filter((_, i) => i !== pick).map((o) => `### ${o.label}\n\n${spokenHook(o.text)}`);
+  const before = top.slice(0, h.index);
+  const sponsor = seg === -1 ? "" : top.slice(seg);
+  return {
+    top: `${before}${OPENING_HEADING}\n\n${spokenHook(chosen.text)}\n\n${sponsor}`,
+    otherAppendix: wrap(others.join("\n\n")),
+    chosen: chosen.label,
+  };
+}
+
+// ── Writing-study checks (measured, never modelled) ──────────────────────────
+
+/**
+ * The opening shape Jake rebuilds every opening into (P3): "Look at this …" /
+ * "By the end of this video, you'll X — even if you've never Y in your life" /
+ * the exact prompts on screen / the welcome. Checked on the text BEFORE the
+ * welcome: at most four paragraphs and about 120 words, the promise sentence
+ * present, and no list of questions the video promises to answer.
+ */
+export function openingShapeIssues(hook: string): string[] {
+  const spoken = hook
+    .split("\n")
+    .filter((l) => !/^\s*(?:={3,}|-{3,}|#{1,6}\s|JAKE:|Best for:|Sub-conversion:)/i.test(l))
+    .map((l) =>
+      l
+        .replace(/^\s*\**\s*Beat\s+\d+\s*(?:\([^)]*\))?\s*:?\s*\**\s*/i, "")
+        .replace(/\[[^\]\n]*\]/g, " ")
+        .replace(/[*_>]/g, " ")
+        .trim(),
+    )
+    .join("\n");
+  const issues: string[] = [];
+  const w = WELCOME_START_RE.exec(spoken);
+  if (!w) issues.push("no welcome line");
+  const pre = (w ? spoken.slice(0, w.index) : spoken).trim();
+  const paras = pre.split(/\n\s*\n|\n/).map((p) => p.trim()).filter((p) => /[a-z]/i.test(p));
+  const words = (pre.match(/[A-Za-z0-9']+/g) ?? []).length;
+  if (paras.length > 4) issues.push(`${paras.length} paragraphs before the welcome (at most 4)`);
+  if (words > 130) issues.push(`${words} words before the welcome (about 120 at most)`);
+  if (!/by the end of this video/i.test(pre)) issues.push('no "By the end of this video, you\'ll …" promise');
+  else if (!/even if you'?ve never/i.test(pre)) issues.push('the promise has no "— even if you\'ve never … in your life" reassurance');
+  const questions = (pre.match(/\?/g) ?? []).length;
+  if (questions >= 2) issues.push(`${questions} questions before the welcome (no list of questions the video promises to answer)`);
+  return issues;
+}
+
+/**
+ * The technical words a beginner has to act on (P19). The first time one is
+ * used it must be named, defused and translated in one plain line — "This is
+ * called an MCP. Now, that sounds scary. It's not. It's just the plug that lets
+ * Claude use another app for you." — not left as a raw label.
+ */
+export const JARGON_TERMS = ["MCP", "API key", "API", "OAuth", "webhook", "endpoint", "token", "CLI"];
+
+const EXPLAIN_RE =
+  /\b(?:is just|it'?s just|are just|just means|basically|means|think of (?:it|them|this|that)|sounds scary|stands for|in plain english|in other words|is (?:a|an|the) (?:little |tiny |simple )?(?:plug|adapter|key|password|code|link|address|bridge|door)|is like|works like|short for)\b/i;
+
+/** First mentions of a jargon term with no plain-English line near them. */
+export function findUnexplainedJargon(text: string): string[] {
+  const sentences = splitSentences(text);
+  const out: string[] = [];
+  const done = new Set<string>();
+  for (const term of JARGON_TERMS) {
+    if (done.has(term)) continue;
+    const re =
+      term === "token"
+        ? /\btokens?\b/i
+        : new RegExp(`\\b${term.replace(/ /g, "\\s+")}s?\\b`, term === term.toUpperCase() ? "" : "i");
+    const at = sentences.findIndex((s) => re.test(s));
+    if (at === -1) continue;
+    // "API key" covers "API": one explanation is enough for both.
+    if (term === "API key") done.add("API");
+    const near = sentences.slice(Math.max(0, at - 1), at + 3).join(" ");
+    if (!EXPLAIN_RE.test(near)) {
+      const s = sentences[at];
+      out.push(`${term} — "${s.length > 120 ? s.slice(0, 117) + "…" : s}"`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The exemplars' signature jokes (P24). The 8-word shingle check in
+ * exemplarEchoes cannot see a reused 3–6 word joke, and a reused joke is the
+ * worst kind of lifted line — the audience has heard it. Steal the move (a joke
+ * riding the login step), never the line.
+ */
+export const EXEMPLAR_JOKE_PHRASES = [
+  "first pancakes",
+  "cheap day rates",
+  "too short for another password",
+  "don't call in sick",
+  "credits will thank you",
+  "keys to a production studio",
+  "burning them on a tiny robot",
+  "marvel fight scenes",
+  "another release cycle",
+  "until your eyes cross",
+  "like a normal person",
+  "plan i'll drown in",
+];
+
+export function findExemplarJokes(text: string): string[] {
+  const norm = text.toLowerCase().replace(/[‘’]/g, "'").replace(/\s+/g, " ");
+  return EXEMPLAR_JOKE_PHRASES.filter((p) => norm.includes(p));
+}
+
+/**
+ * Restatement tails (P11): a paragraph that ends on a short tagline after the
+ * point was already made — "That's the whole trick." / "Done." / "Nothing
+ * spent." — and the "X, not Y" contrast line. Jake cut about forty of these
+ * across eight runs. Reported, never auto-deleted.
+ */
+const TAGLINE_RE =
+  /^(?:that'?s the whole\b|that'?s it\b|that'?s the tell\b|done\b|nothing spent\b|it'?s normal\b|.*\bis just arithmetic\b|nobody\b.*\bnobody\b|same \w+\. (?:smaller|bigger|different)\b)/i;
+
+export function findTaglineEndings(text: string): string[] {
+  const out: string[] = [];
+  for (const para of text.split(/\n\s*\n|\n/)) {
+    const sents = splitSentences(para);
+    if (sents.length < 2) continue;
+    const last = sents[sents.length - 1];
+    const n = wordsOf(last).length;
+    if (n === 0 || n > 8) continue;
+    if (TAGLINE_RE.test(last.replace(/^["“]/, "")) || /^[^,]{2,40}, not (?:a |an |the )?[^,]{2,40}[.!]$/i.test(last)) {
+      out.push(last);
+    }
+  }
+  return [...new Set(out)].slice(0, 20);
+}
+
+/**
+ * "let's" per 1,000 words (P12) — a SOFT voice target, never a gate. Jake's
+ * finished runs: 2.0–11.3; the same runs as generated: 0.8–5.3. And the bare
+ * imperative step lines ("Click Save. Paste it. Send.") he turns into "now let's
+ * …". Both measured on spoken text only.
+ */
+export function letsMetrics(text: string): { letsPer1000: number; bareImperatives: string[] } {
+  const spoken = text.split(CANONICAL_OUTRO)[0] ?? text;
+  const words = wordsOf(spoken).length;
+  const lets = (spoken.match(/\blet'?s\b/gi) ?? []).length;
+  const bare = splitSentences(spoken).filter(
+    (s) =>
+      wordsOf(s).length <= 4 &&
+      /^(?:click|paste|type|hit|press|open|send|select|copy|tap|choose|drag|save|run)\b/i.test(s.trim()),
+  );
+  return {
+    letsPer1000: words ? Number(((lets / words) * 1000).toFixed(1)) : 0,
+    bareImperatives: [...new Set(bare)].slice(0, 12),
+  };
 }
 
 // ── Script quality metrics ────────────────────────────────────────────────────
@@ -666,11 +1504,13 @@ export function demoDensity(text: string): { demoAnchors: number } {
  */
 const BOILERPLATE_TEXT = [
   CANONICAL_OUTRO,
+  CANONICAL_WELCOME,
   "Thanks so much for hanging out with me today. Before you click away, here's a video you'll probably want to watch next — YouTube's pretty good at this, it'll line up the one video it thinks you'll love next. Just click the video to my left and you'll see exactly what I'm talking about. See you there.",
   "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. Let's get into it. Let's dive right in.",
   "Hey, if you're new here, I'm Jake Dawson, and I help solopreneurs and small business owners get this stuff actually working. If that sounds like you, hit subscribe and smash that like button so more of this finds you.",
   "By the end of this video, you'll be able to, you'll know how to, so you can copy it for your own content, your marketing, or anything you need. Even if you've never done this before.",
   "If you want to go deeper on any of this, I've got a free course inside my Skool community — the prompts from this video are in there as a doc you can copy straight out, and it costs you nothing. Link's in the description.",
+  "If you want to go deeper on this, I've got a free course inside my Skool community that walks through it properly — link's in the description.",
   "And if this video saved you some time and money, do me a favor and smash the like button and hit subscribe. I dig into this stuff every single week. Drop a comment down below. I read every one.",
   "The link's in the description if you want to follow along.",
 ].join("\n\n");
@@ -1306,6 +2146,18 @@ export function findSourceNames(script: string, channels: string[], protect = ""
   return [...hits];
 }
 
+/** The script without the prompts the viewer types (THE PROMPT: lines and the quoted prompts extractPrompts finds). */
+export function stripPromptText(script: string): string {
+  let out = script
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/^[ \t]*(?:\**\s*)?THE PROMPT\b[^\n]*$/gim, " ");
+  for (const p of extractPrompts(out)) {
+    out = out.split(p.text).join(" ");
+  }
+  return out;
+}
+
 export function auditClaims(
   script: string,
   factSheet: string,
@@ -1316,6 +2168,13 @@ export function auditClaims(
   sourceChannels: string[] = [],
   /** Topic + title: a channel word that is part of the subject is never a name. */
   protectWords = "",
+  /**
+   * More evidence for numbers: the UX Scout report and the screenshot sheet.
+   * Without them a number the tool showed on screen today ("20% OFF" on the
+   * generated ad) was "never established", and the claim-fix pass cut it from
+   * the script — and from the prompt the viewer types (2026-10-02).
+   */
+  evidence = "",
 ): ClaimAudit {
   const sourceNames = findSourceNames(script, sourceChannels, protectWords);
   const experienceClaims = findExperienceClaims(
@@ -1340,11 +2199,13 @@ export function auditClaims(
 
   // Timestamps are production markers, not claims. "Beat 4 (1:10–1:35)" would
   // otherwise contribute 1, 10, 1 and 35 to the audit and drown the real findings.
-  const prose = script
+  // A prompt the viewer types is an example, not a claim: "20% off all whole
+  // bean coffee" in the prompt is the sale Jake is inventing for the demo.
+  const prose = stripPromptText(script)
     .replace(/\(?\b\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2}\)?/g, " ")
     .replace(/\b\d{1,2}:\d{2}\b/g, " ");
 
-  const sheetNumbers = [...extractNumbers(factSheet)];
+  const sheetNumbers = [...extractNumbers(`${factSheet}\n${evidence}`)];
   const sheetSet = new Set(sheetNumbers);
   // Below 10 the numbers are prose ("three things", "step two"), not claims.
   const scriptNumbers = [...extractNumbers(prose)].filter((n) => n >= 10);

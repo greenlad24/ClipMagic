@@ -20,14 +20,12 @@ The whole point: the viewer should never feel "sold to." Each CTA rides in on th
 
 ## RULE 1 — SUBSCRIBE AND LIKE go together in the intro, right after the welcome
 
-Both asks ride the welcome line that already exists at the end of the hook. "Hey everyone, welcome back to the channel, I'm Jake Dawson…" — and then, in the same breath, subscribe and like. One aside, both verbs, then straight back into the video.
+Both asks ride the welcome line that already exists at the end of the hook. "Hey everyone, welcome back to the channel — I'm Jake Dawson…" — and then, in the same breath, subscribe and like. One aside, both verbs, then straight back into the video. **The whole line is fixed, word for word, and code puts it into every hook** — so write exactly the line below.
 
 The structure: welcome + identity line → the ask as a soft tag.
 
-Good (rides the welcome line, sounds like an aside):
-> "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, subscribe and like the video so more of this finds you. Alright — let's get into it."
-
-> "...I'm Jake Dawson. Go ahead and hit subscribe and smash that like button if you want more of this — then let's get to work."
+The line (Jake's, locked 2026-10-02):
+> "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it."
 
 Bad (nagging, announced, breaks the bar-Jake voice):
 > ❌ "Don't forget to subscribe and hit the bell!"
@@ -40,7 +38,7 @@ Bad (nagging, announced, breaks the bar-Jake voice):
 - Both asks in ONE aside. Not two sentences, not two moments — "subscribe and like the video" is a single beat.
 - Framed as a benefit to the viewer ("if you want more of this"), never a demand.
 - Approved phrasings: "smash the like button", "hit that subscribe button", "click that notification bell". Banned: nagging — no "don't forget," no "make sure you."
-- If the hook already feels full, make it the lightest possible touch — even just "subscribe and like it if that sounds useful" tagged onto the positioning line.
+- The welcome + ask is the fixed line above in every hook, however full the hook feels — trim the hook around it, never the line.
 
 **You are given FOUR hook options below.** Jake picks one later, so place the ask into the welcome/identity beat of EACH of the four hooks. Change nothing else about any hook. If a hook has no welcome/identity beat, leave that hook untouched.
 
@@ -63,9 +61,9 @@ Jake has a free course inside his Skool community. This is the one place in the 
 **Where it goes:** on a moment where the viewer has just seen something work and would plausibly want more of it — right after a result lands, or right after a step that was clearly the bigger piece of the puzzle. It rides that beat the way the like ask used to: content first, one sentence, then straight back to the work.
 
 Good (soft, earns its place, easy to walk past):
-> "...and that's the whole workflow running on its own. If you want to go deeper on this stuff, I've got a free course inside my Skool community that walks through it properly — link's in the description, it costs nothing. Anyway — next thing."
+> "...and that's the whole workflow running on its own. If you want to go deeper on this, I've got a free course inside my Skool community that walks through it properly — link's in the description."
 
-> "That's the part most people get stuck on. I actually built a free course in my Skool community that covers this end to end, if you want it. Link's below. Alright, moving on."
+That is the whole mention: ONE sentence, then the next line of the script carries on with the content. No "it costs nothing", no "Anyway —", no "Alright, moving on" bolted on after it.
 
 Bad (pitchy, urgent, or bolted onto nothing):
 > ❌ "Make sure you join my free course right now — spots are limited!"
@@ -75,7 +73,7 @@ Bad (pitchy, urgent, or bolted onto nothing):
 **Rules for the free-course CTA:**
 - **Once. Anywhere in the middle** — not in the hook, not in the first thirty seconds, not in the outro.
 - It says the course is **free** and that it lives in the Skool community. Link's in the description.
-- One or two sentences, then pivot back to content in the same breath.
+- One sentence — "If you want to go deeper on this, I've got a free course inside my Skool community that walks through it properly — link's in the description." — then the content carries on. No "it costs nothing", no "Anyway —" after it.
 - No urgency, no scarcity, no "you need this". If the viewer walks past it, that is fine — it is there for the people who want more.
 - **One Skool mention per video.** If you place this, the outro must not also plug Skool. Say so in the notes so the check is easy.
 - Skip it entirely if this video's content gives no natural moment for it — a forced one is worse than none.
@@ -87,9 +85,9 @@ Bad (pitchy, urgent, or bolted onto nothing):
 The comment ask lives in the outro, near the sign-off. Not mid-video. It's not "comment below!" — it's Jake asking something specific he'd actually be curious to hear answers to, tied to whatever the video is about.
 
 Good (specific, curious, at the close):
-> "Let me know in the comments — what's the messy spreadsheet you'd turn into an app first? A client dashboard? A lead tracker? Something internal? I read every one."
+> "What would you build first — the lead finder, the price tracker, or the weekly report? Leave a comment down below — I read every one of them."
 
-> "Which of these would you build first — the lead finder, the price tracker, or the weekly report? Drop it in the comments, I'm curious."
+> "What's the first job you'd hand to it — the leads, the marketing, or the Monday report? Leave a comment down below — I read every one of them."
 
 Bad (generic, no topic hook):
 > ❌ "Comment below and let me know what you think!"
@@ -97,7 +95,8 @@ Bad (generic, no topic hook):
 
 **Rules for the comment CTA:**
 - It goes at the END of the video, inside the outro, before or beside the sign-off.
-- The question MUST be specific to this video's topic — a choice, a number, a "what would you build first."
+- ONE question, specific to this video's topic. It may offer a choice between the things THIS video actually covered — never invented hypotheticals, and never a "not the safe answer" nudge.
+- Then, always: "Leave a comment down below — I read every one of them."
 - Framed as genuine curiosity, not obligation. Jake actually wants the answer.
 - This is the ONLY comment ask in the whole script.
 - The outro stage usually writes this already. If it's there, leave it. Only add one if it's missing.

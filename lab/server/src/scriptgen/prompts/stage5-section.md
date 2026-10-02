@@ -1,10 +1,6 @@
 ## STAGE 5 — SECTION-BY-SECTION SCRIPT
 
-**This is where credentials leak in.** During the meat of the video, Jake can drop **one** short credential sentence — pulled from the **story shrapnel bank** (`story-shrapnel-bank.md`).
-
-> Example: *"I spent a year running automation projects before AI made this stuff way easier. Anyway —"*
-
-One line. Then back to the content. Never a paragraph. Never preceded by "let me tell you about myself."
+**No backstory and no credentials — in any video, in any section** (Jake, 2026-10-02). No past ventures, past jobs, years in tech, money spent, or self-deprecating career lines — he deleted every one the generator placed. First person is for what Jake clicks and what he sees on screen now.
 
 **Some words are never written, in the script or anywhere else.** "caveat" (say "one thing to know" or "the catch is"), "clever" and "neat" (say what the thing actually does, or what it saves the viewer), "genuinely" and "real deal" (cut them — if a thing is good, show why). The WORD SWAPS table below carries the rest. Where a beat below is about being honest regarding a limitation, that is what to write — the limitation itself, plainly.
 
@@ -50,8 +46,8 @@ DESCRIBE (bad) vs SHOW (good) — same fact, both true, only one needs the video
 Every section needs at least one of these, out loud:
 - Point at the result — "Look at that." / "And there it is." / "Watch the meter."
 - Say what changed — "Five sections, nothing else." / "Boom. A product that didn't exist before, now exists."
-- Narrate the wait instead of skipping it — "Now hit enter. It takes a few minutes."
-- Call the miss when there is one — "Now… shot two is a little flat. It barely moves."
+- Narrate the wait in one line instead of skipping it — roughly how long it takes and exactly where the result appears: "Now hit enter. It takes a couple of minutes, and the video shows up right here in your library."
+- Call the miss when a RESULT misses — "Now… shot two is a little flat. It barely moves." (A confusing SETUP step is different: see WALKING A BEGINNER THROUGH IT below.)
 
 **Your section's outline carries an `ON SCREEN:` line.** That is the moment this
 section was commissioned to deliver, decided back when the video was planned.
@@ -68,9 +64,9 @@ VOICE RULES (read every time):
 1. Never punch sideways (no competitor references, no "better than X")
 2. Never punch down (no "if you've been doing this wrong")
 3. Self at the punchline, never the viewer
-4. Credentials leak in DURING the video in short single sentences — NEVER as monologue (pull from story-shrapnel-bank.md if needed, one line max)
+4. No backstory and no credentials, anywhere — first person is for what you click and see now
 5. Whole script written so a 14-year-old understands it
-6. Keep it: short hook, short intro, LARGE meat part, honest thoughts, short CTA
+6. Keep it: short hook, short intro, LARGE meat part, short CTA — honest limits inside the step where the viewer meets them, in one clause, never a review after the demo
 
 ---
 
@@ -84,10 +80,9 @@ Real examples with names:
 - "Here's a real example. A consultant named Amanda…"
 - "Maybe you're running an agency — here's how this looks for you."
 
-Honest about the catch:
-- "And look, it's not instant magic."
+Honest about the catch — inside the step where the viewer meets it, in one clause:
+- "And look, it's not instant magic — the first version usually needs one more try."
 - "Totally fair question…"
-- "But like any growing tool, there are rough edges."
 
 Conversational asides:
 - "And honestly,"
@@ -100,12 +95,8 @@ STRUCTURAL CONVERSATIONAL POINTS (MKBHD-style — positive with a sparkle of rea
 
 These aren't a flat phrase list — they're **structural slots in the script**. Each category is a job that has to be done somewhere in the section. Use 4-8 per script total, sprinkled — never stacked, never two in a row. The structure (sentence-runways like "Now, here's the thing…" or "I have some thoughts. We'll get to that.") is borrowed from MKBHD. The payoff is always positive or curious — never punch-down at the product, company, or viewer.
 
-▶ Slot 1 — VIDEO-OPENING FRAMING (top of script, after the hook)
-Sort the whole video into buckets so the viewer knows the architecture.
-- "So I'm going to show you what's good, what's new, what's smart, and what I'd love to see them push further."
-- "I have some thoughts. We'll get to that."
-- "[Company] hyped this up as [the marketing line] — that's a high bar to set. Let's see how it holds up."
-- "Three things I keep coming back to. We'll get to all of them."
+▶ Slot 1 — (retired) VIDEO-OPENING FRAMING
+Jake rewrites every opening into one shape and cuts any framing of the video's architecture after it — no "what's good, what's new, what I'd love to see", no roadmap. After the hook, go straight into the first real thing.
 
 ▶ Slot 2 — SECTION OPENERS (start of each new beat)
 Casual, low-energy, almost off-hand. Never "Number 3 is…"
@@ -127,8 +118,8 @@ Tiny words that signal a real person, not a teleprompter. Spread across the whol
 - "…you know how it usually goes…"
 Rule: at least 3-4 of these per section. They're the seasoning.
 
-▶ Slot 4 — SOFT HEDGES (honesty without negativity)
-Owns it as opinion, leaves room to be wrong, defers final judgment.
+▶ Slot 4 — SOFT HEDGES (honesty without negativity) — opinion and review videos only, NEVER in a tutorial
+Owns it as opinion, leaves room to be wrong, defers final judgment. In a tutorial, say what the tool does, plainly — a hedge there reads as not having tested it.
 - "…I think." (end of sentence)
 - "I'm not sure how I feel about [X] to be honest."
 - "Maybe it's just me, but…"
@@ -137,7 +128,6 @@ Owns it as opinion, leaves room to be wrong, defers final judgment.
 - "We'll have to get our hands on it."
 - "We'll see."
 - "…if it works…"
-- "…if they get this right, that's a real win."
 - "I'm in the curious-watching category until I see [X]." ← Jake's positive variant of MKBHD's "skeptical category"
 
 ▶ Slot 5 — REACTING TO WHAT JUST HAPPENED
@@ -164,7 +154,6 @@ Earn attention right before you drop the value.
 - "Maybe the most interesting feature, at least to me, was…"
 - "The big new feature really is…"
 - "…the biggest one is probably just…"
-- "And the part I keep coming back to is…"
 
 ▶ Slot 7 — CONCRETE EXAMPLE PIVOT ("let's say…")
 Never explain a feature abstractly. Always pivot to a specific scenario.
@@ -175,19 +164,16 @@ Never explain a feature abstractly. Always pivot to a specific scenario.
 - "Like literally just a [specific small thing]…"
 - "Like a [trip / event / project] you're about to be on…"
 
-▶ Slot 8 — HONEST UNCERTAINTY (questions out loud — Jake's positive variant)
+▶ Slot 8 — HONEST UNCERTAINTY (questions out loud — Jake's positive variant) — opinion and review videos only, NEVER in a tutorial
 MKBHD asks practical questions to pressure-test. Jake asks the same questions but pairs with optimism.
 - "And honestly, I'm curious to see how they handle [edge case]…"
-- "Could go either way, but if they get it right, that's a real win."
 - "How does it know when [X]? That's the part I want to test."
-- "Also — does this work without [premium / paid tier]? Worth checking."
 
 ▶ Slot 9 — SELF-AWARE HUMOR (always at self or situation, never at viewer or product)
 One per script, max two.
 - "…to make sure I'm not crazy here…"
 - "I don't know why they named it that, but…"
 - "…and that's hilarious, in a good way."
-- "Anyway — moving on."
 - Throwaway personal aside ("…also, you might have noticed [random thing], I really like that.")
 
 ▶ Slot 10 — SECTION CLOSERS / TRANSITIONS
@@ -195,35 +181,30 @@ Short, warm, never abrupt.
 - "Either way…"
 - "Anyway…"
 - "So, that's all pretty convenient."
-- "…and that's a real win for [audience type]."
 - "Alright, moving on."
 
-▶ Slot 11 — OUTRO STRUCTURE (the MKBHD pattern, Jake-ified)
-The honest-enthusiasm outro. Use this verbatim shape for any tool review or new-feature video.
-- Step 1 — Honest enthusiasm: "Honestly, I'm really excited to keep testing this."
-- Step 2 — Own it as opinion: "My take so far is…" / "I think mostly my take is…"
-- Step 3 — 2-3 specific small wins: "The [feature] is going to be really useful. Also [feature] looks like it'll save real time."
-- Step 4 — Verify-later pact: "But I want to use it for a few more weeks before I have a final take."
-- Step 5 — Open comments: "Let me know in the comments what you want me to test specifically."
+▶ Slot 11 — (retired) OUTRO STRUCTURE
+Jake cuts the honest-enthusiasm outro from every script. After the last result plays back, the video goes: the pricing block (if any) → the link line → one specific question + "Leave a comment down below — I read every one of them." → the fixed outro. No verdict, no "my take so far", no wins list, no "a few more weeks before I have a final take".
 
 ▶ Slot 12 — PER-SECTION INTERNAL BEAT (the conversational rhythm inside each feature)
 This is the meta-pattern that holds everything together. For EACH feature inside a section:
 1. **Describe** ("So this new [feature] lets you…")
 2. **Demo / specific example** ("Like let's say you're…")
-3. **React** ("…and that's nice." / "That's a huge win." / "It's a really smart idea.")
-4. **The catch** (one slot 4 or slot 8 phrase) ("We'll have to test it." / "I'm curious to see how they handle…")
-5. **Credit or curiosity payoff** ("I'll give them credit for that." / "And the part I keep coming back to is…")
+3. **Point at what changed** — the result on screen, in words that fit only this tool ("Five sections, nothing else.")
+4. **The limit, only if the viewer meets one here** — one clause, inside the step
 
-Run this 5-beat micro-loop per feature. That's the texture that makes a script feel like a person talking, not a script being read.
+Then move on. No reaction line and no payoff line after the result: a sentence that comes after the point only restates it, and Jake cuts those every time.
+
+Run this micro-loop per feature. That's the texture that makes a script feel like a person talking, not a script being read.
 
 ---
 
 USAGE RULES (non-negotiable):
 1. Pull from 4-6 different slots per script. Never use the same phrase twice in one video.
 2. **Never stack two of these in a row.** They're seasoning, not the meal.
-3. **Slot 8 (honest uncertainty) is Jake's positive variant** — when in doubt, pair the question with curiosity, not skepticism.
-4. **Slot 1 framing + Slot 11 outro are the bookends.** Use them on every tool review / new-feature video.
-5. The 5-beat per-section loop (Slot 12) is the rhythm. Every feature gets the loop.
+3. **Slot 8 (honest uncertainty) is Jake's positive variant** — when in doubt, pair the question with curiosity, not skepticism. Never in a tutorial.
+4. **Slots 1 and 11 are retired.** No architecture framing after the hook, no honest-enthusiasm outro.
+5. The per-feature loop (Slot 12) is the rhythm. Every feature gets the loop.
 6. If a phrase doesn't sound natural read aloud, swap it. The list is a menu, not a script.
 
 ---
@@ -232,9 +213,27 @@ Benefit reveals (specific, not hyped):
 - "Here's what it actually does."
 - "You can now do X in one click instead of three apps."
 
-Credential leak (max one per script):
-- "I ran a SaaS a few years ago. AI would've saved me a year. Anyway —"
-- Always followed by a pivot back to content. Never expand. Never explain.
+No credential leak — none in any script (see the top of this prompt).
+
+---
+
+WALKING A BEGINNER THROUGH IT (Jake's edits, 2026-10-02):
+
+- **Prompts a beginner would type.** The prompt the viewer sees and copies is one to three plain sentences naming the outcome, the way a person types into a chat box: "Here's my product. Make five short videos for it." Put it in quotes, on its own. Guard-rails the viewer doesn't need to read (don't invent data, don't contact anyone, the output format) go in a short second line or into the long version — never a long spec in the spoken prompt.
+- **Then write the long version, right after it, fenced exactly like this** (the fence lines on their own lines):
+
+  <<<FULL PROMPT>>>
+  The comprehensive version of the same prompt — full detail, structure, guard-rails, the output format: the long prompt a power user would paste.
+  <<<END FULL PROMPT>>>
+
+  The block is lifted out of the script and printed after it, numbered to match its short version. It is never read aloud, so write it as a prompt, not as narration. One block per short prompt that would gain from a long version; a prompt that is already complete when short needs none.
+- **Name it, defuse it, translate it — once.** The first time the viewer meets a technical word they must act on (MCP, connector, API key, OAuth, skill, webhook): say what it's called, defuse it in a few words, give one plain line — "This is called an MCP. Now, that sounds scary. It's not. It's just the plug that lets Claude use another app for you." — then use the plain word from then on. Never leave a raw interface label as the only name for a thing.
+- **A confusing step: flag it once, exact label, the benefit.** In the same sentence that gives the step: "this one's easy to miss", the exact label, and why in terms of what the viewer gets or saves. No personifying the failure ("It's confident. It's wrong."), no dramatising it ("slow down with me here"), and no second warning paragraph later.
+- **One protective tip per tool, framed as a benefit** — the one setting or habit that saves the viewer money or trouble ("this saves your wallet"). No stacked checks, audits or "before you trust it" paragraphs.
+- **Describe the tool's questions in general.** "It asks a few questions about your business — answer them, it makes the plan better." Never a transcript of the questions and answers.
+- **Never cite where a fact came from.** No "the page says", "their docs say", "let's open their pricing page". Say the fact.
+- **Steps as something you do together:** "now let's paste it in", "let's hit generate" — not a run of bare commands ("Click Save. Paste it. Send.").
+- **An open item is never in the narration.** If a control's name is unconfirmed, write the step around it ("click the button that creates your avatar") and add `PRODUCTION NOTE: <what to check on screen>` on its own line at the end of the section. Never `[VERIFY ON SCREEN: …]`, `[SHOOT DAY: …]` or any bracketed note.
 
 ---
 
@@ -265,7 +264,7 @@ WORD SWAPS (use the everyday word):
 | robust | strong / specific feature |
 | streamline | make easier |
 | integrate | connect |
-|caveat| the thing| |genuinely|really|
+|caveat| one thing to know| |genuinely|really|
 
 If you wouldn't say it to a friend at lunch, don't write it.
 
@@ -281,7 +280,7 @@ SECTION STRUCTURE:
    the video exists rather than a blog post.
 5. Explain why it matters (1–2 sentences, optional)
 6. Real example, when relevant (2–3 sentences)
-7. Honest about the catch (1–2 sentences, optional)
+7. Honest about the catch (one clause, optional — only where the viewer meets it in this step)
 8. Transition (1 sentence) — "Next, let's [action]."
 
 ---
@@ -340,7 +339,9 @@ WHERE THEY GO:
   no internet slang.
 
 Steal the MOVES above, never the sentences. A line lifted from this list verbatim
-is a line the audience has already heard.
+is a line the audience has already heard — every example above is from a published
+video, and a reused joke is flagged in code, even a four-word one. And put the joke
+on a working step: a joke in an aside or a commentary paragraph gets cut with it.
 
 NUMBERS — state clearly, don't make the viewer do math:
 
@@ -363,7 +364,8 @@ CHECKLIST PER SECTION:
 ✅ Is the benefit specific and clear?
 ✅ No punch-sideways / no punch-down?
 ✅ Real example included where relevant?
-✅ Honest about the catch where appropriate?
+✅ Honest about the catch inside the step, in one clause — no review after the demo?
+✅ Paragraphs end on the instruction or the fact, not a tagline restating it?
 ✅ Reads like natural speech?
 
 If any answer is NO, rewrite.
@@ -373,7 +375,8 @@ If any answer is NO, rewrite.
 OUTPUT FORMAT:
 - Plain text only
 - No bullet points in the script
-- No formatting, no stage directions
+- No formatting, no stage directions, nothing bracketed
+- The only two things allowed besides narration: the `<<<FULL PROMPT>>> … <<<END FULL PROMPT>>>` blocks, and `PRODUCTION NOTE:` lines at the end of the section
 - Natural speech with contractions
 - Short sentences
 - Em dashes and ellipses where natural

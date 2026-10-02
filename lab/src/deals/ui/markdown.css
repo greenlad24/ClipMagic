@@ -1,0 +1,99 @@
+/*
+ * Deal Organizer — chat Markdown styles.
+ *
+ * The original relied on @tailwindcss/typography (`prose prose-sm`, with
+ * `prose-p:my-1 prose-ul:my-1 prose-li:my-0.5` in the chat bubble). That
+ * plugin is not installed in the Lab build, so this reproduces the look of
+ * prose-sm with those overrides, on the Deal Organizer tokens. Scoped to the
+ * Deal Organizer (`:root.dealorg`) so no other Lab page is affected.
+ */
+:root.dealorg .prose {
+  color: hsl(var(--foreground));
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+:root.dealorg .prose > :first-child { margin-top: 0; }
+:root.dealorg .prose > :last-child { margin-bottom: 0; }
+:root.dealorg .prose p { margin: 0.25rem 0; }
+:root.dealorg .prose strong { font-weight: 600; color: hsl(var(--foreground)); }
+:root.dealorg .prose em { font-style: italic; }
+:root.dealorg .prose del { text-decoration: line-through; }
+:root.dealorg .prose a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 500;
+}
+:root.dealorg .prose h1,
+:root.dealorg .prose h2,
+:root.dealorg .prose h3,
+:root.dealorg .prose h4,
+:root.dealorg .prose h5,
+:root.dealorg .prose h6 {
+  color: hsl(var(--foreground));
+  font-weight: 700;
+  line-height: 1.35;
+  margin: 1.1em 0 0.45em;
+}
+:root.dealorg .prose h1 { font-size: 1.45em; }
+:root.dealorg .prose h2 { font-size: 1.25em; }
+:root.dealorg .prose h3 { font-size: 1.1em; font-weight: 600; }
+:root.dealorg .prose h4,
+:root.dealorg .prose h5,
+:root.dealorg .prose h6 { font-size: 1em; font-weight: 600; }
+:root.dealorg .prose ul,
+:root.dealorg .prose ol { margin: 0.25rem 0; padding-left: 1.4em; }
+:root.dealorg .prose ul { list-style: disc; }
+:root.dealorg .prose ol { list-style: decimal; }
+:root.dealorg .prose ul ul { list-style: circle; }
+:root.dealorg .prose li { margin: 0.125rem 0; padding-left: 0.2em; }
+:root.dealorg .prose li::marker { color: hsl(var(--muted-foreground)); }
+:root.dealorg .prose li p { margin: 0.125rem 0; }
+:root.dealorg .prose blockquote {
+  margin: 0.6em 0;
+  padding-left: 0.9em;
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+}
+:root.dealorg .prose hr { border: 0; border-top: 1px solid hsl(var(--border)); margin: 1.2em 0; }
+:root.dealorg .prose code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+:root.dealorg .prose pre {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border-radius: 0.5rem;
+  padding: 0.75em 1em;
+  margin: 0.8em 0;
+  overflow-x: auto;
+  font-size: 0.8em;
+}
+:root.dealorg .prose pre code { font-weight: 400; font-size: inherit; }
+:root.dealorg .prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+:root.dealorg .prose thead th {
+  font-weight: 600;
+  text-align: left;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 0 0.6em 0.45em;
+}
+:root.dealorg .prose tbody td {
+  border-bottom: 1px solid hsl(var(--border) / 0.6);
+  padding: 0.45em 0.6em;
+  vertical-align: top;
+}
+:root.dealorg .prose mark {
+  color: hsl(var(--primary-foreground));
+  background-color: hsl(var(--primary));
+  border-radius: 2px;
+  padding: 0 2px;
+}

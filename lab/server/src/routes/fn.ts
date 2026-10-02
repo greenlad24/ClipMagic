@@ -24,6 +24,8 @@ const LOCAL_USER = "local";
 // `generateChatImage` carries base64 reference images (no secret) that would
 // otherwise flood the logs on every send — redact its body too.
 const REDACT_INPUT = new Set(["updatePostizSettings", "uploadThumbnailCharacter", "generateChatImage"]);
+/** Handlers whose RESULT carries a credential (a Google access token) — never logged. */
+const REDACT_RESULT = new Set(["scriptDocsPicker"]);
 
 /** Compact one-line preview of an object for logs (no huge blobs). */
 function preview(obj: unknown, max = 300): string {
@@ -51,7 +53,7 @@ router.post(
     }
     try {
       const result = await handler(req.body ?? {}, LOCAL_USER);
-      console.log(`[fn] ✓ ${name} (${Date.now() - started}ms) result=${preview(result)}`);
+      console.log(`[fn] ✓ ${name} (${Date.now() - started}ms) result=${REDACT_RESULT.has(name) ? "[redacted]" : preview(result)}`);
       res.json(result);
     } catch (err) {
       const ms = Date.now() - started;

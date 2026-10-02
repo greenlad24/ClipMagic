@@ -145,6 +145,33 @@ export function vendorHosts(coreTopic: string, specificFocus?: string): string[]
 }
 
 /**
+ * The vendor's REAL domain(s), read off the UX Scout report — the tool was
+ * opened there today, so these are not a guess. A Linearity run guessed
+ * linearityai.com/.ai/.io… from the topic "Linearity AI" and counted zero
+ * first-party sources, while the product lives on linearity.io.
+ *
+ * Only domains whose name contains the product's first word count, so the
+ * Google sign-in page or a CDN the report mentions never become "the vendor".
+ */
+export function scoutHosts(report: string | null | undefined, coreTopic: string): string[] {
+  if (!report) return [];
+  const word = toolName(coreTopic).toLowerCase().split(/[^a-z0-9]+/).find((w) => w.length >= 3);
+  if (!word) return [];
+  const out = new Set<string>();
+  for (const m of report.toLowerCase().matchAll(/\b((?:[a-z0-9-]+\.)+[a-z]{2,})(?=[\/\s"'”),.:;]|$)/g)) {
+    const parts = m[1].split(".");
+    if (parts.length < 2) continue;
+    // Registrable part, the simple way: the last two labels (the vendors this
+    // tool covers live on .com/.io/.ai/.so — not on co.uk-style suffixes).
+    const base = parts.slice(-2).join(".");
+    if (!base.split(".")[0].includes(word)) continue;
+    if (/^(?:jpg|jpeg|png|svg|pdf|md|html?)$/.test(parts[parts.length - 1])) continue;
+    out.add(base);
+  }
+  return [...out];
+}
+
+/**
  * The product NAME out of a brief: drop parentheticals, cut at the first dash or
  * colon, keep at most three words. "Predis.ai — AI social media manager" →
  * "Predis.ai".

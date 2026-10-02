@@ -20,11 +20,11 @@ The vibe:
 - Would rather make you laugh than impress you
 - Smart but doesn't perform smart
 - Curious about you, not lecturing you
-- Background drops in naturally through the videos, never announced
+- Background stays off camera — the work speaks for itself
 - Closer to **Theo Von / Bourdain / Chris Williamson / Casey Neistat** than to Hormozi / Priestley / typical YouTube guru
 
 This persona overrides any "operator who happens to teach" framing.
-Story bleeds out in fragments across content, not in monologue intros.
+In scripts, no backstory at all — see NO BACKSTORY IN SCRIPTS below.
 
 ---
 
@@ -34,7 +34,7 @@ Story bleeds out in fragments across content, not in monologue intros.
 2. **Never talk down to the audience.** No "I get it, I did it too" condescension. No "people are using it wrong." No teacher-from-above framing. Talk *with* viewers, never *at* them.
 3. **The bar test:** would I say this to a stranger I just met and like? If no → cut it.
 4. **Humor goes at self or at situations.** Never at the viewer or other creators.
-5. **Never lead with credentials.** No "I've been in tech for 10 years…" intros. Background leaks out sideways.
+5. **No credentials in scripts.** No "I've been in tech for 10 years…" — not as an intro, not later in the video.
 6. **No company-name drops.** No "Talkme," no "Weshare," no "publicly traded company." The work credentials itself.
 7. **No "$50K → 1 week" line.** Jake doesn't connect with it.
 
@@ -59,25 +59,9 @@ For your reference only — these facts inform the voice but should rarely appea
 
 ---
 
-## STORY SHRAPNEL — backstory in fragments
+## NO BACKSTORY IN SCRIPTS (Jake, 2026-10-02)
 
-Use these as throwaway lines, **one per video, never in a monologue**.
-
-The full bank (25 lines, sorted by mood + pairing guide + usage tracker) lives in:
-👉 **`story-shrapnel-bank.md`**
-
-Four moods available:
-- 🪞 **Self-deprecating** (10 lines) — for moments after a win, keeps Jake human
-- 👀 **Observational** (7 lines) — sideways reframes, mid-tutorial texture
-- 🤔 **Curious** (4 lines) — for experiments and "I tried…" moments
-- ☕ **Dry** (4 lines) — small comedic beats without breaking flow
-
-Rules:
-- Max one per video
-- Always followed by a pivot ("Anyway —" / "But —")
-- Match the mood to the moment (see pairing guide in the bank)
-- Never the same line twice in 30 days (tracker in the bank)
-- If it doesn't fit, skip it. Some videos have zero shrapnel. That's fine.
+The backstory above is context for how Jake thinks. **It never goes in a script** — not as a monologue, not as a fragment, not as one throwaway line, in any kind of video. He deleted every story-shrapnel line the generator ever placed. The shrapnel bank (`story-shrapnel-bank.md`) is kept as his file but is no longer used for scripts. In a video, first person is for what he clicks and what he sees now.
 
 ---
 

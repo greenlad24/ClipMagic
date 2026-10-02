@@ -56,8 +56,8 @@ Your recommendation line at the very end of the output must follow from this rea
 | Beat | Time | Word count | Purpose |
 |---|---|---|---|
 | **1. Visual outcome on screen** | 0:00–0:08 | ~25 words | Show the impressive result IMMEDIATELY. State what it is in one short line. No confession, no metaphor, no setup. |
-| **2. Copy-paste promise** | 0:08–0:25 | ~35 words | A concrete value promise ("you can copy and paste every prompt from this video"). No credential — nothing about how long Jake has been doing this. |
-| **3. Transformation + welcome + identity** | 0:25–0:50 | ~50 words | "By the end of this video, you'll [outcome]" + welcome line + 1-sentence positioning + brief inclusivity nod |
+| **2. Transformation + reassurance** | 0:08–0:25 | ~30 words | "By the end of this video, you'll [outcome] — even if you've never [the scary thing] in your life." No credential — nothing about how long Jake has been doing this. |
+| **3. Copy-paste promise + welcome** | 0:25–0:50 | ~55 words | "I'll give you the exact prompts, on screen, ready to copy" — naming the features as a short list — then the fixed welcome line |
 
 **Total: ~110 words, ~50 seconds at natural pace.**
 
@@ -65,16 +65,18 @@ Your recommendation line at the very end of the output must follow from this rea
 
 > **Beat 1 (0:00–0:08):** [Image of impressive AI-generated result on screen.] *"Look at this image. ChatGPT made this in under a minute. No Photoshop. No design skills. Just one sentence."*
 >
-> **Beat 2 (0:08–0:25):** *"I've spent the last few weeks testing every trick I can find. And I'm going to give you the exact prompts that get results like this. You can copy and paste every single one from this video."*
+> **Beat 2 (0:08–0:25):** *"By the end of this video, you'll know how to create images like a pro — even if you've never touched a design tool in your life."*
 >
-> **Beat 3 (0:25–0:50):** *"By the end of this video, you'll know how to create images like a pro. Even if you've never touched a design tool in your life. Hey everyone, I'm Jake Dawson, and I help people like you get better with the newest AI tools without wasting time or money on expensive tools."*
+> **Beat 3 (0:25–0:50):** *"I'm going to give you the exact prompts that get results like this, on screen, ready to copy — the poster, the product shot and the logo. Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it."*
+
+**This is the default opening for tutorials** — it is the shape Jake rebuilds every tutorial opening into by hand: (1) "Look at this …" — what's on screen, made with one tool, plus at most one sentence on the problem it fixes; (2) "By the end of this video, you'll [outcome] — even if you've never [the thing the viewer fears] in your life."; (3) the exact prompts on screen, ready to copy, naming the features as a short list; (4) the welcome line. At most four short paragraphs before the welcome, about 120 words. No questions the video promises to answer later, no roadmap, no second "here's what we're using" paragraph. (The order of the promise and the copy-paste line follows his edits: promise first.)
 
 #### Critical rules for Formula A-Compressed
 1. **Beat 1 MUST show a visual result.** Not describe it — show it on screen. The first sentence states what's on screen, not what you're about to teach.
 2. **No "I used to think..." confession.** That's Formula A-Long's signature. This formula is too short for an arc — it's pure proof-of-value.
 3. **No "What if I told you..." metaphor.** That's Formula B/C. This formula starts with the literal result.
-4. **No credential in Beat 2.** Not a short one, not a time-bound one. Beat 2 is the promise of what the viewer gets, and nothing else — the work is the credential.
-5. **The "copy and paste" or equivalent concrete promise is non-negotiable in Beat 2.** Search-intent viewers came for the goods. Tell them they're getting the goods.
+4. **No credential anywhere.** Not a short one, not a time-bound one. The beats are the result, the promise and the goods — the work is the credential.
+5. **The "copy and paste" or equivalent concrete promise is non-negotiable in Beat 3.** Search-intent viewers came for the goods. Tell them they're getting the goods.
 6. **Welcome line lands at ~0:30** — woven into Beat 3, not separate.
 7. **Inclusivity nod is brief — one phrase, not a list.** "Even if you've never touched a design tool in your life" does the funnel job in 10 words.
 8. **No Skool plug in the hook.** Move it to ~1:00 as one brief line, or save it for the end of the video.
@@ -110,7 +112,7 @@ Compressed hooks retain better but convert subscribers worse. The ChatGPT Image 
 >
 > **Beat 3 (0:22–0:42):** *"So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."*
 >
-> **Beat 4 (0:42–0:55):** *"Hey everyone, welcome back to the channel — I'm Jake Dawson and I help business owners use AI without it turning into another full-time job. Let's get into it."*
+> **Beat 4 (0:42–0:55):** *"Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it."*
 
 #### Critical rules for Formula B
 1. **Metaphor + number in sentence 1.** No "What if I told you..." preamble. Get to the image fast.
@@ -153,7 +155,7 @@ The 3-minute hook is **not bloat** for the right audience. From the 1.3M video d
 - 35-54 = 52% of viewers — patient, TV-friendly demographic
 - +31.5K subs converted (3% conversion rate) — the long hook *earned* the subscribe
 
-The pattern: **each beat adds another reason to keep watching**. Beat 1 = image. Beat 2 = stake. Beat 3 = outcomes. Beat 4 = credibility. Beat 5 = "this is for me." Beat 6 = "I trust this person."
+The pattern: **each beat adds another reason to keep watching**. Beat 1 = image. Beat 2 = stake. Beat 3 = outcomes. Beat 4 = who's talking and who he helps. Beat 5 = "this is for me." Beat 6 = "I trust this person."
 
 If you compress this hook to 50 seconds for a TV/older audience, you lose the trust-building beats — and you lose the subscribe conversion. The retention might be similar, but the funnel collapses.
 
@@ -213,12 +215,12 @@ Voice rules (non-negotiable):
 1. Never punch sideways — no "most tutorials don't…", no competitor names, no "unlike other tools"
 2. Never punch down — no "if you've been doing this wrong", no "most people don't know" framed as judgment (note: "most people don't know exist" is fine when framed as opportunity)
 3. Self at the punchline, never the viewer or peers
-4. **No credentials in the hook — in any of the four formulas.** No "for the past two years…", no "I've spent the last few weeks testing…", no track record, no proof of standing, however short. Credentials land later, once, during the video (one line from the story shrapnel bank). A hook earns attention with the thing itself, not with who is holding it. Welcome and positioning ("I'm Jake Dawson and I help business owners use AI without it turning into another full-time job") are not credentials — those stay.
+4. **No credentials in the hook — in any of the four formulas.** No "for the past two years…", no "I've spent the last few weeks testing…", no track record, no proof of standing, however short. And no credentials or backstory later in the video either — none, in any video (Jake, 2026-10-02). A hook earns attention with the thing itself, not with who is holding it. Welcome and positioning ("I'm Jake Dawson and I help business owners use AI without it turning into another full-time job") are not credentials — those stay.
 5. No company name drops (Talkme, Weshare, etc.)
-6. Welcome line goes AFTER the hook earned attention — never the opening line
+6. Welcome line goes AFTER the hook earned attention — never the opening line. It is fixed, word for word, in every hook: "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it." (code puts it in verbatim, so write exactly this)
 7. Use "Turns out..." in Formula A-Long Beat 2 (signature reframe word)
 8. Use "And here's the crazy part:" or "But here's the wild part:" to bridge Formula A-Long Beats 2→3
-9. For Formula A-Compressed: lead with the visual outcome + "Look at this..." or equivalent. The first sentence states what's on screen.
+9. For Formula A-Compressed: lead with the visual outcome + "Look at this..." or equivalent. The first sentence states what's on screen. Then the promise with its reassurance ("By the end of this video, you'll … — even if you've never … in your life."), then the exact prompts on screen, then the welcome — at most four short paragraphs before the welcome. This is the default shape for tutorials.
 10. For Formula B/C: lead with the metaphor + number. Always.
 
 Specificity rules:
@@ -238,9 +240,9 @@ Conversational texture rules (MKBHD-style, positive sparkle):
 The hook should sound spoken, not presented. Use 2-3 (max) of these conversational moves IN THE HOOK to make it feel human — never stack, never sound performed. Match the formula:
 1. Real-time thinking openers — "So…" / "Like…" / "I mean…" / "You know…" (use sparingly, 1-2 max in hook)
 2. Soft hedge ownership — "…I think." / "…honestly." / "…in a good way." — one of these in the hook humanizes the dramatic claim
-3. Credit-giving when the topic deserves it — "It's a really smart idea." / "That's the part I keep coming back to." (only in Formula A hooks, not B/C)
+3. Credit-giving when the topic deserves it — "I'll give them credit for that one." / say the specific thing that impressed you (only in Formula A hooks, not B/C)
 4. Self-aware aside — "…to make sure I'm not crazy here…" / "…and that's hilarious, in a good way." (max once, optional)
-5. Curious framing instead of skeptical — "I'm curious-watching to see how this plays out." / "If they get this right, that's a real win." — replaces any negative framing
+5. Curious framing instead of skeptical — "I'm curious-watching to see how this plays out." — replaces any negative framing
 
 Examples of how this lands in a hook (compare two versions):
 
@@ -300,7 +302,7 @@ Beat 2: [open with "And here's the crazy part:" — kill the main objection, nam
 
 Beat 3: [open with "So in this video, I'm going to..." — list THREE specific outcomes with real names/numbers + tease ONE additional thing for later, use a concrete relatable metaphor]
 
-Beat 4: [welcome line ("Hey guys, if you're new here, I'm Jake Dawson and I help business owners use AI without it turning into another full-time job") + specific time-bound pain validation + one-sentence promise of what's coming next]
+Beat 4: [welcome line ("Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it.") + specific time-bound pain validation + one-sentence promise of what's coming next]
 
 Beat 5: [value-framed Skool plug ("I've got a private Skool community where I drop the exact templates and automations I'm using") + clean transition into the content]
 
@@ -312,18 +314,19 @@ REFERENCE EXAMPLE (ChatGPT Image Generator tutorial — 11.7K views, 6.4% CTR, 4
 
 Beat 1 (0:00–0:08, ~25 words): [Visual outcome on screen FIRST. Then: state what's on screen in one short line + emphasize the impressive part in fragment sentences. Example structure: "Look at this [thing]. [Tool] made this in under a minute. No [hard alternative]. No [hard skill]. Just [one specific input]."]
 
-Beat 2 (0:08–0:25, ~35 words): [Concrete copy-paste value promise, and nothing else — no credential. ("I'm going to give you the exact prompts that get results like this. You can copy and paste every single one from this video.")]
+Beat 2 (0:08–0:25, ~30 words): ["By the end of this video, you'll [specific outcome] — even if you've never [the thing the viewer fears] in your life." — no credential]
 
-Beat 3 (0:25–0:50, ~50 words): ["By the end of this video, you'll [specific outcome]. Even if you've never [common barrier]." + welcome line + 1-sentence positioning. Example: "By the end of this video, you'll know how to [outcome]. Even if you've never [barrier]. Hey everyone, I'm Jake Dawson, and I help [audience description]."]
+Beat 3 (0:25–0:50, ~55 words): [Concrete copy-paste value promise naming the features as a short list ("I'm going to give you the exact prompts on screen, ready to copy — [feature], [feature] and [feature].") + the fixed welcome line: "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it."]
 
 Rules specific to Formula A-Compressed:
 - Beat 1 visual result MUST be on screen — first words describe what's there, not what you'll teach
 - No "I used to think..." confession — that's A-Long's signature
 - No "What if I told you..." metaphor — that's B/C
-- No credential in Beat 2 — the value promise carries it
-- Concrete value promise ("copy and paste every prompt") is non-negotiable in Beat 2
+- No credential anywhere — the result and the promise carry it
+- Concrete value promise ("copy and paste every prompt") is non-negotiable in Beat 3
 - Welcome line woven INTO Beat 3, not separate
-- Inclusivity is ONE phrase in Beat 3 ("even if you've never touched a [tool] in your life"), not a list of viewer types
+- Inclusivity is ONE phrase in Beat 2 ("even if you've never touched a [tool] in your life"), not a list of viewer types
+- No questions the video promises to answer later, no roadmap, at most four short paragraphs before the welcome
 - No Skool plug in the hook — moves to ~1:00 as ONE brief line
 - For sponsored: see Sponsored Video Rules section. Whole-video sponsorships need NO verbal disclosure (open organically). Mid-video sponsor segments go at the 5-7 minute mark with a single transparency sentence opening the segment.
 
@@ -339,7 +342,7 @@ Beat 2 (0:08–0:22, ~35 words): "Most people are only using maybe 10% of what t
 
 Beat 3 (0:22–0:42, ~50 words): "So today I'm walking you through 25 ChatGPT moves most people don't even know exist — with real examples you can copy today. By the end of this video, you'll be using ChatGPT on a completely different level."
 
-Beat 4 (0:42–0:55, ~25 words): "Hey everyone, welcome back to the channel — I'm Jake Dawson and I help business owners use AI without it turning into another full-time job. Let's get into it."
+Beat 4 (0:42–0:55, ~45 words): "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it."
 
 Rules specific to Formula B:
 - Audience qualifier (2-3 viewer types) is BAKED INTO Beat 2 — not a separate beat
@@ -361,7 +364,7 @@ Beat 2 (0:10–0:25, ~35 words): "I'm gonna show you some wild features that'll 
 
 Beat 3 (0:25–0:40, ~40 words): [The 3-outcome stack is baked into Beats 1-2 in the original. Use this slot to add a transition line that bridges into the welcome.]
 
-Beat 4 (0:40–1:10, ~70 words): "Hey, I'm Jake Dawson — and I help business owners use AI without it turning into another full-time job. Today we're pushing ChatGPT way past what you see in the typical tutorials — the stuff that actually saves you time, not the stuff that just looks impressive."
+Beat 4 (0:40–1:10, ~70 words): "Hey everyone, welcome back to the channel — I'm Jake Dawson, and I help business owners use AI without it turning into another full-time job. If that sounds like you, hit subscribe and smash that like button so more of these videos find you. Let's get into it. Today we're pushing ChatGPT way past what you see in the typical tutorials — the stuff that actually saves you time, not the stuff that just looks impressive."
 
 Beat 5 (1:10–2:00, ~120 words): "In today's video, I'm gonna show you 25 insanely powerful ChatGPT tricks that most people don't even know exist. Doesn't matter if you're a student, a business owner, a creative, or just curious about AI — once you see what this thing can actually do, it's gonna completely change how you use it."
 
@@ -412,11 +415,11 @@ Sub-conversion: LOW | Retention: HIGH | Search compounding: HIGH
 Beat 1 (0:00–0:08, ~25 words):
 [Visual outcome on screen FIRST. State what's there in one short line, fragment sentences for emphasis. "Look at this [thing]. [Tool] made this in [time]. No [hard alternative]."]
 
-Beat 2 (0:08–0:25, ~35 words):
-[Concrete copy-paste value promise — no credential]
+Beat 2 (0:08–0:25, ~30 words):
+["By the end of this video, you'll [outcome] — even if you've never [barrier] in your life." — no credential]
 
-Beat 3 (0:25–0:50, ~50 words):
-["By the end of this video, you'll [outcome]. Even if you've never [barrier]." + welcome line + 1-sentence positioning]
+Beat 3 (0:25–0:50, ~55 words):
+[The exact prompts on screen, ready to copy, naming the features as a short list + the fixed welcome line]
 
 ============================================================
 FORMULA B — Compressed Numbered Reveal (45–60s)
@@ -434,7 +437,7 @@ Beat 3 (0:22–0:42, ~50 words):
 [Number reveal + proof tease + transformation promise]
 
 Beat 4 (0:42–0:55, ~25 words):
-[Welcome line + 1-sentence positioning + "Let's get into it."]
+[The fixed welcome line, word for word]
 
 ============================================================
 FORMULA C — Long Numbered Reveal (2:30–3:30)
@@ -464,7 +467,7 @@ Beat 6 (2:00–3:00, ~140 words):
 
 After all four hooks are written, add a single line at the bottom:
 
-JAKE: pick the formula that matches the audience signal for this video. Default leans: tutorials → A-Long unless search-driven; listicles → C unless mobile-led.
+JAKE: pick the formula that matches the audience signal for this video. Default leans: tutorials → A-Compressed (your own opening shape) unless discovery-led; listicles → C unless mobile-led.
 
 No template references. No commentary inside the hooks. Just the four finished hooks.
 

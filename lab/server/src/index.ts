@@ -8,10 +8,18 @@ import { fileURLToPath } from "node:url";
 import { config, ensureDirs, authConfigured, oauthRedirectUri } from "./config.js";
 import { auth } from "./middleware.js";
 import authRouter from "./auth/routes.js";
+import { scoutRouter } from "./scout/routes.js";
 import { requireSession } from "./auth/middleware.js";
 import { newsRouter, followerRouter } from "./news/routes.js";
 import { FOLLOWER_PAGE } from "./news/followerPage.js";
 import { attachNewsLiveSync } from "./news/liveSync.js";
+import { dealsRouter } from "./deals/routes.js";
+import { dealsGmailOAuthRouter } from "./deals/integrations/gmailOauthRoutes.js";
+import { startDealsAgentScheduler, registerPreRunStep } from "./deals/agent/schedule.js";
+import { startSlackAnswerWatcher } from "./deals/agent/slackWatcher.js";
+import { startRuleTeachWatcher } from "./deals/agent/teach.js";
+import { scheduledSync } from "./deals/scheduledSync.js";
+import { startInboxRefresher } from "./deals/gmailSync.js";
 import { youtubeOAuthRouter } from "./audit/oauthRoutes.js";
 import { whatsappProxy } from "./whatsappProxy.js";
 import { tutorialRouter } from "./tutorial/route.js";
@@ -130,11 +138,15 @@ app.get("/news-gatherer/present/teleprompter", (req, res, next) => {
 app.use(requireSession);
 
 app.use("/api/news", newsRouter);
+app.use("/api/deals", dealsRouter);
+app.use("/api/scout", scoutRouter);
 
 // Connecting a YouTube channel for the Channel Audit's paid/organic split.
 // AFTER requireSession on purpose: only a signed-in operator may start an OAuth
 // flow that will store a token on this server.
 app.use(youtubeOAuthRouter());
+// Deal Organizer: connecting the sponsorship Gmail (separate grant from sign-in).
+app.use(dealsGmailOAuthRouter());
   app.use(googleDocsOAuthRouter());
 
 // Health / readiness — no auth, handy for load balancers and uptime checks.
@@ -437,6 +449,17 @@ httpServer.listen(config.port, config.host, () => {
   // arming it is two deliberate acts, not one. The community URL is read per
   // tick rather than captured here — the lab boots before it is set.
   startEngageScheduler(() => String(getSkoolSettings().communityUrl ?? "").trim());
+
+  // Deal Organizer: twice a day (08:00 + 20:00 Bangkok, editable on the Agent
+  // page) sync the sponsor Gmail into the app, then run the email agent. The
+  // agent only writes Gmail drafts / Slack questions when those switches are on.
+  registerPreRunStep((log) => scheduledSync(log));
+  startDealsAgentScheduler();
+  startSlackAnswerWatcher();
+  startRuleTeachWatcher();
+  // Silent inbox refresh every 15 min: new emails only, no AI, skipped while the
+  // big sync runs. No UI indicator (Jake, 2026-09-30: "15 minutes silent refresh").
+  startInboxRefresher();
 
   // Avatar Narrator: an avatar render runs for tens of minutes on the
   // provider's side, so a deploy will land mid-render. Re-attach to anything

@@ -62,14 +62,32 @@ import {
   MIN_SECTION_WORDS,
   toCleanProse,
   stripVerifyMarkers,
-  extractPrompts,
   ensureCanonicalOutro,
   checkSectionDemo,
   exemplarEchoes,
   outlineSectionsMissingOnScreen,
   insertOnScreenLines,
+  lockWelcomeInHooks,
+  extractProductionNotes,
+  findProductionNotesInProse,
+  productionNotesAppendix,
+  dedupeNotes,
+  notesMergePrompt,
+  parseNotesMerge,
+  type NoteGroup,
+  extractFullPrompts,
+  stripFullPromptBlocks,
+  promptAppendices,
+  splitScriptAppendices,
+  parseStoredAppendices,
+  arrangeOpenings,
+  openingShapeIssues,
+  findUnexplainedJargon,
+  findExemplarJokes,
+  findTaglineEndings,
+  letsMetrics,
 } from "./edits.js";
-import type { ContinuityLedger, SectionDemoCheck } from "./edits.js";
+import type { ContinuityLedger, SectionDemoCheck, FullPromptBlock } from "./edits.js";
 import type {
   ScriptInput,
   ScriptSetup,
@@ -93,7 +111,9 @@ import type {
   ScreenshotRef,
 } from "./types.js";
 import { loadShot, shotExists } from "./shots.js";
-import { auditSources, auditLogLine, firstPartyBlock, vendorHosts } from "./sources.js";
+import { getJob as getScoutJob } from "../scout/store.js";
+import { dealBriefBlock } from "./dealBrief.js";
+import { auditSources, auditLogLine, firstPartyBlock, scoutHosts, vendorHosts } from "./sources.js";
 import { parseResearchPack } from "./researchPack.js";
 
 // ── Stage 2 research-paste block ──────────────────────────────────────────────
@@ -254,6 +274,26 @@ export function attachScreenshots(runId: string, screenshots: ScreenshotRef[]): 
   const input: ScriptInput = { ...run.input, screenshots };
   updateRun(runId, { input });
   return { count: screenshots.length };
+}
+
+/**
+ * Attach (or detach, with null) a finished UX Scout job to a run parked at the
+ * checkpoint. The Scout's own finish step calls this when it was started from
+ * the run; the UI calls it to swap or drop one.
+ */
+export function attachUxScout(runId: string, jobId: string | null): { attached: boolean } {
+  const run = getRun(runId);
+  if (!run) throw new ZiteError({ code: "NOT_FOUND", message: "Script run not found." });
+  if (run.status !== "awaiting_confirmation") {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "This run has already started — the UX Scout report has to be attached before you confirm the setup." });
+  }
+  if (jobId) {
+    const job = getScoutJob(jobId);
+    if (!job || job.status !== "done" || !job.report) throw new ZiteError({ code: "BAD_REQUEST", message: "That Scout has no finished report yet." });
+  }
+  const input: ScriptInput = { ...run.input, uxScoutJobId: jobId ?? undefined };
+  updateRun(runId, { input });
+  return { attached: !!jobId };
 }
 
 /**
@@ -576,23 +616,46 @@ function briefBlock(brief: string): string {
  * the walkthrough (which is knowable, and belongs in the script) from the exact
  * LABEL of a control (which may not be, and gets flagged for Jake to read off the
  * screen while he records).
+ *
+ * ⚠️ 2026-10-02 (writing study P1/P4/P21): the flag no longer lives IN the
+ * sentence. This block used to require `[VERIFY ON SCREEN: …]` markers inline,
+ * and Jake deleted 60 of them by hand after approving a lesson against them —
+ * the block won because it sat closer to the task. Now an unconfirmed control
+ * is written around ("click the button that creates your avatar") and the open
+ * item goes on a `PRODUCTION NOTE:` line that the assembly moves into the
+ * production-notes appendix. The block also carries the setup-from-zero order
+ * and the first win, the biggest thing his edits kept adding by hand.
  */
 function stepScaffoldBlock(): string {
   return [
     "",
     "---",
     "",
-    "## STEPS — write the walkthrough, flag what you can't confirm",
+    "## STEPS — write the walkthrough a beginner can follow, with nothing bracketed in it",
     "",
     "Where this video shows someone how to do something, write the actual steps, in order, specific enough that a viewer can follow along with their own account open. Where you go, what you do there, what happens next, and what they should see. Never promise a walkthrough and then skip it — \"I'll talk you through it as I go\" followed by no steps is the single worst thing this script can do, because it spends the viewer's trust and gives nothing back.",
     "",
-    "You will not always know the interface. That is normal, and it is not a reason to go vague:",
+    "### Setup from zero, in this order (every tutorial)",
     "",
-    "- **The sequence is yours to write.** The order of operations, what each step is for, and what the result looks like are all knowable from the brief and the research. Commit to them.",
-    "- **An unconfirmed control gets marked, not dodged.** Where you don't know a button's name, a menu's exact path, or what a screen is called, write the step anyway and mark the unknown inline: `[VERIFY ON SCREEN: exact name of the download control]`. Jake fills it in while he records, because he has the screen in front of him and you don't.",
-    "- **Mark the smallest thing.** The marker goes around the one detail you can't confirm — not the sentence, and never the whole step. \"Open Settings, then Skills, and hit `[VERIFY ON SCREEN: the button that starts a new skill]`\" is right. Marking the entire walkthrough is just the shrug again, with brackets.",
-    "- **Never invent a label.** Do not name a button, menu, tab, or screen that no source gave you. A confident wrong click path is worse than a flagged one — the viewer follows it, it isn't there, and the video is wrong on camera.",
-    "- **Where the brief or the fact sheet DOES give a path, it is confirmed.** Write it exactly as given, with no marker.",
+    "The viewer has never opened this tool. Walk the setup the way the tutorial exemplar (the Blotato build) does it — in plain words, with the on-screen labels:",
+    "",
+    "1. **Create the account**, and say the sign-in to pick.",
+    "2. **Say up front if following along needs a paid plan** — one plain clause (\"you'll need a paid plan for this part — more on that later\"), never a pricing detour here.",
+    "3. **The onboarding questions.** Tell the viewer to answer them and why it makes the tool better for them, and that a skippable one can be skipped. Describe the questions in general (\"it asks a few questions about your business — answer them honestly\"), never as a transcript.",
+    "4. **Connect the accounts or tools**, starting with the simplest one.",
+    "5. **How to open or call the tool from then on.**",
+    "6. **The first win, straight after setup** — one tiny test the viewer can copy (\"List my connected accounts\", \"What tools do you have?\") and point at the answer. That is the viewer's proof it worked, before any real job.",
+    "",
+    "After any generate or render step, say roughly how long it takes and exactly where the result appears, inside that step. Where a step asks the viewer to write or configure something, give the easy way out — the built-in rewrite button, the preview, \"skip it for now, you can do it later\".",
+    "",
+    "When the UX SCOUT REPORT is in your context, this order is filled from it: its EASIEST PATH is the setup and the walkthrough, and its FIRST WIN is the tiny test that runs right after setup.",
+    "",
+    "### Labels, and what to do when one is not confirmed",
+    "",
+    "- **Write every label, menu path and number plainly** — from the UX Scout report, the screenshots or the fact sheet, in that order of authority (never from the tutorial sheet: it carries angles and insights only).",
+    "- **Never invent a label.** Do not name a button, menu, tab, or screen that no source gave you. A confident wrong click path is worse than a vague one — the viewer follows it, it isn't there, and the video is wrong on camera.",
+    "- **If a detail is truly unconfirmed, write the step around it without naming the control** — \"click the button that creates your avatar\", \"open the settings for that agent and turn on sharing\" — and keep the step. Then add the open item on its own line at the END of the section, as `PRODUCTION NOTE: <what to check on screen>`. That line is lifted out of the script into a separate production-notes block for Jake; it is never read aloud.",
+    "- **Nothing bracketed ever goes in the spoken script.** No `[VERIFY ON SCREEN: …]`, no `[SHOOT DAY: …]`, no \"stopwatch this\", no note to Jake inside a sentence. The narration is only what Jake says.",
     "",
     "A step is a place and an action: \"go to Settings, then Skills, and click Browse\". Not \"head into the settings area and find the skills bit\". Where a real prompt or a real value gets typed, write it out in full — that is the part people pause the video for.",
   ].join("\n");
@@ -669,14 +732,13 @@ function storyStructureBlock(wordBudget: number): string {
   return [
     "## SCRIPT STRUCTURE — this overrides the format section below",
     "",
-    "Whatever format the instructions further down propose for this video type, the body of this script has exactly six sections, in this order:",
+    "Whatever format the instructions further down propose for this video type, the body of this script has exactly five sections, in this order:",
     "",
     "1. **INTRO** — short. Who this is for and what they're about to watch happen.",
     "2. **STORY ONE — a use case, built on screen**",
     "3. **STORY TWO — a different use case, built on screen**",
     "4. **STORY THREE — a third use case, built on screen**",
-    "5. **PRICING** — what it costs, how the billing model actually works, and where a person gets surprised by a bill.",
-    "6. **HONEST THOUGHTS** — very short. Thirty seconds at most.",
+    "5. **PRICING** — one plain decision, said once after the stories: each plan's price monthly and yearly, the biggest one or two things it unlocks, and who it fits; the plan these builds need, what the free plan cannot do, and the plan to start on. No credit arithmetic, no billing fine print, no walk through the pricing page.",
     "",
     "### What a story is",
     "",
@@ -688,21 +750,18 @@ function storyStructureBlock(wordBudget: number): string {
     "",
     `Each story gets roughly **${perStory} words**. That's enough for the problem, the build, and the payoff — so don't pad, and don't cut the steps.`,
     "",
-    "The honest bits live INSIDE the stories, at the moment they're earned — when the build gets expensive, when a step is fiddly, when something didn't work the first time. One or two sentences, then back to the work.",
+    "The honest bits live INSIDE the stories, at the moment the viewer meets them — when a step is fiddly, when something didn't work the first time. One clause, then back to the work. After the last result plays back there is no review of it: the video goes to pricing, then the close.",
     "",
     "### What this script does NOT have",
     "",
     "- No feature-by-feature breakdown, feature tour, or numbered feature list. If a feature doesn't earn its place inside a build, it doesn't go in the video.",
     "- No pros-and-cons section. No cons section. No 'the honest truth' section.",
     "- No final verdict, no scorecard, no 'who should buy this' summary.",
-    "",
-    "### The honest-thoughts section",
-    "",
-    "Thirty seconds. Jake's actual take, said once, plainly, the way you'd answer a friend who asked 'so is it any good?'. It is NOT a balanced weighing of pros against cons, and it is not a list of anything. A couple of sentences on what really impressed him and one on what he'd want to see improve. Then stop.",
+    "- No honest-thoughts or 'my take' section, no 'what impressed me', no 'where it struggles', no alternatives, no recap. Jake cuts every one of these from the finished script (2026-10-02 writing study, P2).",
     "",
     "### Header rules (these matter)",
     "",
-    "Use a `##` header for each of the six sections above, and for the hook and the wrap-up. Do NOT use `###` or `####` sub-headers anywhere inside a section — the steps inside a build are written as prose and numbered inline, not as their own headers. A sub-header inside a story gets drafted as if it were its own section of the video, which breaks the script.",
+    "Use a `##` header for each of the five sections above, and for the hook and the wrap-up. Do NOT use `###` or `####` sub-headers anywhere inside a section — the steps inside a build are written as prose and numbered inline, not as their own headers. A sub-header inside a story gets drafted as if it were its own section of the video, which breaks the script.",
   ].join("\n");
 }
 
@@ -718,16 +777,16 @@ function outroNoVerdictBlock(videoType: VideoType, sponsored: boolean, sponsorNa
     "",
     "---",
     "",
-    "## THE OUTRO PATTERN ABOVE IS OUT OF DATE — USE THIS ONE",
+    "## THE CLOSE, IN ORDER — this wins over anything above",
     "",
-    "Jake's approved scripts don't close on the MKBHD honest-enthusiasm beat. By the time the outro arrives, the honest take has already happened earlier in the video. Do not give it again: no 'my take so far is', no 2–3 specific wins, no verify-later pact.",
+    "Jake's approved scripts don't close on the MKBHD honest-enthusiasm beat, and they carry no review of what the video just showed. Do not write one: no 'my take so far is', no 2–3 specific wins, no verify-later pact, no recap, no 'one habit worth stealing', no homework, no 'test it for a few more weeks'.",
     "",
     "Write the close in this order, skipping anything that doesn't apply:",
     "",
     sponsored
       ? `1. **The ${sponsorName} link.** It's free to start (if it is) — tell them where to go. One or two sentences, warm, no pressure.`
-      : "1. **Skool** — only if this video referenced prompts, templates, or resources people would want, AND the script has not already mentioned the free course earlier. One soft sentence, link's in the description. One Skool mention per video, so skip this entirely if it has already happened.",
-    "2. **The comment prompt** — a real question about THIS video's topic, the kind Jake would actually want answered. \"Which of these would you build first?\" He reads every one.",
+      : "1. **Skool** — only if this video referenced prompts, templates, or resources people would want, AND the script has not already mentioned the free course earlier. Exactly one sentence: \"If you want to go deeper on this, I've got a free course inside my Skool community that walks through it properly — link's in the description.\" No \"it costs nothing\", no \"Anyway —\" after it. One Skool mention per video, so skip this entirely if it has already happened.",
+    "2. **The comment prompt** — ONE specific question about THIS video's topic, the kind Jake would actually want answered. It may offer a choice between the things this video actually covered (\"the leads, the marketing, or the Monday report?\"), never invented hypotheticals and never a \"not the safe answer\" nudge. Then: \"Leave a comment down below — I read every one of them.\"",
     "",
     "STOP THERE, on the comment prompt. Do NOT write a sign-off, do NOT tease the next video, do NOT say what's coming up, do NOT say \"thanks for watching\" or \"see you\". **And do NOT write the socials or the notification bell** — no TikTok, no Instagram, no bell, no live show. A fixed closing block is added automatically after your outro and it already says all of that, word for word. Anything you write along those lines is deleted, and if you write it the video asks twice.",
     "",
@@ -749,9 +808,9 @@ function reviewStructureGuard(videoType: VideoType): string {
     "",
     "STRUCTURE IS DELIBERATE — DO NOT 'FIX' IT.",
     "",
-    "This script is built as three use-case stories, then pricing, then a very short honest-thoughts beat. That is the intended shape. When the checklist above asks whether honest thoughts are included, the short honest-thoughts beat satisfies it — as do the honest bits woven inside the stories.",
+    "This script is built as three use-case stories, then pricing, then the close. That is the intended shape. When the checklist above asks if limits are stated inside the steps, the honest bits woven inside the stories satisfy it — there is no separate honest-thoughts beat, and you must not add one.",
     "",
-    "Do not add a pros-and-cons section. Do not add a cons section. Do not add a final verdict, a scorecard, or a 'who should buy this'. Do not expand the honest-thoughts beat beyond about thirty seconds, and do not turn it into a balanced weighing of good against bad. Do not reorganise the stories into a feature list.",
+    "Do not add a pros-and-cons section. Do not add a cons section. Do not add a final verdict, a scorecard, a 'who should buy this', a 'what impressed me', a recap or a 'my take'. Do not reorganise the stories into a feature list.",
     "The script ends with a fixed closing block (\"Oh and by the way, follow me on TikTok and Instagram… See you there.\") that carries the socials, the notification bell and the sign-off. Leave it exactly as it is. Do not add a sign-off of your own, do not add the socials or the bell anywhere else, and do not change its wording.",
     "",
     "Fix voice, clarity, accuracy, and reading level. Leave the architecture alone.",
@@ -770,11 +829,11 @@ function outlineFidelityBlock(w: DateWindows, budget: number): string {
     "",
     "Where the research could not confirm a FACT — a price, a statistic, a claim about what the product does — leave it out rather than smoothing over the gap.",
     "",
-    "A missing STEP is different, and the two were being conflated. Where this video shows someone how to do something, the outline carries the sequence: where to go, what to do there, in order. If a control's exact name was never confirmed, the step still goes in the outline with the unknown marked `[VERIFY ON SCREEN: …]` for Jake to read off the screen. What must never happen is a walkthrough that dissolves into 'talk them through the flow' — the section writer cannot invent what the outline didn't carry, so a vague outline is a vague video.",
+    "A missing STEP is different, and the two were being conflated. Where this video shows someone how to do something, the outline carries the sequence: where to go, what to do there, in order. If a control's exact name was never confirmed, the step still goes in the outline, described by what the control does (\"the button that creates the avatar\"), with a `PRODUCTION NOTE: <what to check on screen>` line at the end of that section — never a bracketed marker inside the step. What must never happen is a walkthrough that dissolves into 'talk them through the flow' — the section writer cannot invent what the outline didn't carry, so a vague outline is a vague video.",
     "",
     `**Carry what is NEW.** The research reports what changed since ${w.recent}. Anything material there — a new feature, a price that moved, a rename, a limit that changed, a model added or dropped — goes into this outline, in the section it belongs to, with its date. Where a recent change is big enough to be the reason someone watches this video now rather than a year ago, give it a beat of its own. A viewer who already knows the old version has to hear what is different; that is what makes the video current instead of merely correct.`,
     "",
-    `**Carry a fact's age with it.** Where the research gives a figure older than ${w.oneYear} and found nothing newer, the outline still carries it — with its date, and with a note that it is the most recent confirmation there was. What must never happen is an old figure arriving in the outline stripped of its date, because the section writer cannot tell the difference and will write it as today's.`,
+    `**Carry a fact's age with it.** Where the research gives a figure older than ${w.oneYear} and found nothing newer, the outline may carry it — with its date, and with a note that it is the most recent confirmation there was — so the section writer knows to leave it OUT of the narration rather than speak it as today's. What must never happen is an old figure arriving in the outline stripped of its date.`,
   ].join("\n");
 }
 
@@ -812,11 +871,11 @@ function factSheetBlock(factSheet: string): string {
     "",
     "Everything above tells you HOW to write. This tells you WHAT IS TRUE. It overrides the last line of the instructions above: the outline and this fact sheet together are your sources.",
     "",
-    "Where the fact sheet gives an exact price, click path, version, or number, use it exactly as written, including its verification date where saying the date out loud sounds natural. Never invent a price, a menu name, a button label, or a statistic that appears in neither the outline nor the fact sheet. If a step you need isn't in either, still write the step — mark the part you can't confirm as `[VERIFY ON SCREEN: …]` and carry on (see the STEPS rules). Don't dissolve the step into a goal: \"open the settings for that agent\" tells a viewer following along nothing they can act on.",
+    "Where the fact sheet gives an exact price, click path, version, or number, use it exactly as written, including its verification date where saying the date out loud sounds natural. Never invent a price, a menu name, a button label, or a statistic that appears in neither the outline nor the fact sheet. If a step you need isn't in either, still write the step — describe the control by what it does instead of naming it, and put the open item on a `PRODUCTION NOTE:` line at the end of the section (see the STEPS rules). Never a bracketed marker in the narration. Don't dissolve the step into a goal: \"open the settings for that agent\" tells a viewer following along nothing they can act on.",
     "",
     "Anything under DO NOT CLAIM must not appear in the script in any form.",
     "",
-    "**WHAT'S NEW is what makes this video worth watching now.** Where a section touches something that recently changed, say what it is today and, where it matters, that it changed — a viewer who used this tool six months ago needs to hear what is different. Facts under OLDER — SAY HOW OLD are the mirror image: they are not banned, they are dated. Speak them with their age attached (\"last time they published a price it was ten bucks a month\") rather than as a flat statement of what the viewer will find today.",
+    "**WHAT'S NEW is what makes this video worth watching now.** Where a section touches something that recently changed, say what it is today and, where it matters, that it changed — a viewer who used this tool six months ago needs to hear what is different. Facts under OLDER — SAY HOW OLD are the mirror image: an older figure is left OUT of the narration rather than spoken with its age — Jake cuts \"last I could find…\" lines. If it matters to the video, put it on a `PRODUCTION NOTE:` line so he can check it on screen. Never cite where a fact came from (\"the page says\", \"their docs say\", \"let's open their pricing page\") — say the fact plainly.",
     "",
     factSheet,
   ].join("\n");
@@ -836,6 +895,38 @@ function factSheetBlock(factSheet: string): string {
  * does not — a tutorial quotes a figure from memory, but a screenshot of the
  * pricing page IS the pricing page.
  */
+/**
+ * The UX Scout's report — the tool USED, today, toward this video's goal, by
+ * Claude Code acting as a first-time user (Jake 2026-10-02: "never write things
+ * that are guesses"). It sits above the screenshot sheet: the shots show
+ * screens, the Scout shows the path between them, what it cost, how long it
+ * took and where a beginner gets stuck.
+ */
+function uxReportBlock(report: string, sponsored = false): string {
+  return [
+    "",
+    "---",
+    "",
+    "## THE UX SCOUT REPORT — the tool used for real, today, toward this video's goal",
+    "",
+    "Before anything was written, the tool was opened in a real browser on Jake's account and used like a first-time, non-technical user would use it, all the way to a finished result. Every step below was clicked, every label was read off the screen, every wait was timed and every result is real. Nothing in it is a guess.",
+    "",
+    "**This is the highest authority in the run on how the tool works** — the path, the labels, the settings, what it cost in credits, how long things took, what came out, and what is paywalled. It outranks the screenshot sheet's interpretation, the tutorial sheet, the fact sheet and the research. Where another source disagrees, this report is right and the other is out of date. **The script is built on this report**: every step, label, timing, setting and result the viewer hears comes from it (or from Jake's screenshots); the tutorials only lend angles and insights, and the research only fills in what a hands-on test cannot see.",
+    "",
+    "**Prices and paywalls follow the same rule.** Its PAYWALLS & COSTS section is what the pricing page and the app said today. Where it says something is unclear or not stated — for example which plan is the minimum for a feature, or what a credit buys — the script does not state it either, not even from the research or the fact sheet. Say what the report does establish (the plans, their prices, the crown icons) and put the open question on a `PRODUCTION NOTE:` line.",
+    "",
+    "**Build the walkthrough on its EASIEST PATH**, in its order, with its exact labels written plainly — it is the setup-from-zero walk (account, paid-plan heads-up, onboarding questions, connections, how to open the tool). **Its FIRST WIN runs right after setup**, as the tiny test the viewer copies to prove it worked, before any real job. Every item in its FRICTION LOG is a moment the script must handle for an everyday viewer — name the confusing thing in plain words and say exactly what to click, before the viewer gets stuck. Use its plain-English translations instead of the tool's jargon.",
+    "",
+    ...(sponsored ? [
+      "**SPONSORED VIDEO — the brief and this report work as ONE.** The sponsor's brief (in the Brief above: angle, must-show, key messages, content rules) says WHAT the video has to show; this report says HOW it really works, signed in, today. Demonstrate every must-show item with this report's real path and exact labels, in the order its EASIEST PATH and its SPONSOR BRIEF CHECK give. A brief claim the report marks \"no\" or \"partly\" is NOT stated as fact — show what it really does, and put the gap in the production notes for Jake to raise with the brand. Use the report's real results, timings and friction to make the sponsor segment concrete and believable for an everyday viewer. Keep the viewer inside the sponsor's product the whole way: no detour to another AI tool to write a prompt for them — give the prompt itself.",
+      "",
+    ] : []),
+    "Its key screenshots are cited `[K1]`, `[K2]`…; carry those onto any line built from them (the editors use them as the shot list). Anything the report lists as NOT TESTED is still unconfirmed: write the step around it without naming the control, and put the open item on a `PRODUCTION NOTE:` line — it goes to the production notes, never into the narration.",
+    "",
+    report,
+  ].join("\n");
+}
+
 function screenshotBlock(sheet: string): string {
   return [
     "",
@@ -847,9 +938,9 @@ function screenshotBlock(sheet: string): string {
     "",
     "**This sheet outranks every other source on anything it shows** — the research, the tutorial sheet, the fact sheet, all of it. That includes prices, tiers and limits, where the tutorial sheet normally defers: a figure read off the live pricing page today settles what a review blog can only report second-hand. Where this sheet and another source disagree, this one is right and the other is out of date. Say what the screenshots show; never average the two into a hedge.",
     "",
-    "**A label under EXACT UI LABELS here is confirmed.** Write it plainly, with no `[VERIFY ON SCREEN: …]` marker — Jake was looking at it.",
+    "**A label under EXACT UI LABELS here is confirmed.** Write it plainly — Jake was looking at it.",
     "",
-    "**Anything under WHAT THESE SHOTS DO NOT SHOW is still unconfirmed**, exactly as if the shots did not exist. It keeps its marker. Do not read a gap in the screenshots as evidence either way.",
+    "**Anything under WHAT THESE SHOTS DO NOT SHOW is still unconfirmed**, exactly as if the shots did not exist. Write around it and list it on a `PRODUCTION NOTE:` line — it goes to the production notes, never into the narration. Do not read a gap in the screenshots as evidence either way.",
     "",
     "The shots are cited `[S1]`, `[S2]` and so on. Carry those citations through onto any line you build from them, the same way the tutorial citations are carried.",
     "",
@@ -858,41 +949,34 @@ function screenshotBlock(sheet: string): string {
 }
 
 /**
- * The workflow sheet, handed to the stages that decide what the video SHOWS.
+ * The tutorial sheet, handed to the stages that shape the video.
  *
- * It outranks the fact sheet on one specific thing and nothing else: where a
- * control lives and what it is called. The fact sheet is built from written
- * sources that describe a product; this is built from people using it on camera.
+ * Jake 2026-10-02: "always base the script on the tester … only get angles from
+ * the tutorials, insights about the product and things like that — only if the
+ * tutorials match 100% that exact product and the right version." So this sheet
+ * no longer carries click paths or labels at all (stage1.6 does not extract
+ * them): it is ANGLES and PRODUCT INSIGHTS, and it outranks nothing.
  */
 function workflowBlock(sheet: string, developerOk: boolean): string {
   return [
     "",
     "---",
     "",
-    "## WHAT THE NEWEST TUTORIALS SHOW ON SCREEN",
+    "## WHAT THE NEWEST TUTORIALS ADD — angles and product insights only",
     "",
-    "This was pulled from the most-watched tutorials published in the last three months — people recording themselves doing the thing. **This is the primary source for how the product actually works** — what it does, how a job runs start to finish, what the screen says at each step, the real name of a button, the order of the clicks, the value that gets typed. An article describes a product from the outside and is often written once and never revisited; a recording published this month shows it as it is now.",
+    "These come from recent, well-watched tutorials about this exact product, in today's version (anything else was rejected before it got here). Use them for two things and nothing else:",
+    "- **ANGLES** — how other creators frame this product: the result they lead with, the job they build the video around, the pain they open on, the moment they treat as the payoff. Use them to sharpen this video's angle, examples and hook. Never copy one.",
+    "- **PRODUCT INSIGHTS** — what people learned by using it: strengths, limits, tips, beginner mistakes. One marked CONFIRMED BY THE SCOUT can be said plainly. One marked NOT CHECKED can shape an example or a tip only if it makes no claim about how the product behaves; otherwise it goes on a `PRODUCTION NOTE:` line for Jake to check on the shoot. One marked CONTRADICTED BY THE SCOUT is dropped.",
     "",
-    "**A label that appears in EXACT UI LABELS SEEN is confirmed.** Write it plainly, with no `[VERIFY ON SCREEN: …]` marker — the marker is for controls nobody could confirm, and these were confirmed by watching someone use them.",
+    "**This sheet is never the source for a step, a click path, a button label, a setting, a timing, a price or a result.** Those come only from the UX Scout report and Jake's screenshots (and, for a number they do not show, the fact sheet). Where this sheet and the Scout disagree, the Scout is right.",
     "",
-    "**Anything under NOT SHOWN is still unconfirmed.** Those steps keep their markers.",
-    "",
-    "Where this sheet and the written research disagree, this wins — on what the product does, on how it behaves, and on every click path. Say what the videos show rather than averaging the two into a hedge. The one exception is a NUMBER: prices, tiers and limits come from the fact sheet, because tutorials quote figures from memory and go stale fastest.",
-    "",
-    "Use the steps. Never use the wording — every one of these came out of somebody else's video, and the script is Jake's.",
-    // A run said "that's the version Nate actually runs day to day" — Nate being
-    // the presenter of two source videos, introduced to the viewer nowhere.
-    "**Never name the people in these videos.** The viewer has never heard of them and Jake is not narrating someone else's tutorial. Cite a setup as the one you would run, not as the one a named person runs.",
-    // The sheet is only as non-technical as the tutorials it came from, and the
-    // most-watched tutorial for an AI topic is very often aimed at developers.
-    // Left ungated, a note-taking script inherits a CLI install, a Git URL and a
-    // trusted workspace — a real run did exactly that — because those were the
-    // only click paths it had been handed.
+    "Use the ideas, never the wording — the script is Jake's.",
+    "**Never name the people in these videos.** The viewer has never heard of them.",
     ...(developerOk
       ? []
       : [
           "",
-          "**This audience does not open a terminal.** Where the sheet's path runs through a command line, an install of a developer tool, a Git URL, a config file or an IDE, teach the same job the way it is done in the product's own interface instead. If the sheet shows no such path, say plainly that this part needs the developer tool rather than walking them into it — naming the limit is honest, and the walkthrough is for someone else.",
+          "**This audience does not open a terminal.** An angle or tip that runs through a command line, a developer install, a Git URL, a config file or an IDE is not for this video.",
         ]),
     "",
     sheet,
@@ -900,40 +984,43 @@ function workflowBlock(sheet: string, developerOk: boolean): string {
 }
 
 /**
- * Research runs AFTER the tutorials have been transcribed, so most of what the
- * written web is good for has already been answered on screen. This tells the
- * research stage to spend its searches on what a recording cannot give — a
- * current price, an official limit, a dated announcement — instead of
- * re-deriving the walkthrough it has already been handed.
+ * Research runs AFTER the Scout and the tutorials, so how the product works is
+ * already settled. This tells the research stage to spend its searches on what
+ * neither can give — a current price, an official limit, a dated announcement,
+ * company facts — instead of re-deriving the walkthrough.
  *
  * This is a cost dial as much as a quality one. Each search round re-sends the
  * whole conversation, so the stage bills far more than the searches themselves;
  * asking for fewer, better-aimed ones is what makes it cheaper.
  */
-function researchScopeBlock(focus: string): string {
+function researchScopeBlock(focus: string, hasScout: boolean): string {
   return [
     "",
     "---",
     "",
     "## WHERE TO SPEND THE SEARCHES",
     "",
-    "You already have the tutorial sheet above: how the product works, the click paths, the real UI labels, the order of the steps. **Do not spend searches re-establishing any of it.** A search that returns a write-up of what the sheet already shows on screen has bought nothing, and the sheet outranks it anyway.",
+    hasScout
+      ? "The UX Scout report above already settles how the product works today: the path, the labels, the settings, the timings, the results, the paywalls — and, where it read them, the live prices. **Do not spend searches re-establishing any of it, and nothing you find overrides it.** A page that describes the product differently is out of date."
+      : "How the product works — the path, the labels, the order of the steps — comes from Jake's screenshots where he has them. **Do not spend searches re-deriving a walkthrough from articles**; write what the written web can establish and let the steps it cannot confirm stay open.",
     "",
-    "Spend them on the things a recording cannot be trusted for, in this order:",
-    "1. **Numbers as they stand today** — prices, tiers, limits, quotas. Prefer the vendor's own pricing or docs page over anybody's summary of it. Tutorials quote figures from memory and go stale fastest, so this is the one place the written web outranks the video.",
-    "2. **What changed recently** — the newest release, deprecation or repricing, with its date. If something in the sheet has since changed, say so plainly.",
-    "3. **The gaps the sheet marks NOT SHOWN** — the steps nobody recorded.",
-    "4. **Anything the brief asks for that neither of the above covers.**",
+    "**Research THIS product only** — the exact product and company the brief and the Scout report name, on its real domain. Pages about a namesake (a different product with a similar name, the same word used for something else) are not sources; drop them rather than citing them.",
     "",
-    "Fewer, better-aimed searches beat a wide sweep. When the sheet and the brief are already answered, stop searching and write up what you have — a thin, current, checkable research doc is worth more than a long one padded with articles about a product you can already watch someone use.",
-      ...(focus.trim()
+    "Spend the searches on the things a hands-on test cannot give, in this order:",
+    "1. **Numbers as they stand today** — prices, tiers, limits, quotas, from the vendor's own pricing or docs page. Where the Scout read the same pricing page today, its reading wins, and where it says something is NOT stated (for example which plan unlocks a feature), do not fill that gap from an older page — leave it open.",
+    "2. **What changed recently** — the newest release, deprecation or repricing, with its date.",
+    "3. **What the Scout lists as NOT TESTED or could not confirm** — the gaps.",
+    "4. **Company facts and anything the brief asks for that neither of the above covers.**",
+    "",
+    "Fewer, better-aimed searches beat a wide sweep. When those are answered, stop searching and write up what you have — a thin, current, checkable research doc is worth more than a long one padded with articles about a product the Scout has already used.",
+    ...(focus.trim()
       ? [
           "",
           `**Everything you search for must serve this focus: ${focus.trim()}**`,
           "An adjacent use of the same product is not this video. Do not research what the product does for a different job, a different industry, or a much larger operation — that reading ends up in the script as a workflow the viewer cannot use.",
         ]
       : []),
-].join("\n");
+  ].join("\n");
 }
 
 /**
@@ -949,18 +1036,33 @@ function researchScopeBlock(focus: string): string {
  * looks fine on its own and is only wrong once you can count the items before
  * it. These all came out of one hand-edit of a finished script.
  */
-function wholeScriptGuard(): string {
+function wholeScriptGuard(title = "", sponsored = false): string {
   return [
     "",
     "---",
     "",
     "## THINGS ONLY THIS PASS CAN SEE",
     "",
-    "You are the only pass that reads the whole script at once. Three checks need exactly that:",
+    "You are the only pass that reads the whole script at once. These checks need exactly that:",
     "",
     "1. **Numbered items must agree with the count.** A seven-ways video shipped with its SIXTH item announcing \"So, number two.\" Count the items as they actually appear. If a spoken number is wrong, either correct it or — better — replace it with a transition that carries order without counting (\"next up\", \"here's another one\").",
     "2. **A promise made in the hook must be kept, and kept where it was promised.** If the hook says a thing is coming and no section delivers it, cut the promise rather than leaving it owed.",
     "3. **The product is named plainly throughout.** \"Claude\" or \"it\" — never a periphrasis invented to avoid repeating the name (\"Anthropic's assistant\", \"the assistant\"). Fix every instance.",
+    // The Linearity run (2026-10-02) made the same coffee joke at three waits
+    // ("a sip of coffee", "refill your coffee", "top up your coffee") and opened
+    // three sentences with "Now look at the". Each section wrote its own, blind
+    // to the others, so only this pass can see the repeat.
+    "4. **A joke is told once.** Each section was written without seeing the others, so the same gag premise — the same coffee-break joke at every wait, the same aside about a confusing label — can turn up two or three times. Keep the best one and cut or replace the others. The same goes for a stock sentence opener that appears three or more times (\"Now look at the…\"): vary or cut the extras. A recurring anchor like \"let me show you\" before each demo is fine.",
+    ...(title.trim()
+      ? [
+          `5. **The title's promises must be backed.** The title is "${title.trim()}". A time (\"in 10 minutes\"), a count, or a result it promises has to match what the UX Scout report (or the fact sheet) actually measured. Never repeat an unbacked promise in the narration. If the title promises more than the measured run delivers, add a \`PRODUCTION NOTE:\` line saying what was measured and suggesting a title that matches it.`,
+        ]
+      : []),
+    ...(sponsored
+      ? [
+          "6. **The viewer stays in the sponsor's product.** Never send them to another AI tool along the way (\"ask Claude/ChatGPT to write the prompt for you\") — give them the prompt itself, short and ready to copy. Cut any such detour.",
+        ]
+      : []),
     "",
   ].join("\n");
 }
@@ -1079,6 +1181,15 @@ function continuityBlock(
     "",
   ];
 
+  if (index === 0) {
+    // Jake deleted a second cold open from every one of the last nine scripts:
+    // the first section re-opened the video after the hook had already done it.
+    lines.push(
+      "**The opening is already written — do not write another one.** Right before this section the viewer has just heard the opening: what's on screen (\"Look at this…\"), the promise (\"By the end of this video, you'll…\") and the welcome line. So this section must not open the video again: no \"Look at this\", no \"Imagine…\", no setting up the problem, no promise, no \"in this video\" / \"today I'm going to\", no welcome, no roadmap. Start with the first real thing the viewer does or sees.",
+      "",
+    );
+  }
+
   if (sectionsDone.length > 0) {
     lines.push(
       `Already covered, in order: ${sectionsDone.join(" → ")}.`,
@@ -1124,6 +1235,12 @@ function reviewGuardBlock(
   hasFactSheet: boolean,
   demo: SectionDemoCheck,
   echoes: string[],
+  /** Measured on the draft's spoken text (writing study P11/P12/P24). */
+  found: { jokes: string[]; taglines: string[]; bareImperatives: string[] } = {
+    jokes: [],
+    taglines: [],
+    bareImperatives: [],
+  },
 ): string {
   const lines: string[] = ["", "---", ""];
   const bullets = (items: string[]) => items.map((s) => `- ${s}`).join("\n");
@@ -1162,6 +1279,27 @@ function reviewGuardBlock(
     );
   }
 
+  if (found.jokes.length > 0) {
+    lines.push(
+      "JOKES TAKEN FROM JAKE'S PUBLISHED SCRIPTS — rewrite each one. The audience has already heard them. Keep the move (a joke riding a dull step), write a new line about the thing in front of you:",
+      ...found.jokes.map((j) => `- "${j}"`),
+      "",
+    );
+  }
+  if (found.taglines.length > 0) {
+    lines.push(
+      "RESTATEMENT TAILS — each of these short closing lines repeats a point the paragraph already made, or is an \"X, not Y\" tagline. End the paragraph on the instruction or the fact instead; delete the tail:",
+      ...found.taglines.map((t) => `- "${t}"`),
+      "",
+    );
+  }
+  if (found.bareImperatives.length >= 3) {
+    lines.push(
+      `BARE COMMAND LINES — ${found.bareImperatives.map((b) => `"${b}"`).join(", ")}. Jake narrates steps as an action he is doing with the viewer: \"now let's paste it in\", \"let's hit send\". Turn most of these into that shape.`,
+      "",
+    );
+  }
+
   // The measurement, handed to the pass that is about to rewrite this section
   // anyway. Counted in code so the note is a fact rather than a hunch — and so
   // the rewrite can be checked against the same number afterwards.
@@ -1183,7 +1321,7 @@ function reviewGuardBlock(
   }
   if (!demo.trustBeat) {
     lines.push(
-      "This section should carry something light — the room this teaches in is supposed to be a fun one, and that holds whatever kind of video this is. Jake's humour is almost always a wry clause of three to eight words riding INSIDE a sentence that was already doing a job, never a joke that stops the tutorial: \"logging in with Google, because life's too short for another password\", \"scroll, like, post a thing or two like a normal person\", \"so it doesn't hand me a plan I'll drown in\", \"then praying they actually talk to each other\". It lands best on the dead stretches — setup, installs, logins, waiting — or as the last line before the transition (\"playbooks don't call in sick\"). Never inside a prompt, never between an instruction and its result. Steal the move, not the sentence.",
+      "This section should carry something light — the room this teaches in is supposed to be a fun one, and that holds whatever kind of video this is. Jake's humour is almost always a wry clause of three to eight words riding INSIDE a sentence that was already doing a job — the login step, the credits, the wait — never a joke that stops the tutorial, and never a joke in an aside or a commentary paragraph (those get cut, and the joke dies with them). It lands best on the dead stretches — setup, installs, logins, waiting — or as the last line before the transition. Never inside a prompt, never between an instruction and its result. Every joke in his published scripts is used up: steal the move, write a new line.",
       "",
     );
   } else {
@@ -1193,7 +1331,11 @@ function reviewGuardBlock(
     );
   }
 
-  lines.push("Output ONLY the rewritten section, as before. No commentary.");
+  lines.push(
+    "Keep every `<<<FULL PROMPT>>> … <<<END FULL PROMPT>>>` block and every `PRODUCTION NOTE:` line exactly as they are, in place — they are lifted out of the script later and are not narration. Do not rewrite them, do not move them, do not count them as part of the section.",
+    "",
+    "Output ONLY the rewritten section, as before. No commentary.",
+  );
   return lines.join("\n");
 }
 
@@ -1209,7 +1351,7 @@ function reviewRuleGuard(sponsored: boolean): string {
     "",
     "---",
     "",
-    "HOW TO READ TWO ITEMS ON THAT CHECKLIST:",
+    "HOW TO READ SOME ITEMS ON THAT CHECKLIST:",
     "",
     sponsored
       ? '**Competitors.** This video IS sponsored, so the old rule stands in full: no competing tool may be named, in any way. Mark noPunchSideways false and remove the line if one appears.'
@@ -1217,11 +1359,11 @@ function reviewRuleGuard(sponsored: boolean): string {
     "",
     '**Income claims.** The rule bans promising the VIEWER money they will earn — "this can make you thousands," "$5k a month." It does NOT ban talking about cost or savings. "This would otherwise cost you thousands" and "it saved me a week of work" are fine and must not be removed.',
     "",
-    "**Credentials.** One sentence of Jake's background, stated once and moved past, is allowed — even in the hook. Only remove it if it runs on, or if it comes back a second time.",
+    "**Credentials and backstory: none, anywhere.** Jake ruled 2026-10-02 that no video — tutorial, listicle, review or opinion — carries his background, past ventures, past jobs, track record or a self-deprecating career line. First person is for what he clicks and what he sees now. If one appears, cut it and stitch the sentences around it.",
     "",
     "**Punching down still fails, always.** Any line that positions the viewer, or people like them, as the ones doing it wrong — cut it and mark noPunchDown false.",
     "",
-    "**Leave every `[VERIFY ON SCREEN: …]` marker exactly where it is.** They are not stage directions and they are not sloppiness — each one is a control the research could not confirm, left for Jake to read off the screen while he records. Deleting one doesn't fix anything; it just hides that the script is guessing, and hands him a confident click path that may be wrong on camera. Do not remove them, do not answer them, and do not replace them with a plausible button name. Rewrite the prose around them freely.",
+    "**Nothing bracketed goes in the narration.** The open items the writer could not confirm have already been moved out of this script into a separate production-notes list for Jake. Never add a `[VERIFY ON SCREEN: …]`, `[SHOOT DAY: …]` or any other note to Jake into the script. If a step names a control that no source confirms, do not guess a plausible button name: write the step around it (\"click the button that creates your avatar\") and keep the step.",
     sponsored
       ? "**Sponsor plug cap.** The sponsor's offer/link (\"free to start\", \"no card\", \"link in the description\") may appear at most TWICE — once early, once at the close. If you see it more often, remove the extra ones; do NOT add any, even if the brief asked for several CTAs. Two is the ceiling."
       : "",
@@ -1415,6 +1557,35 @@ export function splitHooks(hooksText: string): Array<{ label: string; text: stri
   }
   if (cur) out.push(cur);
   return out.map((h) => ({ label: h.label, text: h.text.trim() })).filter((h) => h.text.length > 0);
+}
+
+/**
+ * Lock Jake's welcome line into every hook option of an assembled top part
+ * (title + `## HOOKS — pick one` + the options, optionally followed by the
+ * mid-roll sponsor segment, which is left alone). P8 of the writing study.
+ */
+export function lockWelcomeInTop(topPart: string): { text: string; changed: number } {
+  const seg = topPart.indexOf("## SPONSOR SEGMENT");
+  const hooksPart = seg === -1 ? topPart : topPart.slice(0, seg);
+  const rest = seg === -1 ? "" : topPart.slice(seg);
+  const locked = lockWelcomeInHooks(hooksPart);
+  return { text: locked.text + rest, changed: locked.changed };
+}
+
+/**
+ * The opening-shape check (P3), on the hook options it applies to: Formula
+ * A-Compressed always (it is the "Look at this / By the end of this video" shape,
+ * and the default for tutorials), and the free hook on a tutorial.
+ */
+export function openingIssuesOf(hooksText: string, videoType: VideoType): string[] {
+  const out: string[] = [];
+  for (const h of splitHooks(hooksText)) {
+    const isCompressed = /A-COMPRESSED/i.test(h.label);
+    const isOpen = /^OPEN HOOK/i.test(h.label);
+    if (!isCompressed && !(isOpen && videoType === "Tutorial")) continue;
+    for (const issue of openingShapeIssues(h.text)) out.push(`${h.label.split(/\s+[—–-]\s+/)[0]}: ${issue}`);
+  }
+  return out;
 }
 
 /**
@@ -1736,11 +1907,16 @@ export async function finalReviewAndAssemble(opts: {
   /** Channels of the tutorials behind the workflow sheet. */
   sourceChannels: string[];
   stages: ScriptStages;
+  /**
+   * What a review re-run read back out of the stored appendices: the full
+   * prompts (written by the section stage, which a re-run does not call) and
+   * the production notes. Empty on a normal run.
+   */
+  carried?: { blocks: FullPromptBlock[]; notes: string[]; otherOpenings?: string };
 }): Promise<string> {
   const {
     runId,
     topPart,
-    scriptBody,
     videoType,
     sponsored,
     sponsorName,
@@ -1752,6 +1928,21 @@ export async function finalReviewAndAssemble(opts: {
     sourceChannels,
     stages,
   } = opts;
+  // ⚠️ LIFTED OUT BEFORE STAGE 7 SEES THE SCRIPT (writing study P1 + P20). The
+  // full-prompt blocks are not narration, and a whole-script rewrite pass that
+  // reads them would "fix" their voice, count them, or drop them. The notes to
+  // Jake are not narration either: Stage 7 used to be told to protect inline
+  // [VERIFY ON SCREEN] markers, and every one of them shipped into the script.
+  // Both come back after the script as appendices.
+  const liftedPrompts = extractFullPrompts(opts.scriptBody);
+  const fullBlocks: FullPromptBlock[] = [...(opts.carried?.blocks ?? []), ...liftedPrompts.blocks];
+  const liftedNotes = extractProductionNotes(liftedPrompts.body);
+  const productionNotes: string[] = [...(opts.carried?.notes ?? [])];
+  const addNotes = (ns: string[]) => {
+    for (const n of ns) if (!productionNotes.includes(n)) productionNotes.push(n);
+  };
+  addNotes(liftedNotes.notes);
+  const scriptBody = liftedNotes.body;
   // Same system prefix the section stages used, built the same way — the whole
   // point of the shared block is that this call rides their cache rather than
   // paying to re-establish the rules.
@@ -1773,10 +1964,11 @@ export async function finalReviewAndAssemble(opts: {
       ...(stages.factSheet ? [factSheetBlock(stages.factSheet)] : []),
       // Same position as in sectionExtra, so this call rides the section
       // stages' cached prefix instead of paying to establish it again.
+      ...(stages.uxReport ? [uxReportBlock(stages.uxReport, sponsored)] : []),
       ...(stages.screenshotSheet ? [screenshotBlock(stages.screenshotSheet)] : []),
       ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
       reviewFactUseBlock(),
-      wholeScriptGuard(),
+      wholeScriptGuard(title, sponsored),
     ],
     messages: [{ role: "user", content: s7 }],
     // Whole-document pass: it re-emits the ENTIRE script inside a JSON string,
@@ -1838,7 +2030,12 @@ export async function finalReviewAndAssemble(opts: {
   // Deliverable: Jake reads continuous prose. Strip the headers, beat markers,
   // and timestamps that made the artifact look like a spec — and that were
   // feeding phantom numbers into the claim audit.
-  let spokenBody = ensureCanonicalOutro(toCleanProse(reviewOk ? finalDocument.slice(topPart.length) : scriptBody));
+  // Anything Stage 7 itself fenced or bracketed comes out the same way.
+  const reviewed = extractFullPrompts(reviewOk ? finalDocument.slice(topPart.length) : scriptBody);
+  fullBlocks.push(...reviewed.blocks);
+  const reviewedNotes = extractProductionNotes(toCleanProse(reviewed.body));
+  addNotes(reviewedNotes.notes);
+  let spokenBody = ensureCanonicalOutro(reviewedNotes.body);
 
   // ── Stage 7.5 — ACT on the claim audit ──
   // The audit is deterministic and, until now, purely advisory: it ran last and
@@ -1855,6 +2052,7 @@ export async function finalReviewAndAssemble(opts: {
       sponsorName,
       sourceChannels,
       `${topic} ${title}`,
+      `${stages.uxReport ?? ""}\n${stages.screenshotSheet ?? ""}`,
     );
   let audit = auditOf(spokenBody);
   const findings = claimFixList(audit);
@@ -1897,14 +2095,55 @@ export async function finalReviewAndAssemble(opts: {
     stages.claimFix = null;
   }
 
-  const prompts = extractPrompts(spokenBody);
-  const promptAppendix =
-    prompts.length > 0
-      ? "\n\n---\n\n## PROMPT SUMMARY (for the description / pinned comment)\n\n" +
-        prompts.map((p) => `**${p.label}:** "${p.text}"`).join("\n\n")
-      : "";
-  finalDocument = `${topPart}## SCRIPT\n\n${spokenBody}${promptAppendix}`;
-  if (prompts.length > 0) console.log(`[scriptgen:prompts] extracted ${prompts.length} copy-paste prompt(s)`);
+  // The claim-fix edits are anchored sentence patches, so nothing bracketed
+  // should be able to come back — but if one does, it is moved, not shipped.
+  const lateNotes = extractProductionNotes(spokenBody);
+  if (lateNotes.notes.length > 0) {
+    spokenBody = lateNotes.body;
+    addNotes(lateNotes.notes);
+  }
+
+  // The short prompts (in the script) are numbered in the PROMPT SUMMARY; each
+  // long version goes in FULL PROMPTS under the same number. Then the notes to
+  // Jake. None of the three is spoken, and every reader of the document stops
+  // at the first of them (splitScriptAppendices / editDiff.spokenScript).
+  const prompts = promptAppendices(spokenBody, fullBlocks);
+  const lockedTop = lockWelcomeInTop(topPart);
+  // ONE opening in the script (the top-ranked hook); the other options go after
+  // the script, where nothing counts them (Jake 2026-10-02 — he deleted four of
+  // five openings by hand in every script).
+  const openings = arrangeOpenings(lockedTop.text, stages.hookRanking, opts.carried?.otherOpenings ?? "", videoType === "Tutorial");
+  if (openings.chosen) console.log(`[scriptgen:opening] using "${openings.chosen}"; the other options are after the script`);
+  // One list Jake can work through: duplicates merged, grouped by when he needs
+  // each item. The model pass is optional — if it fails or its answer does not
+  // check out, the deterministic dedupe stands on its own.
+  const dedupedNotes = dedupeNotes(productionNotes);
+  let noteGroups: NoteGroup[] | null = null;
+  if (dedupedNotes.length >= 4) {
+    try {
+      const rawNotes = await opusScriptChat({
+        system: preamble(false),
+        messages: [{ role: "user", content: notesMergePrompt(dedupedNotes) }],
+        maxTokens: 6000,
+        thinking: false,
+        label: "stage7.8-notes",
+        purpose: "scriptgen",
+      });
+      noteGroups = parseNotesMerge(rawNotes, dedupedNotes);
+      if (!noteGroups) console.warn("[scriptgen:notes] merge answer rejected; using the deduped list");
+    } catch (e) {
+      console.warn(`[scriptgen:notes] merge skipped: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const finalNotes = noteGroups ? noteGroups.flatMap((g) => g.notes) : dedupedNotes;
+  console.log(`[scriptgen:notes] ${productionNotes.length} raw → ${dedupedNotes.length} deduped → ${finalNotes.length} final`);
+  finalDocument =
+    `${openings.top}## SCRIPT\n\n${spokenBody}${prompts.text}${productionNotesAppendix(finalNotes, noteGroups)}${openings.otherAppendix}`;
+  if (prompts.shortCount > 0 || prompts.fullCount > 0) {
+    console.log(
+      `[scriptgen:prompts] ${prompts.shortCount} short prompt(s) in the summary, ${prompts.fullCount} full version(s) after the script`,
+    );
+  }
 
   // Audit and measure the SCRIPT BODY, not the assembled document. The document
   // leads with four alternate hooks and their production notes ("listicles for
@@ -1944,13 +2183,46 @@ export async function finalReviewAndAssemble(opts: {
   // resistance — and his instruction was explicit: steal the moves, not the
   // sentences. Reported on the whole document because a line can also be lifted
   // by the Stage 7 rewrite, after the per-section check has already passed.
-  const finalEchoes = exemplarEchoes(auditedBody, EXEMPLAR_SCRIPTS);
+  const finalEchoes = [
+    ...exemplarEchoes(auditedBody, EXEMPLAR_SCRIPTS),
+    // Short signature jokes the 8-word shingles cannot see (P24).
+    ...findExemplarJokes(auditedBody).map((j) => `(joke) ${j}`),
+  ];
   if (finalEchoes.length > 0) {
     console.warn(
       `[scriptgen:echo] ${finalEchoes.length} line(s) lifted verbatim from Jake's published scripts ` +
         `survived into the final document: ${finalEchoes.map((e) => `"${e}"`).join("; ")}`,
     );
   }
+
+  // The writing-study checks (2026-10-02). Advisory: logged and stored, never a
+  // gate — a run that paid for every stage still ships, with the flags beside it.
+  const leftInScript = findProductionNotesInProse(spokenBody);
+  const lets = letsMetrics(auditedBody);
+  stages.writingChecks = {
+    welcomeLocked: lockedTop.changed,
+    productionNotes: finalNotes.length,
+    notesLeftInScript: leftInScript,
+    openingIssues: openingIssuesOf(lockedTop.text, videoType),
+    unexplainedJargon: findUnexplainedJargon(auditedBody),
+    exemplarJokes: findExemplarJokes(auditedBody),
+    taglineEndings: findTaglineEndings(auditedBody),
+    letsPer1000: lets.letsPer1000,
+    bareImperatives: lets.bareImperatives.length,
+    shortPrompts: prompts.shortCount,
+    fullPrompts: prompts.fullCount,
+  };
+  if (leftInScript.length > 0) {
+    console.error(
+      `[scriptgen:notes] ⚠️ ${leftInScript.length} note(s) to Jake are still INSIDE the narration: ${leftInScript.join(" | ")}`,
+    );
+  }
+  console.log(
+    `[scriptgen:writing] welcomeLocked=${lockedTop.changed} notesMoved=${finalNotes.length} ` +
+      `opening=${JSON.stringify(stages.writingChecks.openingIssues)} jargon=${stages.writingChecks.unexplainedJargon.length} ` +
+      `exemplarJokes=${JSON.stringify(stages.writingChecks.exemplarJokes)} taglines=${stages.writingChecks.taglineEndings.length} ` +
+      `lets/1k=${lets.letsPer1000} bareCommands=${lets.bareImperatives.length}`,
+  );
 
   // Measured, not modelled: how repetitive and how spoken the finished script is.
   stages.quality = scriptQuality(auditedBody);
@@ -1970,7 +2242,6 @@ export async function finalReviewAndAssemble(opts: {
  * identical or the re-run would quietly rewrite the hooks section too.
  */
 const SCRIPT_HEADING = "## SCRIPT\n\n";
-const PROMPT_APPENDIX_MARK = "\n\n---\n\n## PROMPT SUMMARY";
 
 /** How much script we accept in one save. Generous: a 20-minute video is ~3,500 words. */
 const MAX_EDITED_CHARS = 400_000;
@@ -2192,11 +2463,12 @@ export async function rerunFinalReview(
     });
   }
   const topPart = doc.slice(0, at);
-  let scriptBody = doc.slice(at + SCRIPT_HEADING.length);
-  // The appendix is regenerated from the reviewed body — carrying the old one in
-  // would put the prompt summary inside the script and then duplicate it.
-  const appendixAt = scriptBody.indexOf(PROMPT_APPENDIX_MARK);
-  if (appendixAt >= 0) scriptBody = scriptBody.slice(0, appendixAt);
+  // The appendices are regenerated from the reviewed body — carrying them in
+  // would put the prompt summary inside the script and then duplicate it. What
+  // a re-run cannot regenerate (the full prompts, the notes to Jake) is read
+  // back out of them and handed through.
+  const { body: scriptBody, appendix } = splitScriptAppendices(doc.slice(at + SCRIPT_HEADING.length));
+  const carried = parseStoredAppendices(appendix);
 
   // Fresh process-wide accounting: this is one pass, and its cost is reported on
   // its own rather than added to what the original run already billed.
@@ -2218,6 +2490,7 @@ export async function rerunFinalReview(
     title: run.setup.title,
     sourceChannels: (stages.videoSources ?? []).map((v) => v.channel),
     stages,
+    carried,
   });
   const costUsd = Number(scriptgenUsageTotal().costUsd.toFixed(4));
   console.log(
@@ -2428,7 +2701,9 @@ async function runScript(
     // The vendor's own domain(s), guessed from the topic once. A wrong guess can
     // never invent a source — a candidate only ever MATCHES a page the search
     // already returned — so guessing wide is free and guessing narrow is not.
-    const hosts = vendorHosts(setup.coreTopic, setup.specificFocus);
+    // `let`: once the Scout report is loaded below, the domain it actually used
+    // goes in front of the guesses.
+    let hosts = vendorHosts(setup.coreTopic, setup.specificFocus);
     const preamble = (withShrapnel: boolean) => systemPreamble(withShrapnel, sponsored);
     const targetLength = (setup.targetLength || "").trim() || "10–12 minutes minimum";
     const sponsorLabel = sponsorshipLabel(setup.sponsorship);
@@ -2447,7 +2722,11 @@ async function runScript(
     // Byte-stable across the run, so it costs full price once and cache-read
     // thereafter — the reason it can be the whole brief rather than a summary.
     const brief = (input.brief || "").trim();
-    const briefExtra = brief ? [briefBlock(brief)] : [];
+    // The sponsor deal (when the video is built from a Deal Organizer deal) rides with
+    // the brief into every stage: it carries the agreed terms, must-say lines, the CTA
+    // and the angle Jake chose.
+    const dealBlock = dealBriefBlock(input.sponsorDeal);
+    const briefExtra = [...(brief ? [briefBlock(brief)] : []), ...(dealBlock ? [dealBlock] : [])];
 
     // ── Stage 0.4 — SCREENSHOTS (runs before EVERYTHING: it is the newest evidence) ──
     // Jake photographs the product, and those pixels outrank every source the run
@@ -2487,9 +2766,23 @@ async function runScript(
       }
       persist();
     }
+    // ── Stage 0.3 — the UX SCOUT REPORT (written before the run, by Claude Code) ──
+    // Loaded once and frozen into the run, so a resume reads the same report even
+    // if the Scout job is later deleted or re-run.
+    if (stages.uxReport === undefined && input.uxScoutJobId) {
+      const sj = getScoutJob(input.uxScoutJobId);
+      stages.uxReport = sj?.status === "done" && sj.report ? sj.report : null;
+      if (!stages.uxReport) console.warn(`[scriptgen:scout] job ${input.uxScoutJobId} has no finished report; running without it`);
+      persist();
+    }
+    hosts = [...new Set([...scoutHosts(stages.uxReport, setup.coreTopic), ...hosts])];
     // Built once and reused by every stage below, so the cached system prefix
-    // stays byte-stable for the whole run.
-    const shotExtra = stages.screenshotSheet ? [screenshotBlock(stages.screenshotSheet)] : [];
+    // stays byte-stable for the whole run. The Scout report sits ABOVE the
+    // screenshot sheet: it is the tool used end to end, the shots are frames of it.
+    const shotExtra = [
+      ...(stages.uxReport ? [uxReportBlock(stages.uxReport, sponsored)] : []),
+      ...(stages.screenshotSheet ? [screenshotBlock(stages.screenshotSheet)] : []),
+    ];
 
     // ── Stage 0.6 — VIDEO WORKFLOWS (runs FIRST: it shapes everything after it) ──
     // Web research knows what a tool IS and not where its buttons are. Someone who
@@ -2544,7 +2837,7 @@ async function runScript(
             "[INSERT TOPIC]": setup.coreTopic,
             "[INSERT TRANSCRIPTS]": transcriptsBlock(videos),
           });
-          stages.videoWorkflows = await opusScriptChat({
+          const sheet = await opusScriptChat({
             system: preamble(false),
             systemExtra: [...briefExtra, ...shotExtra],
             messages: [{ role: "user", content: s16 }],
@@ -2552,10 +2845,16 @@ async function runScript(
             label: "stage1.6-workflows",
             purpose: "scriptgen",
           });
-          console.log(
+          // The extractor's second gate (Jake 2026-10-02): it reads the
+          // transcripts against the Scout report and rejects any video that is
+          // not this exact product in today's version. No match → no sheet.
+          const noMatch = /^\s*`*\s*NO MATCHING TUTORIALS/i.test(sheet);
+          stages.videoWorkflows = noMatch ? null : sheet;
+          if (noMatch) console.log(`[scriptgen:videos] ${asked} → no transcript matched the exact product/version:\n${sheet.trim()}`);
+          else console.log(
             `[scriptgen:videos] ${asked} → ` +
-              `${videos.length} transcript(s) → workflow sheet ` +
-              `(${stages.videoWorkflows.length} chars): ` +
+              `${videos.length} transcript(s) → angles & insights sheet ` +
+              `(${sheet.length} chars): ` +
               videos.map((v) => `${v.title} [${v.views.toLocaleString()} views]`).join(" | "),
           );
         }
@@ -2599,7 +2898,11 @@ async function runScript(
         // what is still open, so it stops re-establishing a price Jake has
         // already photographed and goes after the gaps instead.
         ...shotExtra,
-        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk), researchScopeBlock(setup.specificFocus ?? "")] : []),
+        ...(stages.videoWorkflows ? [workflowBlock(stages.videoWorkflows, developerOk)] : []),
+        // The scope block now rides with the SCOUT as well as the tutorials:
+        // with a hands-on report the walkthrough is settled before research
+        // starts, and the written web is only for what it cannot see.
+        ...(stages.videoWorkflows || stages.uxReport ? [researchScopeBlock(setup.specificFocus ?? "", !!stages.uxReport)] : []),
       ],
       messages: [
         {
@@ -2630,7 +2933,7 @@ async function runScript(
       // re-sends the conversation, so cost rises with the SQUARE of the rounds —
       // and it is spent deliberately: the run this fixes bought 21 sources and
       // not one of them was the product's own pricing page.
-      searchMaxUses: stages.videoWorkflows ? (hosts.length ? 6 : 4) : 8,
+      searchMaxUses: stages.videoWorkflows || stages.uxReport ? (hosts.length ? 6 : 4) : 8,
       maxTokens: 16000,
       label: "stage1-research",
       sinkSources: stages.sources,
@@ -2662,7 +2965,10 @@ async function runScript(
       "[TODAY'S DATE]": today,
       "[RECENT WINDOW]": windows.recent,
       "[ONE YEAR AGO]": windows.oneYear,
-      "[PASTE THE SCREENSHOT SHEET]": stages.screenshotSheet ?? "(no screenshots were uploaded for this run)",
+      "[PASTE THE SCREENSHOT SHEET]": [
+        ...(stages.uxReport ? ["UX SCOUT REPORT — the tool used for real today, end to end (highest authority on how the tool works, what it costs in credits and what it produces):", "", stages.uxReport, "", "SCREENSHOT SHEET:"] : []),
+        stages.screenshotSheet ?? "(no screenshots were uploaded for this run)",
+      ].join("\n"),
       "[PASTE THE VIDEO WORKFLOWS]": stages.videoWorkflows ?? "(no recent video tutorials were found for this topic)",
       "[INSERT TITLE]": title,
       "[PASTE THE RESEARCH]": stages.research ?? "",
@@ -2707,7 +3013,11 @@ async function runScript(
           ].join("\n\n---\n\n"),
         },
       ],
-      maxTokens: 16000,
+      // 32000: with adaptive thinking on Opus 5.5 the thinking spends from the
+      // same budget, and a 16000 cap cut a sponsored outline off a third of the
+      // way through (2026-10-02). Streaming, so the size costs nothing unused.
+      maxTokens: 32000,
+      failOnTruncation: true,
       label: packOutline ? "stage2-outline-rebuild" : "stage2-outline",
       purpose: "scriptgen",
     });
@@ -3065,7 +3375,9 @@ async function runScript(
 
       // The two things the section writer is otherwise blind to: what's true
       // (the fact sheet), and what the rest of the video already said (the ledger).
-      const ledger = buildContinuityLedger(stages.sections.map((s) => s.final));
+      // Spoken text only: a full-prompt block is copy-paste material, and its
+      // phrasing repeated across sections is not the narration repeating itself.
+      const ledger = buildContinuityLedger(stages.sections.map((s) => stripFullPromptBlocks(s.final)));
       const sectionWords = sectionBudgets[i];
       const draftPrompt =
         fill(loadPrompt("stage5-section"), {
@@ -3075,7 +3387,8 @@ async function runScript(
         loopCloseBlock(loops, i);
 
       const draft = await opusScriptChat({
-        system: preamble(true),
+        // No story-shrapnel bank (Jake 2026-10-02: no backstory in any video).
+        system: preamble(false),
         systemExtra: sectionExtra,
         messages: [{ role: "user", content: draftPrompt }],
         maxTokens: 16000,
@@ -3084,11 +3397,16 @@ async function runScript(
       });
       // Measured BEFORE the review call, so the rewrite that is about to happen
       // gets the finding while it is still cheap to act on.
-      const demo = checkSectionDemo(draft, sec.name);
-      const echoes = exemplarEchoes(draft, EXEMPLAR_SCRIPTS);
+      const draftSpoken = stripFullPromptBlocks(draft);
+      const demo = checkSectionDemo(draftSpoken, sec.name);
+      const echoes = exemplarEchoes(draftSpoken, EXEMPLAR_SCRIPTS);
       const reviewPrompt =
         fill(loadPrompt("stage5-review"), { "[PASTE SECTION]": draft }) +
-        reviewGuardBlock(ledger, Boolean(stages.factSheet), demo, echoes);
+        reviewGuardBlock(ledger, Boolean(stages.factSheet), demo, echoes, {
+          jokes: findExemplarJokes(draftSpoken),
+          taglines: findTaglineEndings(draftSpoken),
+          bareImperatives: letsMetrics(draftSpoken).bareImperatives,
+        });
       const final = await opusScriptChat({
         system: preamble(false),
         // Same cached prefix as the draft call, so the fact sheet the review now
@@ -3103,8 +3421,9 @@ async function runScript(
       // Re-measure rather than assume the rewrite landed — the same discipline the
       // claim audit uses. A section that still shows nothing is worth knowing about
       // while the run is in flight.
-      const after = checkSectionDemo(final, sec.name);
-      const echoesAfter = exemplarEchoes(final, EXEMPLAR_SCRIPTS);
+      const finalSpoken = stripFullPromptBlocks(final);
+      const after = checkSectionDemo(finalSpoken, sec.name);
+      const echoesAfter = exemplarEchoes(finalSpoken, EXEMPLAR_SCRIPTS);
       if (echoes.length > 0 || echoesAfter.length > 0) {
         console.log(
           `[scriptgen:echo] section ${i + 1}/${total} "${sec.name}" lifted lines ` +
@@ -3190,6 +3509,7 @@ async function runScript(
             sponsorCapBlock(sponsored, setup.sponsorship?.sponsorName || "the tool") +
             // Jake's prompt says FOUR hooks, twice, and it is canonical — so the
             // fifth is introduced here rather than by editing his text.
+            "\n\n---\n\nNOTE: the script may contain `<<<FULL PROMPT>>> … <<<END FULL PROMPT>>>` blocks and `PRODUCTION NOTE:` lines. They are not narration — they are lifted out after this pass. Return every one of them exactly as given, in place, and never place a call to action inside one. The welcome line in each hook is replaced in code by Jake's fixed welcome, and it already carries the subscribe-and-like ask, so it does not matter how you word it there." +
             (baseHooks.includes(OPEN_HOOK_HEADING)
               ? `\n\n---\n\nNOTE: there are FIVE hook options below, not four. The last one ("${OPEN_HOOK_HEADING.replace(/^#+\s*/, "")}") follows no formula and must be returned with the same treatment as the other four — and returned in full, whether or not you change it.`
               : ""),
@@ -3371,7 +3691,8 @@ export async function refineParagraph(
   // SCRIPTGEN_MAX_USD ceiling before this tiny call ever runs.
   resetScriptgenUsage();
   const reply = await opusScriptChat({
-    system: systemPreamble(true, sponsored),
+    // No story-shrapnel bank: no backstory in any video (Jake 2026-10-02).
+    system: systemPreamble(false, sponsored),
     systemExtra,
     messages: modelMessages,
     // Adaptive thinking bills as output and counts toward this cap, and a big

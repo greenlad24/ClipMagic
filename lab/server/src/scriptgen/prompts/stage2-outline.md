@@ -1,6 +1,6 @@
 You're creating a detailed video outline for Jake Dawson's YouTube channel about AI and automation for solopreneurs and small business owners.
 
-TARGET LENGTH: 10–12 minutes minimum. Build the outline to deliver this depth — include enough sections, sub-points, real examples, and demos to fill 10+ minutes of meat. If the topic feels too narrow to support 10 minutes, expand the angle (more use cases, more demos, more honest pros/cons) before submitting the outline.
+TARGET LENGTH: 10–12 minutes minimum. Build the outline to deliver this depth — include enough sections, sub-points, real examples, and demos to fill 10+ minutes of meat. If the topic feels too narrow to support 10 minutes, expand the angle (more use cases, more demos) before submitting the outline.
 
 ## AUDIENCE PROFILE:
 Solopreneurs and small business owners (25-55 years old) who:
@@ -125,11 +125,13 @@ Two more casting rules:
 #### ⏱️ HOOK (0:00-0:30)
 **Opening Style:** Show the end result or demonstrate the automation working
 
-**Required Elements:**
-- Start with the working result/demo
-- Specific metric/timeframe (e.g., "This took 23 minutes to build")
-- What it replaces or improves
-- Promise: "I'll walk you through every step"
+**Required Elements — the opening shape Jake rebuilds every tutorial into (at most four short paragraphs before the welcome):**
+1. "Look at this …" — what's on screen, made with one tool, in plain words; optionally ONE sentence on the problem it fixes
+2. "By the end of this video, you'll [concrete outcome] — even if you've never [the thing the viewer fears] in your life."
+3. "I'll give you the exact prompts/steps, on screen, ready to copy" — naming the features as a short list
+4. The welcome line (fixed — added in code)
+
+No questions the video promises to answer later, no roadmap, no second "here's what we're using" paragraph.
 
 **Example Openings:**
 - "So this automation just responded to a lead in 47 seconds. Forty-seven seconds. Let me show you exactly how to build it."
@@ -148,7 +150,7 @@ The hook already introduced Jake, named the audience, and promised what's coming
 **Elements:**
 - The problem in one vivid line: [USE MY RESEARCH: the specific pain this removes]
 - What we're building, named once: Specific name/description
-- Prerequisites, if any: what tools they need (free/paid) — a single line
+- Prerequisites, if any: what tools they need — a single line. If following along needs a paid plan, say so here in one clause ("you'll need a paid plan for this — more on that later")
 
 **From My Research:**
 [REFERENCE WHAT I DISCOVERED ABOUT WHY THIS MATTERS]
@@ -165,6 +167,20 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 **Based on My Testing:**
 [USE MY RESEARCH: How I designed this workflow]
+
+---
+
+#### ⏱️ SETUP FROM ZERO (before the first build) — every tutorial
+
+The viewer has never opened this tool. In plain words, with the on-screen labels (the UX Scout report's EASIEST PATH when there is one):
+1. Create the account — and the sign-in to pick
+2. The onboarding questions — tell the viewer to answer them and why it makes the tool better; say a skippable one can be skipped; describe the questions in general, never as a transcript
+3. Connect the accounts or tools — start with the simplest one
+4. How to open or call the tool from then on
+
+**FIRST WIN (straight after setup):** one tiny test the viewer can copy ("List my connected accounts", "What tools do you have?") and the answer on screen — the proof it worked, before any real job (the UX Scout report's FIRST WIN when there is one).
+
+Skip only the steps that truly don't exist for this tool.
 
 ---
 
@@ -186,14 +202,15 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 2. Action: [Next step]
  - Visual cue: "You should see [X] on screen"
- - What to input: [Example from MY RESEARCH]
+ - What to input: [Example from MY RESEARCH] — a typed prompt is the short, conversational version (1–3 plain sentences naming the outcome); its long, detailed version goes after the script
+ - After a generate step: roughly how long it takes and exactly where the result appears
+ - Where the viewer has to write or configure something: the easy way out (the rewrite button, the preview, "skip it for now")
 
 3. Action: [Continue...]
 
-**Pro Tips (From My Testing):**
-- Tip I discovered: [FROM MY RESEARCH]
-- What makes this work better: [Optimization]
-- How to get the best results: [Best practices]
+**One Protective Tip (only if this step has one):**
+- The setting or habit that saves the viewer money or trouble, framed as a benefit ("this saves your wallet") [FROM MY RESEARCH]
+- If a step is easy to get wrong: say so once, with the exact label and what the viewer gets or saves — no second warning later
 
 **Checkpoint:**
 - "At this point you should have [X]"
@@ -211,35 +228,29 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 ---
 
-#### ⏱️ TESTING & OPTIMIZATION (After build is complete)
+#### ⏱️ PRICING (only if plans matter to the viewer — once, after the workflow)
 
-**Test the Automation:**
-- How to trigger a test run
-- What success looks like
-- How to verify it's working correctly
+Open with a spoken connector: "Alright, now that you know the whole workflow, let's talk about pricing."
 
-**Enhancement Tips:**
-[FROM MY RESEARCH: What I learned after using it for X days/weeks to make it even better]
+**For each plan [FROM THE FACT SHEET]:**
+- Price monthly and yearly
+- The biggest one or two things it unlocks
+- Who it fits ("the plan for a solo person", "the one if you're running this for a business")
 
-**Different Ways to Use This:**
-[FROM MY RESEARCH: Variations or extensions I discovered]
+**Then, plainly:**
+- The plan this video's workflow needs, and what the free plan cannot do
+- The plan to start on
+
+No credit arithmetic, no per-generation cost tables, no billing fine print, no "go read the live page yourself". Inside the steps, cost is one clause ("this part is free").
 
 ---
 
-#### ⏱️ WRAP-UP (Final 60-90 seconds)
+#### ⏱️ CLOSE (Final 30-60 seconds)
 
-**Quick Recap:**
-- "So we built [X] that does [Y]"
-- Key benefit: [Time/money saved - MY RESULTS]
-
-**Next Steps:**
-- How to customize for their business
-- Advanced features to explore (if I've tested them)
-
-**CTA:**
-- Comment prompt: "What are you gonna automate with this?"
-- Skool mention: "Templates available in my community" (if applicable)
-- Subscribe + next video tease
+**No recap, no verdict, no rating, no "what impressed me", no "where it struggles", no alternatives, no next-steps homework, no "test it for a few more weeks".** After the last result plays back, the video goes straight to:
+- The link line (the tool, or the free course if it has not been mentioned yet)
+- Comment prompt: ONE specific question about this video. It may offer a choice between the things this video actually covered ("the leads, the marketing, or the Monday report?") — then "Leave a comment down below — I read every one of them."
+- The fixed outro (socials, bell, sign-off) is added automatically — do not plan one
 
 ---
 
@@ -313,7 +324,7 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 **Pricing:** [VERIFIED BY ME]
 - Free tier: What's included
 - Paid tier: Cost + what you get
-- Value assessment: What you get for your investment [MY OPINION]
+- Who it fits: the one plan most viewers need, said plainly
 
 **Perfect For:**
 [FROM MY RESEARCH: Specific user type or use case where this really shines]
@@ -352,17 +363,12 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 ---
 
-#### ⏱️ WRAP-UP (Final 60-90 seconds)
+#### ⏱️ CLOSE (Final 30-60 seconds)
 
-**Final Thoughts:**
-- Overall winner and why [MY CHOICE]
-- Most exciting discovery from testing
-- What impressed me most
-
-**CTA:**
-- "Which tool are you most excited to try?"
-- Skool: "I have comparison sheets in the community"
-- Next video tease
+**No recap, no verdict, no rating, no "what impressed me", no "where it struggles", no alternatives, no next-steps homework, no "test it for a few more weeks".** After the last result plays back, the video goes straight to:
+- The link line (the tool, or the free course if it has not been mentioned yet)
+- Comment prompt: ONE specific question about this video. It may offer a choice between the things this video actually covered ("the leads, the marketing, or the Monday report?") — then "Leave a comment down below — I read every one of them."
+- The fixed outro (socials, bell, sign-off) is added automatically — do not plan one
 
 ---
 
@@ -400,8 +406,7 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 - What I tested: [MY USE CASES - FROM RESEARCH]
 - Structure of the review: "I'll cover [X] main features"
 
-**My Background with This Tool:**
-[FROM MY RESEARCH: How I discovered it, what I used it for, results I got]
+(No backstory and no credentials — not "how I discovered it", not years of use. The intro is about the tool and the viewer.)
 
 ---
 
@@ -456,70 +461,29 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 ---
 
-#### ⏱️ PRICING & VALUE ANALYSIS (After features)
+#### ⏱️ PRICING (only if plans matter to the viewer — once, after the workflow)
 
-**Pricing Breakdown:**
-[VERIFIED BY ME:
-- Free tier: What's available to start
-- Paid tiers: Investment + what you unlock
-- What's included: Credits, features, support]
+Open with a spoken connector: "Alright, now that you know the whole workflow, let's talk about pricing."
 
-**Value Assessment (My Honest Take):**
-[FROM MY RESEARCH:
-- What you get for your investment
-- ROI based on my usage (time/money saved)
-- How it compares to alternatives
-- Who gets maximum value from each tier]
+**For each plan [FROM THE FACT SHEET]:**
+- Price monthly and yearly
+- The biggest one or two things it unlocks
+- Who it fits ("the plan for a solo person", "the one if you're running this for a business")
 
----
+**Then, plainly:**
+- The plan this video's workflow needs, and what the free plan cannot do
+- The plan to start on
 
-#### ⏱️ REAL-WORLD RESULTS (Before final verdict)
-
-**What I Built/Achieved:**
-[FROM MY RESEARCH: Specific projects, results, outcomes using this tool]
-
-**Time Savings:**
-[MY MEASUREMENTS: How much faster compared to previous methods]
-
-**Quality Improvements:**
-[MY OBSERVATIONS: How results improved]
+No credit arithmetic, no per-generation cost tables, no billing fine print, no "go read the live page yourself". Inside the steps, cost is one clause ("this part is free").
 
 ---
 
-#### ⏱️ FINAL VERDICT (Before wrap-up)
+#### ⏱️ CLOSE (Final 30-60 seconds)
 
-**Overall Assessment:**
-
-**What Impressed Me Most:**
-1. [Best discovery from MY testing]
-2. [Second most impressive aspect]
-3. [Pleasant surprise]
-
-**Unique Strengths:**
-[What this tool does that others don't - BASED ON MY EXPERIENCE]
-
-**Ideal For:**
-- Perfect match for: [Specific user type - BASED ON MY FINDINGS]
-- Gets maximum value: [Who benefits most - MY OPINION]
-- Best use cases: [Scenarios where this excels]
-
-**My Rating:** [X/10] - [Why this score - MY REASONING]
-
-**My Recommendation:**
-[MY HONEST TAKE: Who should use this, which tier to start with, how to get best results - all based on MY testing]
-
----
-
-#### ⏱️ WRAP-UP (Final 60 seconds)
-
-**Summary:**
-- Quick recap of standout features
-- Final recommendation and excitement
-
-**CTA:**
-- "Are you using [Tool]? What are you building with it?"
-- Skool: "I share my setup and templates in the community"
-- Next video tease
+**No recap, no verdict, no rating, no "what impressed me", no "where it struggles", no alternatives, no next-steps homework, no "test it for a few more weeks".** After the last result plays back, the video goes straight to:
+- The link line (the tool, or the free course if it has not been mentioned yet)
+- Comment prompt: ONE specific question about this video. It may offer a choice between the things this video actually covered ("the leads, the marketing, or the Monday report?") — then "Leave a comment down below — I read every one of them."
+- The fixed outro (socials, bell, sign-off) is added automatically — do not plan one
 
 ---
 
@@ -531,7 +495,7 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 #### ⏱️ HOOK (0:00-0:30)
 
-**Opening Style:** Share a specific result or success story (yours or client's)
+**Opening Style:** Show a specific result the roadmap produces
 
 **Required Elements:**
 - Concrete business result [FROM MY EXPERIENCE] — **never a money figure.** No revenue, no "$X/month", no income of any kind, whether it's Jake's, a client's, or the viewer's. Time saved, work removed, a thing that now runs itself: those are the results.
@@ -540,11 +504,13 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 - Promise: Step-by-step roadmap
 
 **Example Openings:**
-- "So I helped a client cut their client onboarding from three days of admin down to about twenty minutes, in under a month. And in this video I'm breaking down the exact roadmap we followed."
-- "I set this up six months ago with no technical background at all. Today it runs without me touching it. Let me show you the framework."
+- "This onboarding used to take three days of admin. Now it takes about twenty minutes, and nobody touches it. In this video I'm breaking down the exact roadmap."
+- "Look at this — every new client gets a welcome pack, a calendar invite and a first task, and nobody sends any of it by hand. Let me show you the framework."
+
+(Results come from the brief and the research. No backstory and no credentials: not Jake's past ventures, not "I helped a client", not "I set this up six months ago".)
 
 **Incorporate My Research:**
-[REFERENCE: My personal results, client success story, specific numbers/timeline]
+[REFERENCE: the concrete result this roadmap produces — from the brief and research, never a backstory]
 
 ---
 
@@ -559,8 +525,7 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
  - Investment to get started
  - Skills that help
 
-**My Background:**
-[FROM MY RESEARCH: How I started, key breakthroughs, what I learned]
+(No backstory and no credentials here — the roadmap is the proof.)
 
 ---
 
@@ -627,17 +592,12 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 ---
 
-#### ⏱️ WRAP-UP (Final 90 seconds)
+#### ⏱️ CLOSE (Final 30-60 seconds)
 
-**Real Talk:**
-- What to expect: [MY HONEST ASSESSMENT based on experience]
-- Timeline reality: [MY EXPERIENCE]
-- Who thrives with this: [MY OBSERVATIONS]
-
-**CTA:**
-- "Where are you in this journey? Let me know in the comments."
-- Skool: "I share case studies and templates in the community"
-- Next video tease
+**No recap, no verdict, no rating, no "what impressed me", no "where it struggles", no alternatives, no next-steps homework, no "test it for a few more weeks".** After the last result plays back, the video goes straight to:
+- The link line (the tool, or the free course if it has not been mentioned yet)
+- Comment prompt: ONE specific question about this video. It may offer a choice between the things this video actually covered ("the leads, the marketing, or the Monday report?") — then "Leave a comment down below — I read every one of them."
+- The fixed outro (socials, bell, sign-off) is added automatically — do not plan one
 
 ---
 
@@ -658,7 +618,7 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 - Promise: Evidence and reasoning
 
 **Example Openings:**
-- "AI agents are changing how we work faster than anyone expected. After building 50+ agents for real businesses, here's what I'm seeing."
+- "AI agents are changing how we work faster than anyone expected. Here's what's actually happening."
 - "We're entering the golden age of AI automation for small businesses. And here's why the next 12 months are critical."
 
 **Incorporate My Research:**
@@ -669,9 +629,9 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 #### ⏱️ INTRO + CONTEXT (0:30-1:30)
 
 **Elements:**
-- What sparked this perspective: [MY EXPERIENCE/OBSERVATION]
-- My background: [WHY I'M SHARING THIS]
+- What sparked this perspective: [THE OBSERVATION, FROM THE RESEARCH]
 - What we'll explore: [3-5 main points]
+(No backstory and no credentials.)
 
 **The Current Landscape:**
 [Set the stage with current state]
@@ -728,16 +688,12 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 
 ---
 
-#### ⏱️ WRAP-UP (Final 60 seconds)
+#### ⏱️ CLOSE (Final 30-60 seconds)
 
-**My Perspective:**
-- Restate core insight
-- Express optimism about opportunity
-- Invite discussion
-
-**CTA:**
-- "What are you seeing in your business? Share in the comments."
-- Next video tease
+**No recap, no verdict, no rating, no "what impressed me", no "where it struggles", no alternatives, no next-steps homework, no "test it for a few more weeks".** After the last result plays back, the video goes straight to:
+- The link line (the tool, or the free course if it has not been mentioned yet)
+- Comment prompt: ONE specific question about this video. It may offer a choice between the things this video actually covered ("the leads, the marketing, or the Monday report?") — then "Leave a comment down below — I read every one of them."
+- The fixed outro (socials, bell, sign-off) is added automatically — do not plan one
 
 ---
 
@@ -756,6 +712,8 @@ Give the tool's job ONE plain framing, then go straight to the first build. Do n
 11. **Include my specific examples and discoveries**
 12. **Note where to insert Skool community mentions** (if templates/resources are mentioned)
 13. **Keep it actionable and inspiring** - focus on what viewers can achieve
+14. **No bracketed notes in the plan.** Where a control's exact name is unconfirmed, describe it by what it does and add a `PRODUCTION NOTE: <what to check on screen>` line at the end of that section
+15. **No backstory or credentials** in any section of any format
 
 ---
 

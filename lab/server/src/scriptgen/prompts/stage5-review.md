@@ -1,6 +1,6 @@
 Review this section. Rewrite anything that's unclear, doesn't deliver enough value, or uses complex language. Aim for a 14-year-old's reading level.
 
-Keep Jake's bar voice: never punch sideways, never punch down, humor at self/situation only, honest about the catch where relevant, one idea per sentence, everyday words, natural speech with contractions. Plain text only — no bullet points, no stage directions, no commentary. Output ONLY the rewritten section.
+Keep Jake's bar voice: never punch sideways, never punch down, humor at self/situation only, honest about the catch where relevant (inside the step, one clause), one idea per sentence, everyday words, natural speech with contractions. Plain text only — no bullet points, no stage directions, nothing bracketed, no commentary. Leave any `<<<FULL PROMPT>>> … <<<END FULL PROMPT>>>` block and any `PRODUCTION NOTE:` line exactly as it is. Output ONLY the rewritten section.
 
 Two things to check as you rewrite, because this is a script read out loud over a screen recording and not an essay:
 

@@ -64,6 +64,8 @@ export const ANTHROPIC_RATES: Record<string, TokenRate> = {
   // this model is asked for by name (see claudeJSONWithModel), so its rate has
   // to be keyed here or every audit chat prices at $0.
   "claude-opus-5": { input: 5.0, output: 25.0, cacheWrite: 6.25, cacheRead: 0.5 },
+  // Opus 5.5 — the Script Generator (all stages) since 2026-10-02.
+  "claude-opus-5-5": { input: 4.0, output: 20.0, cacheWrite: 5.0, cacheRead: 0.2 },
   // Opus 4.8 — director tier.
   "claude-opus-4-8": { input: 5.0, output: 25.0, cacheWrite: 6.25, cacheRead: 0.5 },
   // Sonnet 4.6 — research + review tier.

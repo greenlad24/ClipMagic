@@ -313,6 +313,8 @@ export function approvedLessonBlock(): string {
     "AMENDMENTS, **these win**.",
     "",
     "They correct HOW the script is written. They never override a fact, a piece of research, or the brief.",
+    "The three finished scripts at the very end of this prompt still win on how to explain, demonstrate and joke;",
+    "these rules win on everything those scripts do that Jake has since cut — above all, what comes after the demo.",
     "",
     ...rules.map((l, i) => `${i + 1}. ${l.rule}`),
     "",

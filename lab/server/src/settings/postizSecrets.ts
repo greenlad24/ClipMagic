@@ -205,7 +205,18 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   { key: "GDOCS_CLIENT_ID", label: "Google Docs client ID", group: "Script Generator", connects: "OAuth client ID for exporting a finished script into a Google Doc. Uses the drive.file scope: it can create documents and re-open the ones it created, and nothing else in your Drive is visible to it." },
   { key: "GDOCS_CLIENT_SECRET", label: "Google Docs client secret", group: "Script Generator", connects: "Secret for the Google Docs OAuth client above. Server-only; never sent to the browser." },
   { key: "GDOCS_REFRESH_TOKEN", label: "Google Docs refresh token", group: "Script Generator", connects: "Written automatically when you connect Google Docs from the Script Generator. Revoke any time at myaccount.google.com/permissions." },
+  { key: "GDOCS_PICKER_API_KEY", label: "Google Picker API key", group: "Script Generator", connects: "API key from the same Google Cloud project as the Docs client (APIs & Services → Credentials → Create credentials → API key, restricted to the Google Picker API). Lets the Script Generator open Google's own Drive folder picker for the connected account." },
   { key: "GDOCS_FOLDER_ID", label: "Google Docs export folder", group: "Script Generator", connects: "The Drive folder finished scripts are exported into. Paste the folder's URL or its id — open the folder in Drive and copy the address bar." },
+
+  // Deal Organizer — the sponsorship agent's connections (lab server only).
+  // Gmail and its token are written by the connect flow on /deal-organizer/connections;
+  // the client id/secret are OPTIONAL overrides of the Lab sign-in client.
+  { key: "DEALS_SLACK_BOT_TOKEN", label: "Slack Bot User OAuth Token", group: "Deal Organizer", connects: "The xoxb- token from the Deal Organizer Slack app (OAuth & Permissions page). The agent uses it to ask you about conflicts, prices, links and risks. Test it on the Deal Organizer connections page." },
+  { key: "DEALS_SLACK_TARGET", label: "Slack destination", group: "Deal Organizer", connects: "Your Slack member ID (starts with U) for DMs, or a channel ID (starts with C) with the bot invited." },
+  { key: "DEALS_GMAIL_REFRESH_TOKEN", label: "Deal Organizer Gmail refresh token", group: "Deal Organizer", connects: "Written automatically when you connect the sponsor inbox on the Deal Organizer connections page. Revoke any time at myaccount.google.com/permissions." },
+  { key: "DEALS_GMAIL_EMAIL", label: "Deal Organizer Gmail address", group: "Deal Organizer", connects: "The inbox that was connected. Written automatically." },
+  { key: "DEALS_GMAIL_CLIENT_ID", label: "Deal Organizer Gmail client ID (optional)", group: "Deal Organizer", connects: "Leave empty to use the Lab sign-in client. Only set this if Gmail must run on a different Google Cloud project." },
+  { key: "DEALS_GMAIL_CLIENT_SECRET", label: "Deal Organizer Gmail client secret (optional)", group: "Deal Organizer", connects: "Secret for the optional client above." },
 
   { key: "YOUTUBE_CLIENT_ID", label: "YouTube client ID", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
   { key: "YOUTUBE_CLIENT_SECRET", label: "YouTube client secret", group: "YouTube", connects: "Connects YouTube channels for uploads/Shorts." },
@@ -295,6 +306,15 @@ const LAB_ONLY_KEYS = new Set([
   "GDOCS_CLIENT_SECRET",
   "GDOCS_REFRESH_TOKEN",
   "GDOCS_FOLDER_ID",
+  "GDOCS_FOLDER_NAME",
+  "GDOCS_PICKER_API_KEY",
+  // Deal Organizer (lab server only).
+  "DEALS_SLACK_BOT_TOKEN",
+  "DEALS_SLACK_TARGET",
+  "DEALS_GMAIL_REFRESH_TOKEN",
+  "DEALS_GMAIL_EMAIL",
+  "DEALS_GMAIL_CLIENT_ID",
+  "DEALS_GMAIL_CLIENT_SECRET",
 ]);
 
 // ── Paths ────────────────────────────────────────────────────────────────────
@@ -903,10 +923,23 @@ export function getGoogleDocsFolder(): string {
   return (process.env.GDOCS_FOLDER_ID || "").trim() || map.GDOCS_FOLDER_ID || "";
 }
 
-export function setGoogleDocsFolder(folderId: string): void {
+export function setGoogleDocsFolder(folderId: string, name = ""): void {
   const map = readStore();
   map.GDOCS_FOLDER_ID = folderId;
+  // The name is only for showing which folder is chosen (drive.file cannot read
+  // a folder's name back), so it comes from the picker.
+  if (name) map.GDOCS_FOLDER_NAME = name;
+  else delete map.GDOCS_FOLDER_NAME;
   writeStore(map);
+}
+
+export function getGoogleDocsFolderName(): string {
+  return readStore().GDOCS_FOLDER_NAME || "";
+}
+
+/** Browser API key for the Google Picker (Drive folder chooser). */
+export function getGoogleDocsPickerKey(): string {
+  return (process.env.GDOCS_PICKER_API_KEY || "").trim() || readStore().GDOCS_PICKER_API_KEY || "";
 }
 
 /**
@@ -941,5 +974,60 @@ export function setYtAnalyticsRefreshToken(token: string): void {
 export function clearYtAnalyticsRefreshToken(): void {
   const map = readStore();
   delete map.YT_ANALYTICS_REFRESH_TOKEN;
+  writeStore(map);
+}
+
+// ── Deal Organizer integrations ────────────────────────────────────────────
+//
+// Gmail rides on the LAB'S Google OAuth client (Jake's rule: no second client,
+// no Zite client) but as a SEPARATE grant from sign-in: sign-in still asks for
+// "openid email profile" only, and the mailbox is connected once, by consent,
+// from the Deal Organizer page. DEALS_GMAIL_CLIENT_ID/SECRET override the
+// sign-in client only if the sign-in project can't be given the Gmail API.
+// All server-only — none of these may be wired into an HTTP response.
+
+export function getDealsGmailOAuth(): { clientId: string; clientSecret: string; refreshToken: string | null; email: string | null } | null {
+  const map = readStore();
+  const clientId = map.DEALS_GMAIL_CLIENT_ID || config.googleClientId || "";
+  const clientSecret = map.DEALS_GMAIL_CLIENT_SECRET || config.googleClientSecret || "";
+  if (!clientId || !clientSecret) return null;
+  return {
+    clientId,
+    clientSecret,
+    refreshToken: map.DEALS_GMAIL_REFRESH_TOKEN || null,
+    email: map.DEALS_GMAIL_EMAIL || null,
+  };
+}
+
+export function setDealsGmailConnection(refreshToken: string, email: string): void {
+  const map = readStore();
+  map.DEALS_GMAIL_REFRESH_TOKEN = refreshToken;
+  map.DEALS_GMAIL_EMAIL = email;
+  writeStore(map);
+}
+
+export function clearDealsGmailConnection(): void {
+  const map = readStore();
+  delete map.DEALS_GMAIL_REFRESH_TOKEN;
+  delete map.DEALS_GMAIL_EMAIL;
+  writeStore(map);
+}
+
+/** Slack bot token (xoxb-…) and where the agent posts: a user id (DM) or a channel id. */
+export function getDealsSlack(): { botToken: string | null; target: string | null } {
+  const map = readStore();
+  return {
+    botToken: (process.env.DEALS_SLACK_BOT_TOKEN || "").trim() || map.DEALS_SLACK_BOT_TOKEN || null,
+    target: map.DEALS_SLACK_TARGET || null,
+  };
+}
+
+export function setDealsSlack(input: { botToken?: string | null; target?: string | null }): void {
+  const map = readStore();
+  for (const [key, value] of [["DEALS_SLACK_BOT_TOKEN", input.botToken], ["DEALS_SLACK_TARGET", input.target]] as const) {
+    if (value === undefined) continue; // not sent → unchanged (write-only field semantics)
+    if (value === null || value === "") delete map[key];
+    else map[key] = value.trim();
+  }
   writeStore(map);
 }

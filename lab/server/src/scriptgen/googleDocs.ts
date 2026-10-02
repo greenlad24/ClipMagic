@@ -13,7 +13,7 @@
  * high-water mark as a floor, so a number can never be reused even when Drive
  * hides a doc that was made by hand.
  */
-import { getGoogleDocsOAuth, setGoogleDocsHighWater, getGoogleDocsHighWater } from "../settings/postizSecrets.js";
+import { getGoogleDocsOAuth, setGoogleDocsHighWater, getGoogleDocsHighWater, clearGoogleDocsRefreshToken } from "../settings/postizSecrets.js";
 
 const TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const UPLOAD_ENDPOINT = "https://www.googleapis.com/upload/drive/v3/files";
@@ -70,12 +70,35 @@ async function accessToken(): Promise<string> {
   });
   const j = (await r.json().catch(() => ({}))) as { access_token?: string; scope?: string; error?: string };
   if (!r.ok || !j.access_token) {
-    throw new Error(`Google refused the token refresh (${j.error || r.status}). Reconnect it in Settings.`);
+    // invalid_grant = the stored sign-in is dead for good (revoked, or expired:
+    // an OAuth app left in "Testing" mode has its refresh tokens expire after
+    // 7 days). Keeping it only makes every export fail the same way and keeps
+    // the button looking connected (2026-10-02), so forget it: the Script
+    // Generator then offers "Connect Google Docs" instead.
+    if (j.error === "invalid_grant") {
+      clearGoogleDocsRefreshToken();
+      throw new Error("Google ended the Docs connection (the sign-in expired or was revoked). Click \"Connect Google Docs\" to sign in again.");
+    }
+    throw new Error(`Google refused the token refresh (${j.error || r.status}). Try "Connect Google Docs" again.`);
   }
   // Re-check on every refresh: a grant can be widened out from under us by a
   // re-consent elsewhere, and this is the last point before we spend it.
   assertDriveFileScope(j.scope);
   return j.access_token;
+}
+
+/**
+ * A short-lived drive.file access token for Google's Drive Picker in the
+ * browser (signed-in Lab page only). Picking a folder there is what grants this
+ * app access to it under drive.file, so exports can create docs inside it.
+ */
+export async function pickerAccessToken(): Promise<string> {
+  return accessToken();
+}
+
+/** The Cloud project number (the numeric prefix of the client ID) — the Picker's appId. */
+export function projectNumber(): string {
+  return (getGoogleDocsOAuth()?.clientId || "").split("-")[0].replace(/\D/g, "");
 }
 
 function assertAllowed(url: string): void {

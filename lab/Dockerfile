@@ -105,6 +105,20 @@ RUN apt-get update \
   # Chromium is exactly the failure mode we're eliminating.
   && test -x /usr/bin/chromium
 
+# Sponsor-deal reader (scriptgen/dealDocs): briefs and contracts arrive as Word,
+# PowerPoint, Excel or Keynote files and as Loom / Vimeo / Dropbox / Drive videos
+# (Jake 2026-10-02: "all of the limits have to be solved"). LibreOffice (headless,
+# no GUI) converts office files to PDF for Claude to read; yt-dlp pulls the audio
+# of a linked video for transcription. Both are only ever run by that reader.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+       libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui curl poppler-utils \
+  && rm -rf /var/lib/apt/lists/* \
+  && test -x /usr/bin/soffice && test -x /usr/bin/pdftotext \
+  && curl -fsSL -o /usr/local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
+  && chmod +x /usr/local/bin/yt-dlp \
+  && /usr/local/bin/yt-dlp --version
+
 WORKDIR /app
 COPY --from=server /build/server/node_modules ./node_modules
 COPY --from=server /build/server/dist ./dist

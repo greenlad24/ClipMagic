@@ -80,7 +80,10 @@ export function googleDocsOAuthRouter(): Router {
       // prompt=consent Google returns none on a repeat authorisation, and the
       // connection then dies silently at the first access-token expiry.
       access_type: "offline",
-      prompt: "consent",
+      // select_account: always show Google's account picker, so the export can
+      // be connected to a different Google account than the browser's current
+      // one (Jake 2026-10-02 — "reconnect it to another email account").
+      prompt: "consent select_account",
       // Never inherit scopes granted to another client. This connection is
       // drive.file and nothing else, whatever else the account has approved.
       include_granted_scopes: "false",

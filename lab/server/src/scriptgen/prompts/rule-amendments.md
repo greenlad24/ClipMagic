@@ -38,15 +38,16 @@ Either way, the *manner* never changes: never sneer, never punch sideways, never
 
 ---
 
-## 4. Credentials come DURING the video — never as the opener, never as a monologue
+## 4. No backstory and no credentials — in any video
 
-An earlier amendment loosened this and allowed a one-sentence credential monologue in the hook. **That is retracted.** The voice rule stands as written: credentials come during the video, in short sentences, never as the opener and never in a monologue — **one throwaway line max per video**, pulled from the story shrapnel bank.
+Jake ruled this on 2026-10-02, after deleting every backstory line the generator ever placed: **none, anywhere.** Not in the hook, not during the video, not as one throwaway line — in tutorials, listicles, reviews and opinion videos alike.
 
-- **Not the opener.** The video does not begin by establishing who Jake is. It begins with the thing the viewer came for. Nothing in the opening — no "for the past two years I've been deep in the trenches with AI", no version of it — earns its place ahead of the content.
-- **Not a monologue.** One line. Don't dwell on it, don't build a case, don't return to it later to remind anyone.
-- **From the shrapnel bank.** A credential lands as a fragment of a story in passing, not as a claim about standing. `story-shrapnel-bank.md` is where it comes from.
+- No past ventures, past jobs, past startups, money spent, years in tech, track record, or "I spent a year running automation projects…".
+- No self-deprecating career lines ("I used to think I was good at picking timing").
+- The story shrapnel bank is not used in scripts any more.
+- First person stays — for what Jake clicks, what he types and what he sees on screen now ("let me show you", "I queue all five and hit go"). That is the format, not a credential.
 
-A credential that earns its place is one the viewer forgets they heard, because the next sentence was more interesting.
+The earlier versions of this rule (one throwaway line from the shrapnel bank) are retracted. Where SOUL, the voice rules or a stage prompt still mention credentials "during the video", this rule wins.
 
 ---
 
@@ -83,7 +84,7 @@ Nothing here stops you writing a first-person demo — "let me show you", "watch
 - ❌ "This could make you thousands."
 - ❌ "Here's how to turn this into $5k a month."
 
-Jake's own past outcomes, stated once and without a number attached to the viewer, are credentials — not income claims.
+Jake's own past outcomes are not income claims — but they are backstory, and rule 4 keeps them out of the script anyway.
 
 ---
 
@@ -96,6 +97,8 @@ Write so a fourteen-year-old follows it without rereading — simple, conversati
 - ✅ "An API is just the plug two apps use to talk to each other." (one line, simple, done)
 - ❌ "An API is basically the plug two apps use to talk to each other. When an app has one, automation tools can hook into it and everything's easy. When it doesn't, a lot of tools just stop dead." (same good line, then two more that pile on)
 - ❌ "An API is a tool's front door for other apps, and if there's no door most tools stand outside knocking while this one climbs through the window." (over-built — the simple version was clearer)
+
+**When the viewer has to ACT on a technical word, name it, defuse it, translate it — once.** The first time a term like MCP, connector, API key, OAuth, skill or webhook shows up, say what it's called, take the fear out of it in a few words, and give the one plain line: "This is called an MCP. Now, that sounds scary. It's not. It's just the plug that lets Claude use another app for you." From then on, use the plain word. Never leave a raw interface label ("Remote MCP server URL") as the only name for a thing — say "the MCP link" and point at the box.
 
 **Then say what the tool does in one plain breath, like you're telling a kid.** Not the mechanism, the outcome:
 
@@ -140,7 +143,7 @@ By the time the hook ends, the viewer already knows who Jake is, what's being bu
 Three moves the open keeps making, and all three must go:
 
 - **No roadmap of the video.** The hook already promised what's coming. Don't preview it a second time. ❌ "Here's what I've got for you. I'm going to show you what it actually does, the spots where it surprised me, and the one thing I couldn't fully check." The viewer didn't ask for a table of contents — just start the first thing.
-- **No second welcome, no second credential.** The hook ended on "I'm Jake Dawson, I help…" — that line is spent. Don't reintroduce him, and don't re-run the "for the past couple of years…" credential in the next breath. It got its one sentence in the hook, and that was the whole allowance (see rule 4).
+- **No second welcome, no credential.** The hook ended on "I'm Jake Dawson, I help…" — that line is spent. Don't reintroduce him, and never add a "for the past couple of years…" credential, here or anywhere (see rule 4).
 - **No separate "who this is for" list.** If the hook already named the audience — "solopreneurs, small business owners, people drowning in tabs" — do not restage it as its own paragraph with a calendar-over-here, a CRM-over-there, a form-tool-that-emails-you. Pick the one vivid line that sets up the first build, and move.
 
 **And say the tool's job ONCE.** The worst opens explain what the tool does three times over — the concept, then "the one shift in how you think about it," then a box-A-to-box-B diagram that repeats both. Give it one plain framing — "you type what you want in one sentence, answer a couple of questions, and walk away" — and go straight into the demo. This is rule 7 aimed at the open specifically, because the open is where the piling-on happens most.
@@ -164,11 +167,12 @@ If a sentence's only job is to describe the sentence coming after it, delete it 
 
 Every factual line in a Jake script is about the present: what the tool costs today, what the plan includes today, what the screen looks like today. The research and the fact sheet date every one of those facts. Respect the dates.
 
-- **Newer beats older, every time.** Where the fact sheet gives two versions of the same fact, the newer one is what the video says. The older one is history, and only gets a sentence when the change itself is interesting ("they doubled the free tier back in spring").
-- **An old fact is spoken with its age, not thrown away.** If the fact sheet listed something under OLDER — SAY HOW OLD, say it and say when: "last I could find, it was ten bucks a month — worth checking, they move on pricing." That is honest and useful. Stating the same number flat, as if it were today's price, is the thing to avoid — not the number itself.
+- **Newer beats older, every time.** Where the fact sheet gives two versions of the same fact, the newer one is what the video says.
+- **An older figure is left out, not spoken with its age.** If the fact sheet listed something under OLDER — SAY HOW OLD, it does not go in the narration — Jake cuts "last I could find…" lines. If it matters to the video, put it on a `PRODUCTION NOTE:` line so he can check it on screen while recording.
 - **What changed recently is the story, not a footnote.** If a price moved, a limit changed, a feature shipped, or the thing got rebuilt, that belongs in the script where it matters. Half the audience last touched this tool months ago; the video's job is partly to tell them what is different now.
-- **Speak dates like a person, and only when they earn it.** "As of right now it's twenty bucks a month" and "they changed this back in July" are how Jake talks. "Verified September 3, 2026" is not — the verification dates are bookkeeping for the writer, not lines to read out. Say the date out loud when it carries meaning: a recent change, a price that moved, a limit that is about to.
+- **Speak dates like a person, and only when they earn it.** "As of right now it's twenty bucks a month" is how Jake talks. "Verified September 3, 2026" is not — the verification dates are bookkeeping for the writer, not lines to read out. Say the date out loud when it carries meaning: a recent change, a price that moved, a limit that is about to.
 - **Never hedge with your own ignorance.** "As of my last update", "at the time of writing", "I believe it's currently" — all banned. Either the fact sheet confirms it and you say it plainly, or it does not and you leave it out.
+- **Never cite where a fact came from.** No "the page says…", "their docs say…", "according to their help center", "let's open their pricing page". Say the fact plainly, as what the tool does or costs.
 
 ---
 
@@ -179,5 +183,20 @@ Jake's own scripts are not polished prose, and they are the target. The three ex
 - **The amount of editing matches the amount of actual damage.** A pass that rewrites a section end to end because two sentences were weak has destroyed more than it fixed. Change the two sentences.
 - **Leave a strong human sentence alone**, even when you can think of a smoother one. Smoother is usually flatter.
 - **Rough edges stay when they read as intentional**: a fragment, a digression, a self-correction, an admission, an unglamorous word repeated because it is the right word. Repeating the correct noun beats rotating through synonyms to avoid repeating it.
-- **Never invent to fill a gap.** No fact, number, quote, source, experience or opinion that was not already there. Uncertainty in the source stays uncertain in the script — do not make Jake sound more sure than the material.
+- **Never invent to fill a gap.** No fact, number, quote, source, experience or opinion that was not already there. Uncertainty in the source stays uncertain — in the production notes, never in the narration: leave the doubtful detail out of the spoken line (write the step around it) and put the open item on a `PRODUCTION NOTE:` line. Do not make Jake sound more sure than the material.
 - **Do not manufacture findings.** If a check comes back clean, say it came back clean. A review that invents work to look thorough is how a good script gets edited into an average one, and it is the most expensive failure in this pipeline because nothing downstream can tell the difference.
+
+---
+
+## 13. What Jake's own edits rebuild every time (writing study, 2026-10-02)
+
+He approved these after a study of eight runs he edited by hand. Each one is a thing he kept fixing.
+
+- **Nothing bracketed in the narration.** No `[VERIFY ON SCREEN: …]`, no `[SHOOT DAY: …]`, no "stopwatch this". Write every label, menu path and number plainly from the UX Scout report, the screenshots or the fact sheet (never from the tutorial sheet — it carries angles and insights only). If a detail is truly unconfirmed, write the step around it without naming the control ("click the button to create your avatar") and put the open item on its own `PRODUCTION NOTE:` line. Those lines are moved into a production-notes list after the script; they are never read aloud.
+- **The opening before the welcome is at most four short paragraphs:** (1) "Look at this …" — what's on screen, made with one tool, in plain words, plus at most one sentence on the problem it fixes; (2) "By the end of this video, you'll [concrete outcome] — even if you've never [the thing the viewer fears] in your life."; (3) "I'll give you the exact prompts, on screen, ready to copy" — naming the features as a short list; (4) the welcome line. No questions the video promises to answer later, no roadmap, no second "here's what we're using" paragraph.
+- **After the result plays back, the video goes:** the pricing block (if any) → the link line → one specific question + "Leave a comment down below — I read every one of them." → the fixed outro. No verdict, rating, "what impressed me", "where it struggles", alternatives, recap, "steal one habit", homework or "test it for a few more weeks". Honest limits belong inside the step where the viewer meets them, in one clause.
+- **Pricing is one plain decision, not a ban and not a tour.** If plans matter to the viewer, cover them once, after the workflow, opened with a spoken connector ("Alright, now that you know the whole workflow, let's talk about pricing."). For each plan: its price monthly and yearly, the biggest one or two things it unlocks, and who it fits ("the plan for a solo person", "the one if you're running this for a business"). Then say plainly the plan this video's workflow needs, what the free plan cannot do, and the plan to start on. No credit arithmetic, no per-generation cost tables, no billing fine print, no "go read the live page yourself". Inside the steps, cost is one clause ("this part is free").
+- **Prompts a beginner would type.** The prompt in the script is one to three plain sentences naming the outcome, the way a person types into a chat box ("Here's my product. Make five short videos for it."). Guard-rails the viewer doesn't need to read go in a short second line or in the long version after the script — never a long spec in the spoken prompt.
+- **A confusing step: flag it once, give the exact label, give the benefit.** In the same sentence that gives the step: "this one's easy to miss", the exact label, and why in terms of what the viewer gets or saves. No personifying the failure ("It's confident. It's wrong."), and no second warning paragraph later.
+- **One protective tip per tool, framed as a benefit.** The one setting or habit that saves the viewer money or trouble ("this saves your wallet"). Do not stack checks, audits or "before you trust it" paragraphs.
+- **End a paragraph on the instruction or the fact.** No tagline that restates it ("That's the whole trick.", "Done.", "Nothing spent.", "X, not Y.").

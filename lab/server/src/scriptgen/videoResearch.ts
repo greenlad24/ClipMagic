@@ -294,6 +294,12 @@ export function selectionPrompt(
     candidateBlock(cands),
     "",
     `Choose at most ${count}, best first. What matters:`,
+    // Jake 2026-10-02: tutorials only feed angles and product insights now, and
+    // only from a video about EXACTLY this product, in the version that exists
+    // today. A Linearity run drew a GCSE physics lesson on "linearity" and a
+    // regression lecture, because nothing here checked WHICH product a title meant.
+    "- **EXACT PRODUCT, 100%.** The video must be about this exact product, from this exact company. Reject a namesake (the same word used for something else — a school subject, a maths term, a different app with a similar name), a competitor, and a roundup where it is one entry among many. If the title and description do not make it certain which product this is, reject it.",
+    "- **THE RIGHT VERSION.** The video must show the product as it is now: the same generation, the same interface and the same feature set. If the UX Scout report or Jake's screenshots are above, they ARE the current version — reject a video filmed on a predecessor, a renamed older app, a pre-redesign interface, or a version without the feature this video is about. A video published before the feature it would need even existed is the wrong version.",
     "- The video is about THIS topic, not about the same product used for something else. A video about the product's other features is the wrong video.",
     ...(focus
       ? [
@@ -306,7 +312,7 @@ export function selectionPrompt(
     "",
     "Reject roundups that mention the topic in a list, reaction and news videos, and anything whose title promises money rather than a method.",
     ...(gate ? ["", gate, ""] : []),
-    `Returning fewer than ${count} is correct when fewer are relevant. Returning none is correct when none are.`,
+    `Returning fewer than ${count} is correct when fewer are relevant. Returning none is correct when none are — and it is the expected answer whenever you are not sure the product and version match: {"picks": []}.`,
     ...(focus
       ? [
           "A thin set of genuinely on-focus videos beats a full set padded with near misses: everything downstream treats this sheet as the primary source for how the product works, so one off-focus walkthrough teaches the whole script the wrong workflow.",
@@ -610,10 +616,14 @@ export async function findTutorialVideos(
   if (reasons.length > 0) {
     console.log(`[scriptgen:videos] selector: ${reasons.join(" | ")}`);
   }
+  // No fallback to the word-match ranking. "Nothing matched" is the selector's
+  // judgement that no video is about this exact product in this version, and the
+  // ranking is exactly what it overruled: on 2026-10-02 the fallback handed a
+  // Linearity script a physics lesson and a regression lecture.
   if (picked.length === 0) {
-    console.warn("[scriptgen:videos] the selector picked nothing usable — falling back to the ranked list");
+    console.warn("[scriptgen:videos] the selector found no video about this exact product and version — no tutorials used");
   }
-  return (picked.length > 0 ? picked : ranked).map(strip);
+  return picked.map(strip);
 }
 
 interface TranscriptSegment {

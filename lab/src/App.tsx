@@ -21,6 +21,7 @@ import ScriptGeneratorPage from './pages/ScriptGeneratorPage';
 import EngagementManagerPage from './pages/EngagementManagerPage';
 import VideoPlannerPage from './pages/VideoPlannerPage';
 import ChannelAuditPage from './pages/ChannelAuditPage';
+import { dealOrganizerRoutes } from './deals/routes';
 import SkoolManagerPage from './pages/SkoolManagerPage';
 import SkoolEngagePage from './pages/SkoolEngagePage';
 import EngagementRepliesPage from './pages/EngagementRepliesPage';
@@ -33,14 +34,19 @@ import NewsDashboardPage from './news/pages/DashboardPage';
 import NewsAudiencePage from './news/pages/AudiencePage';
 import NewsNotesPage from './news/pages/NotesPage';
 import NewsDisplayPage from './news/pages/DisplayPage';
+import NewsVideoPage from './news/pages/VideoPage';
 import NewsTeleprompterPage from './news/pages/TeleprompterPage';
 import NewsSettingsPage from './news/pages/SettingsPage';
+import DeepDiveListPage from './news/deepdive/DeepDiveListPage';
+import DeepDiveEditorPage from './news/deepdive/DeepDiveEditorPage';
+import DeepDiveStagePage from './news/deepdive/DeepDiveStagePage';
+import DeepDivePresenterPage from './news/deepdive/DeepDivePresenterPage';
 
 // The Lab's floating Jobs panel, except on the AI News Stream pages — those
 // are full-screen presenter/teleprompter views with their own bottom bars.
 function LabJobs() {
   const { pathname } = useLocation();
-  if (pathname.startsWith('/news-gatherer')) return null;
+  if (pathname.startsWith('/news-gatherer') || pathname.startsWith('/deal-organizer')) return null;
   return <BackgroundJobs />;
 }
 
@@ -84,14 +90,20 @@ export default function App() {
         <Route path="/engagement" element={<EngagementManagerPage />} />
         <Route path="/engagement/replies" element={<EngagementRepliesPage />} />
         <Route path="/code-import" element={<CodeImportPage />} />
+        {dealOrganizerRoutes}
         <Route path="/news-gatherer" element={<Navigate to="/news-gatherer/dashboard" replace />} />
         <Route path="/news-gatherer/dashboard" element={<NewsDashboardPage />} />
         <Route path="/news-gatherer/curate" element={<Navigate to="/news-gatherer/dashboard" replace />} />
         <Route path="/news-gatherer/present/audience" element={<NewsAudiencePage />} />
         <Route path="/news-gatherer/present/notes" element={<NewsNotesPage />} />
         <Route path="/news-gatherer/present/display" element={<NewsDisplayPage />} />
+        <Route path="/news-gatherer/present/video" element={<NewsVideoPage />} />
         <Route path="/news-gatherer/present/teleprompter" element={<NewsTeleprompterPage />} />
         <Route path="/news-gatherer/settings" element={<NewsSettingsPage />} />
+        <Route path="/news-gatherer/deep-dive" element={<DeepDiveListPage />} />
+        <Route path="/news-gatherer/deep-dive/:id" element={<DeepDiveEditorPage />} />
+        <Route path="/news-gatherer/deep-dive/:id/present" element={<DeepDiveStagePage />} />
+        <Route path="/news-gatherer/deep-dive/:id/presenter" element={<DeepDivePresenterPage />} />
       </Routes>
       <LabJobs />
       <Toaster theme="dark" />

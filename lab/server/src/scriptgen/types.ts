@@ -68,6 +68,17 @@ export interface ScriptInput {
    * built from search results goes stale or invents things.
    */
   screenshots?: ScreenshotRef[];
+  /**
+   * A finished UX Scout job (scout/store.ts): Claude Code used the tool like a
+   * first-timer and wrote the UX report. Read into `stages.uxReport` when the
+   * run starts; outranks everything except nothing — it is the top evidence.
+   */
+  uxScoutJobId?: string;
+  /**
+   * A sponsored video built from a Deal Organizer deal (scriptgen/dealBrief.ts):
+   * the deal, the brief read from everything about it, and the angle Jake picked.
+   */
+  sponsorDeal?: { dealId: string; briefId: string; angle: number };
 }
 
 export type VideoType = "Tutorial" | "List/Roundup" | "Tool Review" | "Business Guide" | "Opinion";
@@ -277,6 +288,34 @@ export interface ScriptQuality {
   demoAnchors?: number;
 }
 
+/**
+ * Deterministic checks behind the 2026-10-02 writing study (P1, P3, P8, P11,
+ * P12, P19, P20, P24). All advisory: they flag, they never block a run.
+ */
+export interface WritingChecks {
+  /** Hook options whose welcome was replaced by (or given) the canonical line. */
+  welcomeLocked: number;
+  /** Notes to Jake moved out of the narration into the PRODUCTION NOTES appendix. */
+  productionNotes: number;
+  /** Anything that still reads as a note to Jake INSIDE the script. Should be empty. */
+  notesLeftInScript: string[];
+  /** Opening-shape problems, per hook option checked ("FORMULA A-COMPRESSED: …"). */
+  openingIssues: string[];
+  /** First mentions of a jargon term with no plain-English line near them. */
+  unexplainedJargon: string[];
+  /** Signature jokes from the exemplars that turned up in the script. */
+  exemplarJokes: string[];
+  /** Restatement tails / "X, not Y" taglines closing a paragraph. */
+  taglineEndings: string[];
+  /** "let's" per 1,000 spoken words — a soft voice target (Jake's finals: 2–11). */
+  letsPer1000: number;
+  /** Bare 1–4 word command lines ("Click Save.") that Jake turns into "now let's …". */
+  bareImperatives: number;
+  /** Short prompts in the PROMPT SUMMARY / long versions in the FULL PROMPTS appendix. */
+  shortPrompts: number;
+  fullPrompts: number;
+}
+
 /** One brief request, and what the outline did with it (Stage 2.5). */
 export interface CoverageItem {
   item: string;
@@ -353,6 +392,12 @@ export interface ScriptStages {
    * turned out to be unreadable.
    */
   screenshotSheet?: string | null;
+  /**
+   * The UX Scout's report (the tool used for real, step by step, with the
+   * friction a beginner hits). undefined = no Scout attached; the report text
+   * otherwise. Placed ABOVE the screenshot sheet everywhere.
+   */
+  uxReport?: string | null;
   /** Which screenshots that sheet was built from, for the deliverable's source list. */
   screenshotRefs?: ScreenshotRef[];
   /**
@@ -400,6 +445,11 @@ export interface ScriptStages {
   claimAudit: ClaimAudit | null;
   /** What the claim-fix pass rewrote, and what it refused to. Null when the audit found nothing. */
   claimFix: { applied: string[]; skipped: string[] } | null;
+  /**
+   * The writing-study checks (2026-10-02), measured on the finished document.
+   * Optional: runs stored before they existed don't carry them.
+   */
+  writingChecks?: WritingChecks | null;
   /**
    * Set when the research half came from a ChatGPT research pack instead of this
    * server. The pack filled research / fact sheet / outline (and the UI check and

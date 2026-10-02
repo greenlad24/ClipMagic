@@ -38,7 +38,7 @@ Return the COMPLETE outline with every **added** item now carried properly.
 - Keep everything the outline already had. You are adding and re-ordering, never deleting — unless the brief explicitly bans something, in which case cut it and record why.
 - Match the existing outline's format exactly: the same header depth, the same beat structure, the same verification-date discipline, the same flag style. A section you add must be indistinguishable from one Stage 2 wrote.
 - Carry exact prices, click paths, settings, and numbers **verbatim** from the brief and the research, with their verification dates. Do not round them. Do not summarize them into "affordable" or "a few clicks".
-- Where the brief supplies a step sequence, carry the steps in order. Where a control is not confirmed anywhere, still write the step and mark the control `[VERIFY ON SCREEN: what to check]` — never replace a step with a vague goal.
+- Where the brief supplies a step sequence, carry the steps in order. Where a control is not confirmed anywhere, still write the step, describe the control by what it does, and add a `PRODUCTION NOTE: <what to check on screen>` line at the end of that section — never a bracketed marker, and never replace a step with a vague goal.
 - The outline has a word budget, and adding sections spends it. Rebalance the per-section word allocations so the total still fits, taking room from whatever is thinnest in value. Say what you rebalanced in the verdict.
 - If the outline already covers the brief and you are adding nothing, return it **completely unchanged**, byte for byte.
 

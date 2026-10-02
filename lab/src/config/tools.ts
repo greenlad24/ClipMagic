@@ -22,6 +22,7 @@ import {
   Gauge,
   FileCode2,
   Newspaper,
+  Handshake,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -357,6 +358,17 @@ export const TOOLS: ToolDefinition[] = [
     status: 'live',
     accent: 'blue',
     detail: 'News desk · deck builder · live teleprompter',
+  },
+  {
+    id: 'deal-organizer',
+    title: 'Deal Organizer',
+    description:
+      'The sponsorship pipeline and its email agent: reads the sponsor inbox, drafts replies in your voice, and asks you on Slack when it needs a decision. Connect Gmail, YouTube and Slack here.',
+    icon: Handshake,
+    route: '/deal-organizer',
+    status: 'live',
+    accent: 'primary',
+    detail: 'Pipeline · inbox · email agent',
   },
   {
     id: 'code-import',
