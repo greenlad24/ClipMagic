@@ -37,10 +37,11 @@ import {
   type PostKind,
   type PostRequest,
 } from "./engageGen.js";
-import { mentionMember, newMembers, recordWelcomed, type SkoolMember } from "./members.js";
+import { mentionMember, newMembers, recordWelcomed, welcomedUserIds, type SkoolMember } from "./members.js";
 import { getSkoolSettings } from "../db/skool.js";
 import { createPost } from "./engageActions.js";
 import { commentOnPost } from "./postComment.js";
+import { readComments } from "./comments.js";
 import { readFeed, SKOOL_CATEGORIES } from "./community.js";
 import { allLessons } from "./knowledge.js";
 import { nextVideoToAnnounce, recordAnnounced, videoSubject } from "./videoPosts.js";
@@ -1775,3 +1776,68 @@ export async function publishSlot(communityUrl: string, slotKey: string): Promis
   );
   return { ok: true, detail: `${posted.detail}${welcome}` };
 }
+
+/**
+ * Send the welcome comment LATE, under an ask post that is already live but
+ * whose first comment never went in (2026-09-24 / 10-01: the poll pushed the
+ * comment box off-screen and every chip failed — see `focusBody` in actions.ts).
+ *
+ * ⚠️ THE SAME `welcomeComment` THE PUBLISHER CALLS — never a second poster. The
+ * names are the ones the slot stored when it drafted, the closing is the one the
+ * drafter wrote, and the ledger is written by the same line, so a late welcome
+ * and an on-time one leave identical records.
+ *
+ * Refuses rather than guesses:
+ *   • only a POSTED ASK slot with a slug — there is nothing to comment under otherwise;
+ *   • only inside the 7-day window the ask post looks back over — older joiners
+ *     are a week stale, and next Thursday's window has moved past them anyway;
+ *   • members already in the ledger are dropped, so a second call cannot
+ *     re-tag anyone whose chip landed the first time;
+ *   • if a comment of ours carrying the closing line is already on the post,
+ *     nothing is sent — that is a welcome that landed and was just not recorded.
+ * Shares the scheduler's lock, so it never drives the browser mid-cycle.
+ */
+export async function resendWelcome(communityUrl: string, slotKey: string): Promise<{ ok: boolean; detail: string }> {
+  const slot = getSlot(slotKey);
+  if (!slot) return { ok: false, detail: `No slot "${slotKey}".` };
+  if (slot.kind !== "ask") return { ok: false, detail: `Slot ${slotKey} is a ${slot.kind} post — only the ask post carries a welcome.` };
+  if (slot.state !== "posted" || !slot.slug) return { ok: false, detail: `Slot ${slotKey} is not posted (${slot.state}), so there is nothing to comment under.` };
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(slotKey);
+  const age = m ? Date.now() - Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : Infinity;
+  if (!(age >= 0 && age <= 7 * 24 * 3600_000)) {
+    return { ok: false, detail: `Slot ${slotKey} is outside the 7-day welcome window — its joiners are next Thursday's or nobody's.` };
+  }
+
+  const welcomed = welcomedUserIds();
+  const all = parseMentions(slot.mentionsJson);
+  const pending = all.filter((mm) => !mm.userId || !welcomed.has(mm.userId));
+  if (!pending.length) return { ok: false, detail: `Everyone slot ${slotKey} named (${all.length}) is already in the welcome ledger.` };
+
+  const closing = welcomeClosing(slot.welcomeClose, slotKey);
+  const existing = await readComments(communityUrl, slot.slug).catch(() => null);
+  if (!existing || existing.error) {
+    return { ok: false, detail: `Could not read the post's comments first (${existing?.error ?? "unreadable"}), so nothing was sent.` };
+  }
+  const needle = closing.slice(0, Math.min(closing.length, 20));
+  if ((existing.comments ?? []).some((c: any) => c.byMe && String(c.body ?? "").includes(needle))) {
+    return { ok: false, detail: `A comment of ours with "${needle}" is already on /${slot.slug} — not sending a second welcome.` };
+  }
+
+  if (inFlightSince !== null) return { ok: false, detail: describeLockHold(Date.now() - inFlightSince).detail };
+  inFlightSince = Date.now();
+  try {
+    const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const welcome = await welcomeComment(
+      communityUrl,
+      { ...slot, mentionsJson: JSON.stringify(pending) },
+      slot.slug,
+      closing,
+      `${slot.steps ?? ""} · LATE WELCOME ${stamp} UTC (${pending.length} member(s))`,
+    );
+    const landed = welcome.includes("Comment is live");
+    return { ok: landed, detail: welcome.trim() || "Nothing was sent." };
+  } finally {
+    inFlightSince = null;
+  }
+}
+

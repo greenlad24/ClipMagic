@@ -813,28 +813,91 @@ async function bodyMustBeEmpty(): Promise<ActionResult> {
  * drift the first time Skool adds another contenteditable to the composer.
  */
 export async function focusBody(): Promise<boolean> {
+  // ⚠️⚠️ SCROLL FIRST, THEN MEASURE, THEN CLICK, THEN CHECK. This used to click
+  // the editor's coordinates as measured, without bringing it into view, and
+  // return true regardless. On a post carrying a POLL the comment box sits below
+  // the 900px viewport, so the click landed off-screen, focused nothing, and
+  // every @mention after it failed as "autocomplete never opened" — the
+  // Thursday welcome comment died on 2026-09-24 and 10-01 exactly that way.
   const spot = await withSkoolPage(async (page) =>
     page.evaluate(() => {
       const doc: any = (globalThis as any).document;
+      const win: any = globalThis;
       const editors = (Array.from(doc.querySelectorAll("[contenteditable='true']")) as any[]).filter(
         (el) => el.getBoundingClientRect().height > 20,
       );
       if (editors.length === 0) return null;
       editors.sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height);
-      const r = editors[0].getBoundingClientRect();
-      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + Math.min(20, r.height / 2)) };
+      const ed = editors[0];
+      // Mark it so the checks below test THIS editor, not "any contenteditable".
+      for (const e of Array.from(doc.querySelectorAll("[data-cm-focus-target]")) as any[]) e.removeAttribute("data-cm-focus-target");
+      ed.setAttribute("data-cm-focus-target", "1");
+      ed.scrollIntoView({ block: "center", inline: "nearest" });
+      const r = ed.getBoundingClientRect();
+      const top = Math.max(r.top, 0);
+      const bottom = Math.min(r.bottom, win.innerHeight);
+      const y = Math.round(top + Math.min(20, Math.max(1, (bottom - top) / 2)));
+      return { x: Math.round(r.x + r.width / 2), y };
     }),
   );
   if (!spot) return false;
+  await settle(250);
+
+  const focusedInside = () =>
+    withSkoolPage(async (page) =>
+      page.evaluate(() => {
+        const doc: any = (globalThis as any).document;
+        const ed: any = doc.querySelector("[data-cm-focus-target]");
+        const a: any = doc.activeElement;
+        return !!(ed && a && (ed === a || ed.contains(a)));
+      }),
+    ).catch(() => false);
+
+  // Re-measure after the scroll settled (smooth scrolling, lazy layout), so the
+  // click goes where the editor IS rather than where it was a moment ago.
   await withSkoolPage(async (page) => {
     try {
-      await page.mouse.click(spot.x, spot.y, { delay: 40 });
+      const again = await page.evaluate(() => {
+        const doc: any = (globalThis as any).document;
+        const win: any = globalThis;
+        const ed: any = doc.querySelector("[data-cm-focus-target]");
+        if (!ed) return null;
+        const r = ed.getBoundingClientRect();
+        const top = Math.max(r.top, 0);
+        const bottom = Math.min(r.bottom, win.innerHeight);
+        if (bottom <= top) return null;
+        return { x: Math.round(r.x + r.width / 2), y: Math.round(top + Math.min(20, Math.max(1, (bottom - top) / 2))) };
+      });
+      const at = again ?? spot;
+      await page.mouse.click(at.x, at.y, { delay: 40 });
     } catch {
-      /* best effort */
+      /* best effort — the focus check below is what decides */
     }
   });
   await settle(400);
-  return true;
+  if (await focusedInside()) return true;
+
+  // One retry without the mouse: focus the element and put the caret at the END
+  // of its content (an empty box's start and end are the same place).
+  await withSkoolPage(async (page) =>
+    page.evaluate(() => {
+      const doc: any = (globalThis as any).document;
+      const win: any = globalThis;
+      const ed: any = doc.querySelector("[data-cm-focus-target]");
+      if (!ed) return;
+      ed.focus();
+      const sel = win.getSelection?.();
+      if (sel) {
+        const range = doc.createRange();
+        range.selectNodeContents(ed);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }),
+  ).catch(() => undefined);
+  await settle(300);
+  return focusedInside();
 }
 
 /**

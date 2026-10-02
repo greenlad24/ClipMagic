@@ -403,6 +403,22 @@ export async function writeReplyText(
  */
 const SHORT_SNIPPET = 12;
 
+/**
+ * Fold text for the comment-card join: NFKD (which maps mathematical
+ * alphanumerics like 𝐀/𝘢/𝕒 and fullwidth letters to ASCII), drop combining
+ * marks (underline/strike "fancy text"), drop zero-width characters, collapse
+ * whitespace, lowercase. The page-side copy in `replyToComment` must match.
+ */
+export function foldText(s: string): string {
+  return String(s || "")
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 export async function replyToComment(input: {
   communityUrl: string;
   slug: string;
@@ -485,7 +501,13 @@ export async function replyToComment(input: {
   // raw body of a threaded reply opens with `[@Name](obj://user/<id>)` and the
   // page shows `@Name` — measured, refused, and fixed in `plainBody`.
   const snippet = (target.plain || plainBody(input.commentBody)).replace(/\s+/g, " ").trim().slice(0, 60);
-  if (!snippet) {
+  // ⚠️ THE JOIN IS DONE ON FOLDED TEXT, BOTH SIDES. A comment in Unicode "fancy
+  // text" (𝐛𝐨𝐥𝐝, u̲n̲d̲e̲r̲l̲i̲n̲e̲d̲ — Tom Henry, 2026-09-26) failed the plain
+  // `includes` as "No comment on that page contains…": the combining marks and
+  // the API/DOM's differing normalisation broke the match. Folded from the FULL
+  // text and sliced by code point, so a surrogate pair is never cut in half.
+  const want = Array.from(foldText(target.plain || plainBody(input.commentBody))).slice(0, 60).join("");
+  if (!snippet || !want) {
     return { ok: false, detail: "That comment has no text to find it by on the page, so it was not answered.", replyId: null };
   }
 
@@ -502,7 +524,7 @@ export async function replyToComment(input: {
   // member; a short comment simply stops being refused before it is even looked
   // for.
   const author = (target.authorName || "").replace(/\s+/g, " ").trim();
-  if (snippet.length < SHORT_SNIPPET && !author) {
+  if (want.length < SHORT_SNIPPET && !author) {
     return {
       ok: false,
       detail:
@@ -517,6 +539,15 @@ export async function replyToComment(input: {
       const doc: any = (globalThis as any).document;
       const win: any = globalThis;
       const norm = (s: string) => (s || "").replace(/\s+/g, " ").trim();
+      // Must stay identical to `foldText` above — page.evaluate cannot see it.
+      const fold = (s: string) =>
+        String(s || "")
+          .normalize("NFKD")
+          .replace(/\p{M}/gu, "")
+          .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase();
       const vis = (el: any) => {
         const r = el.getBoundingClientRect();
         return r.width > 0 && r.height > 0;
@@ -536,7 +567,7 @@ export async function replyToComment(input: {
           for (let hop = 0; hop < 9 && node; hop++) {
             node = node.parentElement;
             if (!node) break;
-            const t = norm(node.textContent);
+            const t = fold(node.textContent);
             if (!t.includes(arg.want)) continue;
             if (needAuthor && !t.includes(arg.author)) continue;
             found.push({ btn, size: (node.textContent || "").length });
@@ -573,7 +604,7 @@ export async function replyToComment(input: {
         return { ok: false, why: "offscreen", count: hits.length };
       }
       return { ok: true, x, y, count: hits.length };
-    }, { want: snippet, author, shortAt: SHORT_SNIPPET });
+    }, { want, author: foldText(author), shortAt: SHORT_SNIPPET });
 
     if (!found?.ok) return found;
     await page.mouse.click(found.x, found.y, { delay: 40 });

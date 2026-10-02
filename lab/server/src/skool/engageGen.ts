@@ -1046,12 +1046,25 @@ function askNote(
     "  sentences, not a lesson.",
     "- close by asking for the answer in the comments, in Jake's own way.",
     "",
-    "⚠️ A NUMBERED LIST IN THE TEXT BEATS AN ATTACHED POLL, and it is not a close",
-    "call. A poll collects a click and nothing else — no name against it, no",
-    "thread to reply into, nothing to answer. Numbered options asked in the words",
-    "of the post are just as easy to answer and produce a COMMENT, which is a",
-    "member Jake can actually talk to. Attach a poll only if the post genuinely",
-    "wants a headcount and no conversation.",
+    "==========================================",
+    "⚠️⚠️ THE POLL STAYS — AND THE TEXT MUST STILL ASK FOR A COMMENT",
+    "==========================================",
+    "",
+    "Jake's ruling: keep the poll AND ask people to comment. Attach the options",
+    "as a poll (\"attach\": {\"kind\":\"poll\",...}), the same 2 to 4 options the",
+    "question offers. A vote is one tap, which is the point.",
+    "",
+    "But a vote is a click and nothing else — no name against it, no thread to",
+    "reply into, nothing Jake can answer. So the post must ALSO explicitly ask",
+    "them to COMMENT, and say what to put in it: why they picked that one, or",
+    "what exactly they'd build / hand off. Use the word \"comment\" (or \"comments\").",
+    "This is a follow-on to the same question, not a second question.",
+    "  e.g. \"Vote below, then tell me in the comments what exactly you'd build",
+    "  with it — I'll point you at where to start.\"",
+    "  e.g. \"Tap one, and drop a comment with why — the more specific, the more",
+    "  useful my answer.\"",
+    "⚠️ With a poll attached, do NOT say \"drop the number\" — the poll IS where",
+    "the number goes. The comment is for the why / the what.",
     "",
     "Do NOT teach a lesson here. Do NOT list steps. Do NOT link a lesson unless",
     "the question genuinely needs it — this post asks, it does not explain.",
@@ -1741,6 +1754,25 @@ function repairBlock(note: string | undefined): string {
   return text ? `\n\n${text}` : "";
 }
 
+/**
+ * An ask post with a poll must still ASK FOR A COMMENT in its text.
+ *
+ * Jake, 2026-10-02: "Keep poll + ask to comment." The 09-24 and 10-01 Thursday
+ * posts carried a poll and said "drop the number" — so people voted, and a vote
+ * leaves nothing for the agent to reply to. `askNote` asks for the line; a
+ * prompt is a request, so this is the guarantee: a poll post whose body never
+ * says "comment" gets one closing line that does. Untouched when there is no
+ * poll, or when the drafter already asked.
+ */
+export const POLL_COMMENT_ASK =
+  "Vote in the poll, then tell me in the comments why you picked it — or what exactly you'd build — and I'll point you at where to start 👇";
+
+export function withPollCommentAsk(body: string, attachment: Attachment | null): string {
+  if (attachment?.kind !== "poll") return body;
+  if (/\bcomments?\b/i.test(body)) return body;
+  return `${body.trimEnd()}\n\n${POLL_COMMENT_ASK}`;
+}
+
 export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null; error: string | null }> {
   if (!req.voicePrompt.trim()) {
     // Same refusal as the Engagement Manager: with no voice stored, generation
@@ -1826,7 +1858,8 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
     req.preferredCategory ??
     null;
 
-  const body = String(parsed.body).trim();
+  const attachment = attachmentFrom(parsed.attach, req.videoCandidates ?? []);
+  const body = req.kind === "ask" ? withPollCommentAsk(String(parsed.body).trim(), attachment) : String(parsed.body).trim();
 
   return {
     draft: {
@@ -1839,7 +1872,7 @@ export async function draftPost(req: PostRequest): Promise<{ draft: Draft | null
       // choice.
       body: req.kind === "ask" && (req.newMembers?.length ?? 0) > 0 ? openingForMentions(body) : body,
       category,
-      attachment: attachmentFrom(parsed.attach, req.videoCandidates ?? []),
+      attachment,
       cited: citedFrom(parsed.cited, hits),
       // Retrieval PLUS what his own posts already link — see `urlsInStyleExamples`.
       shownUrls: [...shownUrlsFrom(hits), ...urlsInStyleExamples(req.styleExamples)],

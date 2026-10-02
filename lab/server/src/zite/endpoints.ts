@@ -10,6 +10,7 @@
  * clear, structured responses so the UI works and shows where Stage 2 wiring
  * (OpenAI + Kinovi + capture service) will plug in.
  */
+import { searchSponsorDeals as dealBriefSearch, startDealBrief as dealBriefStart, getDealBriefForUi as dealBriefGet, latestDealBrief } from "../scriptgen/dealBrief.js";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
@@ -239,11 +240,15 @@ import {
   exportScriptToDoc as exportScriptToDocFn,
   googleDocsConfigured as googleDocsConfiguredFn,
   parseFolderId as parseFolderIdFn,
+  pickerAccessToken as pickerAccessTokenFn,
+  projectNumber as gdocsProjectNumberFn,
 } from "../scriptgen/googleDocs.js";
 import {
   getGoogleDocsOAuth as getGoogleDocsOAuthCfg,
   getGoogleDocsFolder as getGoogleDocsFolderCfg,
   setGoogleDocsFolder as setGoogleDocsFolderCfg,
+  getGoogleDocsFolderName as getGoogleDocsFolderNameCfg,
+  getGoogleDocsPickerKey as getGoogleDocsPickerKeyCfg,
 } from "../settings/postizSecrets.js";
 import {
   createQueue as createQueueDb,
@@ -354,6 +359,7 @@ import {
   unpinSubject,
   listSlots,
   publishSlot,
+  resendWelcome,
   tickNow,
   localNow,
   chooseSubject,
@@ -3728,6 +3734,25 @@ const attachScriptShots: Handler = async (input) => {
   return runAttachScreenshots(runId, shots);
 };
 
+/* ── Sponsored scripts from a Deal Organizer deal (scriptgen/dealBrief.ts) ── */
+
+/** Deals in production (the Deadlines page), searchable by name / client / email. */
+const searchSponsorDeals: Handler = async (input) => ({ deals: dealBriefSearch(String(input?.q ?? "")) });
+
+/** Read everything about a deal (background). Reuses the newest finished read unless `fresh`. */
+const startDealBrief: Handler = async (input) => {
+  const dealId = String(input?.dealId ?? "");
+  if (!dealId) throw new ZiteError({ code: "BAD_REQUEST", message: "dealId is required." });
+  if (!input?.fresh) { const done = latestDealBrief(dealId); if (done) return { briefId: done.id, reused: true }; }
+  return { briefId: dealBriefStart(dealId, String(input?.idea ?? "")), reused: false };
+};
+
+const getDealBrief: Handler = async (input) => {
+  const job = dealBriefGet(String(input?.briefId ?? ""));
+  if (!job) throw new ZiteError({ code: "NOT_FOUND", message: "That deal read no longer exists." });
+  return job;
+};
+
 /** Drop one screenshot before the run starts (or after — the bytes are the run's). */
 const deleteScriptShot: Handler = async (input) => {
   const id: string | undefined = input?.id;
@@ -3767,7 +3792,38 @@ const scriptDocsStatus: Handler = async () => ({
   configured: Boolean(getGoogleDocsOAuthCfg()),
   connected: googleDocsConfiguredFn(),
   folderId: getGoogleDocsFolderCfg(),
+  folderName: getGoogleDocsFolderNameCfg(),
+  // The Drive folder picker needs its own API key (Settings).
+  pickerReady: Boolean(getGoogleDocsPickerKeyCfg()),
+  // The sign-in route (docsOauthRoutes.ts) — nothing in the UI linked to it, so
+  // a dead token could not be replaced from the app.
+  connectUrl: "/api/gdocs-oauth/start",
 });
+
+/**
+ * What Google's Drive Picker needs in the browser to show the CONNECTED
+ * account's Drive: a short-lived drive.file token, the Picker API key, and the
+ * project number (appId) so the picked folder is granted to this app.
+ */
+const scriptDocsPicker: Handler = async () => {
+  const apiKey = getGoogleDocsPickerKeyCfg();
+  if (!apiKey) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: "Add the Google Picker API key in Settings → Script Generator first." });
+  }
+  // A Google API key is "AIza" + 35 characters. A pasted link here made the
+  // picker silently not open (2026-10-02).
+  if (!/^AIza[0-9A-Za-z_-]{35}$/.test(apiKey)) {
+    throw new ZiteError({
+      code: "BAD_REQUEST",
+      message: `The "Google Picker API key" in Settings is not an API key (it starts with "${apiKey.slice(0, 12)}…"). Paste the key from Google Cloud → APIs & Services → Credentials — it starts with "AIza" and is 39 characters long.`,
+    });
+  }
+  try {
+    return { accessToken: await pickerAccessTokenFn(), apiKey, appId: gdocsProjectNumberFn() };
+  } catch (e) {
+    throw new ZiteError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : String(e) });
+  }
+};
 
 const setScriptDocsFolder: Handler = async (input) => {
   const raw = String(input?.folderId ?? "").trim();
@@ -3778,8 +3834,9 @@ const setScriptDocsFolder: Handler = async (input) => {
       message: "That doesn't look like a Google Drive folder — paste the folder's URL or its id.",
     });
   }
-  setGoogleDocsFolderCfg(raw ? parseFolderIdFn(raw)! : "");
-  return { folderId: getGoogleDocsFolderCfg() };
+  const name = String(input?.name ?? "").trim().slice(0, 200);
+  setGoogleDocsFolderCfg(raw ? parseFolderIdFn(raw)! : "", raw ? name : "");
+  return { folderId: getGoogleDocsFolderCfg(), folderName: getGoogleDocsFolderNameCfg() };
 };
 
 const exportScriptToDocs: Handler = async (input) => {
@@ -6091,6 +6148,10 @@ const skoolEngageTick: Handler = async () => {
 const skoolEngagePublish: Handler = async (input) => {
   const slotKey = String(input?.slotKey ?? "").trim();
   if (!slotKey) throw new ZiteError({ code: "BAD_REQUEST", message: "Which slot?" });
+  // `welcomeOnly: true` — the post is already live and only its first comment
+  // (the @mention welcome) is missing. Same `welcomeComment` the publisher
+  // calls; see `resendWelcome` for what it refuses.
+  if (input?.welcomeOnly === true) return await resendWelcome(communityUrlOrThrow(), slotKey);
   return await publishSlot(communityUrlOrThrow(), slotKey);
 };
 
@@ -8133,6 +8194,9 @@ export const HANDLERS: Record<string, Handler> = {
   importResearchPack,
   uploadScriptShots,
   attachScriptShots,
+  searchSponsorDeals,
+  startDealBrief,
+  getDealBrief,
   deleteScriptShot,
   continueScript,
   scriptJobStatus,
@@ -8151,6 +8215,7 @@ export const HANDLERS: Record<string, Handler> = {
   deleteScriptLesson,
   applyScriptRules,
   scriptDocsStatus,
+  scriptDocsPicker,
   setScriptDocsFolder,
   exportScriptToDocs,
   createScriptQueue,
