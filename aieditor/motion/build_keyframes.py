@@ -108,6 +108,10 @@ LIBRARY = {
     "sound": {k: spec("prompt-camera-sfx", f"C_sfx_mix/{k}") for k in ["levels", "entrance_sfx", "sfx_summary"]},
 }
 
+sysf = HERE / "screencast_system.json"      # the screencast SYSTEM (screencast/SYSTEM.md)
+if sysf.exists():
+    LIBRARY["screencast"] = json.loads(sysf.read_text())
+
 extra = HERE / "keyframes_measured.json"   # replica-measured tables (e.g. the LINK pill)
 if extra.exists():
     LIBRARY["measured"] = json.loads(extra.read_text())

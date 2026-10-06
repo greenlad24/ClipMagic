@@ -64,6 +64,13 @@ so people understand what they get by watching. While he describes what he made 
 will make, the screen shows that finished result, from the very first words. The first two minutes
 are MOSTLY screencast: A-roll only for his welcome/name, the subscribe ask and the link line.
 
+INTENT = BEATS (the recording agent follows it literally): write each segment's "intent" as beats
+tied to his words — "on '<word>': <what fills the screen>" — about one beat per 4-6 s, each a calm
+screen (a page, a panel, a design, a form being typed into), never several tiny targets at once.
+Only ask for what EXISTS in the account (the walkthrough and the page list below) or what the
+segment itself makes on screen — never a document/brand/campaign that is not there. Logged in,
+screencasts use the APP's address; the marketing site only when he says to go to the website.
+
 RULES
 1. Pacing like the reference (Jake's own tutorial): about three quarters of a tutorial is screencast.
    A-roll stretches 6-12 s (his intro, the subscribe/link asks, opinions, transitions), screencast

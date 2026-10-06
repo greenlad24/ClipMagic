@@ -62,6 +62,14 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     # a site the UX Scout is logged in to → the real app, driven by the agent recorder
     scout = next((x for x in (agentrec.scout_for(s["url"]) for s in sites) if x), None)
     knowledge = scout["report"] if scout else None
+    if scout:
+        # what already EXISTS in the account (its own browser history): the plan may only ask
+        # the screen for things that exist or that the segment itself makes (v5: the plan asked
+        # for "a campaign generated beforehand with Jake's own brand" that was never made)
+        pages = agentrec.known_pages(scout["profile"])
+        if pages:
+            knowledge = (knowledge or "") + "\n\nPAGES THAT EXIST IN THIS ACCOUNT (from its history):\n" + \
+                "\n".join(f"- {u}  ({t})" for u, t in pages)
     plan_p = w / "direct.json"
     if not _fresh(plan_p, edl_at):
         progress("Claude is planning the edit (screencasts + graphics)…", 0.02)

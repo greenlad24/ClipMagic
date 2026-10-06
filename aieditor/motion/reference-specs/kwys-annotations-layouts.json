@@ -1,0 +1,1358 @@
+{
+ "meta": {
+  "video": "kwysV2smgfY",
+  "fps": "30000/1001",
+  "res": "1920x1080",
+  "family": "screencast annotations + B-roll layouts + camera + sound",
+  "frame_index": "absolute 0-based frame of a full decode from frame 0 (verified). All seek-based extracts re-run with -fps_mode passthrough; see kit_bug.",
+  "kit_bug": "kit strip.sh / frames.sh / track.sh decode with ffmpeg's default CFR output; on this VP9 file (pts jitter 528/544 in 1/16000) ffmpeg inserts a duplicate frame within the first 1-3 output frames, so every label after it is 1 frame HIGH (label F shows true frame F-1). Fix: add -fps_mode passthrough (ffmpeg 6+) to the decode. Verified on f217-230 and f10830-10843 against a decode-from-start.",
+  "relative_frames": "tables keyed by frames from the element's first visible frame unless stated",
+  "work_dir": "/opt/aieditor-work/reference/work/kwys-annot/",
+  "proof_dir": "/opt/aieditor-work/reference/work/kwys-annot/proof/"
+ },
+ "A_screencast_annotations": {
+  "inventory": {
+   "yellow_text_highlight": "7 wipes in 3 groups: 06:01.4-06:03.4 (H1-H4, in the user prompt bubble), 06:23.6 (H5), 06:34.6-06:35.2 (H6,H7). All wipes in the video; no other yellow annotations (Artlist site's own yellow buttons are native UI).",
+   "orange_label_box": "1: 'Seedance 2.5,' 04:26.4 (f7983) to 04:28.8 (f8059)",
+   "not_found": "no arrows, spotlights, blur/dim masks, circles or click ripples anywhere in the screencast sections. The 'highlight box on MCP options' at 04:00.5 is the Artlist page's native card; what happens there is an 8-frame cross-dissolve (f7205-7212) + a screen zoom.",
+   "confidence": "high (whole-video colour scan on a 128x72 proxy + full-res checks)"
+  },
+  "wipe_motion": {
+   "type": "marker wipe: a rectangle whose RIGHT edge sweeps left->right across the phrase; left edge fixed; fill is full strength immediately behind the edge (hard leading edge, <=2 px soft); no fade, no scale, no y motion",
+   "shared_curve": {
+    "cubic_bezier": [
+     0.264,
+     0.139,
+     0.361,
+     0.897
+    ],
+    "rms_progress": 0.0091,
+    "applies_to": "progress = (right_edge - box_left)/(box_width), measured in screen-stabilised coordinates (camera zoom removed)",
+    "conf": "high"
+   },
+   "start": "curve t0 sits 1.4-2.5 f before the first visible frame (first frame already shows 4-14% of the width)",
+   "duration_rule": {
+    "formula": "T_frames = clamp(13.3 + 0.071*w_px, 18, 35) at 1080p, w = highlight box width at rest; in em of the highlighted text (font ~22.5 px): T = clamp(13.3 + 1.6*w_em, 18, 35)",
+    "points": {
+     "H1": [
+      158,
+      25.98
+     ],
+     "H2": [
+      163,
+      24.85
+     ],
+     "H3": [
+      66,
+      18.84
+     ],
+     "H4": [
+      295,
+      34.26
+     ],
+     "H5": [
+      682,
+      27.13
+     ],
+     "H6": [
+      84,
+      18.47
+     ],
+     "H7": [
+      690,
+      35.2
+     ],
+     "orange": [
+      186,
+      26.4
+     ]
+    },
+    "outlier": "H5 (682 px) took only 27.1 f",
+    "conf": "medium"
+   },
+   "multi_line": "each line segment is its own wipe (a phrase that wraps = two highlights: H2 'slight handheld' on line 1 then H3 'shake.' on line 2). The next wipe starts when the previous is ~60-80% done (H1->H2 +13.6 f, H2->H3 +16.0 f, H3->H4 +12.7 f, H6->H7 +18.7 f between curve t0s). Several highlights stay on together.",
+   "exit": {
+    "type": "opacity fade of the fill (and the text tint) together",
+    "start_rule": "starts on the frame the screen camera starts its NEXT move (H5 fade start f11821 = pan t0 11821.2; H1-H4 fade start f11497 = zoom start 11495; H6/H7 fade f12301 = zoom-out start 12302); i.e. the old highlights clear as the camera leaves",
+    "fade_alpha_per_frame_from_start": {
+     "-3": 1.0,
+     "-2": 1.0,
+     "-1": 1.0,
+     "0": 0.99,
+     "1": 0.916,
+     "2": 0.881,
+     "3": 0.796,
+     "4": 0.664,
+     "5": 0.586,
+     "6": 0.46,
+     "7": 0.389,
+     "8": 0.315,
+     "9": 0.243,
+     "10": 0.216,
+     "11": 0.137,
+     "12": 0.12,
+     "13": 0.066,
+     "14": 0.061,
+     "15": 0.033,
+     "16": 0.02,
+     "17": 0.009,
+     "18": 0.006,
+     "19": 0.006,
+     "20": 0.0,
+     "21": 0.003
+    },
+    "fit": {
+     "t0_rel": -2.1,
+     "T": 19.46,
+     "cubic_bezier": [
+      0.358,
+      -0.04,
+      0.287,
+      0.854
+     ]
+    },
+    "half_point_frames": 6.5,
+    "below_5pct_after_frames": 15,
+    "conf": "high (H5 measured on fill pixels); H1-H4 and H6/H7 fades match in timing (median-yellowness metric)"
+   },
+   "camera_coupling": "every wipe runs while/after a screen-camera move toward the text: wipe t0 relative to that move's t0: H1 +26 f (zoom Z1 t0 10805), H5 +3 f (Z2 11492), H6 +5 f (pan 11821), orange +20 f (Z4 7963). Rule: start the wipe 3-26 f (median ~12 f) after the camera starts moving to the phrase. Camera move recipes: see kwys-screencast spec (sibling agent); my own fits listed under C_camera.screen_moves_seen_here.",
+   "per_highlight": [
+    {
+     "id": "H1",
+     "text": "phone footage",
+     "first_visible_frame": 10834,
+     "width_px_at_rest": 158,
+     "shared_curve_t0_rel": -2.54,
+     "duration_frames": 25.98,
+     "rms": 0.0074,
+     "free_fit": {
+      "t0_rel": -1.82,
+      "T": 23.53,
+      "bezier": [
+       0.428,
+       0.465,
+       0.398,
+       0.809
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.101,
+      "1": 0.131,
+      "2": 0.189,
+      "3": 0.26,
+      "4": 0.309,
+      "5": 0.392,
+      "6": 0.453,
+      "7": 0.515,
+      "8": 0.577,
+      "9": 0.634,
+      "10": 0.694,
+      "11": 0.725,
+      "12": 0.786,
+      "13": 0.81,
+      "14": 0.841,
+      "15": 0.872,
+      "16": 0.896,
+      "17": 0.928,
+      "18": 0.926,
+      "19": 0.957,
+      "20": 0.983,
+      "21": 0.989,
+      "22": 1.001,
+      "23": 1.0,
+      "24": 1.0,
+      "25": 1.0,
+      "26": 1.0,
+      "27": 1.0,
+      "28": 1.0,
+      "29": 1.0,
+      "30": 1.0,
+      "31": 1.0,
+      "32": 1.0,
+      "33": 1.0,
+      "34": 1.0,
+      "35": 1.0,
+      "36": 1.0
+     }
+    },
+    {
+     "id": "H2",
+     "text": "slight handheld",
+     "first_visible_frame": 10847,
+     "width_px_at_rest": 163,
+     "shared_curve_t0_rel": -1.92,
+     "duration_frames": 24.85,
+     "rms": 0.0086,
+     "free_fit": {
+      "t0_rel": -1.39,
+      "T": 24.87,
+      "bezier": [
+       0.259,
+       0.252,
+       0.438,
+       0.97
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.06,
+      "1": 0.125,
+      "2": 0.178,
+      "3": 0.238,
+      "4": 0.304,
+      "5": 0.374,
+      "6": 0.452,
+      "7": 0.501,
+      "8": 0.581,
+      "9": 0.628,
+      "10": 0.675,
+      "11": 0.748,
+      "12": 0.773,
+      "13": 0.798,
+      "14": 0.847,
+      "15": 0.871,
+      "16": 0.908,
+      "17": 0.92,
+      "18": 0.945,
+      "19": 0.969,
+      "20": 0.994,
+      "21": 0.994,
+      "22": 0.994,
+      "23": 0.994,
+      "24": 0.994,
+      "25": 0.994,
+      "26": 0.994,
+      "27": 0.994,
+      "28": 0.994
+     }
+    },
+    {
+     "id": "H3",
+     "text": "shake.",
+     "first_visible_frame": 10863,
+     "width_px_at_rest": 66,
+     "shared_curve_t0_rel": -1.9,
+     "duration_frames": 18.84,
+     "rms": 0.019,
+     "free_fit": {
+      "t0_rel": -1.14,
+      "T": 19.85,
+      "bezier": [
+       0.548,
+       0.971,
+       0.746,
+       1.02
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.091,
+      "1": 0.212,
+      "2": 0.273,
+      "3": 0.333,
+      "4": 0.424,
+      "5": 0.515,
+      "6": 0.576,
+      "7": 0.636,
+      "8": 0.758,
+      "9": 0.758,
+      "10": 0.818,
+      "11": 0.879,
+      "12": 0.909,
+      "13": 0.939,
+      "14": 0.97,
+      "15": 1.0,
+      "16": 1.0,
+      "17": 1.0,
+      "18": 1.0,
+      "19": 1.0,
+      "20": 1.0,
+      "21": 1.0,
+      "22": 1.0
+     }
+    },
+    {
+     "id": "H4",
+     "text": "small physical imperfections",
+     "first_visible_frame": 10876,
+     "width_px_at_rest": 295,
+     "shared_curve_t0_rel": -2.16,
+     "duration_frames": 34.26,
+     "rms": 0.0051,
+     "free_fit": {
+      "t0_rel": -1.79,
+      "T": 37.43,
+      "bezier": [
+       0.271,
+       0.208,
+       0.321,
+       0.969
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.047,
+      "1": 0.075,
+      "2": 0.115,
+      "3": 0.156,
+      "4": 0.197,
+      "5": 0.251,
+      "6": 0.305,
+      "7": 0.359,
+      "8": 0.407,
+      "9": 0.461,
+      "10": 0.508,
+      "11": 0.556,
+      "12": 0.603,
+      "13": 0.644,
+      "14": 0.678,
+      "15": 0.712,
+      "16": 0.753,
+      "17": 0.773,
+      "18": 0.8,
+      "19": 0.834,
+      "20": 0.847,
+      "21": 0.875,
+      "22": 0.888,
+      "23": 0.902,
+      "24": 0.915,
+      "25": 0.929,
+      "26": 0.942,
+      "27": 0.956,
+      "28": 0.969,
+      "29": 0.976,
+      "30": 0.983,
+      "31": 0.983,
+      "32": 0.99,
+      "33": 0.997,
+      "34": 0.997,
+      "35": 0.997,
+      "36": 0.997,
+      "37": 0.997,
+      "38": 0.997,
+      "39": 0.997
+     }
+    },
+    {
+     "id": "H5",
+     "text": "timestamp...(line)",
+     "first_visible_frame": 11495,
+     "width_px_at_rest": 682,
+     "shared_curve_t0_rel": 0.53,
+     "duration_frames": 27.13,
+     "rms": 0.0054,
+     "free_fit": {
+      "t0_rel": -2.16,
+      "T": 29.85,
+      "bezier": [
+       0.375,
+       -0.008,
+       0.302,
+       0.858
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.011,
+      "1": 0.025,
+      "2": 0.045,
+      "3": 0.079,
+      "4": 0.119,
+      "5": 0.172,
+      "6": 0.23,
+      "7": 0.295,
+      "8": 0.365,
+      "9": 0.435,
+      "10": 0.499,
+      "11": 0.563,
+      "12": 0.617,
+      "13": 0.664,
+      "14": 0.711,
+      "15": 0.751,
+      "16": 0.793,
+      "17": 0.825,
+      "18": 0.848,
+      "19": 0.875,
+      "20": 0.898,
+      "21": 0.921,
+      "22": 0.936,
+      "23": 0.95,
+      "24": 0.964,
+      "25": 0.976,
+      "26": 0.984,
+      "27": 0.993,
+      "28": 1.001,
+      "29": 1.001,
+      "30": 0.998,
+      "31": 0.998,
+      "32": 0.998,
+      "33": 1.0,
+      "34": 1.0,
+      "35": 1.0,
+      "36": 1.0,
+      "37": 1.0,
+      "38": 1.0,
+      "39": 1.0,
+      "40": 1.0
+     }
+    },
+    {
+     "id": "H6",
+     "text": "Put the",
+     "first_visible_frame": 11829,
+     "width_px_at_rest": 84,
+     "shared_curve_t0_rel": -2.6,
+     "duration_frames": 18.47,
+     "rms": 0.0115,
+     "free_fit": {
+      "t0_rel": -1.94,
+      "T": 17.13,
+      "bezier": [
+       0.139,
+       0.056,
+       0.349,
+       0.842
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.143,
+      "1": 0.234,
+      "2": 0.333,
+      "3": 0.424,
+      "4": 0.519,
+      "5": 0.619,
+      "6": 0.667,
+      "7": 0.714,
+      "8": 0.762,
+      "9": 0.833,
+      "10": 0.857,
+      "11": 0.9,
+      "12": 0.929,
+      "13": 0.948,
+      "14": 1.005,
+      "15": 1.0,
+      "16": 1.0,
+      "17": 1.0,
+      "18": 1.0,
+      "19": 1.0,
+      "20": 1.0,
+      "21": 1.0
+     }
+    },
+    {
+     "id": "H7",
+     "text": "spoken line in quotation marks (line)",
+     "first_visible_frame": 11846,
+     "width_px_at_rest": 690,
+     "shared_curve_t0_rel": -0.89,
+     "duration_frames": 35.2,
+     "rms": 0.0067,
+     "free_fit": {
+      "t0_rel": -1.33,
+      "T": 38.44,
+      "bezier": [
+       0.306,
+       0.153,
+       0.281,
+       0.915
+      ]
+     },
+     "right_edge_progress_per_frame": {
+      "0": 0.023,
+      "1": 0.041,
+      "2": 0.067,
+      "3": 0.099,
+      "4": 0.128,
+      "5": 0.174,
+      "6": 0.221,
+      "7": 0.27,
+      "8": 0.325,
+      "9": 0.377,
+      "10": 0.429,
+      "11": 0.481,
+      "12": 0.528,
+      "13": 0.574,
+      "14": 0.617,
+      "15": 0.655,
+      "16": 0.69,
+      "17": 0.719,
+      "18": 0.754,
+      "19": 0.777,
+      "20": 0.806,
+      "21": 0.826,
+      "22": 0.846,
+      "23": 0.867,
+      "24": 0.884,
+      "25": 0.899,
+      "26": 0.916,
+      "27": 0.928,
+      "28": 0.939,
+      "29": 0.951,
+      "30": 0.957,
+      "31": 0.968,
+      "32": 0.974,
+      "33": 0.983,
+      "34": 0.986,
+      "35": 0.991,
+      "36": 0.997,
+      "37": 0.997,
+      "38": 1.0,
+      "39": 1.0,
+      "40": 1.0,
+      "41": 1.0,
+      "42": 1.0,
+      "43": 1.0,
+      "44": 1.0
+     }
+    }
+   ],
+   "orange": {
+    "first_visible_frame": 7985,
+    "curve": {
+     "shared_curve_t0_rel": -2.0,
+     "duration_frames": 26.4,
+     "free_fit": {
+      "t0_rel": -0.95,
+      "T": 25.91,
+      "bezier": [
+       0.389,
+       0.498,
+       0.328,
+       0.839
+      ]
+     }
+    },
+    "right_edge_progress_per_frame": {
+     "0": 0.058,
+     "1": 0.095,
+     "2": 0.151,
+     "3": 0.21,
+     "4": 0.285,
+     "5": 0.351,
+     "6": 0.423,
+     "7": 0.495,
+     "8": 0.558,
+     "9": 0.609,
+     "10": 0.656,
+     "11": 0.712,
+     "12": 0.75,
+     "13": 0.787,
+     "14": 0.814,
+     "15": 0.847,
+     "16": 0.873,
+     "17": 0.895,
+     "18": 0.91,
+     "19": 0.932,
+     "20": 0.953,
+     "21": 0.957,
+     "22": 0.968,
+     "23": 0.979,
+     "24": 0.989,
+     "25": 0.989,
+     "26": 1.0
+    },
+    "exit": "hold ~33 f at rest, rides the zoom-out that starts f8043, then disappears over 2-3 frames f8057-8059 mid-zoom (fast fade/cut, not on a shot cut)",
+    "conf": "high"
+   }
+  },
+  "style_separate": {
+   "yellow": {
+    "sampled_fill_over_bubble_blue": "#99831C (153,131,28) on #113166 bg",
+    "text_inside": "glyphs turn yellow #F7F26C (247,242,108) (white text underneath) => the layer is drawn OVER the text and tints it, i.e. not opaque. Fits approximately a hard-light/overlay blend of ~#C8B323, or 'yellow at ~50% + text tint'. Exact blend unresolved (low conf); suggest: rect #FFE600 at 55% opacity with mix-blend-mode: hard-light over the text",
+    "corners": "square (radius <=2 px)",
+    "box_geometry": "height = line ascender-top-2px .. descender-bottom (26 px for a 35 px line pitch = 0.74 x pitch, ~1.15 em); horizontal pad 2-4 px (~0.13 em) beyond the phrase ink; trailing space excluded; adjacent-line boxes leave an 8-9 px gap",
+    "conf": "geometry high, colour/blend low"
+   },
+   "orange": {
+    "fill": "#FA9D00 (250,157,0) opaque",
+    "text": "white text stays on top, unchanged",
+    "corners": "square",
+    "box_geometry": "186x33 px for 'Seedance 2.5,' (ink 808-971 x, 352-375 y): pad left 8 px, right 14 px (to the comma), top 6 px above cap top, bottom 3 px below descender (~0.35 em L/T pads)",
+    "conf": "high"
+   }
+  }
+ },
+ "B_broll_layouts": {
+  "three_phone_panels": {
+   "cut_in_frame": 217,
+   "cut_out_frame": 367,
+   "background": "light mint gradient, static first 5 frames (217-221), then panels rise",
+   "source_rate": "the whole sequence is 23.976 fps content in the 29.97 timeline: every 5th frame repeats (228, 233, 238, ...). Curves below are in 23.976 source frames (src) AND converted to 29.97 output frames.",
+   "joint_recipe": {
+    "cubic_bezier_on_top_edge": [
+     0.35,
+     0.252,
+     0.29,
+     0.905
+    ],
+    "duration_src": 26.29,
+    "duration_out_frames": 32.9,
+    "duration_s": 1.097,
+    "travel_px": 1102.5,
+    "travel_rel_panel_height": 1.179,
+    "note_travel": "start position = panel top at y_end + 1102 px, i.e. the panel starts fully below the frame (travel = 1.18 panel heights; top starts at y~1190, ~110 px below the frame)",
+    "stagger_src": [
+     6.02,
+     6.08
+    ],
+    "stagger_s": 0.25,
+    "stagger_out_frames": 7.5,
+    "order": "left -> middle -> right",
+    "t0_out_frames": [
+     220.8,
+     228.3,
+     235.9
+    ],
+    "first_panel_delay_after_cut_s": 0.126,
+    "rms_px": 1.93,
+    "no_rotation": "none seen",
+    "opacity": "opaque from first visible frame (enters from off-screen)",
+    "scale": "width grows ~+5% during the rise (485->509 px for p1, mask includes shadow) - possibly a small scale 0.95->1 or the start of the group push-in; low conf",
+    "conf": "high for curve/stagger/travel"
+   },
+   "panels": {
+    "p0": {
+     "first_visible_frame": 224,
+     "top_edge_y_per_frame": {
+      "224": 1007,
+      "225": 945,
+      "226": 868,
+      "227": 785,
+      "229": 702,
+      "230": 621,
+      "231": 547,
+      "232": 482,
+      "234": 423,
+      "235": 372,
+      "236": 328,
+      "237": 289,
+      "239": 254,
+      "240": 224,
+      "241": 199,
+      "242": 177,
+      "244": 158,
+      "245": 141,
+      "246": 127,
+      "247": 116,
+      "249": 106,
+      "250": 98,
+      "251": 92,
+      "252": 88,
+      "254": 85,
+      "255": 83,
+      "256": 83
+     },
+     "individual_fit_src24": {
+      "t0_src": 4.64,
+      "T_src": 28.92,
+      "y_start": 1117.1,
+      "y_end": 79.5,
+      "bezier": [
+       0.267,
+       0.256,
+       0.238,
+       1.001
+      ],
+      "rms_px": 1.15
+     }
+    },
+    "p1": {
+     "first_visible_frame": 231,
+     "top_edge_y_per_frame": {
+      "231": 1011,
+      "232": 949,
+      "234": 872,
+      "235": 790,
+      "236": 703,
+      "237": 623,
+      "239": 548,
+      "240": 482,
+      "241": 423,
+      "242": 372,
+      "244": 327,
+      "245": 289,
+      "246": 255,
+      "247": 225,
+      "249": 199,
+      "250": 177,
+      "251": 157,
+      "252": 140,
+      "254": 126,
+      "255": 114,
+      "256": 105,
+      "257": 97,
+      "259": 91,
+      "260": 87,
+      "261": 85,
+      "262": 84,
+      "264": 82
+     },
+     "individual_fit_src24": {
+      "t0_src": 9.44,
+      "T_src": 26.12,
+      "y_start": 1165.5,
+      "y_end": 85.7,
+      "bezier": [
+       0.332,
+       0.226,
+       0.277,
+       0.906
+      ],
+      "rms_px": 1.23
+     }
+    },
+    "p2": {
+     "first_visible_frame": 239,
+     "top_edge_y_per_frame": {
+      "239": 1017,
+      "240": 954,
+      "241": 878,
+      "242": 795,
+      "244": 708,
+      "245": 625,
+      "246": 551,
+      "247": 485,
+      "249": 425,
+      "250": 373,
+      "251": 329,
+      "252": 289,
+      "254": 254,
+      "255": 225,
+      "256": 199,
+      "257": 176,
+      "259": 157,
+      "260": 141,
+      "261": 127,
+      "262": 115,
+      "264": 105,
+      "265": 98,
+      "266": 92,
+      "267": 88,
+      "269": 86,
+      "270": 85,
+      "271": 84
+     },
+     "individual_fit_src24": {
+      "t0_src": 13.16,
+      "T_src": 28.24,
+      "y_start": 1283.6,
+      "y_end": 86.7,
+      "bezier": [
+       0.418,
+       0.292,
+       0.31,
+       0.904
+      ],
+      "rms_px": 1.65
+     }
+    }
+   },
+   "after_landing": "whole group slowly scales about frame centre: +0.067%/frame (~2.0%/s, linear): p1 509x922 at f262 -> 550x988 at f366; same rate as the A-roll push-in",
+   "exit": "hard cut to A-roll at f367 (no exit animation)",
+   "layout_style": {
+    "panels": "3 equal 9:16-ish cards ~498x935 at rest (aspect 0.53), tops at y~82-88 (8% H), gaps ~114-118 px, side margins ~95-100 px, rounded corners ~30 px, soft drop shadow down-right (diff falls from ~250 at the edge to ~20 at +60 px)",
+    "conf": "medium (style)"
+   }
+  },
+  "split_screen_00_15": "NOT a layout: f451-608 is a single full-bleed AI clip of two people side by side. It enters with an 8-frame linear cross-dissolve from A-roll (f450.6-458.5, mix 0.05,0.18,0.30,0.42,0.56,0.68,0.81,0.94,1.0) and leaves by hard cut at f608.",
+  "five_panel_01_12_08_32_10_23": "NOT editor layouts: they are the Artlist web UI (native 5-thumbnail grid) inside the screencast. No per-panel animation. The motion at 01:12 is a screen-camera zoom-in on the cut: z 0.775->1.0 (x1.29) f2150-2182, bezier (0.386,-0.10,0.195,1.063) T 40 f, anchor near the left card.",
+  "conf": "high"
+ },
+ "C_camera": {
+  "opening_zoom_out": {
+   "frames": "0-34",
+   "scale_per_frame_rel_to_settled": {
+    "0": 1.5482,
+    "1": 1.5482,
+    "2": 1.5375,
+    "3": 1.5011,
+    "4": 1.4111,
+    "5": 1.3298,
+    "6": 1.2762,
+    "7": 1.2398,
+    "8": 1.2141,
+    "9": 1.1927,
+    "10": 1.1713,
+    "11": 1.1542,
+    "12": 1.137,
+    "13": 1.1221,
+    "14": 1.1113,
+    "15": 1.1006,
+    "16": 1.0899,
+    "17": 1.0792,
+    "18": 1.0749,
+    "19": 1.0642,
+    "20": 1.0578,
+    "21": 1.0514,
+    "22": 1.0471,
+    "23": 1.0407,
+    "24": 1.0343,
+    "25": 1.0278,
+    "26": 1.0236,
+    "27": 1.0236,
+    "28": 1.0236,
+    "29": 1.0128,
+    "30": 1.0128,
+    "31": 1.0086,
+    "32": 1.0043,
+    "33": 1.0043,
+    "34": 1.0,
+    "35": 1.0,
+    "36": 1.0,
+    "37": 1.0,
+    "38": 1.0,
+    "39": 1.0,
+    "40": 1.0
+   },
+   "fit_on_log_scale": {
+    "t0": 2.59,
+    "T": 31.26,
+    "cubic_bezier": [
+     0.089,
+     0.443,
+     0.126,
+     0.834
+    ],
+    "rms": 0.005
+   },
+   "summary": "video opens punched in x1.548 and eases OUT to the normal A-roll framing in ~31 f (1.04 s); hold 2 frames, strong ease-out; zoom about frame centre (translation 0). Title text 'UGC AI videos' rises in during f3-f10 together with it.",
+   "conf": "high"
+  },
+  "punch_in_00_02_5": "NOT FOUND. No cut and no zoom step between f30 and f217 (scale constant 1.000 f34-86). What exists: (a) the opening zoom-out above, (b) the slow A-roll push-in starting ~f86.",
+  "a_roll_push_in": {
+   "rule": "every A-roll block (after screencast/B-roll) starts at scale 1.000 of the base framing and pushes in linearly at ~0.06%/frame (1.8%/s, range 1.5-2.1%/s over 15 blocks); continuous across jump cuts inside the block (zoom ratio across 9 of 11 A->A jump cuts = 1.000+-0.004); caps at ~1.124 then holds (seen in long blocks 57.4-71.7 s and 637-699 s); about frame centre (dx,dy ~0). Exceptions: opening block 2.5%/s from f86; block at 57.4 s reached the cap in 2.8 s (4.1%/s) then pushed again 1.124->1.181 during the Subscribe CTA (f1968-2049).",
+   "per_block": "see A-roll survey azoom.txt: start scale always 0.929 vs ref f720 (=1.000)",
+   "conf": "medium-high"
+  },
+  "jump_cuts": "no digital punch-ins at jump cuts (framing identical; head moves only). Two cuts read x1.07-1.08 at low match score (13614, 19305) - low conf.",
+  "transitions": {
+   "hard_cut": "default everywhere",
+   "cross_dissolves": [
+    {
+     "frames": "450.6-458.5",
+     "what": "A-roll -> AI B-roll",
+     "mix_per_frame": [
+      0.054,
+      0.175,
+      0.303,
+      0.422,
+      0.555,
+      0.684,
+      0.809,
+      0.94,
+      0.999
+     ]
+    },
+    {
+     "frames": "7204.8-7212.2",
+     "what": "ChatGPT screencast -> Artlist screencast (04:00.4)",
+     "mix_per_frame": [
+      0.031,
+      0.144,
+      0.274,
+      0.413,
+      0.561,
+      0.723,
+      0.895,
+      0.991
+     ]
+    }
+   ],
+   "dissolve_recipe": "8 frames (0.27 s) linear opacity cross-fade",
+   "conf": "high"
+  },
+  "end_fade": {
+   "last_full_frame": 20921,
+   "black_from": 20951,
+   "frames": 30,
+   "seconds": 1.0,
+   "opacity_per_frame": {
+    "1": 0.968,
+    "2": 0.932,
+    "3": 0.895,
+    "4": 0.862,
+    "5": 0.824,
+    "6": 0.798,
+    "7": 0.756,
+    "8": 0.721,
+    "9": 0.688,
+    "10": 0.661,
+    "11": 0.618,
+    "12": 0.592,
+    "13": 0.551,
+    "14": 0.519,
+    "15": 0.487,
+    "16": 0.452,
+    "17": 0.423,
+    "18": 0.385,
+    "19": 0.353,
+    "20": 0.324,
+    "21": 0.279,
+    "22": 0.218,
+    "23": 0.172,
+    "24": 0.134,
+    "25": 0.087,
+    "26": 0.055,
+    "27": 0.033,
+    "28": 0.017,
+    "29": 0.006,
+    "30": 0.0
+   },
+   "curve": "near-linear (-0.034/frame) for 20 f, slightly faster over the last 8 f; 3 black frames end the file (20951-20953)",
+   "audio": "NOT faded: music bed continues at ~-40 dBFS RMS to the last sample",
+   "starts": "11:38.1 (not 11:32 as Gemini said)",
+   "conf": "high"
+  },
+  "screen_moves_seen_here": {
+   "Z1_in_6:00": {
+    "kind": "z",
+    "frames": [
+     10808,
+     10862
+    ],
+    "z_ratio": 1.475,
+    "dy": null,
+    "t0": 10805.14,
+    "T": 51.07,
+    "bezier": [
+     0.426,
+     -0.071,
+     0.24,
+     0.932
+    ],
+    "rms": 0.0016,
+    "first_moving": 10811,
+    "reaches_99": 10853,
+    "anchor_in_start_frame": [
+     1321,
+     356
+    ]
+   },
+   "Z2_in_6:23": {
+    "kind": "z",
+    "frames": [
+     11493,
+     11532
+    ],
+    "z_ratio": 1.131,
+    "dy": null,
+    "t0": 11492.4,
+    "T": 44.48,
+    "bezier": [
+     0.34,
+     -0.001,
+     0.179,
+     1.073
+    ],
+    "rms": 0.004,
+    "first_moving": 11495,
+    "reaches_99": 11528,
+    "anchor_in_start_frame": [
+     782,
+     1084
+    ]
+   },
+   "Z3_in_1:12": {
+    "kind": "z",
+    "frames": [
+     2149,
+     2186
+    ],
+    "z_ratio": 1.29,
+    "dy": null,
+    "t0": 2146.56,
+    "T": 40.32,
+    "bezier": [
+     0.386,
+     -0.1,
+     0.195,
+     1.063
+    ],
+    "rms": 0.0022,
+    "first_moving": 2151,
+    "reaches_99": 2180,
+    "anchor_in_start_frame": [
+     86,
+     342
+    ]
+   },
+   "Z4_in_4:25": {
+    "kind": "z",
+    "frames": [
+     7961,
+     8012
+    ],
+    "z_ratio": 1.721,
+    "dy": null,
+    "t0": 7962.53,
+    "T": 45.36,
+    "bezier": [
+     0.166,
+     0.337,
+     0.279,
+     0.967
+    ],
+    "rms": 0.0016,
+    "first_moving": 7963,
+    "reaches_99": 8004,
+    "anchor_in_start_frame": [
+     683,
+     523
+    ]
+   },
+   "Z5_pan_6:34": {
+    "kind": "dy",
+    "frames": [
+     11824,
+     11864
+    ],
+    "z_ratio": null,
+    "dy": 77.4,
+    "t0": 11821.22,
+    "T": 46.34,
+    "bezier": [
+     0.385,
+     -0.112,
+     0.182,
+     1.053
+    ],
+    "rms": 0.004,
+    "first_moving": 11827,
+    "reaches_99": 11860,
+    "anchor_in_start_frame": null
+   },
+   "Z6_out_4:28": {
+    "kind": "z",
+    "frames": [
+     8041,
+     8080
+    ],
+    "z_ratio": 0.58,
+    "dy": null,
+    "t0": 8040.61,
+    "T": 37.49,
+    "bezier": [
+     0.442,
+     -0.029,
+     0.588,
+     0.661
+    ],
+    "rms": 0.0023,
+    "first_moving": 8045,
+    "reaches_99": 8078,
+    "anchor_in_start_frame": null
+   },
+   "Z7_out_6:50": {
+    "kind": "z",
+    "frames": [
+     12297,
+     12360
+    ],
+    "z_ratio": 0.602,
+    "dy": null,
+    "t0": 12295.37,
+    "T": 61.44,
+    "bezier": [
+     0.389,
+     -0.044,
+     0.324,
+     0.843
+    ],
+    "rms": 0.0027,
+    "first_moving": 12302,
+    "reaches_99": 12356,
+    "anchor_in_start_frame": null
+   }
+  },
+  "shot_stats": {
+   "blocks": {
+    "A": {
+     "n": 20,
+     "total_s": 165.6,
+     "share": 0.237,
+     "median": 6.71,
+     "mean": 8.28,
+     "p25": 3.35,
+     "p75": 7.65,
+     "min": 1.8,
+     "max": 40.87
+    },
+    "S": {
+     "n": 17,
+     "total_s": 523.5,
+     "share": 0.749,
+     "median": 18.55,
+     "mean": 30.79,
+     "p25": 17.75,
+     "p75": 46.85,
+     "min": 3.17,
+     "max": 77.24
+    },
+    "B": {
+     "n": 2,
+     "total_s": 10.1,
+     "share": 0.014,
+     "median": 5.06,
+     "mean": 5.06,
+     "p25": 5.03,
+     "p75": 5.08,
+     "min": 5.0,
+     "max": 5.11
+    }
+   },
+   "a_roll_shots_incl_jump_cuts": {
+    "n": 31,
+    "median": 4.4,
+    "mean": 5.34
+   },
+   "screencast_shots_split_at_hard_cuts": {
+    "n": 76,
+    "median": 3.64,
+    "mean": 6.89
+   },
+   "notes": "A = presenter A-roll (brick wall), S = screencast with facecam bubble, B = full-screen AI B-roll. Screencast = 75% of runtime, A-roll 24%, B-roll 1.4%. Block sequence alternates A/S 39 blocks. Screencast 'shots' include page changes inside the screen recording (noisy, p25 0.63 s).",
+   "block_sequence": [
+    [
+     "A",
+     0,
+     217
+    ],
+    [
+     "B",
+     217,
+     367
+    ],
+    [
+     "A",
+     367,
+     455
+    ],
+    [
+     "B",
+     455,
+     608
+    ],
+    [
+     "A",
+     608,
+     815
+    ],
+    [
+     "S",
+     815,
+     1719
+    ],
+    [
+     "A",
+     1719,
+     2149
+    ],
+    [
+     "S",
+     2149,
+     2681
+    ],
+    [
+     "A",
+     2681,
+     2917
+    ],
+    [
+     "S",
+     2917,
+     3452
+    ],
+    [
+     "A",
+     3452,
+     3858
+    ],
+    [
+     "S",
+     3858,
+     4397
+    ],
+    [
+     "A",
+     4397,
+     4535
+    ],
+    [
+     "S",
+     4535,
+     4936
+    ],
+    [
+     "A",
+     4936,
+     5042
+    ],
+    [
+     "S",
+     5042,
+     6857
+    ],
+    [
+     "A",
+     6857,
+     6947
+    ],
+    [
+     "S",
+     6947,
+     7479
+    ],
+    [
+     "A",
+     7479,
+     7535
+    ],
+    [
+     "S",
+     7535,
+     8939
+    ],
+    [
+     "A",
+     8939,
+     9166
+    ],
+    [
+     "S",
+     9166,
+     11353
+    ],
+    [
+     "A",
+     11353,
+     11493
+    ],
+    [
+     "S",
+     11493,
+     12563
+    ],
+    [
+     "A",
+     12563,
+     12617
+    ],
+    [
+     "S",
+     12617,
+     13253
+    ],
+    [
+     "A",
+     13253,
+     13322
+    ],
+    [
+     "S",
+     13322,
+     13547
+    ],
+    [
+     "A",
+     13547,
+     13761
+    ],
+    [
+     "S",
+     13761,
+     14317
+    ],
+    [
+     "A",
+     14317,
+     14421
+    ],
+    [
+     "S",
+     14421,
+     16125
+    ],
+    [
+     "A",
+     16125,
+     16320
+    ],
+    [
+     "S",
+     16320,
+     16558
+    ],
+    [
+     "A",
+     16558,
+     16782
+    ],
+    [
+     "S",
+     16782,
+     19097
+    ],
+    [
+     "A",
+     19097,
+     19634
+    ],
+    [
+     "S",
+     19634,
+     19729
+    ],
+    [
+     "A",
+     19729,
+     20954
+    ]
+   ]
+  }
+ },
+ "D_sound": {
+  "mix": {
+   "integrated_LUFS": -18.6,
+   "LRA_LU": 3.4,
+   "true_peak_dBTP": -0.1,
+   "speech_only_LUFS": -16.0,
+   "pauses_only_LUFS": -38.9,
+   "bed_vs_voice_LU": -22.9,
+   "rms": {
+    "speech_50ms_median_dBFS": -21.2,
+    "pause_median_dBFS": -40.3,
+    "pause_IQR": [
+     -44.7,
+     -38.4
+    ]
+   },
+   "bed": "music bed present: pause energy is mostly <250 Hz (kick/bass, beat-like striations in the spectrogram) and has a stereo side component (-18 dB side/mid in pauses vs -33 dB overall); bed sits ~23 LU under the voice",
+   "ducking": "none: sub-60 Hz band median power equal in speech and pauses (21.4 vs 22.3 dB rel)",
+   "conf": "medium-high"
+  },
+  "sfx": {
+   "result": "No SFX layer detected at any measured visual event. B-roll cut f217/panel rises (7.24-7.9 s): the cut falls in a 0.42 s speech pause that contains only the LF bed - no whoosh. Highlight H2 starts in a pause (361.86 s) - silent. No stereo transients locked to events (side-channel onsets: 0 of 20 events within +-150 ms beyond chance; 6/96 hard cuts = chance rate). Subscribe CTA appear (65.97 s) / click (68.37 s), Instagram icon (661.49 s): overlapped by speech; HF bursts there are consistent with sibilants - unresolved.",
+   "gemini_claims_refuted": "'subtle bass whoosh' 00:02.5 and 'whoosh' 00:06.6: not present (no broadband/noise event in the pause around the 7.24 s B-roll cut).",
+   "conf": "medium for 'graphics are silent' at events inside pauses; low for events overlapped by speech"
+  }
+ },
+ "proof_strips": [
+  "proof/hl_H1H2_wipe.jpg",
+  "proof/hl_H3H4_wipe.jpg",
+  "proof/hl_fadeout_H5_and_H6_wipe.jpg",
+  "proof/hl_H7_wipe.jpg",
+  "proof/orange_zoom_and_wipe.jpg",
+  "proof/orange_exit_zoomout.jpg",
+  "proof/broll_3panel_rise.jpg",
+  "proof/dissolve_aroll_to_coffee.jpg",
+  "proof/dissolve_screencast.jpg",
+  "proof/opening_zoomout.jpg",
+  "proof/jumpcut_punchin_subscribe.jpg",
+  "proof/end_fade_black.jpg",
+  "proof/screen_zoom_5panel.jpg",
+  "sec_0.jpg",
+  "sec_1.jpg",
+  "sec_2.jpg",
+  "spec_broll.png",
+  "spec_subscribe.png",
+  "spec_highlights.png",
+  "spec_insta.png",
+  "hlzoom.png"
+ ]
+}

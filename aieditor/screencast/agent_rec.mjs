@@ -25,10 +25,16 @@ import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 import { spawn } from "node:child_process";
+import zlib from "node:zlib";
 import puppeteer from "puppeteer-core";
 
 const [workdir, profileDir] = process.argv.slice(2);
-const CSS_W = 1920, CSS_H = 1080, SCALE = 4 / 3, FPS = 30000 / 1001, DT = 1000 / FPS;
+// UI magnification (SYSTEM.md §4): reference 2's recording is "already UI-magnified" — the app is
+// laid out at a smaller CSS viewport and captured at 2560×1440, so every control reads ~1.25×
+// larger than a plain 1920-wide desktop. AGENT_CSS_W=1920 restores the old 1:1 desktop.
+const CSS_W = +(process.env.AGENT_CSS_W || 1536), CSS_H = Math.round(CSS_W * 9 / 16), SCALE = 2560 / CSS_W,
+  FPS = 30000 / 1001, DT = 1000 / FPS;
+const SHOT_F = CSS_W / 1280;          // the agent sees a 1280×720 screenshot: shot px × SHOT_F = CSS px
 const W = Math.round(CSS_W * SCALE), H = Math.round(CSS_H * SCALE);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
@@ -97,6 +103,76 @@ async function step() {
   rec.cursor.push([t(), cx * SCALE, cy * SCALE]);
   rec.frame += 1;
 }
+// ── settle cuts (SYSTEM.md §4): reference 2 never shows a page loading — the edit jump-cuts
+// from the click to the loaded result (7 in-span cuts / min). After a click (or Enter / goto)
+// the page runs in REAL time, unrecorded, until the screen stops changing and is not blank;
+// if it changed meanwhile, a "cut" event is logged (the camera resets there).
+const SYS = (() => { try { return JSON.parse(fs.readFileSync(new URL("../motion/screencast_system.json", import.meta.url))).recorder || {}; } catch { return {}; } })();
+const SETTLE = { on: SYS.settle_after_click !== false && process.env.AGENT_SETTLE !== "0", changed: SYS.settle_changed_px ?? 0.03,
+  poll: SYS.settle_poll_ms ?? 500, stable: SYS.settle_stable_polls ?? 2, max: (SYS.settle_max_s ?? 25) * 1000 };
+function pngGray(buf) {
+  // minimal PNG decoder (8-bit RGB/RGBA, non-interlaced — what Chrome writes) → {w,h,g:Uint8Array}
+  let o = 8, w = 0, h = 0, ct = 2; const idat = [];
+  while (o < buf.length) {
+    const len = buf.readUInt32BE(o), type = buf.toString("ascii", o + 4, o + 8), d = buf.subarray(o + 8, o + 8 + len);
+    if (type === "IHDR") { w = d.readUInt32BE(0); h = d.readUInt32BE(4); ct = d[9]; }
+    else if (type === "IDAT") idat.push(d);
+    else if (type === "IEND") break;
+    o += 12 + len;
+  }
+  const bpp = ct === 6 ? 4 : 3, stride = w * bpp, raw = zlib.inflateSync(Buffer.concat(idat));
+  const px = Buffer.alloc(h * stride);
+  for (let y = 0; y < h; y++) {
+    const f = raw[y * (stride + 1)], src = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1));
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? px[y * stride + x - bpp] : 0, b = y ? px[(y - 1) * stride + x] : 0,
+        c = x >= bpp && y ? px[(y - 1) * stride + x - bpp] : 0;
+      let v = src[x];
+      if (f === 1) v += a; else if (f === 2) v += b; else if (f === 3) v += (a + b) >> 1;
+      else if (f === 4) { const pp = a + b - c, pa = Math.abs(pp - a), pb = Math.abs(pp - b), pc = Math.abs(pp - c); v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c; }
+      px[y * stride + x] = v & 255;
+    }
+  }
+  const g = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) g[i] = (px[i * bpp] * 77 + px[i * bpp + 1] * 150 + px[i * bpp + 2] * 29) >> 8;
+  return { w, h, g };
+}
+async function tiny() {
+  const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: { x: 0, y: 0, width: CSS_W, height: CSS_H, scale: 0.05 } });
+  return pngGray(Buffer.from(s.data, "base64")).g;
+}
+const changedShare = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 12) n++; return n / a.length; };
+function blankish(g) {
+  let s = 0, s2 = 0; for (const v of g) { s += v; s2 += v * v; }
+  const m = s / g.length, sd = Math.sqrt(Math.max(0, s2 / g.length - m * m));
+  let off = 0; for (const v of g) if (Math.abs(v - m) > 14) off++;
+  return sd < 6 || off / g.length < 0.02;
+}
+async function settleCut(why, before = null) {
+  if (!rec || !SETTLE.on) return false;
+  const url0 = page.url();
+  let shown = before;                                               // the frame the viewer saw last
+  if (!shown) { try { shown = await tiny(); } catch { return false; } }
+  await realtime();
+  const t0 = Date.now();
+  let prev = shown, calm = 0, moved = false, cur = shown;
+  try {
+    while (Date.now() - t0 < SETTLE.max) {
+      await sleep(SETTLE.poll);
+      try { cur = await tiny(); } catch { moved = true; calm = 0; continue; }   // mid-navigation
+      if (changedShare(shown, cur) > SETTLE.changed) moved = true;
+      calm = changedShare(prev, cur) < 0.005 && !blankish(cur) ? calm + 1 : 0;
+      prev = cur;
+      if (!moved && Date.now() - t0 >= 1500) break;                // nothing is coming: no cut
+      if (moved && calm >= SETTLE.stable) break;
+    }
+  } catch {}
+  await pause();
+  // a BIG change (> 35 % of the screen) is a new page/panel: the camera resets there; a small
+  // one (a dropdown, a toolbar) is a plain jump past the animation/loading, camera unchanged
+  if (moved) log("cut", { why, big: page.url() !== url0 || changedShare(shown, cur) > 0.35, waited: Math.round((Date.now() - t0) / 100) / 10 });
+  return moved;
+}
 async function holdUntil(sec) { while (rec && t() < sec - 1e-6) await step(); }
 async function hold(s) { const n = Math.round(s * FPS); for (let i = 0; i < n; i++) await step(); }
 function log(type, extra = {}) { const e = { t: t(), type, ...extra }; if (rec) rec.events.push(e); return e; }
@@ -105,6 +181,17 @@ async function load(url, settle = 2.5) {
   await realtime();
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
   await sleep(settle * 1000);
+  // a heavy app keeps drawing after domcontentloaded: wait (real time, unrecorded) until the
+  // screen is stable and not blank, so the first recorded frame of the new page is the page
+  try {
+    let prev = await tiny(), calm = 0; const t0 = Date.now();
+    while (Date.now() - t0 < SETTLE.max && calm < SETTLE.stable) {
+      await sleep(SETTLE.poll);
+      const cur = await tiny();
+      calm = changedShare(prev, cur) < 0.005 && !blankish(cur) ? calm + 1 : 0;
+      prev = cur;
+    }
+  } catch {}
   if (rec) await pause();         // off camera the page keeps real time (a WebGL editor needs it to load)
 }
 
@@ -153,11 +240,11 @@ async function observe() {
   // after every observation and marked a healthy page as crashed (2026-10-06)
   let timer;
   const s = await Promise.race([
-    cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip: { x: 0, y: 0, width: CSS_W, height: CSS_H, scale: 2 / 3 } }),
+    cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 70, clip: { x: 0, y: 0, width: CSS_W, height: CSS_H, scale: 1 / SHOT_F } }),
     new Promise((_, rej) => { timer = setTimeout(() => { crashed = true; rej(new Error("screenshot timed out — the page was reopened; observe again")); }, 180000); }),
   ]).finally(() => clearTimeout(timer));
   fs.writeFileSync(shot, Buffer.from(s.data, "base64"));
-  return { t: t(), ...info, shot, cursor: [Math.round(cx), Math.round(cy)] };
+  return { t: t(), ...info, shot, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)] };
 }
 
 async function boxOf(ref) {
@@ -194,10 +281,10 @@ async function act(a) {
     }, label).catch(() => null);
     // coordinates come in SCREENSHOT pixels (the agent sees a 1280×720 shot of the 1920×1080 page)
     const raw = a.to || a.xy || (a.x != null && a.y != null ? [a.x, a.y] : null);
-    const xy = raw ? [raw[0] * 1.5, raw[1] * 1.5] : null;
+    const xy = raw ? [raw[0] * SHOT_F, raw[1] * SHOT_F] : null;
     // a spot on a canvas may carry "box" (screenshot px) = the whole design it belongs to:
     // the camera frames that, the cursor still goes to the spot
-    const ab = Array.isArray(a.box) && a.box.length === 4 && a.box.every((v) => Number.isFinite(v)) ? a.box.map((v) => v * 1.5) : null;
+    const ab = Array.isArray(a.box) && a.box.length === 4 && a.box.every((v) => Number.isFinite(v)) ? a.box.map((v) => v * SHOT_F) : null;
     if (!b && ab && ab[2] > 4 && ab[3] > 4) b = { x: ab[0], y: ab[1], width: ab[2], height: ab[3], tag: "region", text: "", href: null, blank: false, at: xy };
     if (!b && xy) b = { x: xy[0] - 1, y: xy[1] - 1, width: 2, height: 2, tag: "point", text: "", href: null, blank: false };
   }
@@ -209,11 +296,14 @@ async function act(a) {
       const e = log("click", { box: toCap(b), text: b.text });
       await moveTo(...c);
       if (rec) await hold(0.12);
+      let pre = null;
+      try { if (rec) pre = await tiny(); } catch {}
       await page.mouse.click(cx, cy, { clickCount: a.type === "dblclick" ? 2 : 1 }).catch(() => {});
       e.press = t();
       // let the page react on the frozen clock: a handful of frames
-      if (rec) await hold(0.3); else await sleep(300);
       if (b.href && b.blank) { log("nav", { url: b.href }); await load(b.href, a.settle ?? 2.5); }
+      else if (rec && a.cut !== false) await settleCut("click", pre);
+      if (rec) await hold(0.3); else await sleep(300);
       e.end = t();
       break;
     }
@@ -228,11 +318,26 @@ async function act(a) {
         while (rec && acc >= 1) { await step(); acc -= 1; }
       }
       e.end = t();
-      if (a.enter) { if (rec) await hold(0.25); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); }
+      if (a.enter) { if (rec) await hold(0.25); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); if (rec) { await hold(0.3); await settleCut("enter"); } }
       break;
     }
-    case "key": await page.keyboard.press(a.key); log("key", { key: a.key }); if (rec) await hold(0.2); break;
+    case "key": await pressCombo(a.key); log("key", { key: a.key }); if (rec) { await hold(0.2); if (a.key === "Enter") await settleCut("enter"); } break;
     case "scroll": {
+      if (a.zoom) {
+        // zoom an app canvas at a point (ctrl+wheel): result first, big — not a page scroll
+        const raw = a.to || (a.x != null ? [a.x, a.y] : [640, 360]);
+        await moveTo(raw[0] * SHOT_F, raw[1] * SHOT_F);
+        // "zoom": "in" | "out" with "steps" (1 step = 80 wheel units ≈ 2× on Linearity's canvas);
+        // a numeric "by" still works (negative = in)
+        const dir = a.zoom === "out" ? 1 : a.zoom === "in" ? -1 : Math.sign(a.by || -1);
+        const total = typeof a.zoom === "string" ? 80 * Math.max(1, Math.min(3, a.steps || 1)) : Math.abs(a.by || 80);
+        const n = Math.max(1, Math.round(total / 80));
+        await page.keyboard.down("Control");
+        for (let k = 0; k < n; k++) { await page.mouse.wheel({ deltaY: dir * total / n }); if (rec) await hold(0.1); else await sleep(250); }
+        await page.keyboard.up("Control");
+        log("cut", { why: "canvas zoom", big: true });
+        break;
+      }
       const e = log("scroll", { by: a.by });
       const n = Math.max(1, Math.round(Math.abs(a.by) / 200));
       for (let k = 0; k < n; k++) { await page.mouse.wheel({ deltaY: a.by / n }); if (rec) await hold(0.4); }
@@ -241,8 +346,9 @@ async function act(a) {
     }
     case "read": case "highlight": {
       const markable = a.type === "highlight" && !["input", "textarea", "select", "img", "video", "canvas"].includes(b.tag) && b.text;
-      const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text });
-      if (rec) await hold((a.ms ?? 2000) / 1000);
+      const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text, ...(a.deep ? { deep: true } : {}) });
+      // a beat is a calm screen (SYSTEM.md §2): never shorter than ~1.8 s
+      if (rec) await hold(Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000);
       e.end = t();
       break;
     }
@@ -274,6 +380,15 @@ async function act(a) {
   return { ok: true, t: t() };
 }
 
+async function pressCombo(k) {
+  // "Shift+1", "Control+0", "Meta+a" → modifiers held around the key
+  const parts = String(k).split("+").filter(Boolean);
+  if (parts.length < 2) return page.keyboard.press(k);
+  const mods = parts.slice(0, -1).map((m) => ({ ctrl: "Control", cmd: "Meta", alt: "Alt", shift: "Shift" }[m.toLowerCase()] || m));
+  for (const m of mods) await page.keyboard.down(m);
+  await page.keyboard.press(parts[parts.length - 1]);
+  for (const m of mods.reverse()) await page.keyboard.up(m);
+}
 async function startSegment(dir) {
   const full = path.join(workdir, dir);
   fs.mkdirSync(full, { recursive: true });

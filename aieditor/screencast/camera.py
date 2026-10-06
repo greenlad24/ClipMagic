@@ -21,18 +21,24 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 
 DEFAULTS = {
-    # reference 2 (kwysV2smgfY) screen camera — kwys-screencast.json, 29.97 fps frames
+    # reference 2 (kwysV2smgfY) screen camera — kwys-screencast.json, 29.97 fps frames.
+    # The SYSTEM values (motion/screencast_system.json ["camera"], SYSTEM.md) override these.
     "zoom_in_ease": [0.31, 0.10, 0.22, 1.0],      # on LOG zoom, rms 0.001–0.004 (15/17)
-    "zoom_in_frames": 43, "zoom_in_frames_big": 56, "big_zoom": 1.4,
+    "zoom_in_frames": 43, "zoom_in_frames_big": 56, "big_zoom": 1.45,
     "zoom_out_ease": [0.345, 0.0, 0.33, 0.91], "zoom_out_frames": 50,
-    "zoom_min": 1.13, "zoom_max": 1.6, "zoom_cap": 2.0,
+    # zoom-in levels: reference median 1.37 (IQR 1.31–1.46), > 1.6 in 1 of 22 moves (a table row)
+    "zoom_min": 1.25, "zoom_max": 1.45, "zoom_cap": 1.6, "zoom_deep": 2.0,
     "entry_zoom": 1.36, "entry_delay_frames": 1.5, "entry_frames": 40,
-    "fit": 0.55,                  # the target fills at most this much of the view
+    "fit": 0.62,                  # the target fills at most this much of the view
     "readable_px": 34,            # a target already this tall on screen needs no zoom
     "lead_s": 0.6,                # the move starts this long before its event
-    "hold_min_s": 1.2,            # never re-frame sooner (the reference averages one move / 13–17 s, but narration-timed beats come faster)
-    "idle_out_s": 9.0,            # no target for this long → zoom back out
+    "hold_min_s": 3.0,            # never re-frame sooner (reference holds: median 13.7 s, p25 6.6 s, 2 of 27 < 1.5 s)
+    "moves_per_min_max": 6.0,     # rolling 60 s move budget (reference 3.1–4.1 moves / min of screencast)
+    "cluster_s": 6.0,             # one framing covers the targets of the next few seconds when it can
+    "idle_out_s": 14.0,           # no target for this long → zoom back out
     "nav_resets": True,           # a page change is a hard cut back to the full frame
+    "nav_click_window_s": 2.5,    # a click followed by a page change this soon is a NAVIGATION click: not a zoom target
+    "blank_std": 7.0, "blank_content": 0.025,     # a loading/blank source frame → hold the last good frame
     "cursor_smooth_s": 0.0,       # the reference cursor is native, unsmoothed
     "cursor_scale": 1.0,
     # yellow marker wipe (kwys-annotations-layouts.json)
@@ -53,12 +59,13 @@ REF_FPS = 30000 / 1001
 
 def params():
     p = dict(DEFAULTS)
-    kf = HERE.parent / "motion" / "keyframes.json"
-    try:
-        sc = json.loads(kf.read_text()).get("screencast", {}).get("camera", {})
-        p.update({k: v for k, v in sc.items() if k in DEFAULTS})
-    except Exception:  # noqa: BLE001
-        pass
+    for src in (HERE.parent / "motion" / "keyframes.json", HERE.parent / "motion" / "screencast_system.json"):
+        try:
+            d = json.loads(src.read_text())
+            sc = (d.get("screencast") or {}).get("camera", {}) if "screencast" in d else d.get("camera", {})
+            p.update({k: v for k, v in sc.items() if k in DEFAULTS})
+        except Exception:  # noqa: BLE001
+            pass
     return p
 
 
@@ -101,19 +108,32 @@ def clamp(z, cx, cy, W, H):
     return z, min(max(cx, hw), W - hw), min(max(cy, hh), H - hh)
 
 
-def framing_for(box, W, H, p):
+def framing_for(box, W, H, p, deep=False):
+    """(zoom, cx, cy) for a target: the reference's levels (1.25–1.5, 1.6 cap; 2.0 only for a
+    small detail the narration reads out = `deep`), centred on it, clamped into the frame."""
     x, y, bw, bh = box
     # a POINT target (the agent framed a spot on a canvas) means "this design here", not a
     # 2-px box to zoom to the 2× cap: give it a design-sized area around the point
     mw, mh = W * 0.24, H * 0.30
     if bw < mw and bh < mh and bw * bh < 400:
         x, y, bw, bh = x + bw / 2 - mw / 2, y + bh / 2 - mh / 2, mw, mh
-    z = min(p["zoom_cap"], p["fit"] * W / max(bw, 1), p["fit"] * H / max(bh, 1))
+    cap = p["zoom_deep"] if deep else p["zoom_cap"]
+    z = min(cap, p["fit"] * W / max(bw, 1), p["fit"] * H / max(bh, 1))
     if z < p["zoom_min"] * 0.9:
         # a target this big (a whole section / the page) is not a zoom target: full frame
         return (1.0, W / 2, H / 2)
-    z = min(max(z, p["zoom_min"]), p["zoom_max"] if z < p["zoom_cap"] else p["zoom_cap"])
+    # the v5 defect: every small target went straight to the 2.0 cap (69 % of zoom-ins);
+    # the reference sits at 1.31–1.46 and goes past 1.6 once in 11 minutes
+    z = min(max(z, p["zoom_min"]), cap if deep else p["zoom_max"])
     return clamp(z, x + bw / 2, y + bh / 2, W, H)
+
+
+def union(boxes):
+    x0 = min(b[0] for b in boxes)
+    y0 = min(b[1] for b in boxes)
+    x1 = max(b[0] + b[2] for b in boxes)
+    y1 = max(b[1] + b[3] for b in boxes)
+    return [x0, y0, x1 - x0, y1 - y0]
 
 
 def avoid_bubble(view, box, W, H, p):
@@ -135,12 +155,14 @@ def avoid_bubble(view, box, W, H, p):
     return view
 
 
-def in_view(box, view, W, H, out_h, p):
-    """The target is inside the current view and already readable on screen."""
+def in_view(box, view, W, H, out_h, p, readable=True):
+    """The target is inside the current view (and, with `readable`, already readable on screen)."""
     z, cx, cy = view
     vw, vh = W / z, H / z
     x, y, bw, bh = box
     inside = x >= cx - vw / 2 and x + bw <= cx + vw / 2 and y >= cy - vh / 2 and y + bh <= cy + vh / 2
+    if not readable:
+        return inside
     return inside and bh * z * out_h / H >= p["readable_px"] * out_h / 1080 and z > 1.05
 
 
@@ -186,28 +208,67 @@ def drop_empty_targets(ev, raw, f0, fps, p):
     return dropped
 
 
+def page_changes(ev):
+    """Clip seconds where the screen became a different page: navigations and the recorder's
+    settle cuts (a click whose result loaded off camera = a jump cut, like the reference's)."""
+    return sorted(e["t"] for e in ev["events"] if (e["type"] == "nav" or (e["type"] == "cut" and e.get("big", True)))
+                  and e["t"] > 0.05)
+
+
 def plan_moves(ev, fps, f0, n_frames, p):
-    """[(start_frame, frames, view_from, view_to, ease)] — reference 2's camera: an entry
-    push-in, then one eased move per target that is not already well framed, zoom-outs
-    on idle; a page change is a hard cut back to the full frame."""
+    """[(start_frame, frames, view_from, view_to, ease, box)] — reference 2's camera (SYSTEM.md §3):
+    an entry push-in, then eased moves to the targets the narration is about, never sooner
+    than hold_min_s after the last one and within a rolling per-minute budget; one framing
+    covers the next few seconds of targets when it can; a page change is a hard cut back
+    to the full frame (then a fresh push-in); navigation clicks are not zoom targets."""
     W, H = ev["capture"]["w"], ev["capture"]["h"]
     k = fps / REF_FPS                        # reference frames → this clip's frames
     full = (1.0, W / 2, H / 2)
-    focus = [e for e in ev["events"] if e.get("box") and not e.get("empty")
-             and e["type"] in ("click", "type", "read", "highlight", "move", "hover")]
-    navs = [e["t"] for e in ev["events"] if e["type"] == "nav" and e["t"] > 0.05]
+    pages = page_changes(ev)
     scrolls = [e["t"] for e in ev["events"] if e["type"] == "scroll"]
+
+    def nav_click(e):
+        return e["type"] == "click" and any(0 <= c - e["t"] <= p["nav_click_window_s"] + (e.get("end", e["t"]) - e["t"])
+                                            for c in pages)
+    focus = [e for e in ev["events"] if e.get("box") and not e.get("empty")
+             and e["type"] in ("click", "type", "read", "highlight", "move", "hover") and not nav_click(e)]
     moves, view, last_move_end = [], full, -1e9
+    starts = []                               # move start frames (the rolling budget)
+
+    def budget_ok(s0):
+        # rolling budget over a 30 s window (a 30 s clip may not spend a whole minute's moves)
+        recent = [x for x in starts if s0 - 30 * fps < x <= s0]
+        return len(recent) < p["moves_per_min_max"] / 2
+
+    def framing(e, t):
+        # one framing for this target and the ones right after it on the same page, when the
+        # union still zooms: fewer, calmer moves (reference: one move per 13–17 s)
+        nxt_page = next((c for c in pages if c > t), 1e9)
+        group = [e["box"]]
+        for o in focus:
+            if t < o["t"] <= min(t + p["cluster_s"], nxt_page) and o is not e:
+                cand = framing_for(union(group + [o["box"]]), W, H, p)
+                if cand[0] < p["zoom_min"] - 1e-6:
+                    break
+                group.append(o["box"])
+        box = union(group)
+        return avoid_bubble(framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1), box, W, H, p), box
+
     first = focus[0] if focus else None
-    # entry push-in toward the first target (or the centre)
-    if first is None or first["t"] > 0.4:
-        tgt = framing_for(first["box"], W, H, p) if first else full
-        z = p["entry_zoom"]
-        v = clamp(z, tgt[1], tgt[2], W, H) if first else (z, W / 2, H / 2)
+    if first is None or first["t"] > 0.4 or framing(first, first["t"])[0][0] <= 1.0:
+        # entry push-in toward the first target's area (or the centre) — reference: every span
+        # that starts unzoomed pushes in to ~1.36× from its 1st–2nd frame
+        if first is not None and (not pages or first["t"] < pages[0]):
+            tgt, box = framing(first, first["t"])
+            cxy = (tgt[1], tgt[2]) if tgt[0] > 1.0 else (box[0] + box[2] / 2, box[1] + box[3] / 2)
+            v = clamp(p["entry_zoom"], *cxy, W, H)
+        else:
+            v, box = (p["entry_zoom"], W / 2, H / 2), None
         s0 = f0 + p["entry_delay_frames"] * k
-        moves.append((s0, p["entry_frames"] * k, view, v, "in", first["box"] if first else None))
+        moves.append((s0, p["entry_frames"] * k, view, v, "in", box))
+        starts.append(s0)
         view, last_move_end = v, s0 + p["entry_frames"] * k
-    cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in navs]
+    cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in pages]
                   + [(t, "scroll", None) for t in scrolls], key=lambda c: c[0])
     last_target_end = 0.0
     for t, kind, e in cues:
@@ -219,26 +280,47 @@ def plan_moves(ev, fps, f0, n_frames, p):
                 view, last_move_end = full, fr + p["zoom_out_frames"] * k
             continue
         if kind == "nav":
-            if p["nav_resets"]:
+            if p["nav_resets"] and view != full:
                 moves.append((fr, 0, view, full, "cut"))
-                view, last_move_end = full, fr
+            view, last_move_end = full, min(last_move_end, fr)
+            last_target_end = t
             continue
+        end = e.get("end", t)
         if t - last_target_end > p["idle_out_s"] and view[0] > 1.0 and fr - last_move_end > p["zoom_out_frames"] * k:
             s0 = f0 + (last_target_end + 1.0) * fps
             moves.append((s0, p["zoom_out_frames"] * k, view, full, "out"))
+            starts.append(s0)
             view, last_move_end = full, s0 + p["zoom_out_frames"] * k
-        last_target_end = max(last_target_end, e.get("end", t))
-        if in_view(e["box"], view, W, H, 1080, p):
+        last_target_end = max(last_target_end, end)
+        if view[0] > 1.05 and in_view(e["box"], view, W, H, 1080, p, readable=False):
             continue
-        tgt = avoid_bubble(framing_for(e["box"], W, H, p), e["box"], W, H, p)
+        tgt, box = framing(e, t)
+        if tgt == view or tgt[0] <= 1.0:          # a whole-page target never pulls the camera out
+            continue
         dur = (p["zoom_in_frames_big"] if tgt[0] > p["big_zoom"] else p["zoom_in_frames"]) * k
-        s0 = max(fr - p["lead_s"] * fps, last_move_end + p["hold_min_s"] * fps * (0 if view == full else 1),
-                 f0 + p["entry_delay_frames"] * k)
-        if s0 > fr + 1.5 * fps:              # too late to matter: let it go
+        # out of a full frame (after a cut / at the start) the move may come at once; from a
+        # framed view the camera holds at least hold_min_s first
+        gap = 0 if view == full else p["hold_min_s"] * fps
+        last_cut = max([c for c in pages if c <= t + 1e-6], default=None)
+        s0 = max(fr - p["lead_s"] * fps, last_move_end + gap, f0 + p["entry_delay_frames"] * k,
+                 f0 + last_cut * fps + p["entry_delay_frames"] * k if last_cut is not None else 0)
+        if s0 > max(fr + 1.5 * fps, f0 + (end - 1.0) * fps):     # too late to matter: let it go
             continue
-        moves.append((s0, dur, view, tgt, "in" if tgt[0] >= view[0] else "out", e["box"]))
+        # a push-in out of the full frame right after a page cut is that screen's ENTRY (the
+        # reference opens every span this way) — it does not spend the move budget
+        entry = view == full and last_cut is not None and f0 + last_cut * fps >= (starts[-1] if starts else -1e9)
+        if entry and t - last_cut <= 1.5:
+            # the reference re-targets by JUMP CUT more often than by a move: a new screen that
+            # is about this target lands already framed, on the cut itself
+            moves.append((f0 + last_cut * fps, 0, full, tgt, "cut", box))
+            view, last_move_end = tgt, f0 + last_cut * fps
+            continue
+        if not entry and not budget_ok(s0):
+            continue
+        moves.append((s0, dur, view, tgt, "in" if tgt[0] >= view[0] else "out", box))
+        if not entry:
+            starts.append(s0)
         view, last_move_end = tgt, s0 + dur
-    end = f0 + ev["end"] * fps
     return moves
 
 
@@ -276,6 +358,24 @@ def move_starts(moves):
 def active_targets(ev, t):
     return [e for e in ev["events"] if e.get("box") and e["type"] in ("click", "type", "read", "highlight", "move", "hover")
             and e["t"] - 0.3 <= t <= e.get("end", e["t"]) + 0.3]
+
+
+def is_blank(img, p):
+    """A loading / blank source frame: (almost) one flat colour (a spinner on white, an app
+    canvas still drawing, a page scrolled into nothing). Reference 2 never shows one (0.3 %)."""
+    h, w = img.shape[:2]
+    # judged on the CENTRE (15 % margins off): an app's chrome (header bar, side toolbar) stays
+    # drawn around a canvas that is still loading (2026-10-06: a grey Linearity canvas passed)
+    img = img[int(h * 0.15):int(h * 0.85), int(w * 0.15):int(w * 0.85)]
+    sm = cv2.resize(img, (160, 90), interpolation=cv2.INTER_AREA)
+    if float(sm.std()) < p["blank_std"]:
+        return True
+    q = (sm // 8).reshape(-1, 3).astype(np.int32)
+    key = q[:, 0] * 1024 + q[:, 1] * 32 + q[:, 2]
+    vals, cnt = np.unique(key, return_counts=True)
+    bg = vals[cnt.argmax()]
+    bgc = np.array([bg // 1024, (bg // 32) % 32, bg % 32]) * 8 + 4
+    return float((np.abs(sm.astype(np.int32) - bgc).max(axis=2) > 10).mean()) < p["blank_content"]
 
 
 # ── drawing ──────────────────────────────────────────────────────────────────
@@ -364,6 +464,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
                             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], stdin=subprocess.PIPE)
     fb = W * H * 3
     cur_src, frame_src, last = a - 1, None, None
+    good, held_src = None, []               # last non-blank source frame; output seconds held on it
     for o in range(n_out):
         f = a + int(o / ofps * fps + 1e-6)              # source frame shown at this output frame
         while cur_src < min(f, b - 1):
@@ -373,6 +474,13 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
                 break
             frame_src = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
             cur_src += 1
+            # a loading/blank frame never shows: the last good frame holds until the page
+            # has drawn (reads as the reference's jump cut past a load)
+            if is_blank(frame_src, p) and good is not None:
+                frame_src = good
+                held_src.append(cur_src)
+            else:
+                good = frame_src
         if frame_src is None:
             break
         f = min(f, cur_src)
@@ -470,7 +578,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         else:
             bl.append([t_, t_])
     scroll_t = [round(e["t"] - (t_from or 0), 3) for e in ev["events"] if e["type"] == "scroll"]
-    json.dump({"f0": f0, "moves": keys, "bubble_hide": spans, "blank": [b_ for b_ in bl if b_[1] - b_[0] >= 0.5],
+    json.dump({"f0": f0, "moves": keys, "bubble_hide": spans, "held_blank_frames": len(held_src), "blank": [b_ for b_ in bl if b_[1] - b_[0] >= 0.5],
                "scrolls": scroll_t,
                "params": p}, open(str(out) + ".camera.json", "w"), indent=1)
     return keys

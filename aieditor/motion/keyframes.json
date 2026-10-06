@@ -9512,5 +9512,244 @@
    },
    "tint_note": "solved per frame like card_portal_open (plate f5032, settled f5055, pink #FF2E9A)."
   }
+ },
+ "screencast": {
+  "about": "Screencast production SYSTEM (motion + rules, design-free) derived from reference 2 (kwysV2smgfY, Jake's own tutorial). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here.",
+  "source": "reference-specs/kwys-screencast.json (+ seg.txt shot segmentation, zoom_events.json) measured 2026-10-05/06",
+  "camera": {
+   "zoom_in_ease": [
+    0.31,
+    0.1,
+    0.22,
+    1.0
+   ],
+   "zoom_in_frames": 43,
+   "zoom_in_frames_big": 56,
+   "big_zoom": 1.45,
+   "zoom_out_ease": [
+    0.345,
+    0.0,
+    0.33,
+    0.91
+   ],
+   "zoom_out_frames": 50,
+   "zoom_min": 1.25,
+   "zoom_max": 1.45,
+   "zoom_cap": 1.6,
+   "zoom_deep": 2.0,
+   "entry_zoom": 1.36,
+   "entry_delay_frames": 1.5,
+   "entry_frames": 40,
+   "fit": 0.62,
+   "readable_px": 34,
+   "lead_s": 0.6,
+   "hold_min_s": 3.0,
+   "moves_per_min_max": 6.0,
+   "cluster_s": 6.0,
+   "idle_out_s": 14.0,
+   "nav_resets": true,
+   "nav_click_window_s": 2.5,
+   "blank_std": 7.0,
+   "blank_content": 0.025
+  },
+  "recorder": {
+   "settle_after_click": true,
+   "settle_changed_px": 0.03,
+   "settle_poll_ms": 500,
+   "settle_stable_polls": 2,
+   "settle_max_s": 25,
+   "min_beat_s": 2.5,
+   "type_cps": 18,
+   "cursor_move_ms": [
+    280,
+    1100
+   ]
+  },
+  "qa": {
+   "frame": {
+    "blank_share": 0.02,
+    "sparse_share": 0.08
+   },
+   "reference_spans_s": [
+    [
+     27.19,
+     57.36
+    ],
+    [
+     71.7,
+     89.46
+    ],
+    [
+     97.33,
+     115.18
+    ],
+    [
+     128.73,
+     146.71
+    ],
+    [
+     151.32,
+     164.7
+    ],
+    [
+     168.23,
+     228.8
+    ],
+    [
+     231.8,
+     249.55
+    ],
+    [
+     251.42,
+     298.26
+    ],
+    [
+     305.84,
+     378.81
+    ],
+    [
+     383.48,
+     419.19
+    ],
+    [
+     420.99,
+     442.21
+    ],
+    [
+     444.51,
+     452.02
+    ],
+    [
+     459.16,
+     477.71
+    ],
+    [
+     481.18,
+     538.04
+    ],
+    [
+     544.54,
+     552.49
+    ],
+    [
+     559.96,
+     637.2
+    ],
+    [
+     655.12,
+     658.29
+    ]
+   ],
+   "metrics": {
+    "screencast_share_pct": {
+     "ref": 74.9,
+     "band": [
+      65,
+      85
+     ],
+     "scale": 10,
+     "weight": 1.0
+    },
+    "span_median_s": {
+     "ref": 19.9,
+     "band": [
+      14,
+      35
+     ],
+     "scale": 8,
+     "weight": 0.5
+    },
+    "moves_per_min": {
+     "ref": 3.1,
+     "band": [
+      2.5,
+      6.0
+     ],
+     "scale": 3,
+     "weight": 2.0
+    },
+    "zoom_in_median": {
+     "ref": 1.37,
+     "band": [
+      1.28,
+      1.48
+     ],
+     "scale": 0.15,
+     "weight": 2.0
+    },
+    "deep_zoom_pct": {
+     "ref": 5.0,
+     "band": [
+      0,
+      10
+     ],
+     "scale": 15,
+     "weight": 1.5
+    },
+    "time_zoomed_pct": {
+     "ref": 62,
+     "band": [
+      45,
+      80
+     ],
+     "scale": 20,
+     "weight": 1.0
+    },
+    "mean_zoom": {
+     "ref": 1.24,
+     "band": [
+      1.15,
+      1.33
+     ],
+     "scale": 0.15,
+     "weight": 1.0
+    },
+    "hold_median_s": {
+     "ref": 13.7,
+     "band": [
+      4.0,
+      20.0
+     ],
+     "scale": 4,
+     "weight": 1.5
+    },
+    "short_holds_pct": {
+     "ref": 7.4,
+     "band": [
+      0,
+      12
+     ],
+     "scale": 15,
+     "weight": 1.0
+    },
+    "cuts_per_min": {
+     "ref": 7.2,
+     "band": [
+      2.0,
+      12.0
+     ],
+     "scale": 4,
+     "weight": 1.0
+    },
+    "blank_pct": {
+     "ref": 0.29,
+     "band": [
+      0,
+      1.0
+     ],
+     "scale": 3,
+     "weight": 2.5
+    },
+    "sparse_pct": {
+     "ref": 6.29,
+     "band": [
+      0,
+      12
+     ],
+     "scale": 15,
+     "weight": 1.0
+    }
+   }
+  }
  }
 }

@@ -54,7 +54,8 @@ def known_pages(profile, limit=25):
     hist = Path(profile) / "Default" / "History"
     if not hist.exists():
         return []
-    tmp = Path(profile).parent / "history-read.db"
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="aieditor-hist-")) / "history-read.db"   # never write beside a Scout profile
     try:
         shutil.copyfile(hist, tmp)             # the live file may be locked by the browser
         rows = sqlite3.connect(tmp).execute(
@@ -62,7 +63,7 @@ def known_pages(profile, limit=25):
     except sqlite3.Error:
         return []
     finally:
-        tmp.unlink(missing_ok=True)
+        shutil.rmtree(tmp.parent, ignore_errors=True)
     seen, out = set(), []
     for url, title, _ in rows:
         base = url.split("?")[0].split("#")[0].rstrip("/")
@@ -94,7 +95,8 @@ class Session:
         self.name = f"aieditor-agent-{uuid.uuid4().hex[:8]}"
         cmd = ["docker", "run", "-i", "--rm", "--name", self.name, "--cpuset-cpus", config.CPUSET, "--shm-size", "1g",
                "--memory", config.MEMORY, "-e", "AGENT_WEBGL=1",   # app canvases (Linearity's editor) need WebGL
-               "-v", f"{config.CODE / 'screencast'}:/app/screencast", "-v", f"{self.workdir}:/w"]
+               "-v", f"{config.CODE / 'screencast'}:/app/screencast", "-v", f"{config.CODE / 'motion'}:/app/motion:ro",
+               "-v", f"{self.workdir}:/w"]
         if profile_src:
             cmd += ["-v", f"{self.profile}:/prof"]
         cmd += [SC_IMAGE, "node", "/app/screencast/agent_rec.mjs", "/w"] + (["/prof"] if profile_src else [])
@@ -136,9 +138,31 @@ TIMING: every action has "at" = the clip second (from the narration times you ar
 word that describes it — the click lands on "click", the brand name appears as he names it. Never
 earlier than the current time. The page's clock is frozen between your steps, so think freely.
 
-THE CAMERA zooms to every element you click, hover, read or highlight — so act on the element the
-narration is about, and use "read" to frame something he is talking about without clicking it.
-Use "highlight" only for a short phrase of text he reads out.
+SHOT GRAMMAR (Jake's own reference tutorial — follow it, it is how the result is judged):
+- ONE BEAT PER IDEA. Each narration idea gets one calm screen: act once, then let it sit. Give a
+  read/hover at least 2.5 s ("ms": 2500+). Do NOT hop between several small targets within a few
+  seconds — the camera can only move about once every 4–10 s and ignores the rest.
+- WHAT THE CAMERA DOES: it zooms (1.25–1.5×) to the element you click/type/read/highlight and holds
+  there. So read/highlight targets must be MEANINGFUL BLOCKS the viewer should look at: a card, a
+  panel, a form, a design, a row of swatches — never a lone word, an icon, an empty area or bare
+  canvas. Give "deep": true only for a small detail he reads out (a table row, one price); it
+  zooms to 2×. Prefer the main content area; elements tucked in a corner (a logo, a sidebar link)
+  make a poor shot to hold on.
+- NAVIGATION IS A CUT: when a click opens another page or a big panel, the recorder cuts straight
+  to the loaded result (loading never shows). So just click; do not "hold" for a load. Never
+  show a spinner, a blank canvas or an empty page.
+- RESULT FIRST, BIG: when he talks about a result (designs, a campaign, a generated output), that
+  result is on screen from his first word — open the existing document. The camera frames it (it
+  pushes in on what you read), so do NOT fiddle with the app's own zoom: change it only when the
+  designs are small (thumbnails you can't read), ONCE and OFF CAMERA (in the set-up): scroll with
+  {"type":"scroll","zoom":"in","steps":1,"x":..,"y":..} at the centre of the designs he talks about
+  (1 step ≈ 2× closer). REQUIRED whenever a canvas shows its designs as small thumbnails (together
+  less than ~60 % of the screen, labels unreadable) — also on camera right after a canvas opens:
+  the zoom is instant and reads as a cut. Then leave the canvas alone (no zooming back and forth).
+- TYPING is shown live (cps 16–20), into the real field, then the result after a cut.
+- SCROLL only to reveal the thing he names, and never into empty/dark sections of a marketing page.
+- When the narration describes a step we cannot show for real (e.g. a sign-up while logged in),
+  show the closest honest thing (hover the button he names) — never wander.
 
 SAFETY: never delete anything, never buy/upgrade/checkout, never publish, share, invite, email or
 post, never change account, billing or security settings. Creating a brand, running an AI
@@ -148,18 +172,20 @@ account owner allows it ("it spends what it needs").
 PREFER WHAT EXISTS: when the narration SHOWS a result ("look at this", "here are the designs"),
 open a finished document that already exists instead of making a new one. Make something new only
 when the narration walks through making it. Long AI work: start it, then {"type":"wait_for",
-"text":"<text that appears when done>","show":2,"timeout":240} — the wait is cut out of the video.
+"text":"<text that appears when done>","show":1,"timeout":240} — the wait is cut out of the video.
 
 ACTION FIELDS (exactly these):
   click | dblclick | hover | move | read | highlight: {"ref": "r12"} (from the element list; or
       {"x": 640, "y": 300} for a spot on a canvas — SCREENSHOT pixels, 1280×720); read/highlight also
-      take "ms" (how long to hold). For a spot on a canvas ALSO give "box": [x, y, w, h] = the whole
-      design/artboard it belongs to (screenshot px), so the camera frames the design, not bare canvas
-  type: {"ref": "r5", "text": "what to type", "cps": 16, "enter": false}
-  key: {"key": "Escape" | "Enter" | "Tab" | "ArrowDown" ...}
-  scroll: {"by": 400}   (px, + = down)
-  wait_for: {"text": "text that appears when done", "show": 2, "timeout": 240, "gone": false}
-  hold: {"s": 1.5}      goto: {"url": "..."}
+      take "ms" (how long to hold) and optional "deep": true. For a spot on a canvas ALSO give
+      "box": [x, y, w, h] = the whole design/artboard it belongs to (screenshot px), so the camera
+      frames the design, not bare canvas
+  type: {"ref": "r5", "text": "what to type", "cps": 18, "enter": false}
+  key: {"key": "Escape" | "Enter" | "Tab" | "ArrowDown" | "Shift+1" ...}
+  scroll: {"by": 400}   (px, + = down). Canvas zoom: {"type":"scroll","zoom":"in","steps":1,"x":..,"y":..}
+      = ctrl+wheel at that spot, 1 step ≈ 2× — to make designs big on a canvas (off camera)
+  wait_for: {"text": "text that appears when done", "show": 1, "timeout": 240, "gone": false}
+  hold: {"s": 1.5}      goto: {"url": "..."}   (a goto is a cut too)
 Reply with ONE JSON object and nothing else:
 {"action": {"type": "...", "at": 3.4, ...fields above...}, "why": "<8 words>"}
 or {"done": true, "why": "..."} when the segment's narration is fully shown."""
@@ -200,7 +226,11 @@ def _call(content, system_blocks, max_tokens=1500):
 
 PREPARE = """OFF CAMERA, before the recording starts: get the app to the screen the segment should OPEN on, so
 its first frame already shows what the first words are about (for the opening of the video: the
-finished result itself, e.g. the finished campaign document — open it). Nothing you do now is
+finished result itself, e.g. the finished campaign document — open it; a canvas opens "fit all",
+which leaves designs as small thumbnails: zoom IN ONCE onto the designs he talks about
+({"type":"scroll","zoom":"in","steps":1} at their centre — never "out") so they fill most of the
+screen) — REQUIRED before you say ready if the designs are small thumbnails. If the
+segment opens on a page the previous segment left a dropdown/menu/typed text on, clean it up. Nothing you do now is
 recorded and "at" is ignored. The page runs in REAL time here: a heavy editor can take 10–20 s to
 draw after goto — {"type":"hold","s":6} really waits; do not navigate away from a page that is still
 loading. Reply {"ready": true} when the screen is right (also if it already is)."""
@@ -219,7 +249,7 @@ def prepare(sess, seg, said, system, log, max_steps=14):
             content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                                         "data": base64.b64encode(shot.read_bytes()).decode()}})
             shot.unlink(missing_ok=True)
-        items = "\n".join(f'{i["ref"]} {i["tag"]} "{i["text"]}" @{[round(v / 1.5) for v in i["box"]]}' for i in obs["items"][:200])
+        items = "\n".join(f'{i["ref"]} {i["tag"]} "{i["text"]}" @{[round(v / obs.get("f", 1.5)) for v in i["box"]]}' for i in obs["items"][:200])
         hist = "\n".join(f'- {json.dumps(h["a"])[:140]} → {h["r"]}' for h in history) or "(none)"
         pages = "\n".join(f"- {u}  ({t})" for u, t in getattr(sess, "pages", [])) or "(none known)"
         content.append({"type": "text", "text": f"""{PREPARE}
@@ -273,7 +303,7 @@ def record_segment(sess, seg, video, knowledge, out_rel, log=print, first=False)
         if not obs.get("ok", True) and "items" not in obs:
             history.append({"t": obs.get("t", 0), "action": {"type": "observe"}, "result": obs.get("error", "observe failed")})
             continue
-        items = "\n".join(f'{i["ref"]} {i["tag"]} "{i["text"]}" @{[round(v / 1.5) for v in i["box"]]}'
+        items = "\n".join(f'{i["ref"]} {i["tag"]} "{i["text"]}" @{[round(v / obs.get("f", 1.5)) for v in i["box"]]}'
                           for i in obs.get("items", [])[:200])
         shot = Path(sess.workdir) / Path(obs["shot"]).relative_to("/w") if obs.get("shot", "").startswith("/w") else None
         content = []
@@ -282,7 +312,8 @@ def record_segment(sess, seg, video, knowledge, out_rel, log=print, first=False)
                                                         "data": base64.b64encode(shot.read_bytes()).decode()}})
             shot.unlink(missing_ok=True)
         hist = "\n".join(f'- t={h["t"]:.1f}: {json.dumps(h["action"])[:160]} → {h["result"]}' for h in history[-10:]) or "(none yet)"
-        content.append({"type": "text", "text": f"""SEGMENT: {dur:.1f} s of screencast. The edit wants: {seg.get('intent', '')}
+        content.append({"type": "text", "text": f"""SEGMENT: {dur:.1f} s of screencast — about {max(2, round(dur / 5))} beats in all (one calm screen per idea).
+The edit wants: {seg.get('intent', '')}
 NARRATION (word@second from the segment start):
 {said}
 

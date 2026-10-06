@@ -63,6 +63,37 @@ try:
     v = camera.avoid_bubble((1.6, 1500, 400), [1700, 200, 300, 40], W, H, P)
     sx1 = (1700 + 300 - (v[1] - W / v[0] / 2)) / (W / v[0])
     check("avoid_bubble moves the target left of the bubble when it can", sx1 <= P["bubble_zone"][0] or v[1] == W - W / v[0] / 2)
+    # SYSTEM.md (reference 2): zoom levels, move budget, navigation cuts, blank frames
+    zs, _, _ = camera.framing_for([1200, 600, 60, 30], W, H, P)
+    check("a small target zooms to the reference band, not the 2x cap", P["zoom_min"] <= zs <= P["zoom_max"])
+    check("deep: true is the only way to 2x", camera.framing_for([1200, 600, 60, 30], W, H, P, deep=True)[0] == P["zoom_deep"])
+    evs = [{"t": 0, "type": "begin"}]
+    for k in range(12):                                  # a target every 0.8 s for ~10 s
+        evs.append({"t": 1.0 + 0.8 * k, "type": "read", "box": [200 + 150 * k, 300 + 60 * (k % 5), 120, 40], "end": 1.6 + 0.8 * k})
+    evs.append({"t": 12.0, "type": "click", "box": [30, 120, 300, 40], "end": 12.5})
+    evs.append({"t": 12.6, "type": "cut", "why": "click"})
+    evs.append({"t": 14.0, "type": "read", "box": [900, 500, 500, 300], "end": 17.0})
+    ev = {"capture": {"w": W, "h": H, "fps": 30.0}, "events": evs, "end": 20}
+    mv = camera.plan_moves(ev, 30.0, 0, 600, P)
+    eased = [m for m in mv if m[1] > 0]
+    check("at most 3 eased moves in any 30 s", len(eased) <= 3)
+    gaps = [(b[0] - (a[0] + a[1])) / 30 for a, b in zip(mv, mv[1:]) if a[1] > 0 and b[1] > 0 and a[3][0] > 1.0]
+    check("holds of at least hold_min_s between moves from a framed view", all(g >= P["hold_min_s"] - 0.05 for g in gaps))
+    check("the navigation click is not a zoom target", not any(m[5] == [30, 120, 300, 40] for m in mv if len(m) > 5))
+    check("a settle cut resets the camera with a hard cut", any(m[4] == "cut" and abs(m[0] - 12.6 * 30) < 1 for m in mv))
+    check("every zoom-in stays <= the cap", all(m[3][0] <= P["zoom_cap"] + 1e-6 for m in mv))
+    import numpy as np
+    white = np.full((1440, 2560, 3), 250, np.uint8)
+    check("a white loading frame is blank", camera.is_blank(white, P))
+    page = white.copy()
+    for y in range(200, 1200, 40):
+        page[y:y + 14, 300:2200] = 30                    # lines of text
+    check("a page with text is not blank", not camera.is_blank(page, P))
+    import qa
+    ideal = {k: (v["band"][0] + v["band"][1]) / 2 for k, v in qa.system()["qa"]["metrics"].items()}
+    check("QA: a video inside every band scores 100", qa.score(ideal)["score"] == 100.0)
+    check("QA: v5-like camera (2x, 16 moves/min) scores low",
+          qa.score({**ideal, "zoom_in_median": 2.0, "moves_per_min": 15.7, "deep_zoom_pct": 69})["score"] < 80)
     ok_cam = True
 except ImportError:
     ok_cam = False
