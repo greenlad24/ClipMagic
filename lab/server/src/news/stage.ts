@@ -19,7 +19,7 @@
  * this) is drawn from its presenter notes by the web's fallback.
  */
 import { callNewsModel } from "./ai.js";
-import { L, clip, clipList, spec } from "./textLimits.js";
+import { L, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 
 export const STAGE_KINDS = ["reveal", "stats", "versus", "flow", "timeline", "list", "quote"] as const;
 export type StageKind = (typeof STAGE_KINDS)[number];
@@ -194,6 +194,7 @@ RULES:
 6. eyebrow: ${spec(L.eyebrow)}, like a label ("WHAT HAPPENED", "WHO GETS IT", "THE CATCH").
 7. cover.heading: the story in everyday words, ${spec(L.coverHeading)}, with one *accent* — not the news headline copied. cover.lede: one sentence, ${spec(L.coverLede)}, why a regular person should care. cover.eyebrow: ${spec(L.eyebrow)} (e.g. "Model release", "Rumor", "Robotics").
 8. cues: for each → after the cover, in order, copy 3-6 words EXACTLY from the script where Jake should press it (the moment that beat's content starts being said). One cue per beat.
+9b. ${SHORT_WORDS}
 9. No banned hype words: game-changer, revolutionary, groundbreaking, unleash, supercharge, seamless.
 
 STORY: "${input.headline}"

@@ -127,6 +127,8 @@ export function DotField({ still }: { still: boolean }) {
   return <canvas ref={ref} aria-hidden />;
 }
 
+const titleSize = (h: string): string => { const n = h.replace(/\*/g, '').length; return n > 52 ? 't-xl' : n > 30 ? 't-l' : ''; };
+
 function TitleChapter({ c, diveId, still, active, presenter }: { c: Chapter; diveId: string; still: boolean; active: boolean; presenter: string }) {
   const d = c.data;
   const hero = d.heroClip;
@@ -140,7 +142,8 @@ function TitleChapter({ c, diveId, still, active, presenter }: { c: Chapter; div
       </div>
       <div className="dd2-wrap dd2-title" style={{ justifyContent: 'center' }}>
         <div><span className="dd2-chip"><span className="av">JD</span>{presenter}<span>· AI Deep Dive</span></span></div>
-        <h1 className="dd2-h1"><Accent text={c.heading} /><span className="full">.</span></h1>
+        {/* a long title is SET smaller by design (like the AI News cover), so it isn't squeezed to fit */}
+        <h1 className={`dd2-h1 ${titleSize(c.heading)}`}><Accent text={c.heading} /><span className="full">.</span></h1>
         {d.lede && <p className="dd2-lede">{d.lede}</p>}
         {!!d.agenda?.length && (
           <ol className="dd2-agenda">
@@ -286,12 +289,13 @@ function ArticleShowcase({ a, beat, diveId, still }: { a: ArticleData; beat: num
 function RevealCard({ card, shown, still }: { card: NonNullable<Chapter['data']['cards']>[number]; shown: boolean; still: boolean }) {
   const isNum = typeof card.countTo === 'number';
   const v = useCount(isNum ? (card.countTo as number) : 0, shown, still);
-  const words = !isNum && card.big.length > 8;
+  // two words never sit at the giant number size ("US Test" wrapped onto two 150px lines)
+  const words = !isNum && (card.big.length > 8 || (/\s/.test(card.big.trim()) && card.big.length > 5));
   return (
     <div className={`dd2-card t-${card.tone || 'dark'} ${shown ? '' : 'hid'}`}>
       <span className="q">?</span>
-      {card.tag && <span className="tag">{card.tag}</span>}
-      <div className="name">{card.name}</div>
+      {/* name and tag share a row, so a long name wraps before the tag instead of running under it */}
+      <div className="hd"><div className="name">{card.name}</div>{card.tag && <span className="tag">{card.tag}</span>}</div>
       {card.note && <div className="note">{card.note}</div>}
       <div className={`big ${words ? 'words' : ''}`}>
         {isNum
@@ -393,17 +397,24 @@ export interface ChapterProps {
  * the AI News story cover (daily/stage/StoryShow.tsx), which is a `.dd2-title`.
  */
 export const SHOW_FIT: FitTarget[] = [
-  { sel: '.dd2-title' },
-  { sel: '.dd2-h', min: 0.55 },
-  { sel: '.dd2-tabs', min: 0.6 },
-  { sel: '.dd2-body' },
-  { sel: '.dd2-cards', items: '.dd2-card' },
-  { sel: '.dd2-flow', items: '.dd2-beat' },
-  { sel: '.dd2-vs' },
-  { sel: '.dd2-field .ov' },
-  { sel: '.dd2-facts', items: '.dd2-fact' },
-  { sel: '.dd2-takes', items: '.dd2-take .b' },
-  { sel: '.dd2-end', min: 0.6 },
+  // Floors (Jake, 2026-10-06: "readable and big, but not overlap"): a nudge, not a shrink.
+  // The title / cover headline (10.5u / 7.6u) gives way first, never below the
+  // size of a chapter heading; only then the rest of the title column.
+  { sel: '.dd2-title .dd2-h1', within: '.dd2-title', min: 0.75 },
+  { sel: '.dd2-title', min: 0.9, last: true },
+  { sel: '.dd2-h', min: 0.9 },
+  { sel: '.dd2-tabs', min: 0.85 },
+  { sel: '.dd2-body', min: 0.85 },
+  { sel: '.dd2-cards', items: '.dd2-card', min: 0.85 },
+  { sel: '.dd2-flow', items: '.dd2-beat', min: 0.85 },
+  { sel: '.dd2-vs', min: 0.85 },
+  { sel: '.dd2-field .ov', min: 0.9 },
+  { sel: '.dd2-facts', items: '.dd2-fact', min: 0.9 },
+  { sel: '.dd2-takes', items: '.dd2-take .b', min: 0.85 },
+  { sel: '.dd2-end', min: 0.85 },
+  // Last resort before anything is cut: a card's GIANT number (8u ≈ 150px) gives
+  // way first — at 0.7 it is still the biggest thing on the slide.
+  { sel: '.dd2-card .big', within: '.dd2-card', min: 0.7, last: true },
 ];
 
 export function ChapterView({ chapter: c, index, beat, diveId, active, still = false, paper = false, presenter = 'Jake Dawson', onBeat, onRunLive }: ChapterProps) {
@@ -557,7 +568,7 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
     case 'list': {
       const items = d.items ?? [];
       body = (
-        <div className={`dd2-list ${d.image ? '' : 'noimg'}`}>
+        <div className={`dd2-list ${d.image ? '' : 'noimg'} ${items.length >= 5 ? 'dense' : ''}`}>
           <ul>
             {items.map((t, k) => (
               <li key={k} className={`${still || k <= beat ? 'on' : ''} ${!still && k === beat ? 'cur' : ''}`} onClick={() => onBeat?.(k)}>

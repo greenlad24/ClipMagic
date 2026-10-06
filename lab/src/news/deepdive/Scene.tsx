@@ -240,10 +240,10 @@ function SceneBody({ section, still, active, beat }: { section: Section; still: 
           <div className="dd-tl">
             {/* With beats the line grows to the current event; without, it draws once. */}
             <div className={`dd-tl-line ${b !== undefined ? 'stepped' : ''}`}
-              style={b !== undefined ? { transform: `scaleX(${n <= 1 ? 1 : Math.min(1, (8 + (84 * Math.min(b, n - 1)) / (n - 1)) / 100)})` } : undefined} />
+              style={b !== undefined ? { transform: `scaleX(${n <= 1 ? 1 : Math.min(1, (9.5 + (81 * Math.min(b, n - 1)) / (n - 1)) / 100)})` } : undefined} />
             {ev.map((e, i) => {
-              // Evenly spaced, inset from the ends so the outer labels fit.
-              const left = n === 1 ? 50 : 8 + (84 * i) / (n - 1);
+              // Evenly spaced, inset from the ends so the outer cards (15u wide) stay inside the line.
+              const left = n === 1 ? 50 : 9.5 + (81 * i) / (n - 1);
               const g = gate(i, 450 + i * (1300 / Math.max(1, n)));
               return (
                 <div key={i} className={`dd-tl-ev ${i % 2 === 0 ? 'up' : 'down'} ${g.cls}`} style={{ left: `${left}%` }}>
@@ -414,10 +414,12 @@ interface SceneProps {
 
 /** The classic slide's boxes whose text is fitted (./fitText.ts), outer → inner. */
 const SCENE_FIT: FitTarget[] = [
-  { sel: '.dd-scene' },
-  { sel: '.dd-stats', items: '.dd-stat' },
-  { sel: '.dd-cmp', items: '.dd-cmp-cell' },
-  { sel: '.dd-lower', min: 0.6 },
+  // floors: a nudge, not a shrink (Jake: "readable and big, but not overlap")
+  // (the title's rings bleed off the right edge by design — only height counts for the scene itself)
+  { sel: '.dd-scene', min: 0.85, axis: 'y' },
+  { sel: '.dd-stats', items: '.dd-stat', min: 0.9 },
+  { sel: '.dd-cmp', items: '.dd-cmp-cell', min: 0.85 },
+  { sel: '.dd-lower', min: 0.85 },
 ];
 
 /** One section, with its chrome (counter, eyebrow line, footer). */

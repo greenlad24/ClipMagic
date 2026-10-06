@@ -26,7 +26,7 @@ import { callNewsModel } from "./ai.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
 import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { fitMarkers } from "./deepDiveBeats.js";
-import { L, clip, clipList, spec } from "./textLimits.js";
+import { L, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 import {
   deepDives, deepDiveSections, sectionsOf, setGenerating, isGenerating,
   research, parseJsonReply, findSectionVideo, splitScripts,
@@ -172,6 +172,7 @@ RULES:
 5. "notes": one note per BEAT, in order, for the scriptwriter: what Jake says while that beat is on screen, with the specific facts. The number of notes = the number of beats (demo: total steps; clip: clips; article: highlights; reveal: cards (+1 if good/bad); stats/versus/flow/timeline/list/takeaways: items; title/quote: 1).
 6. Every number, date, name and quote comes from the research or the material. Nothing invented.
 7. Only use ids that exist above. Do not use the same clip or screenshot twice.
+8b. ${SHORT_WORDS}
 8. Plain words. On-screen text is short; the explaining happens out loud.
 
 Reply with ONLY this JSON (no markdown):

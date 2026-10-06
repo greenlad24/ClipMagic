@@ -27,7 +27,7 @@ import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { findVideoForStory, parseVideoId } from "./video.js";
 import { gatherVisuals, type Visual } from "./deepDiveVisuals.js";
 import { fitMarkers, sectionBeatCountOf } from "./deepDiveBeats.js";
-import { L, clip, clipList, spec } from "./textLimits.js";
+import { L, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS news_deep_dives (
@@ -583,6 +583,7 @@ RULES:
 5. Every number, date, name and quote must come from the research. Nothing invented. Rumors get "Rumor:" or "Unconfirmed" in the eyebrow.
 6. "eyebrow" = a 1-3 word label above the heading (e.g. "The numbers", "How we got here"). "heading" = ${spec(L.headingV1)} (for "statement" and "quote" the heading is a short label; the big text is in data).
 7. "beats" = 2-4 notes for the scriptwriter: what Jake should say on this section, with the specific facts to use.
+8b. ${SHORT_WORDS}
 8. Plain words. No jargon unless it's the official name the story is about.
 
 Reply with ONLY this JSON (no markdown):

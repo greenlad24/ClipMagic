@@ -29,7 +29,18 @@ export interface FitTarget {
   sel: string;
   /** The boxes that must fit (default: the target itself) — e.g. every card of a row, so the row shares one size. */
   items?: string;
-  /** Smallest factor (default 0.5). */
+  /** Instead: the box that must fit is this ancestor (e.g. a headline is scaled, but it's the title column that must fit). */
+  within?: string;
+  /** Fit after every other box (a fallback that scales a whole column only if its headline couldn't make room). */
+  last?: boolean;
+  /** 'y': only height counts for the box itself (its decoration bleeds sideways by design); long words still count. */
+  axis?: 'y';
+  /**
+   * Smallest EFFECTIVE factor (default 0.85) — inherited factors count, so a
+   * card inside a shrunk body never compounds below it. Jake 2026-10-06: "I
+   * want the text to be readable and big" — shrinking is a small final nudge;
+   * the room comes from layout and shorter generated text.
+   */
   min?: number;
 }
 
@@ -55,17 +66,19 @@ function wideWord(box: HTMLElement): boolean {
     // in a card's number) — not a clipping frame like a demo's screen
     const own = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent?.trim());
     if (!own && (cs.overflowX !== 'visible' || !el.textContent?.trim())) continue;
+    // a box holding a picture: a tilted screenshot frame pokes out a few px by design
+    if (!own && el.querySelector('img, video, iframe, canvas')) continue;
     if (cs.textOverflow === 'ellipsis' || cs.whiteSpace === 'nowrap' || cs.whiteSpace === 'pre') continue;
     return true;
   }
   return false;
 }
 
-function fitsAll(items: HTMLElement[]): boolean {
+function fitsAll(items: HTMLElement[], axis?: 'y'): boolean {
   for (const el of items) {
     if (!el.isConnected || el.clientWidth === 0) continue;
     const o = overflows(el);
-    if (o.w > TOL || o.h > TOL || wideWord(el)) return false;
+    if ((o.w > TOL && axis !== 'y') || o.h > TOL || wideWord(el)) return false;
   }
   return true;
 }
@@ -87,7 +100,10 @@ function clampable(box: HTMLElement): HTMLElement[] {
     if (!own(el) || el.hasAttribute(CLAMPED)) continue;
     const d = getComputedStyle(el).display;
     if (d === 'inline' || d === 'contents' || d === 'none' || d.includes('grid') || d.includes('flex')) continue;
+    if (getComputedStyle(el).whiteSpace === 'nowrap') continue;
     if (el.getBoundingClientRect().height < lineHeight(el) * 1.8) continue;
+    // never a counted number (sized count-up: the cells of an inline-grid)
+    if (el.parentElement && getComputedStyle(el.parentElement).display === 'inline-grid') continue;
     out.push({ el, fs: parseFloat(getComputedStyle(el).fontSize) });
   }
   return out.sort((a, b) => a.fs - b.fs).map((x) => x.el);
@@ -128,22 +144,24 @@ export function fitText(root: HTMLElement | null, targets: FitTarget[]): void {
     for (const el of found) boxes.push({ el, t });
   }
   // outer → inner: document order puts an ancestor before its descendants
-  boxes.sort((a, b) => (a.el === b.el ? 0 : a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  boxes.sort((a, b) => (+!!a.t.last - +!!b.t.last) || (a.el === b.el ? 0 : a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
   for (const b of boxes) b.el.style.removeProperty('--fit');
   for (const { el, t } of boxes) {
-    const items = t.items ? [...el.querySelectorAll<HTMLElement>(t.items)] : [el];
+    const up = t.within ? el.parentElement?.closest<HTMLElement>(t.within) : null;
+    const items = up ? [up] : t.items ? [...el.querySelectorAll<HTMLElement>(t.items)] : [el];
     if (!items.length) continue;
     el.setAttribute('data-fitting', '');
     const base = inherited(el);
-    if (!fitsAll(items)) {
-      let lo = t.min ?? 0.5, hi = 1, best = lo;
+    if (!fitsAll(items, t.axis)) {
+      const floor = Math.min(1, (t.min ?? 0.85) / base);
+      let lo = floor, hi = 1, best = floor;
       for (let i = 0; i < 7; i++) {
         const mid = (lo + hi) / 2;
         el.style.setProperty('--fit', String(+(base * mid).toFixed(4)));
-        if (fitsAll(items)) { best = mid; lo = mid; } else hi = mid;
+        if (fitsAll(items, t.axis)) { best = mid; lo = mid; } else hi = mid;
       }
       // a hair of slack: the measured fit is exact, and real wrapping (overflow-wrap: anywhere) is less forgiving
-      el.style.setProperty('--fit', String(+(base * best * 0.97).toFixed(4)));
+      el.style.setProperty('--fit', String(+(base * Math.max(floor, best * 0.97)).toFixed(4)));
     }
     el.removeAttribute('data-fitting');
     for (const it of items) if (it.clientWidth > 0 && overflows(it).h > TOL) clampToFit(it);

@@ -287,8 +287,11 @@
 /* ── TEXT ALWAYS FITS ITS BOX (Jake, 2026-10-06: "no text is going outside the box").
    ../fitText.ts shrinks the text of these boxes (`--fit`) until it fits; the
    rules here make each box a real, bounded box it can measure against. ── */
-/* a heading gets two lines at full size, three when it's long (it shrinks to fit) */
-.dd2-h { max-height: calc(var(--u) * 11); line-height: 1; }
+/* a heading may use three lines at full size before it shrinks at all */
+.dd2-h { max-height: calc(var(--u) * 16); line-height: 1; }
+/* a long title is set smaller by design (TitleChapter `titleSize`), as the AI News cover's l / xl */
+.dd2-h1.t-l { font-size: calc(var(--u) * 8 * var(--fit, 1)); max-width: 15ch; }
+.dd2-h1.t-xl { font-size: calc(var(--u) * 6.2 * var(--fit, 1)); max-width: 20ch; line-height: 1; }
 .dd2-h1 { line-height: .98; }
 /* rows share the space instead of growing past the stage */
 .dd2-cards { grid-auto-rows: minmax(0, 1fr); }
@@ -312,3 +315,14 @@
    always the page's 16px — fine on a 1080p stage, giant in a thumbnail and
    never fitted. Same look on the 1080p stage (16px ≈ .84u), now in --u. */
 .dd2 .dd2-tab { font-size: calc(var(--u) * .84 * var(--fit, 1)); }
+/* five list rows: a little less air between them, so the text keeps its size */
+.dd2-list.dense ul { gap: calc(var(--u) * .4); }
+.dd2-list.dense li { padding-top: calc(var(--u) * .95); padding-bottom: calc(var(--u) * .95); }
+/* a reveal card's name and tag share one row (the tag used to be absolute and a
+   long name ran under it); the tag keeps its old corner position. */
+/* not enough room for both: the tag moves up a line (still top-right) — nothing shrinks */
+.dd2-card .hd { display: flex; flex-wrap: wrap-reverse; align-items: flex-end; /* = top, under wrap-reverse */ justify-content: space-between; gap: calc(var(--u) * .6) calc(var(--u) * 1); min-width: 0; }
+.dd2-card .hd .name { min-width: 0; }
+.dd2-card .hd .tag { position: static; flex: none; white-space: nowrap; margin: calc(var(--u) * -.4) 0 0 auto; }
+/* the tag sits .4u further right than the name column (its old corner) — the row reaches into the padding, not the tag out of the row */
+.dd2-card .hd { margin-right: calc(var(--u) * -.4); }

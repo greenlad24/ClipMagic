@@ -14,6 +14,9 @@
  * also fit any text to its box (web deepdive/fitText.ts) — these limits are
  * what keeps that from having to shrink it.
  *
+ * Tightened 2026-10-06 (second pass) so generated text fits at FULL size —
+ * the screens only nudge text down a little (floors 0.85–0.9, fitText.ts).
+ *
  * Applied to GENERATED text only. An editor save (Jake typing) is never cut.
  */
 
@@ -21,49 +24,56 @@ export interface Limit { w: number; c: number }
 
 export const L = {
   /** a chapter / scene heading (v2, AI News) */
-  heading: { w: 6, c: 44 },
+  heading: { w: 6, c: 40 },
   /** a classic slide's heading */
   headingV1: { w: 8, c: 56 },
   /** the AI News story cover headline */
-  coverHeading: { w: 8, c: 56 },
+  coverHeading: { w: 7, c: 44 },
   /** the AI News cover's one-line "why you care" */
-  coverLede: { w: 16, c: 110 },
+  coverLede: { w: 14, c: 96 },
   /** the Deep Dive title chapter's lede / classic title subtitle */
   titleLede: { w: 18, c: 120 },
   agendaItem: { w: 4, c: 26 },
   eyebrow: { w: 4, c: 28 },
   island: { w: 3, c: 20 },
   flowLabel: { w: 2, c: 16 },
-  flowText: { w: 6, c: 40 },
+  flowText: { w: 5, c: 32 },
   cardName: { w: 3, c: 22 },
   cardTag: { w: 2, c: 14 },
   /** a card's big text when it's words, not a number */
   cardBig: { w: 3, c: 18 },
-  cardSmall: { w: 7, c: 46 },
-  cardNote: { w: 6, c: 40 },
+  cardSmall: { w: 6, c: 40 },
+  cardNote: { w: 5, c: 34 },
   gate: { w: 3, c: 22 },
-  statLabel: { w: 6, c: 40 },
+  statLabel: { w: 5, c: 34 },
   statDisplay: { w: 2, c: 10 },
   vsName: { w: 3, c: 22 },
-  vsLine: { w: 9, c: 60 },
-  vsPoint: { w: 5, c: 34 },
+  vsLine: { w: 8, c: 50 },
+  vsPoint: { w: 4, c: 28 },
   tlDate: { w: 3, c: 12 },
   tlLabel: { w: 4, c: 28 },
-  tlDetail: { w: 6, c: 42 },
-  listItem: { w: 7, c: 48 },
-  quote: { w: 24, c: 150 },
+  tlDetail: { w: 5, c: 36 },
+  listItem: { w: 6, c: 42 },
+  quote: { w: 20, c: 120 },
   who: { w: 4, c: 32 },
   role: { w: 6, c: 44 },
-  takeaway: { w: 8, c: 56 },
+  takeaway: { w: 7, c: 48 },
   /** demo step / clip / article highlight caption */
-  caption: { w: 7, c: 48 },
+  caption: { w: 6, c: 42 },
   /** classic: statement sentence, bullet, compare cell, bar label, media caption */
-  statement: { w: 16, c: 100 },
-  bullet: { w: 8, c: 56 },
+  statement: { w: 14, c: 90 },
+  bullet: { w: 7, c: 48 },
   cmpCell: { w: 5, c: 32 },
   barLabel: { w: 3, c: 22 },
   mediaCaption: { w: 10, c: 64 },
 } satisfies Record<string, Limit>;
+
+/**
+ * Said once in every prompt: the screens set text BIG (Jake, 2026-10-06: "I
+ * want the text to be readable and big, but not overlap"), so a long word in a
+ * narrow card can't fit at full size.
+ */
+export const SHORT_WORDS = "Use short everyday words on screen — no word longer than 12 letters in card, step or list text (a long word can't fit a card at full size).";
 
 /** "max 6 words / 40 characters" — what the prompts say. */
 export const spec = (l: Limit): string => `max ${l.w} words / ${l.c} characters`;
