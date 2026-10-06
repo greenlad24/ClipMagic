@@ -396,17 +396,18 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
    * frame and every real drag would land inside it.
    */
   var lastProgScroll = -1;
-  var seekTimer = null, pendingSeek = null;
+  var seekTimer = null, pendingSeek = null, pendingSeekIdx = 0;
   function publishScroll() {
     if (!sock || !scrollEl) return;
     if (Math.abs(scrollEl.scrollTop - lastProgScroll) <= 2) return; // that was us
     var max = scrollEl.scrollHeight - scrollEl.clientHeight;
     if (max <= 0) return;
     pendingSeek = Math.max(0, Math.min(1, scrollEl.scrollTop / max));
+    pendingSeekIdx = state.idx;
     if (seekTimer) return;
     seekTimer = setTimeout(function () {
       seekTimer = null;
-      if (pendingSeek !== null && sock) sock.emit('scroll-position', pendingSeek);
+      if (pendingSeek !== null && sock) sock.emit('scroll-position', { pos: pendingSeek, idx: pendingSeekIdx });
       pendingSeek = null;
     }, 120);
   }
@@ -426,7 +427,7 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     if (max <= 0) return;
     var stepPx = state.fontSize * state.lineHeight * 3;
     var here = positionNow();
-    sock.emit('scroll-position', Math.max(0, Math.min(1, here + direction * (stepPx / max))));
+    sock.emit('scroll-position', { pos: Math.max(0, Math.min(1, here + direction * (stepPx / max))), idx: state.idx });
   }
 
   function toggleFromFollower() {
@@ -460,6 +461,8 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     var from = clampIndex(state.idx, flat.length);
     var to = clampIndex(from + dir, flat.length);
     if (to === from) return;
+    if (seekTimer) { clearTimeout(seekTimer); seekTimer = null; }
+    pendingSeek = null;
     sock.emit('slide-index', sectionOf(to) === sectionOf(from) ? { idx: to, keepScroll: true } : to);
   }
 

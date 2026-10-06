@@ -231,7 +231,8 @@ export default function NotesPage() {
 
   // Reset teleprompter scroll on slide change — start paused so presenter controls when scrolling begins
   useEffect(() => {
-    if (teleprompterRef.current) teleprompterRef.current.scrollTop = 0;
+    // Marked as ours so the scrub listener does not publish it as a drag.
+    if (teleprompterRef.current) { lastProgScrollRef.current = 0; teleprompterRef.current.scrollTop = 0; }
     setTeleprompterPaused(true);
 
     // Sync source tab if latched on — navigate the existing tab, never reopen

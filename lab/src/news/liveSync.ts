@@ -126,6 +126,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   // but the FINAL resting position must always be sent or the screens part.
   let seekTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSeek: number | null = null;
+  let pendingSeekIdx = 0;   // the slide the scrub was made on — the server drops it once the room has moved on
 
   const api = {
     socket,
@@ -140,10 +141,11 @@ export function connectLiveSync(sessionId: string): LiveSync {
     },
     seek(fraction) {
       pendingSeek = Math.min(1, Math.max(0, fraction));
+      pendingSeekIdx = snapshot.idx;
       if (seekTimer) return;
       seekTimer = setTimeout(() => {
         seekTimer = null;
-        if (pendingSeek !== null) socket.emit('scroll-position', pendingSeek);
+        if (pendingSeek !== null) socket.emit('scroll-position', { pos: pendingSeek, idx: pendingSeekIdx });
         pendingSeek = null;
       }, 120);
     },
@@ -151,6 +153,9 @@ export function connectLiveSync(sessionId: string): LiveSync {
       socket.emit('scroll-speed', { scrollSpeed, rate });
     },
     setSlide(idx, beat) {
+      // A scrub still waiting to go out belongs to the slide being left (bottom of the old script).
+      if (seekTimer) { clearTimeout(seekTimer); seekTimer = null; }
+      pendingSeek = null;
       socket.emit('slide-index', typeof beat === 'number' ? { idx, beat } : idx);
     },
     // ⚠️ APPEARANCE IS SHARED STATE, NOT A LOCAL PREFERENCE. Width and size

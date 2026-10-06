@@ -39,6 +39,8 @@ import { sessions } from "./db.js";
 interface SyncState {
   /** Which slide is on screen. The news app is slide-based; the source app was one long script. */
   idx: number;
+  /** When the last slide change that reset the scroll happened (ms). */
+  resetAt?: number;
   /**
    * Scroll anchor at `anchorTime`, as a FRACTION of the script (0–1).
    *
@@ -225,9 +227,15 @@ export function attachNewsLiveSync(server: HttpServer): Server {
     });
 
     // ── An absolute scroll position — a drag, a wheel, a seek.
-    socket.on("scroll-position", (pos: unknown) => {
+    socket.on("scroll-position", (payload: unknown) => {
       const s = stateFor(sessionId);
-      s.position = Math.min(1, Math.max(0, num(pos, s.position)));
+      // ⚠️ A STALE SCRUB MUST NOT LAND ON THE NEXT SLIDE (Jake 2026-10-06: scrolled to the
+      // bottom, pressed →, and the new script opened at the bottom). Seeks are throttled, so
+      // the last one can arrive just after the slide change; each carries the slide it was
+      // made on, and one aimed at a slide the room has just left is dropped.
+      const obj = payload && typeof payload === "object" ? (payload as { pos?: unknown; idx?: unknown }) : null;
+      if (obj && typeof obj.idx === "number" && obj.idx !== s.idx && Date.now() - (s.resetAt ?? 0) < 3000) return;
+      s.position = Math.min(1, Math.max(0, num(obj ? obj.pos : payload, s.position)));
       s.anchorTime = Date.now();
       broadcast();
     });
@@ -275,6 +283,7 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       }
       s.position = 0;
       s.anchorTime = Date.now();
+      s.resetAt = s.anchorTime;
       // A new slide always opens on its article (the video closed).
       s.media = "article";
       s.beat = Math.max(0, Math.round(num(obj?.beat, 0)));
