@@ -369,6 +369,7 @@ async function buildStages(deckId: string, force: boolean): Promise<{ built: num
 
 export async function buildDeckFromStories(
   write: (chunk: string) => void | Promise<void>,
+  opts: { template?: string } = {},
 ): Promise<{ success: boolean; slidesCreated: number; deckId: string; message: string }> {
     const prog = async (msg: string, pct: number) => { await write(JSON.stringify({ message: msg, percent: pct })); };
 
@@ -389,10 +390,12 @@ export async function buildDeckFromStories(
     let deck = decks.where('deck_date = ? ORDER BY created_at DESC LIMIT 1', today)[0];
     if (deck) {
       for (const s of slides.where('deck_id = ?', deck.id)) slides.remove(s.id);
+      // Jake picks the template before every build (2026-10-06: "every new deck asks you for the template you want first")
+      if (opts.template !== undefined) decks.update(deck.id, { template: opts.template });
     } else {
-      // A new day's deck keeps the look Jake last picked (decks.template); none = his brand.
+      // A new day's deck takes the template picked for this build, else the look Jake last picked; none = his brand.
       const lastLook = decks.where("template IS NOT NULL AND template != '' ORDER BY created_at DESC LIMIT 1")[0]?.template ?? "";
-      deck = decks.insert({ deckDate: today, totalSlides: 0, template: lastLook });
+      deck = decks.insert({ deckDate: today, totalSlides: 0, template: opts.template ?? lastLook });
     }
 
     await prog(`Deck ready. Generating presenter notes + scripts for ${sorted.length} stories…`, 18);

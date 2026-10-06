@@ -230,7 +230,8 @@ export const toggleStoryInDeck = (input: { storyId: string; addedToDeck: boolean
 export const clearCache = (input: Record<string, never>) => call<{ success: boolean; cleared: number }>('clearCache', input);
 export const collectNews = (input: Record<string, never>) =>
   streamingCall<{ success: boolean; storiesFound: number; message: string }>('collectNews', input);
-export const buildDeckFromStories = (input: Record<string, never>) =>
+/** template: the design picked for this build (Jake picks it first, every build); omitted = keep the deck's. */
+export const buildDeckFromStories = (input: { template?: string }) =>
   streamingCall<{ success: boolean; slidesCreated: number; deckId: string; message: string }>('buildDeckFromStories', input);
 export const getSlides = (input: { deckId?: string }) => call<GetSlidesOutputType>('getSlides', input);
 /** The deck's design template (the Deep Dive's templates; '' = Jake's brand). No deckId = today's deck. */

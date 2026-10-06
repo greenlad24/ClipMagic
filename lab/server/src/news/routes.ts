@@ -577,7 +577,11 @@ const HANDLERS: Record<string, Handler> = {
 type Streamer = (write: (chunk: string) => void, input: any) => Promise<unknown>;
 const STREAMERS: Record<string, Streamer> = {
   collectNews,
-  buildDeckFromStories,
+  buildDeckFromStories: (write, input) => {
+    const template = input?.template === undefined ? undefined : templateInput(input.template);
+    if (input?.template !== undefined && template === undefined) throw Object.assign(new Error("Unknown template."), { status: 400 });
+    return buildDeckFromStories(write, { template });
+  },
   generateDeepDive,
 };
 

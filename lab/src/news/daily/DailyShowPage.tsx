@@ -21,6 +21,7 @@ import WorkflowBar from './WorkflowBar';
 import StoriesPane from './StoriesPane';
 import RundownPane from './RundownPane';
 import SlidePreviewDialog from './SlidePreviewDialog';
+import { DeckTemplateDialog } from './DeckLook';
 import { useDailyShow, type StoryFilter } from './useDailyShow';
 
 type Pane = 'stories' | 'rundown';
@@ -48,9 +49,16 @@ function DailyShowWorkspace() {
   // Look the slide up live so the dialog shows notes saved a moment ago.
   const previewSlide = show.slides.find(s => s.id === previewId) ?? null;
 
+  // Every build asks for the template first (Jake 2026-10-06); the pick starts the build.
+  const [pickForBuild, setPickForBuild] = useState(false);
   const handleBuild = async () => {
-    if (show.selectedCount > 0) setPane('rundown');
-    const ok = await show.buildDeck();
+    if (show.selectedCount === 0) { await show.buildDeck(); return; }   // its own "select stories first" message
+    setPickForBuild(true);
+  };
+  const buildWith = async (template: string) => {
+    setPickForBuild(false);
+    setPane('rundown');
+    const ok = await show.buildDeck(template);
     if (ok) document.getElementById('rundown-scroll')?.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -127,6 +135,7 @@ function DailyShowWorkspace() {
         </div>
       )}
 
+      <DeckTemplateDialog show={show} open={pickForBuild} onOpenChange={setPickForBuild} onPick={(t) => void buildWith(t)} building />
       <SlidePreviewDialog slide={previewSlide} number={previewSlide ? show.slides.indexOf(previewSlide) + 1 : 1} template={show.deckTemplate} onClose={() => setPreviewId(null)} onNotesUpdated={show.loadSlides} />
     </div>
   );

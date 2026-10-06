@@ -19,10 +19,31 @@ import { storyStage } from './stage/story';
 import type { DailyShow } from './useDailyShow';
 
 export default function DeckLook({ show }: { show: DailyShow }) {
-  const { slides, deckTemplate, chooseDeckTemplate } = show;
+  const { deckTemplate, chooseDeckTemplate } = show;
   const [open, setOpen] = useState(false);
   const [bubble, setBubble] = useBubbleSettings();
   const tpl = templateFor(deckTemplate, 'v2');
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2" data-deck-look={tpl.id}>
+      <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => setOpen(true)} title="Pick the deck's design (the Deep Dive templates)">
+        <Palette className="h-3.5 w-3.5" />
+        <span className="flex gap-0.5" aria-hidden>{[tpl.ink, tpl.paper, tpl.accent].map((c, i) => <span key={i} className="h-2.5 w-2.5 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}</span>
+        Template: <span className="font-semibold">{tpl.name}</span>
+      </Button>
+      <BubbleControl value={bubble} onChange={setBubble} />
+      <DeckTemplateDialog show={show} open={open} onOpenChange={setOpen}
+        onPick={(t) => { void chooseDeckTemplate(t); setOpen(false); }} />
+    </div>
+  );
+}
+
+/** The template picker for the daily deck — on the Go-live card, and FIRST on every
+ *  build (Jake 2026-10-06: "every new deck asks you for the template you want first"). */
+export function DeckTemplateDialog({ show, open, onOpenChange, onPick, building = false }: {
+  show: DailyShow; open: boolean; onOpenChange: (o: boolean) => void; onPick: (template: string) => void; building?: boolean;
+}) {
+  const { slides, deckTemplate } = show;
 
   // The preview story: the first one with built visuals (else the first).
   const sample = useMemo(() => {
@@ -47,25 +68,18 @@ export default function DeckLook({ show }: { show: DailyShow }) {
   );
 
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2" data-deck-look={tpl.id}>
-      <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => setOpen(true)} title="Pick the deck's design (the Deep Dive templates)">
-        <Palette className="h-3.5 w-3.5" />
-        <span className="flex gap-0.5" aria-hidden>{[tpl.ink, tpl.paper, tpl.accent].map((c, i) => <span key={i} className="h-2.5 w-2.5 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}</span>
-        Template: <span className="font-semibold">{tpl.name}</span>
-      </Button>
-      <BubbleControl value={bubble} onChange={setBubble} />
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-4">
-          <DialogTitle className="text-sm">Template — the design today's whole deck is shown in</DialogTitle>
-          <p className="-mt-1 text-xs text-muted-foreground">
-            The same templates as Deep Dive. Each preview is one of today's stories drawn in that template. Picking one re-skins the audience
-            and display screens, the slide previews and every thumbnail at once — the stories, beats and scripts stay as they are, and Rebuild keeps it.
-          </p>
-          <TemplatePicker value={deckTemplate} format="v2" preview={sample ? preview : undefined}
-            onChange={(t) => { void chooseDeckTemplate(t); setOpen(false); }} />
-        </DialogContent>
-      </Dialog>
-    </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-4">
+        <DialogTitle className="text-sm">
+          {building ? 'Pick the template for this deck — the build starts when you choose' : "Template — the design today's whole deck is shown in"}
+        </DialogTitle>
+        <p className="-mt-1 text-xs text-muted-foreground">
+          {building
+            ? 'The same templates as Deep Dive. The deck is built in the one you pick; you can still change it later on the Go-live card without rebuilding.'
+            : "The same templates as Deep Dive. Each preview is one of today's stories drawn in that template. Picking one re-skins the audience and display screens, the slide previews and every thumbnail at once — the stories, beats and scripts stay as they are."}
+        </p>
+        <TemplatePicker value={deckTemplate} format="v2" preview={sample ? preview : undefined} onChange={onPick} />
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -136,7 +136,7 @@ export function useDailyShow(enabled: boolean) {
   };
 
   /** Resolves true when slides were created. */
-  const buildDeck = async (): Promise<boolean> => {
+  const buildDeck = async (template?: string): Promise<boolean> => {
     if ((meta?.addedToDeck ?? 0) === 0) {
       toast.info('Select at least one story before building.');
       return false;
@@ -146,7 +146,7 @@ export function useDailyShow(enabled: boolean) {
     buildLog.setLogs([]);
     buildLog.add('Building deck from selected stories…', 0);
     try {
-      const stream = buildDeckFromStories({});
+      const stream = buildDeckFromStories(template === undefined ? {} : { template });
       for await (const chunk of stream) {
         try { const u = JSON.parse(chunk) as { message: string; percent: number }; buildLog.add(u.message, u.percent); }
         catch { buildLog.add(chunk, 0); }
@@ -156,6 +156,7 @@ export function useDailyShow(enabled: boolean) {
         buildLog.add(`✓ Done — ${result.slidesCreated} slides created`, 100);
         toast.success(`Presentation ready: ${result.slidesCreated} slides`);
         await loadSlides();
+        if (template !== undefined && result.deckId) announceDeckTemplate(result.deckId, template);
         return true;
       }
       buildLog.add(`⚠ ${result.message}`, 100);
