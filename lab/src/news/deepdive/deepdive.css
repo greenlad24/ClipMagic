@@ -55,7 +55,7 @@
   border-radius: 50%;
   filter: blur(calc(var(--u) * 9));
   opacity: 0.55;
-  animation: dd-drift 26s ease-in-out infinite alternate;
+  animation: dd-drift 26s ease-in-out 1 forwards;   /* once, then settles (Jake: nothing loops endlessly) */
 }
 .dd-blob.b1 { background: var(--dd-a); top: -22%; left: -12%; }
 .dd-blob.b2 { background: var(--dd-b); bottom: -30%; right: -10%; opacity: 0.38; animation-duration: 32s; animation-delay: -8s; }
@@ -74,7 +74,7 @@
   background-size: calc(var(--u) * 6) calc(var(--u) * 6);
   opacity: 0.35;
   mask-image: radial-gradient(ellipse at 50% 45%, #000 0%, transparent 70%);
-  animation: dd-grid-pan 60s linear infinite;
+  animation: dd-grid-pan 60s linear 1 forwards;
 }
 @keyframes dd-grid-pan { to { background-position: calc(var(--u) * 6) calc(var(--u) * 6); } }
 .dd-vignette {
@@ -241,7 +241,7 @@
   border-radius: 99px;
   background: var(--dd-c);
   box-shadow: 0 0 calc(var(--u) * 1.2) var(--dd-c);
-  animation: dd-blink 1.6s ease-in-out infinite;
+  animation: dd-blink 1.6s ease-in-out 3;
 }
 @keyframes dd-blink { 50% { opacity: 0.35; } }
 .dd-title .dd-h { font-size: calc(var(--u) * 7.4); max-width: calc(var(--u) * 70); line-height: 0.98; }
@@ -263,7 +263,7 @@
   background: conic-gradient(from 0deg, transparent, var(--dd-a), var(--dd-b), transparent 70%);
   -webkit-mask: radial-gradient(circle, transparent 64%, #000 65%, #000 66%, transparent 67%);
   mask: radial-gradient(circle, transparent 64%, #000 65%, #000 66%, transparent 67%);
-  animation: dd-spin 14s linear infinite;
+  animation: dd-spin 14s linear 1 forwards;
   opacity: 0.9;
   z-index: -1;
 }
@@ -614,7 +614,7 @@
   border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow: 0 calc(var(--u) * 3) calc(var(--u) * 8) rgba(0, 0, 0, 0.55);
   transform: perspective(calc(var(--u) * 140)) rotateY(-5deg);
-  animation: dd-float 9s ease-in-out infinite alternate;
+  animation: dd-float 9s ease-in-out 1 forwards;
 }
 @keyframes dd-float {
   from { transform: perspective(calc(var(--u) * 140)) rotateY(-5deg) translateY(0); }

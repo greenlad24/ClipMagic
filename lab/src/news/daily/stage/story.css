@@ -6,11 +6,11 @@
  */
 .ns-cover { justify-content: center; }
 .ns-cover-bg { position: absolute; inset: 0; overflow: hidden; }
-.ns-cover-bg img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; opacity: .34; filter: saturate(.9); transform: scale(1.06); animation: ns-drift 24s ease-in-out infinite alternate; }
+.ns-cover-bg img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; opacity: .34; filter: saturate(.9); transform: scale(1.06); animation: ns-drift 24s ease-in-out 1 forwards; }
 .ns-cover-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--ink) 22%, color-mix(in srgb, var(--ink) 70%, transparent) 58%, color-mix(in srgb, var(--ink) 35%, transparent)); }
 .ns-cover-bg canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
 /* a slow glow in the template's accent, pure CSS (no images spent) */
-.ns-glow { position: absolute; z-index: 1; width: calc(var(--u) * 70); height: calc(var(--u) * 70); right: calc(var(--u) * -18); bottom: calc(var(--u) * -30); border-radius: 50%; background: radial-gradient(closest-side, color-mix(in srgb, var(--yellow) 22%, transparent), transparent); animation: ns-glow 9s ease-in-out infinite alternate; }
+.ns-glow { position: absolute; z-index: 1; width: calc(var(--u) * 70); height: calc(var(--u) * 70); right: calc(var(--u) * -18); bottom: calc(var(--u) * -30); border-radius: 50%; background: radial-gradient(closest-side, color-mix(in srgb, var(--yellow) 22%, transparent), transparent); animation: ns-glow 9s ease-in-out 1 forwards; }
 .ns-cover.still .ns-glow, .ns-cover.still .ns-cover-bg img, .dd2.instant .ns-cover-bg img { animation: none; }
 @keyframes ns-drift { to { transform: scale(1.14) translate(-1.5%, -1%); } }
 @keyframes ns-glow { to { transform: translate(calc(var(--u) * -10), calc(var(--u) * -6)) scale(1.15); opacity: .7; } }

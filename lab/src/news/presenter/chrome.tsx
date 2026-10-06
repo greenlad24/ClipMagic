@@ -158,6 +158,17 @@ export function SourceButton({ enabled, blocked, onClick }: { enabled: boolean; 
   );
 }
 
+/** "↗ Screen" — opens the presentation screen (the audience view) in its own window. */
+export function ScreenButton({ onClick, disabled = false }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onClick} disabled={disabled} title="Open the presentation screen (the audience view) in its own window"
+      style={{ background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.35)', borderRadius: 4, padding: '2px 9px',
+        fontSize: 11, cursor: disabled ? 'default' : 'pointer', color: D.blue, whiteSpace: 'nowrap', opacity: disabled ? 0.5 : 1 }}>
+      ↗ Screen
+    </button>
+  );
+}
+
 /** The red "E End". */
 export function EndButton({ onClick }: { onClick: () => void }) {
   return (

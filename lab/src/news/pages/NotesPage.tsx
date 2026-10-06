@@ -11,7 +11,7 @@ import { findCues, markCues } from '../daily/stage/cues';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import {
-  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, SourceButton, EndButton,
+  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, SourceButton, EndButton, ScreenButton,
   ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl, WidthToggle, BeatDots,
 } from '../presenter/chrome';
 
@@ -723,6 +723,12 @@ export default function NotesPage() {
           <FollowerLinkButton getSessionId={() => ctxRef.current.sessionId} synced={remoteSynced} />
 
           <Divider />
+
+          {/* The presentation screen, like the Deep Dive presenter's (Jake 2026-10-06) */}
+          <ScreenButton onClick={() => {
+            const w = window.open('/news-gatherer/present/audience', 'news-screen');
+            if (!w) toast.error('The browser blocked the new window. Allow pop-ups for this site, or open Audience from the dashboard.');
+          }} />
 
           {/* Source tab */}
           {sourceUrl && (

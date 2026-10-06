@@ -44,7 +44,7 @@ import { startSession, getSession, endSession } from '../api';
 import { connectLiveSync, type LiveSync } from '../liveSync';
 import {
   D, SCRIPT_FONT, WIDTH_PX, type TpWidth, type ViewMode, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider,
-  FollowerLinkButton, SourceButton, EndButton, ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl,
+  FollowerLinkButton, SourceButton, EndButton, ScreenButton, ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl,
   WidthToggle, BeatDots,
 } from '../presenter/chrome';
 import { getDeepDive, editorPath, stagePath, KIND_LABEL, type DeepDive, type Section } from './api';
@@ -425,10 +425,7 @@ export default function DeepDivePresenterPage() {
 
           <Divider />
 
-          <button onClick={openScreen} disabled={!sessionId} title="Open the presentation screen (the audience view) in its own window"
-            style={{ ...smallBtn, color: D.blue, background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.35)' }}>
-            ↗ Screen
-          </button>
+          <ScreenButton onClick={openScreen} disabled={!sessionId} />
           {sourceUrl && <SourceButton enabled={sourceEnabled} blocked={sourceBlocked} onClick={toggleSource} />}
           <button onClick={() => navigate(editorPath(id))} style={smallBtn}>Editor</button>
           <EndButton onClick={() => setConfirmEnd(true)} />

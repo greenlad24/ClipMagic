@@ -92,14 +92,20 @@ export function DotField({ still }: { still: boolean }) {
       const n = Math.round((w * h) / 9000);
       pts = Array.from({ length: n }, () => ({ x: Math.random() * w, y: Math.random() * h, r: Math.random() * 2.2 + 0.4, v: Math.random() * 0.25 + 0.05, y0: Math.random() < 0.06 }));
     };
+    // The field drifts in, then holds still (Jake 2026-10-06: nothing loops endlessly).
+    let t0 = -1;
+    const SETTLE_MS = 3500;
     const frame = (t: number) => {
+      if (t0 < 0) t0 = t;
+      const settled = still || t - t0 > SETTLE_MS;
+      if (settled) t = t0 + SETTLE_MS;
       ctx.clearRect(0, 0, w, h);
       // The template's colours (templates.ts) — Jake's yellow + paper by default.
       const cs = getComputedStyle(cv);
       const acc = cs.getPropertyValue('--yellow').trim() || '#ffd21e';
       const fg = cs.getPropertyValue('--fg').trim() || '#f5f5f2';
       for (const p of pts) {
-        if (!still) { p.x += p.v; if (p.x > w + 4) p.x = -4; }
+        if (!settled) { p.x += p.v; if (p.x > w + 4) p.x = -4; }
         const tw = 0.45 + 0.55 * Math.sin(t / 900 + p.x * 0.02);
         ctx.beginPath();
         ctx.arc(p.x, p.y + Math.sin(t / 1600 + p.x * 0.01) * 6, p.y0 ? p.r * 2.2 : p.r, 0, 7);
@@ -108,10 +114,11 @@ export function DotField({ still }: { still: boolean }) {
         ctx.fill();
       }
       ctx.globalAlpha = 1;
-      if (!still) raf = requestAnimationFrame(frame);
+      if (!settled) raf = requestAnimationFrame(frame);
     };
     size();
-    const ro = new ResizeObserver(size);
+    // A resize clears the canvas: redraw it (one frame once the field has settled).
+    const ro = new ResizeObserver(() => { size(); cancelAnimationFrame(raf); raf = requestAnimationFrame(frame); });
     ro.observe(cv);
     raf = requestAnimationFrame(frame);
     return () => { cancelAnimationFrame(raf); ro.disconnect(); };
