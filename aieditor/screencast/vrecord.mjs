@@ -52,6 +52,12 @@ const toCap = (b) => b && [b.x * SCALE, b.y * SCALE, b.width * SCALE, b.height *
 let _dpr = null;
 async function dpr() { if (_dpr == null) _dpr = await page.evaluate(() => devicePixelRatio); return _dpr; }
 // one frame: advance the page's clock by DT, then capture it
+// the clip is in DOCUMENT coordinates: on a scrolled page (0,0) is the unpainted top = black
+async function vclip() {
+  let x = 0, y = 0;
+  try { const m = await cdp.send("Page.getLayoutMetrics"); const v = m.cssVisualViewport || {}; x = v.pageX || 0; y = v.pageY || 0; } catch {}
+  return { x, y, width: CSS_W, height: CSS_H, scale: SCALE };
+}
 async function step() {
   await new Promise(async (resolve) => {
     const done = () => { cdp.off("Emulation.virtualTimeBudgetExpired", done); resolve(); };
@@ -61,7 +67,7 @@ async function step() {
   // clip.scale re-rasterises at capture resolution (a plain capture came back 1920×1080
   // even with a 4/3 device scale factor)
   const shot = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 92, captureBeyondViewport: false,
-    clip: { x: 0, y: 0, width: CSS_W, height: CSS_H, scale: SCALE } });   // CDP ignores the dpr: scale = SCALE (probed)
+    clip: await vclip() });   // CDP ignores the dpr: scale = SCALE (probed)
   const buf = Buffer.from(shot.data, "base64");
   if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once("drain", r));
   cursor.push([t(), cx * SCALE, cy * SCALE]);

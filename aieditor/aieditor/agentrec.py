@@ -148,17 +148,18 @@ SHOT GRAMMAR (Jake's own reference tutorial — follow it, it is how the result 
   canvas. Give "deep": true only for a small detail he reads out (a table row, one price); it
   zooms to 2×. Prefer the main content area; elements tucked in a corner (a logo, a sidebar link)
   make a poor shot to hold on.
+- A WIDE CARD OR BANNER (a full-width plan card, a hero): read the block of its heading + the
+  line he quotes (e.g. the "p" with "250 introductory credits … No credit card required"), with
+  "deep": true when he reads a detail out — a full-width box cannot be zoomed and stays small.
 - NAVIGATION IS A CUT: when a click opens another page or a big panel, the recorder cuts straight
   to the loaded result (loading never shows). So just click; do not "hold" for a load. Never
   show a spinner, a blank canvas or an empty page.
 - RESULT FIRST, BIG: when he talks about a result (designs, a campaign, a generated output), that
-  result is on screen from his first word — open the existing document. The camera frames it (it
-  pushes in on what you read), so do NOT fiddle with the app's own zoom: change it only when the
-  designs are small (thumbnails you can't read), ONCE and OFF CAMERA (in the set-up): scroll with
-  {"type":"scroll","zoom":"in","steps":1,"x":..,"y":..} at the centre of the designs he talks about
-  (1 step ≈ 2× closer). REQUIRED whenever a canvas shows its designs as small thumbnails (together
-  less than ~60 % of the screen, labels unreadable) — also on camera right after a canvas opens:
-  the zoom is instant and reads as a cut. Then leave the canvas alone (no zooming back and forth).
+  result is on screen from his first word — open the existing document. A DESIGN CANVAS IS FRAMED
+  FOR YOU: whenever a canvas page opens (goto, or a click that opens a document) the recorder
+  itself zooms it so the designs fill the screen, inside the cut. Do NOT press canvas zoom keys
+  (Shift+1/Shift+0/Ctrl+±) or zoom-scroll — they are ignored. The camera pushes in on what you
+  read, so to show one design, READ it with its "box".
 - TYPING is shown live (cps 16–20), into the real field, then the result after a cut.
 - SCROLL only to reveal the thing he names, and never into empty/dark sections of a marketing page.
 - When the narration describes a step we cannot show for real (e.g. a sign-up while logged in),
@@ -182,8 +183,7 @@ ACTION FIELDS (exactly these):
       frames the design, not bare canvas
   type: {"ref": "r5", "text": "what to type", "cps": 18, "enter": false}
   key: {"key": "Escape" | "Enter" | "Tab" | "ArrowDown" | "Shift+1" ...}
-  scroll: {"by": 400}   (px, + = down). Canvas zoom: {"type":"scroll","zoom":"in","steps":1,"x":..,"y":..}
-      = ctrl+wheel at that spot, 1 step ≈ 2× — to make designs big on a canvas (off camera)
+  scroll: {"by": 400}   (px, + = down; on a design canvas it pans)
   wait_for: {"text": "text that appears when done", "show": 1, "timeout": 240, "gone": false}
   hold: {"s": 1.5}      goto: {"url": "..."}   (a goto is a cut too)
 Reply with ONE JSON object and nothing else:
@@ -226,14 +226,14 @@ def _call(content, system_blocks, max_tokens=1500):
 
 PREPARE = """OFF CAMERA, before the recording starts: get the app to the screen the segment should OPEN on, so
 its first frame already shows what the first words are about (for the opening of the video: the
-finished result itself, e.g. the finished campaign document — open it; a canvas opens "fit all",
-which leaves designs as small thumbnails: zoom IN ONCE onto the designs he talks about
-({"type":"scroll","zoom":"in","steps":1} at their centre — never "out") so they fill most of the
-screen) — REQUIRED before you say ready if the designs are small thumbnails. If the
-segment opens on a page the previous segment left a dropdown/menu/typed text on, clean it up. Nothing you do now is
-recorded and "at" is ignored. The page runs in REAL time here: a heavy editor can take 10–20 s to
-draw after goto — {"type":"hold","s":6} really waits; do not navigate away from a page that is still
-loading. Reply {"ready": true} when the screen is right (also if it already is)."""
+finished result itself, e.g. the finished campaign document — open it with goto). A design canvas
+is zoomed onto its designs by the recorder itself after every load (do NOT zoom it yourself).
+For a long page whose subject is further down (a pricing card, a section he names), scroll so
+that subject is in the middle of the screen. If the segment opens on a page the previous segment
+left a dropdown/menu/typed text on, clean it up. Nothing you do now is recorded and "at" is
+ignored. The page runs in REAL time here: a heavy editor can take 10–20 s to draw after goto —
+{"type":"hold","s":6} really waits. Reply {"ready": true} when the screen is right (also if it
+already is)."""
 
 
 def prepare(sess, seg, said, system, log, max_steps=14):
@@ -272,6 +272,12 @@ Next set-up step, or {{"ready": true}}?"""})
         a = {k: v for k, v in reply["action"].items() if k != "at"}
         res = sess.send({"cmd": "act", "action": a})
         history.append({"a": a, "r": "ok" if res.get("ok") else res.get("error", "failed")})
+    # DETERMINISTIC: a design canvas opens "fit all" (designs = small thumbnails) and the agent
+    # never zoomed it reliably (3 runs) — the recorder measures the designs and zooms/pans them
+    # to ~78 % of the canvas area. No-op (ok false) on a page without a design canvas.
+    fit = sess.send({"cmd": "act", "action": {"type": "fit_designs"}})
+    if fit.get("ok"):
+        log(f"framed the designs off camera: fill {fit.get('fill')} ({'; '.join(fit.get('steps', []))})")
     if history:
         log(f"prepared off camera: {'; '.join(json.dumps(h['a'])[:60] for h in history)}")
     return usd

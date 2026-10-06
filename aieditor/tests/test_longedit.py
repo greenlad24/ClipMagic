@@ -89,6 +89,24 @@ try:
     for y in range(200, 1200, 40):
         page[y:y + 14, 300:2200] = 30                    # lines of text
     check("a page with text is not blank", not camera.is_blank(page, P))
+    # v10: a big page title running under the facecam (v9 at 1:10) — the framing moves so the
+    # bubble sits on background; a view whose bubble is already on background is left alone
+    sm = np.full((360, 640, 3), 250, np.uint8)
+    sm[120:150, 300:600] = 30                            # a title across the top right (capture 1200-2400, 480-600)
+    sm[190:250, 200:270] = 90                            # the target tile (capture 800-1080, 760-1000)
+    tgt = [800, 760, 280, 240]
+    v0 = (1.45, 1300, 820)
+    v1 = camera.clear_bubble(v0, tgt, sm, W, H, P)
+    check("clear_bubble: less content under the bubble", camera.bubble_cover(sm, v1, W, H) < camera.bubble_cover(sm, v0, W, H) - 0.05)
+    z1, c1x, c1y = v1
+    check("clear_bubble: the target stays in view", c1x - W / z1 / 2 <= 800 and 1080 <= c1x + W / z1 / 2 and c1y - H / z1 / 2 <= 760 and 1000 <= c1y + H / z1 / 2)
+    blank = np.full((360, 640, 3), 250, np.uint8)
+    check("clear_bubble: nothing under the bubble = unchanged", camera.clear_bubble(v0, tgt, blank, W, H, P) == v0)
+    evs2 = [{"t": 0, "type": "begin"}, {"t": 1.0, "type": "read", "box": [900, 300, 300, 100], "end": 4.0},
+            {"t": 8.0, "type": "scroll", "by": 400, "end": 8.8}, {"t": 9.5, "type": "read", "box": [900, 700, 300, 100], "end": 12.0}]
+    mv2 = camera.plan_moves({"capture": {"w": W, "h": H, "fps": 30.0}, "events": evs2, "end": 14}, 30.0, 0, 420, P)
+    check("a scroll with a target right after it: no zoom-out first", not any(m[4] == "out" for m in mv2))
+    check("...and the target lands by a jump cut at the scroll's end", any(m[4] == "cut" and m[1] == 0 and abs(m[0] - 8.8 * 30) < 1 and m[3][0] > 1 for m in mv2))
     import qa
     ideal = {k: (v["band"][0] + v["band"][1]) / 2 for k, v in qa.system()["qa"]["metrics"].items()}
     check("QA: a video inside every band scores 100", qa.score(ideal)["score"] == 100.0)

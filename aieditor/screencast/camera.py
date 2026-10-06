@@ -49,6 +49,10 @@ DEFAULTS = {
     # facecam: hide while the target is under the bubble (top-right of the OUTPUT frame)
     "bubble_zone": [1480 / 1920, 0, 1.0, 470 / 1080],
     "empty_min": 0.03,            # a read/hover framing with less non-background than this is skipped
+    # reference 2 zooms out before a scroll (SYSTEM.md §3) — but out-then-in again on a target
+    # right after it cost 2 of v9's 13 moves. When a target follows within this many seconds,
+    # the page scrolls under the held framing and ONE move goes to that target. (v10)
+    "scroll_direct_s": 3.0,
 }
 STYLE = {
     "highlight_rgba": (255, 214, 10, 0.42),       # reads #99831C on blue, text #F7F26C — multiply-like
@@ -155,6 +159,112 @@ def avoid_bubble(view, box, W, H, p):
     return view
 
 
+BUBBLE_DISC = (1701.9 / 1920, 253.7 / 1080, 179.3 / 1920)     # facecam centre + outer radius (output 0..1, r in widths)
+_DISC_PTS = None
+
+
+def _bg(sm):
+    """The frame's flat background colour (None if it has none) — cached per frame."""
+    if _BG_CACHE.get("ref") is sm:
+        return _BG_CACHE["v"]
+    q = (sm[::2, ::2] // 8).reshape(-1, 3)
+    vals, cnt = np.unique(q, axis=0, return_counts=True)
+    v = None if cnt.max() < 0.3 * len(q) else vals[cnt.argmax()].astype(int) * 8 + 4
+    _BG_CACHE.update(ref=sm, v=v)
+    return v
+
+
+_BG_CACHE = {}
+
+
+def bubble_cover(sm, view, W, H):
+    """Share of the facecam disc that sits on page CONTENT (not the flat background) for this
+    view — what the bubble would hide. None when the frame has no flat background."""
+    global _DISC_PTS
+    if _DISC_PTS is None:
+        cxu, cyu, r = BUBBLE_DISC
+        g = np.linspace(-1, 1, 17)
+        pts = [(cxu + r * a, cyu + r * b * 16 / 9) for a in g for b in g if a * a + b * b <= 1]
+        _DISC_PTS = np.array(pts)
+    bg = _bg(sm)
+    if bg is None:
+        return None
+    z, cx, cy = view
+    s = sm.shape[1] / W
+    xs = ((cx - W / z / 2) + _DISC_PTS[:, 0] * W / z) * s
+    ys = ((cy - H / z / 2) + _DISC_PTS[:, 1] * H / z) * s
+    xi = np.clip(xs.astype(int), 0, sm.shape[1] - 1)
+    yi = np.clip(ys.astype(int), 0, sm.shape[0] - 1)
+    px = sm[yi, xi].astype(int)
+    return float((np.abs(px - bg).max(axis=1) > 8).mean())
+
+
+def edge_cut(sm, view, W, H):
+    """Share of the view's left/right edges that runs through content (a title cut in half by
+    the frame edge is as bad as one under the bubble)."""
+    bg = _bg(sm)
+    if bg is None:
+        return 0.0
+    z, cx, cy = view
+    s = sm.shape[1] / W
+    v = np.linspace(0.02, 0.98, 40)
+    hits = []
+    for u in (0.004, 0.996):
+        xs = np.full_like(v, ((cx - W / z / 2) + u * W / z) * s)
+        ys = ((cy - H / z / 2) + v * H / z) * s
+        xi = np.clip(xs.astype(int), 0, sm.shape[1] - 1)
+        yi = np.clip(ys.astype(int), 0, sm.shape[0] - 1)
+        hits.append((np.abs(sm[yi, xi].astype(int) - bg).max(axis=1) > 8).mean())
+    return float(sum(hits) / 2)
+
+
+def clear_bubble(view, box, sm, W, H, p):
+    """Reference 2 keeps what he talks about clear of the facecam: the bubble only fades when the
+    ACTION target is top-right; otherwise the subject is framed left of / below it. v9 (1:10): a
+    zoom on the brand kit's Logo tile left the page's big "Jake Dawson" title running under the
+    bubble. Search nearby framings (pan ±30 %, zoom ±8 %) that keep the target fully in view and
+    out of the bubble zone, and take the one whose bubble covers the least content."""
+    z, cx, cy = view
+    if sm is None or z <= 1.01:
+        return view
+    base = bubble_cover(sm, view, W, H)
+    if base is None or base < 0.08:
+        return view
+    x, y, bw, bh = box
+    zx0, zy0, zx1, zy1 = p["bubble_zone"]
+
+    def ok(v):
+        z2, cx2, cy2 = v
+        vw, vh = W / z2, H / z2
+        l, t = cx2 - vw / 2, cy2 - vh / 2
+        m = 0.01
+        if x < l + m * vw or x + bw > l + (1 - m) * vw or y < t + m * vh or y + bh > t + (1 - m) * vh:
+            return False
+        return (x + bw - l) / vw <= zx0 - 0.01 or (y - t) / vh >= zy1
+    need_clear = ok(view)
+
+    def cost(v):
+        c = bubble_cover(sm, v, W, H)
+        return None if c is None else c + 0.5 * edge_cut(sm, v, W, H)
+    base_s = cost(view)
+    best, best_s = view, base_s
+    vw, vh = W / z, H / z
+    for zf in (1.0, 0.93, 1.08):
+        z2 = min(max(z * zf, p["zoom_min"] * 0.98), max(z, p["zoom_max"]))
+        for dx in np.linspace(-0.3, 0.3, 13):
+            for dy in np.linspace(-0.35, 0.35, 15):
+                v2 = clamp(z2, cx + dx * vw, cy + dy * vh, W, H)
+                if need_clear and not ok(v2):
+                    continue
+                c = cost(v2)
+                if c is None:
+                    continue
+                sc = c + 0.2 * (abs(v2[1] - cx) / vw + abs(v2[2] - cy) / vh) + 0.3 * abs(math.log(z2 / z))
+                if sc < best_s:
+                    best, best_s = v2, sc
+    return best if best != view and best_s <= base_s - 0.05 else view
+
+
 def in_view(box, view, W, H, out_h, p, readable=True):
     """The target is inside the current view (and, with `readable`, already readable on screen)."""
     z, cx, cy = view
@@ -190,15 +300,20 @@ def drop_empty_targets(ev, raw, f0, fps, p):
     """Mark read/hover/move targets whose framing would show (almost) only background:
     the agent picked a spot on a zoomed-out canvas that missed the design."""
     W, H = ev["capture"]["w"], ev["capture"]["h"]
-    cand = [e for e in ev["events"] if e.get("box") and e["type"] in ("read", "hover", "move")]
+    cand = [e for e in ev["events"] if e.get("box") and e["type"] in ("read", "hover", "move", "click", "type", "highlight")]
     if not cand:
         return []
     cap = cv2.VideoCapture(str(raw))
     dropped = []
     for e in cand:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(f0 + e.get("end", e["t"]) * fps) - 1)
+        # the screen while the target is held (a click: just before it acts — after it the page may change)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(f0 + (e["t"] if e["type"] == "click" else e.get("end", e["t"])) * fps) - 1))
         ok, img = cap.read()
         if not ok:
+            continue
+        # kept small for the bubble-clearance search (plan_moves) — never written to camera.json
+        e["_sm"] = cv2.medianBlur(cv2.resize(img, (640, round(H * 640 / W)), interpolation=cv2.INTER_AREA), 5)
+        if e["type"] not in ("read", "hover", "move"):
             continue
         frac = content_fraction(img, framing_for(e["box"], W, H, p), W, H)
         if frac is not None and frac < p["empty_min"]:
@@ -252,7 +367,8 @@ def plan_moves(ev, fps, f0, n_frames, p):
                     break
                 group.append(o["box"])
         box = union(group)
-        return avoid_bubble(framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1), box, W, H, p), box
+        v = avoid_bubble(framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1), box, W, H, p)
+        return clear_bubble(v, box, e.get("_sm"), W, H, p), box
 
     first = focus[0] if focus else None
     if first is None or first["t"] > 0.4 or framing(first, first["t"])[0][0] <= 1.0:
@@ -261,7 +377,7 @@ def plan_moves(ev, fps, f0, n_frames, p):
         if first is not None and (not pages or first["t"] < pages[0]):
             tgt, box = framing(first, first["t"])
             cxy = (tgt[1], tgt[2]) if tgt[0] > 1.0 else (box[0] + box[2] / 2, box[1] + box[3] / 2)
-            v = clamp(p["entry_zoom"], *cxy, W, H)
+            v = clear_bubble(clamp(p["entry_zoom"], *cxy, W, H), box, first.get("_sm"), W, H, p)
         else:
             v, box = (p["entry_zoom"], W / 2, H / 2), None
         s0 = f0 + p["entry_delay_frames"] * k
@@ -271,11 +387,19 @@ def plan_moves(ev, fps, f0, n_frames, p):
     cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in pages]
                   + [(t, "scroll", None) for t in scrolls], key=lambda c: c[0])
     last_target_end = 0.0
+    scroll_cut = None                         # end of a scroll whose next target lands by a cut
     for t, kind, e in cues:
         fr = f0 + t * fps
         if kind == "scroll":
             # the page moves under the view: open back out to the full frame as it starts
-            if view[0] > 1.0 and fr >= last_move_end:
+            soon = any(0 < o["t"] - t <= p["scroll_direct_s"] for o in focus)
+            if soon:
+                # the target right after the scroll lands by a JUMP CUT at the scroll's end, already
+                # framed (reference 2 re-targets by cut far more than by move; a 56-frame deep move
+                # after the scroll reached the Free plan card only as the segment ended — v10)
+                se = next((x for x in ev["events"] if x["type"] == "scroll" and abs(x["t"] - t) < 1e-6), {})
+                scroll_cut = se.get("end", t)
+            if not soon and view[0] > 1.0 and fr >= last_move_end:
                 moves.append((fr, p["zoom_out_frames"] * k, view, full, "out"))
                 view, last_move_end = full, fr + p["zoom_out_frames"] * k
             continue
@@ -286,6 +410,14 @@ def plan_moves(ev, fps, f0, n_frames, p):
             last_target_end = t
             continue
         end = e.get("end", t)
+        if scroll_cut is not None and 0 <= t - scroll_cut <= p["scroll_direct_s"]:
+            tgt, box = framing(e, t)
+            if tgt[0] > 1.0:
+                moves.append((f0 + scroll_cut * fps, 0, view, tgt, "cut", box))
+                view, last_move_end, last_target_end = tgt, f0 + scroll_cut * fps, max(last_target_end, end)
+                scroll_cut = None
+                continue
+        scroll_cut = None if scroll_cut is not None and t - scroll_cut > p["scroll_direct_s"] else scroll_cut
         if t - last_target_end > p["idle_out_s"] and view[0] > 1.0 and fr - last_move_end > p["zoom_out_frames"] * k:
             s0 = f0 + (last_target_end + 1.0) * fps
             moves.append((s0, p["zoom_out_frames"] * k, view, full, "out"))
