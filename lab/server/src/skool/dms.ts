@@ -213,8 +213,15 @@ export async function readChannels(communityUrl: string): Promise<ChannelRead> {
  *   1. AGE. A reply to a months-old message is not late, it is strange. The
  *      cutoff is a parameter because "how stale is too stale" is a judgement,
  *      but it is never absent.
- *   2. SUBSTANCE. A closing pleasantry is not a question. Measured against the
- *      real tail: emoji-only and short thanks are what actually sits there.
+ *   2. SUBSTANCE. A message with no WORDS in it (a lone "👍", a "…") is not
+ *      something to answer.
+ *
+ * ⚠️⚠️ A ONE-WORD MESSAGE IS ANSWERED — Jake, 2026-10-05: *"the skool agent
+ * doesn't reply to a comment or a dm if it's one word - it should reply."* This
+ * used to drop anything under 12 characters and any short "thanks"/"ok"/"cool",
+ * so a "hi", a "Claude" or a "thanks!" sat unanswered while the same word as a
+ * COMMENT got a reply. The age cutoff is what keeps the 2024 thumbs-up out; the
+ * drafter is told to keep the answer to a one-word message one short line.
  *
  * Neither filter can tell an answered question from an unanswered one on its
  * own — that is the drafter's job — but both keep the obviously-wrong out of
@@ -238,12 +245,8 @@ export function needingReply(channels: DmChannel[], opts: { maxAgeDays?: number 
         .replace(/[\p{Extended_Pictographic}\p{Emoji_Presentation}]/gu, " ")
         .replace(/[^\p{L}\p{N}\s]/gu, " ")
         .trim();
-      if (words.length < 12) return false;
-      // A pure sign-off, however long it is padded out.
-      if (/^(thanks?|thank you|ok|okay|cool|great|awesome|got it|will do|appreciate it)\b/i.test(words) && words.length < 40) {
-        return false;
-      }
-      return true;
+      // At least one real word. Length is NOT a test — see above.
+      return words.length > 0;
     })
     .sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : -1));
 }

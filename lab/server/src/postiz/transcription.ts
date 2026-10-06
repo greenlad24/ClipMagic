@@ -22,7 +22,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import { aiConfig } from "../ai/config.js";
-import { extractAudioForTranscription } from "../render/cut.js";
+import { extractAudioForTranscription } from "../render/audio.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
 import { resolveLocalPath, resolveSourceUrl, type FileSourceRef } from "./fileSources.js";
 

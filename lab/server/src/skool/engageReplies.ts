@@ -854,7 +854,9 @@ export async function collectTargets(communityUrl: string, cfg: ReplyConfig): Pr
         if (read.comments.some((c) => c.depth === 0 && (c.byMe || admins.has(c.authorId)))) continue;
       }
       const words = `${post.title}\n\n${post.body}`.trim();
-      if (words.replace(/\s+/g, "").length < 12) continue;
+      // ⚠️ A ONE-WORD POST IS STILL ANSWERED (Jake, 2026-10-05) — only a post
+      // with no words at all (emoji, punctuation) is passed over.
+      if (!/[\p{L}\p{N}]/u.test(words)) continue;
       out.targets.push({
         surface: "post",
         targetId: post.id,

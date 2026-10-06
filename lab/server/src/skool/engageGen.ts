@@ -2443,6 +2443,11 @@ export async function draftReply(req: ReplyRequest): Promise<{ reply: ReplyDraft
           "THIS IS A DIRECT MESSAGE IN SKOOL, one-to-one.",
           "The rules above apply as written. It is a private message, so no",
           "broadcast phrasing — answer the person.",
+          // Jake, 2026-10-05: a one-word DM "should reply". The collector no
+          // longer drops them, so the size of the answer is decided here.
+          "A ONE-WORD or very short message (\"hi\", \"thanks\", \"ok\", \"yes\") is still",
+          "answered — never skip it. Match its size: one short warm line, or one easy",
+          "question back if they only said hi. Do not use it as a cue to teach something.",
           "",
           // Jake, 2026-08-27: "when answering him I want the agent to have the
           // context of the whole thread (not just the last message) so he

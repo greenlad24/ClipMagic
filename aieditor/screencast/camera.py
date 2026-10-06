@@ -1,0 +1,485 @@
+"""Screencast camera: events.json (record.mjs) → a zoom/pan path → rendered clip.
+
+Runs inside the aieditor-screencast image (numpy + cv2 + ffmpeg):
+    python3 camera.py <recdir> <out.mp4> [--size 3840x2160] [--from S --to S] [--plan plan.json]
+
+The camera is a list of KEYS (frame, zoom, cx, cy) in capture pixels; between keys it
+eases with the measured curve. Motion constants come from motion/keyframes.json
+["screencast"] (reference 2, kwysV2smgfY) when present, else the DEFAULTS below.
+Design (cursor sprite, highlight colour) is STYLE, kept apart from motion like the
+rest of the motion library (Jake: "save mostly the animation keyframes").
+"""
+import json
+import math
+import subprocess
+import sys
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+HERE = Path(__file__).resolve().parent
+
+DEFAULTS = {
+    # reference 2 (kwysV2smgfY) screen camera — kwys-screencast.json, 29.97 fps frames
+    "zoom_in_ease": [0.31, 0.10, 0.22, 1.0],      # on LOG zoom, rms 0.001–0.004 (15/17)
+    "zoom_in_frames": 43, "zoom_in_frames_big": 56, "big_zoom": 1.4,
+    "zoom_out_ease": [0.345, 0.0, 0.33, 0.91], "zoom_out_frames": 50,
+    "zoom_min": 1.13, "zoom_max": 1.6, "zoom_cap": 2.0,
+    "entry_zoom": 1.36, "entry_delay_frames": 1.5, "entry_frames": 40,
+    "fit": 0.55,                  # the target fills at most this much of the view
+    "readable_px": 34,            # a target already this tall on screen needs no zoom
+    "lead_s": 0.6,                # the move starts this long before its event
+    "hold_min_s": 1.2,            # never re-frame sooner (the reference averages one move / 13–17 s, but narration-timed beats come faster)
+    "idle_out_s": 9.0,            # no target for this long → zoom back out
+    "nav_resets": True,           # a page change is a hard cut back to the full frame
+    "cursor_smooth_s": 0.0,       # the reference cursor is native, unsmoothed
+    "cursor_scale": 1.0,
+    # yellow marker wipe (kwys-annotations-layouts.json)
+    "hl_ease": [0.264, 0.139, 0.361, 0.897], "hl_lead_frames": 2.0,
+    "hl_dur": [13.3, 0.071, 18, 35],              # clamp(13.3 + 0.071·width_px@1080p, 18, 35)
+    "hl_out_ease": [0.358, -0.04, 0.287, 0.854], "hl_out_frames": 19.5,
+    "hl_height": 0.74, "hl_pad_px": 3,
+    # facecam: hide while the target is under the bubble (top-right of the OUTPUT frame)
+    "bubble_zone": [1480 / 1920, 0, 1.0, 470 / 1080],
+    "empty_min": 0.03,            # a read/hover framing with less non-background than this is skipped
+}
+STYLE = {
+    "highlight_rgba": (255, 214, 10, 0.42),       # reads #99831C on blue, text #F7F26C — multiply-like
+    "cursor": "arrow",
+}
+REF_FPS = 30000 / 1001
+
+
+def params():
+    p = dict(DEFAULTS)
+    kf = HERE.parent / "motion" / "keyframes.json"
+    try:
+        sc = json.loads(kf.read_text()).get("screencast", {}).get("camera", {})
+        p.update({k: v for k, v in sc.items() if k in DEFAULTS})
+    except Exception:  # noqa: BLE001
+        pass
+    return p
+
+
+# ── easing ───────────────────────────────────────────────────────────────────
+def bezier(p1x, p1y, p2x, p2y):
+    def f(x):
+        if x <= 0:
+            return 0.0
+        if x >= 1:
+            return 1.0
+        lo, hi = 0.0, 1.0
+        for _ in range(40):
+            u = (lo + hi) / 2
+            bx = 3 * (1 - u) ** 2 * u * p1x + 3 * (1 - u) * u * u * p2x + u ** 3
+            lo, hi = (u, hi) if bx < x else (lo, u)
+        u = (lo + hi) / 2
+        return 3 * (1 - u) ** 2 * u * p1y + 3 * (1 - u) * u * u * p2y + u ** 3
+    return f
+
+
+# ── sync ─────────────────────────────────────────────────────────────────────
+def marker_frame(raw, w, h):
+    """First frame after the white→black marker (record.mjs) = event time 0."""
+    cmd = ["ffmpeg", "-v", "error", "-i", str(raw), "-t", "6", "-vf", "scale=64:36", "-f", "rawvideo",
+           "-pix_fmt", "gray", "-"]
+    buf = subprocess.run(cmd, capture_output=True, check=True).stdout
+    fr = np.frombuffer(buf, np.uint8).reshape(-1, 36, 64).mean(axis=(1, 2))
+    seen_white = False
+    for i, v in enumerate(fr):
+        if v > 200:
+            seen_white = True
+        elif seen_white and v < 40:
+            return i
+    raise RuntimeError("sync marker not found in the first 6 s")
+
+
+# ── planning ─────────────────────────────────────────────────────────────────
+def clamp(z, cx, cy, W, H):
+    hw, hh = W / z / 2, H / z / 2
+    return z, min(max(cx, hw), W - hw), min(max(cy, hh), H - hh)
+
+
+def framing_for(box, W, H, p):
+    x, y, bw, bh = box
+    # a POINT target (the agent framed a spot on a canvas) means "this design here", not a
+    # 2-px box to zoom to the 2× cap: give it a design-sized area around the point
+    mw, mh = W * 0.24, H * 0.30
+    if bw < mw and bh < mh and bw * bh < 400:
+        x, y, bw, bh = x + bw / 2 - mw / 2, y + bh / 2 - mh / 2, mw, mh
+    z = min(p["zoom_cap"], p["fit"] * W / max(bw, 1), p["fit"] * H / max(bh, 1))
+    if z < p["zoom_min"] * 0.9:
+        # a target this big (a whole section / the page) is not a zoom target: full frame
+        return (1.0, W / 2, H / 2)
+    z = min(max(z, p["zoom_min"]), p["zoom_max"] if z < p["zoom_cap"] else p["zoom_cap"])
+    return clamp(z, x + bw / 2, y + bh / 2, W, H)
+
+
+def avoid_bubble(view, box, W, H, p):
+    """Keep the target out from under the facecam (top-right): shift the view right/up so
+    the target's on-screen box ends left of / below the bubble zone, when the frame allows."""
+    z, cx, cy = view
+    vw, vh = W / z, H / z
+    x, y, bw, bh = box
+    zx0, zy0, zx1, zy1 = p["bubble_zone"]
+    sx1 = (x + bw - (cx - vw / 2)) / vw          # target right edge on screen (0..1)
+    sy0 = (y - (cy - vh / 2)) / vh               # target top on screen
+    if sx1 <= zx0 - 0.01 or sy0 >= zy1:
+        return view
+    # move the view right so the right edge lands just left of the zone
+    need = (sx1 - (zx0 - 0.02)) * vw
+    z2, cx2, cy2 = clamp(z, cx + need, cy, W, H)
+    if (x + bw - (cx2 - vw / 2)) / vw <= zx0:
+        return (z2, cx2, cy2)
+    return view
+
+
+def in_view(box, view, W, H, out_h, p):
+    """The target is inside the current view and already readable on screen."""
+    z, cx, cy = view
+    vw, vh = W / z, H / z
+    x, y, bw, bh = box
+    inside = x >= cx - vw / 2 and x + bw <= cx + vw / 2 and y >= cy - vh / 2 and y + bh <= cy + vh / 2
+    return inside and bh * z * out_h / H >= p["readable_px"] * out_h / 1080 and z > 1.05
+
+
+def content_fraction(img, view, W, H):
+    """Share of the view (z, cx, cy) that is not the page's flat background — a zoom onto
+    bare canvas between designs is a wasted move. None when the frame has no flat background."""
+    sw = 640
+    sm = cv2.medianBlur(cv2.resize(img, (sw, round(H * sw / W)), interpolation=cv2.INTER_AREA), 5)   # dot grids go
+    q = (sm // 8).reshape(-1, 3)
+    vals, cnt = np.unique(q, axis=0, return_counts=True)
+    if cnt.max() < 0.3 * len(q):
+        return None
+    bg = vals[cnt.argmax()].astype(int) * 8 + 4
+    z, cx, cy = view
+    s = sw / W
+    x0, x1 = int((cx - W / z / 2) * s), int((cx + W / z / 2) * s)
+    y0, y1 = int((cy - H / z / 2) * s), int((cy + H / z / 2) * s)
+    roi = sm[max(y0, 0):y1, max(x0, 0):x1].astype(int)
+    if roi.size == 0:
+        return None
+    return float((np.abs(roi - bg).max(axis=2) > 8).mean())
+
+
+def drop_empty_targets(ev, raw, f0, fps, p):
+    """Mark read/hover/move targets whose framing would show (almost) only background:
+    the agent picked a spot on a zoomed-out canvas that missed the design."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    cand = [e for e in ev["events"] if e.get("box") and e["type"] in ("read", "hover", "move")]
+    if not cand:
+        return []
+    cap = cv2.VideoCapture(str(raw))
+    dropped = []
+    for e in cand:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(f0 + e.get("end", e["t"]) * fps) - 1)
+        ok, img = cap.read()
+        if not ok:
+            continue
+        frac = content_fraction(img, framing_for(e["box"], W, H, p), W, H)
+        if frac is not None and frac < p["empty_min"]:
+            e["empty"] = True
+            dropped.append(round(e["t"], 2))
+    cap.release()
+    return dropped
+
+
+def plan_moves(ev, fps, f0, n_frames, p):
+    """[(start_frame, frames, view_from, view_to, ease)] — reference 2's camera: an entry
+    push-in, then one eased move per target that is not already well framed, zoom-outs
+    on idle; a page change is a hard cut back to the full frame."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    k = fps / REF_FPS                        # reference frames → this clip's frames
+    full = (1.0, W / 2, H / 2)
+    focus = [e for e in ev["events"] if e.get("box") and not e.get("empty")
+             and e["type"] in ("click", "type", "read", "highlight", "move", "hover")]
+    navs = [e["t"] for e in ev["events"] if e["type"] == "nav" and e["t"] > 0.05]
+    scrolls = [e["t"] for e in ev["events"] if e["type"] == "scroll"]
+    moves, view, last_move_end = [], full, -1e9
+    first = focus[0] if focus else None
+    # entry push-in toward the first target (or the centre)
+    if first is None or first["t"] > 0.4:
+        tgt = framing_for(first["box"], W, H, p) if first else full
+        z = p["entry_zoom"]
+        v = clamp(z, tgt[1], tgt[2], W, H) if first else (z, W / 2, H / 2)
+        s0 = f0 + p["entry_delay_frames"] * k
+        moves.append((s0, p["entry_frames"] * k, view, v, "in", first["box"] if first else None))
+        view, last_move_end = v, s0 + p["entry_frames"] * k
+    cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in navs]
+                  + [(t, "scroll", None) for t in scrolls], key=lambda c: c[0])
+    last_target_end = 0.0
+    for t, kind, e in cues:
+        fr = f0 + t * fps
+        if kind == "scroll":
+            # the page moves under the view: open back out to the full frame as it starts
+            if view[0] > 1.0 and fr >= last_move_end:
+                moves.append((fr, p["zoom_out_frames"] * k, view, full, "out"))
+                view, last_move_end = full, fr + p["zoom_out_frames"] * k
+            continue
+        if kind == "nav":
+            if p["nav_resets"]:
+                moves.append((fr, 0, view, full, "cut"))
+                view, last_move_end = full, fr
+            continue
+        if t - last_target_end > p["idle_out_s"] and view[0] > 1.0 and fr - last_move_end > p["zoom_out_frames"] * k:
+            s0 = f0 + (last_target_end + 1.0) * fps
+            moves.append((s0, p["zoom_out_frames"] * k, view, full, "out"))
+            view, last_move_end = full, s0 + p["zoom_out_frames"] * k
+        last_target_end = max(last_target_end, e.get("end", t))
+        if in_view(e["box"], view, W, H, 1080, p):
+            continue
+        tgt = avoid_bubble(framing_for(e["box"], W, H, p), e["box"], W, H, p)
+        dur = (p["zoom_in_frames_big"] if tgt[0] > p["big_zoom"] else p["zoom_in_frames"]) * k
+        s0 = max(fr - p["lead_s"] * fps, last_move_end + p["hold_min_s"] * fps * (0 if view == full else 1),
+                 f0 + p["entry_delay_frames"] * k)
+        if s0 > fr + 1.5 * fps:              # too late to matter: let it go
+            continue
+        moves.append((s0, dur, view, tgt, "in" if tgt[0] >= view[0] else "out", e["box"]))
+        view, last_move_end = tgt, s0 + dur
+    end = f0 + ev["end"] * fps
+    return moves
+
+
+def _view_between(a, b, u):
+    """Zoom on LOG scale about the move's fixed point (the reference's view corners move
+    in step with its width — a pure zoom about one point, then any pan)."""
+    z0, x0, y0 = a
+    z1, x1, y1 = b
+    z = math.exp(math.log(z0) + (math.log(z1) - math.log(z0)) * u)
+    if abs(z1 - z0) < 1e-6:
+        return z, x0 + (x1 - x0) * u, y0 + (y1 - y0) * u
+    # the fixed point P stays put on screen: (P − c0)·z0 = (P − c1)·z1
+    px, py = (x0 * z0 - x1 * z1) / (z0 - z1), (y0 * z0 - y1 * z1) / (z0 - z1)
+    return z, px - (px - x0) * z0 / z, py - (py - y0) * z0 / z
+
+
+def camera_at(moves, f, p, eases, W, H):
+    view = (1.0, W / 2, H / 2)
+    for s0, dur, a, b, kind, *_ in moves:
+        if f < s0:
+            break
+        if dur <= 0 or f >= s0 + dur:
+            view = b
+            continue
+        u = eases["out" if kind == "out" else "in"]((f - s0) / dur)
+        view = clamp(*_view_between(a, b, u), W, H)
+        break
+    return view
+
+
+def move_starts(moves):
+    return [m[0] for m in moves if m[1] > 0]
+
+
+def active_targets(ev, t):
+    return [e for e in ev["events"] if e.get("box") and e["type"] in ("click", "type", "read", "highlight", "move", "hover")
+            and e["t"] - 0.3 <= t <= e.get("end", e["t"]) + 0.3]
+
+
+# ── drawing ──────────────────────────────────────────────────────────────────
+def cursor_sprite(px):
+    """A clean macOS-like arrow, white with a dark rim, rendered at px height, RGBA."""
+    s = px / 24.0
+    pts = np.array([[0, 0], [0, 17], [4.2, 13.2], [6.8, 19.4], [9.6, 18.2], [7.0, 12.2], [12.4, 12.2]], np.float32)
+    pad = int(3 * s) + 2
+    w, h = int(13 * s) + 2 * pad, int(21 * s) + 2 * pad
+    img = np.zeros((h * 4, w * 4, 4), np.uint8)               # 4× supersampled
+    P = ((pts * s + pad) * 4).astype(np.int32)
+    cv2.fillPoly(img, [P], (20, 20, 20, 255), lineType=cv2.LINE_AA)
+    cv2.polylines(img, [P], True, (20, 20, 20, 255), thickness=max(4, int(2.2 * s * 4)), lineType=cv2.LINE_AA)
+    inner = np.array([[1.4, 3.2], [1.4, 13.6], [4.6, 10.6], [7.4, 16.9], [8.2, 16.5], [5.5, 10.4], [9.6, 10.4]], np.float32)
+    cv2.fillPoly(img, [((inner * s + pad) * 4).astype(np.int32)], (255, 255, 255, 255), lineType=cv2.LINE_AA)
+    img = cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
+    return img, (pad, pad)                                     # hotspot
+
+
+def paste(dst, rgba, x, y):
+    h, w = rgba.shape[:2]
+    x0, y0 = int(round(x)), int(round(y))
+    xa, ya, xb, yb = max(0, x0), max(0, y0), min(dst.shape[1], x0 + w), min(dst.shape[0], y0 + h)
+    if xa >= xb or ya >= yb:
+        return
+    src = rgba[ya - y0:yb - y0, xa - x0:xb - x0].astype(np.float32)
+    a = src[:, :, 3:4] / 255.0
+    roi = dst[ya:yb, xa:xb].astype(np.float32)
+    dst[ya:yb, xa:xb] = (src[:, :, :3][:, :, ::-1] * a + roi * (1 - a)).astype(np.uint8)   # RGBA→BGR
+
+
+def cursor_track(ev, fps, f0, n, smooth_s):
+    c = np.array(ev["cursor"], np.float64) if ev["cursor"] else np.zeros((1, 3))
+    tt = f0 / fps * 0 + (np.arange(n) - f0) / fps
+    x = np.interp(tt, c[:, 0], c[:, 1])
+    y = np.interp(tt, c[:, 0], c[:, 2])
+    k = max(1, int(round(smooth_s * fps)))
+    if k > 1:
+        ker = np.ones(k) / k
+        x = np.convolve(np.pad(x, (k // 2, k - 1 - k // 2), mode="edge"), ker, "valid")
+        y = np.convolve(np.pad(y, (k // 2, k - 1 - k // 2), mode="edge"), ker, "valid")
+    return x, y
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
+def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, preset="veryfast", out_fps=None):
+    """t_from/t_to: seconds on the recording's clock (0 = sync marker). The clip is exactly
+    (t_to − t_from) long: a recording that ends early holds its last frame. out_fps: the
+    edit's frame rate (frames are picked by time, so 30 → 29.97 never drifts)."""
+    recdir = Path(recdir)
+    ev = json.loads((recdir / "events.json").read_text())
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    fps = ev["capture"]["fps"]
+    raw = recdir / "raw.mp4"
+    n_all = int(subprocess.run(["ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0", "-show_entries",
+                                "stream=nb_read_packets", "-of", "csv=p=0", str(raw)], capture_output=True, text=True).stdout.strip())
+    vw, vh = (int(v) for v in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+              "stream=width,height", "-of", "csv=p=0", str(raw)], capture_output=True, text=True).stdout.strip().split(","))
+    if (vw, vh) != (W, H):
+        raise RuntimeError(f"recording is {vw}x{vh}, events say {W}x{H}")
+    f0 = ev["pre_frames"] if ev.get("virtual_time") else marker_frame(raw, W, H)
+    p = params()
+    eases = {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"])}
+    hl_in, hl_out = bezier(*p["hl_ease"]), bezier(*p["hl_out_ease"])
+    drop_empty_targets(ev, raw, f0, fps, p)
+    keys = plan_moves(ev, fps, f0, n_all, p)
+    starts = move_starts(keys)
+    kref = fps / REF_FPS
+    hide = []                                  # output seconds where the bubble must fade out
+    blank = []                                 # output seconds showing an (almost) empty screen
+    a = f0 + round((t_from or 0) * fps)
+    b_req = n_all if t_to is None else f0 + round(t_to * fps)
+    b = min(n_all, b_req)
+    ofps = out_fps or fps
+    n_out = round((b_req - a) / fps * ofps)
+    cx_t, cy_t = cursor_track(ev, fps, f0, n_all, max(p["cursor_smooth_s"], 1e-6))
+    ow, oh = size
+    sprite_cache = {}
+    highlights = [e for e in ev["events"] if e["type"] == "highlight" and e.get("box")]
+    page_moves = sorted(e["t"] for e in ev["events"] if e["type"] in ("scroll", "nav"))
+
+    dec = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{a / fps:.6f}", "-i", str(raw), "-frames:v", str(b - a),
+                            "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], stdout=subprocess.PIPE)
+    enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{ow}x{oh}",
+                            "-r", f"{ofps:.6f}", "-i", "-", "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
+                            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], stdin=subprocess.PIPE)
+    fb = W * H * 3
+    cur_src, frame_src, last = a - 1, None, None
+    for o in range(n_out):
+        f = a + int(o / ofps * fps + 1e-6)              # source frame shown at this output frame
+        while cur_src < min(f, b - 1):
+            buf = dec.stdout.read(fb)
+            if len(buf) < fb:
+                b = cur_src + 1
+                break
+            frame_src = np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+            cur_src += 1
+        if frame_src is None:
+            break
+        f = min(f, cur_src)
+        frame = frame_src.copy()
+        z, cx, cy = camera_at(keys, f, p, eases, W, H)
+        t = (f - f0) / fps
+        # highlights: a left→right marker wipe drawn in CAPTURE space (it zooms with the
+        # page); it fades when the camera's NEXT move starts (reference 2, 3/3 cases)
+        for e in highlights:
+            fe = f0 + e["t"] * fps
+            if f < fe - p["hl_lead_frames"] * kref:
+                continue
+            x, y, bw, bh = e["box"]
+            w1080 = bw * 1080 / H
+            dur = min(max(p["hl_dur"][0] + p["hl_dur"][1] * w1080, p["hl_dur"][2]), p["hl_dur"][3]) * kref
+            u = hl_in((f - (fe - p["hl_lead_frames"] * kref)) / dur)
+            nxt = next((m for m in starts if m > fe + dur), None)
+            alpha = 1.0
+            if nxt is not None and f >= nxt:
+                alpha = 1 - hl_out((f - nxt) / (p["hl_out_frames"] * kref))
+            # the page scrolls or changes under it: the marker goes at once (3 f)
+            gone = next((f0 + x * fps for x in page_moves if x * fps + f0 > fe), None)
+            if gone is not None and f >= gone:
+                alpha = min(alpha, 1 - (f - gone) / (3 * kref))
+            if alpha <= 0.001:
+                continue
+            hh = bh * p["hl_height"] / 0.74 if bh < 60 else bh * 0.92
+            pad = p["hl_pad_px"] * H / 1080
+            yc = y + bh / 2
+            x1 = int(x - pad + (bw + 2 * pad) * u)
+            if x1 <= x - pad:
+                continue
+            r, g, bl, al = STYLE["highlight_rgba"]
+            y0r, y1r, x0r = int(yc - hh / 2), int(yc + hh / 2), int(x - pad)
+            roi = frame[y0r:y1r, x0r:x1].astype(np.float32)
+            col = np.array([bl, g, r], np.float32)
+            # multiply-like marker: darks stay dark, light text takes the yellow
+            mixed = roi * (col / 255.0) * 0.55 + col * 0.45
+            frame[y0r:y1r, x0r:x1] = (roi * (1 - al * alpha) + mixed * (al * alpha)).clip(0, 255).astype(np.uint8)
+        cw, ch = W / z, H / z
+        x0, y0 = cx - cw / 2, cy - ch / 2
+        M = np.array([[ow / cw, 0, -x0 * ow / cw], [0, oh / ch, -y0 * oh / ch]], np.float32)
+        img = cv2.warpAffine(frame, M, (ow, oh), flags=cv2.INTER_CUBIC if z > 1.01 else cv2.INTER_AREA,
+                             borderMode=cv2.BORDER_REPLICATE)
+        # cursor: scales with the zoom like the page under it
+        px = 24 * ev["capture"]["scale"] * p["cursor_scale"] * z * ow / W
+        key = round(px * 2) / 2
+        if key not in sprite_cache:
+            sprite_cache[key] = cursor_sprite(key)
+        spr, hot = sprite_cache[key]
+        # facecam: the bubble hides while a target sits under it on screen
+        # the target the camera is HOLDING on counts for as long as it holds
+        held = None
+        for m in keys:
+            if m[0] <= f:
+                held = m[5] if len(m) > 5 and m[5] else None
+        targets = active_targets(ev, t) + ([{"box": held}] if held else [])
+        for e in targets:
+            # the target's on-screen box (0..1) against the bubble's zone: hide when a real
+            # share of the target sits under it (its centre alone missed a wide headline)
+            bx, by, bw2, bh2 = e["box"]
+            ax0, ay0 = (bx - x0) / cw, (by - y0) / ch
+            ax1, ay1 = (bx + bw2 - x0) / cw, (by + bh2 - y0) / ch
+            zx0, zy0, zx1, zy1 = p["bubble_zone"]
+            ix = max(0.0, min(ax1, zx1) - max(ax0, zx0))
+            iy = max(0.0, min(ay1, zy1) - max(ay0, zy0))
+            area = max(1e-6, (ax1 - ax0) * (ay1 - ay0))
+            if ix * iy / area >= 0.08 and ax1 > zx0:
+                hide.append(round(o / ofps, 3))
+                break
+        # blank screens (a page that scrolled into an empty/black section): reported so the
+        # edit can cut back to the presenter instead of showing nothing
+        small = cv2.resize(img, (96, 54), interpolation=cv2.INTER_AREA)
+        if float(small.std()) < 7.0:
+            blank.append(round(o / ofps, 3))
+        sx = (cx_t[f] - x0) * ow / cw - hot[0]
+        sy = (cy_t[f] - y0) * oh / ch - hot[1]
+        paste(img, spr, sx, sy)
+        enc.stdin.write(img.tobytes())
+    dec.stdout.close()
+    enc.stdin.close()
+    enc.wait()
+    dec.wait()
+    # hide frames → spans (output seconds), merged over 0.5 s gaps
+    spans = []
+    for t_ in hide:
+        if spans and t_ - spans[-1][1] < 0.5:
+            spans[-1][1] = t_
+        else:
+            spans.append([t_, t_])
+    bl = []
+    for t_ in blank:
+        if bl and t_ - bl[-1][1] < 2.5 / ofps:
+            bl[-1][1] = t_
+        else:
+            bl.append([t_, t_])
+    scroll_t = [round(e["t"] - (t_from or 0), 3) for e in ev["events"] if e["type"] == "scroll"]
+    json.dump({"f0": f0, "moves": keys, "bubble_hide": spans, "blank": [b_ for b_ in bl if b_[1] - b_[0] >= 0.5],
+               "scrolls": scroll_t,
+               "params": p}, open(str(out) + ".camera.json", "w"), indent=1)
+    return keys
+
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    opt = {k: args[args.index(k) + 1] for k in ("--size", "--from", "--to", "--fps") if k in args}
+    size = tuple(int(v) for v in opt.get("--size", "1920x1080").split("x"))
+    keys = render(args[0], args[1], size, float(opt["--from"]) if "--from" in opt else None,
+                  float(opt["--to"]) if "--to" in opt else None, out_fps=float(opt["--fps"]) if "--fps" in opt else None)
+    print(json.dumps({"keys": len(keys)}))

@@ -1,0 +1,1948 @@
+{
+ "meta": {
+  "family": "titles-lists: full-screen title/chapter cards, framework lists, acronyms, cold open, end card",
+  "video": "/opt/aieditor-work/reference/gVPZU1btFA8/video.mp4",
+  "fps": 24,
+  "res": [
+   1920,
+   1080
+  ],
+  "frame_convention": "absolute frame index k = round(t*24) of the decoded stream (pts are truncated to ms, e.g. frame 1630 has pts 67.916). All seeks in this study used t = k/24 - 0.0004 (or an exact pts), so ceil/round agree and frame numbers are exact under both the old and the fixed kit. Early chapter-card numbers from a 67.917 start were corrected (+1) before use.",
+  "methods": [
+   "per-element template fit: frame = bg + alpha*(warp(final; dx,dy,scale,box-blur) - bg), least squares (tools/meas.py)",
+   "kit track.sh bbox/area series",
+   "bezier fit by Nelder-Mead (tools/bezfit.py), residual reported as rms relative to the animated range",
+   "64x36 whole-video scan for full-screen card segments",
+   "10 ms RMS (full band and >6 kHz) for SFX"
+  ],
+  "blur_units": "blur values are box-blur radius r in px (box width 2r+1); gaussian sigma ~= 0.58*(2r+1)/2: r1~0.8, r2~1.4, r4~2.6, r6~3.8, r8~4.9 px",
+  "scratch": "/opt/aieditor-work/reference/work/titles-lists/ (tools/, sheets, strips)"
+ },
+ "inventory": [
+  {
+   "id": "cold_open",
+   "frames": [
+    0,
+    131
+   ],
+   "time": "0:00.000-0:05.46",
+   "kind": "full-screen kinetic sequence on pink-glow plate"
+  },
+  {
+   "id": "chapter_card_1",
+   "frames": [
+    1631,
+    1685
+   ],
+   "time": "1:07.958-1:10.21",
+   "kind": "full-screen chapter card 'AD FORMAT #1 / CALLOUT DIAGRAM'"
+  },
+  {
+   "id": "proof_acronym",
+   "frames": [
+    1472,
+    1497
+   ],
+   "time": "1:01.33-1:02.38",
+   "kind": "overlay acronym list P/R/O/O/F (perspective)"
+  },
+  {
+   "id": "attention_x_list",
+   "frames": [
+    4066,
+    4161
+   ],
+   "time": "2:49.42-2:53.38",
+   "kind": "overlay typewriter list with red X"
+  },
+  {
+   "id": "comparison_list",
+   "frames": [
+    5990,
+    6147
+   ],
+   "time": "4:09.58-4:16.13",
+   "kind": "overlay stacked comparison A -> B with arrow"
+  },
+  {
+   "id": "quest_card",
+   "frames": [
+    10200,
+    10265
+   ],
+   "time": "7:05.00-7:07.71",
+   "kind": "full-screen framework card, 5 pill rows"
+  },
+  {
+   "id": "numbered_list",
+   "frames": [
+    10320,
+    10451
+   ],
+   "time": "7:10.00-7:15.46",
+   "kind": "full-screen numbered list 01/02/03 rows"
+  },
+  {
+   "id": "exclusivity_list",
+   "frames": [
+    10979,
+    11031
+   ],
+   "time": "7:37.46-7:39.63",
+   "kind": "overlay vertical pink-gradient word list"
+  },
+  {
+   "id": "quest_pills_2",
+   "frames": [
+    11908,
+    11970
+   ],
+   "time": "8:16.2-8:18.75",
+   "kind": "same pill-row component, right column beside a 9:16 card, on glow plate"
+  },
+  {
+   "id": "end_card",
+   "frames": [
+    14717,
+    14953
+   ],
+   "time": "10:13.21-10:23.04 (end of file)",
+   "kind": "presenter frame shrinks into logo, logo lockup on dark plate"
+  }
+ ],
+ "inventory_findings": [
+  "Only ONE full-screen chapter card exists (1631-1685). The whole-video 64x36 scan (all 14954 frames) found no other dark full-frame segment with centred title text. 'Ad format #2/#3' are small captions under ad cards at ~3:33-3:38 (other family), not chapter cards. The '10 chapters share one recipe' premise is not supported by the video.",
+  "No 'flash cut' and no 'glow transition' were found: 7:05 QUEST card and 7:10 numbered list are HARD CUTS into the glow plate (luma of the first card frame equals the plate; no white/bright frame).",
+  "The end card does NOT fade to dark: the file ends on the fully held card at frame 14953.",
+  "The cold-open GPT-6 card exits with a whole-canvas horizontal whip-pan (plate glow moves too), not a cut."
+ ],
+ "background": {
+  "pink_glow_plate": {
+   "used_by": [
+    "cold_open",
+    "quest_card",
+    "numbered_list",
+    "quest_pills_2 section (481-508 s)"
+   ],
+   "is_a_looping_clip": "yes - edge-glow time series at frame 0 and frame 10200 are identical frame-for-frame (64x36 R-mean of edge strips equal to +-0.5), i.e. a pre-rendered plate restarted at each card; 10324 starts the same plate ~12-15 frames in",
+   "layout_norm": {
+    "left_glow_centroid": [
+     0.08,
+     0.6
+    ],
+    "right_glow_centroid": [
+     0.91,
+     0.44
+    ],
+    "centre_dark_ellipse": "near-black #030303-#0B0403 covering x 0.2-0.8, y 0.15-0.85",
+    "top_left_corner": "warm brown #492921"
+   },
+   "sampled_colours_frame70": {
+    "right_glow_peak(0.98,0.35)": "#DD405F",
+    "right(0.9,0.35)": "#822739",
+    "left_bottom(0.02,0.95)": "#A12F45",
+    "left(0.02,0.65)": "#752430",
+    "centre(0.5,0.5)": "#040203",
+    "top_left(0.02,0.05)": "#492921",
+    "top_mid(0.5,0.05)": "#120707"
+   },
+   "breathing": "both glows pulse independently, organic (not sinusoidal). Right-edge strip mean R channel: 101 (f0) -> 84 (f28) -> 135.6 (f75) -> 97 (f117); left: 70 (f0) -> 86 (f45) -> 77 (f110). Swing period 2-3.5 s, amplitude about +-25 % of glow intensity. Right glow centroid y drifts 0.42-0.47.",
+   "dot_grid": "faint 1-2 px dots on a ~119 px square grid (x 68,187,305,...; y 123,242,360,...), barely visible (+5-10 luma) over the glow, invisible over the black centre",
+   "confidence": "high for colours/positions; medium for period (longest clean window 5.5 s)"
+  },
+  "chapter_card_plate": {
+   "base": "#020202 to #000000 centre",
+   "edge_vignette": "faint plum #0C0006-#20010F at edges, strongest right-top (0.98,0.2) #20010F",
+   "motion": "none measurable",
+   "confidence": "high"
+  },
+  "end_card_plate": {
+   "base": "#101114 flat charcoal",
+   "glow": "magenta radial at top-centre: (0.5,0.05) #9B1642, (0.35,0.05) #7D1C40, (0.5,0.35) #58152C, fades to base by y~0.5 and x<0.2/>0.8; glow fades in with the shrink transition (visible from 14724)",
+   "decor": "very faint thin curved line strokes (Higgsfield squiggle outlines) at ~3-5 % contrast"
+  },
+  "transitions_into_full_screen": {
+   "chapter_card": "hard cut (1630 presenter -> 1631 empty plate); text starts 1 frame later",
+   "quest_card": "hard cut at 10200; plate held EMPTY 20 frames before header at 10220",
+   "numbered_list": "hard cut at 10320; first row bar at 10322",
+   "quest_pills_2": "glow plate section continues from previous 9:16 card scenes",
+   "cold_open": "video starts mid-animation (pill already present at f0)",
+   "end_card": "presenter frame scales down into the logo tile (see end_card)"
+  },
+  "transitions_out": {
+   "chapter_card": "elements rise+fade 1676-1684, empty plate 1685, hard cut 1686",
+   "quest_card": "hard cut 10266, no exit animation",
+   "numbered_list": "hard cut 10452, no exit animation",
+   "cold_open": "whole-canvas whip-pan left 119-131 into the ad-carousel scene",
+   "comparison/proof/attention/exclusivity overlays": "vanish on a camera cut (no exit animation)"
+  }
+ },
+ "typography": {
+  "primary": {
+   "family": "Space Grotesk",
+   "weight": "Bold (700)",
+   "google_font": true,
+   "evidence": [
+    "'D' stem protrudes left above and below the bowl joint (AD, DIAGRAM, UNDERSTAND) - unique to Space Grotesk among the 14 grotesks rendered side by side",
+    "'1' with long diagonal flag and no foot (#1, 10,000, 01)",
+    "'&' drawn as an 'Et' ligature form (PRODUCTS & SERVICES)",
+    "ink-trap notches at N/M joins (ANALYZING, UNDERSTAND)",
+    "square-ish rounded 0/O (10,000, 01 02 03)"
+   ],
+   "used_for": "every title/list/acronym/counter word in this family",
+   "confidence": "high (rendered comparison: work/titles-lists/fontcand.png)",
+   "alternates_if_unavailable": [
+    "Space Mono Bold for the monospace-feel words (other family: 'BUDGET')",
+    "Familjen Grotesk Bold (closest metrics, lacks D spur)"
+   ]
+  },
+  "secondary": {
+   "GPT-6 ASTRA": {
+    "candidates": [
+     "Inter Bold",
+     "Geist Bold",
+     "SF Pro Display Bold"
+    ],
+    "evidence": "'G' with spur and flat bar, plain 'A' and round '6', no Space Grotesk D/1 traits",
+    "confidence": "medium-low"
+   },
+   "end_card 'Higgsfield Marketing'": {
+    "candidates": [
+     "Inter SemiBold",
+     "SF Pro Display Semibold"
+    ],
+    "note": "brand lockup, probably an image asset",
+    "confidence": "low"
+   }
+  },
+  "tracking": "0 (no visible letter-spacing) everywhere",
+  "case": "ALL CAPS for all family text",
+  "sizes_px_at_1080p": {
+   "note": "font-size = cap height / 0.70 (Space Grotesk cap height 700/1000)",
+   "chapter_label 'AD FORMAT #1'": {
+    "cap": 53,
+    "font": 76
+   },
+   "chapter_title 'CALLOUT DIAGRAM'": {
+    "cap": 82,
+    "font": 117
+   },
+   "cold 'WEEKS'": {
+    "cap": 130,
+    "font": 185
+   },
+   "cold 'I SPENT'": {
+    "cap": 60,
+    "font": 86
+   },
+   "cold counter digits": {
+    "digit_h": 160,
+    "font": 230
+   },
+   "cold 'ANALYZING'": {
+    "cap": 40,
+    "font": 57
+   },
+   "cold 'ADS'": {
+    "cap": 50,
+    "font": 72
+   },
+   "cold 'PRODUCTS'/'SERVICES'": {
+    "cap": 42,
+    "font": 60
+   },
+   "cold 'FOR'": {
+    "cap": 22,
+    "font": 32
+   },
+   "cold 'GPT-6 ASTRA'": {
+    "cap": 87,
+    "font_inter_equiv": 120
+   },
+   "quest rows": {
+    "cap": 52,
+    "font": 75
+   },
+   "quest_pills_2 rows": {
+    "cap": 48,
+    "font": 69
+   },
+   "numbered list rows": {
+    "cap": 50,
+    "font": 72,
+    "line_height_px": 70
+   },
+   "proof rows": {
+    "cap": 49,
+    "font": 70,
+    "note": "in 3D perspective; nearer rows larger"
+   },
+   "comparison rows": {
+    "cap": 50,
+    "font": 72
+   },
+   "exclusivity rows": {
+    "cap": 62,
+    "font": 88
+   },
+   "attention rows": {
+    "cap": "~22",
+    "font": "~32 (small, top-left)"
+   }
+  },
+  "colours": {
+   "white_text": "#FFFFFF (sampled #FDFDFD-#FFFFFF)",
+   "grey_minor_text 'FOR'": "#B3ABB0",
+   "pink_solid_letters (acronym initials P,R,O / Q,U,E,S,T / 01)": {
+    "median": "#FC1955",
+    "top": "#FC2C75",
+    "bottom": "#FD1470",
+    "range": "#CA0031-#FF6F98",
+    "gradient": "vertical, lighter top (#FF6F98) to deeper bottom (#E0113F)"
+   },
+   "pink_gradient_titles (CALLOUT DIAGRAM, WEEKS, 10,000, PRODUCT IN ACTION, UGC VIDEO, EXCLUSIVITY, ASTRA)": {
+    "stops": [
+     "#FC167F hot pink",
+     "#FD0A3E red",
+     "#FB70A0 light pink",
+     "#FCCB73 gold"
+    ],
+    "direction": "mainly horizontal (pink left, red middle, light-pink/gold toward the right), plus vertical lightening at the top of letters",
+    "animated": "yes - stops flow; on the chapter card the gold patch sits on 'GRAM' 1640-1655 then fades and a light-pink patch appears on 'CA' at 1663-1670 (cycle ~1.5-2 s). Not a single linear sweep.",
+    "confidence": "medium (colour flow is measured, its exact generator is not)"
+   },
+   "chapter underline": "#FF0990 (range #C9057A-#FF2497), flat",
+   "cold counter underline": "#F40744",
+   "arrow (comparison)": "#EE0C87",
+   "ampersand": "#F77CAC",
+   "row pill fill": "#0F0E11 flat, 1 px edge #211E22 at top",
+   "number badge fill": "#21161E",
+   "cold-open glass pills": "horizontal gradient #3B2032 (left) -> #100A11 (right); 1-2 px pink top-edge glow #982559",
+   "end card": {
+    "logo tile": "horizontal #CD2F3D -> #EB4339, white squiggle",
+    "title": "#EFEAEE",
+    "url 'higgsfield.ai'": "#8B878C"
+   }
+  }
+ },
+ "geometry": {
+  "chapter_card": {
+   "label": {
+    "bbox": [
+     718,
+     358,
+     1206,
+     411
+    ],
+    "centre_x": 962
+   },
+   "title": {
+    "bbox": [
+     468,
+     519,
+     1455,
+     601
+    ],
+    "centre_x": 961
+   },
+   "underline": {
+    "x": [
+     355,
+     1567
+    ],
+    "y_centre": 680,
+    "thickness": 6,
+    "caps": "round",
+    "width_px": 1212
+   },
+   "baseline_gap_label_to_title": 190,
+   "title_baseline_to_underline": 79,
+   "norm": {
+    "label_cy": 0.355,
+    "title_cy": 0.519,
+    "underline_y": 0.63
+   }
+  },
+  "quest_card": {
+   "header": {
+    "sparkle_icon": [
+     592,
+     135,
+     655,
+     200
+    ],
+    "text 'QUEST'": [
+     660,
+     145,
+     777,
+     185
+    ]
+   },
+   "rows": {
+    "x": [
+     595,
+     1325
+    ],
+    "tops": [
+     250,
+     368,
+     485,
+     602,
+     720
+    ],
+    "height": 100,
+    "pitch": 117.5,
+    "radius": 12,
+    "letter_x": [
+     658,
+     702
+    ],
+    "word_x": 737
+   },
+   "norm": {
+    "rows_x": [
+     0.31,
+     0.69
+    ],
+    "rows_y": [
+     0.23,
+     0.76
+    ]
+   }
+  },
+  "quest_pills_2": {
+   "rows": {
+    "x": [
+     960,
+     1655
+    ],
+    "tops": [
+     253,
+     358,
+     463,
+     568,
+     673
+    ],
+    "height": 88,
+    "pitch": 105,
+    "letter_x": [
+     998,
+     1037
+    ],
+    "word_x": 1067
+   }
+  },
+  "numbered_list": {
+   "badge": {
+    "x": [
+     270,
+     380
+    ],
+    "h": 110,
+    "radius": 12
+   },
+   "pill": {
+    "x": [
+     400,
+     1650
+    ],
+    "tops": [
+     213,
+     451,
+     690
+    ],
+    "height": 178,
+    "pitch": 238.5,
+    "radius": 16
+   },
+   "text_x": 460,
+   "icon_cx": 1560,
+   "norm": {
+    "x": [
+     0.14,
+     0.86
+    ],
+    "y": [
+     0.2,
+     0.8
+    ]
+   }
+  },
+  "proof_acronym": {
+   "rows_y_tops": [
+    187,
+    289,
+    387,
+    477,
+    561
+   ],
+   "pitch": "100,98,90,84 (perspective)",
+   "letter_x": [
+    300,
+    346
+   ],
+   "word_x": [
+    395,
+    432
+   ],
+   "note": "rows shift right ~11 px each and slant: the list plane is rotated in 3D (approx rotateY 15-25 deg, rotateZ ~-2 deg); norm x 0.15-0.36, y 0.17-0.55"
+  },
+  "comparison_list": {
+   "pair1": {
+    "head_bbox": [
+     325,
+     187,
+     822,
+     240
+    ],
+    "arrow_c": [
+     588,
+     278
+    ],
+    "line2_bbox": [
+     300,
+     322,
+     858,
+     370
+    ]
+   },
+   "pair2": {
+    "head": [
+     408,
+     540,
+     790,
+     592
+    ],
+    "arrow_c": [
+     610,
+     620
+    ],
+    "line2": [
+     455,
+     650,
+     765,
+     708
+    ]
+   },
+   "note": "same 3D perspective slant as PROOF; norm x 0.16-0.45"
+  },
+  "exclusivity_list": {
+   "rows_left_x": [
+    255,
+    278,
+    292
+   ],
+   "row_tops": [
+    300,
+    450,
+    590
+   ],
+   "pitch": 145,
+   "note": "perspective, norm x 0.13-0.41, y 0.28-0.61"
+  },
+  "cold_open": {
+   "pill": {
+    "bbox": [
+     362,
+     410,
+     1565,
+     770
+    ],
+    "radius": 40
+   },
+   "I_SPENT": [
+    790,
+    286,
+    1080,
+    350
+   ],
+   "clock_icon_c": [
+    698,
+    316
+   ],
+   "calendar_icon": [
+    1290,
+    470,
+    1520,
+    705
+   ],
+   "counter_digits": [
+    540,
+    288,
+    1245,
+    478
+   ],
+   "ADS": [
+    1330,
+    385,
+    1460,
+    435
+   ],
+   "counter_underline": {
+    "x": [
+     510,
+     1416
+    ],
+    "y": 531,
+    "thickness": 4
+   },
+   "FOR_c": [
+    960,
+    604
+   ],
+   "PRODUCTS_pill": [
+    422,
+    646,
+    922,
+    758
+   ],
+   "SERVICES_pill": [
+    996,
+    648,
+    1500,
+    760
+   ],
+   "GPT_line": {
+    "logo": [
+     480,
+     474,
+     632,
+     626
+    ],
+    "text": [
+     705,
+     510,
+     1455,
+     597
+    ]
+   }
+  },
+  "end_card": {
+   "logo_tile": [
+    870,
+    450,
+    1048,
+    630
+   ],
+   "logo_radius": 40,
+   "title_bbox": [
+    625,
+    675,
+    1295,
+    740
+   ],
+   "url_c": [
+    960,
+    995
+   ]
+  }
+ },
+ "recipes": {
+  "word_rise_reveal": {
+   "used_by": [
+    "chapter_card_1 (both lines)",
+    "comparison_list",
+    "numbered_list row text",
+    "EXCLUSIVITY (direction inverted)"
+   ],
+   "unit": "one word (space-delimited)",
+   "stagger_frames": "1.5-2 between consecutive words (measured: AD 0, FORMAT +1.5, #1 +3; STATIC 0, DIAGRAM +2); second line starts 3 frames after first line's first word (CALLOUT at AD+3, DIAGRAM at AD+5)",
+   "keyframes_rel_first_visible_frame": {
+    "opacity": [
+     {
+      "f": -0.25,
+      "v": 0
+     },
+     {
+      "f": 11.8,
+      "v": 1
+     }
+    ],
+    "opacity_ease": "cubic-bezier(0.248,0.115,0.48,1.0)",
+    "opacity_fit_rms": "1.9-2.9 % over 4 words",
+    "translateY_px": [
+     {
+      "f": -0.85,
+      "v": 30
+     },
+     {
+      "f": 9.4,
+      "v": 0
+     }
+    ],
+    "translateY_ease": "cubic-bezier(0.383,0.261,0.219,0.701) (practically ~ easeOutQuad with a 1-frame soft start)",
+    "translateY_fit_rms": "2.5-7 % (dy quantised to 2 px)",
+    "blur_box_r": [
+     {
+      "f": 0,
+      "v": 4
+     },
+     {
+      "f": 2,
+      "v": 2
+     },
+     {
+      "f": 5,
+      "v": 1
+     },
+     {
+      "f": 8,
+      "v": 0
+     }
+    ]
+   },
+   "pooled_model_values_opacity": [
+    0.012,
+    0.089,
+    0.204,
+    0.338,
+    0.474,
+    0.601,
+    0.713,
+    0.807,
+    0.882,
+    0.938,
+    0.975,
+    0.995,
+    1.0
+   ],
+   "pooled_model_values_y": [
+    28.0,
+    24.5,
+    19.4,
+    14.2,
+    10.2,
+    7.3,
+    5.0,
+    3.2,
+    1.7,
+    0.4,
+    0,
+    0
+   ],
+   "confidence": "high for timing/stagger (+-0.5 f), medium for the bezier shape"
+  },
+  "underline_rise": {
+   "used_by": [
+    "chapter_card_1"
+   ],
+   "note": "full width from first frame - NO wipe",
+   "start_frame_rel_card_cut": 6,
+   "opacity": [
+    {
+     "f": 0,
+     "v": 0
+    },
+    {
+     "f": 5.2,
+     "v": 1
+    }
+   ],
+   "opacity_ease": "cubic-bezier(0.349,0.313,0.15,0.779) rms 0.0",
+   "translateY_px": [
+    {
+     "f": 0,
+     "v": 30
+    },
+    {
+     "f": 11,
+     "v": 0
+    },
+    {
+     "f": 15,
+     "v": -2.5
+    },
+    {
+     "f": 21,
+     "v": 0
+    }
+   ],
+   "translateY_ease": "single bezier with overshoot: cubic-bezier(0.332,0.0,0.182,1.425) over 22.9 f, rms 1 % (equivalent to backOut, overshoot 8 %)"
+  },
+  "chapter_exit": {
+   "all elements together, no stagger": true,
+   "translateY_px": [
+    {
+     "f": 0,
+     "v": 0
+    },
+    {
+     "f": 17.3,
+     "v": -30
+    }
+   ],
+   "translateY_ease": "cubic-bezier(0.356,0.169,0.16,0.408) - accelerating (ease-in), observed until -18 px when opacity hits 0",
+   "opacity": [
+    {
+     "f": 2.75,
+     "v": 1
+    },
+    {
+     "f": 9.0,
+     "v": 0
+    }
+   ],
+   "opacity_ease": "cubic-bezier(0.441,0.686,0.346,0.845)",
+   "frame0": 1676
+  },
+  "pill_row_flip_in": {
+   "used_by": [
+    "quest_card",
+    "quest_pills_2",
+    "numbered_list (pill only; its text uses word_rise_reveal)"
+   ],
+   "stagger_frames": 2,
+   "per_row": "row bar appears 2 frames before its text: f-2 thin, blurred, tilted bar (h ~0.57 of final, w ~0.26 of final, rotateZ ~-2 deg, left edge already in place); f-1 w 0.84, h 0.71; f0 w 0.90; f+2 w 0.99 h 0.99; text: opacity .27 .45 .60 .73 .89-.95 1.0 (f0..f5), dy +20 +15 +10 +5 +2 0 px, dx +10 -> 0, blur r4 -> 0 by f+5",
+   "transform_origin": "left-centre (left edge fixed at x 595-602 while width grows 185->723 px)",
+   "interpretation": "rotateX flip-up (~55 deg -> 0) with perspective + scaleX from left + small rotateZ, 3-4 frames for the bar; text fades/rises over 6 frames",
+   "confidence": "medium (rotation not directly fitted; rres 0.1-0.3 because rotation unmodelled)"
+  },
+  "acronym_row_snap": {
+   "used_by": [
+    "proof_acronym"
+   ],
+   "stagger_frames": 1,
+   "per_row_frames": [
+    {
+     "f": 0,
+     "opacity": 0.0,
+     "dy": ">=12",
+     "blur_r": 6
+    },
+    {
+     "f": 1,
+     "opacity": 0.29,
+     "dy": 6,
+     "blur_r": 1
+    },
+    {
+     "f": 2,
+     "opacity": 0.83,
+     "dy": 0,
+     "blur_r": 1
+    },
+    {
+     "f": 3,
+     "opacity": 1.0,
+     "dy": 0,
+     "blur_r": 0
+    }
+   ],
+   "note": "very fast (3 frames per row, 5 rows in 7 frames); identical numbers for all 5 rows (+-0.03)",
+   "confidence": "high"
+  },
+  "drop_in_word": {
+   "used_by": [
+    "exclusivity_list"
+   ],
+   "opacity": [
+    0.02,
+    0.17,
+    0.4,
+    0.59,
+    0.74,
+    0.8,
+    0.85,
+    0.88,
+    0.91,
+    0.94,
+    0.97,
+    0.99,
+    1.0
+   ],
+   "dy": [
+    -16,
+    -12,
+    -6,
+    -4,
+    -2,
+    0,
+    0
+   ],
+   "blur_r": [
+    2,
+    2,
+    2,
+    1,
+    1,
+    0
+   ],
+   "frame0": 10979,
+   "note": "comes DOWN from above, otherwise same timing as word_rise_reveal; one word per spoken cue (EXCLUSIVITY 10979, SPEED 10999, RESULTS 11008)"
+  },
+  "typewriter_row": {
+   "used_by": [
+    "attention_x_list"
+   ],
+   "rate": "~1.6 frames per character (15 chars/s); red X icon first, then 'ATTENTION — LOST' 4071-4096, 'LEAD COST — HIGH' 4110-4137, 'ADS — BURNED OUT FAST' ~4141-4160",
+   "exit": "1 frame partial fade (4161 at 27 % area) then camera cut 4162"
+  },
+  "counter": {
+   "used_by": [
+    "cold_open"
+   ],
+   "values_by_frame": {
+    "24": 0,
+    "25": 63,
+    "26": 1557,
+    "27": 2893,
+    "28": 4080,
+    "29": 5127,
+    "30": 6043,
+    "31": 6836,
+    "32": 7515,
+    "33": 8089,
+    "34": 8568,
+    "35": 8959,
+    "36": 9271,
+    "37": 9514,
+    "38": 9696,
+    "39": 9825,
+    "40": 9912,
+    "41": 9963,
+    "42": 9990,
+    "43": "9,999 ghosted into 10,000 (blend frame)",
+    "44": 10000
+   },
+   "ease": "cubic-bezier(0.335,0.947,0.67,0.996) start 24.96 dur 17.87 f, rms 0.0 % (an expo/quart-out)",
+   "format": "thousands comma, tabular digits, 'ADS' suffix fades in at 43-44"
+  }
+ },
+ "recipes_glow_background": {
+  "used_by": [
+   "cold_open",
+   "quest_card",
+   "numbered_list",
+   "quest_pills_2 section (481-508 s)"
+  ],
+  "is_a_looping_clip": "yes - edge-glow time series at frame 0 and frame 10200 are identical frame-for-frame (64x36 R-mean of edge strips equal to +-0.5), i.e. a pre-rendered plate restarted at each card; 10324 starts the same plate ~12-15 frames in",
+  "layout_norm": {
+   "left_glow_centroid": [
+    0.08,
+    0.6
+   ],
+   "right_glow_centroid": [
+    0.91,
+    0.44
+   ],
+   "centre_dark_ellipse": "near-black #030303-#0B0403 covering x 0.2-0.8, y 0.15-0.85",
+   "top_left_corner": "warm brown #492921"
+  },
+  "sampled_colours_frame70": {
+   "right_glow_peak(0.98,0.35)": "#DD405F",
+   "right(0.9,0.35)": "#822739",
+   "left_bottom(0.02,0.95)": "#A12F45",
+   "left(0.02,0.65)": "#752430",
+   "centre(0.5,0.5)": "#040203",
+   "top_left(0.02,0.05)": "#492921",
+   "top_mid(0.5,0.05)": "#120707"
+  },
+  "breathing": "both glows pulse independently, organic (not sinusoidal). Right-edge strip mean R channel: 101 (f0) -> 84 (f28) -> 135.6 (f75) -> 97 (f117); left: 70 (f0) -> 86 (f45) -> 77 (f110). Swing period 2-3.5 s, amplitude about +-25 % of glow intensity. Right glow centroid y drifts 0.42-0.47.",
+  "dot_grid": "faint 1-2 px dots on a ~119 px square grid (x 68,187,305,...; y 123,242,360,...), barely visible (+5-10 luma) over the glow, invisible over the black centre",
+  "confidence": "high for colours/positions; medium for period (longest clean window 5.5 s)"
+ },
+ "instances": {
+  "cold_open": {
+   "segments": [
+    {
+     "name": "I SPENT / WEEKS pill",
+     "frames": [
+      0,
+      23
+     ],
+     "per_frame": "f0 pill present (alpha ~0.3 of final look, tilted ~-0.7 deg); f1-f4 clock+'I SPENT' fade in (alpha .04 .22 .70 .88) and rise: text top y 324 (f4) 313 306 301 296 292 290 288 287 286 (f13); f4-f9 'WEEKS'+calendar fade in from heavy blur (r8->0 by f12), calendar rotates ~-8 deg (f5) -> +3 (f6) -> 0 (f8) -> -3 (f11) wobble; clock hands spin each frame",
+     "I_SPENT_rise_ease": "cubic-bezier(0.0,0.457,0.45,1.0) start 3.4 dur 10.1 f rms 0.5 %",
+     "exit": "whip LEFT (elements only, plate static) f16-f23: group right edge 1503 1496 1473 1431 1365 1265 1116 901 (f15-f22), gone by f24; ease cubic-bezier(0.635,0.043,0.406,0.934) start 15.4 dur 14.4 (ease-in part observed) with horizontal motion blur"
+    },
+    {
+     "name": "ANALYZING 10,000 ADS counter",
+     "frames": [
+      24,
+      83
+     ],
+     "entrance": "slides in from right with motion blur, left edge 1162 902 766 686 637 607 592 590 585 578 575 (f25-f35); ease cubic-bezier(0.108,1.0,0.517,0.968) start 24.4 dur 10.9 f (expo-out)",
+     "count": "see recipes.counter",
+     "underline": "pink #F40744 line under digits present from the slide-in",
+     "group_rise_and_shrink": "f50-f64 group moves up 83 px (ANALYZING top 266 264 261 255 248 236 221 208 198 192 188 186 184 184 183) and scales to 0.875 (width 272->238); ease cubic-bezier(0.539,0.191,0.269,1.0) start 50.3 dur 13.8 (ease-in-out)",
+     "FOR/PRODUCTS & SERVICES": "'FOR' fades in f52-54; pills+text rise in from below f55-f63: text top 716 694 683 676 673 672 (f58-63), blurred first 2 frames",
+     "exit": "vertical push UP: group cy 515 514 508 496 469 447 (f76-f81), then motion-blurred off the top by f87 with fade (ease-in)"
+    },
+    {
+     "name": "GPT-6 ASTRA",
+     "frames": [
+      84,
+      131
+     ],
+     "entrance": "rises from below with motion blur, overlapping the counter exit: cy 660(f87, partial) 619 587 567 555 550 548.5 (f88-f93); ease cubic-bezier(0.261,1.0,1.0,0.976) start 86.05 dur 6.3 f; 'ASTRA' pink letters fade in left->right f86-f89",
+     "hold": "f93-f118 with slow push-in: width 549 -> 578 px over 20 f (+0.26 %/frame)",
+     "exit": "whole-canvas whip-pan LEFT f119-f131 incl. plate: plate glow peak x 1900 (f118) 1830 1800 1740 1680 1560 1320 1020 720 480 300 180 (f130) = ~-60,-60,-60,-120,-240,-300,-300,-240,-180,-120 px/frame (ease-in-out, peak ~300 px/f at f125-127); next scene's cards enter from right in the same pan from f124"
+    }
+   ]
+  },
+  "chapter_card_1": {
+   "cut_in": 1631,
+   "plate_empty_frames": [
+    1631
+   ],
+   "words": {
+    "AD": {
+     "first": 1632,
+     "settled": 1645
+    },
+    "FORMAT": {
+     "first": 1633.5,
+     "settled": 1646
+    },
+    "#1": {
+     "first": 1635,
+     "settled": 1647
+    },
+    "CALLOUT": {
+     "first": 1635,
+     "settled": 1645
+    },
+    "DIAGRAM": {
+     "first": 1637,
+     "settled": 1647
+    }
+   },
+   "underline": {
+    "first": 1637,
+    "opacity_settled": 1642,
+    "y_settled": 1646,
+    "overshoot": "-3 px at 1651-52, back to 0 at 1657"
+   },
+   "per_frame_AD": [
+    [
+     1632,
+     0.015,
+     28
+    ],
+    [
+     1633,
+     0.092,
+     26
+    ],
+    [
+     1634,
+     0.226,
+     22
+    ],
+    [
+     1635,
+     0.355,
+     16
+    ],
+    [
+     1636,
+     0.456,
+     12
+    ],
+    [
+     1637,
+     0.578,
+     8
+    ],
+    [
+     1638,
+     0.688,
+     6
+    ],
+    [
+     1639,
+     0.766,
+     4
+    ],
+    [
+     1640,
+     0.862,
+     2
+    ],
+    [
+     1641,
+     0.919,
+     2
+    ],
+    [
+     1642,
+     0.965,
+     0
+    ],
+    [
+     1643,
+     0.975,
+     0
+    ],
+    [
+     1644,
+     0.995,
+     0
+    ],
+    [
+     1645,
+     1.0,
+     0
+    ]
+   ],
+   "per_frame_FORMAT": [
+    [
+     1634,
+     0.049,
+     28
+    ],
+    [
+     1635,
+     0.152,
+     24
+    ],
+    [
+     1636,
+     0.291,
+     18
+    ],
+    [
+     1637,
+     0.397,
+     14
+    ],
+    [
+     1638,
+     0.521,
+     10
+    ],
+    [
+     1639,
+     0.634,
+     8
+    ],
+    [
+     1640,
+     0.705,
+     6
+    ],
+    [
+     1641,
+     0.801,
+     4
+    ],
+    [
+     1642,
+     0.877,
+     2
+    ],
+    [
+     1643,
+     0.92,
+     2
+    ],
+    [
+     1644,
+     0.947,
+     0
+    ],
+    [
+     1645,
+     0.988,
+     0
+    ],
+    [
+     1646,
+     1.0,
+     0
+    ]
+   ],
+   "per_frame_#1": [
+    [
+     1635,
+     0.017,
+     28
+    ],
+    [
+     1636,
+     0.098,
+     26
+    ],
+    [
+     1637,
+     0.224,
+     22
+    ],
+    [
+     1638,
+     0.355,
+     16
+    ],
+    [
+     1639,
+     0.463,
+     12
+    ],
+    [
+     1640,
+     0.585,
+     8
+    ],
+    [
+     1641,
+     0.668,
+     6
+    ],
+    [
+     1642,
+     0.751,
+     4
+    ],
+    [
+     1643,
+     0.862,
+     2
+    ],
+    [
+     1644,
+     0.91,
+     2
+    ],
+    [
+     1645,
+     0.932,
+     2
+    ],
+    [
+     1646,
+     0.971,
+     0
+    ],
+    [
+     1647,
+     0.998,
+     0
+    ]
+   ],
+   "per_frame_CALLOUT": [
+    [
+     1635,
+     0.023,
+     28
+    ],
+    [
+     1636,
+     0.14,
+     26
+    ],
+    [
+     1637,
+     0.336,
+     22
+    ],
+    [
+     1638,
+     0.565,
+     16
+    ],
+    [
+     1639,
+     0.756,
+     12
+    ],
+    [
+     1640,
+     0.893,
+     8
+    ],
+    [
+     1641,
+     0.981,
+     6
+    ],
+    [
+     1642,
+     1.0,
+     4
+    ],
+    [
+     1643,
+     1.0,
+     2
+    ],
+    [
+     1644,
+     1.0,
+     2
+    ],
+    [
+     1645,
+     1.0,
+     0
+    ]
+   ],
+   "per_frame_DIAGRAM": [
+    [
+     1637,
+     0.037,
+     28
+    ],
+    [
+     1638,
+     0.149,
+     24
+    ],
+    [
+     1639,
+     0.317,
+     18
+    ],
+    [
+     1640,
+     0.487,
+     14
+    ],
+    [
+     1641,
+     0.646,
+     10
+    ],
+    [
+     1642,
+     0.762,
+     6
+    ],
+    [
+     1643,
+     0.868,
+     4
+    ],
+    [
+     1644,
+     0.927,
+     4
+    ],
+    [
+     1645,
+     0.97,
+     2
+    ],
+    [
+     1646,
+     1.0,
+     0
+    ]
+   ],
+   "per_frame_note": "[frame, opacity, translateY px]; CALLOUT/DIAGRAM opacity is confounded by the animated gradient (fit alpha > 1 later), treat as approximate",
+   "per_frame_underline": [
+    [
+     1637,
+     0.111,
+     29
+    ],
+    [
+     1638,
+     0.498,
+     27
+    ],
+    [
+     1639,
+     0.756,
+     23
+    ],
+    [
+     1640,
+     0.884,
+     18
+    ],
+    [
+     1641,
+     0.963,
+     13
+    ],
+    [
+     1642,
+     1.0,
+     9
+    ],
+    [
+     1643,
+     1,
+     6
+    ],
+    [
+     1644,
+     1,
+     4
+    ],
+    [
+     1645,
+     1,
+     2
+    ],
+    [
+     1646,
+     1,
+     0
+    ],
+    [
+     1647,
+     1,
+     -1
+    ],
+    [
+     1648,
+     1,
+     -2
+    ],
+    [
+     1651,
+     1,
+     -3
+    ],
+    [
+     1653,
+     1,
+     -2
+    ],
+    [
+     1655,
+     1,
+     -1
+    ],
+    [
+     1657,
+     1,
+     0
+    ]
+   ],
+   "hold": {
+    "from": 1647,
+    "to": 1675,
+    "frames": 29,
+    "motion": "none (no push-in measured: bboxes constant +-0 px)"
+   },
+   "exit_per_frame": [
+    [
+     1676,
+     1.0,
+     -1
+    ],
+    [
+     1677,
+     0.99,
+     -2
+    ],
+    [
+     1678,
+     0.99,
+     -4
+    ],
+    [
+     1679,
+     0.94,
+     -6
+    ],
+    [
+     1680,
+     0.67,
+     -9
+    ],
+    [
+     1681,
+     0.39,
+     -11.5
+    ],
+    [
+     1682,
+     0.2,
+     -14
+    ],
+    [
+     1683,
+     0.1,
+     -16
+    ],
+    [
+     1684,
+     0.045,
+     -18
+    ],
+    [
+     1685,
+     0,
+     null
+    ]
+   ],
+   "exit_note": "[frame, opacity, translateY px] identical for label, title and underline (+-0.03 / +-1 px); plate stays; hard cut to presenter at 1686",
+   "total_on_screen_frames": 55
+  },
+  "proof_acronym": {
+   "camera_cut": 1470,
+   "rows": {
+    "PROMISE": 1472,
+    "RECEIPTS": 1473,
+    "OFFER": 1474,
+    "OBJECTION": 1475,
+    "FIRST STEP": 1476
+   },
+   "recipe": "acronym_row_snap",
+   "settled_all": 1479,
+   "hold_to": 1497,
+   "exit": "camera cut at 1498 (list gone)"
+  },
+  "comparison_list": {
+   "pair1": {
+    "STATIC": 5990,
+    "DIAGRAM": 5992,
+    "arrow": "fades 5993-5996 (opacity .14 .55 .76 .97), no motion",
+    "PRODUCT IN ACTION": "first 5998, opacity .08 .17 .30 .40 .55 .65 .78 .89 .99 (5999-6007), dy 20 14 10 8 6 4 2 2 0"
+   },
+   "per_frame_STATIC": [
+    [
+     5990,
+     0.008,
+     28
+    ],
+    [
+     5991,
+     0.07,
+     22
+    ],
+    [
+     5992,
+     0.174,
+     16
+    ],
+    [
+     5993,
+     0.301,
+     10
+    ],
+    [
+     5994,
+     0.462,
+     8
+    ],
+    [
+     5995,
+     0.606,
+     6
+    ],
+    [
+     5996,
+     0.746,
+     4
+    ],
+    [
+     5997,
+     0.83,
+     2
+    ],
+    [
+     5998,
+     0.922,
+     0
+    ],
+    [
+     5999,
+     0.957,
+     0
+    ],
+    [
+     6000,
+     0.99,
+     0
+    ],
+    [
+     6001,
+     1,
+     0
+    ]
+   ],
+   "per_frame_DIAGRAM": [
+    [
+     5992,
+     0.01,
+     22
+    ],
+    [
+     5993,
+     0.086,
+     18
+    ],
+    [
+     5994,
+     0.203,
+     12
+    ],
+    [
+     5995,
+     0.356,
+     8
+    ],
+    [
+     5996,
+     0.489,
+     6
+    ],
+    [
+     5997,
+     0.646,
+     4
+    ],
+    [
+     5998,
+     0.751,
+     2
+    ],
+    [
+     5999,
+     0.851,
+     2
+    ],
+    [
+     6000,
+     0.925,
+     0
+    ],
+    [
+     6001,
+     0.975,
+     0
+    ],
+    [
+     6002,
+     1,
+     0
+    ]
+   ],
+   "pair2": {
+    "REVIEW CARD": "6085",
+    "arrow+UGC VIDEO": "6091-6099"
+   },
+   "hold_to": 6147,
+   "exit": "camera cut 6148"
+  },
+  "attention_x_list": {
+   "recipe": "typewriter_row",
+   "icon_first": 4066,
+   "row1": [
+    4071,
+    4096
+   ],
+   "row2": [
+    4110,
+    4137
+   ],
+   "row3": [
+    4141,
+    4160
+   ],
+   "exit": "4161 partial, cut 4162"
+  },
+  "quest_card": {
+   "cut_in": 10200,
+   "empty_plate_frames": [
+    10200,
+    10219
+   ],
+   "header": "sparkle icon + 'QUEST' fade/rise 10220-10223",
+   "rows_first_bar": {
+    "Q": 10223,
+    "U": 10225,
+    "E": 10227,
+    "S": 10229,
+    "T": 10231
+   },
+   "rows_text_first": {
+    "Q": 10225,
+    "U": 10227,
+    "E": 10229,
+    "S": 10231,
+    "T": 10233
+   },
+   "per_frame_row1_text": [
+    [
+     10225,
+     0.274,
+     20,
+     10,
+     4
+    ],
+    [
+     10226,
+     0.452,
+     15,
+     10,
+     4
+    ],
+    [
+     10227,
+     0.609,
+     10,
+     10,
+     2
+    ],
+    [
+     10228,
+     0.728,
+     5,
+     10,
+     4
+    ],
+    [
+     10229,
+     0.758,
+     5,
+     10,
+     4
+    ],
+    [
+     10230,
+     0.945,
+     0,
+     0,
+     4
+    ],
+    [
+     10231,
+     1.0,
+     0,
+     0,
+     2
+    ],
+    [
+     10232,
+     1.0,
+     0,
+     0,
+     0
+    ]
+   ],
+   "per_frame_row1_note": "[frame, opacity, dy, dx, blur r]",
+   "row1_bar_size": [
+    [
+     10223,
+     185,
+     57
+    ],
+    [
+     10224,
+     604,
+     71
+    ],
+    [
+     10225,
+     653,
+     85
+    ],
+    [
+     10226,
+     670,
+     76
+    ],
+    [
+     10227,
+     717,
+     99
+    ],
+    [
+     10228,
+     723,
+     102
+    ]
+   ],
+   "row1_bar_note": "[frame, width px, height px] final 730x100",
+   "hold": [
+    10235,
+    10265
+   ],
+   "exit": "hard cut 10266"
+  },
+  "numbered_list": {
+   "cut_in": 10320,
+   "row1": {
+    "bar": 10322,
+    "text": 10324,
+    "text_settled": 10330
+   },
+   "row2": {
+    "text": 10337,
+    "settled": 10348,
+    "icon_pop": [
+     10349,
+     10356
+    ]
+   },
+   "row3": {
+    "text": "~10383",
+    "icon": "~10407"
+   },
+   "per_frame_row2_text_top": [
+    [
+     10337,
+     508
+    ],
+    [
+     10338,
+     501
+    ],
+    [
+     10339,
+     497
+    ],
+    [
+     10340,
+     494
+    ],
+    [
+     10341,
+     492
+    ],
+    [
+     10342,
+     490
+    ],
+    [
+     10343,
+     490
+    ],
+    [
+     10344,
+     489
+    ],
+    [
+     10345,
+     488
+    ],
+    [
+     10346,
+     487
+    ],
+    [
+     10347,
+     485
+    ],
+    [
+     10348,
+     484
+    ],
+    [
+     10349,
+     483
+    ]
+   ],
+   "note": "rows are cued to VO ('a quiz' 430.28 s, 'a case study' 431.08 s), not a fixed stagger; text rise 25 px over 12 frames = word_rise_reveal; icon pops ~12 frames after its text",
+   "hold_to": 10451,
+   "exit": "hard cut 10452"
+  },
+  "exclusivity_list": {
+   "recipe": "drop_in_word",
+   "EXCLUSIVITY": 10979,
+   "SPEED": 10999,
+   "RESULTS": 11008,
+   "hold_to": 11031,
+   "exit": "cut 11032"
+  },
+  "quest_pills_2": {
+   "rows_text_first": {
+    "Q": 11911,
+    "U": 11913,
+    "E": 11915,
+    "S": 11917,
+    "T": 11919
+   },
+   "recipe": "pill_row_flip_in (identical stagger and per-row timing to quest_card)",
+   "exit": "neighbouring 9:16 card fades 11965-11969; pills hold; hard cut 11971"
+  },
+  "end_card": {
+   "shrink": {
+    "frames": [
+     14717,
+     14731
+    ],
+    "frame_bbox_h_px": [
+     [
+      14716,
+      1059
+     ],
+     [
+      14717,
+      1049
+     ],
+     [
+      14718,
+      1027
+     ],
+     [
+      14719,
+      993
+     ],
+     [
+      14720,
+      948
+     ],
+     [
+      14721,
+      879
+     ],
+     [
+      14722,
+      785
+     ],
+     [
+      14723,
+      660
+     ],
+     [
+      14724,
+      526
+     ],
+     [
+      14725,
+      411
+     ],
+     [
+      14726,
+      361
+     ],
+     [
+      14727,
+      334
+     ]
+    ],
+    "note": "presenter video scales down about its centre (cx ~970) to the 178 px logo tile with rounded corners, video cross-dissolves into the logo icon 14727-14731; glow plate visible from 14724; ease-in-out (slow start, fastest 14722-14724)"
+   },
+   "title_fade": {
+    "frames": [
+     14741,
+     14748
+    ],
+    "note": "'Higgsfield Marketing' fades in (no measurable rise), url fades 14749-14753"
+   },
+   "hold": [
+    14753,
+    14953
+   ],
+   "exit": "none - file ends on the card (no fade to dark)"
+  }
+ },
+ "sfx": {
+  "method": "10 ms RMS full band and >6 kHz high-pass, windows -0.5..+1.0 s around each first visible frame; candidate onsets checked against caption word times",
+  "result": "No entrance in this family carries an isolated, unambiguous SFX hit: every candidate onset coincides with VO onsets or music. Candidates (low confidence): comparison STATIC 5990 full-band jump -35 -> -21 dB at 0 ms (but VO 'Instead' at ~249.68 s); end card shrink 14717: >6 kHz -58 -> -36 dB at +0..+20 ms; chapter card: >6 kHz swell rising from -61 dB (-60 ms) to -44 dB (+70 ms) - whoosh-like; cold-open start: audio begins +30 ms, first loud hit +120 ms; chapter exit 1676: >6 kHz -69 -> -43 dB at +40 ms.",
+  "offsets_ms": {
+   "cold_open_f0": "+30 (audio start), +120 hit",
+   "chapter_in_1631": "swell peaking +70 (whoosh?)",
+   "chapter_exit_1676": "+40",
+   "comparison_5990": "0",
+   "end_card_14717": "0..+20"
+  },
+  "confidence": "low - would change with a stem-separated (music/VO removed) track or the editor's SFX list"
+ },
+ "confidence_and_what_would_change_it": [
+  "Frame indices: +-0 frames (exact pts seeks).",
+  "Opacity values: +-0.03 for white/flat elements; +-0.1 for gradient-animated words (CALLOUT, DIAGRAM, PRODUCT IN ACTION, EXCLUSIVITY, WEEKS) because the colour flow is not separable from opacity.",
+  "translateY: +-1-2 px (search grid 1-2 px).",
+  "Blur: box radius +-1 step; only qualitative early in fades.",
+  "3D rotations (pill flip-in, PROOF/comparison perspective plane, calendar wobble) are estimated by eye from bbox ratios, not fitted - medium/low. A homography fit per frame would pin them.",
+  "Gradient colour flow: stops and colours measured; generator (noise/mesh vs moving linear gradient) unknown - medium/low.",
+  "Bezier curves are fitted to 2-px/0.01 quantised data; several bezier shapes fit equally well (rms differences < 1 %), so treat the curve values (pooled_model_values) as the truth and the bezier as one valid encoding.",
+  "Fonts: Space Grotesk Bold high; GPT-6 / end-card sans medium-low.",
+  "Background plate: identical-loop finding high; breathing period medium."
+ ]
+}

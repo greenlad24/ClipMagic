@@ -1,0 +1,9516 @@
+{
+ "about": "Builds keyframes.json — the reference video's ANIMATION keyframes, design-free.",
+ "fps": 24,
+ "verified": {
+  "keyword_rise": {
+   "what": "keyword text (SAVE THE / BUDGET): fade + rise, line 2 +2 f",
+   "opacity": {
+    "start": 0.5,
+    "dur": 7.4,
+    "ease": [
+     0.368,
+     0.101,
+     0.493,
+     0.937
+    ]
+   },
+   "translateY_em": {
+    "start": 0.5,
+    "dur": 7.53,
+    "from": 0.337,
+    "to": 0,
+    "ease": [
+     0.236,
+     0.62,
+     0.455,
+     0.97
+    ]
+   },
+   "motion_blur": "360° shutter (σ = travel per frame / √12)",
+   "line_stagger_f": 2,
+   "hold": "pixel-static",
+   "exit": "hard cut, usually on a camera cut",
+   "speech": "text leads the spoken word by 140–300 ms",
+   "replica": "A SAVE THE BUDGET f965–1006: ≤0.016 opacity, ≤0.7 px every frame (2026-10-04)"
+  },
+  "dropin": {
+   "what": "R1 floating drop-in (numbers/labels beside the presenter)",
+   "opacity": {
+    "start": -2,
+    "dur": 9,
+    "ease": [
+     0.5,
+     0,
+     0.4,
+     1
+    ]
+   },
+   "translateY_px": {
+    "start": -2,
+    "dur": 9,
+    "from": -15.4,
+    "to": 0,
+    "ease": [
+     0.4,
+     0.4,
+     0.3,
+     1
+    ],
+    "scale_rule": "FIXED travel, independent of font size (98 px = $250 and 59 px lines both drop 15.4 px, replica-verified); scale only with output resolution (px at 1080p)"
+   },
+   "blur_sigma_px": {
+    "start": -2,
+    "dur": 6,
+    "from": 4,
+    "to": 0,
+    "ease": [
+     0.4,
+     0.4,
+     0.3,
+     1
+    ]
+   },
+   "gradient_line_fade_lead_f": 1,
+   "gradient_line_note": "a pink/gradient line's FADE starts 1 f earlier (drop unchanged): 5/5 lines measured (= $250, $1,000, $100, HOOK RATE, CPL — 36–71 % ink visible at k+1 vs ~0 % for white timing). If a redesign drops the gradient, re-check whether the lead belongs to 'hero' lines or to the gradient.",
+   "stagger": "speech-triggered, no fixed stagger (13–59 f measured)",
+   "exit_fade_3f": [
+    1.0,
+    0.748,
+    0.3,
+    0.049,
+    0.0
+   ],
+   "replica": "E 5 VIDEOS × $50 = $250 f8760–8919: white lines ≤0.05 opacity, ≤0.4 px; gradient line shape ≤0.4 px from k+3 (2026-10-05)"
+  },
+  "word_rise": {
+   "what": "title/list words (chapter card AD FORMAT #1 / CALLOUT DIAGRAM): spec word_rise_reveal tables",
+   "stagger": "words +1.5 f (AD 0, FORMAT +1.5, #1 +3); line 2 first word +3 f after line 1's — spec CONFIRMED by shape measurement",
+   "rise": "30 px fixed for 76 px and 117 px words alike",
+   "gradient_word_fade_lead_f": 1.5,
+   "underline_start_f": 2.5,
+   "underline_note": "the spec put the underline at card-cut+6 (= first word +5.8); measured rise aligns at first word +2.5 (−3.3 f)",
+   "replica": "white words ≤0.03 progress / ≤1 px rise every frame; pink words rise identical, clear-ink fraction within ~0.07 with the 1.5 f lead (2026-10-05)"
+  },
+  "cards": {
+   "what": "floating cards: portal swing-open (7:44) + pink-reveal rise (3:29) — tables in measured.card_portal_open / card_pink_reveal_rise",
+   "portal_replica": "both cards from ONE averaged table: width/top ≤2 px, slab centre ≤6 px (near-side lean), pink amount within 0.06 every frame",
+   "callout_replica": "box ≤1 px, opacity ≤0.03; pink clears on the same frames (~0.1 high mid-way — depends on the assumed pink, style)",
+   "corrections_vs_spec": "pink is ~0.72 max on portal cards (not solid); callout fades in over 5 f at full pink; the callout also grows ~2 %"
+  },
+  "prompt_bar": {
+   "what": "ChatGPT-style composer over the presenter (P5 9:13)",
+   "typing": "linear 1.706 chars/f from k+0.87 (fit over 63 frames: rms 0.77, max 1.9 chars); glyphs fade ~1.5 f, no caret; showcase bars (P1/P3) type the whole prompt in 28 f",
+   "entrance_overlay": "opacity .27 .49 .75 1 (k..k+3)",
+   "wrap": "bar grows one line over 6 f when the next line starts (bottom +12 px)",
+   "replica": "line 2 starts f13306 and typing ends f13335.7 vs measured 13306 / 13334; within ~1 char every frame (2026-10-05)"
+  },
+  "count_up": {
+   "ease": [
+    0.65,
+    0,
+    0.35,
+    1
+   ],
+   "rounding": "Math.round, en-US grouping",
+   "replica": "REACH 1,200→48,000 over 33 f: 33/33 values exact; days 01→14 21/22 (tests/motion_count_test.mjs)"
+  }
+ },
+ "text": {
+  "keyword_variants": {
+   "source": "reference-specs/keyword-text.json#recipe",
+   "keyframes": {
+    "units": "frames @24fps; k = 0 is the FIRST frame on which the line is visible (opacity ~0.02-0.03). translateY in em of the line font-size (+ = down). Keyframe the tween to START at k = -0.5.",
+    "variant_RISE_standard": {
+     "used_by": [
+      "A",
+      "B",
+      "C",
+      "D",
+      "G",
+      "H (faster)",
+      "SKILL label (2832)"
+     ],
+     "keyframes": {
+      "opacity": [
+       [
+        -0.5,
+        0.0
+       ],
+       [
+        0,
+        0.025
+       ],
+       [
+        1,
+        0.145
+       ],
+       [
+        2,
+        0.335
+       ],
+       [
+        3,
+        0.55
+       ],
+       [
+        4,
+        0.755
+       ],
+       [
+        5,
+        0.883
+       ],
+       [
+        6,
+        0.969
+       ],
+       [
+        7,
+        0.999
+       ],
+       [
+        8,
+        1.0
+       ]
+      ],
+      "translateY_em": [
+       [
+        -0.5,
+        0.337
+       ],
+       [
+        0,
+        0.28
+       ],
+       [
+        1,
+        0.185
+       ],
+       [
+        2,
+        0.115
+       ],
+       [
+        3,
+        0.066
+       ],
+       [
+        4,
+        0.037
+       ],
+       [
+        5,
+        0.016
+       ],
+       [
+        6,
+        0.005
+       ],
+       [
+        7,
+        0.0
+       ]
+      ],
+      "motion_blur_sigma_y_em": [
+       [
+        0,
+        0.031
+       ],
+       [
+        1,
+        0.017
+       ],
+       [
+        2,
+        0.012
+       ],
+       [
+        3,
+        0.007
+       ],
+       [
+        4,
+        0.004
+       ],
+       [
+        5,
+        0.0
+       ]
+      ],
+      "blur_sigma_x_em": [
+       [
+        0,
+        0.01
+       ],
+       [
+        1,
+        0.01
+       ],
+       [
+        2,
+        0.008
+       ],
+       [
+        3,
+        0.004
+       ],
+       [
+        4,
+        0.0
+       ]
+      ],
+      "scale": "none measurable (0.992-0.996 on k=0..2 only, within fit noise) -> keep 1.0",
+      "translateX": "none (|dx| <= 2.5 px on k=0, 0 from k=3; noise)"
+     },
+     "ease_fits": {
+      "opacity": {
+       "start": -0.5,
+       "duration_frames": 7.4,
+       "cubic_bezier": [
+        0.368,
+        0.101,
+        0.493,
+        0.937
+       ],
+       "rms": 0.0032,
+       "residuals_k0_k8": [
+        -0.003,
+        0.001,
+        0.001,
+        -0.005,
+        0.005,
+        -0.004,
+        0.001,
+        -0.001,
+        0.0
+       ]
+      },
+      "translateY": {
+       "start": -0.5,
+       "duration_frames": 7.53,
+       "from_em": 0.337,
+       "to_em": 0.0,
+       "cubic_bezier": [
+        0.236,
+        0.62,
+        0.455,
+        0.97
+       ],
+       "rms_em": 0.00056,
+       "residuals_em_k0_k8": [
+        -0.0003,
+        0.0003,
+        0.0002,
+        -0.0011,
+        0.0011,
+        -0.0003,
+        -0.0001,
+        -0.0001,
+        0.0
+       ]
+      },
+      "note": "start time and from-offset trade off against each other because the line is invisible before k=0; alternative fit with start -1.0: duration 7.75 f, from 0.381 em, bezier(0.255,0.507,0.374,0.940), rms 0.00052 em. Both reproduce every visible frame."
+     },
+     "blur_rule": "blur is directional (y >> x) and tracks velocity: sigma_y ~= velocity_px_per_frame / sqrt(12) (box blur one full frame of travel = 360-degree shutter motion blur). Implement as motion blur, or as filter blur on y only."
+    },
+    "variant_RISE_fast": {
+     "used_by": [
+      "H"
+     ],
+     "keyframes": {
+      "opacity": [
+       [
+        -0.5,
+        0
+       ],
+       [
+        0,
+        0.036
+       ],
+       [
+        1,
+        0.136
+       ],
+       [
+        2,
+        0.312
+       ],
+       [
+        3,
+        0.591
+       ],
+       [
+        4,
+        0.874
+       ],
+       [
+        5,
+        1.0
+       ]
+      ],
+      "translateY_em": [
+       [
+        0,
+        0.153
+       ],
+       [
+        1,
+        0.107
+       ],
+       [
+        2,
+        0.067
+       ],
+       [
+        3,
+        0.033
+       ],
+       [
+        4,
+        0.007
+       ],
+       [
+        5,
+        0.0
+       ]
+      ]
+     },
+     "ease_fits": {
+      "opacity": {
+       "start": -0.5,
+       "duration_frames": 5.26,
+       "cubic_bezier": [
+        0.64,
+        0.201,
+        0.633,
+        0.765
+       ],
+       "rms": 0.001
+      }
+     }
+    },
+    "variant_DROP": {
+     "used_by": [
+      "E (slow)",
+      "F",
+      "I"
+     ],
+     "keyframes": {
+      "opacity": [
+       [
+        -0.5,
+        0
+       ],
+       [
+        0,
+        0.014
+       ],
+       [
+        1,
+        0.126
+       ],
+       [
+        2,
+        0.319
+       ],
+       [
+        3,
+        0.54
+       ],
+       [
+        4,
+        0.741
+       ],
+       [
+        5,
+        0.884
+       ],
+       [
+        6,
+        0.956
+       ],
+       [
+        7,
+        0.995
+       ],
+       [
+        8,
+        1.0
+       ]
+      ],
+      "translateY_em_F": [
+       [
+        0,
+        -0.304
+       ],
+       [
+        1,
+        -0.167
+       ],
+       [
+        2,
+        -0.106
+       ],
+       [
+        3,
+        -0.061
+       ],
+       [
+        4,
+        -0.03
+       ],
+       [
+        5,
+        -0.015
+       ],
+       [
+        6,
+        0.0
+       ]
+      ],
+      "translateY_em_I": [
+       [
+        1,
+        -0.101
+       ],
+       [
+        2,
+        -0.067
+       ],
+       [
+        3,
+        -0.038
+       ],
+       [
+        4,
+        -0.019
+       ],
+       [
+        5,
+        -0.01
+       ],
+       [
+        6,
+        0.0
+       ]
+      ],
+      "motion_blur_sigma_y_em": [
+       [
+        0,
+        0.03
+       ],
+       [
+        1,
+        0.023
+       ],
+       [
+        2,
+        0.015
+       ],
+       [
+        3,
+        0.008
+       ],
+       [
+        4,
+        0.0
+       ]
+      ]
+     },
+     "ease_fits": {
+      "opacity": {
+       "start": -0.5,
+       "duration_frames": 7.89,
+       "cubic_bezier": [
+        0.339,
+        0.027,
+        0.457,
+        0.997
+       ],
+       "rms": 0.0034
+      },
+      "translateY_F": {
+       "start": -0.5,
+       "duration_frames": 5.26,
+       "from_em": -0.203,
+       "cubic_bezier": [
+        0.587,
+        1.138,
+        0.928,
+        0.839
+       ],
+       "rms_em": 0.00024,
+       "note": "k=0 value (-0.304 em) excluded: opacity 0.01 there, dy unreliable"
+      }
+     }
+    },
+    "variant_SLOW_DROP": {
+     "used_by": [
+      "E"
+     ],
+     "keyframes": {
+      "opacity_line1_CPL": "see per_frame E1: 0.016 at k0 ... 0.90 at k11, 1.0 at k19",
+      "opacity_line2": "see per_frame E2"
+     },
+     "ease_fits": {
+      "opacity_E1": {
+       "start": -0.5,
+       "duration_frames": 17.78,
+       "cubic_bezier": [
+        0.135,
+        0.031,
+        0.337,
+        1.007
+       ],
+       "rms": 0.0051
+      },
+      "opacity_E2": {
+       "start": -0.5,
+       "duration_frames": 14.81,
+       "cubic_bezier": [
+        0.386,
+        0.058,
+        0.442,
+        1.002
+       ],
+       "rms": 0.0042
+      },
+      "translateY_E1_px": "from about -28.7 px (0.24 em) to 0 over ~12.4 f, strong ease-out (bezier 0.076,0.894,0.750,0.945; rms 0.075 px)"
+     }
+    },
+    "line_stagger": {
+     "rule": "line 2 uses the SAME tween as line 1, offset by N frames; N measured = 1 (A), 2 (B), 0 (D), 7 (E), 5 (F), 2 (G), 14 (H), 2 (I). Median 2 f. N is NOT constant; long delays (H, E) look speech-paced (H: line 2 lands as \"organic\" is spoken).",
+     "default": 2,
+     "order": "top line first, always (also when the top line is the pink one: E, I)",
+     "within_line": "no per-word or per-letter stagger: every word of a line moves and fades in lockstep (fit residual < 0.04 with one rigid layer per line)"
+    },
+    "hold": {
+     "rule": "static: zero motion, zero scale drift during hold (C: frame diff 0.0 for 30 f). Only the pink gradient fill keeps animating.",
+     "visible_frames": {
+      "A": 35,
+      "B": 35,
+      "C": 56,
+      "D": 25,
+      "E": 27,
+      "F": 51,
+      "G": 40,
+      "H": 41,
+      "I": 26
+     }
+    },
+    "exit": {
+     "default": "hard cut: the text disappears in one frame with no fade/scale/move. Usually the camera cut removes it (C, E, F, G, H, I).",
+     "variant_hard_cut_mid_shot": "A, B: text cut out mid-shot after exactly 35 visible frames (A 5 f before the camera cut, B 56 f before).",
+     "variant_slide_up_fade": "D: translateY 0 -> -22.5 px (-0.24 em) over 9 f, ease ~ cubic-bezier(0.241,-0.063,0.733,1.116) (start k-0.5, 10.4 f, rms 0.005 of progress), then opacity 1.0 -> 0.20 -> 0.02 in the last 2 frames, gone on the camera cut frame."
+    },
+    "camera_cut_relation": "Entrance is independent of cuts: first visible frame is 0-2 f after a cut (B +2), or 30-80 f into the shot (A, C, D, E, F), or 2 f BEFORE the cut and continuing across it (G).",
+    "speech_relation": "first visible frame leads the matching spoken word by ~140-300 ms (B \"what\" +138 ms, G \"What\" +137 ms, I \"AB\" +167 ms, D \"video\" +270 ms; YouTube auto-caption word times, +/-100 ms)."
+   }
+  },
+  "keyword_related": {
+   "source": "reference-specs/keyword-text.json#related_variants",
+   "keyframes": {
+    "SKILL (01:58, f2832)": "icon card + small white label; the label uses the same RISE recipe (opacity 0.059,0.24,0.477,0.713,0.863,0.977 / dy 21.5,12,7,3.5,1.5,0.5 px at ~39 px font).",
+    "ATTENTION - LOST stack (02:49, f4066)": "different family: red X icon + white line revealed left->right (type-on/wipe) over ~20 f, lines added one by one.",
+    "STATIC DIAGRAM / PRODUCT IN ACTION (04:09, f5991)": "list family: white header fades up like this family, pink line wipes in; arrows/extra rows follow.",
+    "HOOK RATE / CTR / CPL (09:31) and TOTAL ~$100 (09:39)": "stacked metric lists in the same pink gradient; not measured here."
+   }
+  },
+  "titles_lists": {
+   "source": "reference-specs/titles-lists.json#recipes",
+   "keyframes": {
+    "word_rise_reveal": {
+     "used_by": [
+      "chapter_card_1 (both lines)",
+      "comparison_list",
+      "numbered_list row text",
+      "EXCLUSIVITY (direction inverted)"
+     ],
+     "unit": "one word (space-delimited)",
+     "stagger_frames": "1.5-2 between consecutive words (measured: AD 0, FORMAT +1.5, #1 +3; STATIC 0, DIAGRAM +2); second line starts 3 frames after first line's first word (CALLOUT at AD+3, DIAGRAM at AD+5)",
+     "keyframes_rel_first_visible_frame": {
+      "opacity": [
+       {
+        "f": -0.25,
+        "v": 0
+       },
+       {
+        "f": 11.8,
+        "v": 1
+       }
+      ],
+      "opacity_ease": "cubic-bezier(0.248,0.115,0.48,1.0)",
+      "opacity_fit_rms": "1.9-2.9 % over 4 words",
+      "translateY_px": [
+       {
+        "f": -0.85,
+        "v": 30
+       },
+       {
+        "f": 9.4,
+        "v": 0
+       }
+      ],
+      "translateY_ease": "cubic-bezier(0.383,0.261,0.219,0.701) (practically ~ easeOutQuad with a 1-frame soft start)",
+      "translateY_fit_rms": "2.5-7 % (dy quantised to 2 px)",
+      "blur_box_r": [
+       {
+        "f": 0,
+        "v": 4
+       },
+       {
+        "f": 2,
+        "v": 2
+       },
+       {
+        "f": 5,
+        "v": 1
+       },
+       {
+        "f": 8,
+        "v": 0
+       }
+      ]
+     },
+     "pooled_model_values_opacity": [
+      0.012,
+      0.089,
+      0.204,
+      0.338,
+      0.474,
+      0.601,
+      0.713,
+      0.807,
+      0.882,
+      0.938,
+      0.975,
+      0.995,
+      1.0
+     ],
+     "pooled_model_values_y": [
+      28.0,
+      24.5,
+      19.4,
+      14.2,
+      10.2,
+      7.3,
+      5.0,
+      3.2,
+      1.7,
+      0.4,
+      0,
+      0
+     ],
+     "confidence": "high for timing/stagger (+-0.5 f), medium for the bezier shape"
+    },
+    "underline_rise": {
+     "used_by": [
+      "chapter_card_1"
+     ],
+     "note": "full width from first frame - NO wipe",
+     "start_frame_rel_card_cut": 6,
+     "opacity": [
+      {
+       "f": 0,
+       "v": 0
+      },
+      {
+       "f": 5.2,
+       "v": 1
+      }
+     ],
+     "opacity_ease": "cubic-bezier(0.349,0.313,0.15,0.779) rms 0.0",
+     "translateY_px": [
+      {
+       "f": 0,
+       "v": 30
+      },
+      {
+       "f": 11,
+       "v": 0
+      },
+      {
+       "f": 15,
+       "v": -2.5
+      },
+      {
+       "f": 21,
+       "v": 0
+      }
+     ],
+     "translateY_ease": "single bezier with overshoot: cubic-bezier(0.332,0.0,0.182,1.425) over 22.9 f, rms 1 % (equivalent to backOut, overshoot 8 %)"
+    },
+    "chapter_exit": {
+     "all elements together, no stagger": true,
+     "translateY_px": [
+      {
+       "f": 0,
+       "v": 0
+      },
+      {
+       "f": 17.3,
+       "v": -30
+      }
+     ],
+     "translateY_ease": "cubic-bezier(0.356,0.169,0.16,0.408) - accelerating (ease-in), observed until -18 px when opacity hits 0",
+     "opacity": [
+      {
+       "f": 2.75,
+       "v": 1
+      },
+      {
+       "f": 9.0,
+       "v": 0
+      }
+     ],
+     "opacity_ease": "cubic-bezier(0.441,0.686,0.346,0.845)",
+     "frame0": 1676
+    },
+    "pill_row_flip_in": {
+     "used_by": [
+      "quest_card",
+      "quest_pills_2",
+      "numbered_list (pill only; its text uses word_rise_reveal)"
+     ],
+     "stagger_frames": 2,
+     "per_row": "row bar appears 2 frames before its text: f-2 thin, blurred, tilted bar (h ~0.57 of final, w ~0.26 of final, rotateZ ~-2 deg, left edge already in place); f-1 w 0.84, h 0.71; f0 w 0.90; f+2 w 0.99 h 0.99; text: opacity .27 .45 .60 .73 .89-.95 1.0 (f0..f5), dy +20 +15 +10 +5 +2 0 px, dx +10 -> 0, blur r4 -> 0 by f+5",
+     "transform_origin": "left-centre (left edge fixed at x 595-602 while width grows 185->723 px)",
+     "interpretation": "rotateX flip-up (~55 deg -> 0) with perspective + scaleX from left + small rotateZ, 3-4 frames for the bar; text fades/rises over 6 frames",
+     "confidence": "medium (rotation not directly fitted; rres 0.1-0.3 because rotation unmodelled)"
+    },
+    "acronym_row_snap": {
+     "used_by": [
+      "proof_acronym"
+     ],
+     "stagger_frames": 1,
+     "per_row_frames": [
+      {
+       "f": 0,
+       "opacity": 0.0,
+       "dy": ">=12",
+       "blur_r": 6
+      },
+      {
+       "f": 1,
+       "opacity": 0.29,
+       "dy": 6,
+       "blur_r": 1
+      },
+      {
+       "f": 2,
+       "opacity": 0.83,
+       "dy": 0,
+       "blur_r": 1
+      },
+      {
+       "f": 3,
+       "opacity": 1.0,
+       "dy": 0,
+       "blur_r": 0
+      }
+     ],
+     "note": "very fast (3 frames per row, 5 rows in 7 frames); identical numbers for all 5 rows (+-0.03)",
+     "confidence": "high"
+    },
+    "drop_in_word": {
+     "used_by": [
+      "exclusivity_list"
+     ],
+     "opacity": [
+      0.02,
+      0.17,
+      0.4,
+      0.59,
+      0.74,
+      0.8,
+      0.85,
+      0.88,
+      0.91,
+      0.94,
+      0.97,
+      0.99,
+      1.0
+     ],
+     "dy": [
+      -16,
+      -12,
+      -6,
+      -4,
+      -2,
+      0,
+      0
+     ],
+     "blur_r": [
+      2,
+      2,
+      2,
+      1,
+      1,
+      0
+     ],
+     "frame0": 10979,
+     "note": "comes DOWN from above, otherwise same timing as word_rise_reveal; one word per spoken cue (EXCLUSIVITY 10979, SPEED 10999, RESULTS 11008)"
+    },
+    "typewriter_row": {
+     "used_by": [
+      "attention_x_list"
+     ],
+     "rate": "~1.6 frames per character (15 chars/s); red X icon first, then 'ATTENTION — LOST' 4071-4096, 'LEAD COST — HIGH' 4110-4137, 'ADS — BURNED OUT FAST' ~4141-4160",
+     "exit": "1 frame partial fade (4161 at 27 % area) then camera cut 4162"
+    },
+    "counter": {
+     "used_by": [
+      "cold_open"
+     ],
+     "values_by_frame": {
+      "24": 0,
+      "25": 63,
+      "26": 1557,
+      "27": 2893,
+      "28": 4080,
+      "29": 5127,
+      "30": 6043,
+      "31": 6836,
+      "32": 7515,
+      "33": 8089,
+      "34": 8568,
+      "35": 8959,
+      "36": 9271,
+      "37": 9514,
+      "38": 9696,
+      "39": 9825,
+      "40": 9912,
+      "41": 9963,
+      "42": 9990,
+      "43": "9,999 ghosted into 10,000 (blend frame)",
+      "44": 10000
+     },
+     "ease": "cubic-bezier(0.335,0.947,0.67,0.996) start 24.96 dur 17.87 f, rms 0.0 % (an expo/quart-out)",
+     "format": "thousands comma, tabular digits, 'ADS' suffix fades in at 43-44"
+    }
+   }
+  },
+  "glow_background_loop": {
+   "source": "reference-specs/titles-lists.json#recipes_glow_background",
+   "keyframes": {
+    "used_by": [
+     "cold_open",
+     "quest_card",
+     "numbered_list",
+     "quest_pills_2 section (481-508 s)"
+    ],
+    "is_a_looping_clip": "yes - edge-glow time series at frame 0 and frame 10200 are identical frame-for-frame (64x36 R-mean of edge strips equal to +-0.5), i.e. a pre-rendered plate restarted at each card; 10324 starts the same plate ~12-15 frames in",
+    "layout_norm": {
+     "left_glow_centroid": [
+      0.08,
+      0.6
+     ],
+     "right_glow_centroid": [
+      0.91,
+      0.44
+     ],
+     "centre_dark_ellipse": "near-black #030303-#0B0403 covering x 0.2-0.8, y 0.15-0.85",
+     "top_left_corner": "warm brown #492921"
+    },
+    "sampled_colours_frame70": {
+     "right_glow_peak(0.98,0.35)": "#DD405F",
+     "right(0.9,0.35)": "#822739",
+     "left_bottom(0.02,0.95)": "#A12F45",
+     "left(0.02,0.65)": "#752430",
+     "centre(0.5,0.5)": "#040203",
+     "top_left(0.02,0.05)": "#492921",
+     "top_mid(0.5,0.05)": "#120707"
+    },
+    "breathing": "both glows pulse independently, organic (not sinusoidal). Right-edge strip mean R channel: 101 (f0) -> 84 (f28) -> 135.6 (f75) -> 97 (f117); left: 70 (f0) -> 86 (f45) -> 77 (f110). Swing period 2-3.5 s, amplitude about +-25 % of glow intensity. Right glow centroid y drifts 0.42-0.47.",
+    "dot_grid": "faint 1-2 px dots on a ~119 px square grid (x 68,187,305,...; y 123,242,360,...), barely visible (+5-10 luma) over the glow, invisible over the black centre",
+    "confidence": "high for colours/positions; medium for period (longest clean window 5.5 s)"
+   }
+  }
+ },
+ "numbers": {
+  "recipes": {
+   "source": "reference-specs/data-cards.json#recipe",
+   "keyframes": [
+    {
+     "R1_floating_dropin (A-roll text beside presenter: E,F,G,H)": {
+      "keyframes_rel_to_first_visible_frame_k0": {
+       "start": -2,
+       "end": 7,
+       "duration_frames": 9
+      },
+      "opacity": [
+       {
+        "f": -2,
+        "v": 0
+       },
+       {
+        "f": 7,
+        "v": 1
+       }
+      ],
+      "opacity_easing": "cubic-bezier(0.50,0,0.40,1)",
+      "opacity_residual_rms": 0.016,
+      "translateY_px": [
+       {
+        "f": -2,
+        "v": -15.4
+       },
+       {
+        "f": 7,
+        "v": 0
+       }
+      ],
+      "translateY_easing": "cubic-bezier(0.40,0.40,0.30,1)",
+      "translateY_residual_rms_px": 0.06,
+      "blur_sigma_px": [
+       {
+        "f": -2,
+        "v": 4
+       },
+       {
+        "f": 4,
+        "v": 0
+       }
+      ],
+      "blur_easing": "same as translateY (measured 2-3,1,1,1,0)",
+      "scale": "1 (no scale)",
+      "translateX": "0",
+      "model_vs_measured_opacity": {
+       "measured_k0..k7": [
+        0.075,
+        0.209,
+        0.444,
+        0.718,
+        0.84,
+        0.945,
+        1.0,
+        1.0
+       ],
+       "model": [
+        0.072,
+        0.212,
+        0.449,
+        0.698,
+        0.862,
+        0.951,
+        0.992,
+        1.0
+       ]
+      },
+      "model_vs_measured_y": {
+       "measured": [
+        -10.5,
+        -7,
+        -4,
+        -2,
+        -1,
+        -0.5,
+        0,
+        0
+       ]
+      },
+      "stagger": "one line/word group at a time, triggered by the spoken word (gaps 13-59 frames); never an automatic fixed stagger. Items on one line (5 VIDEOS / × $50) enter separately.",
+      "exit": "hard cut with the shot (G,H,D) or 3-frame fade 1,.77,.32,0 adjacent to the cut (E,F)"
+     },
+     "R2_fullscreen_fast_rise (headings on data cards: STILL / RUNNING., AD labels)": {
+      "start": -0.5,
+      "duration_frames": 4,
+      "opacity_easing": "cubic-bezier(0.2,0,0.6,1)",
+      "translateY_px": "+11 -> 0",
+      "y_easing": "cubic-bezier(0.3,0,0.6,1)",
+      "blur": "0",
+      "residual": "opacity 0.008, y 0.07px"
+     },
+     "R3_fullscreen_slow_rise (funnel cells, $80, $240 REVENUE)": {
+      "start": -1,
+      "duration_frames": 10,
+      "opacity_easing": "cubic-bezier(0.4,0,0.8,1)",
+      "translateY_px": "+14 -> 0",
+      "y_easing": "cubic-bezier(0.6,0.6,0.9,1) (~linear)",
+      "blur_sigma": "4 -> 2 -> 1 -> 0 over first 7 frames",
+      "residual": "opacity 0.006, y 0.23px (fit to the averaged series of 7 cells)"
+     },
+     "R4_number_pop (card counters 200 / 20,000)": {
+      "start": -1,
+      "duration_frames": 6,
+      "opacity_easing": "cubic-bezier(0.1,0,0.6,1)",
+      "translateY_px": "+23 at first visible (≈+30 at start) -> 0",
+      "scale": "0.875-0.925 -> 1.0 by 2nd frame",
+      "blur_sigma": "6-8 at first visible frame -> 1 -> 0",
+      "residual": "opacity 0.014, y 0.2px"
+     },
+     "R5_A-roll_hero_rise ($240, $$$)": {
+      "duration_frames": "7-9",
+      "translateY_px": "+12..+16 -> 0",
+      "blur": "8 -> 2 -> 1 -> 0",
+      "opacity": ".03,.23,.49,.74,.93,1 ($240) / .19,.35,.49,.65,.77,.88,.93,1 ($)",
+      "stagger_$$$": "3-4 frames"
+     },
+     "count_up": {
+      "easing": "cubic-bezier(0.65,0,0.35,1) easeInOutCubic",
+      "duration": "33 frames (1.375 s) for 48,000; 26 frames for 1->14",
+      "start_value": "not 0: REACH starts at 1,200 (2.5%), days at 1",
+      "rounding": "Math.round, en-US grouping",
+      "sync": "number fades in over the first 2-3 frames of the count; tick SFX train over the count"
+     },
+     "big_moves (card slides)": {
+      "easing": "cubic-bezier(0.65,0,0.35,1)",
+      "duration_frames": 19.5,
+      "motion_blur": "directional, peaks mid-move"
+     },
+     "border_trace": {
+      "duration_frames": 13.5,
+      "easing": "cubic-bezier(0.60,0,0.50,1)",
+      "direction": "clockwise from top-right corner"
+     },
+     "arrow_draw": "6 frames: shaft 3 frames (0.22, 0.53, 1.0) then head arms 1+2 frames",
+     "content_fade_out (full-screen)": "6 frames, 1,.95,.81,.61,.40,.20,.05,0",
+     "gradient_fill": "every highlighted number uses the animated pink gradient (palette in colours); whites stay pure white"
+    }
+   ]
+  },
+  "counters": {
+   "source": "reference-specs/data-cards.json#counters",
+   "keyframes": {
+    "A_REACH": {
+     "per_frame": {
+      "3321": 1235,
+      "3322": 1346,
+      "3323": 1542,
+      "3324": 1833,
+      "3325": 2234,
+      "3326": 2760,
+      "3327": 3431,
+      "3328": 4273,
+      "3329": 5316,
+      "3330": 6600,
+      "3331": 8177,
+      "3332": 10108,
+      "3333": 12469,
+      "3334": 15332,
+      "3335": 18731,
+      "3336": 22582,
+      "3337": 26618,
+      "3338": 30469,
+      "3339": 33868,
+      "3340": 36731,
+      "3341": 39092,
+      "3342": 41023,
+      "3343": 42600,
+      "3344": 43884,
+      "3345": 44927,
+      "3346": 45769,
+      "3347": 46440,
+      "3348": 46966,
+      "3349": 47367,
+      "3350": 47658,
+      "3351": 47854,
+      "3352": 47965,
+      "3353": 48000
+     },
+     "format": "en-US thousands separator ',', no decimals, Math.round",
+     "fit": {
+      "from": 1200,
+      "to": 48000,
+      "start_frame": 3320,
+      "duration_frames": 33,
+      "end_frame": 3353,
+      "easing": "cubic-bezier(0.65,0,0.35,1) = easeInOutCubic",
+      "residual": "0 on all 33 frames (exact reproduction after rounding)"
+     },
+     "visibility": "value 1200 at 3320 is not drawn; number fades in 3321 (~0.25, blurred) -> 3322 (~0.6) -> 3323 (1.0); held at 48,000 until scene fade 3406",
+     "companion": "REACH label (gradient) fades in with it; 10x5 grid of person icons fills row-by-row in step with the count; tick SFX train 138.57-139.74 s (see sfx)"
+    },
+    "A_DAYS": {
+     "per_frame": {
+      "3283": "01 (fading in)",
+      "3284": 1,
+      "3285": 1,
+      "3286": 1,
+      "3287": 1,
+      "3288": 1,
+      "3289": 2,
+      "3290": 2,
+      "3291": 2,
+      "3292": 3,
+      "3293": 3,
+      "3294": 4,
+      "3295": 5,
+      "3296": 6,
+      "3297": 7,
+      "3298": 9,
+      "3299": 10,
+      "3300": 11,
+      "3301": 12,
+      "3302": 13,
+      "3303": 13,
+      "3304": 13,
+      "3305": 14
+     },
+     "format": "2-digit zero-padded ('01'..'09','10'..), gradient fill",
+     "fit": {
+      "from": 1,
+      "to": 14,
+      "start_frame": 3283.75,
+      "duration_frames": 26,
+      "easing": "cubic-bezier(0.65,0,0.35,1)",
+      "rounding": "Math.round",
+      "residual": "22/23 frames exact (1 mismatch at 3298: shows 09, model 8 - the reference skips 08)"
+     },
+     "companion": "14-tick timeline under it: pink filled ticks advance with the value; label 'DAYS' gains ' ACTIVE' at 3296-3298 (fade-in, label re-centres)"
+    },
+    "B_AD1_200": {
+     "per_frame": {
+      "3470": "hidden",
+      "3471": 198,
+      "3472": 200
+     },
+     "note": "count-up is effectively finished when the number becomes visible (198 = 99% on the first visible frame). Rebuild: count 0->200 easeInOutCubic ending at the 2nd visible frame; the reveal (rise+blur+scale) carries the motion."
+    },
+    "B_AD2_20000": {
+     "per_frame": {
+      "3522": "hidden",
+      "3523": 19776,
+      "3524": 20000
+     },
+     "note": "same as AD1 (98.9% on first visible frame)"
+    },
+    "formatting_rules": "$ prefix glued to digits ('$10','$240','$1,000'); ranges with en dash '$100–$200'; approx with tilde '~$100'; multiply sign '×' (U+00D7) in '5 VIDEOS × $50' and '100×'; thousands comma always"
+   }
+  },
+  "rise_tables": {
+   "source": "reference-specs/data-cards.json#entrance_tables_rise",
+   "keyframes": {
+    "C_bag_image(fade at +63px, then slides up)": [
+     {
+      "frame": 7006,
+      "opacity": 0.018,
+      "dy_px": 63,
+      "blur_sigma_px": 8
+     },
+     {
+      "frame": 7007,
+      "opacity": 0.079,
+      "dy_px": 64,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7008,
+      "opacity": 0.247,
+      "dy_px": 63,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7009,
+      "opacity": 0.558,
+      "dy_px": 61,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7010,
+      "opacity": 0.735,
+      "dy_px": 58,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7011,
+      "opacity": 0.81,
+      "dy_px": 54,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7012,
+      "opacity": 0.845,
+      "dy_px": 47,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7013,
+      "opacity": 0.883,
+      "dy_px": 38,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7014,
+      "opacity": 0.939,
+      "dy_px": 27,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7015,
+      "opacity": 0.986,
+      "dy_px": 17,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7016,
+      "opacity": 1.0,
+      "dy_px": 11,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7017,
+      "opacity": 1.0,
+      "dy_px": 7,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7018,
+      "opacity": 1.0,
+      "dy_px": 4,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7019,
+      "opacity": 1.0,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7020,
+      "opacity": 1.0,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7021,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_$80(gradient)": [
+     {
+      "frame": 7030,
+      "opacity": 0.02,
+      "dy_px": 9,
+      "blur_sigma_px": 6
+     },
+     {
+      "frame": 7031,
+      "opacity": 0.126,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7032,
+      "opacity": 0.277,
+      "dy_px": 7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7033,
+      "opacity": 0.447,
+      "dy_px": 5,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7034,
+      "opacity": 0.64,
+      "dy_px": 3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7035,
+      "opacity": 0.797,
+      "dy_px": 2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7036,
+      "opacity": 0.884,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7037,
+      "opacity": 0.934,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7038,
+      "opacity": 0.955,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_row1_$10SPEND": [
+     {
+      "frame": 7054,
+      "opacity": 0.009,
+      "dy_px": 13,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 7055,
+      "opacity": 0.038,
+      "dy_px": 11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7056,
+      "opacity": 0.091,
+      "dy_px": 10,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7057,
+      "opacity": 0.182,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7058,
+      "opacity": 0.287,
+      "dy_px": 8,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7059,
+      "opacity": 0.409,
+      "dy_px": 6,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7060,
+      "opacity": 0.496,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7061,
+      "opacity": 0.64,
+      "dy_px": 3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7062,
+      "opacity": 0.805,
+      "dy_px": 2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7063,
+      "opacity": 0.88,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_row1_1LEAD": [
+     {
+      "frame": 7080,
+      "opacity": 0.046,
+      "dy_px": 10,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7081,
+      "opacity": 0.132,
+      "dy_px": 10,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7082,
+      "opacity": 0.217,
+      "dy_px": 9,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7083,
+      "opacity": 0.328,
+      "dy_px": 7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7084,
+      "opacity": 0.447,
+      "dy_px": 5,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7085,
+      "opacity": 0.582,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7086,
+      "opacity": 0.7,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7087,
+      "opacity": 0.852,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7088,
+      "opacity": 0.966,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7089,
+      "opacity": 0.998,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_row1_0SALES(gradient)": [
+     {
+      "frame": 7103,
+      "opacity": 0.029,
+      "dy_px": 11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7104,
+      "opacity": 0.083,
+      "dy_px": 10,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7105,
+      "opacity": 0.21,
+      "dy_px": 10,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7106,
+      "opacity": 0.358,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7107,
+      "opacity": 0.461,
+      "dy_px": 7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7108,
+      "opacity": 0.582,
+      "dy_px": 5,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7109,
+      "opacity": 0.737,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7110,
+      "opacity": 0.846,
+      "dy_px": 2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7111,
+      "opacity": 0.891,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7112,
+      "opacity": 0.957,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7113,
+      "opacity": 0.991,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_row2_$10SPEND": [
+     {
+      "frame": 7126,
+      "opacity": 0.011,
+      "dy_px": 12,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 7127,
+      "opacity": 0.039,
+      "dy_px": 11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7128,
+      "opacity": 0.091,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7129,
+      "opacity": 0.185,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7130,
+      "opacity": 0.288,
+      "dy_px": 8,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7131,
+      "opacity": 0.409,
+      "dy_px": 6,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7132,
+      "opacity": 0.496,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7133,
+      "opacity": 0.644,
+      "dy_px": 3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7134,
+      "opacity": 0.805,
+      "dy_px": 2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7135,
+      "opacity": 0.877,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_row2_10LEADS(gradient)": [
+     {
+      "frame": 7151,
+      "opacity": 0.023,
+      "dy_px": null,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 7152,
+      "opacity": 0.055,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7153,
+      "opacity": 0.158,
+      "dy_px": 9,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7154,
+      "opacity": 0.306,
+      "dy_px": 8,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7155,
+      "opacity": 0.436,
+      "dy_px": 7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7156,
+      "opacity": 0.629,
+      "dy_px": 5,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7157,
+      "opacity": 0.806,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7158,
+      "opacity": 0.91,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7159,
+      "opacity": 1.0,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7160,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_row2_3SALES(gradient)": [
+     {
+      "frame": 7177,
+      "opacity": 0.095,
+      "dy_px": 9,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 7178,
+      "opacity": 0.166,
+      "dy_px": 8,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7179,
+      "opacity": 0.277,
+      "dy_px": 7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7180,
+      "opacity": 0.408,
+      "dy_px": 5,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7181,
+      "opacity": 0.507,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7182,
+      "opacity": 0.639,
+      "dy_px": 2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7183,
+      "opacity": 0.69,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7184,
+      "opacity": 0.777,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7185,
+      "opacity": 0.848,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "C_$240REVENUE(gradient)": [
+     {
+      "frame": 7192,
+      "opacity": 0.017,
+      "dy_px": 13,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 7193,
+      "opacity": 0.107,
+      "dy_px": 11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7194,
+      "opacity": 0.237,
+      "dy_px": 10,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7195,
+      "opacity": 0.387,
+      "dy_px": 8,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7196,
+      "opacity": 0.559,
+      "dy_px": 6,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7197,
+      "opacity": 0.702,
+      "dy_px": 4,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7198,
+      "opacity": 0.85,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7199,
+      "opacity": 0.992,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7200,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "A_STILL": [
+     {
+      "frame": 3276,
+      "opacity": 0.13,
+      "dy_px": 10,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3277,
+      "opacity": 0.467,
+      "dy_px": 7,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3278,
+      "opacity": 0.782,
+      "dy_px": 3,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3279,
+      "opacity": 0.977,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3280,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "A_RUNNING.": [
+     {
+      "frame": 3283,
+      "opacity": 0.078,
+      "dy_px": 11,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 3284,
+      "opacity": 0.401,
+      "dy_px": 7,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3285,
+      "opacity": 0.715,
+      "dy_px": 3,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3286,
+      "opacity": 0.958,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3287,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "B_AD1_number_200(counter, scale 0.925->1)": [
+     {
+      "frame": 3471,
+      "opacity": 0.212,
+      "dy_px": 23,
+      "blur_sigma_px": 6
+     },
+     {
+      "frame": 3472,
+      "opacity": 0.392,
+      "dy_px": 15,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 3473,
+      "opacity": 0.615,
+      "dy_px": 8,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3474,
+      "opacity": 0.874,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3475,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "B_AD2_number_20000(counter, scale 0.875->1, gradient)": [
+     {
+      "frame": 3523,
+      "opacity": 0.192,
+      "dy_px": 23,
+      "blur_sigma_px": 8
+     },
+     {
+      "frame": 3524,
+      "opacity": 0.415,
+      "dy_px": 15,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 3525,
+      "opacity": 0.642,
+      "dy_px": 8,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 3526,
+      "opacity": 0.786,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 3527,
+      "opacity": 0.855,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "D_$240(A-roll, gradient; ref = clean plate f13680)": [
+     {
+      "frame": 7233,
+      "opacity": 0.027,
+      "dy_px": 16,
+      "blur_sigma_px": 8
+     },
+     {
+      "frame": 7234,
+      "opacity": 0.227,
+      "dy_px": 16,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 7235,
+      "opacity": 0.49,
+      "dy_px": 10,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7236,
+      "opacity": 0.74,
+      "dy_px": 6,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7237,
+      "opacity": 0.929,
+      "dy_px": 3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7238,
+      "opacity": 1.0,
+      "dy_px": 1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7239,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "D_$1": [
+     {
+      "frame": 7308,
+      "opacity": 0.048,
+      "dy_px": null,
+      "blur_sigma_px": 8
+     },
+     {
+      "frame": 7309,
+      "opacity": 0.186,
+      "dy_px": 12,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7310,
+      "opacity": 0.347,
+      "dy_px": 8,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7311,
+      "opacity": 0.494,
+      "dy_px": 6,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7312,
+      "opacity": 0.653,
+      "dy_px": 4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7313,
+      "opacity": 0.771,
+      "dy_px": 2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7314,
+      "opacity": 0.876,
+      "dy_px": 1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7315,
+      "opacity": 0.931,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7316,
+      "opacity": 0.995,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "D_$2": [
+     {
+      "frame": 7311,
+      "opacity": 0.083,
+      "dy_px": null,
+      "blur_sigma_px": 8
+     },
+     {
+      "frame": 7312,
+      "opacity": 0.216,
+      "dy_px": 12,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7313,
+      "opacity": 0.375,
+      "dy_px": 8,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7314,
+      "opacity": 0.525,
+      "dy_px": 6,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7315,
+      "opacity": 0.666,
+      "dy_px": 4,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7316,
+      "opacity": 0.778,
+      "dy_px": 3,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7317,
+      "opacity": 0.873,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7318,
+      "opacity": 0.946,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7319,
+      "opacity": 0.999,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "D_$3": [
+     {
+      "frame": 7315,
+      "opacity": 0.09,
+      "dy_px": null,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 7316,
+      "opacity": 0.215,
+      "dy_px": 9,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 7317,
+      "opacity": 0.374,
+      "dy_px": 6,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7318,
+      "opacity": 0.535,
+      "dy_px": 4,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7319,
+      "opacity": 0.668,
+      "dy_px": 3,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7320,
+      "opacity": 0.782,
+      "dy_px": 2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 7321,
+      "opacity": 0.867,
+      "dy_px": 1,
+      "blur_sigma_px": 0
+     }
+    ]
+   }
+  },
+  "dropin_tables": {
+   "source": "reference-specs/data-cards.json#entrance_tables_floating_dropin",
+   "keyframes": {
+    "E_5VIDEOS": [
+     {
+      "frame": 8768,
+      "opacity": 0.035,
+      "dy_px": null,
+      "blur_sigma_px": 11
+     },
+     {
+      "frame": 8769,
+      "opacity": 0.081,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 8770,
+      "opacity": 0.228,
+      "dy_px": -7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8771,
+      "opacity": 0.472,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8772,
+      "opacity": 0.729,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8773,
+      "opacity": 0.849,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8774,
+      "opacity": 0.945,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8775,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "E_x50": [
+     {
+      "frame": 8787,
+      "opacity": 0.088,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 8788,
+      "opacity": 0.23,
+      "dy_px": -7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8789,
+      "opacity": 0.469,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8790,
+      "opacity": 0.73,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8791,
+      "opacity": 0.845,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8792,
+      "opacity": 0.955,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8793,
+      "opacity": 0.997,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8794,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "E_eq250(gradient)": [
+     {
+      "frame": 8808,
+      "opacity": 0.057,
+      "dy_px": -11,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8809,
+      "opacity": 0.243,
+      "dy_px": -7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8810,
+      "opacity": 0.482,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 8811,
+      "opacity": 0.629,
+      "dy_px": -2,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8812,
+      "opacity": 0.737,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 8813,
+      "opacity": 0.791,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "F_GENERAL": [
+     {
+      "frame": 10669,
+      "opacity": 0.055,
+      "dy_px": -10,
+      "blur_sigma_px": 3
+     },
+     {
+      "frame": 10670,
+      "opacity": 0.179,
+      "dy_px": -7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10671,
+      "opacity": 0.411,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10672,
+      "opacity": 0.7,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10673,
+      "opacity": 0.832,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 10674,
+      "opacity": 0.936,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 10675,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "F_100(gradient)": [
+     {
+      "frame": 10709,
+      "opacity": 0.109,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 10710,
+      "opacity": 0.314,
+      "dy_px": -7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 10711,
+      "opacity": 0.527,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10712,
+      "opacity": 0.726,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10713,
+      "opacity": 0.856,
+      "dy_px": -1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10714,
+      "opacity": 0.882,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "F_BUSINESS": [
+     {
+      "frame": 10732,
+      "opacity": 0.075,
+      "dy_px": -11,
+      "blur_sigma_px": 3
+     },
+     {
+      "frame": 10733,
+      "opacity": 0.198,
+      "dy_px": -7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10734,
+      "opacity": 0.425,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10735,
+      "opacity": 0.712,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10736,
+      "opacity": 0.833,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 10737,
+      "opacity": 0.942,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 10738,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "F_1000(gradient)": [
+     {
+      "frame": 10778,
+      "opacity": 0.168,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 10779,
+      "opacity": 0.466,
+      "dy_px": -7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 10780,
+      "opacity": 0.743,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10781,
+      "opacity": 0.969,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 10782,
+      "opacity": 1.0,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 10783,
+      "opacity": 1.0,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "G_HOOKRATE": [
+     {
+      "frame": 13694,
+      "opacity": 0.189,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13695,
+      "opacity": 0.436,
+      "dy_px": -7,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13696,
+      "opacity": 0.644,
+      "dy_px": -3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13697,
+      "opacity": 0.778,
+      "dy_px": -1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13698,
+      "opacity": 0.825,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "G_CTR": [
+     {
+      "frame": 13710,
+      "opacity": 0.026,
+      "dy_px": -19,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13711,
+      "opacity": 0.225,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13712,
+      "opacity": 0.504,
+      "dy_px": -7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13713,
+      "opacity": 0.702,
+      "dy_px": -3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13714,
+      "opacity": 0.842,
+      "dy_px": -1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13715,
+      "opacity": 0.88,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "G_CPL": [
+     {
+      "frame": 13725,
+      "opacity": 0.09,
+      "dy_px": -18,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 13726,
+      "opacity": 0.281,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13727,
+      "opacity": 0.517,
+      "dy_px": -6,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13728,
+      "opacity": 0.733,
+      "dy_px": -3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13729,
+      "opacity": 0.872,
+      "dy_px": -1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13730,
+      "opacity": 0.912,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 13731,
+      "opacity": 0.976,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "H1_TOTAL": [
+     {
+      "frame": 13879,
+      "opacity": 0.064,
+      "dy_px": -18,
+      "blur_sigma_px": 4
+     },
+     {
+      "frame": 13880,
+      "opacity": 0.188,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13881,
+      "opacity": 0.435,
+      "dy_px": -7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13882,
+      "opacity": 0.66,
+      "dy_px": -3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13883,
+      "opacity": 0.872,
+      "dy_px": -1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13884,
+      "opacity": 0.926,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 13885,
+      "opacity": 0.998,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "H1_~$100(gradient)": [
+     {
+      "frame": 13886,
+      "opacity": 0.087,
+      "dy_px": -16,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13887,
+      "opacity": 0.261,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13888,
+      "opacity": 0.476,
+      "dy_px": -6,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 13889,
+      "opacity": 0.63,
+      "dy_px": -3,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13890,
+      "opacity": 0.742,
+      "dy_px": -1,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 13891,
+      "opacity": 0.806,
+      "dy_px": 0,
+      "blur_sigma_px": 1
+     }
+    ],
+    "H2_TOTAL~$100(gradient)": [
+     {
+      "frame": 14215,
+      "opacity": 0.082,
+      "dy_px": -13,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 14216,
+      "opacity": 0.306,
+      "dy_px": -8,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 14217,
+      "opacity": 0.559,
+      "dy_px": -5,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 14218,
+      "opacity": 0.779,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 14219,
+      "opacity": 0.878,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 14220,
+      "opacity": 0.953,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 14221,
+      "opacity": 0.989,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "H2_1UGCAD": [
+     {
+      "frame": 14274,
+      "opacity": 0.079,
+      "dy_px": -12,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 14275,
+      "opacity": 0.24,
+      "dy_px": -7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 14276,
+      "opacity": 0.457,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 14277,
+      "opacity": 0.721,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 14278,
+      "opacity": 0.846,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 14279,
+      "opacity": 0.946,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 14280,
+      "opacity": 0.999,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ],
+    "H2_$100-$200(gradient)": [
+     {
+      "frame": 14301,
+      "opacity": 0.125,
+      "dy_px": -11,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 14302,
+      "opacity": 0.311,
+      "dy_px": -7,
+      "blur_sigma_px": 2
+     },
+     {
+      "frame": 14303,
+      "opacity": 0.534,
+      "dy_px": -4,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 14304,
+      "opacity": 0.734,
+      "dy_px": -2,
+      "blur_sigma_px": 1
+     },
+     {
+      "frame": 14305,
+      "opacity": 0.839,
+      "dy_px": -1,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 14306,
+      "opacity": 0.912,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     },
+     {
+      "frame": 14307,
+      "opacity": 0.956,
+      "dy_px": 0,
+      "blur_sigma_px": 0
+     }
+    ]
+   }
+  },
+  "exits": {
+   "source": "reference-specs/data-cards.json#exits",
+   "keyframes": {
+    "E": {
+     "type": "3-frame fade, all lines together, starts ON the cut (text fades over the NEW shot)",
+     "per_frame": {
+      "8920": 1.0,
+      "8921": 0.748,
+      "8922": 0.3,
+      "8923": 0.049,
+      "8924": 0.0
+     },
+     "cut_frame": 8921
+    },
+    "F": {
+     "type": "3-frame fade ending on the cut",
+     "per_frame": {
+      "10804": 1.0,
+      "10805": 0.78,
+      "10806": 0.34,
+      "10807": 0.0
+     },
+     "cut_frame": 10807
+    },
+    "G": {
+     "type": "hard cut, no fade",
+     "last_frame": 13752
+    },
+    "H1": {
+     "type": "hard cut",
+     "last_frame": 13909
+    },
+    "H2": {
+     "type": "hard cut",
+     "last_frame": 14366
+    },
+    "D_$240": {
+     "type": "hard cut",
+     "last_frame": 7273
+    },
+    "D_$$$": {
+     "type": "hard cut",
+     "last_frame": 7362
+    },
+    "A": {
+     "type": "6-frame content fade to bg (table in A scene)"
+    },
+    "B": {
+     "type": "hard cut",
+     "last_frame": 3599
+    },
+    "C": {
+     "type": "1-frame cross-dissolve at 7232 into A-roll"
+    },
+    "fade_curve_fit": "1 -> .77 -> .32 -> .03 -> 0 = ease-in (cubic-bezier(0.5,0,1,1) approx over 3.5 frames)"
+   }
+  },
+  "scene_active_ad_card": {
+   "source": "reference-specs/data-cards.json#A_active_ad_card_scene",
+   "keyframes": {
+    "span": "cut from A-roll at 3240 -> content fade-out 3406-3412 -> empty bg 3412-3417 -> next scene B (AD1 card) from 3416",
+    "card_entrance": [
+     {
+      "frame": 3242,
+      "card_luma(0-255)": 54,
+      "cx": null,
+      "cy": null,
+      "rot_deg": null
+     },
+     {
+      "frame": 3243,
+      "card_luma(0-255)": 137,
+      "cx": 944,
+      "cy": 458,
+      "rot_deg": null
+     },
+     {
+      "frame": 3244,
+      "card_luma(0-255)": 210,
+      "cx": 985,
+      "cy": 590,
+      "rot_deg": 4.6
+     },
+     {
+      "frame": 3245,
+      "card_luma(0-255)": 236,
+      "cx": 1007,
+      "cy": 578,
+      "rot_deg": 1.1
+     },
+     {
+      "frame": 3246,
+      "card_luma(0-255)": 231,
+      "cx": 1027,
+      "cy": 569,
+      "rot_deg": -2.5
+     },
+     {
+      "frame": 3247,
+      "card_luma(0-255)": 240,
+      "cx": 1037,
+      "cy": 551,
+      "rot_deg": -3.8
+     },
+     {
+      "frame": 3248,
+      "card_luma(0-255)": 241,
+      "cx": 1042,
+      "cy": 546,
+      "rot_deg": -4.3
+     },
+     {
+      "frame": 3249,
+      "card_luma(0-255)": 242,
+      "cx": 1044,
+      "cy": 545,
+      "rot_deg": -4.7
+     },
+     {
+      "frame": 3250,
+      "card_luma(0-255)": 241,
+      "cx": 1045,
+      "cy": 546,
+      "rot_deg": -4.8
+     },
+     {
+      "frame": 3251,
+      "card_luma(0-255)": 242,
+      "cx": 1046,
+      "cy": 547,
+      "rot_deg": -5.1
+     }
+    ],
+    "card_entrance_note": "card first appears as a flat grey rounded rectangle (no photo) whose luminance ramps 0->54->137->210->236 (3241-3245) while it rotates +4.6->-5.1 deg and rises ~44px / moves +60px right; the photo fades in blurred 3245-3247; inner texts stagger: HIGGSFIELD 3246-3248, WORK. GYM. TRAVEL. 3250-3251, ONE BAG. EVERY DAY. 3252-3253, arrow button 3253-3255 (grey->black), ACTIVE dot 3255-3256",
+    "slide_right": {
+     "frames": "3250-3270",
+     "cx_per_frame": {
+      "3252": 1048.9,
+      "3253": 1053.3,
+      "3254": 1059.9,
+      "3255": 1068.5,
+      "3256": 1082.2,
+      "3257": 1102.2,
+      "3258": 1130.1,
+      "3259": 1167.0,
+      "3260": 1206.8,
+      "3261": 1240.1,
+      "3262": 1264.6,
+      "3263": 1281.9,
+      "3264": 1294.1,
+      "3265": 1302.3,
+      "3266": 1307.9,
+      "3267": 1311.4,
+      "3268": 1313.2,
+      "3269": 1313.7
+     },
+     "rot": "-5.1 -> -2.4 deg",
+     "dy": "+22px",
+     "fit": "start 3250.0, 19.5 frames, cubic-bezier(0.65,0,0.30,1), rms 1.4px",
+     "motion_blur": "visible 3257-3261 (directional, ~20-40px)"
+    },
+    "nudge": "3271-3276: +28px x, rot -2.4 -> -2.9 deg (secondary drift when STILL appears)",
+    "slide_left_and_shrink": {
+     "frames": "3300-3320",
+     "card_right_edge_x": {
+      "3300": 1577,
+      "3301": 1574,
+      "3302": 1564,
+      "3303": 1548,
+      "3304": 1524,
+      "3305": 1488,
+      "3306": 1438,
+      "3307": 1367,
+      "3308": 1269,
+      "3309": 1136,
+      "3310": 980,
+      "3311": 832,
+      "3312": 718,
+      "3313": 634,
+      "3314": 574,
+      "3315": 532,
+      "3316": 502,
+      "3317": 482,
+      "3318": 469,
+      "3319": 463,
+      "3320": 462,
+      "3321": 462
+     },
+     "scale": "1.0 -> 0.70 (height 661 -> 467)",
+     "rot": "-2.9 -> 0 deg",
+     "fit": "start 3300, 19.5 frames, cubic-bezier(0.65,0,0.35,1), rms 3.7px",
+     "note": "STILL RUNNING / day counter fade out under it 3307-3311 with motion blur; REACH column fades in 3321"
+    },
+    "headline_STILL_RUNNING": "STILL 3276-3280, RUNNING. 3283-3287 (rise table); clock icon (pink ring) draws from 3254 and shrinks+fades 3278-3281",
+    "notifications": "4 lead cards on the right, stagger 6-7 frames: placeholder rect fades in grey (3357) -> white (3358) -> content (3359); then 3363/3364/3365, 3370/3371/3372, 3374/3375/3376. Connector lines from the person grid draw toward them.",
+    "heading_MORE_CHANCES_TO_CONVERT": "word-by-word fade with blur: MORE 3352-3355, CHANCES 3357-3359, TO 3370-3371, CONVERT 3373-3375 (pink gradient, top-left); POTENTIAL 3356-3358, LEADS 3370-3372",
+    "exit": [
+     {
+      "frame": 3404,
+      "content_opacity": 1.0
+     },
+     {
+      "frame": 3405,
+      "content_opacity": 1.0
+     },
+     {
+      "frame": 3406,
+      "content_opacity": 0.95
+     },
+     {
+      "frame": 3407,
+      "content_opacity": 0.809
+     },
+     {
+      "frame": 3408,
+      "content_opacity": 0.608
+     },
+     {
+      "frame": 3409,
+      "content_opacity": 0.4
+     },
+     {
+      "frame": 3410,
+      "content_opacity": 0.202
+     },
+     {
+      "frame": 3411,
+      "content_opacity": 0.054
+     },
+     {
+      "frame": 3412,
+      "content_opacity": 0.0
+     }
+    ],
+    "exit_note": "all content fades together (6 frames, ~linear/ease-in-out); background glow is NOT faded; whites dip to light grey first (consistent with plain opacity over black)."
+   }
+  },
+  "scene_ad_comparison": {
+   "source": "reference-specs/data-cards.json#B_ad_comparison_scene",
+   "keyframes": {
+    "span": "3416 -> hard cut to A-roll at 3600 (no exit animation)",
+    "timeline": {
+     "AD1_card_body_fade": "3416-3419 opacity 0, .20, .68, .94, 1 (soft/blurred edges at 3417-3418)",
+     "AD1_border_trace": "3418-3431",
+     "AD1_label": "3421-3424 (rise)",
+     "header_30_DAYS_/": "3445-3447 opacity .11,.44,.92",
+     "AD1_dot_grid_and_REACH": "3456-3462 grid of 10x10 dim dots fades in, REACH label 3458-3461; one dot lit white",
+     "AD1_number": "3471-3475 (table)",
+     "AD1_border_off": "3497-3499 (fades as AD2 starts)",
+     "AD2_card_body": "3494-3497",
+     "AD2_border_trace": "3495-3508",
+     "AD2_label": "3500-3503",
+     "AD2_dots_colour_fill": "3517-3527 (dots recoloured with the animated gradient, sweeping across columns)",
+     "AD2_REACH": "3518-3521",
+     "AD2_number": "3523-3527 (table)",
+     "pill": "border present by 3526; '100×' 3528-3531; 'MORE REACH' 3533-3536 (word stagger 5 frames)",
+     "header_SAME_BUDGET": "SAME blurred at 3545 -> sharp; BUDGET ~3548-3552 (word-by-word, blur)"
+    },
+    "border_trace": {
+     "start": "top-right corner, clockwise (down the right edge, bottom right->left, up the left edge, top left->right)",
+     "lit_fraction_AD1": {
+      "3419": 0.021,
+      "3420": 0.049,
+      "3421": 0.092,
+      "3422": 0.159,
+      "3423": 0.241,
+      "3424": 0.388,
+      "3425": 0.559,
+      "3426": 0.726,
+      "3427": 0.804,
+      "3428": 0.905,
+      "3429": 0.96,
+      "3430": 0.99,
+      "3431": 1.0
+     },
+     "lit_fraction_AD2": {
+      "3495": 0.009,
+      "3496": 0.03,
+      "3497": 0.067,
+      "3498": 0.132,
+      "3499": 0.231,
+      "3500": 0.341,
+      "3501": 0.569,
+      "3502": 0.737,
+      "3503": 0.802,
+      "3504": 0.881,
+      "3505": 0.937,
+      "3506": 0.957,
+      "3507": 0.979,
+      "3508": 1.0
+     },
+     "fit": "start 3417.5, 13.5 frames, cubic-bezier(0.60,0,0.50,1), rms 0.013",
+     "head": "leading segment is brighter (white/yellow hot-spot) - gradient stroke"
+    }
+   }
+  },
+  "scene_funnel": {
+   "source": "reference-specs/data-cards.json#C_funnel_scene",
+   "keyframes": {
+    "span": "hard cut in at 7005 (from A-roll 7004) -> 1-frame 50% cross-dissolve at 7232 into A-roll where $240 continues",
+    "order_and_first_visible": [
+     [
+      "product image (fade at +63px, then slides up 63px)",
+      7006
+     ],
+     [
+      "BAG label (rises +20px, settles ~7019)",
+      7012
+     ],
+     [
+      "$80",
+      7030
+     ],
+     [
+      "row1 $10 SPEND",
+      7054
+     ],
+     [
+      "arrow 1",
+      7070
+     ],
+     [
+      "1 LEAD",
+      7080
+     ],
+     [
+      "arrow 2",
+      7094
+     ],
+     [
+      "0 SALES",
+      7103
+     ],
+     [
+      "divider (opacity fade 7119-7122: .19,.50,.75,.97, full width at once)",
+      7119
+     ],
+     [
+      "row2 $10 SPEND",
+      7126
+     ],
+     [
+      "arrow 3 (pink)",
+      7142
+     ],
+     [
+      "10 LEADS",
+      7151
+     ],
+     [
+      "arrow 4 (pink)",
+      7166
+     ],
+     [
+      "3 SALES",
+      7175
+     ],
+     [
+      "$240 REVENUE",
+      7192
+     ]
+    ],
+    "stagger": "each step waits for speech; gaps 10-26 frames; arrows start 6-8 frames after the preceding cell's first frame; cells start 9-10 frames after the arrow's first frame",
+    "arrow_draw": {
+     "per_frame_arrow1": [
+      {
+       "frame": 7070,
+       "shaft_progress": 0.22,
+       "state": "shaft 19/85px"
+      },
+      {
+       "frame": 7071,
+       "shaft_progress": 0.53,
+       "state": "shaft 45/85"
+      },
+      {
+       "frame": 7072,
+       "shaft_progress": 1.0,
+       "state": "shaft full + upper head arm starting"
+      },
+      {
+       "frame": 7073,
+       "shaft_progress": 1.0,
+       "state": "upper arm full"
+      },
+      {
+       "frame": 7074,
+       "shaft_progress": 1.0,
+       "state": "lower arm half"
+      },
+      {
+       "frame": 7075,
+       "shaft_progress": 1.0,
+       "state": "complete"
+      }
+     ],
+     "rule": "stroke-dash draw: shaft 3 frames then head arms sequentially 1+2 frames; total 6 frames; identical for all 4 arrows",
+     "stroke_px": 3,
+     "cap": "round"
+    },
+    "bag_image_slide": "up 63px over 7010-7021, ease-in-out (dy 63,61,58,54,47,38,27,17,11,7,4,2,1,0)"
+   }
+  }
+ },
+ "pills_cards": {
+  "source": "reference-specs/pills-cards.json#recipes_24fps",
+  "keyframes": {
+   "note": "Offsets in frames from offset 0 = first visible frame. Values are the measured keyframes; interpolate linearly between consecutive keys for an exact match, or use the listed bezier per segment.",
+   "red_brand_pill_enter": {
+    "opacity": [
+     [
+      -2,
+      0.15
+     ],
+     [
+      -1,
+      0.5
+     ],
+     [
+      0,
+      0.75
+     ],
+     [
+      1,
+      0.9
+     ],
+     [
+      2,
+      1
+     ]
+    ],
+    "shape": "rounded square (h x h, r=0.2h) at the pill's LEFT end -> pill",
+    "translate_x_centre_px_rel_final": [
+     [
+      0,
+      -281.5
+     ],
+     [
+      3,
+      -270.5
+     ],
+     [
+      4,
+      -242.5
+     ],
+     [
+      5,
+      -198.5
+     ],
+     [
+      6,
+      -147
+     ],
+     [
+      7,
+      -104
+     ],
+     [
+      8,
+      -69
+     ],
+     [
+      9,
+      -44.5
+     ],
+     [
+      10,
+      -27
+     ],
+     [
+      11,
+      -14
+     ],
+     [
+      12,
+      -5.5
+     ],
+     [
+      13,
+      0
+     ],
+     [
+      14,
+      3
+     ],
+     [
+      15,
+      4
+     ],
+     [
+      16,
+      3
+     ],
+     [
+      17,
+      1
+     ],
+     [
+      18,
+      0.5
+     ],
+     [
+      19,
+      0
+     ]
+    ],
+    "width_frac_of_final": [
+     [
+      0,
+      0.214
+     ],
+     [
+      3,
+      0.214
+     ],
+     [
+      4,
+      0.224
+     ],
+     [
+      5,
+      0.249
+     ],
+     [
+      6,
+      0.309
+     ],
+     [
+      7,
+      0.406
+     ],
+     [
+      8,
+      0.554
+     ],
+     [
+      9,
+      0.725
+     ],
+     [
+      10,
+      0.855
+     ],
+     [
+      11,
+      0.934
+     ],
+     [
+      12,
+      0.977
+     ],
+     [
+      13,
+      1.003
+     ],
+     [
+      14,
+      1.017
+     ],
+     [
+      15,
+      1.021
+     ],
+     [
+      16,
+      1.017
+     ],
+     [
+      17,
+      1.017
+     ],
+     [
+      18,
+      1.012
+     ],
+     [
+      19,
+      1.007
+     ],
+     [
+      20,
+      1.0
+     ]
+    ],
+    "motion_blur": "horizontal, strong at offsets 4-8",
+    "content_opacity(logo+word)": [
+     [
+      9,
+      0.3
+     ],
+     [
+      10,
+      0.7
+     ],
+     [
+      11,
+      1
+     ]
+    ],
+    "button_scaleX_from_left": [
+     [
+      13,
+      0.3
+     ],
+     [
+      14,
+      0.7
+     ],
+     [
+      15,
+      1
+     ]
+    ],
+    "button_translate_y_px": [
+     [
+      15,
+      13
+     ],
+     [
+      16,
+      12
+     ],
+     [
+      17,
+      10
+     ],
+     [
+      18,
+      8
+     ],
+     [
+      19,
+      4
+     ],
+     [
+      20,
+      2
+     ],
+     [
+      21,
+      1
+     ],
+     [
+      22,
+      0
+     ]
+    ],
+    "easing": {
+     "width": [
+      0.49,
+      0.14,
+      0.05,
+      1.25
+     ],
+     "centre_x": [
+      0.29,
+      0.11,
+      0.13,
+      1.18
+     ]
+    }
+   },
+   "red_brand_pill_exit": {
+    "content_opacity": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0.4
+     ],
+     [
+      2,
+      0
+     ]
+    ],
+    "right_edge_collapse_width_frac": [
+     [
+      3,
+      1.0
+     ],
+     [
+      4,
+      0.94
+     ],
+     [
+      5,
+      0.76
+     ],
+     [
+      6,
+      0.46
+     ],
+     [
+      7,
+      0.25
+     ],
+     [
+      8,
+      0.18
+     ]
+    ],
+    "square_opacity": [
+     [
+      8,
+      1
+     ],
+     [
+      9,
+      0.25
+     ],
+     [
+      10,
+      0
+     ]
+    ]
+   },
+   "subscribe_state_change": {
+    "cursor_on": 0,
+    "press_grey": [
+     2,
+     3
+    ],
+    "blank_pink_blur": 4,
+    "typing_2_chars_per_frame": [
+     5,
+     10
+    ],
+    "fill": [
+     [
+      2,
+      "#D1D1D1"
+     ],
+     [
+      4,
+      "#FE0C44"
+     ],
+     [
+      5,
+      "#FE0F54"
+     ],
+     [
+      7,
+      "#F01870"
+     ],
+     [
+      9,
+      "#E5186A"
+     ],
+     [
+      10,
+      "#651531"
+     ],
+     [
+      12,
+      "#671733"
+     ],
+     [
+      14,
+      "#252525"
+     ],
+     [
+      15,
+      "#1E1E1E"
+     ]
+    ],
+    "container_width_grow_px": [
+     [
+      3,
+      0
+     ],
+     [
+      4,
+      6
+     ],
+     [
+      5,
+      18
+     ],
+     [
+      6,
+      46
+     ],
+     [
+      7,
+      70
+     ],
+     [
+      8,
+      82
+     ],
+     [
+      9,
+      86
+     ],
+     [
+      10,
+      86
+     ]
+    ],
+    "sparkles": [
+     5,
+     19
+    ],
+    "easing_width": [
+     0.53,
+     0.11,
+     0.32,
+     1.07
+    ]
+   },
+   "logo_tile_pop": {
+    "scale_frac": [
+     [
+      0,
+      0.081
+     ],
+     [
+      1,
+      0.276
+     ],
+     [
+      2,
+      0.528
+     ],
+     [
+      3,
+      0.87
+     ],
+     [
+      4,
+      1.057
+     ],
+     [
+      5,
+      1.065
+     ],
+     [
+      6,
+      1.053
+     ],
+     [
+      7,
+      1.024
+     ],
+     [
+      8,
+      0.992
+     ],
+     [
+      9,
+      0.976
+     ],
+     [
+      10,
+      0.976
+     ],
+     [
+      11,
+      0.992
+     ],
+     [
+      12,
+      0.996
+     ],
+     [
+      13,
+      1.0
+     ]
+    ],
+    "rotate_deg": [
+     [
+      1,
+      -10
+     ],
+     [
+      2,
+      -15
+     ],
+     [
+      3,
+      -12
+     ],
+     [
+      4,
+      -8
+     ],
+     [
+      5,
+      -3
+     ],
+     [
+      6,
+      0
+     ]
+    ],
+    "fill": "flat red until +4, glossy pink from +5",
+    "icon_stroke_draw": [
+     [
+      6,
+      0
+     ],
+     [
+      7,
+      0.1
+     ],
+     [
+      8,
+      0.25
+     ],
+     [
+      9,
+      0.5
+     ],
+     [
+      10,
+      0.75
+     ],
+     [
+      11,
+      1
+     ]
+    ],
+    "sparkle_burst": [
+     -1,
+     10
+    ],
+    "spring": {
+     "model": "damped spring x(t)=v1-(v1-v0)e^{-zeta*w*t}(cos(wd t)+zeta*w/wd sin(wd t)), t in frames from t0",
+     "t0": 500.25,
+     "w_rad_per_frame": 0.825,
+     "zeta": 0.625,
+     "stiffness_mass1": 392.0,
+     "damping_mass1": 24.75,
+     "rms": 2.86,
+     "max": 7.52,
+     "points": [
+      [
+       500,
+       10.0,
+       10.0
+      ],
+      [
+       501,
+       34.0,
+       26.5
+      ],
+      [
+       502,
+       65.0,
+       70.2
+      ],
+      [
+       503,
+       107.0,
+       107.0
+      ],
+      [
+       504,
+       130.0,
+       126.5
+      ],
+      [
+       505,
+       131.0,
+       132.1
+      ],
+      [
+       506,
+       129.5,
+       130.4
+      ],
+      [
+       507,
+       126.0,
+       126.8
+      ],
+      [
+       508,
+       122.0,
+       124.0
+      ],
+      [
+       509,
+       120.0,
+       122.6
+      ],
+      [
+       510,
+       120.0,
+       122.3
+      ],
+      [
+       511,
+       122.0,
+       122.4
+      ],
+      [
+       512,
+       122.5,
+       122.7
+      ],
+      [
+       513,
+       123.0,
+       122.9
+      ]
+     ]
+    }
+   },
+   "pill_stretch_pop(handle)": {
+    "width_px": [
+     [
+      0,
+      3
+     ],
+     [
+      1,
+      15
+     ],
+     [
+      2,
+      37
+     ],
+     [
+      3,
+      84
+     ],
+     [
+      4,
+      232
+     ],
+     [
+      5,
+      339
+     ],
+     [
+      6,
+      349
+     ],
+     [
+      7,
+      351
+     ],
+     [
+      8,
+      349
+     ],
+     [
+      9,
+      341
+     ],
+     [
+      10,
+      335
+     ],
+     [
+      11,
+      338
+     ],
+     [
+      12,
+      345
+     ],
+     [
+      13,
+      352
+     ],
+     [
+      14,
+      355
+     ],
+     [
+      15,
+      355
+     ],
+     [
+      18,
+      350
+     ]
+    ],
+    "height_px": [
+     [
+      0,
+      5
+     ],
+     [
+      1,
+      13
+     ],
+     [
+      2,
+      25
+     ],
+     [
+      3,
+      49
+     ],
+     [
+      4,
+      79
+     ],
+     [
+      5,
+      93
+     ],
+     [
+      6,
+      96
+     ],
+     [
+      7,
+      93
+     ],
+     [
+      8,
+      85
+     ],
+     [
+      9,
+      81
+     ],
+     [
+      10,
+      78
+     ],
+     [
+      11,
+      81
+     ],
+     [
+      13,
+      82
+     ]
+    ],
+    "centre_x_rel_final": [
+     [
+      0,
+      -103.5
+     ],
+     [
+      1,
+      -93.5
+     ],
+     [
+      2,
+      -74.5
+     ],
+     [
+      3,
+      -43
+     ],
+     [
+      4,
+      -5
+     ],
+     [
+      5,
+      9.5
+     ],
+     [
+      6,
+      0.5
+     ],
+     [
+      7,
+      -1.5
+     ],
+     [
+      10,
+      -5.5
+     ],
+     [
+      13,
+      0
+     ]
+    ],
+    "typing": "per char blur->sharp 2 f, ~1.3 chars/f from +5"
+   },
+   "hop_and_pop_exit": {
+    "translate_y_px": [
+     [
+      0,
+      -11
+     ],
+     [
+      1,
+      -21.5
+     ],
+     [
+      2,
+      -40.5
+     ],
+     [
+      3,
+      -44.5
+     ],
+     [
+      4,
+      -44.5
+     ]
+    ],
+    "then": "logo: smear+sparkles at +4/+5, gone +5; handle: glitch-stripe dissolve at +3/+4"
+   },
+   "glass_cta_pill(LINK)": {
+    "sparkle": [
+     [
+      0,
+      "tiny"
+     ],
+     [
+      3,
+      "full pair"
+     ]
+    ],
+    "tile": {
+     "appear": 2,
+     "size_px": [
+      [
+       3,
+       [
+        66,
+        100
+       ]
+      ],
+      [
+       4,
+       [
+        76,
+        111
+       ]
+      ],
+      [
+       5,
+       [
+        78,
+        120
+       ]
+      ],
+      [
+       11,
+       [
+        100,
+        124
+       ]
+      ]
+     ],
+     "centre_y_rel_final": -50
+    },
+    "morph": {
+     "start": "12 (0:32) / 15 (9:58) / 10 (3:58)",
+     "frames_x0": [
+      [
+       0,
+       861
+      ],
+      [
+       1,
+       800
+      ],
+      [
+       2,
+       683
+      ],
+      [
+       3,
+       662
+      ],
+      [
+       4,
+       651
+      ]
+     ],
+     "frames_x1": [
+      [
+       0,
+       998
+      ],
+      [
+       1,
+       1070
+      ],
+      [
+       2,
+       1225
+      ],
+      [
+       3,
+       1253
+      ],
+      [
+       4,
+       1270
+      ]
+     ],
+     "frames_y0": [
+      [
+       0,
+       801
+      ],
+      [
+       1,
+       830
+      ],
+      [
+       2,
+       828
+      ],
+      [
+       3,
+       852
+      ],
+      [
+       4,
+       860
+      ]
+     ]
+    },
+    "text": {
+     "start": "+40 / +38 from sparkle",
+     "opacity": [
+      [
+       0,
+       0.15
+      ],
+      [
+       1,
+       0.4
+      ],
+      [
+       2,
+       0.65
+      ],
+      [
+       3,
+       0.85
+      ],
+      [
+       4,
+       0.95
+      ],
+      [
+       5,
+       1
+      ]
+     ],
+     "translate_y_px": [
+      [
+       0,
+       12
+      ],
+      [
+       1,
+       9
+      ],
+      [
+       2,
+       6
+      ],
+      [
+       3,
+       3
+      ],
+      [
+       4,
+       2
+      ],
+      [
+       5,
+       0
+      ]
+     ],
+     "blur_px": [
+      [
+       0,
+       8
+      ],
+      [
+       1,
+       6
+      ],
+      [
+       2,
+       4
+      ],
+      [
+       3,
+       2
+      ],
+      [
+       4,
+       1
+      ],
+      [
+       5,
+       0
+      ]
+     ]
+    },
+    "edge_beam": "two red glow segments (~300 px long) orbiting clockwise at ~7 px/frame",
+    "exit_variants": [
+     "hard cut",
+     "blur-fade 4 f: opacity [[0,1],[1,0.7],[2,0.4],[3,0.15],[4,0]], blur 0->10 px"
+    ]
+   },
+   "glass_panel_rise_fade(hologram)": {
+    "opacity": [
+     [
+      0,
+      0.085
+     ],
+     [
+      1,
+      0.5
+     ],
+     [
+      2,
+      0.733
+     ],
+     [
+      3,
+      0.846
+     ],
+     [
+      4,
+      0.886
+     ],
+     [
+      5,
+      0.914
+     ],
+     [
+      6,
+      0.939
+     ],
+     [
+      8,
+      0.98
+     ],
+     [
+      11,
+      1
+     ]
+    ],
+    "translate_y_px": [
+     [
+      1,
+      35
+     ],
+     [
+      2,
+      30
+     ],
+     [
+      3,
+      24
+     ],
+     [
+      4,
+      18
+     ],
+     [
+      5,
+      14
+     ],
+     [
+      6,
+      10
+     ],
+     [
+      8,
+      4
+     ],
+     [
+      11,
+      0
+     ]
+    ],
+    "exit_opacity": [
+     [
+      0,
+      0.975
+     ],
+     [
+      1,
+      0.934
+     ],
+     [
+      2,
+      0.632
+     ],
+     [
+      3,
+      0.366
+     ],
+     [
+      4,
+      0.206
+     ],
+     [
+      5,
+      0.11
+     ],
+     [
+      6,
+      0.044
+     ],
+     [
+      7,
+      0
+     ]
+    ],
+    "exit_translate_y_px": [
+     [
+      0,
+      0
+     ],
+     [
+      2,
+      -5
+     ],
+     [
+      3,
+      -9
+     ],
+     [
+      5,
+      -13
+     ]
+    ]
+   },
+   "portal_card_open": {
+    "rotateY_deg_est": [
+     [
+      0,
+      80
+     ],
+     [
+      1,
+      75
+     ],
+     [
+      2,
+      70
+     ],
+     [
+      4,
+      45
+     ],
+     [
+      6,
+      20
+     ],
+     [
+      8,
+      12
+     ],
+     [
+      10,
+      12
+     ]
+    ],
+    "opacity": [
+     [
+      0,
+      0.2
+     ],
+     [
+      1,
+      0.6
+     ],
+     [
+      2,
+      0.85
+     ],
+     [
+      3,
+      1
+     ]
+    ],
+    "pink_overlay(7:44 & 3:29 only)": [
+     [
+      0,
+      1
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      5,
+      0.75
+     ],
+     [
+      6,
+      0.5
+     ],
+     [
+      7,
+      0.3
+     ],
+     [
+      8,
+      0.15
+     ],
+     [
+      9,
+      0
+     ]
+    ],
+    "stagger_frames": "3 (7:44) / 2 (8:37)",
+    "confidence": "rotation inferred from projected width, +-10 deg"
+   },
+   "pink_tint_reveal_rise(callout)": {
+    "top_y_rel_final": [
+     [
+      1,
+      52
+     ],
+     [
+      2,
+      44
+     ],
+     [
+      3,
+      34
+     ],
+     [
+      4,
+      28
+     ],
+     [
+      5,
+      21
+     ],
+     [
+      6,
+      16
+     ],
+     [
+      7,
+      12
+     ],
+     [
+      8,
+      8
+     ],
+     [
+      9,
+      6
+     ],
+     [
+      10,
+      4
+     ],
+     [
+      11,
+      2
+     ],
+     [
+      12,
+      1
+     ],
+     [
+      13,
+      0
+     ]
+    ],
+    "tint_colour_progress": [
+     [
+      2,
+      0.0
+     ],
+     [
+      3,
+      0.2
+     ],
+     [
+      4,
+      0.45
+     ],
+     [
+      5,
+      0.7
+     ],
+     [
+      6,
+      0.85
+     ],
+     [
+      7,
+      0.93
+     ],
+     [
+      8,
+      0.97
+     ],
+     [
+      9,
+      1.0
+     ]
+    ],
+    "bezier": [
+     0.46,
+     1.03,
+     0.84,
+     0.93
+    ]
+   },
+   "info_card_unroll": {
+    "strip": "dark header strip (55 px tall) fades/slides in at 0, holds 4 f",
+    "bottom_px_rel_final": [
+     [
+      4,
+      -158
+     ],
+     [
+      5,
+      -144
+     ],
+     [
+      6,
+      -96
+     ],
+     [
+      7,
+      -52
+     ],
+     [
+      8,
+      -26
+     ],
+     [
+      9,
+      -10
+     ],
+     [
+      10,
+      -1
+     ],
+     [
+      11,
+      4
+     ],
+     [
+      12,
+      5
+     ],
+     [
+      13,
+      4
+     ],
+     [
+      14,
+      2
+     ],
+     [
+      15,
+      1
+     ],
+     [
+      16,
+      0
+     ]
+    ],
+    "header_fade": [
+     10,
+     13
+    ],
+    "divider_draw_L_to_R": [
+     22,
+     28
+    ],
+    "title_blur_in": "4-5 f, blur 10->0, opacity 0.3->1, triggered by narration",
+    "bezier": [
+     0.27,
+     0.14,
+     0.03,
+     1.25
+    ]
+   },
+   "slide_in_from_offscreen(0:08 cards)": {
+    "left_x_px_rel_final": [
+     [
+      0,
+      -500
+     ],
+     [
+      1,
+      -467
+     ],
+     [
+      2,
+      -435
+     ],
+     [
+      3,
+      -360
+     ],
+     [
+      4,
+      -294
+     ],
+     [
+      5,
+      -224
+     ],
+     [
+      6,
+      -158
+     ],
+     [
+      7,
+      -107
+     ],
+     [
+      8,
+      -73
+     ],
+     [
+      9,
+      -44
+     ],
+     [
+      10,
+      -25
+     ],
+     [
+      13,
+      -10
+     ],
+     [
+      25,
+      0
+     ]
+    ],
+    "opacity": [
+     [
+      0,
+      0.5
+     ],
+     [
+      3,
+      0.55
+     ],
+     [
+      8,
+      0.9
+     ],
+     [
+      9,
+      1
+     ]
+    ],
+    "bezier": [
+     0.3,
+     0.67,
+     0.06,
+     1.12
+    ]
+   },
+   "fade_out_3f": {
+    "opacity": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0.6
+     ],
+     [
+      2,
+      0.25
+     ],
+     [
+      3,
+      0
+     ]
+    ],
+    "used_by": [
+     "7:44 portal cards",
+     "8:37 PRF cards"
+    ]
+   },
+   "label_pop(PAIN etc.)": {
+    "outline_on": -1,
+    "opacity": [
+     [
+      0,
+      0.3
+     ],
+     [
+      1,
+      0.6
+     ],
+     [
+      2,
+      0.9
+     ],
+     [
+      3,
+      1
+     ]
+    ],
+    "translate_y_px": [
+     [
+      0,
+      -4
+     ],
+     [
+      1,
+      -2
+     ],
+     [
+      2,
+      -1
+     ],
+     [
+      3,
+      0
+     ]
+    ],
+    "hold": "17-24 f",
+    "out": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0.5
+     ],
+     [
+      2,
+      0
+     ]
+    ],
+    "outline_out_after_label": 6
+   }
+  }
+ },
+ "prompt_bars": {
+  "typing": {
+   "source": "reference-specs/prompt-camera-sfx.json#A_prompt_bars/typing_summary",
+   "keyframes": {
+    "P1": {
+     "chars": 35,
+     "frames": 28,
+     "cpf": 1.25
+    },
+    "P3": {
+     "chars": 118,
+     "frames": 28,
+     "cpf": 4.3
+    },
+    "P4": {
+     "chars": 100,
+     "frames": 103,
+     "cpf": 0.97
+    },
+    "P5": {
+     "chars": 110,
+     "frames": 63,
+     "cpf": 1.74
+    },
+    "note": "no single constant rate: full-screen showcase bars (P1, P3) type in a fixed ~28 f (1.17 s) regardless of length; overlay bars over the presenter (P4, P5) type at 1-1.75 char/frame, i.e. paced to speech. Linear in time (no ease) in all four."
+   }
+  },
+  "instances": {
+   "source": "reference-specs/prompt-camera-sfx.json#A_prompt_bars/instances",
+   "keyframes": [
+    {
+     "id": "P1",
+     "time": "0:43.6",
+     "frames": "1045-1108 (cut-in 1045 from B close-up; bag image fades in from 1109)",
+     "context": "full-screen, black + dark-red vignette + faint 178-px dot grid (static); bar shown at ≈2x UI zoom (button 105 px, text ≈60 px)",
+     "text": "Generate a product photo of the bag",
+     "chars": 35,
+     "entrance": {
+      "frames": "1047-1055",
+      "opacity_per_frame": {
+       "1047": 0.03,
+       "1048": 0.17,
+       "1049": 0.41,
+       "1050": 0.72,
+       "1051": 0.93,
+       "1052": 0.97,
+       "1053": 1.0
+      },
+      "top_edge_y": {
+       "1049": 478,
+       "1050": 465,
+       "1051": 452,
+       "1052": 444,
+       "1053": 440,
+       "1054": 438,
+       "1055": 437
+      },
+      "height_px": {
+       "1050": 267,
+       "1051": 272,
+       "1052": 277,
+       "1055": 282
+      },
+      "note": "rise ≈ +45 px→0 and scale ≈0.94→1.0 together with the fade; centre-y 598→578",
+      "fit_opacity": {
+       "bezier": [
+        0.647,
+        0.522,
+        0.35,
+        0.981
+       ],
+       "t0": 1046.8,
+       "t1": 1053,
+       "v0": 0,
+       "v1": 1,
+       "rms": 0.008,
+       "residuals": [
+        [
+         1047.0,
+         0.0
+        ],
+        [
+         1048.0,
+         -0.01
+        ],
+        [
+         1049.0,
+         0.01
+        ],
+        [
+         1050.0,
+         -0.0
+        ],
+        [
+         1051.0,
+         0.01
+        ],
+        [
+         1052.0,
+         -0.01
+        ],
+        [
+         1053.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         1047,
+         0.03
+        ],
+        [
+         1048,
+         0.17
+        ],
+        [
+         1049,
+         0.41
+        ],
+        [
+         1050,
+         0.72
+        ],
+        [
+         1051,
+         0.93
+        ],
+        [
+         1052,
+         0.97
+        ],
+        [
+         1053,
+         1.0
+        ]
+       ]
+      },
+      "fit_top": {
+       "bezier": [
+        0.497,
+        -0.328,
+        0.2,
+        0.925
+       ],
+       "t0": 1047,
+       "t1": 1055,
+       "v0": 478,
+       "v1": 437,
+       "rms": 0.193,
+       "residuals": [
+        [
+         1049.0,
+         0.12
+        ],
+        [
+         1050.0,
+         -0.2
+        ],
+        [
+         1051.0,
+         0.37
+        ],
+        [
+         1052.0,
+         -0.22
+        ],
+        [
+         1053.0,
+         -0.14
+        ],
+        [
+         1054.0,
+         0.04
+        ],
+        [
+         1055.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         1049,
+         478
+        ],
+        [
+         1050,
+         465
+        ],
+        [
+         1051,
+         452
+        ],
+        [
+         1052,
+         444
+        ],
+        [
+         1053,
+         440
+        ],
+        [
+         1054,
+         438
+        ],
+        [
+         1055,
+         437
+        ],
+        [
+         1056,
+         437
+        ]
+       ]
+      }
+     },
+     "typing": {
+      "per_frame": [
+       [
+        1051,
+        0,
+        ""
+       ],
+       [
+        1052,
+        1,
+        "G"
+       ],
+       [
+        1053,
+        2,
+        "Ge"
+       ],
+       [
+        1054,
+        3,
+        "Gen"
+       ],
+       [
+        1055,
+        5,
+        "Gener"
+       ],
+       [
+        1056,
+        6,
+        "Genera"
+       ],
+       [
+        1057,
+        7,
+        "Generat"
+       ],
+       [
+        1058,
+        8,
+        "Generate"
+       ],
+       [
+        1059,
+        10,
+        "Generate a"
+       ],
+       [
+        1060,
+        10,
+        "Generate a"
+       ],
+       [
+        1061,
+        12,
+        "…a p"
+       ],
+       [
+        1062,
+        13,
+        "…pr"
+       ],
+       [
+        1063,
+        15,
+        "…prod"
+       ],
+       [
+        1064,
+        16,
+        "…produ"
+       ],
+       [
+        1065,
+        17,
+        "…produc"
+       ],
+       [
+        1066,
+        18,
+        "…product"
+       ],
+       [
+        1067,
+        20,
+        "…product p"
+       ],
+       [
+        1068,
+        21,
+        "…ph"
+       ],
+       [
+        1069,
+        22,
+        "…pho"
+       ],
+       [
+        1070,
+        24,
+        "…photo"
+       ],
+       [
+        1071,
+        24,
+        "…photo"
+       ],
+       [
+        1072,
+        26,
+        "…photo o"
+       ],
+       [
+        1073,
+        27,
+        "…of"
+       ],
+       [
+        1074,
+        29,
+        "…of t"
+       ],
+       [
+        1075,
+        30,
+        "…th"
+       ],
+       [
+        1076,
+        31,
+        "…the"
+       ],
+       [
+        1077,
+        31,
+        "…the"
+       ],
+       [
+        1078,
+        34,
+        "…the ba"
+       ],
+       [
+        1079,
+        35,
+        "…the bag (complete)"
+       ]
+      ],
+      "rate_chars_per_frame": 1.25,
+      "pattern": "≈1 char/frame; a space+next letter usually land on the SAME frame (+2), and the frame after a completed word often holds (1059→1060, 1070→1071, 1076→1077)",
+      "duration_f": 28
+     },
+     "follow_pan": {
+      "what": "bar translates left to keep the typed end in view (background dots do NOT move → it is the bar, not a camera)",
+      "left_edge_x": {
+       "1056": 221,
+       "1057": 221,
+       "1058": 221,
+       "1059": 219,
+       "1060": 217,
+       "1061": 214,
+       "1062": 209,
+       "1063": 203,
+       "1064": 194,
+       "1065": 181,
+       "1066": 161,
+       "1067": 143,
+       "1068": 121,
+       "1069": 103,
+       "1070": 88,
+       "1071": 78,
+       "1072": 71,
+       "1073": 66,
+       "1074": 61,
+       "1075": 59,
+       "1076": 57,
+       "1077": 56,
+       "1078": 55
+      },
+      "fit": {
+       "bezier": [
+        0.566,
+        0.038,
+        0.341,
+        1.003
+       ],
+       "t0": 1058,
+       "t1": 1078,
+       "v0": 221,
+       "v1": 55,
+       "rms": 0.842,
+       "residuals": [
+        [
+         1058.0,
+         0.0
+        ],
+        [
+         1059.0,
+         -1.0
+        ],
+        [
+         1060.0,
+         -0.96
+        ],
+        [
+         1061.0,
+         -0.64
+        ],
+        [
+         1062.0,
+         -0.69
+        ],
+        [
+         1063.0,
+         0.36
+        ],
+        [
+         1064.0,
+         1.14
+        ],
+        [
+         1065.0,
+         1.44
+        ],
+        [
+         1066.0,
+         -1.24
+        ],
+        [
+         1067.0,
+         1.25
+        ],
+        [
+         1068.0,
+         -0.12
+        ],
+        [
+         1069.0,
+         -0.39
+        ],
+        [
+         1070.0,
+         -1.48
+        ],
+        [
+         1071.0,
+         -0.94
+        ],
+        [
+         1072.0,
+         -0.07
+        ],
+        [
+         1073.0,
+         0.74
+        ],
+        [
+         1074.0,
+         -0.07
+        ],
+        [
+         1075.0,
+         0.84
+        ],
+        [
+         1076.0,
+         0.71
+        ],
+        [
+         1077.0,
+         0.72
+        ],
+        [
+         1078.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         1056,
+         221
+        ],
+        [
+         1057,
+         221
+        ],
+        [
+         1058,
+         221
+        ],
+        [
+         1059,
+         219
+        ],
+        [
+         1060,
+         217
+        ],
+        [
+         1061,
+         214
+        ],
+        [
+         1062,
+         209
+        ],
+        [
+         1063,
+         203
+        ],
+        [
+         1064,
+         194
+        ],
+        [
+         1065,
+         181
+        ],
+        [
+         1066,
+         161
+        ],
+        [
+         1067,
+         143
+        ],
+        [
+         1068,
+         121
+        ],
+        [
+         1069,
+         103
+        ],
+        [
+         1070,
+         88
+        ],
+        [
+         1071,
+         78
+        ],
+        [
+         1072,
+         71
+        ],
+        [
+         1073,
+         66
+        ],
+        [
+         1074,
+         61
+        ],
+        [
+         1075,
+         59
+        ],
+        [
+         1076,
+         57
+        ],
+        [
+         1077,
+         56
+        ],
+        [
+         1078,
+         55
+        ]
+       ]
+      }
+     },
+     "whip_to_submit": {
+      "frames": "1079-1090",
+      "note": "fast leftward translate with heavy horizontal motion blur (1080-1086) to reveal the right end; total travel ≈ 1330 px (estimate, bar width inferred), button enters at x=1900 on 1083 and settles x=1073.5 on 1090",
+      "button_x": {
+       "1083": 1900.1,
+       "1084": 1632.4,
+       "1085": 1388.2,
+       "1086": 1238.4,
+       "1087": 1151.8,
+       "1088": 1104.0,
+       "1089": 1079.5,
+       "1090": 1073.5
+      },
+      "fit_tail": {
+       "bezier": [
+        0.244,
+        0.497,
+        0.3,
+        0.997
+       ],
+       "t0": 1083,
+       "t1": 1090,
+       "v0": 1900.1,
+       "v1": 1073.5,
+       "rms": 0.746,
+       "residuals": [
+        [
+         1083.0,
+         0.0
+        ],
+        [
+         1084.0,
+         0.04
+        ],
+        [
+         1085.0,
+         -0.62
+        ],
+        [
+         1086.0,
+         1.48
+        ],
+        [
+         1087.0,
+         0.92
+        ],
+        [
+         1088.0,
+         0.42
+        ],
+        [
+         1089.0,
+         -0.92
+        ],
+        [
+         1090.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         1083,
+         1900.1
+        ],
+        [
+         1084,
+         1632.4
+        ],
+        [
+         1085,
+         1388.2
+        ],
+        [
+         1086,
+         1238.4
+        ],
+        [
+         1087,
+         1151.8
+        ],
+        [
+         1088,
+         1104.0
+        ],
+        [
+         1089,
+         1079.5
+        ],
+        [
+         1090,
+         1073.5
+        ]
+       ]
+      }
+     },
+     "click": {
+      "button_diameter": {
+       "1090": 105,
+       "1091": 105,
+       "1092": 99,
+       "1093": 93,
+       "1094": 95,
+       "1095": 99,
+       "1096": 103,
+       "1097": 105
+      },
+      "press": "scale 1→0.886 in 2 f, back to 1 in 4 f (1091→1097); cursor already resting on button from 1087"
+     },
+     "exit": {
+      "frames": "1098-1107",
+      "note": "flies up-and-right, accelerating (ease-in), shrinking 1→0.79, motion blur; gone 1108",
+      "button_cx_cy": {
+       "1097": [
+        1073.8,
+        508.6
+       ],
+       "1098": [
+        1075.7,
+        504.9
+       ],
+       "1099": [
+        1081.4,
+        495.7
+       ],
+       "1100": [
+        1092.4,
+        480.9
+       ],
+       "1101": [
+        1111.3,
+        461.1
+       ],
+       "1102": [
+        1132.0,
+        427.5
+       ],
+       "1103": [
+        1159.6,
+        382.9
+       ],
+       "1104": [
+        1196.2,
+        324.0
+       ],
+       "1105": [
+        1244.1,
+        246.8
+       ],
+       "1106": [
+        1306.0,
+        146.4
+       ],
+       "1107": [
+        1383.3,
+        28.1
+       ]
+      },
+      "fit_y": {
+       "bezier": [
+        0.85,
+        -0.006,
+        1,
+        1.213
+       ],
+       "t0": 1097,
+       "t1": 1107,
+       "v0": 508.6,
+       "v1": 28.1,
+       "rms": 1.238,
+       "residuals": [
+        [
+         1097.0,
+         -0.0
+        ],
+        [
+         1098.0,
+         -1.25
+        ],
+        [
+         1099.0,
+         -1.92
+        ],
+        [
+         1100.0,
+         -1.3
+        ],
+        [
+         1101.0,
+         2.25
+        ],
+        [
+         1102.0,
+         1.32
+        ],
+        [
+         1103.0,
+         0.61
+        ],
+        [
+         1104.0,
+         -0.4
+        ],
+        [
+         1105.0,
+         -1.29
+        ],
+        [
+         1106.0,
+         0.95
+        ],
+        [
+         1107.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         1097,
+         508.6
+        ],
+        [
+         1098,
+         504.9
+        ],
+        [
+         1099,
+         495.7
+        ],
+        [
+         1100,
+         480.9
+        ],
+        [
+         1101,
+         461.1
+        ],
+        [
+         1102,
+         427.5
+        ],
+        [
+         1103,
+         382.9
+        ],
+        [
+         1104,
+         324.0
+        ],
+        [
+         1105,
+         246.8
+        ],
+        [
+         1106,
+         146.4
+        ],
+        [
+         1107,
+         28.1
+        ]
+       ]
+      }
+     }
+    },
+    {
+     "id": "P2",
+     "time": "1:35.9",
+     "frames": "2301-2332 over camera A (cut-in at 2298)",
+     "context": "pre-filled prompt (no typing) pinned bottom-centre over presenter; box x≈508-1415, y≈795-948 (905x153)",
+     "text": "Follow the attached ad workflow for my product. Research customer reviews, competitors, buyer needs and objections, then make 5 static ads for this $80 leather bag. Designed for work, the gym, and travel.",
+     "entrance": {
+      "frames": "2301-2310",
+      "per_frame": {
+       "2302": {
+        "dy": 18,
+        "scale": 0.97,
+        "alpha": 0.34,
+        "sharp": 0.25
+       },
+       "2303": {
+        "dy": 16,
+        "scale": 0.98,
+        "alpha": 0.66,
+        "sharp": 0.64
+       },
+       "2304": {
+        "dy": 12,
+        "scale": 0.98,
+        "alpha": 0.77,
+        "sharp": 0.87
+       },
+       "2305": {
+        "dy": 10,
+        "scale": 0.99,
+        "alpha": 0.96,
+        "sharp": 0.95
+       },
+       "2306": {
+        "dy": 6,
+        "scale": 0.99,
+        "alpha": 0.9,
+        "sharp": 0.99
+       },
+       "2307": {
+        "dy": 4,
+        "scale": 1.0,
+        "alpha": 0.91,
+        "sharp": 0.99
+       },
+       "2308": {
+        "dy": 2,
+        "scale": 1.0,
+        "alpha": 0.96,
+        "sharp": 0.98
+       },
+       "2309": {
+        "dy": 2,
+        "scale": 1.0,
+        "alpha": 0.87,
+        "sharp": 1.01
+       },
+       "2310": {
+        "dy": 0,
+        "scale": 1.0,
+        "alpha": 0.98,
+        "sharp": 0.98
+       }
+      },
+      "note": "blur-in: edge sharpness 0.25→0.64→0.87→0.95 over 2302-2305 (≈ blur 8px→0 in 4 f); alpha values ±0.1 (presenter moving behind)",
+      "fit_dy": {
+       "bezier": [
+        0.834,
+        0.838,
+        0.259,
+        0.6
+       ],
+       "t0": 2301,
+       "t1": 2310,
+       "v0": 20,
+       "v1": 0,
+       "rms": 0.47,
+       "residuals": [
+        [
+         2302.0,
+         0.28
+        ],
+        [
+         2303.0,
+         0.67
+        ],
+        [
+         2304.0,
+         -0.75
+        ],
+        [
+         2305.0,
+         0.21
+        ],
+        [
+         2306.0,
+         -0.04
+        ],
+        [
+         2307.0,
+         0.12
+        ],
+        [
+         2308.0,
+         -0.48
+        ],
+        [
+         2309.0,
+         0.79
+        ],
+        [
+         2310.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         2302,
+         18
+        ],
+        [
+         2303,
+         16
+        ],
+        [
+         2304,
+         12
+        ],
+        [
+         2305,
+         10
+        ],
+        [
+         2306,
+         6
+        ],
+        [
+         2307,
+         4
+        ],
+        [
+         2308,
+         2
+        ],
+        [
+         2309,
+         2
+        ],
+        [
+         2310,
+         0
+        ]
+       ]
+      },
+      "fit_opacity": {
+       "bezier": [
+        0.591,
+        1.191,
+        0.734,
+        0.903
+       ],
+       "t0": 2300.8,
+       "t1": 2307,
+       "v0": 0,
+       "v1": 1,
+       "rms": 0.021,
+       "residuals": [
+        [
+         2301.0,
+         0.03
+        ],
+        [
+         2302.0,
+         -0.03
+        ],
+        [
+         2303.0,
+         0.03
+        ],
+        [
+         2304.0,
+         -0.02
+        ],
+        [
+         2305.0,
+         0.01
+        ],
+        [
+         2306.0,
+         -0.0
+        ],
+        [
+         2307.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         2301,
+         0.09
+        ],
+        [
+         2302,
+         0.34
+        ],
+        [
+         2303,
+         0.66
+        ],
+        [
+         2304,
+         0.8
+        ],
+        [
+         2305,
+         0.95
+        ],
+        [
+         2306,
+         0.97
+        ],
+        [
+         2307,
+         1.0
+        ]
+       ]
+      }
+     },
+     "cursor": {
+      "path_full_res": {
+       "2316": [
+        1443,
+        972
+       ],
+       "2317": [
+        1437,
+        968
+       ],
+       "2318": [
+        1430,
+        962
+       ],
+       "2319": [
+        1423,
+        953
+       ],
+       "2320": [
+        1414,
+        945
+       ],
+       "2321": [
+        1403,
+        938
+       ],
+       "2322": [
+        1393,
+        928
+       ],
+       "2323": [
+        1389,
+        919
+       ],
+       "2324": [
+        1383,
+        917
+       ]
+      },
+      "note": "tip positions ±4 px read off zoomed strip p2d; enters 2316 (motion-blurred), settles 2324"
+     },
+     "click": {
+      "button_diameter": {
+       "2325": 42,
+       "2326": 38,
+       "2327": 37,
+       "2328": 37
+      },
+      "darken": "2328 blue 194→176",
+      "note": "press 2326-2328, no release seen before exit"
+     },
+     "exit": {
+      "frames": "2328-2333",
+      "opacity": {
+       "2328": 0.92,
+       "2329": 0.53,
+       "2330": 0.33,
+       "2331": 0.2,
+       "2332": 0.09,
+       "2333": 0.03
+      },
+      "dy": {
+       "2328": -4,
+       "2329": -8,
+       "2330": -10,
+       "2331": -12,
+       "2332": -18
+      },
+      "fit_opacity": {
+       "bezier": [
+        0.172,
+        0.078,
+        0.05,
+        0.697
+       ],
+       "t0": 2327.6,
+       "t1": 2333.5,
+       "v0": 1,
+       "v1": 0,
+       "rms": 0.005,
+       "residuals": [
+        [
+         2328.0,
+         0.0
+        ],
+        [
+         2329.0,
+         -0.0
+        ],
+        [
+         2330.0,
+         0.0
+        ],
+        [
+         2331.0,
+         0.01
+        ],
+        [
+         2332.0,
+         -0.01
+        ],
+        [
+         2333.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         2328,
+         0.92
+        ],
+        [
+         2329,
+         0.53
+        ],
+        [
+         2330,
+         0.33
+        ],
+        [
+         2331,
+         0.2
+        ],
+        [
+         2332,
+         0.09
+        ],
+        [
+         2333,
+         0.03
+        ]
+       ]
+      }
+     },
+     "cut_after": "2338 (to W) — box gone 5 f before the cut"
+    },
+    {
+     "id": "P3",
+     "time": "3:45.0",
+     "frames": "5400-5646 (hard cut-in 5400 to black/red vignette; cut out 5653)",
+     "context": "full-screen; bar centred (button at 1538,546 → bar ≈ x 340-1580)",
+     "text": "Resize these creatives for the feed, Stories, and Reels.\\nAdjust the layout so the text and product stay fully visible.",
+     "chars": 118,
+     "entrance": {
+      "frames": "5403-5413",
+      "note": "5403 faint, 5404 ≈half, 5405 full alpha; rise: button cy 561→546 (-15 px) over 5405-5413 + slight scale-up (cx 1525→1538)",
+      "button_cy": {
+       "5405": 561.0,
+       "5406": 557.8,
+       "5407": 555.2,
+       "5408": 552.7,
+       "5409": 550.9,
+       "5410": 549.3,
+       "5411": 548.0,
+       "5412": 546.9,
+       "5413": 546.2
+      },
+      "fit": {
+       "bezier": [
+        0.094,
+        -0.331,
+        0.25,
+        0.7
+       ],
+       "t0": 5404,
+       "t1": 5413,
+       "v0": 561.0,
+       "v1": 546.2,
+       "rms": 0.074,
+       "residuals": [
+        [
+         5405.0,
+         0.09
+        ],
+        [
+         5406.0,
+         -0.14
+        ],
+        [
+         5407.0,
+         0.06
+        ],
+        [
+         5408.0,
+         -0.08
+        ],
+        [
+         5409.0,
+         0.07
+        ],
+        [
+         5410.0,
+         0.05
+        ],
+        [
+         5411.0,
+         0.03
+        ],
+        [
+         5412.0,
+         -0.07
+        ],
+        [
+         5413.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         5405,
+         561.0
+        ],
+        [
+         5406,
+         557.8
+        ],
+        [
+         5407,
+         555.2
+        ],
+        [
+         5408,
+         552.7
+        ],
+        [
+         5409,
+         550.9
+        ],
+        [
+         5410,
+         549.3
+        ],
+        [
+         5411,
+         548.0
+        ],
+        [
+         5412,
+         546.9
+        ],
+        [
+         5413,
+         546.2
+        ]
+       ]
+      }
+     },
+     "typing": {
+      "per_frame": [
+       [
+        5404,
+        1,
+        "R"
+       ],
+       [
+        5405,
+        6,
+        "Resize"
+       ],
+       [
+        5406,
+        10,
+        "Resize the"
+       ],
+       [
+        5407,
+        15,
+        "…these cr"
+       ],
+       [
+        5408,
+        19,
+        "…creati"
+       ],
+       [
+        5409,
+        24,
+        "…creatives f"
+       ],
+       [
+        5410,
+        28,
+        "…for t"
+       ],
+       [
+        5411,
+        33,
+        "…the fe"
+       ],
+       [
+        5412,
+        36,
+        "…feed,"
+       ],
+       [
+        5413,
+        42,
+        "…Stori"
+       ],
+       [
+        5414,
+        45,
+        "…Stories,"
+       ],
+       [
+        5415,
+        49,
+        "…and"
+       ],
+       [
+        5416,
+        55,
+        "…Reels"
+       ],
+       [
+        5417,
+        59,
+        "…Reels.⏎Ad (wrap)"
+       ],
+       [
+        5418,
+        63,
+        "Adjust"
+       ],
+       [
+        5419,
+        67,
+        "Adjust the"
+       ],
+       [
+        5420,
+        73,
+        "…layou"
+       ],
+       [
+        5421,
+        77,
+        "…layout so"
+       ],
+       [
+        5422,
+        81,
+        "…so the"
+       ],
+       [
+        5423,
+        86,
+        "…text"
+       ],
+       [
+        5424,
+        90,
+        "…text and"
+       ],
+       [
+        5425,
+        95,
+        "…prod"
+       ],
+       [
+        5426,
+        100,
+        "…product s"
+       ],
+       [
+        5427,
+        103,
+        "…stay"
+       ],
+       [
+        5428,
+        109,
+        "…fully"
+       ],
+       [
+        5429,
+        113,
+        "…vis"
+       ],
+       [
+        5430,
+        117,
+        "…visible"
+       ],
+       [
+        5431,
+        118,
+        "…visible. (complete)"
+       ]
+      ],
+      "rate_chars_per_frame": 4.33,
+      "pattern": "steady 4-6 chars/frame (≈104 cps), no pauses; wraps to line 2 at 5417; bar grows by one line height (button cy 546→557 over 5414-5421, i.e. bar centred and grows ±11 px)"
+     },
+     "cursor": {
+      "note": "appears lower-right 5419 while still typing, reaches button 5424"
+     },
+     "click": {
+      "button_w": {
+       "5427": 54,
+       "5428": 50,
+       "5429": 48,
+       "5430": 49,
+       "5431": 52,
+       "5432": 54
+      },
+      "press": "scale 1→0.89 over 2 f, back over 3 f (5428-5432)"
+     },
+     "slide_down": {
+      "frames": "5452-5470",
+      "note": "after a 20-f hold the bar slides to the bottom (cy 557→961, +404 px), motion-blurred mid-move, slight leftward shift (cx 1538→1518 5465-5471) — bar narrows ~40 px",
+      "button_cy": {
+       "5452": 557.4,
+       "5453": 565.5,
+       "5454": 587.6,
+       "5455": 626.3,
+       "5456": 678.3,
+       "5457": 732.6,
+       "5458": 782.0,
+       "5459": 822.2,
+       "5460": 855.1,
+       "5461": 881.7,
+       "5462": 902.7,
+       "5463": 919.6,
+       "5464": 932.9,
+       "5465": 943.1,
+       "5466": 950.4,
+       "5467": 955.7,
+       "5468": 959.0,
+       "5469": 960.5,
+       "5470": 960.9
+      },
+      "fit": {
+       "bezier": [
+        0.312,
+        0.091,
+        0.219,
+        1.006
+       ],
+       "t0": 5452,
+       "t1": 5470,
+       "v0": 557.1,
+       "v1": 960.9,
+       "rms": 1.112,
+       "residuals": [
+        [
+         5452.0,
+         0.3
+        ],
+        [
+         5453.0,
+         -2.6
+        ],
+        [
+         5454.0,
+         -2.64
+        ],
+        [
+         5455.0,
+         -0.28
+        ],
+        [
+         5456.0,
+         1.95
+        ],
+        [
+         5457.0,
+         1.39
+        ],
+        [
+         5458.0,
+         0.67
+        ],
+        [
+         5459.0,
+         -0.61
+        ],
+        [
+         5460.0,
+         -0.9
+        ],
+        [
+         5461.0,
+         -0.63
+        ],
+        [
+         5462.0,
+         -0.47
+        ],
+        [
+         5463.0,
+         -0.02
+        ],
+        [
+         5464.0,
+         0.42
+        ],
+        [
+         5465.0,
+         0.72
+        ],
+        [
+         5466.0,
+         0.6
+        ],
+        [
+         5467.0,
+         0.61
+        ],
+        [
+         5468.0,
+         0.44
+        ],
+        [
+         5469.0,
+         0.07
+        ],
+        [
+         5470.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         5452,
+         557.4
+        ],
+        [
+         5453,
+         565.5
+        ],
+        [
+         5454,
+         587.6
+        ],
+        [
+         5455,
+         626.3
+        ],
+        [
+         5456,
+         678.3
+        ],
+        [
+         5457,
+         732.6
+        ],
+        [
+         5458,
+         782.0
+        ],
+        [
+         5459,
+         822.2
+        ],
+        [
+         5460,
+         855.1
+        ],
+        [
+         5461,
+         881.7
+        ],
+        [
+         5462,
+         902.7
+        ],
+        [
+         5463,
+         919.6
+        ],
+        [
+         5464,
+         932.9
+        ],
+        [
+         5465,
+         943.1
+        ],
+        [
+         5466,
+         950.4
+        ],
+        [
+         5467,
+         955.7
+        ],
+        [
+         5468,
+         959.0
+        ],
+        [
+         5469,
+         960.5
+        ],
+        [
+         5470,
+         960.9
+        ]
+       ]
+      }
+     },
+     "result_cards": {
+      "layout": "5 squares 304x304 px, pitch 350 px (x0 = 108, 458, 807, 1157, 1508), top y=358 settled",
+      "stagger_frames": 2,
+      "first_visible": [
+       5456,
+       5458,
+       5460,
+       5462,
+       5464
+      ],
+      "per_card": "fade from dark to pink (#F62397 family; mid-transition samples #471630→#86265b→#b7357d→#d34995) in 4 f, rise 47 px (top 405→358) over ~14 f, then cross-fade pink→ad image over 6 f starting ≈4 f after first visible",
+      "fit_rise": {
+       "bezier": [
+        0.212,
+        -0.097,
+        0.266,
+        0.972
+       ],
+       "t0": 5455,
+       "t1": 5470,
+       "v0": 405,
+       "v1": 358,
+       "rms": 0.342,
+       "residuals": [
+        [
+         5456.0,
+         0.39
+        ],
+        [
+         5457.0,
+         -0.56
+        ],
+        [
+         5458.0,
+         0.84
+        ],
+        [
+         5459.0,
+         -0.31
+        ],
+        [
+         5460.0,
+         -0.11
+        ],
+        [
+         5461.0,
+         0.16
+        ],
+        [
+         5462.0,
+         -0.48
+        ],
+        [
+         5463.0,
+         0.07
+        ],
+        [
+         5464.0,
+         -0.07
+        ],
+        [
+         5465.0,
+         0.19
+        ],
+        [
+         5466.0,
+         -0.05
+        ],
+        [
+         5467.0,
+         0.25
+        ],
+        [
+         5468.0,
+         0.17
+        ],
+        [
+         5469.0,
+         -0.26
+        ],
+        [
+         5470.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         5456,
+         405
+        ],
+        [
+         5457,
+         400
+        ],
+        [
+         5458,
+         395
+        ],
+        [
+         5459,
+         387
+        ],
+        [
+         5460,
+         381
+        ],
+        [
+         5461,
+         376
+        ],
+        [
+         5462,
+         371
+        ],
+        [
+         5463,
+         368
+        ],
+        [
+         5464,
+         365
+        ],
+        [
+         5465,
+         363
+        ],
+        [
+         5466,
+         361
+        ],
+        [
+         5467,
+         360
+        ],
+        [
+         5468,
+         359
+        ],
+        [
+         5469,
+         358
+        ],
+        [
+         5470,
+         358
+        ]
+       ]
+      }
+     },
+     "expand_9x16": {
+      "frames": "5520-5550",
+      "note": "each card flashes to solid pink #F62397 in 2 f (staggered 2 f: 5521,5523,5525,5527,5529), then grows from 304x304 to ~287x~510 (top 357→257, ≈symmetric about centre y≈510), width shrinking 307→287, then cross-fades pink→9:16 image over ~6 f (card1 5537-5543)",
+      "fit_top": {
+       "bezier": [
+        0.628,
+        0.169,
+        0.344,
+        0.894
+       ],
+       "t0": 5524,
+       "t1": 5542,
+       "v0": 357,
+       "v1": 257,
+       "rms": 0.454,
+       "residuals": [
+        [
+         5525.0,
+         -0.28
+        ],
+        [
+         5526.0,
+         -0.05
+        ],
+        [
+         5527.0,
+         0.83
+        ],
+        [
+         5528.0,
+         0.56
+        ],
+        [
+         5529.0,
+         0.41
+        ],
+        [
+         5530.0,
+         -0.18
+        ],
+        [
+         5531.0,
+         -0.6
+        ],
+        [
+         5532.0,
+         -0.32
+        ],
+        [
+         5533.0,
+         -0.13
+        ],
+        [
+         5534.0,
+         0.12
+        ],
+        [
+         5535.0,
+         0.59
+        ],
+        [
+         5536.0,
+         0.52
+        ],
+        [
+         5537.0,
+         -0.38
+        ],
+        [
+         5538.0,
+         0.41
+        ],
+        [
+         5539.0,
+         -0.76
+        ],
+        [
+         5540.0,
+         -0.64
+        ],
+        [
+         5541.0,
+         -0.1
+        ],
+        [
+         5542.0,
+         -0.0
+        ]
+       ],
+       "samples": [
+        [
+         5525,
+         355
+        ],
+        [
+         5526,
+         353
+        ],
+        [
+         5527,
+         351
+        ],
+        [
+         5528,
+         347
+        ],
+        [
+         5529,
+         342
+        ],
+        [
+         5530,
+         335
+        ],
+        [
+         5531,
+         326
+        ],
+        [
+         5532,
+         315
+        ],
+        [
+         5533,
+         302
+        ],
+        [
+         5534,
+         290
+        ],
+        [
+         5535,
+         281
+        ],
+        [
+         5536,
+         274
+        ],
+        [
+         5537,
+         268
+        ],
+        [
+         5538,
+         265
+        ],
+        [
+         5539,
+         261
+        ],
+        [
+         5540,
+         259
+        ],
+        [
+         5541,
+         258
+        ],
+        [
+         5542,
+         257
+        ]
+       ]
+      }
+     },
+     "exit": {
+      "frames": "5642-5646",
+      "note": "bar drops +18 px and fades in 4 f (cy 961→979); cards stay until cut 5653"
+     }
+    },
+    {
+     "id": "P4",
+     "time": "6:47.1",
+     "frames": "9770-9942 over camera A (cut-in 9761) — survives the cut to B at 9939 for 2 f",
+     "context": "box 1200x353 (x 360-1559, y 672-1025) with attachment thumbnail",
+     "text": "Analyze which of my creatives perform best and why, then create more variations around the winners.",
+     "chars": 100,
+     "entrance": {
+      "frames": "9770-9783",
+      "note": "LAPTOP MORPH: the laptop lid darkens to #202020 (9770-9772) and that rectangle grows into the box (left 515→360, right 1403→1559, top 721→672, bottom 995→1025); controls fade in 9778, attachment 9784-9786",
+      "rect_per_frame": {
+       "9773": [
+        515,
+        721,
+        1403,
+        995
+       ],
+       "9774": [
+        496,
+        714,
+        1419,
+        997
+       ],
+       "9775": [
+        448,
+        700,
+        1461,
+        1005
+       ],
+       "9776": [
+        413,
+        688,
+        1501,
+        1015
+       ],
+       "9777": [
+        391,
+        680,
+        1523,
+        1019
+       ],
+       "9778": [
+        376,
+        675,
+        1540,
+        1021
+       ],
+       "9779": [
+        368,
+        672,
+        1549,
+        1021
+       ],
+       "9780": [
+        363,
+        672,
+        1555,
+        1023
+       ],
+       "9781": [
+        361,
+        670,
+        1555,
+        1023
+       ],
+       "9782": [
+        360,
+        672,
+        1559,
+        1023
+       ]
+      },
+      "fit_width": {
+       "bezier": [
+        0.35,
+        -0.013,
+        0.1,
+        0.975
+       ],
+       "t0": 9772.5,
+       "t1": 9782,
+       "v0": 888,
+       "v1": 1199,
+       "rms": 1.781,
+       "residuals": [
+        [
+         9773.0,
+         -2.08
+        ],
+        [
+         9774.0,
+         1.63
+        ],
+        [
+         9775.0,
+         0.96
+        ],
+        [
+         9776.0,
+         -1.79
+        ],
+        [
+         9777.0,
+         -2.69
+        ],
+        [
+         9778.0,
+         1.74
+        ],
+        [
+         9779.0,
+         1.27
+        ],
+        [
+         9780.0,
+         1.47
+        ],
+        [
+         9781.0,
+         -2.57
+        ],
+        [
+         9782.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         9773,
+         888
+        ],
+        [
+         9774,
+         923
+        ],
+        [
+         9775,
+         1013
+        ],
+        [
+         9776,
+         1088
+        ],
+        [
+         9777,
+         1132
+        ],
+        [
+         9778,
+         1164
+        ],
+        [
+         9779,
+         1181
+        ],
+        [
+         9780,
+         1192
+        ],
+        [
+         9781,
+         1194
+        ],
+        [
+         9782,
+         1199
+        ]
+       ]
+      }
+     },
+     "typing": {
+      "per_frame": [
+       {
+        "frame": 9787,
+        "chars_approx": 0,
+        "line1_right_x": 0,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9788,
+        "chars_approx": 1,
+        "line1_right_x": 400,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9789,
+        "chars_approx": 2,
+        "line1_right_x": 414,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9790,
+        "chars_approx": 3,
+        "line1_right_x": 428,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9791,
+        "chars_approx": 4,
+        "line1_right_x": 434,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9792,
+        "chars_approx": 5,
+        "line1_right_x": 448,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9793,
+        "chars_approx": 6,
+        "line1_right_x": 462,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9794,
+        "chars_approx": 7,
+        "line1_right_x": 476,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9795,
+        "chars_approx": 7,
+        "line1_right_x": 476,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9796,
+        "chars_approx": 10,
+        "line1_right_x": 503,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9797,
+        "chars_approx": 11,
+        "line1_right_x": 517,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9798,
+        "chars_approx": 11,
+        "line1_right_x": 523,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9799,
+        "chars_approx": 12,
+        "line1_right_x": 537,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9800,
+        "chars_approx": 14,
+        "line1_right_x": 552,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9801,
+        "chars_approx": 14,
+        "line1_right_x": 552,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9802,
+        "chars_approx": 14,
+        "line1_right_x": 552,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9803,
+        "chars_approx": 16,
+        "line1_right_x": 575,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9804,
+        "chars_approx": 16,
+        "line1_right_x": 584,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9805,
+        "chars_approx": 16,
+        "line1_right_x": 584,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9806,
+        "chars_approx": 19,
+        "line1_right_x": 612,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9807,
+        "chars_approx": 20,
+        "line1_right_x": 626,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9808,
+        "chars_approx": 20,
+        "line1_right_x": 626,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9809,
+        "chars_approx": 21,
+        "line1_right_x": 647,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9810,
+        "chars_approx": 22,
+        "line1_right_x": 657,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9811,
+        "chars_approx": 23,
+        "line1_right_x": 670,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9812,
+        "chars_approx": 25,
+        "line1_right_x": 684,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9813,
+        "chars_approx": 25,
+        "line1_right_x": 694,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9814,
+        "chars_approx": 26,
+        "line1_right_x": 699,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9815,
+        "chars_approx": 27,
+        "line1_right_x": 713,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9816,
+        "chars_approx": 28,
+        "line1_right_x": 727,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9817,
+        "chars_approx": 29,
+        "line1_right_x": 740,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9818,
+        "chars_approx": 29,
+        "line1_right_x": 740,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9819,
+        "chars_approx": 31,
+        "line1_right_x": 762,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9820,
+        "chars_approx": 32,
+        "line1_right_x": 777,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9821,
+        "chars_approx": 33,
+        "line1_right_x": 783,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9822,
+        "chars_approx": 34,
+        "line1_right_x": 793,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9823,
+        "chars_approx": 34,
+        "line1_right_x": 797,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9824,
+        "chars_approx": 35,
+        "line1_right_x": 811,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9825,
+        "chars_approx": 36,
+        "line1_right_x": 821,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9826,
+        "chars_approx": 37,
+        "line1_right_x": 841,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9827,
+        "chars_approx": 37,
+        "line1_right_x": 841,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9828,
+        "chars_approx": 39,
+        "line1_right_x": 864,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9829,
+        "chars_approx": 41,
+        "line1_right_x": 879,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9830,
+        "chars_approx": 42,
+        "line1_right_x": 892,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9831,
+        "chars_approx": 42,
+        "line1_right_x": 901,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9832,
+        "chars_approx": 42,
+        "line1_right_x": 901,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9833,
+        "chars_approx": 44,
+        "line1_right_x": 922,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9834,
+        "chars_approx": 45,
+        "line1_right_x": 936,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9835,
+        "chars_approx": 47,
+        "line1_right_x": 951,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9836,
+        "chars_approx": 47,
+        "line1_right_x": 951,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9837,
+        "chars_approx": 49,
+        "line1_right_x": 980,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9838,
+        "chars_approx": 50,
+        "line1_right_x": 994,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9839,
+        "chars_approx": 51,
+        "line1_right_x": 1007,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9840,
+        "chars_approx": 52,
+        "line1_right_x": 1012,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9841,
+        "chars_approx": 52,
+        "line1_right_x": 1013,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9842,
+        "chars_approx": 53,
+        "line1_right_x": 1027,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9843,
+        "chars_approx": 53,
+        "line1_right_x": 1030,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9844,
+        "chars_approx": 54,
+        "line1_right_x": 1045,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9845,
+        "chars_approx": 55,
+        "line1_right_x": 1060,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9846,
+        "chars_approx": 57,
+        "line1_right_x": 1074,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9847,
+        "chars_approx": 57,
+        "line1_right_x": 1074,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9848,
+        "chars_approx": 58,
+        "line1_right_x": 1095,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9849,
+        "chars_approx": 59,
+        "line1_right_x": 1105,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9850,
+        "chars_approx": 60,
+        "line1_right_x": 1119,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9851,
+        "chars_approx": 61,
+        "line1_right_x": 1132,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9852,
+        "chars_approx": 62,
+        "line1_right_x": 1142,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9853,
+        "chars_approx": 63,
+        "line1_right_x": 1156,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9854,
+        "chars_approx": 63,
+        "line1_right_x": 1156,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9855,
+        "chars_approx": 66,
+        "line1_right_x": 1185,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9856,
+        "chars_approx": 67,
+        "line1_right_x": 1200,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9857,
+        "chars_approx": 68,
+        "line1_right_x": 1210,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9858,
+        "chars_approx": 69,
+        "line1_right_x": 1223,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 9859,
+        "chars_approx": 71,
+        "line1_right_x": 1224,
+        "line2_right_x": 396
+       },
+       {
+        "frame": 9860,
+        "chars_approx": 72,
+        "line1_right_x": 1224,
+        "line2_right_x": 409
+       },
+       {
+        "frame": 9861,
+        "chars_approx": 73,
+        "line1_right_x": 1224,
+        "line2_right_x": 416
+       },
+       {
+        "frame": 9862,
+        "chars_approx": 73,
+        "line1_right_x": 1224,
+        "line2_right_x": 420
+       },
+       {
+        "frame": 9863,
+        "chars_approx": 73,
+        "line1_right_x": 1224,
+        "line2_right_x": 425
+       },
+       {
+        "frame": 9864,
+        "chars_approx": 75,
+        "line1_right_x": 1224,
+        "line2_right_x": 439
+       },
+       {
+        "frame": 9865,
+        "chars_approx": 75,
+        "line1_right_x": 1224,
+        "line2_right_x": 449
+       },
+       {
+        "frame": 9866,
+        "chars_approx": 76,
+        "line1_right_x": 1224,
+        "line2_right_x": 454
+       },
+       {
+        "frame": 9867,
+        "chars_approx": 77,
+        "line1_right_x": 1224,
+        "line2_right_x": 470
+       },
+       {
+        "frame": 9868,
+        "chars_approx": 78,
+        "line1_right_x": 1224,
+        "line2_right_x": 484
+       },
+       {
+        "frame": 9869,
+        "chars_approx": 79,
+        "line1_right_x": 1224,
+        "line2_right_x": 497
+       },
+       {
+        "frame": 9870,
+        "chars_approx": 79,
+        "line1_right_x": 1224,
+        "line2_right_x": 497
+       },
+       {
+        "frame": 9871,
+        "chars_approx": 81,
+        "line1_right_x": 1224,
+        "line2_right_x": 518
+       },
+       {
+        "frame": 9872,
+        "chars_approx": 82,
+        "line1_right_x": 1224,
+        "line2_right_x": 528
+       },
+       {
+        "frame": 9873,
+        "chars_approx": 83,
+        "line1_right_x": 1224,
+        "line2_right_x": 542
+       },
+       {
+        "frame": 9874,
+        "chars_approx": 84,
+        "line1_right_x": 1224,
+        "line2_right_x": 556
+       },
+       {
+        "frame": 9875,
+        "chars_approx": 86,
+        "line1_right_x": 1224,
+        "line2_right_x": 571
+       },
+       {
+        "frame": 9876,
+        "chars_approx": 87,
+        "line1_right_x": 1224,
+        "line2_right_x": 586
+       },
+       {
+        "frame": 9877,
+        "chars_approx": 87,
+        "line1_right_x": 1224,
+        "line2_right_x": 586
+       },
+       {
+        "frame": 9878,
+        "chars_approx": 88,
+        "line1_right_x": 1224,
+        "line2_right_x": 603
+       },
+       {
+        "frame": 9879,
+        "chars_approx": 90,
+        "line1_right_x": 1224,
+        "line2_right_x": 617
+       },
+       {
+        "frame": 9880,
+        "chars_approx": 91,
+        "line1_right_x": 1224,
+        "line2_right_x": 632
+       },
+       {
+        "frame": 9881,
+        "chars_approx": 91,
+        "line1_right_x": 1224,
+        "line2_right_x": 633
+       },
+       {
+        "frame": 9882,
+        "chars_approx": 91,
+        "line1_right_x": 1224,
+        "line2_right_x": 633
+       },
+       {
+        "frame": 9883,
+        "chars_approx": 93,
+        "line1_right_x": 1224,
+        "line2_right_x": 660
+       },
+       {
+        "frame": 9884,
+        "chars_approx": 94,
+        "line1_right_x": 1224,
+        "line2_right_x": 666
+       },
+       {
+        "frame": 9885,
+        "chars_approx": 95,
+        "line1_right_x": 1224,
+        "line2_right_x": 680
+       },
+       {
+        "frame": 9886,
+        "chars_approx": 96,
+        "line1_right_x": 1224,
+        "line2_right_x": 694
+       },
+       {
+        "frame": 9887,
+        "chars_approx": 98,
+        "line1_right_x": 1224,
+        "line2_right_x": 710
+       },
+       {
+        "frame": 9888,
+        "chars_approx": 98,
+        "line1_right_x": 1224,
+        "line2_right_x": 720
+       },
+       {
+        "frame": 9889,
+        "chars_approx": 99,
+        "line1_right_x": 1224,
+        "line2_right_x": 732
+       },
+       {
+        "frame": 9890,
+        "chars_approx": 100,
+        "line1_right_x": 1224,
+        "line2_right_x": 738
+       }
+      ],
+      "rate_chars_per_frame": 0.97,
+      "pattern": "exactly ~1 char per frame INCLUDING spaces (space frames show no new ink: 9795, 9801-9802, 9805, 9808…); new glyph fades in over ~2 f; line 2 starts 9859; done 9890 (103 f for 100 chars)"
+     },
+     "resize": {
+      "frames": "9886-9893",
+      "note": "button cy 987→971 (-16 px), box shrinks to y 690-1009 — layout settle after typing ends; confidence low on cause"
+     },
+     "cursor": {
+      "note": "visible lower-right by 9905, arrives on button 9913; no press animation seen"
+     },
+     "exit": {
+      "frames": "9939-9942",
+      "note": "box holds through the cut to B (9939, 9940), fades ≈0.5 (9941), ≈0.2 (9942), gone 9943 — no motion"
+     }
+    },
+    {
+     "id": "P5",
+     "time": "9:13.0",
+     "frames": "13270-13399 over camera A (cut-in 13240, cut-out 13400)",
+     "context": "box 1200 wide, x 360-1559, y ≈795-955 after wrap",
+     "text": "Make three new versions for this audience. Change the hook.\\nKeep the offer and the rest of the ad consistent.",
+     "chars": 110,
+     "entrance": {
+      "frames": "13270-13273",
+      "opacity": {
+       "13270": 0.27,
+       "13271": 0.49,
+       "13272": 0.75,
+       "13273": 1.0
+      },
+      "note": "pure 4-f fade, ≤1.5 px motion",
+      "fit": {
+       "bezier": [
+        0.312,
+        0.4,
+        0.041,
+        0.0
+       ],
+       "t0": 13269,
+       "t1": 13273,
+       "v0": 0,
+       "v1": 1,
+       "rms": 0.004,
+       "residuals": [
+        [
+         13270.0,
+         0.0
+        ],
+        [
+         13271.0,
+         -0.0
+        ],
+        [
+         13272.0,
+         0.01
+        ],
+        [
+         13273.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         13270,
+         0.27
+        ],
+        [
+         13271,
+         0.49
+        ],
+        [
+         13272,
+         0.75
+        ],
+        [
+         13273,
+         1.0
+        ]
+       ]
+      }
+     },
+     "typing": {
+      "per_frame": [
+       {
+        "frame": 13272,
+        "chars_approx": 1,
+        "line1_right_x": 404,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13273,
+        "chars_approx": 3,
+        "line1_right_x": 426,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13274,
+        "chars_approx": 5,
+        "line1_right_x": 447,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13275,
+        "chars_approx": 9,
+        "line1_right_x": 492,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13276,
+        "chars_approx": 11,
+        "line1_right_x": 516,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13277,
+        "chars_approx": 12,
+        "line1_right_x": 537,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13278,
+        "chars_approx": 15,
+        "line1_right_x": 572,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13279,
+        "chars_approx": 15,
+        "line1_right_x": 572,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13280,
+        "chars_approx": 18,
+        "line1_right_x": 607,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13281,
+        "chars_approx": 20,
+        "line1_right_x": 630,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13282,
+        "chars_approx": 20,
+        "line1_right_x": 635,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13283,
+        "chars_approx": 23,
+        "line1_right_x": 665,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13284,
+        "chars_approx": 24,
+        "line1_right_x": 678,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13285,
+        "chars_approx": 25,
+        "line1_right_x": 695,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13286,
+        "chars_approx": 27,
+        "line1_right_x": 719,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13287,
+        "chars_approx": 29,
+        "line1_right_x": 734,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13288,
+        "chars_approx": 30,
+        "line1_right_x": 748,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13289,
+        "chars_approx": 31,
+        "line1_right_x": 768,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13290,
+        "chars_approx": 33,
+        "line1_right_x": 789,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13291,
+        "chars_approx": 34,
+        "line1_right_x": 803,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13292,
+        "chars_approx": 36,
+        "line1_right_x": 825,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13293,
+        "chars_approx": 38,
+        "line1_right_x": 854,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13294,
+        "chars_approx": 41,
+        "line1_right_x": 883,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13295,
+        "chars_approx": 41,
+        "line1_right_x": 889,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13296,
+        "chars_approx": 43,
+        "line1_right_x": 915,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13297,
+        "chars_approx": 46,
+        "line1_right_x": 943,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13298,
+        "chars_approx": 47,
+        "line1_right_x": 958,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13299,
+        "chars_approx": 49,
+        "line1_right_x": 988,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13300,
+        "chars_approx": 51,
+        "line1_right_x": 1005,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13301,
+        "chars_approx": 52,
+        "line1_right_x": 1019,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13302,
+        "chars_approx": 53,
+        "line1_right_x": 1034,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13303,
+        "chars_approx": 56,
+        "line1_right_x": 1071,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13304,
+        "chars_approx": 57,
+        "line1_right_x": 1086,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13305,
+        "chars_approx": 59,
+        "line1_right_x": 1106,
+        "line2_right_x": 0
+       },
+       {
+        "frame": 13306,
+        "chars_approx": 61,
+        "line1_right_x": 1106,
+        "line2_right_x": 399
+       },
+       {
+        "frame": 13307,
+        "chars_approx": 62,
+        "line1_right_x": 1106,
+        "line2_right_x": 413
+       },
+       {
+        "frame": 13308,
+        "chars_approx": 65,
+        "line1_right_x": 1106,
+        "line2_right_x": 442
+       },
+       {
+        "frame": 13309,
+        "chars_approx": 66,
+        "line1_right_x": 1106,
+        "line2_right_x": 459
+       },
+       {
+        "frame": 13310,
+        "chars_approx": 68,
+        "line1_right_x": 1106,
+        "line2_right_x": 473
+       },
+       {
+        "frame": 13311,
+        "chars_approx": 69,
+        "line1_right_x": 1106,
+        "line2_right_x": 488
+       },
+       {
+        "frame": 13312,
+        "chars_approx": 72,
+        "line1_right_x": 1106,
+        "line2_right_x": 520
+       },
+       {
+        "frame": 13313,
+        "chars_approx": 74,
+        "line1_right_x": 1106,
+        "line2_right_x": 542
+       },
+       {
+        "frame": 13314,
+        "chars_approx": 75,
+        "line1_right_x": 1106,
+        "line2_right_x": 552
+       },
+       {
+        "frame": 13315,
+        "chars_approx": 76,
+        "line1_right_x": 1106,
+        "line2_right_x": 572
+       },
+       {
+        "frame": 13316,
+        "chars_approx": 79,
+        "line1_right_x": 1106,
+        "line2_right_x": 602
+       },
+       {
+        "frame": 13317,
+        "chars_approx": 79,
+        "line1_right_x": 1106,
+        "line2_right_x": 602
+       },
+       {
+        "frame": 13318,
+        "chars_approx": 82,
+        "line1_right_x": 1106,
+        "line2_right_x": 633
+       },
+       {
+        "frame": 13319,
+        "chars_approx": 83,
+        "line1_right_x": 1106,
+        "line2_right_x": 648
+       },
+       {
+        "frame": 13320,
+        "chars_approx": 85,
+        "line1_right_x": 1106,
+        "line2_right_x": 665
+       },
+       {
+        "frame": 13321,
+        "chars_approx": 87,
+        "line1_right_x": 1106,
+        "line2_right_x": 692
+       },
+       {
+        "frame": 13322,
+        "chars_approx": 88,
+        "line1_right_x": 1106,
+        "line2_right_x": 701
+       },
+       {
+        "frame": 13323,
+        "chars_approx": 90,
+        "line1_right_x": 1106,
+        "line2_right_x": 723
+       },
+       {
+        "frame": 13324,
+        "chars_approx": 91,
+        "line1_right_x": 1106,
+        "line2_right_x": 733
+       },
+       {
+        "frame": 13325,
+        "chars_approx": 93,
+        "line1_right_x": 1106,
+        "line2_right_x": 762
+       },
+       {
+        "frame": 13326,
+        "chars_approx": 95,
+        "line1_right_x": 1106,
+        "line2_right_x": 778
+       },
+       {
+        "frame": 13327,
+        "chars_approx": 97,
+        "line1_right_x": 1106,
+        "line2_right_x": 798
+       },
+       {
+        "frame": 13328,
+        "chars_approx": 98,
+        "line1_right_x": 1106,
+        "line2_right_x": 813
+       },
+       {
+        "frame": 13329,
+        "chars_approx": 100,
+        "line1_right_x": 1106,
+        "line2_right_x": 835
+       },
+       {
+        "frame": 13330,
+        "chars_approx": 102,
+        "line1_right_x": 1106,
+        "line2_right_x": 864
+       },
+       {
+        "frame": 13331,
+        "chars_approx": 104,
+        "line1_right_x": 1106,
+        "line2_right_x": 884
+       },
+       {
+        "frame": 13332,
+        "chars_approx": 105,
+        "line1_right_x": 1106,
+        "line2_right_x": 897
+       },
+       {
+        "frame": 13333,
+        "chars_approx": 107,
+        "line1_right_x": 1106,
+        "line2_right_x": 920
+       },
+       {
+        "frame": 13334,
+        "chars_approx": 109,
+        "line1_right_x": 1106,
+        "line2_right_x": 944
+       }
+      ],
+      "rate_chars_per_frame": 1.74,
+      "pattern": "≈1.7 chars/frame steady, short holds at word ends (13278-79, 13316-17); line 2 starts 13306 with the box growing 1 line (button cy 903.6→915.7 over 13305-13311); done 13334"
+     },
+     "cursor": {
+      "note": "enters lower-right 13346, settles on button 13356; no press seen"
+     },
+     "exit": {
+      "frames": "13396-13399",
+      "opacity": {
+       "13396": 0.93,
+       "13397": 0.72,
+       "13398": 0.48,
+       "13399": 0.3
+      },
+      "note": "fade starts 4 f before the cut at 13400 and is cut off at 0.30",
+      "fit": {
+       "bezier": [
+        0.409,
+        0.109,
+        0.15,
+        0.312
+       ],
+       "t0": 13395,
+       "t1": 13401,
+       "v0": 1,
+       "v1": 0,
+       "rms": 0.002,
+       "residuals": [
+        [
+         13396.0,
+         0.0
+        ],
+        [
+         13397.0,
+         0.0
+        ],
+        [
+         13398.0,
+         -0.0
+        ],
+        [
+         13399.0,
+         0.0
+        ]
+       ],
+       "samples": [
+        [
+         13396,
+         0.93
+        ],
+        [
+         13397,
+         0.72
+        ],
+        [
+         13398,
+         0.48
+        ],
+        [
+         13399,
+         0.3
+        ]
+       ]
+      }
+     }
+    }
+   ]
+  }
+ },
+ "camera": {
+  "framings": {
+   "source": "reference-specs/prompt-camera-sfx.json#B_camera/framings",
+   "keyframes": {
+    "A": "frontal MCU behind silver laptop, S-mural left (ref frame 322)",
+    "W": "wide 3/4 from presenter's right showing room, sofa left, window right (ref 4390)",
+    "B": "45° side close-up, presenter facing frame-right, window/city behind (ref 4458)",
+    "note": "Three locked framings, not two cameras + punch-ins: none of A/W/B is a crop of another (best NCC of gradient images across framings ≈0.2 = noise level vs 0.55-0.75 within a framing; visual check cmpB.jpg). Every camera shot of a framing registers to its reference at scale exactly 1.00 ±0.004 with zero shift (fine search 0.96-1.06 step 0.004 on 11 long shots) → tripod-locked, no handheld drift, no slow push."
+   }
+  },
+  "digital_punch_ins": {
+   "source": "reference-specs/prompt-camera-sfx.json#B_camera/digital_punch_ins",
+   "keyframes": {
+    "count": 1,
+    "instance": {
+     "frames": "331-341 inside A shot 314-377 (0:13.8)",
+     "scale_per_frame": {
+      "330": 1.0,
+      "331": 1.01,
+      "332": 1.14,
+      "333": 1.25,
+      "334": 1.32,
+      "335": 1.37,
+      "336": 1.41,
+      "337": 1.44,
+      "338": 1.46,
+      "339": 1.48,
+      "340": 1.49,
+      "341": 1.5,
+      "342": 1.5
+     },
+     "crop_centre_norm": "x 0.50, y 0.50→0.374 (moves up toward the face as it zooms)",
+     "note": "an ANIMATED zoom 1.0→1.5 over 10 f with motion blur on 332-333, then holds 1.5 until the cut at 377",
+     "fit": {
+      "bezier": [
+       0.194,
+       -0.013,
+       0.003,
+       0.813
+      ],
+      "t0": 330.5,
+      "t1": 341,
+      "v0": 1.0,
+      "v1": 1.5,
+      "rms": 0.002,
+      "residuals": [
+       [
+        331.0,
+        0.0
+       ],
+       [
+        332.0,
+        0.0
+       ],
+       [
+        333.0,
+        -0.0
+       ],
+       [
+        334.0,
+        -0.0
+       ],
+       [
+        335.0,
+        -0.0
+       ],
+       [
+        336.0,
+        0.0
+       ],
+       [
+        337.0,
+        0.0
+       ],
+       [
+        338.0,
+        0.0
+       ],
+       [
+        339.0,
+        0.0
+       ],
+       [
+        340.0,
+        0.0
+       ],
+       [
+        341.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        330,
+        1.0
+       ],
+       [
+        331,
+        1.01
+       ],
+       [
+        332,
+        1.14
+       ],
+       [
+        333,
+        1.25
+       ],
+       [
+        334,
+        1.32
+       ],
+       [
+        335,
+        1.37
+       ],
+       [
+        336,
+        1.41
+       ],
+       [
+        337,
+        1.44
+       ],
+       [
+        338,
+        1.46
+       ],
+       [
+        339,
+        1.48
+       ],
+       [
+        340,
+        1.49
+       ],
+       [
+        341,
+        1.5
+       ],
+       [
+        342,
+        1.5
+       ]
+      ]
+     }
+    },
+    "scan": "2409 frames sampled every 4 f in every A/W/B shot against their reference at scale 1.0-1.6: all 1.00 except 3 frames at the head of segment 6576 that belong to the preceding vertical-video graphic (not a zoom), and the outro logo frames after 14717 → no other punch-ins in the video. Gemini's \"punch-in\" shots are the B (side close-up) camera."
+   }
+  },
+  "transitions": {
+   "source": "reference-specs/prompt-camera-sfx.json#B_camera/transitions",
+   "keyframes": [
+    {
+     "frm": "A",
+     "to": "B",
+     "n": 23
+    },
+    {
+     "frm": "B",
+     "to": "A",
+     "n": 22
+    },
+    {
+     "frm": "W",
+     "to": "A",
+     "n": 14
+    },
+    {
+     "frm": "A",
+     "to": "W",
+     "n": 13
+    },
+    {
+     "frm": "W",
+     "to": "B",
+     "n": 10
+    },
+    {
+     "frm": "B",
+     "to": "MG",
+     "n": 6
+    },
+    {
+     "frm": "B",
+     "to": "W",
+     "n": 6
+    },
+    {
+     "frm": "MG",
+     "to": "A",
+     "n": 5
+    },
+    {
+     "frm": "MG",
+     "to": "W",
+     "n": 5
+    },
+    {
+     "frm": "A",
+     "to": "MG",
+     "n": 5
+    },
+    {
+     "frm": "MG",
+     "to": "B",
+     "n": 4
+    },
+    {
+     "frm": "W",
+     "to": "MG",
+     "n": 3
+    },
+    {
+     "frm": "B",
+     "to": "SC",
+     "n": 3
+    },
+    {
+     "frm": "SC",
+     "to": "A",
+     "n": 3
+    },
+    {
+     "frm": "SC",
+     "to": "B",
+     "n": 3
+    },
+    {
+     "frm": "VID",
+     "to": "W",
+     "n": 3
+    },
+    {
+     "frm": "A",
+     "to": "SC",
+     "n": 3
+    },
+    {
+     "frm": "BROLL",
+     "to": "A",
+     "n": 2
+    },
+    {
+     "frm": "W",
+     "to": "SC",
+     "n": 2
+    },
+    {
+     "frm": "SC",
+     "to": "W",
+     "n": 2
+    },
+    {
+     "frm": "B",
+     "to": "VID",
+     "n": 2
+    },
+    {
+     "frm": "A",
+     "to": "A*",
+     "n": 1
+    },
+    {
+     "frm": "A*",
+     "to": "BROLL",
+     "n": 1
+    },
+    {
+     "frm": "B",
+     "to": "BROLL",
+     "n": 1
+    },
+    {
+     "frm": "A",
+     "to": "VID",
+     "n": 1
+    }
+   ]
+  },
+  "pattern": {
+   "source": "reference-specs/prompt-camera-sfx.json#B_camera/pattern",
+   "keyframes": "Camera shots alternate A↔B most (A→B 23, B→A 22), with W inserted as the third angle (A↔W 27, W→B 10, B→W 6). Never the same framing twice in a row. Graphics/screencasts are entered from any camera and exit to any camera. Camera shot medians: A 3.7 s, W 3.1 s, B 2.7 s (B close-ups are the shortest); full-screen MG median 7.0 s, SC 8.1 s."
+  },
+  "cuts_vs_speech": {
+   "source": "reference-specs/prompt-camera-sfx.json#B_camera/cuts_vs_speech",
+   "keyframes": {
+    "n_checked": 85,
+    "result": "85 camera→camera cuts vs YouTube ASR word onsets and 10-ms mid-band energy: cut-frame speech energy is a median 11.8 dB below the local speech level and 61% of cuts sit in a pause (<-10 dB); the next word starts a median 123 ms after the cut (p25 68, p75 197 ms) and the previous word is sentence/clause-final in most cases (e.g. \"today.\", \"framework.\", \"screen.\", \"visuals.\"). → cuts land in the inter-sentence gap, ~0.1-0.2 s BEFORE the next sentence starts.",
+    "confidence": "medium (ASR onsets ±~100 ms)"
+   }
+  },
+  "shot_length_stats_s": {
+   "source": "reference-specs/prompt-camera-sfx.json#B_camera/shot_length_stats_s",
+   "keyframes": {
+    "MG": {
+     "n": 15,
+     "total_s": 102.3,
+     "median_s": 7.0,
+     "mean_s": 6.82,
+     "min_s": 2.29,
+     "p25_s": 3.17,
+     "p75_s": 9.46,
+     "max_s": 15.0
+    },
+    "A": {
+     "n": 46,
+     "total_s": 177.3,
+     "median_s": 3.73,
+     "mean_s": 3.86,
+     "min_s": 0.75,
+     "p25_s": 2.25,
+     "p75_s": 5.62,
+     "max_s": 8.17
+    },
+    "W": {
+     "n": 29,
+     "total_s": 107.5,
+     "median_s": 3.08,
+     "mean_s": 3.71,
+     "min_s": 1.21,
+     "p25_s": 1.88,
+     "p75_s": 4.79,
+     "max_s": 10.33
+    },
+    "A*": {
+     "n": 1,
+     "total_s": 1.9,
+     "median_s": 1.88,
+     "mean_s": 1.88,
+     "min_s": 1.88,
+     "p25_s": 1.88,
+     "p75_s": 1.88,
+     "max_s": 1.88
+    },
+    "BROLL": {
+     "n": 2,
+     "total_s": 10.5,
+     "median_s": 5.23,
+     "mean_s": 5.23,
+     "min_s": 4.96,
+     "p25_s": 4.96,
+     "p75_s": 5.5,
+     "max_s": 5.5
+    },
+    "B": {
+     "n": 40,
+     "total_s": 115.7,
+     "median_s": 2.73,
+     "mean_s": 2.89,
+     "min_s": 1.12,
+     "p25_s": 2.25,
+     "p75_s": 3.71,
+     "max_s": 5.88
+    },
+    "SC": {
+     "n": 8,
+     "total_s": 60.0,
+     "median_s": 8.1,
+     "mean_s": 7.5,
+     "min_s": 3.46,
+     "p25_s": 7.46,
+     "p75_s": 8.83,
+     "max_s": 9.0
+    },
+    "VID": {
+     "n": 3,
+     "total_s": 47.9,
+     "median_s": 13.33,
+     "mean_s": 15.96,
+     "min_s": 9.04,
+     "p25_s": 9.04,
+     "p75_s": 25.5,
+     "max_s": 25.5
+    }
+   }
+  }
+ },
+ "sound": {
+  "levels": {
+   "source": "reference-specs/prompt-camera-sfx.json#C_sfx_mix/levels",
+   "keyframes": {
+    "speech_100ms_RMS_median_dBFS": -16.9,
+    "pause_RMS_median_dBFS": -32.3,
+    "pause_RMS_IQR_dBFS": [
+     -35.1,
+     -29.8
+    ],
+    "music_only_outro_615_622s_dBFS": -26.2,
+    "estimate": "music bed ≈ 15 dB under voice (−32 vs −17 dBFS RMS); outro music alone ≈ −26 dBFS, i.e. the bed is raised ~6 dB once speech ends",
+    "ducking": "no evidence of sidechain ducking: in 13 pauses ≥500 ms the bed is −31.1 dB in the first 100 ms and −34.8 dB in the last 100 ms (would rise if ducked). Treat as a constant low bed (~−32 dBFS RMS) under VO, raised only for the outro.",
+    "confidence": "medium (pause level includes room tone/SFX tails)"
+   }
+  },
+  "entrance_sfx": {
+   "source": "reference-specs/prompt-camera-sfx.json#C_sfx_mix/entrance_sfx",
+   "keyframes": [
+    {
+     "event": "e-com big word (pink/white)",
+     "visual_first_frame": 732,
+     "hf_peak_offset_ms": "+60",
+     "hf_burst_ms": 130,
+     "hf_minus_mid_dB": -9.8,
+     "confidence": "low",
+     "note": "voice-masked; broadband HF swell starting ~-330 ms before (whoosh-like riser into the word?)"
+    },
+    {
+     "event": "prompt bar 0:43 fade-in",
+     "visual_first_frame": 1047,
+     "hf_peak_offset_ms": "+15",
+     "hf_burst_ms": 20,
+     "hf_minus_mid_dB": 0.6,
+     "confidence": "low",
+     "note": "very short HF tick at +15..+25 ms"
+    },
+    {
+     "event": "prompt bar 0:43 submit click (press 1092-1093)",
+     "visual_first_frame": 1092,
+     "hf_peak_offset_ms": "-14 (rel. press)",
+     "hf_burst_ms": 10,
+     "hf_minus_mid_dB": -18.1,
+     "confidence": "low",
+     "note": "single 10 ms HF tick 1098.7 = during exit, not at press"
+    },
+    {
+     "event": "prompt box 1:35 entrance",
+     "visual_first_frame": 2302,
+     "hf_peak_offset_ms": "+123",
+     "hf_burst_ms": 40,
+     "hf_minus_mid_dB": 11.3,
+     "confidence": "med",
+     "note": "non-voice HF transient (hb-mb +11 dB), 40 ms: pop/click"
+    },
+    {
+     "event": "prompt box 1:35 submit press (2326)",
+     "visual_first_frame": 2326,
+     "hf_peak_offset_ms": "+73",
+     "hf_burst_ms": 50,
+     "hf_minus_mid_dB": 11.6,
+     "confidence": "med",
+     "note": "HF transient 50 ms: click"
+    },
+    {
+     "event": "RESEARCH & COPY glyph",
+     "visual_first_frame": 2358,
+     "hf_peak_offset_ms": "+90",
+     "hf_burst_ms": 80,
+     "hf_minus_mid_dB": 12.6,
+     "confidence": "med",
+     "note": "HF burst 80 ms (pop/sparkle)"
+    },
+    {
+     "event": "KEEP IT SIMPLE text",
+     "visual_first_frame": 4862,
+     "hf_peak_offset_ms": "+17",
+     "hf_burst_ms": 70,
+     "hf_minus_mid_dB": 6.6,
+     "confidence": "med",
+     "note": "HF burst ~70 ms starting at onset (pop)"
+    },
+    {
+     "event": "prompt bar 3:44 fade-in",
+     "visual_first_frame": 5403,
+     "hf_peak_offset_ms": "+145",
+     "hf_burst_ms": 30,
+     "hf_minus_mid_dB": 9.0,
+     "confidence": "low-med",
+     "note": "HF tick 30 ms"
+    },
+    {
+     "event": "prompt bar 3:44 submit press (5428)",
+     "visual_first_frame": 5428,
+     "hf_peak_offset_ms": "+163",
+     "hf_burst_ms": 10,
+     "hf_minus_mid_dB": 4.5,
+     "confidence": "low",
+     "note": ""
+    },
+    {
+     "event": "3:44 pink placeholders turn pink (5520)",
+     "visual_first_frame": 5520,
+     "hf_peak_offset_ms": "+50",
+     "hf_burst_ms": 70,
+     "hf_minus_mid_dB": 14.2,
+     "confidence": "med",
+     "note": "HF burst 70 ms"
+    },
+    {
+     "event": "WHAT ABOUT VIDEO?",
+     "visual_first_frame": 5862,
+     "hf_peak_offset_ms": "-120",
+     "hf_burst_ms": 40,
+     "hf_minus_mid_dB": 1.7,
+     "confidence": "low",
+     "note": "speech-masked"
+    },
+    {
+     "event": "CPL text",
+     "visual_first_frame": 6912,
+     "hf_peak_offset_ms": "+100",
+     "hf_burst_ms": 90,
+     "hf_minus_mid_dB": 9.6,
+     "confidence": "med",
+     "note": "HF burst 90 ms (pop/chime attack)"
+    },
+    {
+     "event": "WHAT AD DO WE RUN NEXT? (on a cut)",
+     "visual_first_frame": 8512,
+     "hf_peak_offset_ms": "-147",
+     "hf_burst_ms": 120,
+     "hf_minus_mid_dB": 8.1,
+     "confidence": "low-med",
+     "note": "HF swell 120 ms ending before the cut: whoosh lead-in"
+    },
+    {
+     "event": "TEST THE ORGANIC",
+     "visual_first_frame": 9227,
+     "hf_peak_offset_ms": "-108",
+     "hf_burst_ms": 50,
+     "hf_minus_mid_dB": 14.1,
+     "confidence": "low-med",
+     "note": "HF 50 ms ending ~100 ms before visual"
+    },
+    {
+     "event": "prompt box 6:46 laptop morph",
+     "visual_first_frame": 9770,
+     "hf_peak_offset_ms": "-43",
+     "hf_burst_ms": 70,
+     "hf_minus_mid_dB": 12.7,
+     "confidence": "med",
+     "note": "strong HF 70 ms (+52 dB above floor) starting ~130 ms before morph start"
+    },
+    {
+     "event": "EXCLUSIVITY",
+     "visual_first_frame": 10980,
+     "hf_peak_offset_ms": "+120",
+     "hf_burst_ms": 60,
+     "hf_minus_mid_dB": 0.7,
+     "confidence": "low",
+     "note": ""
+    },
+    {
+     "event": "A/B TEST",
+     "visual_first_frame": 13124,
+     "hf_peak_offset_ms": "-153",
+     "hf_burst_ms": 350,
+     "hf_minus_mid_dB": -11.5,
+     "confidence": "low",
+     "note": "speech-masked"
+    },
+    {
+     "event": "prompt bar 9:12 fade-in",
+     "visual_first_frame": 13270,
+     "hf_peak_offset_ms": "-87",
+     "hf_burst_ms": 70,
+     "hf_minus_mid_dB": -15.9,
+     "confidence": "low",
+     "note": "voice"
+    },
+    {
+     "event": "HOOK RATE",
+     "visual_first_frame": 13694,
+     "hf_peak_offset_ms": "-23",
+     "hf_burst_ms": 30,
+     "hf_minus_mid_dB": -9.9,
+     "confidence": "low",
+     "note": "voice"
+    },
+    {
+     "event": "TOTAL ~$100",
+     "visual_first_frame": 13881,
+     "hf_peak_offset_ms": "-145",
+     "hf_burst_ms": 80,
+     "hf_minus_mid_dB": -9.9,
+     "confidence": "low",
+     "note": "voice"
+    }
+   ]
+  },
+  "sfx_summary": {
+   "source": "reference-specs/prompt-camera-sfx.json#C_sfx_mix/sfx_summary",
+   "keyframes": "Of 20 graphic/UI events, 9 show a clearly non-voice HF transient (HF−mid ≥ +6 dB, global p90 is −3.4 dB) within −150…+165 ms of the first visible frame; median of those ≈ +60 ms after the visual (bar2 +123, click2 +73, research +90, keep +17, bar3 +145, pinks +50, cpl +100, organic −108, morph −43, runnext −147). Envelopes are short (30-90 ms at −6 dB) → pops/clicks; the two longer ones (runnext 120 ms, e-com 130 ms + 300 ms rise) are whoosh-like and LEAD the visual. Recipe: pop/click SFX with transient at +2 f (≈ +60-120 ms) after the element's first frame; whooshes start ≈ 4-8 f before a word that enters on a cut."
+  }
+ },
+ "measured": {
+  "cta_pill_link": {
+   "what": "'LINK IN THE DESCRIPTION' CTA pill at 0:32 (f781 = offset 0 = first visible sparkle). Tracked 2026-10-05 from the red rim (bbox minus ~3 px glow) and the white sparkle mask, frame-exact seeks.",
+   "final_box_px": [
+    645,
+    853,
+    1275,
+    972
+   ],
+   "normalise": "x: (x-960)/630 of final width, y: (y-912.5)/119 of final height — multiply by the new design's pill size. Tile-phase sizes are better scaled by the pill HEIGHT only.",
+   "box_px_per_offset": {
+    "3": [
+     897,
+     827,
+     951,
+     918
+    ],
+    "4": [
+     893,
+     811,
+     957,
+     914
+    ],
+    "5": [
+     891,
+     803,
+     959,
+     911
+    ],
+    "6": [
+     889,
+     798,
+     960,
+     910
+    ],
+    "7": [
+     889,
+     795,
+     961,
+     910
+    ],
+    "8": [
+     889,
+     795,
+     961,
+     910
+    ],
+    "9": [
+     889,
+     795,
+     961,
+     910
+    ],
+    "10": [
+     885,
+     796,
+     965,
+     911
+    ],
+    "11": [
+     877,
+     799,
+     975,
+     913
+    ],
+    "12": [
+     861,
+     803,
+     986,
+     917
+    ],
+    "13": [
+     825,
+     813,
+     1052,
+     928
+    ],
+    "14": [
+     691,
+     829,
+     1209,
+     944
+    ],
+    "15": [
+     680,
+     855,
+     1190,
+     970
+    ],
+    "16": [
+     672,
+     861,
+     1224,
+     978
+    ],
+    "17": [
+     673,
+     863,
+     1250,
+     978
+    ],
+    "18": [
+     null,
+     860,
+     1270,
+     976
+    ],
+    "19": [
+     null,
+     855,
+     1270,
+     972
+    ],
+    "20": [
+     null,
+     853,
+     1270,
+     968
+    ]
+   },
+   "box_notes": "tile appears at +3 (bottom edge ~fixed, grows UP +3..+7), holds +7..+9, widens +10..+12, stretches +12..+18 with a ~6-8 px downward overshoot at +16..+17, settled by ~+20. +14 and +15 are motion-blurred (right edge 1209 then 1190: blur inflates +14). null = left edge not measurable (rim faint / sparkle glow) — final left 645 from the spec. All values = measured red-rim bbox minus ~3 px glow.",
+   "sparkle_pair_px": {
+    "what": "bbox of the white 2-star sparkle incl. glow; it pops in, rotates from a horizontal pair (+2..+8) to a vertical pair (+9..+12), then shrinks into the pill's left icon",
+    "per_offset": {
+     "0": [
+      723,
+      912,
+      733,
+      920
+     ],
+     "1": [
+      708,
+      901,
+      743,
+      928
+     ],
+     "2": [
+      668,
+      872,
+      769,
+      947
+     ],
+     "3": [
+      657,
+      869,
+      774,
+      949
+     ],
+     "4": [
+      651,
+      870,
+      776,
+      953
+     ],
+     "5": [
+      647,
+      874,
+      777,
+      955
+     ],
+     "6": [
+      645,
+      880,
+      775,
+      958
+     ],
+     "7": [
+      643,
+      880,
+      773,
+      961
+     ],
+     "8": [
+      642,
+      872,
+      769,
+      965
+     ],
+     "9": [
+      644,
+      862,
+      762,
+      969
+     ],
+     "10": [
+      648,
+      852,
+      752,
+      973
+     ],
+     "11": [
+      658,
+      844,
+      746,
+      973
+     ],
+     "12": [
+      670,
+      845,
+      769,
+      964
+     ],
+     "13": [
+      657,
+      866,
+      778,
+      954
+     ],
+     "14": [
+      657,
+      885,
+      771,
+      964
+     ],
+     "15": [
+      670,
+      879,
+      758,
+      962
+     ],
+     "16": [
+      691,
+      887,
+      743,
+      949
+     ],
+     "17": [
+      698,
+      889,
+      737,
+      945
+     ],
+     "18": [
+      702,
+      890,
+      733,
+      943
+     ],
+     "22": [
+      708,
+      891,
+      740,
+      936
+     ]
+    },
+    "final_icon_px": [
+     707,
+     891,
+     746,
+     931
+    ],
+    "angle": "NOT tracked directly: |angle| per frame is derived from the measured box's width:height (pair = 1.6:1 flat, 1:1.6 upright) in recipes._sparkle_angles: flat +2..+8, upright by +11, flat again +13..+14, upright +17.., icon. Turn DIRECTION is ambiguous from a box (looks counter-clockwise)."
+   },
+   "text": {
+    "start_offset": 40,
+    "opacity": [
+     [
+      0,
+      0.15
+     ],
+     [
+      1,
+      0.4
+     ],
+     [
+      2,
+      0.65
+     ],
+     [
+      3,
+      0.85
+     ],
+     [
+      4,
+      0.95
+     ],
+     [
+      5,
+      1
+     ]
+    ],
+    "translateY_px": [
+     [
+      0,
+      12
+     ],
+     [
+      1,
+      9
+     ],
+     [
+      2,
+      6
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      5,
+      0
+     ]
+    ],
+    "blur_px": [
+     [
+      0,
+      8
+     ],
+     [
+      1,
+      6
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      5,
+      0
+     ]
+    ],
+    "final_ink_px": [
+     774,
+     898,
+     1203,
+     922
+    ],
+    "note": "timing confirmed on the strip (faint at f821, sharp f826). Other instances: text +38 (9:58); at 3:58 text is present from the tile stage."
+   },
+   "edge_beam": "two glow segments (~300 px, ~half the pill width) orbiting clockwise at ~7 px/frame through the hold",
+   "variants": {
+    "morph_start_offset": {
+     "0:32": 12,
+     "3:58": 10,
+     "9:58": 15
+    }
+   },
+   "exits": {
+    "hard_cut": "0:32 (f844)",
+    "cut_with_shot": "3:58",
+    "blur_fade_4f": {
+     "opacity": [
+      [
+       0,
+       1
+      ],
+      [
+       1,
+       0.7
+      ],
+      [
+       2,
+       0.4
+      ],
+      [
+       3,
+       0.15
+      ],
+      [
+       4,
+       0
+      ]
+     ],
+     "blur_px": "0 -> 10"
+    }
+   }
+  },
+  "card_portal_open": {
+   "what": "7:44 'pop portal' cards: edge-on pink slab → swings open → pink clears; tracked 2026-10-05 per card (B k=f11146, A k=f11149 = +3), normalised to each card's FINAL box (cx/top/bottom offsets in final width/height units, width = fraction of final width, pink = overlay amount 0..1 from the card's measured colour). Offset 0 = first measurable frame; offset −1 = a faint ~20 % pink sliver.",
+   "faint_offset_minus_1_opacity": 0.2,
+   "stagger_f": {
+    "7:44": 3,
+    "8:37 (no pink)": 2
+   },
+   "average": {
+    "0": {
+     "cx": 0.0084,
+     "top": 0.1089,
+     "bottom": 0.0263,
+     "width": 0.369,
+     "pink": 0.9505
+    },
+    "1": {
+     "cx": 0.0102,
+     "top": 0.0772,
+     "bottom": 0.0184,
+     "width": 0.4333,
+     "pink": 1.0
+    },
+    "2": {
+     "cx": 0.0104,
+     "top": 0.0518,
+     "bottom": 0.0123,
+     "width": 0.4618,
+     "pink": 1.0
+    },
+    "3": {
+     "cx": 0.0091,
+     "top": 0.0333,
+     "bottom": 0.0052,
+     "width": 0.4812,
+     "pink": 0.9505
+    },
+    "4": {
+     "cx": 0.0112,
+     "top": 0.0193,
+     "bottom": 0.0026,
+     "width": 0.6024,
+     "pink": 0.805
+    },
+    "5": {
+     "cx": 0.0086,
+     "top": 0.0087,
+     "bottom": 0.0026,
+     "width": 0.7445,
+     "pink": 0.595
+    },
+    "6": {
+     "cx": 0.0047,
+     "top": 0.0008,
+     "bottom": 0.0017,
+     "width": 0.8536,
+     "pink": 0.3785
+    },
+    "7": {
+     "cx": -0.0025,
+     "top": -0.0053,
+     "bottom": 0.0017,
+     "width": 0.911,
+     "pink": 0.2225
+    },
+    "8": {
+     "cx": 0.0016,
+     "top": -0.0097,
+     "bottom": 0.0017,
+     "width": 0.9644,
+     "pink": 0.11
+    },
+    "9": {
+     "cx": 0.0009,
+     "top": -0.0105,
+     "bottom": 0.0017,
+     "width": 0.9926,
+     "pink": 0.0085
+    },
+    "10": {
+     "cx": 0.0008,
+     "top": -0.0105,
+     "bottom": 0.0017,
+     "width": 1.0076,
+     "pink": 0.0045
+    },
+    "11": {
+     "cx": 0.0008,
+     "top": -0.0097,
+     "bottom": 0.0017,
+     "width": 1.0076,
+     "pink": 0.0
+    },
+    "12": {
+     "cx": -0.0007,
+     "top": -0.0062,
+     "bottom": 0.0017,
+     "width": 1.0014,
+     "pink": 0.0
+    },
+    "13": {
+     "cx": 0.0,
+     "top": -0.0035,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0.0
+    },
+    "14": {
+     "cx": 0.0,
+     "top": -0.0027,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0.0045
+    },
+    "15": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0.0
+    },
+    "16": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0.0
+    }
+   },
+   "card_B": {
+    "0": {
+     "cx": 0.0508,
+     "top": 0.1085,
+     "bottom": 0.0235,
+     "width": 0.3651,
+     "pink": 0.966
+    },
+    "1": {
+     "cx": 0.0444,
+     "top": 0.0759,
+     "bottom": 0.0163,
+     "width": 0.4286,
+     "pink": 1
+    },
+    "2": {
+     "cx": 0.0349,
+     "top": 0.0506,
+     "bottom": 0.0108,
+     "width": 0.4603,
+     "pink": 1
+    },
+    "3": {
+     "cx": 0.0254,
+     "top": 0.0325,
+     "bottom": 0.0036,
+     "width": 0.4794,
+     "pink": 0.966
+    },
+    "4": {
+     "cx": 0.0238,
+     "top": 0.0181,
+     "bottom": 0.0018,
+     "width": 0.6032,
+     "pink": 0.871
+    },
+    "5": {
+     "cx": 0.0159,
+     "top": 0.0072,
+     "bottom": 0.0018,
+     "width": 0.746,
+     "pink": 0.69
+    },
+    "6": {
+     "cx": 0.0095,
+     "top": 0.0,
+     "bottom": 0.0018,
+     "width": 0.854,
+     "pink": 0.474
+    },
+    "7": {
+     "cx": 0.0063,
+     "top": -0.0072,
+     "bottom": 0.0018,
+     "width": 0.9238,
+     "pink": 0.293
+    },
+    "8": {
+     "cx": 0.0032,
+     "top": -0.0108,
+     "bottom": 0.0018,
+     "width": 0.9683,
+     "pink": 0.155
+    },
+    "9": {
+     "cx": 0.0032,
+     "top": -0.0108,
+     "bottom": 0.0018,
+     "width": 0.9937,
+     "pink": 0.017
+    },
+    "10": {
+     "cx": 0.0016,
+     "top": -0.0108,
+     "bottom": 0.0018,
+     "width": 1.0095,
+     "pink": 0.009
+    },
+    "11": {
+     "cx": 0.0016,
+     "top": -0.0108,
+     "bottom": 0.0018,
+     "width": 1.0095,
+     "pink": 0
+    },
+    "12": {
+     "cx": 0.0,
+     "top": -0.0072,
+     "bottom": 0.0018,
+     "width": 1.0,
+     "pink": 0
+    },
+    "13": {
+     "cx": 0.0,
+     "top": -0.0036,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    },
+    "14": {
+     "cx": 0.0,
+     "top": -0.0036,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0.009
+    },
+    "15": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    },
+    "16": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    }
+   },
+   "card_A": {
+    "0": {
+     "cx": -0.0339,
+     "top": 0.1092,
+     "bottom": 0.029,
+     "width": 0.3729,
+     "pink": 0.935
+    },
+    "1": {
+     "cx": -0.024,
+     "top": 0.0785,
+     "bottom": 0.0205,
+     "width": 0.4379,
+     "pink": 1
+    },
+    "2": {
+     "cx": -0.0141,
+     "top": 0.0529,
+     "bottom": 0.0137,
+     "width": 0.4633,
+     "pink": 1
+    },
+    "3": {
+     "cx": -0.0071,
+     "top": 0.0341,
+     "bottom": 0.0068,
+     "width": 0.4831,
+     "pink": 0.935
+    },
+    "4": {
+     "cx": -0.0014,
+     "top": 0.0205,
+     "bottom": 0.0034,
+     "width": 0.6017,
+     "pink": 0.739
+    },
+    "5": {
+     "cx": 0.0014,
+     "top": 0.0102,
+     "bottom": 0.0034,
+     "width": 0.7429,
+     "pink": 0.5
+    },
+    "6": {
+     "cx": 0.0,
+     "top": 0.0017,
+     "bottom": 0.0017,
+     "width": 0.8531,
+     "pink": 0.283
+    },
+    "7": {
+     "cx": -0.0113,
+     "top": -0.0034,
+     "bottom": 0.0017,
+     "width": 0.8983,
+     "pink": 0.152
+    },
+    "8": {
+     "cx": 0.0,
+     "top": -0.0085,
+     "bottom": 0.0017,
+     "width": 0.9605,
+     "pink": 0.065
+    },
+    "9": {
+     "cx": -0.0014,
+     "top": -0.0102,
+     "bottom": 0.0017,
+     "width": 0.9915,
+     "pink": 0
+    },
+    "10": {
+     "cx": 0.0,
+     "top": -0.0102,
+     "bottom": 0.0017,
+     "width": 1.0056,
+     "pink": 0
+    },
+    "11": {
+     "cx": 0.0,
+     "top": -0.0085,
+     "bottom": 0.0017,
+     "width": 1.0056,
+     "pink": 0
+    },
+    "12": {
+     "cx": -0.0014,
+     "top": -0.0051,
+     "bottom": 0.0017,
+     "width": 1.0028,
+     "pink": 0
+    },
+    "13": {
+     "cx": 0.0,
+     "top": -0.0034,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    },
+    "14": {
+     "cx": 0.0,
+     "top": -0.0017,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    },
+    "15": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    },
+    "16": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    }
+   },
+   "notes": "slab phase 0..3 (width .37→.48), swing 4..9 with ~+1 % width overshoot at 9..10; top rises then settles back ~1 % of height (bounce) by 15; rotation not measured directly — width = cos(rotateY) gives ~68°→0° (perspective ignored). The 8:37 variant is the same swing without the pink.",
+   "tint": {
+    "0": 0.72,
+    "1": 0.699,
+    "2": 0.683,
+    "3": 0.637,
+    "4": 0.518,
+    "5": 0.348,
+    "6": 0.196,
+    "7": 0.112,
+    "8": 0.072,
+    "9": 0.04,
+    "10": 0.048,
+    "11": 0.041,
+    "12": 0.026
+   },
+   "opacity": {
+    "-1": 0.15,
+    "0": 0.7,
+    "1": 1.0
+   },
+   "tint_note": "solved per frame (2026-10-05) from the colour equation frame = bg + a·(content−bg) + a·t·(pink−content) with the clean plate (f11144) and the settled card (f11170), pink = #FF2E9A: a = opacity, t = pink amount. B and A agree within 0.06; 'tint' = their mean. Pink peaks at ~0.72, not 1. The earlier 'pink' field in the per-offset tables is a raw colour ratio — superseded.",
+   "near_side_cx": {
+    "0": 0.0423,
+    "1": 0.0342,
+    "2": 0.0245,
+    "3": 0.0163,
+    "4": 0.0126,
+    "5": 0.0073,
+    "6": 0.0047,
+    "7": 0.0088,
+    "8": 0.0016,
+    "9": 0.0023,
+    "10": 0.0008,
+    "11": 0.0008,
+    "12": 0.0007,
+    "13": 0.0,
+    "14": 0.0,
+    "15": 0.0,
+    "16": 0.0
+   },
+   "near_side_note": "while edge-on the card's centre sits toward its NEARER edge (perspective): B (near edge right) +, A (near edge left) −. Value = fraction of final width; recipe: cx = sign(near) * near_side_cx."
+  },
+  "card_pink_reveal_rise": {
+   "what": "3:29 callout card: solid pink silhouette fades in, rises + grows ~2 %, pink dissolves to content. Offset 0 = f5035 (f5034 = faint ~20 %). Normalised like card_portal_open.",
+   "faint_offset_minus_1_opacity": 0.2,
+   "opacity": {
+    "0": 0.231,
+    "1": 0.525,
+    "2": 0.762,
+    "3": 0.915,
+    "4": 0.983,
+    "5": 1.0,
+    "6": 1.0,
+    "7": 1.0,
+    "8": 0.999,
+    "9": 0.998,
+    "10": 1.0,
+    "11": 1.0,
+    "12": 1.0,
+    "-1": 0.08
+   },
+   "frames": {
+    "0": {
+     "cx": 0.0061,
+     "top": 0.0795,
+     "bottom": 0.0588,
+     "width": 0.9732,
+     "pink": 0.8
+    },
+    "1": {
+     "cx": 0.0085,
+     "top": 0.0668,
+     "bottom": 0.0525,
+     "width": 0.9878,
+     "pink": 1
+    },
+    "2": {
+     "cx": 0.0061,
+     "top": 0.0572,
+     "bottom": 0.0429,
+     "width": 0.9927,
+     "pink": 0.982
+    },
+    "3": {
+     "cx": 0.0049,
+     "top": 0.0445,
+     "bottom": 0.0334,
+     "width": 0.9902,
+     "pink": 0.8
+    },
+    "4": {
+     "cx": 0.0037,
+     "top": 0.035,
+     "bottom": 0.0254,
+     "width": 0.9927,
+     "pink": 0.509
+    },
+    "5": {
+     "cx": 0.0012,
+     "top": 0.027,
+     "bottom": 0.0207,
+     "width": 0.9976,
+     "pink": 0.273
+    },
+    "6": {
+     "cx": 0.0024,
+     "top": 0.0191,
+     "bottom": 0.0143,
+     "width": 1.0,
+     "pink": 0.145
+    },
+    "7": {
+     "cx": 0.0012,
+     "top": 0.0127,
+     "bottom": 0.0111,
+     "width": 0.9976,
+     "pink": 0.055
+    },
+    "8": {
+     "cx": 0.0,
+     "top": 0.0095,
+     "bottom": 0.0079,
+     "width": 1.0,
+     "pink": 0.018
+    },
+    "9": {
+     "cx": 0.0,
+     "top": 0.0064,
+     "bottom": 0.0048,
+     "width": 1.0,
+     "pink": 0
+    },
+    "10": {
+     "cx": 0.0,
+     "top": 0.0032,
+     "bottom": 0.0032,
+     "width": 1.0,
+     "pink": 0
+    },
+    "11": {
+     "cx": 0.0,
+     "top": 0.0016,
+     "bottom": 0.0016,
+     "width": 1.0,
+     "pink": 0
+    },
+    "12": {
+     "cx": 0.0,
+     "top": 0.0,
+     "bottom": 0.0,
+     "width": 1.0,
+     "pink": 0
+    }
+   },
+   "top_bezier": [
+    0.46,
+    1.03,
+    0.84,
+    0.93
+   ],
+   "label_after_f": 36,
+   "exit": "hard cut with the shot",
+   "tint": {
+    "0": 0.994,
+    "1": 0.908,
+    "2": 0.826,
+    "3": 0.68,
+    "4": 0.479,
+    "5": 0.323,
+    "6": 0.22,
+    "7": 0.155,
+    "8": 0.11,
+    "9": 0.074,
+    "10": 0.049,
+    "11": 0.019,
+    "12": 0.0
+   },
+   "tint_note": "solved per frame like card_portal_open (plate f5032, settled f5055, pink #FF2E9A)."
+  }
+ }
+}

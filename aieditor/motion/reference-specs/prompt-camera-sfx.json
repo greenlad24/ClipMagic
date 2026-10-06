@@ -1,0 +1,4937 @@
+{
+ "meta": {
+  "video": "gVPZU1btFA8",
+  "fps": 24,
+  "res": "1920x1080",
+  "frame_index": "round(t*24); all absolute frame numbers below come from my own seek helpers (-ss F/24, verified against scene-cut frames 1045, 2298, 9761, 13240) or kit strips started on integer frames; the one kit run that started on a fractional frame (track.sh 43.6 → labels 1 low) was discarded and re-measured on exact raw frames. Strip p1b (start 45.3 s) labels were 1 low; its findings were re-measured with exact raw data.",
+  "tools": "numpy in aieditor-aligner:0.1; ffmpeg in hyperframes-runner:0.8.30; scratch /opt/aieditor-work/reference/work/prompt-camera-sfx/"
+ },
+ "A_prompt_bars": {
+  "shared_design": {
+   "family": "ChatGPT-style composer (dark)",
+   "fill": "#202020 opaque (sampled 32,32,32 at all 5 instances)",
+   "border": "1px; at 2x zoom (0:43) reads #3D3D3D-#414141 lighter stroke; at 1x it blends (row values 24→33) — confidence low",
+   "radius": "1x layout (instances 4/5, box 1200x~160-350): ~40 px; instance 2 (905x153): ~26 px; 0:43 zoomed (height 280-287): ~100 px",
+   "shadow": "soft drop shadow below only: -5/-3/-1 luma at +5/+9/+13 px under the bottom edge (≈ 0 4px 16px rgba(0,0,0,0.12)); none at sides — confidence med",
+   "backdrop_blur": "none (fill opaque)",
+   "typed_text": "#FFFFFF (max 255), Inter Regular candidate, 1x size ≈ 26-27 px (cap height ≈ 20 px), line pitch 41 px; instance 2 ≈ 17 px / 31 px pitch",
+   "chip_text": "\"GPT-6 Astra\" + chevron, #C1C1C1-#DADADA grey, ≈ 0.9x body size",
+   "icons": "\"+\" left (white, thin), mic outline icon, submit = solid blue circle #2D66C2 (sampled 44-45,101,194-195), white up-arrow; diameter 52 px at 1x (42 px in instance 2, 105 px at 0:43 zoom)",
+   "attachment": "instance 4 only: 220x150 dark thumbnail (#1a1218) with bottom label chip \"Campaign results\" + green spreadsheet glyph; fades in 9784-9786 (≈3 f) after the box finishes morphing",
+   "placeholder": "none seen (bar shows only + / chip / mic / button until first char)",
+   "caret": "NONE visible in any instance (checked pause frames 1060, 5416, 9795, 13279); instead each new character fades in over ≈1-2 frames (faint leading glyph visible, e.g. 9864 \"varia\" + faint \"t\")",
+   "font": {
+    "candidates": [
+     "Inter (Google Fonts) — best match",
+     "SF Pro Text (not Google)",
+     "Söhne / OpenAI Sans (not Google)"
+    ],
+    "evidence": "double-storey a with straight stem and no tail spur, t with slanted-cut top, G with horizontal bar + spur, flat-terminal r, 6 with open bowl; regular weight; wide default tracking; crop c1078.png"
+   },
+   "cursor": "macOS black arrow with white 1-2 px outline + soft shadow, ~28 px tall at 1x; enters from lower-right (~+60,+55 px from button) and eases out onto the submit button over ~8-10 f (motion-blurred while moving)"
+  },
+  "instances": [
+   {
+    "id": "P1",
+    "time": "0:43.6",
+    "frames": "1045-1108 (cut-in 1045 from B close-up; bag image fades in from 1109)",
+    "context": "full-screen, black + dark-red vignette + faint 178-px dot grid (static); bar shown at ≈2x UI zoom (button 105 px, text ≈60 px)",
+    "text": "Generate a product photo of the bag",
+    "chars": 35,
+    "entrance": {
+     "frames": "1047-1055",
+     "opacity_per_frame": {
+      "1047": 0.03,
+      "1048": 0.17,
+      "1049": 0.41,
+      "1050": 0.72,
+      "1051": 0.93,
+      "1052": 0.97,
+      "1053": 1.0
+     },
+     "top_edge_y": {
+      "1049": 478,
+      "1050": 465,
+      "1051": 452,
+      "1052": 444,
+      "1053": 440,
+      "1054": 438,
+      "1055": 437
+     },
+     "height_px": {
+      "1050": 267,
+      "1051": 272,
+      "1052": 277,
+      "1055": 282
+     },
+     "note": "rise ≈ +45 px→0 and scale ≈0.94→1.0 together with the fade; centre-y 598→578",
+     "fit_opacity": {
+      "bezier": [
+       0.647,
+       0.522,
+       0.35,
+       0.981
+      ],
+      "t0": 1046.8,
+      "t1": 1053,
+      "v0": 0,
+      "v1": 1,
+      "rms": 0.008,
+      "residuals": [
+       [
+        1047.0,
+        0.0
+       ],
+       [
+        1048.0,
+        -0.01
+       ],
+       [
+        1049.0,
+        0.01
+       ],
+       [
+        1050.0,
+        -0.0
+       ],
+       [
+        1051.0,
+        0.01
+       ],
+       [
+        1052.0,
+        -0.01
+       ],
+       [
+        1053.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        1047,
+        0.03
+       ],
+       [
+        1048,
+        0.17
+       ],
+       [
+        1049,
+        0.41
+       ],
+       [
+        1050,
+        0.72
+       ],
+       [
+        1051,
+        0.93
+       ],
+       [
+        1052,
+        0.97
+       ],
+       [
+        1053,
+        1.0
+       ]
+      ]
+     },
+     "fit_top": {
+      "bezier": [
+       0.497,
+       -0.328,
+       0.2,
+       0.925
+      ],
+      "t0": 1047,
+      "t1": 1055,
+      "v0": 478,
+      "v1": 437,
+      "rms": 0.193,
+      "residuals": [
+       [
+        1049.0,
+        0.12
+       ],
+       [
+        1050.0,
+        -0.2
+       ],
+       [
+        1051.0,
+        0.37
+       ],
+       [
+        1052.0,
+        -0.22
+       ],
+       [
+        1053.0,
+        -0.14
+       ],
+       [
+        1054.0,
+        0.04
+       ],
+       [
+        1055.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        1049,
+        478
+       ],
+       [
+        1050,
+        465
+       ],
+       [
+        1051,
+        452
+       ],
+       [
+        1052,
+        444
+       ],
+       [
+        1053,
+        440
+       ],
+       [
+        1054,
+        438
+       ],
+       [
+        1055,
+        437
+       ],
+       [
+        1056,
+        437
+       ]
+      ]
+     }
+    },
+    "typing": {
+     "per_frame": [
+      [
+       1051,
+       0,
+       ""
+      ],
+      [
+       1052,
+       1,
+       "G"
+      ],
+      [
+       1053,
+       2,
+       "Ge"
+      ],
+      [
+       1054,
+       3,
+       "Gen"
+      ],
+      [
+       1055,
+       5,
+       "Gener"
+      ],
+      [
+       1056,
+       6,
+       "Genera"
+      ],
+      [
+       1057,
+       7,
+       "Generat"
+      ],
+      [
+       1058,
+       8,
+       "Generate"
+      ],
+      [
+       1059,
+       10,
+       "Generate a"
+      ],
+      [
+       1060,
+       10,
+       "Generate a"
+      ],
+      [
+       1061,
+       12,
+       "…a p"
+      ],
+      [
+       1062,
+       13,
+       "…pr"
+      ],
+      [
+       1063,
+       15,
+       "…prod"
+      ],
+      [
+       1064,
+       16,
+       "…produ"
+      ],
+      [
+       1065,
+       17,
+       "…produc"
+      ],
+      [
+       1066,
+       18,
+       "…product"
+      ],
+      [
+       1067,
+       20,
+       "…product p"
+      ],
+      [
+       1068,
+       21,
+       "…ph"
+      ],
+      [
+       1069,
+       22,
+       "…pho"
+      ],
+      [
+       1070,
+       24,
+       "…photo"
+      ],
+      [
+       1071,
+       24,
+       "…photo"
+      ],
+      [
+       1072,
+       26,
+       "…photo o"
+      ],
+      [
+       1073,
+       27,
+       "…of"
+      ],
+      [
+       1074,
+       29,
+       "…of t"
+      ],
+      [
+       1075,
+       30,
+       "…th"
+      ],
+      [
+       1076,
+       31,
+       "…the"
+      ],
+      [
+       1077,
+       31,
+       "…the"
+      ],
+      [
+       1078,
+       34,
+       "…the ba"
+      ],
+      [
+       1079,
+       35,
+       "…the bag (complete)"
+      ]
+     ],
+     "rate_chars_per_frame": 1.25,
+     "pattern": "≈1 char/frame; a space+next letter usually land on the SAME frame (+2), and the frame after a completed word often holds (1059→1060, 1070→1071, 1076→1077)",
+     "duration_f": 28
+    },
+    "follow_pan": {
+     "what": "bar translates left to keep the typed end in view (background dots do NOT move → it is the bar, not a camera)",
+     "left_edge_x": {
+      "1056": 221,
+      "1057": 221,
+      "1058": 221,
+      "1059": 219,
+      "1060": 217,
+      "1061": 214,
+      "1062": 209,
+      "1063": 203,
+      "1064": 194,
+      "1065": 181,
+      "1066": 161,
+      "1067": 143,
+      "1068": 121,
+      "1069": 103,
+      "1070": 88,
+      "1071": 78,
+      "1072": 71,
+      "1073": 66,
+      "1074": 61,
+      "1075": 59,
+      "1076": 57,
+      "1077": 56,
+      "1078": 55
+     },
+     "fit": {
+      "bezier": [
+       0.566,
+       0.038,
+       0.341,
+       1.003
+      ],
+      "t0": 1058,
+      "t1": 1078,
+      "v0": 221,
+      "v1": 55,
+      "rms": 0.842,
+      "residuals": [
+       [
+        1058.0,
+        0.0
+       ],
+       [
+        1059.0,
+        -1.0
+       ],
+       [
+        1060.0,
+        -0.96
+       ],
+       [
+        1061.0,
+        -0.64
+       ],
+       [
+        1062.0,
+        -0.69
+       ],
+       [
+        1063.0,
+        0.36
+       ],
+       [
+        1064.0,
+        1.14
+       ],
+       [
+        1065.0,
+        1.44
+       ],
+       [
+        1066.0,
+        -1.24
+       ],
+       [
+        1067.0,
+        1.25
+       ],
+       [
+        1068.0,
+        -0.12
+       ],
+       [
+        1069.0,
+        -0.39
+       ],
+       [
+        1070.0,
+        -1.48
+       ],
+       [
+        1071.0,
+        -0.94
+       ],
+       [
+        1072.0,
+        -0.07
+       ],
+       [
+        1073.0,
+        0.74
+       ],
+       [
+        1074.0,
+        -0.07
+       ],
+       [
+        1075.0,
+        0.84
+       ],
+       [
+        1076.0,
+        0.71
+       ],
+       [
+        1077.0,
+        0.72
+       ],
+       [
+        1078.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        1056,
+        221
+       ],
+       [
+        1057,
+        221
+       ],
+       [
+        1058,
+        221
+       ],
+       [
+        1059,
+        219
+       ],
+       [
+        1060,
+        217
+       ],
+       [
+        1061,
+        214
+       ],
+       [
+        1062,
+        209
+       ],
+       [
+        1063,
+        203
+       ],
+       [
+        1064,
+        194
+       ],
+       [
+        1065,
+        181
+       ],
+       [
+        1066,
+        161
+       ],
+       [
+        1067,
+        143
+       ],
+       [
+        1068,
+        121
+       ],
+       [
+        1069,
+        103
+       ],
+       [
+        1070,
+        88
+       ],
+       [
+        1071,
+        78
+       ],
+       [
+        1072,
+        71
+       ],
+       [
+        1073,
+        66
+       ],
+       [
+        1074,
+        61
+       ],
+       [
+        1075,
+        59
+       ],
+       [
+        1076,
+        57
+       ],
+       [
+        1077,
+        56
+       ],
+       [
+        1078,
+        55
+       ]
+      ]
+     }
+    },
+    "whip_to_submit": {
+     "frames": "1079-1090",
+     "note": "fast leftward translate with heavy horizontal motion blur (1080-1086) to reveal the right end; total travel ≈ 1330 px (estimate, bar width inferred), button enters at x=1900 on 1083 and settles x=1073.5 on 1090",
+     "button_x": {
+      "1083": 1900.1,
+      "1084": 1632.4,
+      "1085": 1388.2,
+      "1086": 1238.4,
+      "1087": 1151.8,
+      "1088": 1104.0,
+      "1089": 1079.5,
+      "1090": 1073.5
+     },
+     "fit_tail": {
+      "bezier": [
+       0.244,
+       0.497,
+       0.3,
+       0.997
+      ],
+      "t0": 1083,
+      "t1": 1090,
+      "v0": 1900.1,
+      "v1": 1073.5,
+      "rms": 0.746,
+      "residuals": [
+       [
+        1083.0,
+        0.0
+       ],
+       [
+        1084.0,
+        0.04
+       ],
+       [
+        1085.0,
+        -0.62
+       ],
+       [
+        1086.0,
+        1.48
+       ],
+       [
+        1087.0,
+        0.92
+       ],
+       [
+        1088.0,
+        0.42
+       ],
+       [
+        1089.0,
+        -0.92
+       ],
+       [
+        1090.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        1083,
+        1900.1
+       ],
+       [
+        1084,
+        1632.4
+       ],
+       [
+        1085,
+        1388.2
+       ],
+       [
+        1086,
+        1238.4
+       ],
+       [
+        1087,
+        1151.8
+       ],
+       [
+        1088,
+        1104.0
+       ],
+       [
+        1089,
+        1079.5
+       ],
+       [
+        1090,
+        1073.5
+       ]
+      ]
+     }
+    },
+    "click": {
+     "button_diameter": {
+      "1090": 105,
+      "1091": 105,
+      "1092": 99,
+      "1093": 93,
+      "1094": 95,
+      "1095": 99,
+      "1096": 103,
+      "1097": 105
+     },
+     "press": "scale 1→0.886 in 2 f, back to 1 in 4 f (1091→1097); cursor already resting on button from 1087"
+    },
+    "exit": {
+     "frames": "1098-1107",
+     "note": "flies up-and-right, accelerating (ease-in), shrinking 1→0.79, motion blur; gone 1108",
+     "button_cx_cy": {
+      "1097": [
+       1073.8,
+       508.6
+      ],
+      "1098": [
+       1075.7,
+       504.9
+      ],
+      "1099": [
+       1081.4,
+       495.7
+      ],
+      "1100": [
+       1092.4,
+       480.9
+      ],
+      "1101": [
+       1111.3,
+       461.1
+      ],
+      "1102": [
+       1132.0,
+       427.5
+      ],
+      "1103": [
+       1159.6,
+       382.9
+      ],
+      "1104": [
+       1196.2,
+       324.0
+      ],
+      "1105": [
+       1244.1,
+       246.8
+      ],
+      "1106": [
+       1306.0,
+       146.4
+      ],
+      "1107": [
+       1383.3,
+       28.1
+      ]
+     },
+     "fit_y": {
+      "bezier": [
+       0.85,
+       -0.006,
+       1,
+       1.213
+      ],
+      "t0": 1097,
+      "t1": 1107,
+      "v0": 508.6,
+      "v1": 28.1,
+      "rms": 1.238,
+      "residuals": [
+       [
+        1097.0,
+        -0.0
+       ],
+       [
+        1098.0,
+        -1.25
+       ],
+       [
+        1099.0,
+        -1.92
+       ],
+       [
+        1100.0,
+        -1.3
+       ],
+       [
+        1101.0,
+        2.25
+       ],
+       [
+        1102.0,
+        1.32
+       ],
+       [
+        1103.0,
+        0.61
+       ],
+       [
+        1104.0,
+        -0.4
+       ],
+       [
+        1105.0,
+        -1.29
+       ],
+       [
+        1106.0,
+        0.95
+       ],
+       [
+        1107.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        1097,
+        508.6
+       ],
+       [
+        1098,
+        504.9
+       ],
+       [
+        1099,
+        495.7
+       ],
+       [
+        1100,
+        480.9
+       ],
+       [
+        1101,
+        461.1
+       ],
+       [
+        1102,
+        427.5
+       ],
+       [
+        1103,
+        382.9
+       ],
+       [
+        1104,
+        324.0
+       ],
+       [
+        1105,
+        246.8
+       ],
+       [
+        1106,
+        146.4
+       ],
+       [
+        1107,
+        28.1
+       ]
+      ]
+     }
+    }
+   },
+   {
+    "id": "P2",
+    "time": "1:35.9",
+    "frames": "2301-2332 over camera A (cut-in at 2298)",
+    "context": "pre-filled prompt (no typing) pinned bottom-centre over presenter; box x≈508-1415, y≈795-948 (905x153)",
+    "text": "Follow the attached ad workflow for my product. Research customer reviews, competitors, buyer needs and objections, then make 5 static ads for this $80 leather bag. Designed for work, the gym, and travel.",
+    "entrance": {
+     "frames": "2301-2310",
+     "per_frame": {
+      "2302": {
+       "dy": 18,
+       "scale": 0.97,
+       "alpha": 0.34,
+       "sharp": 0.25
+      },
+      "2303": {
+       "dy": 16,
+       "scale": 0.98,
+       "alpha": 0.66,
+       "sharp": 0.64
+      },
+      "2304": {
+       "dy": 12,
+       "scale": 0.98,
+       "alpha": 0.77,
+       "sharp": 0.87
+      },
+      "2305": {
+       "dy": 10,
+       "scale": 0.99,
+       "alpha": 0.96,
+       "sharp": 0.95
+      },
+      "2306": {
+       "dy": 6,
+       "scale": 0.99,
+       "alpha": 0.9,
+       "sharp": 0.99
+      },
+      "2307": {
+       "dy": 4,
+       "scale": 1.0,
+       "alpha": 0.91,
+       "sharp": 0.99
+      },
+      "2308": {
+       "dy": 2,
+       "scale": 1.0,
+       "alpha": 0.96,
+       "sharp": 0.98
+      },
+      "2309": {
+       "dy": 2,
+       "scale": 1.0,
+       "alpha": 0.87,
+       "sharp": 1.01
+      },
+      "2310": {
+       "dy": 0,
+       "scale": 1.0,
+       "alpha": 0.98,
+       "sharp": 0.98
+      }
+     },
+     "note": "blur-in: edge sharpness 0.25→0.64→0.87→0.95 over 2302-2305 (≈ blur 8px→0 in 4 f); alpha values ±0.1 (presenter moving behind)",
+     "fit_dy": {
+      "bezier": [
+       0.834,
+       0.838,
+       0.259,
+       0.6
+      ],
+      "t0": 2301,
+      "t1": 2310,
+      "v0": 20,
+      "v1": 0,
+      "rms": 0.47,
+      "residuals": [
+       [
+        2302.0,
+        0.28
+       ],
+       [
+        2303.0,
+        0.67
+       ],
+       [
+        2304.0,
+        -0.75
+       ],
+       [
+        2305.0,
+        0.21
+       ],
+       [
+        2306.0,
+        -0.04
+       ],
+       [
+        2307.0,
+        0.12
+       ],
+       [
+        2308.0,
+        -0.48
+       ],
+       [
+        2309.0,
+        0.79
+       ],
+       [
+        2310.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        2302,
+        18
+       ],
+       [
+        2303,
+        16
+       ],
+       [
+        2304,
+        12
+       ],
+       [
+        2305,
+        10
+       ],
+       [
+        2306,
+        6
+       ],
+       [
+        2307,
+        4
+       ],
+       [
+        2308,
+        2
+       ],
+       [
+        2309,
+        2
+       ],
+       [
+        2310,
+        0
+       ]
+      ]
+     },
+     "fit_opacity": {
+      "bezier": [
+       0.591,
+       1.191,
+       0.734,
+       0.903
+      ],
+      "t0": 2300.8,
+      "t1": 2307,
+      "v0": 0,
+      "v1": 1,
+      "rms": 0.021,
+      "residuals": [
+       [
+        2301.0,
+        0.03
+       ],
+       [
+        2302.0,
+        -0.03
+       ],
+       [
+        2303.0,
+        0.03
+       ],
+       [
+        2304.0,
+        -0.02
+       ],
+       [
+        2305.0,
+        0.01
+       ],
+       [
+        2306.0,
+        -0.0
+       ],
+       [
+        2307.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        2301,
+        0.09
+       ],
+       [
+        2302,
+        0.34
+       ],
+       [
+        2303,
+        0.66
+       ],
+       [
+        2304,
+        0.8
+       ],
+       [
+        2305,
+        0.95
+       ],
+       [
+        2306,
+        0.97
+       ],
+       [
+        2307,
+        1.0
+       ]
+      ]
+     }
+    },
+    "cursor": {
+     "path_full_res": {
+      "2316": [
+       1443,
+       972
+      ],
+      "2317": [
+       1437,
+       968
+      ],
+      "2318": [
+       1430,
+       962
+      ],
+      "2319": [
+       1423,
+       953
+      ],
+      "2320": [
+       1414,
+       945
+      ],
+      "2321": [
+       1403,
+       938
+      ],
+      "2322": [
+       1393,
+       928
+      ],
+      "2323": [
+       1389,
+       919
+      ],
+      "2324": [
+       1383,
+       917
+      ]
+     },
+     "note": "tip positions ±4 px read off zoomed strip p2d; enters 2316 (motion-blurred), settles 2324"
+    },
+    "click": {
+     "button_diameter": {
+      "2325": 42,
+      "2326": 38,
+      "2327": 37,
+      "2328": 37
+     },
+     "darken": "2328 blue 194→176",
+     "note": "press 2326-2328, no release seen before exit"
+    },
+    "exit": {
+     "frames": "2328-2333",
+     "opacity": {
+      "2328": 0.92,
+      "2329": 0.53,
+      "2330": 0.33,
+      "2331": 0.2,
+      "2332": 0.09,
+      "2333": 0.03
+     },
+     "dy": {
+      "2328": -4,
+      "2329": -8,
+      "2330": -10,
+      "2331": -12,
+      "2332": -18
+     },
+     "fit_opacity": {
+      "bezier": [
+       0.172,
+       0.078,
+       0.05,
+       0.697
+      ],
+      "t0": 2327.6,
+      "t1": 2333.5,
+      "v0": 1,
+      "v1": 0,
+      "rms": 0.005,
+      "residuals": [
+       [
+        2328.0,
+        0.0
+       ],
+       [
+        2329.0,
+        -0.0
+       ],
+       [
+        2330.0,
+        0.0
+       ],
+       [
+        2331.0,
+        0.01
+       ],
+       [
+        2332.0,
+        -0.01
+       ],
+       [
+        2333.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        2328,
+        0.92
+       ],
+       [
+        2329,
+        0.53
+       ],
+       [
+        2330,
+        0.33
+       ],
+       [
+        2331,
+        0.2
+       ],
+       [
+        2332,
+        0.09
+       ],
+       [
+        2333,
+        0.03
+       ]
+      ]
+     }
+    },
+    "cut_after": "2338 (to W) — box gone 5 f before the cut"
+   },
+   {
+    "id": "P3",
+    "time": "3:45.0",
+    "frames": "5400-5646 (hard cut-in 5400 to black/red vignette; cut out 5653)",
+    "context": "full-screen; bar centred (button at 1538,546 → bar ≈ x 340-1580)",
+    "text": "Resize these creatives for the feed, Stories, and Reels.\\nAdjust the layout so the text and product stay fully visible.",
+    "chars": 118,
+    "entrance": {
+     "frames": "5403-5413",
+     "note": "5403 faint, 5404 ≈half, 5405 full alpha; rise: button cy 561→546 (-15 px) over 5405-5413 + slight scale-up (cx 1525→1538)",
+     "button_cy": {
+      "5405": 561.0,
+      "5406": 557.8,
+      "5407": 555.2,
+      "5408": 552.7,
+      "5409": 550.9,
+      "5410": 549.3,
+      "5411": 548.0,
+      "5412": 546.9,
+      "5413": 546.2
+     },
+     "fit": {
+      "bezier": [
+       0.094,
+       -0.331,
+       0.25,
+       0.7
+      ],
+      "t0": 5404,
+      "t1": 5413,
+      "v0": 561.0,
+      "v1": 546.2,
+      "rms": 0.074,
+      "residuals": [
+       [
+        5405.0,
+        0.09
+       ],
+       [
+        5406.0,
+        -0.14
+       ],
+       [
+        5407.0,
+        0.06
+       ],
+       [
+        5408.0,
+        -0.08
+       ],
+       [
+        5409.0,
+        0.07
+       ],
+       [
+        5410.0,
+        0.05
+       ],
+       [
+        5411.0,
+        0.03
+       ],
+       [
+        5412.0,
+        -0.07
+       ],
+       [
+        5413.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        5405,
+        561.0
+       ],
+       [
+        5406,
+        557.8
+       ],
+       [
+        5407,
+        555.2
+       ],
+       [
+        5408,
+        552.7
+       ],
+       [
+        5409,
+        550.9
+       ],
+       [
+        5410,
+        549.3
+       ],
+       [
+        5411,
+        548.0
+       ],
+       [
+        5412,
+        546.9
+       ],
+       [
+        5413,
+        546.2
+       ]
+      ]
+     }
+    },
+    "typing": {
+     "per_frame": [
+      [
+       5404,
+       1,
+       "R"
+      ],
+      [
+       5405,
+       6,
+       "Resize"
+      ],
+      [
+       5406,
+       10,
+       "Resize the"
+      ],
+      [
+       5407,
+       15,
+       "…these cr"
+      ],
+      [
+       5408,
+       19,
+       "…creati"
+      ],
+      [
+       5409,
+       24,
+       "…creatives f"
+      ],
+      [
+       5410,
+       28,
+       "…for t"
+      ],
+      [
+       5411,
+       33,
+       "…the fe"
+      ],
+      [
+       5412,
+       36,
+       "…feed,"
+      ],
+      [
+       5413,
+       42,
+       "…Stori"
+      ],
+      [
+       5414,
+       45,
+       "…Stories,"
+      ],
+      [
+       5415,
+       49,
+       "…and"
+      ],
+      [
+       5416,
+       55,
+       "…Reels"
+      ],
+      [
+       5417,
+       59,
+       "…Reels.⏎Ad (wrap)"
+      ],
+      [
+       5418,
+       63,
+       "Adjust"
+      ],
+      [
+       5419,
+       67,
+       "Adjust the"
+      ],
+      [
+       5420,
+       73,
+       "…layou"
+      ],
+      [
+       5421,
+       77,
+       "…layout so"
+      ],
+      [
+       5422,
+       81,
+       "…so the"
+      ],
+      [
+       5423,
+       86,
+       "…text"
+      ],
+      [
+       5424,
+       90,
+       "…text and"
+      ],
+      [
+       5425,
+       95,
+       "…prod"
+      ],
+      [
+       5426,
+       100,
+       "…product s"
+      ],
+      [
+       5427,
+       103,
+       "…stay"
+      ],
+      [
+       5428,
+       109,
+       "…fully"
+      ],
+      [
+       5429,
+       113,
+       "…vis"
+      ],
+      [
+       5430,
+       117,
+       "…visible"
+      ],
+      [
+       5431,
+       118,
+       "…visible. (complete)"
+      ]
+     ],
+     "rate_chars_per_frame": 4.33,
+     "pattern": "steady 4-6 chars/frame (≈104 cps), no pauses; wraps to line 2 at 5417; bar grows by one line height (button cy 546→557 over 5414-5421, i.e. bar centred and grows ±11 px)"
+    },
+    "cursor": {
+     "note": "appears lower-right 5419 while still typing, reaches button 5424"
+    },
+    "click": {
+     "button_w": {
+      "5427": 54,
+      "5428": 50,
+      "5429": 48,
+      "5430": 49,
+      "5431": 52,
+      "5432": 54
+     },
+     "press": "scale 1→0.89 over 2 f, back over 3 f (5428-5432)"
+    },
+    "slide_down": {
+     "frames": "5452-5470",
+     "note": "after a 20-f hold the bar slides to the bottom (cy 557→961, +404 px), motion-blurred mid-move, slight leftward shift (cx 1538→1518 5465-5471) — bar narrows ~40 px",
+     "button_cy": {
+      "5452": 557.4,
+      "5453": 565.5,
+      "5454": 587.6,
+      "5455": 626.3,
+      "5456": 678.3,
+      "5457": 732.6,
+      "5458": 782.0,
+      "5459": 822.2,
+      "5460": 855.1,
+      "5461": 881.7,
+      "5462": 902.7,
+      "5463": 919.6,
+      "5464": 932.9,
+      "5465": 943.1,
+      "5466": 950.4,
+      "5467": 955.7,
+      "5468": 959.0,
+      "5469": 960.5,
+      "5470": 960.9
+     },
+     "fit": {
+      "bezier": [
+       0.312,
+       0.091,
+       0.219,
+       1.006
+      ],
+      "t0": 5452,
+      "t1": 5470,
+      "v0": 557.1,
+      "v1": 960.9,
+      "rms": 1.112,
+      "residuals": [
+       [
+        5452.0,
+        0.3
+       ],
+       [
+        5453.0,
+        -2.6
+       ],
+       [
+        5454.0,
+        -2.64
+       ],
+       [
+        5455.0,
+        -0.28
+       ],
+       [
+        5456.0,
+        1.95
+       ],
+       [
+        5457.0,
+        1.39
+       ],
+       [
+        5458.0,
+        0.67
+       ],
+       [
+        5459.0,
+        -0.61
+       ],
+       [
+        5460.0,
+        -0.9
+       ],
+       [
+        5461.0,
+        -0.63
+       ],
+       [
+        5462.0,
+        -0.47
+       ],
+       [
+        5463.0,
+        -0.02
+       ],
+       [
+        5464.0,
+        0.42
+       ],
+       [
+        5465.0,
+        0.72
+       ],
+       [
+        5466.0,
+        0.6
+       ],
+       [
+        5467.0,
+        0.61
+       ],
+       [
+        5468.0,
+        0.44
+       ],
+       [
+        5469.0,
+        0.07
+       ],
+       [
+        5470.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        5452,
+        557.4
+       ],
+       [
+        5453,
+        565.5
+       ],
+       [
+        5454,
+        587.6
+       ],
+       [
+        5455,
+        626.3
+       ],
+       [
+        5456,
+        678.3
+       ],
+       [
+        5457,
+        732.6
+       ],
+       [
+        5458,
+        782.0
+       ],
+       [
+        5459,
+        822.2
+       ],
+       [
+        5460,
+        855.1
+       ],
+       [
+        5461,
+        881.7
+       ],
+       [
+        5462,
+        902.7
+       ],
+       [
+        5463,
+        919.6
+       ],
+       [
+        5464,
+        932.9
+       ],
+       [
+        5465,
+        943.1
+       ],
+       [
+        5466,
+        950.4
+       ],
+       [
+        5467,
+        955.7
+       ],
+       [
+        5468,
+        959.0
+       ],
+       [
+        5469,
+        960.5
+       ],
+       [
+        5470,
+        960.9
+       ]
+      ]
+     }
+    },
+    "result_cards": {
+     "layout": "5 squares 304x304 px, pitch 350 px (x0 = 108, 458, 807, 1157, 1508), top y=358 settled",
+     "stagger_frames": 2,
+     "first_visible": [
+      5456,
+      5458,
+      5460,
+      5462,
+      5464
+     ],
+     "per_card": "fade from dark to pink (#F62397 family; mid-transition samples #471630→#86265b→#b7357d→#d34995) in 4 f, rise 47 px (top 405→358) over ~14 f, then cross-fade pink→ad image over 6 f starting ≈4 f after first visible",
+     "fit_rise": {
+      "bezier": [
+       0.212,
+       -0.097,
+       0.266,
+       0.972
+      ],
+      "t0": 5455,
+      "t1": 5470,
+      "v0": 405,
+      "v1": 358,
+      "rms": 0.342,
+      "residuals": [
+       [
+        5456.0,
+        0.39
+       ],
+       [
+        5457.0,
+        -0.56
+       ],
+       [
+        5458.0,
+        0.84
+       ],
+       [
+        5459.0,
+        -0.31
+       ],
+       [
+        5460.0,
+        -0.11
+       ],
+       [
+        5461.0,
+        0.16
+       ],
+       [
+        5462.0,
+        -0.48
+       ],
+       [
+        5463.0,
+        0.07
+       ],
+       [
+        5464.0,
+        -0.07
+       ],
+       [
+        5465.0,
+        0.19
+       ],
+       [
+        5466.0,
+        -0.05
+       ],
+       [
+        5467.0,
+        0.25
+       ],
+       [
+        5468.0,
+        0.17
+       ],
+       [
+        5469.0,
+        -0.26
+       ],
+       [
+        5470.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        5456,
+        405
+       ],
+       [
+        5457,
+        400
+       ],
+       [
+        5458,
+        395
+       ],
+       [
+        5459,
+        387
+       ],
+       [
+        5460,
+        381
+       ],
+       [
+        5461,
+        376
+       ],
+       [
+        5462,
+        371
+       ],
+       [
+        5463,
+        368
+       ],
+       [
+        5464,
+        365
+       ],
+       [
+        5465,
+        363
+       ],
+       [
+        5466,
+        361
+       ],
+       [
+        5467,
+        360
+       ],
+       [
+        5468,
+        359
+       ],
+       [
+        5469,
+        358
+       ],
+       [
+        5470,
+        358
+       ]
+      ]
+     }
+    },
+    "expand_9x16": {
+     "frames": "5520-5550",
+     "note": "each card flashes to solid pink #F62397 in 2 f (staggered 2 f: 5521,5523,5525,5527,5529), then grows from 304x304 to ~287x~510 (top 357→257, ≈symmetric about centre y≈510), width shrinking 307→287, then cross-fades pink→9:16 image over ~6 f (card1 5537-5543)",
+     "fit_top": {
+      "bezier": [
+       0.628,
+       0.169,
+       0.344,
+       0.894
+      ],
+      "t0": 5524,
+      "t1": 5542,
+      "v0": 357,
+      "v1": 257,
+      "rms": 0.454,
+      "residuals": [
+       [
+        5525.0,
+        -0.28
+       ],
+       [
+        5526.0,
+        -0.05
+       ],
+       [
+        5527.0,
+        0.83
+       ],
+       [
+        5528.0,
+        0.56
+       ],
+       [
+        5529.0,
+        0.41
+       ],
+       [
+        5530.0,
+        -0.18
+       ],
+       [
+        5531.0,
+        -0.6
+       ],
+       [
+        5532.0,
+        -0.32
+       ],
+       [
+        5533.0,
+        -0.13
+       ],
+       [
+        5534.0,
+        0.12
+       ],
+       [
+        5535.0,
+        0.59
+       ],
+       [
+        5536.0,
+        0.52
+       ],
+       [
+        5537.0,
+        -0.38
+       ],
+       [
+        5538.0,
+        0.41
+       ],
+       [
+        5539.0,
+        -0.76
+       ],
+       [
+        5540.0,
+        -0.64
+       ],
+       [
+        5541.0,
+        -0.1
+       ],
+       [
+        5542.0,
+        -0.0
+       ]
+      ],
+      "samples": [
+       [
+        5525,
+        355
+       ],
+       [
+        5526,
+        353
+       ],
+       [
+        5527,
+        351
+       ],
+       [
+        5528,
+        347
+       ],
+       [
+        5529,
+        342
+       ],
+       [
+        5530,
+        335
+       ],
+       [
+        5531,
+        326
+       ],
+       [
+        5532,
+        315
+       ],
+       [
+        5533,
+        302
+       ],
+       [
+        5534,
+        290
+       ],
+       [
+        5535,
+        281
+       ],
+       [
+        5536,
+        274
+       ],
+       [
+        5537,
+        268
+       ],
+       [
+        5538,
+        265
+       ],
+       [
+        5539,
+        261
+       ],
+       [
+        5540,
+        259
+       ],
+       [
+        5541,
+        258
+       ],
+       [
+        5542,
+        257
+       ]
+      ]
+     }
+    },
+    "exit": {
+     "frames": "5642-5646",
+     "note": "bar drops +18 px and fades in 4 f (cy 961→979); cards stay until cut 5653"
+    }
+   },
+   {
+    "id": "P4",
+    "time": "6:47.1",
+    "frames": "9770-9942 over camera A (cut-in 9761) — survives the cut to B at 9939 for 2 f",
+    "context": "box 1200x353 (x 360-1559, y 672-1025) with attachment thumbnail",
+    "text": "Analyze which of my creatives perform best and why, then create more variations around the winners.",
+    "chars": 100,
+    "entrance": {
+     "frames": "9770-9783",
+     "note": "LAPTOP MORPH: the laptop lid darkens to #202020 (9770-9772) and that rectangle grows into the box (left 515→360, right 1403→1559, top 721→672, bottom 995→1025); controls fade in 9778, attachment 9784-9786",
+     "rect_per_frame": {
+      "9773": [
+       515,
+       721,
+       1403,
+       995
+      ],
+      "9774": [
+       496,
+       714,
+       1419,
+       997
+      ],
+      "9775": [
+       448,
+       700,
+       1461,
+       1005
+      ],
+      "9776": [
+       413,
+       688,
+       1501,
+       1015
+      ],
+      "9777": [
+       391,
+       680,
+       1523,
+       1019
+      ],
+      "9778": [
+       376,
+       675,
+       1540,
+       1021
+      ],
+      "9779": [
+       368,
+       672,
+       1549,
+       1021
+      ],
+      "9780": [
+       363,
+       672,
+       1555,
+       1023
+      ],
+      "9781": [
+       361,
+       670,
+       1555,
+       1023
+      ],
+      "9782": [
+       360,
+       672,
+       1559,
+       1023
+      ]
+     },
+     "fit_width": {
+      "bezier": [
+       0.35,
+       -0.013,
+       0.1,
+       0.975
+      ],
+      "t0": 9772.5,
+      "t1": 9782,
+      "v0": 888,
+      "v1": 1199,
+      "rms": 1.781,
+      "residuals": [
+       [
+        9773.0,
+        -2.08
+       ],
+       [
+        9774.0,
+        1.63
+       ],
+       [
+        9775.0,
+        0.96
+       ],
+       [
+        9776.0,
+        -1.79
+       ],
+       [
+        9777.0,
+        -2.69
+       ],
+       [
+        9778.0,
+        1.74
+       ],
+       [
+        9779.0,
+        1.27
+       ],
+       [
+        9780.0,
+        1.47
+       ],
+       [
+        9781.0,
+        -2.57
+       ],
+       [
+        9782.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        9773,
+        888
+       ],
+       [
+        9774,
+        923
+       ],
+       [
+        9775,
+        1013
+       ],
+       [
+        9776,
+        1088
+       ],
+       [
+        9777,
+        1132
+       ],
+       [
+        9778,
+        1164
+       ],
+       [
+        9779,
+        1181
+       ],
+       [
+        9780,
+        1192
+       ],
+       [
+        9781,
+        1194
+       ],
+       [
+        9782,
+        1199
+       ]
+      ]
+     }
+    },
+    "typing": {
+     "per_frame": [
+      {
+       "frame": 9787,
+       "chars_approx": 0,
+       "line1_right_x": 0,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9788,
+       "chars_approx": 1,
+       "line1_right_x": 400,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9789,
+       "chars_approx": 2,
+       "line1_right_x": 414,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9790,
+       "chars_approx": 3,
+       "line1_right_x": 428,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9791,
+       "chars_approx": 4,
+       "line1_right_x": 434,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9792,
+       "chars_approx": 5,
+       "line1_right_x": 448,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9793,
+       "chars_approx": 6,
+       "line1_right_x": 462,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9794,
+       "chars_approx": 7,
+       "line1_right_x": 476,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9795,
+       "chars_approx": 7,
+       "line1_right_x": 476,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9796,
+       "chars_approx": 10,
+       "line1_right_x": 503,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9797,
+       "chars_approx": 11,
+       "line1_right_x": 517,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9798,
+       "chars_approx": 11,
+       "line1_right_x": 523,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9799,
+       "chars_approx": 12,
+       "line1_right_x": 537,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9800,
+       "chars_approx": 14,
+       "line1_right_x": 552,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9801,
+       "chars_approx": 14,
+       "line1_right_x": 552,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9802,
+       "chars_approx": 14,
+       "line1_right_x": 552,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9803,
+       "chars_approx": 16,
+       "line1_right_x": 575,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9804,
+       "chars_approx": 16,
+       "line1_right_x": 584,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9805,
+       "chars_approx": 16,
+       "line1_right_x": 584,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9806,
+       "chars_approx": 19,
+       "line1_right_x": 612,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9807,
+       "chars_approx": 20,
+       "line1_right_x": 626,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9808,
+       "chars_approx": 20,
+       "line1_right_x": 626,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9809,
+       "chars_approx": 21,
+       "line1_right_x": 647,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9810,
+       "chars_approx": 22,
+       "line1_right_x": 657,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9811,
+       "chars_approx": 23,
+       "line1_right_x": 670,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9812,
+       "chars_approx": 25,
+       "line1_right_x": 684,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9813,
+       "chars_approx": 25,
+       "line1_right_x": 694,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9814,
+       "chars_approx": 26,
+       "line1_right_x": 699,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9815,
+       "chars_approx": 27,
+       "line1_right_x": 713,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9816,
+       "chars_approx": 28,
+       "line1_right_x": 727,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9817,
+       "chars_approx": 29,
+       "line1_right_x": 740,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9818,
+       "chars_approx": 29,
+       "line1_right_x": 740,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9819,
+       "chars_approx": 31,
+       "line1_right_x": 762,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9820,
+       "chars_approx": 32,
+       "line1_right_x": 777,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9821,
+       "chars_approx": 33,
+       "line1_right_x": 783,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9822,
+       "chars_approx": 34,
+       "line1_right_x": 793,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9823,
+       "chars_approx": 34,
+       "line1_right_x": 797,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9824,
+       "chars_approx": 35,
+       "line1_right_x": 811,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9825,
+       "chars_approx": 36,
+       "line1_right_x": 821,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9826,
+       "chars_approx": 37,
+       "line1_right_x": 841,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9827,
+       "chars_approx": 37,
+       "line1_right_x": 841,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9828,
+       "chars_approx": 39,
+       "line1_right_x": 864,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9829,
+       "chars_approx": 41,
+       "line1_right_x": 879,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9830,
+       "chars_approx": 42,
+       "line1_right_x": 892,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9831,
+       "chars_approx": 42,
+       "line1_right_x": 901,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9832,
+       "chars_approx": 42,
+       "line1_right_x": 901,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9833,
+       "chars_approx": 44,
+       "line1_right_x": 922,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9834,
+       "chars_approx": 45,
+       "line1_right_x": 936,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9835,
+       "chars_approx": 47,
+       "line1_right_x": 951,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9836,
+       "chars_approx": 47,
+       "line1_right_x": 951,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9837,
+       "chars_approx": 49,
+       "line1_right_x": 980,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9838,
+       "chars_approx": 50,
+       "line1_right_x": 994,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9839,
+       "chars_approx": 51,
+       "line1_right_x": 1007,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9840,
+       "chars_approx": 52,
+       "line1_right_x": 1012,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9841,
+       "chars_approx": 52,
+       "line1_right_x": 1013,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9842,
+       "chars_approx": 53,
+       "line1_right_x": 1027,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9843,
+       "chars_approx": 53,
+       "line1_right_x": 1030,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9844,
+       "chars_approx": 54,
+       "line1_right_x": 1045,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9845,
+       "chars_approx": 55,
+       "line1_right_x": 1060,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9846,
+       "chars_approx": 57,
+       "line1_right_x": 1074,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9847,
+       "chars_approx": 57,
+       "line1_right_x": 1074,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9848,
+       "chars_approx": 58,
+       "line1_right_x": 1095,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9849,
+       "chars_approx": 59,
+       "line1_right_x": 1105,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9850,
+       "chars_approx": 60,
+       "line1_right_x": 1119,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9851,
+       "chars_approx": 61,
+       "line1_right_x": 1132,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9852,
+       "chars_approx": 62,
+       "line1_right_x": 1142,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9853,
+       "chars_approx": 63,
+       "line1_right_x": 1156,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9854,
+       "chars_approx": 63,
+       "line1_right_x": 1156,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9855,
+       "chars_approx": 66,
+       "line1_right_x": 1185,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9856,
+       "chars_approx": 67,
+       "line1_right_x": 1200,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9857,
+       "chars_approx": 68,
+       "line1_right_x": 1210,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9858,
+       "chars_approx": 69,
+       "line1_right_x": 1223,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 9859,
+       "chars_approx": 71,
+       "line1_right_x": 1224,
+       "line2_right_x": 396
+      },
+      {
+       "frame": 9860,
+       "chars_approx": 72,
+       "line1_right_x": 1224,
+       "line2_right_x": 409
+      },
+      {
+       "frame": 9861,
+       "chars_approx": 73,
+       "line1_right_x": 1224,
+       "line2_right_x": 416
+      },
+      {
+       "frame": 9862,
+       "chars_approx": 73,
+       "line1_right_x": 1224,
+       "line2_right_x": 420
+      },
+      {
+       "frame": 9863,
+       "chars_approx": 73,
+       "line1_right_x": 1224,
+       "line2_right_x": 425
+      },
+      {
+       "frame": 9864,
+       "chars_approx": 75,
+       "line1_right_x": 1224,
+       "line2_right_x": 439
+      },
+      {
+       "frame": 9865,
+       "chars_approx": 75,
+       "line1_right_x": 1224,
+       "line2_right_x": 449
+      },
+      {
+       "frame": 9866,
+       "chars_approx": 76,
+       "line1_right_x": 1224,
+       "line2_right_x": 454
+      },
+      {
+       "frame": 9867,
+       "chars_approx": 77,
+       "line1_right_x": 1224,
+       "line2_right_x": 470
+      },
+      {
+       "frame": 9868,
+       "chars_approx": 78,
+       "line1_right_x": 1224,
+       "line2_right_x": 484
+      },
+      {
+       "frame": 9869,
+       "chars_approx": 79,
+       "line1_right_x": 1224,
+       "line2_right_x": 497
+      },
+      {
+       "frame": 9870,
+       "chars_approx": 79,
+       "line1_right_x": 1224,
+       "line2_right_x": 497
+      },
+      {
+       "frame": 9871,
+       "chars_approx": 81,
+       "line1_right_x": 1224,
+       "line2_right_x": 518
+      },
+      {
+       "frame": 9872,
+       "chars_approx": 82,
+       "line1_right_x": 1224,
+       "line2_right_x": 528
+      },
+      {
+       "frame": 9873,
+       "chars_approx": 83,
+       "line1_right_x": 1224,
+       "line2_right_x": 542
+      },
+      {
+       "frame": 9874,
+       "chars_approx": 84,
+       "line1_right_x": 1224,
+       "line2_right_x": 556
+      },
+      {
+       "frame": 9875,
+       "chars_approx": 86,
+       "line1_right_x": 1224,
+       "line2_right_x": 571
+      },
+      {
+       "frame": 9876,
+       "chars_approx": 87,
+       "line1_right_x": 1224,
+       "line2_right_x": 586
+      },
+      {
+       "frame": 9877,
+       "chars_approx": 87,
+       "line1_right_x": 1224,
+       "line2_right_x": 586
+      },
+      {
+       "frame": 9878,
+       "chars_approx": 88,
+       "line1_right_x": 1224,
+       "line2_right_x": 603
+      },
+      {
+       "frame": 9879,
+       "chars_approx": 90,
+       "line1_right_x": 1224,
+       "line2_right_x": 617
+      },
+      {
+       "frame": 9880,
+       "chars_approx": 91,
+       "line1_right_x": 1224,
+       "line2_right_x": 632
+      },
+      {
+       "frame": 9881,
+       "chars_approx": 91,
+       "line1_right_x": 1224,
+       "line2_right_x": 633
+      },
+      {
+       "frame": 9882,
+       "chars_approx": 91,
+       "line1_right_x": 1224,
+       "line2_right_x": 633
+      },
+      {
+       "frame": 9883,
+       "chars_approx": 93,
+       "line1_right_x": 1224,
+       "line2_right_x": 660
+      },
+      {
+       "frame": 9884,
+       "chars_approx": 94,
+       "line1_right_x": 1224,
+       "line2_right_x": 666
+      },
+      {
+       "frame": 9885,
+       "chars_approx": 95,
+       "line1_right_x": 1224,
+       "line2_right_x": 680
+      },
+      {
+       "frame": 9886,
+       "chars_approx": 96,
+       "line1_right_x": 1224,
+       "line2_right_x": 694
+      },
+      {
+       "frame": 9887,
+       "chars_approx": 98,
+       "line1_right_x": 1224,
+       "line2_right_x": 710
+      },
+      {
+       "frame": 9888,
+       "chars_approx": 98,
+       "line1_right_x": 1224,
+       "line2_right_x": 720
+      },
+      {
+       "frame": 9889,
+       "chars_approx": 99,
+       "line1_right_x": 1224,
+       "line2_right_x": 732
+      },
+      {
+       "frame": 9890,
+       "chars_approx": 100,
+       "line1_right_x": 1224,
+       "line2_right_x": 738
+      }
+     ],
+     "rate_chars_per_frame": 0.97,
+     "pattern": "exactly ~1 char per frame INCLUDING spaces (space frames show no new ink: 9795, 9801-9802, 9805, 9808…); new glyph fades in over ~2 f; line 2 starts 9859; done 9890 (103 f for 100 chars)"
+    },
+    "resize": {
+     "frames": "9886-9893",
+     "note": "button cy 987→971 (-16 px), box shrinks to y 690-1009 — layout settle after typing ends; confidence low on cause"
+    },
+    "cursor": {
+     "note": "visible lower-right by 9905, arrives on button 9913; no press animation seen"
+    },
+    "exit": {
+     "frames": "9939-9942",
+     "note": "box holds through the cut to B (9939, 9940), fades ≈0.5 (9941), ≈0.2 (9942), gone 9943 — no motion"
+    }
+   },
+   {
+    "id": "P5",
+    "time": "9:13.0",
+    "frames": "13270-13399 over camera A (cut-in 13240, cut-out 13400)",
+    "context": "box 1200 wide, x 360-1559, y ≈795-955 after wrap",
+    "text": "Make three new versions for this audience. Change the hook.\\nKeep the offer and the rest of the ad consistent.",
+    "chars": 110,
+    "entrance": {
+     "frames": "13270-13273",
+     "opacity": {
+      "13270": 0.27,
+      "13271": 0.49,
+      "13272": 0.75,
+      "13273": 1.0
+     },
+     "note": "pure 4-f fade, ≤1.5 px motion",
+     "fit": {
+      "bezier": [
+       0.312,
+       0.4,
+       0.041,
+       0.0
+      ],
+      "t0": 13269,
+      "t1": 13273,
+      "v0": 0,
+      "v1": 1,
+      "rms": 0.004,
+      "residuals": [
+       [
+        13270.0,
+        0.0
+       ],
+       [
+        13271.0,
+        -0.0
+       ],
+       [
+        13272.0,
+        0.01
+       ],
+       [
+        13273.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        13270,
+        0.27
+       ],
+       [
+        13271,
+        0.49
+       ],
+       [
+        13272,
+        0.75
+       ],
+       [
+        13273,
+        1.0
+       ]
+      ]
+     }
+    },
+    "typing": {
+     "per_frame": [
+      {
+       "frame": 13272,
+       "chars_approx": 1,
+       "line1_right_x": 404,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13273,
+       "chars_approx": 3,
+       "line1_right_x": 426,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13274,
+       "chars_approx": 5,
+       "line1_right_x": 447,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13275,
+       "chars_approx": 9,
+       "line1_right_x": 492,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13276,
+       "chars_approx": 11,
+       "line1_right_x": 516,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13277,
+       "chars_approx": 12,
+       "line1_right_x": 537,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13278,
+       "chars_approx": 15,
+       "line1_right_x": 572,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13279,
+       "chars_approx": 15,
+       "line1_right_x": 572,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13280,
+       "chars_approx": 18,
+       "line1_right_x": 607,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13281,
+       "chars_approx": 20,
+       "line1_right_x": 630,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13282,
+       "chars_approx": 20,
+       "line1_right_x": 635,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13283,
+       "chars_approx": 23,
+       "line1_right_x": 665,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13284,
+       "chars_approx": 24,
+       "line1_right_x": 678,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13285,
+       "chars_approx": 25,
+       "line1_right_x": 695,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13286,
+       "chars_approx": 27,
+       "line1_right_x": 719,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13287,
+       "chars_approx": 29,
+       "line1_right_x": 734,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13288,
+       "chars_approx": 30,
+       "line1_right_x": 748,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13289,
+       "chars_approx": 31,
+       "line1_right_x": 768,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13290,
+       "chars_approx": 33,
+       "line1_right_x": 789,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13291,
+       "chars_approx": 34,
+       "line1_right_x": 803,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13292,
+       "chars_approx": 36,
+       "line1_right_x": 825,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13293,
+       "chars_approx": 38,
+       "line1_right_x": 854,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13294,
+       "chars_approx": 41,
+       "line1_right_x": 883,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13295,
+       "chars_approx": 41,
+       "line1_right_x": 889,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13296,
+       "chars_approx": 43,
+       "line1_right_x": 915,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13297,
+       "chars_approx": 46,
+       "line1_right_x": 943,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13298,
+       "chars_approx": 47,
+       "line1_right_x": 958,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13299,
+       "chars_approx": 49,
+       "line1_right_x": 988,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13300,
+       "chars_approx": 51,
+       "line1_right_x": 1005,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13301,
+       "chars_approx": 52,
+       "line1_right_x": 1019,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13302,
+       "chars_approx": 53,
+       "line1_right_x": 1034,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13303,
+       "chars_approx": 56,
+       "line1_right_x": 1071,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13304,
+       "chars_approx": 57,
+       "line1_right_x": 1086,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13305,
+       "chars_approx": 59,
+       "line1_right_x": 1106,
+       "line2_right_x": 0
+      },
+      {
+       "frame": 13306,
+       "chars_approx": 61,
+       "line1_right_x": 1106,
+       "line2_right_x": 399
+      },
+      {
+       "frame": 13307,
+       "chars_approx": 62,
+       "line1_right_x": 1106,
+       "line2_right_x": 413
+      },
+      {
+       "frame": 13308,
+       "chars_approx": 65,
+       "line1_right_x": 1106,
+       "line2_right_x": 442
+      },
+      {
+       "frame": 13309,
+       "chars_approx": 66,
+       "line1_right_x": 1106,
+       "line2_right_x": 459
+      },
+      {
+       "frame": 13310,
+       "chars_approx": 68,
+       "line1_right_x": 1106,
+       "line2_right_x": 473
+      },
+      {
+       "frame": 13311,
+       "chars_approx": 69,
+       "line1_right_x": 1106,
+       "line2_right_x": 488
+      },
+      {
+       "frame": 13312,
+       "chars_approx": 72,
+       "line1_right_x": 1106,
+       "line2_right_x": 520
+      },
+      {
+       "frame": 13313,
+       "chars_approx": 74,
+       "line1_right_x": 1106,
+       "line2_right_x": 542
+      },
+      {
+       "frame": 13314,
+       "chars_approx": 75,
+       "line1_right_x": 1106,
+       "line2_right_x": 552
+      },
+      {
+       "frame": 13315,
+       "chars_approx": 76,
+       "line1_right_x": 1106,
+       "line2_right_x": 572
+      },
+      {
+       "frame": 13316,
+       "chars_approx": 79,
+       "line1_right_x": 1106,
+       "line2_right_x": 602
+      },
+      {
+       "frame": 13317,
+       "chars_approx": 79,
+       "line1_right_x": 1106,
+       "line2_right_x": 602
+      },
+      {
+       "frame": 13318,
+       "chars_approx": 82,
+       "line1_right_x": 1106,
+       "line2_right_x": 633
+      },
+      {
+       "frame": 13319,
+       "chars_approx": 83,
+       "line1_right_x": 1106,
+       "line2_right_x": 648
+      },
+      {
+       "frame": 13320,
+       "chars_approx": 85,
+       "line1_right_x": 1106,
+       "line2_right_x": 665
+      },
+      {
+       "frame": 13321,
+       "chars_approx": 87,
+       "line1_right_x": 1106,
+       "line2_right_x": 692
+      },
+      {
+       "frame": 13322,
+       "chars_approx": 88,
+       "line1_right_x": 1106,
+       "line2_right_x": 701
+      },
+      {
+       "frame": 13323,
+       "chars_approx": 90,
+       "line1_right_x": 1106,
+       "line2_right_x": 723
+      },
+      {
+       "frame": 13324,
+       "chars_approx": 91,
+       "line1_right_x": 1106,
+       "line2_right_x": 733
+      },
+      {
+       "frame": 13325,
+       "chars_approx": 93,
+       "line1_right_x": 1106,
+       "line2_right_x": 762
+      },
+      {
+       "frame": 13326,
+       "chars_approx": 95,
+       "line1_right_x": 1106,
+       "line2_right_x": 778
+      },
+      {
+       "frame": 13327,
+       "chars_approx": 97,
+       "line1_right_x": 1106,
+       "line2_right_x": 798
+      },
+      {
+       "frame": 13328,
+       "chars_approx": 98,
+       "line1_right_x": 1106,
+       "line2_right_x": 813
+      },
+      {
+       "frame": 13329,
+       "chars_approx": 100,
+       "line1_right_x": 1106,
+       "line2_right_x": 835
+      },
+      {
+       "frame": 13330,
+       "chars_approx": 102,
+       "line1_right_x": 1106,
+       "line2_right_x": 864
+      },
+      {
+       "frame": 13331,
+       "chars_approx": 104,
+       "line1_right_x": 1106,
+       "line2_right_x": 884
+      },
+      {
+       "frame": 13332,
+       "chars_approx": 105,
+       "line1_right_x": 1106,
+       "line2_right_x": 897
+      },
+      {
+       "frame": 13333,
+       "chars_approx": 107,
+       "line1_right_x": 1106,
+       "line2_right_x": 920
+      },
+      {
+       "frame": 13334,
+       "chars_approx": 109,
+       "line1_right_x": 1106,
+       "line2_right_x": 944
+      }
+     ],
+     "rate_chars_per_frame": 1.74,
+     "pattern": "≈1.7 chars/frame steady, short holds at word ends (13278-79, 13316-17); line 2 starts 13306 with the box growing 1 line (button cy 903.6→915.7 over 13305-13311); done 13334"
+    },
+    "cursor": {
+     "note": "enters lower-right 13346, settles on button 13356; no press seen"
+    },
+    "exit": {
+     "frames": "13396-13399",
+     "opacity": {
+      "13396": 0.93,
+      "13397": 0.72,
+      "13398": 0.48,
+      "13399": 0.3
+     },
+     "note": "fade starts 4 f before the cut at 13400 and is cut off at 0.30",
+     "fit": {
+      "bezier": [
+       0.409,
+       0.109,
+       0.15,
+       0.312
+      ],
+      "t0": 13395,
+      "t1": 13401,
+      "v0": 1,
+      "v1": 0,
+      "rms": 0.002,
+      "residuals": [
+       [
+        13396.0,
+        0.0
+       ],
+       [
+        13397.0,
+        0.0
+       ],
+       [
+        13398.0,
+        -0.0
+       ],
+       [
+        13399.0,
+        0.0
+       ]
+      ],
+      "samples": [
+       [
+        13396,
+        0.93
+       ],
+       [
+        13397,
+        0.72
+       ],
+       [
+        13398,
+        0.48
+       ],
+       [
+        13399,
+        0.3
+       ]
+      ]
+     }
+    }
+   }
+  ],
+  "typing_summary": {
+   "P1": {
+    "chars": 35,
+    "frames": 28,
+    "cpf": 1.25
+   },
+   "P3": {
+    "chars": 118,
+    "frames": 28,
+    "cpf": 4.3
+   },
+   "P4": {
+    "chars": 100,
+    "frames": 103,
+    "cpf": 0.97
+   },
+   "P5": {
+    "chars": 110,
+    "frames": 63,
+    "cpf": 1.74
+   },
+   "note": "no single constant rate: full-screen showcase bars (P1, P3) type in a fixed ~28 f (1.17 s) regardless of length; overlay bars over the presenter (P4, P5) type at 1-1.75 char/frame, i.e. paced to speech. Linear in time (no ease) in all four."
+  },
+  "typing_sfx": {
+   "finding": "HF (>6 kHz) transient rate during typing windows 17-23 /s with median inter-onset 36-42 ms (≈ one click per video frame) vs 5.5-19.5 /s (median ~10/s) in 7 non-typing control windows → consistent with a keyboard-clatter SFX bed at ~24 clicks/s that is NOT locked 1:1 to characters (P3 types 4.3 chars/f but clicks stay ~17/s)",
+   "confidence": "low-medium: voice sibilants also make HF onsets; controls at 60 s and 541.7 s are as busy. A clean stem or listening test would settle it."
+  }
+ },
+ "B_camera": {
+  "framings": {
+   "A": "frontal MCU behind silver laptop, S-mural left (ref frame 322)",
+   "W": "wide 3/4 from presenter's right showing room, sofa left, window right (ref 4390)",
+   "B": "45° side close-up, presenter facing frame-right, window/city behind (ref 4458)",
+   "note": "Three locked framings, not two cameras + punch-ins: none of A/W/B is a crop of another (best NCC of gradient images across framings ≈0.2 = noise level vs 0.55-0.75 within a framing; visual check cmpB.jpg). Every camera shot of a framing registers to its reference at scale exactly 1.00 ±0.004 with zero shift (fine search 0.96-1.06 step 0.004 on 11 long shots) → tripod-locked, no handheld drift, no slow push."
+  },
+  "digital_punch_ins": {
+   "count": 1,
+   "instance": {
+    "frames": "331-341 inside A shot 314-377 (0:13.8)",
+    "scale_per_frame": {
+     "330": 1.0,
+     "331": 1.01,
+     "332": 1.14,
+     "333": 1.25,
+     "334": 1.32,
+     "335": 1.37,
+     "336": 1.41,
+     "337": 1.44,
+     "338": 1.46,
+     "339": 1.48,
+     "340": 1.49,
+     "341": 1.5,
+     "342": 1.5
+    },
+    "crop_centre_norm": "x 0.50, y 0.50→0.374 (moves up toward the face as it zooms)",
+    "note": "an ANIMATED zoom 1.0→1.5 over 10 f with motion blur on 332-333, then holds 1.5 until the cut at 377",
+    "fit": {
+     "bezier": [
+      0.194,
+      -0.013,
+      0.003,
+      0.813
+     ],
+     "t0": 330.5,
+     "t1": 341,
+     "v0": 1.0,
+     "v1": 1.5,
+     "rms": 0.002,
+     "residuals": [
+      [
+       331.0,
+       0.0
+      ],
+      [
+       332.0,
+       0.0
+      ],
+      [
+       333.0,
+       -0.0
+      ],
+      [
+       334.0,
+       -0.0
+      ],
+      [
+       335.0,
+       -0.0
+      ],
+      [
+       336.0,
+       0.0
+      ],
+      [
+       337.0,
+       0.0
+      ],
+      [
+       338.0,
+       0.0
+      ],
+      [
+       339.0,
+       0.0
+      ],
+      [
+       340.0,
+       0.0
+      ],
+      [
+       341.0,
+       0.0
+      ]
+     ],
+     "samples": [
+      [
+       330,
+       1.0
+      ],
+      [
+       331,
+       1.01
+      ],
+      [
+       332,
+       1.14
+      ],
+      [
+       333,
+       1.25
+      ],
+      [
+       334,
+       1.32
+      ],
+      [
+       335,
+       1.37
+      ],
+      [
+       336,
+       1.41
+      ],
+      [
+       337,
+       1.44
+      ],
+      [
+       338,
+       1.46
+      ],
+      [
+       339,
+       1.48
+      ],
+      [
+       340,
+       1.49
+      ],
+      [
+       341,
+       1.5
+      ],
+      [
+       342,
+       1.5
+      ]
+     ]
+    }
+   },
+   "scan": "2409 frames sampled every 4 f in every A/W/B shot against their reference at scale 1.0-1.6: all 1.00 except 3 frames at the head of segment 6576 that belong to the preceding vertical-video graphic (not a zoom), and the outro logo frames after 14717 → no other punch-ins in the video. Gemini's \"punch-in\" shots are the B (side close-up) camera."
+  },
+  "cut_detection": "ffmpeg scene score per frame (320x180), local-peak picking (score ≥0.06 and >4x local median), every peak checked on contact sheets; 202 raw peaks → 143 shots after merging peaks caused by graphics (e.g. 733 \"e-com\", 252 floating cards) and internal cuts inside screencasts/vertical videos. Weak-peak search (≥0.015) inside camera shots found no same-framing jump cuts — every cut changes framing.",
+  "shots": [
+   {
+    "start": 0,
+    "end": 209,
+    "start_tc": "0:00.00",
+    "dur_s": 8.71,
+    "cls": "MG"
+   },
+   {
+    "start": 209,
+    "end": 285,
+    "start_tc": "0:08.71",
+    "dur_s": 3.17,
+    "cls": "A"
+   },
+   {
+    "start": 285,
+    "end": 314,
+    "start_tc": "0:11.88",
+    "dur_s": 1.21,
+    "cls": "W"
+   },
+   {
+    "start": 314,
+    "end": 332,
+    "start_tc": "0:13.08",
+    "dur_s": 0.75,
+    "cls": "A"
+   },
+   {
+    "start": 332,
+    "end": 377,
+    "start_tc": "0:13.83",
+    "dur_s": 1.88,
+    "cls": "A*"
+   },
+   {
+    "start": 377,
+    "end": 496,
+    "start_tc": "0:15.71",
+    "dur_s": 4.96,
+    "cls": "BROLL"
+   },
+   {
+    "start": 496,
+    "end": 604,
+    "start_tc": "0:20.67",
+    "dur_s": 4.5,
+    "cls": "A"
+   },
+   {
+    "start": 604,
+    "end": 661,
+    "start_tc": "0:25.17",
+    "dur_s": 2.38,
+    "cls": "W"
+   },
+   {
+    "start": 661,
+    "end": 701,
+    "start_tc": "0:27.54",
+    "dur_s": 1.67,
+    "cls": "A"
+   },
+   {
+    "start": 701,
+    "end": 777,
+    "start_tc": "0:29.21",
+    "dur_s": 3.17,
+    "cls": "B"
+   },
+   {
+    "start": 777,
+    "end": 927,
+    "start_tc": "0:32.38",
+    "dur_s": 6.25,
+    "cls": "A"
+   },
+   {
+    "start": 927,
+    "end": 1010,
+    "start_tc": "0:38.62",
+    "dur_s": 3.46,
+    "cls": "W"
+   },
+   {
+    "start": 1010,
+    "end": 1045,
+    "start_tc": "0:42.08",
+    "dur_s": 1.46,
+    "cls": "B"
+   },
+   {
+    "start": 1045,
+    "end": 1259,
+    "start_tc": "0:43.54",
+    "dur_s": 8.92,
+    "cls": "MG"
+   },
+   {
+    "start": 1259,
+    "end": 1352,
+    "start_tc": "0:52.46",
+    "dur_s": 3.88,
+    "cls": "W"
+   },
+   {
+    "start": 1352,
+    "end": 1470,
+    "start_tc": "0:56.33",
+    "dur_s": 4.92,
+    "cls": "A"
+   },
+   {
+    "start": 1470,
+    "end": 1501,
+    "start_tc": "1:01.25",
+    "dur_s": 1.29,
+    "cls": "W"
+   },
+   {
+    "start": 1501,
+    "end": 1577,
+    "start_tc": "1:02.54",
+    "dur_s": 3.17,
+    "cls": "MG"
+   },
+   {
+    "start": 1577,
+    "end": 1631,
+    "start_tc": "1:05.71",
+    "dur_s": 2.25,
+    "cls": "B"
+   },
+   {
+    "start": 1631,
+    "end": 1686,
+    "start_tc": "1:07.96",
+    "dur_s": 2.29,
+    "cls": "MG"
+   },
+   {
+    "start": 1686,
+    "end": 1719,
+    "start_tc": "1:10.25",
+    "dur_s": 1.38,
+    "cls": "A"
+   },
+   {
+    "start": 1719,
+    "end": 1801,
+    "start_tc": "1:11.62",
+    "dur_s": 3.42,
+    "cls": "MG"
+   },
+   {
+    "start": 1801,
+    "end": 1906,
+    "start_tc": "1:15.04",
+    "dur_s": 4.38,
+    "cls": "B"
+   },
+   {
+    "start": 1906,
+    "end": 2025,
+    "start_tc": "1:19.42",
+    "dur_s": 4.96,
+    "cls": "A"
+   },
+   {
+    "start": 2025,
+    "end": 2114,
+    "start_tc": "1:24.38",
+    "dur_s": 3.71,
+    "cls": "B"
+   },
+   {
+    "start": 2114,
+    "end": 2298,
+    "start_tc": "1:28.08",
+    "dur_s": 7.67,
+    "cls": "SC"
+   },
+   {
+    "start": 2298,
+    "end": 2338,
+    "start_tc": "1:35.75",
+    "dur_s": 1.67,
+    "cls": "A"
+   },
+   {
+    "start": 2338,
+    "end": 2455,
+    "start_tc": "1:37.42",
+    "dur_s": 4.88,
+    "cls": "W"
+   },
+   {
+    "start": 2455,
+    "end": 2516,
+    "start_tc": "1:42.29",
+    "dur_s": 2.54,
+    "cls": "B"
+   },
+   {
+    "start": 2516,
+    "end": 2610,
+    "start_tc": "1:44.83",
+    "dur_s": 3.92,
+    "cls": "A"
+   },
+   {
+    "start": 2610,
+    "end": 2738,
+    "start_tc": "1:48.75",
+    "dur_s": 5.33,
+    "cls": "MG"
+   },
+   {
+    "start": 2738,
+    "end": 2825,
+    "start_tc": "1:54.08",
+    "dur_s": 3.62,
+    "cls": "B"
+   },
+   {
+    "start": 2825,
+    "end": 2867,
+    "start_tc": "1:57.71",
+    "dur_s": 1.75,
+    "cls": "W"
+   },
+   {
+    "start": 2867,
+    "end": 3083,
+    "start_tc": "1:59.46",
+    "dur_s": 9.0,
+    "cls": "SC"
+   },
+   {
+    "start": 3083,
+    "end": 3128,
+    "start_tc": "2:08.46",
+    "dur_s": 1.88,
+    "cls": "B"
+   },
+   {
+    "start": 3128,
+    "end": 3211,
+    "start_tc": "2:10.33",
+    "dur_s": 3.46,
+    "cls": "SC"
+   },
+   {
+    "start": 3211,
+    "end": 3240,
+    "start_tc": "2:13.79",
+    "dur_s": 1.21,
+    "cls": "B"
+   },
+   {
+    "start": 3240,
+    "end": 3600,
+    "start_tc": "2:15.00",
+    "dur_s": 15.0,
+    "cls": "MG"
+   },
+   {
+    "start": 3600,
+    "end": 3679,
+    "start_tc": "2:30.00",
+    "dur_s": 3.29,
+    "cls": "A"
+   },
+   {
+    "start": 3679,
+    "end": 3754,
+    "start_tc": "2:33.29",
+    "dur_s": 3.12,
+    "cls": "B"
+   },
+   {
+    "start": 3754,
+    "end": 3874,
+    "start_tc": "2:36.42",
+    "dur_s": 5.0,
+    "cls": "W"
+   },
+   {
+    "start": 3874,
+    "end": 4062,
+    "start_tc": "2:41.42",
+    "dur_s": 7.83,
+    "cls": "MG"
+   },
+   {
+    "start": 4062,
+    "end": 4174,
+    "start_tc": "2:49.25",
+    "dur_s": 4.67,
+    "cls": "W"
+   },
+   {
+    "start": 4174,
+    "end": 4353,
+    "start_tc": "2:53.92",
+    "dur_s": 7.46,
+    "cls": "SC"
+   },
+   {
+    "start": 4353,
+    "end": 4427,
+    "start_tc": "3:01.38",
+    "dur_s": 3.08,
+    "cls": "W"
+   },
+   {
+    "start": 4427,
+    "end": 4489,
+    "start_tc": "3:04.46",
+    "dur_s": 2.58,
+    "cls": "B"
+   },
+   {
+    "start": 4489,
+    "end": 4541,
+    "start_tc": "3:07.04",
+    "dur_s": 2.17,
+    "cls": "A"
+   },
+   {
+    "start": 4541,
+    "end": 4603,
+    "start_tc": "3:09.21",
+    "dur_s": 2.58,
+    "cls": "B"
+   },
+   {
+    "start": 4603,
+    "end": 4815,
+    "start_tc": "3:11.79",
+    "dur_s": 8.83,
+    "cls": "SC"
+   },
+   {
+    "start": 4815,
+    "end": 4916,
+    "start_tc": "3:20.62",
+    "dur_s": 4.21,
+    "cls": "A"
+   },
+   {
+    "start": 4916,
+    "end": 4971,
+    "start_tc": "3:24.83",
+    "dur_s": 2.29,
+    "cls": "B"
+   },
+   {
+    "start": 4971,
+    "end": 5032,
+    "start_tc": "3:27.12",
+    "dur_s": 2.54,
+    "cls": "MG"
+   },
+   {
+    "start": 5032,
+    "end": 5093,
+    "start_tc": "3:29.67",
+    "dur_s": 2.54,
+    "cls": "W"
+   },
+   {
+    "start": 5093,
+    "end": 5261,
+    "start_tc": "3:32.21",
+    "dur_s": 7.0,
+    "cls": "MG"
+   },
+   {
+    "start": 5261,
+    "end": 5306,
+    "start_tc": "3:39.21",
+    "dur_s": 1.88,
+    "cls": "W"
+   },
+   {
+    "start": 5306,
+    "end": 5400,
+    "start_tc": "3:41.08",
+    "dur_s": 3.92,
+    "cls": "A"
+   },
+   {
+    "start": 5400,
+    "end": 5653,
+    "start_tc": "3:45.00",
+    "dur_s": 10.54,
+    "cls": "MG"
+   },
+   {
+    "start": 5653,
+    "end": 5823,
+    "start_tc": "3:55.54",
+    "dur_s": 7.08,
+    "cls": "A"
+   },
+   {
+    "start": 5823,
+    "end": 5886,
+    "start_tc": "4:02.62",
+    "dur_s": 2.62,
+    "cls": "W"
+   },
+   {
+    "start": 5886,
+    "end": 5987,
+    "start_tc": "4:05.25",
+    "dur_s": 4.21,
+    "cls": "B"
+   },
+   {
+    "start": 5987,
+    "end": 6148,
+    "start_tc": "4:09.46",
+    "dur_s": 6.71,
+    "cls": "W"
+   },
+   {
+    "start": 6148,
+    "end": 6256,
+    "start_tc": "4:16.17",
+    "dur_s": 4.5,
+    "cls": "B"
+   },
+   {
+    "start": 6256,
+    "end": 6576,
+    "start_tc": "4:20.67",
+    "dur_s": 13.33,
+    "cls": "VID"
+   },
+   {
+    "start": 6576,
+    "end": 6747,
+    "start_tc": "4:34.00",
+    "dur_s": 7.12,
+    "cls": "W"
+   },
+   {
+    "start": 6747,
+    "end": 6820,
+    "start_tc": "4:41.12",
+    "dur_s": 3.04,
+    "cls": "A"
+   },
+   {
+    "start": 6820,
+    "end": 6879,
+    "start_tc": "4:44.17",
+    "dur_s": 2.46,
+    "cls": "B"
+   },
+   {
+    "start": 6879,
+    "end": 6936,
+    "start_tc": "4:46.62",
+    "dur_s": 2.38,
+    "cls": "A"
+   },
+   {
+    "start": 6936,
+    "end": 7005,
+    "start_tc": "4:49.00",
+    "dur_s": 2.88,
+    "cls": "B"
+   },
+   {
+    "start": 7005,
+    "end": 7232,
+    "start_tc": "4:51.88",
+    "dur_s": 9.46,
+    "cls": "MG"
+   },
+   {
+    "start": 7232,
+    "end": 7274,
+    "start_tc": "5:01.33",
+    "dur_s": 1.75,
+    "cls": "W"
+   },
+   {
+    "start": 7274,
+    "end": 7363,
+    "start_tc": "5:03.08",
+    "dur_s": 3.71,
+    "cls": "A"
+   },
+   {
+    "start": 7363,
+    "end": 7424,
+    "start_tc": "5:06.79",
+    "dur_s": 2.54,
+    "cls": "W"
+   },
+   {
+    "start": 7424,
+    "end": 7523,
+    "start_tc": "5:09.33",
+    "dur_s": 4.12,
+    "cls": "B"
+   },
+   {
+    "start": 7523,
+    "end": 7655,
+    "start_tc": "5:13.46",
+    "dur_s": 5.5,
+    "cls": "BROLL"
+   },
+   {
+    "start": 7655,
+    "end": 7702,
+    "start_tc": "5:18.96",
+    "dur_s": 1.96,
+    "cls": "A"
+   },
+   {
+    "start": 7702,
+    "end": 7753,
+    "start_tc": "5:20.92",
+    "dur_s": 2.12,
+    "cls": "B"
+   },
+   {
+    "start": 7753,
+    "end": 7884,
+    "start_tc": "5:23.04",
+    "dur_s": 5.46,
+    "cls": "A"
+   },
+   {
+    "start": 7884,
+    "end": 8089,
+    "start_tc": "5:28.50",
+    "dur_s": 8.54,
+    "cls": "SC"
+   },
+   {
+    "start": 8089,
+    "end": 8128,
+    "start_tc": "5:37.04",
+    "dur_s": 1.62,
+    "cls": "W"
+   },
+   {
+    "start": 8128,
+    "end": 8166,
+    "start_tc": "5:38.67",
+    "dur_s": 1.58,
+    "cls": "B"
+   },
+   {
+    "start": 8166,
+    "end": 8256,
+    "start_tc": "5:40.25",
+    "dur_s": 3.75,
+    "cls": "A"
+   },
+   {
+    "start": 8256,
+    "end": 8331,
+    "start_tc": "5:44.00",
+    "dur_s": 3.12,
+    "cls": "B"
+   },
+   {
+    "start": 8331,
+    "end": 8366,
+    "start_tc": "5:47.12",
+    "dur_s": 1.46,
+    "cls": "W"
+   },
+   {
+    "start": 8366,
+    "end": 8418,
+    "start_tc": "5:48.58",
+    "dur_s": 2.17,
+    "cls": "A"
+   },
+   {
+    "start": 8418,
+    "end": 8489,
+    "start_tc": "5:50.75",
+    "dur_s": 2.96,
+    "cls": "B"
+   },
+   {
+    "start": 8489,
+    "end": 8512,
+    "start_tc": "5:53.71",
+    "dur_s": 0.96,
+    "cls": "A"
+   },
+   {
+    "start": 8512,
+    "end": 8550,
+    "start_tc": "5:54.67",
+    "dur_s": 1.58,
+    "cls": "W"
+   },
+   {
+    "start": 8550,
+    "end": 8571,
+    "start_tc": "5:56.25",
+    "dur_s": 0.88,
+    "cls": "A"
+   },
+   {
+    "start": 8571,
+    "end": 8725,
+    "start_tc": "5:57.12",
+    "dur_s": 6.42,
+    "cls": "SC"
+   },
+   {
+    "start": 8725,
+    "end": 8921,
+    "start_tc": "6:03.54",
+    "dur_s": 8.17,
+    "cls": "A"
+   },
+   {
+    "start": 8921,
+    "end": 9044,
+    "start_tc": "6:11.71",
+    "dur_s": 5.12,
+    "cls": "B"
+   },
+   {
+    "start": 9044,
+    "end": 9112,
+    "start_tc": "6:16.83",
+    "dur_s": 2.83,
+    "cls": "A"
+   },
+   {
+    "start": 9112,
+    "end": 9157,
+    "start_tc": "6:19.67",
+    "dur_s": 1.88,
+    "cls": "B"
+   },
+   {
+    "start": 9157,
+    "end": 9215,
+    "start_tc": "6:21.54",
+    "dur_s": 2.42,
+    "cls": "A"
+   },
+   {
+    "start": 9215,
+    "end": 9266,
+    "start_tc": "6:23.96",
+    "dur_s": 2.12,
+    "cls": "W"
+   },
+   {
+    "start": 9266,
+    "end": 9311,
+    "start_tc": "6:26.08",
+    "dur_s": 1.88,
+    "cls": "B"
+   },
+   {
+    "start": 9311,
+    "end": 9461,
+    "start_tc": "6:27.96",
+    "dur_s": 6.25,
+    "cls": "A"
+   },
+   {
+    "start": 9461,
+    "end": 9668,
+    "start_tc": "6:34.21",
+    "dur_s": 8.62,
+    "cls": "SC"
+   },
+   {
+    "start": 9668,
+    "end": 9761,
+    "start_tc": "6:42.83",
+    "dur_s": 3.88,
+    "cls": "B"
+   },
+   {
+    "start": 9761,
+    "end": 9939,
+    "start_tc": "6:46.71",
+    "dur_s": 7.42,
+    "cls": "A"
+   },
+   {
+    "start": 9939,
+    "end": 9997,
+    "start_tc": "6:54.12",
+    "dur_s": 2.42,
+    "cls": "B"
+   },
+   {
+    "start": 9997,
+    "end": 10075,
+    "start_tc": "6:56.54",
+    "dur_s": 3.25,
+    "cls": "W"
+   },
+   {
+    "start": 10075,
+    "end": 10143,
+    "start_tc": "6:59.79",
+    "dur_s": 2.83,
+    "cls": "A"
+   },
+   {
+    "start": 10143,
+    "end": 10200,
+    "start_tc": "7:02.62",
+    "dur_s": 2.38,
+    "cls": "B"
+   },
+   {
+    "start": 10200,
+    "end": 10266,
+    "start_tc": "7:05.00",
+    "dur_s": 2.75,
+    "cls": "MG"
+   },
+   {
+    "start": 10266,
+    "end": 10320,
+    "start_tc": "7:07.75",
+    "dur_s": 2.25,
+    "cls": "A"
+   },
+   {
+    "start": 10320,
+    "end": 10452,
+    "start_tc": "7:10.00",
+    "dur_s": 5.5,
+    "cls": "MG"
+   },
+   {
+    "start": 10452,
+    "end": 10521,
+    "start_tc": "7:15.50",
+    "dur_s": 2.88,
+    "cls": "B"
+   },
+   {
+    "start": 10521,
+    "end": 10611,
+    "start_tc": "7:18.38",
+    "dur_s": 3.75,
+    "cls": "A"
+   },
+   {
+    "start": 10611,
+    "end": 10647,
+    "start_tc": "7:22.12",
+    "dur_s": 1.5,
+    "cls": "B"
+   },
+   {
+    "start": 10647,
+    "end": 10807,
+    "start_tc": "7:23.62",
+    "dur_s": 6.67,
+    "cls": "A"
+   },
+   {
+    "start": 10807,
+    "end": 10887,
+    "start_tc": "7:30.29",
+    "dur_s": 3.33,
+    "cls": "B"
+   },
+   {
+    "start": 10887,
+    "end": 10945,
+    "start_tc": "7:33.62",
+    "dur_s": 2.42,
+    "cls": "A"
+   },
+   {
+    "start": 10945,
+    "end": 11032,
+    "start_tc": "7:36.04",
+    "dur_s": 3.62,
+    "cls": "W"
+   },
+   {
+    "start": 11032,
+    "end": 11144,
+    "start_tc": "7:39.67",
+    "dur_s": 4.67,
+    "cls": "A"
+   },
+   {
+    "start": 11144,
+    "end": 11299,
+    "start_tc": "7:44.33",
+    "dur_s": 6.46,
+    "cls": "W"
+   },
+   {
+    "start": 11299,
+    "end": 11359,
+    "start_tc": "7:50.79",
+    "dur_s": 2.5,
+    "cls": "A"
+   },
+   {
+    "start": 11359,
+    "end": 11971,
+    "start_tc": "7:53.29",
+    "dur_s": 25.5,
+    "cls": "VID"
+   },
+   {
+    "start": 11971,
+    "end": 12039,
+    "start_tc": "8:18.79",
+    "dur_s": 2.83,
+    "cls": "W"
+   },
+   {
+    "start": 12039,
+    "end": 12118,
+    "start_tc": "8:21.62",
+    "dur_s": 3.29,
+    "cls": "A"
+   },
+   {
+    "start": 12118,
+    "end": 12193,
+    "start_tc": "8:24.92",
+    "dur_s": 3.12,
+    "cls": "B"
+   },
+   {
+    "start": 12193,
+    "end": 12410,
+    "start_tc": "8:28.04",
+    "dur_s": 9.04,
+    "cls": "VID"
+   },
+   {
+    "start": 12410,
+    "end": 12658,
+    "start_tc": "8:37.08",
+    "dur_s": 10.33,
+    "cls": "W"
+   },
+   {
+    "start": 12658,
+    "end": 12799,
+    "start_tc": "8:47.42",
+    "dur_s": 5.88,
+    "cls": "A"
+   },
+   {
+    "start": 12799,
+    "end": 12826,
+    "start_tc": "8:53.29",
+    "dur_s": 1.12,
+    "cls": "B"
+   },
+   {
+    "start": 12826,
+    "end": 12968,
+    "start_tc": "8:54.42",
+    "dur_s": 5.92,
+    "cls": "A"
+   },
+   {
+    "start": 12968,
+    "end": 13025,
+    "start_tc": "9:00.33",
+    "dur_s": 2.38,
+    "cls": "B"
+   },
+   {
+    "start": 13025,
+    "end": 13073,
+    "start_tc": "9:02.71",
+    "dur_s": 2.0,
+    "cls": "A"
+   },
+   {
+    "start": 13073,
+    "end": 13112,
+    "start_tc": "9:04.71",
+    "dur_s": 1.62,
+    "cls": "B"
+   },
+   {
+    "start": 13112,
+    "end": 13149,
+    "start_tc": "9:06.33",
+    "dur_s": 1.54,
+    "cls": "A"
+   },
+   {
+    "start": 13149,
+    "end": 13240,
+    "start_tc": "9:07.88",
+    "dur_s": 3.79,
+    "cls": "B"
+   },
+   {
+    "start": 13240,
+    "end": 13400,
+    "start_tc": "9:11.67",
+    "dur_s": 6.67,
+    "cls": "A"
+   },
+   {
+    "start": 13400,
+    "end": 13541,
+    "start_tc": "9:18.33",
+    "dur_s": 5.88,
+    "cls": "B"
+   },
+   {
+    "start": 13541,
+    "end": 13638,
+    "start_tc": "9:24.21",
+    "dur_s": 4.04,
+    "cls": "A"
+   },
+   {
+    "start": 13638,
+    "end": 13753,
+    "start_tc": "9:28.25",
+    "dur_s": 4.79,
+    "cls": "W"
+   },
+   {
+    "start": 13753,
+    "end": 13827,
+    "start_tc": "9:33.04",
+    "dur_s": 3.08,
+    "cls": "B"
+   },
+   {
+    "start": 13827,
+    "end": 13910,
+    "start_tc": "9:36.12",
+    "dur_s": 3.46,
+    "cls": "W"
+   },
+   {
+    "start": 13910,
+    "end": 14009,
+    "start_tc": "9:39.58",
+    "dur_s": 4.12,
+    "cls": "B"
+   },
+   {
+    "start": 14009,
+    "end": 14145,
+    "start_tc": "9:43.71",
+    "dur_s": 5.67,
+    "cls": "A"
+   },
+   {
+    "start": 14145,
+    "end": 14367,
+    "start_tc": "9:49.38",
+    "dur_s": 9.25,
+    "cls": "W"
+   },
+   {
+    "start": 14367,
+    "end": 14521,
+    "start_tc": "9:58.62",
+    "dur_s": 6.42,
+    "cls": "A"
+   },
+   {
+    "start": 14521,
+    "end": 14582,
+    "start_tc": "10:05.04",
+    "dur_s": 2.54,
+    "cls": "B"
+   },
+   {
+    "start": 14582,
+    "end": 14717,
+    "start_tc": "10:07.58",
+    "dur_s": 5.62,
+    "cls": "A"
+   },
+   {
+    "start": 14717,
+    "end": 14954,
+    "start_tc": "10:13.21",
+    "dur_s": 9.88,
+    "cls": "MG"
+   }
+  ],
+  "classes": "A,W,B = cameras; A* = A shot after the animated punch (331-377); MG = full-screen motion graphic; SC = screencast; VID = full-screen vertical (9:16) video ad; BROLL = generated/VFX b-roll (377-496 hand-from-laptop; 7523-7655 soundstage)",
+  "shot_length_stats_s": {
+   "MG": {
+    "n": 15,
+    "total_s": 102.3,
+    "median_s": 7.0,
+    "mean_s": 6.82,
+    "min_s": 2.29,
+    "p25_s": 3.17,
+    "p75_s": 9.46,
+    "max_s": 15.0
+   },
+   "A": {
+    "n": 46,
+    "total_s": 177.3,
+    "median_s": 3.73,
+    "mean_s": 3.86,
+    "min_s": 0.75,
+    "p25_s": 2.25,
+    "p75_s": 5.62,
+    "max_s": 8.17
+   },
+   "W": {
+    "n": 29,
+    "total_s": 107.5,
+    "median_s": 3.08,
+    "mean_s": 3.71,
+    "min_s": 1.21,
+    "p25_s": 1.88,
+    "p75_s": 4.79,
+    "max_s": 10.33
+   },
+   "A*": {
+    "n": 1,
+    "total_s": 1.9,
+    "median_s": 1.88,
+    "mean_s": 1.88,
+    "min_s": 1.88,
+    "p25_s": 1.88,
+    "p75_s": 1.88,
+    "max_s": 1.88
+   },
+   "BROLL": {
+    "n": 2,
+    "total_s": 10.5,
+    "median_s": 5.23,
+    "mean_s": 5.23,
+    "min_s": 4.96,
+    "p25_s": 4.96,
+    "p75_s": 5.5,
+    "max_s": 5.5
+   },
+   "B": {
+    "n": 40,
+    "total_s": 115.7,
+    "median_s": 2.73,
+    "mean_s": 2.89,
+    "min_s": 1.12,
+    "p25_s": 2.25,
+    "p75_s": 3.71,
+    "max_s": 5.88
+   },
+   "SC": {
+    "n": 8,
+    "total_s": 60.0,
+    "median_s": 8.1,
+    "mean_s": 7.5,
+    "min_s": 3.46,
+    "p25_s": 7.46,
+    "p75_s": 8.83,
+    "max_s": 9.0
+   },
+   "VID": {
+    "n": 3,
+    "total_s": 47.9,
+    "median_s": 13.33,
+    "mean_s": 15.96,
+    "min_s": 9.04,
+    "p25_s": 9.04,
+    "p75_s": 25.5,
+    "max_s": 25.5
+   }
+  },
+  "transitions": [
+   {
+    "frm": "A",
+    "to": "B",
+    "n": 23
+   },
+   {
+    "frm": "B",
+    "to": "A",
+    "n": 22
+   },
+   {
+    "frm": "W",
+    "to": "A",
+    "n": 14
+   },
+   {
+    "frm": "A",
+    "to": "W",
+    "n": 13
+   },
+   {
+    "frm": "W",
+    "to": "B",
+    "n": 10
+   },
+   {
+    "frm": "B",
+    "to": "MG",
+    "n": 6
+   },
+   {
+    "frm": "B",
+    "to": "W",
+    "n": 6
+   },
+   {
+    "frm": "MG",
+    "to": "A",
+    "n": 5
+   },
+   {
+    "frm": "MG",
+    "to": "W",
+    "n": 5
+   },
+   {
+    "frm": "A",
+    "to": "MG",
+    "n": 5
+   },
+   {
+    "frm": "MG",
+    "to": "B",
+    "n": 4
+   },
+   {
+    "frm": "W",
+    "to": "MG",
+    "n": 3
+   },
+   {
+    "frm": "B",
+    "to": "SC",
+    "n": 3
+   },
+   {
+    "frm": "SC",
+    "to": "A",
+    "n": 3
+   },
+   {
+    "frm": "SC",
+    "to": "B",
+    "n": 3
+   },
+   {
+    "frm": "VID",
+    "to": "W",
+    "n": 3
+   },
+   {
+    "frm": "A",
+    "to": "SC",
+    "n": 3
+   },
+   {
+    "frm": "BROLL",
+    "to": "A",
+    "n": 2
+   },
+   {
+    "frm": "W",
+    "to": "SC",
+    "n": 2
+   },
+   {
+    "frm": "SC",
+    "to": "W",
+    "n": 2
+   },
+   {
+    "frm": "B",
+    "to": "VID",
+    "n": 2
+   },
+   {
+    "frm": "A",
+    "to": "A*",
+    "n": 1
+   },
+   {
+    "frm": "A*",
+    "to": "BROLL",
+    "n": 1
+   },
+   {
+    "frm": "B",
+    "to": "BROLL",
+    "n": 1
+   },
+   {
+    "frm": "A",
+    "to": "VID",
+    "n": 1
+   }
+  ],
+  "sequence_string": "·AWAa·AWABAWB·WAW·B·A·BAB·AWBA·BW·B·B·ABW·W·WBAB·AB·W·WA·AWBWB·WABAB·WAWB·ABA·WBABWABAWA·ABABAWBA·BABWAB·A·BABABAWAWA·WAB·WABABABABABAWBWBAWABA·",
+  "pattern": "Camera shots alternate A↔B most (A→B 23, B→A 22), with W inserted as the third angle (A↔W 27, W→B 10, B→W 6). Never the same framing twice in a row. Graphics/screencasts are entered from any camera and exit to any camera. Camera shot medians: A 3.7 s, W 3.1 s, B 2.7 s (B close-ups are the shortest); full-screen MG median 7.0 s, SC 8.1 s.",
+  "cuts_vs_speech": {
+   "n_checked": 85,
+   "result": "85 camera→camera cuts vs YouTube ASR word onsets and 10-ms mid-band energy: cut-frame speech energy is a median 11.8 dB below the local speech level and 61% of cuts sit in a pause (<-10 dB); the next word starts a median 123 ms after the cut (p25 68, p75 197 ms) and the previous word is sentence/clause-final in most cases (e.g. \"today.\", \"framework.\", \"screen.\", \"visuals.\"). → cuts land in the inter-sentence gap, ~0.1-0.2 s BEFORE the next sentence starts.",
+   "confidence": "medium (ASR onsets ±~100 ms)"
+  },
+  "outro": "14717-14733: the A frame shrinks into a rounded card that morphs into the app logo on a black/pink-glow background (not a cut)"
+ },
+ "C_sfx_mix": {
+  "loudness": {
+   "integrated_LUFS": -16.3,
+   "LRA_LU": 2.7,
+   "true_peak_dBTP": -0.7,
+   "source": "ffmpeg ebur128 peak=true on the delivered AAC 44.1 kHz stereo track",
+   "confidence": "high"
+  },
+  "levels": {
+   "speech_100ms_RMS_median_dBFS": -16.9,
+   "pause_RMS_median_dBFS": -32.3,
+   "pause_RMS_IQR_dBFS": [
+    -35.1,
+    -29.8
+   ],
+   "music_only_outro_615_622s_dBFS": -26.2,
+   "estimate": "music bed ≈ 15 dB under voice (−32 vs −17 dBFS RMS); outro music alone ≈ −26 dBFS, i.e. the bed is raised ~6 dB once speech ends",
+   "ducking": "no evidence of sidechain ducking: in 13 pauses ≥500 ms the bed is −31.1 dB in the first 100 ms and −34.8 dB in the last 100 ms (would rise if ducked). Treat as a constant low bed (~−32 dBFS RMS) under VO, raised only for the outro.",
+   "confidence": "medium (pause level includes room tone/SFX tails)"
+  },
+  "entrance_sfx": [
+   {
+    "event": "e-com big word (pink/white)",
+    "visual_first_frame": 732,
+    "hf_peak_offset_ms": "+60",
+    "hf_burst_ms": 130,
+    "hf_minus_mid_dB": -9.8,
+    "confidence": "low",
+    "note": "voice-masked; broadband HF swell starting ~-330 ms before (whoosh-like riser into the word?)"
+   },
+   {
+    "event": "prompt bar 0:43 fade-in",
+    "visual_first_frame": 1047,
+    "hf_peak_offset_ms": "+15",
+    "hf_burst_ms": 20,
+    "hf_minus_mid_dB": 0.6,
+    "confidence": "low",
+    "note": "very short HF tick at +15..+25 ms"
+   },
+   {
+    "event": "prompt bar 0:43 submit click (press 1092-1093)",
+    "visual_first_frame": 1092,
+    "hf_peak_offset_ms": "-14 (rel. press)",
+    "hf_burst_ms": 10,
+    "hf_minus_mid_dB": -18.1,
+    "confidence": "low",
+    "note": "single 10 ms HF tick 1098.7 = during exit, not at press"
+   },
+   {
+    "event": "prompt box 1:35 entrance",
+    "visual_first_frame": 2302,
+    "hf_peak_offset_ms": "+123",
+    "hf_burst_ms": 40,
+    "hf_minus_mid_dB": 11.3,
+    "confidence": "med",
+    "note": "non-voice HF transient (hb-mb +11 dB), 40 ms: pop/click"
+   },
+   {
+    "event": "prompt box 1:35 submit press (2326)",
+    "visual_first_frame": 2326,
+    "hf_peak_offset_ms": "+73",
+    "hf_burst_ms": 50,
+    "hf_minus_mid_dB": 11.6,
+    "confidence": "med",
+    "note": "HF transient 50 ms: click"
+   },
+   {
+    "event": "RESEARCH & COPY glyph",
+    "visual_first_frame": 2358,
+    "hf_peak_offset_ms": "+90",
+    "hf_burst_ms": 80,
+    "hf_minus_mid_dB": 12.6,
+    "confidence": "med",
+    "note": "HF burst 80 ms (pop/sparkle)"
+   },
+   {
+    "event": "KEEP IT SIMPLE text",
+    "visual_first_frame": 4862,
+    "hf_peak_offset_ms": "+17",
+    "hf_burst_ms": 70,
+    "hf_minus_mid_dB": 6.6,
+    "confidence": "med",
+    "note": "HF burst ~70 ms starting at onset (pop)"
+   },
+   {
+    "event": "prompt bar 3:44 fade-in",
+    "visual_first_frame": 5403,
+    "hf_peak_offset_ms": "+145",
+    "hf_burst_ms": 30,
+    "hf_minus_mid_dB": 9.0,
+    "confidence": "low-med",
+    "note": "HF tick 30 ms"
+   },
+   {
+    "event": "prompt bar 3:44 submit press (5428)",
+    "visual_first_frame": 5428,
+    "hf_peak_offset_ms": "+163",
+    "hf_burst_ms": 10,
+    "hf_minus_mid_dB": 4.5,
+    "confidence": "low",
+    "note": ""
+   },
+   {
+    "event": "3:44 pink placeholders turn pink (5520)",
+    "visual_first_frame": 5520,
+    "hf_peak_offset_ms": "+50",
+    "hf_burst_ms": 70,
+    "hf_minus_mid_dB": 14.2,
+    "confidence": "med",
+    "note": "HF burst 70 ms"
+   },
+   {
+    "event": "WHAT ABOUT VIDEO?",
+    "visual_first_frame": 5862,
+    "hf_peak_offset_ms": "-120",
+    "hf_burst_ms": 40,
+    "hf_minus_mid_dB": 1.7,
+    "confidence": "low",
+    "note": "speech-masked"
+   },
+   {
+    "event": "CPL text",
+    "visual_first_frame": 6912,
+    "hf_peak_offset_ms": "+100",
+    "hf_burst_ms": 90,
+    "hf_minus_mid_dB": 9.6,
+    "confidence": "med",
+    "note": "HF burst 90 ms (pop/chime attack)"
+   },
+   {
+    "event": "WHAT AD DO WE RUN NEXT? (on a cut)",
+    "visual_first_frame": 8512,
+    "hf_peak_offset_ms": "-147",
+    "hf_burst_ms": 120,
+    "hf_minus_mid_dB": 8.1,
+    "confidence": "low-med",
+    "note": "HF swell 120 ms ending before the cut: whoosh lead-in"
+   },
+   {
+    "event": "TEST THE ORGANIC",
+    "visual_first_frame": 9227,
+    "hf_peak_offset_ms": "-108",
+    "hf_burst_ms": 50,
+    "hf_minus_mid_dB": 14.1,
+    "confidence": "low-med",
+    "note": "HF 50 ms ending ~100 ms before visual"
+   },
+   {
+    "event": "prompt box 6:46 laptop morph",
+    "visual_first_frame": 9770,
+    "hf_peak_offset_ms": "-43",
+    "hf_burst_ms": 70,
+    "hf_minus_mid_dB": 12.7,
+    "confidence": "med",
+    "note": "strong HF 70 ms (+52 dB above floor) starting ~130 ms before morph start"
+   },
+   {
+    "event": "EXCLUSIVITY",
+    "visual_first_frame": 10980,
+    "hf_peak_offset_ms": "+120",
+    "hf_burst_ms": 60,
+    "hf_minus_mid_dB": 0.7,
+    "confidence": "low",
+    "note": ""
+   },
+   {
+    "event": "A/B TEST",
+    "visual_first_frame": 13124,
+    "hf_peak_offset_ms": "-153",
+    "hf_burst_ms": 350,
+    "hf_minus_mid_dB": -11.5,
+    "confidence": "low",
+    "note": "speech-masked"
+   },
+   {
+    "event": "prompt bar 9:12 fade-in",
+    "visual_first_frame": 13270,
+    "hf_peak_offset_ms": "-87",
+    "hf_burst_ms": 70,
+    "hf_minus_mid_dB": -15.9,
+    "confidence": "low",
+    "note": "voice"
+   },
+   {
+    "event": "HOOK RATE",
+    "visual_first_frame": 13694,
+    "hf_peak_offset_ms": "-23",
+    "hf_burst_ms": 30,
+    "hf_minus_mid_dB": -9.9,
+    "confidence": "low",
+    "note": "voice"
+   },
+   {
+    "event": "TOTAL ~$100",
+    "visual_first_frame": 13881,
+    "hf_peak_offset_ms": "-145",
+    "hf_burst_ms": 80,
+    "hf_minus_mid_dB": -9.9,
+    "confidence": "low",
+    "note": "voice"
+   }
+  ],
+  "sfx_summary": "Of 20 graphic/UI events, 9 show a clearly non-voice HF transient (HF−mid ≥ +6 dB, global p90 is −3.4 dB) within −150…+165 ms of the first visible frame; median of those ≈ +60 ms after the visual (bar2 +123, click2 +73, research +90, keep +17, bar3 +145, pinks +50, cpl +100, organic −108, morph −43, runnext −147). Envelopes are short (30-90 ms at −6 dB) → pops/clicks; the two longer ones (runnext 120 ms, e-com 130 ms + 300 ms rise) are whoosh-like and LEAD the visual. Recipe: pop/click SFX with transient at +2 f (≈ +60-120 ms) after the element's first frame; whooshes start ≈ 4-8 f before a word that enters on a cut.",
+  "sfx_confidence": "LOW overall: measured on the full mix where voice sibilants dominate the same band; no stem, no listening. What would change it: a music/SFX stem, or a listening pass on these 20 timestamps."
+ }
+}

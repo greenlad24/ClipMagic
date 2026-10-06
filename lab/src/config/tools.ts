@@ -75,6 +75,17 @@ export interface ToolDefinition {
 
 export const TOOLS: ToolDefinition[] = [
   {
+    id: 'auto-editor',
+    title: 'Auto Editor',
+    description:
+      'Raw narration in, clean edit out — paste the Descript link to your unedited recording; the best take of every line is picked, crew talk, slips and fillers cut, frame-exact. Review and restore anything.',
+    icon: Scissors,
+    route: '/auto-editor',
+    status: 'live',
+    accent: 'purple',
+    detail: 'Shorts + long-form · graphics, screencasts and music next',
+  },
+  {
     id: 'video-editor',
     title: 'Video Editor',
     description:
@@ -140,16 +151,6 @@ export const TOOLS: ToolDefinition[] = [
     status: 'live',
     accent: 'blue',
     detail: 'Batch pipeline',
-  },
-  {
-    id: 'cutter',
-    title: 'Narration Cutter',
-    description: 'Strip silences, fillers and bad takes from raw narration in one pass.',
-    icon: Scissors,
-    route: '/cutter',
-    status: 'live',
-    accent: 'green',
-    detail: 'Clean-up pass',
   },
   {
     id: 'meme',

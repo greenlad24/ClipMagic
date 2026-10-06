@@ -52,7 +52,13 @@ router.post(
       return;
     }
     try {
-      const result = await handler(req.body ?? {}, LOCAL_USER);
+      const body = req.body ?? {};
+      // Whole-server deletes are logged by the host storage agent with WHO did it;
+      // stamp the signed-in account here so the browser cannot claim another.
+      if (name === "serverStorageDelete" && body && typeof body === "object") {
+        body.__actor = (req as unknown as { authSession?: { email?: string } }).authSession?.email ?? "lab (no session)";
+      }
+      const result = await handler(body, LOCAL_USER);
       console.log(`[fn] ✓ ${name} (${Date.now() - started}ms) result=${REDACT_RESULT.has(name) ? "[redacted]" : preview(result)}`);
       res.json(result);
     } catch (err) {

@@ -14,7 +14,7 @@ import { searchSponsorDeals as dealBriefSearch, startDealBrief as dealBriefStart
 import fs from "node:fs";
 import crypto from "node:crypto";
 import path from "node:path";
-import { Projects, Shots, MusicTracks, PromoVideos, NarrationCuts, MemeProjects, ZiteError } from "./store.js";
+import { Projects, Shots, MusicTracks, PromoVideos, MemeProjects, ZiteError } from "./store.js";
 // Avatar Narrator (LAB tool)
 import * as avatarStore from "../db/avatar.js";
 // Hyperframes render queue (LAB tool) — control plane only; the systemd
@@ -31,6 +31,7 @@ import * as hyperframesDensity from "../hyperframes/density.js";
 // Video Editor (LAB tool) — control plane for `hfp`, the Hyperframes skill as
 // software. The `hfp-worker` systemd service on the host runs the pipeline.
 import * as hfpEditor from "../hyperframes/editor.js";
+import * as autoEditor from "../aieditor/control.js";
 // Tutorial Studio (LAB tool) — the Python reel sidecar.
 import * as tutorial from "../tutorial/client.js";
 import * as tutorialBatches from "../db/tutorialBatches.js";
@@ -75,6 +76,15 @@ import {
 } from "../avatar/types.js";
 import { listStorage, deleteStorageFiles, deleteStorageArea } from "./storage.js";
 import { pruneSystemStorage } from "./systemStorage.js";
+import {
+  serverStorageSummary,
+  serverStorageTree,
+  serverStorageType,
+  serverStorageRefresh,
+  serverStorageLog,
+  serverStoragePreview,
+  serverStorageDelete,
+} from "./serverStorage.js";
 import type { Record_ } from "./store.js";
 import { config } from "../config.js";
 import { createJob, getJob, listJobs as listRenderJobs } from "../db/jobs.js";
@@ -83,20 +93,9 @@ import { db } from "../db/index.js";
 import { pump } from "../render/worker.js";
 import { resolveInput } from "../render/resolve.js";
 import { probe } from "../render/ffmpeg.js";
-import { extractAudioForTranscription, type CutSpec } from "../render/cut.js";
-import { planCuts } from "../cutter/plan.js";
-import { detectSilences, computeEnvelope } from "../cutter/silence.js";
-import { segmentTakes, DEFAULT_SETTINGS, type Envelope, type Seg, type Take } from "../cutter/segments.js";
-import { selectBestTakeDefaults } from "../cutter/bestTake.js";
-import { selectCoherentShort } from "../cutter/findShort.js";
-import { AGGRESSION_PRESETS, type Aggressiveness } from "../cutter/plan.js";
-import { planTakeDecision } from "../cutter/takes.js";
+import { extractAudioForTranscription } from "../render/audio.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
 import { withTimeout } from "../util/withTimeout.js";
-import {
-  createAnalyzeJob, getAnalyzeJob, setStage, setWarning, completeAnalyze, failAnalyze,
-  pollSnapshot, listAnalyzeJobs, type AnalyzeJob,
-} from "../cutter/analyzeJob.js";
 import { beginRun, buildReport, finishRun, reportLogLine } from "../ai/runAccounting.js";
 import { SUBTITLE_TEMPLATES, SUBTITLE_TEMPLATE_POOL, DEFAULT_SUBTITLE_STYLE, type SubtitleTemplate, type MotionGraphicClip } from "../render/manifest.js";
 import { planMotionGraphics, motionGraphicsEnabledFor } from "../motion/director.js";
@@ -1336,42 +1335,9 @@ function nanoidLike(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// ── Narration Cutter (separate product) ──────────────────────────────────────
-// Phase 1 (deterministic): for each raw clip we transcribe it (Groq, word-level
-// timestamps), plan the cuts (remove >0.35s silences + "um"/"uh" fillers), then
-// run a single ffmpeg trim+concat "cut" job. Processed one at a time so the AI
-// API and the render queue stay gentle. Progress is polled via getCutRun.
-
-interface CutStats {
-  originalDuration: number;
-  keptDuration: number;
-  removedDuration: number;
-  silenceCuts: number;
-  fillerCuts: number;
-  stutterCuts: number;
-  takesRemoved: number;
-}
-interface CutItem {
-  cutId: string;
-  title: string;
-  status: "Queued" | "Transcribing" | "Analyzing" | "Rendering" | "Complete" | "Error";
-  outputUrl: string | null;
-  error: string | null;
-  stats: CutStats | null;
-}
-interface CutRun {
-  id: string;
-  running: boolean;
-  total: number;
-  doneCount: number;
-  items: CutItem[];
-  startedAt: number;
-  finishedAt: number | null;
-}
-let cutRun: CutRun | null = null;
-let cutRunning = false;
-
-async function waitForCutJob(
+// ── Render wait helper ───────────────────────────────────────────────────────
+// Polls a render job until it finishes. Used by the Meme editor.
+async function waitForRenderJob(
   jobId: string,
   onProgress?: (status: string, progress: number, stageLabel: string | null) => void,
 ): Promise<{ outputUrl: string | null; error: string | null }> {
@@ -1390,455 +1356,13 @@ async function waitForCutJob(
   return { outputUrl: null, error: "Render timed out" };
 }
 
-async function runOneCut(item: CutItem, sourceUrl: string, aggressiveness: Aggressiveness): Promise<void> {
-  // Account every AI call this cut makes (transcription + take-detection) so the
-  // cutter's real cost/speed shows up honestly in the optimization report.
-  beginRun(item.cutId);
-  try {
-    item.status = "Transcribing";
-    const srcPath = await resolveInput(sourceUrl);
-    const meta = await probe(srcPath);
-    const duration = meta.duration ?? 0;
-    if (!duration) throw new Error("Couldn't read the video — the file looks incomplete or unsupported (often a failed/partial upload). Re-upload and try again; MP4 or MOV work best.");
-    const audio = await extractAudioForTranscription(srcPath);
-    const tr = await transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true });
-
-    item.status = "Analyzing";
-    // Phase 2: find repeated takes and keep only the best (vision + audio energy).
-    // Best-effort — degrades to silence/filler-only if AI/analysis is unavailable.
-    // In parallel, run ONE whole-file silencedetect pass to learn where speech
-    // actually is (Whisper word timings are loose). Both legs are independent.
-    const planDuration = tr.duration || duration;
-    const [takeDecision, silences] = await Promise.all([
-      planTakeDecision(srcPath, tr.words, planDuration)
-        .catch(() => ({ groupsFound: 0, takesRemoved: 0, dropRanges: [] as { start: number; end: number }[] })),
-      detectSilences(srcPath, planDuration, {
-        noiseFloorDb: AGGRESSION_PRESETS[aggressiveness].noiseFloorDb,
-      }).catch(() => []),
-    ]);
-    const plan = planCuts(tr.words, planDuration, {
-      extraCuts: takeDecision.dropRanges,
-      silences,
-      aggressiveness,
-    });
-    // Per-cut diagnostics → server log so a misfiring region can be pinpointed.
-    console.log(
-      `[narrationCut] ${item.title}: ${aggressiveness}, ${silences.length} silent region(s), ` +
-        `${plan.boundariesSnapped} boundary snap(s); ` +
-        plan.diagnostics
-          .map((d) => `${d.kind}[${d.start.toFixed(2)}-${d.end.toFixed(2)}${d.measuredDb != null ? ` ${d.measuredDb}dB` : ""}] ${d.reason}`)
-          .join(" | "),
-    );
-    const stats: CutStats = {
-      originalDuration: plan.originalDuration,
-      keptDuration: plan.keptDuration,
-      removedDuration: plan.removedDuration,
-      silenceCuts: plan.silenceCuts,
-      fillerCuts: plan.fillerCuts,
-      stutterCuts: plan.stutterCuts,
-      takesRemoved: takeDecision.takesRemoved,
-    };
-    item.stats = stats;
-
-    // Snapshot the optimization report (transcription + take-detection savings)
-    // onto the cut record before we hand off to the render queue.
-    let optimizationReportJson: string | undefined;
-    try {
-      const report = buildReport(item.cutId);
-      if (report) { console.log(reportLogLine(report)); optimizationReportJson = JSON.stringify(report); }
-    } catch { /* reporting is best-effort, never blocks the cut */ }
-
-    await NarrationCuts.update({
-      id: item.cutId,
-      record: {
-        status: "Rendering",
-        transcript: tr.text,
-        stats,
-        segments: plan.keep,
-        // Persist the audio-energy breakdown so a misfiring region can be shared.
-        diagnostics: plan.diagnostics,
-        aggressiveness,
-        silentRegions: silences.length,
-        boundariesSnapped: plan.boundariesSnapped,
-        ...(optimizationReportJson ? { optimizationReportJson } : {}),
-      },
-    }).catch(() => {});
-
-    item.status = "Rendering";
-    const spec: CutSpec = { source: srcPath, segments: plan.keep, hasAudio: meta.hasAudio };
-    const jobId = createJob({
-      kind: "cut",
-      manifest: spec,
-      outputName: `${item.title || "cut"}.mp4`,
-      projectId: item.cutId,
-    });
-    db.prepare("UPDATE render_jobs SET duration_sec=? WHERE id=?").run(plan.keptDuration, jobId);
-    await NarrationCuts.update({ id: item.cutId, record: { renderJobId: jobId } }).catch(() => {});
-    pump();
-
-    const { outputUrl, error } = await waitForCutJob(jobId);
-    if (error || !outputUrl) throw new Error(error || "Render produced no output");
-
-    await NarrationCuts.update({ id: item.cutId, record: { status: "Complete", outputUrl } }).catch(() => {});
-    item.outputUrl = outputUrl;
-    item.status = "Complete";
-  } catch (e) {
-    item.status = "Error";
-    item.error = (e instanceof Error ? e.message : String(e)).slice(0, 200);
-    await NarrationCuts.update({ id: item.cutId, record: { status: "Error", error: item.error } }).catch(() => {});
-    console.warn(`[narrationCut] ${item.title} failed: ${item.error}`);
-  } finally {
-    finishRun(item.cutId);
-  }
-}
-
-// Create N cut records from uploaded raw clips and kick the background run.
-const createBulkCut: Handler = async (input, userId) => {
-  if (cutRunning) {
-    return { started: false, message: "A cut run is already in progress.", run: cutRun };
-  }
-  const items: Array<{ sourceUrl: string; title?: string }> = Array.isArray(input?.items) ? input.items : [];
-  if (items.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No videos provided." });
-  // How much non-speech to cut (gentle/balanced/aggressive) — the subjective
-  // "how much to cut" is the user's call; default conservative-balanced.
-  const aggressiveness: Aggressiveness =
-    input?.aggressiveness === "gentle" || input?.aggressiveness === "aggressive"
-      ? input.aggressiveness
-      : "balanced";
-
-  const cutItems: CutItem[] = [];
-  const sources: string[] = [];
-  for (const it of items) {
-    if (!it.sourceUrl) continue;
-    const rec = await NarrationCuts.create({
-      record: { title: it.title || "Cut", status: "Queued", sourceUrl: it.sourceUrl, outputUrl: null, user: userId },
-    });
-    cutItems.push({ cutId: rec.id, title: it.title || "Cut", status: "Queued", outputUrl: null, error: null, stats: null });
-    sources.push(it.sourceUrl);
-  }
-
-  cutRun = {
-    id: nanoidLike(),
-    running: true,
-    total: cutItems.length,
-    doneCount: 0,
-    items: cutItems,
-    startedAt: Date.now(),
-    finishedAt: null,
-  };
-  cutRunning = true;
-
-  // Fire-and-forget: process ONE AT A TIME (gentle on the transcription API).
-  (async () => {
-    for (let i = 0; i < cutRun!.items.length; i++) {
-      await runOneCut(cutRun!.items[i], sources[i], aggressiveness);
-      cutRun!.doneCount++;
-    }
-    cutRun!.running = false;
-    cutRun!.finishedAt = Date.now();
-    cutRunning = false;
-    console.log(`[narrationCut] done — ${cutRun!.items.filter((x) => x.status === "Complete").length}/${cutRun!.total} complete`);
-  })().catch((e) => {
-    if (cutRun) { cutRun.running = false; cutRun.finishedAt = Date.now(); }
-    cutRunning = false;
-    console.error("[narrationCut] run crashed:", e);
-  });
-
-  return { started: true, run: cutRun };
-};
-
-const getCutRun: Handler = async () => ({ run: cutRun });
-
-const getNarrationCuts: Handler = async (_input, userId) => {
-  const { records } = await NarrationCuts.findAll({ filters: { user: userId }, limit: 200 });
-  const cuts = records.sort(sortByCreatedDesc).map((c) => ({
-    id: c.id,
-    title: c.title,
-    status: c.status,
-    outputUrl: c.outputUrl,
-    sourceUrl: c.sourceUrl,
-    stats: c.stats,
-    diagnostics: c.diagnostics ?? null,
-    aggressiveness: c.aggressiveness ?? null,
-    boundariesSnapped: c.boundariesSnapped ?? null,
-    error: c.error,
-    createdAt: c.createdAt,
-  }));
-  return { cuts };
-};
-
-// ── Interactive timeline editor (single-clip, Descript-style) ────────────────
-// The bulk auto path above is untouched. This pair of endpoints powers the
-// manual timeline editor in the Narration Cutter: `analyzeCut` returns the data
-// the browser needs to build the timeline (a dBFS energy envelope, word timings
-// for transcript snippets, and an initial take segmentation), and
-// `renderManualCut` renders the EXACT keep-segment list the editor computed —
-// no re-detection — so what the user previewed is what gets produced. Parity is
-// guaranteed because both sides derive segments from the same envelope via the
-// shared `cutter/segments.ts` math and the render trims that explicit list.
-
-// Per-step timeouts so the analyze job can NEVER hang forever. The Groq path is
-// the historical offender (the whole file, no bound), so it gets the tightest
-// budget and degrades to energy-only on timeout; the ffmpeg passes are fatal if
-// they blow their (generous) budget. Overridable via env without a rebuild.
-const envMs = (name: string, fallback: number): number => {
-  const raw = Number.parseInt(process.env[name] || "", 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
-};
-const ANALYZE_TIMEOUTS = {
-  resolve: () => envMs("ANALYZE_RESOLVE_MS", 60_000),
-  probe: () => envMs("ANALYZE_PROBE_MS", 30_000),
-  audio: () => envMs("ANALYZE_AUDIO_MS", 120_000),
-  transcribe: () => envMs("ANALYZE_TRANSCRIBE_MS", 120_000),
-  envelope: () => envMs("ANALYZE_ENVELOPE_MS", 180_000),
-};
-
-/**
- * Heuristic: is this a LONG, MESSY multi-take recording (where auto-finding the
- * coherent short is the right default), versus a short/simple clip (where the
- * existing keep-LAST per-part dedup is right and must not regress)? True when the
- * source is meaningfully longer than a short AND there are several big-block takes
- * — i.e. enough raw material that restarts / chatter are likely present. Tunable
- * via env so it can be calibrated on the server without a code change.
- */
-function isLongMessyRecording(takes: Take[], duration: number): boolean {
-  const minSeconds = envMs("FIND_SHORT_MIN_SOURCE_MS", 90_000) / 1000;
-  const minTakes = Number.parseInt(process.env.FIND_SHORT_MIN_TAKES || "4", 10);
-  const bigTakes = takes.filter((t) => t.enabled).length;
-  return duration >= minSeconds && bigTakes >= minTakes;
-}
-
-/**
- * Drive the heavy analyze work for one job, narrating each stage onto the job
- * (which the editor polls) and into the server logs with elapsed ms. Transcription
- * is best-effort (timeout/failure → energy-only + a warning); resolve/probe/
- * envelope are fatal. Never throws — it records the outcome on the job.
- */
-async function runAnalyzeJob(job: AnalyzeJob, sourceUrl: string): Promise<void> {
-  const t0 = Date.now();
-  const lap = (label: string, since: number) =>
-    console.log(`[analyzeCut:${job.id}] ${label} (${Date.now() - since}ms, +${Date.now() - t0}ms)`);
-  try {
-    // ── resolve + probe (fatal) ──────────────────────────────────────────────
-    setStage(job, "resolving");
-    let ts = Date.now();
-    const srcPath = await withTimeout(resolveInput(sourceUrl), ANALYZE_TIMEOUTS.resolve(), "loading the video");
-    const meta = await withTimeout(probe(srcPath), ANALYZE_TIMEOUTS.probe(), "reading video metadata");
-    const duration = meta.duration ?? 0;
-    if (!duration) { failAnalyze(job, "Couldn't read the video — the file looks incomplete or unsupported (often a failed/partial upload). Re-upload and try again; MP4 or MOV work best."); return; }
-    lap("resolved + probed", ts);
-
-    // ── transcribe (best-effort: timeout/failure → energy-only + warning) ─────
-    setStage(job, "transcribing");
-    ts = Date.now();
-    let words: { word: string; start: number; end: number }[] = [];
-    let transcript = "";
-    try {
-      const audio = await withTimeout(
-        extractAudioForTranscription(srcPath), ANALYZE_TIMEOUTS.audio(), "extracting audio");
-      const tr = await withTimeout(
-        transcribeWithGroq({ data: audio.buffer, name: audio.name, type: audio.type, wantWords: true }),
-        ANALYZE_TIMEOUTS.transcribe(), "transcription (Groq)");
-      words = tr.words;
-      transcript = tr.text;
-      lap(`transcribed ${words.length} words`, ts);
-    } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      setWarning(job, `transcription unavailable: ${reason} — timeline has no transcript labels`);
-      console.warn(`[analyzeCut:${job.id}] transcription unavailable (non-fatal, +${Date.now() - t0}ms): ${reason}`);
-    }
-
-    // ── waveform envelope (fatal) ─────────────────────────────────────────────
-    setStage(job, "waveform");
-    ts = Date.now();
-    const envelope = await withTimeout(
-      computeEnvelope(srcPath, duration), ANALYZE_TIMEOUTS.envelope(), "building the waveform");
-    lap(`built waveform (${envelope.db.length} samples)`, ts);
-
-    // ── initial segmentation ──────────────────────────────────────────────────
-    setStage(job, "segmenting");
-    const env: Envelope = { db: envelope.db, hop: envelope.hop, duration: envelope.duration };
-    // Initial take segmentation at the defaults — the client re-segments live as
-    // the user drags the controls, using the very same `segmentTakes` math. EVERY
-    // detected take is returned (none dropped); short takes come back disabled.
-    const takes = env.db.length > 0 ? segmentTakes(env, words, DEFAULT_SETTINGS) : [];
-
-    // ── default selection: find the short (long/messy) OR keep-last dedup ───────
-    // For a LONG, MESSY recording (many big takes covering a long source) the
-    // single best default is the AUTO-DETECTED coherent short — one clean run of
-    // the script with the earlier repeats, false starts and chatter dropped. For a
-    // short/simple clip we keep the existing keep-LAST per-part dedup (no
-    // regression). Either way this is just the server-computed DEFAULT disabled-set
-    // the client merges with the live under-minTake rule + the user's toggles; the
-    // user can re-run "Find the short" or fine-tune from the timeline. Best-effort:
-    // any failure or missing key falls back to a deterministic text heuristic.
-    setStage(job, "choosing");
-    let takeDefaults: unknown[] = [];
-    try {
-      const ts2 = Date.now();
-      // Always auto-run "Find the short" so the coherent final run is selected by
-      // default on every clip (the user wants it automatic). selectCoherentShort
-      // is a no-op for <2 takes and dedups cleanly for simple clips.
-      const sel = await selectCoherentShort(takes);
-      takeDefaults = sel.defaults;
-      lap(`default selection (${sel.defaults.length} takes disabled, ${sel.usedAI ? "AI" : "heuristic"})`, ts2);
-    } catch (e) {
-      console.warn(`[analyzeCut:${job.id}] default selection failed (non-fatal): ${e instanceof Error ? e.message : e}`);
-    }
-
-    completeAnalyze(job, {
-      sourceUrl,
-      duration,
-      hasAudio: meta.hasAudio,
-      width: meta.width,
-      height: meta.height,
-      envelope: { db: envelope.db, hop: envelope.hop, floorDb: envelope.floorDb },
-      words,
-      transcript,
-      takes,
-      settings: DEFAULT_SETTINGS,
-      takeDefaults,
-    });
-    console.log(
-      `[analyzeCut:${job.id}] done in ${Date.now() - t0}ms — ${takes.length} takes, ` +
-        `${words.length} words${job.warning ? " (energy-only: " + job.warning + ")" : ""}`);
-  } catch (e) {
-    const reason = e instanceof Error ? e.message : String(e);
-    failAnalyze(job, reason.slice(0, 200));
-    console.error(`[analyzeCut:${job.id}] failed after ${Date.now() - t0}ms: ${reason}`);
-  }
-}
-
-/**
- * Start analyzing one clip for the timeline editor. Returns a jobId IMMEDIATELY;
- * the heavy work (transcribe word timings, build a dBFS envelope, seed the take
- * segmentation) runs in the background with per-stage progress the editor polls
- * via `getAnalyzeCut`. Best-effort on transcription: with no GROQ key (or on a
- * timeout) it still returns the envelope + duration so the waveform, threshold
- * and gap controls work — just without transcript labels.
- */
-const analyzeCut: Handler = async (input) => {
-  const sourceUrl: string = input?.sourceUrl;
-  if (!sourceUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "sourceUrl is required." });
-  const job = createAnalyzeJob();
-  console.log(`[analyzeCut:${job.id}] queued for ${sourceUrl}`);
-  // Fire-and-forget — runAnalyzeJob never throws (it records onto the job).
-  void runAnalyzeJob(job, sourceUrl);
-  return pollSnapshot(job);
-};
-
-/** Poll an analyze job for the timeline editor (stage, progress, warning, result). */
-const getAnalyzeCut: Handler = async (input) => {
-  const jobId: string = input?.jobId;
-  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
-  const job = getAnalyzeJob(jobId);
-  if (!job) {
-    return {
-      jobId, stage: "failed", stageLabel: "Failed", progress: 0, warning: null,
-      result: null, error: "Analyze job not found (it may have expired) — reopen the editor to retry.",
-    };
-  }
-  return pollSnapshot(job);
-};
-
-/**
- * Render the EXACT edit the timeline editor previewed. Accepts the explicit
- * ordered keep-segment list + the inter-take gap and renders precisely that
- * (the render path inserts the gap and applies the same micro-fades as the auto
- * path). No transcription, no take-detection, no silence re-detection — the
- * decision was already made client-side, so preview ↔ render parity is exact.
- */
-const renderManualCut: Handler = async (input, userId) => {
-  const sourceUrl: string = input?.sourceUrl;
-  if (!sourceUrl) throw new ZiteError({ code: "BAD_REQUEST", message: "sourceUrl is required." });
-  const rawSegs: Seg[] = Array.isArray(input?.segments) ? input.segments : [];
-  const segments = rawSegs
-    .filter((s) => Number.isFinite(s?.start) && Number.isFinite(s?.end) && s.end > s.start)
-    .map((s) => ({ start: Math.max(0, s.start), end: s.end }))
-    .sort((a, b) => a.start - b.start);
-  if (segments.length === 0) throw new ZiteError({ code: "BAD_REQUEST", message: "No keep-segments to render." });
-  const gap = Number.isFinite(input?.gap) ? Math.max(0, Math.min(2, input.gap)) : DEFAULT_SETTINGS.gap;
-  const title: string = (input?.title && String(input.title)) || "Manual cut";
-
-  const srcPath = await resolveInput(sourceUrl);
-  const meta = await probe(srcPath);
-
-  const rec = await NarrationCuts.create({
-    record: { title, status: "Rendering", sourceUrl, outputUrl: null, user: userId, manual: true },
-  });
-
-  const spec: CutSpec = { source: srcPath, segments, hasAudio: meta.hasAudio, gap };
-  const keptDuration = segments.reduce((s, seg) => s + (seg.end - seg.start), 0) + gap * Math.max(0, segments.length - 1);
-  const jobId = createJob({ kind: "cut", manifest: spec, outputName: `${title}.mp4`, projectId: rec.id });
-  db.prepare("UPDATE render_jobs SET duration_sec=? WHERE id=?").run(keptDuration, jobId);
-  await NarrationCuts.update({ id: rec.id, record: { renderJobId: jobId, segments, gap } }).catch(() => {});
-  pump();
-
-  return { cutId: rec.id, jobId, expectedDuration: keptDuration };
-};
-
-/**
- * "Auto-cut / Find the short" — run the Stage-4 coherent-short selector over the
- * timeline's CURRENT big-chunk takes and return a DEFAULT disabled-set that keeps
- * only the single best coherent short (discarding earlier repeats, false starts,
- * and off-topic chatter), each excluded take tagged with a reason for the UI.
- *
- * The client sends the takes it already detected at the current settings (id +
- * span + text + whether each passed the Stage-1 big-block gate). The server runs
- * the AI pass (Claude, prompt-cached) and returns a `takeDefaults` list the client
- * applies through the SAME shared core (`applyDefaults`) — so the resulting
- * enabled-set is just a new default the user can fine-tune, and preview ↔ render
- * parity is preserved. Graceful: no Anthropic key (or any AI failure) falls back
- * to the deterministic keep-last selection, so the button always works.
- */
-const findShortCut: Handler = async (input) => {
-  const rawTakes: any[] = Array.isArray(input?.takes) ? input.takes : [];
-  // Sanitize into the minimal Take shape the selector needs, in source order.
-  const takes: Take[] = rawTakes
-    .filter((t) => t && typeof t.id === "string" && Number.isFinite(t.start) && Number.isFinite(t.end) && t.end > t.start)
-    .map((t) => ({
-      id: t.id,
-      start: t.start,
-      end: t.end,
-      text: typeof t.text === "string" ? t.text : "",
-      enabled: t.enabled !== false,
-    }))
-    .sort((a, b) => a.start - b.start);
-  if (takes.length === 0) {
-    return { takeDefaults: [], usedAI: false, keptCount: 0 };
-  }
-  const { defaults, usedAI } = await selectCoherentShort(takes);
-  const disabledIds = new Set(defaults.map((d) => d.id));
-  const keptCount = takes.filter((t) => t.enabled && !disabledIds.has(t.id)).length;
-  console.log(`[findShortCut] ${usedAI ? "AI" : "heuristic"} short: kept ${keptCount}/${takes.length} takes`);
-  return { takeDefaults: defaults, usedAI, keptCount };
-};
-
-/** Poll a single manual-cut render job (by jobId) for the timeline editor. */
-const getCutJob: Handler = async (input) => {
-  const jobId: string = input?.jobId;
-  if (!jobId) throw new ZiteError({ code: "BAD_REQUEST", message: "jobId is required." });
-  const job = getJob(jobId);
-  if (!job) return { status: "missing", progress: 0, outputUrl: null, error: "Job not found" };
-  const outputUrl = job.status === "completed" && job.output_file ? `/api/outputs/${job.output_file}` : null;
-  return {
-    status: job.status,
-    progress: job.progress ?? 0,
-    outputUrl,
-    error: job.status === "failed" || job.status === "canceled" ? (job.error ?? "Render failed") : null,
-  };
-};
-
-
 // ── Background Jobs panel: list + Pause / Resume / Cancel ─────────────────────
-// One global view over every background job. The render queue (render_jobs) has
-// FULL pause/resume/cancel; the cutter's in-memory analyze jobs are SHOWN
-// read-only (no controllable child here). The shapes are unified so the panel
-// renders them the same way.
+// One global view over the render queue (render_jobs), which has full
+// pause/resume/cancel.
 
 interface PanelJob {
   id: string;
-  source: "render" | "analyze";
+  source: "render";
   type: string;
   title: string;
   status: "queued" | "active" | "paused" | "completed" | "failed" | "canceled";
@@ -1846,18 +1370,9 @@ interface PanelJob {
   progress: number;
   error: string | null;
   outputUrl: string | null;
-  /** Which controls apply. Analyze jobs are read-only (all false). */
   controllable: boolean;
   createdAt: number;
   updatedAt: number;
-}
-
-/** Map the analyze stage machine onto the unified panel status vocabulary. */
-function analyzeStatus(stage: string): PanelJob["status"] {
-  if (stage === "done") return "completed";
-  if (stage === "failed") return "failed";
-  if (stage === "queued") return "queued";
-  return "active";
 }
 
 const listJobs: Handler = async (input) => {
@@ -1879,39 +1394,10 @@ const listJobs: Handler = async (input) => {
     updatedAt: j.updatedAt,
   });
 
-  const analyze = listAnalyzeJobs().map<PanelJob>((j) => {
-    const status = analyzeStatus(j.stage);
-    const terminal = status === "completed" || status === "failed" || status === "canceled";
-    return {
-      id: j.id,
-      source: "analyze",
-      type: "Narration analyze",
-      title: "Analyzing clip",
-      status,
-      stage: j.stageLabel,
-      progress: j.progress,
-      error: j.error,
-      outputUrl: null,
-      controllable: false,
-      createdAt: j.createdAt,
-      updatedAt: j.updatedAt,
-      _terminal: terminal,
-    } as PanelJob & { _terminal: boolean };
-  });
-
-  const analyzeActive = (analyze as Array<PanelJob & { _terminal: boolean }>)
-    .filter((j) => !j._terminal)
-    .map(({ _terminal, ...j }) => j);
-  const analyzeRecent = (analyze as Array<PanelJob & { _terminal: boolean }>)
-    .filter((j) => j._terminal)
-    .map(({ _terminal, ...j }) => j);
-
   return {
-    active: [...active.map(mapRender), ...analyzeActive],
-    recent: [...recent.map(mapRender), ...analyzeRecent]
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, recentLimit),
-    activeCount: active.length + analyzeActive.length,
+    active: active.map(mapRender),
+    recent: recent.map(mapRender).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, recentLimit),
+    activeCount: active.length,
   };
 };
 
@@ -2042,7 +1528,7 @@ async function runOneMeme(item: MemeItem, sourceUrl: string, userId: string): Pr
     // 0.95→1.0 band, and surface the worker's live sub-stage label ("Rendering
     // stickers 3/6" → "Compositing video…") so the bar keeps moving through the
     // slow compositing pass instead of parking at "Rendering & compositing 100%".
-    const { outputUrl, error } = await waitForCutJob(result.jobId, (status, prog, stageLabel) => {
+    const { outputUrl, error } = await waitForRenderJob(result.jobId, (status, prog, stageLabel) => {
       item.stageLabel =
         status === "queued"
           ? "Rendering — waiting for a slot"
@@ -2983,8 +2469,7 @@ function coercePicks(input: any): string[] {
 /**
  * Start generation: create a progress job (one variant per pick), kick the
  * recreation chains off in the BACKGROUND, and return the jobId IMMEDIATELY so
- * the UI can poll `thumbnailJobStatus` for live per-thumbnail progress. Mirrors
- * the Narration Cutter's analyzeCut start→poll pattern.
+ * the UI can poll `thumbnailJobStatus` for live per-thumbnail progress.
  */
 function coerceRewrites(raw: any): { old: string; new: string }[] {
   return (Array.isArray(raw) ? raw : [])
@@ -8039,6 +7524,27 @@ const hfpEditorAttest = editorCall(async (i) => ({
   run: await hfpEditor.submitAttestation(i.id, i.attestation),
 }));
 
+/* ────────────────────────── Auto Editor ────────────────────────── */
+
+/**
+ * ⚠️ CONTROL PLANE ONLY. These handlers write job files that the
+ * `aieditor-worker` systemd service on the host picks up; nothing here touches
+ * media. See aieditor/control.ts.
+ */
+const autoEditorStatus = editorCall(() => autoEditor.serviceStatus());
+const autoEditorJobs = editorCall(async () => ({ jobs: await autoEditor.listJobs() }));
+const autoEditorJob = editorCall((i) => autoEditor.getJob(i.id));
+const autoEditorCreate = editorCall((i) => autoEditor.createJob(i));
+const autoEditorSaveEdits = editorCall((i) => autoEditor.saveEdits(i.id, i.videos));
+const autoEditorResetEdits = editorCall((i) => autoEditor.resetEdits(i.id));
+const autoEditorContinue = editorCall((i) => autoEditor.continueJob(i.id));
+const autoEditorCancel = editorCall((i) => autoEditor.cancelJob(i.id));
+const autoEditorDelete = editorCall((i) => autoEditor.deleteJob(i.id));
+const autoEditorSaveNudges = editorCall((i) => autoEditor.saveNudges(i.id, i.nudges, i.apply === true));
+const autoEditorRenderVideo = editorCall((i) => autoEditor.renderVideo(i.id));
+const autoEditorRenderFinal = editorCall((i) => autoEditor.renderFinal(i.id));
+const autoEditorBuildEdit = editorCall((i) => autoEditor.buildEdit(i.id, typeof i.sites === "string" ? i.sites : undefined));
+
 export const HANDLERS: Record<string, Handler> = {
   // data
   createProject,
@@ -8106,14 +7612,6 @@ export const HANDLERS: Record<string, Handler> = {
   // bulk narration → full pipeline + render
   createBulkNarration,
   getBulkRun,
-  createBulkCut,
-  getCutRun,
-  getNarrationCuts,
-  analyzeCut,
-  getAnalyzeCut,
-  findShortCut,
-  renderManualCut,
-  getCutJob,
   // background jobs panel
   listJobs,
   pauseJob,
@@ -8134,6 +7632,14 @@ export const HANDLERS: Record<string, Handler> = {
   deleteStorageFiles,
   deleteStorageArea,
   pruneSystemStorage,
+  // whole-server storage (host storage-agent; see serverStorage.ts)
+  serverStorageSummary,
+  serverStorageTree,
+  serverStorageType,
+  serverStorageRefresh,
+  serverStorageLog,
+  serverStoragePreview,
+  serverStorageDelete,
   // Thumbnail Designer (LAB tool)
   thumbnailStatus,
   analyzeThumbnailScript,
@@ -8454,6 +7960,20 @@ export const HANDLERS: Record<string, Handler> = {
   hfpEditorChooseComposition,
   hfpEditorHandoffTasks,
   hfpEditorAttest,
+  // Auto Editor (LAB tool)
+  autoEditorStatus,
+  autoEditorJobs,
+  autoEditorJob,
+  autoEditorCreate,
+  autoEditorSaveEdits,
+  autoEditorResetEdits,
+  autoEditorContinue,
+  autoEditorCancel,
+  autoEditorDelete,
+  autoEditorSaveNudges,
+  autoEditorRenderVideo,
+  autoEditorRenderFinal,
+  autoEditorBuildEdit,
 };
 
 void config;

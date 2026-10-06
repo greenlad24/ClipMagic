@@ -1,0 +1,21 @@
+[Unit]
+Description=Storage agent for the Lab (whole-server index + real deletes)
+Documentation=file:/opt/clipmagic/storage-agent/storage_agent.py
+After=local-fs.target docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/clipmagic/storage-agent/storage_agent.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=storage-agent
+# A full walk of the root filesystem (~2.6M files, ~100 s) must not compete with renders.
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

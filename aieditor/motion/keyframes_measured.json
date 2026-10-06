@@ -1,0 +1,930 @@
+{
+ "cta_pill_link": {
+  "what": "'LINK IN THE DESCRIPTION' CTA pill at 0:32 (f781 = offset 0 = first visible sparkle). Tracked 2026-10-05 from the red rim (bbox minus ~3 px glow) and the white sparkle mask, frame-exact seeks.",
+  "final_box_px": [
+   645,
+   853,
+   1275,
+   972
+  ],
+  "normalise": "x: (x-960)/630 of final width, y: (y-912.5)/119 of final height — multiply by the new design's pill size. Tile-phase sizes are better scaled by the pill HEIGHT only.",
+  "box_px_per_offset": {
+   "3": [
+    897,
+    827,
+    951,
+    918
+   ],
+   "4": [
+    893,
+    811,
+    957,
+    914
+   ],
+   "5": [
+    891,
+    803,
+    959,
+    911
+   ],
+   "6": [
+    889,
+    798,
+    960,
+    910
+   ],
+   "7": [
+    889,
+    795,
+    961,
+    910
+   ],
+   "8": [
+    889,
+    795,
+    961,
+    910
+   ],
+   "9": [
+    889,
+    795,
+    961,
+    910
+   ],
+   "10": [
+    885,
+    796,
+    965,
+    911
+   ],
+   "11": [
+    877,
+    799,
+    975,
+    913
+   ],
+   "12": [
+    861,
+    803,
+    986,
+    917
+   ],
+   "13": [
+    825,
+    813,
+    1052,
+    928
+   ],
+   "14": [
+    691,
+    829,
+    1209,
+    944
+   ],
+   "15": [
+    680,
+    855,
+    1190,
+    970
+   ],
+   "16": [
+    672,
+    861,
+    1224,
+    978
+   ],
+   "17": [
+    673,
+    863,
+    1250,
+    978
+   ],
+   "18": [
+    null,
+    860,
+    1270,
+    976
+   ],
+   "19": [
+    null,
+    855,
+    1270,
+    972
+   ],
+   "20": [
+    null,
+    853,
+    1270,
+    968
+   ]
+  },
+  "box_notes": "tile appears at +3 (bottom edge ~fixed, grows UP +3..+7), holds +7..+9, widens +10..+12, stretches +12..+18 with a ~6-8 px downward overshoot at +16..+17, settled by ~+20. +14 and +15 are motion-blurred (right edge 1209 then 1190: blur inflates +14). null = left edge not measurable (rim faint / sparkle glow) — final left 645 from the spec. All values = measured red-rim bbox minus ~3 px glow.",
+  "sparkle_pair_px": {
+   "what": "bbox of the white 2-star sparkle incl. glow; it pops in, rotates from a horizontal pair (+2..+8) to a vertical pair (+9..+12), then shrinks into the pill's left icon",
+   "per_offset": {
+    "0": [
+     723,
+     912,
+     733,
+     920
+    ],
+    "1": [
+     708,
+     901,
+     743,
+     928
+    ],
+    "2": [
+     668,
+     872,
+     769,
+     947
+    ],
+    "3": [
+     657,
+     869,
+     774,
+     949
+    ],
+    "4": [
+     651,
+     870,
+     776,
+     953
+    ],
+    "5": [
+     647,
+     874,
+     777,
+     955
+    ],
+    "6": [
+     645,
+     880,
+     775,
+     958
+    ],
+    "7": [
+     643,
+     880,
+     773,
+     961
+    ],
+    "8": [
+     642,
+     872,
+     769,
+     965
+    ],
+    "9": [
+     644,
+     862,
+     762,
+     969
+    ],
+    "10": [
+     648,
+     852,
+     752,
+     973
+    ],
+    "11": [
+     658,
+     844,
+     746,
+     973
+    ],
+    "12": [
+     670,
+     845,
+     769,
+     964
+    ],
+    "13": [
+     657,
+     866,
+     778,
+     954
+    ],
+    "14": [
+     657,
+     885,
+     771,
+     964
+    ],
+    "15": [
+     670,
+     879,
+     758,
+     962
+    ],
+    "16": [
+     691,
+     887,
+     743,
+     949
+    ],
+    "17": [
+     698,
+     889,
+     737,
+     945
+    ],
+    "18": [
+     702,
+     890,
+     733,
+     943
+    ],
+    "22": [
+     708,
+     891,
+     740,
+     936
+    ]
+   },
+   "final_icon_px": [
+    707,
+    891,
+    746,
+    931
+   ],
+   "angle": "NOT tracked directly: |angle| per frame is derived from the measured box's width:height (pair = 1.6:1 flat, 1:1.6 upright) in recipes._sparkle_angles: flat +2..+8, upright by +11, flat again +13..+14, upright +17.., icon. Turn DIRECTION is ambiguous from a box (looks counter-clockwise)."
+  },
+  "text": {
+   "start_offset": 40,
+   "opacity": [
+    [
+     0,
+     0.15
+    ],
+    [
+     1,
+     0.4
+    ],
+    [
+     2,
+     0.65
+    ],
+    [
+     3,
+     0.85
+    ],
+    [
+     4,
+     0.95
+    ],
+    [
+     5,
+     1
+    ]
+   ],
+   "translateY_px": [
+    [
+     0,
+     12
+    ],
+    [
+     1,
+     9
+    ],
+    [
+     2,
+     6
+    ],
+    [
+     3,
+     3
+    ],
+    [
+     4,
+     2
+    ],
+    [
+     5,
+     0
+    ]
+   ],
+   "blur_px": [
+    [
+     0,
+     8
+    ],
+    [
+     1,
+     6
+    ],
+    [
+     2,
+     4
+    ],
+    [
+     3,
+     2
+    ],
+    [
+     4,
+     1
+    ],
+    [
+     5,
+     0
+    ]
+   ],
+   "final_ink_px": [
+    774,
+    898,
+    1203,
+    922
+   ],
+   "note": "timing confirmed on the strip (faint at f821, sharp f826). Other instances: text +38 (9:58); at 3:58 text is present from the tile stage."
+  },
+  "edge_beam": "two glow segments (~300 px, ~half the pill width) orbiting clockwise at ~7 px/frame through the hold",
+  "variants": {
+   "morph_start_offset": {
+    "0:32": 12,
+    "3:58": 10,
+    "9:58": 15
+   }
+  },
+  "exits": {
+   "hard_cut": "0:32 (f844)",
+   "cut_with_shot": "3:58",
+   "blur_fade_4f": {
+    "opacity": [
+     [
+      0,
+      1
+     ],
+     [
+      1,
+      0.7
+     ],
+     [
+      2,
+      0.4
+     ],
+     [
+      3,
+      0.15
+     ],
+     [
+      4,
+      0
+     ]
+    ],
+    "blur_px": "0 -> 10"
+   }
+  }
+ },
+ "card_portal_open": {
+  "what": "7:44 'pop portal' cards: edge-on pink slab → swings open → pink clears; tracked 2026-10-05 per card (B k=f11146, A k=f11149 = +3), normalised to each card's FINAL box (cx/top/bottom offsets in final width/height units, width = fraction of final width, pink = overlay amount 0..1 from the card's measured colour). Offset 0 = first measurable frame; offset −1 = a faint ~20 % pink sliver.",
+  "faint_offset_minus_1_opacity": 0.2,
+  "stagger_f": {
+   "7:44": 3,
+   "8:37 (no pink)": 2
+  },
+  "average": {
+   "0": {
+    "cx": 0.0084,
+    "top": 0.1089,
+    "bottom": 0.0263,
+    "width": 0.369,
+    "pink": 0.9505
+   },
+   "1": {
+    "cx": 0.0102,
+    "top": 0.0772,
+    "bottom": 0.0184,
+    "width": 0.4333,
+    "pink": 1.0
+   },
+   "2": {
+    "cx": 0.0104,
+    "top": 0.0518,
+    "bottom": 0.0123,
+    "width": 0.4618,
+    "pink": 1.0
+   },
+   "3": {
+    "cx": 0.0091,
+    "top": 0.0333,
+    "bottom": 0.0052,
+    "width": 0.4812,
+    "pink": 0.9505
+   },
+   "4": {
+    "cx": 0.0112,
+    "top": 0.0193,
+    "bottom": 0.0026,
+    "width": 0.6024,
+    "pink": 0.805
+   },
+   "5": {
+    "cx": 0.0086,
+    "top": 0.0087,
+    "bottom": 0.0026,
+    "width": 0.7445,
+    "pink": 0.595
+   },
+   "6": {
+    "cx": 0.0047,
+    "top": 0.0008,
+    "bottom": 0.0017,
+    "width": 0.8536,
+    "pink": 0.3785
+   },
+   "7": {
+    "cx": -0.0025,
+    "top": -0.0053,
+    "bottom": 0.0017,
+    "width": 0.911,
+    "pink": 0.2225
+   },
+   "8": {
+    "cx": 0.0016,
+    "top": -0.0097,
+    "bottom": 0.0017,
+    "width": 0.9644,
+    "pink": 0.11
+   },
+   "9": {
+    "cx": 0.0009,
+    "top": -0.0105,
+    "bottom": 0.0017,
+    "width": 0.9926,
+    "pink": 0.0085
+   },
+   "10": {
+    "cx": 0.0008,
+    "top": -0.0105,
+    "bottom": 0.0017,
+    "width": 1.0076,
+    "pink": 0.0045
+   },
+   "11": {
+    "cx": 0.0008,
+    "top": -0.0097,
+    "bottom": 0.0017,
+    "width": 1.0076,
+    "pink": 0.0
+   },
+   "12": {
+    "cx": -0.0007,
+    "top": -0.0062,
+    "bottom": 0.0017,
+    "width": 1.0014,
+    "pink": 0.0
+   },
+   "13": {
+    "cx": 0.0,
+    "top": -0.0035,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0.0
+   },
+   "14": {
+    "cx": 0.0,
+    "top": -0.0027,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0.0045
+   },
+   "15": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0.0
+   },
+   "16": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0.0
+   }
+  },
+  "card_B": {
+   "0": {
+    "cx": 0.0508,
+    "top": 0.1085,
+    "bottom": 0.0235,
+    "width": 0.3651,
+    "pink": 0.966
+   },
+   "1": {
+    "cx": 0.0444,
+    "top": 0.0759,
+    "bottom": 0.0163,
+    "width": 0.4286,
+    "pink": 1
+   },
+   "2": {
+    "cx": 0.0349,
+    "top": 0.0506,
+    "bottom": 0.0108,
+    "width": 0.4603,
+    "pink": 1
+   },
+   "3": {
+    "cx": 0.0254,
+    "top": 0.0325,
+    "bottom": 0.0036,
+    "width": 0.4794,
+    "pink": 0.966
+   },
+   "4": {
+    "cx": 0.0238,
+    "top": 0.0181,
+    "bottom": 0.0018,
+    "width": 0.6032,
+    "pink": 0.871
+   },
+   "5": {
+    "cx": 0.0159,
+    "top": 0.0072,
+    "bottom": 0.0018,
+    "width": 0.746,
+    "pink": 0.69
+   },
+   "6": {
+    "cx": 0.0095,
+    "top": 0.0,
+    "bottom": 0.0018,
+    "width": 0.854,
+    "pink": 0.474
+   },
+   "7": {
+    "cx": 0.0063,
+    "top": -0.0072,
+    "bottom": 0.0018,
+    "width": 0.9238,
+    "pink": 0.293
+   },
+   "8": {
+    "cx": 0.0032,
+    "top": -0.0108,
+    "bottom": 0.0018,
+    "width": 0.9683,
+    "pink": 0.155
+   },
+   "9": {
+    "cx": 0.0032,
+    "top": -0.0108,
+    "bottom": 0.0018,
+    "width": 0.9937,
+    "pink": 0.017
+   },
+   "10": {
+    "cx": 0.0016,
+    "top": -0.0108,
+    "bottom": 0.0018,
+    "width": 1.0095,
+    "pink": 0.009
+   },
+   "11": {
+    "cx": 0.0016,
+    "top": -0.0108,
+    "bottom": 0.0018,
+    "width": 1.0095,
+    "pink": 0
+   },
+   "12": {
+    "cx": 0.0,
+    "top": -0.0072,
+    "bottom": 0.0018,
+    "width": 1.0,
+    "pink": 0
+   },
+   "13": {
+    "cx": 0.0,
+    "top": -0.0036,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   },
+   "14": {
+    "cx": 0.0,
+    "top": -0.0036,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0.009
+   },
+   "15": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   },
+   "16": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   }
+  },
+  "card_A": {
+   "0": {
+    "cx": -0.0339,
+    "top": 0.1092,
+    "bottom": 0.029,
+    "width": 0.3729,
+    "pink": 0.935
+   },
+   "1": {
+    "cx": -0.024,
+    "top": 0.0785,
+    "bottom": 0.0205,
+    "width": 0.4379,
+    "pink": 1
+   },
+   "2": {
+    "cx": -0.0141,
+    "top": 0.0529,
+    "bottom": 0.0137,
+    "width": 0.4633,
+    "pink": 1
+   },
+   "3": {
+    "cx": -0.0071,
+    "top": 0.0341,
+    "bottom": 0.0068,
+    "width": 0.4831,
+    "pink": 0.935
+   },
+   "4": {
+    "cx": -0.0014,
+    "top": 0.0205,
+    "bottom": 0.0034,
+    "width": 0.6017,
+    "pink": 0.739
+   },
+   "5": {
+    "cx": 0.0014,
+    "top": 0.0102,
+    "bottom": 0.0034,
+    "width": 0.7429,
+    "pink": 0.5
+   },
+   "6": {
+    "cx": 0.0,
+    "top": 0.0017,
+    "bottom": 0.0017,
+    "width": 0.8531,
+    "pink": 0.283
+   },
+   "7": {
+    "cx": -0.0113,
+    "top": -0.0034,
+    "bottom": 0.0017,
+    "width": 0.8983,
+    "pink": 0.152
+   },
+   "8": {
+    "cx": 0.0,
+    "top": -0.0085,
+    "bottom": 0.0017,
+    "width": 0.9605,
+    "pink": 0.065
+   },
+   "9": {
+    "cx": -0.0014,
+    "top": -0.0102,
+    "bottom": 0.0017,
+    "width": 0.9915,
+    "pink": 0
+   },
+   "10": {
+    "cx": 0.0,
+    "top": -0.0102,
+    "bottom": 0.0017,
+    "width": 1.0056,
+    "pink": 0
+   },
+   "11": {
+    "cx": 0.0,
+    "top": -0.0085,
+    "bottom": 0.0017,
+    "width": 1.0056,
+    "pink": 0
+   },
+   "12": {
+    "cx": -0.0014,
+    "top": -0.0051,
+    "bottom": 0.0017,
+    "width": 1.0028,
+    "pink": 0
+   },
+   "13": {
+    "cx": 0.0,
+    "top": -0.0034,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   },
+   "14": {
+    "cx": 0.0,
+    "top": -0.0017,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   },
+   "15": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   },
+   "16": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   }
+  },
+  "notes": "slab phase 0..3 (width .37→.48), swing 4..9 with ~+1 % width overshoot at 9..10; top rises then settles back ~1 % of height (bounce) by 15; rotation not measured directly — width = cos(rotateY) gives ~68°→0° (perspective ignored). The 8:37 variant is the same swing without the pink.",
+  "tint": {
+   "0": 0.72,
+   "1": 0.699,
+   "2": 0.683,
+   "3": 0.637,
+   "4": 0.518,
+   "5": 0.348,
+   "6": 0.196,
+   "7": 0.112,
+   "8": 0.072,
+   "9": 0.04,
+   "10": 0.048,
+   "11": 0.041,
+   "12": 0.026
+  },
+  "opacity": {
+   "-1": 0.15,
+   "0": 0.7,
+   "1": 1.0
+  },
+  "tint_note": "solved per frame (2026-10-05) from the colour equation frame = bg + a·(content−bg) + a·t·(pink−content) with the clean plate (f11144) and the settled card (f11170), pink = #FF2E9A: a = opacity, t = pink amount. B and A agree within 0.06; 'tint' = their mean. Pink peaks at ~0.72, not 1. The earlier 'pink' field in the per-offset tables is a raw colour ratio — superseded.",
+  "near_side_cx": {
+   "0": 0.0423,
+   "1": 0.0342,
+   "2": 0.0245,
+   "3": 0.0163,
+   "4": 0.0126,
+   "5": 0.0073,
+   "6": 0.0047,
+   "7": 0.0088,
+   "8": 0.0016,
+   "9": 0.0023,
+   "10": 0.0008,
+   "11": 0.0008,
+   "12": 0.0007,
+   "13": 0.0,
+   "14": 0.0,
+   "15": 0.0,
+   "16": 0.0
+  },
+  "near_side_note": "while edge-on the card's centre sits toward its NEARER edge (perspective): B (near edge right) +, A (near edge left) −. Value = fraction of final width; recipe: cx = sign(near) * near_side_cx."
+ },
+ "card_pink_reveal_rise": {
+  "what": "3:29 callout card: solid pink silhouette fades in, rises + grows ~2 %, pink dissolves to content. Offset 0 = f5035 (f5034 = faint ~20 %). Normalised like card_portal_open.",
+  "faint_offset_minus_1_opacity": 0.2,
+  "opacity": {
+   "0": 0.231,
+   "1": 0.525,
+   "2": 0.762,
+   "3": 0.915,
+   "4": 0.983,
+   "5": 1.0,
+   "6": 1.0,
+   "7": 1.0,
+   "8": 0.999,
+   "9": 0.998,
+   "10": 1.0,
+   "11": 1.0,
+   "12": 1.0,
+   "-1": 0.08
+  },
+  "frames": {
+   "0": {
+    "cx": 0.0061,
+    "top": 0.0795,
+    "bottom": 0.0588,
+    "width": 0.9732,
+    "pink": 0.8
+   },
+   "1": {
+    "cx": 0.0085,
+    "top": 0.0668,
+    "bottom": 0.0525,
+    "width": 0.9878,
+    "pink": 1
+   },
+   "2": {
+    "cx": 0.0061,
+    "top": 0.0572,
+    "bottom": 0.0429,
+    "width": 0.9927,
+    "pink": 0.982
+   },
+   "3": {
+    "cx": 0.0049,
+    "top": 0.0445,
+    "bottom": 0.0334,
+    "width": 0.9902,
+    "pink": 0.8
+   },
+   "4": {
+    "cx": 0.0037,
+    "top": 0.035,
+    "bottom": 0.0254,
+    "width": 0.9927,
+    "pink": 0.509
+   },
+   "5": {
+    "cx": 0.0012,
+    "top": 0.027,
+    "bottom": 0.0207,
+    "width": 0.9976,
+    "pink": 0.273
+   },
+   "6": {
+    "cx": 0.0024,
+    "top": 0.0191,
+    "bottom": 0.0143,
+    "width": 1.0,
+    "pink": 0.145
+   },
+   "7": {
+    "cx": 0.0012,
+    "top": 0.0127,
+    "bottom": 0.0111,
+    "width": 0.9976,
+    "pink": 0.055
+   },
+   "8": {
+    "cx": 0.0,
+    "top": 0.0095,
+    "bottom": 0.0079,
+    "width": 1.0,
+    "pink": 0.018
+   },
+   "9": {
+    "cx": 0.0,
+    "top": 0.0064,
+    "bottom": 0.0048,
+    "width": 1.0,
+    "pink": 0
+   },
+   "10": {
+    "cx": 0.0,
+    "top": 0.0032,
+    "bottom": 0.0032,
+    "width": 1.0,
+    "pink": 0
+   },
+   "11": {
+    "cx": 0.0,
+    "top": 0.0016,
+    "bottom": 0.0016,
+    "width": 1.0,
+    "pink": 0
+   },
+   "12": {
+    "cx": 0.0,
+    "top": 0.0,
+    "bottom": 0.0,
+    "width": 1.0,
+    "pink": 0
+   }
+  },
+  "top_bezier": [
+   0.46,
+   1.03,
+   0.84,
+   0.93
+  ],
+  "label_after_f": 36,
+  "exit": "hard cut with the shot",
+  "tint": {
+   "0": 0.994,
+   "1": 0.908,
+   "2": 0.826,
+   "3": 0.68,
+   "4": 0.479,
+   "5": 0.323,
+   "6": 0.22,
+   "7": 0.155,
+   "8": 0.11,
+   "9": 0.074,
+   "10": 0.049,
+   "11": 0.019,
+   "12": 0.0
+  },
+  "tint_note": "solved per frame like card_portal_open (plate f5032, settled f5055, pink #FF2E9A)."
+ }
+}

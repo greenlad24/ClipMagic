@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { listStorage, deleteStorageFiles, deleteStorageArea, pruneSystemStorage } from 'zite-endpoints-sdk';
+import WholeServerStorage from '@/components/storage/WholeServerStorage';
 
 // Server-driven model — every card the UI renders comes from `areas` (see
 // server/src/zite/storage.ts). The client never hard-codes the list of areas,
@@ -237,6 +238,11 @@ export default function StoragePage() {
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-6 space-y-6">
+        {/* FIRST: every file on the host's disk, with deletes that really free space —
+            served by the host storage-agent (server/src/zite/serverStorage.ts). Jake
+            2026-10-06 "the storage manager doesn't show the files": it sat ~1,300 px down
+            under the Lab-volume cards and opened on the root's locked system folders. */}
+        <WholeServerStorage />
         {/* Disk free-space + full breakdown overview */}
         {data && (
           <div className="rounded-xl border border-border p-4 space-y-4">
@@ -369,6 +375,7 @@ export default function StoragePage() {
             )}
           </div>
         )}
+
 
         {loading && !data && (
           <div className="flex items-center justify-center py-20 text-muted-foreground gap-2">

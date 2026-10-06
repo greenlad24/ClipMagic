@@ -851,9 +851,9 @@ export async function claudeChatJSON(opts: {
 /**
  * JSON completion on an EXPLICIT tier + purpose. Used for calls whose system
  * prompt doesn't fit the gpt-4o-name heuristic resolveTier/resolvePurpose use
- * (e.g. the Narration Cutter's take-detection, which is a cheap structured
- * extraction that belongs on the fast/Haiku tier and must be attributed to its
- * own purpose in the optimization report — not mis-billed as url-research).
+ * (e.g. a cheap structured extraction that belongs on the fast/Haiku tier and
+ * must be attributed to its own purpose in the optimization report — not
+ * mis-billed as url-research).
  */
 /**
  * JSON completion on an EXPLICIT MODEL, bypassing the tier map.

@@ -76,7 +76,7 @@ Because the lab is a literal copy, improvements don't auto-merge. To bring one
 over, diff the file and apply it to the matching root path, e.g.:
 
 ```bash
-diff -u src/pages/CutterPage.tsx lab/src/pages/CutterPage.tsx
+diff -u src/pages/BulkPage.tsx lab/src/pages/BulkPage.tsx
 ```
 
 Then port the wanted hunks into the root file and rebuild the main app.

@@ -1,0 +1,550 @@
+#!/usr/bin/env python3
+"""aieditor-worker — runs Auto Editor jobs for the Lab (systemd: aieditor-worker.service).
+
+The Lab is the CONTROL PLANE (lab/server/src/aieditor/control.ts): it writes a job
+directory and reads files back. This service, on the HOST, does all media work —
+it shells out to Docker for ffmpeg and the aligner, and a 46-minute job must outlive
+the browser tab and a Lab rebuild. One job at a time.
+
+LAYOUT (the filesystem is the database) — /opt/aieditor-work/jobs/<id>/
+  request.json      what Jake asked for (Lab writes): source, format, sponsored, script
+  queue.json        {"action": "run" | "rebuild" | "recut" | "render"} (Lab writes, worker
+                    claims + deletes). run = the whole pipeline (video preview at the end);
+                    rebuild/recut = new cut + sound check only, the video is NOT re-rendered
+                    (Jake: "instead of rerender"); render = the video preview of the current cut
+  cancel            stop now (Lab writes)
+  status.json       state, stage, progress, message, per-stage timings, cost (worker)
+  source.mp4        the raw video          audio16k.wav / .mp3, full48k.wav
+  words.json        Groq transcript        aligned.json   forced-aligned times
+  plan.raw.json     Claude's answer        plan.json      validated plan (what is kept)
+  plan.edit.json    Jake's edits from the review screen (Lab writes; wins over plan.json)
+  joins.edit.json   Jake's hand nudges of single cuts, {"nudges": {"a:<word id>": ms, "b:<word id>": ms}}
+  review.json       sentences + plan + reasons, for the review screen
+  edl.json          frame-exact pieces + output-timeline words per video
+  listen-NN.mp4     sound check: the exact soundtrack over the first frame, held (~3 min for 23 min)
+  preview-NN.mp4    1080p review renders
+  graphics-NN.json  phase 2 (shorts): Claude's graphics plan per video — events anchored to word ids
+  gfx-NN/           the events' frames (motion/render.mjs, measured recipes)
+  captions-NN.ass   word-by-word captions (the Lab's own caption engine)
+  edit-NN.mp4       the preview + graphics + captions + SFX
+  final-NN.mp4      queue action "final": shorts = full-resolution cut + 2× graphics + captions + SFX;
+                    long-form = the full edit at source resolution when one exists, else the cut alone
+  edit-NN/          long-form full edit: direct.json (plan), seg-SS/ (inventory, script, rec/), gfx/,
+                    overlays.json — longedit.py; request.json "sites" = [{url, note}] to screencast
+  log.txt           what happened
+"""
+import json
+import os
+import shutil
+import signal
+import sys
+import time
+import traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from aieditor import align, camera, compose, config, descript, edl, graphics, longedit, media, render, takes, transcribe  # noqa: E402
+
+STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
+STOP = False
+
+
+class Cancelled(Exception):
+    pass
+
+
+def now():
+    return time.time()
+
+
+def jdump(path, obj):
+    tmp = Path(str(path) + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=1))
+    os.replace(tmp, path)
+
+
+def jload(path, default=None):
+    try:
+        return json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return default
+
+
+class Job:
+    def __init__(self, d):
+        self.d = Path(d)
+        self.id = self.d.name
+        self.req = jload(self.d / "request.json", {})
+        self.st = jload(self.d / "status.json", {}) or {}
+        self.st.setdefault("stages", {s: {"state": "pending"} for s in STAGES})
+        self.st.setdefault("cost_usd", 0.0)
+
+    def log(self, msg):
+        with open(self.d / "log.txt", "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+
+    def save(self, **kw):
+        self.st.update(kw)
+        self.st["updated_at"] = now()
+        jdump(self.d / "status.json", self.st)
+
+    def stage(self, name, state, note=None):
+        s = self.st["stages"].setdefault(name, {})
+        s["state"] = state
+        if state == "running":
+            s["started_at"] = now()
+            s.pop("finished_at", None)
+            s.pop("note", None)
+        if state in ("done", "failed", "skipped"):
+            s["finished_at"] = now()
+        if note is not None:
+            s["note"] = note
+        self.save(stage=name if state == "running" else self.st.get("stage"))
+
+    def progress(self, msg=None, frac=None):
+        if self.cancelled():
+            raise Cancelled()
+        kw = {}
+        if msg is not None:
+            kw["message"] = msg
+        if frac is not None:
+            kw["progress"] = round(frac, 3)
+        self.save(**kw)
+
+    def cancelled(self):
+        return STOP or (self.d / "cancel").exists()
+
+
+def run_job(job, action):
+    d = job.d
+    req = job.req
+    fmt = req.get("format")
+    sponsored = req.get("sponsored")
+    if fmt not in ("short", "long") or sponsored not in (True, False):
+        raise RuntimeError("request.json needs format short|long and sponsored true|false")
+
+    def step(name, fn, done_if=None, rerun=False):
+        if not rerun and done_if is not None and done_if():
+            if job.st["stages"].get(name, {}).get("state") != "done":
+                job.stage(name, "done", "reused")
+            return
+        job.stage(name, "running")
+        job.progress(None, 0)
+        job.log(f"stage {name} start")
+        note = fn()
+        job.stage(name, "done", note)
+        job.log(f"stage {name} done {note or ''}")
+
+    rebuild = action in ("rebuild", "recut")
+
+    if action == "final":
+        return run_final(job, fmt)
+
+    # 1 download
+    def do_download():
+        src = req.get("source", {})
+        facts = descript.download(src.get("url"), d / "source.part",
+                                  progress=lambda m, f=None: job.progress(m, f),
+                                  cancelled=job.cancelled)
+        os.replace(d / "source.part", d / "source.mp4")
+        info = media.probe(d / "source.mp4")
+        jdump(d / "source.json", {**facts, **info})
+        return f"{info['width']}x{info['height']}, {info['duration'] / 60:.1f} min"
+    step("download", do_download, lambda: (d / "source.mp4").exists() and (d / "source.json").exists())
+    info = jload(d / "source.json")
+    fps = info["fps"]
+
+    # 2 audio
+    step("audio", lambda: media.extract_audio(d / "source.mp4", d) or "16 kHz + 48 kHz PCM",
+         lambda: all((d / f).exists() for f in ("audio16k.wav", "audio16k.mp3", "full48k.wav")))
+
+    # 3 transcribe
+    def do_transcribe():
+        job.progress("Transcribing with Groq Whisper…")
+        doc = transcribe.transcribe(d / "audio16k.mp3", d / "words.json", wav16k=d / "audio16k.wav",
+                                    job=d, audio=edl.Audio(d / "audio16k.wav"))
+        job.st["cost_usd"] = round(job.st["cost_usd"] + (doc.get("duration") or 0) / 3600 * 0.04, 4)
+        fixed = [r for r in doc["repairs"] if "->" in r]
+        for r in doc["repairs"]:
+            job.log("transcript repair " + r)
+        return f"{len(doc['words'])} words" + (f", {len(fixed)} skipped stretch(es) recovered" if fixed else "")
+    step("transcribe", do_transcribe, lambda: (d / "words.json").exists())
+
+    # 4 align
+    def do_align():
+        job.progress("Re-timing every word against the audio…")
+        return align.align(d, progress=lambda a, b: job.progress(f"Re-timing words: {a}/{b} sentences", a / max(b, 1)))
+    step("align", do_align, lambda: (d / "aligned.json").exists())
+
+    words = takes.load_words(d / "words.json")
+    sents = takes.sentences(words)                      # ids from Whisper's times
+    aligned = jload(d / "aligned.json")["words"]
+    for w in words:                                     # then swap in the aligned times
+        w["s"], w["e"] = float(aligned[w["i"]]["start"]), float(aligned[w["i"]]["end"])
+    by_id = {w["i"]: w for w in words}
+    audio = edl.Audio(d / "audio16k.wav")
+
+    # 5 takes
+    def do_takes():
+        job.progress("Claude is picking the best take of every line…")
+        feats = takes.features(sents, audio)
+        plan, raw, meta = takes.pick(words, sents, feats, fmt, sponsored, req.get("script"))
+        jdump(d / "plan.raw.json", {"answer": raw, "meta": meta})
+        jdump(d / "plan.json", plan)
+        job.st["cost_usd"] = round(job.st["cost_usd"] + meta["usd"], 4)
+        extra = ""
+        if meta.get("restored_opening"):
+            extra += f", {len(meta['restored_opening'])} line(s) kept by the 5:00 rule"
+        if meta.get("seams_fixed"):
+            extra += f", {meta['seams_fixed']} restart(s) across lines removed"
+        return f"{len(plan['videos'])} video(s), ${meta['usd']:.2f}, {meta['seconds']}s{extra}"
+    step("takes", do_takes, lambda: (d / "plan.json").exists())
+
+    plan = jload(d / "plan.json")
+    edit = jload(d / "plan.edit.json")
+    if edit:
+        plan = {**plan, "videos": takes.validate(edit, sents)["videos"]}
+
+    # review data for the Lab page
+    jdump(d / "review.json", {
+        "sentences": [{"s": n, "start": round(s[0]["s"], 2), "end": round(s[-1]["e"], 2),
+                       "words": [{"i": w["i"], "w": w["w"]} for w in s]} for n, s in enumerate(sents)],
+        "videos": plan["videos"],
+        # why Claude dropped each sentence; anything not kept that has no reason here was
+        # removed on the review screen
+        "reasons": {str(r["s"]): r["why"] for r in jload(d / "plan.json")["removed"]},
+        "notes": plan.get("notes", ""),
+        "edited": bool(edit),
+    })
+
+    # 6 cut
+    def do_cut():
+        # long-form: every rebuilt pause is exactly 0.35 s (Jake); shorts stay tighter
+        nudges = (jload(d / "joins.edit.json") or {}).get("nudges") or {}
+        built = [edl.build(v, sents, by_id, audio, fps, exact_gap=(fmt == "long"), nudges=nudges)
+                 for v in plan["videos"]]
+        jdump(d / "edl.json", {"fps": fps, "fps_num": info["fps_num"], "fps_den": info["fps_den"],
+                               "width": info["width"], "height": info["height"], "videos": built})
+        return ", ".join(f"{v['duration']:.0f}s/{v['cuts']} cuts" for v in built)
+    step("cut", do_cut, lambda: (d / "edl.json").exists(), rerun=rebuild)
+
+    # 7 sound check: the exact soundtrack of the current cut, no picture — minutes, not
+    # the ~35 a 4K video preview takes (Jake: "can you preview without render?")
+    def do_listen():
+        e = jload(d / "edl.json")
+        for k, v in enumerate(e["videos"], 1):
+            job.progress(f"Sound check {k} of {len(e['videos'])}…", (k - 1) / len(e["videos"]))
+            try:
+                render.render(d, v, fps, f"listen-{k:02d}", render.listen_size(info["width"], info["height"]),
+                              cancelled=job.cancelled,
+                              room_tone_start=audio.room_tone(), audio_only=True)
+            except render.RenderCancelled:
+                raise Cancelled()
+        for stale in d.glob("listen-*.mp4"):
+            if int(stale.stem.split("-")[1]) > len(e["videos"]):
+                stale.unlink()
+        return f"{len(e['videos'])} sound check(s)"
+    step("listen", do_listen, lambda: any(d.glob("listen-*.mp4")), rerun=rebuild)
+
+    # 8 video preview: on the first run and when Jake presses Render video — never on
+    # an edit (the previous video stays; the sound check is current)
+    if rebuild and any(d.glob("preview-*.mp4")):
+        job.stage("preview", "skipped", "older than the cut — press Render video")
+        if fmt == "short":
+            job.stage("graphics", "skipped", "older than the cut — press Render video")
+            job.stage("compose", "skipped", "older than the cut — press Render video")
+        return
+
+    # 8a phase 2 (shorts): Claude plans the graphics on the cut's word ids (reused until
+    # the cut changes), the camera framings follow from them (camera.py), and the
+    # measured recipes render every graphic. Long-form graphics are not built yet.
+    e = jload(d / "edl.json")
+    if fmt == "short":
+        edl_at = (d / "edl.json").stat().st_mtime
+
+        def plan_fresh(k):
+            f = d / f"graphics-{k:02d}.json"
+            return f.exists() and f.stat().st_mtime >= edl_at
+
+        def do_graphics():
+            n_ev, usd = 0, 0.0
+            for k, v in enumerate(e["videos"], 1):
+                if not plan_fresh(k):
+                    job.progress(f"Claude is planning the graphics of video {k} of {len(e['videos'])}…", (k - 1) / len(e["videos"]))
+                    p, raw, meta = graphics.plan(v, fmt, sponsored)
+                    jdump(d / f"graphics-{k:02d}.json", {"plan": p, "raw": raw, "meta": meta})
+                    usd += meta["usd"]
+                    for ev in p["dropped"]:
+                        job.log(f"video {k}: graphic dropped ({ev['dropped']}): {json.dumps(ev.get('fields'))[:120]}")
+                doc = jload(d / f"graphics-{k:02d}.json")
+                evs = doc["plan"]["events"]
+                doc["framings"] = camera.assign(v, evs, fps)          # one framing per piece
+                jdump(d / f"graphics-{k:02d}.json", doc)
+                n_ev += len(evs)
+                try:
+                    compose.render_events(d, k, evs, round(fps), scale=1, cancelled=job.cancelled,
+                                          progress=lambda m, f: job.progress(f"Video {k}: {m}", f))
+                except InterruptedError:
+                    raise Cancelled()
+            job.st["cost_usd"] = round(job.st["cost_usd"] + usd, 4)
+            return f"{n_ev} graphics" + (f", ${usd:.2f}" if usd else "")
+        step("graphics", do_graphics, rerun=True)
+    else:
+        # long-form: the full edit runs AFTER the preview (it is the edit's base) — below
+        pass
+
+    def framed(k, v):
+        """the video with its camera framings (shorts) for render.render"""
+        doc = jload(d / f"graphics-{k:02d}.json") if fmt == "short" else None
+        if doc and doc.get("framings") and len(doc["framings"]) == len(v["pieces"]):
+            v = {**v, "pieces": [{**p, "framing": f} for p, f in zip(v["pieces"], doc["framings"])]}
+        return v
+
+    def do_preview():
+        e = jload(d / "edl.json")
+        size = render.preview_size(info["width"], info["height"])
+        # ⚠️ keep the previous previews until the new ones exist: deleting them first
+        # left Jake with nothing to review for the whole re-render (render() writes
+        # .part and swaps it in only when finished)
+        (d / "roomtone.wav").unlink(missing_ok=True)
+        for k, v in enumerate(e["videos"], 1):
+            job.progress(f"Rendering preview {k} of {len(e['videos'])}…", (k - 1) / len(e["videos"]))
+            try:
+                render.render(d, framed(k, v), fps, f"preview-{k:02d}", size, cancelled=job.cancelled,
+                              room_tone_start=audio.room_tone(), src_size=(info["width"], info["height"]))
+            except render.RenderCancelled:
+                raise Cancelled()
+        for stale in d.glob("preview-*.mp4"):                # videos that no longer exist
+            if int(stale.stem.split("-")[1]) > len(e["videos"]):
+                stale.unlink()
+        return f"{len(e['videos'])} preview(s)"
+    step("preview", do_preview, lambda: any(d.glob("preview-*.mp4")), rerun=(action == "render" or fmt == "short"))
+
+    # 8c long-form: the FULL EDIT — screencasts (planned, recorded, camera-zoomed), facecam
+    # bubble, overlays, A-roll camera, music bed (reference 2, kwysV2smgfY) → edit-NN.mp4
+    if fmt == "long" and action in ("run", "render", "edit") and not req.get("no_edit"):
+        e = jload(d / "edl.json")
+        sites = req.get("sites") or []
+
+        def do_graphics_long():
+            notes, usd = [], 0.0
+            for k, v in enumerate(e["videos"], 1):
+                try:
+                    note, u = longedit.plan_and_record(d, k, v, sites, sponsored, fps,
+                                                       lambda m, f: job.progress(f"Video {k}: {m}", f),
+                                                       job.cancelled, job.log)
+                except InterruptedError:
+                    raise Cancelled()
+                notes.append(note)
+                usd += u
+            job.st["cost_usd"] = round(job.st["cost_usd"] + usd, 4)
+            return "; ".join(notes) + (f", ${usd:.2f}" if usd else "")
+        step("graphics", do_graphics_long, rerun=True)
+
+        def do_compose_long():
+            size = render.preview_size(info["width"], info["height"])
+            w, h = (int(x) for x in size.split(":"))
+            for k, v in enumerate(e["videos"], 1):
+                try:
+                    longedit.compose(d, k, f"preview-{k:02d}.mp4", fps, (w, h), job.cancelled,
+                                     lambda m, f: job.progress(f"Video {k}: {m}", f), f"edit-{k:02d}")
+                except InterruptedError:
+                    raise Cancelled()
+            return f"{len(e['videos'])} edited video(s)"
+        step("compose", do_compose_long, rerun=True)
+    elif fmt == "long":
+        job.stage("graphics", "skipped", "press Build the edit (screencasts + graphics)")
+        job.stage("compose", "skipped", "press Build the edit (screencasts + graphics)")
+
+    # 8b shorts: the preview + graphics + captions + SFX → edit-NN.mp4
+    if fmt == "short":
+        def do_compose():
+            size = render.preview_size(info["width"], info["height"])
+            w, h = (int(x) for x in size.split(":"))
+            for k, v in enumerate(e["videos"], 1):
+                job.progress(f"Compositing video {k} of {len(e['videos'])} (graphics + captions + SFX)…", (k - 1) / len(e["videos"]))
+                evs = jload(d / f"graphics-{k:02d}.json")["plan"]["events"]
+                compose.captions(d, k, v, w, h)
+                try:
+                    compose.composite(d, k, evs, f"preview-{k:02d}.mp4", round(fps), f"edit-{k:02d}", cancelled=job.cancelled)
+                except InterruptedError:
+                    raise Cancelled()
+            for stale in d.glob("edit-*.mp4"):
+                if int(stale.stem.split("-")[1]) > len(e["videos"]):
+                    stale.unlink()
+            return f"{len(e['videos'])} edited video(s)"
+        step("compose", do_compose, rerun=True)
+
+
+
+def run_final(job, fmt):
+    """The deliverable for shorts: the current cut at the SOURCE resolution, graphics
+    rendered at 2× (2160×3840), captions sized for it, SFX — final-NN.mp4. Needs the
+    graphics plan the preview used (anchored to word ids, so it matches the cut)."""
+    d = job.d
+    if fmt == "long":
+        return run_final_long(job)
+    info = jload(d / "source.json")
+    fps = info["fps"]
+    e = jload(d / "edl.json")
+    w, h = info["width"], info["height"]
+    scale = w / 1080
+    audio = edl.Audio(d / "audio16k.wav")
+    job.stage("final", "running")
+    for k, v in enumerate(e["videos"], 1):
+        gp = d / f"graphics-{k:02d}.json"
+        if not gp.exists():
+            raise RuntimeError(f"video {k} has no graphics plan yet — run the preview first")
+        evs = jload(gp)["plan"]["events"]
+        job.progress(f"Final {k} of {len(e['videos'])}: full-resolution cut…", (k - 1) / len(e["videos"]))
+        try:
+            doc = jload(gp)
+            fv = v
+            if doc.get("framings") and len(doc["framings"]) == len(v["pieces"]):
+                fv = {**v, "pieces": [{**p, "framing": f} for p, f in zip(v["pieces"], doc["framings"])]}
+            render.render(d, fv, fps, f"cutfull-{k:02d}", f"{w}:{h}", crf=14, preset="medium",
+                          cancelled=job.cancelled, room_tone_start=audio.room_tone(), src_size=(w, h))
+            job.progress(f"Final {k} of {len(e['videos'])}: graphics at {w}×{h}…")
+            compose.render_events(d, k, evs, round(fps), scale=scale, cancelled=job.cancelled, tag="gfx4k",
+                                  progress=lambda m, f: job.progress(f"Final {k}: {m}"))
+            compose.captions(d, k, v, w, h, tag="captions4k")
+            job.progress(f"Final {k} of {len(e['videos'])}: compositing…")
+            compose.composite(d, k, evs, f"cutfull-{k:02d}.mp4", round(fps), f"final-{k:02d}", cancelled=job.cancelled,
+                              tag="gfx4k", cap="captions4k", crf=16)
+        except (render.RenderCancelled, InterruptedError):
+            raise Cancelled()
+        (d / f"cutfull-{k:02d}.mp4").unlink(missing_ok=True)
+        shutil.rmtree(d / f"gfx4k-{k:02d}", ignore_errors=True)       # 4K PNGs are big: keep only the video
+    job.stage("final", "done", f"{len(e['videos'])} final video(s)")
+
+
+LONG_FINAL_MBPS = 45     # generous for 4K talking head at crf 16 (measured ~25–35)
+
+
+def run_final_long(job):
+    """The long-form deliverable: the current cut (Jake's take swaps, sentence edits and
+    cut nudges included) at the SOURCE resolution — final-01.mp4. No graphics yet:
+    long-form graphics are not built. Encoded once, piece by piece (render direct=True),
+    so a 16-minute 4K cut needs ~2× its own size on disk, not ~40 GB."""
+    d = job.d
+    info = jload(d / "source.json")
+    fps = info["fps"]
+    e = jload(d / "edl.json")
+    w, h = info["width"], info["height"]
+    audio = edl.Audio(d / "audio16k.wav")
+    secs = sum(p["frames"] for v in e["videos"] for p in v["pieces"]) / fps
+    edited_any = (d / "edit-01" / "direct.json").exists()
+    # cut + A-roll-camera copy + composite live at once for an edited final
+    need = (4 if edited_any else 2) * secs * LONG_FINAL_MBPS / 8 * 1e6 + 2e9
+    free = shutil.disk_usage(d).free
+    if free < need:
+        raise RuntimeError(f"not enough disk for the {secs / 60:.0f}-minute final: {free / 1e9:.1f} GB free, "
+                           f"needs about {need / 1e9:.0f} GB")
+    edited = all((d / f"edit-{k:02d}" / "direct.json").exists() for k in range(1, len(e["videos"]) + 1))
+    job.stage("final", "running")
+    for k, v in enumerate(e["videos"], 1):
+        label = f"Final {k} of {len(e['videos'])} ({w}×{h})"
+        if edited:
+            # the cut at source resolution, then the whole edit on top of it at that size
+            job.progress(f"{label}: the cut…", 0)
+            try:
+                render.render(d, v, fps, f"cutfull-{k:02d}", f"{w}:{h}", crf=14, preset="medium",
+                              cancelled=job.cancelled, room_tone_start=audio.room_tone(), direct=True,
+                              progress=lambda f: job.progress(f"{label}: the cut…", 0.3 * f))
+                longedit.compose(d, k, f"cutfull-{k:02d}.mp4", fps, (w, h), job.cancelled,
+                                 lambda m, f: job.progress(f"{label}: {m}", 0.3 + 0.7 * f), f"final-{k:02d}",
+                                 face_src=f"preview-{k:02d}.mp4")
+            except (render.RenderCancelled, InterruptedError):
+                raise Cancelled()
+            finally:
+                (d / f"cutfull-{k:02d}.mp4").unlink(missing_ok=True)
+            continue
+        job.progress(f"{label}: encoding…", 0)
+        try:
+            render.render(d, v, fps, f"final-{k:02d}", f"{w}:{h}", crf=16, preset="medium",
+                          cancelled=job.cancelled, room_tone_start=audio.room_tone(), direct=True,
+                          progress=lambda f: job.progress(f"{label}: encoding…", f))
+        except render.RenderCancelled:
+            raise Cancelled()
+    job.stage("final", "done", f"{len(e['videos'])} final video(s) at {w}×{h}")
+
+
+QUICK = ("rebuild", "recut")     # Jake's edits: cut + sound check, minutes
+
+
+def claim():
+    # Jake's own edits go first: a save waited 26 min behind a 4K test render (2026-10-05)
+    # and looked lost. Then oldest first.
+    def rank(q):
+        try:
+            action = (jload(q, {}) or {}).get("action", "run")
+        except Exception:                                     # noqa: BLE001
+            action = "run"
+        return (0 if action in QUICK else 1, q.stat().st_mtime)
+    best = None
+    for q in sorted(config.JOBS.glob("*/queue.json"), key=rank):
+        best = q
+        break
+    if not best:
+        return None, None
+    req = jload(best, {}) or {}
+    best.unlink(missing_ok=True)
+    return Job(best.parent), req.get("action", "run")
+
+
+def recover():
+    """A job still 'running' at start-up was interrupted by a restart: say so."""
+    for st in config.JOBS.glob("*/status.json"):
+        s = jload(st, {})
+        if s and s.get("state") == "running":
+            s.update(state="interrupted", message="The worker restarted mid-job. Press Continue.",
+                     updated_at=now())
+            for v in s.get("stages", {}).values():
+                if v.get("state") == "running":
+                    v["state"] = "interrupted"
+            jdump(st, s)
+
+
+def main():
+    def stop(*_):
+        global STOP
+        STOP = True
+    signal.signal(signal.SIGTERM, stop)
+    config.JOBS.mkdir(parents=True, exist_ok=True)
+    recover()
+    hb = config.WORK / "worker-heartbeat.json"
+    while not STOP:
+        jdump(hb, {"at": now(), "pid": os.getpid()})
+        job, action = claim()
+        if not job:
+            time.sleep(2)
+            continue
+        (job.d / "cancel").unlink(missing_ok=True)
+        if action in ("rebuild", "recut"):
+            for f in ("edl.json",):
+                (job.d / f).unlink(missing_ok=True)
+        job.save(state="running", message="Starting…", progress=0, error=None, action=action,
+                 started_at=now())
+        job.log(f"claimed action={action}")
+        try:
+            run_job(job, action)
+            job.save(state="done", message="Ready to review", progress=1, finished_at=now())
+        except Cancelled:
+            job.save(state="cancelled", message="Cancelled")
+            job.log("cancelled")
+        except Exception as exc:                               # noqa: BLE001
+            for s in job.st["stages"].values():
+                if s.get("state") == "running":
+                    s["state"] = "failed"
+            job.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
+            job.log("FAILED " + traceback.format_exc())
+        finally:
+            (job.d / "cancel").unlink(missing_ok=True)
+            for t in job.d.glob("tmp-*"):
+                shutil.rmtree(t, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    main()

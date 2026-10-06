@@ -1,0 +1,2574 @@
+{
+ "meta": {
+  "source": "/opt/aieditor-work/reference/gVPZU1btFA8/video.mp4",
+  "fps": 24,
+  "res": [
+   1920,
+   1080
+  ],
+  "frame_index": "round(t*24); every table uses ABSOLUTE frame indices of the reference",
+  "method": "per-frame model fit (numpy): (frame-cleanplate) ~= opacity * shift(blur(scale(settled-cleanplate))). dy>0 = element is BELOW its rest position. opacity of gradient text is underestimated after settle because the gradient keeps animating (R2<1); timings/translation are unaffected. Tools: /opt/aieditor-work/reference/work/data-cards/{fit,meas,txa,border,card,col,band,sfx}.py",
+  "strip_label_warning": "kit/strip.sh labels are off by +1 frame-number when START*24 has a fractional part < .5 (ffmpeg seeks to the next frame). All numbers here come from frame-exact seeks ((n-0.25)/24)."
+ },
+ "typography": {
+  "family": "Space Grotesk (Google Fonts), weight 700 Bold, for EVERY element of this family (numbers, $, labels, headings, pills, small captions)",
+  "evidence": [
+   "Rendered Space Grotesk 700 '41,023' / 'STILL RUNNING.' side-by-side with the reference crop: glyph-for-glyph match (work/data-cards/cmp1.png)",
+   "'1' has a long flag and no foot ('41,023', '11', '1 UGC AD', '$100', '100x')",
+   "'3' has a FLAT top (Z-like) in '41,023', '30 DAYS', '3 SALES'",
+   "'2' straight diagonal into flat base; '0' squarish-oval; 'G' has spur + horizontal bar; 'N' with ink-trap notches; '$' with a full vertical stroke through the S",
+   "Proportional, NOT monospaced (the pink monospace 'BUDGET' at 0:40 belongs to another family; its likely mate is Space Mono Bold)"
+  ],
+  "alternates": [
+   "Space Mono Bold (only if a monospaced numeral is wanted; not observed in this family)",
+   "Familjen Grotesk 700 / Host Grotesk 700 are the next-closest but have round-top 3 and footed/short-flag 1 - rejected"
+  ],
+  "metrics_used": {
+   "capHeight_em": 0.7,
+   "cap_with_overshoot_em": 0.73,
+   "dollar_height_em": 0.93,
+   "digits_with_comma_em": 0.86
+  },
+  "tracking": "~0 (measured widths within +-2% of Space Grotesk 700 at the derived size; e.g. '41,023' 318px measured vs 323px rendered at 104px => ~-0.01em)",
+  "case": "ALL CAPS everywhere",
+  "sizes_px_at_1080p": {
+   "floating_label_white (5 VIDEOS, TOTAL, 1 UGC AD)": "59-68",
+   "floating_label_small (GENERAL SPANISH, BUSINESS SPANISH)": 40,
+   "floating_value_gradient ($250, $100, $100-$200)": "87-101",
+   "floating_value_hero (~$100 @9:38)": 158,
+   "floating_metric (HOOK RATE / CTR / CPL)": "96-100",
+   "D $240 (A-roll hero)": 226,
+   "D $$$": 163,
+   "A counter 48,000": 104,
+   "A REACH label": 37,
+   "A STILL RUNNING.": 73,
+   "A day counter '11'": 146,
+   "A DAYS ACTIVE": 23,
+   "A footer TIME/REACH/OPPORTUNITY": 15,
+   "B AD 1 / AD 2": 58,
+   "B REACH": 41,
+   "B 200 / 20,000": 142,
+   "B 1 DOT = 200 PEOPLE": 20,
+   "B header 30 DAYS / SAME BUDGET": 64,
+   "B pill text": 36,
+   "C $10 / SPEND / LEAD / SALES": 56,
+   "C $240 REVENUE": 75,
+   "C BAG": 30,
+   "C $80": 77
+  },
+  "size_rule": "floating stacks: value line = 1.65-2.3x the label line; metric list lines equal size"
+ },
+ "colours": {
+  "white_text": "#FFFFFF (AA-averaged ink mean #F4F5F5)",
+  "grey_caption": "#91909A (1 DOT = 200 PEOPLE)",
+  "card_label_grey": "#CDCACB-#D7D5D5 (small white-ish labels)",
+  "gradient_palette_sampled": {
+   "yellow": "#FDDF71",
+   "coral": "#FD8672",
+   "peach": "#FBAE78",
+   "hot_red": "#FD0A3D",
+   "red_pink": "#FC1E54",
+   "magenta": "#FE1680",
+   "pink": "#FD55B6",
+   "pale_pink": "#FECADE"
+  },
+  "gradient_behaviour": "ANIMATED fill on every pink number/word (=, $250, $100, $1,000, HOOK RATE, CTR, CPL, ~$100, $240, $$$, 20,000, AD 2, 11, $80, 0/3 SALES, 10 LEADS, $240 REVENUE, card-2 border, pill). Centre of the text stays hot red (#FD0A3D +-) the whole time while both ends cycle through yellow -> coral -> red -> magenta -> pink -> pale pink, i.e. consistent with a multi-stop LINEAR gradient whose ANGLE rotates around the text centre (or a large conic/mesh gradient drifting). No measurable period within 4.5 s (8807-8921). Per-frame samples in gradient_samples_E250.",
+  "fullscreen_background": {
+   "centre": "#040404",
+   "top_edge_mid": "#0B0406",
+   "bottom_edge_mid": "#110606",
+   "TL": "#1D0F0C",
+   "TR": "#2A0F12-#3E141B",
+   "BL": "#371216-#381216",
+   "BR": "#2E1014",
+   "note": "near-black with maroon corner glows (strongest bottom-left and top-right), slow drift/pulse between scenes (A at 3342 is dimmer: TR #1E0B10, BL #210C0E). Faint 1-px grey dots on a ~180px grid (#1C1210 at (157,95),(337,95)...)"
+  },
+  "card_fill": "#0B0A0D (B cards, pill) / #0E1010 (C product card)",
+  "card_divider": "#2A2C2C 2px (C) / #100F12 (B inner rule)",
+  "arrow_grey": "~#8A9092 core (AA mean #545A5B)",
+  "arrow_pink": "pink #FF2E7A-ish (AA mean #81154D)",
+  "dot_off": "#292830",
+  "dot_on_white": "#FCFCFE"
+ },
+ "geometry": {
+  "A_ad_card": {
+   "size_px": [
+    463,
+    671
+   ],
+   "radius_px": "~28",
+   "fill": "#F7F7F7 white card with product photo",
+   "rotation_deg": "-5.1 at rest centre, -2.4 at rest right, 0 at left/scaled 0.70",
+   "positions": {
+    "centre_rest_cx_cy": [
+     1046,
+     546
+    ],
+    "right_rest_cx_cy": [
+     1314,
+     568
+    ],
+    "left_rest_cx_cy": [
+     300,
+     578
+    ]
+   }
+  },
+  "B_cards": {
+   "AD1": [
+    155,
+    252,
+    905,
+    907
+   ],
+   "AD2": [
+    1015,
+    252,
+    1765,
+    908
+   ],
+   "size_px": [
+    750,
+    655
+   ],
+   "radius_px": "~28",
+   "border_px": "3 (AD2 always; AD1 only 3431-3497)",
+   "gap_px": 110,
+   "pill": [
+    730,
+    938,
+    1190,
+    1012
+   ],
+   "pill_radius": "full (37)",
+   "pill_border": "2px pink #FF1E62-ish @~70%"
+  },
+  "C_layout": {
+   "product_card": [
+    128,
+    280,
+    622,
+    800
+   ],
+   "image": [
+    150,
+    302,
+    600,
+    600
+   ],
+   "rows_y_centre": [
+    380,
+    660
+   ],
+   "cols_x_centre": [
+    830,
+    1220,
+    1610
+   ],
+   "arrows_x": [
+    [
+     980,
+     1065
+    ],
+    [
+     1370,
+     1455
+    ]
+   ],
+   "arrow_len_px": 85,
+   "arrow_head_px": 13,
+   "stroke_px": 3,
+   "divider": [
+    724,
+    519,
+    1730,
+    520
+   ],
+   "revenue_line": [
+    969,
+    850,
+    1471,
+    919
+   ]
+  },
+  "normalised_layout": {
+   "E_5videos": [
+    0.0573,
+    0.2685,
+    0.1802,
+    0.3074
+   ],
+   "E_x50": [
+    0.1953,
+    0.2639,
+    0.2714,
+    0.3148
+   ],
+   "E_eq250": [
+    0.0573,
+    0.3241,
+    0.2172,
+    0.4102
+   ],
+   "F_general": [
+    0.0573,
+    0.2454,
+    0.225,
+    0.2713
+   ],
+   "F_100": [
+    0.0573,
+    0.3009,
+    0.1568,
+    0.375
+   ],
+   "F_business": [
+    0.0573,
+    0.463,
+    0.2333,
+    0.4889
+   ],
+   "F_1000_top_y": 0.528,
+   "G_hookrate": [
+    0.1437,
+    0.237,
+    0.4057,
+    0.3037
+   ],
+   "G_ctr": [
+    0.1562,
+    0.4056,
+    0.2479,
+    0.4694
+   ],
+   "G_cpl": [
+    0.1661,
+    0.563,
+    0.2542,
+    0.6269
+   ],
+   "H1_total": [
+    0.1307,
+    0.2769,
+    0.2349,
+    0.3204
+   ],
+   "H1_100": [
+    0.1437,
+    0.3833,
+    0.3807,
+    0.5167
+   ],
+   "H2_total100": [
+    0.0677,
+    0.2667,
+    0.2984,
+    0.3269
+   ],
+   "H2_1ugcad": [
+    0.0823,
+    0.4444,
+    0.2151,
+    0.487
+   ],
+   "H2_range": [
+    0.0896,
+    0.5204,
+    0.338,
+    0.6046
+   ],
+   "D_240": [
+    0.1667,
+    0.1852,
+    0.4359,
+    0.3787
+   ],
+   "D_dollars": [
+    0.1104,
+    0.3074,
+    0.2958,
+    0.4472
+   ],
+   "A_reach_counter": [
+    0.4958,
+    0.3583,
+    0.6609,
+    0.4417
+   ],
+   "A_still_running": [
+    0.1984,
+    0.3278,
+    0.3583,
+    0.4491
+   ],
+   "B_header": [
+    0.349,
+    0.1194,
+    0.4693,
+    0.162
+   ]
+  },
+  "grid_rules": "A-roll floating stacks are LEFT-aligned at x=0.057 (front cam, 110px) or 0.068-0.16 (side cam) in the left third, never crossing x~0.43; line pitch = ~0.9-1.3x the larger line's cap height. Full-screen cards centre on x=0.5 with ~0.08 side margins."
+ },
+ "entrance_tables_floating_dropin": {
+  "E_5VIDEOS": [
+   {
+    "frame": 8768,
+    "opacity": 0.035,
+    "dy_px": null,
+    "blur_sigma_px": 11
+   },
+   {
+    "frame": 8769,
+    "opacity": 0.081,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 8770,
+    "opacity": 0.228,
+    "dy_px": -7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8771,
+    "opacity": 0.472,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8772,
+    "opacity": 0.729,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8773,
+    "opacity": 0.849,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8774,
+    "opacity": 0.945,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8775,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "E_x50": [
+   {
+    "frame": 8787,
+    "opacity": 0.088,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 8788,
+    "opacity": 0.23,
+    "dy_px": -7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8789,
+    "opacity": 0.469,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8790,
+    "opacity": 0.73,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8791,
+    "opacity": 0.845,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8792,
+    "opacity": 0.955,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8793,
+    "opacity": 0.997,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8794,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "E_eq250(gradient)": [
+   {
+    "frame": 8808,
+    "opacity": 0.057,
+    "dy_px": -11,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8809,
+    "opacity": 0.243,
+    "dy_px": -7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8810,
+    "opacity": 0.482,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 8811,
+    "opacity": 0.629,
+    "dy_px": -2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8812,
+    "opacity": 0.737,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 8813,
+    "opacity": 0.791,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "F_GENERAL": [
+   {
+    "frame": 10669,
+    "opacity": 0.055,
+    "dy_px": -10,
+    "blur_sigma_px": 3
+   },
+   {
+    "frame": 10670,
+    "opacity": 0.179,
+    "dy_px": -7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10671,
+    "opacity": 0.411,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10672,
+    "opacity": 0.7,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10673,
+    "opacity": 0.832,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 10674,
+    "opacity": 0.936,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 10675,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "F_100(gradient)": [
+   {
+    "frame": 10709,
+    "opacity": 0.109,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 10710,
+    "opacity": 0.314,
+    "dy_px": -7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 10711,
+    "opacity": 0.527,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10712,
+    "opacity": 0.726,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10713,
+    "opacity": 0.856,
+    "dy_px": -1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10714,
+    "opacity": 0.882,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "F_BUSINESS": [
+   {
+    "frame": 10732,
+    "opacity": 0.075,
+    "dy_px": -11,
+    "blur_sigma_px": 3
+   },
+   {
+    "frame": 10733,
+    "opacity": 0.198,
+    "dy_px": -7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10734,
+    "opacity": 0.425,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10735,
+    "opacity": 0.712,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10736,
+    "opacity": 0.833,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 10737,
+    "opacity": 0.942,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 10738,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "F_1000(gradient)": [
+   {
+    "frame": 10778,
+    "opacity": 0.168,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 10779,
+    "opacity": 0.466,
+    "dy_px": -7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 10780,
+    "opacity": 0.743,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10781,
+    "opacity": 0.969,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 10782,
+    "opacity": 1.0,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 10783,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "G_HOOKRATE": [
+   {
+    "frame": 13694,
+    "opacity": 0.189,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13695,
+    "opacity": 0.436,
+    "dy_px": -7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13696,
+    "opacity": 0.644,
+    "dy_px": -3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13697,
+    "opacity": 0.778,
+    "dy_px": -1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13698,
+    "opacity": 0.825,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "G_CTR": [
+   {
+    "frame": 13710,
+    "opacity": 0.026,
+    "dy_px": -19,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13711,
+    "opacity": 0.225,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13712,
+    "opacity": 0.504,
+    "dy_px": -7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13713,
+    "opacity": 0.702,
+    "dy_px": -3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13714,
+    "opacity": 0.842,
+    "dy_px": -1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13715,
+    "opacity": 0.88,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "G_CPL": [
+   {
+    "frame": 13725,
+    "opacity": 0.09,
+    "dy_px": -18,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 13726,
+    "opacity": 0.281,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13727,
+    "opacity": 0.517,
+    "dy_px": -6,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13728,
+    "opacity": 0.733,
+    "dy_px": -3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13729,
+    "opacity": 0.872,
+    "dy_px": -1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13730,
+    "opacity": 0.912,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 13731,
+    "opacity": 0.976,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "H1_TOTAL": [
+   {
+    "frame": 13879,
+    "opacity": 0.064,
+    "dy_px": -18,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 13880,
+    "opacity": 0.188,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13881,
+    "opacity": 0.435,
+    "dy_px": -7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13882,
+    "opacity": 0.66,
+    "dy_px": -3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13883,
+    "opacity": 0.872,
+    "dy_px": -1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13884,
+    "opacity": 0.926,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 13885,
+    "opacity": 0.998,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "H1_~$100(gradient)": [
+   {
+    "frame": 13886,
+    "opacity": 0.087,
+    "dy_px": -16,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13887,
+    "opacity": 0.261,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13888,
+    "opacity": 0.476,
+    "dy_px": -6,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 13889,
+    "opacity": 0.63,
+    "dy_px": -3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13890,
+    "opacity": 0.742,
+    "dy_px": -1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 13891,
+    "opacity": 0.806,
+    "dy_px": 0,
+    "blur_sigma_px": 1
+   }
+  ],
+  "H2_TOTAL~$100(gradient)": [
+   {
+    "frame": 14215,
+    "opacity": 0.082,
+    "dy_px": -13,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 14216,
+    "opacity": 0.306,
+    "dy_px": -8,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 14217,
+    "opacity": 0.559,
+    "dy_px": -5,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 14218,
+    "opacity": 0.779,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 14219,
+    "opacity": 0.878,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 14220,
+    "opacity": 0.953,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 14221,
+    "opacity": 0.989,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "H2_1UGCAD": [
+   {
+    "frame": 14274,
+    "opacity": 0.079,
+    "dy_px": -12,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 14275,
+    "opacity": 0.24,
+    "dy_px": -7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 14276,
+    "opacity": 0.457,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 14277,
+    "opacity": 0.721,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 14278,
+    "opacity": 0.846,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 14279,
+    "opacity": 0.946,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 14280,
+    "opacity": 0.999,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "H2_$100-$200(gradient)": [
+   {
+    "frame": 14301,
+    "opacity": 0.125,
+    "dy_px": -11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 14302,
+    "opacity": 0.311,
+    "dy_px": -7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 14303,
+    "opacity": 0.534,
+    "dy_px": -4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 14304,
+    "opacity": 0.734,
+    "dy_px": -2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 14305,
+    "opacity": 0.839,
+    "dy_px": -1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 14306,
+    "opacity": 0.912,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 14307,
+    "opacity": 0.956,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ]
+ },
+ "entrance_tables_rise": {
+  "C_bag_image(fade at +63px, then slides up)": [
+   {
+    "frame": 7006,
+    "opacity": 0.018,
+    "dy_px": 63,
+    "blur_sigma_px": 8
+   },
+   {
+    "frame": 7007,
+    "opacity": 0.079,
+    "dy_px": 64,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7008,
+    "opacity": 0.247,
+    "dy_px": 63,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7009,
+    "opacity": 0.558,
+    "dy_px": 61,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7010,
+    "opacity": 0.735,
+    "dy_px": 58,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7011,
+    "opacity": 0.81,
+    "dy_px": 54,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7012,
+    "opacity": 0.845,
+    "dy_px": 47,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7013,
+    "opacity": 0.883,
+    "dy_px": 38,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7014,
+    "opacity": 0.939,
+    "dy_px": 27,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7015,
+    "opacity": 0.986,
+    "dy_px": 17,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7016,
+    "opacity": 1.0,
+    "dy_px": 11,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7017,
+    "opacity": 1.0,
+    "dy_px": 7,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7018,
+    "opacity": 1.0,
+    "dy_px": 4,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7019,
+    "opacity": 1.0,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7020,
+    "opacity": 1.0,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7021,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_$80(gradient)": [
+   {
+    "frame": 7030,
+    "opacity": 0.02,
+    "dy_px": 9,
+    "blur_sigma_px": 6
+   },
+   {
+    "frame": 7031,
+    "opacity": 0.126,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7032,
+    "opacity": 0.277,
+    "dy_px": 7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7033,
+    "opacity": 0.447,
+    "dy_px": 5,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7034,
+    "opacity": 0.64,
+    "dy_px": 3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7035,
+    "opacity": 0.797,
+    "dy_px": 2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7036,
+    "opacity": 0.884,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7037,
+    "opacity": 0.934,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7038,
+    "opacity": 0.955,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_row1_$10SPEND": [
+   {
+    "frame": 7054,
+    "opacity": 0.009,
+    "dy_px": 13,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 7055,
+    "opacity": 0.038,
+    "dy_px": 11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7056,
+    "opacity": 0.091,
+    "dy_px": 10,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7057,
+    "opacity": 0.182,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7058,
+    "opacity": 0.287,
+    "dy_px": 8,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7059,
+    "opacity": 0.409,
+    "dy_px": 6,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7060,
+    "opacity": 0.496,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7061,
+    "opacity": 0.64,
+    "dy_px": 3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7062,
+    "opacity": 0.805,
+    "dy_px": 2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7063,
+    "opacity": 0.88,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_row1_1LEAD": [
+   {
+    "frame": 7080,
+    "opacity": 0.046,
+    "dy_px": 10,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7081,
+    "opacity": 0.132,
+    "dy_px": 10,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7082,
+    "opacity": 0.217,
+    "dy_px": 9,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7083,
+    "opacity": 0.328,
+    "dy_px": 7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7084,
+    "opacity": 0.447,
+    "dy_px": 5,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7085,
+    "opacity": 0.582,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7086,
+    "opacity": 0.7,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7087,
+    "opacity": 0.852,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7088,
+    "opacity": 0.966,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7089,
+    "opacity": 0.998,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_row1_0SALES(gradient)": [
+   {
+    "frame": 7103,
+    "opacity": 0.029,
+    "dy_px": 11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7104,
+    "opacity": 0.083,
+    "dy_px": 10,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7105,
+    "opacity": 0.21,
+    "dy_px": 10,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7106,
+    "opacity": 0.358,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7107,
+    "opacity": 0.461,
+    "dy_px": 7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7108,
+    "opacity": 0.582,
+    "dy_px": 5,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7109,
+    "opacity": 0.737,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7110,
+    "opacity": 0.846,
+    "dy_px": 2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7111,
+    "opacity": 0.891,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7112,
+    "opacity": 0.957,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7113,
+    "opacity": 0.991,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_row2_$10SPEND": [
+   {
+    "frame": 7126,
+    "opacity": 0.011,
+    "dy_px": 12,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 7127,
+    "opacity": 0.039,
+    "dy_px": 11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7128,
+    "opacity": 0.091,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7129,
+    "opacity": 0.185,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7130,
+    "opacity": 0.288,
+    "dy_px": 8,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7131,
+    "opacity": 0.409,
+    "dy_px": 6,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7132,
+    "opacity": 0.496,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7133,
+    "opacity": 0.644,
+    "dy_px": 3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7134,
+    "opacity": 0.805,
+    "dy_px": 2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7135,
+    "opacity": 0.877,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_row2_10LEADS(gradient)": [
+   {
+    "frame": 7151,
+    "opacity": 0.023,
+    "dy_px": null,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 7152,
+    "opacity": 0.055,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7153,
+    "opacity": 0.158,
+    "dy_px": 9,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7154,
+    "opacity": 0.306,
+    "dy_px": 8,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7155,
+    "opacity": 0.436,
+    "dy_px": 7,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7156,
+    "opacity": 0.629,
+    "dy_px": 5,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7157,
+    "opacity": 0.806,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7158,
+    "opacity": 0.91,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7159,
+    "opacity": 1.0,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7160,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_row2_3SALES(gradient)": [
+   {
+    "frame": 7177,
+    "opacity": 0.095,
+    "dy_px": 9,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 7178,
+    "opacity": 0.166,
+    "dy_px": 8,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7179,
+    "opacity": 0.277,
+    "dy_px": 7,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7180,
+    "opacity": 0.408,
+    "dy_px": 5,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7181,
+    "opacity": 0.507,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7182,
+    "opacity": 0.639,
+    "dy_px": 2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7183,
+    "opacity": 0.69,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7184,
+    "opacity": 0.777,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7185,
+    "opacity": 0.848,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "C_$240REVENUE(gradient)": [
+   {
+    "frame": 7192,
+    "opacity": 0.017,
+    "dy_px": 13,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 7193,
+    "opacity": 0.107,
+    "dy_px": 11,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7194,
+    "opacity": 0.237,
+    "dy_px": 10,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7195,
+    "opacity": 0.387,
+    "dy_px": 8,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7196,
+    "opacity": 0.559,
+    "dy_px": 6,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7197,
+    "opacity": 0.702,
+    "dy_px": 4,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7198,
+    "opacity": 0.85,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7199,
+    "opacity": 0.992,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7200,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "A_STILL": [
+   {
+    "frame": 3276,
+    "opacity": 0.13,
+    "dy_px": 10,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3277,
+    "opacity": 0.467,
+    "dy_px": 7,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3278,
+    "opacity": 0.782,
+    "dy_px": 3,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3279,
+    "opacity": 0.977,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3280,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "A_RUNNING.": [
+   {
+    "frame": 3283,
+    "opacity": 0.078,
+    "dy_px": 11,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 3284,
+    "opacity": 0.401,
+    "dy_px": 7,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3285,
+    "opacity": 0.715,
+    "dy_px": 3,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3286,
+    "opacity": 0.958,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3287,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "B_AD1_number_200(counter, scale 0.925->1)": [
+   {
+    "frame": 3471,
+    "opacity": 0.212,
+    "dy_px": 23,
+    "blur_sigma_px": 6
+   },
+   {
+    "frame": 3472,
+    "opacity": 0.392,
+    "dy_px": 15,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 3473,
+    "opacity": 0.615,
+    "dy_px": 8,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3474,
+    "opacity": 0.874,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3475,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "B_AD2_number_20000(counter, scale 0.875->1, gradient)": [
+   {
+    "frame": 3523,
+    "opacity": 0.192,
+    "dy_px": 23,
+    "blur_sigma_px": 8
+   },
+   {
+    "frame": 3524,
+    "opacity": 0.415,
+    "dy_px": 15,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 3525,
+    "opacity": 0.642,
+    "dy_px": 8,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 3526,
+    "opacity": 0.786,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 3527,
+    "opacity": 0.855,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "D_$240(A-roll, gradient; ref = clean plate f13680)": [
+   {
+    "frame": 7233,
+    "opacity": 0.027,
+    "dy_px": 16,
+    "blur_sigma_px": 8
+   },
+   {
+    "frame": 7234,
+    "opacity": 0.227,
+    "dy_px": 16,
+    "blur_sigma_px": 2
+   },
+   {
+    "frame": 7235,
+    "opacity": 0.49,
+    "dy_px": 10,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7236,
+    "opacity": 0.74,
+    "dy_px": 6,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7237,
+    "opacity": 0.929,
+    "dy_px": 3,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7238,
+    "opacity": 1.0,
+    "dy_px": 1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7239,
+    "opacity": 1.0,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "D_$1": [
+   {
+    "frame": 7308,
+    "opacity": 0.048,
+    "dy_px": null,
+    "blur_sigma_px": 8
+   },
+   {
+    "frame": 7309,
+    "opacity": 0.186,
+    "dy_px": 12,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7310,
+    "opacity": 0.347,
+    "dy_px": 8,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7311,
+    "opacity": 0.494,
+    "dy_px": 6,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7312,
+    "opacity": 0.653,
+    "dy_px": 4,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7313,
+    "opacity": 0.771,
+    "dy_px": 2,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7314,
+    "opacity": 0.876,
+    "dy_px": 1,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7315,
+    "opacity": 0.931,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7316,
+    "opacity": 0.995,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "D_$2": [
+   {
+    "frame": 7311,
+    "opacity": 0.083,
+    "dy_px": null,
+    "blur_sigma_px": 8
+   },
+   {
+    "frame": 7312,
+    "opacity": 0.216,
+    "dy_px": 12,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7313,
+    "opacity": 0.375,
+    "dy_px": 8,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7314,
+    "opacity": 0.525,
+    "dy_px": 6,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7315,
+    "opacity": 0.666,
+    "dy_px": 4,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7316,
+    "opacity": 0.778,
+    "dy_px": 3,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7317,
+    "opacity": 0.873,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7318,
+    "opacity": 0.946,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7319,
+    "opacity": 0.999,
+    "dy_px": 0,
+    "blur_sigma_px": 0
+   }
+  ],
+  "D_$3": [
+   {
+    "frame": 7315,
+    "opacity": 0.09,
+    "dy_px": null,
+    "blur_sigma_px": 4
+   },
+   {
+    "frame": 7316,
+    "opacity": 0.215,
+    "dy_px": 9,
+    "blur_sigma_px": 1
+   },
+   {
+    "frame": 7317,
+    "opacity": 0.374,
+    "dy_px": 6,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7318,
+    "opacity": 0.535,
+    "dy_px": 4,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7319,
+    "opacity": 0.668,
+    "dy_px": 3,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7320,
+    "opacity": 0.782,
+    "dy_px": 2,
+    "blur_sigma_px": 0
+   },
+   {
+    "frame": 7321,
+    "opacity": 0.867,
+    "dy_px": 1,
+    "blur_sigma_px": 0
+   }
+  ]
+ },
+ "counters": {
+  "A_REACH": {
+   "per_frame": {
+    "3321": 1235,
+    "3322": 1346,
+    "3323": 1542,
+    "3324": 1833,
+    "3325": 2234,
+    "3326": 2760,
+    "3327": 3431,
+    "3328": 4273,
+    "3329": 5316,
+    "3330": 6600,
+    "3331": 8177,
+    "3332": 10108,
+    "3333": 12469,
+    "3334": 15332,
+    "3335": 18731,
+    "3336": 22582,
+    "3337": 26618,
+    "3338": 30469,
+    "3339": 33868,
+    "3340": 36731,
+    "3341": 39092,
+    "3342": 41023,
+    "3343": 42600,
+    "3344": 43884,
+    "3345": 44927,
+    "3346": 45769,
+    "3347": 46440,
+    "3348": 46966,
+    "3349": 47367,
+    "3350": 47658,
+    "3351": 47854,
+    "3352": 47965,
+    "3353": 48000
+   },
+   "format": "en-US thousands separator ',', no decimals, Math.round",
+   "fit": {
+    "from": 1200,
+    "to": 48000,
+    "start_frame": 3320,
+    "duration_frames": 33,
+    "end_frame": 3353,
+    "easing": "cubic-bezier(0.65,0,0.35,1) = easeInOutCubic",
+    "residual": "0 on all 33 frames (exact reproduction after rounding)"
+   },
+   "visibility": "value 1200 at 3320 is not drawn; number fades in 3321 (~0.25, blurred) -> 3322 (~0.6) -> 3323 (1.0); held at 48,000 until scene fade 3406",
+   "companion": "REACH label (gradient) fades in with it; 10x5 grid of person icons fills row-by-row in step with the count; tick SFX train 138.57-139.74 s (see sfx)"
+  },
+  "A_DAYS": {
+   "per_frame": {
+    "3283": "01 (fading in)",
+    "3284": 1,
+    "3285": 1,
+    "3286": 1,
+    "3287": 1,
+    "3288": 1,
+    "3289": 2,
+    "3290": 2,
+    "3291": 2,
+    "3292": 3,
+    "3293": 3,
+    "3294": 4,
+    "3295": 5,
+    "3296": 6,
+    "3297": 7,
+    "3298": 9,
+    "3299": 10,
+    "3300": 11,
+    "3301": 12,
+    "3302": 13,
+    "3303": 13,
+    "3304": 13,
+    "3305": 14
+   },
+   "format": "2-digit zero-padded ('01'..'09','10'..), gradient fill",
+   "fit": {
+    "from": 1,
+    "to": 14,
+    "start_frame": 3283.75,
+    "duration_frames": 26,
+    "easing": "cubic-bezier(0.65,0,0.35,1)",
+    "rounding": "Math.round",
+    "residual": "22/23 frames exact (1 mismatch at 3298: shows 09, model 8 - the reference skips 08)"
+   },
+   "companion": "14-tick timeline under it: pink filled ticks advance with the value; label 'DAYS' gains ' ACTIVE' at 3296-3298 (fade-in, label re-centres)"
+  },
+  "B_AD1_200": {
+   "per_frame": {
+    "3470": "hidden",
+    "3471": 198,
+    "3472": 200
+   },
+   "note": "count-up is effectively finished when the number becomes visible (198 = 99% on the first visible frame). Rebuild: count 0->200 easeInOutCubic ending at the 2nd visible frame; the reveal (rise+blur+scale) carries the motion."
+  },
+  "B_AD2_20000": {
+   "per_frame": {
+    "3522": "hidden",
+    "3523": 19776,
+    "3524": 20000
+   },
+   "note": "same as AD1 (98.9% on first visible frame)"
+  },
+  "formatting_rules": "$ prefix glued to digits ('$10','$240','$1,000'); ranges with en dash '$100\u2013$200'; approx with tilde '~$100'; multiply sign '\u00d7' (U+00D7) in '5 VIDEOS \u00d7 $50' and '100\u00d7'; thousands comma always"
+ },
+ "A_active_ad_card_scene": {
+  "span": "cut from A-roll at 3240 -> content fade-out 3406-3412 -> empty bg 3412-3417 -> next scene B (AD1 card) from 3416",
+  "card_entrance": [
+   {
+    "frame": 3242,
+    "card_luma(0-255)": 54,
+    "cx": null,
+    "cy": null,
+    "rot_deg": null
+   },
+   {
+    "frame": 3243,
+    "card_luma(0-255)": 137,
+    "cx": 944,
+    "cy": 458,
+    "rot_deg": null
+   },
+   {
+    "frame": 3244,
+    "card_luma(0-255)": 210,
+    "cx": 985,
+    "cy": 590,
+    "rot_deg": 4.6
+   },
+   {
+    "frame": 3245,
+    "card_luma(0-255)": 236,
+    "cx": 1007,
+    "cy": 578,
+    "rot_deg": 1.1
+   },
+   {
+    "frame": 3246,
+    "card_luma(0-255)": 231,
+    "cx": 1027,
+    "cy": 569,
+    "rot_deg": -2.5
+   },
+   {
+    "frame": 3247,
+    "card_luma(0-255)": 240,
+    "cx": 1037,
+    "cy": 551,
+    "rot_deg": -3.8
+   },
+   {
+    "frame": 3248,
+    "card_luma(0-255)": 241,
+    "cx": 1042,
+    "cy": 546,
+    "rot_deg": -4.3
+   },
+   {
+    "frame": 3249,
+    "card_luma(0-255)": 242,
+    "cx": 1044,
+    "cy": 545,
+    "rot_deg": -4.7
+   },
+   {
+    "frame": 3250,
+    "card_luma(0-255)": 241,
+    "cx": 1045,
+    "cy": 546,
+    "rot_deg": -4.8
+   },
+   {
+    "frame": 3251,
+    "card_luma(0-255)": 242,
+    "cx": 1046,
+    "cy": 547,
+    "rot_deg": -5.1
+   }
+  ],
+  "card_entrance_note": "card first appears as a flat grey rounded rectangle (no photo) whose luminance ramps 0->54->137->210->236 (3241-3245) while it rotates +4.6->-5.1 deg and rises ~44px / moves +60px right; the photo fades in blurred 3245-3247; inner texts stagger: HIGGSFIELD 3246-3248, WORK. GYM. TRAVEL. 3250-3251, ONE BAG. EVERY DAY. 3252-3253, arrow button 3253-3255 (grey->black), ACTIVE dot 3255-3256",
+  "slide_right": {
+   "frames": "3250-3270",
+   "cx_per_frame": {
+    "3252": 1048.9,
+    "3253": 1053.3,
+    "3254": 1059.9,
+    "3255": 1068.5,
+    "3256": 1082.2,
+    "3257": 1102.2,
+    "3258": 1130.1,
+    "3259": 1167.0,
+    "3260": 1206.8,
+    "3261": 1240.1,
+    "3262": 1264.6,
+    "3263": 1281.9,
+    "3264": 1294.1,
+    "3265": 1302.3,
+    "3266": 1307.9,
+    "3267": 1311.4,
+    "3268": 1313.2,
+    "3269": 1313.7
+   },
+   "rot": "-5.1 -> -2.4 deg",
+   "dy": "+22px",
+   "fit": "start 3250.0, 19.5 frames, cubic-bezier(0.65,0,0.30,1), rms 1.4px",
+   "motion_blur": "visible 3257-3261 (directional, ~20-40px)"
+  },
+  "nudge": "3271-3276: +28px x, rot -2.4 -> -2.9 deg (secondary drift when STILL appears)",
+  "slide_left_and_shrink": {
+   "frames": "3300-3320",
+   "card_right_edge_x": {
+    "3300": 1577,
+    "3301": 1574,
+    "3302": 1564,
+    "3303": 1548,
+    "3304": 1524,
+    "3305": 1488,
+    "3306": 1438,
+    "3307": 1367,
+    "3308": 1269,
+    "3309": 1136,
+    "3310": 980,
+    "3311": 832,
+    "3312": 718,
+    "3313": 634,
+    "3314": 574,
+    "3315": 532,
+    "3316": 502,
+    "3317": 482,
+    "3318": 469,
+    "3319": 463,
+    "3320": 462,
+    "3321": 462
+   },
+   "scale": "1.0 -> 0.70 (height 661 -> 467)",
+   "rot": "-2.9 -> 0 deg",
+   "fit": "start 3300, 19.5 frames, cubic-bezier(0.65,0,0.35,1), rms 3.7px",
+   "note": "STILL RUNNING / day counter fade out under it 3307-3311 with motion blur; REACH column fades in 3321"
+  },
+  "headline_STILL_RUNNING": "STILL 3276-3280, RUNNING. 3283-3287 (rise table); clock icon (pink ring) draws from 3254 and shrinks+fades 3278-3281",
+  "notifications": "4 lead cards on the right, stagger 6-7 frames: placeholder rect fades in grey (3357) -> white (3358) -> content (3359); then 3363/3364/3365, 3370/3371/3372, 3374/3375/3376. Connector lines from the person grid draw toward them.",
+  "heading_MORE_CHANCES_TO_CONVERT": "word-by-word fade with blur: MORE 3352-3355, CHANCES 3357-3359, TO 3370-3371, CONVERT 3373-3375 (pink gradient, top-left); POTENTIAL 3356-3358, LEADS 3370-3372",
+  "exit": [
+   {
+    "frame": 3404,
+    "content_opacity": 1.0
+   },
+   {
+    "frame": 3405,
+    "content_opacity": 1.0
+   },
+   {
+    "frame": 3406,
+    "content_opacity": 0.95
+   },
+   {
+    "frame": 3407,
+    "content_opacity": 0.809
+   },
+   {
+    "frame": 3408,
+    "content_opacity": 0.608
+   },
+   {
+    "frame": 3409,
+    "content_opacity": 0.4
+   },
+   {
+    "frame": 3410,
+    "content_opacity": 0.202
+   },
+   {
+    "frame": 3411,
+    "content_opacity": 0.054
+   },
+   {
+    "frame": 3412,
+    "content_opacity": 0.0
+   }
+  ],
+  "exit_note": "all content fades together (6 frames, ~linear/ease-in-out); background glow is NOT faded; whites dip to light grey first (consistent with plain opacity over black)."
+ },
+ "B_ad_comparison_scene": {
+  "span": "3416 -> hard cut to A-roll at 3600 (no exit animation)",
+  "timeline": {
+   "AD1_card_body_fade": "3416-3419 opacity 0, .20, .68, .94, 1 (soft/blurred edges at 3417-3418)",
+   "AD1_border_trace": "3418-3431",
+   "AD1_label": "3421-3424 (rise)",
+   "header_30_DAYS_/": "3445-3447 opacity .11,.44,.92",
+   "AD1_dot_grid_and_REACH": "3456-3462 grid of 10x10 dim dots fades in, REACH label 3458-3461; one dot lit white",
+   "AD1_number": "3471-3475 (table)",
+   "AD1_border_off": "3497-3499 (fades as AD2 starts)",
+   "AD2_card_body": "3494-3497",
+   "AD2_border_trace": "3495-3508",
+   "AD2_label": "3500-3503",
+   "AD2_dots_colour_fill": "3517-3527 (dots recoloured with the animated gradient, sweeping across columns)",
+   "AD2_REACH": "3518-3521",
+   "AD2_number": "3523-3527 (table)",
+   "pill": "border present by 3526; '100\u00d7' 3528-3531; 'MORE REACH' 3533-3536 (word stagger 5 frames)",
+   "header_SAME_BUDGET": "SAME blurred at 3545 -> sharp; BUDGET ~3548-3552 (word-by-word, blur)"
+  },
+  "border_trace": {
+   "start": "top-right corner, clockwise (down the right edge, bottom right->left, up the left edge, top left->right)",
+   "lit_fraction_AD1": {
+    "3419": 0.021,
+    "3420": 0.049,
+    "3421": 0.092,
+    "3422": 0.159,
+    "3423": 0.241,
+    "3424": 0.388,
+    "3425": 0.559,
+    "3426": 0.726,
+    "3427": 0.804,
+    "3428": 0.905,
+    "3429": 0.96,
+    "3430": 0.99,
+    "3431": 1.0
+   },
+   "lit_fraction_AD2": {
+    "3495": 0.009,
+    "3496": 0.03,
+    "3497": 0.067,
+    "3498": 0.132,
+    "3499": 0.231,
+    "3500": 0.341,
+    "3501": 0.569,
+    "3502": 0.737,
+    "3503": 0.802,
+    "3504": 0.881,
+    "3505": 0.937,
+    "3506": 0.957,
+    "3507": 0.979,
+    "3508": 1.0
+   },
+   "fit": "start 3417.5, 13.5 frames, cubic-bezier(0.60,0,0.50,1), rms 0.013",
+   "head": "leading segment is brighter (white/yellow hot-spot) - gradient stroke"
+  }
+ },
+ "C_funnel_scene": {
+  "span": "hard cut in at 7005 (from A-roll 7004) -> 1-frame 50% cross-dissolve at 7232 into A-roll where $240 continues",
+  "order_and_first_visible": [
+   [
+    "product image (fade at +63px, then slides up 63px)",
+    7006
+   ],
+   [
+    "BAG label (rises +20px, settles ~7019)",
+    7012
+   ],
+   [
+    "$80",
+    7030
+   ],
+   [
+    "row1 $10 SPEND",
+    7054
+   ],
+   [
+    "arrow 1",
+    7070
+   ],
+   [
+    "1 LEAD",
+    7080
+   ],
+   [
+    "arrow 2",
+    7094
+   ],
+   [
+    "0 SALES",
+    7103
+   ],
+   [
+    "divider (opacity fade 7119-7122: .19,.50,.75,.97, full width at once)",
+    7119
+   ],
+   [
+    "row2 $10 SPEND",
+    7126
+   ],
+   [
+    "arrow 3 (pink)",
+    7142
+   ],
+   [
+    "10 LEADS",
+    7151
+   ],
+   [
+    "arrow 4 (pink)",
+    7166
+   ],
+   [
+    "3 SALES",
+    7175
+   ],
+   [
+    "$240 REVENUE",
+    7192
+   ]
+  ],
+  "stagger": "each step waits for speech; gaps 10-26 frames; arrows start 6-8 frames after the preceding cell's first frame; cells start 9-10 frames after the arrow's first frame",
+  "arrow_draw": {
+   "per_frame_arrow1": [
+    {
+     "frame": 7070,
+     "shaft_progress": 0.22,
+     "state": "shaft 19/85px"
+    },
+    {
+     "frame": 7071,
+     "shaft_progress": 0.53,
+     "state": "shaft 45/85"
+    },
+    {
+     "frame": 7072,
+     "shaft_progress": 1.0,
+     "state": "shaft full + upper head arm starting"
+    },
+    {
+     "frame": 7073,
+     "shaft_progress": 1.0,
+     "state": "upper arm full"
+    },
+    {
+     "frame": 7074,
+     "shaft_progress": 1.0,
+     "state": "lower arm half"
+    },
+    {
+     "frame": 7075,
+     "shaft_progress": 1.0,
+     "state": "complete"
+    }
+   ],
+   "rule": "stroke-dash draw: shaft 3 frames then head arms sequentially 1+2 frames; total 6 frames; identical for all 4 arrows",
+   "stroke_px": 3,
+   "cap": "round"
+  },
+  "bag_image_slide": "up 63px over 7010-7021, ease-in-out (dy 63,61,58,54,47,38,27,17,11,7,4,2,1,0)"
+ },
+ "D_240_and_dollars": {
+  "$240": "1-frame dissolve 7232, overlay rises from +16px 7233-7239 (table), hard cut at 7274 (no exit)",
+  "$$$": "three $ rise +12px each, stagger 3-4 frames (first visible 7308/7311/7315), hard cut at 7363"
+ },
+ "exits": {
+  "E": {
+   "type": "3-frame fade, all lines together, starts ON the cut (text fades over the NEW shot)",
+   "per_frame": {
+    "8920": 1.0,
+    "8921": 0.748,
+    "8922": 0.3,
+    "8923": 0.049,
+    "8924": 0.0
+   },
+   "cut_frame": 8921
+  },
+  "F": {
+   "type": "3-frame fade ending on the cut",
+   "per_frame": {
+    "10804": 1.0,
+    "10805": 0.78,
+    "10806": 0.34,
+    "10807": 0.0
+   },
+   "cut_frame": 10807
+  },
+  "G": {
+   "type": "hard cut, no fade",
+   "last_frame": 13752
+  },
+  "H1": {
+   "type": "hard cut",
+   "last_frame": 13909
+  },
+  "H2": {
+   "type": "hard cut",
+   "last_frame": 14366
+  },
+  "D_$240": {
+   "type": "hard cut",
+   "last_frame": 7273
+  },
+  "D_$$$": {
+   "type": "hard cut",
+   "last_frame": 7362
+  },
+  "A": {
+   "type": "6-frame content fade to bg (table in A scene)"
+  },
+  "B": {
+   "type": "hard cut",
+   "last_frame": 3599
+  },
+  "C": {
+   "type": "1-frame cross-dissolve at 7232 into A-roll"
+  },
+  "fade_curve_fit": "1 -> .77 -> .32 -> .03 -> 0 = ease-in (cubic-bezier(0.5,0,1,1) approx over 3.5 frames)"
+ },
+ "holds": {
+  "E": "line1 8769-8923 (154f, 6.4s); x$50 from 8787; =$250 from 8808",
+  "F": "10669-10806 (137f)",
+  "G": "13694-13752 (58f)",
+  "H1": "13879-13909 (30f)",
+  "H2": "14215-14366 (151f)",
+  "D_$240": "7233-7273 (40f)",
+  "D_$$$": "7308-7362 (54f)",
+  "A": "3240-3411",
+  "B": "3416-3599",
+  "C": "7005-7231"
+ },
+ "gradient_samples_E250": {
+  "bins": "10 equal x-bins across '= $250' (x 112-416), eroded text pixels, mean RGB hex",
+  "rows": {
+   "8815": "fddf71 fcd872 fc3071 fc1467 fc0f4f fc1445 fc1b59 fd2073 fc187d fd1680",
+   "8831": "ff126e ff136e fc4691 fc4e8c fb3764 fc1344 fd1859 fd3b92 fc55b6 fd3ea1",
+   "8851": "fea3c6 ffc3da fca4bb fb6f92 fd1d4d fd0641 fd115d fd1873 fd177d fd1680",
+   "8867": "fd308d fd4798 fc4c7b fc3662 fd0f40 fe0d53 fe1470 fd4179 fbb286 fccd7c",
+   "8891": "fd40a3 fe57b8 fd449c fb2673 fd105a fe195a fa316c fb4a79 fb3472 fc1c5d",
+   "8917": "fd1580 fd1581 fc1a79 fd186a fd0948 fc043e fd265f fd739c fdc3d5 fcd0df"
+  }
+ },
+ "sfx": {
+  "method": "spectrograms (work/data-cards/spec_*.png) + band-energy peak picking in 10 ms / 5 ms hops; voice is continuous so only SFX with a distinct signature are reported",
+  "A_counter_ticks": {
+   "onset_s": 138.57,
+   "end_s": 139.74,
+   "relative": "onset +240 ms after the counter's first visible frame 3321 (+5.7 frames after the tween start 3320); last tick 3353.6 = on the final value",
+   "character": "dense digital tick/roll with tonal partials at ~2.9, 8.9, 15 kHz; spacing ~20-30 ms mid-count slowing to 70-75 ms at the end (follows the ease-out of the count)",
+   "confidence": "medium-high"
+  },
+  "A_day_counter_ticks": {
+   "window_s": "137.08-137.70",
+   "note": "sparser ticks at 15 kHz during 01->14 (3290-3305)",
+   "confidence": "low-medium"
+  },
+  "B_border_riser": {
+   "AD1": "rising chirp swoosh starting ~142.40 s = frame 3417.6 (0 ms vs border-trace start 3417.5) and lasting ~0.4 s",
+   "AD2": "second riser ~145.68 s = frame 3496.3 (+60 ms vs trace start ~3494.8)",
+   "confidence": "medium"
+  },
+  "B_dot_ticks": {
+   "window_s": "144.02-145.30 (frames 3456.5-3487)",
+   "spacing": "55-70 ms",
+   "note": "ticks during the AD1 dot-grid / REACH / 200 reveal",
+   "confidence": "medium"
+  },
+  "B_AD2_chime": {
+   "onset_s": 146.57,
+   "frame": 3517.7,
+   "note": "sustained shimmer/chime (tones ~3, 9.1, 15.4 kHz, ~0.5 s) starting with the AD2 dot colour fill, i.e. -230 ms before the 20,000 number's first visible frame 3523",
+   "confidence": "medium"
+  },
+  "floating_overlays_E_F_G_H_D": {
+   "result": "NO distinct SFX transient found at any line entrance (spectrograms show only voice + music bed). The shot list's 'pop on text reveal' could not be confirmed; if a pop exists it is masked by speech (< ~-20 dB under voice).",
+   "confidence": "medium (absence is hard to prove)"
+  },
+  "C_funnel": {
+   "result": "no clear click/cash-register SFX isolated around 7192 ($240 REVENUE) or the arrows; unconfirmed",
+   "confidence": "low"
+  }
+ },
+ "recipe": [
+  {
+   "R1_floating_dropin (A-roll text beside presenter: E,F,G,H)": {
+    "keyframes_rel_to_first_visible_frame_k0": {
+     "start": -2,
+     "end": 7,
+     "duration_frames": 9
+    },
+    "opacity": [
+     {
+      "f": -2,
+      "v": 0
+     },
+     {
+      "f": 7,
+      "v": 1
+     }
+    ],
+    "opacity_easing": "cubic-bezier(0.50,0,0.40,1)",
+    "opacity_residual_rms": 0.016,
+    "translateY_px": [
+     {
+      "f": -2,
+      "v": -15.4
+     },
+     {
+      "f": 7,
+      "v": 0
+     }
+    ],
+    "translateY_easing": "cubic-bezier(0.40,0.40,0.30,1)",
+    "translateY_residual_rms_px": 0.06,
+    "blur_sigma_px": [
+     {
+      "f": -2,
+      "v": 4
+     },
+     {
+      "f": 4,
+      "v": 0
+     }
+    ],
+    "blur_easing": "same as translateY (measured 2-3,1,1,1,0)",
+    "scale": "1 (no scale)",
+    "translateX": "0",
+    "model_vs_measured_opacity": {
+     "measured_k0..k7": [
+      0.075,
+      0.209,
+      0.444,
+      0.718,
+      0.84,
+      0.945,
+      1.0,
+      1.0
+     ],
+     "model": [
+      0.072,
+      0.212,
+      0.449,
+      0.698,
+      0.862,
+      0.951,
+      0.992,
+      1.0
+     ]
+    },
+    "model_vs_measured_y": {
+     "measured": [
+      -10.5,
+      -7,
+      -4,
+      -2,
+      -1,
+      -0.5,
+      0,
+      0
+     ]
+    },
+    "stagger": "one line/word group at a time, triggered by the spoken word (gaps 13-59 frames); never an automatic fixed stagger. Items on one line (5 VIDEOS / \u00d7 $50) enter separately.",
+    "exit": "hard cut with the shot (G,H,D) or 3-frame fade 1,.77,.32,0 adjacent to the cut (E,F)"
+   },
+   "R2_fullscreen_fast_rise (headings on data cards: STILL / RUNNING., AD labels)": {
+    "start": -0.5,
+    "duration_frames": 4,
+    "opacity_easing": "cubic-bezier(0.2,0,0.6,1)",
+    "translateY_px": "+11 -> 0",
+    "y_easing": "cubic-bezier(0.3,0,0.6,1)",
+    "blur": "0",
+    "residual": "opacity 0.008, y 0.07px"
+   },
+   "R3_fullscreen_slow_rise (funnel cells, $80, $240 REVENUE)": {
+    "start": -1,
+    "duration_frames": 10,
+    "opacity_easing": "cubic-bezier(0.4,0,0.8,1)",
+    "translateY_px": "+14 -> 0",
+    "y_easing": "cubic-bezier(0.6,0.6,0.9,1) (~linear)",
+    "blur_sigma": "4 -> 2 -> 1 -> 0 over first 7 frames",
+    "residual": "opacity 0.006, y 0.23px (fit to the averaged series of 7 cells)"
+   },
+   "R4_number_pop (card counters 200 / 20,000)": {
+    "start": -1,
+    "duration_frames": 6,
+    "opacity_easing": "cubic-bezier(0.1,0,0.6,1)",
+    "translateY_px": "+23 at first visible (\u2248+30 at start) -> 0",
+    "scale": "0.875-0.925 -> 1.0 by 2nd frame",
+    "blur_sigma": "6-8 at first visible frame -> 1 -> 0",
+    "residual": "opacity 0.014, y 0.2px"
+   },
+   "R5_A-roll_hero_rise ($240, $$$)": {
+    "duration_frames": "7-9",
+    "translateY_px": "+12..+16 -> 0",
+    "blur": "8 -> 2 -> 1 -> 0",
+    "opacity": ".03,.23,.49,.74,.93,1 ($240) / .19,.35,.49,.65,.77,.88,.93,1 ($)",
+    "stagger_$$$": "3-4 frames"
+   },
+   "count_up": {
+    "easing": "cubic-bezier(0.65,0,0.35,1) easeInOutCubic",
+    "duration": "33 frames (1.375 s) for 48,000; 26 frames for 1->14",
+    "start_value": "not 0: REACH starts at 1,200 (2.5%), days at 1",
+    "rounding": "Math.round, en-US grouping",
+    "sync": "number fades in over the first 2-3 frames of the count; tick SFX train over the count"
+   },
+   "big_moves (card slides)": {
+    "easing": "cubic-bezier(0.65,0,0.35,1)",
+    "duration_frames": 19.5,
+    "motion_blur": "directional, peaks mid-move"
+   },
+   "border_trace": {
+    "duration_frames": 13.5,
+    "easing": "cubic-bezier(0.60,0,0.50,1)",
+    "direction": "clockwise from top-right corner"
+   },
+   "arrow_draw": "6 frames: shaft 3 frames (0.22, 0.53, 1.0) then head arms 1+2 frames",
+   "content_fade_out (full-screen)": "6 frames, 1,.95,.81,.61,.40,.20,.05,0",
+   "gradient_fill": "every highlighted number uses the animated pink gradient (palette in colours); whites stay pure white"
+  }
+ ],
+ "confidence": {
+  "font Space Grotesk 700": "high (glyph-level overlay match). Would change only if a licensed look-alike (e.g. a commercial grotesk) renders identically.",
+  "R1 timings/translation": "high: 15 independent lines agree to +-1px / +-0.05 opacity. Blur sigma: medium (sigma grid 0,1,2,3,4,6,8; small values are hard to separate from opacity).",
+  "R1 start at k0-2 / 15.4px total travel": "medium: the first 2 frames are invisible so the start is inferred from the curve fit; any (start,travel) pair on the same curve gives identical visible frames.",
+  "count-up REACH easing": "very high (exact on all frames)",
+  "day counter": "high (22/23)",
+  "R2-R5": "medium: fewer samples; gradient fills make opacity estimates biased low after k3 (R2 0.8-0.95).",
+  "card slide easings": "high for x (rms 1.4/3.7px); rotation +-0.3 deg (moment-based, contaminated by inner text)",
+  "A card entrance (luma ramp, rotation +4.6 -> -5.1)": "medium-low: 2D moments of a partly-visible card; a 3D flip could also produce this - check frames 3243-3246 visually before building",
+  "sizes px": "medium (+-3%): derived from ink height / Space Grotesk metrics",
+  "colours": "medium: AA and compression; gradients are animated so any single frame is only a sample",
+  "gradient animation model": "low-medium: centre-pinned red + cycling ends is measured, the generating mechanism (rotating linear vs mesh) is inferred",
+  "SFX": "see per-item; floating text 'pops' not found",
+  "B notifications / dots / heading word reveals": "medium-low: timed from strips at frame accuracy but not curve-fitted"
+ }
+}

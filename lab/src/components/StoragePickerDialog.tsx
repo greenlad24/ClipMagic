@@ -33,7 +33,7 @@ interface Props {
   onClose: () => void;
   /**
    * Whether multiple files can be picked at once. Single-select tools (Create,
-   * Cutter, Meme) get a one-click "Use" row; Bulk gets checkboxes + a footer.
+   * Meme) get a one-click "Use" row; Bulk gets checkboxes + a footer.
    */
   multiple?: boolean;
   /** Called with the chosen file(s). Each tool feeds these straight into its pipeline. */

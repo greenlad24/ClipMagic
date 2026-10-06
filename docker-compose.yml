@@ -157,6 +157,15 @@ services:
       # separate tree on purpose — the pipeline's guard refuses to write under
       # /opt/hyperframes-work, and renders reach the queue only via its API.
       - /opt/hfp-lab:/hfp-lab
+      # Auto Editor. Same control-plane split: the Lab writes job requests and
+      # edits here and reads status/previews back; the `aieditor-worker` systemd
+      # service on the HOST (/opt/clipmagic/aieditor) does all media work.
+      - /opt/aieditor-work:/aieditor-work
+      # Storage page → "Whole server". The `storage-agent` systemd service on the
+      # HOST (/opt/clipmagic/storage-agent) indexes the whole root filesystem and
+      # performs real deletes (all hard links, protected paths refused server-side).
+      # Only its socket directory is shared — never the index or the delete log.
+      - /var/lib/storage-agent/sock:/storage-agent
 
   # ── WHATSAPP SCHEDULER: schedule WhatsApp messages via in-chat /s commands ──
   # A self-contained sidecar (its own container + persistent WhatsApp Web session

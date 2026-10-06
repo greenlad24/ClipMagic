@@ -215,14 +215,6 @@ export const getPromoIndex = endpoint("getPromoIndex");
 export const exportPromoIndexes = endpoint("exportPromoIndexes");
 export const createBulkNarration = endpoint("createBulkNarration");
 export const getBulkRun = endpoint("getBulkRun");
-export const createBulkCut = endpoint("createBulkCut");
-export const getCutRun = endpoint("getCutRun");
-export const getNarrationCuts = endpoint("getNarrationCuts");
-export const analyzeCut = endpoint("analyzeCut");
-export const getAnalyzeCut = endpoint("getAnalyzeCut");
-export const findShortCut = endpoint("findShortCut");
-export const renderManualCut = endpoint("renderManualCut");
-export const getCutJob = endpoint("getCutJob");
 export const listJobs = endpoint("listJobs");
 export const pauseJob = endpoint("pauseJob");
 export const resumeJob = endpoint("resumeJob");
@@ -257,6 +249,13 @@ export const listStorage = endpoint("listStorage");
 export const deleteStorageFiles = endpoint("deleteStorageFiles");
 export const deleteStorageArea = endpoint("deleteStorageArea");
 export const pruneSystemStorage = endpoint("pruneSystemStorage");
+export const serverStorageSummary = endpoint("serverStorageSummary");
+export const serverStorageTree = endpoint("serverStorageTree");
+export const serverStorageType = endpoint("serverStorageType");
+export const serverStorageRefresh = endpoint("serverStorageRefresh");
+export const serverStorageLog = endpoint("serverStorageLog");
+export const serverStoragePreview = endpoint("serverStoragePreview");
+export const serverStorageDelete = endpoint("serverStorageDelete");
 export const reviewEdit = endpoint("reviewEdit");
 // AI Image Generator (LAB tool) — ephemeral Nano Banana chat.
 export const imageGeneratorStatus =
@@ -3782,6 +3781,75 @@ export const hfpEditorAttest = endpoint<{
     verdict: "pass" | "fail";
   };
 }, { run: HfpRunSummary }>("hfpEditorAttest");
+
+// ── Auto Editor (raw narration → clean edit; aieditor-worker on the host) ──
+export type AutoStageState = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'interrupted';
+export interface AutoJobSummary {
+  id: string; title: string; format: 'short' | 'long'; sponsored: boolean;
+  state: string; message: string | null; createdAt: number | null; updatedAt: number | null;
+}
+export interface AutoSentence { s: number; start: number; end: number; words: { i: number; w: string }[] }
+export interface AutoVideoPlan { title: string; segments: { s: number; drop: number[] }[]; warnings?: string[] }
+export interface AutoJobDetail {
+  id: string;
+  /** set while this job is queued behind another running job */
+  busyWith?: { id: string; title: string | null; message: string | null } | null;
+  request: { format: 'short' | 'long'; sponsored: boolean; script: string | null; source: { url: string }; title: string | null;
+    sites?: { url: string; note: string }[] };
+  status: {
+    state?: string; message?: string; progress?: number; stage?: string; error?: string;
+    cost_usd?: number; updated_at?: number;
+    stages?: Record<string, { state: AutoStageState; note?: string; started_at?: number; finished_at?: number }>;
+  };
+  source: { title?: string; width?: number; height?: number; duration?: number; fps?: number } | null;
+  review: {
+    sentences: AutoSentence[]; videos: AutoVideoPlan[]; reasons: Record<string, string>;
+    notes: string; edited: boolean;
+  } | null;
+  videos: { title: string; duration: number; cuts: number; warnings: string[]; words: number; joins: AutoJoin[] }[];
+  previews: { name: string; bytes: number; modifiedAt: number }[];
+  /** sound checks: the current cut's exact soundtrack over a black frame */
+  listens: { name: string; bytes: number; modifiedAt: number }[];
+  /** phase 2 (shorts): the preview + graphics + captions */
+  edits?: { name: string; bytes: number; modifiedAt: number }[];
+  /** shorts: the full-resolution deliverable (queue action "final") */
+  finals?: { name: string; bytes: number; modifiedAt: number }[];
+  /** Claude's graphics plan per video (output seconds, measured-recipe templates) */
+  graphics?: { t0: number; t1: number; template: string; fields: Record<string, unknown>; why?: string }[][];
+  /** Jake's hand nudges in ms, "a:<word id>" (piece start) / "b:<word id>" (piece end) */
+  nudges: Record<string, number>;
+  /** saved corrections not yet in the cut / sound check (Rebuild applies them) */
+  nudgesPending?: boolean;
+  edlAt: number | null;
+  log: string;
+}
+/** One cut of the edited video, for the cut editor. Times are SOURCE seconds. */
+export interface AutoJoin {
+  k: number; out: number; left_id: number; right_id: number;
+  left_text: string; right_text: string; removed: string;
+  b: number; a: number; auto_b: number; auto_a: number;
+  left_tone: [number, number][]; right_tone: [number, number][];
+}
+
+export const autoEditorStatus = endpoint<Record<string, never>, {
+  workerAlive: boolean; workerSeenAt: number | null; stages: { id: string; title: string }[];
+}>("autoEditorStatus");
+export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
+export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
+export const autoEditorCreate = endpoint<{
+  url: string; format: 'short' | 'long'; sponsored: boolean; script?: string; title?: string; sites?: string;
+}, { id: string }>("autoEditorCreate");
+export const autoEditorSaveEdits =
+  endpoint<{ id: string; videos: AutoVideoPlan[] }, { ok: boolean }>("autoEditorSaveEdits");
+export const autoEditorResetEdits = endpoint<{ id: string }, { ok: boolean }>("autoEditorResetEdits");
+export const autoEditorContinue = endpoint<{ id: string }, { ok: boolean }>("autoEditorContinue");
+export const autoEditorCancel = endpoint<{ id: string }, { ok: boolean }>("autoEditorCancel");
+export const autoEditorDelete = endpoint<{ id: string }, { ok: boolean }>("autoEditorDelete");
+export const autoEditorSaveNudges =
+  endpoint<{ id: string; nudges: Record<string, number>; apply?: boolean }, { ok: boolean; count: number }>("autoEditorSaveNudges");
+export const autoEditorRenderVideo = endpoint<{ id: string }, { ok: boolean }>("autoEditorRenderVideo");
+export const autoEditorRenderFinal = endpoint<{ id: string }, { ok: boolean }>("autoEditorRenderFinal");
+export const autoEditorBuildEdit = endpoint<{ id: string; sites?: string }, { ok: boolean }>("autoEditorBuildEdit");
 
 /* ── Code Import (staging area for code brought in from Zite / repos) ───── */
 export interface CodeImportSummary { name: string; files: number; bytes: number; updatedAt: number; hasNotes: boolean }

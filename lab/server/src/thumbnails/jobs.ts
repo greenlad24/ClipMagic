@@ -4,8 +4,7 @@
  * Generation used to run as one long, blocking request that returned every
  * recreated thumbnail at once behind a single spinner — no feedback while the
  * (slow, multi-call) Nano Banana chain ground through each pick. This turns it
- * into a polled job, mirroring the Narration Cutter's analyze-job pattern
- * (`cutter/analyzeJob.ts`):
+ * into a polled job (start → poll):
  *   - `startThumbnailGeneration` creates a job, kicks the work off in the
  *     background, and returns a jobId immediately.
  *   - `thumbnailJobStatus` returns a live snapshot the UI polls every ~1.2s:

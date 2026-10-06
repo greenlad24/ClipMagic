@@ -9,7 +9,6 @@ import SetupPage from './pages/SetupPage';
 import TimelineEditorPage from './pages/TimelineEditorPage';
 import StoragePage from './pages/StoragePage';
 import BulkPage from './pages/BulkPage';
-import CutterPage from './pages/CutterPage';
 import MemePage from './pages/MemePage';
 import PostizSettingsPage from './pages/PostizSettingsPage';
 import BulkSchedulerPage from './pages/BulkSchedulerPage';
@@ -29,6 +28,7 @@ import AvatarNarratorPage from './pages/AvatarNarratorPage';
 import TutorialStudioPage from './pages/TutorialStudioPage';
 import DensityCheckPage from './pages/DensityCheckPage';
 import VideoEditorPage from './pages/VideoEditorPage';
+import AutoEditorPage from './pages/AutoEditorPage';
 import CodeImportPage from './pages/CodeImportPage';
 import NewsDashboardPage from './news/pages/DashboardPage';
 import NewsAudiencePage from './news/pages/AudiencePage';
@@ -68,11 +68,12 @@ export default function App() {
         <Route path="/setup" element={<SetupPage />} />
         <Route path="/storage" element={<StoragePage />} />
         <Route path="/bulk" element={<BulkPage />} />
-        <Route path="/cutter" element={<CutterPage />} />
         <Route path="/meme" element={<MemePage />} />
         <Route path="/render-queue" element={<RenderQueuePage />} />
         <Route path="/density" element={<DensityCheckPage />} />
         <Route path="/density/:id" element={<DensityCheckPage />} />
+        <Route path="/auto-editor" element={<AutoEditorPage />} />
+        <Route path="/auto-editor/:id" element={<AutoEditorPage />} />
         <Route path="/video-editor" element={<VideoEditorPage />} />
         <Route path="/video-editor/:id" element={<VideoEditorPage />} />
         <Route path="/settings/postiz" element={<PostizSettingsPage />} />

@@ -1,0 +1,1700 @@
+{
+ "family": "kwys-text-cta",
+ "source": "/opt/aieditor-work/reference/kwysV2smgfY/video.mp4 (1920x1080, 30000/1001 fps, VP9; frame index = round(pts*30000/1001) = decode index)",
+ "conventions": {
+  "frames": "29.97 fps reference frames. k = offsets from the element's first visible frame unless stated. Absolute frames verified against an exact select-by-n decode (0-frame error).",
+  "px": "1080p pixels. dy>0 = down. 'comp px' = pixels in the un-zoomed camera comp (see camera_layer).",
+  "exactness": "Per-frame tables ARE the keyframes (interpolate linearly). Beziers are approximations; rms listed.",
+  "kit_warning": "kit/strip.sh and frames.sh label frames from -ss t; at 29.97 fps the landed frame was 1 frame off at some timestamps (ffmpeg seek lands floor or ceil). This spec used pts-select grabs (work/kwys-text-cta/grab.sh, proof.sh)."
+ },
+ "key_findings": [
+  "Two different text templates. (A) LOWER-CENTRE TITLE = Roboto Bold, per-CHARACTER fade + 36 px drop-in, left-to-right stagger normalised to the line (first->last char 4.15 f regardless of length); exit = per-char fade + ~60 px rise, same L->R stagger, all lines of the block exit together. Used by 'UGC AI videos / Made easy', 'Hey everyone / welcome back to the channel', 'I'm Jake Dawson'. (B) 'Link in the description' = Open Sans Bold + white glow, RIGID whole-line slide up from below the frame edge (20 f ease-out), 36 f hold, slide back down (13 f ease-in). Same 69-frame clip, identical to the frame, all 3 times.",
+  "No blur and no scale on either text template (sharpness ratio ~1.0 during motion); no detectable drop shadow on (A).",
+  "Titles and social icons live INSIDE the camera layer: the opening title shrinks with a whole-frame 1.576->1.0 zoom-out (f0-41) and the icons ride a punch-in + pan + zoom-out. In comp space the icons are pixel-static during the hold (+-3 px). Build them as children of the camera transform.",
+  "Subscribe button is NOT reference 1's asset: plain red #FD1728 rectangle 'SUBSCRIBE' (scaleX-from-centre entrance 27 f, label scale-in) -> cursor fades in/rises, clicks -> red crossfades to white 'SUBSCRIBED' while the box slides 98.5 px left and a separate white bell square slides out to the right -> cursor travels to the bell, bell icon greys -> cursor leaves. No sparkles, no dark state, no exit (hard cut with the shot).",
+  "Social icons: TikTok disc (296 comp px) then Instagram squircle (280 comp px) rise from below the frame bottom with a small back-overshoot (17 f, ~1% overshoot), centre y 794 comp, x 379 / 1522; both fade out together, ~22 f near-linear.",
+  "No other text/graphic overlays exist in the A-roll (2 fps scan of the whole video). Screencast UI text and the green 3-phone AI asset (0:06.6) are not overlays of this family."
+ ],
+ "fonts": {
+  "title": {
+   "face": "Roboto Bold 700",
+   "evidence": "chromium render vs reference mask: 'Hey everyone' width ratio 1.004, IoU 0.863 (next best FreeSans 0.42, Inter 0.46); 'UGC AI videos' 1.005/0.83 (600 ambiguous); 'welcome back...' 0.994/0.95 width-matched",
+   "sizes_px": {
+    "UGC AI videos / Made easy": 94,
+    "Hey everyone / welcome back / I'm Jake Dawson": 75.5
+   },
+   "tracking_em": 0,
+   "color": "#FFFFFF",
+   "shadow": "none measurable (at most a faint 2-3 px dark edge)",
+   "confidence": "high"
+  },
+  "link": {
+   "face": "Open Sans Bold 700",
+   "evidence": "width ratio 0.997, IoU 0.83 raw / 0.966 width-matched; Noto Sans 0.62, Roboto 0.33",
+   "size_px": 90,
+   "color": "#FFFFFF",
+   "glow": "white outer glow, brightness over bg +67 @2-3px, +56 @5, +29 @8, +16 @10, +7 @12, 0 @15 px -> approx Gaussian sigma 7-8 px at ~70% opacity (CSS text-shadow 0 0 15px rgba(255,255,255,.7))",
+   "confidence": "high (face), medium (glow)"
+  },
+  "subscribe": {
+   "face": "heavy italic sans, best of tried = Roboto Black Italic 900 (width 1.003, IoU 0.80)",
+   "confidence": "low-medium"
+  }
+ },
+ "layout": {
+  "title_UGC": {
+   "lines": [
+    "UGC AI videos",
+    "Made easy"
+   ],
+   "centre_x": 960,
+   "baselines_y": [
+    903,
+    1004
+   ],
+   "line_pitch_em": 1.08,
+   "ink_L1": [
+    667,
+    838,
+    1251,
+    904
+   ]
+  },
+  "title_hey": {
+   "lines": [
+    "Hey everyone",
+    "welcome back to the channel"
+   ],
+   "centre_x": 960,
+   "baselines_y": [
+    873,
+    965
+   ],
+   "ink": {
+    "L1": [
+     739,
+     822,
+     1180,
+     889
+    ],
+    "L2": [
+     470,
+     909,
+     1451,
+     966
+    ]
+   }
+  },
+  "title_jake": {
+   "lines": [
+    "I'm Jake Dawson"
+   ],
+   "centre_x": 960,
+   "baseline_y": 904,
+   "ink": [
+    678,
+    849,
+    1244,
+    905
+   ]
+  },
+  "link": {
+   "ink": [
+    464,
+    893,
+    1455,
+    970
+   ],
+   "centre_x": 959.5,
+   "note": "single line, ascender top 893, descender bottom 970"
+  },
+  "subscribe": {
+   "red_box": [
+    684,
+    877,
+    1235,
+    1000
+   ],
+   "radius_px": 7,
+   "label_ink": [
+    771,
+    912,
+    1149,
+    964
+   ],
+   "final_white_box": [
+    587,
+    878,
+    1135,
+    999
+   ],
+   "bell_box": [
+    1152,
+    878,
+    1270,
+    999
+   ],
+   "gap_px": 16,
+   "colors": {
+    "red": "#FD1728",
+    "white": "#F9F9F9",
+    "label_grey": "#B2B2B2"
+   }
+  },
+  "icons_comp": {
+   "tiktok_disc": {
+    "centre": [
+     379,
+     793
+    ],
+    "diameter": 296,
+    "glyph_h": 194
+   },
+   "instagram": {
+    "centre": [
+     1522,
+     795
+    ],
+    "size": 280,
+    "corner_radius": 52
+   }
+  }
+ },
+ "recipes": {
+  "title_char_in": {
+   "per_char": {
+    "opacity": [
+     [
+      0,
+      0.0
+     ],
+     [
+      1,
+      0.125
+     ],
+     [
+      2,
+      0.322
+     ],
+     [
+      3,
+      0.518
+     ],
+     [
+      4,
+      0.665
+     ],
+     [
+      5,
+      0.771
+     ],
+     [
+      6,
+      0.852
+     ],
+     [
+      7,
+      0.903
+     ],
+     [
+      8,
+      0.946
+     ],
+     [
+      9,
+      0.969
+     ],
+     [
+      10,
+      0.987
+     ],
+     [
+      11,
+      0.996
+     ],
+     [
+      12,
+      1.0
+     ]
+    ],
+    "translateY_px": [
+     [
+      0,
+      -36
+     ],
+     [
+      1,
+      -31.6
+     ],
+     [
+      2,
+      -24
+     ],
+     [
+      3,
+      -17.7
+     ],
+     [
+      4,
+      -12.2
+     ],
+     [
+      5,
+      -8.9
+     ],
+     [
+      6,
+      -6
+     ],
+     [
+      7,
+      -4
+     ],
+     [
+      8,
+      -2.2
+     ],
+     [
+      9,
+      -1.1
+     ],
+     [
+      10,
+      -1
+     ],
+     [
+      11,
+      0
+     ]
+    ],
+    "bezier_opacity": {
+     "start": 0.164,
+     "dur": 12.002,
+     "cubic_bezier": [
+      0.223,
+      0.34,
+      0.233,
+      1.008
+     ],
+     "rms": 0.003
+    },
+    "bezier_translate": {
+     "start": -0.063,
+     "dur": 11.092,
+     "cubic_bezier": [
+      0.27,
+      0.302,
+      0.231,
+      0.897
+     ],
+     "rms_norm": 0.007
+    },
+    "simple": "one progress p=cubic-bezier(0.22,0.34,0.23,1.0) over 12 f; opacity=p; translateY=-36px*(1-p)",
+    "travel_note": "36 px at both 94 px and 75 px font -> FIXED px (3.3% of frame height), not em"
+   },
+   "stagger": {
+    "rule": "char i (index in the line INCLUDING spaces, 0..N-1) starts at k0 + 4.15*i/(N-1) frames",
+    "measured_first_to_last_frames": {
+     "UGC AI videos": 4.16,
+     "Made easy": 4.07,
+     "Hey everyone": 3.83,
+     "welcome back to the channel": 4.26,
+     "I'm Jake Dawson": 4.14
+    },
+    "fit": "char-index incl. spaces rms 0.06-0.13 f (beats x-position and letter-index)"
+   },
+   "line_2": "each line has its own k0 (line 2 enters with its own words); see instances"
+  },
+  "title_char_out": {
+   "per_char": {
+    "opacity": [
+     [
+      0,
+      1.0
+     ],
+     [
+      1,
+      0.996
+     ],
+     [
+      2,
+      0.947
+     ],
+     [
+      3,
+      0.843
+     ],
+     [
+      4,
+      0.697
+     ],
+     [
+      5,
+      0.533
+     ],
+     [
+      6,
+      0.382
+     ],
+     [
+      7,
+      0.253
+     ],
+     [
+      8,
+      0.156
+     ],
+     [
+      9,
+      0.069
+     ],
+     [
+      10,
+      0.004
+     ]
+    ],
+    "translateY_px": [
+     [
+      0,
+      0
+     ],
+     [
+      1,
+      0
+     ],
+     [
+      2,
+      -4
+     ],
+     [
+      3,
+      -11
+     ],
+     [
+      4,
+      -21
+     ],
+     [
+      5,
+      -32
+     ],
+     [
+      6,
+      -41
+     ],
+     [
+      7,
+      -48
+     ],
+     [
+      8,
+      -53
+     ],
+     [
+      9,
+      -57
+     ],
+     [
+      10,
+      -60
+     ]
+    ],
+    "bezier_opacity_out": {
+     "start": 1.115,
+     "dur": 8.952,
+     "cubic_bezier": [
+      0.346,
+      0.123,
+      0.404,
+      0.684
+     ]
+    },
+    "bezier_translate_out": {
+     "start": 0.912,
+     "note": "rise continues past invisibility; use the table (-60 px at k10 is extrapolated)"
+    }
+   },
+   "stagger": "same rule as entrance (measured 3.8-4.4 f first->last), every line of the block starts its exit on the SAME frame",
+   "no_blur": "per-glyph gradient energy / (alpha*hold) = 0.97-1.09 through entrance and exit"
+  },
+  "link_slide": {
+   "translateY_px_from_final": [
+    [
+     0,
+     184
+    ],
+    [
+     1,
+     159
+    ],
+    [
+     2,
+     135
+    ],
+    [
+     3,
+     114
+    ],
+    [
+     4,
+     96
+    ],
+    [
+     5,
+     80
+    ],
+    [
+     6,
+     66
+    ],
+    [
+     7,
+     55
+    ],
+    [
+     8,
+     45
+    ],
+    [
+     9,
+     36
+    ],
+    [
+     10,
+     29
+    ],
+    [
+     11,
+     23
+    ],
+    [
+     12,
+     18
+    ],
+    [
+     13,
+     14
+    ],
+    [
+     14,
+     10
+    ],
+    [
+     15,
+     7
+    ],
+    [
+     16,
+     5
+    ],
+    [
+     17,
+     3
+    ],
+    [
+     18,
+     2
+    ],
+    [
+     19,
+     1
+    ],
+    [
+     20,
+     0
+    ]
+   ],
+   "start_rule": "k0 = first frame the ascenders cross the frame bottom (184 = 1077-893). Before k0 it is off-frame; fit extrapolates a start ~315 px below at k-5.3.",
+   "in_bezier": {
+    "start_frame": -5.276,
+    "duration_frames": 26.466,
+    "cubic_bezier": [
+     0.283,
+     0.501,
+     0.304,
+     1.0
+    ],
+    "v0": 314.713
+   },
+   "hold_frames": [
+    20,
+    56
+   ],
+   "out_translateY_px": [
+    [
+     56,
+     0
+    ],
+    [
+     57,
+     1
+    ],
+    [
+     58,
+     3
+    ],
+    [
+     59,
+     7
+    ],
+    [
+     60,
+     13
+    ],
+    [
+     61,
+     23
+    ],
+    [
+     62,
+     37
+    ],
+    [
+     63,
+     55
+    ],
+    [
+     64,
+     79
+    ],
+    [
+     65,
+     106
+    ],
+    [
+     66,
+     132
+    ],
+    [
+     67,
+     156
+    ],
+    [
+     68,
+     176
+    ],
+    [
+     69,
+     "gone"
+    ]
+   ],
+   "out_bezier": {
+    "start_frame": -0.098,
+    "duration_frames": 14.68,
+    "cubic_bezier": [
+     0.593,
+     -0.0,
+     0.519,
+     0.601
+    ]
+   },
+   "opacity": "1.0 every visible frame (no fade); no scale; rigid (no per-char stagger)",
+   "lifetime_frames": 69
+  },
+  "subscribe": {
+   "box_scaleX_from_centre": {
+    "width_px": [
+     [
+      0,
+      4
+     ],
+     [
+      1,
+      7
+     ],
+     [
+      2,
+      12
+     ],
+     [
+      3,
+      16
+     ],
+     [
+      4,
+      24
+     ],
+     [
+      5,
+      33
+     ],
+     [
+      6,
+      48
+     ],
+     [
+      7,
+      64
+     ],
+     [
+      8,
+      84
+     ],
+     [
+      9,
+      112
+     ],
+     [
+      10,
+      150
+     ],
+     [
+      11,
+      204
+     ],
+     [
+      12,
+      276
+     ],
+     [
+      13,
+      348
+     ],
+     [
+      14,
+      401
+     ],
+     [
+      15,
+      440
+     ],
+     [
+      16,
+      468
+     ],
+     [
+      17,
+      488
+     ],
+     [
+      18,
+      505
+     ],
+     [
+      19,
+      517
+     ],
+     [
+      20,
+      528
+     ],
+     [
+      21,
+      536
+     ],
+     [
+      22,
+      540
+     ],
+     [
+      23,
+      545
+     ],
+     [
+      24,
+      548
+     ],
+     [
+      25,
+      550
+     ],
+     [
+      26,
+      552
+     ]
+    ],
+    "height": "full 124 px from k0 (only X scales)",
+    "bezier": {
+     "start_frame": 0.173,
+     "duration_frames": 26.858,
+     "cubic_bezier": [
+      0.675,
+      0.092,
+      0.194,
+      1.0
+     ]
+    },
+    "note": "faint 1-2 px line already at k-1 (f1970)"
+   },
+   "label_scale_uniform": {
+    "scale": [
+     [
+      21,
+      0.179
+     ],
+     [
+      22,
+      0.227
+     ],
+     [
+      23,
+      0.293
+     ],
+     [
+      24,
+      0.401
+     ],
+     [
+      25,
+      0.588
+     ],
+     [
+      26,
+      0.702
+     ],
+     [
+      27,
+      0.765
+     ],
+     [
+      28,
+      0.807
+     ],
+     [
+      29,
+      0.842
+     ],
+     [
+      30,
+      0.868
+     ],
+     [
+      31,
+      0.889
+     ],
+     [
+      32,
+      0.908
+     ],
+     [
+      33,
+      0.921
+     ],
+     [
+      34,
+      0.937
+     ],
+     [
+      35,
+      0.95
+     ],
+     [
+      36,
+      0.96
+     ],
+     [
+      37,
+      0.968
+     ],
+     [
+      38,
+      0.976
+     ],
+     [
+      39,
+      0.984
+     ],
+     [
+      40,
+      0.989
+     ],
+     [
+      41,
+      0.995
+     ],
+     [
+      43,
+      1.0
+     ]
+    ],
+    "note": "label visible but tiny from ~k11; table from k21 (white-mask threshold). Centred on the box (960,938).",
+    "bezier": {
+     "start_frame": -4.865,
+     "duration_frames": 24.201,
+     "cubic_bezier": [
+      0.654,
+      0.45,
+      0.0,
+      0.816
+     ],
+     "v0": -0.007
+    }
+   },
+   "cursor_in": {
+    "tip_px": [
+     [
+      64,
+      [
+       987,
+       989
+      ]
+     ],
+     [
+      65,
+      [
+       986,
+       983
+      ]
+     ],
+     [
+      66,
+      [
+       986,
+       978
+      ]
+     ],
+     [
+      67,
+      [
+       986,
+       974
+      ]
+     ],
+     [
+      68,
+      [
+       986,
+       972
+      ]
+     ],
+     [
+      69,
+      [
+       986,
+       970
+      ]
+     ],
+     [
+      70,
+      [
+       986,
+       968
+      ]
+     ],
+     [
+      72,
+      [
+       985,
+       968
+      ]
+     ]
+    ],
+    "opacity": "fades in ~k59-k67 (semi-transparent while rising ~35 px from below)",
+    "note": "standard white arrow, black outline"
+   },
+   "click": {
+    "k": 73,
+    "cursor": "shrinks ~10% (pixel count 1318->1029) and tip moves +3 px for 1 f",
+    "button": "no press-scale on the box"
+   },
+   "bell_box": {
+    "centre_x_offset_px": [
+     [
+      80,
+      -59
+     ],
+     [
+      81,
+      -35
+     ],
+     [
+      82,
+      -22
+     ],
+     [
+      83,
+      -14
+     ],
+     [
+      84,
+      -8
+     ],
+     [
+      85,
+      -4
+     ],
+     [
+      86,
+      -1
+     ],
+     [
+      87,
+      0
+     ]
+    ],
+    "note": "emerges from behind the main box's right side and slides right",
+    "bezier": {
+     "start_frame": -1.042,
+     "duration_frames": 7.464,
+     "cubic_bezier": [
+      0.209,
+      0.118,
+      0.045,
+      0.807
+     ],
+     "v0": 80.673
+    }
+   },
+   "cursor_to_bell": {
+    "tip_px": [
+     [
+      87,
+      [
+       1067,
+       959
+      ]
+     ],
+     [
+      88,
+      [
+       1080,
+       958
+      ]
+     ],
+     [
+      89,
+      [
+       1093,
+       957
+      ]
+     ],
+     [
+      90,
+      [
+       1106,
+       955
+      ]
+     ],
+     [
+      91,
+      [
+       1117,
+       954
+      ]
+     ],
+     [
+      92,
+      [
+       1127,
+       953
+      ]
+     ],
+     [
+      93,
+      [
+       1136,
+       953
+      ]
+     ],
+     [
+      95,
+      [
+       1153,
+       951
+      ]
+     ],
+     [
+      97,
+      [
+       1168,
+       949
+      ]
+     ],
+     [
+      99,
+      [
+       1179,
+       948
+      ]
+     ],
+     [
+      101,
+      [
+       1188,
+       947
+      ]
+     ],
+     [
+      103,
+      [
+       1198,
+       947
+      ]
+     ],
+     [
+      105,
+      [
+       1202,
+       946
+      ]
+     ],
+     [
+      107,
+      [
+       1206,
+       945
+      ]
+     ],
+     [
+      110,
+      [
+       1208,
+       945
+      ]
+     ]
+    ],
+    "x_bezier": {
+     "start_frame": -2.686,
+     "duration_frames": 25.267,
+     "cubic_bezier": [
+      0.383,
+      0.883,
+      0.727,
+      0.945
+     ],
+     "v0": -182.649
+    },
+    "note": "between k74 and k87 the cursor drifts ~40-80 px right (occluded by the state change, approximate)"
+   },
+   "bell_click": {
+    "k": 119,
+    "icon": "bell glyph dark (#2F2F2F) -> light grey in 2-3 f (k119-k121)"
+   },
+   "cursor_out": {
+    "tip_px": [
+     [
+      130,
+      [
+       1210,
+       946
+      ]
+     ],
+     [
+      131,
+      [
+       1178,
+       1009
+      ]
+     ],
+     [
+      132,
+      [
+       1144,
+       1072
+      ]
+     ],
+     [
+      133,
+      "gone"
+     ]
+    ]
+   },
+   "exit": "none: hard cut with the shot at k178 (f2149)",
+   "state_change": {
+    "red_to_white_progress": [
+     [
+      74,
+      0
+     ],
+     [
+      75,
+      0.009
+     ],
+     [
+      76,
+      0.04
+     ],
+     [
+      77,
+      0.11
+     ],
+     [
+      78,
+      0.25
+     ],
+     [
+      79,
+      0.49
+     ],
+     [
+      80,
+      0.75
+     ],
+     [
+      81,
+      0.88
+     ],
+     [
+      82,
+      0.96
+     ],
+     [
+      83,
+      0.99
+     ],
+     [
+      84,
+      1.0
+     ]
+    ],
+    "colour_bezier": {
+     "start_frame": 0.525,
+     "duration_frames": 9.161,
+     "cubic_bezier": [
+      0.638,
+      0.069,
+      0.348,
+      0.956
+     ]
+    },
+    "main_box_centre_x_offset_px": [
+     [
+      72,
+      98.5
+     ],
+     [
+      73,
+      96.5
+     ],
+     [
+      74,
+      95
+     ],
+     [
+      75,
+      92.5
+     ],
+     [
+      76,
+      90.5
+     ],
+     [
+      77,
+      87.5
+     ],
+     [
+      78,
+      82
+     ],
+     [
+      80,
+      30.5
+     ],
+     [
+      81,
+      17.5
+     ],
+     [
+      82,
+      12.5
+     ],
+     [
+      83,
+      8.5
+     ],
+     [
+      84,
+      6.5
+     ],
+     [
+      85,
+      4
+     ],
+     [
+      86,
+      2
+     ],
+     [
+      87,
+      0
+     ]
+    ],
+    "slide_bezier": {
+     "start_frame": -0.176,
+     "duration_frames": 15.694,
+     "cubic_bezier": [
+      1.0,
+      0.205,
+      0.015,
+      0.82
+     ]
+    },
+    "label": "SUBSCRIBE crossfades to SUBSCRIBED (grey #B2B2B2) with a horizontal smear k75-k80; width of the main box unchanged (548-552)"
+   }
+  },
+  "icons": {
+   "rise_comp_px_from_final": {
+    "tiktok": [
+     [
+      0,
+      287.6
+     ],
+     [
+      1,
+      222.6
+     ],
+     [
+      2,
+      168.1
+     ],
+     [
+      3,
+      124.8
+     ],
+     [
+      4,
+      89.7
+     ],
+     [
+      5,
+      61.0
+     ],
+     [
+      6,
+      39.3
+     ],
+     [
+      7,
+      22.8
+     ],
+     [
+      8,
+      10.7
+     ],
+     [
+      9,
+      2.0
+     ],
+     [
+      10,
+      -2.5
+     ],
+     [
+      11,
+      -3.6
+     ],
+     [
+      12,
+      -3.0
+     ],
+     [
+      13,
+      -2.4
+     ],
+     [
+      14,
+      -2.5
+     ],
+     [
+      15,
+      -1.9
+     ],
+     [
+      16,
+      -1.1
+     ],
+     [
+      17,
+      -0.3
+     ],
+     [
+      18,
+      0.5
+     ]
+    ],
+    "instagram": [
+     [
+      0,
+      252.9
+     ],
+     [
+      1,
+      190.8
+     ],
+     [
+      2,
+      140.1
+     ],
+     [
+      3,
+      99.2
+     ],
+     [
+      4,
+      68.2
+     ],
+     [
+      5,
+      43.7
+     ],
+     [
+      6,
+      25.7
+     ],
+     [
+      7,
+      12.6
+     ],
+     [
+      8,
+      4.4
+     ],
+     [
+      9,
+      -0.5
+     ],
+     [
+      10,
+      -2.1
+     ],
+     [
+      11,
+      -2.1
+     ],
+     [
+      12,
+      -0.5
+     ],
+     [
+      13,
+      -0.5
+     ],
+     [
+      14,
+      0.3
+     ],
+     [
+      15,
+      1.2
+     ]
+    ]
+   },
+   "rise_bezier": {
+    "tiktok": {
+     "start_frame": -1.123,
+     "duration_frames": 17.076,
+     "cubic_bezier": [
+      0.302,
+      1.192,
+      0.663,
+      1.0
+     ],
+     "v0": 375.864
+    },
+    "instagram": {
+     "start_frame": -1.023,
+     "duration_frames": 17.54,
+     "cubic_bezier": [
+      0.295,
+      1.285,
+      0.615,
+      0.956
+     ],
+     "v0": 329.311
+    }
+   },
+   "rise_note": "pure translateY in comp space, no scale, no fade (k0 = first visible = top at frame bottom). Back-type overshoot ~3 px (~1% of travel).",
+   "stagger": "Instagram k0 = TikTok k0 + 29 f (each on its own spoken word)",
+   "fade_out_both": {
+    "opacity": [
+     [
+      0,
+      1.0
+     ],
+     [
+      1,
+      0.966
+     ],
+     [
+      2,
+      0.932
+     ],
+     [
+      3,
+      0.885
+     ],
+     [
+      4,
+      0.837
+     ],
+     [
+      5,
+      0.785
+     ],
+     [
+      6,
+      0.736
+     ],
+     [
+      7,
+      0.693
+     ],
+     [
+      8,
+      0.649
+     ],
+     [
+      9,
+      0.6
+     ],
+     [
+      10,
+      0.554
+     ],
+     [
+      11,
+      0.505
+     ],
+     [
+      12,
+      0.46
+     ],
+     [
+      13,
+      0.416
+     ],
+     [
+      14,
+      0.374
+     ],
+     [
+      15,
+      0.329
+     ],
+     [
+      16,
+      0.284
+     ],
+     [
+      17,
+      0.236
+     ],
+     [
+      18,
+      0.194
+     ],
+     [
+      19,
+      0.143
+     ],
+     [
+      20,
+      0.096
+     ],
+     [
+      21,
+      0.048
+     ],
+     [
+      22,
+      0.0
+     ]
+    ],
+    "bezier": {
+     "start_frame": 0.456,
+     "duration_frames": 21.595,
+     "cubic_bezier": [
+      1.0,
+      1.016,
+      0.29,
+      0.277
+     ]
+    },
+    "note": "k0 = f19867 for BOTH icons (same frame); no motion of their own (camera zoom-out moves them on screen)"
+   }
+  }
+ },
+ "camera_layer": {
+  "note": "Context for 'text inside the camera comp' (belongs to the camera family). Transform: p_comp = (960,540) + S*(p_screen-(960,540)) + T; screen zoom = 1/S.",
+  "title_open_zoomout": {
+   "screen_zoom": [
+    [
+     0,
+     1.5755
+    ],
+    [
+     2,
+     1.5625
+    ],
+    [
+     3,
+     1.525
+    ],
+    [
+     4,
+     1.431
+    ],
+    [
+     5,
+     1.348
+    ],
+    [
+     6,
+     1.2945
+    ],
+    [
+     8,
+     1.226
+    ],
+    [
+     10,
+     1.1805
+    ],
+    [
+     12,
+     1.145
+    ],
+    [
+     15,
+     1.106
+    ],
+    [
+     20,
+     1.062
+    ],
+    [
+     25,
+     1.034
+    ],
+    [
+     30,
+     1.0165
+    ],
+    [
+     35,
+     1.006
+    ],
+    [
+     41,
+     1.0
+    ]
+   ],
+   "bezier": {
+    "start_frame": 2.359,
+    "duration_frames": 37.819,
+    "cubic_bezier": [
+     0.086,
+     0.366,
+     0.0,
+     0.956
+    ]
+   },
+   "after": "slow push-in from f56: 1.0005 (f59) -> 1.0095 (f89) and still accelerating at the title exit"
+  },
+  "icons_section": {
+   "zoom_in_S": {
+    "start_frame": 0.879,
+    "duration_frames": 32.421,
+    "cubic_bezier": [
+     0.317,
+     0.093,
+     0.238,
+     1.0
+    ]
+   },
+   "zoom_in_frames": [
+    19781,
+    19813
+   ],
+   "S_final": 0.8173,
+   "T_x_at_zoom": -140,
+   "pan_T_x": {
+    "start_frame": 0.291,
+    "duration_frames": 24.192,
+    "cubic_bezier": [
+     0.329,
+     0.025,
+     0.291,
+     0.985
+    ]
+   },
+   "pan_frames": [
+    19815,
+    19840
+   ],
+   "pan_T_x_range": [
+    -140,
+    138
+   ],
+   "zoom_out_frames": [
+    19851,
+    19894
+   ],
+   "cuts": "shot starts f19729"
+  }
+ },
+ "instances": {
+  "title_UGC": {
+   "L1": {
+    "k0": 1.7,
+    "first_visible": 2,
+    "speech": "'Making' onset f6.6 (text leads 4.9 f); 'UGC' f21.7"
+   },
+   "L2": {
+    "k0": 50.8,
+    "speech": "'has' onset f56.0 (lead 5.2 f); words spoken = 'has become so easy'"
+   },
+   "exit_k0": 94.7,
+   "exit_speech": "'easy' onset f94.5 / end f102.3",
+   "gone": 104
+  },
+  "title_hey": {
+   "L1": {
+    "k0": 1720.7,
+    "speech": "shot cut f1719/1720; 'Hey' f1726.5 (lead 5.8 f)"
+   },
+   "L2": {
+    "k0": 1742.4,
+    "speech": "'welcome' f1750.6 (lead 8.2 f)"
+   },
+   "exit_k0": 1768.8,
+   "exit_speech": "'channel.' f1770.4-1780.7",
+   "gone": 1778
+  },
+  "title_jake": {
+   "k0": 1781.7,
+   "speech": "'I'm' f1794.2 (lead 12.5 f); starts as soon as the Hey block is gone",
+   "exit_k0": 1813.7,
+   "exit_speech": "'Dawson' end f1815.9",
+   "gone": 1822
+  },
+  "link": [
+   {
+    "k0": 13551,
+    "word": "'link' f13553.9",
+    "exit_k0": 13608
+   },
+   {
+    "k0": 19242,
+    "word": "'link' f19240.3",
+    "exit_k0": 19299
+   },
+   {
+    "k0": 20105,
+    "word": "'links' f20100.5",
+    "exit_k0": 20162
+   }
+  ],
+  "subscribe": {
+   "k0": 1971,
+   "speech": "button starts on 'So if that sounds like you' ('So' f1964.3, 'if' f1976.3); 'subscribe,' f2032.8-2050.3; click k73=f2044 (inside the word); bell click f2090 during 'button'/'so'; cut f2149"
+  },
+  "icons": {
+   "tiktok_k0": 19796,
+   "instagram_k0": 19825,
+   "fade_k0": 19867,
+   "speech": "'follow' f19793, 'TikTok' f19808.6 (TikTok settles f19807), 'Instagram' f19822.4 (IG k0 +2.6 f), fade during 'because...I post' (f19845-19881)"
+  }
+ },
+ "sfx": "No shared SFX detected: the three identical Link clips have no correlated audio (2 kHz/5 kHz band window correlation <0.5 everywhere); HF onsets near events are speech. Low confidence for subscribe/icons (speech-masked).",
+ "confidence": {
+  "title per-char curves": "high (5 lines, 1133 samples, rms 0.034 alpha / <1 px)",
+  "stagger rule": "high",
+  "link slide": "high (3 identical instances)",
+  "subscribe tables": "high for box/label/colour/slide, medium for cursor path",
+  "icons": "high in comp space (camera solved, glyph static +-3 px)",
+  "fonts": "Roboto/Open Sans high; subscribe face low",
+  "shadow/glow": "medium"
+ },
+ "proof_strips": "/opt/aieditor-work/reference/work/kwys-text-cta/proof/*.jpg (labelled f<abs> k<offset>)"
+}

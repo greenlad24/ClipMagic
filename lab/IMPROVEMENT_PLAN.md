@@ -1,5 +1,7 @@
 # ClipMagic Improvement Plan
 
+> Note (2026-10-04): the Narration Cutter was removed — the Auto Editor (`/auto-editor`) replaced it. Its items below are historical.
+
 Scope: the **lab** copy only (`lab/src`, `lab/server`, port 9090). Two goals:
 **A. Performance / speed / cost** and **B. Quality of every feature (AI Director,
 subtitles, Bulk, Cutter)**. Grounded in 2025-2026 best practices (sources at end).

@@ -4,10 +4,10 @@
  * A floating trigger (bottom-right) shows a live count of active jobs; clicking
  * it opens a right-side drawer listing every queued / running / paused job plus
  * a "recent" section of finished ones. Each render-queue job can be Paused,
- * Resumed or Canceled; cutter analyze jobs are shown read-only.
+ * Resumed or Canceled.
  *
  * Mounted once at the app root so it's present on every product surface
- * (short-form, bulk, cutter, meme) regardless of each page's own chrome.
+ * (short-form, bulk, meme) regardless of each page's own chrome.
  *
  * Polling: only while open OR while there is known active work, every ~1.8s, so
  * an idle app makes no noise. Controls are optimistic and reconciled on the next

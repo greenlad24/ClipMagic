@@ -31,6 +31,7 @@ import { queueDepth } from "./db/jobs.js";
 import { failOrphanedRuns } from "./db/scriptRuns.js";
 import { googleDocsOAuthRouter } from "./scriptgen/docsOauthRoutes.js";
 import { hyperframesApiRouter } from "./hyperframes/api.js";
+import { audioSlice as aieditorAudioSlice } from "./aieditor/control.js";
 import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
 import { startMonitor } from "./engage/monitor.js";
@@ -258,6 +259,40 @@ app.use(
   "/api/hfp-editor/files",
   auth,
   express.static(path.join(process.env.HFP_LAB || "/hfp-lab", "runs"), {
+    maxAge: 0,
+    etag: true,
+    dotfiles: "deny",
+    index: false,
+  })
+);
+
+// Auto Editor — a short slice (<= 12 s) of a job's original recording as WAV, for the
+// review page's cut editor: Jake nudges a cut and hears it in the browser at once.
+app.get("/api/aieditor/audio/:id", auth, async (req, res) => {
+  try {
+    const buf = await aieditorAudioSlice(req.params.id, Number(req.query.from), Number(req.query.to));
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.end(buf);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// Auto Editor — a job's review renders. Read-only, behind `auth`, and limited to
+// the preview/sound-check/edit (graphics)/final MP4s: the raw source, transcripts and plans stay off
+// the web. express.static serves the range requests the player needs to seek.
+app.use(
+  "/api/aieditor/files",
+  auth,
+  (req, res, next) => {
+    if (!/^\/[a-z0-9][a-z0-9-]{2,63}\/(preview|listen|edit|final)-\d{2}\.mp4$/.test(req.path)) {
+      res.status(404).end();
+      return;
+    }
+    next();
+  },
+  express.static(path.join(process.env.AIEDITOR_WORK || "/aieditor-work", "jobs"), {
     maxAge: 0,
     etag: true,
     dotfiles: "deny",

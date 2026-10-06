@@ -1,0 +1,5124 @@
+{
+ "family": "pills-cards",
+ "source": "/opt/aieditor-work/reference/gVPZU1btFA8/video.mp4 (1920x1080, 24 fps)",
+ "conventions": {
+  "frame": "absolute frame index = round(t*24)",
+  "offsets": "recipe frame offsets are relative to the element's first visible frame (offset 0)",
+  "px": "1080p pixels. bbox = [x0,y0,x1,y1] from colour masks (0.3-0.5 percentile trimmed), +-2 px",
+  "exactness": "The per-frame tables ARE the keyframes. To match exactly, key every frame (linear between frames, as in the tables). The cubic-bezier fits are approximations; residuals are listed.",
+  "sfx_offset": "ms of SFX onset relative to the first visible frame of the named event; negative = sound leads. Method: 10 ms RMS of the first-differenced (high-passed) mono track, onset = start of the rise. Voice-over and music overlap most events, so most values are MEDIUM/LOW confidence."
+ },
+ "key_findings": [
+  "Floating cards and pills are composited in SCREEN space. No tracking: over every hold the measured edges move by 0 px (0:08 cards f206-284, callout card f5047-5092, portal cards f11159-11290, info cards f12871-12956, subscribe pill f623-660). The camera is locked off in all of these shots, so 'tracking vs fixed' cannot be proven from motion, but there is no idle float or drift at all (0 px, 0 deg). Do NOT add an idle bob.",
+  "Several cards sit BEHIND the presenter (the presenter is matted over them): 0:08 centre ad card behind his head, 0:35 hologram prompt window. The others are in front of everything.",
+  "Cards are 3D-posed (perspective, rotateY so the edge nearer to frame-edge is taller), forming a shallow concave arc facing the presenter. Pose is static during the hold.",
+  "One CTA template, three different timings: 'LINK IN THE DESCRIPTION' appears 3x (0:32, 3:58, 9:58). Same morph (sparkle -> glass tile -> pill), but the tile hold, the text delay and the text colour differ (see link_pill.instances). They are NOT identical.",
+  "The Subscribe -> Subscribed state change is the same asset both times (0:27 and 10:10): identical relative timing to the frame.",
+  "Exits are mostly 3-frame fades or hard cuts with the shot; only the lower-third logo/handle and the red Subscribe pill have authored exit animations.",
+  "Gemini times were off: the 8:53 info cards actually start at f12827 (8:54.46); the 0:20.6 'lower third' is two separate elements (logo tile bottom-left + handle pill bottom-right) followed by a separate 'LAST VIDEO' warning top-left."
+ ],
+ "fonts": {
+  "mono_display": {
+   "used_by": [
+    "LAST VIDEO",
+    "@ADILINTHEWILD handle",
+    "info-card titles FREE DIAGNOSTIC / TRIAL LESSON / CONSULTATION",
+    "info-card header 01 DOCTOR"
+   ],
+   "evidence": "Fixed advance: in 'LAST VIDEO' every glyph incl. 'I' advances ~40 px at 51 px cap height (ratio ~0.78); 'I' carries top/bottom serifs (mono trait); rectangular 'O'/'D'; flat-terminal 'C','S'; 'G' with spur; slab foot on '1' in '01'.",
+   "candidates": [
+    "JetBrains Mono ExtraBold/Bold (advance/cap 0.82 - closest)",
+    "Geist Mono Bold",
+    "Martian Mono SemiCondensed Bold"
+   ],
+   "confidence": "medium (monospace = high; exact family = medium)"
+  },
+  "brand_sans_heavy": {
+   "used_by": [
+    "'Marketing' in the red Subscribe pill",
+    "'Subscribe'/'Subscribed' button text"
+   ],
+   "evidence": "double-storey 'a', single-storey open-tail 'g', 't' with angled top cut, geometric round bowls, tight spacing, weight ~700-800",
+   "candidates": [
+    "Plus Jakarta Sans 800",
+    "Figtree 700-800",
+    "Manrope 800"
+   ],
+   "confidence": "medium-low (button text may be YouTube Sans, not on Google Fonts)"
+  },
+  "ui_sans_medium": {
+   "used_by": [
+    "LINK IN THE DESCRIPTION"
+   ],
+   "evidence": "neutral grotesk caps, straight-leg R, horizontal C terminals, medium weight, slight letter-spacing",
+   "candidates": [
+    "Inter 500",
+    "Geist 500",
+    "SF Pro Text Medium (not Google)"
+   ],
+   "confidence": "medium"
+  },
+  "label_sans_black": {
+   "used_by": [
+    "PAIN / RESULT / FREE LESSON labels"
+   ],
+   "evidence": "proportional (narrow L, wide U), heavy weight, rendered in perspective with the cards (~-3 deg)",
+   "candidates": [
+    "Inter 800",
+    "Montserrat 800"
+   ],
+   "confidence": "low (text only ~22 px cap, in perspective)"
+  }
+ },
+ "colors": {
+  "subscribe_pill_fill": "linear-gradient(90deg, #D2323C 0%, #E7423A 100%) (left->right; samples #D0323D/#D3323C left, #E6413B/#E7423A right)",
+  "subscribe_btn_white": "#FDFDFD",
+  "subscribe_btn_pressed": "#D1D1D1 (2 frames)",
+  "subscribed_flash_pink": "#FE0C44 -> #FE0F54 -> #EA176A (hot pink -> magenta)",
+  "subscribed_wine": "#671933",
+  "subscribed_final": "#1E1E1E (text white, bell+chevron white)",
+  "logo_tile_glossy": "radial/linear pink gloss: centre #EC2556, TL #F03765, TR #F45073, BR warm #EE504D; peak core ~#FF0A50",
+  "logo_tile_flat_after_hold": "#DE3A3D (gloss decays to flat red over f512-527)",
+  "handle_pill": "linear-gradient(90deg, #FF226E 0%, #FC083F 45%, #FD1D7E 100%), soft top highlight; during the stretch a peach #FFD080 rim on the leading (right) end",
+  "last_video_red": "#F0383A (text), icon same red with horizontal scanline texture",
+  "link_glass_fill": "approx rgba(207,186,182,0.40) over backdrop blur ~12-16 px (solved from two backgrounds; +-15 per channel)",
+  "link_glass_edge_beam": "#FF2E4F-ish red glow segments travelling along top (rightwards) and bottom (leftwards) edges",
+  "hologram_border": "thin pink/magenta 1-2 px stroke with glow, brightest on right edge (#FF2E7A-ish)",
+  "like_thumb": "#FD0D60 (filled), white 3 px outline before fill",
+  "info_card_fill": "linear-gradient(135deg, #240B26 0%, #140414 50%, #0A020B 100%), opaque",
+  "info_card_number": "#E8185A-ish pink",
+  "info_card_header_label": "#C9C3CC (light grey)",
+  "info_card_divider": "~#5A4560, 1 px",
+  "prf_labels": "gradient #FF1E62 -> warm peach #F5C080 on the last letters",
+  "card_highlight_outline": "#FF2E9A magenta 3 px stroke + soft glow (PAIN/RESULT/FREE LESSON highlight; also 7:44 card A rim)"
+ },
+ "instances": {
+  "subscribe_pill_0m25": {
+   "time": "0:25.2-0:29.1",
+   "frames": [
+    605,
+    698
+   ],
+   "shots": "shot A f604-660 (wide side angle, camera static: frames 638-660 pixel-identical), CUT f661 to shot B (frontal, laptop) f661-700",
+   "geometry": {
+    "shot_A": {
+     "bbox": {
+      "px": [
+       266,
+       212,
+       849,
+       321
+      ],
+      "norm": [
+       0.1385,
+       0.1963,
+       0.4422,
+       0.2972
+      ]
+     },
+     "size_px": [
+      583,
+      109
+     ],
+     "corner_radius_px": 22,
+     "pose": "slight 3D tilt: top edge rises 212->218 left->right while bottom stays 321 (right end ~6 px shorter) and left edge leans (x 262 at y240, 276 at y310): ~rotateY(-3..-4deg) + rotateX(~3deg), perspective ~1000 px; confidence medium"
+    },
+    "shot_B": {
+     "bbox_before_state_change": {
+      "px": [
+       672,
+       860,
+       1255,
+       967
+      ],
+      "norm": [
+       0.35,
+       0.7963,
+       0.6536,
+       0.8954
+      ]
+     },
+     "bbox_after": {
+      "px": [
+       627,
+       860,
+       1299,
+       967
+      ],
+      "norm": [
+       0.3266,
+       0.7963,
+       0.6766,
+       0.8954
+      ]
+     },
+     "size_px": [
+      583,
+      107
+     ],
+     "pose": "flat (no tilt)",
+     "position_rule": "horizontally centred on frame (cx 963), sits over the lower half of the laptop lid"
+    },
+    "content": "squiggle logo (white, ~50x45) + 'Marketing' white ~52 px (cap 37) at left; capsule button at right: 190 x 62 (white 'Subscribe', black text ~32 px) -> 297 x 62 ('Subscribed' dark, bell icon left, chevron right)",
+    "padding": "logo starts ~30 px from left edge; button inset ~20 px from right edge, vertically centred",
+    "shadow": "soft dark drop shadow below, ~6-10 px offset, ~15 px blur, ~40% black (visible in shot A)"
+   },
+   "entrance_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "width_px",
+     "centre_x",
+     "top_y",
+     "bottom_y",
+     "note"
+    ],
+    "rows": [
+     [
+      605,
+      -2,
+      null,
+      null,
+      null,
+      null,
+      "faint red square fading in (opacity ~0.15) at x~214-338 - overlaps outgoing LAST VIDEO text"
+     ],
+     [
+      606,
+      -1,
+      null,
+      null,
+      null,
+      null,
+      "opacity ~0.5"
+     ],
+     [
+      607,
+      0,
+      124,
+      276.0,
+      212,
+      321,
+      "rounded square 124x109, opacity ~0.75 (#AC2C36 vs final #D8383C)"
+     ],
+     [
+      608,
+      1,
+      125,
+      276.5,
+      210,
+      321,
+      "opacity ~0.9"
+     ],
+     [
+      609,
+      2,
+      125,
+      276.5,
+      211,
+      321,
+      "opaque, still"
+     ],
+     [
+      610,
+      3,
+      124,
+      287.0,
+      211,
+      321,
+      "starts moving right"
+     ],
+     [
+      611,
+      4,
+      130,
+      315.0,
+      212,
+      321,
+      "horizontal motion blur"
+     ],
+     [
+      612,
+      5,
+      144,
+      359.0,
+      212,
+      321,
+      ""
+     ],
+     [
+      613,
+      6,
+      179,
+      410.5,
+      212,
+      321,
+      "blur"
+     ],
+     [
+      614,
+      7,
+      235,
+      453.5,
+      213,
+      321,
+      "blur (edge_sharp 0.7)"
+     ],
+     [
+      615,
+      8,
+      321,
+      488.5,
+      213,
+      321,
+      "blur"
+     ],
+     [
+      616,
+      9,
+      420,
+      513.0,
+      213,
+      321,
+      "logo+'Marketing' fade in begins (blurred, ~30%)"
+     ],
+     [
+      617,
+      10,
+      495,
+      530.5,
+      213,
+      321,
+      "text ~70%"
+     ],
+     [
+      618,
+      11,
+      541,
+      543.5,
+      213,
+      321,
+      "text 100%"
+     ],
+     [
+      619,
+      12,
+      566,
+      552.0,
+      213,
+      321,
+      ""
+     ],
+     [
+      620,
+      13,
+      581,
+      557.5,
+      213,
+      321,
+      "Subscribe button appears: pale blurred capsule growing from left"
+     ],
+     [
+      621,
+      14,
+      589,
+      560.5,
+      212,
+      321,
+      "button ~70% width, text not yet"
+     ],
+     [
+      622,
+      15,
+      591,
+      561.5,
+      212,
+      321,
+      "width overshoot peak (+2%); button full, 'Subscribe' visible; button top y 251 (13 px low)"
+     ],
+     [
+      623,
+      16,
+      589,
+      560.5,
+      212,
+      321,
+      "button top 250"
+     ],
+     [
+      624,
+      17,
+      589,
+      558.5,
+      212,
+      321,
+      "button top 248"
+     ],
+     [
+      625,
+      18,
+      586,
+      558.0,
+      212,
+      321,
+      "button top 246"
+     ],
+     [
+      626,
+      19,
+      583,
+      557.5,
+      212,
+      321,
+      "button top 242"
+     ],
+     [
+      627,
+      20,
+      579,
+      557.5,
+      212,
+      321,
+      "button top 240"
+     ],
+     [
+      628,
+      21,
+      579,
+      557.5,
+      212,
+      321,
+      "button top 239"
+     ],
+     [
+      629,
+      22,
+      579,
+      557.5,
+      212,
+      321,
+      "button top 238 = settled"
+     ]
+    ]
+   },
+   "entrance_summary": "fade-in square (2 f) -> hold 2 f -> slides right while stretching into the pill (width ease-in-out with +2% overshoot at +15 f, settle +20 f); content: logo+word fade +9..+11 f, button grows +13..+15 f then the button rises 13 px +15..+22 f",
+   "state_change_table": {
+    "columns": [
+     "frame",
+     "offset_from_cursor",
+     "event",
+     "button_fill",
+     "pill_width"
+    ],
+    "rows": [
+     [
+      661,
+      null,
+      "CUT to shot B; pill already fully present (no re-entrance)",
+      "#FDFDFD",
+      583
+     ],
+     [
+      663,
+      0,
+      "cursor (black arrow, white outline, ~18 px) appears already over the button's right part (pops in, no travel)",
+      "#FDFDFD",
+      584
+     ],
+     [
+      664,
+      1,
+      "cursor nudges ~5 px",
+      "#FDFDFD",
+      584
+     ],
+     [
+      665,
+      2,
+      "CLICK: button pressed (grey)",
+      "#D1D1D1",
+      583
+     ],
+     [
+      666,
+      3,
+      "pressed, cursor shows small click ring",
+      "#D1D1D1",
+      585
+     ],
+     [
+      667,
+      4,
+      "button becomes blank blurred hot-pink capsule; pill starts widening symmetrically",
+      "#FE0C44",
+      591
+     ],
+     [
+      668,
+      5,
+      "bell icon + 'Su' typed + chevron, pink; sparkle particles (pink 4-point stars + dots) start around button",
+      "#FE0F54",
+      603
+     ],
+     [
+      669,
+      6,
+      "'Subs'",
+      "#FD1054",
+      631
+     ],
+     [
+      670,
+      7,
+      "'Subsc'",
+      "#F01870",
+      655
+     ],
+     [
+      671,
+      8,
+      "'Subscril'",
+      "#EB3283/#EA176A",
+      667
+     ],
+     [
+      672,
+      9,
+      "'Subscribe'",
+      "magenta #E5186A",
+      671
+     ],
+     [
+      673,
+      10,
+      "'Subscribed' complete; fill switches to wine",
+      "#651531",
+      671
+     ],
+     [
+      674,
+      11,
+      "",
+      "#671933",
+      671
+     ],
+     [
+      675,
+      12,
+      "",
+      "#671733",
+      672
+     ],
+     [
+      676,
+      13,
+      "darkening",
+      "~#3E1A26",
+      672
+     ],
+     [
+      677,
+      14,
+      "",
+      "#252525",
+      672
+     ],
+     [
+      678,
+      15,
+      "",
+      "#1E1E1E",
+      672
+     ],
+     [
+      679,
+      16,
+      "settled; sparkles fade by ~f682",
+      "#1E1E1E",
+      672
+     ]
+    ],
+    "typing": "~2 characters per frame (Su, Subs, Subsc, Subscril, Subscribe, Subscribed: f668-673)",
+    "width_ease": {
+     "cubic_bezier": [
+      0.53,
+      0.11,
+      0.32,
+      1.07
+     ],
+     "fit_frames": [
+      666,
+      673
+     ],
+     "from": 585,
+     "to": 671,
+     "rms_residual": 0.42,
+     "max_residual": 0.88
+    }
+   },
+   "hold": {
+    "frames": [
+     629,
+     689
+    ],
+    "idle_motion": "none (0 px); sparkles are a one-shot burst f668-682"
+   },
+   "exit_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "x_left",
+     "x_right",
+     "width",
+     "note"
+    ],
+    "rows": [
+     [
+      690,
+      0,
+      628,
+      1299,
+      671,
+      "content (logo, text, button) starts fading"
+     ],
+     [
+      691,
+      1,
+      628,
+      1299,
+      671,
+      "content ~40%"
+     ],
+     [
+      692,
+      2,
+      628,
+      1299,
+      671,
+      "content gone, empty red pill (slightly blurred)"
+     ],
+     [
+      693,
+      3,
+      627,
+      1295,
+      668,
+      "empty red pill"
+     ],
+     [
+      694,
+      4,
+      596,
+      1227,
+      631,
+      "collapse toward left begins; motion blur"
+     ],
+     [
+      695,
+      5,
+      565,
+      1076,
+      511,
+      ""
+     ],
+     [
+      696,
+      6,
+      582,
+      888,
+      306,
+      ""
+     ],
+     [
+      697,
+      7,
+      616,
+      782,
+      166,
+      ""
+     ],
+     [
+      698,
+      8,
+      624,
+      743,
+      119,
+      "rounded square 119x107"
+     ],
+     [
+      699,
+      9,
+      null,
+      null,
+      null,
+      "square at ~25% opacity"
+     ],
+     [
+      700,
+      10,
+      null,
+      null,
+      null,
+      "gone (shot cuts at f701)"
+     ]
+    ],
+    "type": "reverse of the entrance: content fade (3 f) -> right edge collapses leftward to a square (5 f, ease-in-out) -> square fades (2 f)"
+   },
+   "easing_fits": {
+    "width_stretch": {
+     "cubic_bezier": [
+      0.49,
+      0.14,
+      0.05,
+      1.25
+     ],
+     "fit_frames": [
+      610,
+      628
+     ],
+     "from": 124,
+     "to": 579,
+     "rms_residual": 4.96,
+     "max_residual": 7.76
+    },
+    "centre_x": {
+     "cubic_bezier": [
+      0.29,
+      0.11,
+      0.13,
+      1.18
+     ],
+     "fit_frames": [
+      609,
+      626
+     ],
+     "from": 276.5,
+     "to": 557.5,
+     "rms_residual": 1.66,
+     "max_residual": 3.91
+    }
+   },
+   "sfx": [
+    {
+     "event": "square appears (f607)",
+     "offset_ms": -12,
+     "confidence": "medium-high (clean rise -55 -> -33 dB HF)",
+     "type": "short UI pop"
+    },
+    {
+     "event": "click (press f665)",
+     "offset_ms": "+20..+60",
+     "confidence": "medium",
+     "type": "mouse click"
+    },
+    {
+     "event": "pink/typing (f667)",
+     "offset_ms": -20,
+     "confidence": "low-medium",
+     "type": "sparkle/pop"
+    }
+   ]
+  },
+  "lower_third_logo_and_handle_0m20": {
+   "time": "0:20.75-0:22.6",
+   "frames": [
+    498,
+    545
+   ],
+   "note": "Two independent elements, entering almost together and leaving 13 frames apart. Gemini's 'lower third' = these two.",
+   "logo_tile": {
+    "geometry": {
+     "centre_px": [
+      241.5,
+      909
+     ],
+     "centre_norm": [
+      0.1258,
+      0.8417
+     ],
+     "size_px_settled": 123,
+     "corner_radius_px": "~28 (squircle, app-icon style)",
+     "icon": "white squiggle (Higgsfield-like) stroke ~11 px, round caps"
+    },
+    "entrance_table": {
+     "columns": [
+      "frame",
+      "offset",
+      "size_px",
+      "rotation_deg_est",
+      "note"
+     ],
+     "rows": [
+      [
+       499,
+       -1,
+       null,
+       null,
+       "white 4-point sparkle burst at centre (~25 px)"
+      ],
+      [
+       500,
+       0,
+       10,
+       null,
+       "red dot inside sparkle burst; 6-8 white sparkles fly radially (motion-blurred)"
+      ],
+      [
+       501,
+       1,
+       34,
+       -10,
+       "red rounded square, rotated"
+      ],
+      [
+       502,
+       2,
+       65,
+       -15,
+       "blurred, rotated; sparkles at r~110 px"
+      ],
+      [
+       503,
+       3,
+       107,
+       -12,
+       "motion blur, flat red #DE3A3C"
+      ],
+      [
+       504,
+       4,
+       130,
+       -8,
+       "overshoot +6%"
+      ],
+      [
+       505,
+       5,
+       131,
+       -3,
+       "fill switches to glossy pink gradient (+white sheen TL, warm BR)"
+      ],
+      [
+       506,
+       6,
+       129.5,
+       0,
+       "squiggle stroke starts drawing (dot)"
+      ],
+      [
+       507,
+       7,
+       126,
+       0,
+       "stroke ~10%"
+      ],
+      [
+       508,
+       8,
+       122,
+       0,
+       "stroke ~25%"
+      ],
+      [
+       509,
+       9,
+       120,
+       0,
+       "undershoot -2.5%; stroke ~50%"
+      ],
+      [
+       510,
+       10,
+       120,
+       0,
+       "stroke ~75%, sparkle streaks"
+      ],
+      [
+       511,
+       11,
+       122,
+       0,
+       "stroke complete"
+      ],
+      [
+       512,
+       12,
+       122.5,
+       0,
+       ""
+      ],
+      [
+       513,
+       13,
+       123,
+       0,
+       "settled"
+      ]
+     ],
+     "rotation_note": "rotation read visually from tiles (+-3 deg); settles to 0 by f506",
+     "spring_fit": {
+      "model": "damped spring x(t)=v1-(v1-v0)e^{-zeta*w*t}(cos(wd t)+zeta*w/wd sin(wd t)), t in frames from t0",
+      "t0": 500.25,
+      "w_rad_per_frame": 0.825,
+      "zeta": 0.625,
+      "stiffness_mass1": 392.0,
+      "damping_mass1": 24.75,
+      "rms": 2.86,
+      "max": 7.52,
+      "points": [
+       [
+        500,
+        10.0,
+        10.0
+       ],
+       [
+        501,
+        34.0,
+        26.5
+       ],
+       [
+        502,
+        65.0,
+        70.2
+       ],
+       [
+        503,
+        107.0,
+        107.0
+       ],
+       [
+        504,
+        130.0,
+        126.5
+       ],
+       [
+        505,
+        131.0,
+        132.1
+       ],
+       [
+        506,
+        129.5,
+        130.4
+       ],
+       [
+        507,
+        126.0,
+        126.8
+       ],
+       [
+        508,
+        122.0,
+        124.0
+       ],
+       [
+        509,
+        120.0,
+        122.6
+       ],
+       [
+        510,
+        120.0,
+        122.3
+       ],
+       [
+        511,
+        122.0,
+        122.4
+       ],
+       [
+        512,
+        122.5,
+        122.7
+       ],
+       [
+        513,
+        123.0,
+        122.9
+       ]
+      ]
+     },
+     "bezier_fit": {
+      "cubic_bezier": [
+       0.5,
+       1.58,
+       0,
+       0.92
+      ],
+      "fit_frames": [
+       500,
+       513
+      ],
+      "from": 10,
+      "to": 123,
+      "rms_residual": 2.24,
+      "max_residual": 4.4
+     }
+    },
+    "hold": {
+     "frames": [
+      513,
+      525
+     ],
+     "idle_motion": "position/size 0 px; colour drifts from glossy pink (#FD357A median) to flat red (#DE3A3D) over f512-527 (gloss fades)"
+    },
+    "exit_table": {
+     "columns": [
+      "frame",
+      "offset",
+      "centre_y",
+      "note"
+     ],
+     "rows": [
+      [
+       526,
+       0,
+       "~898",
+       "vertical motion blur, moving up"
+      ],
+      [
+       527,
+       1,
+       887.5,
+       "up"
+      ],
+      [
+       528,
+       2,
+       868.5,
+       ""
+      ],
+      [
+       529,
+       3,
+       864.5,
+       "settled 45 px higher"
+      ],
+      [
+       530,
+       4,
+       864.5,
+       "vertical smear + 2 white sparkles"
+      ],
+      [
+       531,
+       5,
+       null,
+       "tile gone, 3 white sparkles"
+      ],
+      [
+       532,
+       6,
+       null,
+       "sparkles drift down/fade"
+      ],
+      [
+       535,
+       9,
+       null,
+       "last sparkle streak gone"
+      ]
+     ],
+     "type": "hop up 45 px (3 f, ease-out) -> 1-frame smear -> pop into sparkles (sparkles fall + fade 4 f)"
+    },
+    "sfx": [
+     {
+      "event": "entrance (f500)",
+      "offset_ms": "+130 (onset near f503 = the 'pop' when the tile hits full size)",
+      "confidence": "low-medium"
+     },
+     {
+      "event": "exit pop (f531)",
+      "offset_ms": "~0",
+      "confidence": "medium"
+     }
+    ]
+   },
+   "handle_pill": {
+    "geometry": {
+     "bbox_settled": {
+      "px": [
+       1389,
+       873,
+       1740,
+       955
+      ],
+      "norm": [
+       0.7234,
+       0.8083,
+       0.9062,
+       0.8843
+      ]
+     },
+     "size_px": [
+      351,
+      82
+     ],
+     "radius": "full capsule (41)",
+     "text": "'@ADILINTHEWILD' white mono bold, cap ~25 px (~34 px font), left padding ~26 px",
+     "position_rule": "bottom-right, centre (1565,914); to the right of the laptop"
+    },
+    "entrance_table": {
+     "columns": [
+      "frame",
+      "offset",
+      "width",
+      "height",
+      "centre_x",
+      "note"
+     ],
+     "rows": [
+      [
+       498,
+       0,
+       3,
+       5,
+       1461.5,
+       "pink dot appears"
+      ],
+      [
+       499,
+       1,
+       15,
+       13,
+       1471.5,
+       ""
+      ],
+      [
+       500,
+       2,
+       37,
+       25,
+       1490.5,
+       "pill-shaped blob moving right"
+      ],
+      [
+       501,
+       3,
+       84,
+       49,
+       1522.0,
+       "motion blur"
+      ],
+      [
+       502,
+       4,
+       232,
+       79,
+       1560.0,
+       "stretch, heavy horizontal blur"
+      ],
+      [
+       503,
+       5,
+       339,
+       93,
+       1574.5,
+       "'@' fades in; peach rim on right end"
+      ],
+      [
+       504,
+       6,
+       349,
+       96,
+       1565.5,
+       "height overshoot +17%; typing '@A'"
+      ],
+      [
+       505,
+       7,
+       351,
+       93,
+       1563.5,
+       "'@AD'"
+      ],
+      [
+       506,
+       8,
+       349,
+       85,
+       1563.5,
+       "'@ADIL'"
+      ],
+      [
+       507,
+       9,
+       341,
+       81,
+       1561.5,
+       "width dip -3%"
+      ],
+      [
+       508,
+       10,
+       335,
+       78,
+       1559.5,
+       "'@ADILIN', height undershoot -5%"
+      ],
+      [
+       509,
+       11,
+       338,
+       81,
+       1561.0,
+       "'@ADILINT'"
+      ],
+      [
+       510,
+       12,
+       345,
+       81,
+       1563.5,
+       "'@ADILINTHE'"
+      ],
+      [
+       511,
+       13,
+       352,
+       82,
+       1565.0,
+       "'@ADILINTHEW'"
+      ],
+      [
+       512,
+       14,
+       355,
+       84,
+       1566.5,
+       "'@ADILINTHEWI'"
+      ],
+      [
+       513,
+       15,
+       355,
+       84,
+       1566.5,
+       "full text (last letters blurred-in)"
+      ],
+      [
+       516,
+       18,
+       350,
+       82,
+       1565.0,
+       "settled"
+      ]
+     ],
+     "text_reveal": "per-character blur+fade typing, ~1.3 chars/frame, each char ~2 f from blurred to sharp",
+     "fits": {
+      "width_bezier": {
+       "cubic_bezier": [
+        0.4,
+        0.6,
+        0.0,
+        1.2
+       ],
+       "fit_frames": [
+        498,
+        516
+       ],
+       "from": 3,
+       "to": 351,
+       "rms_residual": 24.01,
+       "max_residual": 55.07
+      },
+      "height_bezier": {
+       "cubic_bezier": [
+        0.68,
+        1.83,
+        0,
+        0.96
+       ],
+       "fit_frames": [
+        498,
+        512
+       ],
+       "from": 5,
+       "to": 82,
+       "rms_residual": 4.6,
+       "max_residual": 10.93
+      },
+      "width_spring": {
+       "model": "damped spring x(t)=v1-(v1-v0)e^{-zeta*w*t}(cos(wd t)+zeta*w/wd sin(wd t)), t in frames from t0",
+       "t0": 500.25,
+       "w_rad_per_frame": 1.125,
+       "zeta": 0.775,
+       "stiffness_mass1": 729.0,
+       "damping_mass1": 41.85,
+       "rms": 10.85,
+       "max": 34.0,
+       "points": [
+        [
+         498,
+         3.0,
+         3.0
+        ],
+        [
+         499,
+         15.0,
+         3.0
+        ],
+        [
+         500,
+         37.0,
+         3.0
+        ],
+        [
+         501,
+         84.0,
+         82.4
+        ],
+        [
+         502,
+         232.0,
+         238.8
+        ],
+        [
+         503,
+         339.0,
+         326.9
+        ],
+        [
+         504,
+         349.0,
+         355.3
+        ],
+        [
+         505,
+         351.0,
+         358.0
+        ],
+        [
+         506,
+         349.0,
+         354.7
+        ],
+        [
+         507,
+         341.0,
+         352.1
+        ],
+        [
+         508,
+         335.0,
+         351.1
+        ],
+        [
+         509,
+         338.0,
+         350.8
+        ],
+        [
+         510,
+         345.0,
+         350.9
+        ],
+        [
+         511,
+         352.0,
+         351.0
+        ],
+        [
+         512,
+         355.0,
+         351.0
+        ],
+        [
+         513,
+         355.0,
+         351.0
+        ],
+        [
+         514,
+         353.0,
+         351.0
+        ],
+        [
+         515,
+         352.0,
+         351.0
+        ],
+        [
+         516,
+         350.0,
+         351.0
+        ]
+       ]
+      },
+      "height_spring": {
+       "model": "damped spring x(t)=v1-(v1-v0)e^{-zeta*w*t}(cos(wd t)+zeta*w/wd sin(wd t)), t in frames from t0",
+       "t0": 499.0,
+       "w_rad_per_frame": 0.75,
+       "zeta": 0.475,
+       "stiffness_mass1": 324.0,
+       "damping_mass1": 17.1,
+       "rms": 2.62,
+       "max": 8.0,
+       "points": [
+        [
+         498,
+         5.0,
+         5.0
+        ],
+        [
+         499,
+         13.0,
+         5.0
+        ],
+        [
+         500,
+         25.0,
+         21.6
+        ],
+        [
+         501,
+         49.0,
+         52.9
+        ],
+        [
+         502,
+         79.0,
+         79.4
+        ],
+        [
+         503,
+         93.0,
+         93.4
+        ],
+        [
+         504,
+         96.0,
+         95.9
+        ],
+        [
+         505,
+         93.0,
+         91.8
+        ],
+        [
+         506,
+         85.0,
+         86.0
+        ],
+        [
+         507,
+         81.0,
+         81.6
+        ],
+        [
+         508,
+         78.0,
+         79.6
+        ],
+        [
+         509,
+         81.0,
+         79.6
+        ],
+        [
+         510,
+         81.0,
+         80.5
+        ],
+        [
+         511,
+         82.0,
+         81.5
+        ],
+        [
+         512,
+         84.0,
+         82.2
+        ]
+       ]
+      },
+      "note": "width is a two-bump spring; bezier is poor (rms 24 px) - key it per frame"
+     }
+    },
+    "hold": {
+     "frames": [
+      516,
+      538
+     ],
+     "idle_motion": "none (0 px)"
+    },
+    "exit_table": {
+     "columns": [
+      "frame",
+      "offset",
+      "centre_y",
+      "note"
+     ],
+     "rows": [
+      [
+       539,
+       0,
+       "~895",
+       "vertical motion blur, rising"
+      ],
+      [
+       540,
+       1,
+       873.5,
+       ""
+      ],
+      [
+       541,
+       2,
+       858.5,
+       ""
+      ],
+      [
+       542,
+       3,
+       856.0,
+       "+ vertical scanline/glitch smear starting"
+      ],
+      [
+       543,
+       4,
+       null,
+       "gone (faint vertical streaks at the old position)"
+      ]
+     ],
+     "type": "hop up ~58 px (3 f) -> glitch-stripe dissolve (1 f)"
+    },
+    "sfx": [
+     {
+      "event": "entrance f498",
+      "offset_ms": "+130 (shared with logo)",
+      "confidence": "low"
+     }
+    ]
+   },
+   "stagger": "handle starts 2 f before logo (f498 vs f500 first visible); exits: logo f526, handle f539 (+13 f)"
+  },
+  "last_video_warning_0m22": {
+   "time": "0:22.9-0:25.4",
+   "frames": [
+    550,
+    608
+   ],
+   "geometry": {
+    "icon_bbox": {
+     "px": [
+      115,
+      284,
+      268,
+      417
+     ],
+     "norm": [
+      0.0599,
+      0.263,
+      0.1396,
+      0.3861
+     ]
+    },
+    "text_bbox": {
+     "px": [
+      296,
+      324,
+      664,
+      375
+     ],
+     "norm": [
+      0.1542,
+      0.3,
+      0.3458,
+      0.3472
+     ]
+    },
+    "text_cap_px": 51,
+    "text_font_px_est": 70,
+    "gap_icon_text_px": 28,
+    "position_rule": "top-left, left margin 115 px (0.06), vertically ~0.32 h"
+   },
+   "entrance_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "event"
+    ],
+    "rows": [
+     [
+      550,
+      0,
+      "triangle stroke starts drawing from the apex down the right side (scanline-textured red stroke ~10 px, glowing)"
+     ],
+     [
+      551,
+      1,
+      "right side ~60%, '!' bar appears"
+     ],
+     [
+      552,
+      2,
+      "right side done"
+     ],
+     [
+      553,
+      3,
+      "bottom edge drawing right->left"
+     ],
+     [
+      554,
+      4,
+      "bottom done, left side starting"
+     ],
+     [
+      555,
+      5,
+      "left side ~60%"
+     ],
+     [
+      556,
+      6,
+      "triangle closed"
+     ],
+     [
+      557,
+      7,
+      "full icon"
+     ],
+     [
+      558,
+      8,
+      "'LAST VIDEO' at ~20% opacity, blurred ~4 px"
+     ],
+     [
+      559,
+      9,
+      "~45%"
+     ],
+     [
+      560,
+      10,
+      "~70%"
+     ],
+     [
+      561,
+      11,
+      "~85%"
+     ],
+     [
+      562,
+      12,
+      "100%, sharp (glow ~6 px)"
+     ]
+    ]
+   },
+   "hold": {
+    "frames": [
+     562,
+     596
+    ],
+    "idle_motion": "icon has a subtle scanline flicker (area +-10%); no motion"
+   },
+   "exit": {
+    "icon": "fade out f597-599 (3 f)",
+    "text": "holds THROUGH the cut at f604, hard-cut off at f609 while the Subscribe square is already fading in at the same spot (f605-608 overlap)",
+    "type": "icon fade + text hard cut"
+   },
+   "sfx": [
+    {
+     "event": "icon draw start f550",
+     "offset_ms": 0,
+     "confidence": "high (clean -51 -> -28 dB)",
+     "type": "alarm/glitch hit"
+    }
+   ]
+  },
+  "link_pill": {
+   "geometry": {
+    "bbox_settled": {
+     "px": [
+      645,
+      853,
+      1275,
+      972
+     ],
+     "norm": [
+      0.3359,
+      0.7898,
+      0.6641,
+      0.9
+     ]
+    },
+    "size_px": [
+     630,
+     119
+    ],
+    "corner_radius_px": 28,
+    "fill": "frosted glass: backdrop blur ~12-16 px (apple logo visibly blurred) + light warm-white tint ~40% (see colors.link_glass_fill)",
+    "border": "no solid border; red glowing light-beam segments ride the top and bottom edges",
+    "icon": "white 4-point sparkle pair (big ~40 px + small ~14 px at its lower-left), at x~708-748, idle twinkle (scale/rotate pulse)",
+    "text": "'LINK IN THE DESCRIPTION' white, Inter-like 500, cap 24 px (~33 px font), tracking ~+2%, starts x~772",
+    "position_rule": "horizontally centred on the laptop (cx 960), vertical centre at 0.84 h, lower half of the laptop lid"
+   },
+   "template_sequence": [
+    "offset 0: tiny white sparkle appears at the pill's future left end (x~720,y~900); grows to the sparkle pair over ~3 f",
+    "offset +2/+3: small glass tile (66x100 rounded rect r~16, red rim glow) appears centred on the laptop, ~50 px ABOVE the final pill centre (y 822-922)",
+    "tile hold: tile slowly grows to ~100x124 (no position change)",
+    "morph (4-5 f): tile stretches horizontally into the full pill while moving down 50 px (heavy horizontal blur on the 1st two frames); the sparkle pair slides with the left end and shrinks to icon size over ~6 f",
+    "text: blur+rise in (~6 f): opacity 0->1, translateY +12->0 px, blur ~8->0 px",
+    "hold: edge beams travel slowly (top segment rightwards, bottom leftwards ~= clockwise, ~6-8 px/frame -> one lap ~190 f ~ 8 s); sparkle twinkles"
+   ],
+   "instances": {
+    "0m32": {
+     "frames": [
+      781,
+      843
+     ],
+     "first_sparkle": 781,
+     "tile_appears": 783,
+     "tile_hold": [
+      784,
+      792
+     ],
+     "morph": [
+      793,
+      797
+     ],
+     "text_in": [
+      821,
+      826
+     ],
+     "text_colour": "white",
+     "exit": "HARD cut-out at f844 (no animation), 1 frame before the hologram window appears (f845)",
+     "morph_table": {
+      "columns": [
+       "frame",
+       "x0",
+       "x1",
+       "y0",
+       "y1",
+       "note"
+      ],
+      "rows": [
+       [
+        784,
+        892,
+        958,
+        822,
+        922,
+        "tile"
+       ],
+       [
+        785,
+        888,
+        964,
+        809,
+        920,
+        ""
+       ],
+       [
+        786,
+        884,
+        962,
+        799,
+        919,
+        ""
+       ],
+       [
+        792,
+        876,
+        977,
+        795,
+        919,
+        "tile max"
+       ],
+       [
+        793,
+        861,
+        998,
+        801,
+        924,
+        "widening"
+       ],
+       [
+        794,
+        800,
+        1070,
+        830,
+        940,
+        "blur"
+       ],
+       [
+        795,
+        683,
+        1225,
+        828,
+        949,
+        "blur"
+       ],
+       [
+        796,
+        662,
+        1253,
+        852,
+        970,
+        ""
+       ],
+       [
+        797,
+        651,
+        1270,
+        860,
+        979,
+        "~settled (visual est., +-6 px)"
+       ]
+      ]
+     }
+    },
+    "3m58": {
+     "frames": [
+      5716,
+      5822
+     ],
+     "first_sparkle": 5716,
+     "tile_appears": 5718,
+     "tile_hold": [
+      5718,
+      5725
+     ],
+     "morph": [
+      5726,
+      5730
+     ],
+     "text_in": "text already visible from the tile stage (pink #FF5AA0-ish, overflowing the tile, clipped wrongly) and turns white ~f5735-5739",
+     "exit": "hard cut with the shot at f5823",
+     "note": "the text-before-morph looks like an editing slip; reproduce only if 'exact' includes it"
+    },
+    "9m58": {
+     "frames": [
+      14381,
+      14518
+     ],
+     "first_sparkle": 14381,
+     "tile_appears": 14384,
+     "tile_hold": [
+      14385,
+      14395
+     ],
+     "morph": [
+      14396,
+      14400
+     ],
+     "text_in": [
+      14419,
+      14423
+     ],
+     "text_colour": "white",
+     "glass": "noticeably more transparent/dimmer than 0:32 and edge beams fainter",
+     "exit": "blur-fade: f14515 text starts blurring, f14516-14518 whole pill fades+blurs, gone f14519 (4 f); shot cuts f14520"
+    }
+   },
+   "comparison": "Relative to the first sparkle: tile +2 / +2 / +3; morph start +12 / +10 / +15; text +40 / (+2 pink) / +38; exits differ (hard cut / hard cut with shot / 4-f blur fade). Same template, not identical.",
+   "sfx": [
+    {
+     "event": "first sparkle (0:32 f781)",
+     "offset_ms": "0..+20",
+     "confidence": "medium",
+     "type": "sparkle shimmer"
+    },
+    {
+     "event": "first sparkle (9:58 f14381)",
+     "offset_ms": "+30",
+     "confidence": "medium"
+    },
+    {
+     "event": "morph (0:32 f793)",
+     "offset_ms": "+10",
+     "confidence": "medium",
+     "type": "whoosh/slide"
+    },
+    {
+     "event": "text (both)",
+     "offset_ms": "unmeasurable (voice)",
+     "confidence": "low"
+    }
+   ]
+  },
+  "hologram_prompt_window_0m35": {
+   "frames": [
+    845,
+    925
+   ],
+   "geometry": {
+    "bbox_settled": {
+     "px": [
+      343,
+      100,
+      1577,
+      658
+     ],
+     "norm": [
+      0.1786,
+      0.0926,
+      0.8214,
+      0.6093
+     ]
+    },
+    "size_px": [
+     1234,
+     558
+    ],
+    "corner_radius_px": "~10",
+    "layer": "BEHIND the presenter (he is matted in front), above the wall",
+    "fill": "frosted glass, strong backdrop blur (~25 px), slight dark tint; document text (dark grey, Inter-like 14-16 px, bold run-ins) inside a centred 600 px column",
+    "border": "1-2 px light stroke, pink glow strongest on the right edge",
+    "position_rule": "centred horizontally, bottom edge ~25 px above the laptop's top edge"
+   },
+   "entrance_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "opacity(mean_alpha)",
+     "top_y_est"
+    ],
+    "rows": [
+     [
+      845,
+      0,
+      0.085,
+      null
+     ],
+     [
+      846,
+      1,
+      0.5,
+      135
+     ],
+     [
+      847,
+      2,
+      0.733,
+      130
+     ],
+     [
+      848,
+      3,
+      0.846,
+      124
+     ],
+     [
+      849,
+      4,
+      0.886,
+      118
+     ],
+     [
+      850,
+      5,
+      0.914,
+      114
+     ],
+     [
+      851,
+      6,
+      0.939,
+      110
+     ],
+     [
+      853,
+      8,
+      0.98,
+      104
+     ],
+     [
+      856,
+      11,
+      1.0,
+      100
+     ]
+    ],
+    "note": "rises ~35 px while fading in (top-left corner x stays ~344); at f846 the visible corner was at x~432, suggesting a small scale-up (~0.93->1) as well (low confidence)"
+   },
+   "hold": {
+    "frames": [
+     856,
+     918
+    ],
+    "idle_motion": "panel static; the document content scrolls upward continuously (~3-4 px/frame, est.)"
+   },
+   "exit_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "opacity",
+     "top_y_est"
+    ],
+    "rows": [
+     [
+      918,
+      0,
+      0.975,
+      97
+     ],
+     [
+      919,
+      1,
+      0.934,
+      95
+     ],
+     [
+      920,
+      2,
+      0.632,
+      92
+     ],
+     [
+      921,
+      3,
+      0.366,
+      88
+     ],
+     [
+      922,
+      4,
+      0.206,
+      86
+     ],
+     [
+      923,
+      5,
+      0.11,
+      84
+     ],
+     [
+      924,
+      6,
+      0.044,
+      null
+     ],
+     [
+      925,
+      7,
+      0.0,
+      null
+     ]
+    ],
+    "type": "fade out with ~13 px rise, 6 f"
+   },
+   "easing_fits": {
+    "opacity_in": {
+     "cubic_bezier": [
+      0.27,
+      0.03,
+      0,
+      0.97
+     ],
+     "fit_frames": [
+      844,
+      853
+     ],
+     "from": 0,
+     "to": 1,
+     "rms_residual": 0.03,
+     "max_residual": 0.04
+    },
+    "opacity_out": {
+     "cubic_bezier": [
+      0.34,
+      -0.02,
+      0.14,
+      0.79
+     ],
+     "fit_frames": [
+      918,
+      925
+     ],
+     "from": 1,
+     "to": 0,
+     "rms_residual": 0.01,
+     "max_residual": 0.03
+    }
+   },
+   "sfx": [
+    {
+     "event": "appear f845",
+     "offset_ms": "+10",
+     "confidence": "medium-high (clean -52 -> -40 dB)",
+     "type": "soft UI whoosh"
+    }
+   ]
+  },
+  "like_subscribe_outro_10m10": {
+   "frames": [
+    14645,
+    14725
+   ],
+   "geometry": {
+    "thumb_bbox": {
+     "px": [
+      170,
+      255,
+      260,
+      341
+     ],
+     "norm": [
+      0.0885,
+      0.2361,
+      0.1354,
+      0.3157
+     ]
+    },
+    "subscribe_btn_bbox": {
+     "px": [
+      373,
+      257,
+      644,
+      342
+     ],
+     "norm": [
+      0.1943,
+      0.238,
+      0.3354,
+      0.3167
+     ]
+    },
+    "btn_size_px": [
+     271,
+     85
+    ],
+    "position_rule": "top-left cluster at y~0.27 h: thumb at x 0.09-0.135, button starts 113 px to its right"
+   },
+   "thumb_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "size_px",
+     "fill",
+     "note"
+    ],
+    "rows": [
+     [
+      14645,
+      0,
+      68,
+      "white outline",
+      "outline thumb pops in"
+     ],
+     [
+      14646,
+      1,
+      80,
+      "outline",
+      ""
+     ],
+     [
+      14647,
+      2,
+      91,
+      "outline",
+      ""
+     ],
+     [
+      14648,
+      3,
+      95,
+      "outline",
+      "overshoot +7%"
+     ],
+     [
+      14649,
+      4,
+      95,
+      "outline",
+      ""
+     ],
+     [
+      14650,
+      5,
+      91,
+      "outline",
+      ""
+     ],
+     [
+      14651,
+      6,
+      89,
+      "outline",
+      "settled"
+     ],
+     [
+      14652,
+      7,
+      79,
+      "#FD0D60",
+      "FILL: squash to 0.88 + thin white ring burst around it"
+     ],
+     [
+      14653,
+      8,
+      83,
+      "#FD0D60",
+      "tilt starts (~-12 deg)"
+     ],
+     [
+      14654,
+      9,
+      99,
+      "#FD0D60",
+      "+10% overshoot, tilted"
+     ],
+     [
+      14655,
+      10,
+      100,
+      "#FD0D60",
+      "max"
+     ],
+     [
+      14656,
+      11,
+      100,
+      "#FD0D60",
+      "tilt returning"
+     ],
+     [
+      14657,
+      12,
+      97,
+      "#FD0D60",
+      ""
+     ],
+     [
+      14658,
+      13,
+      91,
+      "#FD0D60",
+      "upright"
+     ],
+     [
+      14659,
+      14,
+      90,
+      "#FD0D60",
+      "settled"
+     ]
+    ],
+    "fits": {
+     "outline_bezier": {
+      "cubic_bezier": [
+       0.5,
+       1.87,
+       0.51,
+       1.29
+      ],
+      "fit_frames": [
+       14645,
+       14651
+      ],
+      "from": 68,
+      "to": 89,
+      "rms_residual": 0.41,
+      "max_residual": 0.52
+     },
+     "fill_pop_bezier": {
+      "cubic_bezier": [
+       0.45,
+       2.09,
+       0,
+       2.57
+      ],
+      "fit_frames": [
+       14652,
+       14660
+      ],
+      "from": 79,
+      "to": 90,
+      "rms_residual": 1.92,
+      "max_residual": 3.35
+     }
+    }
+   },
+   "subscribe_btn_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "centre_y",
+     "opacity_est"
+    ],
+    "rows": [
+     [
+      14665,
+      0,
+      315.0,
+      0.8
+     ],
+     [
+      14666,
+      1,
+      305.0,
+      1.0
+     ],
+     [
+      14667,
+      2,
+      298.5,
+      1.0
+     ],
+     [
+      14668,
+      3,
+      297.5,
+      1.0
+     ],
+     [
+      14669,
+      4,
+      299.0,
+      1.0
+     ],
+     [
+      14670,
+      5,
+      299.5,
+      1.0
+     ]
+    ],
+    "type": "rise 15 px + fade, 2 f, -2 px overshoot, settle +5 f"
+   },
+   "state_change": "identical to subscribe_pill_0m25.state_change_table: cursor appears f14679 (offset 0), press grey f14681-14682, blank pink f14683, typing f14684-14689, wine f14689-14692, #1E1E1E from ~f14693. Same frame offsets (+0,+2,+4,+5..+10,+10..+15).",
+   "hold": {
+    "idle_motion": "none"
+   },
+   "exit": "no element exit: the end-card transition (dark/magenta wipe from left) passes over them f14721-14725",
+   "sfx": [
+    {
+     "event": "thumb outline f14645",
+     "offset_ms": "~-20",
+     "confidence": "low"
+    },
+    {
+     "event": "thumb fill f14652",
+     "offset_ms": "+20",
+     "confidence": "medium-high"
+    },
+    {
+     "event": "button f14665",
+     "offset_ms": "+30",
+     "confidence": "medium"
+    },
+    {
+     "event": "click f14681",
+     "offset_ms": "+10",
+     "confidence": "high (clean -56 -> -34 dB)"
+    }
+   ],
+   "stagger": "thumb outline -> fill +7 f -> button +20 f -> cursor +34 f -> click +36 f"
+  },
+  "floating_ad_cards_0m08": {
+   "frames": [
+    205,
+    284
+   ],
+   "layout": {
+    "cards": [
+     {
+      "id": "L-outer 'YOUR WEEKENDS BACK'",
+      "bbox": {
+       "px": [
+        90,
+        200,
+        435,
+        878
+       ],
+       "norm": [
+        0.0469,
+        0.1852,
+        0.2266,
+        0.813
+       ]
+      }
+     },
+     {
+      "id": "L-inner 'Not bad AT MATH'",
+      "bbox": {
+       "px": [
+        457,
+        247,
+        780,
+        832
+       ],
+       "norm": [
+        0.238,
+        0.2287,
+        0.4062,
+        0.7704
+       ]
+      }
+     },
+     {
+      "id": "centre (behind presenter's head)",
+      "bbox": "~[800,330,1110,560], mostly occluded"
+     },
+     {
+      "id": "R-inner 'Organise my new tote bag'",
+      "bbox": {
+       "px": [
+        1140,
+        247,
+        1462,
+        832
+       ],
+       "norm": [
+        0.5938,
+        0.2287,
+        0.7615,
+        0.7704
+       ]
+      }
+     },
+     {
+      "id": "R-outer '1 BAG, 3 OUTFITS'",
+      "bbox": {
+       "px": [
+        1485,
+        200,
+        1828,
+        878
+       ],
+       "norm": [
+        0.7734,
+        0.1852,
+        0.9521,
+        0.813
+       ]
+      }
+     }
+    ],
+    "pose": "concave arc around the presenter: outer cards taller (678 px) than inner (585 px), each with perspective tilt (inner edge shorter) ~rotateY(+-20..25deg)",
+    "style": "9:16-ish video cards, corner radius ~30 px, slightly translucent (~85-90% opacity: the room shows through on the right-outer card), no border, playing video content",
+    "layer": "behind the presenter (matted)",
+    "spacing": "~20-25 px gaps"
+   },
+   "entrance": "Right cards + centre arrive inside the preceding 3D-carousel whip transition (f200-207). Left cards slide in from off-screen left: L-inner f216-229, L-outer f230-241. Ghost-translucent (~50-60%) while moving, opaque on arrival.",
+   "entrance_table_L_inner_left_edge": {
+    "columns": [
+     "frame",
+     "offset",
+     "left_x",
+     "note"
+    ],
+    "rows": [
+     [
+      216,
+      0,
+      "<0 (off-screen)",
+      "enters, blurred"
+     ],
+     [
+      217,
+      1,
+      0,
+      ""
+     ],
+     [
+      218,
+      2,
+      32,
+      ""
+     ],
+     [
+      219,
+      3,
+      107,
+      "ghosted ~55%"
+     ],
+     [
+      220,
+      4,
+      173,
+      ""
+     ],
+     [
+      221,
+      5,
+      243,
+      ""
+     ],
+     [
+      222,
+      6,
+      309,
+      ""
+     ],
+     [
+      223,
+      7,
+      360,
+      ""
+     ],
+     [
+      224,
+      8,
+      394,
+      "opacity ~90%"
+     ],
+     [
+      225,
+      9,
+      423,
+      "opaque"
+     ],
+     [
+      226,
+      10,
+      442,
+      ""
+     ],
+     [
+      229,
+      13,
+      457,
+      ""
+     ],
+     [
+      241,
+      25,
+      467,
+      "final (long tail)"
+     ]
+    ],
+    "visual_estimate": "+-8 px",
+    "bezier": {
+     "cubic_bezier": [
+      0.3,
+      0.67,
+      0.06,
+      1.12
+     ],
+     "fit_frames": [
+      217,
+      241
+     ],
+     "from": 0,
+     "to": 467,
+     "rms_residual": 5.96,
+     "max_residual": 14.75
+    }
+   },
+   "L_outer": "same move 12 f later: f230 enters, ~f236 opaque, left edge final x=90 by f241",
+   "hold": {
+    "idle_motion": "0 px drift (right-outer card right edge x=1828 on every frame f206-284). Card CONTENTS swap by hard cut (e.g. L-outer becomes the white 'Ads live' card at f252)."
+   },
+   "exit": "hard cut with the shot at f285",
+   "sfx": [
+    {
+     "event": "L-inner slide f216",
+     "offset_ms": "-30",
+     "confidence": "low (music/voice)"
+    },
+    {
+     "event": "L-outer slide f230",
+     "offset_ms": "+70",
+     "confidence": "low"
+    }
+   ]
+  },
+  "callout_diagram_card_3m29": {
+   "frames": [
+    5034,
+    5092
+   ],
+   "geometry": {
+    "bbox_settled": {
+     "px": [
+      361,
+      216,
+      749,
+      832
+     ],
+     "norm": [
+      0.188,
+      0.2,
+      0.3901,
+      0.7704
+     ]
+    },
+    "size_px": [
+     388,
+     616
+    ],
+    "pose": "slight perspective (left/right edges fixed, top edge level within 4 px)",
+    "label": "'CALLOUT DIAGRAM' white mono-like caps ~22 px at top-left above the card, y~155-171",
+    "position_rule": "left third, card centre (555,524) = (0.289,0.485); presenter on the right"
+   },
+   "entrance_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "top_y_at_x400",
+     "tint (median card colour)",
+     "note"
+    ],
+    "rows": [
+     [
+      5034,
+      0,
+      null,
+      null,
+      "faint pink rectangle (~20%)"
+     ],
+     [
+      5035,
+      1,
+      268,
+      "#793B59",
+      "pink slab ~40%"
+     ],
+     [
+      5036,
+      2,
+      260,
+      "#9B376F",
+      "pink, content faintly visible"
+     ],
+     [
+      5037,
+      3,
+      250,
+      "#C7488E",
+      ""
+     ],
+     [
+      5038,
+      4,
+      244,
+      "#E770B2",
+      "content readable through pink"
+     ],
+     [
+      5039,
+      5,
+      237,
+      "#F6ABD5",
+      ""
+     ],
+     [
+      5040,
+      6,
+      232,
+      "#FBD3E9",
+      ""
+     ],
+     [
+      5041,
+      7,
+      228,
+      "#FDE8F4",
+      ""
+     ],
+     [
+      5042,
+      8,
+      224,
+      "#FDF5FA",
+      ""
+     ],
+     [
+      5043,
+      9,
+      222,
+      "#FDFBFC",
+      "tint gone"
+     ],
+     [
+      5044,
+      10,
+      220,
+      "#FDFDFD",
+      ""
+     ],
+     [
+      5045,
+      11,
+      218,
+      null,
+      ""
+     ],
+     [
+      5046,
+      12,
+      217,
+      null,
+      ""
+     ],
+     [
+      5047,
+      13,
+      216,
+      null,
+      "settled"
+     ]
+    ],
+    "bottom_edge": "bottom moves 853 -> 832 over the same frames (rises ~21 px) while the top rises ~44 px: card rises AND grows ~4% (or tilts upright)",
+    "bezier_top": {
+     "cubic_bezier": [
+      0.46,
+      1.03,
+      0.84,
+      0.93
+     ],
+     "fit_frames": [
+      5035,
+      5047
+     ],
+     "from": 268,
+     "to": 216,
+     "rms_residual": 0.48,
+     "max_residual": 1.17
+    },
+    "type": "'pink portal' entrance: card fades in as a solid hot-pink (#FF2E9A-ish) silhouette, the pink overlay then dissolves to reveal content (opacity of pink overlay 1->0 over f5036-5043) while the card rises ~30 px with ease-out"
+   },
+   "label": {
+    "in": "f5071-5073 (fade/draw, 3 f)"
+   },
+   "hold": {
+    "frames": [
+     5047,
+     5092
+    ],
+    "idle_motion": "0 px"
+   },
+   "exit": "hard cut with the shot at f5093",
+   "sfx": [
+    {
+     "event": "card f5034",
+     "offset_ms": "~0",
+     "confidence": "medium",
+     "type": "whoosh"
+    },
+    {
+     "event": "label f5071",
+     "offset_ms": "-40",
+     "confidence": "low-medium"
+    }
+   ]
+  },
+  "pop_portal_cards_7m44": {
+   "frames": [
+    11145,
+    11294
+   ],
+   "geometry": {
+    "card_A": {
+     "px": [
+      155,
+      198,
+      562,
+      780
+     ],
+     "norm": [
+      0.0807,
+      0.1833,
+      0.2927,
+      0.7222
+     ]
+    },
+    "card_B": {
+     "px": [
+      560,
+      205,
+      897,
+      758
+     ],
+     "norm": [
+      0.2917,
+      0.1898,
+      0.4672,
+      0.7019
+     ]
+    },
+    "pose": "perspective: left edges taller than right (A: 582 vs ~555 px) ~rotateY(10-15deg)",
+    "radius_px": 18,
+    "rim": "thin magenta rim glow on A's lower-right",
+    "layer": "in front of the room, presenter not overlapping"
+   },
+   "entrance": {
+    "description": "'portal' reveal: each card starts edge-on as a thin hot-pink slab (rotateY ~80 deg, translucent), swings open to its pose over ~6 f while the pink overlay dissolves into the card content over ~5 f",
+    "card_B": {
+     "start": 11145,
+     "rows": [
+      [
+       11145,
+       "faint pink sliver (~20%)"
+      ],
+      [
+       11146,
+       "pink slab x 693-807 @y450"
+      ],
+      [
+       11147,
+       "x 680-815"
+      ],
+      [
+       11148,
+       "x 672-817, content faint"
+      ],
+      [
+       11149,
+       "opening"
+      ],
+      [
+       11150,
+       "content + pink"
+      ],
+      [
+       11151,
+       "content, pink almost gone"
+      ]
+     ]
+    },
+    "card_A": {
+     "start": 11148,
+     "rows": [
+      [
+       11148,
+       "faint pink sliver"
+      ],
+      [
+       11149,
+       "pink slab, left edge x=284 @y450"
+      ],
+      [
+       11150,
+       "277"
+      ],
+      [
+       11151,
+       "275"
+      ],
+      [
+       11152,
+       "275, pink"
+      ],
+      [
+       11153,
+       "256, content through pink"
+      ],
+      [
+       11154,
+       "231, pink fading"
+      ],
+      [
+       11155,
+       "211"
+      ],
+      [
+       11156,
+       "199"
+      ],
+      [
+       11157,
+       "192, pink gone"
+      ],
+      [
+       11158,
+       "186"
+      ],
+      [
+       11159,
+       "184 settled"
+      ]
+     ]
+    },
+    "stagger": "B first, A +3 f"
+   },
+   "hold": {
+    "frames": [
+     11159,
+     11290
+    ],
+    "idle_motion": "0 px"
+   },
+   "exit_table": {
+    "columns": [
+     "frame",
+     "opacity_est"
+    ],
+    "rows": [
+     [
+      11290,
+      1.0
+     ],
+     [
+      11291,
+      0.85
+     ],
+     [
+      11292,
+      0.6
+     ],
+     [
+      11293,
+      0.25
+     ],
+     [
+      11294,
+      0.0
+     ]
+    ],
+    "type": "simultaneous 3-4 f fade, no motion"
+   },
+   "sfx": [
+    {
+     "event": "B f11145",
+     "offset_ms": "+20..+80 (soft rising whoosh)",
+     "confidence": "low-medium"
+    }
+   ]
+  },
+  "prf_ad_frames_8m37": {
+   "frames": [
+    12412,
+    12654
+   ],
+   "geometry": {
+    "card1": {
+     "px": [
+      105,
+      262,
+      425,
+      698
+     ],
+     "norm": [
+      0.0547,
+      0.2426,
+      0.2214,
+      0.6463
+     ]
+    },
+    "card2": {
+     "px": [
+      413,
+      262,
+      690,
+      685
+     ],
+     "norm": [
+      0.2151,
+      0.2426,
+      0.3594,
+      0.6343
+     ]
+    },
+    "card3_easel": {
+     "px": [
+      695,
+      262,
+      932,
+      640
+     ],
+     "norm": [
+      0.362,
+      0.2426,
+      0.4854,
+      0.5926
+     ]
+    },
+    "pose": "perspective arc like 7:44 (left edges taller, cards rotateY ~10-20deg); label baseline ~y 765, labels centred under each card",
+    "labels": {
+     "PAIN": {
+      "px": [
+       154,
+       726,
+       391,
+       771
+      ],
+      "norm": [
+       0.0802,
+       0.6722,
+       0.2036,
+       0.7139
+      ]
+     },
+     "RESULT": {
+      "px": [
+       522,
+       726,
+       622,
+       751
+      ],
+      "norm": [
+       0.2719,
+       0.6722,
+       0.324,
+       0.6954
+      ]
+     },
+     "FREE LESSON": {
+      "px": [
+       742,
+       710,
+       879,
+       733
+      ],
+      "norm": [
+       0.3865,
+       0.6574,
+       0.4578,
+       0.6787
+      ]
+     }
+    }
+   },
+   "entrance": {
+    "type": "same portal swing-open as 7:44 but WITHOUT the pink tint: thin translucent slab -> opens to pose over ~7 f",
+    "starts": {
+     "card1": 12412,
+     "card2": 12414,
+     "card3": 12416
+    },
+    "stagger_frames": 2,
+    "settled_by": 12422
+   },
+   "labels": {
+    "sequence": "card outline highlight (magenta 3 px stroke + glow) appears 1 f before its label; label fades in over 3 f with ~3-5 px downward settle; label hold ~18-24 f then fades in 1-2 f; outline lingers ~6 f after the label",
+    "PAIN": {
+     "outline_in": 12499,
+     "label_in": [
+      12500,
+      12503
+     ],
+     "label_out": [
+      12517,
+      12519
+     ],
+     "outline_out": [
+      12519,
+      12525
+     ]
+    },
+    "RESULT": {
+     "outline_in": 12532,
+     "label_in": [
+      12535,
+      12537
+     ],
+     "label_out": [
+      12558,
+      12560
+     ]
+    },
+    "FREE LESSON": {
+     "outline_in": 12572,
+     "label_in": [
+      12574,
+      12577
+     ],
+     "label_reveal": "grows left->right 71 -> 111 -> 137 px over f12574-12576 (wipe/typing reveal)",
+     "label_out": "stays until the scene fade (f12651-12654)"
+    },
+    "label_style": "proportional heavy caps, ~28-34 px, gradient pink #FF1E62 -> peach on the last letters, drawn in the cards' perspective"
+   },
+   "hold": {
+    "idle_motion": "0 px"
+   },
+   "exit_table": {
+    "columns": [
+     "frame",
+     "opacity_est"
+    ],
+    "rows": [
+     [
+      12651,
+      1.0
+     ],
+     [
+      12652,
+      0.6
+     ],
+     [
+      12653,
+      0.25
+     ],
+     [
+      12654,
+      0.0
+     ]
+    ],
+    "type": "3-frame fade, all together; shot cuts f12658"
+   },
+   "sfx": [
+    {
+     "event": "card1 f12412",
+     "offset_ms": "+110",
+     "confidence": "low-medium"
+    },
+    {
+     "event": "labels",
+     "offset_ms": "unreliable (voice)",
+     "confidence": "low"
+    }
+   ]
+  },
+  "info_cards_8m54": {
+   "frames": [
+    12827,
+    12963
+   ],
+   "geometry": {
+    "card1": {
+     "px": [
+      152,
+      775,
+      667,
+      995
+     ],
+     "norm": [
+      0.0792,
+      0.7176,
+      0.3474,
+      0.9213
+     ]
+    },
+    "card2": {
+     "px": [
+      703,
+      775,
+      1217,
+      995
+     ],
+     "norm": [
+      0.3661,
+      0.7176,
+      0.6339,
+      0.9213
+     ]
+    },
+    "card3": {
+     "px": [
+      1253,
+      775,
+      1767,
+      995
+     ],
+     "norm": [
+      0.6526,
+      0.7176,
+      0.9203,
+      0.9213
+     ]
+    },
+    "size_px": [
+     515,
+     220
+    ],
+    "gap_px": 36,
+    "corner_radius_px": 15,
+    "padding_px": {
+     "left": 35,
+     "top": 33
+    },
+    "header": "'01' pink + 'DOCTOR' light grey, mono ~19 px (cap 13.5), number->label gap ~25 px, header baseline y~828",
+    "divider": "1 px, x 187-625 (inset 35 L / 42 R), y~850",
+    "title": "white mono bold ~47 px (cap 34.5), 2 lines, line pitch 56 px, first cap top y~858",
+    "position_rule": "3 equal columns centred on the frame (cx 960), bottom 85 px above frame bottom (y 0.718-0.921 h); in FRONT of the laptop"
+   },
+   "entrance": {
+    "card1": {
+     "table": {
+      "columns": [
+       "frame",
+       "offset",
+       "opacity",
+       "bottom_y",
+       "note"
+      ],
+      "rows": [
+       [
+        12827,
+        0,
+        0.24,
+        null,
+        "header '01 DOCTOR' visible with card"
+       ],
+       [
+        12828,
+        1,
+        0.33,
+        null,
+        "divider visible"
+       ],
+       [
+        12829,
+        2,
+        0.48,
+        907,
+        ""
+       ],
+       [
+        12830,
+        3,
+        0.67,
+        991,
+        ""
+       ],
+       [
+        12831,
+        4,
+        0.76,
+        991,
+        ""
+       ],
+       [
+        12832,
+        5,
+        0.91,
+        993,
+        "title blurred ~10 px, 30%"
+       ],
+       [
+        12833,
+        6,
+        1.0,
+        993,
+        "title 60%, blur 6"
+       ],
+       [
+        12834,
+        7,
+        1.0,
+        993,
+        "title 85%, blur 3"
+       ],
+       [
+        12835,
+        8,
+        1.0,
+        993,
+        "blur 1"
+       ],
+       [
+        12836,
+        9,
+        1.0,
+        993,
+        "title sharp"
+       ]
+      ]
+     },
+     "opacity_bezier": {
+      "cubic_bezier": [
+       0,
+       0.13,
+       1,
+       1.06
+      ],
+      "fit_frames": [
+       12826,
+       12833
+      ],
+      "from": 0,
+      "to": 1,
+      "rms_residual": 0.02,
+      "max_residual": 0.04
+     },
+     "note": "card 1 enters right after a cut (f12826) and its unroll is mostly hidden under the fade"
+    },
+    "card2": {
+     "table": {
+      "columns": [
+       "frame",
+       "offset",
+       "bottom_y",
+       "note"
+      ],
+      "rows": [
+       [
+        12855,
+        0,
+        null,
+        "blurred dark header strip slides down into place (top ~790)"
+       ],
+       [
+        12856,
+        1,
+        833,
+        "strip 780-833"
+       ],
+       [
+        12857,
+        2,
+        835,
+        ""
+       ],
+       [
+        12858,
+        3,
+        835,
+        ""
+       ],
+       [
+        12859,
+        4,
+        835,
+        ""
+       ],
+       [
+        12860,
+        5,
+        849,
+        "unroll downward"
+       ],
+       [
+        12861,
+        6,
+        897,
+        ""
+       ],
+       [
+        12862,
+        7,
+        941,
+        ""
+       ],
+       [
+        12863,
+        8,
+        967,
+        ""
+       ],
+       [
+        12864,
+        9,
+        983,
+        ""
+       ],
+       [
+        12865,
+        10,
+        992,
+        "header '02 EDUCATION' fades in f12865-12868"
+       ],
+       [
+        12866,
+        11,
+        997,
+        "overshoot +4"
+       ],
+       [
+        12867,
+        12,
+        998,
+        "+5"
+       ],
+       [
+        12868,
+        13,
+        997,
+        ""
+       ],
+       [
+        12869,
+        14,
+        995,
+        ""
+       ],
+       [
+        12870,
+        15,
+        994,
+        ""
+       ],
+       [
+        12871,
+        16,
+        993,
+        "settled"
+       ],
+       [
+        12877,
+        22,
+        993,
+        "divider draws L->R f12877-~12883"
+       ],
+       [
+        12891,
+        36,
+        993,
+        "title blur-in f12889-12894"
+       ]
+      ]
+     },
+     "bottom_bezier": {
+      "cubic_bezier": [
+       0.27,
+       0.14,
+       0.03,
+       1.25
+      ],
+      "fit_frames": [
+       12859,
+       12871
+      ],
+      "from": 835,
+      "to": 993,
+      "rms_residual": 1.42,
+      "max_residual": 2.95
+     },
+     "bottom_spring": {
+      "model": "damped spring x(t)=v1-(v1-v0)e^{-zeta*w*t}(cos(wd t)+zeta*w/wd sin(wd t)), t in frames from t0",
+      "t0": 12859.25,
+      "w_rad_per_frame": 0.7,
+      "zeta": 0.8,
+      "stiffness_mass1": 282.2,
+      "damping_mass1": 26.88,
+      "rms": 1.62,
+      "max": 3.0,
+      "points": [
+       [
+        12859,
+        835.0,
+        835.0
+       ],
+       [
+        12860,
+        849.0,
+        851.4
+       ],
+       [
+        12861,
+        897.0,
+        896.0
+       ],
+       [
+        12862,
+        941.0,
+        938.0
+       ],
+       [
+        12863,
+        967.0,
+        967.3
+       ],
+       [
+        12864,
+        983.0,
+        984.1
+       ],
+       [
+        12865,
+        992.0,
+        992.1
+       ],
+       [
+        12866,
+        997.0,
+        995.0
+       ],
+       [
+        12867,
+        998.0,
+        995.4
+       ],
+       [
+        12868,
+        997.0,
+        994.8
+       ],
+       [
+        12869,
+        995.0,
+        994.1
+       ],
+       [
+        12870,
+        994.0,
+        993.6
+       ],
+       [
+        12871,
+        993.0,
+        993.2
+       ]
+      ]
+     }
+    },
+    "card3": {
+     "strip": [
+      12910,
+      12913
+     ],
+     "unroll": [
+      12914,
+      12925
+     ],
+     "bottom_y": [
+      855,
+      907,
+      939,
+      965,
+      983,
+      993,
+      997,
+      999,
+      997,
+      995,
+      994,
+      993
+     ],
+     "title_in": [
+      12944,
+      12948
+     ],
+     "bottom_bezier": {
+      "cubic_bezier": [
+       0.22,
+       0.17,
+       0.09,
+       1.26
+      ],
+      "fit_frames": [
+       12913,
+       12925
+      ],
+      "from": 835,
+      "to": 993,
+      "rms_residual": 2.23,
+      "max_residual": 3.71
+     }
+    },
+    "stagger": "card starts: 12827, 12855 (+28 f), 12910 (+55 f) - driven by narration, not a fixed stagger; inside a card: strip 4 f -> unroll 12 f (5 px overshoot) -> header fade 3 f -> divider draw ~6 f -> title blur-in 4-5 f when the word is spoken"
+   },
+   "hold": {
+    "idle_motion": "0 px"
+   },
+   "exit_table": {
+    "columns": [
+     "frame",
+     "offset",
+     "note"
+    ],
+    "rows": [
+     [
+      12957,
+      0,
+      "all three start fading; titles blur"
+     ],
+     [
+      12958,
+      1,
+      "titles ~80%"
+     ],
+     [
+      12959,
+      2,
+      "titles ~30%, card3 bottom collapsing (921)"
+     ],
+     [
+      12960,
+      3,
+      "bottoms 911, titles gone"
+     ],
+     [
+      12961,
+      4,
+      "cards ~35%"
+     ],
+     [
+      12962,
+      5,
+      "bottom 831-895"
+     ],
+     [
+      12963,
+      6,
+      "gone"
+     ]
+    ],
+    "type": "6-f fade with upward collapse (reverse unroll), titles first; shot cuts f12968"
+   },
+   "sfx": [
+    {
+     "event": "card2 strip f12855",
+     "offset_ms": "+240 (lands on the unroll start f12860)",
+     "confidence": "medium"
+    },
+    {
+     "event": "card3 strip f12910",
+     "offset_ms": "+30",
+     "confidence": "medium"
+    },
+    {
+     "event": "card1",
+     "offset_ms": "unreliable",
+     "confidence": "low"
+    }
+   ]
+  }
+ },
+ "recipes_24fps": {
+  "note": "Offsets in frames from offset 0 = first visible frame. Values are the measured keyframes; interpolate linearly between consecutive keys for an exact match, or use the listed bezier per segment.",
+  "red_brand_pill_enter": {
+   "opacity": [
+    [
+     -2,
+     0.15
+    ],
+    [
+     -1,
+     0.5
+    ],
+    [
+     0,
+     0.75
+    ],
+    [
+     1,
+     0.9
+    ],
+    [
+     2,
+     1
+    ]
+   ],
+   "shape": "rounded square (h x h, r=0.2h) at the pill's LEFT end -> pill",
+   "translate_x_centre_px_rel_final": [
+    [
+     0,
+     -281.5
+    ],
+    [
+     3,
+     -270.5
+    ],
+    [
+     4,
+     -242.5
+    ],
+    [
+     5,
+     -198.5
+    ],
+    [
+     6,
+     -147
+    ],
+    [
+     7,
+     -104
+    ],
+    [
+     8,
+     -69
+    ],
+    [
+     9,
+     -44.5
+    ],
+    [
+     10,
+     -27
+    ],
+    [
+     11,
+     -14
+    ],
+    [
+     12,
+     -5.5
+    ],
+    [
+     13,
+     0
+    ],
+    [
+     14,
+     3
+    ],
+    [
+     15,
+     4
+    ],
+    [
+     16,
+     3
+    ],
+    [
+     17,
+     1
+    ],
+    [
+     18,
+     0.5
+    ],
+    [
+     19,
+     0
+    ]
+   ],
+   "width_frac_of_final": [
+    [
+     0,
+     0.214
+    ],
+    [
+     3,
+     0.214
+    ],
+    [
+     4,
+     0.224
+    ],
+    [
+     5,
+     0.249
+    ],
+    [
+     6,
+     0.309
+    ],
+    [
+     7,
+     0.406
+    ],
+    [
+     8,
+     0.554
+    ],
+    [
+     9,
+     0.725
+    ],
+    [
+     10,
+     0.855
+    ],
+    [
+     11,
+     0.934
+    ],
+    [
+     12,
+     0.977
+    ],
+    [
+     13,
+     1.003
+    ],
+    [
+     14,
+     1.017
+    ],
+    [
+     15,
+     1.021
+    ],
+    [
+     16,
+     1.017
+    ],
+    [
+     17,
+     1.017
+    ],
+    [
+     18,
+     1.012
+    ],
+    [
+     19,
+     1.007
+    ],
+    [
+     20,
+     1.0
+    ]
+   ],
+   "motion_blur": "horizontal, strong at offsets 4-8",
+   "content_opacity(logo+word)": [
+    [
+     9,
+     0.3
+    ],
+    [
+     10,
+     0.7
+    ],
+    [
+     11,
+     1
+    ]
+   ],
+   "button_scaleX_from_left": [
+    [
+     13,
+     0.3
+    ],
+    [
+     14,
+     0.7
+    ],
+    [
+     15,
+     1
+    ]
+   ],
+   "button_translate_y_px": [
+    [
+     15,
+     13
+    ],
+    [
+     16,
+     12
+    ],
+    [
+     17,
+     10
+    ],
+    [
+     18,
+     8
+    ],
+    [
+     19,
+     4
+    ],
+    [
+     20,
+     2
+    ],
+    [
+     21,
+     1
+    ],
+    [
+     22,
+     0
+    ]
+   ],
+   "easing": {
+    "width": [
+     0.49,
+     0.14,
+     0.05,
+     1.25
+    ],
+    "centre_x": [
+     0.29,
+     0.11,
+     0.13,
+     1.18
+    ]
+   }
+  },
+  "red_brand_pill_exit": {
+   "content_opacity": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     0.4
+    ],
+    [
+     2,
+     0
+    ]
+   ],
+   "right_edge_collapse_width_frac": [
+    [
+     3,
+     1.0
+    ],
+    [
+     4,
+     0.94
+    ],
+    [
+     5,
+     0.76
+    ],
+    [
+     6,
+     0.46
+    ],
+    [
+     7,
+     0.25
+    ],
+    [
+     8,
+     0.18
+    ]
+   ],
+   "square_opacity": [
+    [
+     8,
+     1
+    ],
+    [
+     9,
+     0.25
+    ],
+    [
+     10,
+     0
+    ]
+   ]
+  },
+  "subscribe_state_change": {
+   "cursor_on": 0,
+   "press_grey": [
+    2,
+    3
+   ],
+   "blank_pink_blur": 4,
+   "typing_2_chars_per_frame": [
+    5,
+    10
+   ],
+   "fill": [
+    [
+     2,
+     "#D1D1D1"
+    ],
+    [
+     4,
+     "#FE0C44"
+    ],
+    [
+     5,
+     "#FE0F54"
+    ],
+    [
+     7,
+     "#F01870"
+    ],
+    [
+     9,
+     "#E5186A"
+    ],
+    [
+     10,
+     "#651531"
+    ],
+    [
+     12,
+     "#671733"
+    ],
+    [
+     14,
+     "#252525"
+    ],
+    [
+     15,
+     "#1E1E1E"
+    ]
+   ],
+   "container_width_grow_px": [
+    [
+     3,
+     0
+    ],
+    [
+     4,
+     6
+    ],
+    [
+     5,
+     18
+    ],
+    [
+     6,
+     46
+    ],
+    [
+     7,
+     70
+    ],
+    [
+     8,
+     82
+    ],
+    [
+     9,
+     86
+    ],
+    [
+     10,
+     86
+    ]
+   ],
+   "sparkles": [
+    5,
+    19
+   ],
+   "easing_width": [
+    0.53,
+    0.11,
+    0.32,
+    1.07
+   ]
+  },
+  "logo_tile_pop": {
+   "scale_frac": [
+    [
+     0,
+     0.081
+    ],
+    [
+     1,
+     0.276
+    ],
+    [
+     2,
+     0.528
+    ],
+    [
+     3,
+     0.87
+    ],
+    [
+     4,
+     1.057
+    ],
+    [
+     5,
+     1.065
+    ],
+    [
+     6,
+     1.053
+    ],
+    [
+     7,
+     1.024
+    ],
+    [
+     8,
+     0.992
+    ],
+    [
+     9,
+     0.976
+    ],
+    [
+     10,
+     0.976
+    ],
+    [
+     11,
+     0.992
+    ],
+    [
+     12,
+     0.996
+    ],
+    [
+     13,
+     1.0
+    ]
+   ],
+   "rotate_deg": [
+    [
+     1,
+     -10
+    ],
+    [
+     2,
+     -15
+    ],
+    [
+     3,
+     -12
+    ],
+    [
+     4,
+     -8
+    ],
+    [
+     5,
+     -3
+    ],
+    [
+     6,
+     0
+    ]
+   ],
+   "fill": "flat red until +4, glossy pink from +5",
+   "icon_stroke_draw": [
+    [
+     6,
+     0
+    ],
+    [
+     7,
+     0.1
+    ],
+    [
+     8,
+     0.25
+    ],
+    [
+     9,
+     0.5
+    ],
+    [
+     10,
+     0.75
+    ],
+    [
+     11,
+     1
+    ]
+   ],
+   "sparkle_burst": [
+    -1,
+    10
+   ],
+   "spring": {
+    "model": "damped spring x(t)=v1-(v1-v0)e^{-zeta*w*t}(cos(wd t)+zeta*w/wd sin(wd t)), t in frames from t0",
+    "t0": 500.25,
+    "w_rad_per_frame": 0.825,
+    "zeta": 0.625,
+    "stiffness_mass1": 392.0,
+    "damping_mass1": 24.75,
+    "rms": 2.86,
+    "max": 7.52,
+    "points": [
+     [
+      500,
+      10.0,
+      10.0
+     ],
+     [
+      501,
+      34.0,
+      26.5
+     ],
+     [
+      502,
+      65.0,
+      70.2
+     ],
+     [
+      503,
+      107.0,
+      107.0
+     ],
+     [
+      504,
+      130.0,
+      126.5
+     ],
+     [
+      505,
+      131.0,
+      132.1
+     ],
+     [
+      506,
+      129.5,
+      130.4
+     ],
+     [
+      507,
+      126.0,
+      126.8
+     ],
+     [
+      508,
+      122.0,
+      124.0
+     ],
+     [
+      509,
+      120.0,
+      122.6
+     ],
+     [
+      510,
+      120.0,
+      122.3
+     ],
+     [
+      511,
+      122.0,
+      122.4
+     ],
+     [
+      512,
+      122.5,
+      122.7
+     ],
+     [
+      513,
+      123.0,
+      122.9
+     ]
+    ]
+   }
+  },
+  "pill_stretch_pop(handle)": {
+   "width_px": [
+    [
+     0,
+     3
+    ],
+    [
+     1,
+     15
+    ],
+    [
+     2,
+     37
+    ],
+    [
+     3,
+     84
+    ],
+    [
+     4,
+     232
+    ],
+    [
+     5,
+     339
+    ],
+    [
+     6,
+     349
+    ],
+    [
+     7,
+     351
+    ],
+    [
+     8,
+     349
+    ],
+    [
+     9,
+     341
+    ],
+    [
+     10,
+     335
+    ],
+    [
+     11,
+     338
+    ],
+    [
+     12,
+     345
+    ],
+    [
+     13,
+     352
+    ],
+    [
+     14,
+     355
+    ],
+    [
+     15,
+     355
+    ],
+    [
+     18,
+     350
+    ]
+   ],
+   "height_px": [
+    [
+     0,
+     5
+    ],
+    [
+     1,
+     13
+    ],
+    [
+     2,
+     25
+    ],
+    [
+     3,
+     49
+    ],
+    [
+     4,
+     79
+    ],
+    [
+     5,
+     93
+    ],
+    [
+     6,
+     96
+    ],
+    [
+     7,
+     93
+    ],
+    [
+     8,
+     85
+    ],
+    [
+     9,
+     81
+    ],
+    [
+     10,
+     78
+    ],
+    [
+     11,
+     81
+    ],
+    [
+     13,
+     82
+    ]
+   ],
+   "centre_x_rel_final": [
+    [
+     0,
+     -103.5
+    ],
+    [
+     1,
+     -93.5
+    ],
+    [
+     2,
+     -74.5
+    ],
+    [
+     3,
+     -43
+    ],
+    [
+     4,
+     -5
+    ],
+    [
+     5,
+     9.5
+    ],
+    [
+     6,
+     0.5
+    ],
+    [
+     7,
+     -1.5
+    ],
+    [
+     10,
+     -5.5
+    ],
+    [
+     13,
+     0
+    ]
+   ],
+   "typing": "per char blur->sharp 2 f, ~1.3 chars/f from +5"
+  },
+  "hop_and_pop_exit": {
+   "translate_y_px": [
+    [
+     0,
+     -11
+    ],
+    [
+     1,
+     -21.5
+    ],
+    [
+     2,
+     -40.5
+    ],
+    [
+     3,
+     -44.5
+    ],
+    [
+     4,
+     -44.5
+    ]
+   ],
+   "then": "logo: smear+sparkles at +4/+5, gone +5; handle: glitch-stripe dissolve at +3/+4"
+  },
+  "glass_cta_pill(LINK)": {
+   "sparkle": [
+    [
+     0,
+     "tiny"
+    ],
+    [
+     3,
+     "full pair"
+    ]
+   ],
+   "tile": {
+    "appear": 2,
+    "size_px": [
+     [
+      3,
+      [
+       66,
+       100
+      ]
+     ],
+     [
+      4,
+      [
+       76,
+       111
+      ]
+     ],
+     [
+      5,
+      [
+       78,
+       120
+      ]
+     ],
+     [
+      11,
+      [
+       100,
+       124
+      ]
+     ]
+    ],
+    "centre_y_rel_final": -50
+   },
+   "morph": {
+    "start": "12 (0:32) / 15 (9:58) / 10 (3:58)",
+    "frames_x0": [
+     [
+      0,
+      861
+     ],
+     [
+      1,
+      800
+     ],
+     [
+      2,
+      683
+     ],
+     [
+      3,
+      662
+     ],
+     [
+      4,
+      651
+     ]
+    ],
+    "frames_x1": [
+     [
+      0,
+      998
+     ],
+     [
+      1,
+      1070
+     ],
+     [
+      2,
+      1225
+     ],
+     [
+      3,
+      1253
+     ],
+     [
+      4,
+      1270
+     ]
+    ],
+    "frames_y0": [
+     [
+      0,
+      801
+     ],
+     [
+      1,
+      830
+     ],
+     [
+      2,
+      828
+     ],
+     [
+      3,
+      852
+     ],
+     [
+      4,
+      860
+     ]
+    ]
+   },
+   "text": {
+    "start": "+40 / +38 from sparkle",
+    "opacity": [
+     [
+      0,
+      0.15
+     ],
+     [
+      1,
+      0.4
+     ],
+     [
+      2,
+      0.65
+     ],
+     [
+      3,
+      0.85
+     ],
+     [
+      4,
+      0.95
+     ],
+     [
+      5,
+      1
+     ]
+    ],
+    "translate_y_px": [
+     [
+      0,
+      12
+     ],
+     [
+      1,
+      9
+     ],
+     [
+      2,
+      6
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      4,
+      2
+     ],
+     [
+      5,
+      0
+     ]
+    ],
+    "blur_px": [
+     [
+      0,
+      8
+     ],
+     [
+      1,
+      6
+     ],
+     [
+      2,
+      4
+     ],
+     [
+      3,
+      2
+     ],
+     [
+      4,
+      1
+     ],
+     [
+      5,
+      0
+     ]
+    ]
+   },
+   "edge_beam": "two red glow segments (~300 px long) orbiting clockwise at ~7 px/frame",
+   "exit_variants": [
+    "hard cut",
+    "blur-fade 4 f: opacity [[0,1],[1,0.7],[2,0.4],[3,0.15],[4,0]], blur 0->10 px"
+   ]
+  },
+  "glass_panel_rise_fade(hologram)": {
+   "opacity": [
+    [
+     0,
+     0.085
+    ],
+    [
+     1,
+     0.5
+    ],
+    [
+     2,
+     0.733
+    ],
+    [
+     3,
+     0.846
+    ],
+    [
+     4,
+     0.886
+    ],
+    [
+     5,
+     0.914
+    ],
+    [
+     6,
+     0.939
+    ],
+    [
+     8,
+     0.98
+    ],
+    [
+     11,
+     1
+    ]
+   ],
+   "translate_y_px": [
+    [
+     1,
+     35
+    ],
+    [
+     2,
+     30
+    ],
+    [
+     3,
+     24
+    ],
+    [
+     4,
+     18
+    ],
+    [
+     5,
+     14
+    ],
+    [
+     6,
+     10
+    ],
+    [
+     8,
+     4
+    ],
+    [
+     11,
+     0
+    ]
+   ],
+   "exit_opacity": [
+    [
+     0,
+     0.975
+    ],
+    [
+     1,
+     0.934
+    ],
+    [
+     2,
+     0.632
+    ],
+    [
+     3,
+     0.366
+    ],
+    [
+     4,
+     0.206
+    ],
+    [
+     5,
+     0.11
+    ],
+    [
+     6,
+     0.044
+    ],
+    [
+     7,
+     0
+    ]
+   ],
+   "exit_translate_y_px": [
+    [
+     0,
+     0
+    ],
+    [
+     2,
+     -5
+    ],
+    [
+     3,
+     -9
+    ],
+    [
+     5,
+     -13
+    ]
+   ]
+  },
+  "portal_card_open": {
+   "rotateY_deg_est": [
+    [
+     0,
+     80
+    ],
+    [
+     1,
+     75
+    ],
+    [
+     2,
+     70
+    ],
+    [
+     4,
+     45
+    ],
+    [
+     6,
+     20
+    ],
+    [
+     8,
+     12
+    ],
+    [
+     10,
+     12
+    ]
+   ],
+   "opacity": [
+    [
+     0,
+     0.2
+    ],
+    [
+     1,
+     0.6
+    ],
+    [
+     2,
+     0.85
+    ],
+    [
+     3,
+     1
+    ]
+   ],
+   "pink_overlay(7:44 & 3:29 only)": [
+    [
+     0,
+     1
+    ],
+    [
+     4,
+     1
+    ],
+    [
+     5,
+     0.75
+    ],
+    [
+     6,
+     0.5
+    ],
+    [
+     7,
+     0.3
+    ],
+    [
+     8,
+     0.15
+    ],
+    [
+     9,
+     0
+    ]
+   ],
+   "stagger_frames": "3 (7:44) / 2 (8:37)",
+   "confidence": "rotation inferred from projected width, +-10 deg"
+  },
+  "pink_tint_reveal_rise(callout)": {
+   "top_y_rel_final": [
+    [
+     1,
+     52
+    ],
+    [
+     2,
+     44
+    ],
+    [
+     3,
+     34
+    ],
+    [
+     4,
+     28
+    ],
+    [
+     5,
+     21
+    ],
+    [
+     6,
+     16
+    ],
+    [
+     7,
+     12
+    ],
+    [
+     8,
+     8
+    ],
+    [
+     9,
+     6
+    ],
+    [
+     10,
+     4
+    ],
+    [
+     11,
+     2
+    ],
+    [
+     12,
+     1
+    ],
+    [
+     13,
+     0
+    ]
+   ],
+   "tint_colour_progress": [
+    [
+     2,
+     0.0
+    ],
+    [
+     3,
+     0.2
+    ],
+    [
+     4,
+     0.45
+    ],
+    [
+     5,
+     0.7
+    ],
+    [
+     6,
+     0.85
+    ],
+    [
+     7,
+     0.93
+    ],
+    [
+     8,
+     0.97
+    ],
+    [
+     9,
+     1.0
+    ]
+   ],
+   "bezier": [
+    0.46,
+    1.03,
+    0.84,
+    0.93
+   ]
+  },
+  "info_card_unroll": {
+   "strip": "dark header strip (55 px tall) fades/slides in at 0, holds 4 f",
+   "bottom_px_rel_final": [
+    [
+     4,
+     -158
+    ],
+    [
+     5,
+     -144
+    ],
+    [
+     6,
+     -96
+    ],
+    [
+     7,
+     -52
+    ],
+    [
+     8,
+     -26
+    ],
+    [
+     9,
+     -10
+    ],
+    [
+     10,
+     -1
+    ],
+    [
+     11,
+     4
+    ],
+    [
+     12,
+     5
+    ],
+    [
+     13,
+     4
+    ],
+    [
+     14,
+     2
+    ],
+    [
+     15,
+     1
+    ],
+    [
+     16,
+     0
+    ]
+   ],
+   "header_fade": [
+    10,
+    13
+   ],
+   "divider_draw_L_to_R": [
+    22,
+    28
+   ],
+   "title_blur_in": "4-5 f, blur 10->0, opacity 0.3->1, triggered by narration",
+   "bezier": [
+    0.27,
+    0.14,
+    0.03,
+    1.25
+   ]
+  },
+  "slide_in_from_offscreen(0:08 cards)": {
+   "left_x_px_rel_final": [
+    [
+     0,
+     -500
+    ],
+    [
+     1,
+     -467
+    ],
+    [
+     2,
+     -435
+    ],
+    [
+     3,
+     -360
+    ],
+    [
+     4,
+     -294
+    ],
+    [
+     5,
+     -224
+    ],
+    [
+     6,
+     -158
+    ],
+    [
+     7,
+     -107
+    ],
+    [
+     8,
+     -73
+    ],
+    [
+     9,
+     -44
+    ],
+    [
+     10,
+     -25
+    ],
+    [
+     13,
+     -10
+    ],
+    [
+     25,
+     0
+    ]
+   ],
+   "opacity": [
+    [
+     0,
+     0.5
+    ],
+    [
+     3,
+     0.55
+    ],
+    [
+     8,
+     0.9
+    ],
+    [
+     9,
+     1
+    ]
+   ],
+   "bezier": [
+    0.3,
+    0.67,
+    0.06,
+    1.12
+   ]
+  },
+  "fade_out_3f": {
+   "opacity": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     0.6
+    ],
+    [
+     2,
+     0.25
+    ],
+    [
+     3,
+     0
+    ]
+   ],
+   "used_by": [
+    "7:44 portal cards",
+    "8:37 PRF cards"
+   ]
+  },
+  "label_pop(PAIN etc.)": {
+   "outline_on": -1,
+   "opacity": [
+    [
+     0,
+     0.3
+    ],
+    [
+     1,
+     0.6
+    ],
+    [
+     2,
+     0.9
+    ],
+    [
+     3,
+     1
+    ]
+   ],
+   "translate_y_px": [
+    [
+     0,
+     -4
+    ],
+    [
+     1,
+     -2
+    ],
+    [
+     2,
+     -1
+    ],
+    [
+     3,
+     0
+    ]
+   ],
+   "hold": "17-24 f",
+   "out": [
+    [
+     0,
+     1
+    ],
+    [
+     1,
+     0.5
+    ],
+    [
+     2,
+     0
+    ]
+   ],
+   "outline_out_after_label": 6
+  }
+ },
+ "confidence": {
+  "high": [
+   "frame indices of every event (+-0 f, read from tiles and masks)",
+   "subscribe pill width/centre per frame (+-2 px)",
+   "handle/logo bbox per frame (+-2 px)",
+   "info card bottoms (+-1 px)",
+   "hologram opacity (+-0.03)",
+   "0 px idle drift (integer-pixel edges identical through holds)",
+   "Subscribe->Subscribed timing identical in both uses"
+  ],
+  "medium": [
+   "colours (+-6 per channel on opaque fills; glass tint +-15)",
+   "font = monospace for LAST VIDEO/handle/info cards (family itself medium)",
+   "SFX offsets marked medium",
+   "radii (+-4 px)",
+   "link-pill morph boxes (visual, +-6 px)",
+   "callout card rise"
+  ],
+  "low": [
+   "3D angles (rotateY values are inferred from projected widths)",
+   "portal swing-open rotation curve",
+   "SFX offsets marked low (voice-over masks onsets)",
+   "PRF label font",
+   "hologram scale component",
+   "edge-beam speed"
+  ],
+  "what_would_change_it": [
+   "A source with separate SFX stem would fix every SFX offset",
+   "Corner-pin tracking of the four card corners per frame would give the exact rotateY/perspective",
+   "Higher-quality source (this is a YouTube re-encode) would sharpen sub-pixel edges and glass colour solving",
+   "Rendering candidate fonts over the crops and diffing would settle the font family"
+  ]
+ }
+}

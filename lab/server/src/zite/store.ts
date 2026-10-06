@@ -18,7 +18,6 @@ export type Collection =
   | "musicTracks"
   | "promoVideos"
   | "users"
-  | "narrationCuts"
   | "memeProjects";
 
 const TABLE: Record<Collection, string> = {
@@ -27,7 +26,6 @@ const TABLE: Record<Collection, string> = {
   musicTracks: "z_music_tracks",
   promoVideos: "z_promo_videos",
   users: "z_users",
-  narrationCuts: "z_narration_cuts",
   memeProjects: "z_meme_projects",
 };
 
@@ -47,15 +45,11 @@ CREATE TABLE IF NOT EXISTS z_promo_videos (
 CREATE TABLE IF NOT EXISTS z_users (
   id TEXT PRIMARY KEY, user_id TEXT, doc TEXT NOT NULL, created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS z_narration_cuts (
-  id TEXT PRIMARY KEY, user_id TEXT, doc TEXT NOT NULL, created_at INTEGER NOT NULL
-);
 CREATE TABLE IF NOT EXISTS z_meme_projects (
   id TEXT PRIMARY KEY, user_id TEXT, doc TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_z_shots_project ON z_shots(project_id);
 CREATE INDEX IF NOT EXISTS idx_z_projects_user ON z_projects(user_id);
-CREATE INDEX IF NOT EXISTS idx_z_narration_cuts_user ON z_narration_cuts(user_id);
 CREATE INDEX IF NOT EXISTS idx_z_meme_projects_user ON z_meme_projects(user_id);
 `);
 
@@ -205,7 +199,6 @@ export const Shots = makeCollection("shots");
 export const MusicTracks = makeCollection("musicTracks");
 export const PromoVideos = makeCollection("promoVideos");
 export const Users = makeCollection("users");
-export const NarrationCuts = makeCollection("narrationCuts");
 export const MemeProjects = makeCollection("memeProjects");
 
 /** A Zite-style typed error the endpoints throw. */

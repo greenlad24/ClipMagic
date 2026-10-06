@@ -23,7 +23,7 @@
  */
 import { resolveInput } from "../render/resolve.js";
 import { probe } from "../render/ffmpeg.js";
-import { extractAudioForTranscription } from "../render/cut.js";
+import { extractAudioForTranscription } from "../render/audio.js";
 import { transcribeWithGroq } from "../ai/transcribe.js";
 import {
   SUBTITLE_TEMPLATES,
