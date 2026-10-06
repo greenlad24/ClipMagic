@@ -9,6 +9,7 @@ import { stories, decks, slides, todayDate, type SlideRecord } from './db.js';
 import { callNewsModel } from './ai.js';
 import { pickReadableSource } from './access.js';
 import { findVideoForStory, slideVideoFields, uniqueVideos, type VideoResult } from './video.js';
+import { generateStageForStory, type StoryStage } from './stage.js';
 
 // Official/company blog sources of a story
 interface BlogSource { company: string; url: string; title: string; isOfficial: boolean; }
@@ -317,6 +318,55 @@ Respond ONLY with valid JSON (no markdown):
   }
 }
 
+/** The source list the stage prompt sees — same material as the script's. */
+function stageSourceLines(blogSources: BlogSource[], articleSources: ArticleSource[]): string {
+  return [
+    ...blogSources.map(b => `${b.isOfficial ? '[OFFICIAL]' : '[BLOG]'} ${b.company}: ${b.title}`),
+    ...articleSources.map(a => `[ARTICLE] ${a.outlet}: ${a.title}`),
+  ].join('\n').slice(0, 2000);
+}
+
+/**
+ * Stages for slides that have none — decks built before stages existed — without
+ * touching their scripts, notes or videos (a Rebuild would rewrite all of it).
+ * `force` regenerates every slide's stage. Sequential-ish: 3 at a time.
+ */
+const stagesRunning = new Set<string>();
+export async function buildStagesForDeck(deckId: string, force = false): Promise<{ built: number; failed: number; skipped: number }> {
+  // A second click while the first run is going would pay for every stage twice.
+  if (stagesRunning.has(deckId)) throw Object.assign(new Error('Visuals are already being made for this deck.'), { status: 409 });
+  stagesRunning.add(deckId);
+  try { return await buildStages(deckId, force); } finally { stagesRunning.delete(deckId); }
+}
+
+async function buildStages(deckId: string, force: boolean): Promise<{ built: number; failed: number; skipped: number }> {
+  const list = slides.where('deck_id = ? AND (deleted IS NULL OR deleted = 0)', deckId);
+  const todo = list.filter((s) => force || !s.stageJson);
+  let built = 0, failed = 0;
+  for (let i = 0; i < todo.length; i += 3) {
+    await Promise.all(todo.slice(i, i + 3).map(async (sl) => {
+      const story = sl.story ? stories.get(sl.story) : undefined;
+      let blogSources: BlogSource[] = [];
+      let articleSources: ArticleSource[] = [];
+      try { blogSources = JSON.parse(story?.blogSources || '[]'); } catch {}
+      try { articleSources = JSON.parse(story?.articleSources || '[]'); } catch {}
+      let keyPoints: string[] = [];
+      try { keyPoints = JSON.parse(sl.keyPoints || '[]'); } catch {}
+      const stage: StoryStage | null = await generateStageForStory({
+        headline: sl.topicLabel || story?.headline || '',
+        status: story?.status || '',
+        sourceName: sl.bestSourceName || '',
+        sourceLines: stageSourceLines(blogSources, articleSources),
+        script: sl.teleprompterScript || '',
+        keyPoints: Array.isArray(keyPoints) ? keyPoints.map(String) : [],
+        whyItMatters: sl.whyItMatters || '',
+      });
+      if (stage) { slides.update(sl.id, { stageJson: JSON.stringify(stage) }); built++; } else failed++;
+    }));
+  }
+  return { built, failed, skipped: list.length - todo.length };
+}
+
 export async function buildDeckFromStories(
   write: (chunk: string) => void | Promise<void>,
 ): Promise<{ success: boolean; slidesCreated: number; deckId: string; message: string }> {
@@ -376,11 +426,23 @@ export async function buildDeckFromStories(
           findVideoForStory(story).catch(() => null),
         ]);
 
-        return { notes, teleprompterScript, blogSources, articleSources, video, best: pick.best };
+        // The story's on-screen stage (stage.ts): cover + Deep Dive-style scenes
+        // whose beats follow the script, so it runs after the script exists.
+        const stage = await generateStageForStory({
+          headline: story.headline || '',
+          status: story.status || '',
+          sourceName,
+          sourceLines: stageSourceLines(blogSources, articleSources),
+          script: teleprompterScript,
+          keyPoints: notes.keyPoints,
+          whyItMatters: notes.whyItMatters,
+        });
+
+        return { notes, teleprompterScript, blogSources, articleSources, video, best: pick.best, stage };
       }));
 
       batch.forEach((story, j) => {
-        const { notes, teleprompterScript, blogSources, articleSources, video, best } = resultsArr[j];
+        const { notes, teleprompterScript, blogSources, articleSources, video, best, stage } = resultsArr[j];
         videoFound.push({ story, result: video });
 
         const officialBlog = blogSources.find(b => b.isOfficial) ?? blogSources[0];
@@ -415,6 +477,7 @@ export async function buildDeckFromStories(
           talkingAngle: notes.talkingAngle,
           suggestedTimeSeconds: notes.suggestedTimeSeconds,
           teleprompterScript,
+          stageJson: stage ? JSON.stringify(stage) : undefined,
           favorited: false,
           deleted: false,
           ...slideVideoFields(video),

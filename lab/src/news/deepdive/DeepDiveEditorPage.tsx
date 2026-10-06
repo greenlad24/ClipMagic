@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ExternalLink, Loader2, MonitorPlay, Play,
-  RefreshCw, Telescope, Trash2, Video, VideoOff, AlertTriangle,
+  RefreshCw, Telescope, Trash2, Video, VideoOff, AlertTriangle, LayoutGrid, Palette, Webcam,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,11 @@ import { Scene, SceneThumb, StageFrame, useDeepDiveFont } from './Scene';
 import { STATUS_BADGE } from './DeepDiveListPage';
 import { ChapterCardV2, PreviewV2 } from './v2/EditorV2';
 import { sectionsToChapters } from './v2/adapt';
+import { flatten, firstBeatOf } from './v2/types';
+import { sectionBeatCount, sectionsToUnits } from './beats';
+import TemplatePicker from './TemplatePicker';
+import { templateFor, type DeckTemplate } from './templates';
+import { useBubbleSettings, CORNER_LABEL, SIZE_LABEL, type BubbleCorner, type BubbleSettings, type BubbleSize } from './bubble';
 
 export default function DeepDiveEditorPage() {
   return (
@@ -60,6 +65,8 @@ function Editor() {
   const [logOpen, setLogOpen] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
   const [showSources, setShowSources] = useState(false);
+  const [pickTemplate, setPickTemplate] = useState(false);
+  const [bubble, setBubble] = useBubbleSettings();
   const autoStarted = useRef(false);
 
   const addLog = useCallback((message: string, percent: number, isError = false) =>
@@ -159,6 +166,13 @@ function Editor() {
     try { await deleteSection(s.id); } catch (e) { toast.error(String(e)); void load(); }
   };
 
+  const chooseTemplate = async (template: string) => {
+    const before = dive?.template ?? '';
+    setDive((d) => (d ? { ...d, template } : d));
+    try { await updateDeepDive({ id, template }); toast.success(`Template: ${templateFor(template).name} — the screen and every preview use it now.`); }
+    catch (e) { setDive((d) => (d ? { ...d, template: before } : d)); toast.error(e instanceof Error ? e.message : String(e)); }
+  };
+
   const saveMeta = async (patch: { title?: string; topic?: string; angle?: string }) => {
     try { await updateDeepDive({ id, ...patch }); setDive((d) => (d ? { ...d, ...patch } : d)); }
     catch (e) { toast.error(String(e)); }
@@ -179,12 +193,20 @@ function Editor() {
   const badge = STATUS_BADGE[busy ? 'generating' : dive.status] ?? STATUS_BADGE.draft;
   const title = dive.title || dive.topic;
   const isV2 = dive.format === 'v2';
+  const tpl = templateFor(dive.template, isV2 ? 'v2' : 'v1');
+  // A classic dive with no template keeps its original look (no template vars at all).
+  const tplV1: DeckTemplate | null = !isV2 && !dive.template ? null : tpl;
 
   return (
     <div className="mx-auto max-w-6xl px-3 pb-16 pt-4 sm:px-5">
-      <Link to={DEEP_DIVE_PATH} className="mb-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-3.5 w-3.5" /> All deep dives
-      </Link>
+      {/* Big and obvious (Jake, 2026-10-06: the old text link was too small to find). */}
+      <Button asChild variant="outline" className="mb-4 h-11 gap-2 rounded-lg border-primary/40 bg-primary/5 px-4 text-sm font-semibold hover:bg-primary/15">
+        <Link to={DEEP_DIVE_PATH}>
+          <ArrowLeft className="h-4 w-4" />
+          <LayoutGrid className="h-4 w-4 text-primary" />
+          All deep dives
+        </Link>
+      </Button>
 
       {/* Header */}
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start">
@@ -210,6 +232,14 @@ function Editor() {
                 onBlur={(e) => { const v = e.target.value.trim(); if (v !== dive.angle) void saveMeta({ angle: v }); }} />
             </div>
           </details>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => setPickTemplate(true)} title="Pick the presentation's design">
+              <Palette className="h-3.5 w-3.5" />
+              <span className="flex gap-0.5" aria-hidden>{[tpl.ink, tpl.paper, tpl.accent].map((c, i) => <span key={i} className="h-2.5 w-2.5 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}</span>
+              Template: <span className="font-semibold">{tplV1 ? tpl.name : 'Classic aurora'}</span>
+            </Button>
+            <BubbleControl value={bubble} onChange={setBubble} />
+          </div>
           {isV2 && <DemoAgentSwitch dive={dive} job={demoJob} onRecord={async () => { try { await recordDeepDiveDemo(id); toast.success('The demo agent is recording — it shows up as a chapter when it finishes.'); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); } }} onAttach={async () => { try { const r = await attachDeepDiveDemo(id); if (r.attached) toast.success('The agent recording is in the show (chapter 2).'); else toast.error(`Not added: ${r.reason}`); } catch (e) { toast.error(e instanceof Error ? e.message : String(e)); } }} onChange={(patch) => { setDive({ ...dive, ...patch }); void updateDeepDive({ id, ...patch }).catch((e) => toast.error(String(e?.message ?? e))); }} />}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -258,7 +288,7 @@ function Editor() {
         isV2 ? (
           <ol className="grid grid-cols-1 gap-3">
             {chaptersV2.map((c, i) => (
-              <ChapterCardV2 key={c.id} chapters={chaptersV2} index={i} diveId={id} choices={choices} onMaterial={patchSection}
+              <ChapterCardV2 key={c.id} chapters={chaptersV2} index={i} diveId={id} choices={choices} onMaterial={patchSection} template={tpl} bubble={bubble}
                 onPreview={() => setPreview(i)}
                 onSave={(patch) => saveSection(c.id, patch)}
                 onMove={(dir) => move(i, dir)}
@@ -280,6 +310,8 @@ function Editor() {
               onDelete={() => remove(s)}
               onVideo={patchSection}
               pool={dive.visuals ?? []}
+              template={tplV1}
+              bubble={bubble}
             />
           ))}
         </ol>
@@ -308,14 +340,24 @@ function Editor() {
       )}
 
       {isV2
-        ? <PreviewV2 chapters={chaptersV2} diveId={id} chapter={preview} onClose={() => setPreview(null)} />
-        : <PreviewDialog sections={sections} title={title} index={preview} onIndex={setPreview} />}
+        ? <PreviewV2 chapters={chaptersV2} diveId={id} chapter={preview} onClose={() => setPreview(null)} template={tpl} bubble={bubble} />
+        : <PreviewDialog sections={sections} title={title} index={preview} onClose={() => setPreview(null)} template={tplV1} bubble={bubble} />}
+
+      <Dialog open={pickTemplate} onOpenChange={setPickTemplate}>
+        <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto p-4">
+          <DialogTitle className="text-sm">Template — the design the whole presentation is built in</DialogTitle>
+          <p className="-mt-1 text-xs text-muted-foreground">Each preview is this deep dive drawn in that template. Picking one re-skins the screen, the presenter's previews and every thumbnail at once — the content, beats and script stay as they are, and Regenerate keeps it.</p>
+          <TemplatePicker value={dive.template ?? ''} format={isV2 ? 'v2' : 'v1'} chapters={chaptersV2} sections={sections} diveId={id} title={title}
+            onChange={(t) => { void chooseTemplate(t); setPickTemplate(false); }} />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
-function SectionCard({ section: s, index, total, title, onPreview, onSave, onMove, onDelete, onVideo, pool }: {
+function SectionCard({ section: s, index, total, title, onPreview, onSave, onMove, onDelete, onVideo, pool, template, bubble }: {
   section: Section; index: number; total: number; title: string; pool: Visual[];
+  template: DeckTemplate | null; bubble: BubbleSettings;
   onPreview: () => void;
   onSave: (patch: { heading?: string; eyebrow?: string; script?: string }) => void;
   onMove: (dir: -1 | 1) => void;
@@ -338,16 +380,19 @@ function SectionCard({ section: s, index, total, title, onPreview, onSave, onMov
   };
 
   const hasVideo = !!sectionMedia(s);
+  const beats = sectionBeatCount(s);
+  const marks = (script.match(/\[next\]/gi) ?? []).length;
+  const spoken = script.replace(/\[next\]/gi, ' ');
 
   return (
     <li className="rounded-lg border border-border bg-card">
       <div className="flex flex-col gap-3 p-3 md:flex-row">
         <div className="w-full shrink-0 md:w-[300px]">
           <button onClick={onPreview} className="block w-full" title="Preview with animation">
-            <SceneThumb section={s} index={index} total={total} title={title} className="transition-shadow hover:ring-2 hover:ring-primary/50" />
+            <SceneThumb section={s} index={index} total={total} title={title} template={template} bubble={bubble} className="transition-shadow hover:ring-2 hover:ring-primary/50" />
           </button>
           <div className="mt-2 flex items-center gap-1">
-            <span className="mr-auto text-xs tabular-nums text-muted-foreground">#{index + 1} · {KIND_LABEL[s.kind]}</span>
+            <span className="mr-auto text-xs tabular-nums text-muted-foreground">#{index + 1} · {KIND_LABEL[s.kind]}{beats > 1 ? ` · ${beats} beats` : ''}</span>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => onMove(-1)} disabled={index === 0} title="Move up"><ArrowUp className="h-3.5 w-3.5" /></Button>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => onMove(1)} disabled={index === total - 1} title="Move down"><ArrowDown className="h-3.5 w-3.5" /></Button>
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive" onClick={onDelete} title="Delete section"><Trash2 className="h-3.5 w-3.5" /></Button>
@@ -368,9 +413,16 @@ function SectionCard({ section: s, index, total, title, onPreview, onSave, onMov
               onBlur={() => { if (script !== s.script) onSave({ script }); }}
               rows={Math.min(14, Math.max(4, Math.ceil(script.length / 95)))}
               className="text-sm leading-relaxed"
-              placeholder="What you say on this section"
+              placeholder={beats > 1 ? 'What you say on this section. Put [next] where you press → to build the next item.' : 'What you say on this section'}
             />
-            <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">{wordCount(script)} words · ~{fmtDuration(secondsFor(script))}</p>
+            <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
+              {wordCount(spoken)} words · ~{fmtDuration(secondsFor(spoken))}
+              {beats > 1 && (
+                <> · <span className={marks === beats - 1 ? '' : 'text-amber-500'} title="Each → press builds the next item on screen; the teleprompter marks where">
+                  {marks} [next] mark{marks === 1 ? '' : 's'} for {beats} beats{marks === beats - 1 ? '' : ` (needs ${beats - 1})`}
+                </span></>
+              )}
+            </p>
           </div>
 
           {!NO_VISUAL.has(s.kind) && <VisualPicker section={s} pool={pool} onChange={onVideo} />}
@@ -453,44 +505,93 @@ function VisualPicker({ section: s, pool, onChange }: { section: Section; pool: 
   );
 }
 
-/** Large animated preview; ←/→ step through sections (re-keyed so each one replays its build). */
-function PreviewDialog({ sections, title, index, onIndex }: {
-  sections: Section[]; title: string; index: number | null; onIndex: (i: number | null) => void;
+/**
+ * Large animated preview of a classic dive; ←/→ step BEATS exactly as on the
+ * stage (each slide builds its items one press at a time, then the next slide).
+ */
+function PreviewDialog({ sections, title, index, onClose, template, bubble }: {
+  sections: Section[]; title: string; index: number | null; onClose: () => void;
+  template: DeckTemplate | null; bubble: BubbleSettings;
 }) {
+  const units = useMemo(() => sectionsToUnits(sections), [sections]);
+  const beats = useMemo(() => flatten(units), [units]);
+  const [flat, setFlat] = useState(0);
   const [replay, setReplay] = useState(0);
+  useEffect(() => { if (index !== null) setFlat(firstBeatOf(units, index)); }, [index, units]);
   useEffect(() => {
     if (index === null) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' && index < sections.length - 1) { e.preventDefault(); onIndex(index + 1); }
-      if (e.key === 'ArrowLeft' && index > 0) { e.preventDefault(); onIndex(index - 1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); setFlat((f) => Math.min(beats.length - 1, f + 1)); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); setFlat((f) => Math.max(0, f - 1)); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [index, sections.length, onIndex]);
+  }, [index, beats.length]);
 
-  const s = index !== null ? sections[index] : null;
+  const at = beats[Math.min(flat, beats.length - 1)];
+  const s = index !== null && at ? sections[at.chapter] : null;
+  const n = at ? units[at.chapter]?.beats ?? 1 : 1;
   return (
-    <Dialog open={index !== null} onOpenChange={(o) => !o && onIndex(null)}>
+    <Dialog open={index !== null} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-5xl gap-3 p-3">
-        <DialogTitle className="text-sm">{s ? `#${(index ?? 0) + 1} · ${s.heading || KIND_LABEL[s.kind]}` : ''}</DialogTitle>
-        {s && index !== null && (
+        <DialogTitle className="text-sm">{s && at ? `#${at.chapter + 1} · ${s.heading || KIND_LABEL[s.kind]}${n > 1 ? ` · beat ${at.beat + 1} of ${n}` : ''}` : ''}</DialogTitle>
+        {s && at && (
           <>
             <div className="relative aspect-video overflow-hidden rounded-md bg-black">
-              <StageFrame index={index} total={sections.length}>
+              <StageFrame index={at.chapter} total={sections.length} template={template} bubble={bubble}>
                 {/* active={false}: the preview shows a media section's thumbnail, not a player */}
-                <Scene key={`${s.id}:${replay}`} section={s} index={index} total={sections.length} title={title} active={false} />
+                <Scene key={`${s.id}:${replay}`} section={s} index={at.chapter} total={sections.length} title={title} active={false} beat={at.beat} />
               </StageFrame>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => onIndex(index - 1)} disabled={index === 0}><ChevronLeft className="h-4 w-4" /></Button>
-              <Button variant="outline" size="sm" onClick={() => onIndex(index + 1)} disabled={index >= sections.length - 1}><ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="outline" size="sm" onClick={() => setFlat((f) => Math.max(0, f - 1))} disabled={flat === 0}><ChevronLeft className="h-4 w-4" /></Button>
+              <Button variant="outline" size="sm" onClick={() => setFlat((f) => Math.min(beats.length - 1, f + 1))} disabled={flat >= beats.length - 1}><ChevronRight className="h-4 w-4" /></Button>
               <Button variant="ghost" size="sm" onClick={() => setReplay((r) => r + 1)} className="gap-1.5"><RefreshCw className="h-3.5 w-3.5" /> Replay</Button>
-              <span className="ml-auto text-xs text-muted-foreground">← → to step</span>
+              <span className="ml-auto text-xs text-muted-foreground">← → step beats · {flat + 1} / {beats.length}</span>
             </div>
           </>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The presenter's camera bubble (bubble.tsx): which corner it sits in, its
+ * size, and whether the screen draws the camera itself (then it moves out of
+ * the way of content). Saved on this computer and applied to an open
+ * presentation window at once.
+ */
+function BubbleControl({ value, onChange }: { value: BubbleSettings; onChange: (p: Partial<BubbleSettings>) => void }) {
+  const corners: BubbleCorner[] = ['bl', 'br', 'tl', 'tr', 'off'];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs"
+      title="Slides keep this corner clear so your camera bubble never covers content. Keys on the screen: B corner · C camera · G guide">
+      <Webcam className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-muted-foreground">Camera bubble</span>
+      <select value={value.corner} onChange={(e) => onChange({ corner: e.target.value as BubbleCorner })}
+        className="h-6 rounded border border-border bg-background px-1 text-xs" aria-label="Camera bubble corner">
+        {corners.map((c) => <option key={c} value={c}>{CORNER_LABEL[c]}</option>)}
+      </select>
+      {value.corner !== 'off' && (
+        <>
+          <div className="flex overflow-hidden rounded border border-border">
+            {(['s', 'm', 'l'] as BubbleSize[]).map((z) => (
+              <button key={z} type="button" onClick={() => onChange({ size: z })}
+                className={`px-1.5 py-0.5 ${value.size === z ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{SIZE_LABEL[z]}</button>
+            ))}
+          </div>
+          <label className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+            <input type="checkbox" checked={value.camera} onChange={(e) => onChange({ camera: e.target.checked })} className="h-3 w-3" />
+            Show my camera <span className="hidden sm:inline">(moves out of the way)</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+            <input type="checkbox" checked={value.guide} onChange={(e) => onChange({ guide: e.target.checked })} className="h-3 w-3" />
+            Guide
+          </label>
+        </>
+      )}
+    </div>
   );
 }
 

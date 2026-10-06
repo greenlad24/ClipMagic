@@ -20,6 +20,7 @@ import type { AuthedRequest } from "./middleware.js";
  *   GET /auth/callback → verify state, exchange code, whitelist-check, set session
  *   GET /auth/logout   → clear the session
  *   GET /api/auth/me   → { email, name } for the UI (null when signed out)
+ *   GET /api/claude-chat → { url } of the Claude Code chat session (signed-in only)
  */
 const router = Router();
 const STATE_COOKIE = "cm_oauth_state";
@@ -108,6 +109,37 @@ router.get("/api/auth/me", (req: AuthedRequest, res) => {
     return;
   }
   res.json({ email: null, authEnabled: true });
+});
+
+/**
+ * GET /api/claude-chat → { url } — the Lab's "Chat" button target: the Claude
+ * Code remote-control session running on this box, where Jake talks to Claude
+ * to improve the software. The URL changes whenever remote-control restarts, so
+ * it lives in the CLAUDE_CHAT_URL env var (docker-compose.yml), not in the bundle.
+ *
+ * Mounted with the sign-in routes (before the global gate), so it checks the
+ * session ITSELF and refuses anyone without a valid, whitelisted one — even when
+ * Google Sign-In is not configured and the gate is a pass-through. A link that
+ * opens a session with shell access to this server is for signed-in operators
+ * only; with auth off there is no signed-in operator, so the answer is no.
+ */
+router.get("/api/claude-chat", (req: AuthedRequest, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  const session = authConfigured()
+    ? verifySession(readCookie(req.header("cookie"), SESSION_COOKIE))
+    : null;
+  if (!session || !isAllowedEmail(session.email)) {
+    res.status(401).json({ error: "Sign in required" });
+    return;
+  }
+  const raw = (process.env.CLAUDE_CHAT_URL ?? "").trim();
+  let url: string | null = null;
+  try {
+    if (raw && new URL(raw).protocol === "https:") url = raw;
+  } catch {
+    url = null;
+  }
+  res.json({ url });
 });
 
 export default router;

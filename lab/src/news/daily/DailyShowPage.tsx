@@ -127,7 +127,7 @@ function DailyShowWorkspace() {
         </div>
       )}
 
-      <SlidePreviewDialog slide={previewSlide} onClose={() => setPreviewId(null)} onNotesUpdated={show.loadSlides} />
+      <SlidePreviewDialog slide={previewSlide} number={previewSlide ? show.slides.indexOf(previewSlide) + 1 : 1} onClose={() => setPreviewId(null)} onNotesUpdated={show.loadSlides} />
     </div>
   );
 }

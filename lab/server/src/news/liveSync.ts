@@ -67,6 +67,13 @@ interface SyncState {
    * must not move, pause or re-anchor the teleprompter on any screen.
    */
   media: "article" | "video";
+  /**
+   * Daily Show (2026-10-06): which BEAT of the current story is on screen —
+   * 0 = the story's cover, then each scene's micro-interactions. Like `media`
+   * it has its own event and is never part of the scroll anchor: stepping a
+   * beat must not move, pause or re-anchor any teleprompter.
+   */
+  beat: number;
 }
 
 const DEFAULTS: Omit<SyncState, "anchorTime"> = {
@@ -79,6 +86,7 @@ const DEFAULTS: Omit<SyncState, "anchorTime"> = {
   lineHeight: 1.9,
   textWidth: "medium",
   media: "article",
+  beat: 0,
 };
 
 /**
@@ -111,6 +119,7 @@ function stateFor(sessionId: string): SyncState {
     // meter to 12× (and saving it) the moment Jake touched the script.
     scrollSpeed: typeof (row as any)?.tpSpeed === "number" ? (row as any).tpSpeed : DEFAULTS.scrollSpeed,
     media: (row as any)?.mediaView === "video" ? "video" : "article",
+    beat: typeof (row as any)?.currentBeat === "number" ? Math.max(0, Math.round((row as any).currentBeat)) : 0,
     anchorTime: Date.now(),
   };
   live.set(sessionId, fresh);
@@ -202,6 +211,7 @@ export function attachNewsLiveSync(server: HttpServer): Server {
         lineHeight: s.lineHeight,
         textWidth: s.textWidth,
         media: s.media,
+        beat: s.beat,
       });
     });
 
@@ -249,10 +259,12 @@ export function attachNewsLiveSync(server: HttpServer): Server {
     //    top, and carrying the old offset would open it part-way down.
     // Deep Dive v2 (Jake, 2026-10-02): its index is a BEAT, and stepping
     // between beats of one chapter must NOT move the teleprompter — it sends
-    // { idx, keepScroll: true }. The Daily Show sends a bare number, as before.
+    // { idx, keepScroll: true }. The Daily Show sends a bare number or, since
+    // 2026-10-06, { idx, beat } — stepping BACK into the previous story lands
+    // on its last beat, not its cover.
     socket.on("slide-index", (payload: unknown) => {
       const s = stateFor(sessionId);
-      const obj = payload && typeof payload === "object" ? (payload as { idx?: unknown; keepScroll?: unknown }) : null;
+      const obj = payload && typeof payload === "object" ? (payload as { idx?: unknown; keepScroll?: unknown; beat?: unknown }) : null;
       const next = Math.max(0, Math.round(num(obj ? obj.idx : payload, s.idx)));
       if (next === s.idx) return;
       s.idx = next;
@@ -263,13 +275,15 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       }
       s.position = 0;
       s.anchorTime = Date.now();
-      // A new slide always opens on its article.
+      // A new slide always opens on its article (the video closed).
       s.media = "article";
+      s.beat = Math.max(0, Math.round(num(obj?.beat, 0)));
       broadcast();
       ns.to(room).emit("media-view", { idx: s.idx, media: s.media });
+      ns.to(room).emit("beat", { idx: s.idx, beat: s.beat });
       // The slide is the one piece of this worth surviving a restart.
       try {
-        sessions.update(sessionId, { currentSlideIndex: next, mediaView: "article" } as any);
+        sessions.update(sessionId, { currentSlideIndex: next, mediaView: "article", currentBeat: s.beat } as any);
       } catch {
         /* the show matters more than the bookkeeping */
       }
@@ -288,6 +302,25 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       ns.to(room).emit("media-view", { idx: s.idx, media: s.media });
       try {
         sessions.update(sessionId, { mediaView: s.media } as any);
+      } catch {
+        /* best effort */
+      }
+    });
+
+    // ── A beat of the current story (Daily Show). Its own event, NOT a
+    //    scroll-sync, for the same reason as media-view: the anchor is
+    //    untouched, so no teleprompter moves on a micro-interaction. Persisted
+    //    because the audience page and the presenter's poll read the row.
+    socket.on("beat", (payload: unknown) => {
+      const s = stateFor(sessionId);
+      const p = (payload ?? {}) as { idx?: unknown; beat?: unknown };
+      if (typeof p.idx === "number" && p.idx !== s.idx) return; // aimed at a slide already left
+      const b = Math.max(0, Math.round(num(p.beat, s.beat)));
+      if (b === s.beat) return;
+      s.beat = b;
+      ns.to(room).emit("beat", { idx: s.idx, beat: s.beat });
+      try {
+        sessions.update(sessionId, { currentBeat: s.beat } as any);
       } catch {
         /* best effort */
       }

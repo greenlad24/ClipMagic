@@ -2,10 +2,10 @@ import { useNewsTheme } from '../useNewsTheme';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../auth';
 import { getSession, getSlides, GetSlidesOutputType } from '../api';
-import TweetView from '../components/TweetView';
-import ArticleView from '../components/ArticleView';
 import VideoEmbed from '../components/VideoEmbed';
 import { slideMedia } from '../api';
+import { connectLiveSync, type LiveSync } from '../liveSync';
+import StoryShow from '../daily/stage/StoryShow';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
@@ -21,12 +21,17 @@ export default function AudiencePage() {
   const [ended, setEnded] = useState(false);
   const [ready, setReady] = useState(false);
   const [bgColor, setBgColor] = useState(() => localStorage.getItem(BG_KEY) || '#ffffff');
-  const [scrollPct, setScrollPct] = useState(0);
   // Article, then (on a slide that has one) the official video — from the live session.
   const [mediaView, setMediaView] = useState<'article' | 'video'>('article');
   // A same-browser presenter message is newer than any poll still in flight.
   const lastBcMediaRef = useRef(0);
-  const contentRef = useRef<HTMLDivElement>(null);
+  // The story's beat (cover, then each micro-interaction) — kept with its
+  // slide index so a beat never lands on the wrong story. From the presenter's
+  // BroadcastChannel (same browser), the live socket, and the 300ms poll.
+  const [beatAt, setBeatAt] = useState<{ idx: number; beat: number }>({ idx: 0, beat: 0 });
+  const lastPushBeatRef = useRef(0);
+  const syncRef = useRef<LiveSync | null>(null);
+  const syncSessionRef = useRef('');
   const pollRef = useRef<ReturnType<typeof setInterval>>();
   const prevIdxRef = useRef(0);
 
@@ -53,10 +58,13 @@ export default function AudiencePage() {
         if (idx !== prevIdxRef.current) {
           prevIdxRef.current = idx;
           setCurrentIdx(idx);
-          setScrollPct(0);
-          contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
         }
+        lastPushBeatRef.current = Date.now();
+        setBeatAt({ idx, beat: typeof msg.beat === 'number' ? msg.beat : 0 });
         setMediaView(msg.media === 'video' ? 'video' : 'article');
+      } else if (msg.type === 'beat') {
+        lastPushBeatRef.current = Date.now();
+        setBeatAt({ idx: msg.idx, beat: msg.beat });
       } else if (msg.type === 'media') {
         if (msg.idx === prevIdxRef.current) { lastBcMediaRef.current = Date.now(); setMediaView(msg.view === 'video' ? 'video' : 'article'); }
       } else if (msg.type === 'blackout') {
@@ -90,12 +98,34 @@ export default function AudiencePage() {
       if (!session) return;
       if (session.endedAt) { setEnded(true); clearInterval(pollRef.current); return; }
       setBlackout(!!session.blackout);
+      // The live socket for this session: beats and the video arrive the
+      // moment the presenter presses, not on the next poll.
+      if (session.id && syncSessionRef.current !== session.id) {
+        syncRef.current?.close();
+        syncSessionRef.current = session.id;
+        const sync = connectLiveSync(session.id);
+        syncRef.current = sync;
+        sync.onBeat((b) => {
+          if (typeof b.idx !== 'number' || typeof b.beat !== 'number') return;
+          lastPushBeatRef.current = Date.now();
+          setBeatAt({ idx: b.idx, beat: b.beat });
+          if (b.idx !== prevIdxRef.current) { prevIdxRef.current = b.idx; setCurrentIdx(b.idx); }
+        });
+        sync.onMedia((m) => {
+          if (m.idx !== prevIdxRef.current) return;
+          lastBcMediaRef.current = Date.now();
+          setMediaView(m.media === 'video' ? 'video' : 'article');
+        });
+      }
       const idx = session.currentSlideIndex ?? 0;
-      if (idx !== prevIdxRef.current) {
+      const fresh = Date.now() - lastPushBeatRef.current > 1500;
+      if (idx !== prevIdxRef.current && fresh) {
         prevIdxRef.current = idx;
         setCurrentIdx(idx);
-        setScrollPct(0);
-        contentRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+      if (fresh) {
+        const b = typeof session.currentBeat === 'number' ? Math.max(0, Math.round(session.currentBeat)) : 0;
+        setBeatAt((p) => (p.idx === idx && p.beat === b ? p : { idx, beat: b }));
       }
       if (Date.now() - lastBcMediaRef.current > 1500) setMediaView(session.mediaView === 'video' ? 'video' : 'article');
     } catch {}
@@ -108,13 +138,17 @@ export default function AudiencePage() {
     return () => clearInterval(pollRef.current);
   }, [ready, poll]);
 
-  // Track scroll progress
-  const handleScroll = () => {
-    const el = contentRef.current;
-    if (!el) return;
-    const max = el.scrollHeight - el.clientHeight;
-    setScrollPct(max > 0 ? el.scrollTop / max : 0);
-  };
+  useEffect(() => () => { syncRef.current?.close(); syncRef.current = null; }, []);
+
+  // This screen is on camera: hide a resting cursor.
+  const [cursorHidden, setCursorHidden] = useState(false);
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout>;
+    const move = () => { setCursorHidden(false); clearTimeout(t); t = setTimeout(() => setCursorHidden(true), 2000); };
+    move();
+    window.addEventListener('mousemove', move);
+    return () => { window.removeEventListener('mousemove', move); clearTimeout(t); };
+  }, []);
 
   if (ended) {
     return (
@@ -141,66 +175,14 @@ export default function AudiencePage() {
     );
   }
 
-  const isTweet = slide.bestSourceType?.toLowerCase() === 'tweet';
-  const content = (slide.fullContentHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  // The story in the Deep Dive's style: cover, then its scenes' beats (daily/stage).
+  const beat = beatAt.idx === currentIdx ? beatAt.beat : 0;
 
   return (
-    <div className="fixed inset-0 overflow-hidden" style={{ backgroundColor: bgColor }}>
-      {/* Source bar — minimal */}
-      <div className="px-10 py-4 flex items-center gap-3" style={{ borderBottom: '1px solid rgba(128,128,128,0.15)' }}>
-        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-sm font-bold text-muted-foreground">
-          {(slide.bestSourceName || '?').charAt(0).toUpperCase()}
-        </div>
-        <div>
-          <span className="text-sm font-semibold" style={{ color: bgColor === '#ffffff' || bgColor === '#f5f5f0' ? '#111' : '#eee' }}>
-            {slide.bestSourceName}
-          </span>
-          <span className="text-xs ml-2" style={{ color: bgColor === '#ffffff' || bgColor === '#f5f5f0' ? '#666' : '#aaa' }}>
-            via {isTweet ? 'Twitter/X' : slide.bestSourceName}
-          </span>
-        </div>
-      </div>
+    <div className="fixed inset-0 overflow-hidden select-none" style={{ backgroundColor: '#000', cursor: cursorHidden ? 'none' : 'default' }}>
+      <StoryShow slide={slide} beat={beat} number={currentIdx + 1} />
 
-      {/* Content area */}
-      <div
-        ref={contentRef}
-        className="absolute top-16 bottom-0 left-0 right-2 overflow-y-auto"
-        onScroll={handleScroll}
-        style={{ paddingBottom: '2rem' }}
-      >
-        <div className="flex justify-center px-10 py-10">
-          {isTweet ? (
-            <TweetView
-              sourceName={slide.bestSourceName || ''}
-              sourceHandle={slide.bestSourceHandle}
-              publishedAt={slide.publishedAt}
-              content={content}
-              heroImageUrl={slide.heroImageUrl}
-              large
-            />
-          ) : (
-            <ArticleView
-              sourceName={slide.bestSourceName || ''}
-              sourceUrl={slide.bestSourceUrl}
-              publishedAt={slide.publishedAt}
-              topicLabel={slide.topicLabel || ''}
-              content={content}
-              heroImageUrl={slide.heroImageUrl}
-              large
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Scroll progress — right edge */}
-      <div className="absolute top-16 right-0 bottom-0 w-1.5" style={{ backgroundColor: 'rgba(128,128,128,0.15)' }}>
-        <div
-          className="w-full rounded-full transition-all duration-200"
-          style={{ height: `${scrollPct * 100}%`, backgroundColor: 'rgba(128,128,128,0.5)' }}
-        />
-      </div>
-
-      {/* Official video: loaded behind the article, shown full screen when the presenter switches to it */}
+      {/* Official video: loaded behind the story, full screen while the presenter has it up (Shift) */}
       {(() => { const m = slideMedia(slide); return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null; })()}
     </div>
   );

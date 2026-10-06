@@ -9,9 +9,12 @@
  * delay in ms, so a section builds itself in order when it mounts. Re-keying
  * the scene replays it.
  */
-import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { youtubeEmbedUrl } from '../api';
 import { sectionMedia, visualStill, NO_VISUAL, type Section, type Stat, type Visual } from './api';
+import { templateStyle, type DeckTemplate } from './templates';
+import { bubbleRootProps, type BubbleSettings } from './bubble';
+import { sectionBeatCount } from './beats';
 import './deepdive.css';
 
 /**
@@ -43,7 +46,7 @@ function Words({ text, start = 0, step = 55, wordClass = '' }: { text: string; s
 }
 
 /** Statement text with the highlight phrases marked (case-insensitive). */
-function Highlighted({ text, phrases, start }: { text: string; phrases: string[]; start: number }) {
+function Highlighted({ text, phrases, start, markHold = false, markAt }: { text: string; phrases: string[]; start: number; markHold?: boolean; markAt?: number }) {
   const parts: { t: string; mark: boolean }[] = [];
   const lower = text.toLowerCase();
   const hits: [number, number][] = [];
@@ -69,7 +72,7 @@ function Highlighted({ text, phrases, start }: { text: string; phrases: string[]
         const startAt = start + step * wordIdx;
         wordIdx += p.t.split(/\s+/).filter(Boolean).length;
         return p.mark
-          ? <span key={i} className="dd-mark" style={d(start + step * totalWords + 150)}><Words text={p.t} start={startAt} step={step} /></span>
+          ? <span key={i} className={`dd-mark ${markHold ? 'dd-hold-mark' : ''}`} style={d(markAt ?? start + step * totalWords + 150)}><Words text={p.t} start={startAt} step={step} /></span>
           : <Words key={i} text={p.t} start={startAt} step={step} />;
       })}
     </>
@@ -120,8 +123,28 @@ function Head({ section, start = 0 }: { section: Section; start?: number }) {
   );
 }
 
-function SceneBody({ section, still, active }: { section: Section; still: boolean; active: boolean }) {
+/**
+ * BEATS on a classic slide (Jake, 2026-10-06; counts in ./beats.ts): item k
+ * builds in on beat k, the item of the current beat is lit (`dd-cur`), and
+ * items ahead wait hidden (`dd-hold`). Items already due when the slide
+ * mounts keep the slide's own staggered entrance; an item a → press reveals
+ * comes in at once. `beat` undefined = everything shown (thumbnails, and
+ * any caller that predates beats).
+ */
+function useGate(beat: number | undefined, many: boolean) {
+  const mountBeat = useRef(beat ?? Number.MAX_SAFE_INTEGER);
+  return (k: number, base: number): { cls: string; d: number; shown: boolean } => {
+    if (beat === undefined) return { cls: '', d: base, shown: true };
+    if (k > beat) return { cls: 'dd-hold', d: base, shown: false };
+    return { cls: many && k === beat ? 'dd-cur' : '', d: k <= mountBeat.current ? base : 60, shown: true };
+  };
+}
+
+function SceneBody({ section, still, active, beat }: { section: Section; still: boolean; active: boolean; beat?: number }) {
   const x = section.data;
+  const b = still ? undefined : beat;
+  const gate = useGate(b, sectionBeatCount(section) > 1);
+  const mountBeat = useRef(b ?? Number.MAX_SAFE_INTEGER);
   switch (section.kind) {
     case 'title':
       return (
@@ -138,7 +161,8 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
       return (
         <div className="dd-statement">
           {(section.eyebrow || section.heading) && <div className="dd-eyebrow dd-in" style={d(0)}>{section.eyebrow || section.heading}</div>}
-          <p className="dd-big"><Highlighted text={x.text || section.heading} phrases={x.highlight ?? []} start={150} /></p>
+          <p className="dd-big"><Highlighted text={x.text || section.heading} phrases={x.highlight ?? []} start={150}
+            markHold={b !== undefined && b < 1 && !!x.highlight?.length} markAt={b !== undefined && mountBeat.current < 1 ? 60 : undefined} /></p>
         </div>
       );
 
@@ -150,10 +174,11 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
           <Head section={section} />
           <div className={`dd-stats n${n}`} style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
             {stats.map((st, i) => {
-              const delay = 500 + i * 220;
+              const g = gate(i, 500 + i * 220);
               return (
-                <div key={i} className="dd-stat dd-in" style={d(delay)}>
-                  <div className="dd-num dd-grad"><StatValue stat={st} delay={delay + 150} still={still} /></div>
+                <div key={i} className={`dd-stat dd-in ${g.cls}`} style={d(g.d)}>
+                  {/* the count-up starts when the stat is revealed, not while it waits hidden */}
+                  <div className="dd-num dd-grad">{g.shown ? <StatValue stat={st} delay={g.d + 150} still={still} /> : '\u00a0'}</div>
                   <div className="dd-stat-label">{st.label}</div>
                 </div>
               );
@@ -168,12 +193,15 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
         <div>
           <Head section={section} />
           <div className="dd-points">
-            {(x.points ?? []).map((p, i) => (
-              <div key={i} className="dd-point dd-in" style={d(550 + i * 260)}>
-                <span className="dd-point-n">{String(i + 1).padStart(2, '0')}</span>
-                <span>{p}</span>
-              </div>
-            ))}
+            {(x.points ?? []).map((p, i) => {
+              const g = gate(i, 550 + i * 260);
+              return (
+                <div key={i} className={`dd-point dd-in ${g.cls}`} style={d(g.d)}>
+                  <span className="dd-point-n">{String(i + 1).padStart(2, '0')}</span>
+                  <span>{p}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       );
@@ -184,12 +212,15 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
         <div className="dd-takeaways">
           <Head section={section} />
           <div className="dd-points" style={{ ['--cols' as string]: Math.min(4, Math.max(1, pts.length)) } as CSSProperties}>
-            {pts.map((p, i) => (
-              <div key={i} className="dd-point dd-pop" style={d(550 + i * 240)}>
-                <span className="dd-point-n">{i + 1}</span>
-                <span>{p}</span>
-              </div>
-            ))}
+            {pts.map((p, i) => {
+              const g = gate(i, 550 + i * 240);
+              return (
+                <div key={i} className={`dd-point dd-pop ${g.cls}`} style={d(g.d)}>
+                  <span className="dd-point-n">{i + 1}</span>
+                  <span>{p}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       );
@@ -202,15 +233,17 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
         <div>
           <Head section={section} />
           <div className="dd-tl">
-            <div className="dd-tl-line" />
+            {/* With beats the line grows to the current event; without, it draws once. */}
+            <div className={`dd-tl-line ${b !== undefined ? 'stepped' : ''}`}
+              style={b !== undefined ? { transform: `scaleX(${n <= 1 ? 1 : Math.min(1, (8 + (84 * Math.min(b, n - 1)) / (n - 1)) / 100)})` } : undefined} />
             {ev.map((e, i) => {
               // Evenly spaced, inset from the ends so the outer labels fit.
               const left = n === 1 ? 50 : 8 + (84 * i) / (n - 1);
-              const delay = 450 + i * (1300 / Math.max(1, n));
+              const g = gate(i, 450 + i * (1300 / Math.max(1, n)));
               return (
-                <div key={i} className={`dd-tl-ev ${i % 2 === 0 ? 'up' : 'down'}`} style={{ left: `${left}%` }}>
-                  <div className="dd-tl-dot dd-pop" style={d(delay)} />
-                  <div className="dd-tl-card dd-in" style={d(delay + 120)}>
+                <div key={i} className={`dd-tl-ev ${i % 2 === 0 ? 'up' : 'down'} ${g.cls}`} style={{ left: `${left}%` }}>
+                  <div className={`dd-tl-dot dd-pop ${g.cls}`} style={d(g.d)} />
+                  <div className={`dd-tl-card dd-in ${g.cls}`} style={d(g.d + 120)}>
                     <div className="dd-tl-date">{e.date}</div>
                     <div className="dd-tl-label">{e.label}</div>
                     {e.detail && <div className="dd-tl-detail">{e.detail}</div>}
@@ -234,16 +267,20 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
               <div className="dd-cmp-cell" />
               {cols.map((c, i) => <div key={i} className={`dd-cmp-cell ${i === win ? 'win' : ''}`}>{c}</div>)}
             </div>
-            {(x.rows ?? []).map((r, ri) => (
-              <div key={ri} className="dd-cmp-row">
-                <div className="dd-cmp-cell dd-cmp-label"><span className="dd-in" style={d(650 + ri * 200)}>{r.label}</span></div>
-                {r.values.map((v, ci) => (
-                  <div key={ci} className={`dd-cmp-cell ${ci === win ? 'win' : ''}`}>
-                    <span className="dd-in" style={d(700 + ri * 200 + ci * 90)}>{v}</span>
-                  </div>
-                ))}
-              </div>
-            ))}
+            {(x.rows ?? []).map((r, ri) => {
+              const g = gate(ri, 650 + ri * 200);
+              const row = g.cls === 'dd-cur' ? 'dd-cur-row' : '';
+              return (
+                <div key={ri} className="dd-cmp-row">
+                  <div className={`dd-cmp-cell dd-cmp-label ${row}`}><span className={`dd-in ${g.cls}`} style={d(g.d)}>{r.label}</span></div>
+                  {r.values.map((v, ci) => (
+                    <div key={ci} className={`dd-cmp-cell ${ci === win ? 'win' : ''} ${row}`}>
+                      <span className={`dd-in ${g.cls}`} style={d(g.d + 50 + ci * 90)}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       );
@@ -257,16 +294,17 @@ function SceneBody({ section, still, active }: { section: Section; still: boolea
         <div>
           <Head section={section} />
           <div className="dd-bars">
-            {bars.map((b, i) => {
-              const delay = 500 + i * 180;
-              const w = `${Math.max(1, (Math.abs(b.value) / max) * 78)}%`;
+            {bars.map((bar, i) => {
+              const g = gate(i, 500 + i * 180);
+              const delay = g.d === 60 ? 160 : g.d;
+              const w = `${Math.max(1, (Math.abs(bar.value) / max) * 78)}%`;
               return (
-                <div key={i} className={`dd-bar ${i === hl ? 'hl' : ''}`}>
-                  <div className="dd-bar-label dd-in" style={d(delay - 100)}>{b.label}</div>
+                <div key={i} className={`dd-bar ${i === hl ? 'hl' : ''} ${g.cls}`}>
+                  <div className={`dd-bar-label dd-in ${g.cls}`} style={d(delay - 100)}>{bar.label}</div>
                   <div className="dd-bar-track" style={{ ['--w' as string]: w } as CSSProperties}>
-                    <div className="dd-bar-fill" style={d(delay)} />
-                    <div className="dd-bar-val dd-in" style={d(delay + 700)}>
-                      {b.display || <><CountUp value={b.value} decimals={Number.isInteger(b.value) ? 0 : 1} delay={delay} still={still} />{x.unit}</>}
+                    <div className={`dd-bar-fill ${g.cls}`} style={d(delay)} />
+                    <div className={`dd-bar-val dd-in ${g.cls}`} style={d(delay + 700)}>
+                      {bar.display || (g.shown ? <><CountUp value={bar.value} decimals={Number.isInteger(bar.value) ? 0 : 1} delay={delay} still={still} />{x.unit}</> : '\u00a0')}
                     </div>
                   </div>
                 </div>
@@ -365,10 +403,12 @@ interface SceneProps {
   back?: boolean;
   /** Leaving: plays the exit animation. */
   leaving?: 'up' | 'down';
+  /** The beat on screen (./beats.ts); undefined = every item shown. */
+  beat?: number;
 }
 
 /** One section, with its chrome (counter, eyebrow line, footer). */
-export function Scene({ section, index, total, title, still = false, active = true, back = false, leaving }: SceneProps) {
+export function Scene({ section, index, total, title, still = false, active = true, back = false, leaving, beat }: SceneProps) {
   const isMedia = section.kind === 'media' && !!sectionMedia(section);
   const vis = section.visual && !NO_VISUAL.has(section.kind) ? section.visual : null;
   return (
@@ -382,29 +422,44 @@ export function Scene({ section, index, total, title, still = false, active = tr
       )}
       {vis ? (
         <div className="dd-split">
-          <div className="dd-split-text"><SceneBody section={section} still={still} active={active} /></div>
+          <div className="dd-split-text"><SceneBody section={section} still={still} active={active} beat={beat} /></div>
           <VisualFrame v={vis} still={still || !active} />
         </div>
-      ) : <SceneBody section={section} still={still} active={active} />}
+      ) : <SceneBody section={section} still={still} active={active} beat={beat} />}
     </div>
   );
 }
 
-/** The animated background + progress rail around the scenes. */
-export function StageFrame({ index, total, hue, still = false, children, footer }: {
+/**
+ * The animated background + progress rail around the scenes.
+ *
+ * `template` (templates.ts) re-skins it — colours, type, background pattern,
+ * and light slides where the template alternates or is all light; absent =
+ * the original aurora. `bubble` keeps the presenter bubble's corner clear
+ * (bubble.tsx); `overlay` is drawn inside the frame (the bubble's own layer).
+ */
+export function StageFrame({ index, total, hue, still = false, children, footer, template, bubble, overlay }: {
   index: number; total: number; hue?: number; still?: boolean; children: ReactNode; footer?: ReactNode;
+  template?: DeckTemplate | null; bubble?: BubbleSettings | null; overlay?: ReactNode;
 }) {
   // Each section nudges the aurora's colour a little, so the room changes as
-  // the story moves without ever leaving the palette.
-  const h = hue ?? ((index * 38) % 160) - 40;
+  // the story moves without ever leaving the palette (the aurora only — a
+  // designed template keeps its exact colours).
+  const aurora = !template || template.deco === 'aurora';
+  const h = aurora ? hue ?? ((index * 38) % 160) - 40 : 0;
+  const paper = !!template && (template.surfaces === 'light' || (template.surfaces === 'alternate' && index > 0 && index % 2 === 0));
+  const b = bubbleRootProps(bubble);
+  const style = { ...(template ? templateStyle(template, 'v1', { paper }) : {}), ...(b.style ?? {}) };
   return (
-    <div className={`dd-stage ${still ? 'dd-static' : ''}`}>
+    <div className={`dd-stage ${still ? 'dd-static' : ''} ${template ? 'dd-tpl' : ''}`} style={style}
+      data-deco={template?.deco} data-blobs={aurora ? undefined : '0'} data-paper={paper ? '1' : undefined} data-bubble={b['data-bubble']}>
       <div className="dd-canvas">
-        <div className="dd-bg" style={{ filter: `hue-rotate(${h}deg)` }}>
+        <div className="dd-bg" style={{ filter: h ? `hue-rotate(${h}deg)` : undefined }}>
           <div className="dd-blob b1" />
           <div className="dd-blob b2" />
           <div className="dd-blob b3" />
           <div className="dd-grid" />
+          <div className="dd-deco" />
           <div className="dd-vignette" />
         </div>
         {children}
@@ -414,16 +469,17 @@ export function StageFrame({ index, total, hue, still = false, children, footer 
           </div>
         )}
         {footer && <div className="dd-footer">{footer}</div>}
+        {overlay}
       </div>
     </div>
   );
 }
 
 /** A still 16:9 thumbnail of one section. */
-export function SceneThumb({ section, index, total, title, className = '' }: { section: Section; index: number; total: number; title: string; className?: string }) {
+export function SceneThumb({ section, index, total, title, className = '', template, bubble }: { section: Section; index: number; total: number; title: string; className?: string; template?: DeckTemplate | null; bubble?: BubbleSettings | null }) {
   return (
     <div className={`relative aspect-video overflow-hidden rounded-md bg-black ${className}`}>
-      <StageFrame index={index} total={total} still>
+      <StageFrame index={index} total={total} still template={template} bubble={bubble}>
         <Scene section={section} index={index} total={total} title={title} still active={false} />
       </StageFrame>
     </div>

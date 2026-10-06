@@ -85,6 +85,8 @@ export interface Slide {
   /** Why this video, or why none. */
   videoReason?: string;
   videoCheckedAt?: string;
+  /** The story's on-screen stage as JSON (server stage.ts) — read it with `daily/stage/story.ts`. Unset on older decks. */
+  stageJson?: string;
 }
 
 export interface GetSlidesOutputType { deck: Deck | null; slides: Slide[] }
@@ -111,6 +113,8 @@ export interface LiveSession {
   tpControllerId?: string;
   /** What the audience screen shows for the current slide. Unset = 'article'. */
   mediaView?: string;
+  /** Beat of the current story on the audience screen (0 = its cover). */
+  currentBeat?: number;
 }
 
 export interface UpdateSessionInput {
@@ -128,6 +132,7 @@ export interface UpdateSessionInput {
   tpAutoscroll?: boolean;
   tpControllerId?: string;
   mediaView?: 'article' | 'video';
+  currentBeat?: number;
 }
 
 export async function call<T>(fn: string, input: unknown): Promise<T> {
@@ -257,6 +262,10 @@ export const findDeckVideos = (input: { deckId?: string }) =>
 /** `videoId`: a YouTube id/link, a Vimeo link or a direct .mp4/.webm link; null removes the video. */
 export const setSlideVideo = (input: { slideId: string; videoId: string | null }) =>
   call<{ success: boolean; slide: Slide }>('setSlideVideo', input);
+
+/** Make the on-screen stage for slides that have none (older decks); `force` redoes all. Scripts are untouched. */
+export const buildSlideStages = (input: { deckId?: string; force?: boolean }) =>
+  call<{ built: number; failed: number; skipped: number }>('buildSlideStages', input);
 
 /** YouTube embed for the audience screens: muted, looping, autoplay, as little chrome as YouTube allows. */
 export function youtubeEmbedUrl(videoId: string, opts: { autoplay?: boolean; jsApi?: boolean } = {}): string {

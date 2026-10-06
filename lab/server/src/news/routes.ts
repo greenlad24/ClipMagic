@@ -28,7 +28,7 @@ import {
 import { collectNews } from "./collect.js";
 import { anthropicConfigured } from "../ai/claude.js";
 import { getBraveSearchApiKey, getNewsApiOrgKey, getGNewsApiKey, getDataForSeoCreds } from "../settings/postizSecrets.js";
-import { buildDeckFromStories } from "./deck.js";
+import { buildDeckFromStories, buildStagesForDeck } from "./deck.js";
 import { findSlideVideo as findSlideVideoFor, findDeckVideos as findDeckVideosFor, setSlideVideo as setSlideVideoFor, streamSlideVideo } from "./video.js";
 import { Readable } from "node:stream";
 import { db } from "../db/index.js";
@@ -38,6 +38,7 @@ import {
   sectionsOf,
   sectionOut,
   deepDiveOut,
+  templateInput,
   reconcile,
   isGenerating,
   normalizeData,
@@ -160,6 +161,17 @@ const reorderSlides: Handler = (input) => {
   return { success: true };
 };
 
+/**
+ * The on-screen stage (stage.ts) for slides that have none — a deck built
+ * before stages existed — keeping its scripts, notes and videos. `force`
+ * redoes every slide's stage. Default deck: today's.
+ */
+const buildSlideStages: Handler = async (input) => {
+  const deckId = str(input?.deckId) ?? decks.where("deck_date = ? ORDER BY created_at DESC LIMIT 1", todayDate())[0]?.id;
+  if (!deckId) return { built: 0, failed: 0, skipped: 0 };
+  return buildStagesForDeck(deckId, bool(input?.force));
+};
+
 /* ── official release video (video.ts) ─────────────────────────────────────── */
 
 /** Re-run the search for one slide. */
@@ -240,6 +252,7 @@ const SESSION_FIELDS = [
   ["tpAutoscroll", "bool"],
   ["tpControllerId", "str"],
   ["mediaView", "str"],
+  ["currentBeat", "num"],
 ] as const;
 
 const updateSession: Handler = (input) => {
@@ -401,6 +414,7 @@ const createDeepDive: Handler = (input) => {
     format: input?.format === "v1" ? "" : "v2",
     demoAgent: input?.demoAgent === true ? 1 : 0,
     demoUrl: (str(input?.demoUrl) ?? "").trim().slice(0, 500),
+    template: templateInput(input?.template) ?? "",
     updatedAt: new Date().toISOString(),
   });
   return { deepDive: deepDiveOut(d) };
@@ -416,6 +430,7 @@ const updateDeepDive: Handler = (input) => {
   if (typeof input?.demoAgent === "boolean") patch.demoAgent = input.demoAgent ? 1 : 0;
   if (str(input?.demoUrl) !== undefined) patch.demoUrl = String(input.demoUrl).trim().slice(0, 500);
   if (input?.format === "v1" || input?.format === "v2") patch.format = input.format === "v2" ? "v2" : "";
+  if (templateInput(input?.template) !== undefined) patch.template = templateInput(input?.template);
   if (Object.keys(patch).length) deepDives.update(id, { ...patch, updatedAt: new Date().toISOString() });
   return { success: true };
 };
@@ -521,6 +536,7 @@ const HANDLERS: Record<string, Handler> = {
   findSlideVideo,
   findDeckVideos,
   setSlideVideo,
+  buildSlideStages,
   listDeepDives,
   getDeepDive,
   createDeepDive,

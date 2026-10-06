@@ -26,6 +26,7 @@ import { callNewsModel } from "./ai.js";
 import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { findVideoForStory, parseVideoId } from "./video.js";
 import { gatherVisuals, type Visual } from "./deepDiveVisuals.js";
+import { fitMarkers, sectionBeatCountOf } from "./deepDiveBeats.js";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS news_deep_dives (
@@ -75,6 +76,22 @@ if (!hasCol("news_deep_dive_sections", "visual_json")) db.exec(`ALTER TABLE news
 for (const [c, t] of [["format", "TEXT"], ["demo_agent", "INTEGER"], ["demo_url", "TEXT"], ["media_json", "TEXT"]] as const) {
   if (!hasCol("news_deep_dives", c)) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN ${c} ${t}`);
 }
+// Templates (2026-10-06): the design the dive is presented in (web: src/news/deepdive/templates.ts).
+if (!hasCol("news_deep_dives", "template")) db.exec(`ALTER TABLE news_deep_dives ADD COLUMN template TEXT`);
+
+/**
+ * The template ids the web app draws (src/news/deepdive/templates.ts). A
+ * template is design only — colours, type, backgrounds — so the server just
+ * stores the choice; a rebuild never touches it. Empty = the format's default.
+ */
+export const DEEP_DIVE_TEMPLATES = [
+  "jake", "aurora", "editorial", "midnight", "neon", "terminal", "sunset", "mint", "swiss", "royal", "ocean", "mono",
+] as const;
+/** A valid template id, "" to clear, or undefined when `v` is not a template at all. */
+export function templateInput(v: unknown): string | undefined {
+  if (v === "" || v === null) return "";
+  return typeof v === "string" && (DEEP_DIVE_TEMPLATES as readonly string[]).includes(v) ? v : undefined;
+}
 
 /* ── records ──────────────────────────────────────────────────────────────── */
 
@@ -104,6 +121,8 @@ export interface DeepDiveRecord {
   demoUrl?: string;
   /** v2: the media catalogue (clip candidates, page capture, demo runs) as JSON. */
   mediaJson?: string;
+  /** The design template id (DEEP_DIVE_TEMPLATES); empty = the format's default. */
+  template?: string;
   generatedAt?: string;
   updatedAt?: string;
   createdAt?: number;
@@ -150,6 +169,7 @@ export const deepDives = makeTable<DeepDiveRecord>(
     demoAgent: ["demo_agent", "num"],
     demoUrl: ["demo_url", "text"],
     mediaJson: ["media_json", "text"],
+    template: ["template", "text"],
     generatedAt: ["generated_at", "text"],
     updatedAt: ["updated_at", "text"],
     createdAt: ["created_at", "num"],
@@ -337,6 +357,7 @@ export function deepDiveOut(d: DeepDiveRecord) {
     format: d.format === "v2" ? "v2" : "v1",
     demoAgent: !!d.demoAgent,
     demoUrl: d.demoUrl ?? "",
+    template: d.template ?? "",
     generatedAt: d.generatedAt ?? null,
     updatedAt: d.updatedAt ?? null,
     createdAt: d.createdAt ?? 0,
@@ -582,9 +603,12 @@ export function wordTargets(kinds: SectionKind[]): number[] {
 
 function sectionBrief(sections: { kind: SectionKind; eyebrow: string; heading: string; data: unknown; beats: string[]; visual?: Visual | null }[]): string {
   const targets = wordTargets(sections.map((x) => x.kind));
-  return sections.map((x, i) =>
-    `### SECTION ${i + 1} — ${x.kind.toUpperCase()}${x.eyebrow ? ` · ${x.eyebrow}` : ""} — about ${targets[i]} words\nON SCREEN: ${x.heading}\n${JSON.stringify(x.data)}${x.visual ? `\nVISUAL ON SCREEN NEXT TO IT: ${x.visual.description}` : ""}\nSAY: ${x.beats.join(" | ")}`,
-  ).join("\n\n");
+  return sections.map((x, i) => {
+    // Beats (2026-10-06): the slide's items build in one → press at a time.
+    const n = sectionBeatCountOf(x.kind, x.data);
+    const beatLine = n > 1 ? ` — ${n} beats (${n - 1} [next] markers: the items appear one per beat, in order)` : "";
+    return `### SECTION ${i + 1} — ${x.kind.toUpperCase()}${x.eyebrow ? ` · ${x.eyebrow}` : ""} — about ${targets[i]} words${beatLine}\nON SCREEN: ${x.heading}\n${JSON.stringify(x.data)}${x.visual ? `\nVISUAL ON SCREEN NEXT TO IT: ${x.visual.description}` : ""}\nSAY: ${x.beats.join(" | ")}`;
+  }).join("\n\n");
 }
 
 const DEEP_DIVE_RULES = `THIS IS A DEEP-DIVE SEGMENT, NOT A NEWS SEGMENT:
@@ -596,9 +620,10 @@ const DEEP_DIVE_RULES = `THIS IS A DEEP-DIVE SEGMENT, NOT A NEWS SEGMENT:
 - It is ONE continuous talk. Each section picks up where the last one left off, with a natural bridge ("So how did we get here?", "Now, here's the catch."). Never restart or re-introduce the topic.
 - The audience is looking at the screen. Where a section has a VISUAL ON SCREEN (a real screenshot, GIF or demo clip), talk about what it shows — walk them through it ("see that panel on the right? that's the dot's own browser") the way Jake narrates a demo. Never read on-screen text out word for word — add to it.
 - Use 5-9 phrases from the conversational phrase menu across the whole segment, never two in a row, never the same one twice.
-- Endings within sections vary. The banned endings and the ban on opening an opinion with "My take" apply to every section.`;
+- Endings within sections vary. The banned endings and the ban on opening an opinion with "My take" apply to every section.
+- BEATS: a section with several items (points, numbers, timeline events, comparison rows, bars) shows them ONE AT A TIME — Jake presses → to bring in the next. Where a section says "N beats", put the marker [next] on its own between beats — EXACTLY N−1 markers — and talk about item 1 before the first [next], item 2 after it, and so on, so what he says lines up with what appears. A section with a highlighted statement has 2 beats: the statement, then [next] the highlight lands.`;
 
-async function writeScripts(d: DeepDiveRecord, pack: ResearchPack, brief: string, count: number): Promise<string[]> {
+async function writeScripts(d: DeepDiveRecord, pack: ResearchPack, brief: string, count: number, beats: number[] = []): Promise<string[]> {
   const facts = JSON.stringify(pack).slice(0, 20000);
   const prompt = `${JAKE_STYLE_GUIDE}
 
@@ -616,7 +641,7 @@ ${brief}
 RESEARCH (the only facts you may use):
 ${facts}
 
-OUTPUT FORMAT — exactly ${count} sections, each starting with its marker line on its own, then only the words Jake says:
+OUTPUT FORMAT — exactly ${count} sections, each starting with its marker line on its own, then only the words Jake says (with [next] between beats where a section has them):
 ### SECTION 1
 (words)
 ### SECTION 2
@@ -648,7 +673,7 @@ Check every sentence:
 THE SECTION BRIEF (with each section's word target):
 ${brief}
 
-Do NOT change: the facts, attributions, rumor labels, the order, or the section markers. Do not add facts that aren't in the research.
+Do NOT change: the facts, attributions, rumor labels, the order, the section markers, or the number of [next] beat markers in each section. Do not add facts that aren't in the research.
 
 RESEARCH (for fact-checking only):
 ${facts}
@@ -660,11 +685,12 @@ Output ONLY the final script with the same ### SECTION n marker lines — nothin
   try {
     const reviewed = await callNewsModel(review, "news-deepdive-script", "director");
     const r = splitScripts(reviewed, count);
-    if (r.filter(Boolean).length === parts.filter(Boolean).length) return r.map((t, i) => t || parts[i]);
+    if (r.filter(Boolean).length === parts.filter(Boolean).length) return r.map((t, i) => fitMarkers(t || parts[i], beats[i] ?? 1));
   } catch (err) {
     console.warn("[news-deepdive] review pass failed, keeping the draft:", err);
   }
-  return parts;
+  // Exactly beats−1 [next] marks per section, whatever the model did.
+  return parts.map((t, i) => fitMarkers(t, beats[i] ?? 1));
 }
 
 /* ── 4. videos ────────────────────────────────────────────────────────────── */
@@ -793,8 +819,8 @@ export async function generateDeepDive(
     await prog(`Outline: ${planned.length} sections (${planned.map((p) => p.kind).join(" · ")}), ${planned.filter((p) => p.visual).length} with a screenshot/GIF/clip.`, 52);
 
     await prog("Writing the script in Jake's voice, then reviewing it…", 55);
-    const scripts = await writeScripts(d, pack, sectionBrief(planned), planned.length);
-    const words = scripts.join(" ").split(/\s+/).filter(Boolean).length;
+    const scripts = await writeScripts(d, pack, sectionBrief(planned), planned.length, planned.map((p) => sectionBeatCountOf(p.kind, p.data)));
+    const words = scripts.join(" ").replace(/\[next\]/gi, " ").split(/\s+/).filter(Boolean).length;
     await prog(`Script: ${words} words, about ${Math.round(words / 150)} minutes out loud.`, 85);
 
     const media = planned.map((p, i) => (p.kind === "media" ? i : -1)).filter((i) => i >= 0);

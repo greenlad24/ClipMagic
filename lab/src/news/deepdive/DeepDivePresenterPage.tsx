@@ -9,7 +9,7 @@
  * edits, so its look is copied here rather than shared.
  *
  * Keys (Jake's rule for both screens):
- *   ← / → (and a clicker's PageUp / PageDown)  previous / next section
+ *   ← / → (and a clicker's PageUp / PageDown)  previous / next beat (then section)
  *   ↑ / ↓                                      nudge the script
  *   Space                                      play / pause the scroll
  *   1–9                                        jump to a section
@@ -33,7 +33,8 @@ import { useAuth } from '../auth';
 import { startSession, getSession, endSession } from '../api';
 import { connectLiveSync, type LiveSync } from '../liveSync';
 import { getDeepDive, editorPath, stagePath, KIND_LABEL, type DeepDive, type Section } from './api';
-import { flatten, firstBeatOf, scriptParts, beatCount } from './v2/types';
+import { flatten, firstBeatOf, scriptParts, beatCount, type BeatUnit, type Chapter } from './v2/types';
+import { sectionsToUnits } from './beats';
 import { sectionsToChapters, CHAPTER_LABEL } from './v2/adapt';
 import { sendBeat } from './v2/beatSync';
 
@@ -82,14 +83,17 @@ export default function DeepDivePresenterPage() {
   const tpRef = useRef<HTMLDivElement>(null);
   const lastProgRef = useRef(-1);
   const ref = useRef({ current: 0, count: 0, playing: false, speed: 2.5, fontSize: 32, lineHeight: 1.9 });
-  // v2 (Jake, 2026-10-02): the sync index is a BEAT across the whole show;
-  // the script belongs to the beat's chapter and only resets on a new chapter.
+  // The sync index is a BEAT across the whole show (v2 since 2026-10-02,
+  // classic slides since 2026-10-06 — same code, ./beats.ts gives a classic
+  // slide its beat count); the script belongs to the beat's chapter/slide and
+  // only resets on a new one.
   const isV2 = dive?.format === 'v2';
   const chapters = useMemo(() => (isV2 ? sectionsToChapters(sections) : []), [isV2, sections]);
-  const beats = useMemo(() => flatten(chapters), [chapters]);
-  const count = isV2 ? beats.length : sections.length;
-  const chapterIdx = isV2 ? (beats[Math.min(current, beats.length - 1)]?.chapter ?? 0) : current;
-  const scrollKey = isV2 ? chapterIdx : current;
+  const units: (Chapter | BeatUnit)[] = useMemo(() => (isV2 ? chapters : sectionsToUnits(sections)), [isV2, chapters, sections]);
+  const beats = useMemo(() => flatten(units), [units]);
+  const count = beats.length;
+  const chapterIdx = beats[Math.min(current, beats.length - 1)]?.chapter ?? 0;
+  const scrollKey = chapterIdx;
   ref.current = { current, count, playing, speed, fontSize, lineHeight };
 
   useEffect(() => {
@@ -220,13 +224,12 @@ export default function DeepDivePresenterPage() {
     const from = ref.current.current;
     if (next === from) return;
     setCurrent(next);
-    // v2: a beat inside the same chapter keeps the script where it is.
-    if (beatsRef.current.length) sendBeat(syncRef.current, beatsRef.current, from, next);
-    else syncRef.current?.setSlide(next);
+    // A beat inside the same chapter/slide keeps the script where it is.
+    sendBeat(syncRef.current, beatsRef.current, from, next);
   }, []);
 
-  const chaptersRef = useRef(chapters);
-  chaptersRef.current = chapters;
+  const unitsRef = useRef(units);
+  unitsRef.current = units;
   const beatsRef = useRef(beats);
   beatsRef.current = beats;
 
@@ -259,7 +262,7 @@ export default function DeepDivePresenterPage() {
       else if (e.key === 'ArrowUp') { e.preventDefault(); nudge(-1); }
       else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
-      else if (/^[1-9]$/.test(e.key)) go(chaptersRef.current.length ? firstBeatOf(chaptersRef.current, parseInt(e.key, 10) - 1) : parseInt(e.key, 10) - 1);
+      else if (/^[1-9]$/.test(e.key)) go(firstBeatOf(unitsRef.current, parseInt(e.key, 10) - 1));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -292,12 +295,12 @@ export default function DeepDivePresenterPage() {
 
   const sec = sections[Math.min(chapterIdx, sections.length - 1)];
   const next = sections[chapterIdx + 1];
-  const chapter = isV2 ? chapters[chapterIdx] : null;
-  const beatNow = isV2 ? (beats[Math.min(current, beats.length - 1)]?.beat ?? 0) : 0;
-  const parts = chapter ? scriptParts(chapter) : [];
+  const unit = units[Math.min(chapterIdx, units.length - 1)];
+  const beatNow = beats[Math.min(current, beats.length - 1)]?.beat ?? 0;
+  const parts = unit ? scriptParts(unit) : [];
+  const nBeats = unit ? beatCount(unit) : 1;
   const kindLabel = (k: string) => (isV2 ? CHAPTER_LABEL[k as keyof typeof CHAPTER_LABEL] : KIND_LABEL[k as keyof typeof KIND_LABEL]) || k;
   const title = dive.title || dive.topic;
-  const paragraphs = (sec.script || '').split(/\n+/).map((p) => p.trim()).filter(Boolean);
   const atStart = current === 0;
   const atEnd = current >= count - 1;
 
@@ -315,7 +318,7 @@ export default function DeepDivePresenterPage() {
           <button onClick={() => go(current - 1)} disabled={atStart} title="Previous section (←)"
             style={{ background: D.card, border: `1px solid ${D.border}`, color: atStart ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: atStart ? 'not-allowed' : 'pointer', fontSize: 13 }}>‹
           </button>
-          <span style={{ fontSize: 13, fontWeight: 600, color: D.text, whiteSpace: 'nowrap' }}>{isV2 ? `${chapterIdx + 1}.${beatNow + 1}` : current + 1} / {isV2 ? sections.length : sections.length}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: D.text, whiteSpace: 'nowrap' }}>{nBeats > 1 ? `${chapterIdx + 1}.${beatNow + 1}` : chapterIdx + 1} / {sections.length}</span>
           <button onClick={() => go(current + 1)} disabled={atEnd} title="Next section (→)"
             style={{ background: D.card, border: `1px solid ${D.border}`, color: atEnd ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: atEnd ? 'not-allowed' : 'pointer', fontSize: 13 }}>›
           </button>
@@ -360,10 +363,10 @@ export default function DeepDivePresenterPage() {
           <div style={{ maxWidth: WIDTH_PX[width], margin: '0 auto', padding: '44px 40px 0', position: 'relative' }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
               {chapterIdx + 1} / {sections.length} · {kindLabel(sec.kind)}{sec.heading ? ` · ${sec.heading.replace(/\*/g, '')}` : ''}
-              {chapter && beatCount(chapter) > 1 ? ` · beat ${beatNow + 1} of ${beatCount(chapter)}` : ''}
+              {nBeats > 1 ? ` · beat ${beatNow + 1} of ${nBeats}` : ''}
             </p>
 
-            {chapter ? parts.map((part, b) => (
+            {parts.some((p) => p.trim()) ? parts.map((part, b) => (
               <div key={`${sec.id}:b${b}`} style={{ opacity: b < beatNow ? 0.35 : 1, transition: 'opacity .3s' }}>
                 {b > 0 && (
                   <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', color: b === beatNow ? '#ffd21e' : D.faint, margin: `0 0 ${Math.round(fontSize * 0.5)}px`, fontFamily: 'system-ui, sans-serif' }}>
@@ -378,14 +381,6 @@ export default function DeepDivePresenterPage() {
                   } as CSSProperties}>{para}</p>
                 ))}
               </div>
-            )) : paragraphs.length ? paragraphs.map((para, i) => (
-              <p key={`${sec.id}:${i}`} style={{
-                fontSize, lineHeight, color: '#ffffff', fontWeight: 400,
-                margin: `0 0 ${Math.round(fontSize * 0.8)}px`,
-                letterSpacing: '0.012em', fontFamily: SCRIPT_FONT, WebkitTextSizeAdjust: '100%',
-              } as CSSProperties}>
-                {para}
-              </p>
             )) : (
               <div style={{ textAlign: 'center', marginTop: 60 }}>
                 <p style={{ fontSize: 18, color: D.muted, marginBottom: 8 }}>No script for this section.</p>
@@ -444,7 +439,7 @@ export default function DeepDivePresenterPage() {
           </div>
 
           <span style={{ flex: 1 }} />
-          <span style={{ fontSize: 10, color: D.faint }}>← → sections · ↑ ↓ script · Space scroll</span>
+          <span style={{ fontSize: 10, color: D.faint }}>← → beats · ↑ ↓ script · Space scroll</span>
         </div>
       </div>
 

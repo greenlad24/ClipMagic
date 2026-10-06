@@ -1,40 +1,40 @@
 /**
- * Preview a slide: the audience view (rendered with the audience screen's own
- * light palette and background colour) beside the presenter notes, which can
- * be edited in place.
+ * Preview a slide: the audience view — the story as the stage shows it
+ * (cover, then each beat; daily/stage, 2026-10-06), steppable here with the
+ * arrows under it — beside the presenter notes, which can be edited in place.
  */
 import { useEffect, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { Pencil, Search, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { findSlideVideo, setSlideVideo, slideMedia } from '../api';
-import TweetView from '../components/TweetView';
-import ArticleView from '../components/ArticleView';
 import NotesEditor, { parseKeyPoints } from './NotesEditor';
 import type { Slide } from './useDailyShow';
-import './audience-preview.css';
-
-const BG_KEY = 'ng-audience-bg'; // same key Settings writes and the audience page reads
+import { StoryThumb } from './stage/StoryShow';
+import { beatLabel, storyBeats, storyStage } from './stage/story';
 
 interface Props {
   slide: Slide | null;
+  /** Its place in the show (1-based), for the scenes' number badge. */
+  number?: number;
   onClose: () => void;
   onNotesUpdated: () => void;
 }
 
-export default function SlidePreviewDialog({ slide, onClose, onNotesUpdated }: Props) {
+export default function SlidePreviewDialog({ slide, number = 1, onClose, onNotesUpdated }: Props) {
   const [editingNotes, setEditingNotes] = useState(false);
   const [videoBusy, setVideoBusy] = useState<'' | 'find' | 'set'>('');
   const [videoLink, setVideoLink] = useState('');
-  useEffect(() => { setEditingNotes(false); setVideoLink(''); }, [slide?.id]);
+  const [beat, setBeat] = useState(0);
+  useEffect(() => { setEditingNotes(false); setVideoLink(''); setBeat(0); }, [slide?.id]);
   if (!slide) return null;
+  const stage = storyStage(slide);
+  const beats = storyBeats(stage);
 
   const keyPoints = parseKeyPoints(slide.keyPoints);
-  const isTweet = slide.bestSourceType?.toLowerCase() === 'tweet';
-  const content = (slide.fullContentHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   const timeAgo = slide.publishedAt ? formatDistanceToNow(new Date(slide.publishedAt), { addSuffix: true }) : '';
   const slideId = slide.id;
   const media = slideMedia(slide);
@@ -59,9 +59,6 @@ export default function SlidePreviewDialog({ slide, onClose, onNotesUpdated }: P
     finally { setVideoBusy(''); }
   };
 
-  let bg = '#ffffff';
-  try { bg = localStorage.getItem(BG_KEY) || bg; } catch { /* storage blocked */ }
-
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
@@ -74,15 +71,26 @@ export default function SlidePreviewDialog({ slide, onClose, onNotesUpdated }: P
         <div className="mt-2 grid grid-cols-1 gap-6 md:grid-cols-2">
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Audience view</p>
-            <div className="news-audience-preview rounded-xl p-3" style={{ background: bg }}>
-              {isTweet ? (
-                <TweetView sourceName={slide.bestSourceName || ''} sourceHandle={slide.bestSourceHandle} publishedAt={slide.publishedAt} content={content} heroImageUrl={slide.heroImageUrl} />
-              ) : (
-                <ArticleView sourceName={slide.bestSourceName || ''} sourceUrl={slide.bestSourceUrl} publishedAt={slide.publishedAt} topicLabel={slide.topicLabel || ''} content={content} heroImageUrl={slide.heroImageUrl} />
-              )}
+            <div data-story-preview>
+              <StoryThumb slide={slide} beat={beat} number={number} live />
             </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setBeat((b) => Math.max(0, b - 1))} disabled={beat <= 0} aria-label="Previous beat">
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <span className="text-xs tabular-nums text-muted-foreground">Beat {Math.min(beat, beats - 1) + 1} / {beats}</span>
+              <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setBeat((b) => Math.min(beats - 1, b + 1))} disabled={beat >= beats - 1} aria-label="Next beat">
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+              <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{beatLabel(stage, Math.min(beat, beats - 1))}</span>
+            </div>
+            {stage.fallback && (
+              <p className="mt-1.5 text-[11px] leading-snug text-amber-300/90">
+                No visuals built for this story yet — it shows its key points. Use “Make visuals” in Selections (keeps the script).
+              </p>
+            )}
 
-            {/* Official release video — plays full screen after the article (→ on the presenter). */}
+            {/* Official release video — full screen on demand (Shift on the presenter), never on a beat. */}
             <div className="mt-3 rounded-lg border border-border p-2.5" data-video-panel>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Story video</p>
@@ -111,7 +119,7 @@ export default function SlidePreviewDialog({ slide, onClose, onNotesUpdated }: P
                   </Button>
                 </div>
               ) : (
-                <p className="mt-1.5 text-xs text-muted-foreground">No video — this slide shows the article only.</p>
+                <p className="mt-1.5 text-xs text-muted-foreground">No video — this story shows its slides only.</p>
               )}
               {slide.videoReason && <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{slide.videoReason}</p>}
               <form className="mt-2 flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (videoLink.trim()) void setVideo(videoLink.trim()); }}>

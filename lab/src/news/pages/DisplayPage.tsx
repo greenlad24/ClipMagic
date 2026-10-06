@@ -2,16 +2,16 @@ import { useNewsTheme } from '../useNewsTheme';
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../auth';
 import { GetSlidesOutputType } from '../api';
-import TweetView from '../components/TweetView';
-import ArticleView from '../components/ArticleView';
+import StoryShow from '../daily/stage/StoryShow';
 import VideoEmbed from '../components/VideoEmbed';
 import { slideMedia } from '../api';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
 type BCMsg =
-  | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: 'article' | 'video' }
+  | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: 'article' | 'video'; beat?: number }
   | { type: 'media'; idx: number; view: 'article' | 'video' }
+  | { type: 'beat'; idx: number; beat: number }
   | { type: 'blackout'; value: boolean }
   | { type: 'end' }
   | { type: 'ping' }
@@ -25,7 +25,8 @@ export default function DisplayPage() {
   const { user, isLoading: authLoading, loginWithRedirect } = useAuth();
   const [slide, setSlide] = useState<SlideType | null>(null);
   const [idx, setIdx] = useState(0);
-  const [total, setTotal] = useState(0);
+  // The story's beat (cover, then each micro-interaction), from the presenter.
+  const [beat, setBeat] = useState(0);
   const [blackout, setBlackout] = useState(false);
   const [ended, setEnded] = useState(false);
   // Article, then (on a slide that has one) the official video — driven by the presenter.
@@ -50,9 +51,11 @@ export default function DisplayPage() {
         setSlide(msg.slide);
         setIdx(msg.idx);
         idxRef.current = msg.idx;
-        setTotal(msg.total);
+        setBeat(typeof msg.beat === 'number' ? msg.beat : 0);
         setBlackout(false);
         setMediaView(msg.media === 'video' ? 'video' : 'article');
+      } else if (msg.type === 'beat') {
+        if (msg.idx === idxRef.current) setBeat(msg.beat);
       } else if (msg.type === 'media') {
         if (msg.idx === idxRef.current) setMediaView(msg.view === 'video' ? 'video' : 'article');
       } else if (msg.type === 'blackout') {
@@ -92,77 +95,12 @@ export default function DisplayPage() {
     );
   }
 
-  const isTweet = slide.bestSourceType?.toLowerCase() === 'tweet';
-  const content = (slide.fullContentHtml || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  const sourceHost = slide.bestSourceUrl
-    ? (() => { try { return new URL(slide.bestSourceUrl).hostname.replace('www.', ''); } catch { return ''; } })()
-    : '';
-
   return (
-    <div className="fixed inset-0 overflow-hidden" style={{ backgroundColor: bgColor }}>
-      {/* Source bar */}
-      <div
-        className="flex items-center gap-3 px-10 py-4"
-        style={{ borderBottom: '1px solid rgba(128,128,128,0.15)' }}
-      >
-        <div
-          className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-          style={{ background: 'rgba(128,128,128,0.15)', color: subColor }}
-        >
-          {(slide.bestSourceName || '?').charAt(0).toUpperCase()}
-        </div>
-        <div className="min-w-0">
-          <span className="text-sm font-semibold" style={{ color: textColor }}>{slide.bestSourceName}</span>
-          {sourceHost && (
-            <span className="text-xs ml-2" style={{ color: subColor }}>via {sourceHost}</span>
-          )}
-        </div>
-        {/* Slide counter — unobtrusive */}
-        <div className="ml-auto flex items-center gap-3">
-          {total > 0 && (
-            <span className="text-xs tabular-nums" style={{ color: subColor }}>{idx + 1} / {total}</span>
-          )}
-          {slide.bestSourceUrl && (
-            <a
-              href={slide.bestSourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs"
-              style={{ color: '#60a5fa' }}
-            >
-              Open source ↗
-            </a>
-          )}
-        </div>
-      </div>
+    <div className="fixed inset-0 overflow-hidden" style={{ backgroundColor: '#000' }}>
+      {/* The story in the Deep Dive's style: cover, then its scenes' beats (daily/stage). */}
+      <StoryShow slide={slide} beat={beat} number={idx + 1} />
 
-      {/* Content */}
-      <div className="absolute left-0 right-0 bottom-0 overflow-y-auto" style={{ top: '4rem' }}>
-        <div className="flex justify-center px-10 py-10">
-          {isTweet ? (
-            <TweetView
-              sourceName={slide.bestSourceName || ''}
-              sourceHandle={slide.bestSourceHandle}
-              publishedAt={slide.publishedAt}
-              content={content}
-              heroImageUrl={slide.heroImageUrl}
-              large
-            />
-          ) : (
-            <ArticleView
-              sourceName={slide.bestSourceName || ''}
-              sourceUrl={slide.bestSourceUrl}
-              publishedAt={slide.publishedAt}
-              topicLabel={slide.topicLabel || ''}
-              content={content}
-              heroImageUrl={slide.heroImageUrl}
-              large
-            />
-          )}
-        </div>
-      </div>
-
-      {/* Official video: loaded behind the article, shown full screen on the presenter's → */}
+      {/* Official video: loaded behind the story, full screen while the presenter has it up (Shift) */}
       {(() => { const m = slideMedia(slide); return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null; })()}
     </div>
   );

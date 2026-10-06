@@ -134,6 +134,10 @@ for (const col of ["video_id", "video_title", "video_channel", "video_reason", "
 }
 if (!hasColumn("news_slides", "video_proxy")) db.exec(`ALTER TABLE news_slides ADD COLUMN video_proxy INTEGER`);
 if (!hasColumn("news_live_sessions", "media_view")) db.exec(`ALTER TABLE news_live_sessions ADD COLUMN media_view TEXT`);
+// Daily Show stage (stage.ts): the story's cover + Deep Dive-style scenes, and
+// which beat of the current story the audience screen is on. Additive only.
+if (!hasColumn("news_slides", "stage_json")) db.exec(`ALTER TABLE news_slides ADD COLUMN stage_json TEXT`);
+if (!hasColumn("news_live_sessions", "current_beat")) db.exec(`ALTER TABLE news_live_sessions ADD COLUMN current_beat REAL`);
 if (!hasColumn("news_source_cache", "first_seen_date")) {
   db.exec(`ALTER TABLE news_source_cache ADD COLUMN first_seen_date TEXT`);
   // Backfill with the SHOW-TIMEZONE date of the last sighting — the UTC date
@@ -272,6 +276,8 @@ export interface SlideRecord {
   /** Why this video (or why none) — shown on the dashboard. */
   videoReason?: string;
   videoCheckedAt?: string;
+  /** stage.ts StoryStage as JSON — the story's cover + scenes. Unset on decks built before 2026-10-06. */
+  stageJson?: string;
 }
 
 export interface SessionRecord {
@@ -296,6 +302,8 @@ export interface SessionRecord {
   tpControllerId?: string;
   /** What the audience screen shows for the current slide: "article" (default) or "video". */
   mediaView?: string;
+  /** Beat of the current story on the audience screen (0 = its cover). */
+  currentBeat?: number;
 }
 
 export interface SlideStatRecord {
@@ -374,6 +382,7 @@ export const slides = makeTable<SlideRecord>(
     videoChannel: ["video_channel", "text"],
     videoReason: ["video_reason", "text"],
     videoCheckedAt: ["video_checked_at", "text"],
+    stageJson: ["stage_json", "text"],
   },
   { created_at: now },
 );
@@ -398,6 +407,7 @@ export const sessions = makeTable<SessionRecord>("news_live_sessions", {
   tpAnchorAt: ["tp_anchor_at", "num"],
   tpControllerId: ["tp_controller_id", "text"],
   mediaView: ["media_view", "text"],
+  currentBeat: ["current_beat", "num"],
 });
 
 export const slideStats = makeTable<SlideStatRecord>("news_slide_stats", {

@@ -129,6 +129,12 @@ services:
       # the SCRIPTGEN_MAX_USD ceiling price each model (ai/claude.ts rateFor).
       SCRIPTGEN_MODEL: ${SCRIPTGEN_MODEL:-claude-opus-5-5}
       SCRIPTGEN_MECHANICAL_MODEL: ${SCRIPTGEN_MECHANICAL_MODEL:-claude-opus-5-5}
+      # The Lab's floating "Chat" button (above Jobs) opens this Claude Code
+      # remote-control session in a new tab. Served only to signed-in users via
+      # GET /api/claude-chat. The session id changes whenever remote-control is
+      # restarted — override CLAUDE_CHAT_URL in .env and recreate the lab
+      # (no rebuild needed).
+      CLAUDE_CHAT_URL: ${CLAUDE_CHAT_URL:-https://claude.ai/code/session_01HeuNAUTscG1VCohbiEh5qF}
     volumes:
       # SEPARATE volume — the lab's media + database never mix with the main app.
       - clipmagic-lab-data:/data

@@ -12,6 +12,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { assetUrl, type ArticleData, type Chapter, type ClipItem, type DemoTab, type StatItem } from './types';
+import { paperFor, type DeckTemplate } from '../templates';
 import './show.css';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -93,14 +94,20 @@ function DotField({ still }: { still: boolean }) {
     };
     const frame = (t: number) => {
       ctx.clearRect(0, 0, w, h);
+      // The template's colours (templates.ts) — Jake's yellow + paper by default.
+      const cs = getComputedStyle(cv);
+      const acc = cs.getPropertyValue('--yellow').trim() || '#ffd21e';
+      const fg = cs.getPropertyValue('--fg').trim() || '#f5f5f2';
       for (const p of pts) {
         if (!still) { p.x += p.v; if (p.x > w + 4) p.x = -4; }
         const tw = 0.45 + 0.55 * Math.sin(t / 900 + p.x * 0.02);
         ctx.beginPath();
         ctx.arc(p.x, p.y + Math.sin(t / 1600 + p.x * 0.01) * 6, p.y0 ? p.r * 2.2 : p.r, 0, 7);
-        ctx.fillStyle = p.y0 ? `rgba(255,210,30,${0.5 + 0.5 * tw})` : `rgba(245,245,242,${0.1 + 0.25 * tw})`;
+        ctx.globalAlpha = p.y0 ? 0.5 + 0.5 * tw : 0.1 + 0.25 * tw;
+        ctx.fillStyle = p.y0 ? acc : fg;
         ctx.fill();
       }
+      ctx.globalAlpha = 1;
       if (!still) raf = requestAnimationFrame(frame);
     };
     size();
@@ -320,12 +327,16 @@ function StatField({ stat, still, active }: { stat: StatItem; still: boolean; ac
     const gx = r.width / cols, gy = r.height / rows, rad = Math.max(1, Math.min(gx, gy) * 0.28);
     const n = cols * rows;
     const lit = Math.round(n * frac);
+    const cs = getComputedStyle(cv);
+    const acc = cs.getPropertyValue('--yellow').trim() || '#ffd21e';
+    const fg = cs.getPropertyValue('--fg').trim() || '#f5f5f2';
+    const off = cs.getPropertyValue('--card-2').trim() || '#222226';
     for (let i = 0; i < n; i++) {
       // a stable scatter order, so the field fills like rain, not like a progress bar
       const k = (i * 7919) % n;
       ctx.beginPath();
       ctx.arc((k % cols + 0.5) * gx, (Math.floor(k / cols) + 0.5) * gy, rad, 0, 7);
-      ctx.fillStyle = i < lit ? (k % 97 === 0 ? '#ffd21e' : '#f5f5f2') : '#222226';
+      ctx.fillStyle = i < lit ? (k % 97 === 0 ? acc : fg) : off;
       ctx.fill();
     }
   }, [frac, tick]);
@@ -565,5 +576,9 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
   );
 }
 
-/** Paper or black: alternate by position, title always black. */
-export const isPaper = (chapters: Chapter[], i: number) => chapters[i]?.kind !== 'title' && i % 2 === 0;
+/**
+ * Paper or black: alternate by position, title always black — or the
+ * template's rhythm when one is given (templates.ts: all dark / all light).
+ */
+export const isPaper = (chapters: Chapter[], i: number, template?: DeckTemplate) =>
+  template ? paperFor(template, i, chapters[i]?.kind === 'title') : chapters[i]?.kind !== 'title' && i % 2 === 0;

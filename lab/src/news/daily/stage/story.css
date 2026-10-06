@@ -1,0 +1,33 @@
+/*
+ * Daily Show story cover — the Deep Dive v2 title look (show.css) sized for a
+ * news headline. Everything else on a story is the Deep Dive's own CSS.
+ * Sizes are `--u` container units, so the stage, the presenter's thumbnail and
+ * the dashboard preview are the same picture.
+ */
+.ns-cover { justify-content: center; }
+.ns-cover-bg { position: absolute; inset: 0; overflow: hidden; }
+.ns-cover-bg img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; opacity: .34; filter: saturate(.9); transform: scale(1.06); animation: ns-drift 24s ease-in-out infinite alternate; }
+.ns-cover-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, #000 22%, rgba(0,0,0,.7) 58%, rgba(0,0,0,.35)); }
+/* a slow yellow glow, pure CSS (no images spent) */
+.ns-glow { position: absolute; z-index: 1; width: calc(var(--u) * 70); height: calc(var(--u) * 70); right: calc(var(--u) * -18); bottom: calc(var(--u) * -30); border-radius: 50%; background: radial-gradient(closest-side, rgba(255,210,30,.22), rgba(255,210,30,0)); animation: ns-glow 9s ease-in-out infinite alternate; }
+.ns-cover.still .ns-glow, .ns-cover.still .ns-cover-bg img, .dd2.instant .ns-cover-bg img { animation: none; }
+@keyframes ns-drift { to { transform: scale(1.14) translate(-1.5%, -1%); } }
+@keyframes ns-glow { to { transform: translate(calc(var(--u) * -10), calc(var(--u) * -6)) scale(1.15); opacity: .7; } }
+
+.ns-cover-wrap { justify-content: center; position: relative; z-index: 2; }
+.ns-cover-eyebrow { margin: calc(var(--u) * 3) 0 0; color: var(--yellow); }
+.ns-h1 { font-size: calc(var(--u) * 7.6); max-width: 15ch; margin-top: calc(var(--u) * 1.4); line-height: .95; }
+.ns-h1.l { font-size: calc(var(--u) * 6); max-width: 19ch; }
+.ns-h1.xl { font-size: calc(var(--u) * 4.6); max-width: 26ch; letter-spacing: -.045em; line-height: 1.02; }
+.ns-lede { margin-top: calc(var(--u) * 3); }
+.ns-src { margin-top: calc(var(--u) * 3.4); font: 500 calc(var(--u) * 1.05) var(--mono); letter-spacing: .06em; color: var(--mute); display: flex; align-items: baseline; gap: calc(var(--u) * .5); flex-wrap: wrap; }
+.ns-src b { color: var(--paper); font-weight: 600; }
+.ns-src em { font-style: normal; margin-left: calc(var(--u) * 1); border: 1px solid var(--line); border-radius: 999px; padding: calc(var(--u) * .25) calc(var(--u) * .8); color: #c9c9c2; }
+
+/* entrance: the cover's lines rise in, one after another, when it comes on */
+.ns-cover.on .ns-cover-wrap > * { animation: ns-rise .8s var(--ease) both; }
+.ns-cover.on .ns-cover-wrap > *:nth-child(2) { animation-delay: .08s; }
+.ns-cover.on .ns-cover-wrap > *:nth-child(3) { animation-delay: .16s; }
+.ns-cover.on .ns-cover-wrap > *:nth-child(4) { animation-delay: .3s; }
+.ns-cover.on .ns-cover-wrap > *:nth-child(5) { animation-delay: .42s; }
+@keyframes ns-rise { from { opacity: 0; transform: translateY(calc(var(--u) * 1.6)); } }

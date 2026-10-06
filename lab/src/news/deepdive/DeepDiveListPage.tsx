@@ -4,7 +4,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { Loader2, Telescope, Trash2, Sparkles, Newspaper, X } from 'lucide-react';
+import { Loader2, Telescope, Trash2, Sparkles, Newspaper, X, Palette, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,6 +13,8 @@ import NewsShell from '../shell/NewsShell';
 import { useAuth } from '../auth';
 import { getStories, type Story } from '../api';
 import { listDeepDives, createDeepDive, deleteDeepDive, editorPath, type DeepDive } from './api';
+import TemplatePicker from './TemplatePicker';
+import { DEFAULT_TEMPLATE, TEMPLATES, templateFor, type TemplateId } from './templates';
 
 export default function DeepDiveListPage() {
   return (
@@ -55,6 +57,9 @@ function DeepDiveList() {
   const [format, setFormat] = useState<'v1' | 'v2'>('v2');
   const [demoAgent, setDemoAgent] = useState(false);
   const [demoUrl, setDemoUrl] = useState('');
+  // The design it's built in (Jake, 2026-10-06) — his brand unless he picks another.
+  const [template, setTemplate] = useState<TemplateId>(DEFAULT_TEMPLATE);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const load = () => listDeepDives().then((r) => setDives(r.deepDives)).catch((e) => toast.error(String(e?.message ?? e)));
   useEffect(() => { if (user) void load(); }, [user]);
@@ -75,7 +80,7 @@ function DeepDiveList() {
     if (!topic.trim() && !story) return;
     setCreating(true);
     try {
-      const { deepDive } = await createDeepDive({ topic: topic.trim(), angle: angle.trim(), storyId: story?.id, format, demoAgent: format === 'v2' && demoAgent, demoUrl: demoUrl.trim() });
+      const { deepDive } = await createDeepDive({ topic: topic.trim(), angle: angle.trim(), storyId: story?.id, format, demoAgent: format === 'v2' && demoAgent, demoUrl: demoUrl.trim(), template });
       navigate(`${editorPath(deepDive.id)}?generate=1`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e));
@@ -136,6 +141,20 @@ function DeepDiveList() {
                 <span className="text-muted-foreground">Demo agent{demoAgent ? ': an AI uses the real product and records it' : ' (off)'}</span>
                 {demoAgent && <Input value={demoUrl} onChange={(e) => setDemoUrl(e.target.value)} placeholder="Product URL (optional)" className="h-7 max-w-[220px] text-xs" />}
               </>
+            )}
+          </div>
+          <div className="rounded-md border border-border bg-muted/20 p-2">
+            <button type="button" onClick={() => setShowTemplates((v) => !v)} className="flex w-full items-center gap-2 text-left text-xs">
+              <Palette className="h-3.5 w-3.5 text-primary" />
+              <span className="text-muted-foreground">Template</span>
+              <span className="flex gap-0.5" aria-hidden>{(() => { const t = templateFor(template); return [t.ink, t.paper, t.accent, t.accent2]; })().map((c, i) => <span key={i} className="h-3 w-3 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}</span>
+              <span className="font-semibold text-foreground">{templateFor(template).name}</span>
+              <span className="ml-auto flex items-center gap-1 text-muted-foreground">{showTemplates ? 'Hide' : `Choose from ${TEMPLATES.length}`}{showTemplates ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}</span>
+            </button>
+            {showTemplates && (
+              <div className="mt-3">
+                <TemplatePicker value={template} format={format} onChange={(t) => setTemplate(t)} />
+              </div>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3">

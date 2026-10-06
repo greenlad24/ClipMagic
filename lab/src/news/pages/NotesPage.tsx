@@ -1,19 +1,22 @@
 import { useNewsTheme } from '../useNewsTheme';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
 import { connectLiveSync, type LiveSync, type MediaView } from '../liveSync';
 import { slideMedia, slideHasVideo } from '../api';
 import { videoPageUrl } from './VideoPage';
+import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
+import { findCues, markCues } from '../daily/stage/cues';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
 type BCMsg =
-  | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: MediaView }
+  | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: MediaView; beat?: number }
   | { type: 'media'; idx: number; view: MediaView }
+  | { type: 'beat'; idx: number; beat: number }
   | { type: 'blackout'; value: boolean }
   | { type: 'end' }
   | { type: 'ping' }
@@ -104,6 +107,18 @@ export default function NotesPage() {
   const pendingMediaRef = useRef<{ idx: number; media: MediaView } | null>(null);
   const applyMediaView = (m: MediaView) => { mediaViewRef.current = m; setMediaViewState(m); };
 
+  // The BEAT of the current story on the audience screen (Daily Show stages,
+  // 2026-10-06): 0 = the story's cover, then each scene's micro-interactions.
+  // → / ← step beats, then stories. Like the media view it is shared over its
+  // own socket event and never touches the teleprompter. Held WITH its slide
+  // index, so a beat that arrives before (or after) its slide change can never
+  // be shown on the wrong story.
+  const [beatAt, setBeatAtState] = useState<{ idx: number; beat: number }>({ idx: 0, beat: 0 });
+  const beatAtRef = useRef<{ idx: number; beat: number }>({ idx: 0, beat: 0 });
+  const lastLocalBeatTimeRef = useRef(0);
+  const applyBeat = (idx: number, beat: number) => { beatAtRef.current = { idx, beat }; setBeatAtState({ idx, beat }); };
+  const beatOf = (idx: number) => (beatAtRef.current.idx === idx ? beatAtRef.current.beat : 0);
+
   // Refs
   const slideStartRef = useRef(Date.now());
   const streamStartRef = useRef(Date.now());
@@ -170,7 +185,7 @@ export default function NotesPage() {
         lastPongRef.current = Date.now();
         setDisplayConnected(true);
         const { slides: sls, currentIdx: ci, blackout: bo } = ctxRef.current;
-        if (sls[ci]) ch.postMessage({ type: 'slide', slide: sls[ci], idx: ci, total: sls.length, media: mediaViewRef.current } satisfies BCMsg);
+        if (sls[ci]) ch.postMessage({ type: 'slide', slide: sls[ci], idx: ci, total: sls.length, media: mediaViewRef.current, beat: beatOf(ci) } satisfies BCMsg);
         if (bo) ch.postMessage({ type: 'blackout', value: bo } satisfies BCMsg);
       }
     };
@@ -198,14 +213,22 @@ export default function NotesPage() {
         const localIdx = ctxRef.current.currentIdx;
         // Only apply remote change if this device hasn't navigated in the last 2s
         // (prevents the two devices from fighting each other)
+        const remoteBeat = typeof state.session.currentBeat === 'number' ? Math.max(0, Math.round(state.session.currentBeat)) : 0;
         if (remoteIdx !== localIdx && timeSinceLocalNav > 2000) {
           setCurrentIdx(remoteIdx);
+          applyBeat(remoteIdx, remoteBeat);
           const sls = ctxRef.current.slides;
           if (channelRef.current && sls[remoteIdx]) {
-            channelRef.current.postMessage({ type: 'slide', slide: sls[remoteIdx], idx: remoteIdx, total: sls.length } satisfies BCMsg);
+            channelRef.current.postMessage({ type: 'slide', slide: sls[remoteIdx], idx: remoteIdx, total: sls.length, beat: remoteBeat } satisfies BCMsg);
           }
           setRemoteSynced(true);
           setTimeout(() => setRemoteSynced(false), 2000);
+        }
+        // The beat of the story both devices are on — unless this device just stepped.
+        if (remoteIdx === ctxRef.current.currentIdx && remoteBeat !== beatOf(remoteIdx)
+            && Date.now() - lastLocalBeatTimeRef.current > 2000 && timeSinceLocalNav > 2000) {
+          applyBeat(remoteIdx, remoteBeat);
+          channelRef.current?.postMessage({ type: 'beat', idx: remoteIdx, beat: remoteBeat } satisfies BCMsg);
         }
         // Article/video for the slide both devices are on — unless this device just changed it.
         const remoteMedia: MediaView = state.session.mediaView === 'video' ? 'video' : 'article';
@@ -332,24 +355,25 @@ export default function NotesPage() {
     setSourceLog(prev => [...prev.slice(-4), { time, msg, type }]);
   }, []);
 
-  const navigateTo = useCallback(async (idx: number) => {
+  const navigateTo = useCallback(async (idx: number, beat = 0) => {
     const { currentIdx: cur, slides: sls, sessionId: sid } = ctxRef.current;
     if (idx < 0 || idx >= sls.length) return;
+    applyBeat(idx, beat);
     lastLocalNavTimeRef.current = Date.now(); // suppress remote sync for 2s after local nav
     const spent = Math.floor((Date.now() - slideStartRef.current) / 1000);
     if (sid && sls[cur]) {
       navOrderRef.current += 1;
       logSlideStats({ sessionId: sid, slideId: sls[cur].id, timeSpentSeconds: spent, navigationOrder: navOrderRef.current }).catch(() => {});
       const deviceId = window.localStorage.getItem('tp2-device-id') || undefined;
-      updateSession({ sessionId: sid, deviceId, currentSlideIndex: idx, tpScrollPct: 0, tpPaused: true, tpAutoscroll: false, mediaView: 'article' } as any).catch(() => {});
+      updateSession({ sessionId: sid, deviceId, currentSlideIndex: idx, currentBeat: beat, tpScrollPct: 0, tpPaused: true, tpAutoscroll: false, mediaView: 'article' } as any).catch(() => {});
       // The socket carries the slide for the live screens; the session write
       // above stays as the durable record the next reload reads.
-      syncRef.current?.setSlide(idx);
+      syncRef.current?.setSlide(idx, beat);
     }
     slideStartRef.current = Date.now();
     setCurrentIdx(idx);
     if (channelRef.current && sls[idx]) {
-      channelRef.current.postMessage({ type: 'slide', slide: sls[idx], idx, total: sls.length, media: 'article' } satisfies BCMsg);
+      channelRef.current.postMessage({ type: 'slide', slide: sls[idx], idx, total: sls.length, media: 'article', beat } satisfies BCMsg);
     }
     // Source tab auto-navigation is handled by the currentIdx effect
   }, [logSource]);
@@ -464,6 +488,16 @@ export default function NotesPage() {
         channelRef.current?.postMessage({ type: 'media', idx: m.idx, view: media } satisfies BCMsg);
       }
     });
+    // A beat stepped (here or on another screen). The sender gets its own echo;
+    // ignoring echoes for a moment after a local step keeps a fast double-tap
+    // from flickering back to the beat in between.
+    sync.onBeat((b) => {
+      if (typeof b.idx !== 'number' || typeof b.beat !== 'number') return;
+      if (b.idx === ctxRef.current.currentIdx && Date.now() - lastLocalBeatTimeRef.current < 800) return;
+      if (b.idx === beatAtRef.current.idx && b.beat === beatAtRef.current.beat) return;
+      applyBeat(b.idx, b.beat);
+      if (b.idx === ctxRef.current.currentIdx) channelRef.current?.postMessage({ type: 'beat', idx: b.idx, beat: b.beat } satisfies BCMsg);
+    });
     // Appearance changed on another screen — apply it here.
     sync.onAppearance((a) => {
       if (typeof a.textSize === 'number') setTpFontSize(a.textSize);
@@ -557,21 +591,50 @@ export default function NotesPage() {
     sync.playPause(!nextPaused);
   }, [rateFor]);
 
+  /**
+   * → / ← (Jake, 2026-10-06): step the story's BEATS — the cover, then each
+   * micro-interaction — and past the last beat to the next story; back past
+   * the cover to the previous story's LAST beat. Never opens the video (that
+   * is Shift). A step while the video is up also closes it: the video was an
+   * aside, and the beat being stepped to should be what the audience sees.
+   */
+  const stepBeat = useCallback((dir: 1 | -1) => {
+    const { currentIdx: ci, slides: sls } = ctxRef.current;
+    const cur = sls[ci];
+    if (!cur) return;
+    const n = storyBeats(storyStage(cur));
+    const b = beatOf(ci);
+    if (mediaViewRef.current === 'video') setMedia('article');
+    if (dir > 0 && b < n - 1) {
+      lastLocalBeatTimeRef.current = Date.now();
+      applyBeat(ci, b + 1);
+      syncRef.current?.setBeat(ci, b + 1);
+      channelRef.current?.postMessage({ type: 'beat', idx: ci, beat: b + 1 } satisfies BCMsg);
+    } else if (dir < 0 && b > 0) {
+      lastLocalBeatTimeRef.current = Date.now();
+      applyBeat(ci, b - 1);
+      syncRef.current?.setBeat(ci, b - 1);
+      channelRef.current?.postMessage({ type: 'beat', idx: ci, beat: b - 1 } satisfies BCMsg);
+    } else if (dir > 0) {
+      navigateTo(ci + 1, 0);
+    } else if (ci > 0) {
+      navigateTo(ci - 1, storyBeats(storyStage(sls[ci - 1])) - 1);
+    }
+  }, [navigateTo, setMedia]);
+
+  // Shift ALONE toggles the story video full screen. Alone = released with no
+  // other key pressed in between, so Shift+D (debug) and a capital letter
+  // never flip the audience screen to the video.
+  const shiftAloneRef = useRef(false);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const { currentIdx: ci } = ctxRef.current;
-      // A slide with an official video is article → video → next slide, and
-      // back the same way. Without a video, left/right are exactly as before.
-      if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        if (slideHasVideo(ctxRef.current.slides[ci]) && mediaViewRef.current === 'article') setMedia('video');
-        else navigateTo(ci + 1);
-      }
-      else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        if (mediaViewRef.current === 'video') setMedia('article');
-        else navigateTo(ci - 1);
-      }
+      if (e.key === 'Shift') { if (!e.repeat) shiftAloneRef.current = true; return; }
+      shiftAloneRef.current = false;
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); stepBeat(1); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); stepBeat(-1); }
+      else if (e.key === 'Escape' && mediaViewRef.current === 'video') { e.preventDefault(); setMedia('article'); }
       // Up/down move through the SCRIPT; left/right move between SLIDES.
       else if (e.key === 'ArrowDown' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(1); }
       else if (e.key === 'ArrowUp' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(-1); }
@@ -594,9 +657,24 @@ export default function NotesPage() {
         gTimerRef.current = setTimeout(() => { navigateTo(parseInt(buf) - 1); setGMode(false); setGBuffer(''); }, 600);
       } else if (!gMode && /^[1-9]$/.test(e.key)) navigateTo(parseInt(e.key) - 1);
     };
+    const upHandler = (e: KeyboardEvent) => {
+      if (e.key !== 'Shift' || !shiftAloneRef.current) return;
+      shiftAloneRef.current = false;
+      const { currentIdx: ci, slides: sls } = ctxRef.current;
+      if (!slideHasVideo(sls[ci])) return;
+      setMedia(mediaViewRef.current === 'video' ? 'article' : 'video');
+    };
+    const blur = () => { shiftAloneRef.current = false; };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge, setMedia]);
+    window.addEventListener('keyup', upHandler);
+    window.addEventListener('blur', blur);
+    return () => { window.removeEventListener('keydown', handler); window.removeEventListener('keyup', upHandler); window.removeEventListener('blur', blur); };
+  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge, setMedia, stepBeat]);
+
+  // The current story's stage (cover + scenes) and where its cues sit in the script.
+  const curSlide = slides[currentIdx];
+  const stage = useMemo(() => storyStage(curSlide), [curSlide]);
+  const cueSpans = useMemo(() => findCues(curSlide?.teleprompterScript || '', stage.cues), [curSlide, stage]);
 
   // ── Guards ─────────────────────────────────────────────────────────────────
 
@@ -628,6 +706,8 @@ export default function NotesPage() {
   const sourceName = slide?.bestSourceName || 'Unknown';
   const sourceHost = sourceUrl ? (() => { try { return new URL(sourceUrl).hostname.replace('www.', ''); } catch { return ''; } })() : '';
   const upNext = slides.slice(currentIdx + 1, currentIdx + 3);
+  const totalBeats = storyBeats(stage);
+  const curBeat = Math.min(totalBeats - 1, beatAt.idx === currentIdx ? beatAt.beat : 0);
   const isTeleprompter = viewMode === 'teleprompter';
 
   return (
@@ -752,7 +832,11 @@ export default function NotesPage() {
               </p>
 
               {slide?.teleprompterScript ? (
-                slide.teleprompterScript.split('\n\n').map((para, i) =>
+                (() => { let off = 0; const script = slide.teleprompterScript; return script.split('\n\n').map((raw) => {
+                  // Where this paragraph starts in the whole script, for the cue marks.
+                  const at = script.indexOf(raw, off); off = at + raw.length;
+                  return { para: raw, start: at + (raw.length - raw.trimStart().length) };
+                }); })().map(({ para, start }, i) =>
                   para.trim() ? (
                     <p key={i} style={{
                       fontSize: tpFontSize,
@@ -771,7 +855,7 @@ export default function NotesPage() {
                       fontFamily: "'NewsScript', Arial, Helvetica, sans-serif",
                       WebkitTextSizeAdjust: '100%',
                     } as React.CSSProperties}>
-                      {para.trim()}
+                      {markCues(para.trim(), start, cueSpans, curBeat)}
                     </p>
                   ) : null
                 )
@@ -853,26 +937,42 @@ export default function NotesPage() {
               ))}
             </div>
 
-            {/* Article / Video — only on a slide that has an official video. Same as → / ←. */}
+            {/* Beats of this story — → / ← step them (then the next / previous story). */}
+            <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
+            <div data-beats={`${curBeat}/${totalBeats}`} title={stage.fallback ? 'This story has no built visuals yet — showing its key points. Make visuals from the dashboard (Selections).' : '→ / ← step the beats, then the stories'}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
+                {Array.from({ length: totalBeats }, (_, b) => (
+                  <span key={b} style={{ width: b === curBeat ? 14 : 6, height: 6, borderRadius: 3, transition: 'all .2s', background: b === curBeat ? '#ffd21e' : b < curBeat ? '#8a7a2a' : D.faint }} />
+                ))}
+              </div>
+              <span style={{ fontSize: 11, color: D.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {curBeat < totalBeats - 1
+                  ? <>next <span style={{ color: D.text }}>{beatLabel(stage, curBeat + 1)}</span></>
+                  : currentIdx < slides.length - 1 ? <>next <span style={{ color: D.text }}>story {currentIdx + 2}</span></> : 'last beat'}
+              </span>
+            </div>
+
+            {/* Article / Video — only on a slide that has an official video. Shift toggles it, Esc closes. */}
             {slideHasVideo(slide) && (
               <>
                 <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
                 <div data-media-toggle style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 10 }}
-                  title={`${slide!.videoTier === 'product' ? 'Product demo' : 'Launch video'}: ${slide!.videoTitle || ''}${slide!.videoChannel ? ` (${slide!.videoChannel})` : ''}`}>
+                  title={`${slide!.videoTier === 'product' ? 'Product demo' : 'Launch video'}: ${slide!.videoTitle || ''}${slide!.videoChannel ? ` (${slide!.videoChannel})` : ''} — Shift shows it full screen, Shift or Esc closes`}>
                   {(['article', 'video'] as const).map(m => (
                     <button key={m} data-media={m} onClick={() => setMedia(m)} style={{
                       padding: '2px 8px', border: 'none', cursor: 'pointer',
                       background: mediaView === m ? (m === 'video' ? 'rgba(239,68,68,0.15)' : 'rgba(96,165,250,0.15)') : 'transparent',
                       color: mediaView === m ? (m === 'video' ? '#fca5a5' : D.blue) : D.muted,
                       borderLeft: m === 'video' ? `1px solid ${D.border}` : 'none',
-                    }}>{m === 'article' ? 'Article' : '▶ Video'}</button>
+                    }}>{m === 'article' ? 'Slides' : '▶ Video ⇧'}</button>
                   ))}
                 </div>
               </>
             )}
 
             <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 10, color: D.faint }}>Followers see this tab</span>
+            <span style={{ fontSize: 10, color: D.faint, whiteSpace: 'nowrap' }}>Followers see this tab</span>
           </div>
         </div>
       ) : (

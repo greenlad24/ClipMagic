@@ -1,0 +1,23 @@
+/*
+ * Deep Dive templates — the parts a CSS variable can't carry (templates.ts).
+ * Fonts only download when a template that uses them is on screen.
+ */
+@import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Playfair+Display:ital,wght@0,700;0,800;0,900;1,700;1,800&family=Sora:wght@600;700;800&display=swap");
+
+/* ── v2 chapters: a pattern layer under each chapter ── */
+.dd2-ch::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: var(--deco-dark, none); }
+.dd2-ch.paper::before { background-image: var(--deco-paper, none); }
+.dd2-ch > .dd2-wrap { position: relative; z-index: 1; }
+.dd2[data-deco="dots"] .dd2-ch::before { background-size: calc(var(--u) * 2.4) calc(var(--u) * 2.4); }
+.dd2[data-deco="grid"] .dd2-ch::before { background-size: calc(var(--u) * 5) calc(var(--u) * 5); }
+.dd2[data-deco="lines"] .dd2-ch::before { background-size: 100% calc(var(--u) * 3.2); }
+
+/* ── v1 stage: the same pattern, and the aurora only where the template has it ── */
+.dd-deco { position: absolute; inset: 0; background-image: var(--dd-deco, none); }
+.dd-stage[data-deco="dots"] .dd-deco { background-size: calc(var(--u) * 2.4) calc(var(--u) * 2.4); }
+.dd-stage[data-deco="grid"] .dd-deco { background-size: calc(var(--u) * 5) calc(var(--u) * 5); }
+.dd-stage[data-deco="lines"] .dd-deco { background-size: 100% calc(var(--u) * 3.2); }
+.dd-stage[data-blobs="0"] .dd-blob,
+.dd-stage[data-blobs="0"] .dd-grid { display: none; }
+.dd-stage[data-blobs="0"] .dd-vignette { opacity: .5; }
+.dd-stage[data-paper="1"] .dd-vignette { display: none; }

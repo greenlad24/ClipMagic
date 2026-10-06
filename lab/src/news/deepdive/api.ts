@@ -100,6 +100,8 @@ export interface DeepDive {
   demoAgent?: boolean;
   /** v2: the product URL the demo agent opens (optional). */
   demoUrl?: string;
+  /** The design (templates.ts TemplateId); empty = the format's default look. */
+  template?: string;
 }
 
 export const listDeepDives = () => call<{ deepDives: DeepDive[] }>('listDeepDives', {});
@@ -124,9 +126,9 @@ export const attachDeepDiveDemo = (id: string) => call<{ attached: boolean; reas
 export const startLiveDeepDiveDemo = (id: string) => call<{ jobId: string }>('startLiveDeepDiveDemo', { id });
 export interface LiveDemoState { status: DemoJobInfo['status']; error: string | null; shot: string | null; click: [number, number] | null; caption: string; w: number; h: number; steps: number }
 export const getLiveDeepDiveDemo = (jobId: string) => call<LiveDemoState>('getLiveDeepDiveDemo', { jobId });
-export const createDeepDive = (input: { topic?: string; angle?: string; storyId?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string }) =>
+export const createDeepDive = (input: { topic?: string; angle?: string; storyId?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string; template?: string }) =>
   call<{ deepDive: DeepDive }>('createDeepDive', input);
-export const updateDeepDive = (input: { id: string; title?: string; subtitle?: string; topic?: string; angle?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string }) =>
+export const updateDeepDive = (input: { id: string; title?: string; subtitle?: string; topic?: string; angle?: string; format?: 'v1' | 'v2'; demoAgent?: boolean; demoUrl?: string; template?: string }) =>
   call<{ success: boolean }>('updateDeepDive', input);
 export const deleteDeepDive = (id: string) => call<{ success: boolean }>('deleteDeepDive', { id });
 /** `fresh` = search the web again even if this topic was researched in the last 12 hours. */

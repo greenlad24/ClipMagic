@@ -33,7 +33,8 @@ export interface LiveSync {
   playPause(next: boolean): void;
   seek(fraction: number): void;
   setSpeed(scrollSpeed: number, rate: number): void;
-  setSlide(idx: number): void;
+  /** `beat` (Daily Show): land on that beat of the new slide instead of its cover. */
+  setSlide(idx: number, beat?: number): void;
   /** Appearance — shared, because both screens must read the same layout. */
   setTextSize(px: number): void;
   setLineHeight(v: number): void;
@@ -46,6 +47,12 @@ export interface LiveSync {
    */
   setMedia(idx: number, media: MediaView): void;
   onMedia(fn: (m: { idx: number; media: MediaView }) => void): void;
+  /**
+   * Daily Show: the beat (micro-interaction) of story `idx` — 0 is its cover.
+   * Its own event like media-view, so stepping never moves a teleprompter.
+   */
+  setBeat(idx: number, beat: number): void;
+  onBeat(fn: (b: { idx: number; beat: number }) => void): void;
   close(): void;
 }
 
@@ -66,6 +73,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   const syncHandlers: ((s: SyncSnapshot) => void)[] = [];
   const appearanceHandlers: ((a: any) => void)[] = [];
   const mediaHandlers: ((m: { idx: number; media: MediaView }) => void)[] = [];
+  const beatHandlers: ((b: { idx: number; beat: number }) => void)[] = [];
 
   const syncClock = () => socket.emit('time-ping', Date.now());
   const burstSyncClock = () => {
@@ -99,6 +107,9 @@ export function connectLiveSync(sessionId: string): LiveSync {
     if (s.media === 'article' || s.media === 'video') {
       for (const fn of mediaHandlers) fn({ idx: s.idx, media: s.media });
     }
+    if (typeof s.beat === 'number') {
+      for (const fn of beatHandlers) fn({ idx: s.idx, beat: s.beat });
+    }
     for (const fn of appearanceHandlers) {
       fn({ textSize: s.textSize, lineHeight: s.lineHeight, textWidth: s.textWidth });
     }
@@ -107,6 +118,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   socket.on('line-height', (v: number) => appearanceHandlers.forEach((fn) => fn({ lineHeight: v })));
   socket.on('text-width', (v: string) => appearanceHandlers.forEach((fn) => fn({ textWidth: v })));
   socket.on('media-view', (m: { idx: number; media: MediaView }) => mediaHandlers.forEach((fn) => fn(m)));
+  socket.on('beat', (b: { idx: number; beat: number }) => beatHandlers.forEach((fn) => fn(b)));
 
   const clockSyncTimer = setInterval(burstSyncClock, 15000);
 
@@ -138,8 +150,8 @@ export function connectLiveSync(sessionId: string): LiveSync {
     setSpeed(scrollSpeed, rate) {
       socket.emit('scroll-speed', { scrollSpeed, rate });
     },
-    setSlide(idx) {
-      socket.emit('slide-index', idx);
+    setSlide(idx, beat) {
+      socket.emit('slide-index', typeof beat === 'number' ? { idx, beat } : idx);
     },
     // ⚠️ APPEARANCE IS SHARED STATE, NOT A LOCAL PREFERENCE. Width and size
     // change where every line breaks; if one screen is narrow and the other
@@ -165,6 +177,12 @@ export function connectLiveSync(sessionId: string): LiveSync {
     },
     onMedia(fn) {
       mediaHandlers.push(fn);
+    },
+    setBeat(idx, beat) {
+      socket.emit('beat', { idx, beat });
+    },
+    onBeat(fn) {
+      beatHandlers.push(fn);
     },
     close() {
       clearInterval(clockSyncTimer);

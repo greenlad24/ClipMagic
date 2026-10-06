@@ -4,8 +4,9 @@
  * Go-live card with the show screens.
  */
 import { useEffect, useState } from 'react';
-import { Layers, Play, ScrollText, MonitorPlay, Tv, ExternalLink, SlidersHorizontal } from 'lucide-react';
-import { getTeleprompterSettings } from '../api';
+import { Layers, Play, ScrollText, MonitorPlay, Tv, ExternalLink, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
+import { buildSlideStages, getTeleprompterSettings } from '../api';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import RunLog from './RunLog';
@@ -47,6 +48,22 @@ export default function RundownPane({ show, onBuild, onPreview }: Props) {
   };
 
   const showLog = building || buildLog.logs.length > 0;
+
+  // The on-screen visuals (cover + beats, daily/stage). A deck built before
+  // they existed has none and presents its key points instead; this makes them
+  // without a Rebuild, so the scripts Jake already read through stay as they are.
+  const [stagesBusy, setStagesBusy] = useState(false);
+  const missingStages = slides.filter((s) => !s.stageJson).length;
+  const makeStages = async (force: boolean) => {
+    setStagesBusy(true);
+    try {
+      const r = await buildSlideStages({ deckId: slides[0]?.deck, force });
+      if (r.failed) toast.warning(`Visuals made for ${r.built} ${r.built === 1 ? 'story' : 'stories'}; ${r.failed} failed (those show their key points).`);
+      else toast.success(`Visuals made for ${r.built} ${r.built === 1 ? 'story' : 'stories'}`);
+      await show.loadSlides();
+    } catch (e: any) { toast.error(e?.message || 'Could not make the visuals'); }
+    finally { setStagesBusy(false); }
+  };
 
   return (
     <section className="flex min-h-0 flex-col" aria-label="Selections">
@@ -115,6 +132,19 @@ export default function RundownPane({ show, onBuild, onPreview }: Props) {
             </div>
             <Button onClick={show.startShow} disabled={building} className="gap-1.5">
               <Play className="h-4 w-4" /> Start show
+            </Button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground" data-stages={missingStages}>
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5" />
+              {missingStages > 0
+                ? `${missingStages} of ${slides.length} ${slides.length === 1 ? 'story has' : 'stories have'} no visuals yet (they show key points).`
+                : 'Every story has its visuals (cover + beats).'}
+            </span>
+            <Button variant={missingStages > 0 ? 'secondary' : 'ghost'} size="sm" className="h-7 gap-1 text-xs"
+              disabled={stagesBusy || building} onClick={() => void makeStages(missingStages === 0)}
+              title="Makes each story's on-screen visuals from its script. Scripts, notes and videos are not touched.">
+              {stagesBusy ? 'Making visuals…' : missingStages > 0 ? 'Make visuals' : 'Redo visuals'}
             </Button>
           </div>
           {tp && (

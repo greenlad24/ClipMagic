@@ -136,8 +136,19 @@ export interface Chapter {
   script: string;
 }
 
-/** How many ←/→ beats a chapter has (always ≥ 1). */
-export function beatCount(c: Chapter): number {
+/**
+ * Anything that steps in beats but is not a v2 chapter — a classic (v1) slide
+ * (../beats.ts `sectionsToUnits`). It carries its own beat count, so the same
+ * flatten / firstBeatOf / scriptParts / sendBeat drive both formats (Jake,
+ * 2026-10-06: classic slides step "exactly the way" demo slides do).
+ */
+export interface BeatUnit { id: string; script: string; beats: number }
+
+const isUnit = (c: Chapter | BeatUnit): c is BeatUnit => typeof (c as BeatUnit).beats === 'number';
+
+/** How many ←/→ beats a chapter (or a classic slide) has (always ≥ 1). */
+export function beatCount(c: Chapter | BeatUnit): number {
+  if (isUnit(c)) return Math.max(1, Math.floor(c.beats) || 1);
   const d = c.data || {};
   const n = (() => {
     switch (c.kind) {
@@ -160,21 +171,21 @@ export function beatCount(c: Chapter): number {
 export interface FlatBeat { chapter: number; beat: number }
 
 /** Every beat of the show in order; the index into this is the sync index. */
-export function flatten(chapters: Chapter[]): FlatBeat[] {
+export function flatten(chapters: (Chapter | BeatUnit)[]): FlatBeat[] {
   const out: FlatBeat[] = [];
   chapters.forEach((c, ci) => { for (let b = 0; b < beatCount(c); b++) out.push({ chapter: ci, beat: b }); });
   return out;
 }
 
 /** The flat index of a chapter's first beat. */
-export function firstBeatOf(chapters: Chapter[], chapter: number): number {
+export function firstBeatOf(chapters: (Chapter | BeatUnit)[], chapter: number): number {
   let n = 0;
   for (let i = 0; i < chapter && i < chapters.length; i++) n += beatCount(chapters[i]);
   return n;
 }
 
 /** The script split at its [next] marks: one part per beat (padded/merged to fit). */
-export function scriptParts(c: Chapter): string[] {
+export function scriptParts(c: Chapter | BeatUnit): string[] {
   const parts = (c.script || '').split(/\s*\[next\]\s*/i);
   const n = beatCount(c);
   if (parts.length > n) return [...parts.slice(0, n - 1), parts.slice(n - 1).join(' ')];

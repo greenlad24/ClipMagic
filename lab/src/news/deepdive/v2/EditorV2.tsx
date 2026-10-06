@@ -15,6 +15,8 @@ import MaterialEditor from './MaterialEditor';
 import Show, { ChapterThumb } from './Show';
 import { CHAPTER_LABEL } from './adapt';
 import { beatCount, firstBeatOf, flatten, type Chapter } from './types';
+import type { DeckTemplate } from '../templates';
+import type { BubbleSettings } from '../bubble';
 
 function material(c: Chapter): string {
   const d = c.data;
@@ -34,8 +36,11 @@ function material(c: Chapter): string {
   }
 }
 
-export function ChapterCardV2({ chapters, index, diveId, choices, onMaterial, onPreview, onSave, onMove, onDelete }: {
+export function ChapterCardV2({ chapters, index, diveId, choices, onMaterial, onPreview, onSave, onMove, onDelete, template, bubble }: {
   chapters: Chapter[]; index: number; diveId: string;
+  /** The dive's design + the camera bubble's safe frame, so the card shows the stage's look. */
+  template?: DeckTemplate | null;
+  bubble?: BubbleSettings | null;
   choices: MediaChoices | null;
   onMaterial: (s: Section) => void;
   onPreview: () => void;
@@ -55,7 +60,7 @@ export function ChapterCardV2({ chapters, index, diveId, choices, onMaterial, on
       <div className="flex flex-col gap-3 p-3 md:flex-row">
         <div className="w-full shrink-0 md:w-[320px]">
           <button onClick={onPreview} className="block w-full transition-shadow hover:ring-2 hover:ring-primary/50 rounded-lg" title="Preview — ← → step through the beats">
-            <ChapterThumb chapters={chapters} index={index} diveId={diveId} beat={beats - 1} />
+            <ChapterThumb chapters={chapters} index={index} diveId={diveId} beat={beats - 1} template={template} bubble={bubble} />
           </button>
           <div className="mt-2 flex items-center gap-1">
             <span className="mr-auto text-xs tabular-nums text-muted-foreground">#{index + 1} · {CHAPTER_LABEL[c.kind] ?? c.kind} · {beats} beat{beats === 1 ? '' : 's'}</span>
@@ -95,7 +100,7 @@ export function ChapterCardV2({ chapters, index, diveId, choices, onMaterial, on
 }
 
 /** The show itself, big, in a dialog. ← → step beats exactly as on stage. */
-export function PreviewV2({ chapters, diveId, chapter, onClose }: { chapters: Chapter[]; diveId: string; chapter: number | null; onClose: () => void }) {
+export function PreviewV2({ chapters, diveId, chapter, onClose, template, bubble }: { chapters: Chapter[]; diveId: string; chapter: number | null; onClose: () => void; template?: DeckTemplate | null; bubble?: BubbleSettings | null }) {
   const beats = useMemo(() => flatten(chapters), [chapters]);
   const [flat, setFlat] = useState(0);
   useEffect(() => { if (chapter !== null) setFlat(firstBeatOf(chapters, chapter)); }, [chapter, chapters]);
@@ -117,7 +122,7 @@ export function PreviewV2({ chapters, diveId, chapter, onClose }: { chapters: Ch
         {chapter !== null && (
           <>
             <div className="relative aspect-video overflow-hidden rounded-md bg-black">
-              <Show chapters={chapters} diveId={diveId} flat={flat} onFlat={setFlat} />
+              <Show chapters={chapters} diveId={diveId} flat={flat} onFlat={setFlat} template={template} bubble={bubble} />
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={() => setFlat((f) => Math.max(0, f - 1))} disabled={flat === 0}><ChevronLeft className="h-4 w-4" /></Button>

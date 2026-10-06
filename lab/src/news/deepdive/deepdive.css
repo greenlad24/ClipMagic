@@ -16,9 +16,10 @@
   height: 100%;
   overflow: hidden;
   isolation: isolate;
-  background: #06070b;
-  color: #f4f5fa;
-  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--dd-bg, #06070b);
+  color: var(--dd-fg, #f4f5fa);
+  font-family: var(--dd-sans, 'Inter', system-ui, sans-serif);
+  transition: background-color .8s ease, color .8s ease;
   -webkit-font-smoothing: antialiased;
   --dd-a: #8b6cff;   /* violet */
   --dd-b: #2ee6d6;   /* teal */
@@ -100,7 +101,7 @@
   font-weight: 600;
 }
 .dd-count { font-family: var(--dd-display); color: var(--dd-fg, #fff); font-variant-numeric: tabular-nums; }
-.dd-count b { color: #fff; }
+.dd-count b { color: var(--dd-fg, #fff); }
 .dd-chrome-dash { width: calc(var(--u) * 3); height: 2px; background: linear-gradient(90deg, var(--dd-a), var(--dd-b)); }
 .dd-rail {
   position: absolute;
@@ -191,7 +192,7 @@
 }
 .dd-h {
   font-family: var(--dd-display);
-  font-weight: 800;
+  font-weight: var(--dd-head-w, 800);
   font-size: calc(var(--u) * 4.6);
   line-height: 1.04;
   letter-spacing: -0.035em;
@@ -199,7 +200,7 @@
   text-wrap: balance;
 }
 .dd-grad {
-  background: linear-gradient(100deg, #fff 10%, var(--dd-b) 55%, var(--dd-a) 95%);
+  background: linear-gradient(100deg, var(--dd-fg, #fff) 10%, var(--dd-b) 55%, var(--dd-a) 95%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -223,9 +224,9 @@
   align-items: center;
   gap: calc(var(--u) * 0.8);
   padding: calc(var(--u) * 0.6) calc(var(--u) * 1.4);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--dd-line);
   border-radius: 99px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--dd-card);
   backdrop-filter: blur(8px);
   font-size: calc(var(--u) * 1.2);
   letter-spacing: 0.2em;
@@ -357,7 +358,8 @@
   font-weight: 700;
   font-size: calc(var(--u) * 1.6);
   background: linear-gradient(135deg, color-mix(in srgb, var(--dd-a) 40%, transparent), color-mix(in srgb, var(--dd-b) 30%, transparent));
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid var(--dd-line);
+  transition: transform .45s cubic-bezier(.34, 1.56, .64, 1), box-shadow .45s, background .45s;
 }
 .dd-takeaways .dd-points {
   grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr));
@@ -406,7 +408,7 @@
   height: calc(var(--u) * 1.5);
   margin: calc(var(--u) * -0.75) 0 0 calc(var(--u) * -0.75);
   border-radius: 99px;
-  background: #fff;
+  background: var(--dd-fg, #fff);
   box-shadow: 0 0 0 calc(var(--u) * 0.5) color-mix(in srgb, var(--dd-a) 45%, transparent), 0 0 calc(var(--u) * 2) var(--dd-b);
 }
 .dd-tl-card {
@@ -450,7 +452,7 @@
   font-family: var(--dd-display);
   font-weight: 700;
   font-size: calc(var(--u) * 2.1);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--dd-card);
 }
 .dd-cmp-label { color: var(--dd-dim); font-size: calc(var(--u) * 1.5); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
 .dd-cmp-cell.win { background: color-mix(in srgb, var(--dd-a) 16%, transparent); }
@@ -461,7 +463,7 @@
 .dd-bars { margin-top: calc(var(--u) * 4); display: grid; gap: calc(var(--u) * 1.6); max-width: calc(var(--u) * 82); }
 .dd-bar { display: grid; grid-template-columns: calc(var(--u) * 18) minmax(0, 1fr); align-items: center; gap: calc(var(--u) * 2); }
 .dd-bar-label { font-size: calc(var(--u) * 1.8); font-weight: 600; text-align: right; color: var(--dd-dim); }
-.dd-bar.hl .dd-bar-label { color: #fff; }
+.dd-bar.hl .dd-bar-label { color: var(--dd-fg, #fff); }
 .dd-bar-track { position: relative; height: calc(var(--u) * 4.2); }
 .dd-bar-fill {
   position: absolute;
@@ -469,7 +471,7 @@
   width: var(--w);
   min-width: calc(var(--u) * 0.6);
   border-radius: calc(var(--u) * 0.8);
-  background: linear-gradient(90deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.26));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--dd-fg, #fff) 14%, transparent), color-mix(in srgb, var(--dd-fg, #fff) 26%, transparent));
   transform: scaleX(0);
   transform-origin: left;
   animation: dd-draw 1.3s cubic-bezier(.3, .9, .2, 1) forwards;
@@ -644,6 +646,46 @@
   letter-spacing: 0.06em;
   text-align: right;
 }
+
+/* ── BEATS on classic slides (Jake, 2026-10-06; Scene.tsx `useGate`) ───────
+   An item waits hidden until its beat (dd-hold); revealing it drops the class
+   and its entrance animation runs. The item of the current beat is lit
+   (dd-cur) — the classic slides' version of the demo show's current step. */
+.dd-in.dd-hold, .dd-pop.dd-hold { animation: none; opacity: 0; transform: translateY(calc(var(--u) * 1.2)); transition: opacity .3s ease, transform .3s ease; }
+.dd-bar-fill.dd-hold { animation: none; transform: scaleX(0); }
+.dd-mark.dd-hold-mark { animation: none; background-size: 0% 32%; }
+.dd-tl-line.stepped { animation: none; transition: transform 1s cubic-bezier(.2, .8, .2, 1); }
+.dd-point { transition: opacity .45s ease; }
+.dd-point.dd-cur .dd-point-n {
+  transform: scale(1.12);
+  background: linear-gradient(135deg, var(--dd-a), var(--dd-b));
+  box-shadow: 0 0 calc(var(--u) * 2.4) color-mix(in srgb, var(--dd-a) 60%, transparent);
+  color: var(--dd-bg, #06070b);
+}
+.dd-takeaways .dd-point { transition: border-color .45s, box-shadow .45s, transform .45s cubic-bezier(.34, 1.56, .64, 1); }
+.dd-takeaways .dd-point.dd-cur { border-color: color-mix(in srgb, var(--dd-a) 70%, transparent); box-shadow: 0 0 calc(var(--u) * 3) color-mix(in srgb, var(--dd-a) 30%, transparent); }
+.dd-stat { transition: border-color .45s, box-shadow .45s; }
+.dd-stat.dd-cur { border-color: color-mix(in srgb, var(--dd-b) 70%, transparent); box-shadow: 0 0 calc(var(--u) * 3.2) color-mix(in srgb, var(--dd-b) 28%, transparent); }
+/* (not transform: the dot's pop animation holds its transform with fill-mode forwards) */
+.dd-tl-ev.dd-cur .dd-tl-dot { box-shadow: 0 0 0 calc(var(--u) * 0.9) color-mix(in srgb, var(--dd-b) 55%, transparent), 0 0 calc(var(--u) * 3.4) var(--dd-b); transition: box-shadow .45s; }
+.dd-tl-ev.dd-cur .dd-tl-label { color: var(--dd-b); }
+.dd-cmp-cell { transition: background .45s; }
+.dd-cmp-cell.dd-cur-row { background: color-mix(in srgb, var(--dd-b) 12%, transparent); }
+.dd-cmp-cell.dd-cur-row.dd-cmp-label { color: var(--dd-fg, #fff); }
+.dd-bar.dd-cur .dd-bar-label { color: var(--dd-fg, #fff); }
+.dd-bar.dd-cur .dd-bar-fill { box-shadow: 0 0 calc(var(--u) * 2.4) color-mix(in srgb, var(--dd-b) 40%, transparent); }
+
+/* ── presenter-bubble SAFE FRAME (Jake, 2026-10-06; bubble.tsx) ──────────────
+   `data-bubble` names the camera bubble's corner, --bub the clear zone's
+   width in --u. The side the bubble is on gets that much room. */
+.dd-stage[data-bubble="bl"] .dd-scene, .dd-stage[data-bubble="tl"] .dd-scene { padding-left: max(calc(var(--u) * 6), calc(var(--u) * var(--bub))); }
+.dd-stage[data-bubble="br"] .dd-scene, .dd-stage[data-bubble="tr"] .dd-scene { padding-right: max(calc(var(--u) * 7), calc(var(--u) * (var(--bub) + 1))); }
+.dd-stage[data-bubble="bl"] .dd-lower { left: calc(var(--u) * var(--bub)); }
+.dd-stage[data-bubble="br"] .dd-lower { max-width: calc(var(--u) * (95 - var(--bub) - 5)); }
+.dd-stage[data-bubble="tl"] .dd-chrome-top { left: calc(var(--u) * var(--bub)); }
+.dd-stage[data-bubble="tr"] .dd-chrome-top { right: calc(var(--u) * var(--bub)); }
+.dd-stage[data-bubble="br"] .dd-rail, .dd-stage[data-bubble="tr"] .dd-rail { right: calc(var(--u) * (var(--bub) * .25)); }
+.dd-stage[data-bubble] .dd-ring { opacity: .55; }
 
 /* ── static (thumbnails, previews): final state, no motion ────────────────── */
 

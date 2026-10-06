@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import BackgroundJobs from './components/BackgroundJobs';
+import ClaudeChatButton from './components/ClaudeChatButton';
 import HomePage from './pages/HomePage';
 import CreatePage from './pages/CreatePage';
 import ProcessingPage from './pages/ProcessingPage';
@@ -44,10 +45,21 @@ import DeepDivePresenterPage from './news/deepdive/DeepDivePresenterPage';
 
 // The Lab's floating Jobs panel, except on the AI News Stream pages — those
 // are full-screen presenter/teleprompter views with their own bottom bars.
+// The Chat button (signed-in only — it renders nothing otherwise) sits directly
+// above Jobs; where Jobs is hidden it takes Jobs' corner, and it stays off the
+// on-air presenter views entirely.
 function LabJobs() {
   const { pathname } = useLocation();
-  if (pathname.startsWith('/news-gatherer') || pathname.startsWith('/deal-organizer')) return null;
-  return <BackgroundJobs />;
+  if (pathname.startsWith('/news-gatherer') || pathname.startsWith('/deal-organizer')) {
+    const onAir = pathname.startsWith('/news-gatherer/present') || /\/deep-dive\/[^/]+\/present/.test(pathname);
+    return onAir ? null : <ClaudeChatButton aboveJobs={false} />;
+  }
+  return (
+    <>
+      <ClaudeChatButton />
+      <BackgroundJobs />
+    </>
+  );
 }
 
 // Redirect /project/:id/preview → /project/:id/timeline

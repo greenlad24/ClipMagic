@@ -25,6 +25,7 @@ import { stories } from "./db.js";
 import { callNewsModel } from "./ai.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
 import { JAKE_STYLE_GUIDE } from "./deck.js";
+import { fitMarkers } from "./deepDiveBeats.js";
 import {
   deepDives, deepDiveSections, sectionsOf, setGenerating, isGenerating,
   research, parseJsonReply, findSectionVideo, splitScripts,
@@ -392,23 +393,8 @@ Output ONLY the final script with the same marker lines.`;
   return parts.map((p, i) => fitMarkers(p, beats[i]));
 }
 
-/** Make a script carry exactly beats−1 [next] marks (merge extras, split at sentences when short). */
-export function fitMarkers(text: string, beats: number): string {
-  let parts = text.split(/\s*\[next\]\s*/i).map((x) => x.trim()).filter(Boolean);
-  if (beats <= 1) return parts.join(" ");
-  if (parts.length > beats) parts = [...parts.slice(0, beats - 1), parts.slice(beats - 1).join(" ")];
-  while (parts.length < beats) {
-    // Split the longest part at the sentence boundary nearest its middle.
-    let li = 0;
-    parts.forEach((p, i) => { if (p.length > parts[li].length) li = i; });
-    const p = parts[li];
-    const sentences = p.match(/[^.!?]+[.!?]+["”’)]*\s*|[^.!?]+$/g) ?? [p];
-    if (sentences.length < 2) { parts.splice(li + 1, 0, ""); continue; }
-    const half = Math.ceil(sentences.length / 2);
-    parts.splice(li, 1, sentences.slice(0, half).join("").trim(), sentences.slice(half).join("").trim());
-  }
-  return parts.join(" [next] ");
-}
+/** Moved to deepDiveBeats.ts (shared with classic slides, 2026-10-06); re-exported for callers. */
+export { fitMarkers };
 
 /* ── media gathering ──────────────────────────────────────────────────────── */
 
