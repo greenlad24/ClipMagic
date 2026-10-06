@@ -77,7 +77,7 @@ const fmt = (v: number, like: number) => {
 
 /* ── title ───────────────────────────────────────────────────────────────── */
 
-function DotField({ still }: { still: boolean }) {
+export function DotField({ still }: { still: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const cv = ref.current;

@@ -7,9 +7,10 @@
 .ns-cover { justify-content: center; }
 .ns-cover-bg { position: absolute; inset: 0; overflow: hidden; }
 .ns-cover-bg img { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; opacity: .34; filter: saturate(.9); transform: scale(1.06); animation: ns-drift 24s ease-in-out infinite alternate; }
-.ns-cover-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, #000 22%, rgba(0,0,0,.7) 58%, rgba(0,0,0,.35)); }
-/* a slow yellow glow, pure CSS (no images spent) */
-.ns-glow { position: absolute; z-index: 1; width: calc(var(--u) * 70); height: calc(var(--u) * 70); right: calc(var(--u) * -18); bottom: calc(var(--u) * -30); border-radius: 50%; background: radial-gradient(closest-side, rgba(255,210,30,.22), rgba(255,210,30,0)); animation: ns-glow 9s ease-in-out infinite alternate; }
+.ns-cover-bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, var(--ink) 22%, color-mix(in srgb, var(--ink) 70%, transparent) 58%, color-mix(in srgb, var(--ink) 35%, transparent)); }
+.ns-cover-bg canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; }
+/* a slow glow in the template's accent, pure CSS (no images spent) */
+.ns-glow { position: absolute; z-index: 1; width: calc(var(--u) * 70); height: calc(var(--u) * 70); right: calc(var(--u) * -18); bottom: calc(var(--u) * -30); border-radius: 50%; background: radial-gradient(closest-side, color-mix(in srgb, var(--yellow) 22%, transparent), transparent); animation: ns-glow 9s ease-in-out infinite alternate; }
 .ns-cover.still .ns-glow, .ns-cover.still .ns-cover-bg img, .dd2.instant .ns-cover-bg img { animation: none; }
 @keyframes ns-drift { to { transform: scale(1.14) translate(-1.5%, -1%); } }
 @keyframes ns-glow { to { transform: translate(calc(var(--u) * -10), calc(var(--u) * -6)) scale(1.15); opacity: .7; } }
@@ -18,11 +19,15 @@
 .ns-cover-eyebrow { margin: calc(var(--u) * 3) 0 0; color: var(--yellow); }
 .ns-h1 { font-size: calc(var(--u) * 7.6); max-width: 15ch; margin-top: calc(var(--u) * 1.4); line-height: .95; }
 .ns-h1.l { font-size: calc(var(--u) * 6); max-width: 19ch; }
-.ns-h1.xl { font-size: calc(var(--u) * 4.6); max-width: 26ch; letter-spacing: -.045em; line-height: 1.02; }
+.ns-h1.xl { font-size: calc(var(--u) * 4.6); max-width: 26ch; letter-spacing: var(--head-track); line-height: 1.02; }
 .ns-lede { margin-top: calc(var(--u) * 3); }
 .ns-src { margin-top: calc(var(--u) * 3.4); font: 500 calc(var(--u) * 1.05) var(--mono); letter-spacing: .06em; color: var(--mute); display: flex; align-items: baseline; gap: calc(var(--u) * .5); flex-wrap: wrap; }
-.ns-src b { color: var(--paper); font-weight: 600; }
-.ns-src em { font-style: normal; margin-left: calc(var(--u) * 1); border: 1px solid var(--line); border-radius: 999px; padding: calc(var(--u) * .25) calc(var(--u) * .8); color: #c9c9c2; }
+.ns-src b { color: var(--fg); font-weight: 600; }
+.ns-src em { font-style: normal; margin-left: calc(var(--u) * 1); border: 1px solid var(--line); border-radius: calc(999px * var(--r)); padding: calc(var(--u) * .25) calc(var(--u) * .8); color: color-mix(in srgb, var(--fg) 78%, var(--ink)); }
+
+/* presenter-bubble safe frame (deepdive/bubble.tsx; the rest is show.css's own
+   rules, which already move the cover's lede and lift the centred block) */
+.dd2[data-bubble="bl"] .ns-src { margin-left: max(0px, calc(var(--u) * (var(--bub) - 6))); }
 
 /* entrance: the cover's lines rise in, one after another, when it comes on */
 .ns-cover.on .ns-cover-wrap > * { animation: ns-rise .8s var(--ease) both; }

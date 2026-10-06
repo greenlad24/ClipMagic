@@ -6,16 +6,20 @@
  * unchanged (same endpoints, same streamed logs, same toasts), plus:
  *   - moveSlide(): reorder by one step, for touch screens where HTML5
  *     drag-and-drop does not fire (iPad);
- *   - an Undo on "Slide removed" (updateSlide deleted:false).
+ *   - an Undo on "Slide removed" (updateSlide deleted:false);
+ *   - the deck's design template (the Deep Dive's templates, 2026-10-06):
+ *     chooseDeckTemplate() saves it and re-skins every open screen at once.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {
   getStories, toggleStoryInDeck, collectNews, clearCache,
-  buildDeckFromStories, getSlides, updateSlide, reorderSlides, startSession,
+  buildDeckFromStories, getSlides, updateSlide, reorderSlides, startSession, setDeckTemplate,
   type GetStoriesOutputType, type GetSlidesOutputType,
 } from '../api';
 import type { LogEntry } from './RunLog';
+import { announceDeckTemplate } from './stage/deckTemplate';
+import { templateFor } from '../deepdive/templates';
 
 export type Story = GetStoriesOutputType['stories'][0];
 export type Meta = GetStoriesOutputType['meta'];
@@ -196,6 +200,23 @@ export function useDailyShow(enabled: boolean) {
     await persistOrder(next);
   };
 
+  // The deck's look ('' = Jake's brand). Optimistic: every preview here
+  // switches at once; the audience/display windows follow (deckTemplate.ts).
+  const deckTemplate = deck?.template ?? '';
+  const chooseDeckTemplate = async (template: string) => {
+    if (!deck) return toast.error('Build the deck first');
+    const before = deck.template ?? '';
+    setDeck((d) => (d ? { ...d, template } : d));
+    try {
+      await setDeckTemplate({ deckId: deck.id, template });
+      announceDeckTemplate(deck.id, template);
+      toast.success(`Template: ${templateFor(template).name} — the show screens and every preview use it now.`);
+    } catch (e: any) {
+      setDeck((d) => (d ? { ...d, template: before } : d));
+      toast.error(e?.message || 'Could not change the template');
+    }
+  };
+
   const startShow = () => {
     if (!deck) return toast.error('No deck loaded');
     window.open(PRESENTER_PATH, '_blank');
@@ -213,6 +234,7 @@ export function useDailyShow(enabled: boolean) {
     refreshing, clearingCache, collect, clearAndCollect, collectLog,
     building, buildDeck, buildLog,
     slides, deck, slidesLoading, loadSlides, starSlide, deleteSlide, moveSlideTo, startShow,
+    deckTemplate, chooseDeckTemplate,
     selectedCount, estMins, deckDateLabel,
   };
 }

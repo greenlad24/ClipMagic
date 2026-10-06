@@ -43,6 +43,8 @@ export interface Deck {
   totalSlides?: number;
   presentedAt?: string;
   totalDurationSeconds?: number;
+  /** Design template id (deepdive/templates.ts); empty/unset = Jake's brand. */
+  template?: string;
 }
 
 export interface Slide {
@@ -231,6 +233,9 @@ export const collectNews = (input: Record<string, never>) =>
 export const buildDeckFromStories = (input: Record<string, never>) =>
   streamingCall<{ success: boolean; slidesCreated: number; deckId: string; message: string }>('buildDeckFromStories', input);
 export const getSlides = (input: { deckId?: string }) => call<GetSlidesOutputType>('getSlides', input);
+/** The deck's design template (the Deep Dive's templates; '' = Jake's brand). No deckId = today's deck. */
+export const getDeckTemplate = (input: { deckId?: string }) => call<{ deckId: string | null; template: string }>('getDeckTemplate', input);
+export const setDeckTemplate = (input: { deckId?: string; template: string }) => call<{ deckId: string; template: string }>('setDeckTemplate', input);
 export const updateSlide = (input: {
   slideId: string;
   favorited?: boolean;

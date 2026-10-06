@@ -20,6 +20,7 @@
  * Stage keys: B = next corner, C = camera on/off, G = guide on/off.
  */
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Webcam } from 'lucide-react';
 
 export type BubbleCorner = 'bl' | 'br' | 'tl' | 'tr' | 'off';
 export type BubbleSize = 's' | 'm' | 'l';
@@ -202,6 +203,46 @@ export function BubbleLayer({ settings, scope, trigger }: { settings: BubbleSett
           <video ref={videoRef} muted playsInline autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
           {camErr && <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '12%', textAlign: 'center', color: '#fff', font: '500 calc(var(--u) * .9) system-ui' }}>Camera unavailable: {camErr}</div>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The presenter's camera bubble (bubble.tsx): which corner it sits in, its
+ * size, and whether the screen draws the camera itself (then it moves out of
+ * the way of content). Saved on this computer and applied to an open
+ * presentation window at once. Used by the Deep Dive editor and the Daily
+ * Show dashboard (the same setting: one camera, one machine).
+ */
+export function BubbleControl({ value, onChange }: { value: BubbleSettings; onChange: (p: Partial<BubbleSettings>) => void }) {
+  const corners: BubbleCorner[] = ['bl', 'br', 'tl', 'tr', 'off'];
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs"
+      title="Slides keep this corner clear so your camera bubble never covers content. Keys on the screen: B corner · C camera · G guide">
+      <Webcam className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-muted-foreground">Camera bubble</span>
+      <select value={value.corner} onChange={(e) => onChange({ corner: e.target.value as BubbleCorner })}
+        className="h-6 rounded border border-border bg-background px-1 text-xs" aria-label="Camera bubble corner">
+        {corners.map((c) => <option key={c} value={c}>{CORNER_LABEL[c]}</option>)}
+      </select>
+      {value.corner !== 'off' && (
+        <>
+          <div className="flex overflow-hidden rounded border border-border">
+            {(['s', 'm', 'l'] as BubbleSize[]).map((z) => (
+              <button key={z} type="button" onClick={() => onChange({ size: z })}
+                className={`px-1.5 py-0.5 ${value.size === z ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{SIZE_LABEL[z]}</button>
+            ))}
+          </div>
+          <label className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+            <input type="checkbox" checked={value.camera} onChange={(e) => onChange({ camera: e.target.checked })} className="h-3 w-3" />
+            Show my camera <span className="hidden sm:inline">(moves out of the way)</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-1 text-muted-foreground">
+            <input type="checkbox" checked={value.guide} onChange={(e) => onChange({ guide: e.target.checked })} className="h-3 w-3" />
+            Guide
+          </label>
+        </>
       )}
     </div>
   );

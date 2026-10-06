@@ -139,6 +139,30 @@ const getSlides: Handler = (input) => {
   return { deck, slides: list };
 };
 
+/**
+ * The deck's design template (Jake, 2026-10-06: "the deck itself will look like
+ * the deep dive presentation, with all of the templates that I can choose").
+ * Design only, so it re-skins a built deck at once — no rebuild. The screens
+ * read it with getDeckTemplate (cheap; they poll it).
+ */
+const deckFor = (deckId?: string) => (deckId
+  ? decks.get(deckId)
+  : decks.where("deck_date = ? ORDER BY created_at DESC LIMIT 1", todayDate())[0]);
+
+const getDeckTemplate: Handler = (input) => {
+  const deck = deckFor(str(input?.deckId));
+  return { deckId: deck?.id ?? null, template: deck?.template ?? "" };
+};
+
+const setDeckTemplate: Handler = (input) => {
+  const deck = deckFor(str(input?.deckId));
+  if (!deck) throw Object.assign(new Error("No deck yet — build the presentation first."), { status: 400 });
+  const template = templateInput(input?.template);
+  if (template === undefined) throw Object.assign(new Error("Unknown template."), { status: 400 });
+  decks.update(deck.id, { template });
+  return { deckId: deck.id, template };
+};
+
 const updateSlide: Handler = (input) => {
   const slideId = need(str(input?.slideId), "slideId");
   const record: Record<string, unknown> = {};
@@ -526,6 +550,8 @@ const HANDLERS: Record<string, Handler> = {
   toggleStoryInDeck,
   clearCache,
   getSlides,
+  getDeckTemplate,
+  setDeckTemplate,
   updateSlide,
   reorderSlides,
   startSession,

@@ -3,6 +3,8 @@
  * mini preview — the show's own components drawn in that template — not a
  * name in a list. In the editor the previews are this dive's own title and
  * first content chapter/slide; on the list page (nothing built yet) a sample.
+ * The Daily Show dashboard uses this same picker with its own `preview` (a
+ * story's cover + first scene, drawn by daily/stage/StoryShow in the template).
  */
 import { useMemo, type ReactNode } from 'react';
 import { Check } from 'lucide-react';
@@ -67,7 +69,7 @@ function Preview({ t, format, chapters, sections, diveId, title }: {
   );
 }
 
-export default function TemplatePicker({ value, onChange, format, chapters, sections, diveId = '', title = '', disabled = false, footer }: {
+export default function TemplatePicker({ value, onChange, format, chapters, sections, diveId = '', title = '', disabled = false, footer, preview }: {
   /** The chosen template id ('' = the format's default). */
   value: string;
   onChange: (id: TemplateId) => void;
@@ -79,6 +81,8 @@ export default function TemplatePicker({ value, onChange, format, chapters, sect
   title?: string;
   disabled?: boolean;
   footer?: ReactNode;
+  /** Draws a card's preview instead of the dive's chapters (the Daily Show's stories). */
+  preview?: (t: DeckTemplate) => ReactNode;
 }) {
   const current = templateFor(value, format).id;
   const ch = useMemo(() => {
@@ -100,7 +104,7 @@ export default function TemplatePicker({ value, onChange, format, chapters, sect
             <button key={t.id} type="button" disabled={disabled} onClick={() => onChange(t.id)}
               className={`group rounded-lg border p-2 text-left transition-colors disabled:opacity-50 ${on ? 'border-primary ring-2 ring-primary/40' : 'border-border hover:border-muted-foreground/50'}`}>
               <div className="pointer-events-none overflow-hidden rounded-md">
-                <Preview t={t} format={format} chapters={ch} sections={secs} diveId={diveId} title={title || 'The AI that never sleeps'} />
+                {preview ? preview(t) : <Preview t={t} format={format} chapters={ch} sections={secs} diveId={diveId} title={title || 'The AI that never sleeps'} />}
               </div>
               <div className="mt-2 flex items-center gap-2">
                 <span className="flex shrink-0 gap-0.5" aria-hidden>

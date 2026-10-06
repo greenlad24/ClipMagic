@@ -15,16 +15,22 @@ import NotesEditor, { parseKeyPoints } from './NotesEditor';
 import type { Slide } from './useDailyShow';
 import { StoryThumb } from './stage/StoryShow';
 import { beatLabel, storyBeats, storyStage } from './stage/story';
+import { templateFor } from '../deepdive/templates';
+import { useBubbleSettings } from '../deepdive/bubble';
 
 interface Props {
   slide: Slide | null;
   /** Its place in the show (1-based), for the scenes' number badge. */
   number?: number;
+  /** The deck's template id ('' = Jake's brand) — the preview is drawn in it. */
+  template?: string;
   onClose: () => void;
   onNotesUpdated: () => void;
 }
 
-export default function SlidePreviewDialog({ slide, number = 1, onClose, onNotesUpdated }: Props) {
+export default function SlidePreviewDialog({ slide, number = 1, template = '', onClose, onNotesUpdated }: Props) {
+  // The safe frame the show screens keep for the camera bubble, so the preview matches them.
+  const [bubble] = useBubbleSettings();
   const [editingNotes, setEditingNotes] = useState(false);
   const [videoBusy, setVideoBusy] = useState<'' | 'find' | 'set'>('');
   const [videoLink, setVideoLink] = useState('');
@@ -72,7 +78,7 @@ export default function SlidePreviewDialog({ slide, number = 1, onClose, onNotes
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Audience view</p>
             <div data-story-preview>
-              <StoryThumb slide={slide} beat={beat} number={number} live />
+              <StoryThumb slide={slide} beat={beat} number={number} live template={templateFor(template, 'v2')} bubble={bubble} />
             </div>
             <div className="mt-1.5 flex items-center gap-2">
               <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setBeat((b) => Math.max(0, b - 1))} disabled={beat <= 0} aria-label="Previous beat">

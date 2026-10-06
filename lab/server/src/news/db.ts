@@ -138,6 +138,9 @@ if (!hasColumn("news_live_sessions", "media_view")) db.exec(`ALTER TABLE news_li
 // which beat of the current story the audience screen is on. Additive only.
 if (!hasColumn("news_slides", "stage_json")) db.exec(`ALTER TABLE news_slides ADD COLUMN stage_json TEXT`);
 if (!hasColumn("news_live_sessions", "current_beat")) db.exec(`ALTER TABLE news_live_sessions ADD COLUMN current_beat REAL`);
+// The deck's design template (2026-10-06): the Deep Dive's templates, picked on
+// the dashboard (web: src/news/deepdive/templates.ts). Empty/NULL = Jake's brand.
+if (!hasColumn("news_decks", "template")) db.exec(`ALTER TABLE news_decks ADD COLUMN template TEXT`);
 if (!hasColumn("news_source_cache", "first_seen_date")) {
   db.exec(`ALTER TABLE news_source_cache ADD COLUMN first_seen_date TEXT`);
   // Backfill with the SHOW-TIMEZONE date of the last sighting — the UTC date
@@ -234,6 +237,8 @@ export interface DeckRecord {
   totalSlides?: number;
   presentedAt?: string;
   totalDurationSeconds?: number;
+  /** Design template id (the Deep Dive's, deepDive.ts DEEP_DIVE_TEMPLATES); empty = Jake's brand. */
+  template?: string;
 }
 
 export interface SlideRecord {
@@ -343,6 +348,7 @@ export const decks = makeTable<DeckRecord>(
     totalSlides: ["total_slides", "num"],
     presentedAt: ["presented_at", "text"],
     totalDurationSeconds: ["total_duration_seconds", "num"],
+    template: ["template", "text"],
   },
   { created_at: now },
 );

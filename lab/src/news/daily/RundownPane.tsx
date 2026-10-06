@@ -1,7 +1,7 @@
 /**
  * Right pane — the rundown (the built deck): build log, the ordered slide
  * list (drag or arrows to reorder, star, preview, edit notes, remove), and the
- * Go-live card with the show screens.
+ * Go-live card with the deck's template (DeckLook) and the show screens.
  */
 import { useEffect, useState } from 'react';
 import { Layers, Play, ScrollText, MonitorPlay, Tv, ExternalLink, SlidersHorizontal, Sparkles } from 'lucide-react';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import RunLog from './RunLog';
 import RundownItem from './RundownItem';
+import DeckLook from './DeckLook';
 import type { DailyShow, Slide } from './useDailyShow';
 
 interface Props {
@@ -134,6 +135,8 @@ export default function RundownPane({ show, onBuild, onPreview }: Props) {
               <Play className="h-4 w-4" /> Start show
             </Button>
           </div>
+          {/* The deck's design: the Deep Dive templates + the camera-bubble safe frame. */}
+          <DeckLook show={show} />
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground" data-stages={missingStages}>
             <span className="flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5" />

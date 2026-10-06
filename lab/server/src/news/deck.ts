@@ -390,7 +390,9 @@ export async function buildDeckFromStories(
     if (deck) {
       for (const s of slides.where('deck_id = ?', deck.id)) slides.remove(s.id);
     } else {
-      deck = decks.insert({ deckDate: today, totalSlides: 0 });
+      // A new day's deck keeps the look Jake last picked (decks.template); none = his brand.
+      const lastLook = decks.where("template IS NOT NULL AND template != '' ORDER BY created_at DESC LIMIT 1")[0]?.template ?? "";
+      deck = decks.insert({ deckDate: today, totalSlides: 0, template: lastLook });
     }
 
     await prog(`Deck ready. Generating presenter notes + scripts for ${sorted.length} stories…`, 18);

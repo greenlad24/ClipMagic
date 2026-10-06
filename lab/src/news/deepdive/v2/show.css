@@ -211,6 +211,10 @@
 .dd2-beat.on { border-style: solid; border-color: var(--paper-ink); background: var(--paper-card); box-shadow: 0 18px 40px -24px rgba(0,0,0,.35); }
 .dd2-ch:not(.paper) .dd2-beat.on { background: var(--card-2); border-color: var(--line); }
 .dd2-beat.on .big { color: inherit; } .dd2-beat.cur .n { color: var(--yellow); }
+/* a built step on a DARK chapter: the :not(.paper) rules above outrank the two
+   lines before, which left every step dim with no lit number (2026-10-06) */
+.dd2-ch:not(.paper) .dd2-beat.on .big { color: var(--fg); }
+.dd2-ch:not(.paper) .dd2-beat.cur .n { color: var(--yellow); }
 
 /* ── timeline ── */
 .dd2-tl { position: relative; display: grid; gap: calc(var(--u) * 1.1); padding-top: calc(var(--u) * 2.6); align-self: center; }
