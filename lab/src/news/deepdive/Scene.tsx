@@ -15,6 +15,7 @@ import { sectionMedia, visualStill, NO_VISUAL, type Section, type Stat, type Vis
 import { templateStyle, type DeckTemplate } from './templates';
 import { bubbleRootProps, type BubbleSettings } from './bubble';
 import { sectionBeatCount } from './beats';
+import { useFitText, sizedStyle, ghostStyle, liveStyle, type FitTarget } from './fitText';
 import './deepdive.css';
 
 /**
@@ -105,12 +106,16 @@ function CountUp({ value, decimals, delay, still }: { value: number; decimals: n
 
 function StatValue({ stat, delay, still }: { stat: Stat; delay: number; still: boolean }) {
   if (stat.value === null) return <>{stat.display || '—'}</>;
+  // The final value is laid out invisibly under the counting one, so the box is fitted at its real width.
   return (
-    <>
-      {stat.prefix}
-      <CountUp value={stat.value} decimals={stat.decimals} delay={delay} still={still} />
-      {stat.suffix && <small>{stat.suffix}</small>}
-    </>
+    <span style={sizedStyle}>
+      <span style={ghostStyle} aria-hidden>{stat.prefix}{formatNum(stat.value, stat.decimals)}{stat.suffix && <small>{stat.suffix}</small>}</span>
+      <span style={liveStyle}>
+        {stat.prefix}
+        <CountUp value={stat.value} decimals={stat.decimals} delay={delay} still={still} />
+        {stat.suffix && <small>{stat.suffix}</small>}
+      </span>
+    </span>
   );
 }
 
@@ -407,12 +412,22 @@ interface SceneProps {
   beat?: number;
 }
 
+/** The classic slide's boxes whose text is fitted (./fitText.ts), outer → inner. */
+const SCENE_FIT: FitTarget[] = [
+  { sel: '.dd-scene' },
+  { sel: '.dd-stats', items: '.dd-stat' },
+  { sel: '.dd-cmp', items: '.dd-cmp-cell' },
+  { sel: '.dd-lower', min: 0.6 },
+];
+
 /** One section, with its chrome (counter, eyebrow line, footer). */
 export function Scene({ section, index, total, title, still = false, active = true, back = false, leaving, beat }: SceneProps) {
   const isMedia = section.kind === 'media' && !!sectionMedia(section);
   const vis = section.visual && !NO_VISUAL.has(section.kind) ? section.visual : null;
+  const ref = useRef<HTMLDivElement>(null);
+  useFitText(ref, SCENE_FIT, [section, beat, still, active]);
   return (
-    <div className={`dd-scene ${back ? 'back' : ''} ${leaving ? `out-${leaving}` : ''}`} style={isMedia ? { padding: 0 } : undefined}>
+    <div ref={ref} className={`dd-scene ${back ? 'back' : ''} ${leaving ? `out-${leaving}` : ''}`} style={isMedia ? { padding: 0 } : undefined}>
       {!isMedia && section.kind !== 'title' && (
         // No "05 / 11" counter (Jake, 2026-10-01) — just the dive's title.
         <div className="dd-chrome-top dd-in" style={d(0)}>

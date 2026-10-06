@@ -13,6 +13,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { assetUrl, type ArticleData, type Chapter, type ClipItem, type DemoTab, type StatItem } from './types';
 import { paperFor, type DeckTemplate } from '../templates';
+import { useFitText, sizedStyle, ghostStyle, liveStyle, type FitTarget } from '../fitText';
 import './show.css';
 
 /* ── helpers ─────────────────────────────────────────────────────────────── */
@@ -293,7 +294,13 @@ function RevealCard({ card, shown, still }: { card: NonNullable<Chapter['data'][
       <div className="name">{card.name}</div>
       {card.note && <div className="note">{card.note}</div>}
       <div className={`big ${words ? 'words' : ''}`}>
-        {isNum ? <>{card.prefix}{fmt(v, card.countTo as number)}{card.suffix && <small>{card.suffix}</small>}</> : card.big}
+        {isNum
+          // the final value sits invisibly under the counting one, so the card is fitted at its real width
+          ? <span style={sizedStyle}>
+              <span style={ghostStyle} aria-hidden>{card.prefix}{fmt(card.countTo as number, card.countTo as number)}{card.suffix && <small>{card.suffix}</small>}</span>
+              <span style={liveStyle}>{card.prefix}{fmt(v, card.countTo as number)}{card.suffix && <small>{card.suffix}</small>}</span>
+            </span>
+          : card.big}
       </div>
       {card.small && <div className="small">{card.small}</div>}
     </div>
@@ -351,7 +358,12 @@ function StatField({ stat, still, active }: { stat: StatItem; still: boolean; ac
     <div className="dd2-field">
       <canvas ref={ref} aria-hidden />
       <div className="ov"><div>
-        <b>{stat.value === null ? stat.display : <>{stat.prefix}{fmt(v, to)}{v >= to ? stat.suffix : ''}</>}</b>
+        <b>{stat.value === null ? stat.display : (
+          <span style={{ ...sizedStyle, justifyItems: 'center' }}>
+            <span style={ghostStyle} aria-hidden>{stat.prefix}{fmt(to, to)}{stat.suffix}</span>
+            <span style={liveStyle}>{stat.prefix}{fmt(v, to)}{v >= to ? stat.suffix : ''}</span>
+          </span>
+        )}</b>
         <span>{stat.label}</span>
       </div></div>
     </div>
@@ -376,12 +388,32 @@ export interface ChapterProps {
   onRunLive?: () => void;
 }
 
+/**
+ * The boxes whose text is fitted (../fitText.ts), outer → inner. Shared with
+ * the AI News story cover (daily/stage/StoryShow.tsx), which is a `.dd2-title`.
+ */
+export const SHOW_FIT: FitTarget[] = [
+  { sel: '.dd2-title' },
+  { sel: '.dd2-h', min: 0.55 },
+  { sel: '.dd2-tabs', min: 0.6 },
+  { sel: '.dd2-body' },
+  { sel: '.dd2-cards', items: '.dd2-card' },
+  { sel: '.dd2-flow', items: '.dd2-beat' },
+  { sel: '.dd2-vs' },
+  { sel: '.dd2-field .ov' },
+  { sel: '.dd2-facts', items: '.dd2-fact' },
+  { sel: '.dd2-takes', items: '.dd2-take .b' },
+  { sel: '.dd2-end', min: 0.6 },
+];
+
 export function ChapterView({ chapter: c, index, beat, diveId, active, still = false, paper = false, presenter = 'Jake Dawson', onBeat, onRunLive }: ChapterProps) {
   const d = c.data || {};
   const cls = `dd2-ch k-${c.kind} ${paper ? 'paper' : ''} ${active ? 'on' : ''}`;
+  const ref = useRef<HTMLElement>(null);
+  useFitText(ref, SHOW_FIT, [c, beat, still, paper, active]);
 
   if (c.kind === 'title') {
-    return <section className={cls}><TitleChapter c={c} diveId={diveId} still={still} active={active} presenter={presenter} /></section>;
+    return <section ref={ref} className={cls}><TitleChapter c={c} diveId={diveId} still={still} active={active} presenter={presenter} /></section>;
   }
 
   const head = (
@@ -549,7 +581,7 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
     case 'takeaways': {
       const pts = d.points ?? [];
       return (
-        <section className={cls}>
+        <section ref={ref} className={cls}>
           <div className="dd2-wrap">
             {head}
             <div className="dd2-takes" style={{ gridTemplateColumns: `repeat(${Math.max(1, pts.length)}, minmax(0, 1fr))` }}>
@@ -570,7 +602,7 @@ export function ChapterView({ chapter: c, index, beat, diveId, active, still = f
   }
 
   return (
-    <section className={cls}>
+    <section ref={ref} className={cls}>
       <div className="dd2-wrap">
         {head}
         <div className="dd2-stage">

@@ -15,8 +15,9 @@
  * Dive stage gets (`dd2RootProps`, `paperFor`), and the presenter-bubble safe
  * frame (deepdive/bubble.tsx) — nothing here is forked from the Deep Dive.
  */
-import { useEffect, useMemo, useState } from 'react';
-import { Accent, ChapterView, DotField } from '../../deepdive/v2/Chapter';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Accent, ChapterView, DotField, SHOW_FIT } from '../../deepdive/v2/Chapter';
+import { useFitText } from '../../deepdive/fitText';
 import { dd2RootProps } from '../../deepdive/v2/Show';
 import type { Slide } from '../../api';
 import { beatCount } from '../../deepdive/v2/types';
@@ -53,8 +54,11 @@ function Cover({ slide, st, on, still }: { slide: Slide; st: StoryStage; on: boo
   useEffect(() => { setBg(slide.heroImageUrl || ytThumb(slide)); }, [slide.id, slide.heroImageUrl, slide.videoId]);
   const plain = c.heading.replace(/\*/g, '');
   const size = plain.length > 70 ? 'xl' : plain.length > 42 ? 'l' : '';
+  // The headline, lede and source always fit the screen (deepdive/fitText.ts).
+  const ref = useRef<HTMLElement>(null);
+  useFitText(ref, SHOW_FIT, [c.heading, c.lede, c.eyebrow, c.source, still, on]);
   return (
-    <section className={`dd2-ch k-title ns-cover ${on ? 'on' : ''} ${still ? 'still' : ''}`}>
+    <section ref={ref} className={`dd2-ch k-title ns-cover ${on ? 'on' : ''} ${still ? 'still' : ''}`}>
       <div className="ns-cover-bg" aria-hidden>
         {bg && (
           <img src={bg} alt="" referrerPolicy="strict-origin-when-cross-origin"

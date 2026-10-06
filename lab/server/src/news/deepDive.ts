@@ -27,6 +27,7 @@ import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { findVideoForStory, parseVideoId } from "./video.js";
 import { gatherVisuals, type Visual } from "./deepDiveVisuals.js";
 import { fitMarkers, sectionBeatCountOf } from "./deepDiveBeats.js";
+import { L, clip, clipList, spec } from "./textLimits.js";
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS news_deep_dives (
@@ -297,6 +298,28 @@ export function normalizeData(kind: SectionKind, raw: unknown): Record<string, u
   }
 }
 
+/**
+ * The on-screen limits (textLimits.ts) on a GENERATED section — the outline's
+ * text, trimmed at a word boundary. Not used on editor saves: what Jake types
+ * is kept (the screen fits it to its box instead).
+ */
+export function limitData(kind: SectionKind, data: Record<string, unknown>): Record<string, unknown> {
+  const d = data as Record<string, any>;
+  switch (kind) {
+    case "title": return { ...d, subtitle: clip(d.subtitle, L.titleLede), kicker: clip(d.kicker, L.eyebrow) };
+    case "statement": return { ...d, text: clip(d.text, L.statement) };
+    case "stats": return { ...d, stats: arr(d.stats).map((x: any) => ({ ...x, display: clip(x.display, L.statDisplay), label: clip(x.label, L.statLabel) })) };
+    case "bullets": return { ...d, points: clipList(d.points, L.bullet, 5) };
+    case "takeaways": return { ...d, points: clipList(d.points, L.takeaway, 4) };
+    case "timeline": return { ...d, events: arr(d.events).map((e: any) => ({ ...e, date: clip(e.date, L.tlDate), label: clip(e.label, L.tlLabel), detail: clip(e.detail, L.tlDetail) })) };
+    case "compare": return { ...d, columns: arr(d.columns).map((c) => clip(c, L.vsName)), rows: arr(d.rows).map((r: any) => ({ ...r, label: clip(r.label, L.barLabel), values: arr(r.values).map((v) => clip(v, L.cmpCell)) })) };
+    case "bars": return { ...d, bars: arr(d.bars).map((b: any) => ({ ...b, label: clip(b.label, L.barLabel) })) };
+    case "quote": return { ...d, quote: clip(d.quote, L.quote, true), who: clip(d.who, L.who), role: clip(d.role, L.role) };
+    case "media": return { ...d, caption: clip(d.caption, L.mediaCaption) };
+  }
+  return d;
+}
+
 /** Kinds whose layout has no room for a visual beside it. */
 export const NO_VISUAL = new Set<SectionKind>(["title", "takeaways", "media", "compare", "timeline"]);
 
@@ -487,16 +510,17 @@ interface OutlineSection { kind: string; eyebrow?: string; heading?: string; dat
 interface Outline { title?: string; subtitle?: string; sections?: OutlineSection[] }
 
 const KIND_SPEC = `SECTION KINDS — each section is one full screen. Pick the kind that SHOWS the point best:
-- "title": the opener. heading = the deep dive's title (max 8 words). data: {"subtitle":"one line, max 14 words","kicker":"2-4 word label, e.g. 'AI Deep Dive'"}
-- "statement": one big idea in a sentence. data: {"text":"max 18 words","highlight":["1-3 exact words or short phrases from text to color"]}
-- "stats": 1-4 big numbers. data: {"stats":[{"value":20,"prefix":"$","suffix":"/mo","decimals":0,"label":"max 10 words"}]} — value MUST be a plain number that counts up on screen. If a figure can't be a number (e.g. "Q3 2026"), set "value":null and put it in "display".
-- "bullets": a heading + 3-5 short points. data: {"points":["max 10 words each"]}
-- "timeline": how we got here. data: {"events":[{"date":"Mar 2025","label":"max 8 words","detail":"optional, max 14 words"}]} — 3-7 events, oldest first.
-- "compare": a versus table. data: {"columns":["Old way","New way"],"rows":[{"label":"Price","values":["$20","Free"]}],"winner":null} — 2-3 columns, 3-6 rows, each cell max 6 words. "winner" = index of the column to highlight, or null.
+- "title": the opener. heading = the deep dive's title (${spec(L.headingV1)}). data: {"subtitle":"one line, ${spec(L.titleLede)}","kicker":"2-4 word label, e.g. 'AI Deep Dive'"}
+- "statement": one big idea in a sentence. data: {"text":"${spec(L.statement)}","highlight":["1-3 exact words or short phrases from text to color"]}
+- "stats": 1-4 big numbers. data: {"stats":[{"value":20,"prefix":"$","suffix":"/mo","decimals":0,"label":"${spec(L.statLabel)}"}]} — value MUST be a plain number that counts up on screen. If a figure can't be a number (e.g. "Q3 2026"), set "value":null and put it in "display".
+- "bullets": a heading + 3-5 short points. data: {"points":["${spec(L.bullet)} each"]}
+- "timeline": how we got here. data: {"events":[{"date":"Mar 2025","label":"${spec(L.tlLabel)}","detail":"optional, ${spec(L.tlDetail)}"}]} — 3-7 events, oldest first.
+- "compare": a versus table. data: {"columns":["Old way","New way"],"rows":[{"label":"Price","values":["$20","Free"]}],"winner":null} — 2-3 columns, 3-6 rows, each cell ${spec(L.cmpCell)}, row labels ${spec(L.barLabel)}. "winner" = index of the column to highlight, or null.
 - "bars": a simple bar chart of comparable numbers. data: {"unit":"%","bars":[{"label":"Model A","value":72}],"highlight":0} — 2-7 bars, same unit, from the research only.
-- "quote": a real quote from the research, word for word. data: {"quote":"...","who":"Name","role":"Title, Company"}
-- "media": the company's own video plays full screen (we search YouTube for it). data: {"caption":"max 12 words","videoQuery":"what the video would be called, e.g. 'OpenAI Sora 2 launch'","source":{"outlet":"...","title":"headline of the best article","url":"..."}} — the source is shown instead when no video exists.
-- "takeaways": the closer. heading max 6 words. data: {"points":["3-4 things to remember, max 10 words each"]}`;
+- "quote": a real quote from the research, word for word. data: {"quote":"${spec(L.quote)} — the strongest part","who":"Name","role":"Title, Company"}
+- "media": the company's own video plays full screen (we search YouTube for it). data: {"caption":"${spec(L.mediaCaption)}","videoQuery":"what the video would be called, e.g. 'OpenAI Sora 2 launch'","source":{"outlet":"...","title":"headline of the best article","url":"..."}} — the source is shown instead when no video exists.
+- "takeaways": the closer. heading max 6 words. data: {"points":["3-4 things to remember, ${spec(L.takeaway)} each"]}
+Every text field has a HARD limit (words AND characters); anything longer is cut off, so write to fit.`;
 
 /**
  * THE STRUCTURE IS JAKE'S VIDEO STRUCTURE (2026-10-01): payoff first — the
@@ -557,7 +581,7 @@ RULES:
 3. Variety: NEVER the same kind twice in a row (check the list before answering — "bullets" then "bullets" is wrong; turn one into a statement, stats, compare or quote). Use at least one "stats", and at least one of "compare" / "bars" / "timeline". Use "quote" only with a real quote from the research.
 4. The SCREEN IS NOT THE SCRIPT. On-screen text is short and punchy — a 14-year-old gets it at a glance. Jake does the explaining out loud.
 5. Every number, date, name and quote must come from the research. Nothing invented. Rumors get "Rumor:" or "Unconfirmed" in the eyebrow.
-6. "eyebrow" = a 1-3 word label above the heading (e.g. "The numbers", "How we got here"). "heading" = max 9 words (for "statement" and "quote" the heading is a short label; the big text is in data).
+6. "eyebrow" = a 1-3 word label above the heading (e.g. "The numbers", "How we got here"). "heading" = ${spec(L.headingV1)} (for "statement" and "quote" the heading is a short label; the big text is in data).
 7. "beats" = 2-4 notes for the scriptwriter: what Jake should say on this section, with the specific facts to use.
 8. Plain words. No jargon unless it's the official name the story is about.
 
@@ -797,7 +821,7 @@ export async function generateDeepDive(
       .map((x: any) => {
         const kind = x.kind as SectionKind;
         const visual = NO_VISUAL.has(kind) ? null : byId.get(s(x.visual, 10)) ?? null;
-        return { kind, eyebrow: s(x.eyebrow, 40), heading: s(x.heading, 120), data: normalizeData(kind, x.data), beats: arr(x.beats).map((b) => s(b, 400)).filter(Boolean), visual };
+        return { kind, eyebrow: clip(x.eyebrow, L.eyebrow), heading: clip(x.heading, L.headingV1), data: limitData(kind, normalizeData(kind, x.data)), beats: arr(x.beats).map((b) => s(b, 400)).filter(Boolean), visual };
       });
     if (planned.length < 4) throw new Error(`The outline came back with ${planned.length} usable sections — too few to present.`);
     const repeats = planned.filter((p, i) => i > 0 && planned[i - 1].kind === p.kind).length;

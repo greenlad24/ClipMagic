@@ -19,6 +19,7 @@
  * this) is drawn from its presenter notes by the web's fallback.
  */
 import { callNewsModel } from "./ai.js";
+import { L, clip, clipList, spec } from "./textLimits.js";
 
 export const STAGE_KINDS = ["reveal", "stats", "versus", "flow", "timeline", "list", "quote"] as const;
 export type StageKind = (typeof STAGE_KINDS)[number];
@@ -64,46 +65,47 @@ function oneAccent(text: string): string {
   return i < 0 ? plain : `${plain.slice(0, i)}*${m[1]}*${plain.slice(i + m[1].length)}`;
 }
 
+// Every on-screen string is trimmed to its limit (textLimits.ts) at a word boundary.
 function sceneData(kind: StageKind, d: any): Record<string, unknown> | null {
   switch (kind) {
     case "reveal": {
       const cards = arr(d?.cards).slice(0, 3).map((c) => {
         const countTo = num(c?.countTo);
         return {
-          name: s(c?.name, 40), tag: s(c?.tag, 24), big: s(c?.big, 40) || (countTo !== null ? String(countTo) : ""),
-          countTo, prefix: s(c?.prefix, 6), suffix: s(c?.suffix, 10), small: s(c?.small, 80), note: s(c?.note, 80),
+          name: clip(c?.name, L.cardName), tag: clip(c?.tag, L.cardTag), big: clip(c?.big, L.cardBig) || (countTo !== null ? String(countTo) : ""),
+          countTo, prefix: s(c?.prefix, 4), suffix: s(c?.suffix, 8), small: clip(c?.small, L.cardSmall), note: clip(c?.note, L.cardNote),
           tone: TONES.has(c?.tone) ? c.tone : "dark",
         };
       }).filter((c) => c.name && c.big);
       if (cards.length < 2) return null;
-      return { cards, good: arr(d?.good).map((x) => s(x, 30)).filter(Boolean).slice(0, 4), bad: arr(d?.bad).map((x) => s(x, 30)).filter(Boolean).slice(0, 4) };
+      return { cards, good: clipList(d?.good, L.gate, 3), bad: clipList(d?.bad, L.gate, 3) };
     }
     case "stats": {
       const stats = arr(d?.stats).slice(0, 3).map((x) => {
         const value = num(x?.value);
-        return { value, display: value === null ? s(x?.display, 16) : "", prefix: s(x?.prefix, 6), suffix: s(x?.suffix, 10), label: s(x?.label, 60) };
+        return { value, display: value === null ? clip(x?.display, L.statDisplay) : "", prefix: s(x?.prefix, 4), suffix: s(x?.suffix, 8), label: clip(x?.label, L.statLabel) };
       }).filter((x) => x.label && (x.value !== null || x.display));
       return stats.length ? { stats } : null;
     }
     case "versus": {
-      const options = arr(d?.options).slice(0, 3).map((o) => ({ name: s(o?.name, 30), line: s(o?.line, 90), points: arr(o?.points).map((p) => s(p, 50)).filter(Boolean).slice(0, 3) })).filter((o) => o.name && o.line);
+      const options = arr(d?.options).slice(0, 3).map((o) => ({ name: clip(o?.name, L.vsName), line: clip(o?.line, L.vsLine), points: clipList(o?.points, L.vsPoint, 3) })).filter((o) => o.name && o.line);
       return options.length >= 2 ? { options } : null;
     }
     case "flow": {
-      const steps = arr(d?.steps).slice(0, 4).map((x) => ({ label: s(x?.label, 20), text: s(x?.text, 60) })).filter((x) => x.label && x.text);
+      const steps = arr(d?.steps).slice(0, 4).map((x) => ({ label: clip(x?.label, L.flowLabel), text: clip(x?.text, L.flowText) })).filter((x) => x.label && x.text);
       return steps.length >= 2 ? { steps } : null;
     }
     case "timeline": {
-      const events = arr(d?.events).slice(0, 5).map((e) => ({ date: s(e?.date, 16), label: s(e?.label, 36), detail: s(e?.detail, 60), soon: e?.soon === true })).filter((e) => e.date && e.label);
+      const events = arr(d?.events).slice(0, 5).map((e) => ({ date: clip(e?.date, L.tlDate), label: clip(e?.label, L.tlLabel), detail: clip(e?.detail, L.tlDetail), soon: e?.soon === true })).filter((e) => e.date && e.label);
       return events.length >= 2 ? { events } : null;
     }
     case "list": {
-      const items = arr(d?.items).map((x) => s(x, 70)).filter(Boolean).slice(0, 5);
+      const items = clipList(d?.items, L.listItem, 5);
       return items.length >= 2 ? { items } : null;
     }
     case "quote": {
-      const quote = s(d?.quote, 240);
-      return quote ? { quote, who: s(d?.who, 40), role: s(d?.role, 60) } : null;
+      const quote = clip(d?.quote, L.quote, true);
+      return quote ? { quote, who: clip(d?.who, L.who), role: clip(d?.role, L.role) } : null;
     }
   }
 }
@@ -138,16 +140,16 @@ export function normalizeStage(raw: unknown): StoryStage | null {
     if (!(STAGE_KINDS as readonly string[]).includes(kind)) continue;
     const data = sceneData(kind, x?.data);
     if (!data) continue;
-    const heading = oneAccent(s(x?.heading, 70));
+    const heading = oneAccent(clip(x?.heading, L.heading).replace(/\.\s*$/, ""));
     if (!heading) continue;
-    const q = s(x?.island?.q, 40), a = s(x?.island?.a, 30);
-    scenes.push({ kind, eyebrow: s(x?.eyebrow, 40), heading, island: q && a ? { q, a } : null, data });
+    const q = clip(x?.island?.q, L.island), a = clip(x?.island?.a, L.island);
+    scenes.push({ kind, eyebrow: clip(x?.eyebrow, L.eyebrow), heading, island: q && a ? { q, a } : null, data });
   }
   if (!scenes.length) return null;
-  const coverHeading = oneAccent(s(r.cover?.heading, 80));
+  const coverHeading = oneAccent(clip(r.cover?.heading, L.coverHeading).replace(/\.\s*$/, ""));
   const st: StoryStage = {
     v: 1,
-    cover: { eyebrow: s(r.cover?.eyebrow, 50), heading: coverHeading, lede: s(r.cover?.lede, 180) },
+    cover: { eyebrow: clip(r.cover?.eyebrow, L.eyebrow), heading: coverHeading, lede: clip(r.cover?.lede, L.coverLede) },
     scenes,
     cues: [],
   };
@@ -157,14 +159,15 @@ export function normalizeStage(raw: unknown): StoryStage | null {
 
 /* ── generation ───────────────────────────────────────────────────────────── */
 
-const KINDS = `SCENE KINDS — each scene is ONE full screen: a small header (eyebrow, heading, optional question→answer "island" chip) above one big stage that steps through BEATS as Jake presses →. Text on screen is TINY — Jake explains out loud; the screen shows the one thing to look at.
-- "flow": what happened, as a 2-4 step mini story. data {"steps":[{"label":"1-2 words","text":"max 6 words — readable in one second"}]} — one step per beat.
-- "reveal": 2-3 cards revealed one per beat (price, who gets it, what's new, the catch, the verdict). data {"cards":[{"name":"max 3 words","tag":"1-2 words or empty","big":"$20 or max 4 words","countTo":20,"prefix":"$","suffix":"/mo","small":"optional, max 8 words","note":"","tone":"dark|light|brand|blue"}],"good":["optional: who CAN use it, 1-3 words each"],"bad":["optional: who can't"]} — countTo is a plain number ONLY when big is that number, else null.
-- "stats": 1-3 numbers, one per beat, each fills the screen with a count-up. data {"stats":[{"value":4000,"display":"","prefix":"","suffix":"+","label":"max 8 words"}]} — value null + display (e.g. "2×") when it isn't a plain number.
-- "versus": 2-3 things compared, one highlighted per beat. data {"options":[{"name":"max 3 words","line":"max 12 words","points":["max 3, max 6 words each"]}]}
-- "timeline": 2-5 dated events. data {"events":[{"date":"Sep 29","label":"max 4 words","detail":"max 7 words","soon":false}]} — soon=true for a date still ahead.
-- "list": 2-5 short items, one lights up per beat. data {"items":["max 8 words"]}
-- "quote": a REAL quote from the source material, word for word (never invent one). data {"quote":"max 30 words","who":"Name","role":"Title, Company"}`;
+// The word/character limits come from textLimits.ts — the same numbers the normaliser trims to.
+const KINDS = `SCENE KINDS — each scene is ONE full screen: a small header (eyebrow, heading) above one big stage that steps through BEATS as Jake presses →. Text on screen is TINY — Jake explains out loud; the screen shows the one thing to look at. Every text field has a HARD limit (words AND characters); anything longer is cut off, so write to fit.
+- "flow": what happened, as a 2-4 step mini story. data {"steps":[{"label":"${spec(L.flowLabel)}","text":"${spec(L.flowText)} — readable in one second"}]} — one step per beat.
+- "reveal": 2-3 cards revealed one per beat (price, who gets it, what's new, the catch, the verdict). data {"cards":[{"name":"${spec(L.cardName)}","tag":"${spec(L.cardTag)} or empty","big":"$20, or ${spec(L.cardBig)}","countTo":20,"prefix":"$","suffix":"/mo","small":"optional, ${spec(L.cardSmall)}","note":"","tone":"dark|light|brand|blue"}],"good":["optional: who CAN use it, ${spec(L.gate)} each, max 3"],"bad":["optional: who can't"]} — countTo is a plain number ONLY when big is that number, else null. suffix max 8 characters.
+- "stats": 1-3 numbers, one per beat, each fills the screen with a count-up. data {"stats":[{"value":4000,"display":"","prefix":"","suffix":"+","label":"${spec(L.statLabel)}"}]} — value null + display (e.g. "2×", ${spec(L.statDisplay)}) when it isn't a plain number.
+- "versus": 2-3 things compared, one highlighted per beat. data {"options":[{"name":"${spec(L.vsName)}","line":"${spec(L.vsLine)}","points":["max 3 points, ${spec(L.vsPoint)} each"]}]}
+- "timeline": 2-5 dated events. data {"events":[{"date":"Sep 29","label":"${spec(L.tlLabel)}","detail":"${spec(L.tlDetail)}","soon":false}]} — soon=true for a date still ahead.
+- "list": 2-5 short items, one lights up per beat. data {"items":["${spec(L.listItem)}"]}
+- "quote": a REAL quote from the source material, word for word (never invent one). data {"quote":"${spec(L.quote)} — pick the strongest part","who":"Name","role":"Title, Company"}`;
 
 /** Build the stage for one story. Never throws; null = keep the web's fallback. */
 export async function generateStageForStory(input: {
@@ -186,10 +189,10 @@ RULES:
 1. Facts only from the source material and the script. Never invent numbers, prices, dates, names or quotes. If the story has no real numbers, don't use "stats"; if no real quote, don't use "quote".
 2. 1 scene for a small story, 2 for a big one. Pick the kinds that SHOW this story best; don't default to "list". Different scenes use different kinds.
 3. Total beats after the cover: 3-7.
-4. Headings: max 6 words, plain words, may mark ONE accent word or short phrase with *asterisks* (it renders in italic serif with a yellow underline). No period at the end.
-5. island (optional): a tiny question → answer chip, e.g. {"q":"Free?","a":"Not yet"} — max 4 words each side. Null if nothing fits.
-6. eyebrow: 1-4 words, like a label ("WHAT HAPPENED", "WHO GETS IT", "THE CATCH").
-7. cover.heading: the story in max 8 everyday words with one *accent* — not the news headline copied. cover.lede: one sentence, max 18 words, why a regular person should care. cover.eyebrow: 1-4 words (e.g. "Model release", "Rumor", "Robotics").
+4. Headings: ${spec(L.heading)}, plain words, may mark ONE accent word or short phrase with *asterisks* (it renders in italic serif with a yellow underline). No period at the end.
+5. island: always null (it is no longer shown).
+6. eyebrow: ${spec(L.eyebrow)}, like a label ("WHAT HAPPENED", "WHO GETS IT", "THE CATCH").
+7. cover.heading: the story in everyday words, ${spec(L.coverHeading)}, with one *accent* — not the news headline copied. cover.lede: one sentence, ${spec(L.coverLede)}, why a regular person should care. cover.eyebrow: ${spec(L.eyebrow)} (e.g. "Model release", "Rumor", "Robotics").
 8. cues: for each → after the cover, in order, copy 3-6 words EXACTLY from the script where Jake should press it (the moment that beat's content starts being said). One cue per beat.
 9. No banned hype words: game-changer, revolutionary, groundbreaking, unleash, supercharge, seamless.
 

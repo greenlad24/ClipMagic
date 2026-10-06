@@ -17,11 +17,11 @@
 
 .ns-cover-wrap { justify-content: center; position: relative; z-index: 2; }
 .ns-cover-eyebrow { margin: calc(var(--u) * 3) 0 0; color: var(--yellow); }
-.ns-h1 { font-size: calc(var(--u) * 7.6); max-width: 15ch; margin-top: calc(var(--u) * 1.4); line-height: .95; }
-.ns-h1.l { font-size: calc(var(--u) * 6); max-width: 19ch; }
-.ns-h1.xl { font-size: calc(var(--u) * 4.6); max-width: 26ch; letter-spacing: var(--head-track); line-height: 1.02; }
+.ns-h1 { font-size: calc(var(--u) * 7.6 * var(--fit, 1)); max-width: 15ch; margin-top: calc(var(--u) * 1.4); line-height: 1; }
+.ns-h1.l { font-size: calc(var(--u) * 6 * var(--fit, 1)); max-width: 19ch; }
+.ns-h1.xl { font-size: calc(var(--u) * 4.6 * var(--fit, 1)); max-width: 26ch; letter-spacing: var(--head-track); line-height: 1.02; }
 .ns-lede { margin-top: calc(var(--u) * 3); }
-.ns-src { margin-top: calc(var(--u) * 3.4); font: 500 calc(var(--u) * 1.05) var(--mono); letter-spacing: .06em; color: var(--mute); display: flex; align-items: baseline; gap: calc(var(--u) * .5); flex-wrap: wrap; }
+.ns-src { margin-top: calc(var(--u) * 3.4); font: 500 calc(var(--u) * 1.05 * var(--fit, 1)) var(--mono); letter-spacing: .06em; color: var(--mute); display: flex; align-items: baseline; gap: calc(var(--u) * .5); flex-wrap: wrap; }
 .ns-src b { color: var(--fg); font-weight: 600; }
 .ns-src em { font-style: normal; margin-left: calc(var(--u) * 1); border: 1px solid var(--line); border-radius: calc(999px * var(--r)); padding: calc(var(--u) * .25) calc(var(--u) * .8); color: color-mix(in srgb, var(--fg) 78%, var(--ink)); }
 

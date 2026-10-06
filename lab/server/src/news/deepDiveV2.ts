@@ -26,6 +26,7 @@ import { callNewsModel } from "./ai.js";
 import { claudeTextForPurpose } from "../ai/claude.js";
 import { JAKE_STYLE_GUIDE } from "./deck.js";
 import { fitMarkers } from "./deepDiveBeats.js";
+import { L, clip, clipList, spec } from "./textLimits.js";
 import {
   deepDives, deepDiveSections, sectionsOf, setGenerating, isGenerating,
   research, parseJsonReply, findSectionVideo, splitScripts,
@@ -122,19 +123,20 @@ function catalogText(media: MediaCatalog, pool: Visual[]): string {
 
 const KINDS_SPEC = `CHAPTER KINDS — each chapter is ONE full screen with a small header and one big interactive stage. Jake presses → to step through its BEATS.
 DEMONSTRATION KINDS (use these as much as the material allows):
-- "demo": a step-by-step walkthrough of real SCREENSHOTS — the camera zooms to each step, a yellow spotlight and a cursor click on it. data {"tabs":[{"name":"short name of who/what is doing it","job":"1-3 words","steps":[{"shot":"v4","point":"PRECISE visual description of the exact spot on that screenshot to zoom to (e.g. 'the green chat bubble that asks to draft an email')","caption":"max 7 words","label":"1-2 words"}]}]} — 1-4 tabs, 2-5 steps each (one beat per step). Only screenshots of the product's UI. A step's point must be something visible in that shot's description.
-- "clip": moments of the OFFICIAL VIDEO, played muted, one per beat. data {"clips":[{"clip":"c3","caption":"max 7 words — what you SEE","label":"1-2 words"}]} — 2-5 clips. Only moments that show the product, its UI or a striking product shot — never a person talking to camera.
-- "article": the OFFICIAL POST shown in a browser, scrolling to a highlighted line per beat. data {"highlights":[{"block":12,"caption":"max 8 words — what this line means"}]} — 2-5 highlights, in page order, using the b-numbers.
+- "demo": a step-by-step walkthrough of real SCREENSHOTS — the camera zooms to each step, a yellow spotlight and a cursor click on it. data {"tabs":[{"name":"short name of who/what is doing it","job":"1-3 words","steps":[{"shot":"v4","point":"PRECISE visual description of the exact spot on that screenshot to zoom to (e.g. 'the green chat bubble that asks to draft an email')","caption":"${spec(L.caption)}","label":"1-2 words"}]}]} — 1-4 tabs, 2-5 steps each (one beat per step). Only screenshots of the product's UI. A step's point must be something visible in that shot's description.
+- "clip": moments of the OFFICIAL VIDEO, played muted, one per beat. data {"clips":[{"clip":"c3","caption":"${spec(L.caption)} — what you SEE","label":"1-2 words"}]} — 2-5 clips. Only moments that show the product, its UI or a striking product shot — never a person talking to camera.
+- "article": the OFFICIAL POST shown in a browser, scrolling to a highlighted line per beat. data {"highlights":[{"block":12,"caption":"${spec(L.caption)} — what this line means"}]} — 2-5 highlights, in page order, using the b-numbers.
 OTHER KINDS (keep text tiny — a 14-year-old gets it at a glance; Jake explains out loud):
-- "title": the opener. heading = max 6 words. data {"lede":"max 22 words","agenda":["3 items, max 4 words each"],"heroClip":"c1 or empty — a moment that loops softly behind the title"}
-- "reveal": 2-3 cards revealed one per beat (prices, plans, verdicts, who wins). data {"cards":[{"name":"...","tag":"1-3 words","big":"$100 or max 4 words","countTo":100,"prefix":"$","suffix":"/mo","small":"optional, max 8 words","note":"optional, max 8 words","tone":"dark|light|brand|blue"}],"good":["optional: who CAN get it, 1-3 words each"],"bad":["optional: who can't"]} — countTo is a plain number when big is a number, else null.
-- "stats": 1-3 numbers, one per beat, each fills the screen. data {"stats":[{"value":4000,"display":"","prefix":"","suffix":"+","label":"max 8 words"}]} — value null + display when it isn't a number.
-- "versus": 2-3 options side by side, one highlighted per beat. data {"options":[{"name":"...","line":"max 12 words","points":["max 3, max 6 words each"]}]}
-- "flow": a little story in 3-4 steps. data {"steps":[{"label":"1-2 words","text":"max 7 words"}]}
-- "timeline": 3-5 dated events. data {"events":[{"date":"Sep 29","label":"max 4 words","detail":"max 7 words","soon":false}]}
-- "list": 3-5 short items, one lights up per beat, optionally beside a screenshot. data {"items":["max 8 words"],"image":"v8 or empty"}
-- "quote": a real quote from the research, word for word. data {"quote":"max 30 words","who":"Name","role":"Title, Company"}
-- "takeaways": the closer, 3-4 cards. data {"points":["max 10 words"]}`;
+- "title": the opener. heading = ${spec(L.heading)}. data {"lede":"${spec(L.titleLede)}","agenda":["3 items, ${spec(L.agendaItem)} each"],"heroClip":"c1 or empty — a moment that loops softly behind the title"}
+- "reveal": 2-3 cards revealed one per beat (prices, plans, verdicts, who wins). data {"cards":[{"name":"${spec(L.cardName)}","tag":"${spec(L.cardTag)}","big":"$100, or ${spec(L.cardBig)}","countTo":100,"prefix":"$","suffix":"/mo","small":"optional, ${spec(L.cardSmall)}","note":"optional, ${spec(L.cardNote)}","tone":"dark|light|brand|blue"}],"good":["optional: who CAN get it, ${spec(L.gate)} each, max 3"],"bad":["optional: who can't"]} — countTo is a plain number when big is a number, else null.
+- "stats": 1-3 numbers, one per beat, each fills the screen. data {"stats":[{"value":4000,"display":"","prefix":"","suffix":"+","label":"${spec(L.statLabel)}"}]} — value null + display (${spec(L.statDisplay)}) when it isn't a number.
+- "versus": 2-3 options side by side, one highlighted per beat. data {"options":[{"name":"${spec(L.vsName)}","line":"${spec(L.vsLine)}","points":["max 3 points, ${spec(L.vsPoint)} each"]}]}
+- "flow": a little story in 3-4 steps. data {"steps":[{"label":"${spec(L.flowLabel)}","text":"${spec(L.flowText)}"}]}
+- "timeline": 3-5 dated events. data {"events":[{"date":"Sep 29","label":"${spec(L.tlLabel)}","detail":"${spec(L.tlDetail)}","soon":false}]}
+- "list": 3-5 short items, one lights up per beat, optionally beside a screenshot. data {"items":["${spec(L.listItem)}"],"image":"v8 or empty"}
+- "quote": a real quote from the research, word for word. data {"quote":"${spec(L.quote)} — the strongest part","who":"Name","role":"Title, Company"}
+- "takeaways": the closer, 3-4 cards. data {"points":["${spec(L.takeaway)}"]}
+Every text field has a HARD limit (words AND characters); anything longer is cut off, so write to fit.`;
 
 const STRUCTURE_V2 = `STRUCTURE — Jake's video structure, payoff first:
 1. "title" — the hook: the most impressive thing this does, not a news label.
@@ -164,8 +166,8 @@ ${STRUCTURE_V2}
 
 RULES:
 1. 8 to 11 chapters. First "title", last "takeaways". About 32-45 beats in total (each beat ≈ 15-20 seconds of Jake talking).
-2. "heading": max 7 words, NO final period, and exactly ONE accent phrase of 1-3 words wrapped in *asterisks* (it is set in italic with a yellow underline) — e.g. "Watch a dot *do the job*".
-3. "eyebrow": 2-5 words, e.g. "The payoff · OpenAI's own demo". Rumors say "Unconfirmed".
+2. "heading": ${spec(L.heading)}, NO final period, and exactly ONE accent phrase of 1-3 words wrapped in *asterisks* (it is set in italic with a yellow underline) — e.g. "Watch a dot *do the job*".
+3. "eyebrow": ${spec(L.eyebrow)}, e.g. "The payoff · OpenAI's own demo". Rumors say "Unconfirmed".
 4. "island": a tiny question → answer chip for the chapter, {"q":"max 3 words, ends with ?","a":"max 3 words"} — e.g. {"q":"Who types?","a":"Mostly the dot"}. null for title and takeaways.
 5. "notes": one note per BEAT, in order, for the scriptwriter: what Jake says while that beat is on screen, with the specific facts. The number of notes = the number of beats (demo: total steps; clip: clips; article: highlights; reveal: cards (+1 if good/bad); stats/versus/flow/timeline/list/takeaways: items; title/quote: 1).
 6. Every number, date, name and quote comes from the research or the material. Nothing invented.
@@ -182,8 +184,8 @@ Reply with ONLY this JSON (no markdown):
     .slice(0, 12)
     .map((c) => ({
       kind: c.kind as Kind,
-      eyebrow: s(c.eyebrow, 60),
-      heading: s(c.heading, 90).replace(/\.\s*$/, ""),
+      eyebrow: clip(c.eyebrow, L.eyebrow),
+      heading: clip(c.heading, L.heading).replace(/\.\s*$/, ""),
       island: c.island && s(c.island.q, 30) && s(c.island.a, 30) ? { q: s(c.island.q, 30), a: s(c.island.a, 30) } : null,
       data: c.data && typeof c.data === "object" ? c.data : {},
       notes: arr(c.notes).map((n) => s(n, 500)).filter(Boolean),
@@ -208,13 +210,13 @@ async function resolveChapter(
     // A muted moment longer than ~10s drags on stage: keep the first 10.
     const end = Math.min(cand.end, cand.start + 10);
     const a = await cutClip(diveId, video.videoId, cand.start, end, cand.description);
-    return { file: a.file, poster: a.poster, w: a.width, h: a.height, caption: s(caption, 80), label: s(label, 24), credit: `${video.videoChannel || "Official"} · official video` };
+    return { file: a.file, poster: a.poster, w: a.width, h: a.height, caption: clip(caption, L.caption), label: s(label, 24), credit: `${video.videoChannel || "Official"} · official video` };
   };
 
   switch (c.kind) {
     case "title": {
       const hero = d.heroClip ? await clipOf(s(d.heroClip, 6), "", "").catch(() => null) : null;
-      return { kind: "title", data: { lede: s(d.lede, 200), agenda: arr(d.agenda).map((x) => s(x, 40)).filter(Boolean).slice(0, 4), heroClip: hero } };
+      return { kind: "title", data: { lede: clip(d.lede, L.titleLede), agenda: clipList(d.agenda, L.agendaItem, 4), heroClip: hero } };
     }
     case "clip": {
       const clips: ClipItem[] = [];
@@ -229,7 +231,7 @@ async function resolveChapter(
       if (!page) return null;
       const blocks = new Map(page.blocks.map((b) => [b.i, b]));
       const highlights = arr(d.highlights)
-        .map((h) => ({ b: blocks.get(Number(String(h?.block ?? "").replace(/^b/, ""))), caption: s(h?.caption, 90) }))
+        .map((h) => ({ b: blocks.get(Number(String(h?.block ?? "").replace(/^b/, ""))), caption: clip(h?.caption, L.caption) }))
         .filter((h) => h.b)
         .sort((a, b) => a.b!.y - b.b!.y)
         .slice(0, 6)
@@ -261,7 +263,7 @@ async function resolveChapter(
           out.push({
             image: v.file, w, h, box,
             click: box ? [Math.round(box[0] + box[2] * 0.5), Math.round(box[1] + box[3] * 0.55)] : null,
-            caption: s(st?.caption, 80), label: s(st?.label, 24),
+            caption: clip(st?.caption, L.caption), label: s(st?.label, 24),
           });
         });
         if (out.length) {
@@ -275,31 +277,31 @@ async function resolveChapter(
       const cards = arr(d.cards).slice(0, 3).map((x) => {
         const countTo = num(x?.countTo);
         return {
-          name: s(x?.name, 40), tag: s(x?.tag, 24), big: s(x?.big, 40), countTo, prefix: s(x?.prefix, 4), suffix: s(x?.suffix, 8),
-          small: s(x?.small, 80), note: s(x?.note, 80), tone: ["dark", "light", "brand", "blue"].includes(x?.tone) ? x.tone : "dark",
+          name: clip(x?.name, L.cardName), tag: clip(x?.tag, L.cardTag), big: clip(x?.big, L.cardBig), countTo, prefix: s(x?.prefix, 4), suffix: s(x?.suffix, 8),
+          small: clip(x?.small, L.cardSmall), note: clip(x?.note, L.cardNote), tone: ["dark", "light", "brand", "blue"].includes(x?.tone) ? x.tone : "dark",
         };
       }).filter((x) => x.name && (x.big || x.countTo !== null));
       if (!cards.length) return null;
-      return { kind: "reveal", data: { cards, good: arr(d.good).map((x) => s(x, 30)).filter(Boolean).slice(0, 4), bad: arr(d.bad).map((x) => s(x, 30)).filter(Boolean).slice(0, 4) } };
+      return { kind: "reveal", data: { cards, good: clipList(d.good, L.gate, 3), bad: clipList(d.bad, L.gate, 3) } };
     }
     case "stats": {
-      const stats = arr(d.stats).slice(0, 3).map((x) => ({ value: num(x?.value), display: s(x?.display, 20), prefix: s(x?.prefix, 4), suffix: s(x?.suffix, 8), label: s(x?.label, 80) })).filter((x) => x.label && (x.value !== null || x.display));
+      const stats = arr(d.stats).slice(0, 3).map((x) => ({ value: num(x?.value), display: clip(x?.display, L.statDisplay), prefix: s(x?.prefix, 4), suffix: s(x?.suffix, 8), label: clip(x?.label, L.statLabel) })).filter((x) => x.label && (x.value !== null || x.display));
       return stats.length ? { kind: "stats", data: { stats } } : null;
     }
     case "versus": {
-      const options = arr(d.options).slice(0, 3).map((x) => ({ name: s(x?.name, 40), line: s(x?.line, 120), points: arr(x?.points).map((p) => s(p, 60)).filter(Boolean).slice(0, 3) })).filter((x) => x.name);
+      const options = arr(d.options).slice(0, 3).map((x) => ({ name: clip(x?.name, L.vsName), line: clip(x?.line, L.vsLine), points: clipList(x?.points, L.vsPoint, 3) })).filter((x) => x.name);
       return options.length >= 2 ? { kind: "versus", data: { options } } : null;
     }
     case "flow": {
-      const steps = arr(d.steps).slice(0, 4).map((x) => ({ label: s(x?.label, 24), text: s(x?.text, 70) })).filter((x) => x.text);
+      const steps = arr(d.steps).slice(0, 4).map((x) => ({ label: clip(x?.label, L.flowLabel), text: clip(x?.text, L.flowText) })).filter((x) => x.text);
       return steps.length >= 2 ? { kind: "flow", data: { steps } } : null;
     }
     case "timeline": {
-      const events = arr(d.events).slice(0, 5).map((x) => ({ date: s(x?.date, 20), label: s(x?.label, 40), detail: s(x?.detail, 80), soon: x?.soon === true })).filter((x) => x.label);
+      const events = arr(d.events).slice(0, 5).map((x) => ({ date: clip(x?.date, L.tlDate), label: clip(x?.label, L.tlLabel), detail: clip(x?.detail, L.tlDetail), soon: x?.soon === true })).filter((x) => x.label);
       return events.length >= 2 ? { kind: "timeline", data: { events } } : null;
     }
     case "list": {
-      const items = arr(d.items).map((x) => s(x, 80)).filter(Boolean).slice(0, 5);
+      const items = clipList(d.items, L.listItem, 5);
       if (!items.length) return null;
       const v = d.image ? byId.get(s(d.image, 10)) : undefined;
       const image = v?.file && !used.has(`shot:${v.id}`) ? { file: v.file, w: v.width ?? 0, h: v.height ?? 0, credit: v.credit } : null;
@@ -307,9 +309,9 @@ async function resolveChapter(
       return { kind: "list", data: { items, image, credit: image?.credit ? `Image: ${image.credit}` : "" } };
     }
     case "quote":
-      return s(d.quote) ? { kind: "quote", data: { quote: s(d.quote, 300), who: s(d.who, 60), role: s(d.role, 80) } } : null;
+      return s(d.quote) ? { kind: "quote", data: { quote: clip(d.quote, L.quote, true), who: clip(d.who, L.who), role: clip(d.role, L.role) } } : null;
     case "takeaways": {
-      const points = arr(d.points).map((x) => s(x, 90)).filter(Boolean).slice(0, 4);
+      const points = clipList(d.points, L.takeaway, 4);
       return points.length ? { kind: "takeaways", data: { points } } : null;
     }
   }
