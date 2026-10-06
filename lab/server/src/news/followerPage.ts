@@ -12,6 +12,17 @@
  *     speed; big jumps snap, small ones ease; never backwards while playing
  *   · resyncs when the device wakes / the tab becomes visible
  *   · read-only; "Mirror" is local to THIS TAB (sessionStorage, not local)
+ *
+ * DEEP DIVES TOO (Jake, 2026-10-06). The same link from the Deep Dive
+ * presenter opens this same page; /news-follow/state then answers
+ * `kind: "deep-dive"` with the dive's sections (label, beat count, script per
+ * beat — deepDiveFollow.ts). There the sync index is a BEAT across the whole
+ * show, so `flat` maps it back to section + beat: a new SECTION re-renders and
+ * snaps (the server reset its scroll), a new BEAT in the same section only
+ * re-lights the script (the server kept the scroll — keepScroll). The script
+ * is laid out exactly like DeepDivePresenterPage's (one-line label, the
+ * "▶ NEXT · BEAT n" marks, done beats dimmed) so both break lines alike.
+ * ←/→ (and a clicker's PageUp/PageDown) step beats from here as well.
  */
 export const FOLLOWER_PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -80,6 +91,13 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   #empty p:first-child { font-size: 20px; color: #555; margin: 0; }
   #empty p:last-child { font-size: 14px; color: #1e1e1e; margin: 8px 0 0; }
   #spacer { height: 75vh; }
+  /* Deep Dive: the beat marks — MUST match DeepDivePresenterPage's markStyle. */
+  .beat-mark { font-family: 'NewsScript', Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 800;
+               letter-spacing: .12em; color: #3a3a3a; }
+  .beat-mark.on { color: #ffd21e; }
+  .beat-part { transition: opacity .3s; }
+  #label.one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #next-up { font-size: 11px; font-weight: 700; color: #3a3a3a; letter-spacing: .08em; text-transform: uppercase; margin: 12px 0 0; }
   #mirror { position: fixed; bottom: 16px; right: 16px; z-index: 20; display: flex; align-items: center; gap: 6px;
             background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
             padding: 8px 14px; cursor: pointer; color: rgba(255,255,255,0.3); font-size: 12px; font-weight: 600;
@@ -100,6 +118,12 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   var sessionId = params.get('session') || '';
 
   var slides = [];
+  // Deep Dive mode: its sections, and every beat of the show in order
+  // ({ section, beat }) — the index into flat is the sync index.
+  var dd = null;
+  var flat = [];
+  function total() { return dd ? flat.length : slides.length; }
+  function sectionOf(i) { var f = flat[i]; return f ? f.section : 0; }
   var state = { idx: 0, fontSize: 32, lineHeight: 1.9, width: 'medium', playing: false, autoscroll: false, speed: 12 };
   var lastSeq = 0;
   var connected = true;
@@ -165,7 +189,8 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
 
   function renderScript() {
     if (!scriptEl) return;
-    var idx = clampIndex(state.idx, slides.length);
+    if (dd) { renderDeepDive(); return; }
+    var idx = clampIndex(state.idx, total());
     var slide = slides[idx] || null;
     var raw = slide && typeof slide.teleprompterScript === 'string' ? slide.teleprompterScript : '';
     var paragraphs = raw.split(PARA_SPLIT).map(function (p) { return p.trim(); }).filter(Boolean);
@@ -192,6 +217,59 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       empty.innerHTML = '<p>No script for this slide.</p><p>Rebuild the deck to generate teleprompter scripts.</p>';
       scriptEl.appendChild(empty);
     }
+    var spacer = document.createElement('div');
+    spacer.id = 'spacer';
+    scriptEl.appendChild(spacer);
+  }
+
+  function renderDeepDive() {
+    var at = flat[clampIndex(state.idx, flat.length)] || { section: 0, beat: 0 };
+    var secs = dd.sections;
+    var sec = secs[at.section] || { label: '', parts: [], beats: 1 };
+    var nextSec = secs[at.section + 1];
+    scriptEl.style.maxWidth = (WIDTH_PX[state.width] || 660) + 'px';
+    scriptEl.style.transform = mirror ? 'scaleX(-1)' : '';
+    scriptEl.innerHTML = '';
+    var label = document.createElement('p');
+    label.id = 'label';
+    label.className = 'one-line';
+    label.textContent = (at.section + 1) + ' / ' + secs.length + ' · ' + sec.label + (sec.beats > 1 ? ' · beat ' + (at.beat + 1) + ' of ' + sec.beats : '');
+    scriptEl.appendChild(label);
+    var parts = sec.parts || [];
+    var any = parts.some(function (p) { return p && p.trim(); });
+    if (any) {
+      parts.forEach(function (part, b) {
+        var wrap = document.createElement('div');
+        wrap.className = 'beat-part';
+        wrap.style.opacity = b < at.beat ? '0.35' : '1';
+        if (b > 0) {
+          var mark = document.createElement('p');
+          mark.className = 'beat-mark' + (b === at.beat ? ' on' : '');
+          mark.style.margin = '0 0 ' + Math.round(state.fontSize * 0.5) + 'px';
+          mark.textContent = '▶ NEXT · BEAT ' + (b + 1);
+          wrap.appendChild(mark);
+        }
+        (part || '').split(/\n+/).map(function (t) { return t.trim(); }).filter(Boolean).forEach(function (t) {
+          var el = document.createElement('p');
+          el.className = 'para';
+          el.style.fontSize = state.fontSize + 'px';
+          el.style.lineHeight = String(state.lineHeight);
+          el.style.margin = '0 0 ' + Math.round(state.fontSize * 0.8) + 'px';
+          el.textContent = t;
+          wrap.appendChild(el);
+        });
+        scriptEl.appendChild(wrap);
+      });
+    } else {
+      var empty = document.createElement('div');
+      empty.id = 'empty';
+      empty.innerHTML = '<p>No script for this section.</p><p>Write one in the deep dive editor.</p>';
+      scriptEl.appendChild(empty);
+    }
+    var nx = document.createElement('p');
+    nx.id = 'next-up';
+    nx.textContent = nextSec ? 'Next → ' + nextSec.heading : 'End of the deep dive';
+    scriptEl.appendChild(nx);
     var spacer = document.createElement('div');
     spacer.id = 'spacer';
     scriptEl.appendChild(spacer);
@@ -262,7 +340,14 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
 
     function applySync(sn) {
       var slideChanged = typeof sn.idx === 'number' && sn.idx !== state.idx;
-      if (slideChanged) { state.idx = clampIndex(sn.idx, slides.length); renderScript(); }
+      if (slideChanged) {
+        var nextIdx = clampIndex(sn.idx, total());
+        // Deep Dive: another beat of the SAME section keeps the script where
+        // it is (the server kept the anchor) — re-light it, do not snap.
+        if (dd && sectionOf(nextIdx) === sectionOf(state.idx)) slideChanged = false;
+        state.idx = nextIdx;
+        renderScript();
+      }
       sync.position = typeof sn.position === 'number' ? sn.position : sync.position;
       sync.anchorTime = typeof sn.anchorTime === 'number' ? sn.anchorTime : sync.anchorTime;
       sync.isPlaying = !!sn.isPlaying;
@@ -363,6 +448,21 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     sock.emit('play-pause', starting);
   }
 
+  /**
+   * Deep Dive: step a beat FROM THE PHONE (a clicker paired to a tablet).
+   * Exactly the presenter's message (web deepdive/v2/beatSync.ts): inside one
+   * section keepScroll, so no teleprompter moves; across sections a bare index,
+   * so every screen's script restarts at the top. Nothing changes here until
+   * the room's broadcast comes back, so this screen cannot disagree with it.
+   */
+  function stepBeat(dir) {
+    if (!sock || !dd) return;
+    var from = clampIndex(state.idx, flat.length);
+    var to = clampIndex(from + dir, flat.length);
+    if (to === from) return;
+    sock.emit('slide-index', sectionOf(to) === sectionOf(from) ? { idx: to, keepScroll: true } : to);
+  }
+
   var errors = 0;
 
   // Glide: keep moving at the presenter's estimated speed between updates,
@@ -394,7 +494,7 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     fetchState(false).then(function (data) {
       if (!data.session) return;
       var s = data.session;
-      state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, slides.length) : 0;
+      state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, total()) : 0;
       applySettings(s);
       renderScript();
       requestAnimationFrame(function () { applyScrollPct(typeof s.tpScrollPct === 'number' ? s.tpScrollPct : 0); });
@@ -414,12 +514,21 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
 
   fetchState(true).then(function (data) {
     slides = data.slides || [];
+    if (data.kind === 'deep-dive' && Array.isArray(data.sections)) {
+      dd = { title: data.title || '', sections: data.sections };
+      flat = [];
+      dd.sections.forEach(function (sec, i) {
+        var n = Math.max(1, Math.floor(sec.beats) || 1);
+        for (var b = 0; b < n; b++) flat.push({ section: i, beat: b });
+      });
+      if (dd.title) document.title = dd.title + ' · Teleprompter';
+    }
     if (!data.session || !slides.length) {
       message('No deck found.', 'Build a deck first from the Dashboard, then start the show.');
       return;
     }
     var s = data.session;
-    state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, slides.length) : 0;
+    state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, total()) : 0;
     applySettings(s);
     if (typeof s.tpRevision === 'number') lastSeq = s.tpRevision;
     build();
@@ -439,6 +548,8 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       if (e.key === 'ArrowDown') { e.preventDefault(); nudge(1); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); nudge(-1); }
       else if (e.key === ' ') { e.preventDefault(); toggleFromFollower(); }
+      else if (dd && (e.key === 'ArrowRight' || e.key === 'PageDown')) { e.preventDefault(); stepBeat(1); }
+      else if (dd && (e.key === 'ArrowLeft' || e.key === 'PageUp')) { e.preventDefault(); stepBeat(-1); }
     });
     requestAnimationFrame(tick);
   }).catch(function () {

@@ -25,10 +25,6 @@
 .ns-src b { color: var(--fg); font-weight: 600; }
 .ns-src em { font-style: normal; margin-left: calc(var(--u) * 1); border: 1px solid var(--line); border-radius: calc(999px * var(--r)); padding: calc(var(--u) * .25) calc(var(--u) * .8); color: color-mix(in srgb, var(--fg) 78%, var(--ink)); }
 
-/* presenter-bubble safe frame (deepdive/bubble.tsx; the rest is show.css's own
-   rules, which already move the cover's lede and lift the centred block) */
-.dd2[data-bubble="bl"] .ns-src { margin-left: max(0px, calc(var(--u) * (var(--bub) - 6))); }
-
 /* entrance: the cover's lines rise in, one after another, when it comes on */
 .ns-cover.on .ns-cover-wrap > * { animation: ns-rise .8s var(--ease) both; }
 .ns-cover.on .ns-cover-wrap > *:nth-child(2) { animation-delay: .08s; }

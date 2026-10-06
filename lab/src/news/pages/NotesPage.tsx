@@ -10,6 +10,10 @@ import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
 import { findCues, markCues } from '../daily/stage/cues';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
+import {
+  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, SourceButton, EndButton,
+  ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl, WidthToggle, BeatDots,
+} from '../presenter/chrome';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
@@ -25,31 +29,8 @@ type BCMsg =
 const CHANNEL = 'ng-presenter';
 
 
-const D = {
-  bg: '#0a0a0a', panel: '#111', card: '#1c1c1c', border: '#2a2a2a',
-  text: '#f0f0f0', muted: '#777', faint: '#3a3a3a',
-  blue: '#60a5fa', red: '#ef4444', orange: '#f97316', green: '#22c55e',
-};
-
-function NoteCard({ title, text, keyPoints }: { title: string; text?: string | null; keyPoints?: string[] }) {
-  return (
-    <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 10, padding: '12px 14px', overflow: 'auto' }}>
-      <p style={{ fontSize: 10, fontWeight: 700, color: D.muted, marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>{title}</p>
-      {keyPoints !== undefined ? (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column' as const, gap: 7 }}>
-          {keyPoints.map((pt, i) => (
-            <li key={i} style={{ fontSize: 14, lineHeight: 1.5, color: D.text, paddingLeft: 14, position: 'relative' as const }}>
-              <span style={{ position: 'absolute' as const, left: 0, color: D.blue }}>•</span>{pt}
-            </li>
-          ))}
-          {!keyPoints.length && <li style={{ fontSize: 13, color: D.faint }}>—</li>}
-        </ul>
-      ) : (
-        <p style={{ fontSize: 14, lineHeight: 1.65, color: D.text, margin: 0 }}>{text || '—'}</p>
-      )}
-    </div>
-  );
-}
+// The palette and the chrome below are shared with the Deep Dive presenter
+// (../presenter/chrome.tsx), lifted out of this file verbatim.
 
 export default function NotesPage() {
   useNewsTheme();
@@ -717,90 +698,37 @@ export default function NotesPage() {
       <header style={{ background: D.panel, borderBottom: `1px solid ${D.border}`, padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
 
         {/* Nav buttons */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <button onClick={() => navigateTo(currentIdx - 1)} disabled={currentIdx === 0}
-            style={{ background: D.card, border: `1px solid ${D.border}`, color: currentIdx === 0 ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: currentIdx === 0 ? 'not-allowed' : 'pointer', fontSize: 13 }}>‹
-          </button>
-          <span style={{ fontSize: 13, fontWeight: 600, color: D.text, whiteSpace: 'nowrap' }}>
+        <NavStepper
+          label={<>
             {currentIdx + 1} / {slides.length}
             {gMode && gBuffer && <span style={{ marginLeft: 6, fontSize: 11, color: D.blue }}>→ {gBuffer}</span>}
-          </span>
-          <button onClick={() => navigateTo(currentIdx + 1)} disabled={currentIdx === slides.length - 1}
-            style={{ background: D.card, border: `1px solid ${D.border}`, color: currentIdx === slides.length - 1 ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: currentIdx === slides.length - 1 ? 'not-allowed' : 'pointer', fontSize: 13 }}>›
-          </button>
-        </div>
+          </>}
+          onPrev={() => navigateTo(currentIdx - 1)} prevDisabled={currentIdx === 0}
+          onNext={() => navigateTo(currentIdx + 1)} nextDisabled={currentIdx === slides.length - 1}
+        />
 
         {/* Topic label */}
-        <p style={{ flex: 1, fontSize: 12, color: D.muted, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-          — {slide?.topicLabel}
-        </p>
+        <TopicLabel>{slide?.topicLabel}</TopicLabel>
 
         {/* Right controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
 
           {/* Notes / Teleprompter toggle */}
-          <div style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 11 }}>
-            <button
-              onClick={() => setViewMode('notes')}
-              style={{ padding: '2px 10px', background: !isTeleprompter ? D.card : 'transparent', color: !isTeleprompter ? D.text : D.muted, cursor: 'pointer', border: 'none' }}>
-              Notes
-            </button>
-            <button
-              onClick={() => setViewMode('teleprompter')}
-              style={{ padding: '2px 10px', background: isTeleprompter ? 'rgba(96,165,250,0.12)' : 'transparent', color: isTeleprompter ? D.blue : D.muted, cursor: 'pointer', border: 'none', borderLeft: `1px solid ${D.border}` }}>
-              Teleprompter
-            </button>
-          </div>
+          <ViewToggle mode={viewMode} onChange={setViewMode} />
 
-          <div style={{ width: 1, height: 14, background: D.border }} />
+          <Divider />
 
           {/* Mirror on device */}
-          <button
-            onClick={() => {
-              const sid = ctxRef.current.sessionId;
-              const url = sid
-                ? `${window.location.origin}/news-gatherer/present/teleprompter?follow=1&session=${sid}`
-                : window.location.href;
-              navigator.clipboard.writeText(url).then(() => {
-                toast.success('Follower link copied! Open it on your phone or iPad.');
-              });
-            }}
-            title="Copy a follower link — read-only, follows this monitor"
-            style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              background: remoteSynced ? 'rgba(96,165,250,0.12)' : D.card,
-              border: `1px solid ${remoteSynced ? 'rgba(96,165,250,0.4)' : D.border}`,
-              borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
-              color: remoteSynced ? D.blue : D.muted, whiteSpace: 'nowrap',
-              transition: 'all 0.3s',
-            }}>
-            <span style={{ fontSize: 10 }}>{remoteSynced ? '\u27f3' : '\ud83d\udcf1'}</span>
-            {remoteSynced ? 'Synced' : 'Follower link'}
-          </button>
+          <FollowerLinkButton getSessionId={() => ctxRef.current.sessionId} synced={remoteSynced} />
 
-          <div style={{ width: 1, height: 14, background: D.border }} />
+          <Divider />
 
           {/* Source tab */}
           {sourceUrl && (
-            <button
-              onClick={handleOpenSource}
-              title={sourceEnabled ? 'Source tab is following — click to turn off' : 'Open source article in a controlled tab'}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                background: sourceBlocked ? 'rgba(239,68,68,0.08)' : sourceEnabled ? 'rgba(96,165,250,0.08)' : D.card,
-                border: `1px solid ${sourceBlocked ? 'rgba(239,68,68,0.35)' : sourceEnabled ? 'rgba(96,165,250,0.35)' : D.border}`,
-                borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
-                color: sourceBlocked ? D.red : sourceEnabled ? D.blue : D.muted, whiteSpace: 'nowrap',
-              }}>
-              <span style={{ fontSize: 7 }}>{'\u25cf'}</span>
-              {sourceBlocked ? 'Source blocked' : sourceEnabled ? 'Source following' : '\u2197 Source'}
-            </button>
+            <SourceButton enabled={sourceEnabled} blocked={sourceBlocked} onClick={handleOpenSource} />
           )}
 
-          <button onClick={() => setConfirmEnd(true)}
-            style={{ background: '#7f1d1d', border: '1px solid #991b1b', color: '#fecaca', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>
-            E End
-          </button>
+          <EndButton onClick={() => setConfirmEnd(true)} />
         </div>
       </header>
 
@@ -813,16 +741,7 @@ export default function NotesPage() {
             style={{ flex: 1, minHeight: 0, overflowY: 'auto', position: 'relative', scrollbarWidth: 'thin', scrollbarColor: `${D.faint} transparent` }}
           >
             {/* Scroll state indicator */}
-            <div style={{ position: 'sticky', top: 10, zIndex: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-              <div style={{
-                background: 'rgba(17,17,17,0.85)', border: `1px solid ${teleprompterPaused ? D.border : 'rgba(96,165,250,0.35)'}`,
-                borderRadius: 20, padding: '3px 14px', fontSize: 11,
-                color: teleprompterPaused ? D.muted : D.blue,
-                transition: 'all 0.2s',
-              }}>
-                {teleprompterPaused ? '⏸ Paused' : '▶ Scrolling'}
-              </div>
-            </div>
+            <ScrollPill paused={teleprompterPaused} />
 
             <div style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
 
@@ -872,86 +791,42 @@ export default function NotesPage() {
           </div>
 
           {/* ── Teleprompter Controls (simple — configure on standalone page) */}
-          <div style={{ background: D.panel, borderTop: `1px solid ${D.border}`, flexShrink: 0, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* Play / Pause */}
-            <button
-              // ONE path for play/pause — the space bar and this button must not
-              // be able to disagree about what "playing" means.
-              onClick={toggleTpPlayPause}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0,
-                background: teleprompterPaused ? 'rgba(96,165,250,0.15)' : 'rgba(34,197,94,0.12)',
-                border: `1px solid ${teleprompterPaused ? 'rgba(96,165,250,0.4)' : 'rgba(34,197,94,0.35)'}`,
-                borderRadius: 6, padding: '4px 14px', cursor: 'pointer',
-                color: teleprompterPaused ? D.blue : D.green,
-                fontSize: 13, fontWeight: 600, letterSpacing: '0.02em',
-                transition: 'all 0.15s',
-              }}
-            >
-              <span style={{ fontSize: 15 }}>{teleprompterPaused ? '▶' : '⏸'}</span>
-              {teleprompterPaused ? 'Play' : 'Pause'}
-            </button>
+          <ControlsBar>
+            {/* Play / Pause — ONE path: the space bar and this button must not
+                be able to disagree about what "playing" means. */}
+            <PlayButton paused={teleprompterPaused} onClick={toggleTpPlayPause} />
 
-            <span style={{ fontSize: 11, color: D.faint, marginRight: 4 }}>Speed</span>
-            <input type="range" min={0.5} max={6} step={0.5} value={tpSpeed}
-              onChange={e => {
-                const v = parseFloat(e.target.value);
-                setTpSpeed(v);
-                const sid = ctxRef.current.sessionId;
-                if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpSpeed: v } as any).catch(() => {}); }
-                // Re-anchor at the new slope, or the change applies retroactively.
-                syncRef.current?.setSpeed(v, rateFor(v));
-              }}
-              style={{ width: 70, accentColor: D.blue }} />
-            <span style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', minWidth: 30 }}>{tpSpeed.toFixed(1)}×</span>
+            <SpeedControl value={tpSpeed} onChange={v => {
+              setTpSpeed(v);
+              const sid = ctxRef.current.sessionId;
+              if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpSpeed: v } as any).catch(() => {}); }
+              // Re-anchor at the new slope, or the change applies retroactively.
+              syncRef.current?.setSpeed(v, rateFor(v));
+            }} />
 
-            <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
+            <Divider spaced />
 
-            <span style={{ fontSize: 11, color: D.faint, marginRight: 4 }}>Size</span>
-            <input type="range" min={18} max={56} step={2} value={tpFontSize}
-              onChange={e => {
-                const v = parseInt(e.target.value);
-                setTpFontSize(v);
-                const sid = ctxRef.current.sessionId;
-                if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpFontSize: v } as any).catch(() => {}); }
-                syncRef.current?.setTextSize(v);
-              }}
-              style={{ width: 70, accentColor: D.blue }} />
-            <span style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', minWidth: 30 }}>{tpFontSize}px</span>
+            <SizeControl value={tpFontSize} onChange={v => {
+              setTpFontSize(v);
+              const sid = ctxRef.current.sessionId;
+              if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpFontSize: v } as any).catch(() => {}); }
+              syncRef.current?.setTextSize(v);
+            }} />
 
-            <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
+            <Divider spaced />
 
-            <div style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 10 }}>
-              {(['narrow', 'medium', 'wide'] as const).map(w => (
-                <button key={w} onClick={() => {
-                  setTpWidth(w);
-                  const sid = ctxRef.current.sessionId;
-                  if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpWidth: w } as any).catch(() => {}); }
-                  syncRef.current?.setTextWidth(w);
-                }} style={{
-                  padding: '2px 8px', border: 'none', cursor: 'pointer',
-                  background: tpWidth === w ? 'rgba(96,165,250,0.15)' : 'transparent',
-                  color: tpWidth === w ? D.blue : D.muted,
-                  borderLeft: w !== 'narrow' ? `1px solid ${D.border}` : 'none',
-                }}>{w[0].toUpperCase() + w.slice(1)}</button>
-              ))}
-            </div>
+            <WidthToggle value={tpWidth} onChange={w => {
+              setTpWidth(w);
+              const sid = ctxRef.current.sessionId;
+              if (sid) { const deviceId = window.localStorage.getItem('tp2-device-id') || undefined; updateSession({ sessionId: sid, deviceId, tpWidth: w } as any).catch(() => {}); }
+              syncRef.current?.setTextWidth(w);
+            }} />
 
             {/* Beats of this story — → / ← step them (then the next / previous story). */}
-            <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
-            <div data-beats={`${curBeat}/${totalBeats}`} title={stage.fallback ? 'This story has no built visuals yet — showing its key points. Make visuals from the dashboard (Selections).' : '→ / ← step the beats, then the stories'}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexShrink: 1, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', gap: 3, flexShrink: 0 }}>
-                {Array.from({ length: totalBeats }, (_, b) => (
-                  <span key={b} style={{ width: b === curBeat ? 14 : 6, height: 6, borderRadius: 3, transition: 'all .2s', background: b === curBeat ? '#ffd21e' : b < curBeat ? '#8a7a2a' : D.faint }} />
-                ))}
-              </div>
-              <span style={{ fontSize: 11, color: D.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {curBeat < totalBeats - 1
-                  ? <>next <span style={{ color: D.text }}>{beatLabel(stage, curBeat + 1)}</span></>
-                  : currentIdx < slides.length - 1 ? <>next <span style={{ color: D.text }}>story {currentIdx + 2}</span></> : 'last beat'}
-              </span>
-            </div>
+            <Divider spaced />
+            <BeatDots cur={curBeat} total={totalBeats}
+              title={stage.fallback ? 'This story has no built visuals yet — showing its key points. Make visuals from the dashboard (Selections).' : '→ / ← step the beats, then the stories'}
+              next={curBeat < totalBeats - 1 ? beatLabel(stage, curBeat + 1) : currentIdx < slides.length - 1 ? `story ${currentIdx + 2}` : null} />
 
             {/* Article / Video — only on a slide that has an official video. Shift toggles it, Esc closes. */}
             {slideHasVideo(slide) && (
@@ -973,7 +848,7 @@ export default function NotesPage() {
 
             <span style={{ flex: 1 }} />
             <span style={{ fontSize: 10, color: D.faint, whiteSpace: 'nowrap' }}>Followers see this tab</span>
-          </div>
+          </ControlsBar>
         </div>
       ) : (
         // ── NOTES VIEW ─────────────────────────────────────────────────

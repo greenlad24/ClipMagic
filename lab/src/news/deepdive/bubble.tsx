@@ -3,17 +3,20 @@
  * presenter bubble sits in the bottom-left corner by default and covers text
  * and other slide content".
  *
- * Two layers of defence, both here:
- *  1. SAFE FRAME — every slide layout keeps the bubble's corner clear
- *     (`bubbleRootProps` → `data-bubble` + `--bub` on the show's root; the
- *     rules are in v2/show.css and deepdive.css). This is what protects the
- *     bubble a recorder/stream puts on top of the screen, which this page
- *     cannot move.
- *  2. AUTO-MOVE — with "Show my camera" on, the stage draws the bubble itself
- *     (the webcam, in a circle) and, when content is behind it anyway, glides
- *     it to the clearest corner, then home again. The guide (G) outlines the
- *     corner and turns red when anything sits behind it — the way to check a
- *     recorder's bubble lines up.
+ * ⚠️ NO SAFE FRAME ANY MORE (Jake, 2026-10-06, the same day it was built:
+ * "I don't like the new restructuring of the presentation — bring it back to
+ * full screen"). Slides use the whole screen again; `bubbleRootProps` returns
+ * nothing and the layout rules were deleted from v2/show.css, deepdive.css
+ * and daily/stage/story.css. What is left is opt-in and takes no room:
+ *  · AUTO-MOVE — with "Show my camera" on, the stage draws the bubble itself
+ *     (the webcam, in a circle) and, when content is behind it, glides it to
+ *     the clearest corner, then home again.
+ *  · GUIDE (G) — outlines the corner and turns red when anything sits behind
+ *     it: the way to check a recorder's bubble lines up.
+ *
+ * ⚠️ THE TOP-RIGHT CORNER STAYS EMPTY on every show screen (Jake, same day:
+ * "remove things from the top right corner" — everything there). So there is
+ * no top-right bubble corner, and the camera never glides there either.
  *
  * The settings are per machine (the screen that records), kept in
  * localStorage and shared live between the editor and an open stage window.
@@ -22,14 +25,14 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Webcam } from 'lucide-react';
 
-export type BubbleCorner = 'bl' | 'br' | 'tl' | 'tr' | 'off';
+export type BubbleCorner = 'bl' | 'br' | 'tl' | 'off';
 export type BubbleSize = 's' | 'm' | 'l';
 export interface BubbleSettings { corner: BubbleCorner; size: BubbleSize; camera: boolean; guide: boolean }
 
 export const DEFAULT_BUBBLE: BubbleSettings = { corner: 'bl', size: 'm', camera: false, guide: false };
-export const CORNER_LABEL: Record<BubbleCorner, string> = { bl: 'Bottom-left', br: 'Bottom-right', tl: 'Top-left', tr: 'Top-right', off: 'None' };
+export const CORNER_LABEL: Record<BubbleCorner, string> = { bl: 'Bottom-left', br: 'Bottom-right', tl: 'Top-left', off: 'None' };
 export const SIZE_LABEL: Record<BubbleSize, string> = { s: 'S', m: 'M', l: 'L' };
-const CYCLE: BubbleCorner[] = ['bl', 'br', 'tr', 'tl', 'off'];
+const CYCLE: BubbleCorner[] = ['bl', 'br', 'tl', 'off'];
 
 /** The bubble's diameter as a share of the frame's HEIGHT. */
 const DIAMETER: Record<BubbleSize, number> = { s: 0.24, m: 0.3, l: 0.38 };
@@ -47,7 +50,12 @@ const KEY = 'dd-bubble';
 function read(): BubbleSettings {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (v && typeof v === 'object') return { ...DEFAULT_BUBBLE, ...v };
+    if (v && typeof v === 'object') {
+      const out = { ...DEFAULT_BUBBLE, ...v };
+      // A machine saved on top-right before that corner was retired.
+      if (!(out.corner in CORNER_LABEL)) out.corner = 'br';
+      return out;
+    }
   } catch { /* private window / blocked storage */ }
   return DEFAULT_BUBBLE;
 }
@@ -80,10 +88,14 @@ export function bubbleKey(e: KeyboardEvent, s: BubbleSettings, set: (p: Partial<
   return false;
 }
 
-/** Spread onto the show's root (`.dd2` or `.dd-stage`): turns the safe frame on. */
-export function bubbleRootProps(s: BubbleSettings | null | undefined): { 'data-bubble'?: string; style?: CSSProperties } {
-  if (!s || s.corner === 'off') return {};
-  return { 'data-bubble': s.corner, style: { ['--bub' as string]: bubbleZoneU(s.size) } as CSSProperties };
+/**
+ * Spread onto the show's root (`.dd2` or `.dd-stage`). It used to turn the
+ * safe frame on (`data-bubble` + `--bub`); since Jake's "back to full screen"
+ * (2026-10-06) it adds nothing, so every slide uses the whole frame. Kept as
+ * the one seam in case a reserved corner is ever wanted again.
+ */
+export function bubbleRootProps(_s: BubbleSettings | null | undefined): { 'data-bubble'?: string; style?: CSSProperties } {
+  return {};
 }
 
 /* ── content-behind-the-bubble check ─────────────────────────────────────── */
@@ -96,7 +108,7 @@ function bubbleCircle(frame: DOMRect, corner: Exclude<BubbleCorner, 'off'>, size
   const rad = (bubbleDiameterU(size) / 2) * u;
   const off = EDGE_U * u + rad;
   const left = corner === 'bl' || corner === 'tl';
-  const top = corner === 'tl' || corner === 'tr';
+  const top = corner === 'tl';
   return { cx: left ? frame.left + off : frame.right - off, cy: top ? frame.top + off : frame.bottom - off, r: rad + 0.6 * u };
 }
 
@@ -172,9 +184,8 @@ export function BubbleLayer({ settings, scope, trigger }: { settings: BubbleSett
       setBlocked(homeBusy);
       if (!settings.camera) return;
       if (!homeBusy) { setAt(home); return; }
-      const order: Exclude<BubbleCorner, 'off'>[] = home[0] === 'b'
-        ? [home === 'bl' ? 'br' : 'bl', home === 'bl' ? 'tr' : 'tl', home === 'bl' ? 'tl' : 'tr']
-        : [home === 'tl' ? 'tr' : 'tl', home === 'tl' ? 'bl' : 'br', home === 'tl' ? 'br' : 'bl'];
+      // Never top-right (that corner stays empty on the show screens).
+      const order: Exclude<BubbleCorner, 'off'>[] = home === 'bl' ? ['br', 'tl'] : home === 'br' ? ['bl', 'tl'] : ['bl', 'br'];
       const free = order.find((c) => !busy(c));
       setAt(free ?? home);
     };
@@ -216,10 +227,10 @@ export function BubbleLayer({ settings, scope, trigger }: { settings: BubbleSett
  * Show dashboard (the same setting: one camera, one machine).
  */
 export function BubbleControl({ value, onChange }: { value: BubbleSettings; onChange: (p: Partial<BubbleSettings>) => void }) {
-  const corners: BubbleCorner[] = ['bl', 'br', 'tl', 'tr', 'off'];
+  const corners: BubbleCorner[] = ['bl', 'br', 'tl', 'off'];
   return (
     <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2 py-1 text-xs"
-      title="Slides keep this corner clear so your camera bubble never covers content. Keys on the screen: B corner · C camera · G guide">
+      title="Where your camera bubble sits. Slides use the full screen; the guide shows whether anything is behind it, and 'Show my camera' draws your camera and moves it out of the way. Keys on the screen: B corner · C camera · G guide">
       <Webcam className="h-3.5 w-3.5 text-muted-foreground" />
       <span className="text-muted-foreground">Camera bubble</span>
       <select value={value.corner} onChange={(e) => onChange({ corner: e.target.value as BubbleCorner })}

@@ -599,6 +599,11 @@
 .dd-split .dd-bar-track { height: calc(var(--u) * 3); }
 .dd-split .dd-bar-val { font-size: calc(var(--u) * 1.5); }
 .dd-split .dd-article { margin-top: calc(var(--u) * 2.4); }
+/* ⚠️ The top-right corner of the screen stays EMPTY (Jake, 2026-10-06). A tall
+   screenshot beside the text used to reach up into it; the visual is kept a
+   little shorter and sits lower, clear of that corner. */
+.dd-split > .dd-vis { margin-top: calc(var(--u) * 8); }
+.dd-split .dd-vis-frame img, .dd-split .dd-vis-frame video { max-height: calc(var(--u) * 32); }
 
 .dd-vis { margin: 0; }
 .dd-vis-frame {
@@ -675,17 +680,8 @@
 .dd-bar.dd-cur .dd-bar-label { color: var(--dd-fg, #fff); }
 .dd-bar.dd-cur .dd-bar-fill { box-shadow: 0 0 calc(var(--u) * 2.4) color-mix(in srgb, var(--dd-b) 40%, transparent); }
 
-/* ── presenter-bubble SAFE FRAME (Jake, 2026-10-06; bubble.tsx) ──────────────
-   `data-bubble` names the camera bubble's corner, --bub the clear zone's
-   width in --u. The side the bubble is on gets that much room. */
-.dd-stage[data-bubble="bl"] .dd-scene, .dd-stage[data-bubble="tl"] .dd-scene { padding-left: max(calc(var(--u) * 6), calc(var(--u) * var(--bub))); }
-.dd-stage[data-bubble="br"] .dd-scene, .dd-stage[data-bubble="tr"] .dd-scene { padding-right: max(calc(var(--u) * 7), calc(var(--u) * (var(--bub) + 1))); }
-.dd-stage[data-bubble="bl"] .dd-lower { left: calc(var(--u) * var(--bub)); }
-.dd-stage[data-bubble="br"] .dd-lower { max-width: calc(var(--u) * (95 - var(--bub) - 5)); }
-.dd-stage[data-bubble="tl"] .dd-chrome-top { left: calc(var(--u) * var(--bub)); }
-.dd-stage[data-bubble="tr"] .dd-chrome-top { right: calc(var(--u) * var(--bub)); }
-.dd-stage[data-bubble="br"] .dd-rail, .dd-stage[data-bubble="tr"] .dd-rail { right: calc(var(--u) * (var(--bub) * .25)); }
-.dd-stage[data-bubble] .dd-ring { opacity: .55; }
+/* (The presenter-bubble SAFE FRAME was removed 2026-10-06 — Jake: "bring it
+   back to full screen". See bubble.tsx.) */
 
 /* ── static (thumbnails, previews): final state, no motion ────────────────── */
 

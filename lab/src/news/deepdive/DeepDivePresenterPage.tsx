@@ -1,17 +1,21 @@
 /**
- * Deep Dive — the presenter's screen (/news-gatherer/deep-dive/:id/presenter).
+ * Deep Dive — the presenter's screen (/news-gatherer/deep-dive/:id/presenter),
+ * for BOTH formats (classic slides and v2 demo chapters).
  *
- * ⚠️ IT LOOKS LIKE THE DAILY SHOW'S /present/notes TELEPROMPTER ON PURPOSE
- * (Jake, 2026-10-01): same dark palette, same header bar (‹ n/N › · topic ·
- * controls · red End), same script column and font, same bottom controls bar
- * (Play/Pause · Speed · Size · Narrow/Medium/Wide). No monitor panel — the
- * presentation screen is the monitor. NotesPage itself is off-limits for
- * edits, so its look is copied here rather than shared.
+ * ⚠️ IT IS THE DAILY SHOW'S /present/notes PRESENTER (Jake, 2026-10-01, and
+ * again 2026-10-06: "the deep dive presentation should have a button
+ * 'follower link' and the functionality with the web sockets — the same as
+ * the ai news presentation"). The chrome is not copied any more: the header
+ * (‹ n/N › · topic · Notes | Teleprompter · 📱 Follower link · ↗ Source ·
+ * E End) and the bottom bar (Play · Speed · Size · Narrow/Medium/Wide · beat
+ * pills "next …") are the SAME components NotesPage renders
+ * (../presenter/chrome.tsx). No monitor panel — the stage is the monitor.
  *
  * Keys (Jake's rule for both screens):
  *   ← / → (and a clicker's PageUp / PageDown)  previous / next beat (then section)
- *   ↑ / ↓                                      nudge the script
- *   Space                                      play / pause the scroll
+ *   ↑ / ↓                                      nudge the script (teleprompter view)
+ *   Space                                      play / pause the scroll (notes view: next beat)
+ *   T                                          Notes ↔ Teleprompter
  *   1–9                                        jump to a section
  *   E                                          end
  *
@@ -20,6 +24,12 @@
  * rate is a fraction of THIS section's script per ms, so it is re-sent after
  * every section change and every layout change — a stale rate would scroll a
  * short script at a long script's pace.
+ *
+ * ⚠️ THE FOLLOWER LINK IS THE DAILY SHOW'S PUBLIC FOLLOWER PAGE, unchanged in
+ * trust model: /news-follow/state sees that this session's deck id is a deep
+ * dive and serves that dive's scripts split per beat (server routes.ts
+ * `deepDiveFollowerSlides`). The phone plays/pauses/scrolls every screen and
+ * steps beats with ←/→ like this page.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -32,21 +42,17 @@ import { useNewsTheme } from '../useNewsTheme';
 import { useAuth } from '../auth';
 import { startSession, getSession, endSession } from '../api';
 import { connectLiveSync, type LiveSync } from '../liveSync';
+import {
+  D, SCRIPT_FONT, WIDTH_PX, type TpWidth, type ViewMode, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider,
+  FollowerLinkButton, SourceButton, EndButton, ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl,
+  WidthToggle, BeatDots,
+} from '../presenter/chrome';
 import { getDeepDive, editorPath, stagePath, KIND_LABEL, type DeepDive, type Section } from './api';
 import { flatten, firstBeatOf, scriptParts, beatCount, type BeatUnit, type Chapter } from './v2/types';
 import { sectionsToUnits } from './beats';
 import { sectionsToChapters, CHAPTER_LABEL } from './v2/adapt';
 import { sendBeat } from './v2/beatSync';
-
-/** The /notes palette, verbatim. */
-const D = {
-  bg: '#0a0a0a', panel: '#111', card: '#1c1c1c', border: '#2a2a2a',
-  text: '#f0f0f0', muted: '#777', faint: '#3a3a3a',
-  blue: '#60a5fa', red: '#ef4444', orange: '#f97316', green: '#22c55e',
-};
-const SCRIPT_FONT = "'NewsScript', Arial, Helvetica, sans-serif";
-type Width = 'narrow' | 'medium' | 'wide';
-const WIDTH_PX: Record<Width, number> = { narrow: 420, medium: 660, wide: 960 };
+import { beatItems, sectionSourceUrl } from './presenterNotes';
 
 const DEVICE_KEY = 'tp2-device-id';
 const deviceId = (() => {
@@ -57,7 +63,21 @@ const deviceId = (() => {
   } catch { return undefined; }
 })();
 
-const btn: CSSProperties = { background: D.card, border: `1px solid ${D.border}`, borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer', color: D.muted, whiteSpace: 'nowrap' };
+const SOURCE_KEY = 'dd-source-enabled';
+const readSourceLatch = () => { try { return localStorage.getItem(SOURCE_KEY) === 'true'; } catch { return false; } };
+
+const smallBtn: CSSProperties = { background: D.card, border: `1px solid ${D.border}`, borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer', color: D.muted, whiteSpace: 'nowrap' };
+
+/**
+ * ⚠️ THE "▶ NEXT · BEAT n" MARKER IS PART OF THE SCRIPT'S LAYOUT, so it is
+ * styled identically in the public follower page (server followerPage.ts
+ * `.beat-mark`): fixed line height and the script face, never system-ui —
+ * otherwise the two screens' paragraphs start at different heights.
+ */
+const markStyle = (fontSize: number, on: boolean): CSSProperties => ({
+  fontSize: 11, lineHeight: '16px', fontWeight: 800, letterSpacing: '0.12em', color: on ? '#ffd21e' : D.faint,
+  margin: `0 0 ${Math.round(fontSize * 0.5)}px`, fontFamily: SCRIPT_FONT,
+});
 
 export default function DeepDivePresenterPage() {
   useNewsTheme(); // loads the NewsScript face, exactly as /notes does
@@ -75,14 +95,23 @@ export default function DeepDivePresenterPage() {
   const [speed, setSpeed] = useState(2.5);
   const [fontSize, setFontSize] = useState(32);
   const [lineHeight, setLineHeight] = useState(1.9);
-  const [width, setWidth] = useState<Width>('medium');
+  const [width, setWidth] = useState<TpWidth>('medium');
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [startedAt] = useState(() => Date.now());
+  // Opens on the TELEPROMPTER, like /notes (what Jake reads from on air).
+  const [viewMode, setViewMode] = useState<ViewMode>('teleprompter');
+  // "⟳ Synced" on the follower-link button when another screen moved the show.
+  const [remoteSynced, setRemoteSynced] = useState(false);
+  const syncedTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Source tab — latched on/off like /notes, survives reloads.
+  const [sourceEnabled, setSourceEnabled] = useState(readSourceLatch);
+  const [sourceBlocked, setSourceBlocked] = useState(false);
+  const sourceWindowRef = useRef<Window | null>(null);
 
   const syncRef = useRef<LiveSync | null>(null);
   const tpRef = useRef<HTMLDivElement>(null);
   const lastProgRef = useRef(-1);
-  const ref = useRef({ current: 0, count: 0, playing: false, speed: 2.5, fontSize: 32, lineHeight: 1.9 });
+  const ref = useRef({ current: 0, count: 0, playing: false, speed: 2.5, fontSize: 32, lineHeight: 1.9, viewMode: 'teleprompter' as ViewMode });
   // The sync index is a BEAT across the whole show (v2 since 2026-10-02,
   // classic slides since 2026-10-06 — same code, ./beats.ts gives a classic
   // slide its beat count); the script belongs to the beat's chapter/slide and
@@ -94,11 +123,13 @@ export default function DeepDivePresenterPage() {
   const count = beats.length;
   const chapterIdx = beats[Math.min(current, beats.length - 1)]?.chapter ?? 0;
   const scrollKey = chapterIdx;
-  ref.current = { current, count, playing, speed, fontSize, lineHeight };
+  ref.current = { current, count, playing, speed, fontSize, lineHeight, viewMode };
 
   useEffect(() => {
     if (!authLoading && !user) loginWithRedirect({ redirectUrl: window.location.href });
   }, [authLoading, user, loginWithRedirect]);
+
+  useEffect(() => { try { localStorage.setItem(SOURCE_KEY, String(sourceEnabled)); } catch { /* private mode */ } }, [sourceEnabled]);
 
   // Content — refreshed so a script fixed in the editor mid-show shows up here.
   useEffect(() => {
@@ -143,6 +174,12 @@ export default function DeepDivePresenterPage() {
     return max > 0 ? (spd * 8) / max / 1000 : 0;
   }, []);
 
+  const flashSynced = useCallback(() => {
+    setRemoteSynced(true);
+    clearTimeout(syncedTimer.current);
+    syncedTimer.current = setTimeout(() => setRemoteSynced(false), 2000);
+  }, []);
+
   useEffect(() => {
     if (!sessionId) return;
     const sync = connectLiveSync(sessionId);
@@ -152,8 +189,11 @@ export default function DeepDivePresenterPage() {
     sync.onSync((snap) => {
       setPlaying(snap.isPlaying);
       if (typeof snap.scrollSpeed === 'number') setSpeed(snap.scrollSpeed);
+      // Our own steps come back with the index we already show; anything else
+      // was moved on another screen (the stage, a phone on the follower link).
       if (typeof snap.idx === 'number' && snap.idx !== ref.current.current) {
         setCurrent(Math.max(0, Math.min(Math.max(0, ref.current.count - 1), snap.idx)));
+        flashSynced();
       }
       // A paused screen still follows a seek from elsewhere.
       if (!snap.isPlaying) {
@@ -170,9 +210,10 @@ export default function DeepDivePresenterPage() {
       if (a.textWidth === 'narrow' || a.textWidth === 'medium' || a.textWidth === 'wide') setWidth(a.textWidth);
     });
     return () => { sync.close(); syncRef.current = null; setConnected(false); };
-  }, [sessionId]);
+  }, [sessionId, flashSynced]);
 
-  // The render loop: while playing, every frame solves the anchor.
+  // The render loop: while playing, every frame solves the anchor. (In the
+  // Notes view there is no script element, so it idles.)
   useEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -191,6 +232,20 @@ export default function DeepDivePresenterPage() {
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
+
+  // Back on the Teleprompter tab: the script element is new, so land it on the
+  // shared position (a paused show would otherwise sit at the top).
+  useEffect(() => {
+    if (viewMode !== 'teleprompter') return;
+    const raf = requestAnimationFrame(() => {
+      const el = tpRef.current;
+      const sync = syncRef.current;
+      if (!el || !sync) return;
+      const max = el.scrollHeight - el.clientHeight;
+      if (max > 0) { const top = sync.positionNow() * max; lastProgRef.current = top; el.scrollTop = top; }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [viewMode]);
 
   // Jake scrolling the script himself (wheel / drag) re-anchors every screen.
   const onTpScroll = () => {
@@ -215,7 +270,12 @@ export default function DeepDivePresenterPage() {
       if (ref.current.playing) syncRef.current?.setSpeed(ref.current.speed, rateFor(ref.current.speed));
     });
     return () => cancelAnimationFrame(raf);
-  }, [scrollKey, fontSize, lineHeight, width, rateFor]);
+  }, [scrollKey, fontSize, lineHeight, width, viewMode, rateFor]);
+
+  const unitsRef = useRef(units);
+  unitsRef.current = units;
+  const beatsRef = useRef(beats);
+  beatsRef.current = beats;
 
   const go = useCallback((n: number) => {
     const total = ref.current.count;
@@ -227,11 +287,6 @@ export default function DeepDivePresenterPage() {
     // A beat inside the same chapter/slide keeps the script where it is.
     sendBeat(syncRef.current, beatsRef.current, from, next);
   }, []);
-
-  const unitsRef = useRef(units);
-  unitsRef.current = units;
-  const beatsRef = useRef(beats);
-  beatsRef.current = beats;
 
   const togglePlay = useCallback(() => {
     const sync = syncRef.current;
@@ -256,17 +311,46 @@ export default function DeepDivePresenterPage() {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if ((e.target as HTMLElement)?.closest('input, textarea')) return;
       const c = ref.current.current;
+      const tp = ref.current.viewMode === 'teleprompter';
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); go(c + 1); }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(c - 1); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); nudge(1); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); nudge(-1); }
-      else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+      else if (e.key === 'ArrowDown' && tp) { e.preventDefault(); nudge(1); }
+      else if (e.key === 'ArrowUp' && tp) { e.preventDefault(); nudge(-1); }
+      else if (e.key === ' ') { e.preventDefault(); if (tp) togglePlay(); else go(c + 1); }
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
+      else if (e.key === 't' || e.key === 'T') setViewMode((v) => (v === 'notes' ? 'teleprompter' : 'notes'));
       else if (/^[1-9]$/.test(e.key)) go(firstBeatOf(unitsRef.current, parseInt(e.key, 10) - 1));
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [go, nudge, togglePlay]);
+
+  // The latched source tab follows the show (navigated in place, never reopened).
+  const sec = sections[Math.min(chapterIdx, Math.max(0, sections.length - 1))];
+  const sourceUrl = sectionSourceUrl(sec, isV2, dive);
+  useEffect(() => {
+    if (!sourceEnabled || !sourceUrl) return;
+    const win = sourceWindowRef.current;
+    if (!win || win.closed) { sourceWindowRef.current = null; setSourceEnabled(false); return; }
+    try { if (win.location.href !== sourceUrl) win.location.href = sourceUrl; } catch {
+      try { win.location.href = sourceUrl; } catch { /* cross-origin nav refused */ }
+    }
+    window.focus();
+  }, [sourceUrl, sourceEnabled]);
+
+  const toggleSource = () => {
+    if (sourceEnabled) { setSourceEnabled(false); return; }
+    if (!sourceUrl) return;
+    const win = window.open(sourceUrl, 'dd-source-tab');
+    if (win) {
+      sourceWindowRef.current = win;
+      setSourceEnabled(true);
+      setSourceBlocked(false);
+      setTimeout(() => window.focus(), 100);
+    } else {
+      setSourceBlocked(true);
+    }
+  };
 
   const openScreen = () => {
     const w = window.open(stagePath(id, sessionId || undefined), 'dd-stage');
@@ -291,20 +375,28 @@ export default function DeepDivePresenterPage() {
   if (authLoading || !user) return center('Loading…');
   if (loadError) return center(loadError);
   if (!dive) return center('Loading…');
-  if (!sections.length) return center('This deep dive has no sections yet. Generate it in the editor first.');
+  if (!sections.length || !sec) return center('This deep dive has no sections yet. Generate it in the editor first.');
 
-  const sec = sections[Math.min(chapterIdx, sections.length - 1)];
   const next = sections[chapterIdx + 1];
   const unit = units[Math.min(chapterIdx, units.length - 1)];
   const beatNow = beats[Math.min(current, beats.length - 1)]?.beat ?? 0;
   const parts = unit ? scriptParts(unit) : [];
   const nBeats = unit ? beatCount(unit) : 1;
   const kindLabel = (k: string) => (isV2 ? CHAPTER_LABEL[k as keyof typeof CHAPTER_LABEL] : KIND_LABEL[k as keyof typeof KIND_LABEL]) || k;
+  const headingOf = (s: Section) => (s.heading || kindLabel(s.kind)).replace(/\*/g, '');
   const title = dive.title || dive.topic;
   const atStart = current === 0;
   const atEnd = current >= count - 1;
+  const items = beatItems(sec, isV2);
+  const nextLabel = beatNow < nBeats - 1
+    ? (items[beatNow + 1] || `beat ${beatNow + 2}`)
+    : next ? `section ${chapterIdx + 2} · ${headingOf(next)}` : null;
+  const isTeleprompter = viewMode === 'teleprompter';
+  const island = isV2 ? ((sec.data ?? {}) as { island?: { q?: string; a?: string } }).island : null;
+  const angle = island?.q ? `${island.q} → ${island.a ?? ''}` : (sec.eyebrow || sec.data?.subtitle || sec.data?.text || sec.data?.kicker || '');
+  const sources = dive.sources ?? [];
 
-  const setLook = (patch: { size?: number; width?: Width }) => {
+  const setLook = (patch: { size?: number; width?: TpWidth }) => {
     if (patch.size !== undefined) { setFontSize(patch.size); syncRef.current?.setTextSize(patch.size); }
     if (patch.width) { setWidth(patch.width); syncRef.current?.setTextWidth(patch.width); }
   };
@@ -312,136 +404,142 @@ export default function DeepDivePresenterPage() {
   return (
     <div style={{ height: '100vh', background: D.bg, color: D.text, display: 'flex', flexDirection: 'column', fontFamily: 'system-ui, sans-serif', overflow: 'hidden' }}>
 
-      {/* ── Header bar (as /notes) ─────────────────────────────────────── */}
+      {/* ── Header bar (the /notes header) ──────────────────────────────── */}
       <header style={{ background: D.panel, borderBottom: `1px solid ${D.border}`, padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <button onClick={() => go(current - 1)} disabled={atStart} title="Previous section (←)"
-            style={{ background: D.card, border: `1px solid ${D.border}`, color: atStart ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: atStart ? 'not-allowed' : 'pointer', fontSize: 13 }}>‹
-          </button>
-          <span style={{ fontSize: 13, fontWeight: 600, color: D.text, whiteSpace: 'nowrap' }}>{nBeats > 1 ? `${chapterIdx + 1}.${beatNow + 1}` : chapterIdx + 1} / {sections.length}</span>
-          <button onClick={() => go(current + 1)} disabled={atEnd} title="Next section (→)"
-            style={{ background: D.card, border: `1px solid ${D.border}`, color: atEnd ? D.faint : D.text, borderRadius: 5, padding: '4px 10px', cursor: atEnd ? 'not-allowed' : 'pointer', fontSize: 13 }}>›
-          </button>
-        </div>
+        <NavStepper
+          label={<>{nBeats > 1 ? `${chapterIdx + 1}.${beatNow + 1}` : chapterIdx + 1} / {sections.length}</>}
+          onPrev={() => go(current - 1)} prevDisabled={atStart} prevTitle="Previous beat (←)"
+          onNext={() => go(current + 1)} nextDisabled={atEnd} nextTitle="Next beat (→)"
+        />
 
-        <p style={{ flex: 1, fontSize: 12, color: D.muted, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-          — {title}
-        </p>
+        <TopicLabel>{headingOf(sec)} <span style={{ color: D.faint }}>· {title}</span></TopicLabel>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <span title={connected ? 'Live sync connected' : 'Connecting…'}
+          <ViewToggle mode={viewMode} onChange={setViewMode} />
+
+          <Divider />
+
+          <span data-live={connected ? 'on' : 'off'} title={connected ? 'Live sync connected' : 'Connecting…'}
             style={{ width: 7, height: 7, borderRadius: 99, background: connected ? D.green : D.orange }} />
+          <FollowerLinkButton getSessionId={() => sessionId} synced={remoteSynced} />
+
+          <Divider />
+
           <button onClick={openScreen} disabled={!sessionId} title="Open the presentation screen (the audience view) in its own window"
-            style={{ ...btn, color: D.blue, background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.35)' }}>
-            ↗ Presentation screen
+            style={{ ...smallBtn, color: D.blue, background: 'rgba(96,165,250,0.08)', border: '1px solid rgba(96,165,250,0.35)' }}>
+            ↗ Screen
           </button>
-          <div style={{ width: 1, height: 14, background: D.border }} />
-          <button onClick={() => navigate(editorPath(id))} style={btn}>Editor</button>
-          <button onClick={() => setConfirmEnd(true)}
-            style={{ background: '#7f1d1d', border: '1px solid #991b1b', color: '#fecaca', borderRadius: 4, padding: '2px 8px', fontSize: 11, cursor: 'pointer' }}>
-            E End
-          </button>
+          {sourceUrl && <SourceButton enabled={sourceEnabled} blocked={sourceBlocked} onClick={toggleSource} />}
+          <button onClick={() => navigate(editorPath(id))} style={smallBtn}>Editor</button>
+          <EndButton onClick={() => setConfirmEnd(true)} />
         </div>
       </header>
 
-      {/* ── Teleprompter (as /notes) ───────────────────────────────────── */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div
-          ref={tpRef}
-          onScroll={onTpScroll}
-          style={{ flex: 1, minHeight: 0, overflowY: 'auto', position: 'relative', scrollbarWidth: 'thin', scrollbarColor: `${D.faint} transparent` }}
-        >
-          <div style={{ position: 'sticky', top: 10, zIndex: 10, display: 'flex', justifyContent: 'center', pointerEvents: 'none' }}>
-            <div style={{
-              background: 'rgba(17,17,17,0.85)', border: `1px solid ${playing ? 'rgba(96,165,250,0.35)' : D.border}`,
-              borderRadius: 20, padding: '3px 14px', fontSize: 11, color: playing ? D.blue : D.muted, transition: 'all 0.2s',
-            }}>
-              {playing ? '▶ Scrolling' : '⏸ Paused'}
+      {isTeleprompter ? (
+        // ── TELEPROMPTER VIEW (as /notes) ────────────────────────────────
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div
+            ref={tpRef}
+            onScroll={onTpScroll}
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', position: 'relative', scrollbarWidth: 'thin', scrollbarColor: `${D.faint} transparent` }}
+          >
+            <ScrollPill paused={!playing} />
+
+            <div style={{ maxWidth: WIDTH_PX[width], margin: '0 auto', padding: '44px 40px 0', position: 'relative' }}>
+              {/* One line, always — a wrapped label would push this screen's
+                  script below the follower's (followerPage.ts `#label`). */}
+              <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {chapterIdx + 1} / {sections.length} · {kindLabel(sec.kind)}{sec.heading ? ` · ${sec.heading.replace(/\*/g, '')}` : ''}
+                {nBeats > 1 ? ` · beat ${beatNow + 1} of ${nBeats}` : ''}
+              </p>
+
+              {parts.some((p) => p.trim()) ? parts.map((part, b) => (
+                <div key={`${sec.id}:b${b}`} style={{ opacity: b < beatNow ? 0.35 : 1, transition: 'opacity .3s' }}>
+                  {b > 0 && <p style={markStyle(fontSize, b === beatNow)}>▶ NEXT · BEAT {b + 1}</p>}
+                  {part.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((para, i) => (
+                    <p key={i} style={{
+                      fontSize, lineHeight, color: '#ffffff', fontWeight: 400,
+                      margin: `0 0 ${Math.round(fontSize * 0.8)}px`,
+                      letterSpacing: '0.012em', fontFamily: SCRIPT_FONT, WebkitTextSizeAdjust: '100%',
+                    } as CSSProperties}>{para}</p>
+                  ))}
+                </div>
+              )) : (
+                <div style={{ textAlign: 'center', marginTop: 60 }}>
+                  <p style={{ fontSize: 18, color: D.muted, marginBottom: 8 }}>No script for this section.</p>
+                  <p style={{ fontSize: 13, color: D.faint }}>Write one in the editor.</p>
+                </div>
+              )}
+
+              <p style={{ fontSize: 11, fontWeight: 700, color: D.faint, letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 12 }}>
+                {next ? `Next → ${headingOf(next)}` : 'End of the deep dive'}
+              </p>
+
+              {/* Bottom spacer so the last line can scroll to the top */}
+              <div style={{ height: '70vh' }} />
             </div>
           </div>
 
-          <div style={{ maxWidth: WIDTH_PX[width], margin: '0 auto', padding: '44px 40px 0', position: 'relative' }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
-              {chapterIdx + 1} / {sections.length} · {kindLabel(sec.kind)}{sec.heading ? ` · ${sec.heading.replace(/\*/g, '')}` : ''}
-              {nBeats > 1 ? ` · beat ${beatNow + 1} of ${nBeats}` : ''}
-            </p>
+          {/* ── Controls bar (the /notes bar) ─────────────────────────────── */}
+          <ControlsBar>
+            <PlayButton paused={!playing} onClick={togglePlay} />
 
-            {parts.some((p) => p.trim()) ? parts.map((part, b) => (
-              <div key={`${sec.id}:b${b}`} style={{ opacity: b < beatNow ? 0.35 : 1, transition: 'opacity .3s' }}>
-                {b > 0 && (
-                  <p style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.12em', color: b === beatNow ? '#ffd21e' : D.faint, margin: `0 0 ${Math.round(fontSize * 0.5)}px`, fontFamily: 'system-ui, sans-serif' }}>
-                    ▶ NEXT · BEAT {b + 1}
-                  </p>
-                )}
-                {part.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((para, i) => (
-                  <p key={i} style={{
-                    fontSize, lineHeight, color: '#ffffff', fontWeight: 400,
-                    margin: `0 0 ${Math.round(fontSize * 0.8)}px`,
-                    letterSpacing: '0.012em', fontFamily: SCRIPT_FONT, WebkitTextSizeAdjust: '100%',
-                  } as CSSProperties}>{para}</p>
+            <SpeedControl value={speed} onChange={(v) => { setSpeed(v); syncRef.current?.setSpeed(v, rateFor(v)); }} />
+
+            <Divider spaced />
+
+            <SizeControl value={fontSize} onChange={(v) => setLook({ size: v })} />
+
+            <Divider spaced />
+
+            <WidthToggle value={width} onChange={(w) => setLook({ width: w })} />
+
+            <Divider spaced />
+            <BeatDots cur={beatNow} total={nBeats} next={nextLabel} title="→ / ← step the beats, then the sections" />
+
+            <span style={{ flex: 1 }} />
+            <span style={{ fontSize: 10, color: D.faint, whiteSpace: 'nowrap' }}>Followers see this tab</span>
+          </ControlsBar>
+        </div>
+      ) : (
+        // ── NOTES VIEW (as /notes) ───────────────────────────────────────
+        <>
+          <div style={{ padding: '14px 18px 6px', flexShrink: 0 }}>
+            <h1 style={{ fontSize: 20, fontWeight: 700, color: '#fff', margin: 0, lineHeight: 1.3 }}>{headingOf(sec)}</h1>
+            <p style={{ fontSize: 12, color: D.muted, margin: '4px 0 0' }}>
+              {kindLabel(sec.kind)} · section {chapterIdx + 1} of {sections.length}{nBeats > 1 ? ` · beat ${beatNow + 1} of ${nBeats}` : ''}
+            </p>
+          </div>
+
+          <div style={{ flex: 1, overflow: 'auto', padding: '10px 16px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, alignContent: 'start' }}>
+            <NoteCard title="🎯 The point" text={angle.replace(/\*/g, '')} />
+            <NoteCard title="🔑 On screen, beat by beat" keyPoints={items} current={beatNow} />
+            <NoteCard title="📚 Sources" keyPoints={sources.slice(0, 6).map((s) => `${s.outlet || 'Source'}${s.official && !/official/i.test(s.outlet || '') ? ' (official)' : ''} — ${s.title}`)} />
+          </div>
+
+          {next && (
+            <div style={{ padding: '6px 16px 12px', flexShrink: 0 }}>
+              <p style={{ fontSize: 10, fontWeight: 700, color: D.muted, letterSpacing: '0.06em', textTransform: 'uppercase', margin: '0 0 6px' }}>Up Next</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {sections.slice(chapterIdx + 1, chapterIdx + 3).map((s, i) => (
+                  <button
+                    key={s.id}
+                    onClick={() => go(firstBeatOf(units, chapterIdx + 1 + i))}
+                    style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 6, padding: '7px 11px', flex: 1, textAlign: 'left', cursor: 'pointer', transition: 'border-color 0.15s' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.borderColor = D.blue)}
+                    onMouseLeave={(e) => (e.currentTarget.style.borderColor = D.border)}
+                  >
+                    <p style={{ fontSize: 12, color: D.text, margin: 0, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {chapterIdx + 2 + i}. {headingOf(s)}
+                    </p>
+                    <p style={{ fontSize: 11, color: D.muted, margin: '2px 0 0' }}>{kindLabel(s.kind)}</p>
+                  </button>
                 ))}
               </div>
-            )) : (
-              <div style={{ textAlign: 'center', marginTop: 60 }}>
-                <p style={{ fontSize: 18, color: D.muted, marginBottom: 8 }}>No script for this section.</p>
-                <p style={{ fontSize: 13, color: D.faint }}>Write one in the editor.</p>
-              </div>
-            )}
-
-            <p style={{ fontSize: 11, fontWeight: 700, color: D.faint, letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 12 }}>
-              {next ? `Next → ${(next.heading || kindLabel(next.kind)).replace(/\*/g, '')}` : 'End of the deep dive'}
-            </p>
-
-            {/* Bottom spacer so the last line can scroll to the top */}
-            <div style={{ height: '70vh' }} />
-          </div>
-        </div>
-
-        {/* ── Controls bar (as /notes) ──────────────────────────────────── */}
-        <div style={{ background: D.panel, borderTop: `1px solid ${D.border}`, flexShrink: 0, padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <button onClick={togglePlay} disabled={!sessionId}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0,
-              background: playing ? 'rgba(34,197,94,0.12)' : 'rgba(96,165,250,0.15)',
-              border: `1px solid ${playing ? 'rgba(34,197,94,0.35)' : 'rgba(96,165,250,0.4)'}`,
-              borderRadius: 6, padding: '4px 14px', cursor: 'pointer',
-              color: playing ? D.green : D.blue, fontSize: 13, fontWeight: 600, letterSpacing: '0.02em', transition: 'all 0.15s',
-            }}>
-            <span style={{ fontSize: 15 }}>{playing ? '⏸' : '▶'}</span>
-            {playing ? 'Pause' : 'Play'}
-          </button>
-
-          <span style={{ fontSize: 11, color: D.faint, marginRight: 4 }}>Speed</span>
-          <input type="range" min={0.5} max={6} step={0.5} value={speed}
-            onChange={(e) => { const v = parseFloat(e.target.value); setSpeed(v); syncRef.current?.setSpeed(v, rateFor(v)); }}
-            style={{ width: 70, accentColor: D.blue }} />
-          <span style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', minWidth: 30 }}>{speed.toFixed(1)}×</span>
-
-          <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
-
-          <span style={{ fontSize: 11, color: D.faint, marginRight: 4 }}>Size</span>
-          <input type="range" min={18} max={56} step={2} value={fontSize}
-            onChange={(e) => setLook({ size: parseInt(e.target.value, 10) })}
-            style={{ width: 70, accentColor: D.blue }} />
-          <span style={{ fontSize: 11, color: D.text, fontFamily: 'monospace', minWidth: 30 }}>{fontSize}px</span>
-
-          <div style={{ width: 1, height: 14, background: D.border, margin: '0 4px' }} />
-
-          <div style={{ display: 'flex', border: `1px solid ${D.border}`, borderRadius: 4, overflow: 'hidden', fontSize: 10 }}>
-            {(['narrow', 'medium', 'wide'] as const).map((w) => (
-              <button key={w} onClick={() => setLook({ width: w })} style={{
-                padding: '2px 8px', border: 'none', cursor: 'pointer',
-                background: width === w ? 'rgba(96,165,250,0.15)' : 'transparent',
-                color: width === w ? D.blue : D.muted,
-                borderLeft: w !== 'narrow' ? `1px solid ${D.border}` : 'none',
-              }}>{w[0].toUpperCase() + w.slice(1)}</button>
-            ))}
-          </div>
-
-          <span style={{ flex: 1 }} />
-          <span style={{ fontSize: 10, color: D.faint }}>← → beats · ↑ ↓ script · Space scroll</span>
-        </div>
-      </div>
+            </div>
+          )}
+        </>
+      )}
 
       <AlertDialog open={confirmEnd} onOpenChange={setConfirmEnd}>
         <AlertDialogContent>

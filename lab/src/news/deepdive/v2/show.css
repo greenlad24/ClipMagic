@@ -66,6 +66,13 @@
 .dd2-island .d3 i:nth-child(2) { animation-delay: .2s; } .dd2-island .d3 i:nth-child(3) { animation-delay: .4s; }
 @keyframes dd2-blink { 50% { background: var(--yellow); } }
 .dd2-island .a { background: var(--yellow); color: var(--accent-ink); border-radius: 999px; padding: calc(var(--u) * .4) calc(var(--u) * 1); font-weight: 800; }
+/* ⚠️ THE TOP-RIGHT CORNER OF THE SCREEN STAYS EMPTY (Jake, 2026-10-06:
+   "remove things from the top right corner" — everything there). The island
+   used to sit in a third column at the header's right end, i.e. in that
+   corner; it now sits under the heading, and the heading itself stops short
+   of the corner (the head's right padding = the corner's width). */
+.dd2-head { grid-template-columns: calc(var(--u) * 4.4) minmax(0, 1fr); padding-right: calc(var(--u) * 14); }
+.dd2-head > .dd2-island { grid-column: 2; justify-self: start; margin-top: calc(var(--u) * 1.1); }
 
 /* stage */
 .dd2-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line); border-radius: calc(var(--u) * 1.7 * var(--r)); overflow: hidden; color: var(--fg); }
@@ -268,20 +275,9 @@
 .dd2-end b { font-weight: 900; font-size: calc(var(--u) * 2.6); letter-spacing: -.04em; }
 .dd2-end a { background: var(--yellow); color: var(--accent-ink); font-weight: 800; text-decoration: none; border-radius: calc(var(--u) * .9 * var(--r)); padding: calc(var(--u) * 1) calc(var(--u) * 1.5); font-size: calc(var(--u) * 1.2); }
 
-/* ── presenter-bubble SAFE FRAME (Jake, 2026-10-06) ──
-   The camera bubble of the recording/stream sits in a corner (bottom-left by
-   default) and covered slide content. `data-bubble` on .dd2 names its corner
-   and --bub its width in --u units (../bubble.tsx); every layout keeps that
-   corner clear: bottom corners push the stage (and the takeaways, the credit
-   line, the title's lede + agenda) sideways, top corners push the header. */
-.dd2[data-bubble="bl"] .dd2-stage, .dd2[data-bubble="bl"] .dd2-takes, .dd2[data-bubble="bl"] .dd2-end, .dd2[data-bubble="bl"] .dd2-wrap > .dd2-credit,
-.dd2[data-bubble="bl"] .dd2-lede, .dd2[data-bubble="bl"] .dd2-agenda { margin-left: max(0px, calc(var(--u) * (var(--bub) - 6))); }
-.dd2[data-bubble="br"] .dd2-stage, .dd2[data-bubble="br"] .dd2-takes, .dd2[data-bubble="br"] .dd2-end { margin-right: max(0px, calc(var(--u) * (var(--bub) - 6))); }
-.dd2[data-bubble="br"] .dd2-wrap > .dd2-credit { padding-right: max(0px, calc(var(--u) * (var(--bub) - 6))); }
-.dd2[data-bubble="tl"] .dd2-head, .dd2[data-bubble="tl"] .dd2-title > div:first-child { padding-left: max(0px, calc(var(--u) * (var(--bub) - 6))); }
-.dd2[data-bubble="tr"] .dd2-head { padding-right: max(0px, calc(var(--u) * (var(--bub) - 6))); }
-/* The title's block is centred: lift it a little off a bottom bubble. */
-.dd2[data-bubble="bl"] .dd2-ch.k-title .dd2-wrap, .dd2[data-bubble="br"] .dd2-ch.k-title .dd2-wrap { padding-bottom: calc(var(--u) * 5); }
+/* (The presenter-bubble SAFE FRAME that shifted these layouts sideways was
+   removed on 2026-10-06, Jake: "bring it back to full screen". The bubble's
+   guide / own camera (../bubble.tsx) are opt-in overlays and take no room.) */
 
 @media (prefers-reduced-motion: reduce) {
   .dd2 *, .dd2 *::before, .dd2 *::after { animation: none !important; transition: none !important; }

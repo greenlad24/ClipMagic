@@ -50,6 +50,7 @@ import {
 } from "./deepDive.js";
 import { assetDir, removeAssets, ASSET_FILE_RE, type Visual } from "./deepDiveVisuals.js";
 import { MEDIA_FILE_RE } from "./deepDiveMedia.js";
+import { deepDiveFollowerSlides } from "./deepDiveFollow.js";
 import { generateDeepDiveV2, mediaChoices, editChapter } from "./deepDiveV2.js";
 import { startDemoJob, latestDemoJob, liveDemoState, attachDemoToDive } from "./deepDiveDemo.js";
 
@@ -686,6 +687,10 @@ newsRouter.post("/:fn", express.json({ limit: "2mb" }), async (req: Request, res
  * cannot be guessed), and only while it is live. It returns the session's
  * display state and the scripts of that session's own deck — never stories,
  * notes, sources or any other deck — and it is read-only.
+ *
+ * A Deep Dive's session (Jake, 2026-10-06) reads the same way: its deck id is
+ * the dive's id, and it gets that dive's per-section label, beat count and
+ * script parts only (deepDiveFollow.ts) — no research, sources or media.
  */
 const FOLLOWER_SESSION_FIELDS: (keyof SessionRecord)[] = [
   "id", "currentSlideIndex", "endedAt", "tpRevision", "tpScrollPct", "tpSpeed", "tpPaused",
@@ -706,7 +711,15 @@ followerRouter.get("/state", (req: Request, res: Response) => {
   const safe: Record<string, unknown> = {};
   for (const k of FOLLOWER_SESSION_FIELDS) if (session[k] !== undefined) safe[k] = session[k];
   const out: Record<string, unknown> = { session: safe, serverTime: Date.now() };
-  if (withSlides && session.deck) {
+  // A Deep Dive's live session (its deck id is the dive's id): that dive's
+  // scripts per beat, nothing else — see deepDiveFollow.ts.
+  const dive = withSlides && session.deck && !decks.get(session.deck) ? deepDiveFollowerSlides(session.deck) : null;
+  if (dive) {
+    out.kind = "deep-dive";
+    out.title = dive.title;
+    out.sections = dive.sections;
+    out.slides = dive.sections.map((x) => ({ id: x.id, bestSourceName: "", teleprompterScript: x.parts.join("\n\n") }));
+  } else if (withSlides && session.deck) {
     out.slides = slides
       .where("deck_id = ? AND (deleted IS NULL OR deleted = 0)", session.deck)
       .sort((a, b) => (a.position || 0) - (b.position || 0))
