@@ -798,3 +798,20 @@ followerRouter.get("/state", async (req: Request, res: Response) => {
   }
   res.json(out);
 });
+
+
+/**
+ * ⚠️ A DEPLOY RESTARTS THE SERVER, AND A DEEP DIVE GENERATING AT THAT MOMENT USED TO
+ * FAIL ("Generation was interrupted…", 2026-10-07). On boot, every dive still marked
+ * "generating" is started again here — before any request can reconcile it into an
+ * error. The pipeline saves each stage as it lands, so this resumes rather than
+ * repaying the research. Each start registers itself synchronously.
+ */
+try {
+  for (const d of deepDives.where("status = 'generating'")) {
+    console.log(`[news-deepdive] resuming "${d.title || d.topic}" after a restart`);
+    void generateDeepDive(() => {}, { id: d.id }).catch((err) => console.warn("[news-deepdive] resume failed:", err?.message ?? err));
+  }
+} catch (err) {
+  console.warn("[news-deepdive] could not check for interrupted deep dives:", err);
+}

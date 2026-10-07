@@ -497,7 +497,28 @@ Aim for 12-25 facts, every number you can find, 4-8 timeline events and 6-15 sou
     searchMaxUses: 5,
     maxTokens: 10000,
   });
-  const pack = await parseJsonReply<ResearchPack>(text, "research");
+  let pack: ResearchPack;
+  try {
+    pack = await parseJsonReply<ResearchPack>(text, "research");
+  } catch (err) {
+    if (!/returned no JSON/.test(String((err as Error)?.message))) throw err;
+    // ⚠️ The research reply had no JSON at all (2026-10-07: "Pacing AI models" — prose,
+    // or a turn that ended before its answer). One cheap follow-up, no new searches,
+    // turns what it found into the JSON instead of failing the whole deep dive.
+    console.warn(`[news-deepdive] research reply had no JSON (${text.length} chars) — asking once for the JSON only`);
+    const fixed = await claudeTextForPurpose({
+      tier: "research",
+      purpose: "news-deepdive-research",
+      system: "You are the research engine behind a live AI news show. Answer in exactly the requested JSON format.",
+      messages: [
+        { role: "user", content: prompt },
+        { role: "assistant", content: text.trim() || "I searched the web for this topic." },
+        { role: "user", content: "Now reply with ONLY the JSON object in the exact format requested above, built from what you found (empty arrays where you found nothing). No prose, no markdown." },
+      ],
+      maxTokens: 10000,
+    });
+    pack = await parseJsonReply<ResearchPack>(fixed, "research");
+  }
   pack.sources = arr(pack.sources)
     .map((x: any) => ({ title: s(x?.title, 200), url: s(x?.url, 600), outlet: s(x?.outlet, 80), official: x?.official === true }))
     .filter((x) => /^https?:\/\//.test(x.url));

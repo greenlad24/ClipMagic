@@ -330,6 +330,18 @@ async function anthropicStreamRequest(
             else if (ev.delta?.type === "citations_delta" && ev.delta.citation) {
               (b.citations as unknown[]) = [...((b.citations as unknown[]) ?? []), ev.delta.citation];
             }
+            // Kept so a "pause_turn" reply can be sent back verbatim to continue it.
+            else if (ev.delta?.type === "input_json_delta") b._partialJson = `${b._partialJson ?? ""}${ev.delta.partial_json ?? ""}`;
+            else if (ev.delta?.type === "thinking_delta") b.thinking = `${b.thinking ?? ""}${ev.delta.thinking ?? ""}`;
+            else if (ev.delta?.type === "signature_delta") b.signature = ev.delta.signature;
+            break;
+          }
+          case "content_block_stop": {
+            const b = blocks[ev.index];
+            if (b && typeof b._partialJson === "string") {
+              try { b.input = b._partialJson ? JSON.parse(b._partialJson) : {}; } catch { b.input = {}; }
+              delete b._partialJson;
+            }
             break;
           }
           case "message_delta":
@@ -439,9 +451,21 @@ async function callClaude(opts: {
   // ⚠️ A SEARCH CALL STREAMS AND IS NEVER RETRIED. Partial output is already
   // billed, and the retry loop below would re-issue the whole search-heavy
   // request — the exact double-bill the scriptgen path documents.
-  const json = opts.webSearch
+  let json = opts.webSearch
     ? await anthropicStreamRequest(body, label, auth)
     : await anthropicRequest(body, label, undefined, auth);
+  // ⚠️ A WEB-SEARCH TURN CAN STOP WITH "pause_turn" before its answer (the
+  // server-side tool loop paused). Its text then holds no answer at all, which
+  // a deep dive's research step reported as "returned no JSON" (2026-10-07).
+  // Continue it by sending the paused turn back, a few times at most; only the
+  // final turn's text is the answer.
+  for (let k = 0; k < 3 && opts.webSearch && (json as { stop_reason?: string }).stop_reason === "pause_turn"; k++) {
+    if (opts.purpose) recordAnthropicUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+    recordScopedUsage({ model: opts.model, purpose: opts.purpose, usage: json.usage, ms: Date.now() - t0 });
+    console.log(`[claude] web search paused (pause_turn) — continuing (${k + 1}/3) (${opts.purpose ?? "no purpose"})`);
+    body.messages = [...(body.messages as unknown[]), { role: "assistant", content: json.content }];
+    json = await anthropicStreamRequest(body, label, auth);
+  }
   const ms = Date.now() - t0;
   // ⚠️⚠️ SAY WHETHER THE SEARCH ACTUALLY RAN. Offering the tool is not using it:
   // the model decides, and with `jsonMode` telling it to return only a JSON
