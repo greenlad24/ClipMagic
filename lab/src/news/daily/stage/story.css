@@ -47,13 +47,14 @@
 .nw-it.hold { opacity: 0; transform: translateY(calc(var(--u) * 1.4)); }
 .nw.still .nw-it, .nw.instant .nw-it { transition: none; }
 
-/* ── SOURCE: the real page, full screen, scrolling ── */
-.nw-src { position: absolute; inset: 0; background: #fff; overflow: hidden; }
-.nw-src img { width: 100%; height: auto; will-change: transform; }
+/* ── SOURCE: the real page, full screen, a still image Jake scrolls himself (nothing pops up over it) ── */
+.nw-src { position: absolute; inset: 0; background: #fff; overflow: hidden; touch-action: none; }
+.nw-src.can-scroll { cursor: grab; }
+.nw-src.dragging { cursor: grabbing; }
+.nw-src img { width: 100%; height: auto; will-change: transform; user-select: none; -webkit-user-drag: none; }
 .nw-src-chip { position: absolute; right: calc(var(--u) * 2.4); bottom: calc(var(--u) * 2.4); display: flex; align-items: center; gap: calc(var(--u) * .8); padding: calc(var(--u) * .8) calc(var(--u) * 1.4); border-radius: calc(var(--u) * .6 * var(--n-r)); background: var(--n-bg); color: var(--n-ink); font: 600 calc(var(--u) * 1.3) / 1 var(--n-label); letter-spacing: .06em; box-shadow: 0 calc(var(--u) * .4) calc(var(--u) * 2) rgba(0,0,0,.25); }
 .nw-src-chip i { width: calc(var(--u) * .8); height: calc(var(--u) * .8); border-radius: 50%; background: var(--n-accent); }
 .nw-src-chip span { color: var(--n-mute); font-weight: 500; }
-.nw-screen.on .nw-src-chip { animation: nw-fade .6s .5s ease both; }
 
 /* ── TITLE card (no capturable source) ── */
 .nw-title { justify-content: center; }
@@ -128,3 +129,148 @@
 
 @keyframes nw-rise { from { opacity: 0; transform: translateY(calc(var(--u) * 1.6)); } }
 @keyframes nw-fade { from { opacity: 0; } }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   v3 SLIDES (Jake, 2026-10-07: "2 or 3 slides per story … designed really
+   great including animations — just different from the deep dive").
+   One idea, one beat, one entrance that plays ONCE. NewsSlides.tsx.
+   ⚠️ Motion rule (see NewsSlides.tsx): opacity, scale ≤ 1, clip-path, moves
+   from the top/left, or a rise inside an overflow-hidden mask — never a child
+   pushed down/right, which the text fitter would read as overflow.
+   ═════════════════════════════════════════════════════════════════════════ */
+.nx { position: relative; z-index: 1; height: 100%; }
+.nx-body { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; overflow: hidden; overflow-wrap: anywhere; }
+/* room on the left for what slides in from the left (nx-in-l) — otherwise its first letters are clipped mid-entrance */
+.nx-body { padding-left: calc(var(--u) * 2.6); margin-left: calc(var(--u) * -2.6); }
+[data-fitting] .nx-body, [data-fitting] .nx-body * { overflow-wrap: normal !important; }
+.nx-h { margin-top: calc(var(--u) * 2.2); }
+
+/* kinetic type: each word rises out of its own mask */
+/* overflow: CLIP (not hidden) + a clip margin: descenders and accents still draw, the risen-from word
+   below stays hidden, and nothing here counts as scrollable overflow for the text fitter. */
+.kw { display: inline-block; overflow: clip; overflow-clip-margin: .3em; vertical-align: top; }
+.kw-i { display: inline-block; }
+.nw-screen.on .kw-i { animation: nx-rise .8s cubic-bezier(.16,.9,.24,1) var(--d, 0s) both; }
+
+/* the strip arrives first, from the left */
+.nw-screen.on .nx .nw-strip { animation: nx-in-l .55s cubic-bezier(.2,.8,.2,1) both; }
+
+/* ── number: one huge number ── */
+.nx-num-wrap { justify-content: center; padding-bottom: calc(var(--u) * 2); }
+.nx-num { overflow: hidden; white-space: nowrap; max-width: 82%; padding: .04em .02em; font: var(--n-head-w) calc(var(--u) * 17 * var(--fit, 1)) / 1.12 var(--n-head); letter-spacing: -.045em; font-variant-numeric: tabular-nums; color: var(--n-ink); }
+/* short number: the number left, its words beside it on the baseline */
+.nx-num-wrap.side { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: calc(var(--u) * 5); align-items: end; align-content: center; }
+.nx-num-wrap.side .nx-num { max-width: none; font-size: calc(var(--u) * 24 * var(--fit, 1)); line-height: 1.04; }
+.nx-num-wrap.side .nx-num-text { padding-bottom: calc(var(--u) * 3.4); }
+.nx-num-wrap.side .nx-num-label { max-width: 100%; }
+.nx-num-wrap.side .nx-num-ctx { max-width: 100%; }
+.nx-num .px { font-size: .5em; vertical-align: .62em; margin-right: .04em; letter-spacing: 0; color: var(--n-accent); }
+.nx-num .sx { font-size: .42em; margin-left: .05em; letter-spacing: -.01em; color: var(--n-accent); }
+.nx-rule { flex: none; width: calc(var(--u) * 14); height: calc(var(--u) * .6); margin: calc(var(--u) * 1.6) 0 calc(var(--u) * 2.4); background: var(--n-accent); border-radius: calc(var(--u) * .3 * var(--n-r)); transform-origin: left center; }
+.nx-num-label { max-width: 74%; font: 700 calc(var(--u) * 4.2 * var(--fit, 1)) / 1.12 var(--n-head); letter-spacing: var(--n-head-track); text-transform: var(--n-head-case); text-wrap: balance; }
+.nx-num-ctx { margin-top: calc(var(--u) * 1.8); max-width: 58%; font: 500 calc(var(--u) * 2.4 * var(--fit, 1)) / 1.35 var(--n-body); color: color-mix(in srgb, var(--n-ink) 72%, var(--n-bg)); }
+.nw-screen.on .nx-num { animation: nx-pop .9s cubic-bezier(.2,.9,.25,1) .05s both; }
+.nw-screen.on .nx-rule { animation: nx-draw .7s cubic-bezier(.7,0,.2,1) .3s both; }
+.nw-screen.on .nx-num-ctx { animation: nx-in-l .6s cubic-bezier(.2,.8,.2,1) .75s both; }
+
+/* ── quote: a pull quote on the card tone ── */
+.nx-quote { background: var(--n-card); }
+.nx-quote-fig { margin: 0; }
+.nx-q-in { position: relative; padding-left: calc(var(--u) * 10); max-width: 92%; }
+.nx-qmark { position: absolute; left: 0; top: calc(var(--u) * -2.6); font: 700 calc(var(--u) * 19) / 1 var(--n-head); color: var(--n-accent); }
+.nx-q { margin: 0; font: var(--n-head-w) calc(var(--u) * 4.9 * var(--fit, 1)) / 1.2 var(--n-head); letter-spacing: var(--n-head-track); text-wrap: pretty; }
+.nx-q .qw { display: inline-block; }
+.nx-who { display: flex; align-items: center; gap: calc(var(--u) * 1.4); margin-top: calc(var(--u) * 3.2); font: 600 calc(var(--u) * 1.9 * var(--fit, 1)) / 1.25 var(--n-label); letter-spacing: .05em; color: var(--n-mute); }
+.nx-who b { color: var(--n-ink); font-weight: 700; }
+.nx-who-rule { flex: none; width: calc(var(--u) * 5); height: calc(var(--u) * .35); background: var(--n-accent); }
+.nw-screen.on .nx-qmark { animation: nx-qm .8s cubic-bezier(.2,.9,.3,1.25) both; }
+.nw-screen.on .nx-q .qw { animation: nx-word .55s ease-out var(--d, 0s) both; }
+.nw-screen.on .nx-who { animation: nx-in-l .6s cubic-bezier(.2,.8,.2,1) var(--d, 1s) both; }
+
+/* ── meaning: the takeaway on a full-bleed accent field ── */
+.nx-meaning { background: var(--n-accent); color: var(--n-accent-ink); }
+.nx-meaning .nw-strip { color: color-mix(in srgb, var(--n-accent-ink) 72%, var(--n-accent)); }
+.nx-meaning .nw-strip .no { background: var(--n-accent-ink); color: var(--n-accent); }
+.nx-mean-h { margin: 0; max-width: 84%; font: var(--n-head-w) calc(var(--u) * 7.2 * var(--fit, 1)) / 1.03 var(--n-head); letter-spacing: var(--n-head-track); text-transform: var(--n-head-case); text-wrap: balance; }
+.nx-meaning .nw-acc, .nw[data-mark="block"] .nx-meaning .nw-acc { color: var(--n-accent); background: var(--n-accent-ink); padding: 0 .1em; }
+.nx-mean-t { display: flex; gap: calc(var(--u) * 1.4); align-items: baseline; margin: calc(var(--u) * 3.6) 0 0; max-width: 66%; font: 600 calc(var(--u) * 2.7 * var(--fit, 1)) / 1.32 var(--n-body); }
+.nx-mean-t .ar { flex: none; font-weight: 800; }
+.nw-screen.on .nx-meaning { animation: nx-wipe .8s cubic-bezier(.75,0,.2,1) both; }
+.nw-screen.on .nx-mean-t { animation: nx-in-l .65s cubic-bezier(.2,.8,.2,1) .95s both; }
+
+/* ── compare: two sides wiped in from the edges ── */
+.nx-cmp { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: calc(var(--u) * 2.8); align-content: center; position: relative; margin-top: calc(var(--u) * 3); }
+.nx-side { min-width: 0; padding: calc(var(--u) * 3) calc(var(--u) * 3.4) calc(var(--u) * 3.4); background: var(--n-card); border-radius: calc(var(--u) * 1.2 * var(--n-r)); overflow: hidden; }
+.nx-side.b { background: var(--n-accent); color: var(--n-accent-ink); }
+.nx-side .nm { font: 600 calc(var(--u) * 1.6 * var(--fit, 1)) / 1.15 var(--n-label); letter-spacing: .12em; text-transform: uppercase; color: var(--n-mute); }
+.nx-side.b .nm { color: color-mix(in srgb, var(--n-accent-ink) 70%, var(--n-accent)); }
+.nx-side .big { margin-top: calc(var(--u) * 1.6); font: var(--n-head-w) calc(var(--u) * 7.4 * var(--fit, 1)) / 1 var(--n-head); letter-spacing: -.035em; }
+.nx-side .ln { margin-top: calc(var(--u) * 1.8); font: 600 calc(var(--u) * 2.5 * var(--fit, 1)) / 1.28 var(--n-body); }
+.nx-vs { position: absolute; left: 50%; top: 50%; width: calc(var(--u) * 6.4); height: calc(var(--u) * 6.4); margin: calc(var(--u) * -3.2) 0 0 calc(var(--u) * -3.2); border-radius: 50%; background: var(--n-bg); color: var(--n-ink); display: grid; place-items: center; font: 700 calc(var(--u) * 1.7) / 1 var(--n-label); letter-spacing: .1em; text-transform: uppercase; box-shadow: 0 calc(var(--u) * .3) calc(var(--u) * 1.6) rgba(0,0,0,.18); }
+.nw-screen.on .nx-side.a { animation: nx-wipe .75s cubic-bezier(.75,0,.2,1) .12s both; }
+.nw-screen.on .nx-side.b { animation: nx-wipe-r .75s cubic-bezier(.75,0,.2,1) .3s both; }
+.nw-screen.on .nx-side .big { animation: nx-pop .7s cubic-bezier(.2,.9,.25,1) .55s both; }
+.nw-screen.on .nx-side.b .big { animation-delay: .72s; }
+.nw-screen.on .nx-vs { animation: nx-disc .55s cubic-bezier(.3,1.6,.5,1) .8s both; }
+
+/* ── timeline: a rule drawing left → right, moments popping on it ── */
+.nx-tl-row { position: relative; display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); column-gap: calc(var(--u) * 2.6); }
+.nx-tl-line { position: absolute; left: 0; right: 0; top: calc(var(--u) * 1.05); height: calc(var(--u) * .3); background: var(--n-line); }
+.nx-tl-line i { display: block; height: 100%; background: var(--n-accent); transform-origin: left center; }
+.nx-ev { position: relative; min-width: 0; padding-top: calc(var(--u) * 4.4); }
+.nx-ev .dot { position: absolute; left: 0; top: 0; width: calc(var(--u) * 2.4); height: calc(var(--u) * 2.4); border-radius: 50%; background: var(--n-accent); box-shadow: 0 0 0 calc(var(--u) * .7) var(--n-bg); }
+.nx-ev.soon .dot { background: var(--n-bg); border: calc(var(--u) * .3) dashed var(--n-accent); }
+.nx-ev .dt { font: 600 calc(var(--u) * 1.7 * var(--fit, 1)) / 1.1 var(--n-label); letter-spacing: .1em; text-transform: uppercase; color: var(--n-accent); }
+.nx-ev .soon-tag { display: inline-block; margin-left: .7em; padding: .2em .55em; border: 1px solid currentColor; border-radius: calc(var(--u) * .4 * var(--n-r)); font-size: .78em; letter-spacing: .08em; vertical-align: .08em; }
+.nx-ev .lb { margin-top: calc(var(--u) * 1.3); font: 700 calc(var(--u) * 3.1 * var(--fit, 1)) / 1.14 var(--n-head); letter-spacing: var(--n-head-track); text-transform: var(--n-head-case); }
+.nw-screen.on .nx-tl-line i { animation: nx-draw 1.1s cubic-bezier(.6,0,.2,1) .25s both; }
+.nw-screen.on .nx-ev .dot { animation: nx-disc .5s cubic-bezier(.3,1.6,.5,1) var(--d, 0s) both; }
+.nw-screen.on .nx-ev .dt { animation: nx-in-l .5s cubic-bezier(.2,.8,.2,1) calc(var(--d, 0s) + .08s) both; }
+.nw-screen.on .nx-ev .lb { animation: nx-in-l .55s cubic-bezier(.2,.8,.2,1) calc(var(--d, 0s) + .16s) both; }
+
+/* ── facts: 2–3 numbered rows, rules drawing ── */
+.nx-factlist { list-style: none; margin: calc(var(--u) * 2) 0 0; padding: 0; }
+.nx-factlist li { position: relative; display: grid; grid-template-columns: calc(var(--u) * 7.5) minmax(0, 1fr); align-items: baseline; padding: calc(var(--u) * 2.3) 0; }
+.nx-factlist li::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: calc(var(--u) * .2); background: var(--n-ink); opacity: .22; transform-origin: left center; }
+.nx-factlist .n { font: 700 calc(var(--u) * 2.2 * var(--fit, 1)) / 1 var(--n-label); letter-spacing: .04em; color: var(--n-accent); }
+.nx-factlist .t { font: 650 calc(var(--u) * 3.9 * var(--fit, 1)) / 1.16 var(--n-body); letter-spacing: -.012em; }
+.nw-screen.on .nx-factlist li { animation: nx-in-l .65s cubic-bezier(.2,.8,.2,1) var(--d, 0s) both; }
+.nw-screen.on .nx-factlist li::before { animation: nx-draw .8s cubic-bezier(.6,0,.2,1) var(--d, 0s) both; }
+
+/* ── picture: the page's own image, big, the headline beside it ── */
+.nx-picture { display: grid; grid-template-columns: 56% minmax(0, 1fr); }
+.nx-picture.no-pic { grid-template-columns: minmax(0, 1fr); }
+.nx-pic { position: relative; overflow: hidden; background: #000; }
+.nx-pic-img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; transform-origin: 50% 45%; }
+/* no picture found: the article's top as a cutting on the card tone */
+.nx-pic.cut { background: var(--n-card); }
+.nx-clip { position: absolute; left: 9%; right: 9%; top: 12%; bottom: 12%; display: flex; align-items: center; transform: rotate(-2.2deg); }
+.nx-clip svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 calc(var(--u) * .8) calc(var(--u) * 2.4) rgba(0,0,0,.35)); }
+.nx-pic-side { min-width: 0; min-height: 0; display: flex; flex-direction: column; justify-content: center; padding: calc(var(--u) * 5.2) calc(var(--u) * 6) calc(var(--u) * 5.6) calc(var(--u) * 4.6); }
+.nx-picture.no-pic .nx-pic-side { padding-left: calc(var(--u) * 7); }
+.nx-pic-text { flex: 0 1 auto; justify-content: flex-start; padding-bottom: calc(var(--u) * .8); }
+.nx-pic-side .nx-h { max-width: 100%; max-height: calc(var(--u) * 17); font-size: calc(var(--u) * 5 * var(--fit, 1)); }
+.nx-cap { margin: calc(var(--u) * 2.4) 0 0; font: 500 calc(var(--u) * 2.3 * var(--fit, 1)) / 1.4 var(--n-body); color: color-mix(in srgb, var(--n-ink) 78%, var(--n-bg)); }
+.nx-via { display: flex; align-items: center; gap: calc(var(--u) * .8); margin-top: calc(var(--u) * 3); font: 600 calc(var(--u) * 1.4 * var(--fit, 1)) / 1.3 var(--n-label); letter-spacing: .1em; text-transform: uppercase; color: var(--n-mute); }
+.nx-via i { width: calc(var(--u) * .9); height: calc(var(--u) * .9); border-radius: 50%; background: var(--n-accent); }
+.nw-screen.on .nx-pic { animation: nx-wipe .9s cubic-bezier(.75,0,.2,1) both; }
+.nw-screen.on .nx-pic-img { animation: nx-settle 2.8s cubic-bezier(.2,.7,.2,1) both; }
+.nw-screen.on .nx-clip { animation: nx-drop .9s cubic-bezier(.2,.9,.25,1) .25s both; }
+.nw-screen.on .nx-cap { animation: nx-in-l .6s cubic-bezier(.2,.8,.2,1) .7s both; }
+.nw-screen.on .nx-via { animation: nx-fade .6s ease .95s both; }
+
+/* thumbnails / previews: the final frame, no motion */
+.nw.still .nx, .nw.still .nx * { animation: none !important; }
+
+@keyframes nx-rise { from { transform: translateY(110%); } }
+@keyframes nx-in-l { from { opacity: 0; transform: translateX(calc(var(--u) * -2.4)); } }
+@keyframes nx-fade { from { opacity: 0; } }
+@keyframes nx-pop { from { opacity: 0; transform: scale(.9); filter: blur(calc(var(--u) * .4)); } }
+@keyframes nx-draw { from { transform: scaleX(0); } }
+@keyframes nx-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes nx-wipe-r { from { clip-path: inset(0 0 0 100%); } to { clip-path: inset(0 0 0 0); } }
+@keyframes nx-disc { from { transform: scale(0); } }
+@keyframes nx-qm { from { opacity: 0; transform: scale(.45) rotate(-14deg); } }
+@keyframes nx-word { from { opacity: 0; transform: translateY(calc(var(--u) * -.5)); filter: blur(calc(var(--u) * .25)); } }
+@keyframes nx-settle { from { transform: scale(1.12); } }
+@keyframes nx-drop { from { opacity: 0; transform: rotate(-7deg) scale(.9); } }

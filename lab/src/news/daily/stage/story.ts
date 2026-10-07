@@ -1,29 +1,30 @@
 /**
  * Daily Show — one story on the show screens (Jake, 2026-10-07).
  *
- * EVERY STORY RUNS THE SAME TWO PARTS, IN THIS ORDER (Jake's correction,
- * 2026-10-07: "Source (with a slow scroll down effect) as the first slide of
- * each story; clicking shift — to change it to the video at any slide of the
- * story; clicking forward after the first slide would be the rest of the
- * slides"):
- *   1. SOURCE — the story's best source article, full screen, scrolling slowly
- *      (a server-side capture of the real page: server news/sourceShot.ts). It
- *      tells the audience "next story" and breaks up the look. A story whose
- *      page could not be captured opens on a title card instead.
- *   2. INFO   — 1–2 simple info slides (a few facts, numbers, a comparison…),
- *      revealed one item per beat as the script reaches them.
+ * EVERY STORY RUNS THE SAME TWO PARTS, IN THIS ORDER:
+ *   1. SOURCE — the story's best source article, full screen: a server-side
+ *      capture of the real page (server news/sourceShot.ts), a still image —
+ *      nothing pops up over it. Jake scrolls it HIMSELF (2026-10-07: "instead
+ *      of auto scrolling — let me scroll my self"): wheel / drag on the Screen
+ *      window, Shift+↑/↓ or the mini-map on the presenter, synced to every
+ *      show screen (sourceScroll.ts). A story whose page could not be captured
+ *      opens on a title card instead.
+ *   2. SLIDES — v3 (2026-10-07: "maybe 2 or 3 slides per story (I can skim past
+ *      them a little bit quicker) … designed really great including
+ *      animations — just different from the deep dive"): 2–3 one-idea slides
+ *      (big number, key quote, what it means, comparison, timeline, key facts,
+ *      picture), each ONE beat — the slide arrives whole with its own entrance
+ *      animation (StoryShow.tsx / story.css). Older stages (v2: 1–2 slides,
+ *      one item per beat; v1) still render as they were until "Redo visuals".
  * The story's video is NOT a beat: Shift toggles it full screen over ANY beat
  * of the story (media-view), and toggling back returns to that same beat.
  * The Deep Dive keeps its own look; these are the AI News templates
  * (newsTemplates.ts), not the Deep Dive's.
  *
  * BEATS == CUES (Jake, 2026-10-07: "some of the beats aren't highlighted in
- * the script, leaving left-over beats at the end"). The cause: the stage model
- * wrote 4–6 cues for 6–8 beats (it never counted a reveal's extra "who can
- * get it" beat, and the normaliser accepted short cue lists), so the last
- * beats of a story had no mark and Jake pressed → blind. Now every beat after
- * the first is built WITH its cue, and `reconcile()` checks each cue against
- * the script with the presenter's own search (cues.tsx `placeCue`):
+ * the script, leaving left-over beats at the end"). Every beat after the first
+ * is built WITH its cue, and `reconcile()` checks each cue against the script
+ * with the presenter's own search (cues.tsx `placeCue`):
  *   - a cue not found in order is re-made from the script itself — the start
  *     of a sentence (else a clause) between its neighbours' cues;
  *   - a beat that still has no place is MERGED (an item appears together with
@@ -56,13 +57,20 @@ export interface SourceShot {
   /** Image size in px (the page is captured 1.5× at 1280 CSS px wide). */
   w: number;
   h: number;
+  /** The page's main picture in image px (captures from 2026-10-07 on) — the "picture" slide crops it. */
+  hero: { x: number; y: number; w: number; h: number } | null;
 }
 
-export type SceneKind = 'list' | 'stats' | 'versus' | 'flow' | 'timeline' | 'quote' | 'reveal';
+/** v1/v2 kinds (one item per beat) + the v3 one-beat slides (number … picture). */
+export type SceneKind =
+  | 'list' | 'stats' | 'versus' | 'flow' | 'timeline' | 'quote' | 'reveal'
+  | 'number' | 'meaning' | 'compare' | 'facts' | 'picture';
 
 export interface NewsScene {
   id: string;
   kind: SceneKind;
+  /** A v3 slide: ONE beat, arrives whole (its kind may share a name with a v2 one — quote, timeline). */
+  v3?: boolean;
   eyebrow: string;
   heading: string;
   data: Record<string, any>;
@@ -96,6 +104,7 @@ export interface StoryStage {
 }
 
 const KINDS: SceneKind[] = ['list', 'stats', 'versus', 'flow', 'timeline', 'quote', 'reveal'];
+const KINDS_V3: SceneKind[] = ['number', 'quote', 'meaning', 'compare', 'timeline', 'facts', 'picture'];
 
 const hostOf = (url?: string): string => {
   if (!url) return '';
@@ -126,11 +135,14 @@ const parse = (json?: string): any => {
 export function sourceShotOf(slide: Slide | null | undefined): SourceShot | null {
   const v = parse((slide as any)?.sourceShot);
   if (!v || typeof v.file !== 'string' || !/^[a-z0-9]+\.jpg$/i.test(v.file) || !(v.w > 0) || !(v.h > 0)) return null;
-  return { src: `/api/news/source-shot/${v.file}`, url: String(v.url || ''), name: String(v.name || ''), host: hostOf(v.url), w: Number(v.w), h: Number(v.h) };
+  const h = v.hero;
+  const hero = h && [h.x, h.y, h.w, h.h].every((n: unknown) => typeof n === 'number' && Number.isFinite(n)) && h.w > 0 && h.h > 0 ? { x: h.x, y: h.y, w: h.w, h: h.h } : null;
+  return { src: `/api/news/source-shot/${v.file}`, url: String(v.url || ''), name: String(v.name || ''), host: hostOf(v.url), w: Number(v.w), h: Number(v.h), hero };
 }
 
 /** Items (= beats) in a scene. A reveal's "who can get it" row is not a beat here. */
 export function sceneItems(sc: NewsScene): number {
+  if (sc.v3) return 1;
   const d = sc.data || {};
   const n = (() => {
     switch (sc.kind) {
@@ -149,6 +161,14 @@ export function sceneItems(sc: NewsScene): number {
 /** A short label for item `i` of a scene — the presenter's "next" line. */
 function itemLabel(sc: NewsScene, i: number): string {
   const d = sc.data || {};
+  if (sc.v3) {
+    const plain = sc.heading.replace(/\*/g, '');
+    switch (sc.kind) {
+      case 'number': return plain || `${d.prefix ?? ''}${d.value ?? d.display ?? ''}${d.suffix ?? ''} ${d.label ?? ''}`.trim();
+      case 'quote': return plain || (d.who ? `Quote · ${d.who}` : 'Quote');
+      default: return plain || sc.eyebrow || sc.kind;
+    }
+  }
   const pick = (): string => {
     switch (sc.kind) {
       case 'reveal': return d.cards?.[i]?.name ?? '';
@@ -241,6 +261,15 @@ function readScenes(raw: any, slideId: string): { scenes: NewsScene[]; cues: str
   const scenes: NewsScene[] = [];
   const cues: string[][] = [];
   const v2 = raw?.v === 2;
+  // v3: 2–3 one-beat slides, each with its one cue.
+  if (raw?.v === 3) {
+    for (const [i, x] of (Array.isArray(raw?.scenes) ? raw.scenes : []).entries()) {
+      if (!x || !KINDS_V3.includes(x.kind)) continue;
+      scenes.push({ id: `${slideId}:${i}`, kind: x.kind, v3: true, eyebrow: String(x.eyebrow || ''), heading: String(x.heading || ''), data: x.data && typeof x.data === 'object' ? x.data : {} });
+      cues.push([String(x.cue ?? '')]);
+    }
+    return { scenes, cues };
+  }
   // Old (v1) stages: one flat cue list over the Deep Dive beats after the cover —
   // a reveal's extra "who can get it" beat included, which is not a beat here.
   const flat: string[] = !v2 && Array.isArray(raw?.cues) ? raw.cues.map((c: unknown) => String(c ?? '')) : [];

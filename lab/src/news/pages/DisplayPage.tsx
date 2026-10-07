@@ -15,6 +15,7 @@ type BCMsg =
   | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: 'article' | 'video'; beat?: number }
   | { type: 'media'; idx: number; view: 'article' | 'video' }
   | { type: 'beat'; idx: number; beat: number }
+  | { type: 'src'; idx: number; y: number; from?: string }
   | { type: 'blackout'; value: boolean }
   | { type: 'end' }
   | { type: 'ping' }
@@ -30,6 +31,8 @@ export default function DisplayPage() {
   const [idx, setIdx] = useState(0);
   // The story's beat (cover, then each micro-interaction), from the presenter.
   const [beat, setBeat] = useState(0);
+  // The source page's scroll — follows the presenter / the Screen window (relayed by the presenter tab).
+  const [srcY, setSrcY] = useState(0);
   const [blackout, setBlackout] = useState(false);
   const [ended, setEnded] = useState(false);
   // Article, then (on a slide that has one) the official video — driven by the presenter.
@@ -62,6 +65,7 @@ export default function DisplayPage() {
       if (msg.type === 'ping') {
         ch.postMessage({ type: 'pong' } satisfies BCMsg);
       } else if (msg.type === 'slide') {
+        if (msg.idx !== idxRef.current) setSrcY(0); // a new story's page opens at its top
         setSlide(msg.slide);
         setIdx(msg.idx);
         idxRef.current = msg.idx;
@@ -70,6 +74,8 @@ export default function DisplayPage() {
         setMediaView(msg.media === 'video' ? 'video' : 'article');
       } else if (msg.type === 'beat') {
         if (msg.idx === idxRef.current) setBeat(msg.beat);
+      } else if (msg.type === 'src') {
+        if (msg.idx === idxRef.current && typeof msg.y === 'number') setSrcY(msg.y);
       } else if (msg.type === 'media') {
         if (msg.idx === idxRef.current) setMediaView(msg.view === 'video' ? 'video' : 'article');
       } else if (msg.type === 'blackout') {
@@ -112,7 +118,7 @@ export default function DisplayPage() {
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ backgroundColor: '#000' }}>
       {/* The story: source → info slides, beat by beat (daily/stage); Shift = its video. */}
-      <StoryShow slide={slide} beat={beat} number={idx + 1} template={newsTemplateFor(deckTemplate)} bubble={bubble} bubbleLayer />
+      <StoryShow slide={slide} beat={beat} number={idx + 1} template={newsTemplateFor(deckTemplate)} bubble={bubble} bubbleLayer srcY={srcY} />
 
       {/* The story's video: loaded behind the story, full screen on Shift over ANY beat (it is not a beat). */}
       {(() => {

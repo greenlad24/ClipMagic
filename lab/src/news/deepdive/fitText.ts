@@ -33,8 +33,9 @@ export interface FitTarget {
   within?: string;
   /** Fit after every other box (a fallback that scales a whole column only if its headline couldn't make room). */
   last?: boolean;
-  /** 'y': only height counts for the box itself (its decoration bleeds sideways by design); long words still count. */
-  axis?: 'y';
+  /** 'y': only height counts for the box itself (its decoration bleeds sideways by design); long words still count.
+   *  'x': only width counts — a one-line nowrap number whose glyphs poke above/below its line (AI News v3 big number). */
+  axis?: 'y' | 'x';
   /**
    * Smallest EFFECTIVE factor (default 0.85) — inherited factors count, so a
    * card inside a shrunk body never compounds below it. Jake 2026-10-06: "I
@@ -74,11 +75,11 @@ function wideWord(box: HTMLElement): boolean {
   return false;
 }
 
-function fitsAll(items: HTMLElement[], axis?: 'y'): boolean {
+function fitsAll(items: HTMLElement[], axis?: 'y' | 'x'): boolean {
   for (const el of items) {
     if (!el.isConnected || el.clientWidth === 0) continue;
     const o = overflows(el);
-    if ((o.w > TOL && axis !== 'y') || o.h > TOL || wideWord(el)) return false;
+    if ((o.w > TOL && axis !== 'y') || (o.h > TOL && axis !== 'x') || wideWord(el)) return false;
   }
   return true;
 }
@@ -164,7 +165,7 @@ export function fitText(root: HTMLElement | null, targets: FitTarget[]): void {
       el.style.setProperty('--fit', String(+(base * Math.max(floor, best * 0.97)).toFixed(4)));
     }
     el.removeAttribute('data-fitting');
-    for (const it of items) if (it.clientWidth > 0 && overflows(it).h > TOL) clampToFit(it);
+    if (t.axis !== 'x') for (const it of items) if (it.clientWidth > 0 && overflows(it).h > TOL) clampToFit(it);
   }
 }
 

@@ -76,6 +76,15 @@ interface SyncState {
    * beat must not move, pause or re-anchor any teleprompter.
    */
   beat: number;
+  /**
+   * Daily Show source beat (Jake, 2026-10-07: "let me scroll myself"): how far
+   * down the captured source page the show screens are, as the fraction of
+   * the IMAGE height at the top edge of the screen (0 = the top). Its own
+   * event (`source-scroll`), like `beat`: never part of the anchor, so it can
+   * never move a teleprompter. Live only (not persisted) and reset to the top
+   * on every slide change — a new story's page always opens at its top.
+   */
+  srcY: number;
 }
 
 const DEFAULTS: Omit<SyncState, "anchorTime"> = {
@@ -89,6 +98,7 @@ const DEFAULTS: Omit<SyncState, "anchorTime"> = {
   textWidth: "medium",
   media: "article",
   beat: 0,
+  srcY: 0,
 };
 
 /**
@@ -214,6 +224,7 @@ export function attachNewsLiveSync(server: HttpServer): Server {
         textWidth: s.textWidth,
         media: s.media,
         beat: s.beat,
+        srcY: s.srcY,
       });
     });
 
@@ -287,6 +298,7 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       // A new slide always opens on its article (the video closed).
       s.media = "article";
       s.beat = Math.max(0, Math.round(num(obj?.beat, 0)));
+      s.srcY = 0;
       broadcast();
       ns.to(room).emit("media-view", { idx: s.idx, media: s.media });
       ns.to(room).emit("beat", { idx: s.idx, beat: s.beat });
@@ -333,6 +345,20 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       } catch {
         /* best effort */
       }
+    });
+
+    // ── The source page's scroll on the show screens (Daily Show, 2026-10-07).
+    //    Its own event, NOT a scroll-sync: the teleprompter anchor is untouched.
+    //    `from` = the sender's socket id, so the screen being scrolled ignores
+    //    its own echo (its local value is newer than anything coming back).
+    socket.on("source-scroll", (payload: unknown) => {
+      const s = stateFor(sessionId);
+      const p = (payload ?? {}) as { idx?: unknown; y?: unknown };
+      if (typeof p.idx === "number" && p.idx !== s.idx) return; // aimed at a story already left
+      const y = Math.min(1, Math.max(0, num(p.y, s.srcY)));
+      if (y === s.srcY) return;
+      s.srcY = y;
+      ns.to(room).emit("source-scroll", { idx: s.idx, y, from: socket.id });
     });
 
     // ── Appearance. Shared so both screens read the same thing, but it does

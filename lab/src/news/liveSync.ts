@@ -53,6 +53,14 @@ export interface LiveSync {
    */
   setBeat(idx: number, beat: number): void;
   onBeat(fn: (b: { idx: number; beat: number }) => void): void;
+  /**
+   * Daily Show source beat: how far down the source page the show screens are
+   * (fraction of the image height at the screen's top edge). Its own event —
+   * never touches the teleprompter. Sends are throttled (the last one always
+   * goes out); this screen's own echoes are filtered out.
+   */
+  setSourceScroll(idx: number, y: number): void;
+  onSourceScroll(fn: (s: { idx: number; y: number; from?: string }) => void): void;
   close(): void;
 }
 
@@ -74,6 +82,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   const appearanceHandlers: ((a: any) => void)[] = [];
   const mediaHandlers: ((m: { idx: number; media: MediaView }) => void)[] = [];
   const beatHandlers: ((b: { idx: number; beat: number }) => void)[] = [];
+  const srcHandlers: ((s: { idx: number; y: number; from?: string }) => void)[] = [];
 
   const syncClock = () => socket.emit('time-ping', Date.now());
   const burstSyncClock = () => {
@@ -110,6 +119,9 @@ export function connectLiveSync(sessionId: string): LiveSync {
     if (typeof s.beat === 'number') {
       for (const fn of beatHandlers) fn({ idx: s.idx, beat: s.beat });
     }
+    if (typeof s.srcY === 'number') {
+      for (const fn of srcHandlers) fn({ idx: s.idx, y: s.srcY });
+    }
     for (const fn of appearanceHandlers) {
       fn({ textSize: s.textSize, lineHeight: s.lineHeight, textWidth: s.textWidth });
     }
@@ -119,6 +131,10 @@ export function connectLiveSync(sessionId: string): LiveSync {
   socket.on('text-width', (v: string) => appearanceHandlers.forEach((fn) => fn({ textWidth: v })));
   socket.on('media-view', (m: { idx: number; media: MediaView }) => mediaHandlers.forEach((fn) => fn(m)));
   socket.on('beat', (b: { idx: number; beat: number }) => beatHandlers.forEach((fn) => fn(b)));
+  socket.on('source-scroll', (m: { idx: number; y: number; from?: string }) => {
+    if (m.from && m.from === socket.id) return; // our own, already shown here
+    srcHandlers.forEach((fn) => fn({ idx: m.idx, y: m.y, from: m.from }));
+  });
 
   const clockSyncTimer = setInterval(burstSyncClock, 15000);
 
@@ -127,6 +143,9 @@ export function connectLiveSync(sessionId: string): LiveSync {
   let seekTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSeek: number | null = null;
   let pendingSeekIdx = 0;   // the slide the scrub was made on — the server drops it once the room has moved on
+  // Source scroll: a wheel fires ~60×/s; ~16 sends a second is plenty (each screen eases between them).
+  let srcTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingSrc: { idx: number; y: number } | null = null;
 
   const api = {
     socket,
@@ -189,8 +208,22 @@ export function connectLiveSync(sessionId: string): LiveSync {
     onBeat(fn) {
       beatHandlers.push(fn);
     },
+    setSourceScroll(idx, y) {
+      pendingSrc = { idx, y: Math.min(1, Math.max(0, y)) };
+      if (srcTimer) return;
+      socket.emit('source-scroll', pendingSrc);
+      pendingSrc = null;
+      srcTimer = setTimeout(function flush() {
+        srcTimer = null;
+        if (pendingSrc) { socket.emit('source-scroll', pendingSrc); pendingSrc = null; srcTimer = setTimeout(flush, 60); }
+      }, 60);
+    },
+    onSourceScroll(fn) {
+      srcHandlers.push(fn);
+    },
     close() {
       clearInterval(clockSyncTimer);
+      if (srcTimer) clearTimeout(srcTimer);
       if (seekTimer) clearTimeout(seekTimer);
       socket.close();
     },

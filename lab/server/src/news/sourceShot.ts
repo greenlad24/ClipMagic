@@ -47,10 +47,34 @@ const DPR = 1.5;
 /** ~5 screens of page: the top of an article is what the audience sees in the few seconds it's up. */
 const MAX_CSS_H = 4000;
 const MAX_TRIES = 4;
+/** 2 = also records the page's main picture (`hero`). */
+const SHOT_VERSION = 2;
+
+/** The biggest real picture near the top of the article (CSS px, page coords) — the "picture" slide shows it. */
+const FIND_HERO = `(() => {
+  let best = null, bestA = 0;
+  for (const el of document.querySelectorAll('img, picture, video[poster], [style*="background-image"]')) {
+    const r = el.getBoundingClientRect();
+    const top = r.top + scrollY;
+    if (top > 2600 || r.width < 420 || r.height < 220) continue;
+    const ar = r.width / r.height;
+    if (ar < 0.6 || ar > 3.2) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) < 0.5) continue;
+    if (el.tagName === 'IMG' && !(el.complete && el.naturalWidth > 200)) continue;
+    // a logo/sprite or an ad box is not the story's picture
+    // (class + file name only: an alt text like "the Claude app icon on a phone" describes a real photo)
+    if (/(^|[-_\\s/.])(logo|avatar|sprite|icon|favicon|advert)s?([-_\\s/.]|$)/i.test(String(el.className || '') + ' ' + (el.getAttribute('src') || '').split('?')[0])) continue;
+    const a = Math.min(r.width, 1280) * r.height * (top < 1400 ? 1.25 : 1);
+    if (a > bestA) { bestA = a; best = { x: Math.max(0, r.left + scrollX), y: Math.max(0, top), w: Math.min(r.width, 1280), h: r.height }; }
+  }
+  return best;
+})()`;
 /** A capture is reused for a week. */
 const TTL_MS = 7 * 86_400_000;
 
-export interface SourceShot { file: string; url: string; name: string; w: number; h: number; capturedAt: string }
+/** `hero` = the page's main picture, in image px (the "picture" info slide crops it; v2 captures, 2026-10-07). */
+export interface SourceShot { file: string; url: string; name: string; w: number; h: number; capturedAt: string; v?: number; hero?: { x: number; y: number; w: number; h: number } | null }
 export interface ShotResult { ok: boolean; shot?: SourceShot; tried: Array<{ name: string; url: string; reason: string }> }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -130,7 +154,8 @@ function cachedShot(url: string): SourceShot | null {
   const meta = path.join(shotDir(), `${file}.json`);
   try {
     const m = JSON.parse(fs.readFileSync(meta, "utf8")) as SourceShot;
-    if (m.url === url && fs.existsSync(path.join(shotDir(), file)) && Date.now() - Date.parse(m.capturedAt) < TTL_MS) return m;
+    // v1 captures have no `hero` (the picture slide's crop) — take those again.
+    if (m.url === url && (m.v ?? 1) >= SHOT_VERSION && fs.existsSync(path.join(shotDir(), file)) && Date.now() - Date.parse(m.capturedAt) < TTL_MS) return m;
   } catch { /* none */ }
   return null;
 }
@@ -182,13 +207,16 @@ async function captureOne(browser: any, url: string, name: string): Promise<Sour
 
     const fullH = Number(await page.evaluate("Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0)")) || VIEW_H;
     const h = Math.max(VIEW_H, Math.min(MAX_CSS_H, fullH));
+    const heroCss = (await page.evaluate(FIND_HERO).catch(() => null)) as { x: number; y: number; w: number; h: number } | null;
     const png: Buffer = Buffer.from(await page.screenshot({ type: "png", clip: { x: 0, y: 0, width: CSS_W, height: h }, captureBeyondViewport: true }));
     const file = fileFor(url);
     fs.mkdirSync(shotDir(), { recursive: true });
     const tmp = path.join(shotDir(), `${file}.tmp`);
     const info = await sharp(png, { limitInputPixels: false }).jpeg({ quality: 80, mozjpeg: true }).toFile(tmp);
     fs.renameSync(tmp, path.join(shotDir(), file));
-    const shot: SourceShot = { file, url, name, w: info.width, h: info.height, capturedAt: new Date().toISOString() };
+    const k = info.width / CSS_W;
+    const hero = heroCss && heroCss.y + heroCss.h <= h ? { x: Math.round(heroCss.x * k), y: Math.round(heroCss.y * k), w: Math.round(heroCss.w * k), h: Math.round(heroCss.h * k) } : null;
+    const shot: SourceShot = { file, url, name, w: info.width, h: info.height, capturedAt: new Date().toISOString(), v: SHOT_VERSION, hero };
     fs.writeFileSync(path.join(shotDir(), `${file}.json`), JSON.stringify(shot));
     return shot;
   } catch (e) {

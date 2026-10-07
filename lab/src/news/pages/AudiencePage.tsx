@@ -1,5 +1,5 @@
 import { useNewsTheme } from '../useNewsTheme';
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../auth';
 import { getSession, getSlides, GetSlidesOutputType } from '../api';
 import VideoEmbed from '../components/VideoEmbed';
@@ -9,6 +9,8 @@ import StoryShow from '../daily/stage/StoryShow';
 import { useDeckTemplate } from '../daily/stage/deckTemplate';
 import { newsTemplateFor } from '../daily/stage/newsTemplates';
 import { bubbleKey, useBubbleSettings } from '../deepdive/bubble';
+import { storyStage } from '../daily/stage/story';
+import { clampSrcY, srcStep } from '../daily/stage/sourceScroll';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
@@ -49,6 +51,14 @@ export default function AudiencePage() {
   const syncSessionRef = useRef('');
   const pollRef = useRef<ReturnType<typeof setInterval>>();
   const prevIdxRef = useRef(0);
+  // The SOURCE page's scroll (Jake, 2026-10-07: "let me scroll my self"): this
+  // window's wheel / drag / ↑↓ scroll it and publish it; the presenter's
+  // Shift+↑/↓ and mini-map arrive over the socket. Held with its story index —
+  // a new story is at its top. Own socket event; never the teleprompter.
+  const [srcAt, setSrcAt] = useState<{ idx: number; y: number }>({ idx: 0, y: 0 });
+  const srcAtRef = useRef(srcAt);
+  srcAtRef.current = srcAt;
+  const bcRef = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) loginWithRedirect({ redirectUrl: window.location.href });
@@ -66,6 +76,7 @@ export default function AudiencePage() {
   // BroadcastChannel — instant updates when presenter is in the same browser
   useEffect(() => {
     const ch = new BroadcastChannel('ng-presenter');
+    bcRef.current = ch;
     ch.onmessage = (e) => {
       const msg = e.data;
       if (msg.type === 'slide') {
@@ -82,13 +93,16 @@ export default function AudiencePage() {
         setBeatAt({ idx: msg.idx, beat: msg.beat });
       } else if (msg.type === 'media') {
         if (msg.idx === prevIdxRef.current) { lastBcMediaRef.current = Date.now(); setMediaView(msg.view === 'video' ? 'video' : 'article'); }
+      } else if (msg.type === 'src') {
+        // (the presenter relays every screen's scroll — ours included, which is older than what we show)
+        if (typeof msg.idx === 'number' && typeof msg.y === 'number' && !(msg.from && msg.from === syncRef.current?.socket.id)) setSrcAt({ idx: msg.idx, y: msg.y });
       } else if (msg.type === 'blackout') {
         setBlackout(!!msg.value);
       } else if (msg.type === 'end') {
         setEnded(true);
       }
     };
-    return () => ch.close();
+    return () => { ch.close(); bcRef.current = null; };
   }, []);
 
   // Load today's deck slides once — only after auth confirmed
@@ -129,6 +143,9 @@ export default function AudiencePage() {
           setBeatAt({ idx: b.idx, beat: b.beat });
           if (b.idx !== prevIdxRef.current) { prevIdxRef.current = b.idx; setCurrentIdx(b.idx); }
         });
+        sync.onSourceScroll((m) => {
+          if (typeof m.idx === 'number' && typeof m.y === 'number') setSrcAt({ idx: m.idx, y: m.y });
+        });
         sync.onMedia((m) => {
           if (m.idx !== prevIdxRef.current) return;
           lastBcMediaRef.current = Date.now();
@@ -157,6 +174,35 @@ export default function AudiencePage() {
   }, [ready, poll]);
 
   useEffect(() => () => { syncRef.current?.close(); syncRef.current = null; }, []);
+
+  // A new story's page opens at its top.
+  useEffect(() => { if (srcAtRef.current.idx !== currentIdx) setSrcAt({ idx: currentIdx, y: 0 }); }, [currentIdx]);
+
+  /** Jake scrolled the source on this window: show it, publish it (socket → every screen; BroadcastChannel → a Display tab). */
+  const publishSrc = useCallback((idx: number, y: number) => {
+    setSrcAt({ idx, y });
+    syncRef.current?.setSourceScroll(idx, y);
+    bcRef.current?.postMessage({ type: 'src', idx, y, from: syncRef.current?.socket.id || 'audience' });
+  }, []);
+
+  // ↑ / ↓ on this window scroll the source page too (a third of a screen), while it is up.
+  const keyCtx = useRef({ idx: 0, beat: 0, video: false, shot: null as ReturnType<typeof storyStage>['shot'] });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const k = keyCtx.current;
+      if (!k.shot || k.beat !== 0 || k.video) return;
+      e.preventDefault();
+      const cur = srcAtRef.current.idx === k.idx ? srcAtRef.current.y : 0;
+      const next = clampSrcY(cur + (e.key === 'ArrowDown' ? 1 : -1) * srcStep(k.shot), k.shot);
+      if (next !== cur) publishSrc(k.idx, next);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [publishSrc]);
+
+  const curSlide = slides[currentIdx];
+  const curShot = useMemo(() => (curSlide ? storyStage(curSlide).shot : null), [curSlide]);
 
   // This screen is on camera: hide a resting cursor.
   const [cursorHidden, setCursorHidden] = useState(false);
@@ -195,10 +241,12 @@ export default function AudiencePage() {
 
   // The story: source → info slides, beat by beat (daily/stage); Shift = its video.
   const beat = beatAt.idx === currentIdx ? beatAt.beat : 0;
+  keyCtx.current = { idx: currentIdx, beat, video: mediaView === 'video', shot: curShot };
 
   return (
     <div className="fixed inset-0 overflow-hidden select-none" style={{ backgroundColor: '#000', cursor: cursorHidden ? 'none' : 'default' }}>
-      <StoryShow slide={slide} beat={beat} number={currentIdx + 1} template={newsTemplateFor(deckTemplate)} bubble={bubble} bubbleLayer />
+      <StoryShow slide={slide} beat={beat} number={currentIdx + 1} template={newsTemplateFor(deckTemplate)} bubble={bubble} bubbleLayer
+        srcY={srcAt.idx === currentIdx ? srcAt.y : 0} onSrcScroll={(y) => publishSrc(currentIdx, y)} />
 
       {/* The story's video: loaded behind the story, full screen on Shift over ANY beat (it is not a beat). */}
       {(() => {

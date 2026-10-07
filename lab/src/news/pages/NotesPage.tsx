@@ -7,6 +7,8 @@ import { connectLiveSync, type LiveSync, type MediaView } from '../liveSync';
 import { slideMedia, slideHasVideo } from '../api';
 import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
 import { findCues, markCues } from '../daily/stage/cues';
+import SourceMap from '../daily/stage/SourceMap';
+import { clampSrcY, srcStep } from '../daily/stage/sourceScroll';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import {
@@ -20,6 +22,8 @@ type BCMsg =
   | { type: 'slide'; slide: SlideType; idx: number; total: number; media?: MediaView; beat?: number }
   | { type: 'media'; idx: number; view: MediaView }
   | { type: 'beat'; idx: number; beat: number }
+  // The source page's scroll (daily/stage/sourceScroll.ts); `from` = who scrolled (a screen ignores its own).
+  | { type: 'src'; idx: number; y: number; from?: string }
   | { type: 'blackout'; value: boolean }
   | { type: 'end' }
   | { type: 'ping' }
@@ -91,6 +95,16 @@ export default function NotesPage() {
   const applyBeat = (idx: number, beat: number) => { beatAtRef.current = { idx, beat }; setBeatAtState({ idx, beat }); };
   const beatOf = (idx: number) => (beatAtRef.current.idx === idx ? beatAtRef.current.beat : 0);
 
+  // The SOURCE page's scroll on the show screens (Jake, 2026-10-07: "let me
+  // scroll my self"): fraction of the page at the screen's top edge, held WITH
+  // its story index (a new story is at its top). Its own socket event — never
+  // the teleprompter's anchor. Set here by Shift+↑/↓ or the mini-map, or by
+  // the Screen window's wheel/drag (arrives over the socket).
+  const [srcAt, setSrcAtState] = useState<{ idx: number; y: number }>({ idx: 0, y: 0 });
+  const srcAtRef = useRef<{ idx: number; y: number }>({ idx: 0, y: 0 });
+  const applySrc = (idx: number, y: number) => { srcAtRef.current = { idx, y }; setSrcAtState({ idx, y }); };
+  const srcOf = (idx: number) => (srcAtRef.current.idx === idx ? srcAtRef.current.y : 0);
+
   // Refs
   const slideStartRef = useRef(Date.now());
   const streamStartRef = useRef(Date.now());
@@ -156,6 +170,7 @@ export default function NotesPage() {
         setDisplayConnected(true);
         const { slides: sls, currentIdx: ci, blackout: bo } = ctxRef.current;
         if (sls[ci]) ch.postMessage({ type: 'slide', slide: sls[ci], idx: ci, total: sls.length, media: mediaViewRef.current, beat: beatOf(ci) } satisfies BCMsg);
+        if (sls[ci] && srcOf(ci) > 0) ch.postMessage({ type: 'src', idx: ci, y: srcOf(ci), from: 'presenter' } satisfies BCMsg);
         if (bo) ch.postMessage({ type: 'blackout', value: bo } satisfies BCMsg);
       }
     };
@@ -415,6 +430,13 @@ export default function NotesPage() {
       applyBeat(b.idx, b.beat);
       if (b.idx === ctxRef.current.currentIdx) channelRef.current?.postMessage({ type: 'beat', idx: b.idx, beat: b.beat } satisfies BCMsg);
     });
+    // The source page scrolled on another screen (the Screen window's wheel / drag).
+    // Relayed to a same-browser Display tab, which has no socket of its own.
+    sync.onSourceScroll((m) => {
+      if (typeof m.idx !== 'number' || typeof m.y !== 'number') return;
+      applySrc(m.idx, m.y);
+      channelRef.current?.postMessage({ type: 'src', idx: m.idx, y: m.y, from: m.from } satisfies BCMsg);
+    });
     // Appearance changed on another screen — apply it here.
     sync.onAppearance((a) => {
       if (typeof a.textSize === 'number') setTpFontSize(a.textSize);
@@ -467,6 +489,9 @@ export default function NotesPage() {
     channelRef.current?.postMessage({ type: 'media', idx: ci, view: next } satisfies BCMsg);
   }, []);
 
+  // A new story's source page is at its top (the server resets it on every slide change too).
+  useEffect(() => { if (srcAtRef.current.idx !== currentIdx) applySrc(currentIdx, 0); }, [currentIdx]);
+
   // A new slide always opens on its article (or on what the room says, when a
   // media update for this slide arrived before the slide did).
   useEffect(() => {
@@ -518,6 +543,25 @@ export default function NotesPage() {
     }
   }, [navigateTo, setMedia]);
 
+  /** Scroll the source page on every show screen (Shift+↑/↓, the mini-map). Only while the source is up. */
+  const setSrc = useCallback((y: number) => {
+    const { currentIdx: ci, slides: sls } = ctxRef.current;
+    const shot = storyStage(sls[ci]).shot;
+    if (!shot) return;
+    const next = clampSrcY(y, shot);
+    if (next === srcOf(ci)) return;
+    applySrc(ci, next);
+    syncRef.current?.setSourceScroll(ci, next);
+    channelRef.current?.postMessage({ type: 'src', idx: ci, y: next, from: 'presenter' } satisfies BCMsg);
+  }, []);
+  const stepSrc = useCallback((dir: 1 | -1): boolean => {
+    const { currentIdx: ci, slides: sls } = ctxRef.current;
+    const shot = storyStage(sls[ci]).shot;
+    if (!shot || beatOf(ci) !== 0 || mediaViewRef.current === 'video') return false;
+    setSrc(srcOf(ci) + dir * srcStep(shot));
+    return true;
+  }, [setSrc]);
+
   // Shift ALONE toggles the story video full screen. Alone = released with no
   // other key pressed in between, so a Shift+key combo or a capital letter
   // never flip the audience screen to the video.
@@ -531,6 +575,8 @@ export default function NotesPage() {
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); stepBeat(1); }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); stepBeat(-1); }
       else if (e.key === 'Escape' && mediaViewRef.current === 'video') { e.preventDefault(); setMedia('article'); }
+      // Shift+↓ / Shift+↑: scroll the SOURCE page on the show screens (on the source beat; else nothing).
+      else if (e.shiftKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { e.preventDefault(); stepSrc(e.key === 'ArrowDown' ? 1 : -1); }
       // Up/down move through the SCRIPT; left/right move between SLIDES.
       else if (e.key === 'ArrowDown' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(1); }
       else if (e.key === 'ArrowUp' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(-1); }
@@ -565,7 +611,7 @@ export default function NotesPage() {
     window.addEventListener('keyup', upHandler);
     window.addEventListener('blur', blur);
     return () => { window.removeEventListener('keydown', handler); window.removeEventListener('keyup', upHandler); window.removeEventListener('blur', blur); };
-  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge, setMedia, stepBeat]);
+  }, [gMode, gBuffer, navigateTo, toggleBlackout, toggleTpPlayPause, nudge, setMedia, stepBeat, stepSrc]);
 
   // The current story's stage (cover + scenes) and where its cues sit in the script.
   const curSlide = slides[currentIdx];
@@ -604,6 +650,9 @@ export default function NotesPage() {
   const upNext = slides.slice(currentIdx + 1, currentIdx + 3);
   const totalBeats = storyBeats(stage);
   const curBeat = Math.min(totalBeats - 1, beatAt.idx === currentIdx ? beatAt.beat : 0);
+  // The source page is on the show screens: the presenter gets its map (scroll it from here).
+  const sourceUp = curBeat === 0 && !!stage.shot && mediaView !== 'video';
+  const curSrcY = srcAt.idx === currentIdx ? srcAt.y : 0;
   const isTeleprompter = viewMode === 'teleprompter';
 
   return (
@@ -651,6 +700,8 @@ export default function NotesPage() {
       </header>
 
       {/* ── Main content ───────────────────────────────────────────────── */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+      {sourceUp && stage.shot && <SourceMap shot={stage.shot} y={curSrcY} onY={setSrc} />}
       {isTeleprompter ? (
         // ── TELEPROMPTER VIEW ───────────────────────────────────────────
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -812,6 +863,7 @@ export default function NotesPage() {
           )}
         </>
       )}
+      </div>
 
       <AlertDialog open={confirmEnd} onOpenChange={setConfirmEnd}>
         <AlertDialogContent>

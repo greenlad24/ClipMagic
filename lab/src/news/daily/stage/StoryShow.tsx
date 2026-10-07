@@ -1,8 +1,10 @@
 /**
  * Daily Show — one story on the show screens (Jake, 2026-10-07):
- *   SOURCE (the real article, full screen, scrolling slowly) → INFO slides
- *   (a few facts, one item per beat). See story.ts for the beat model and how
- *   every beat gets its cue in the script.
+ *   SOURCE (the real article, full screen — a still image Jake scrolls
+ *   himself, synced to every screen) → 2–3 SLIDES, one idea and one beat each,
+ *   each with its own entrance animation (NewsSlides.tsx; older v2 stages still
+ *   draw their item-per-beat slides here). See story.ts for the beat model and
+ *   how every beat gets its cue in the script.
  *
  * Drawn in the AI News templates (newsTemplates.ts + story.css) — NOT the Deep
  * Dive's components or look, so the Deep Dive at the end of the show stays the
@@ -13,12 +15,14 @@
  * full screen over whatever beat is showing (media-view), so toggling back
  * lands on the same beat.
  */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useFitText, type FitTarget } from '../../deepdive/fitText';
 import type { Slide } from '../../api';
 import { BubbleLayer, type BubbleSettings } from '../../deepdive/bubble';
 import { beatAtIndex, beatFor, storyStage, type NewsScene, type SourceShot, type StoryStage } from './story';
 import { newsTemplateFor, newsTemplateStyle, type NewsTemplate } from './newsTemplates';
+import { NewsSlide, Strip } from './NewsSlides';
+import { clampSrcY, srcWheelPx } from './sourceScroll';
 import './story.css';
 
 export interface StoryShowProps {
@@ -40,6 +44,14 @@ export interface StoryShowProps {
   bubbleLayer?: boolean;
   /** Draw the opener as the title card even when a source page exists (the template picker's inset). */
   titleCard?: boolean;
+  /**
+   * The source page's scroll (fraction of the image height at the screen's top
+   * edge; sourceScroll.ts). The host holds it and syncs it to the other screens;
+   * each screen eases to it and clamps it to its own shape. Default: the top.
+   */
+  srcY?: number;
+  /** Jake scrolled the source on THIS screen (wheel / drag) — the host publishes it. Absent = not scrollable here. */
+  onSrcScroll?: (y: number) => void;
 }
 
 // Fit floors (Jake, 2026-10-06: "readable and big, but not overlap") — a nudge, not a shrink.
@@ -59,39 +71,106 @@ function Accent({ text }: { text: string }) {
   return <>{parts.map((p, i) => (i % 2 === 1 ? <span key={i} className="nw-acc">{p}</span> : <span key={i}>{p}</span>))}</>;
 }
 
-function Strip({ number, label }: { number: number; label: string }) {
-  return (
-    <div className="nw-strip">
-      <span className="no">{pad2(number)}</span>
-      {label && <span className="lb">{label}</span>}
-    </div>
-  );
-}
-
 /* ── SOURCE ── */
 
-function SourceScroll({ shot, on, still }: { shot: SourceShot; on: boolean; still: boolean }) {
+/**
+ * The source page — a still image (Jake, 2026-10-07: "instead of auto
+ * scrolling — let me scroll my self — I love that it's an image and nothing
+ * pops up"). It sits where the host says (`y`), easing there smoothly; with
+ * `onScroll` the wheel / trackpad / a drag on it scroll it and report the new
+ * spot (the host syncs it to the other screens). A new page opens at its top.
+ */
+function SourceScroll({ shot, on, still, y, onScroll }: { shot: SourceShot; on: boolean; still: boolean; y: number; onScroll?: (y: number) => void }) {
   const box = useRef<HTMLDivElement>(null);
   const img = useRef<HTMLImageElement>(null);
-  const [loaded, setLoaded] = useState(false);
+  const shown = useRef(0);
+  const target = useRef(0);
+  const raf = useRef(0);
+  const last = useRef(0);
+  const [dragging, setDragging] = useState(false);
+  const onScrollRef = useRef(onScroll);
+  onScrollRef.current = onScroll;
+
+  /** The page's height on this screen, in px. */
+  const pageH = () => { const b = box.current; return b ? (shot.h * b.clientWidth) / shot.w : 0; };
+  const clampHere = (v: number) => { const b = box.current; return b ? clampSrcY(v, shot, b.clientHeight / Math.max(1, b.clientWidth)) : 0; };
+  const paint = () => { if (img.current) img.current.style.transform = `translate3d(0, ${(-shown.current * pageH()).toFixed(2)}px, 0)`; };
+  const step = (t: number) => {
+    const dt = Math.min(64, t - (last.current || t));
+    last.current = t;
+    const diff = target.current - shown.current;
+    if (Math.abs(diff * pageH()) < 0.4) { shown.current = target.current; raf.current = 0; last.current = 0; paint(); return; }
+    shown.current += diff * (1 - Math.exp(-dt / 95));
+    paint();
+    raf.current = requestAnimationFrame(step);
+  };
+  const kick = () => { if (!raf.current) raf.current = requestAnimationFrame(step); };
+
+  // A new page opens exactly where the host says (the top) — no glide from the last story's spot.
+  useLayoutEffect(() => {
+    cancelAnimationFrame(raf.current); raf.current = 0; last.current = 0;
+    shown.current = target.current = clampHere(y);
+    paint();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.src]);
+  // The host moved it (here or on another screen): ease there.
   useEffect(() => {
-    const el = img.current, b = box.current;
-    if (!el || !b || !loaded) return;
-    el.getAnimations().forEach((a) => a.cancel());
-    if (still || !on) return;
-    // Like a camera on the real page: hold the top a moment, then a slow, even scroll.
-    const dist = Math.max(0, (shot.h * b.clientWidth) / shot.w - b.clientHeight);
-    if (dist < 4) return;
-    const pxPerSec = b.clientHeight * 0.045; // ≈ 49 px/s on a 1080p screen
-    const anim = el.animate(
-      [{ transform: 'translateY(0)' }, { transform: `translateY(${-dist}px)` }],
-      { duration: Math.max(8000, (dist / pxPerSec) * 1000), delay: 1400, easing: 'cubic-bezier(.42,0,.58,1)', fill: 'forwards' },
-    );
-    return () => anim.cancel();
-  }, [on, still, loaded, shot.src, shot.w, shot.h]);
+    target.current = clampHere(y);
+    if (still || !on) { cancelAnimationFrame(raf.current); raf.current = 0; shown.current = target.current; paint(); return; }
+    kick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [y, still, on]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  // Keep the picture in place when the window changes shape.
+  useEffect(() => {
+    const b = box.current;
+    if (!b) return;
+    const ro = new ResizeObserver(() => { target.current = clampHere(target.current); shown.current = clampHere(shown.current); paint(); });
+    ro.observe(b);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shot.src]);
+
+  // Wheel / trackpad: non-passive, so the page itself never scrolls.
+  useEffect(() => {
+    const b = box.current;
+    if (!b || !onScroll || still) return;
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const h = pageH();
+      if (h <= 0) return;
+      const next = clampHere(target.current + srcWheelPx(e, b.clientHeight) / h);
+      if (next === target.current) return;
+      target.current = next;
+      kick();
+      onScrollRef.current?.(next);
+    };
+    b.addEventListener('wheel', wheel, { passive: false });
+    return () => b.removeEventListener('wheel', wheel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [!!onScroll, still, shot.src]);
+
+  // Drag: the page follows the pointer (grab-and-move, like a phone).
+  const drag = useRef<{ id: number; y0: number; t0: number } | null>(null);
+  const can = !!onScroll && !still;
   return (
-    <div className="nw-src" ref={box}>
-      <img ref={img} src={shot.src} alt="" onLoad={() => setLoaded(true)} draggable={false} />
+    <div className={`nw-src ${can ? 'can-scroll' : ''} ${dragging ? 'dragging' : ''}`} ref={box}
+      onPointerDown={can ? (e) => { if (e.button !== 0) return; (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); drag.current = { id: e.pointerId, y0: e.clientY, t0: target.current }; setDragging(true); } : undefined}
+      onPointerMove={can ? (e) => {
+        const d = drag.current;
+        if (!d || d.id !== e.pointerId) return;
+        const h = pageH();
+        if (h <= 0) return;
+        const next = clampHere(d.t0 - (e.clientY - d.y0) / h);
+        if (next === target.current) return;
+        target.current = next;
+        shown.current = next; // under the finger: no easing lag
+        paint();
+        onScrollRef.current?.(next);
+      } : undefined}
+      onPointerUp={can ? () => { drag.current = null; setDragging(false); } : undefined}
+      onPointerCancel={can ? () => { drag.current = null; setDragging(false); } : undefined}>
+      <img ref={img} src={shot.src} alt="" onLoad={paint} draggable={false} />
       <div className="nw-src-chip"><i />{shot.name || shot.host}{shot.name && shot.host && <span>{shot.host}</span>}</div>
     </div>
   );
@@ -215,7 +294,7 @@ function SceneScreen({ sc, number, upTo, on, still, onItem }: { sc: NewsScene; n
   );
 }
 
-export default function StoryShow({ slide, beat, number, still = false, onBeat, stage, template, bubble, bubbleLayer = false, titleCard = false }: StoryShowProps) {
+export default function StoryShow({ slide, beat, number, still = false, onBeat, stage, template, bubble, bubbleLayer = false, titleCard = false, srcY = 0, onSrcScroll }: StoryShowProps) {
   const st = useMemo(() => stage ?? storyStage(slide), [stage, slide]);
   const t = template ?? newsTemplateFor(null);
   const at = beatAtIndex(st, beat);
@@ -232,12 +311,16 @@ export default function StoryShow({ slide, beat, number, still = false, onBeat, 
       <div className="nw-deck">
         {st.screens.map((sc, i) => {
           const on = i === at.screen;
+          const kind = sc.kind === 'scene' ? st.scenes[sc.scene].kind : 'open';
           const cls = `nw-screen k-${sc.kind} ${on ? 'on' : i < at.screen ? 'past' : ''}`;
           let body: ReactNode = null;
           if (sc.kind === 'open') {
             body = st.shot && !titleCard
-              ? <SourceScroll shot={st.shot} on={on} still={still} />
+              ? <SourceScroll shot={st.shot} on={on} still={still} y={srcY} onScroll={onSrcScroll} />
               : <TitleCard st={st} number={number} on={on} still={still} />;
+          } else if (st.scenes[sc.scene].v3) {
+            // v3: the whole slide is one beat, with its own entrance.
+            body = <NewsSlide sc={st.scenes[sc.scene]} number={number} on={on} still={still} shot={st.shot} source={st.shot?.name || st.cover.source || st.shot?.host || st.cover.host} />;
           } else {
             const scene = st.scenes[sc.scene];
             // A slide already passed shows all its items; one ahead shows none yet.
@@ -247,7 +330,7 @@ export default function StoryShow({ slide, beat, number, still = false, onBeat, 
                 onItem={onBeat ? (k) => onBeat(beatFor(st, i, k + 1)) : undefined} />
             );
           }
-          return <section key={i} className={cls} data-screen={sc.kind}>{body}</section>;
+          return <section key={i} className={cls} data-screen={sc.kind} data-kind={kind}>{body}</section>;
         })}
       </div>
       {bubbleLayer && bubble && !still && <BubbleLayer settings={bubble} scope=".nw-screen.on" trigger={`${slide.id}:${beat}`} />}

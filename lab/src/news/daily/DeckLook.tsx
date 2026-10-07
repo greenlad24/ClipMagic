@@ -46,9 +46,12 @@ const SAMPLE: Slide = {
   bestSourceName: 'TechCrunch',
   bestSourceUrl: 'https://techcrunch.com/',
   stageJson: JSON.stringify({
-    v: 2,
+    v: 3,
     cover: { eyebrow: 'Model release', heading: 'A free AI model you can *download*', lede: 'It runs on your own computer, and it costs nothing to try.' },
-    scenes: [{ kind: 'list', eyebrow: 'What happened', heading: 'Three things to *know*', data: { items: ['Free to download', 'Runs on your own computer', 'Beats some bigger models'] }, cues: ['You can download', 'It runs on', 'It beats some'] }],
+    scenes: [
+      { kind: 'number', eyebrow: 'By the numbers', heading: 'Free to try', data: { value: 0, display: '', prefix: '$', suffix: '', label: 'to download it and run it at home', context: 'No account, no monthly plan' }, cue: 'You can download it' },
+      { kind: 'meaning', eyebrow: 'What it means', heading: 'Strong AI is now *free* to run yourself', data: { text: 'You can try it tonight on your own laptop' }, cue: 'And it costs nothing' },
+    ],
   }),
 } as Slide;
 
@@ -65,7 +68,7 @@ export function DeckTemplateDialog({ show, open, onOpenChange, onPick, building 
     const i = slides.findIndex((s) => !storyStage(s).fallback);
     const slide = i >= 0 ? slides[i] : SAMPLE;
     const st = storyStage(slide);
-    // Its first info slide, fully revealed.
+    // Its first slide (fully revealed).
     const first = st.screens.findIndex((x) => x.kind === 'scene');
     let beat = 0;
     st.beats.forEach((b, k) => { if (b.screen === first) beat = k; });
@@ -89,7 +92,7 @@ export function DeckTemplateDialog({ show, open, onOpenChange, onPick, building 
         </DialogTitle>
         <p className="-mt-1 text-xs text-muted-foreground">
           {building
-            ? 'The AI News templates — plainer than the Deep Dive on purpose, so the Deep Dive stays the special one. You can still change it later on the Go-live card without rebuilding.'
+            ? 'The AI News templates — their own look, different from the Deep Dive, so the Deep Dive stays the special one. You can still change it later on the Go-live card without rebuilding.'
             : "The AI News templates. Each preview is one of today's stories (an info slide + its title card) drawn in that template. Picking one re-skins the audience and display screens, the slide previews and every thumbnail at once — the stories, beats and scripts stay as they are. Each story opens on its source page either way; Shift shows its video."}
         </p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" data-news-picker>

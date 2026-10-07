@@ -58,6 +58,23 @@ export const L = {
   who: { w: 4, c: 32 },
   role: { w: 6, c: 44 },
   takeaway: { w: 7, c: 48 },
+  /* ── AI News story slides v3 (2026-10-07: 2–3 one-idea slides per story) ── */
+  /** "big number" slide: what the number is */
+  numLabel: { w: 8, c: 52 },
+  /** "big number" slide: one line of context under it */
+  numContext: { w: 10, c: 64 },
+  /** "what it means" slide: the statement */
+  meaning: { w: 9, c: 58 },
+  /** "what it means" slide: the line under it ("for you: …") */
+  meaningText: { w: 12, c: 80 },
+  /** comparison slide: a side's big value ("Free", "$20/mo", "2×") */
+  cmpBig: { w: 3, c: 14 },
+  /** comparison slide: a side's one line */
+  cmpLine: { w: 7, c: 44 },
+  /** "key facts" slide: one fact */
+  fact: { w: 7, c: 46 },
+  /** picture slide: the caption beside the image */
+  picCaption: { w: 12, c: 80 },
   /** demo step / clip / article highlight caption */
   caption: { w: 6, c: 42 },
   /** classic: statement sentence, bullet, compare cell, bar label, media caption */
