@@ -428,7 +428,7 @@ async function officialPosts(d: DeepDiveRecord, pack: ResearchPack): Promise<{ u
         tier: "research", purpose: "news-deepdive-research",
         system: "Find the company's own announcement page. Answer with ONLY the URL, or NONE.",
         messages: [{ role: "user", content: `What is the URL of ${pack.company}'s own official announcement / blog post about: ${d.topic}? It must be on ${pack.company}'s own website.` }],
-        webSearch: true, searchMaxUses: 2, maxTokens: 600,
+        webSearch: true, basicSearch: true, searchMaxUses: 2, maxTokens: 600,
       });
       const m = /https?:\/\/[^\s)"'<>]+/.exec(text);
       if (m) add(m[0].replace(/[.,]$/, ""), pack.company);

@@ -478,19 +478,19 @@ Other researchers cover the other parts of this topic at the same time — gathe
       name: "facts",
       ask: "YOUR PART: what happened / what this is, the background that makes it make sense, and every key number (prices, dates, sizes, user counts, scores) exactly as sources state them. ALWAYS include the company's own announcement / blog post among the sources, marked \"official\": true.",
       json: '{"summary":"3-4 plain sentences","company":"the main company involved, or empty","facts":[{"fact":"...","source":"url"}],"numbers":[{"value":"$20","label":"per month for the Plus plan","source":"url"}],"sources":[{"title":"...","url":"...","outlet":"The Verge","official":false}]}\nAim for 10-18 facts and every number you can find.',
-      maxTokens: 4500,
+      maxTokens: 9000,
     },
     {
       name: "context",
       ask: "YOUR PART: a dated timeline of how we got here, who the players are and what each wants, comparisons that help (versus the previous version, versus rivals, before vs after), and what it means for a regular person using AI tools — concrete, everyday.",
       json: '{"timeline":[{"date":"Mar 2025","event":"...","source":"url"}],"players":[{"name":"...","role":"..."}],"comparisons":[{"subject":"X vs Y","points":["..."]}],"everydayImpact":["..."],"sources":[{"title":"...","url":"...","outlet":"...","official":false}]}\nAim for 4-8 timeline events.',
-      maxTokens: 3500,
+      maxTokens: 7000,
     },
     {
       name: "voices",
       ask: "YOUR PART: one or two strong quotes from the people involved, word for word; caveats, criticism, what's unconfirmed; and the open questions nobody can answer yet.",
       json: '{"quotes":[{"quote":"exact words","who":"name","role":"title","source":"url"}],"caveats":["..."],"openQuestions":["..."],"sources":[{"title":"...","url":"...","outlet":"...","official":false}]}',
-      maxTokens: 2500,
+      maxTokens: 5000,
     },
   ];
   const runPart = async (part: (typeof parts)[number]): Promise<ResearchPack> => {
