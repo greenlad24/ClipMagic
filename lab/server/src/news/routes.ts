@@ -722,7 +722,7 @@ export const followerRouter = express.Router();
  * missing bundle (a dev run without the build) just means no marks: the
  * script still reads, exactly as before.
  */
-type CueMarkOut = { start: number; end: number; beat: number; label: string; last: boolean; tag: string };
+type CueMarkOut = { start: number; end: number; beat: number; title: string; last: boolean; mark: string };
 let cueMarksMod: Promise<{ cueMarks: (slide: unknown, nextTitle: string | null) => CueMarkOut[] } | null> | null = null;
 function loadCueMarks() {
   if (!cueMarksMod) {

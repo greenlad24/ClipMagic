@@ -1,13 +1,13 @@
 import { useNewsTheme } from '../useNewsTheme';
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
 import { connectLiveSync, type LiveSync, type MediaView } from '../liveSync';
 import { slideMedia, slideHasVideo } from '../api';
 import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
-import { markCues, fitCueTags } from '../daily/stage/cues';
-import { cueMarks, scriptParas } from '../daily/stage/cueMarks';
+import { markCues, newsMarkStyle } from '../daily/stage/cues';
+import { cueMarks, scriptParts } from '../daily/stage/cueMarks';
 import SourceMap from '../daily/stage/SourceMap';
 import { clampSrcY, srcStep } from '../daily/stage/sourceScroll';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -633,20 +633,9 @@ export default function NotesPage() {
   // The current story's stage (cover + scenes) and where its cues sit in the script.
   const curSlide = slides[currentIdx];
   const stage = useMemo(() => storyStage(curSlide), [curSlide]);
-  // …with each cue's beat title, the story's last cue flagged (Jake 2026-10-07). The follower page
-  // gets the same marks from the server, made by the same cueMarks().
-  const nextTitle = slides[currentIdx + 1]?.topicLabel ?? null;
-  const marks = useMemo(() => cueMarks(curSlide, nextTitle), [curSlide, nextTitle]);
-  // The titles are out-of-flow tags: keep them inside the script column (they never move text).
-  const tpColumnRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { fitCueTags(tpColumnRef.current); });
-  useEffect(() => {
-    const fit = () => fitCueTags(tpColumnRef.current);
-    window.addEventListener('resize', fit);
-    const fonts = (document as any).fonts;
-    fonts?.addEventListener?.('loadingdone', fit);
-    return () => { window.removeEventListener('resize', fit); fonts?.removeEventListener?.('loadingdone', fit); };
-  }, []);
+  // …with each cue's beat marker ("▶ BEAT n · TITLE", the last one violet — Jake 2026-10-07). The
+  // follower page gets the same marks from the server, made by the same cueMarks().
+  const marks = useMemo(() => cueMarks(curSlide), [curSlide]);
 
   // ── Guards ─────────────────────────────────────────────────────────────────
 
@@ -742,7 +731,7 @@ export default function NotesPage() {
             {/* Scroll state indicator */}
             <ScrollPill paused={teleprompterPaused} />
 
-            <div ref={tpColumnRef} style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
+            <div style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
 
               {/* Slide label */}
               <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
@@ -750,31 +739,35 @@ export default function NotesPage() {
               </p>
 
               {slide?.teleprompterScript ? (
-                // The SAME paragraph split as the follower page (cueMarks.ts scriptParas), with
-                // where each paragraph starts in the whole script, for the cue marks.
-                scriptParas(slide.teleprompterScript).map(({ text: para, start }, i) =>
-                  para ? (
-                    <p key={i} style={{
-                      fontSize: tpFontSize,
-                      lineHeight: tpLineHeight,
-                      color: '#ffffff',
-                      fontWeight: 400,
-                      margin: `0 0 ${Math.round(tpFontSize * 0.8)}px`,
-                      // ⚠️ THESE THREE VALUES ARE SHARED WITH THE FOLLOWER PAGE
-                      // AND THE STANDALONE TELEPROMPTER. This is the screen Jake
-                      // presents from; the follower is what a second screen sees.
-                      // A different font (system-ui resolves per platform) or a
-                      // different letter-spacing wraps the same script at
-                      // different words, so the two screens show different lines
-                      // while their scroll positions agree perfectly.
-                      letterSpacing: '0.012em',
-                      fontFamily: "'NewsScript', Arial, Helvetica, sans-serif",
-                      WebkitTextSizeAdjust: '100%',
-                    } as React.CSSProperties}>
-                      {markCues(para, start, marks, curBeat)}
-                    </p>
-                  ) : null
-                )
+                // Placed like the Deep Dive: the script cut at each cue into parts, each later part
+                // opened by its "▶ BEAT n · TITLE" marker line; parts already spoken dimmed. The SAME
+                // blocks as the follower page (followerPage.ts) — the marker is part of the layout.
+                scriptParts(slide.teleprompterScript, marks).map((part, pi) => (
+                  <div key={pi} style={{ opacity: part.beat < curBeat ? 0.35 : 1, transition: 'opacity .3s' }}>
+                    {part.mark && <p style={newsMarkStyle(tpFontSize, part.mark.beat === curBeat + 1, part.mark.last)}>{part.mark.mark}</p>}
+                    {part.paras.map(({ text: para, start }, i) => (
+                      <p key={i} style={{
+                        fontSize: tpFontSize,
+                        lineHeight: tpLineHeight,
+                        color: '#ffffff',
+                        fontWeight: 400,
+                        margin: `0 0 ${Math.round(tpFontSize * 0.8)}px`,
+                        // ⚠️ THESE THREE VALUES ARE SHARED WITH THE FOLLOWER PAGE
+                        // AND THE STANDALONE TELEPROMPTER. This is the screen Jake
+                        // presents from; the follower is what a second screen sees.
+                        // A different font (system-ui resolves per platform) or a
+                        // different letter-spacing wraps the same script at
+                        // different words, so the two screens show different lines
+                        // while their scroll positions agree perfectly.
+                        letterSpacing: '0.012em',
+                        fontFamily: "'NewsScript', Arial, Helvetica, sans-serif",
+                        WebkitTextSizeAdjust: '100%',
+                      } as React.CSSProperties}>
+                        {markCues(para, start, marks, curBeat)}
+                      </p>
+                    ))}
+                  </div>
+                ))
               ) : (
                 <div style={{ textAlign: 'center', marginTop: 60 }}>
                   <p style={{ fontSize: 18, color: D.muted, marginBottom: 8 }}>No script for this slide.</p>

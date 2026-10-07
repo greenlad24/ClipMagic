@@ -36,6 +36,7 @@
  */
 import type { Slide } from '../../api';
 import { cueSearchStart, placeCue } from './cueFind';
+import { shortTitle } from './beatTitle';
 
 export interface StoryCover {
   eyebrow: string;
@@ -74,6 +75,8 @@ export interface NewsScene {
   eyebrow: string;
   heading: string;
   data: Record<string, any>;
+  /** v3: the generated short beat title (≤ 4 words) for the teleprompter's marker line; older stages have none. */
+  title?: string;
 }
 
 /** A screen of the story, in order. (No video screen — Shift shows the video over any beat.) */
@@ -87,6 +90,8 @@ export interface StoryBeat {
   /** The script words at which → lands on this beat ('' for beat 0 — arriving at the story). */
   cue: string;
   label: string;
+  /** The teleprompter marker's title — ≤ 4 words (beatTitle.ts), from the stage's `title` or derived from `label`. */
+  short: string;
 }
 
 export interface StoryStage {
@@ -265,7 +270,7 @@ function readScenes(raw: any, slideId: string): { scenes: NewsScene[]; cues: str
   if (raw?.v === 3) {
     for (const [i, x] of (Array.isArray(raw?.scenes) ? raw.scenes : []).entries()) {
       if (!x || !KINDS_V3.includes(x.kind)) continue;
-      scenes.push({ id: `${slideId}:${i}`, kind: x.kind, v3: true, eyebrow: String(x.eyebrow || ''), heading: String(x.heading || ''), data: x.data && typeof x.data === 'object' ? x.data : {} });
+      scenes.push({ id: `${slideId}:${i}`, kind: x.kind, v3: true, eyebrow: String(x.eyebrow || ''), heading: String(x.heading || ''), data: x.data && typeof x.data === 'object' ? x.data : {}, title: typeof x.title === 'string' ? x.title : '' });
       cues.push([String(x.cue ?? '')]);
     }
     return { scenes, cues };
@@ -348,7 +353,7 @@ export function storyStage(slide: Slide | null | undefined): StoryStage {
   });
 
   const shot = sourceShotOf(s);
-  const beats: StoryBeat[] = [{ screen: 0, upTo: 0, cue: '', label: shot ? `Source · ${shot.name || shot.host}` : 'Title' }];
+  const beats: StoryBeat[] = [{ screen: 0, upTo: 0, cue: '', label: shot ? `Source · ${shot.name || shot.host}` : 'Title', short: 'Source' }];
   for (const [i, sc] of scenes.entries()) {
     if (!keepScene[i]) continue;
     const mine = got.filter((g) => g.scene === i);
@@ -357,7 +362,9 @@ export function storyStage(slide: Slide | null | undefined): StoryStage {
     for (const g of mine) {
       if (g.cue) {
         // An entry without a place waits for the first item that has one; that beat shows all before it.
-        beats.push({ screen, upTo: g.item + 1, cue: g.cue, label: itemLabel(sc, g.item) });
+        const label = itemLabel(sc, g.item);
+        // A slide's generated title (v3) names its one beat; otherwise the label, shortened.
+        beats.push({ screen, upTo: g.item + 1, cue: g.cue, label, short: shortTitle((sc.v3 && sc.title) || label) || shortTitle(sc.eyebrow) || 'Slide' });
         open = true;
       } else if (open) {
         // No place of its own: it appears with the item before it.

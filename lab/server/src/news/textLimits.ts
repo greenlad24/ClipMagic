@@ -35,6 +35,8 @@ export const L = {
   titleLede: { w: 18, c: 120 },
   agendaItem: { w: 4, c: 26 },
   eyebrow: { w: 4, c: 28 },
+  /** an AI News slide's BEAT TITLE on the teleprompter marker ("▶ BEAT 1 · TITLE") — Jake: 3–4 words max. Never slack-clipped: tidyBeatTitle (stage.ts) holds it to 4 words. */
+  beatTitle: { w: 4, c: 28 },
   island: { w: 3, c: 20 },
   flowLabel: { w: 2, c: 16 },
   flowText: { w: 5, c: 32 },

@@ -36,6 +36,8 @@ export interface StageScene {
   data: Record<string, unknown>;
   /** The script words where Jake presses → for this slide; '' = not found (the web re-makes it). */
   cue: string;
+  /** The beat's short title on the teleprompter marker ("▶ BEAT 1 · 722 MATH RESULTS") — ≤ 4 words. */
+  title: string;
 }
 
 export interface StoryStage {
@@ -122,6 +124,39 @@ function checkCues(script: string, list: string[]): string[] {
   });
 }
 
+/**
+ * A beat title held to Jake's rule (2026-10-07: "maximum 3-4 words"): ≤ 4
+ * words / 28 characters, cut at a word, never ending on a little word or on
+ * punctuation, no "…". The teleprompter applies the same rule again to every
+ * title (web daily/stage/beatTitle.ts — keep the two in step), so older decks
+ * without a title get one derived from the slide's heading.
+ */
+const TITLE_TAIL = new Set(["a", "an", "the", "of", "to", "for", "in", "on", "at", "by", "with", "from", "into", "about", "as", "and", "or", "but", "nor", "so", "than", "that", "this", "is", "are", "was", "were", "be", "its", "it's", "their", "your", "our", "his", "her", "my", "vs", "via", "behind", "over", "under", "after", "before", "between", "through", "without", "like", "has", "have", "had"]);
+const TITLE_AUX = new Set(["is", "are", "was", "were", "has", "have", "had", "will", "would", "can", "could", "may", "might"]);
+export function tidyBeatTitle(v: unknown): string {
+  const raws = String(typeof v === "string" ? v : "")
+    .replace(/[*“”"]/g, " ").replace(/[‘’]/g, "'").replace(/…/g, " ")
+    .split(/\s+/).filter(Boolean);
+  const words: string[] = [];
+  const short = raws.map((r) => r.replace(/^[^\p{L}\p{N}$#]+|[^\p{L}\p{N}%+]+$/gu, "")).filter(Boolean).length <= L.beatTitle.w;
+  for (const r of raws) {
+    // Short enough already: keep every word (just cleaned).
+    if (short) { const w = r.replace(/^[^\p{L}\p{N}$#]+|[^\p{L}\p{N}%+]+$/gu, ""); if (w) words.push(w); continue; }
+    if (/^[—–=&+→-]+$/.test(r)) { if (words.length >= 2) break; continue; }
+    const w = r.replace(/^[^\p{L}\p{N}$#]+|[^\p{L}\p{N}%+]+$/gu, "");
+    if (w) {
+      if (words.length >= 2 && TITLE_AUX.has(w.toLowerCase())) break;
+      words.push(w);
+    }
+    if (words.length >= L.beatTitle.w || (words.length >= 2 && /[,:;.!?—–]$/.test(r))) break;
+  }
+  let out = words;
+  const trim = () => { while (out.length > 1 && TITLE_TAIL.has(out[out.length - 1].toLowerCase())) out = out.slice(0, -1); };
+  trim();
+  while (out.length > 1 && out.join(" ").length > L.beatTitle.c) { out = out.slice(0, -1); trim(); }
+  return out.join(" ").slice(0, L.beatTitle.c);
+}
+
 /** Clean whatever the model returned into a StoryStage, or null when nothing usable is left. `script` checks the cues. */
 export function normalizeStage(raw: unknown, script = ""): StoryStage | null {
   const r = (raw ?? {}) as any;
@@ -140,7 +175,7 @@ export function normalizeStage(raw: unknown, script = ""): StoryStage | null {
     // The number / quote slides can stand without one (the number or the quote is the idea).
     if (!heading && kind !== "number" && kind !== "quote") continue;
     used.add(kind);
-    scenes.push({ kind, eyebrow: clip(x?.eyebrow, L.eyebrow), heading, data, cue: s(x?.cue ?? arr(x?.cues)[0], 80) });
+    scenes.push({ kind, eyebrow: clip(x?.eyebrow, L.eyebrow), heading, data, cue: s(x?.cue ?? arr(x?.cues)[0], 80), title: tidyBeatTitle(x?.title) || tidyBeatTitle(heading) || tidyBeatTitle(x?.eyebrow) });
   }
   if (!scenes.length) return null;
   const coverHeading = oneAccent(clip(r.cover?.heading, L.coverHeading).replace(/\.\s*$/, ""));
@@ -192,8 +227,9 @@ RULES:
 4. eyebrow: ${spec(L.eyebrow)}, a label ("WHAT HAPPENED", "BY THE NUMBERS", "IN THEIR WORDS", "WHAT IT MEANS", "THE CATCH").
 5. cover (used for the presenter's labels and when the source page can't be shown): heading = the story in everyday words, ${spec(L.coverHeading)}, one *accent*; lede = one sentence, ${spec(L.coverLede)}, why a regular person should care; eyebrow = ${spec(L.eyebrow)} (e.g. "Model release", "Rumor", "Robotics").
 6. CUES — where Jake presses →. Each slide has ONE "cue": 3-6 words copied EXACTLY, letter for letter, from the script (no paraphrase, no added or dropped words) — the words where that slide's idea starts being said. The cues are in script order: slide 1's, then slide 2's, then slide 3's. Never use words of the first sentence (that is the source beat).
-7. ${SHORT_WORDS}
-8. No banned hype words: game-changer, revolutionary, groundbreaking, unleash, supercharge, seamless.
+7. TITLE — each slide has a "title": its name on Jake's teleprompter ("▶ BEAT 1 · 722 MATH RESULTS"), ${spec(L.beatTitle)}, 2-4 plain words that say what the slide shows (e.g. "722 math results", "Free plan ends", "Who's backing it"). No punctuation, no full sentence. Required for every slide.
+8. ${SHORT_WORDS}
+9. No banned hype words: game-changer, revolutionary, groundbreaking, unleash, supercharge, seamless.
 
 STORY: "${input.headline}"
 STATUS: ${input.status || "unknown"}${/rumou?r|unconfirmed|single/i.test(input.status) ? " — say it's unconfirmed somewhere on screen" : ""}
@@ -210,7 +246,7 @@ SCRIPT JAKE READS:
 ${input.script || "(no script — follow the key points)"}
 
 Respond ONLY with JSON (no markdown):
-{"cover":{"eyebrow":"...","heading":"...","lede":"..."},"scenes":[{"kind":"number","eyebrow":"...","heading":"...","data":{...},"cue":"exact script words"}]}`;
+{"cover":{"eyebrow":"...","heading":"...","lede":"..."},"scenes":[{"kind":"number","eyebrow":"...","heading":"...","data":{...},"cue":"exact script words","title":"2-4 word beat title"}]}`;
 
   try {
     const t = await callNewsModel(prompt, "news-notes", "research");

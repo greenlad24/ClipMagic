@@ -24,17 +24,17 @@
  * "▶ NEXT · BEAT n" marks, done beats dimmed) so both break lines alike.
  * ←/→ (and a clicker's PageUp/PageDown) step beats from here as well.
  *
- * BEAT TITLES + THE LAST CUE (Jake, 2026-10-07), AI News mode only: each
- * slide arrives with `cues` — made on the server by the presenter's own
- * cueMarks.ts — and the script marks the cues still ahead of the show's beat
- * exactly as NotesPage does (markCues in web daily/stage/cues.tsx): next cue
- * yellow + underlined, later ones dotted, the story's LAST cue in coral, and
- * over each one its beat's title as an out-of-flow tag. ⚠️ Same element
- * structure and the same paragraph split as the presenter, colour/underline
- * only on the words, the tag position:absolute — the lines MUST break where
- * the presenter's do (the scroll sync is a fraction of the script's height).
- * The beat comes from the room's own "beat" event; it re-marks the script
- * and never moves the scroll.
+ * BEAT MARKERS + THE LAST BEAT (Jake, 2026-10-07), AI News mode only: each
+ * slide arrives with 'cues' — made on the server by the presenter's own
+ * cueMarks.ts — and the script is laid out exactly as NotesPage lays it out:
+ * cut at each cue's first word into parts, each later part opened by its
+ * "▶ BEAT n · TITLE" marker line (the Deep Dive's marker style + one line
+ * always, '.beat-mark.news'), parts already spoken dimmed; the cue words
+ * coloured (next yellow, later dotted, the story's LAST beat a calm violet).
+ * ⚠️ Same blocks, same sizes, same paragraph split as the presenter — the
+ * lines MUST break where the presenter's do (the scroll sync is a fraction of
+ * the script's height). The beat comes from the room's own "beat" event; it
+ * re-lays the script and never moves the scroll.
  */
 export const FOLLOWER_PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -103,23 +103,16 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   #empty p:first-child { font-size: 20px; color: #555; margin: 0; }
   #empty p:last-child { font-size: 14px; color: #1e1e1e; margin: 8px 0 0; }
   #spacer { height: 75vh; }
-  /* AI News cue marks + beat titles — MUST match web daily/stage/cues.tsx (SPAN / TAG). Colour and
-     underline only on the words; the tag is OUT OF FLOW (absolute, inside the relative cue span), so
-     neither can move a line break. */
-  .cue { position: relative; text-decoration-line: underline; text-underline-offset: .18em; }
+  /* AI News cue words — MUST match web daily/stage/cues.tsx SPAN: colour and underline only. */
+  .cue { text-decoration-line: underline; text-underline-offset: .18em; }
   .cue.next { color: #ffd21e; text-decoration-color: #ffd21e; }
   .cue.later { text-decoration-style: dotted; text-decoration-color: rgba(255,255,255,.35); }
-  .cue.next.last { color: #ff5a4e; text-decoration-color: #ff5a4e; }
-  .cue.later.last { text-decoration-color: rgba(255,90,78,.75); }
-  .cue-tag { position: absolute; left: 0; top: 0;
-             font-family: 'NewsScript', Arial, Helvetica, sans-serif; line-height: 1.25;
-             font-weight: 700; letter-spacing: .02em; overflow: hidden; text-overflow: ellipsis;
-             padding: 2px 7px; border-radius: 4px; pointer-events: none; background: rgba(8,8,8,.85);
-             border: 1px solid transparent; color: rgba(255,255,255,.5); }
-  .cue.next .cue-tag { color: #ffd21e; border-color: rgba(255,210,30,.45); }
-  .cue.next.last .cue-tag { color: #1a0605; background: #ff5a4e; border-color: #ff5a4e; }
-  /* The LAST beat's title is ALWAYS a solid coral block (Jake: "the last beat title should be in a different color"). */
-  .cue.later.last .cue-tag { color: #1a0605; background: rgba(255,90,78,.78); border-color: #ff5a4e; }
+  .cue.next.last { color: #b69cff; text-decoration-color: #b69cff; }
+  .cue.later.last { text-decoration-color: rgba(182,156,255,.6); }
+  /* AI News beat markers — the Deep Dive .beat-mark + one line always (web cues.tsx newsMarkStyle). */
+  .beat-mark.news { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .beat-mark.news.last { color: rgba(182,156,255,.6); }
+  .beat-mark.news.last.on { color: #b69cff; }
   /* Deep Dive: the beat marks — MUST match DeepDivePresenterPage's markStyle. */
   .beat-mark { font-family: 'NewsScript', Arial, Helvetica, sans-serif; font-size: 11px; line-height: 16px; font-weight: 800;
                letter-spacing: .12em; color: #3a3a3a; }
@@ -226,14 +219,9 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     var slide = slides[idx] || null;
     var raw = slide && typeof slide.teleprompterScript === 'string' ? slide.teleprompterScript : '';
     // Paragraphs + where each starts in the script (web cueMarks.ts scriptParas — same split).
-    var paragraphs = [];
-    var off = 0;
-    raw.split(PARA_SPLIT).forEach(function (r) {
-      var at = raw.indexOf(r, off); off = at + r.length;
-      var t = r.trim();
-      if (t) paragraphs.push({ text: t, start: at + (r.length - r.replace(/^\s+/, '').length) });
-    });
     var cues = slide && Array.isArray(slide.cues) ? slide.cues : [];
+    var parts = scriptParts(raw, cues);
+    var any = parts.some(function (pt) { return pt.paras.length > 0; });
     var beat = curBeat();
     scriptEl.style.maxWidth = (WIDTH_PX[state.width] || 660) + 'px';
     scriptEl.style.transform = mirror ? 'scaleX(-1)' : '';
@@ -242,15 +230,29 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     label.id = 'label';
     label.textContent = (idx + 1) + ' / ' + slides.length + (slide && slide.bestSourceName ? ' · ' + slide.bestSourceName : '');
     scriptEl.appendChild(label);
-    if (paragraphs.length) {
-      paragraphs.forEach(function (p) {
-        var el = document.createElement('p');
-        el.className = 'para';
-        el.style.fontSize = state.fontSize + 'px';
-        el.style.lineHeight = String(state.lineHeight);
-        el.style.margin = '0 0 ' + Math.round(state.fontSize * 0.8) + 'px';
-        markPara(el, p.text, p.start, cues, beat);
-        scriptEl.appendChild(el);
+    if (any) {
+      // NotesPage's blocks, node for node: a part per beat, its marker line, its paragraphs.
+      parts.forEach(function (pt) {
+        var wrap = document.createElement('div');
+        wrap.className = 'beat-part';
+        wrap.style.opacity = pt.beat < beat ? '0.35' : '1';
+        if (pt.mark) {
+          var mk = document.createElement('p');
+          mk.className = 'beat-mark news' + (pt.mark.last ? ' last' : '') + (pt.mark.beat === beat + 1 ? ' on' : '');
+          mk.style.margin = '0 0 ' + Math.round(state.fontSize * 0.5) + 'px';
+          mk.textContent = String(pt.mark.mark || '');
+          wrap.appendChild(mk);
+        }
+        pt.paras.forEach(function (p) {
+          var el = document.createElement('p');
+          el.className = 'para';
+          el.style.fontSize = state.fontSize + 'px';
+          el.style.lineHeight = String(state.lineHeight);
+          el.style.margin = '0 0 ' + Math.round(state.fontSize * 0.8) + 'px';
+          markPara(el, p.text, p.start, cues, beat);
+          wrap.appendChild(el);
+        });
+        scriptEl.appendChild(wrap);
       });
     } else {
       var empty = document.createElement('div');
@@ -261,13 +263,34 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     var spacer = document.createElement('div');
     spacer.id = 'spacer';
     scriptEl.appendChild(spacer);
-    fitTags();
+  }
+
+  /** web cueMarks.ts scriptParas — the paragraphs of text and where each starts in the whole script. */
+  function scriptParas(text, base) {
+    var out = [], off = 0;
+    text.split(PARA_SPLIT).forEach(function (r) {
+      var at = text.indexOf(r, off); off = at + r.length;
+      var t = r.trim();
+      if (t) out.push({ text: t, start: base + at + (r.length - r.replace(/^\s+/, '').length) });
+    });
+    return out;
+  }
+
+  /** web cueMarks.ts scriptParts — the script cut at each cue's first word; part 0 = the source beat. */
+  function scriptParts(script, cues) {
+    var cuts = cues.filter(function (m) { return m && m.start > 0 && m.start < script.length; });
+    var out = [], from = 0, mark = null;
+    cuts.concat([null]).forEach(function (m) {
+      var to = m ? m.start : script.length;
+      out.push({ beat: mark ? mark.beat : 0, mark: mark, paras: scriptParas(script.slice(from, to), from) });
+      if (m) { from = m.start; mark = m; }
+    });
+    return out;
   }
 
   /**
    * One paragraph with the cues still ahead of the show marked — node for node
-   * what the presenter's markCues renders: text, then a span per cue (title
-   * tag first, on the paragraph where the cue starts), then text.
+   * what the presenter's markCues renders: text, a span per cue, text.
    */
   function markPara(el, text, offset, cues, beat) {
     var at = 0;
@@ -279,64 +302,11 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       var sp = document.createElement('span');
       sp.className = 'cue ' + (c.beat === beat + 1 ? 'next' : 'later') + (c.last ? ' last' : '');
       sp.setAttribute('data-cue', String(c.beat));
-      if (c.start >= offset) {
-        var tag = document.createElement('span');
-        tag.className = 'cue-tag';
-        tag.setAttribute('data-cue-tag', '');
-        tag.textContent = String(c.tag || '');
-        sp.appendChild(tag);
-      }
       sp.appendChild(document.createTextNode(text.slice(a, b)));
       el.appendChild(sp);
       at = b;
     });
     if (at < text.length) el.appendChild(document.createTextNode(text.slice(at)));
-  }
-
-  /**
-   * Place the title tags — the presenter's fitCueTags (web cues.tsx), step for
-   * step: in the margin left of the text (level with the cue's line) when
-   * there are >= 170px there, else a one-line tag just above the cue's first
-   * word, kept inside the column. Moves tags only, never text.
-   */
-  function fitTags() {
-    if (!scriptEl || dd) return;
-    var col = scriptEl;
-    var cs = getComputedStyle(col);
-    var padL = parseFloat(cs.paddingLeft) || 0, padR = parseFloat(cs.paddingRight) || 0;
-    var colW = col.offsetWidth;
-    var mirrored = /^matrix\(-1/.test(cs.transform);
-    var cr = col.getBoundingClientRect();
-    var pr = (col.parentElement || col).getBoundingClientRect();
-    var room = (mirrored ? pr.right - cr.right : cr.left - pr.left) + padL;
-    var gutter = room >= 170;
-    var lastBottom = -Infinity;
-    var tags = col.querySelectorAll('[data-cue-tag]');
-    for (var i = 0; i < tags.length; i++) {
-      var tag = tags[i];
-      var fr = tag.parentElement ? tag.parentElement.getClientRects()[0] : null;
-      if (!fr) continue;
-      var cueLeft = mirrored ? cr.right - fr.right : fr.left - cr.left;
-      var st = tag.style, tw, th;
-      if (gutter) {
-        st.whiteSpace = 'normal'; st.textAlign = 'right'; st.fontSize = 'max(13px, 0.42em)'; st.padding = '2px 7px'; st.lineHeight = '1.25';
-        st.maxWidth = Math.min(300, room - 28) + 'px'; st.width = 'max-content';
-        tw = tag.offsetWidth; th = tag.offsetHeight;
-        var top = (fr.height - th) / 2;
-        var y = fr.top - cr.top + top;
-        if (y < lastBottom + 4) { top += lastBottom + 4 - y; y = lastBottom + 4; }
-        lastBottom = y + th;
-        st.left = (-(cueLeft - padL) - tw - 14) + 'px';
-        st.top = top + 'px';
-      } else {
-        st.whiteSpace = 'nowrap'; st.textAlign = 'left'; st.fontSize = 'max(11px, 0.36em)'; st.padding = '0 6px'; st.lineHeight = '1.15';
-        st.maxWidth = Math.max(40, colW - padL - padR) + 'px'; st.width = '';
-        tw = tag.offsetWidth; th = tag.offsetHeight;
-        var over = cueLeft + tw - (colW - padR);
-        st.left = (over > 0 ? -over : 0) + 'px';
-        st.top = (-th - 2) + 'px';
-      }
-    }
   }
 
   /** The show moved to another beat: re-mark the script where it stands — never scroll it. */
@@ -684,8 +654,6 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       else if (dd && (e.key === 'ArrowRight' || e.key === 'PageDown')) { e.preventDefault(); stepBeat(1); }
       else if (dd && (e.key === 'ArrowLeft' || e.key === 'PageUp')) { e.preventDefault(); stepBeat(-1); }
     });
-    window.addEventListener('resize', fitTags);
-    if (document.fonts && document.fonts.addEventListener) document.fonts.addEventListener('loadingdone', fitTags);
     requestAnimationFrame(tick);
   }).catch(function () {
     message('No deck found.', 'Build a deck first from the Dashboard, then start the show.');
