@@ -18,7 +18,7 @@
  *                                              when pressed twice within 1 s
  *   ‹ / › (header)                             previous / next section
  *   ↑ / ↓                                      nudge the script (teleprompter view)
- *   Space                                      play / pause the scroll (notes view: = →)
+ *   Space                                      play / pause the scroll (both views)
  *   T                                          Notes ↔ Teleprompter
  *   1–9, G + number                            jump to a section
  *   E                                          end
@@ -345,7 +345,8 @@ export default function DeepDivePresenterPage() {
     const sync = syncRef.current;
     if (!sync) return;
     const next = !ref.current.playing;
-    if (next) sync.setSpeed(ref.current.speed, rateFor(ref.current.speed));
+    // In the Notes view the script isn't laid out here (rate 0): keep the room's last slope.
+    if (next) { const r = rateFor(ref.current.speed); if (r > 0) sync.setSpeed(ref.current.speed, r); }
     sync.playPause(next);
   }, [rateFor]);
 
@@ -372,7 +373,7 @@ export default function DeepDivePresenterPage() {
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); step(-1); }
       else if (e.key === 'ArrowDown' && tp) { e.preventDefault(); nudge(1); }
       else if (e.key === 'ArrowUp' && tp) { e.preventDefault(); nudge(-1); }
-      else if (e.key === ' ') { e.preventDefault(); if (tp) togglePlay(); else step(1); }
+      else if (e.key === ' ') { e.preventDefault(); togglePlay(); }   // always play/pause, in both views (Jake 2026-10-07)
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
       else if (e.key === 't' || e.key === 'T') setViewMode((v) => (v === 'notes' ? 'teleprompter' : 'notes'));
       else if (e.key === 'g' || e.key === 'G') { g.buf = ''; setGBuffer(''); }

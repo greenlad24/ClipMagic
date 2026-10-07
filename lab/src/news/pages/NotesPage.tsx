@@ -554,7 +554,8 @@ export default function NotesPage() {
     // Starting: publish the slope first, computed from THIS screen's geometry,
     // so the anchor the others receive is already complete. Then play — and let
     // the returning broadcast be what flips the UI, here and everywhere else.
-    if (!nextPaused) sync.setSpeed(tpSpeedRef.current, rateFor(tpSpeedRef.current));
+    // In the Notes view the script isn't laid out here (rate 0): keep the room's last slope.
+    if (!nextPaused) { const r = rateFor(tpSpeedRef.current); if (r > 0) sync.setSpeed(tpSpeedRef.current, r); }
     sync.playPause(!nextPaused);
   }, [rateFor]);
 
@@ -640,9 +641,8 @@ export default function NotesPage() {
       else if (e.key === 'ArrowUp' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(-1); }
       else if (e.key === ' ') {
         e.preventDefault();
-        // Notes view: the same as → (beats, then the next story — double press on the last beat).
-        if (viewModeRef.current === 'teleprompter') toggleTpPlayPause();
-        else stepBeat(1);
+        // Space ALWAYS plays/pauses the teleprompter, in both views and both presenters (Jake 2026-10-07).
+        toggleTpPlayPause();
       }
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
       else if (e.key === 't' || e.key === 'T') setViewMode(v => v === 'notes' ? 'teleprompter' : 'notes');
