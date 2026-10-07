@@ -22,6 +22,12 @@ export interface SyncSnapshot {
   /** Fraction per millisecond. */
   rate: number;
   scrollSpeed: number;
+  /**
+   * Which script the scroll belongs to (server liveSync.ts `epoch`): bumped by
+   * every change that resets the scroll. Seeks carry it, so one made on the
+   * previous script is dropped by the server however late it lands.
+   */
+  epoch?: number;
 }
 
 export interface LiveSync {
@@ -143,6 +149,7 @@ export function connectLiveSync(sessionId: string): LiveSync {
   let seekTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSeek: number | null = null;
   let pendingSeekIdx = 0;   // the slide the scrub was made on — the server drops it once the room has moved on
+  let pendingSeekEpoch: number | undefined;   // …and the script (epoch) it was made on: the exact rule
   // Source scroll: a wheel fires ~60×/s; ~16 sends a second is plenty (each screen eases between them).
   let srcTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSrc: { idx: number; y: number } | null = null;
@@ -161,10 +168,15 @@ export function connectLiveSync(sessionId: string): LiveSync {
     seek(fraction) {
       pendingSeek = Math.min(1, Math.max(0, fraction));
       pendingSeekIdx = snapshot.idx;
+      pendingSeekEpoch = snapshot.epoch;
       if (seekTimer) return;
       seekTimer = setTimeout(() => {
         seekTimer = null;
-        if (pendingSeek !== null) socket.emit('scroll-position', { pos: pendingSeek, idx: pendingSeekIdx });
+        if (pendingSeek !== null) {
+          socket.emit('scroll-position', typeof pendingSeekEpoch === 'number'
+            ? { pos: pendingSeek, idx: pendingSeekIdx, epoch: pendingSeekEpoch }
+            : { pos: pendingSeek, idx: pendingSeekIdx });
+        }
         pendingSeek = null;
       }, 120);
     },
@@ -175,6 +187,11 @@ export function connectLiveSync(sessionId: string): LiveSync {
       // A scrub still waiting to go out belongs to the slide being left (bottom of the old script).
       if (seekTimer) { clearTimeout(seekTimer); seekTimer = null; }
       pendingSeek = null;
+      // ⚠️ LAND ON THE TOP NOW, NOT ONE ROUND TRIP LATER. Until the room's answer comes
+      // back this screen's render loop would otherwise keep solving the OLD script's
+      // anchor (0.97 of the way down, say) against the NEW script — the next story
+      // flashed up at its bottom. The answer replaces this, epoch and all.
+      snapshot = { ...snapshot, idx, position: 0, anchorTime: Date.now() + serverOffset };
       socket.emit('slide-index', typeof beat === 'number' ? { idx, beat } : idx);
     },
     // ⚠️ APPEARANCE IS SHARED STATE, NOT A LOCAL PREFERENCE. Width and size

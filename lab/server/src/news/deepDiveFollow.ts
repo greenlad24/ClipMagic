@@ -38,6 +38,13 @@ export interface FollowerSection {
   beats: number;
   /** One script part per beat (mirror of the web's `scriptParts`). */
   parts: string[];
+  /**
+   * The marker line opening each part ("▶ BEAT 2 · PRICING · LAST"; [0] = ''),
+   * made by the presenter's own code (web presenter/beatMarks.ts, bundled into
+   * dist/news/cue-marks.js). Empty when that bundle is missing — the page then
+   * writes "▶ BEAT n" itself.
+   */
+  marks: string[];
 }
 
 /** Mirror of the web's v2/types.ts `scriptParts`. */
@@ -49,7 +56,10 @@ export function scriptPartsOf(script: string, n: number): string[] {
 }
 
 /** The follower's view of a deep dive, or null when `id` is not a deep dive. */
-export function deepDiveFollowerSlides(id: string): { title: string; sections: FollowerSection[] } | null {
+export function deepDiveFollowerSlides(
+  id: string,
+  markLines?: ((sec: unknown, v2: boolean, beats: number) => string[]) | null,
+): { title: string; sections: FollowerSection[] } | null {
   const d = deepDives.get(id);
   if (!d) return null;
   const v2 = d.format === "v2";
@@ -65,6 +75,7 @@ export function deepDiveFollowerSlides(id: string): { title: string; sections: F
       heading: heading || kindLabel,
       beats,
       parts: scriptPartsOf(s.script, beats),
+      marks: (() => { try { return markLines ? markLines(s, v2, beats) : []; } catch { return []; } })(),
     };
   });
   return { title: d.title || d.topic || "", sections };

@@ -35,6 +35,22 @@
  * lines MUST break where the presenter's do (the scroll sync is a fraction of
  * the script's height). The beat comes from the room's own "beat" event; it
  * re-lays the script and never moves the scroll.
+ *
+ * ONLY GESTURES ARE PUBLISHED (2026-10-07, "sometimes when I go to the next
+ * slide I am still brought to the bottom of the script of the next slide").
+ * This page re-renders the new script on a slide change, the browser clamps
+ * the old offset into it and fires a scroll event — and that event used to go
+ * out as a seek to the BOTTOM, tagged with the new slide, so the server took
+ * it and moved every screen. Now a scroll is published only when a gesture
+ * (a fresh wheel burst, a touch, the scrollbar) STARTED after the last slide
+ * change, exactly as web presenter/scrollGuard.ts does for the presenters;
+ * every seek names the script (epoch) it was made on; the new script is put
+ * at the room's position synchronously, before any scroll event can fire.
+ *
+ * DEEP DIVE CONTROLS = THE PRESENTER'S: on a section's last beat → goes on
+ * only when pressed twice within 1 s (a small toast here says so); marker
+ * lines "▶ BEAT n · TITLE" with the next press lit and the last beat violet,
+ * text made by the presenter's own code on the server.
  */
 export const FOLLOWER_PAGE = String.raw`<!doctype html>
 <html lang="en">
@@ -125,6 +141,10 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
             padding: 8px 14px; cursor: pointer; color: rgba(255,255,255,0.3); font-size: 12px; font-weight: 600;
             transition: all .15s; -webkit-tap-highlight-color: transparent; }
   #mirror.on { background: rgba(96,165,250,0.15); border-color: rgba(96,165,250,0.4); color: #60a5fa; }
+  #toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 30; max-width: 92vw;
+           background: #1c1c1c; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px 14px; color: #f0f0f0;
+           font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .15s; pointer-events: none; }
+  #toast.on { opacity: 1; }
   .center { height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
   .center p { margin: 0; }
 </style>
@@ -174,6 +194,57 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   var renderPos = 0;
   var lastFrameTs = null;
 
+  // ── Which scrolls are the user's (web presenter/scrollGuard.ts, the same rules).
+  var WHEEL_GAP_MS = 200, SETTLE_MS = 1500;
+  var gSeq = 0, gestureSeq = 0, navSeq = 0, navAt = -Infinity, lastWheelAt = -Infinity, lastTouchAt = -Infinity;
+  function nowMs() { return performance.now(); }
+  function gesture() { gestureSeq = ++gSeq; }
+  function userScrolling() { return gestureSeq > navSeq; }
+  /** A new script is on screen: whatever is still moving belongs to the old one. */
+  function markNav() {
+    navSeq = ++gSeq; navAt = nowMs();
+    if (scrollEl && nowMs() - lastTouchAt < 3000) {
+      // A touch fling coasts without events; cutting the overflow for a frame stops it.
+      var el = scrollEl; el.style.overflowY = 'hidden';
+      requestAnimationFrame(function () { el.style.overflowY = ''; });
+    }
+  }
+  function guardScroller(el) {
+    el.addEventListener('wheel', function (e) {
+      var t = nowMs();
+      if (t - lastWheelAt > WHEEL_GAP_MS) gesture();
+      lastWheelAt = t;
+      if (gestureSeq < navSeq) e.preventDefault(); // a flick from the previous script
+    }, { passive: false });
+    el.addEventListener('touchstart', function () { lastTouchAt = nowMs(); gesture(); }, { passive: true });
+    el.addEventListener('pointerdown', function (e) {
+      if (e.pointerType !== 'mouse' || e.clientX >= el.getBoundingClientRect().left + el.clientWidth) gesture();
+    });
+  }
+  /** Where the room's script is, in this screen's pixels. */
+  function roomTop() {
+    if (!scrollEl) return 0;
+    var max = scrollEl.scrollHeight - scrollEl.clientHeight;
+    return max > 0 ? Math.max(0, Math.min(max, positionNow() * max)) : 0;
+  }
+  /** Put this screen exactly where the room is, marked as our own write. */
+  function landOnRoom() {
+    if (!scrollEl) return;
+    var top = roomTop();
+    scrollEl.scrollTop = top;
+    renderPos = scrollEl.scrollTop;
+    lastProgScroll = renderPos;
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); }
+    t.textContent = msg; t.className = 'on';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = ''; }, 2500);
+  }
+
   var root = document.getElementById('root');
   var scrollEl, pillEl, scriptEl;
 
@@ -206,6 +277,7 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     // A new show builds a new scroller, so its listeners are attached here, every build.
     scrollEl.addEventListener('click', toggleFromFollower);
     scrollEl.addEventListener('scroll', publishScroll, { passive: true });
+    guardScroller(scrollEl);
     document.getElementById('mirror').addEventListener('click', function () {
       mirror = !mirror;
       try { sessionStorage.setItem('tp2-mirror', String(mirror)); } catch (e) {}
@@ -358,10 +430,12 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
         wrap.className = 'beat-part';
         wrap.style.opacity = b < at.beat ? '0.35' : '1';
         if (b > 0) {
+          // The AI News marker line (web presenter/beatMarks.ts made the text): next press lit, last beat violet.
           var mark = document.createElement('p');
-          mark.className = 'beat-mark' + (b === at.beat ? ' on' : '');
+          var lastB = b === parts.length - 1;
+          mark.className = 'beat-mark news' + (lastB ? ' last' : '') + (b === at.beat + 1 ? ' on' : '');
           mark.style.margin = '0 0 ' + Math.round(state.fontSize * 0.5) + 'px';
-          mark.textContent = '▶ NEXT · BEAT ' + (b + 1);
+          mark.textContent = (sec.marks && sec.marks[b]) || ('▶ BEAT ' + b);
           wrap.appendChild(mark);
         }
         (part || '').split(/\n+/).map(function (t) { return t.trim(); }).filter(Boolean).forEach(function (t) {
@@ -422,7 +496,7 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   var sock = null;
   var serverOffset = 0;
   var bestRtt = Infinity;
-  var sync = { position: 0, anchorTime: 0, isPlaying: false, rate: 0 };
+  var sync = { position: 0, anchorTime: 0, isPlaying: false, rate: 0, epoch: null };
 
   function syncClock() { if (sock) sock.emit('time-ping', Date.now()); }
   function burstSyncClock() {
@@ -457,6 +531,14 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     });
 
     function applySync(sn) {
+      // The anchor first, so a new script below is placed at the room's (new) position.
+      sync.position = typeof sn.position === 'number' ? sn.position : sync.position;
+      sync.anchorTime = typeof sn.anchorTime === 'number' ? sn.anchorTime : sync.anchorTime;
+      sync.isPlaying = !!sn.isPlaying;
+      sync.rate = typeof sn.rate === 'number' ? sn.rate : sync.rate;
+      if (typeof sn.epoch === 'number') sync.epoch = sn.epoch;
+      if (typeof sn.scrollSpeed === 'number') state.speed = sn.scrollSpeed;
+      state.playing = sync.isPlaying;
       var slideChanged = typeof sn.idx === 'number' && sn.idx !== state.idx;
       if (slideChanged) {
         var nextIdx = clampIndex(sn.idx, total());
@@ -464,14 +546,18 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
         // it is (the server kept the anchor) — re-light it, do not snap.
         if (dd && sectionOf(nextIdx) === sectionOf(state.idx)) slideChanged = false;
         state.idx = nextIdx;
+        if (slideChanged && seekTimer) { clearTimeout(seekTimer); seekTimer = null; pendingSeek = null; }
+        var keep = scrollEl ? scrollEl.scrollTop : 0;
         renderScript();
+        if (slideChanged) {
+          // ⚠️ SYNCHRONOUSLY, before the frame's scroll event: the old offset clamped into
+          // the new script must never be seen (it used to go out as a seek to the bottom).
+          markNav();
+          landOnRoom();
+        } else if (scrollEl && scrollEl.scrollTop !== keep) {
+          scrollEl.scrollTop = keep; lastProgScroll = scrollEl.scrollTop;
+        }
       }
-      sync.position = typeof sn.position === 'number' ? sn.position : sync.position;
-      sync.anchorTime = typeof sn.anchorTime === 'number' ? sn.anchorTime : sync.anchorTime;
-      sync.isPlaying = !!sn.isPlaying;
-      sync.rate = typeof sn.rate === 'number' ? sn.rate : sync.rate;
-      if (typeof sn.scrollSpeed === 'number') state.speed = sn.scrollSpeed;
-      state.playing = sync.isPlaying;
       renderPill();
       if (slideChanged || !sync.isPlaying) {
         // Snap on a seek, a pause or a new slide — easing there looks like lag.
@@ -491,11 +577,13 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       if (typeof sn.textSize === 'number' && state.fontSize !== sn.textSize) { state.fontSize = sn.textSize; changed = true; }
       if (typeof sn.lineHeight === 'number' && state.lineHeight !== sn.lineHeight) { state.lineHeight = sn.lineHeight; changed = true; }
       if (sn.textWidth && WIDTH_PX[sn.textWidth] && state.width !== sn.textWidth) { state.width = sn.textWidth; changed = true; }
-      if (changed) renderScript();
+      if (changed) relayout();
     });
-    on('text-size', function (v) { state.fontSize = v; renderScript(); });
-    on('line-height', function (v) { state.lineHeight = v; renderScript(); });
-    on('text-width', function (v) { if (WIDTH_PX[v]) { state.width = v; renderScript(); } });
+    // A new size / width re-wraps the script: land back on the room's place in it.
+    function relayout() { renderScript(); if (!sync.isPlaying) landOnRoom(); }
+    on('text-size', function (v) { state.fontSize = v; relayout(); });
+    on('line-height', function (v) { state.lineHeight = v; relayout(); });
+    on('text-width', function (v) { if (WIDTH_PX[v]) { state.width = v; relayout(); } });
 
   }
   setInterval(burstSyncClock, 15000);
@@ -516,18 +604,30 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
    * frame and every real drag would land inside it.
    */
   var lastProgScroll = -1;
-  var seekTimer = null, pendingSeek = null, pendingSeekIdx = 0;
+  var seekTimer = null, pendingSeek = null, pendingSeekIdx = 0, pendingSeekEpoch = null;
+  function seekMsg(pos, idx, epoch) {
+    var m = { pos: pos, idx: idx };
+    if (typeof epoch === 'number') m.epoch = epoch;
+    return m;
+  }
   function publishScroll() {
     if (!sock || !scrollEl) return;
     if (Math.abs(scrollEl.scrollTop - lastProgScroll) <= 2) return; // that was us
     var max = scrollEl.scrollHeight - scrollEl.clientHeight;
     if (max <= 0) return;
+    // Not a gesture that began on THIS script (a layout clamp, an old flick, a re-layout):
+    // never published; just after a slide change, back to where the room is.
+    if (!userScrolling()) {
+      if (nowMs() - navAt < SETTLE_MS) landOnRoom();
+      return;
+    }
     pendingSeek = Math.max(0, Math.min(1, scrollEl.scrollTop / max));
     pendingSeekIdx = state.idx;
+    pendingSeekEpoch = sync.epoch;
     if (seekTimer) return;
     seekTimer = setTimeout(function () {
       seekTimer = null;
-      if (pendingSeek !== null && sock) sock.emit('scroll-position', { pos: pendingSeek, idx: pendingSeekIdx });
+      if (pendingSeek !== null && sock) sock.emit('scroll-position', seekMsg(pendingSeek, pendingSeekIdx, pendingSeekEpoch));
       pendingSeek = null;
     }, 120);
   }
@@ -547,7 +647,7 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     if (max <= 0) return;
     var stepPx = state.fontSize * state.lineHeight * 3;
     var here = positionNow();
-    sock.emit('scroll-position', { pos: Math.max(0, Math.min(1, here + direction * (stepPx / max))), idx: state.idx });
+    sock.emit('scroll-position', seekMsg(Math.max(0, Math.min(1, here + direction * (stepPx / max))), state.idx, sync.epoch));
   }
 
   function toggleFromFollower() {
@@ -576,11 +676,22 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
    * so every screen's script restarts at the top. Nothing changes here until
    * the room's broadcast comes back, so this screen cannot disagree with it.
    */
+  var NEXT_WINDOW_MS = 1000, armed = null;   // web presenter/controls.ts — two presses within 1 s
   function stepBeat(dir) {
     if (!sock || !dd) return;
     var from = clampIndex(state.idx, flat.length);
     var to = clampIndex(from + dir, flat.length);
     if (to === from) return;
+    if (dir > 0 && sectionOf(to) !== sectionOf(from)) {
+      var now = Date.now();
+      if (!armed || armed.section !== sectionOf(from) || now - armed.at > NEXT_WINDOW_MS) {
+        armed = { section: sectionOf(from), at: now };
+        toast('Last beat of this section — press → twice quickly for the next section');
+        return;
+      }
+      var t = document.getElementById('toast'); if (t) t.className = '';
+    }
+    armed = null;
     if (seekTimer) { clearTimeout(seekTimer); seekTimer = null; }
     pendingSeek = null;
     sock.emit('slide-index', sectionOf(to) === sectionOf(from) ? { idx: to, keepScroll: true } : to);
@@ -620,19 +731,9 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       // The stable link: another show went live (or none) while this screen slept — follow it.
       if (liveToken && (data.revoked || data.waiting || data.liveKey !== liveKeyNow)) { onLive(data); return; }
       if (!data.session || !scriptEl) return;
-      var s = data.session;
-      state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, total()) : 0;
-      applySettings(s);
-      renderScript();
-      requestAnimationFrame(function () { applyScrollPct(typeof s.tpScrollPct === 'number' ? s.tpScrollPct : 0); });
-      anchor = {
-        position: typeof s.tpScrollPct === 'number' ? s.tpScrollPct : 0,
-        velocity: 0,
-        receivedAt: Date.now(),
-        playing: typeof s.tpPaused === 'boolean' ? !s.tpPaused : false,
-      };
-      renderPos = (typeof s.tpScrollPct === 'number' ? s.tpScrollPct : 0) * (scrollEl ? scrollEl.scrollHeight - scrollEl.clientHeight : 0);
-      lastSeq = 0; // force the next poll to apply
+      // Same show: the ROOM says where it is (the row's old scroll field is not live state —
+      // applying it here used to publish a seek of it to every screen as the phone woke).
+      if (sock) sock.emit('request-current-state');
       connected = true; renderPill();
     }).catch(function () {});
   });
@@ -658,8 +759,8 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     slides = []; dd = null; flat = [];
     state.idx = 0; state.playing = false;
     beatAt = { idx: 0, beat: 0 };
-    sync = { position: 0, anchorTime: 0, isPlaying: false, rate: 0 };
-    lastSeq = 0; renderPos = 0; lastProgScroll = -1;
+    sync = { position: 0, anchorTime: 0, isPlaying: false, rate: 0, epoch: null };
+    lastSeq = 0; renderPos = 0; lastProgScroll = -1; armed = null;
     document.title = 'Teleprompter';
   }
 
@@ -707,9 +808,10 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       // The one-off HTTP read above supplies the SLIDES; the socket supplies the
       // live position from here on, and request-current-state on connect lands
       // this screen on whatever the show is already doing.
+      markNav();
       if (typeof s.tpScrollPct === 'number') {
         sync.position = s.tpScrollPct;
-        requestAnimationFrame(function () { if (my !== gen || !scrollEl) return; applyScrollPct(s.tpScrollPct); renderPos = scrollEl.scrollTop; });
+        requestAnimationFrame(function () { if (my !== gen || !scrollEl) return; landOnRoom(); });
       }
       connectSocket();
     }).catch(function () {

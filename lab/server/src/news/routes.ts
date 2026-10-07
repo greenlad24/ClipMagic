@@ -51,6 +51,7 @@ import {
 import { assetDir, removeAssets, ASSET_FILE_RE, type Visual } from "./deepDiveVisuals.js";
 import { MEDIA_FILE_RE } from "./deepDiveMedia.js";
 import { deepDiveFollowerSlides } from "./deepDiveFollow.js";
+import { liveScreens, resetLiveShow } from "./liveSync.js";
 import { activeForToken, followSessionEnded, followToken, liveKey, rotateFollowToken, setFollowActive as markFollowActive } from "./followChannel.js";
 import { generateDeepDiveV2, mediaChoices, editChapter } from "./deepDiveV2.js";
 import { startDemoJob, latestDemoJob, liveDemoState, attachDemoToDive } from "./deepDiveDemo.js";
@@ -229,11 +230,27 @@ const startSession: Handler = (input) => {
   const deckId = need(str(input?.deckId), "deckId");
   const controllerId = str(input?.controllerId);
   const serverTime = Date.now();
+  // OPENING A PRESENTER STARTS THE SHOW FROM THE TOP (Jake, 2026-10-07 — both the
+  // AI News and the Deep Dive presenter): `reset` = first slide, first beat, script
+  // at the top and paused, article not video — in the row AND the live room, so the
+  // show screen and every follower land there too. `resetIfIdle` (a Deep Dive show
+  // screen opened on its own) does the same only when no screen is in the room —
+  // joining a show that is running must never move it.
+  const wantsReset = input?.reset === true;
+  const resetIfIdle = input?.resetIfIdle === true;
 
   const open = latestOpenSession(deckId);
   if (open) {
     // Claim control if no controller is set yet.
     if (controllerId && !open.tpControllerId) sessions.update(open.id, { tpControllerId: controllerId });
+    if (wantsReset || (resetIfIdle && liveScreens(open.id) === 0)) {
+      sessions.update(open.id, {
+        currentSlideIndex: 0, currentBeat: 0, mediaView: "article", tpScrollPct: 0, tpPaused: true, tpAutoscroll: false,
+        tpRevision: (typeof open.tpRevision === "number" ? open.tpRevision : 0) + 1, tpAnchorAt: serverTime,
+      } as any);
+      resetLiveShow(open.id);
+      return { sessionId: open.id, isNew: false, reset: true, serverTime };
+    }
     return { sessionId: open.id, isNew: false, serverTime };
   }
 
@@ -738,7 +755,11 @@ export const followerRouter = express.Router();
  * script still reads, exactly as before.
  */
 type CueMarkOut = { start: number; end: number; beat: number; title: string; last: boolean; mark: string };
-let cueMarksMod: Promise<{ cueMarks: (slide: unknown, nextTitle: string | null) => CueMarkOut[] } | null> | null = null;
+let cueMarksMod: Promise<{
+  cueMarks: (slide: unknown, nextTitle: string | null) => CueMarkOut[];
+  /** The Deep Dive's marker lines (web presenter/beatMarks.ts) — absent in a bundle built before it. */
+  ddBeatMarks?: (sec: unknown, v2: boolean, beats: number) => string[];
+} | null> | null = null;
 function loadCueMarks() {
   if (!cueMarksMod) {
     const file = new URL("./cue-marks.js", import.meta.url).href;
@@ -777,7 +798,8 @@ followerRouter.get("/state", async (req: Request, res: Response) => {
   if (liveToken) out.liveKey = liveKey(liveToken, session.id);
   // A Deep Dive's live session (its deck id is the dive's id): that dive's
   // scripts per beat, nothing else — see deepDiveFollow.ts.
-  const dive = withSlides && session.deck && !decks.get(session.deck) ? deepDiveFollowerSlides(session.deck) : null;
+  const isDive = withSlides && !!session.deck && !decks.get(session.deck);
+  const dive = isDive ? deepDiveFollowerSlides(session.deck!, (await loadCueMarks())?.ddBeatMarks ?? null) : null;
   if (dive) {
     out.kind = "deep-dive";
     out.title = dive.title;

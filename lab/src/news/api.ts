@@ -250,8 +250,13 @@ export const updateSlide = (input: {
   position?: number;
 }) => call<{ success: boolean }>('updateSlide', input);
 export const reorderSlides = (input: { slideIds: string[] }) => call<{ success: boolean }>('reorderSlides', input);
-export const startSession = (input: { deckId: string; controllerId?: string }) =>
-  call<{ sessionId: string; isNew: boolean; serverTime: number }>('startSession', input);
+/**
+ * `reset` (a presenter opening): the show starts from the top — first slide, first beat,
+ * script at the top and paused — for every screen in the room. `resetIfIdle` (a Deep Dive
+ * show screen opened on its own): the same, only when no screen is in the room yet.
+ */
+export const startSession = (input: { deckId: string; controllerId?: string; reset?: boolean; resetIfIdle?: boolean }) =>
+  call<{ sessionId: string; isNew: boolean; reset?: boolean; serverTime: number }>('startSession', input);
 export const getSession = (input: { sessionId?: string; deckId?: string }) =>
   call<{ session: LiveSession | null; serverTime: number }>('getSession', input);
 export const updateSession = (input: UpdateSessionInput) =>

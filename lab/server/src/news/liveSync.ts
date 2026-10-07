@@ -32,7 +32,7 @@
  * given the id for, or reach any other part of the Lab.
  */
 import type { Server as HttpServer } from "node:http";
-import { Server, type Socket } from "socket.io";
+import { Server, type Socket, type Namespace } from "socket.io";
 import { sessions } from "./db.js";
 import { activeForToken, infoFor, setChannelNotifier } from "./followChannel.js";
 
@@ -42,6 +42,16 @@ interface SyncState {
   idx: number;
   /** When the last slide change that reset the scroll happened (ms). */
   resetAt?: number;
+  /**
+   * Which SCRIPT the scroll belongs to (2026-10-07, the bottom-of-script bug).
+   * Bumped on every change that resets the scroll — a new story, a new Deep
+   * Dive section, a reset on opening — and NOT on a Deep Dive beat inside one
+   * section (keepScroll). Every seek from a current client carries the epoch
+   * it was made on; one made on another script is dropped, however late it
+   * arrives. Starts at the clock so a server restart never reuses a number a
+   * screen still holds.
+   */
+  epoch: number;
   /**
    * Scroll anchor at `anchorTime`, as a FRACTION of the script (0–1).
    *
@@ -88,7 +98,7 @@ interface SyncState {
   srcY: number;
 }
 
-const DEFAULTS: Omit<SyncState, "anchorTime"> = {
+const DEFAULTS: Omit<SyncState, "anchorTime" | "epoch"> = {
   idx: 0,
   position: 0,
   isPlaying: false,
@@ -134,6 +144,7 @@ function stateFor(sessionId: string): SyncState {
     media: (row as any)?.mediaView === "video" ? "video" : "article",
     beat: typeof (row as any)?.currentBeat === "number" ? Math.max(0, Math.round((row as any).currentBeat)) : 0,
     anchorTime: Date.now(),
+    epoch: Date.now(),
   };
   live.set(sessionId, fresh);
   return fresh;
@@ -169,7 +180,61 @@ function syncPayload(s: SyncState) {
     isPlaying: s.isPlaying,
     rate: s.rate,
     scrollSpeed: s.scrollSpeed,
+    epoch: s.epoch,
   };
+}
+
+/**
+ * A seek from a page opened BEFORE scroll epochs existed (an open follower tab
+ * keeps its old script until it is reloaded) cannot say which script it was
+ * made on. For a moment after a reset those are dropped: that is exactly when
+ * such a page publishes the new script's layout clamp ("scrolled to the
+ * bottom, pressed →, the next story opened at the bottom").
+ */
+const LEGACY_SETTLE_MS = 1500;
+
+/** Put the scroll at the top of a new script (a slide/section change, or a reset). */
+function resetScroll(s: SyncState): void {
+  s.position = 0;
+  s.anchorTime = Date.now();
+  s.resetAt = s.anchorTime;
+  s.epoch += 1;
+}
+
+/** The namespace, once attached — for resets that come over HTTP (startSession). */
+let nsRef: Namespace | null = null;
+
+/**
+ * OPEN = START FROM THE TOP (Jake, 2026-10-07: "Deep dive presentations should
+ * always reset to the beginning (first slide first beat) when opening it again
+ * … I could load it during a live stream and land on the wrong slide and
+ * script notes." — and the same for the AI News presenter on a reload).
+ * Called when a presenter opens; every screen in the room (show screen,
+ * follower, the stable follower link) is moved with it: first slide, first
+ * beat, script at the top and paused, the article (not the video), the source
+ * page at its top.
+ */
+export function resetLiveShow(sessionId: string): void {
+  const s = stateFor(sessionId);
+  s.idx = 0;
+  s.isPlaying = false;
+  resetScroll(s);
+  s.media = "article";
+  s.beat = 0;
+  s.srcY = 0;
+  if (!nsRef) return;
+  const room = `session:${sessionId}`;
+  nsRef.to(room).emit("scroll-sync", syncPayload(s));
+  // The beat first: the audience screen takes its slide from it and drops a media
+  // update for a slide it is not on yet.
+  nsRef.to(room).emit("beat", { idx: 0, beat: 0 });
+  nsRef.to(room).emit("media-view", { idx: 0, media: s.media });
+  nsRef.to(room).emit("source-scroll", { idx: 0, y: 0, from: "server" });
+}
+
+/** How many screens are in a session's room right now (a stage opened on its own resets only an empty show). */
+export function liveScreens(sessionId: string): number {
+  return nsRef?.adapter.rooms.get(`session:${sessionId}`)?.size ?? 0;
 }
 
 const num = (v: unknown, fallback: number): number =>
@@ -192,6 +257,7 @@ export function attachNewsLiveSync(server: HttpServer): Server {
   });
 
   const ns = io.of("/news-tp");
+  nsRef = ns;
 
   /**
    * THE STABLE FOLLOWER LINK (followChannel.ts). Two kinds of socket carry
@@ -288,8 +354,15 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       // bottom, pressed →, and the new script opened at the bottom). Seeks are throttled, so
       // the last one can arrive just after the slide change; each carries the slide it was
       // made on, and one aimed at a slide the room has just left is dropped.
-      const obj = payload && typeof payload === "object" ? (payload as { pos?: unknown; idx?: unknown }) : null;
-      if (obj && typeof obj.idx === "number" && obj.idx !== s.idx && Date.now() - (s.resetAt ?? 0) < 3000) return;
+      const obj = payload && typeof payload === "object" ? (payload as { pos?: unknown; idx?: unknown; epoch?: unknown }) : null;
+      if (obj && typeof obj.epoch === "number") {
+        // A current client: the seek names the script it was made on. Another one → stale, drop it.
+        if (obj.epoch !== s.epoch) return;
+      } else {
+        // A page from before epochs: the old slide rule, plus the settle window (see LEGACY_SETTLE_MS).
+        if (obj && typeof obj.idx === "number" && obj.idx !== s.idx && Date.now() - (s.resetAt ?? 0) < 3000) return;
+        if (Date.now() - (s.resetAt ?? 0) < LEGACY_SETTLE_MS) return;
+      }
       s.position = Math.min(1, Math.max(0, num(obj ? obj.pos : payload, s.position)));
       s.anchorTime = Date.now();
       broadcast();
@@ -329,16 +402,19 @@ export function attachNewsLiveSync(server: HttpServer): Server {
       const s = stateFor(sessionId);
       const obj = payload && typeof payload === "object" ? (payload as { idx?: unknown; keepScroll?: unknown; beat?: unknown }) : null;
       const next = Math.max(0, Math.round(num(obj ? obj.idx : payload, s.idx)));
-      if (next === s.idx) return;
-      s.idx = next;
       if (obj?.keepScroll === true) {
+        if (next === s.idx) return;
+        s.idx = next;
         broadcast();
         try { sessions.update(sessionId, { currentSlideIndex: next } as any); } catch { /* bookkeeping only */ }
         return;
       }
-      s.position = 0;
-      s.anchorTime = Date.now();
-      s.resetAt = s.anchorTime;
+      // ⚠️ A SLIDE CHANGE ALWAYS RESETS THE SCROLL, EVEN TO THE INDEX THE ROOM IS ALREADY
+      // ON. This used to return early, so a presenter whose own index had drifted from the
+      // room's (a late poll, a reload) stepped "to" the room's slide and nothing reset —
+      // every screen kept the old position, the bottom of the script included.
+      s.idx = next;
+      resetScroll(s);
       // A new slide always opens on its article (the video closed).
       s.media = "article";
       s.beat = Math.max(0, Math.round(num(obj?.beat, 0)));

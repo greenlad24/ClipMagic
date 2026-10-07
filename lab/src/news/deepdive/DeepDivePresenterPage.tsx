@@ -11,13 +11,18 @@
  * pills "next …") are the SAME components NotesPage renders
  * (../presenter/chrome.tsx). No monitor panel — the stage is the monitor.
  *
- * Keys (Jake's rule for both screens):
- *   ← / → (and a clicker's PageUp / PageDown)  previous / next beat (then section)
+ * Keys — THE AI NEWS PRESENTER'S MAP (Jake, 2026-10-07: "these 2 presentation types
+ * will be delivered in sequence … the UX should be basically the same"):
+ *   ← / → (and a clicker's PageUp / PageDown)  previous / next beat (then section);
+ *                                              on a section's LAST beat → goes on only
+ *                                              when pressed twice within 1 s
+ *   ‹ / › (header)                             previous / next section
  *   ↑ / ↓                                      nudge the script (teleprompter view)
- *   Space                                      play / pause the scroll (notes view: next beat)
+ *   Space                                      play / pause the scroll (notes view: = →)
  *   T                                          Notes ↔ Teleprompter
- *   1–9                                        jump to a section
+ *   1–9, G + number                            jump to a section
  *   E                                          end
+ * Opening (or reloading) this page starts the show from the top for every screen.
  *
  * ⚠️ THE SCROLL IS THE SAME ANCHOR PROTOCOL AS THE DAILY SHOW (../liveSync):
  * the server holds `position at time T + rate`, every screen solves it. The
@@ -31,7 +36,7 @@
  * `deepDiveFollowerSlides`). The phone plays/pauses/scrolls every screen and
  * steps beats with ←/→ like this page.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
@@ -53,6 +58,10 @@ import { sectionsToUnits } from './beats';
 import { sectionsToChapters, CHAPTER_LABEL } from './v2/adapt';
 import { sendBeat } from './v2/beatSync';
 import { beatItems, sectionSourceUrl } from './presenterNotes';
+import { useScrollGuard, SETTLE_MS } from '../presenter/scrollGuard';
+import { leaveGuard, armMessage, ARM_TOAST_ID } from '../presenter/controls';
+import { ddBeatMarks } from '../presenter/beatMarks';
+import { newsMarkStyle } from '../daily/stage/cues';
 
 const DEVICE_KEY = 'tp2-device-id';
 const deviceId = (() => {
@@ -69,15 +78,13 @@ const readSourceLatch = () => { try { return localStorage.getItem(SOURCE_KEY) ==
 const smallBtn: CSSProperties = { background: D.card, border: `1px solid ${D.border}`, borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer', color: D.muted, whiteSpace: 'nowrap' };
 
 /**
- * ⚠️ THE "▶ NEXT · BEAT n" MARKER IS PART OF THE SCRIPT'S LAYOUT, so it is
- * styled identically in the public follower page (server followerPage.ts
- * `.beat-mark`): fixed line height and the script face, never system-ui —
- * otherwise the two screens' paragraphs start at different heights.
+ * ⚠️ THE "▶ BEAT n · TITLE" MARKER IS PART OF THE SCRIPT'S LAYOUT — the AI News
+ * marker exactly (daily/stage/cues.tsx `newsMarkStyle`: one line, fixed height,
+ * the script face; the NEXT press yellow, the section's LAST beat violet), and
+ * the follower page draws the same `.beat-mark.news` line with the same text
+ * (presenter/beatMarks.ts, run by the server too). Otherwise the two screens'
+ * paragraphs start at different heights.
  */
-const markStyle = (fontSize: number, on: boolean): CSSProperties => ({
-  fontSize: 11, lineHeight: '16px', fontWeight: 800, letterSpacing: '0.12em', color: on ? '#ffd21e' : D.faint,
-  margin: `0 0 ${Math.round(fontSize * 0.5)}px`, fontFamily: SCRIPT_FONT,
-});
 
 export default function DeepDivePresenterPage() {
   useNewsTheme(); // loads the NewsScript face, exactly as /notes does
@@ -113,6 +120,8 @@ export default function DeepDivePresenterPage() {
   const syncRef = useRef<LiveSync | null>(null);
   const tpRef = useRef<HTMLDivElement>(null);
   const lastProgRef = useRef(-1);
+  // Which scrolls of the script are Jake's (presenter/scrollGuard.ts) — re-made when the view mounts.
+  const tpGuard = useScrollGuard(tpRef, [viewMode, !!dive, sections.length > 0, !!loadError]);
   const ref = useRef({ current: 0, count: 0, playing: false, speed: 2.5, fontSize: 32, lineHeight: 1.9, viewMode: 'teleprompter' as ViewMode });
   // The sync index is a BEAT across the whole show (v2 since 2026-10-02,
   // classic slides since 2026-10-06 — same code, ./beats.ts gives a classic
@@ -151,12 +160,17 @@ export default function DeepDivePresenterPage() {
     let cancelled = false;
     (async () => {
       try {
-        const s = await startSession({ deckId: id, controllerId: deviceId });
+        // ⚠️ OPENING (OR RELOADING) THIS PAGE STARTS THE SHOW FROM THE TOP (Jake, 2026-10-07:
+        // "Deep dive presentations should always reset to the beginning (first slide first
+        // beat) when opening it again … I could load it during a live stream and land on the
+        // wrong slide and script notes"). `reset` does it in the row and the live room, so the
+        // show screen and every follower start at section 1, beat 1, script top, paused.
+        const s = await startSession({ deckId: id, controllerId: deviceId, reset: true });
         if (cancelled) return;
+        setCurrent(0);
         const st = await getSession({ sessionId: s.sessionId }).catch(() => null);
         const row = st?.session;
         if (!cancelled && row) {
-          if (typeof row.currentSlideIndex === 'number') setCurrent(row.currentSlideIndex);
           if (typeof row.tpFontSize === 'number') setFontSize(row.tpFontSize);
           if (typeof row.tpLineHeight === 'number') setLineHeight(row.tpLineHeight);
           if (typeof row.tpSpeed === 'number') setSpeed(row.tpSpeed);
@@ -257,14 +271,27 @@ export default function DeepDivePresenterPage() {
     if (Math.abs(el.scrollTop - lastProgRef.current) < 3) return; // our own write
     const max = el.scrollHeight - el.clientHeight;
     if (max <= 0) return;
+    // Not a gesture that began on THIS script (a layout clamp, a flick from the previous
+    // section, a re-layout): never published; right after a section change, put back.
+    if (!tpGuard.userScrolling()) {
+      if (tpGuard.sinceNav() < SETTLE_MS) {
+        const top = (sync.state().idx === ref.current.current ? sync.positionNow() : 0) * max;
+        lastProgRef.current = top;
+        el.scrollTop = top;
+      }
+      return;
+    }
     lastProgRef.current = el.scrollTop;
     sync.seek(el.scrollTop / max);
   };
 
-  // New section: top of its script.
-  useEffect(() => {
+  // New section: top of its script — before the browser can fire a scroll event for the
+  // old offset clamped into the new script (a layout effect; see NotesPage).
+  useLayoutEffect(() => {
+    tpGuard.markNav();
     const el = tpRef.current;
     if (el) { lastProgRef.current = 0; el.scrollTop = 0; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollKey]);
   // New section or new layout: a rate for THIS script's length.
   useEffect(() => {
@@ -290,6 +317,30 @@ export default function DeepDivePresenterPage() {
     sendBeat(syncRef.current, beatsRef.current, from, next);
   }, []);
 
+  // → on a section's LAST beat goes on only when pressed twice within 1 s — the AI News
+  // rule and wording (presenter/controls.ts). Beats inside a section stay single-press.
+  const leaveRef = useRef(leaveGuard());
+  const step = useCallback((dir: 1 | -1) => {
+    const c = ref.current.current;
+    const b = beatsRef.current;
+    if (dir > 0 && c < b.length - 1 && b[c] && b[c + 1] && b[c].chapter !== b[c + 1].chapter) {
+      if (!leaveRef.current.press(b[c].chapter)) {
+        toast.info(armMessage('section'), { id: ARM_TOAST_ID, duration: 2500 });
+        return;
+      }
+      toast.dismiss(ARM_TOAST_ID);
+    }
+    leaveRef.current.disarm();
+    go(c + dir);
+  }, [go]);
+  /** ‹ / › in the header: the previous / next SECTION (AI News: story), from its first beat. */
+  const goSection = useCallback((chapter: number) => {
+    const u = unitsRef.current;
+    if (chapter < 0 || chapter >= u.length) return;
+    leaveRef.current.disarm();
+    go(firstBeatOf(u, chapter));
+  }, [go]);
+
   const togglePlay = useCallback(() => {
     const sync = syncRef.current;
     if (!sync) return;
@@ -308,24 +359,34 @@ export default function DeepDivePresenterPage() {
     sync.seek(Math.max(0, Math.min(1, sync.positionNow() + (dir * step) / max)));
   }, []);
 
+  // G + number = that section (as G + number = that story on /notes).
+  const [gBuffer, setGBuffer] = useState<string | null>(null);
+  const gRef = useRef<{ buf: string | null; timer?: ReturnType<typeof setTimeout> }>({ buf: null });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if ((e.target as HTMLElement)?.closest('input, textarea')) return;
-      const c = ref.current.current;
       const tp = ref.current.viewMode === 'teleprompter';
-      if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); go(c + 1); }
-      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); go(c - 1); }
+      const g = gRef.current;
+      if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); step(1); }
+      else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); step(-1); }
       else if (e.key === 'ArrowDown' && tp) { e.preventDefault(); nudge(1); }
       else if (e.key === 'ArrowUp' && tp) { e.preventDefault(); nudge(-1); }
-      else if (e.key === ' ') { e.preventDefault(); if (tp) togglePlay(); else go(c + 1); }
+      else if (e.key === ' ') { e.preventDefault(); if (tp) togglePlay(); else step(1); }
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
       else if (e.key === 't' || e.key === 'T') setViewMode((v) => (v === 'notes' ? 'teleprompter' : 'notes'));
-      else if (/^[1-9]$/.test(e.key)) go(firstBeatOf(unitsRef.current, parseInt(e.key, 10) - 1));
+      else if (e.key === 'g' || e.key === 'G') { g.buf = ''; setGBuffer(''); }
+      else if (g.buf !== null && /^\d$/.test(e.key)) {
+        const buf = g.buf + e.key;
+        g.buf = buf; setGBuffer(buf);
+        clearTimeout(g.timer);
+        g.timer = setTimeout(() => { goSection(parseInt(buf, 10) - 1); g.buf = null; setGBuffer(null); }, 600);
+      }
+      else if (/^[1-9]$/.test(e.key)) goSection(parseInt(e.key, 10) - 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [go, nudge, togglePlay]);
+  }, [step, goSection, nudge, togglePlay]);
 
   // The latched source tab follows the show (navigated in place, never reopened).
   const sec = sections[Math.min(chapterIdx, Math.max(0, sections.length - 1))];
@@ -384,11 +445,11 @@ export default function DeepDivePresenterPage() {
   const beatNow = beats[Math.min(current, beats.length - 1)]?.beat ?? 0;
   const parts = unit ? scriptParts(unit) : [];
   const nBeats = unit ? beatCount(unit) : 1;
+  // "▶ BEAT n · TITLE[ · LAST]" — the same text the follower page gets from the server.
+  const marks = ddBeatMarks(sec, isV2, nBeats);
   const kindLabel = (k: string) => (isV2 ? CHAPTER_LABEL[k as keyof typeof CHAPTER_LABEL] : KIND_LABEL[k as keyof typeof KIND_LABEL]) || k;
   const headingOf = (s: Section) => (s.heading || kindLabel(s.kind)).replace(/\*/g, '');
   const title = dive.title || dive.topic;
-  const atStart = current === 0;
-  const atEnd = current >= count - 1;
   const items = beatItems(sec, isV2);
   const nextLabel = beatNow < nBeats - 1
     ? (items[beatNow + 1] || `beat ${beatNow + 2}`)
@@ -409,9 +470,12 @@ export default function DeepDivePresenterPage() {
       {/* ── Header bar (the /notes header) ──────────────────────────────── */}
       <header style={{ background: D.panel, borderBottom: `1px solid ${D.border}`, padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
         <NavStepper
-          label={<>{nBeats > 1 ? `${chapterIdx + 1}.${beatNow + 1}` : chapterIdx + 1} / {sections.length}</>}
-          onPrev={() => go(current - 1)} prevDisabled={atStart} prevTitle="Previous beat (←)"
-          onNext={() => go(current + 1)} nextDisabled={atEnd} nextTitle="Next beat (→)"
+          label={<>
+            {nBeats > 1 ? `${chapterIdx + 1}.${beatNow + 1}` : chapterIdx + 1} / {sections.length}
+            {gBuffer && <span style={{ marginLeft: 6, fontSize: 11, color: D.blue }}>→ {gBuffer}</span>}
+          </>}
+          onPrev={() => goSection(chapterIdx - 1)} prevDisabled={chapterIdx === 0} prevTitle="Previous section (← steps beats)"
+          onNext={() => goSection(chapterIdx + 1)} nextDisabled={chapterIdx >= units.length - 1} nextTitle="Next section (→ steps beats)"
         />
 
         <TopicLabel>{headingOf(sec)} <span style={{ color: D.faint }}>· {title}</span></TopicLabel>
@@ -454,7 +518,7 @@ export default function DeepDivePresenterPage() {
 
               {parts.some((p) => p.trim()) ? parts.map((part, b) => (
                 <div key={`${sec.id}:b${b}`} style={{ opacity: b < beatNow ? 0.35 : 1, transition: 'opacity .3s' }}>
-                  {b > 0 && <p style={markStyle(fontSize, b === beatNow)}>▶ NEXT · BEAT {b + 1}</p>}
+                  {b > 0 && <p style={newsMarkStyle(fontSize, b === beatNow + 1, b === nBeats - 1)}>{marks[b] || `▶ BEAT ${b}`}</p>}
                   {part.split(/\n+/).map((t) => t.trim()).filter(Boolean).map((para, i) => (
                     <p key={i} style={{
                       fontSize, lineHeight, color: '#ffffff', fontWeight: 400,

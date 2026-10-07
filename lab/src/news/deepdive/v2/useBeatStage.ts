@@ -4,7 +4,10 @@
  * a copy). The sync index is a BEAT across the whole show (types.ts
  * `flatten`); a v2 chapter or a classic slide is one "unit" of beats.
  *
- *   ← / → , PageUp / PageDown      previous / next beat
+ *   ← / → , PageUp / PageDown      previous / next beat — on a unit's LAST beat
+ *                                  → goes on only when pressed twice within 1 s,
+ *                                  the presenter's rule (presenter/controls.ts);
+ *                                  silent here: this screen is on camera
  *   mouse wheel / vertical swipe   previous / next UNIT (scrolls like a site)
  *   horizontal swipe               previous / next beat
  *   ↑ / ↓                          nudge the presenter's script
@@ -19,6 +22,7 @@ import { useSearchParams } from 'react-router-dom';
 import { startSession } from '../../api';
 import { connectLiveSync, type LiveSync } from '../../liveSync';
 import { sendBeat } from './beatSync';
+import { leaveGuard } from '../../presenter/controls';
 import { flatten, firstBeatOf, type BeatUnit, type Chapter, type FlatBeat } from './types';
 
 export interface BeatStage {
@@ -62,6 +66,17 @@ export function useBeatStage({ diveId, units, onKey }: {
     if (broadcast) sendBeat(syncRef.current, st.current.beats, from, next);
   }, []);
 
+  // → / PageDown / a left swipe: beats, and past a unit's last beat only on a double press.
+  const leave = useRef(leaveGuard());
+  const beatStep = useCallback((dir: 1 | -1) => {
+    const { flat: f, beats: b } = st.current;
+    if (dir > 0 && f < b.length - 1 && b[f] && b[f + 1] && b[f].chapter !== b[f + 1].chapter) {
+      if (!leave.current.press(b[f].chapter)) return;
+    }
+    leave.current.disarm();
+    show(f + dir, true);
+  }, [show]);
+
   const unitStep = useCallback((dir: 1 | -1) => {
     const { flat: f, beats: b, units: u } = st.current;
     const cur = b[f]?.chapter ?? 0;
@@ -84,7 +99,9 @@ export function useBeatStage({ diveId, units, onKey }: {
     let cancelled = false;
     (async () => {
       let sid = params.get('session') || '';
-      if (!sid) { try { sid = (await startSession({ deckId: diveId })).sessionId; } catch { return; } }
+      // Opened on its own (not from the presenter's Screen button): a show nobody is on
+      // starts from the top, like the presenter (Jake 2026-10-07); a running one is joined as is.
+      if (!sid) { try { sid = (await startSession({ deckId: diveId, resetIfIdle: true })).sessionId; } catch { return; } }
       if (cancelled || !sid) return;
       sync = connectLiveSync(sid);
       syncRef.current = sync;
@@ -98,10 +115,9 @@ export function useBeatStage({ diveId, units, onKey }: {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const f = st.current.flat;
       switch (e.key) {
-        case 'ArrowRight': case 'PageDown': e.preventDefault(); show(f + 1, true); return;
-        case 'ArrowLeft': case 'PageUp': e.preventDefault(); show(f - 1, true); return;
+        case 'ArrowRight': case 'PageDown': e.preventDefault(); beatStep(1); return;
+        case 'ArrowLeft': case 'PageUp': e.preventDefault(); beatStep(-1); return;
         case 'ArrowDown': e.preventDefault(); nudgeScript(1); return;
         case 'ArrowUp': e.preventDefault(); nudgeScript(-1); return;
         case ' ': { e.preventDefault(); const s = syncRef.current; if (s) s.playPause(!s.state().isPlaying); return; }
@@ -116,7 +132,7 @@ export function useBeatStage({ diveId, units, onKey }: {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [show, nudgeScript]);
+  }, [show, beatStep, nudgeScript]);
 
   // Wheel = one unit per gesture (a trackpad fires dozens of events).
   useEffect(() => {
@@ -142,14 +158,14 @@ export function useBeatStage({ diveId, units, onKey }: {
       const t = e.changedTouches[0];
       if (!p0 || !t) return;
       const dx = t.clientX - p0.x, dy = t.clientY - p0.y;
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) show(st.current.flat + (dx < 0 ? 1 : -1), true);
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) beatStep(dx < 0 ? 1 : -1);
       else if (Math.abs(dy) > 60) unitStep(dy < 0 ? 1 : -1);
       p0 = null;
     };
     window.addEventListener('touchstart', start, { passive: true });
     window.addEventListener('touchend', end, { passive: true });
     return () => { window.removeEventListener('touchstart', start); window.removeEventListener('touchend', end); };
-  }, [show, unitStep]);
+  }, [beatStep, unitStep]);
 
   // This screen is on camera: hide a resting cursor.
   useEffect(() => {

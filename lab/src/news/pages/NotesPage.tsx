@@ -1,5 +1,5 @@
 import { useNewsTheme } from '../useNewsTheme';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
@@ -16,6 +16,8 @@ import {
   D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, useFollowActive, EndButton, ScreenButton,
   ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl, WidthToggle, BeatDots,
 } from '../presenter/chrome';
+import { useScrollGuard, SETTLE_MS } from '../presenter/scrollGuard';
+import { leaveGuard, armMessage, ARM_TOAST_ID } from '../presenter/controls';
 
 type SlideType = GetSlidesOutputType['slides'][0];
 
@@ -35,8 +37,6 @@ const CHANNEL = 'ng-presenter';
 
 // The palette and the chrome below are shared with the Deep Dive presenter
 // (../presenter/chrome.tsx), lifted out of this file verbatim.
-
-const NEXT_STORY_WINDOW_MS = 1000;   // Jake: two presses within 1 s
 
 export default function NotesPage() {
   useNewsTheme();
@@ -74,6 +74,8 @@ export default function NotesPage() {
 
   // Multi-device sync
   const [remoteSynced, setRemoteSynced] = useState(false); // shows "Synced from device" briefly
+  // The live socket's state — the green dot in the header, as on the Deep Dive presenter.
+  const [connected, setConnected] = useState(false);
 
   // Article → official video, on a slide that has one. Shared with every
   // screen (socket + session row) but deliberately NOT part of the teleprompter
@@ -130,6 +132,8 @@ export default function NotesPage() {
   // drag would land inside the window and be discarded. Comparing against the
   // value we last wrote works in both states.
   const lastProgScrollRef = useRef(-1);
+  // Which scrolls of the script are Jake's (presenter/scrollGuard.ts) — re-made when the view mounts.
+  const tpGuard = useScrollGuard(teleprompterRef, [viewMode, loading]);
 
   useEffect(() => {
     ctxRef.current = { currentIdx, slides, sessionId: sessionId || '', blackout };
@@ -149,16 +153,18 @@ export default function NotesPage() {
         const data = await getSlides(deckParam ? { deckId: deckParam } : {});
         if (!data.deck || data.slides.length === 0) { toast.error('No deck found. Build a deck first.'); return; }
         setSlides(data.slides);
-        const sess = await startSession({ deckId: data.deck.id, controllerId: window.localStorage.getItem('tp2-device-id') || undefined } as any);
+        // ⚠️ OPENING (OR RELOADING) THE PRESENTER STARTS THE SHOW FROM THE TOP (Jake,
+        // 2026-10-07: "Regular News presentations should also reset to the beginning if
+        // they've been accessed before and then reloaded"): story 1, its source beat,
+        // script at the top and paused, video closed, source page at its top. `reset`
+        // does it on the server too — the row AND the live room — so the show screen,
+        // followers and the stable follower link all land there with this screen.
+        const sess = await startSession({ deckId: data.deck.id, controllerId: window.localStorage.getItem('tp2-device-id') || undefined, reset: true } as any);
+        setCurrentIdx(0);
+        applyBeat(0, 0);
+        applyMediaView('article');
+        applySrc(0, 0);
         setSessionId(sess.sessionId);
-        // Joining an existing session — sync to wherever the other device is
-        if (!sess.isNew) {
-          const state = await getSession({ sessionId: sess.sessionId });
-          const remoteIdx = typeof state.session?.currentSlideIndex === 'number' ? state.session.currentSlideIndex : 0;
-          if (remoteIdx > 0) setCurrentIdx(remoteIdx);
-          // Mark as "just synced remotely" so the poller doesn't immediately overwrite
-          lastLocalNavTimeRef.current = Date.now() - 5000;
-        }
       } catch { toast.error('Failed to load presentation'); }
       finally { setLoading(false); }
     })();
@@ -204,7 +210,12 @@ export default function NotesPage() {
         // Only apply remote change if this device hasn't navigated in the last 2s
         // (prevents the two devices from fighting each other)
         const remoteBeat = typeof state.session.currentBeat === 'number' ? Math.max(0, Math.round(state.session.currentBeat)) : 0;
-        if (remoteIdx !== localIdx && timeSinceLocalNav > 2000) {
+        // ⚠️ WHILE THE SOCKET IS UP IT IS THE ONLY SOURCE OF THE SLIDE, BEAT AND MEDIA. The row
+        // lags it (and an HTTP write can land after a newer socket one), so a poll that read it
+        // could put this screen on another story than the room's — and the next → from there
+        // then "changed" to the slide the room was already on. The poll is the fallback only.
+        const socketUp = !!syncRef.current?.socket.connected;
+        if (!socketUp && remoteIdx !== localIdx && timeSinceLocalNav > 2000) {
           setCurrentIdx(remoteIdx);
           applyBeat(remoteIdx, remoteBeat);
           const sls = ctxRef.current.slides;
@@ -215,14 +226,14 @@ export default function NotesPage() {
           setTimeout(() => setRemoteSynced(false), 2000);
         }
         // The beat of the story both devices are on — unless this device just stepped.
-        if (remoteIdx === ctxRef.current.currentIdx && remoteBeat !== beatOf(remoteIdx)
+        if (!socketUp && remoteIdx === ctxRef.current.currentIdx && remoteBeat !== beatOf(remoteIdx)
             && Date.now() - lastLocalBeatTimeRef.current > 2000 && timeSinceLocalNav > 2000) {
           applyBeat(remoteIdx, remoteBeat);
           channelRef.current?.postMessage({ type: 'beat', idx: remoteIdx, beat: remoteBeat } satisfies BCMsg);
         }
         // Article/video for the slide both devices are on — unless this device just changed it.
         const remoteMedia: MediaView = state.session.mediaView === 'video' ? 'video' : 'article';
-        if (remoteIdx === ctxRef.current.currentIdx && remoteMedia !== mediaViewRef.current
+        if (!socketUp && remoteIdx === ctxRef.current.currentIdx && remoteMedia !== mediaViewRef.current
             && Date.now() - lastLocalMediaTimeRef.current > 2000 && timeSinceLocalNav > 2000
             && (remoteMedia === 'article' || slideHasVideo(ctxRef.current.slides[remoteIdx]))) {
           applyMediaView(remoteMedia);
@@ -238,11 +249,18 @@ export default function NotesPage() {
     return () => clearInterval(iv);
   }, [sessionId]);
 
-  // Reset teleprompter scroll on slide change — start paused so presenter controls when scrolling begins
-  useEffect(() => {
-    // Marked as ours so the scrub listener does not publish it as a drag.
+  // A new story's script starts at its top.
+  // ⚠️ A LAYOUT EFFECT, AND THE GUARD IS TOLD. When the change came from the room (another
+  // screen, a reset) a plain effect ran after the browser had already clamped the old
+  // scroll offset into the new, shorter script and fired a scroll event for it — which was
+  // published as a seek to the BOTTOM. Here the reset lands before any scroll event, and
+  // the guard (presenter/scrollGuard.ts) keeps anything still moving from being published.
+  // The play state is the room's (it used to be forced to "paused" here while the room
+  // kept playing, so the first Space after a story change did nothing).
+  useLayoutEffect(() => {
+    tpGuard.markNav();
     if (teleprompterRef.current) { lastProgScrollRef.current = 0; teleprompterRef.current.scrollTop = 0; }
-    setTeleprompterPaused(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIdx]);
 
   // Claim teleprompter control when switching to teleprompter tab
@@ -311,6 +329,17 @@ export default function NotesPage() {
       if (Math.abs(el.scrollTop - lastProgScrollRef.current) <= 2) return;
       const max = el.scrollHeight - el.clientHeight;
       if (max <= 0) return;
+      // Not a gesture that began on THIS script (a clamp, an old flick, a re-layout): never
+      // published, and just after a story change this screen goes back to where the room is.
+      if (!tpGuard.userScrolling()) {
+        if (tpGuard.sinceNav() < SETTLE_MS) {
+          const sync = syncRef.current;
+          const top = (sync && sync.state().idx === ctxRef.current.currentIdx ? sync.positionNow() : 0) * max;
+          lastProgScrollRef.current = top;
+          el.scrollTop = top;
+        }
+        return;
+      }
       syncRef.current?.seek(Math.max(0, Math.min(1, el.scrollTop / max)));
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -388,6 +417,8 @@ export default function NotesPage() {
     if (!sid) return;
     const sync = connectLiveSync(sid);
     syncRef.current = sync;
+    sync.socket.on('connect', () => setConnected(true));
+    sync.socket.on('disconnect', () => setConnected(false));
     sync.onSync((snap) => {
       // The authoritative event drives the UI, including for the screen that
       // asked for the change — a local guess can disagree with the broadcast.
@@ -450,8 +481,18 @@ export default function NotesPage() {
         setTpWidth(a.textWidth as 'wide' | 'medium' | 'narrow');
       }
     });
-    return () => { sync.close(); syncRef.current = null; };
+    return () => { sync.close(); syncRef.current = null; setConnected(false); };
   }, [sessionId]);
+
+  // A new size / line height / width re-wraps the script: a paused screen lands back on the
+  // room's place in it (a playing one does so on its next frame).
+  useLayoutEffect(() => {
+    const el = teleprompterRef.current;
+    const sync = syncRef.current;
+    if (!el || !sync || sync.state().isPlaying || sync.state().idx !== ctxRef.current.currentIdx) return;
+    const max = el.scrollHeight - el.clientHeight;
+    if (max > 0) { const top = sync.positionNow() * max; lastProgScrollRef.current = top; el.scrollTop = top; }
+  }, [tpFontSize, tpLineHeight, tpWidth]);
 
   const tpPausedRef = useRef(teleprompterPaused);
   useEffect(() => { tpPausedRef.current = teleprompterPaused; }, [teleprompterPaused]);
@@ -527,7 +568,8 @@ export default function NotesPage() {
   // Leaving a story takes TWO presses (Jake 2026-10-07: so a stray → on the last
   // slide never jumps to the next story). The first press on the last beat arms it;
   // a second one within NEXT_STORY_WINDOW_MS goes on. Any other step disarms it.
-  const armedNextRef = useRef<{ idx: number; at: number } | null>(null);
+  // The same rule and wording as the Deep Dive presenter (presenter/controls.ts).
+  const leaveRef = useRef(leaveGuard());
   const stepBeat = useCallback((dir: 1 | -1) => {
     const { currentIdx: ci, slides: sls } = ctxRef.current;
     const cur = sls[ci];
@@ -535,15 +577,13 @@ export default function NotesPage() {
     const n = storyBeats(storyStage(cur));
     const b = beatOf(ci);
     if (dir > 0 && b >= n - 1 && ci < sls.length - 1) {
-      const armed = armedNextRef.current;
-      if (!armed || armed.idx !== ci || Date.now() - armed.at > NEXT_STORY_WINDOW_MS) {
-        armedNextRef.current = { idx: ci, at: Date.now() };
-        toast.info('Last slide of this story — press → twice quickly for the next story', { id: 'next-story-arm', duration: 2500 });
+      if (!leaveRef.current.press(ci)) {
+        toast.info(armMessage('story'), { id: ARM_TOAST_ID, duration: 2500 });
         return;
       }
-      toast.dismiss('next-story-arm');
+      toast.dismiss(ARM_TOAST_ID);
     }
-    armedNextRef.current = null;
+    leaveRef.current.disarm();
     if (mediaViewRef.current === 'video') setMedia('article');
     if (dir > 0 && b < n - 1) {
       lastLocalBeatTimeRef.current = Date.now();
@@ -588,7 +628,6 @@ export default function NotesPage() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const { currentIdx: ci } = ctxRef.current;
       if (e.key === 'Shift') { if (!e.repeat) shiftAloneRef.current = true; return; }
       shiftAloneRef.current = false;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); stepBeat(1); }
@@ -601,11 +640,9 @@ export default function NotesPage() {
       else if (e.key === 'ArrowUp' && viewModeRef.current === 'teleprompter') { e.preventDefault(); nudge(-1); }
       else if (e.key === ' ') {
         e.preventDefault();
-        if (viewModeRef.current === 'teleprompter') {
-          toggleTpPlayPause();
-        } else {
-          navigateTo(ci + 1);
-        }
+        // Notes view: the same as → (beats, then the next story — double press on the last beat).
+        if (viewModeRef.current === 'teleprompter') toggleTpPlayPause();
+        else stepBeat(1);
       }
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
       else if (e.key === 't' || e.key === 'T') setViewMode(v => v === 'notes' ? 'teleprompter' : 'notes');
@@ -703,6 +740,8 @@ export default function NotesPage() {
 
           <Divider />
 
+          <span data-live={connected ? 'on' : 'off'} title={connected ? 'Live sync connected' : 'Connecting…'}
+            style={{ width: 7, height: 7, borderRadius: 99, background: connected ? D.green : D.orange }} />
           {/* Mirror on device */}
           <FollowerLinkButton getSessionId={() => ctxRef.current.sessionId} synced={remoteSynced} />
 

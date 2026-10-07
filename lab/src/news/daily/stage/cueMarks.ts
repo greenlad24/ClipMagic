@@ -100,3 +100,9 @@ export function scriptParts(script: string, marks: CueMark[]): ScriptPart[] {
   }
   return out;
 }
+
+/**
+ * Carried in the same server bundle (dist/news/cue-marks.js): the Deep Dive's
+ * marker lines, so its follower shows exactly what its presenter shows.
+ */
+export { ddBeatMarks } from '../../presenter/beatMarks';
