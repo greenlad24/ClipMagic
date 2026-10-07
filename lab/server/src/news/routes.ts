@@ -713,7 +713,29 @@ const FOLLOWER_SESSION_FIELDS: (keyof SessionRecord)[] = [
 
 export const followerRouter = express.Router();
 
-followerRouter.get("/state", (req: Request, res: Response) => {
+/**
+ * The cue marks + beat titles of each story's script, for the follower page
+ * (Jake, 2026-10-07: beat titles in the teleprompter, the story's last cue in
+ * its own colour). Computed by THE PRESENTER'S OWN CODE — lab/src/news/daily/
+ * stage/cueMarks.ts, bundled to dist/news/cue-marks.js at build time
+ * (scripts/build-pipeline.mjs) — so both screens mark the same words. A
+ * missing bundle (a dev run without the build) just means no marks: the
+ * script still reads, exactly as before.
+ */
+type CueMarkOut = { start: number; end: number; beat: number; label: string; last: boolean; tag: string };
+let cueMarksMod: Promise<{ cueMarks: (slide: unknown, nextTitle: string | null) => CueMarkOut[] } | null> | null = null;
+function loadCueMarks() {
+  if (!cueMarksMod) {
+    const file = new URL("./cue-marks.js", import.meta.url).href;
+    cueMarksMod = import(file).catch((e) => {
+      console.warn("[news-follow] cue marks unavailable:", (e as Error).message);
+      return null;
+    });
+  }
+  return cueMarksMod;
+}
+
+followerRouter.get("/state", async (req: Request, res: Response) => {
   const id = String(req.query.session ?? "");
   const withSlides = req.query.slides === "1";
   const session = /^[0-9a-f-]{36}$/i.test(id) ? sessions.get(id) : undefined;
@@ -734,10 +756,17 @@ followerRouter.get("/state", (req: Request, res: Response) => {
     out.sections = dive.sections;
     out.slides = dive.sections.map((x) => ({ id: x.id, bestSourceName: "", teleprompterScript: x.parts.join("\n\n") }));
   } else if (withSlides && session.deck) {
-    out.slides = slides
+    const rows = slides
       .where("deck_id = ? AND (deleted IS NULL OR deleted = 0)", session.deck)
-      .sort((a, b) => (a.position || 0) - (b.position || 0))
-      .map((s) => ({ id: s.id, bestSourceName: s.bestSourceName ?? "", teleprompterScript: s.teleprompterScript ?? "" }));
+      .sort((a, b) => (a.position || 0) - (b.position || 0));
+    const mod = await loadCueMarks();
+    out.slides = rows.map((s, i) => {
+      // Only the marks leave the server (positions in the script + the beat titles,
+      // which are the slides' on-screen headings) — never the stage, notes or sources.
+      let cues: CueMarkOut[] = [];
+      try { cues = mod ? mod.cueMarks(s, rows[i + 1]?.topicLabel ?? null) : []; } catch { cues = []; }
+      return { id: s.id, bestSourceName: s.bestSourceName ?? "", teleprompterScript: s.teleprompterScript ?? "", cues };
+    });
   }
   res.json(out);
 });

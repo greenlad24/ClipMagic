@@ -35,7 +35,7 @@
  * The live sync is unchanged: slide index = story, beat = index into `beats`.
  */
 import type { Slide } from '../../api';
-import { cueSearchStart, placeCue } from './cues';
+import { cueSearchStart, placeCue } from './cueFind';
 
 export interface StoryCover {
   eyebrow: string;

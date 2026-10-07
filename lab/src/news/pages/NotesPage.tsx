@@ -1,12 +1,13 @@
 import { useNewsTheme } from '../useNewsTheme';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
 import { connectLiveSync, type LiveSync, type MediaView } from '../liveSync';
 import { slideMedia, slideHasVideo } from '../api';
 import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
-import { findCues, markCues } from '../daily/stage/cues';
+import { markCues, fitCueTags } from '../daily/stage/cues';
+import { cueMarks, scriptParas } from '../daily/stage/cueMarks';
 import SourceMap from '../daily/stage/SourceMap';
 import { clampSrcY, srcStep } from '../daily/stage/sourceScroll';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
@@ -616,7 +617,20 @@ export default function NotesPage() {
   // The current story's stage (cover + scenes) and where its cues sit in the script.
   const curSlide = slides[currentIdx];
   const stage = useMemo(() => storyStage(curSlide), [curSlide]);
-  const cueSpans = useMemo(() => findCues(curSlide?.teleprompterScript || '', stage.cues), [curSlide, stage]);
+  // …with each cue's beat title, the story's last cue flagged (Jake 2026-10-07). The follower page
+  // gets the same marks from the server, made by the same cueMarks().
+  const nextTitle = slides[currentIdx + 1]?.topicLabel ?? null;
+  const marks = useMemo(() => cueMarks(curSlide, nextTitle), [curSlide, nextTitle]);
+  // The titles are out-of-flow tags: keep them inside the script column (they never move text).
+  const tpColumnRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { fitCueTags(tpColumnRef.current); });
+  useEffect(() => {
+    const fit = () => fitCueTags(tpColumnRef.current);
+    window.addEventListener('resize', fit);
+    const fonts = (document as any).fonts;
+    fonts?.addEventListener?.('loadingdone', fit);
+    return () => { window.removeEventListener('resize', fit); fonts?.removeEventListener?.('loadingdone', fit); };
+  }, []);
 
   // ── Guards ─────────────────────────────────────────────────────────────────
 
@@ -712,7 +726,7 @@ export default function NotesPage() {
             {/* Scroll state indicator */}
             <ScrollPill paused={teleprompterPaused} />
 
-            <div style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
+            <div ref={tpColumnRef} style={{ maxWidth: tpWidth === 'wide' ? 960 : tpWidth === 'narrow' ? 420 : 660, margin: '0 auto', padding: '44px 40px 0', transform: tpMirror ? 'scaleX(-1)' : undefined, position: 'relative' }}>
 
               {/* Slide label */}
               <p style={{ fontSize: 11, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 28 }}>
@@ -720,12 +734,10 @@ export default function NotesPage() {
               </p>
 
               {slide?.teleprompterScript ? (
-                (() => { let off = 0; const script = slide.teleprompterScript; return script.split('\n\n').map((raw) => {
-                  // Where this paragraph starts in the whole script, for the cue marks.
-                  const at = script.indexOf(raw, off); off = at + raw.length;
-                  return { para: raw, start: at + (raw.length - raw.trimStart().length) };
-                }); })().map(({ para, start }, i) =>
-                  para.trim() ? (
+                // The SAME paragraph split as the follower page (cueMarks.ts scriptParas), with
+                // where each paragraph starts in the whole script, for the cue marks.
+                scriptParas(slide.teleprompterScript).map(({ text: para, start }, i) =>
+                  para ? (
                     <p key={i} style={{
                       fontSize: tpFontSize,
                       lineHeight: tpLineHeight,
@@ -743,7 +755,7 @@ export default function NotesPage() {
                       fontFamily: "'NewsScript', Arial, Helvetica, sans-serif",
                       WebkitTextSizeAdjust: '100%',
                     } as React.CSSProperties}>
-                      {markCues(para.trim(), start, cueSpans, curBeat)}
+                      {markCues(para, start, marks, curBeat)}
                     </p>
                   ) : null
                 )
