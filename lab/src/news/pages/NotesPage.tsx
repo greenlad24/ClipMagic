@@ -36,6 +36,8 @@ const CHANNEL = 'ng-presenter';
 // The palette and the chrome below are shared with the Deep Dive presenter
 // (../presenter/chrome.tsx), lifted out of this file verbatim.
 
+const NEXT_STORY_WINDOW_MS = 1000;   // Jake: two presses within 1 s
+
 export default function NotesPage() {
   useNewsTheme();
   const navigate = useNavigate();
@@ -520,12 +522,26 @@ export default function NotesPage() {
    * is Shift). A step while the video is up also closes it: the video was an
    * aside, and the beat being stepped to should be what the audience sees.
    */
+  // Leaving a story takes TWO presses (Jake 2026-10-07: so a stray → on the last
+  // slide never jumps to the next story). The first press on the last beat arms it;
+  // a second one within NEXT_STORY_WINDOW_MS goes on. Any other step disarms it.
+  const armedNextRef = useRef<{ idx: number; at: number } | null>(null);
   const stepBeat = useCallback((dir: 1 | -1) => {
     const { currentIdx: ci, slides: sls } = ctxRef.current;
     const cur = sls[ci];
     if (!cur) return;
     const n = storyBeats(storyStage(cur));
     const b = beatOf(ci);
+    if (dir > 0 && b >= n - 1 && ci < sls.length - 1) {
+      const armed = armedNextRef.current;
+      if (!armed || armed.idx !== ci || Date.now() - armed.at > NEXT_STORY_WINDOW_MS) {
+        armedNextRef.current = { idx: ci, at: Date.now() };
+        toast.info('Last slide of this story — press → twice quickly for the next story', { id: 'next-story-arm', duration: 2500 });
+        return;
+      }
+      toast.dismiss('next-story-arm');
+    }
+    armedNextRef.current = null;
     if (mediaViewRef.current === 'video') setMedia('article');
     if (dir > 0 && b < n - 1) {
       lastLocalBeatTimeRef.current = Date.now();
