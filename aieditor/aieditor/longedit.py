@@ -162,8 +162,11 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         nxt = allsegs[i + 1] if i + 1 < len(allsegs) else None
         into_next = bool(nxt and abs(nxt["t0"] - seg["t1"]) < 0.05
                          and (w / f"seg-{i + 1:02d}" / "rec" / "events.json").exists())
+        # the clip also runs past its end for the dissolve back into the full-screen narration
+        # (Jake #5: the bubble fades first, then the screencast) — both need extra frames
+        tail = xf_s if into_next else compose_long.aroll_tail_s()
         _docker(["python3", "/a/screencast/camera.py", f"/w/seg-{i:02d}/rec", f"/w/{clip}", "--size", f"{W}x{H}",
-                 "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + (xf_s if into_next else 0):.3f}", "--fps", f"{fps:.8f}"],
+                 "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + tail:.3f}", "--fps", f"{fps:.8f}"],
                 [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-cam")
         cam = json.load(open(w / f"{clip}.camera.json"))
         kept = compose_long.trim_blank({"t0": seg["t0"], "t1": seg["t1"], "clip": clip, "bubble": True,
@@ -171,8 +174,13 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         if kept:
             if into_next and kept["t1"] == seg["t1"]:
                 kept["tail"] = xf_s
-            if segs and segs[-1].get("tail") and abs(segs[-1]["t1"] - kept["t0"]) < 0.05:
+            elif not into_next:
+                kept["tail"] = compose_long.aroll_tail_s()
+                kept["aroll_out"] = True
+            if segs and segs[-1].get("tail") and not segs[-1].get("aroll_out") and abs(segs[-1]["t1"] - kept["t0"]) < 0.05:
                 kept["fade_in"] = segs[-1]["tail"]
+            elif kept["t0"] > 0.05:
+                kept["aroll_in"] = True              # (the video's own first frame does not fade in)
             segs.append(kept)
     # the presenter's face (for the bubble crop and the A-roll push anchor)
     face_p = d / "face.json"

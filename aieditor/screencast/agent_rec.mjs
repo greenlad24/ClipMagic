@@ -92,7 +92,8 @@ async function vclip(scale) {
   try { const m = await cdp.send("Page.getLayoutMetrics"); const v = m.cssVisualViewport || m.visualViewport || {}; x = v.pageX || 0; y = v.pageY || 0; } catch {}
   return { x, y, width: CSS_W, height: CSS_H, scale };
 }
-async function step() {
+let stalls = 0;
+async function step(silent = false) {
   if (crashed) throw new Error("the page crashed — it was reopened; observe again");
   const ok = await Promise.race([
     new Promise(async (resolve) => {
@@ -101,10 +102,18 @@ async function step() {
       await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: DT })
         .catch((e) => { process.stderr.write(`VT REJECT: ${e?.message}\n`); resolve(false); });
     }),
-    new Promise((res) => { stepTimer = setTimeout(() => res(false), 600000); }),
+    new Promise((res) => { stepTimer = setTimeout(() => res("slow"), 30000); }),
   ]).finally(() => clearTimeout(stepTimer));
-  if (!ok) { crashed = true; throw new Error("the page stopped responding — it was reopened; observe again"); }
-  if (!rec) return;
+  // ⚠️ 2026-10-07 (v12 seg-02, 3×): after a wheel scroll on Linearity's brand page the budget-expired
+  // event never came; the old 600 s timeout then "crashed" a healthy page. A frame that does not
+  // expire in 30 s is taken anyway (the page is alive — screenshots work)
+  if (ok === "slow") {
+    process.stderr.write("VT budget did not expire in 30 s — continuing\n");
+    await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" }).catch(() => {});
+    stalls += 1;
+    if (stalls > 20) { crashed = true; throw new Error("the page stopped responding — it was reopened; observe again"); }
+  } else if (!ok) { crashed = true; throw new Error("the page stopped responding — it was reopened; observe again"); }
+  if (!rec || silent) return;          // silent: the page clock moves, nothing is recorded (inside a cut)
   const shot = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 92, clip: await vclip(SCALE) });
   const buf = Buffer.from(shot.data, "base64");
   if (!rec.ff.stdin.write(buf)) await new Promise((r) => rec.ff.stdin.once("drain", r));
@@ -191,7 +200,7 @@ async function settleCut(why, before = null) {
 // differ from the canvas's flat colour), group them into clusters, keep the main group, then
 // pan + ctrl-wheel zoom in closed loop until that group fills ~78 % of the canvas area.
 const FIT_GX = 96, FIT_GY = 54;
-let fittedUrl = null, fitTrace = [], lastFit = null;          // the canvas page fitDesigns framed: the agent's own canvas-zoom keys are ignored there
+let fittedUrl = null, fitTrace = [], lastFit = null, fitArea = null, panGain = null, lastNavT = null;          // the canvas page fitDesigns framed: the agent's own canvas-zoom keys are ignored there
 const AUTO_FIT = process.env.AGENT_AUTOFIT !== "0";
 async function autoFit(why) {
   if (!AUTO_FIT) return null;
@@ -401,6 +410,7 @@ async function fitDesigns(target = 0.78) {
   }
   await page.mouse.move(cx, cy).catch(() => {});
   fittedUrl = page.url();
+  fitArea = U; panGain = gain;
   const fill = Math.max(G.w / U.w, G.h / U.h);
   return { ok: true, steps, trace: fitTrace, fill: +fill.toFixed(2), box: [G.x, G.y, G.w, G.h].map((v) => Math.round(v / SHOT_F)) };
 }
@@ -414,7 +424,15 @@ async function wheelZoom(x, y, log2z, unitsPer2x) {
 }
 async function holdUntil(sec) { while (rec && t() < sec - 1e-6) await step(); }
 async function hold(s) { const n = Math.round(s * FPS); for (let i = 0; i < n; i++) await step(); }
-function log(type, extra = {}) { const e = { t: t(), type, ...extra }; if (rec) rec.events.push(e); return e; }
+// the clip second of the WORD the agent tied this action to: the camera starts its zoom on it
+// (Jake #11 — "zoom to the login button only when he says it")
+let curAt = null;
+function log(type, extra = {}) {
+  const e = { t: t(), type, ...extra };
+  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type"].includes(type)) e.at = curAt;
+  if (rec) rec.events.push(e);
+  return e;
+}
 
 async function load(url, settle = 2.5) {
   await realtime();
@@ -506,6 +524,84 @@ async function boxOf(ref, tight = false) {
   }, ref, tight);
 }
 
+// Jake #1 (subject centre-middle): a design he names on a FITTED canvas is glided to the middle
+// of the canvas area by a visible wheel pan (~0.9 s, eased) — the camera then frames it centred
+// instead of clamping at the canvas edge. Returns the target's box after the pan.
+async function centreOnCanvas(b) {
+  if (!b || !fitArea || !panGain || page.url() !== fittedUrl || !["region", "point"].includes(b.tag)) return b;
+  if (b.width > fitArea.w * 0.9 || b.height > fitArea.h * 0.9) return b;
+  const mx = fitArea.x + fitArea.w / 2, my = fitArea.y + fitArea.h / 2;
+  const off = [b.x + b.width / 2 - mx, b.y + b.height / 2 - my];
+  if (Math.abs(off[0]) < 0.06 * CSS_W && Math.abs(off[1]) < 0.06 * CSS_H) return b;
+  const e = log("pan", { by: off.map((v) => Math.round(v * SCALE)) });
+  await page.mouse.move(mx, my).catch(() => {});            // the wheel acts at the pointer; the drawn cursor stays
+  // the wheel's gain differs per axis and per zoom (v12a: x overshot ~30 %, y barely moved), so the
+  // REAL displacement is measured on screen (grey thumbnails, best shift) and the box follows it;
+  // one smaller correction glide fixes what is left (per-axis gain re-estimated)
+  const glide = async (dx, dy, secs, gx, gy) => {
+    const n = Math.max(6, Math.round(secs * FPS));
+    let prev = 0;
+    for (let i = 1; i <= n; i++) {
+      const u = i / n, ez = u < 0.5 ? 4 * u ** 3 : 1 - (-2 * u + 2) ** 3 / 2, d = ez - prev;
+      prev = ez;
+      await page.mouse.wheel({ deltaX: gx * dx * d, deltaY: gy * dy * d }).catch(() => {});
+      if (rec) await step(); else await sleep(30);
+    }
+  };
+  let gx = panGain, gy = panGain, moved = [0, 0];
+  let before = await grey10();
+  await glide(off[0], off[1], 0.9, gx, gy);
+  if (rec) await hold(0.1); else await sleep(300);
+  let after = await grey10();
+  let sh = before && after ? bestShift(before, after, [-off[0] / 10, -off[1] / 10]) : null;
+  if (sh) {
+    moved = [sh[0] * 10, sh[1] * 10];                         // content displacement, css px
+    const left = [off[0] + moved[0], off[1] + moved[1]];      // still to go (content must move by −off)
+    if (Math.abs(left[0]) > 0.05 * CSS_W || Math.abs(left[1]) > 0.05 * CSS_H) {
+      if (Math.abs(moved[0]) > 8) gx = Math.max(-4, Math.min(4, gx * -off[0] / moved[0]));
+      if (Math.abs(moved[1]) > 8) gy = Math.max(-4, Math.min(4, gy * -off[1] / moved[1]));
+      before = after;
+      await glide(left[0], left[1], 0.6, gx, gy);
+      if (rec) await hold(0.1); else await sleep(300);
+      after = await grey10();
+      const sh2 = before && after ? bestShift(before, after, [-left[0] / 10, -left[1] / 10]) : null;
+      if (sh2) moved = [moved[0] + sh2[0] * 10, moved[1] + sh2[1] * 10];
+    }
+  } else moved = [-off[0], -off[1]];
+  if (rec) await hold(0.1); else await sleep(200);
+  await page.mouse.move(cx, cy).catch(() => {});
+  e.end = t();
+  e.moved = moved.map((v) => Math.round(v * SCALE));
+  return { ...b, x: b.x + moved[0], y: b.y + moved[1], at: b.at ? [b.at[0] + moved[0], b.at[1] + moved[1]] : b.at };
+}
+async function grey10() {
+  try {
+    const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.1) });
+    return pngGray(Buffer.from(s.data, "base64"));
+  } catch { return null; }
+}
+function bestShift(A, B, expect = [0, 0]) {
+  // the (dx, dy) in thumbnail px that best maps A onto B (B(x+dx, y+dy) ≈ A(x, y)), central region,
+  // searched AROUND the expected shift (an unconstrained search matched the dot grid: v12 probe)
+  const w = Math.min(A.w, B.w), h = Math.min(A.h, B.h);
+  const ex = Math.round(expect[0]), ey = Math.round(expect[1]);
+  const RX = Math.max(6, Math.round(Math.abs(ex) * 0.7)), RY = Math.max(6, Math.round(Math.abs(ey) * 0.7) + 4);
+  let best = null, bs = Infinity;
+  const x0 = Math.round(w * 0.1), x1 = Math.round(w * 0.9), y0 = Math.round(h * 0.15), y1 = Math.round(h * 0.85);
+  for (let dy = ey - RY; dy <= ey + RY; dy++) for (let dx = ex - RX; dx <= ex + RX; dx++) {
+    let sad = 0, n = 0;
+    for (let y = y0; y < y1; y += 2) {
+      const yb = y + dy; if (yb < 0 || yb >= h) continue;
+      for (let x = x0; x < x1; x += 2) {
+        const xb = x + dx; if (xb < 0 || xb >= w) continue;
+        sad += Math.abs(A.g[y * A.w + x] - B.g[yb * B.w + xb]); n++;
+      }
+    }
+    if (n > 200 && sad / n < bs) { bs = sad / n; best = [dx, dy]; }
+  }
+  return best;
+}
+
 const LEAD = { click: 0.75, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3 };
 async function act(a) {
   // a page scroll ENDS on its word (0.4 s per ~200 px chunk): the thing he names is on screen as
@@ -525,6 +621,22 @@ async function act(a) {
     if (a.ref) b = await boxOf(a.ref, a.type === "read" || a.type === "highlight");
     // a target off screen is SCROLLED to (visibly, wheel flicks, logged) so it sits mid-screen —
     // a silent scrollIntoView jumped the page and left the Free plan line on the bottom edge (v10)
+    // right after a goto/cut (Jake #7: landing → CUT to the zoomed Free card) the page is put in
+    // place INSIDE the cut — no visible scroll; the camera lands framed on the target
+    if (b && (b.y < 0 || b.y + b.height > CSS_H) && rec && lastNavT != null && t() - lastNavT < 0.8) {
+      await page.evaluate((ref) => document.querySelector(`[data-agent-ref="${ref}"]`)?.scrollIntoView({ block: "center" }), a.ref).catch(() => {});
+      await sleep(400);
+      b = await boxOf(a.ref, a.type === "read" || a.type === "highlight");
+    }
+    // Jake #9 (v11 1:13, v12b): a block that is already mostly on screen is READ where it is — no
+    // scroll; the camera frames its visible part
+    if (b && (b.y < 0 || b.y + b.height > CSS_H)) {
+      const vis = Math.min(CSS_H, b.y + b.height) - Math.max(0, b.y);
+      if (vis >= Math.min(b.height * 0.5, CSS_H * 0.3) && b.y < CSS_H * 0.85) {
+        const y0 = Math.max(0, b.y), y1 = Math.min(CSS_H, b.y + b.height);
+        b = { ...b, y: y0, height: y1 - y0 };
+      }
+    }
     if (b && (b.y < 0 || b.y + b.height > CSS_H)) {
       const want = Math.round(b.y + b.height / 2 - CSS_H * 0.45);
       const before = await page.evaluate(() => [scrollX, scrollY]).catch(() => [0, 0]);
@@ -558,6 +670,14 @@ async function act(a) {
     if (!b && ab && ab[2] > 4 && ab[3] > 4) b = { x: ab[0], y: ab[1], width: ab[2], height: ab[3], tag: "region", text: "", href: null, blank: false, at: xy };
     if (!b && xy) b = { x: xy[0] - 1, y: xy[1] - 1, width: 2, height: 2, tag: "point", text: "", href: null, blank: false };
   }
+  curAt = a.at != null ? +a.at : null;
+  if (rec && ["read", "highlight", "hover", "move", "click", "dblclick"].includes(a.type)) {
+    // the glide happens ON the word (the pan, then the read holds the centred design); for a click
+    // it comes just before, so the click itself still lands on its word (Jake: 1:23 = the action centred)
+    const clicky = a.type === "click" || a.type === "dblclick";
+    if (a.at != null) await holdUntil(Math.max(t(), clicky ? a.at - 0.95 - (LEAD[a.type] ?? 0) : a.at));
+    b = await centreOnCanvas(b);
+  }
   if (pointer && startAt != null && rec) await holdUntil(Math.max(t(), startAt));
   if (need && !b) return { ok: false, error: `no element for ${JSON.stringify({ ref: a.ref, text: a.text, target: a.target })} — observe again and use a ref from the list` };
   const c = b ? (b.at || [b.x + b.width / 2, b.y + b.height / 2]) : null;
@@ -584,20 +704,52 @@ async function act(a) {
     }
     case "type": {
       if (b) { await moveTo(...c); await page.mouse.click(cx, cy).catch(() => {}); }
-      const e = log("type", { box: toCap(b), text: a.text });
-      const perChar = FPS / (a.cps ?? 16);
-      let acc = 0;
-      for (const ch of a.text) {
-        await page.keyboard.type(ch);
-        acc += perChar;
-        while (rec && acc >= 1) { await step(); acc -= 1; }
+      const popups = () => page.evaluate(() => [...document.querySelectorAll('[role=listbox],[role=option],[class*="suggest" i],[class*="autocomplete" i]')]
+        .filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 40 && r.height > 12 && st.visibility !== "hidden" && st.display !== "none" && +st.opacity > 0.2; }).length).catch(() => 0);
+      const nPop = await popups();
+      const e = log("type", { box: toCap(b), text: a.text, paste: !!a.paste });
+      if (a.paste) {
+        // Jake #8: an address / a name goes in WHOLE, at once (a paste), never letter by letter
+        // set the focused field's value in one go (React-safe native setter + input event). Key
+        // events need a frame to be acknowledged: insertText / keys without a step() between them
+        // hung on the paused virtual clock (2026-10-07 v12 seg-02, twice)
+        // real key events (the JS value setter did not render in Linearity's field, v12c 1:02), each
+        // acknowledged by a SILENT clock tick: the page sees typing, the recording sees it all at once
+        for (const ch of a.text) { await page.keyboard.type(ch); if (rec) await step(true); }
+        if (rec) { for (let j = 0; j < 3; j++) await step(true); await hold(0.4); }
+      } else {
+        const perChar = FPS / (a.cps ?? 16);
+        let acc = 0;
+        for (const ch of a.text) {
+          await page.keyboard.type(ch);
+          acc += perChar;
+          while (rec && acc >= 1) { await step(); acc -= 1; }
+        }
       }
       e.end = t();
+      // Jake #8 clean screens: an autocomplete / search-suggestion list that opened under the
+      // field is closed (Escape) unless the next step submits with Enter
+      if (!a.enter && a.dismiss !== false) {
+        // only a list that APPEARED with the typing (never Escape a dialog the field sits in)
+        if (await popups() > nPop) { await page.keyboard.press("Escape").catch(() => {}); log("key", { key: "Escape", why: "dismiss popup" }); if (rec) await hold(0.15); }
+      }
       if (a.enter) { if (rec) await hold(0.25); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); if (rec) { await hold(0.3); await settleCut("enter"); } }
       break;
     }
     case "key": await pressCombo(a.key); log("key", { key: a.key }); if (rec) { await hold(0.2); if (a.key === "Enter") await settleCut("enter"); } break;
     case "scroll": {
+      if (!a.zoom && rec && lastNavT != null && t() - lastNavT < 0.8) {
+        // a scroll right after a goto happens INSIDE the cut (Jake #7/#9: the landing → CUT to the
+        // Free card zoomed; no visible scroll) — the page is placed off camera, nothing is logged
+        // the wheel, but with NO recorded frames between the flicks (the clock stays frozen, so the
+        // first frame after it already shows the scrolled page). ⚠️ realtime()/pause() here stalled
+        // the next step() for 10 min (v12 seg-01)
+        await page.mouse.move(cx, cy).catch(() => {});
+        const n = Math.max(1, Math.round(Math.abs(a.by || 0) / 200));
+        // input needs frames to be acknowledged: tick the page clock WITHOUT recording frames
+        for (let k = 0; k < n; k++) { await page.mouse.wheel({ deltaY: (a.by || 0) / n }).catch(() => {}); for (let j = 0; j < 6; j++) await step(true); }
+        return { ok: true, t: t(), note: "scrolled inside the cut (right after the goto) — nothing of it is shown" };
+      }
       if (a.zoom) {
         // zoom an app canvas at a point (ctrl+wheel): result first, big — not a page scroll
         const raw = a.to || (a.x != null ? [a.x, a.y] : [640, 360]);
@@ -649,7 +801,7 @@ async function act(a) {
       break;
     }
     case "hold": if (rec) await hold(a.s ?? 1); else await sleep(Math.min(a.s ?? 1, 30) * 1000); break;
-    case "goto": log("nav", { url: a.url }); lastFit = null; await load(a.url, a.settle ?? 2.5); if (lastFit) return { ok: true, t: t(), fit: lastFit }; break;
+    case "goto": lastNavT = t(); log("nav", { url: a.url, ...(a.fade ? { fade: true } : {}), ...(a.cut ? { cut: true } : {}) }); lastFit = null; await load(a.url, a.settle ?? 2.5); if (lastFit) return { ok: true, t: t(), fit: lastFit }; break;
     default: return { ok: false, error: `unknown action ${a.type}` };
   }
   return { ok: true, t: t() };
@@ -672,7 +824,7 @@ async function startSegment(dir) {
     "-pix_fmt", "yuv420p", "-r", String(FPS), path.join(full, "raw.mp4")],   // ~100 MB, not ~470 (the box swaps)
     { stdio: ["pipe", "ignore", "inherit"] });
   await pause();                  // the recorded clock only moves frame by frame
-  rec = { ff, frame: 0, events: [], cursor: [], dir: full };
+  rec = { ff, frame: 0, events: [], cursor: [], dir: full, url: page.url() };
   log("begin");
 }
 async function endSegment(until) {
@@ -682,7 +834,7 @@ async function endSegment(until) {
   rec.ff.stdin.end();
   await new Promise((res) => r.ff.on("close", res));
   fs.writeFileSync(path.join(r.dir, "events.json"), JSON.stringify({
-    capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0,
+    capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0, url: r.url,
     end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events }, null, 1));
   rec = null;
   await realtime();

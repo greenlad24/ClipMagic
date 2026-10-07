@@ -104,11 +104,119 @@ def target_fit(m, W, H, p):
     l, t = cx - vw / 2, cy - vh / 2
     x, y, bw, bh = m[5]
     inside = x >= l - 0.01 * vw and x + bw <= l + 1.01 * vw and y >= t - 0.01 * vh and y + bh <= t + 1.01 * vh
-    zx0, zy0, zx1, zy1 = p["bubble_zone"]
-    ax0, ay0, ax1, ay1 = (x - l) / vw, (y - t) / vh, (x + bw - l) / vw, (y + bh - t) / vh
-    ov = max(0.0, min(ax1, zx1) - max(ax0, zx0)) * max(0.0, min(ay1, zy1) - max(ay0, zy0))
-    clear = ov / max(1e-6, (ax1 - ax0) * (ay1 - ay0)) < 0.08
-    return bool(inside and clear)
+    # the facecam zone no longer counts (Jake 2026-10-07: the bubble stays put, the subject is
+    # centred even if part of it runs under the bubble)
+    return bool(inside)
+
+
+def subject_offset(m, W, H):
+    """Distance of a framed target's centre from the frame centre after the move, in frame units
+    (hypot(dx/W, dy/H) of the output) — Jake #1 centre-middle. None without a target box."""
+    if len(m) < 6 or not m[5] or m[3][0] <= 1.0:
+        return None
+    z, cx, cy = m[3]
+    x, y, bw, bh = m[5]
+    return math.hypot((x + bw / 2 - cx) * z / W, (y + bh / 2 - cy) * z / H)
+
+
+def centre_excess(m, W, H):
+    """How much further from the centre the target ended than the page edge forced: 0 = centred as
+    well as the capture allows (a sidebar item or a top-bar button cannot reach the middle without
+    showing past the page). Measures the camera's compliance with Jake #1, not the page layout."""
+    o = subject_offset(m, W, H)
+    if o is None:
+        return None
+    z = m[3][0]
+    x, y, bw, bh = m[5]
+    _, icx, icy = camera.clamp(z, x + bw / 2, y + bh / 2, W, H)
+    best = math.hypot((x + bw / 2 - icx) * z / W, (y + bh / 2 - icy) * z / H)
+    return max(0.0, o - best)
+
+
+# ── frame checks shared with the references (sc6 measurement scripts) ──────────────────────
+RING = (1701.9, 253.7, 175.6)          # facecam ring centre + radius at 1080p (compose_long FACECAM)
+
+
+def _decode(video, t0, n, w, h, fmt="rgb24"):
+    cmd = ["ffmpeg", "-v", "error", "-ss", f"{max(0, t0):.3f}", "-i", str(video), "-frames:v", str(n),
+           "-vf", f"scale={w}:{h}:flags=area", "-f", "rawvideo", "-pix_fmt", fmt, "-"]
+    buf = subprocess.run(cmd, capture_output=True, check=True).stdout
+    c = 3 if fmt == "rgb24" else 1
+    k = len(buf) // (w * h * c)
+    return np.frombuffer(buf[: k * w * h * c], np.uint8).reshape((k, h, w, c) if c == 3 else (k, h, w))
+
+
+def ring_blue(img):
+    """Share of the ring's circle that shows the ring's blue (pass1.py's test, RGB order)."""
+    h, w = img.shape[:2]
+    s = w / 1920
+    ang = np.linspace(0, 2 * np.pi, 360, endpoint=False)
+    xs = np.clip((RING[0] + RING[2] * np.cos(ang)) * s, 0, w - 1).astype(int)
+    ys = np.clip((RING[1] + RING[2] * np.sin(ang)) * s, 0, h - 1).astype(int)
+    px = img[ys, xs].astype(np.int16)
+    return float((((px[:, 2] - px[:, 1]) > 60) & (px[:, 2] > 100)).mean())
+
+
+def _bubble_mask(w, h):
+    yy, xx = np.mgrid[0:h, 0:w]
+    return np.hypot(xx - RING[0] * w / 1920, yy - RING[1] * h / 1080) > (185 * w / 1920 + 2)
+
+
+def edge_centroid(g):
+    """Edge-weighted content centroid of a 160x90 grey frame (bubble masked) → distance from the
+    centre in frame units — the same measure as the references' 0.10 median."""
+    im = g.astype(np.float32)
+    gx = np.abs(np.diff(im, axis=1))[:-1, :]
+    gy = np.abs(np.diff(im, axis=0))[:, :-1]
+    e = gx + gy
+    e[~_bubble_mask(160, 90)[:-1, :-1]] = 0
+    e[e < 12] = 0
+    if e.sum() < 10:
+        return None
+    Y, X = np.mgrid[0:89, 0:159]
+    return math.hypot((e * X).sum() / e.sum() / 159 - 0.5, (e * Y).sum() / e.sum() / 89 - 0.5)
+
+
+def transition_shape(video, t, kind, fps):
+    """Bubble opacity and screen blend weight per frame across a screencast ↔ A-roll boundary.
+    ok = the bubble fade is short (≤ 6 f) and comes FIRST on exit / LAST on entry, and the screen
+    change is a dissolve of 4–20 f (Jake #5) — a 1-frame cut of both is 'hard'."""
+    n0 = 14
+    rgb = _decode(video, t - n0 / fps, 2 * n0 + 1, 960, 540)
+    if len(rgb) < 10:
+        return None
+    grey = np.array([np.dot(f[::6, ::6, :3], [0.299, 0.587, 0.114]) for f in rgb])
+    m = _bubble_mask(grey.shape[2], grey.shape[1])
+    A, B = grey[0], grey[-1]
+    D = B - A
+    den = max(float((D[m] ** 2).sum()), 1.0)
+    w = [float(((g - A)[m] * D[m]).sum() / den) for g in grey]
+    rb = [ring_blue(f) for f in rgb]
+    side = rb[:6] if kind == "out" else rb[-6:]          # the bubble's own plateau (screencast side)
+    plat = float(np.median(side)) or max(rb) or 1.0
+    ring = [min(1.0, r / plat) for r in rb]
+
+    def first(xs, pred):
+        return next((i for i, v in enumerate(xs) if pred(v)), None)
+    ss, se = first(w, lambda v: v > 0.06), first(w, lambda v: v > 0.94)
+    if kind == "out":
+        rs, rg = first(ring, lambda v: v < 0.93), first(ring, lambda v: v <= 0.07)
+    else:
+        rs, rg = first(ring, lambda v: v > 0.07), first(ring, lambda v: v >= 0.93)
+    res = {"t": round(t, 2), "kind": kind, "ring": [round(v, 2) for v in ring], "w": [round(v, 2) for v in w]}
+    if None in (ss, se, rs, rg):
+        res["ok"] = False
+        return res
+    res.update(bubble_frames=rg - rs, screen_frames=se - ss)
+    if kind == "out":
+        w_at_gone = w[rg]
+        res["bubble_first"] = w_at_gone <= 0.6
+    else:
+        res["bubble_first"] = w[rs] >= 0.4           # entry: the screencast is in before the bubble
+    res["max_step"] = round(max(b - a for a, b in zip(w, w[1:])), 2)
+    res["ok"] = bool(1 <= res["bubble_frames"] <= 6 and 4 <= res["screen_frames"] <= 20 and res["bubble_first"]
+                     and res["max_step"] <= 0.5)
+    return res
 
 
 def edit_metrics(edit_dir, video):
@@ -128,6 +236,7 @@ def edit_metrics(edit_dir, video):
         spans.append((t, total))
     sc_dur = sum(b - a for a, b in spans)
     zin, holds, cuts, n_moves, zoom_series, deep = [], [], 0, 0, [], 0
+    offs, move_end_t, n_events, hide_spans, excess = [], [], 0, [], []
     pans, pan_frames, pan_peaks, n_xf, xf_frames, hard_page, fits = 0, [], [], 0, [], 0, []
     cp = camera.params()
     for i, seg in enumerate(plan["segments"]):
@@ -161,7 +270,7 @@ def edit_metrics(edit_dir, video):
                 us = [ease(j / 200) for j in range(201)]
                 vmax = max(b - a for a, b in zip(us, us[1:])) * 200 / (m[1] / cfps)
                 pan_peaks.append(dist * vmax)
-            if z1 > z0 + 0.02:
+            if z1 > z0 + 0.02 and m[4] != "drift":
                 zin.append(z1)
                 deep += z1 > 1.6 + 1e-6
             times.append(((m[0] - f0) / cfps, m[1] / cfps))
@@ -172,14 +281,31 @@ def edit_metrics(edit_dir, video):
         xf_t = [x[0] for x in xfs]
         # full-screen changes that stayed HARD cuts (page changes without a dissolve)
         hard_page += sum(1 for t_ in camera.page_changes(ev) if 0.05 < t_ < dur and not any(abs(t_ - x) < 0.05 for x in xf_t))
+        W_, H_ = ev["capture"]["w"], ev["capture"]["h"]
         for m in ms:
-            f_ = target_fit(m, ev["capture"]["w"], ev["capture"]["h"], cp)
+            f_ = target_fit(m, W_, H_, cp)
             if f_ is not None:
                 fits.append(f_)
-        # holds: from the end of a move to the start of the next move/cut (or the span end)
-        times.sort()
-        for (s0, d0), (s1, _) in zip(times, times[1:] + [(dur, 0)]):
-            holds.append(max(0.0, s1 - (s0 + d0)))
+            o_ = subject_offset(m, W_, H_)
+            if o_ is not None:
+                offs.append(o_)
+                excess.append(centre_excess(m, W_, H_))
+                move_end_t.append(span[0] + (m[0] + max(m[1], 0) - f0) / cfps + 0.15)
+        # STATIC holds (Jake #2): screencast time with no camera move, no cut, no dissolve, no scroll /
+        # canvas pan / live typing — the same events the references' 854 holds were cut at
+        busy = sorted(((a_ - f0) / cfps, (b_ - f0) / cfps) for a_, b_ in camera.busy_spans([tuple(m) for m in cam["moves"]], ev, cfps, f0, cp))
+        cur = 0.0
+        for a_, b_ in busy:
+            if a_ >= dur:
+                break
+            if a_ > cur:
+                holds.append(a_ - cur)
+            cur = max(cur, b_)
+        if dur > cur:
+            holds.append(dur - cur)
+        n_events += sum(1 for m in ms if m[1] > 0 or m[4] in ("cut", "xfade"))
+        n_events += sum(1 for e in ev["events"] if e["type"] in ("cut", "nav") and 0.05 < e["t"] < dur)
+        hide_spans += [(span[0] + a_, span[0] + b_) for a_, b_ in cam.get("bubble_hide", [])]
         zoom_series += _camera_series(cam, ev, dur, fps)
     mins = sc_dur / 60 if sc_dur else 1
     m = {
@@ -190,8 +316,13 @@ def edit_metrics(edit_dir, video):
         "deep_zoom_pct": round(100 * deep / len(zin), 1) if zin else 0.0,
         "time_zoomed_pct": round(100 * sum(z > 1.05 for z in zoom_series) / len(zoom_series), 1) if zoom_series else 0,
         "mean_zoom": round(sum(zoom_series) / len(zoom_series), 3) if zoom_series else 1.0,
-        "hold_median_s": round(st.median(holds), 2) if holds else 0.0,
-        "short_holds_pct": round(100 * sum(h < 1.5 for h in holds) / len(holds), 1) if holds else 0.0,
+        "static_hold_p50_s": round(_q(holds, 50), 2) if holds else 0.0,
+        "static_hold_p90_s": round(_q(holds, 90), 2) if holds else 0.0,
+        "static_hold_max_s": round(max(holds), 2) if holds else 0.0,
+        "motion_events_per_min": round(n_events / mins, 2),
+        "subject_centre_median": round(st.median(offs), 3) if offs else 0.0,
+        "subject_centre_p75": round(_q(offs, 75), 3) if offs else 0.0,
+        "centre_excess_p90": round(_q(excess, 90), 3) if excess else 0.0,
         "cuts_per_min": round(cuts / mins, 2),
         "pans_per_min": round(pans / mins, 2),
         "pan_frames_median": round(st.median(pan_frames), 1) if pan_frames else 0.0,
@@ -205,7 +336,94 @@ def edit_metrics(edit_dir, video):
         if not n_:
             m.pop(k_)
     m.update(frame_metrics(video, spans))
+    m.update(rule_frame_metrics(edit_dir, video, spans, move_end_t, hide_spans, fps, total))
     return m
+
+
+def _q(xs, pct):
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(len(xs) * pct / 100))]
+
+
+def rule_frame_metrics(edit_dir, video, spans, move_end_t, hide_spans, fps, total):
+    """Frame checks for Jake's review rules, measured on the rendered video:
+    - frame_centroid_median: edge centroid after each framing move (refs 2–5 median 0.10);
+    - bubble_constant_pct: the ring at its exact place on screencast frames (2 fps), except while an
+      action under it hides it and within 0.5 s of a span edge;
+    - aroll_transition_ok_pct: every screencast ↔ A-roll boundary is bubble-first + a short dissolve;
+    - text_gradient_pct: every text overlay darkens the bottom band (away from the text) by > 20 %."""
+    out, details = {}, {}
+    cents = []
+    for t in move_end_t:
+        g = _decode(video, t, 1, 160, 90, "gray")
+        if len(g):
+            c = edge_centroid(g[0])
+            if c is not None:
+                cents.append(c)
+    if cents:
+        out["frame_centroid_median"] = round(st.median(cents), 3)
+    # bubble constancy
+    n = ok = 0
+    for a, b in spans:
+        a2, b2 = a + 0.5, b - 0.5
+        if b2 - a2 < 0.5:
+            continue
+        ffps = 2.0
+        cmd = ["ffmpeg", "-v", "error", "-ss", f"{a2:.3f}", "-t", f"{b2 - a2:.3f}", "-i", str(video),
+               "-vf", f"fps={ffps},scale=960:540:flags=area", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+        buf = subprocess.run(cmd, capture_output=True, check=True).stdout
+        k = len(buf) // (960 * 540 * 3)
+        frames = np.frombuffer(buf[: k * 960 * 540 * 3], np.uint8).reshape(k, 540, 960, 3)
+        for i, f in enumerate(frames):
+            t = a2 + i / ffps
+            if any(x - 0.5 <= t <= y + 0.6 for x, y in hide_spans):
+                continue
+            n += 1
+            ok += ring_blue(f) >= 0.45
+    if n:
+        out["bubble_constant_pct"] = round(100 * ok / n, 1)
+    # screencast <-> A-roll transitions
+    blocks = json.loads((Path(edit_dir) / "blocks.json").read_text())["blocks"]
+    trans = []
+    for a, b in spans:
+        if a > 0.3:
+            trans.append(transition_shape(video, a, "in", fps))
+        if b < total - 0.3:
+            trans.append(transition_shape(video, b, "out", fps))
+    trans = [x for x in trans if x]
+    if trans:
+        out["aroll_transition_ok_pct"] = round(100 * sum(x["ok"] for x in trans) / len(trans), 1)
+        details["transitions"] = trans
+    # text gradient
+    ov_p = Path(edit_dir) / "overlays.json"
+    grads = []
+    if ov_p.exists():
+        for ev in json.loads(ov_p.read_text()):
+            if ev.get("template") not in ("lower_title", "link", "keyword", "list", "number"):
+                continue
+            nfr = len(list((Path(edit_dir) / "gfx" / ev["frames_dir"]).glob("f*.png"))) if (Path(edit_dir) / "gfx" / ev["frames_dir"]).exists() else 0
+            a = ev["start_frame"] / fps
+            b = a + (nfr / fps if nfr else ev["t1"] - ev["t0"])
+            mid = a + 0.55 * (b - a)
+            ref_t = None
+            for cand in (b + 0.45, a - 0.45):
+                if 0 < cand < total and any(x <= cand <= y for x, y in blocks) and not any(x <= cand <= y for x, y in spans):
+                    ref_t = cand
+                    break
+            if ref_t is None:
+                continue
+            g1 = _decode(video, mid, 1, 160, 90, "gray")
+            g0 = _decode(video, ref_t, 1, 160, 90, "gray")
+            if not len(g1) or not len(g0):
+                continue
+            band = (slice(77, 90), np.r_[0:24, 136:160])
+            r = float(g1[0][band].mean() + 1) / float(g0[0][band].mean() + 1)
+            grads.append({"t": round(a, 2), "template": ev["template"], "ratio": round(r, 2), "ok": r < 0.8})
+    if grads:
+        out["text_gradient_pct"] = round(100 * sum(x["ok"] for x in grads) / len(grads), 1)
+        details["gradients"] = grads
+    out["_details"] = details
+    return out
 
 
 # ── scoring ────────────────────────────────────────────────────────────────────────────────
@@ -213,7 +431,7 @@ def score(metrics):
     q = system()["qa"]
     rows, wsum, ssum = [], 0.0, 0.0
     for name, spec in q["metrics"].items():
-        if name not in metrics:
+        if name not in metrics or not isinstance(metrics[name], (int, float)):
             continue
         v = metrics[name]
         lo, hi = spec["band"]

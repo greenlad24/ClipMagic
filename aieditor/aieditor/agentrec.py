@@ -9,6 +9,7 @@ long AI generations never show). The Scout's report for the tool is the map of t
 """
 import base64
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -141,7 +142,7 @@ earlier than the current time. The page's clock is frozen between your steps, so
 SHOT GRAMMAR (Jake's own reference tutorial — follow it, it is how the result is judged):
 - ONE BEAT PER IDEA. Each narration idea gets one calm screen: act once, then let it sit. Give a
   read/hover at least 2.5 s ("ms": 2500+). Do NOT hop between several small targets within a few
-  seconds — the camera can only move about once every 4–10 s and ignores the rest.
+  seconds — the camera moves about once every 3–5 s (a hold of ~3 s, then the next beat) and ignores the rest.
 - WHAT THE CAMERA DOES: it zooms (1.25–1.5×) to the element you click/type/read/highlight and holds
   there. So read/highlight targets must be MEANINGFUL BLOCKS the viewer should look at: a card, a
   panel, a form, a design, a row of swatches — never a lone word, an icon, an empty area or bare
@@ -174,6 +175,25 @@ SHOT GRAMMAR (Jake's own reference tutorial — follow it, it is how the result 
 - When the narration describes a step we cannot show for real (e.g. a sign-up while logged in),
   show the closest honest thing (hover the button he names) — never wander.
 
+JAKE'S RULES (his review of the v11 sample, 2026-10-07 — they win over anything above):
+1. CENTRE-MIDDLE: the camera centres what you act on / read, so act on the ONE thing the words name.
+   On a design canvas, read a design with its "box": the recorder glides it to the middle of the
+   screen and the camera centres it.
+2. CONSTANT MOTION: a new beat every 3-5 s while he talks about one screen — read the NEXT part he
+   names (the next card, the next row, the next design), in order, never jumping around.
+3. REVEAL: when he names the tool, its landing page (logo, hero) — goto it, unzoomed.
+4. NO PURPOSELESS PAGES: never click through Home or a dashboard to reach something; goto its page
+   directly (use the page list). Never show the whole zoomed-out canvas as a beat.
+7. PRICING: the landing page (logo) first, then goto the pricing page with "cut": true and READ the
+   Free plan card (deep) right away — the cut lands on it zoomed. Never read or show all prices.
+8. CLEAN SCREENS: type addresses/names with "paste": true (all at once). If a suggestion list or
+   popup opens, close it (key Escape) before the next beat. No cookie banners.
+9. NO UNNECESSARY SCROLL: scroll only to reach the one thing he names next.
+10. PROMPTS: type the prompt into the box (live, cps 16-20); then do NOT click any design: goto
+   the finished document that holds the designs (a goto dissolves in). The camera stays zoomed
+   out while typing.
+11. ON THE WORD: "at" = the second of the word that names the target; no hovering around first.
+
 SAFETY: never delete anything, never buy/upgrade/checkout, never publish, share, invite, email or
 post, never change account, billing or security settings. Creating a brand, running an AI
 generation, opening documents, resizing, editing text/fonts/colours in a design are fine — the
@@ -190,11 +210,13 @@ ACTION FIELDS (exactly these):
       take "ms" (how long to hold) and optional "deep": true. For a spot on a canvas ALSO give
       "box": [x, y, w, h] = the whole design/artboard it belongs to (screenshot px), so the camera
       frames the design, not bare canvas
-  type: {"ref": "r5", "text": "what to type", "cps": 18, "enter": false}
+  type: {"ref": "r5", "text": "what to type", "cps": 18, "enter": false, "paste": false}
+      ("paste": true puts the whole text in at once — addresses, names, URLs)
   key: {"key": "Escape" | "Enter" | "Tab" | "ArrowDown" | "Shift+1" ...}
   scroll: {"by": 400}   (px, + = down; on a design canvas it pans)
   wait_for: {"text": "text that appears when done", "show": 1, "timeout": 240, "gone": false}
-  hold: {"s": 1.5}      goto: {"url": "..."}   (a goto is a cut too)
+  hold: {"s": 1.5}      goto: {"url": "...", "cut": false, "fade": false}   (a goto DISSOLVES — "meanwhile /
+      somewhere else"; "cut": true makes it a hard cut — the landing page → straight to the pricing card)
 Reply with ONE JSON object and nothing else:
 {"action": {"type": "...", "at": 3.4, ...fields above...}, "why": "<8 words>"}
 or {"done": true, "why": "..."} when the segment's narration is fully shown."""
@@ -238,7 +260,8 @@ its first frame already shows what the first words are about (for the opening of
 finished result itself, e.g. the finished campaign document — open it with goto). A design canvas
 is zoomed onto its designs by the recorder itself after every load (do NOT zoom it yourself).
 For a long page whose subject is further down (a pricing card, a section he names), scroll so
-that subject is in the middle of the screen. If the segment opens on a page the previous segment
+that subject is in the middle of the screen. Never open on a page that has no purpose for the first
+words (no Home/dashboard as a stop on the way). If the segment opens on a page the previous segment
 left a dropdown/menu/typed text on, clean it up. Nothing you do now is recorded and "at" is
 ignored. The page runs in REAL time here: a heavy editor can take 10–20 s to draw after goto —
 {"type":"hold","s":6} really waits. Reply {"ready": true} when the screen is right (also if it
@@ -348,6 +371,8 @@ Next single step?"""})
             history.append({"t": obs.get("t", 0), "action": {}, "result": "unreadable reply — answer with ONE JSON object"})
             continue
         a = reply["action"]
+        if os.environ.get("AIEDITOR_DEBUG"):
+            log(f"agent step @{obs.get('t', 0):.2f}: {json.dumps(a)[:160]}")
         res = sess.send({"cmd": "act", "action": a})
         history.append({"t": obs.get("t", 0), "action": a, "result": "ok" if res.get("ok") else res.get("error", "failed")})
         if not res.get("ok"):

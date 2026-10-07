@@ -70,6 +70,29 @@ DEFAULTS = {
     "xfade_frames": 5,
     "xfade_kinds": ["nav", "wait", "enter"],
     "xfade_target_s": 3.0,        # a target this soon after a dissolve: go straight to it (no out-and-in)
+    "xfade_same_site": True,      # a goto inside the same site dissolves too (Jake APPROVED v11 1:04: dialog → brand kit)
+                                  # — a goto the agent marks "cut": true is a hard cut (Jake #7: landing → CUT to the pricing card)
+    # ── Jake's review of v11 (2026-10-07, SYSTEM.md §0) ──
+    # #1 every move ENDS with the subject CENTRE-MIDDLE: centre on the target, clamp only where the
+    # page ends. The old "frame left of / below the facecam" shift (avoid_bubble/clear_bubble) is OFF:
+    # the bubble never moves and the subject is never pushed aside for it.
+    "avoid_bubble": False,
+    "overscan_max": 0.25,         # max share of the view past a FLAT canvas edge (centre a design at the edge)
+    # #2 constant motion: refs 2–5 camera-static holds (no move, no cut, no dissolve) p50 1.0 s,
+    # p75 3.07 s, p90 6.04 s, p95 8.9 s (854 holds, sc4 measure 2026-10-07). A hold that would run
+    # past hold_max_s gets a slow drift (a centred push, or a pull-back when already deep) starting
+    # hold_target_s after the last motion — Jake's "move → hold ~3 s → pan → move".
+    "hold_target_s": 3.0, "hold_max_s": 6.0,
+    "drift_frames": 54, "drift_zoom": 1.08, "drift_ease": [0.33, 0.02, 0.27, 0.96],
+    # #11 a zoom starts ON the word that names the target (not lead_s before it); the entry push-in
+    # only heads for a target named in the first entry_target_s, else it is a centred push
+    "word_lead_s": 0.0, "entry_target_s": 1.0,
+    # #10 typing a prompt is shown zoomed OUT (no zoom-in on a type target; a held zoom opens out)
+    "type_zoom": False,
+    "nav_click_zoom": True, "nav_click_frames": 24,   # a click that navigates gets a quick zoom landing on the press
+    # bubble (Jake 2026-10-07): exact position + size on every screencast frame; it fades out
+    # (7 f) ONLY while a click / type / drag acts on something under it, and back in (11 f) after
+    "bubble_hide_actions": ["click", "dblclick", "type", "drag", "select"],
 }
 STYLE = {
     "highlight_rgba": (255, 214, 10, 0.42),       # reads #99831C on blue, text #F7F26C — multiply-like
@@ -93,7 +116,8 @@ def params():
 # ── easing ───────────────────────────────────────────────────────────────────
 def make_eases(p):
     """in / out (zoom) and pan curves — one dict for the render and qa.py."""
-    return {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"]), "pan": bezier(*p["pan_ease"])}
+    return {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"]), "pan": bezier(*p["pan_ease"]),
+            "drift": bezier(*p.get("drift_ease", p["pan_ease"]))}
 
 
 def bezier(p1x, p1y, p2x, p2y):
@@ -129,12 +153,41 @@ def marker_frame(raw, w, h):
 
 
 # ── planning ─────────────────────────────────────────────────────────────────
-def clamp(z, cx, cy, W, H):
+def clamp(z, cx, cy, W, H, room=None):
+    """Keep the view inside the capture. `room` = (left, right, top, bottom) shares of the VIEW
+    the camera may run past that edge (overscan onto flat canvas background, Jake #1)."""
     hw, hh = W / z / 2, H / z / 2
-    return z, min(max(cx, hw), W - hw), min(max(cy, hh), H - hh)
+    l, r, t, b = room or (0, 0, 0, 0)
+    return z, min(max(cx, hw - 2 * hw * l), W - hw + 2 * hw * r), min(max(cy, hh - 2 * hh * t), H - hh + 2 * hh * b)
 
 
-def framing_for(box, W, H, p, deep=False):
+def overscan_of(view, W, H):
+    """(left, right, top, bottom) share of the view that lies past each capture edge."""
+    z, cx, cy = view
+    vw, vh = W / z, H / z
+    return (max(0.0, (vw / 2 - cx) / vw), max(0.0, (cx + vw / 2 - W) / vw),
+            max(0.0, (vh / 2 - cy) / vh), max(0.0, (cy + vh / 2 - H) / vh))
+
+
+def edge_room(sm, p):
+    """Jake #1 (subject centre-middle) against a design sitting at the canvas edge: the camera may
+    run past an edge whose outer band is FLAT background (a design canvas), filled with that
+    colour, by up to overscan_max of the view. Never past real UI (a sidebar, a header)."""
+    mx = p.get("overscan_max", 0)
+    if sm is None or not mx:
+        return None
+    h, w = sm.shape[:2]
+    bw, bh = max(2, int(w * 0.04)), max(2, int(h * 0.04))
+    out = []
+    for band in (sm[:, :bw], sm[:, w - bw:], sm[:bh, :], sm[h - bh:, :]):
+        q = band.reshape(-1, 3).astype(int)
+        med = np.median(q, axis=0)
+        flat = (np.abs(q - med).max(axis=1) <= 10).mean() >= 0.97
+        out.append(mx if flat else 0.0)
+    return tuple(out)
+
+
+def framing_for(box, W, H, p, deep=False, room=None):
     """(zoom, cx, cy) for a target: the reference's levels (1.25–1.5, 1.6 cap; 2.0 only for a
     small detail the narration reads out = `deep`), centred on it, clamped into the frame."""
     x, y, bw, bh = box
@@ -151,7 +204,7 @@ def framing_for(box, W, H, p, deep=False):
     # the v5 defect: every small target went straight to the 2.0 cap (69 % of zoom-ins);
     # the reference sits at 1.31–1.46 and goes past 1.6 once in 11 minutes
     z = min(max(z, p["zoom_min"]), cap if deep else p["zoom_max"])
-    return clamp(z, x + bw / 2, y + bh / 2, W, H)
+    return clamp(z, x + bw / 2, y + bh / 2, W, H, room)
 
 
 def union(boxes):
@@ -298,6 +351,20 @@ def in_view(box, view, W, H, out_h, p, readable=True):
     return inside and bh * z * out_h / H >= p["readable_px"] * out_h / 1080 and z > 1.05
 
 
+def framed(box, view, W, H, p, tol=0.12, room=None):
+    """The target is already THE SUBJECT of this view: fully inside it, its centre within `tol` of
+    the frame centre (or as close as the page edge allows), and the view about as zoomed as the
+    target asks for. Merely "somewhere in view" is not enough any more (Jake #1: centre-middle)."""
+    if not in_view(box, view, W, H, 1080, p, readable=False):
+        return False
+    want = framing_for(box, W, H, p)
+    if want[0] > view[0] * 1.05:
+        return False
+    z, cx, cy = view
+    ideal = clamp(z, box[0] + box[2] / 2, box[1] + box[3] / 2, W, H, room)
+    return abs(ideal[1] - cx) * z / W <= tol and abs(ideal[2] - cy) * z / H <= tol
+
+
 def content_fraction(img, view, W, H):
     """Share of the view (z, cx, cy) that is not the page's flat background — a zoom onto
     bare canvas between designs is a wasted move. None when the frame has no flat background."""
@@ -345,6 +412,31 @@ def drop_empty_targets(ev, raw, f0, fps, p):
     return dropped
 
 
+def first_frame_facts(ev, raw, f0, p):
+    """The span's first screen: its content centroid (edge-weighted, bubble zone masked) and its
+    flat-edge room — the centred entry push centres the VISUAL MASS (Jake #1: v12b 0:00 pushed on
+    the geometric centre while the big boards sat left of it)."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    cap = cv2.VideoCapture(str(raw))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(f0) + 1))
+    ok, img = cap.read()
+    cap.release()
+    if not ok:
+        return
+    sm = cv2.medianBlur(cv2.resize(img, (640, round(H * 640 / W)), interpolation=cv2.INTER_AREA), 5)
+    g = cv2.cvtColor(sm, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    e = np.abs(np.diff(g, axis=1))[:-1, :] + np.abs(np.diff(g, axis=0))[:, :-1]
+    hh, ww = e.shape
+    zx0, zy0, zx1, zy1 = p["bubble_zone"]
+    e[: int(zy1 * hh), int(zx0 * ww):] = 0
+    e[e < 12] = 0
+    if e.sum() < 50:
+        return
+    Y, X = np.mgrid[0:hh, 0:ww]
+    ev["_centroid"] = (float((e * X).sum() / e.sum()) * W / 640, float((e * Y).sum() / e.sum()) * W / 640)
+    ev["_room"] = edge_room(sm, p)
+
+
 def page_changes(ev):
     """Clip seconds where the screen became a different page: navigations and the recorder's
     settle cuts (a click whose result loaded off camera = a jump cut, like the reference's)."""
@@ -352,14 +444,26 @@ def page_changes(ev):
                   and e["t"] > 0.05)
 
 
+def _site(url):
+    host = str(url or "").split("//")[-1].split("/")[0].lower()
+    return ".".join(host.split(".")[-2:])
+
+
 def xfade_cues(ev, p):
-    """{t: kind} of the screen changes that DISSOLVE (refs 2–5, SYSTEM.md §3b): a goto (another
-    page / site = a change of world), a skipped wait (a generation finishing = a time skip) and a
-    submit with Enter whose result was cut to. Click navigations and same-page state changes
-    stay hard cuts (the refs' jump cuts)."""
+    """{t: kind} of the screen changes that DISSOLVE (refs 2–5, SYSTEM.md §3b): a goto to ANOTHER
+    site (a change of world), a skipped wait (a generation finishing = a time skip) and a
+    submit with Enter whose result was cut to. Click navigations, same-page state changes and (Jake
+    #7) a goto inside the same site stay hard cuts (the refs' jump cuts)."""
     kinds = set(p.get("xfade_kinds") or [])
     out = {}
+    site = _site(ev.get("url"))
     for e in ev["events"]:
+        if e["type"] == "nav":
+            prev, site = site, _site(e.get("url")) or site
+            if e.get("cut") and not e.get("fade"):
+                continue                          # the agent asked for a hard cut (Jake #7)
+            if not p.get("xfade_same_site", True) and prev and prev == site and not e.get("fade"):
+                continue                          # same site = a hard cut, unless the agent asked to fade (Jake #10)
         if e["t"] <= 0.05:
             continue
         if e["type"] == "nav" and "nav" in kinds:
@@ -391,11 +495,24 @@ def plan_moves(ev, fps, f0, n_frames, p):
     xf_n = p.get("xfade_frames", 0)
     free_after = None                         # a dissolve just ended: the next move may start at once
 
+    def word_t(e):
+        """When the narration names this target: the agent's requested word time ("at"), else the
+        click's press, else the end of a hover's cursor travel, else the event time."""
+        if e.get("at") is not None:
+            return e["at"]
+        if e["type"] in ("click", "dblclick") and e.get("press") is not None:
+            return e["press"] - 0.35
+        if e["type"] in ("hover", "move") and e.get("end") is not None:
+            return min(e["end"], e["t"] + 0.6)
+        return e["t"]
+
     def nav_click(e):
         return e["type"] == "click" and any(0 <= c - e["t"] <= p["nav_click_window_s"] + (e.get("end", e["t"]) - e["t"])
                                             for c in pages)
     focus = [e for e in ev["events"] if e.get("box") and not e.get("empty")
-             and e["type"] in ("click", "type", "read", "highlight", "move", "hover") and not nav_click(e)]
+             and e["type"] in ("click", "type", "read", "highlight", "move", "hover")
+             and (not nav_click(e) or p.get("nav_click_zoom"))]
+    navc = {id(e) for e in focus if nav_click(e)}
     moves, view, last_move_end = [], full, -1e9
     starts = []                               # move start frames (the rolling budget)
 
@@ -410,14 +527,16 @@ def plan_moves(ev, fps, f0, n_frames, p):
         nxt_page = next((c for c in pages if c > t), 1e9)
         group = [e["box"]]
         for o in focus:
-            if t < o["t"] <= min(t + p["cluster_s"], nxt_page) and o is not e:
+            if t < o["t"] <= t + p["cluster_s"] and o["t"] < nxt_page - 1e-6 and o is not e:
                 cand = framing_for(union(group + [o["box"]]), W, H, p)
                 if cand[0] < p["zoom_min"] - 1e-6:
                     break
                 group.append(o["box"])
         box = union(group)
-        v = avoid_bubble(framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1), box, W, H, p)
-        return clear_bubble(v, box, e.get("_sm"), W, H, p), box
+        v = framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1, room=edge_room(e.get("_sm"), p))
+        if p.get("avoid_bubble"):                 # off since Jake's review: centre-middle wins
+            v = clear_bubble(avoid_bubble(v, box, W, H, p), box, e.get("_sm"), W, H, p)
+        return v, box
 
     def retarget(view, tgt, box, e):
         """(target view, kind, frames) for a move from `view`. MOVE INSIDE THE ZOOM (refs 2–5):
@@ -426,9 +545,10 @@ def plan_moves(ev, fps, f0, n_frames, p):
         dur = (p["zoom_in_frames_big"] if tgt[0] > p["big_zoom"] else p["zoom_in_frames"]) * k
         mkind = "in" if tgt[0] >= view[0] else "out"
         if view[0] > 1.05 and max(tgt[0] / view[0], view[0] / tgt[0]) <= p["pan_zoom_tol"]:
-            pz = clamp(view[0], tgt[1], tgt[2], W, H)
-            pz = clear_bubble(pz, box, e.get("_sm"), W, H, {**p, "zoom_min": view[0], "zoom_max": view[0]})
-            pz = clamp(view[0], pz[1], pz[2], W, H)
+            pz = clamp(view[0], tgt[1], tgt[2], W, H, edge_room(e.get("_sm"), p))
+            if p.get("avoid_bubble"):
+                pz = clear_bubble(pz, box, e.get("_sm"), W, H, {**p, "zoom_min": view[0], "zoom_max": view[0]})
+                pz = clamp(view[0], pz[1], pz[2], W, H)
             d1080 = math.hypot(pz[1] - view[1], pz[2] - view[2]) * view[0] * 1080 / H
             if d1080 < 12:
                 return None, None, 0
@@ -436,25 +556,42 @@ def plan_moves(ev, fps, f0, n_frames, p):
                 return pz, "pan", pan_frames(d1080, p) * k
         return tgt, mkind, dur
 
+    entry_untargeted = False
     first = focus[0] if focus else None
     if first is None or first["t"] > 0.4 or framing(first, first["t"])[0][0] <= 1.0:
         # entry push-in toward the first target's area (or the centre) — reference: every span
-        # that starts unzoomed pushes in to ~1.36× from its 1st–2nd frame
-        if first is not None and (not pages or first["t"] < pages[0]):
+        # that starts unzoomed pushes in to ~1.36× from its 1st–2nd frame. Jake #11: it heads for a
+        # target only when that target is named at the very start; a later one (the Log in button
+        # at 3.8 s) gets its zoom ON its word, so the entry is a centred push
+        if first is not None and (not pages or first["t"] < pages[0]) and \
+                word_t(first) <= p.get("entry_target_s", 1e9) and not (first["type"] == "type" and not p.get("type_zoom", True)):
             tgt, box = framing(first, first["t"])
             cxy = (tgt[1], tgt[2]) if tgt[0] > 1.0 else (box[0] + box[2] / 2, box[1] + box[3] / 2)
-            v = clear_bubble(clamp(p["entry_zoom"], *cxy, W, H), box, first.get("_sm"), W, H, p)
+            v = clamp(p["entry_zoom"], *cxy, W, H, edge_room(first.get("_sm"), p))
+            if p.get("avoid_bubble"):
+                v = clear_bubble(v, box, first.get("_sm"), W, H, p)
         else:
-            v, box = (p["entry_zoom"], W / 2, H / 2), None
-        s0 = f0 + p["entry_delay_frames"] * k
-        moves.append((s0, p["entry_frames"] * k, view, v, "in", box))
-        starts.append(s0)
-        view, last_move_end = v, s0 + p["entry_frames"] * k
+            # Jake #11 (v11 1:45): "from NO zoom to the login button only when he says it" — a span
+            # whose first beat is a CLICK named later opens at 1.0; one that opens on a result he
+            # describes (the designs at 0:00) still gets the refs' centred push from frame 1-2
+            first_click = first is not None and first["type"] in ("click", "dblclick", "type")
+            # Jake #3/#7: a tool's LANDING page stays unzoomed (the logo in view)
+            landing = str(ev.get("url", "")).split("//")[-1].split("/")[0].startswith("www.")
+            ccx, ccy = ev.get("_centroid") or (W / 2, H / 2)
+            v = None if (first_click or landing) else clamp(p["entry_zoom"], ccx, ccy, W, H, ev.get("_room"))
+            box = None
+            entry_untargeted = True
+        if v is not None:
+            s0 = f0 + p["entry_delay_frames"] * k
+            moves.append((s0, p["entry_frames"] * k, view, v, "in", box))
+            starts.append(s0)
+            view, last_move_end = v, s0 + p["entry_frames"] * k
     page_keys = {round(t, 4) for t in pages}
     cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in pages]
                   + [(t, "scroll", None) for t in scrolls]
                   + [(t, "xf", None) for t, kd in xcues.items() if t not in page_keys and xf_n > 0],
-                  key=lambda c: c[0])
+                  key=lambda c: (c[0], 0 if c[1] in ("nav", "xf") else 1 if c[1] == "scroll" else 2))
+    # (a target logged at the very instant of a page change belongs to the NEW page: the change first)
     last_target_end = 0.0
     scroll_cut = None                         # end of a scroll whose next target lands by a cut
     for t, kind, e in cues:
@@ -487,10 +624,15 @@ def plan_moves(ev, fps, f0, n_frames, p):
             moves.append((fr, 0, view, view, "xfade", None, xf_n))
             xend = fr + xf_n * k
             nxt_page = next((c for c in pages if c > t + 1e-6), 1e9)
-            soon = next((o for o in focus if t < o["t"] <= min(t + p.get("xfade_target_s", 3.0), nxt_page)), None)
+            soon = next((o for o in focus if t - 1e-6 <= o["t"] <= min(t + p.get("xfade_target_s", 3.0), nxt_page - 1e-6)), None)
             last_move_end = max(last_move_end, xend)
+            if soon is not None and soon["type"] == "type" and not p.get("type_zoom", True) and view != full:
+                # typing after a dissolve (Jake #10: zoomed OUT): the incoming screen arrives at the
+                # full frame — a held zoom on the new page showed the wrong corner for 1.3 s (v12b 1:15)
+                moves.append((fr, 0, view, full, "cut", None))
+                view, soon = full, None
             if view != full and soon is not None:
-                if not in_view(soon["box"], view, W, H, 1080, p, readable=False):
+                if not framed(soon["box"], view, W, H, p, room=edge_room(soon.get("_sm"), p)):
                     tg, bx = framing(soon, soon["t"])
                     tg, mk, du = retarget(view, tg, bx, soon) if tg[0] > 1.0 else (full, "out", p["zoom_out_frames"] * k)
                     if tg is not None:
@@ -523,7 +665,14 @@ def plan_moves(ev, fps, f0, n_frames, p):
             starts.append(s0)
             view, last_move_end = full, s0 + p["zoom_out_frames"] * k
         last_target_end = max(last_target_end, end)
-        if view[0] > 1.05 and in_view(e["box"], view, W, H, 1080, p, readable=False):
+        if e["type"] == "type" and not p.get("type_zoom", True):
+            # Jake #10: typing a prompt reads better zoomed OUT — open a held zoom as typing starts
+            if view != full and fr >= last_move_end:
+                moves.append((fr, p["zoom_out_frames"] * k, view, full, "out"))
+                starts.append(fr)
+                view, last_move_end = full, fr + p["zoom_out_frames"] * k
+            continue
+        if view[0] > 1.05 and framed(e["box"], view, W, H, p, room=edge_room(e.get("_sm"), p)):
             continue
         tgt, box = framing(e, t)
         if tgt == view or tgt[0] <= 1.0:          # a whole-page target never pulls the camera out
@@ -535,10 +684,20 @@ def plan_moves(ev, fps, f0, n_frames, p):
         # framed view the camera holds at least hold_min_s first — and right after a dissolve
         # the camera moves on at once (refs: the move starts 0–20 f after the dissolve)
         gap = 0 if view == full or (free_after is not None and fr - free_after < 2.5 * fps) else p["hold_min_s"] * fps
+        if entry_untargeted and len(starts) == 1:
+            gap = min(gap, 1.0 * fps)          # after a centred entry push the word wins (Jake #11)
+        # Jake #11: the zoom starts ON the word that names the target, not before it
+        fw = f0 + (word_t(e) - p.get("word_lead_s", p["lead_s"])) * fps
+        if id(e) in navc:
+            # a click that opens another page (Log in, Brand in the sidebar): a quick zoom straight
+            # to it that LANDS on the press, then the page change cuts (Jake #11, v11 1:45 / 2:21)
+            dur = min(dur, p.get("nav_click_frames", 24) * k)
+            fw = f0 + e.get("press", e.get("end", t)) * fps - dur
+            gap = 0
         last_cut = max([c for c in pages if c <= t + 1e-6], default=None)
-        s0 = max(fr - p["lead_s"] * fps, last_move_end + gap, f0 + p["entry_delay_frames"] * k,
+        s0 = max(fw, last_move_end + gap, f0 + p["entry_delay_frames"] * k,
                  f0 + last_cut * fps + p["entry_delay_frames"] * k if last_cut is not None else 0)
-        if s0 > max(fr + 1.5 * fps, f0 + (end - 1.0) * fps):     # too late to matter: let it go
+        if s0 > max(fw + 1.5 * fps, f0 + (end - 1.0) * fps):     # too late to matter: let it go
             continue
         # a push-in out of the full frame right after a page cut is that screen's ENTRY (the
         # reference opens every span this way) — it does not spend the move budget
@@ -555,7 +714,77 @@ def plan_moves(ev, fps, f0, n_frames, p):
         if not entry:
             starts.append(s0)
         view, last_move_end = tgt, s0 + dur
-    return moves
+    return fill_holds(moves, ev, fps, f0, n_frames, p)
+
+
+def busy_spans(moves, ev, fps, f0, p):
+    """Source-frame spans where the picture is in motion: camera moves, cuts, dissolves, page
+    changes, scrolls and live typing (Jake #2: "if there's no cut there must be movement")."""
+    k = fps / REF_FPS
+    out = []
+    for m in moves:
+        if m[4] == "xfade":
+            out.append((m[0], m[0] + (m[6] if len(m) > 6 else 5) * k))
+        else:
+            out.append((m[0], m[0] + max(m[1], 1)))
+    for e in ev["events"]:
+        if e["type"] in ("nav", "cut") and e["t"] > 0.05:
+            out.append((f0 + e["t"] * fps, f0 + e["t"] * fps + 1))
+        elif e["type"] in ("scroll", "type", "pan"):
+            out.append((f0 + e["t"] * fps, f0 + e.get("end", e["t"]) * fps + 1))
+    return sorted(out)
+
+
+def fill_holds(moves, ev, fps, f0, n_frames, p):
+    """No camera-static hold longer than hold_max_s (refs 2–5 p90 6.0 s): a hold that would run
+    longer gets a slow DRIFT hold_target_s after the last motion — a centred push of ×drift_zoom
+    on what is already framed (a pull-back when that would pass the zoom cap). The subject stays
+    centre-middle. Then every later move starts from the drifted view."""
+    hmax, htgt = p.get("hold_max_s", 0), p.get("hold_target_s", 3.0)
+    if not hmax:
+        return moves
+    k = fps / REF_FPS
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    D = p.get("drift_frames", 54) * k
+    end = f0 + (ev.get("end") or (n_frames - f0) / fps) * fps
+    busy = busy_spans(moves, ev, fps, f0, p)
+    edges, cur = [], f0
+    for a, b in busy:
+        if a > cur:
+            edges.append((cur, a))
+        cur = max(cur, b)
+    if end > cur:
+        edges.append((cur, end))
+    eases = make_eases(p)
+    drifts = []
+    for g0, g1 in edges:
+        c, sign = g0, 1
+        while g1 - c > hmax * fps:
+            s0 = c + htgt * fps
+            if s0 + D > g1 - 0.2 * fps:
+                break
+            z, cx, cy = camera_at(sorted(moves + drifts, key=lambda m: m[0]), s0, p, eases, W, H)
+            z2 = z * p["drift_zoom"] ** sign
+            if z2 > p["zoom_cap"] or z2 < 1.0:
+                sign = -sign
+                z2 = max(1.0, z * p["drift_zoom"] ** sign)
+            drifts.append((s0, D, (z, cx, cy), clamp(z2, cx, cy, W, H, overscan_of((z, cx, cy), W, H)), "drift", None))
+            sign = -sign
+            c = s0 + D
+    if not drifts:
+        return moves
+    out, view = [], (1.0, W / 2, H / 2)
+    for m in sorted(moves + drifts, key=lambda m: (m[0], m[4] != "drift")):
+        m = list(m)
+        if m[4] == "xfade":
+            m[2] = m[3] = view
+        elif m[1] > 0:
+            m[2] = view
+            if m[4] == "pan" and view[0] > 1.0:   # a pan stays at the (drifted) zoom it starts from
+                m[3] = clamp(view[0], m[3][1], m[3][2], W, H, overscan_of(m[3], W, H))
+        out.append(tuple(m))
+        view = m[3]
+    return out
 
 
 def _view_between(a, b, u):
@@ -580,13 +809,27 @@ def camera_at(moves, f, p, eases, W, H):
             view = b
             continue
         u = eases.get(kind, eases["in"])((f - s0) / dur)
-        view = clamp(*_view_between(a, b, u), W, H)
+        oa, ob = overscan_of(a, W, H), overscan_of(b, W, H)
+        view = clamp(*_view_between(a, b, u), W, H, tuple(max(x, y) for x, y in zip(oa, ob)))
         break
     return view
 
 
 def move_starts(moves):
     return [m[0] for m in moves if m[1] > 0]
+
+
+def action_targets(ev, t):
+    """Events ACTING at clip second t: a click from just before its press until it has landed, a
+    type while it types (the bubble fades only for these, SYSTEM.md §0 bubble rule)."""
+    out = []
+    for e in ev["events"]:
+        if not e.get("box") or e["type"] not in ("click", "dblclick", "type", "drag", "select"):
+            continue
+        a = (e["press"] - 0.35) if e.get("press") is not None else e["t"]
+        if a - 0.1 <= t <= e.get("end", e["t"]) + 0.2:
+            out.append(e)
+    return out
 
 
 def active_targets(ev, t):
@@ -675,6 +918,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     eases = make_eases(p)
     hl_in, hl_out = bezier(*p["hl_ease"]), bezier(*p["hl_out_ease"])
     drop_empty_targets(ev, raw, f0, fps, p)
+    first_frame_facts(ev, raw, f0, p)
     keys = plan_moves(ev, fps, f0, n_all, p)
     starts = move_starts(keys)
     kref = fps / REF_FPS
@@ -689,7 +933,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     ow, oh = size
     sprite_cache = {}
     highlights = [e for e in ev["events"] if e["type"] == "highlight" and e.get("box")]
-    page_moves = sorted(e["t"] for e in ev["events"] if e["type"] in ("scroll", "nav"))
+    page_moves = sorted(e["t"] for e in ev["events"] if e["type"] in ("scroll", "nav", "pan"))
 
     dec = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", f"{a / fps:.6f}", "-i", str(raw), "-frames:v", str(b - a),
                             "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], stdout=subprocess.PIPE)
@@ -700,7 +944,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     # dissolves (SYSTEM.md §3b): (source frame, length in ref frames) — the outgoing picture is the
     # last output frame before the change, held, under a linear opacity ramp of the incoming one
     xfades = [(m[0], m[6]) for m in keys if m[4] == "xfade" and len(m) > 6 and m[6] > 0]
-    xf_hold, prev_img = {}, None
+    xf_hold, prev_img, bg_cache = {}, None, {}
     cur_src, frame_src, last = a - 1, None, None
     good, held_src = None, []               # last non-blank source frame; output seconds held on it
     for o in range(n_out):
@@ -761,8 +1005,18 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         cw, ch = W / z, H / z
         x0, y0 = cx - cw / 2, cy - ch / 2
         M = np.array([[ow / cw, 0, -x0 * ow / cw], [0, oh / ch, -y0 * oh / ch]], np.float32)
-        img = cv2.warpAffine(frame, M, (ow, oh), flags=cv2.INTER_CUBIC if z > 1.01 else cv2.INTER_AREA,
-                             borderMode=cv2.BORDER_REPLICATE)
+        if x0 < -0.5 or y0 < -0.5 or x0 + cw > W + 0.5 or y0 + ch > H + 0.5:
+            # overscan onto a flat canvas edge: fill with that edge's colour (edge_room only allows
+            # it where the outer band is one flat colour)
+            if bg_cache.get("src") != cur_src:
+                ring = np.concatenate([frame[::8, :8].reshape(-1, 3), frame[::8, -8:].reshape(-1, 3),
+                                       frame[:8, ::8].reshape(-1, 3), frame[-8:, ::8].reshape(-1, 3)])
+                bg_cache.update(src=cur_src, v=tuple(float(v) for v in np.median(ring, axis=0)))
+            img = cv2.warpAffine(frame, M, (ow, oh), flags=cv2.INTER_CUBIC if z > 1.01 else cv2.INTER_AREA,
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=bg_cache["v"])
+        else:
+            img = cv2.warpAffine(frame, M, (ow, oh), flags=cv2.INTER_CUBIC if z > 1.01 else cv2.INTER_AREA,
+                                 borderMode=cv2.BORDER_REPLICATE)
         # cursor: scales with the zoom like the page under it
         px = 24 * ev["capture"]["scale"] * p["cursor_scale"] * z * ow / W
         key = round(px * 2) / 2
@@ -771,11 +1025,9 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         spr, hot = sprite_cache[key]
         # facecam: the bubble hides while a target sits under it on screen
         # the target the camera is HOLDING on counts for as long as it holds
-        held = None
-        for m in keys:
-            if m[0] <= f:
-                held = m[5] if len(m) > 5 and m[5] else None
-        targets = active_targets(ev, t) + ([{"box": held}] if held else [])
+        # Jake 2026-10-07: the bubble keeps its exact place; it fades ONLY while an ACTION (click,
+        # type, drag) lands on something under it — never for a read, a hover or a held framing
+        targets = [e for e in action_targets(ev, t) if e["type"] in p.get("bubble_hide_actions", ())]
         for e in targets:
             # the target's on-screen box (0..1) against the bubble's zone: hide when a real
             # share of the target sits under it (its centre alone missed a wide headline)
@@ -786,7 +1038,12 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
             ix = max(0.0, min(ax1, zx1) - max(ax0, zx0))
             iy = max(0.0, min(ay1, zy1) - max(ay0, zy0))
             area = max(1e-6, (ax1 - ax0) * (ay1 - ay0))
-            if ix * iy / area >= 0.08 and ax1 > zx0:
+            # the point being acted on (the cursor at a click) under the disc also counts
+            ux, uy = (cx_t[f] - x0) / cw, (cy_t[f] - y0) / ch
+            dcx, dcy, dr = BUBBLE_DISC
+            on_disc = math.hypot(ux - dcx, (uy - dcy) * 9 / 16) <= dr * 1.05
+            clicky = e["type"] in ("click", "dblclick")
+            if (clicky and on_disc) or (not clicky and ix * iy / area >= 0.08 and ax1 > zx0):
                 hide.append(round(o / ofps, 3))
                 break
         # blank screens (a page that scrolled into an empty/black section): reported so the
@@ -811,13 +1068,15 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     enc.stdin.close()
     enc.wait()
     dec.wait()
-    # hide frames → spans (output seconds), merged over 0.5 s gaps
+    # hide frames → spans (output seconds), merged over 0.5 s gaps; a flicker shorter than 0.3 s
+    # (a box crossing the zone while the camera moves) is not an action under the bubble
     spans = []
     for t_ in hide:
         if spans and t_ - spans[-1][1] < 0.5:
             spans[-1][1] = t_
         else:
             spans.append([t_, t_])
+    spans = [s_ for s_ in spans if s_[1] - s_[0] >= 0.3]
     bl = []
     for t_ in blank:
         if bl and t_ - bl[-1][1] < 2.5 / ofps:

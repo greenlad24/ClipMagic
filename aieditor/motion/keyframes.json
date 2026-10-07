@@ -8584,7 +8584,7 @@
   }
  },
  "screencast": {
-  "about": "Screencast production SYSTEM (motion + rules, design-free) derived from Jake's own tutorials: reference 2 (kwysV2smgfY) + refs 3–5 (3Jq-L6uLd28, Geg9TyNoi3w, AZxFgIVgHjg, measured 2026-10-07). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here.",
+  "about": "Screencast production SYSTEM (motion + rules, design-free) derived from Jake's own tutorials: reference 2 (kwysV2smgfY) + refs 3–5 (3Jq-L6uLd28, Geg9TyNoi3w, AZxFgIVgHjg, measured 2026-10-07). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here. 2026-10-07: Jake's 19-point review of v11 (SYSTEM.md §0) overrides earlier rules: subject centre-middle, constant motion (holds ≤ 6 s), bubble fixed (fades only for actions under it), bubble-first transitions to/from full-screen narration, gradient behind every text overlay.",
   "source": "reference-specs/kwys-screencast.json (ref 2, 2026-10-05/06) + reference-specs/sc4-refs2-5.{md,json} (same frame pipeline on refs 2–5, 2026-10-07)",
   "camera": {
    "zoom_in_ease": [
@@ -8614,8 +8614,8 @@
    "readable_px": 34,
    "lead_s": 0.6,
    "hold_min_s": 3.0,
-   "moves_per_min_max": 6.0,
-   "cluster_s": 6.0,
+   "moves_per_min_max": 14.0,
+   "cluster_s": 2.0,
    "idle_out_s": 14.0,
    "nav_resets": true,
    "nav_click_window_s": 2.5,
@@ -8641,7 +8641,32 @@
     "wait",
     "enter"
    ],
-   "xfade_target_s": 3.0
+   "xfade_target_s": 3.0,
+   "avoid_bubble": false,
+   "hold_target_s": 3.0,
+   "hold_max_s": 6.0,
+   "drift_frames": 54,
+   "drift_zoom": 1.08,
+   "drift_ease": [
+    0.33,
+    0.02,
+    0.27,
+    0.96
+   ],
+   "word_lead_s": 0.0,
+   "entry_target_s": 1.0,
+   "type_zoom": false,
+   "xfade_same_site": true,
+   "bubble_hide_actions": [
+    "click",
+    "dblclick",
+    "type",
+    "drag",
+    "select"
+   ],
+   "overscan_max": 0.25,
+   "cluster_note": "Jake #1/#2 (2026-10-07): each named thing gets its own centred framing — clustering only within 2 s (was 6 s, one framing for a whole list)",
+   "moves_budget_note": "Jake #2 constant motion (2026-10-07): the 6/min budget (refs' clean moves only) dropped named beats (v12b: the Resize click at 0:23); refs have 17–25 motion events/min"
   },
   "recorder": {
    "settle_after_click": true,
@@ -8754,10 +8779,11 @@
      "ref": 5.6,
      "band": [
       3.5,
-      7.0
+      12.0
      ],
      "scale": 3,
-     "weight": 2.0
+     "weight": 2.0,
+     "note": "Jake #2 constant motion (drifts) raised the upper bound; refs 4.7–6.6 moves + 17–25 motion events / min"
     },
     "zoom_in_median": {
      "ref": 1.27,
@@ -8795,24 +8821,6 @@
      "scale": 0.15,
      "weight": 1.0
     },
-    "hold_median_s": {
-     "ref": 13.7,
-     "band": [
-      4.0,
-      20.0
-     ],
-     "scale": 4,
-     "weight": 1.5
-    },
-    "short_holds_pct": {
-     "ref": 7.4,
-     "band": [
-      0,
-      12
-     ],
-     "scale": 15,
-     "weight": 1.0
-    },
     "cuts_per_min": {
      "ref": 7.2,
      "band": [
@@ -8847,7 +8855,8 @@
       2.6
      ],
      "scale": 1.0,
-     "weight": 1.5
+     "weight": 1.5,
+     "note": "refs band; Jake's constant-motion rule (2026-10-07) pushes this up — moves inside a zoom are how the camera keeps moving"
     },
     "pan_frames_median": {
      "ref": 35,
@@ -8892,9 +8901,275 @@
       100
      ],
      "scale": 15,
+     "weight": 2.0,
+     "note": "framed targets fully in view (the bubble no longer counts: Jake 2026-10-07)"
+    },
+    "static_hold_p50_s": {
+     "ref": 1.0,
+     "band": [
+      0.3,
+      3.5
+     ],
+     "scale": 2,
+     "weight": 1.0
+    },
+    "static_hold_p90_s": {
+     "ref": 6.04,
+     "band": [
+      0,
+      6.5
+     ],
+     "scale": 2,
      "weight": 2.0
+    },
+    "static_hold_max_s": {
+     "ref": 8.91,
+     "band": [
+      0,
+      9.0
+     ],
+     "scale": 3,
+     "weight": 1.5
+    },
+    "motion_events_per_min": {
+     "ref": 21.8,
+     "band": [
+      12,
+      30
+     ],
+     "scale": 6,
+     "weight": 1.0
+    },
+    "subject_centre_median": {
+     "ref": 0.1,
+     "band": [
+      0,
+      0.1
+     ],
+     "scale": 0.06,
+     "weight": 2.5
+    },
+    "subject_centre_p75": {
+     "ref": 0.16,
+     "band": [
+      0,
+      0.16
+     ],
+     "scale": 0.08,
+     "weight": 0.5,
+     "note": "raw offset incl. targets at a UI edge (sidebar, top bar) that cannot reach the middle; compliance = centre_excess_p90"
+    },
+    "frame_centroid_median": {
+     "ref": 0.1,
+     "band": [
+      0,
+      0.13
+     ],
+     "scale": 0.06,
+     "weight": 1.0
+    },
+    "bubble_constant_pct": {
+     "ref": 100,
+     "band": [
+      97,
+      100
+     ],
+     "scale": 5,
+     "weight": 2.0
+    },
+    "aroll_transition_ok_pct": {
+     "ref": 100,
+     "band": [
+      90,
+      100
+     ],
+     "scale": 20,
+     "weight": 1.5
+    },
+    "text_gradient_pct": {
+     "ref": 100,
+     "band": [
+      95,
+      100
+     ],
+     "scale": 20,
+     "weight": 1.5
+    },
+    "centre_excess_p90": {
+     "ref": 0.0,
+     "band": [
+      0,
+      0.03
+     ],
+     "scale": 0.05,
+     "weight": 2.5,
+     "note": "distance from centre beyond what the page edge forces (camera compliance with Jake #1)"
     }
    }
+  },
+  "measured_2026_10_07": {
+   "about": "refs 2–5 (sc5 per-frame data, /opt/aieditor-work/reference/work/sc5) re-measured for Jake's review; scripts in the session scratchpad copied to reference/work/sc6/bin",
+   "subject_centre_after_move": {
+    "what": "distance of the content centroid (edge-weighted, bubble masked) from the frame centre after zoom-ins/pans, in frame units (hypot of dx/W, dy/H)",
+    "edge_centroid_p25_50_75_90": [
+     0.06,
+     0.1,
+     0.16,
+     0.27
+    ],
+    "n": 267,
+    "activity_centroid_p25_50_75_90": [
+     0.08,
+     0.18,
+     0.27,
+     0.36
+    ],
+    "activity_n": 203,
+    "per_ref_edge_p50": {
+     "2": [
+      0.09,
+      0.06
+     ],
+     "3": [
+      0.1,
+      0.1
+     ],
+     "4": [
+      0.16,
+      0.11
+     ],
+     "5": [
+      0.11,
+      0.08
+     ]
+    }
+   },
+   "static_holds": {
+    "what": "screencast time with no camera move, no cut, no dissolve (854 holds)",
+    "p50_75_90_95_max_s": [
+     1.0,
+     3.07,
+     6.04,
+     8.91,
+     32.7
+    ],
+    "per_ref_p75_90": {
+     "2": [
+      3.1,
+      7.44
+     ],
+     "3": [
+      3.64,
+      6.07
+     ],
+     "4": [
+      2.94,
+      5.21
+     ],
+     "5": [
+      2.97,
+      6.47
+     ]
+    },
+    "pixel_static_runs_p50_75_90_95_s": [
+     1.3,
+     2.6,
+     4.8,
+     6.91
+    ],
+    "motion_events_per_min": {
+     "2": 21.1,
+     "3": 17.2,
+     "4": 25.4,
+     "5": 23.3
+    }
+   },
+   "aroll_transition": {
+    "what": "screencast <-> full-screen narration (A-roll) boundaries, refs 2–5",
+    "hard_cut_share": {
+     "out": 0.88,
+     "in": 0.94
+    },
+    "n_out": 134,
+    "n_in": 128,
+    "dissolve_variant": {
+     "bubble_fade_frames_median": 3,
+     "bubble_fade_range": [
+      2,
+      5
+     ],
+     "bubble_out_curve_examples": [
+      [
+       1.0,
+       0.8,
+       0.64,
+       0.39,
+       0.07,
+       0.0
+      ],
+      [
+       0.96,
+       0.91,
+       0.24,
+       0.02,
+       0.0
+      ],
+      [
+       0.99,
+       0.65,
+       0.01,
+       0.0
+      ]
+     ],
+     "screen_frames_to_50pct_median": 8.5,
+     "screen_weight_per_frame": [
+      0.06,
+      0.14
+     ],
+     "order": "the bubble is gone while the screen dissolve is still < ~40 % (out); in: the screen dissolves in first, the bubble fades in over 3–5 f during its second half",
+     "examples": [
+      "ref5 0:35.80 bubble 23→26 f then screen from f28",
+      "ref3 5:19.55 bubble 24→26 then screen from f29",
+      "ref5 9:19.83 bubble 22→26 then screen from f29",
+      "ref3 0:47.35 7 f linear screen, bubble gone mid-way"
+     ]
+    }
+   },
+   "text_gradient": {
+    "what": "black→transparent full-width gradient behind ref 2's lower titles and 'Link in the description' (kwysV2smgfY f1720–1822, f13548–13620)",
+    "direction": "bottom → up",
+    "opacity_bottom": 0.63,
+    "transparent_above_y": 0.15,
+    "profile": "alpha(y) = 0.63 · clip((y/H − 0.15)/0.85, 0, 1)^1.23  (rows: y .50 → .21, y .76 → .42, y .98 → .62)",
+    "fade_in_frames": 22,
+    "fade_in_curve": "≈ linear (norm .08 .16 .25 .34 .44 .55 .65 .76 .84 .92 .96 1 every 2 f)",
+    "fade_out_frames": 8,
+    "fade_out_curve": "norm 1 .96 .74 .34 .15 .07 0 every 2 f from the text exit",
+    "spans": "starts with the first title (on the cut), stays across back-to-back titles (Hey everyone → I'm Jake Dawson), fades with the last title's exit"
+   }
+  },
+  "transition": {
+   "aroll_bubble_fade_frames": 6,
+   "aroll_screen_dissolve_frames": 10,
+   "aroll_screen_delay_frames": 2,
+   "note": "Jake #5: bubble first, then the screencast. Exit: bubble fades over 6 f from t1−4 f, the screencast dissolves into the A-roll over 10 f from t1. Entry: the screencast dissolves in over 10 f from t0, the bubble fades in over 6 f from t0+5 f. (The refs' 3 f is the ring-blue test's reading; that test reads a true 6 f fade as ~3 f.)",
+   "aroll_bubble_lead_frames": 4
+  },
+  "text_gradient": {
+   "opacity_bottom": 0.63,
+   "top": 0.15,
+   "power": 1.23,
+   "fade_in_frames": 22,
+   "fade_out_frames": 8,
+   "merge_gap_s": 1.0,
+   "templates": [
+    "lower_title",
+    "link",
+    "keyword",
+    "list",
+    "number"
+   ],
+   "note": "design-free motion+opacity; colour black. Upper-half overlays get the mirrored (top → down) gradient."
   }
  },
  "measured": {

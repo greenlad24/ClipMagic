@@ -28,10 +28,74 @@ FACECAM = {"centre": [1701.9, 253.7], "video_d": 344.6, "outer_d": 358.6, "crop_
            "fade_out_s": 7 / 29.97, "fade_in_s": 11 / 29.97}
 MUSIC_UNDER_VOICE_DB = 23       # reference 2: bed ~23 LU under the voice, no ducking
 XFADE_REF_FRAMES = 5            # screencast → screencast dissolve (refs 2–5: 3–8 f, SYSTEM.md §3b)
+# screencast ↔ full-screen narration (Jake #5, SYSTEM.md §0 rule 5; refs 2–5 dissolve variant):
+# the BUBBLE fades first (3 f), then the screencast dissolves (10 f linear) — and mirrored on entry
+# (the refs' "3 f" was read with the ring-blue test, which drops below its threshold half-way
+# through a fade: through the same test our true 3 f fade read as 1 f, a true 6 f fade reads 3 f)
+AROLL_BUBBLE_F = 6
+AROLL_SCREEN_F = 10
+AROLL_BUBBLE_LEAD_F = 4          # exit: the bubble starts fading 4 f before the screencast does
+# black → transparent gradient behind every text overlay (Jake #6; ref 2 f1720–1822, f13548–13620)
+TEXT_GRADIENT = {"opacity": 0.63, "top": 0.15, "power": 1.23, "in_f": 22, "out_f": 8, "merge_gap_s": 1.0,
+                 "templates": ("lower_title", "link", "keyword", "list", "number")}
 
 
 def xfade_s(fps=30000 / 1001):
     return round(XFADE_REF_FRAMES / (30000 / 1001), 4)
+
+
+def aroll_tail_s():
+    """How far a screencast clip runs past its end for the dissolve into the A-roll."""
+    return round(AROLL_SCREEN_F / (30000 / 1001), 4)
+
+
+def _f(n):
+    return n / (30000 / 1001)
+
+
+def bubble_env_expr(segments):
+    """Bubble opacity over time: 1 on a screencast, with the bubble-first fades where a screencast
+    meets the full-screen narration (exit: out over 3 f from t1−2 f; entry: in over 3 f after the
+    screencast has dissolved in), untouched between back-to-back screencasts."""
+    terms = []
+    for s in segments:
+        a, b = s["t0"], s["t1"] + (s.get("tail", 0) if s.get("aroll_out") else 0)
+        f_in = (f"clip((T-{a + _f(AROLL_SCREEN_F - AROLL_BUBBLE_F + 1):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1)"
+                if s.get("aroll_in") else "1")
+        f_out = (f"(1-clip((T-{s['t1'] - _f(AROLL_BUBBLE_LEAD_F):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1))"
+                 if s.get("aroll_out") else "1")
+        terms.append(f"between(T,{a:.4f},{b:.4f})*{f_in}*{f_out}")
+    return f"min(1,{'+'.join(terms)})" if terms else "1"
+
+
+def gradient_spans(events, fps):
+    """[(t0, t1)] output seconds where the text gradient shows: each text overlay's on-screen span
+    (its PNG frames), back-to-back overlays merged (ref 2 keeps it across 'Hey everyone' → 'I'm
+    Jake Dawson')."""
+    spans = []
+    for ev in sorted(events, key=lambda e: e.get("start_frame", 0)):
+        if ev.get("template") not in TEXT_GRADIENT["templates"]:
+            continue
+        a = ev["start_frame"] / fps
+        n = ev.get("n_frames")
+        b = (ev["start_frame"] + n) / fps if n else ev["t1"]
+        if spans and a - spans[-1][1] < TEXT_GRADIENT["merge_gap_s"]:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    return spans
+
+
+def gradient_png(job, W, H):
+    """The full-frame gradient (black, alpha = 0.63·((y/H − 0.15)/0.85)^1.23) at the output size."""
+    out = Path(job) / f"textgrad-{W}.png"
+    if not out.exists():
+        g = TEXT_GRADIENT
+        _run(f"python3 -c \"import numpy as np, cv2; H={H}; W={W}; y=(np.arange(H)+0.5)/H; "
+             f"a=np.clip((y-{g['top']})/(1-{g['top']}),0,1)**{g['power']}*{g['opacity']}; "
+             f"img=np.zeros((H,W,4),np.uint8); img[:,:,3]=(a*255).round().astype(np.uint8)[:,None]; "
+             f"cv2.imwrite('/job/{out.name}', img)\"", [(Path(job), "/job")])
+    return out.name
 
 
 def _run(cmd, mounts, cancelled=lambda: False, image=SC_IMAGE, memory=None):
@@ -93,8 +157,16 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
     for i, s in enumerate(segments):
         ins.append(f"-i /job/{s['clip']}")
         n = len(ins) - 1
-        # a screencast that follows another back to back dissolves in over its tail (linear)
-        fin = (f",format=rgba,fade=t=in:st=0:d={s['fade_in']:.4f}:alpha=1" if s.get("fade_in") else "")
+        # a screencast that follows another back to back dissolves in over its tail (linear); one
+        # that comes out of / goes back to the full-screen narration dissolves too (Jake #5)
+        fade = []
+        if s.get("fade_in"):
+            fade.append(f"fade=t=in:st=0:d={s['fade_in']:.4f}:alpha=1")
+        elif s.get("aroll_in"):
+            fade.append(f"fade=t=in:st=0:d={_f(AROLL_SCREEN_F):.4f}:alpha=1")
+        if s.get("aroll_out"):
+            fade.append(f"fade=t=out:st={s['t1'] - s['t0']:.4f}:d={s.get('tail', _f(AROLL_SCREEN_F)):.4f}:alpha=1")
+        fin = ("," + ",".join(["format=rgba"] + fade)) if fade else ""
         t1 = s["t1"] + s.get("tail", 0)
         chain.append(f"[{n}:v]setpts=PTS-STARTPTS{fin},setpts=PTS+{s['t0']:.4f}/TB[sc{i}];"
                      f"[{cur}][sc{i}]overlay=eof_action=pass{':format=auto' if fin else ''}:enable='between(t,{s['t0']:.4f},{t1:.4f})'[vs{i}]")
@@ -105,9 +177,13 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         mi = len(ins) - 1
         ins.append("-loop 1 -i /fc/ring.png")
         ri = len(ins) - 1
-        en = "+".join(f"between(t,{s['t0']:.4f},{s['t1']:.4f})" for s in bub)
+        en = "+".join(f"between(t,{s['t0']:.4f},{s['t1'] + (s.get('tail', 0) if s.get('aroll_out') else 0):.4f})" for s in bub)
         hides = [(s["t0"] + a, s["t0"] + b) for s in bub for a, b in s.get("bubble_hide", [])]
         vis = _vis_expr(hides, P["fade_out_s"], P["fade_in_s"])
+        env = bubble_env_expr(bub)
+        if env != "1":
+            vis = f"({vis})*{env}"
+            hides = hides or [None]                      # the geq alpha pass is needed
         off = (side - dv) // 2
         chain.append(f"[1:v]crop={sq}:{sq}:{sx}:{sy},scale={dv}:{dv}:flags=lanczos,format=rgba,"
                      f"pad={side}:{side}:{off}:{off}:color=black@0[fv];"
@@ -116,6 +192,23 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
                      + (f",geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*({vis})'" if hides else "")
                      + f"[bub];[{cur}][bub]overlay={bx}:{by}:shortest=1:enable='{en}'[vb]")
         cur = "vb"
+    # the gradient behind the text overlays (Jake #6), under the text
+    for ev in events:
+        if "n_frames" not in ev:
+            ev["n_frames"] = len(list((job / gfx_tag / ev["frames_dir"]).glob("f*.png")))
+    gspans = gradient_spans(events, fps)
+    if gspans:
+        gname = gradient_png(job, W, H)
+        G = TEXT_GRADIENT
+        for j, (a, b) in enumerate(gspans):
+            d = b - a
+            ins.append(f"-loop 1 -framerate {fps} -t {d:.4f} -i /job/{gname}")
+            n = len(ins) - 1
+            fo = min(_f(G["out_f"]), d / 3)
+            chain.append(f"[{n}:v]format=rgba,fade=t=in:st=0:d={min(_f(G['in_f']), d / 2):.4f}:alpha=1,"
+                         f"fade=t=out:st={d - fo:.4f}:d={fo:.4f}:alpha=1,setpts=PTS-STARTPTS+{a:.4f}/TB[tg{j}];"
+                         f"[{cur}][tg{j}]overlay=eof_action=pass:format=auto:enable='between(t,{a:.4f},{b:.4f})'[vtg{j}]")
+            cur = f"vtg{j}"
     for m, ev in enumerate(events):
         ins.append(f"-framerate {fps} -start_number {ev['start_frame']} -i /g/{ev['frames_dir']}/f%05d.png")
         n = len(ins) - 1

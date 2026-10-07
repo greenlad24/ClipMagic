@@ -64,6 +64,28 @@ so people understand what they get by watching. While he describes what he made 
 will make, the screen shows that finished result, from the very first words. The first two minutes
 are MOSTLY screencast: A-roll only for his welcome/name, the subscribe ask and the link line.
 
+JAKE'S SCREENCAST RULES (his review of the v11 sample, 2026-10-07 — they override anything below):
+- REVEAL THE TOOL: the moment he names the tool ("this tool called Linearity"), the screen REVEALS it:
+  either cut to full-screen narration (no segment over those words) or show the tool's LANDING page
+  (its marketing home, logo visible, unzoomed). Never a random app page on the tool's name.
+- NO PURPOSELESS PAGES: every beat shows exactly what the words say. Never a Home/dashboard page as a
+  way-through to something else (go to the thing directly), never a page "because we are here".
+- NEVER THE WHOLE CANVAS: do not ask for "all artboards zoomed to fit"/"zoomed out on the canvas" as a
+  beat. Go straight to the main section/design he names (zoomed), or leave that moment to the
+  full-screen narration for a bigger wow.
+- PRICING: on the plan/price talk show the LANDING page unzoomed with the logo first, then CUT straight
+  to the pricing page's FREE (or the named) plan section, zoomed. Never show all the prices.
+- CLEAN SCREENS: an address/name is pasted whole (no letter-by-letter), no popups or search
+  suggestions left open, no cookie banners.
+- NO UNNECESSARY SCROLL: never scroll to "show more" of a page; only to reach the one thing he names.
+- PROMPTS: typing a prompt is shown zoomed OUT (the whole box), then the edit DISSOLVES to all the
+  designs together (the finished document) — no click on the designs, no waiting.
+- ON THE WORD: every zoom/click lands when he says the thing ("click the login" → the Log in button
+  on "login", not before). When he gives a UI instruction ("click brand in the left sidebar"), a
+  screencast is ON for those words and goes straight to that element.
+- CONSTANT MOTION: about one new beat every 3-5 s (a new part of the same screen, a click, a cut) —
+  never one static screen for long; but every beat must still be one of the above.
+
 INTENT = BEATS (the recording agent follows it literally): write each segment's "intent" as beats
 tied to his words — "on '<word>': <what fills the screen>" — about one beat per 4-6 s, each a calm
 screen (a page, a panel, a design, a form being typed into), never several tiny targets at once.
