@@ -402,6 +402,7 @@ async function callClaude(opts: {
   webSearch?: boolean;
   /** How many searches a web-search call may run. Defaults to 4. */
   searchMaxUses?: number;
+  basicSearch?: boolean;
   /** Cap on the answer length. Defaults to the lab-wide aiConfig.maxTokens. */
   maxTokens?: number;
 }): Promise<string> {
@@ -443,7 +444,10 @@ async function callClaude(opts: {
   if (opts.webSearch) {
     // Four, not scriptgen's eight: this is one member's question, not a tool
     // review that has to price every tier, and every search is billed and slow.
-    body.tools = [{ type: "web_search_20260209", name: "web_search", max_uses: opts.searchMaxUses ?? 4 }];
+    // basicSearch: the dynamic-filtering variant runs code execution under the hood —
+    // a deep-dive research part capped at 2 searches made 43 tool calls and ran for
+    // 15+ minutes (2026-10-07). The basic variant does exactly max_uses searches.
+    body.tools = [{ type: opts.basicSearch ? "web_search_20250305" : "web_search_20260209", name: "web_search", max_uses: opts.searchMaxUses ?? 4 }];
   }
 
   const t0 = Date.now();
@@ -955,6 +959,8 @@ export async function claudeTextForPurpose(opts: {
   /** Server-side web search before answering (streams; never retried). */
   webSearch?: boolean;
   searchMaxUses?: number;
+  /** The basic web_search_20250305 tool: no dynamic filtering (no code execution), max_uses is a hard cap — much faster. */
+  basicSearch?: boolean;
 }): Promise<string> {
   return await callClaude({
     model: modelForTier(opts.tier),
@@ -965,6 +971,7 @@ export async function claudeTextForPurpose(opts: {
     maxTokens: opts.maxTokens,
     webSearch: opts.webSearch,
     searchMaxUses: opts.searchMaxUses,
+    basicSearch: opts.basicSearch,
   });
 }
 

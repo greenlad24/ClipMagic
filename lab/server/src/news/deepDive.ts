@@ -501,7 +501,8 @@ Other researchers cover the other parts of this topic at the same time — gathe
       system: "You are a fast research engine behind a live AI news show. Use web search, then answer in exactly the requested JSON format.",
       messages: [{ role: "user", content: prompt }],
       webSearch: true,
-      searchMaxUses: 2,
+      basicSearch: true,
+      searchMaxUses: 3,
       maxTokens: part.maxTokens,
     });
     try {
@@ -526,7 +527,12 @@ Other researchers cover the other parts of this topic at the same time — gathe
     }
   };
   const t0 = Date.now();
-  const settled = await Promise.allSettled(parts.map(runPart));
+  // No part may hold the whole deep dive hostage: 4 minutes each, then it counts as failed.
+  const withLimit = (part: (typeof parts)[number]) => Promise.race([
+    runPart(part),
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error(`research (${part.name}) took longer than 4 minutes`)), 240_000)),
+  ]);
+  const settled = await Promise.allSettled(parts.map(withLimit));
   const got = settled.flatMap((r, i) => {
     if (r.status === "fulfilled") return [r.value];
     console.warn(`[news-deepdive] research part "${parts[i].name}" failed:`, (r.reason as Error)?.message ?? r.reason);
