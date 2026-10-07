@@ -459,69 +459,93 @@ function seedFromStory(story: StoryRecord | undefined): string {
 export async function research(d: DeepDiveRecord, story: StoryRecord | undefined): Promise<ResearchPack> {
   const today = new Date().toISOString().slice(0, 10);
   const seed = seedFromStory(story);
-  const prompt = `You are the researcher for a ~10-minute live segment on Jake Dawson's AI show. The segment goes deep on ONE topic for regular people who are curious about AI tools (not engineers).
+  const brief = `You are a researcher for a ~10-minute live segment on Jake Dawson's AI show. The segment goes deep on ONE topic for regular people who are curious about AI tools (not engineers).
 
 TOPIC: ${d.topic}
 ${d.angle ? `JAKE'S NOTES ON THE ANGLE: ${d.angle}\n` : ""}TODAY: ${today}
 ${seed ? `\nSTARTING POINT — the story on today's news wire and the sources that covered it:\n${seed}\n` : ""}
-Search the web and gather what a great 10-minute explainer needs:
-- What happened (or what this is), and the background that makes it make sense.
-- The key numbers (prices, dates, sizes, user counts, scores) — exactly as the sources state them.
-- A timeline of how we got here (dated events).
-- Who the players are and what each one wants.
-- Comparisons that help: versus the previous version, versus rivals, before vs after.
-- What it means for a regular person using AI tools — concrete, everyday.
-- Caveats, criticism, what's unconfirmed, what we don't know yet.
-- One or two strong quotes from the people involved, word for word.
-- ALWAYS include the company's own announcement / blog post among the sources (on the company's own website), marked "official": true.
-- Prefer the company's own announcement and tech press (The Verge, TechCrunch, Wired, Ars Technica, MIT Technology Review…) over financial press.
+ACCURACY: only report what a source you actually read says. Never invent a number, date, quote or name. If sources disagree, say so. Mark rumors as rumors.
+Prefer the company's own announcement and tech press (The Verge, TechCrunch, Wired, Ars Technica, MIT Technology Review…) over financial press.
+Other researchers cover the other parts of this topic at the same time — gather ONLY your part, quickly.`;
 
-ACCURACY: only report what a source you actually read says. Never invent a number, date, quote or name. If sources disagree, say so in the fact. Mark rumors as rumors.
-
-Reply with ONLY this JSON (no markdown):
-{"summary":"3-4 plain sentences","company":"the main company involved, or empty","facts":[{"fact":"...","source":"url"}],"numbers":[{"value":"$20","label":"per month for the Plus plan","source":"url"}],"timeline":[{"date":"Mar 2025","event":"...","source":"url"}],"players":[{"name":"...","role":"..."}],"comparisons":[{"subject":"X vs Y","points":["..."]}],"quotes":[{"quote":"exact words","who":"name","role":"title","source":"url"}],"everydayImpact":["..."],"caveats":["..."],"openQuestions":["..."],"sources":[{"title":"...","url":"...","outlet":"The Verge","official":false}]}
-Aim for 12-25 facts, every number you can find, 4-8 timeline events and 6-15 sources.`;
-
-  // ⚠️ RESEARCH RUNS ON THE RESEARCH TIER WITH 5 SEARCHES, NOT OPUS WITH 8.
-  // The first live run (Opus, max 8) took FIFTEEN MINUTES: the search tool's
-  // dynamic filtering issued 25 searches under that cap, each round re-sending
-  // the whole conversation. Gathering facts is not the judgement step — the
-  // outline and the script (Opus) are — and a deep dive has to be makeable
-  // shortly before a show.
-  const text = await claudeTextForPurpose({
-    tier: "research",
-    purpose: "news-deepdive-research",
-    system: "You are the research engine behind a live AI news show. Use web search, then answer in exactly the requested JSON format.",
-    messages: [{ role: "user", content: prompt }],
-    webSearch: true,
-    searchMaxUses: 5,
-    maxTokens: 10000,
-  });
-  let pack: ResearchPack;
-  try {
-    pack = await parseJsonReply<ResearchPack>(text, "research");
-  } catch (err) {
-    if (!/returned no JSON/.test(String((err as Error)?.message))) throw err;
-    // ⚠️ The research reply had no JSON at all (2026-10-07: "Pacing AI models" — prose,
-    // or a turn that ended before its answer). One cheap follow-up, no new searches,
-    // turns what it found into the JSON instead of failing the whole deep dive.
-    console.warn(`[news-deepdive] research reply had no JSON (${text.length} chars) — asking once for the JSON only`);
-    const fixed = await claudeTextForPurpose({
+  // ⚠️ RESEARCH IS THREE SMALL CALLS IN PARALLEL, NOT ONE BIG ONE (Jake 2026-10-07:
+  // "it's too long for a research phase"). One Sonnet call doing 5 searches and then
+  // writing a ~10k-token JSON report sat at 3% for 6+ minutes — the writing alone is
+  // minutes. Three focused parts (2 searches, a third of the report each) finish in
+  // about the time of one part; they are merged into the same ResearchPack shape.
+  const parts: { name: string; ask: string; json: string; maxTokens: number }[] = [
+    {
+      name: "facts",
+      ask: "YOUR PART: what happened / what this is, the background that makes it make sense, and every key number (prices, dates, sizes, user counts, scores) exactly as sources state them. ALWAYS include the company's own announcement / blog post among the sources, marked \"official\": true.",
+      json: '{"summary":"3-4 plain sentences","company":"the main company involved, or empty","facts":[{"fact":"...","source":"url"}],"numbers":[{"value":"$20","label":"per month for the Plus plan","source":"url"}],"sources":[{"title":"...","url":"...","outlet":"The Verge","official":false}]}\nAim for 10-18 facts and every number you can find.',
+      maxTokens: 4500,
+    },
+    {
+      name: "context",
+      ask: "YOUR PART: a dated timeline of how we got here, who the players are and what each wants, comparisons that help (versus the previous version, versus rivals, before vs after), and what it means for a regular person using AI tools — concrete, everyday.",
+      json: '{"timeline":[{"date":"Mar 2025","event":"...","source":"url"}],"players":[{"name":"...","role":"..."}],"comparisons":[{"subject":"X vs Y","points":["..."]}],"everydayImpact":["..."],"sources":[{"title":"...","url":"...","outlet":"...","official":false}]}\nAim for 4-8 timeline events.',
+      maxTokens: 3500,
+    },
+    {
+      name: "voices",
+      ask: "YOUR PART: one or two strong quotes from the people involved, word for word; caveats, criticism, what's unconfirmed; and the open questions nobody can answer yet.",
+      json: '{"quotes":[{"quote":"exact words","who":"name","role":"title","source":"url"}],"caveats":["..."],"openQuestions":["..."],"sources":[{"title":"...","url":"...","outlet":"...","official":false}]}',
+      maxTokens: 2500,
+    },
+  ];
+  const runPart = async (part: (typeof parts)[number]): Promise<ResearchPack> => {
+    const prompt = `${brief}\n\n${part.ask}\n\nSearch the web, then reply with ONLY this JSON (no markdown):\n${part.json}`;
+    const text = await claudeTextForPurpose({
       tier: "research",
       purpose: "news-deepdive-research",
-      system: "You are the research engine behind a live AI news show. Answer in exactly the requested JSON format.",
-      messages: [
-        { role: "user", content: prompt },
-        { role: "assistant", content: text.trim() || "I searched the web for this topic." },
-        { role: "user", content: "Now reply with ONLY the JSON object in the exact format requested above, built from what you found (empty arrays where you found nothing). No prose, no markdown." },
-      ],
-      maxTokens: 10000,
+      system: "You are a fast research engine behind a live AI news show. Use web search, then answer in exactly the requested JSON format.",
+      messages: [{ role: "user", content: prompt }],
+      webSearch: true,
+      searchMaxUses: 2,
+      maxTokens: part.maxTokens,
     });
-    pack = await parseJsonReply<ResearchPack>(fixed, "research");
+    try {
+      return await parseJsonReply<ResearchPack>(text, `research (${part.name})`);
+    } catch (err) {
+      if (!/returned no JSON/.test(String((err as Error)?.message))) throw err;
+      // ⚠️ The reply had no JSON at all (2026-10-07: "Pacing AI models" — prose, or a
+      // turn that ended before its answer). One cheap follow-up, no new searches.
+      console.warn(`[news-deepdive] research (${part.name}) reply had no JSON (${text.length} chars) — asking once for the JSON only`);
+      const fixed = await claudeTextForPurpose({
+        tier: "research",
+        purpose: "news-deepdive-research",
+        system: "You are a research engine behind a live AI news show. Answer in exactly the requested JSON format.",
+        messages: [
+          { role: "user", content: prompt },
+          { role: "assistant", content: text.trim() || "I searched the web for this topic." },
+          { role: "user", content: "Now reply with ONLY the JSON object in the exact format requested above, built from what you found (empty arrays where you found nothing). No prose, no markdown." },
+        ],
+        maxTokens: part.maxTokens,
+      });
+      return await parseJsonReply<ResearchPack>(fixed, `research (${part.name})`);
+    }
+  };
+  const t0 = Date.now();
+  const settled = await Promise.allSettled(parts.map(runPart));
+  const got = settled.flatMap((r, i) => {
+    if (r.status === "fulfilled") return [r.value];
+    console.warn(`[news-deepdive] research part "${parts[i].name}" failed:`, (r.reason as Error)?.message ?? r.reason);
+    return [];
+  });
+  // The facts part is the backbone of the outline — without it there is nothing to build on.
+  if (settled[0].status === "rejected") throw (settled[0] as PromiseRejectedResult).reason;
+  console.log(`[news-deepdive] research: ${got.length}/${parts.length} parts in ${Math.round((Date.now() - t0) / 1000)} s`);
+  const pack: ResearchPack = { ...got[0] };
+  for (const g of got.slice(1)) {
+    for (const k of ["facts", "numbers", "timeline", "players", "comparisons", "quotes", "everydayImpact", "caveats", "openQuestions", "sources"] as const) {
+      const v = (g as Record<string, unknown>)[k];
+      if (Array.isArray(v)) (pack as Record<string, unknown>)[k] = [...arr((pack as Record<string, unknown>)[k]), ...v];
+    }
   }
+  const seen = new Set<string>();
   pack.sources = arr(pack.sources)
     .map((x: any) => ({ title: s(x?.title, 200), url: s(x?.url, 600), outlet: s(x?.outlet, 80), official: x?.official === true }))
-    .filter((x) => /^https?:\/\//.test(x.url));
+    .filter((x) => /^https?:\/\//.test(x.url) && !seen.has(x.url) && (seen.add(x.url), true));
   return pack;
 }
 
@@ -812,7 +836,7 @@ export async function generateDeepDive(
     if (pack) {
       await prog(`Reusing this topic's research from earlier (${pack.facts?.length ?? 0} facts, ${pack.sources?.length ?? 0} sources).`, 35);
     } else {
-      await prog(`Researching "${d.topic}" on the web (takes a few minutes)…`, 5);
+      await prog(`Researching "${d.topic}" on the web — 3 researchers in parallel (about 1–2 min)…`, 5);
       pack = await research(d, story);
       deepDives.update(id, { researchJson: JSON.stringify({ key, at: Date.now(), pack }), sourcesJson: JSON.stringify(pack.sources ?? []) });
       await prog(`Research done: ${pack.facts?.length ?? 0} facts, ${pack.numbers?.length ?? 0} numbers, ${pack.sources?.length ?? 0} sources.`, 35);

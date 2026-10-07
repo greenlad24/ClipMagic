@@ -522,7 +522,7 @@ export async function generateDeepDiveV2(
     }
     if (pack) await prog(`Reusing this topic's research (${pack.facts?.length ?? 0} facts, ${pack.sources?.length ?? 0} sources).`, 25);
     else {
-      await prog(`Researching "${d.topic}" on the web (takes a few minutes)…`, 3);
+      await prog(`Researching "${d.topic}" on the web — 3 researchers in parallel (about 1–2 min)…`, 3);
       pack = await research(d, story);
       deepDives.update(id, { researchJson: JSON.stringify({ key, at: Date.now(), pack }), sourcesJson: JSON.stringify(pack.sources ?? []), mediaJson: "" });
       await prog(`Research done: ${pack.facts?.length ?? 0} facts, ${pack.sources?.length ?? 0} sources.`, 25);
