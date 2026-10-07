@@ -7,10 +7,13 @@
  *   - moveSlide(): reorder by one step, for touch screens where HTML5
  *     drag-and-drop does not fire (iPad);
  *   - an Undo on "Slide removed" (updateSlide deleted:false);
- *   - the deck's design template (the Deep Dive's templates, 2026-10-06):
- *     chooseDeckTemplate() saves it and re-skins every open screen at once.
+ *   - the deck's design template (the AI News templates, 2026-10-07):
+ *     chooseDeckTemplate() saves it and re-skins every open screen at once;
+ *   - the deck on screen stays the deck on screen: a reload (after "Redo
+ *     visuals", a notes edit, an undo) re-reads THAT deck by id. Asking for
+ *     "today's" found nothing once Bangkok midnight had passed (2026-10-07).
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   getStories, toggleStoryInDeck, collectNews, clearCache,
@@ -19,7 +22,7 @@ import {
 } from '../api';
 import type { LogEntry } from './RunLog';
 import { announceDeckTemplate } from './stage/deckTemplate';
-import { templateFor } from '../deepdive/templates';
+import { newsTemplateFor } from './stage/newsTemplates';
 
 export type Story = GetStoriesOutputType['stories'][0];
 export type Meta = GetStoriesOutputType['meta'];
@@ -77,9 +80,13 @@ export function useDailyShow(enabled: boolean) {
     finally { setStoriesLoading(false); }
   }, []);
 
-  const loadSlides = useCallback(async () => {
+  // The deck on screen (see the header) — null until one is loaded, and after a build (= today's).
+  const deckIdRef = useRef<string | null>(null);
+  const loadSlides = useCallback(async (opts: { today?: boolean } = {}) => {
     try {
-      const data = await getSlides({});
+      const id = opts.today ? null : deckIdRef.current;
+      const data = await getSlides(id ? { deckId: id } : {});
+      deckIdRef.current = data.deck?.id ?? null;
       setDeck(data.deck);
       setSlides(data.slides);
     } catch { toast.error('Failed to load presentation'); }
@@ -155,7 +162,7 @@ export function useDailyShow(enabled: boolean) {
       if (result.slidesCreated > 0) {
         buildLog.add(`✓ Done — ${result.slidesCreated} slides created`, 100);
         toast.success(`Presentation ready: ${result.slidesCreated} slides`);
-        await loadSlides();
+        await loadSlides({ today: true });
         if (template !== undefined && result.deckId) announceDeckTemplate(result.deckId, template);
         return true;
       }
@@ -211,7 +218,7 @@ export function useDailyShow(enabled: boolean) {
     try {
       await setDeckTemplate({ deckId: deck.id, template });
       announceDeckTemplate(deck.id, template);
-      toast.success(`Template: ${templateFor(template).name} — the show screens and every preview use it now.`);
+      toast.success(`Template: ${newsTemplateFor(template).name} — the show screens and every preview use it now.`);
     } catch (e: any) {
       setDeck((d) => (d ? { ...d, template: before } : d));
       toast.error(e?.message || 'Could not change the template');
@@ -220,7 +227,7 @@ export function useDailyShow(enabled: boolean) {
 
   const startShow = () => {
     if (!deck) return toast.error('No deck loaded');
-    window.open(PRESENTER_PATH, '_blank');
+    window.open(`${PRESENTER_PATH}?deck=${encodeURIComponent(deck.id)}`, '_blank');
     startSession({ deckId: deck.id }).catch(() => {});
   };
 

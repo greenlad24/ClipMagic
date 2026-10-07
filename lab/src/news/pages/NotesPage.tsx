@@ -5,13 +5,12 @@ import { useAuth } from '../auth';
 import { getSlides, startSession, updateSession, endSession, logSlideStats, getSession, GetSlidesOutputType } from '../api';
 import { connectLiveSync, type LiveSync, type MediaView } from '../liveSync';
 import { slideMedia, slideHasVideo } from '../api';
-import { videoPageUrl } from './VideoPage';
 import { storyStage, storyBeats, beatLabel } from '../daily/stage/story';
 import { findCues, markCues } from '../daily/stage/cues';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import {
-  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, SourceButton, EndButton, ScreenButton,
+  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, EndButton, ScreenButton,
   ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl, WidthToggle, BeatDots,
 } from '../presenter/chrome';
 
@@ -52,14 +51,6 @@ export default function NotesPage() {
 
   // Connection status
   const [displayConnected, setDisplayConnected] = useState(false);
-
-  // Source tab — latched on/off, survives reloads
-  const [sourceEnabled, setSourceEnabled] = useState(() => localStorage.getItem('tp2-source-enabled') === 'true');
-  const [sourceBlocked, setSourceBlocked] = useState(false);
-
-  // Source tab debug mode
-  const [sourceDebug, setSourceDebug] = useState(false);
-  const [sourceLog, setSourceLog] = useState<Array<{ time: string; msg: string; type: 'info' | 'error' | 'warn' }>>([]);
 
   // Teleprompter mode — synced settings come from session, mirror is local-only
   // Presentation opens on the TELEPROMPTER — it is what Jake reads from on
@@ -108,7 +99,6 @@ export default function NotesPage() {
   const lastPongRef = useRef(0);
   const lastLocalNavTimeRef = useRef(0); // ms timestamp of last local navigation (used to suppress remote sync noise)
   const channelRef = useRef<BroadcastChannel | null>(null);
-  const sourceWindowRef = useRef<Window | null>(null);
   const teleprompterRef = useRef<HTMLDivElement>(null);
   const scrollAnimRef = useRef<number | undefined>();
   const ctxRef = useRef({ currentIdx: 0, slides: [] as SlideType[], sessionId: '', blackout: false });
@@ -130,15 +120,14 @@ export default function NotesPage() {
     if (!authLoading && !user) loginWithRedirect({ redirectUrl: window.location.href });
   }, [authLoading, user, loginWithRedirect]);
 
-  // Persist source-tab latch
-  useEffect(() => { localStorage.setItem('tp2-source-enabled', String(sourceEnabled)); }, [sourceEnabled]);
-
   // Load slides + start/join session
   useEffect(() => {
     if (!user) return;
     (async () => {
       try {
-        const data = await getSlides({});
+        // ?deck=<id> (the dashboard's Start show): that deck — "today's" is empty after Bangkok midnight.
+        const deckParam = new URLSearchParams(window.location.search).get('deck');
+        const data = await getSlides(deckParam ? { deckId: deckParam } : {});
         if (!data.deck || data.slides.length === 0) { toast.error('No deck found. Build a deck first.'); return; }
         setSlides(data.slides);
         const sess = await startSession({ deckId: data.deck.id, controllerId: window.localStorage.getItem('tp2-device-id') || undefined } as any);
@@ -234,30 +223,6 @@ export default function NotesPage() {
     // Marked as ours so the scrub listener does not publish it as a drag.
     if (teleprompterRef.current) { lastProgScrollRef.current = 0; teleprompterRef.current.scrollTop = 0; }
     setTeleprompterPaused(true);
-
-    // Sync source tab if latched on — navigate the existing tab, never reopen
-    if (sourceEnabled) {
-      const url = slides[currentIdx]?.bestSourceUrl;
-      if (url) {
-        const existing = sourceWindowRef.current;
-        if (existing && !existing.closed) {
-          // Tab is still open — navigate it in place without stealing focus
-          try {
-            existing.location.href = url;
-            logSource(`slide→tab: reused → ${url.slice(0, 60)}`);
-          } catch {
-            logSource('slide→tab: cross-origin nav failed', 'warn');
-          }
-          // Keep presenter window focused
-          window.focus();
-        } else {
-          // Tab was closed — turn source off silently, don't pop a new window
-          sourceWindowRef.current = null;
-          setSourceEnabled(false);
-          logSource('slide→tab: tab was closed — source off');
-        }
-      }
-    }
   }, [currentIdx]);
 
   // Claim teleprompter control when switching to teleprompter tab
@@ -332,11 +297,6 @@ export default function NotesPage() {
     return () => { el.removeEventListener('scroll', onScroll); };
   }, [viewMode, loading]);
 
-  const logSource = useCallback((msg: string, type: 'info' | 'error' | 'warn' = 'info') => {
-    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    setSourceLog(prev => [...prev.slice(-4), { time, msg, type }]);
-  }, []);
-
   const navigateTo = useCallback(async (idx: number, beat = 0) => {
     const { currentIdx: cur, slides: sls, sessionId: sid } = ctxRef.current;
     if (idx < 0 || idx >= sls.length) return;
@@ -357,32 +317,7 @@ export default function NotesPage() {
     if (channelRef.current && sls[idx]) {
       channelRef.current.postMessage({ type: 'slide', slide: sls[idx], idx, total: sls.length, media: 'article', beat } satisfies BCMsg);
     }
-    // Source tab auto-navigation is handled by the currentIdx effect
-  }, [logSource]);
-
-  const handleOpenSource = useCallback(() => {
-    if (sourceEnabled) {
-      // Toggle off
-      setSourceEnabled(false);
-      logSource('source following turned off');
-      return;
-    }
-    // Toggle on — open source for current slide
-    const url = ctxRef.current.slides[ctxRef.current.currentIdx]?.bestSourceUrl;
-    if (!url) { logSource('button: no URL for this slide', 'warn'); return; }
-    const win = window.open(url, 'ng-source-tab');
-    if (win) {
-      sourceWindowRef.current = win;
-      setSourceEnabled(true);
-      setSourceBlocked(false);
-      logSource(`button: opened ${url.slice(0, 70)}`);
-      // Keep presenter window focused
-      setTimeout(() => window.focus(), 100);
-    } else {
-      setSourceBlocked(true);
-      logSource('button: window.open blocked — popup blocker?', 'error');
-    }
-  }, [logSource, sourceEnabled]);
+  }, []);
 
   const toggleBlackout = useCallback(async () => {
     const { sessionId: sid, blackout: bo } = ctxRef.current;
@@ -541,27 +476,6 @@ export default function NotesPage() {
     applyMediaView(m);
   }, [currentIdx]);
 
-  // The latched source tab follows the media view too: the video plays in it
-  // full window, and going back to the article puts the article back.
-  const sourceTabRef = useRef<{ idx: number; url: string }>({ idx: -1, url: '' });
-  useEffect(() => {
-    // The ref, not the state: on a slide change the reset effect above has
-    // already set it to 'article' while this render still holds the old state.
-    const media = mediaViewRef.current;
-    const sl = slides[currentIdx];
-    // Video view: the Lab's full-window player page, not the raw video URL (a bare file opens paused in the browser's viewer).
-    const url = sl ? (media === 'video' && slideHasVideo(sl) ? videoPageUrl(slideMedia(sl)!) : sl.bestSourceUrl || '') : '';
-    const prev = sourceTabRef.current;
-    sourceTabRef.current = { idx: currentIdx, url };
-    // A slide change lands on the article, and the currentIdx effect has already navigated the tab there.
-    if (prev.idx !== currentIdx && media === 'article') return;
-    if (!sourceEnabled || !url || url === prev.url) return;
-    const win = sourceWindowRef.current;
-    if (!win || win.closed) return;
-    try { win.location.href = url; } catch { /* cross-origin nav refused */ }
-    window.focus();
-  }, [mediaView, currentIdx]);
-
   const toggleTpPlayPause = useCallback(() => {
     const nextPaused = !tpPausedRef.current;
     const sync = syncRef.current;
@@ -605,7 +519,7 @@ export default function NotesPage() {
   }, [navigateTo, setMedia]);
 
   // Shift ALONE toggles the story video full screen. Alone = released with no
-  // other key pressed in between, so Shift+D (debug) and a capital letter
+  // other key pressed in between, so a Shift+key combo or a capital letter
   // never flip the audience screen to the video.
   const shiftAloneRef = useRef(false);
 
@@ -630,7 +544,6 @@ export default function NotesPage() {
       }
       else if (e.key === 'e' || e.key === 'E') setConfirmEnd(true);
       else if (e.key === 't' || e.key === 'T') setViewMode(v => v === 'notes' ? 'teleprompter' : 'notes');
-      else if (e.key === 'D' && e.shiftKey) { e.preventDefault(); setSourceDebug(d => !d); }
       else if (e.key === 'g' || e.key === 'G') { setGMode(true); setGBuffer(''); }
       else if (gMode && /^\d$/.test(e.key)) {
         const buf = gBuffer + e.key;
@@ -643,7 +556,8 @@ export default function NotesPage() {
       if (e.key !== 'Shift' || !shiftAloneRef.current) return;
       shiftAloneRef.current = false;
       const { currentIdx: ci, slides: sls } = ctxRef.current;
-      if (!slideHasVideo(sls[ci])) return;
+      // No video for this story: nothing on the audience screen — just tell the presenter.
+      if (!slideHasVideo(sls[ci])) { toast('This story has no video', { id: 'no-video', duration: 1500 }); return; }
       setMedia(mediaViewRef.current === 'video' ? 'article' : 'video');
     };
     const blur = () => { shiftAloneRef.current = false; };
@@ -724,16 +638,13 @@ export default function NotesPage() {
 
           <Divider />
 
-          {/* The presentation screen, like the Deep Dive presenter's (Jake 2026-10-06) */}
-          <ScreenButton onClick={() => {
-            const w = window.open('/news-gatherer/present/audience', 'news-screen');
+          {/* ONE button (Jake 2026-10-07): the presentation screen. Each story's source is its first
+              slide there now (a captured page, scrolling), so the AI News presenter has no separate
+              controlled source tab any more. The Deep Dive presenter keeps Screen + Source. */}
+          <ScreenButton title="Open the presentation screen (the audience view) — each story opens on its source page, then its slides; Shift shows the story's video" onClick={() => {
+            const w = window.open(`/news-gatherer/present/audience${slides[0]?.deck ? `?deck=${encodeURIComponent(slides[0].deck)}` : ''}`, 'news-screen');
             if (!w) toast.error('The browser blocked the new window. Allow pop-ups for this site, or open Audience from the dashboard.');
           }} />
-
-          {/* Source tab */}
-          {sourceUrl && (
-            <SourceButton enabled={sourceEnabled} blocked={sourceBlocked} onClick={handleOpenSource} />
-          )}
 
           <EndButton onClick={() => setConfirmEnd(true)} />
         </div>
@@ -901,78 +812,6 @@ export default function NotesPage() {
           )}
         </>
       )}
-
-      {/* ── Source Tab Debug Overlay (Shift+D) ────────────────────────── */}
-      {sourceDebug && (() => {
-        const refExists = !!sourceWindowRef.current;
-        const refOpen = refExists && !sourceWindowRef.current!.closed;
-        const currentUrl = slides[currentIdx]?.bestSourceUrl || '\u2014';
-        return (
-          <div style={{
-            position: 'fixed', bottom: 60, left: 12, zIndex: 9999,
-            background: 'rgba(10,10,10,0.96)', border: `1px solid ${D.blue}`,
-            borderRadius: 8, padding: '10px 14px', width: 380,
-            fontFamily: 'ui-monospace, monospace', fontSize: 11,
-            boxShadow: '0 4px 24px rgba(0,0,0,0.7)',
-          }}>
-            {/* Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, alignItems: 'center' }}>
-              <span style={{ fontSize: 10, fontWeight: 700, color: D.blue, letterSpacing: '0.1em', textTransform: 'uppercase' }}>{'\u2b1b'} Source Tab Debug</span>
-              <span style={{ fontSize: 9, color: D.muted }}>Shift+D to close</span>
-            </div>
-
-            {/* Ref status */}
-            <div style={{ background: D.card, borderRadius: 5, padding: '6px 8px', marginBottom: 7 }}>
-              <div style={{ display: 'flex', gap: 16, marginBottom: 3 }}>
-                <span style={{ color: D.muted }}>enabled:</span>
-                <span style={{ color: sourceEnabled ? D.green : D.muted }}>{sourceEnabled ? '\u2713 on' : '\u2717 off'}</span>
-                <span style={{ color: D.muted }}>ref:</span>
-                <span style={{ color: refExists ? D.green : D.red }}>{refExists ? '\u2713 exists' : '\u2717 null'}</span>
-                <span style={{ color: D.muted }}>tab:</span>
-                <span style={{ color: refOpen ? D.green : D.red }}>{!refExists ? 'n/a' : refOpen ? '\u2713 open' : '\u2717 closed'}</span>
-              </div>
-              <div style={{ color: D.muted, fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                url: <span style={{ color: D.text }}>{currentUrl.length > 55 ? currentUrl.slice(0, 55) + '…' : currentUrl}</span>
-              </div>
-            </div>
-
-            {/* Action log */}
-            <div>
-              <p style={{ fontSize: 9, fontWeight: 700, color: D.muted, letterSpacing: '0.08em', textTransform: 'uppercase', margin: '0 0 4px' }}>Action Log</p>
-              {sourceLog.length === 0
-                ? <p style={{ color: D.faint, fontSize: 10, margin: 0 }}>No actions yet — navigate a slide or click Source</p>
-                : [...sourceLog].reverse().map((entry, i) => (
-                  <div key={i} style={{
-                    display: 'flex', gap: 7, marginBottom: 3,
-                    opacity: i === 0 ? 1 : 0.55 + (0.15 * (sourceLog.length - 1 - i)),
-                  }}>
-                    <span style={{ color: D.faint, flexShrink: 0 }}>{entry.time}</span>
-                    <span style={{
-                      color: entry.type === 'error' ? D.red : entry.type === 'warn' ? D.orange : D.green,
-                      flexShrink: 0, fontSize: 10,
-                    }}>
-                      {entry.type === 'error' ? '✗' : entry.type === 'warn' ? '⚠' : '✓'}
-                    </span>
-                    <span style={{ color: entry.type === 'error' ? '#fca5a5' : entry.type === 'warn' ? '#fdba74' : D.text, lineHeight: 1.4 }}>
-                      {entry.msg}
-                    </span>
-                  </div>
-                ))
-              }
-            </div>
-
-            {/* Clear button */}
-            {sourceLog.length > 0 && (
-              <button
-                onClick={() => setSourceLog([])}
-                style={{ marginTop: 6, fontSize: 9, color: D.muted, background: 'none', border: `1px solid ${D.faint}`, borderRadius: 3, padding: '1px 7px', cursor: 'pointer' }}
-              >
-                clear log
-              </button>
-            )}
-          </div>
-        );
-      })()}
 
       <AlertDialog open={confirmEnd} onOpenChange={setConfirmEnd}>
         <AlertDialogContent>

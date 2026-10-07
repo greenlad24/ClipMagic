@@ -1,27 +1,28 @@
 /**
- * AI News Stream — the on-screen STAGE of a Daily Show story (Jake, 2026-10-06:
- * "make AI News presentations look and feel more like Deep Dives: beats,
- * micro-interactions and a real presentation style for each story, rather than
- * something that looks like a website").
+ * AI News Stream — the on-screen STAGE of a Daily Show story.
  *
- * A story is shown as a COVER (headline, source, one-line lede) followed by
- * 1–2 SCENES. Each scene is a Deep Dive v2 chapter (same kinds, same data
- * shapes — see src/news/deepdive/v2/types.ts and server deepDiveV2.ts), so the
- * web draws it with the Deep Dive's own ChapterView. Jake steps through the
- * beats with →; the teleprompter never moves on a beat.
+ * 2026-10-07 (Jake): every story runs SOURCE → INFO — the source article
+ * scrolling full screen (sourceShot.ts, not designed here), then "some info on
+ * slides": 1–2 simple info slides revealed one item per → press. The story's
+ * video is NOT a beat: Shift shows it full screen over any beat. The Deep Dive stays the special,
+ * rich format at the end of the show; these slides are deliberately plainer
+ * and are drawn in the AI News templates (web daily/stage/newsTemplates.ts).
  *
- * Only the kinds that need no captured media are used here (a Daily Show
- * build does not download or cut anything): reveal, stats, versus, flow,
- * timeline, list, quote. The story's official video stays where it was — its
- * own full-screen layer, opened with Shift.
- *
- * Stored on the slide as `stage_json`. A slide without one (decks built before
- * this) is drawn from its presenter notes by the web's fallback.
+ * Stored on the slide as `stage_json`, v2:
+ *   { v: 2, cover, scenes: [{ kind, eyebrow, heading, data, cues[] }] }
+ * (Stages built earlier on 2026-10-07 may also carry a `videoCue` — the web ignores it.)
+ * — ONE cue per beat, attached to the beat it starts (so a cue can't go
+ * missing the way v1's single flat list did: the model wrote 4–6 cues for
+ * 6–8 beats). Every cue is checked against the script here with the same
+ * forward search the presenter uses (web cues.tsx `placeCue`); a cue that
+ * isn't in the script, in order, is stored as '' and the web re-makes it from
+ * the script or merges the beat (web story.ts `reconcile`). v1 stages (cover +
+ * scenes + flat cues) still render.
  */
 import { callNewsModel } from "./ai.js";
 import { L, SHORT_WORDS, clip, clipList, spec } from "./textLimits.js";
 
-export const STAGE_KINDS = ["reveal", "stats", "versus", "flow", "timeline", "list", "quote"] as const;
+export const STAGE_KINDS = ["list", "stats", "versus", "flow", "timeline", "quote"] as const;
 export type StageKind = (typeof STAGE_KINDS)[number];
 
 export interface StageScene {
@@ -29,20 +30,16 @@ export interface StageScene {
   eyebrow: string;
   /** May mark ONE accent phrase with *asterisks*. */
   heading: string;
-  island: { q: string; a: string } | null;
   data: Record<string, unknown>;
+  /** One per beat (item) of the scene: the script words where Jake presses → for it; '' = not found (the web re-makes it). */
+  cues: string[];
 }
 
 export interface StoryStage {
-  v: 1;
+  v: 2;
+  /** The title card (shown when the source page could not be captured) + the presenter's labels. */
   cover: { eyebrow: string; heading: string; lede: string };
   scenes: StageScene[];
-  /**
-   * For each → after the cover: the few words of the script at which Jake
-   * presses it. Length = total beats − 1 (may be shorter; the presenter shows
-   * what there is).
-   */
-  cues: string[];
 }
 
 /* ── normalisation (never trust the model's JSON shape) ───────────────────── */
@@ -54,7 +51,6 @@ const num = (v: unknown): number | null => {
   if (typeof v === "string" && /^-?[\d,]*\.?\d+$/.test(v.trim())) return Number(v.replace(/,/g, ""));
   return null;
 };
-const TONES = new Set(["dark", "light", "brand", "blue"]);
 
 /** One accent at most: keep the first *pair*, drop any other asterisks. */
 function oneAccent(text: string): string {
@@ -68,18 +64,6 @@ function oneAccent(text: string): string {
 // Every on-screen string is trimmed to its limit (textLimits.ts) at a word boundary.
 function sceneData(kind: StageKind, d: any): Record<string, unknown> | null {
   switch (kind) {
-    case "reveal": {
-      const cards = arr(d?.cards).slice(0, 3).map((c) => {
-        const countTo = num(c?.countTo);
-        return {
-          name: clip(c?.name, L.cardName), tag: clip(c?.tag, L.cardTag), big: clip(c?.big, L.cardBig) || (countTo !== null ? String(countTo) : ""),
-          countTo, prefix: s(c?.prefix, 4), suffix: s(c?.suffix, 8), small: clip(c?.small, L.cardSmall), note: clip(c?.note, L.cardNote),
-          tone: TONES.has(c?.tone) ? c.tone : "dark",
-        };
-      }).filter((c) => c.name && c.big);
-      if (cards.length < 2) return null;
-      return { cards, good: clipList(d?.good, L.gate, 3), bad: clipList(d?.bad, L.gate, 3) };
-    }
     case "stats": {
       const stats = arr(d?.stats).slice(0, 3).map((x) => {
         const value = num(x?.value);
@@ -110,28 +94,49 @@ function sceneData(kind: StageKind, d: any): Record<string, unknown> | null {
   }
 }
 
-/** Beats in one scene — mirrors the web's v2 `beatCount` for these kinds. */
-export function sceneBeats(sc: StageScene): number {
+/** Beats in one scene = its items — mirrors the web's `sceneItems` (daily/stage/story.ts). */
+export function sceneBeats(sc: { kind: string; data: Record<string, unknown> }): number {
   const d = sc.data as any;
   const n = (() => {
     switch (sc.kind) {
-      case "reveal": return arr(d.cards).length + (arr(d.good).length || arr(d.bad).length ? 1 : 0);
       case "stats": return arr(d.stats).length;
       case "versus": return arr(d.options).length;
       case "flow": return arr(d.steps).length;
       case "timeline": return arr(d.events).length;
       case "list": return arr(d.items).length;
+      case "reveal": return arr(d.cards).length;
       default: return 1;
     }
   })();
   return Math.max(1, n);
 }
 
-/** Total → presses for a story = the cover + every scene's beats. */
-export const stageBeats = (st: StoryStage): number => 1 + st.scenes.reduce((a, sc) => a + sceneBeats(sc), 0);
+/* ── cues: the presenter's own search (web daily/stage/cues.tsx — keep in step) ── */
 
-/** Clean whatever the model returned into a StoryStage, or null when nothing usable is left. */
-export function normalizeStage(raw: unknown): StoryStage | null {
+const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function placeCue(script: string, cue: string, from: number): { start: number; end: number } | null {
+  const words = cue.replace(/[“”"]/g, " ").split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}$]+|[^\p{L}\p{N}%]+$/gu, "")).filter(Boolean);
+  if (!words.length) return null;
+  const re = new RegExp(words.map((w) => esc(w).replace(/['’‘]/g, "['’‘]")).join("[^\\p{L}\\p{N}]+"), "giu");
+  re.lastIndex = Math.max(0, from);
+  const m = re.exec(script);
+  return m ? { start: m.index, end: m.index + m[0].length } : null;
+}
+export const cueSearchStart = (script: string): number => Math.max(1, script.match(/^\s*\S+/)?.[0].length ?? 1);
+
+/** Keep each cue only when the script has it after the previous kept one. */
+function checkCues(script: string, list: string[]): string[] {
+  let from = cueSearchStart(script);
+  return list.map((c) => {
+    const m = c ? placeCue(script, c, from) : null;
+    if (!m) return "";
+    from = m.end;
+    return c;
+  });
+}
+
+/** Clean whatever the model returned into a StoryStage, or null when nothing usable is left. `script` checks the cues. */
+export function normalizeStage(raw: unknown, script = ""): StoryStage | null {
   const r = (raw ?? {}) as any;
   const scenes: StageScene[] = [];
   for (const x of arr(r.scenes).slice(0, 4)) {
@@ -142,28 +147,28 @@ export function normalizeStage(raw: unknown): StoryStage | null {
     if (!data) continue;
     const heading = oneAccent(clip(x?.heading, L.heading).replace(/\.\s*$/, ""));
     if (!heading) continue;
-    const q = clip(x?.island?.q, L.island), a = clip(x?.island?.a, L.island);
-    scenes.push({ kind, eyebrow: clip(x?.eyebrow, L.eyebrow), heading, island: q && a ? { q, a } : null, data });
+    const sc: StageScene = { kind, eyebrow: clip(x?.eyebrow, L.eyebrow), heading, data, cues: [] };
+    sc.cues = Array.from({ length: sceneBeats(sc) }, (_, b) => s(arr(x?.cues)[b], 80));
+    scenes.push(sc);
   }
   if (!scenes.length) return null;
   const coverHeading = oneAccent(clip(r.cover?.heading, L.coverHeading).replace(/\.\s*$/, ""));
-  const st: StoryStage = {
-    v: 1,
+  // One pass over every cue in show order.
+  const all = checkCues(script, scenes.flatMap((sc) => sc.cues));
+  for (const sc of scenes) sc.cues = all.splice(0, sc.cues.length);
+  return {
+    v: 2,
     cover: { eyebrow: clip(r.cover?.eyebrow, L.eyebrow), heading: coverHeading, lede: clip(r.cover?.lede, L.coverLede) },
     scenes,
-    cues: [],
   };
-  st.cues = arr(r.cues).map((c) => s(c, 80)).slice(0, stageBeats(st) - 1);
-  return st;
 }
 
 /* ── generation ───────────────────────────────────────────────────────────── */
 
 // The word/character limits come from textLimits.ts — the same numbers the normaliser trims to.
-const KINDS = `SCENE KINDS — each scene is ONE full screen: a small header (eyebrow, heading) above one big stage that steps through BEATS as Jake presses →. Text on screen is TINY — Jake explains out loud; the screen shows the one thing to look at. Every text field has a HARD limit (words AND characters); anything longer is cut off, so write to fit.
+const KINDS = `INFO SLIDE KINDS — each is ONE full screen: a small label (eyebrow) and a heading above a few ITEMS that appear one per → press (one item = one beat). Text on screen is TINY — Jake explains out loud; the screen shows the one thing to look at. Every text field has a HARD limit (words AND characters); anything longer is cut off, so write to fit.
 - "flow": what happened, as a 2-4 step mini story. data {"steps":[{"label":"${spec(L.flowLabel)}","text":"${spec(L.flowText)} — readable in one second"}]} — one step per beat.
-- "reveal": 2-3 cards revealed one per beat (price, who gets it, what's new, the catch, the verdict). data {"cards":[{"name":"${spec(L.cardName)}","tag":"${spec(L.cardTag)} or empty","big":"$20, or ${spec(L.cardBig)}","countTo":20,"prefix":"$","suffix":"/mo","small":"optional, ${spec(L.cardSmall)}","note":"","tone":"dark|light|brand|blue"}],"good":["optional: who CAN use it, ${spec(L.gate)} each, max 3"],"bad":["optional: who can't"]} — countTo is a plain number ONLY when big is that number, else null. suffix max 8 characters.
-- "stats": 1-3 numbers, one per beat, each fills the screen with a count-up. data {"stats":[{"value":4000,"display":"","prefix":"","suffix":"+","label":"${spec(L.statLabel)}"}]} — value null + display (e.g. "2×", ${spec(L.statDisplay)}) when it isn't a plain number.
+- "stats": 1-3 real numbers, one per beat. data {"stats":[{"value":4000,"display":"","prefix":"","suffix":"+","label":"${spec(L.statLabel)}"}]} — value null + display (e.g. "2×", ${spec(L.statDisplay)}) when it isn't a plain number.
 - "versus": 2-3 things compared, one highlighted per beat. data {"options":[{"name":"${spec(L.vsName)}","line":"${spec(L.vsLine)}","points":["max 3 points, ${spec(L.vsPoint)} each"]}]}
 - "timeline": 2-5 dated events. data {"events":[{"date":"Sep 29","label":"${spec(L.tlLabel)}","detail":"${spec(L.tlDetail)}","soon":false}]} — soon=true for a date still ahead.
 - "list": 2-5 short items, one lights up per beat. data {"items":["${spec(L.listItem)}"]}
@@ -179,22 +184,26 @@ export async function generateStageForStory(input: {
   keyPoints: string[];
   whyItMatters: string;
 }): Promise<StoryStage | null> {
-  const prompt = `You design the on-screen visuals for ONE story of Jake Dawson's live AI news show. The audience is regular people curious about AI tools (a 14-year-old must get every screen at a glance). The look is Jake's Deep Dive style: minimal, bold, one idea per screen, a few words per beat, numbers that count up, cards that reveal one at a time.
+  const prompt = `You design the on-screen info slides for ONE story of Jake Dawson's live AI news show. The audience is regular people curious about AI tools (a 14-year-old must get every screen at a glance).
 
-The story is shown as a COVER, then 1-2 SCENES. Jake reads the script below from a teleprompter and presses → to reveal the next beat. The beats must follow the ORDER of the script, so what appears matches what he is saying at that moment.
+Each story on screen runs in this order, and Jake presses → to move on:
+  beat 0 — the source article, full screen (automatic; nothing to design)
+  then   — 1-2 INFO SLIDES: plain, minimal, "some info on slides". A few facts, one item per → press.
+These are deliberately SIMPLE (the show's special, rich presentation is the Deep Dive at the end — don't imitate it). Jake reads the script below from a teleprompter; the items must follow the ORDER of the script, so what appears matches what he is saying at that moment.
 
 ${KINDS}
 
 RULES:
 1. Facts only from the source material and the script. Never invent numbers, prices, dates, names or quotes. If the story has no real numbers, don't use "stats"; if no real quote, don't use "quote".
-2. 1 scene for a small story, 2 for a big one. Pick the kinds that SHOW this story best; don't default to "list". Different scenes use different kinds.
-3. Total beats after the cover: 3-7.
-4. Headings: ${spec(L.heading)}, plain words, may mark ONE accent word or short phrase with *asterisks* (it renders in italic serif with a yellow underline). No period at the end.
-5. island: always null (it is no longer shown).
-6. eyebrow: ${spec(L.eyebrow)}, like a label ("WHAT HAPPENED", "WHO GETS IT", "THE CATCH").
-7. cover.heading: the story in everyday words, ${spec(L.coverHeading)}, with one *accent* — not the news headline copied. cover.lede: one sentence, ${spec(L.coverLede)}, why a regular person should care. cover.eyebrow: ${spec(L.eyebrow)} (e.g. "Model release", "Rumor", "Robotics").
-8. cues: for each → after the cover, in order, copy 3-6 words EXACTLY from the script where Jake should press it (the moment that beat's content starts being said). One cue per beat.
-9b. ${SHORT_WORDS}
+2. 1 info slide for a small story, 2 for a big one. Pick the kind that shows the facts best; different slides use different kinds.
+3. Total items across the info slides: 2-5.
+4. Headings: ${spec(L.heading)}, plain words, may mark ONE key word or short phrase with *asterisks* (it is set in the template's accent colour). No period at the end.
+5. eyebrow: ${spec(L.eyebrow)}, a label ("WHAT HAPPENED", "WHO GETS IT", "THE CATCH").
+6. cover (used for the presenter's labels and when the source page can't be shown): heading = the story in everyday words, ${spec(L.coverHeading)}, one *accent*; lede = one sentence, ${spec(L.coverLede)}, why a regular person should care; eyebrow = ${spec(L.eyebrow)} (e.g. "Model release", "Rumor", "Robotics").
+7. CUES — where Jake presses →. Copy 3-6 words EXACTLY, letter for letter, from the script (no paraphrase, no added or dropped words):
+   - each info slide has "cues": EXACTLY one per item, in the same order as its items — the words where that item starts being said.
+   - All cues together are in script order: slide 1's cues, then slide 2's. Never reuse words of the first sentence (that is the source beat).
+8. ${SHORT_WORDS}
 9. No banned hype words: game-changer, revolutionary, groundbreaking, unleash, supercharge, seamless.
 
 STORY: "${input.headline}"
@@ -212,12 +221,12 @@ SCRIPT JAKE READS:
 ${input.script || "(no script — follow the key points)"}
 
 Respond ONLY with JSON (no markdown):
-{"cover":{"eyebrow":"...","heading":"...","lede":"..."},"scenes":[{"kind":"flow","eyebrow":"...","heading":"...","island":null,"data":{...}}],"cues":["...","..."]}`;
+{"cover":{"eyebrow":"...","heading":"...","lede":"..."},"scenes":[{"kind":"flow","eyebrow":"...","heading":"...","data":{...},"cues":["one per item","..."]}]}`;
 
   try {
     const t = await callNewsModel(prompt, "news-notes", "research");
     const json = t.slice(t.indexOf("{"), t.lastIndexOf("}") + 1).replace(/,\s*([}\]])/g, "$1");
-    return normalizeStage(JSON.parse(json));
+    return normalizeStage(JSON.parse(json), input.script);
   } catch {
     return null;
   }

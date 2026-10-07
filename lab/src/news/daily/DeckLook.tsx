@@ -1,34 +1,34 @@
 /**
- * The deck's LOOK, on the Go-live card (Jake, 2026-10-06: "the deck itself
- * will look like the deep dive presentation, with all of the templates that I
- * can choose"): the Deep Dive's own TemplatePicker — every card is one of
- * today's stories drawn in that template (cover + its first scene) — and the
- * camera-bubble setting the Deep Dive uses (one camera, one machine, so the
- * same setting). Picking re-skins the deck at once; no rebuild.
+ * The deck's LOOK, on the Go-live card — the AI NEWS templates (Jake,
+ * 2026-10-07: "the AI news presentation templates should have different
+ * templates — minimalistic, beautiful but different templates from the deep
+ * dives"; stage/newsTemplates.ts). Same picker UX as before: every card is a
+ * REAL render — one of today's stories' info slides drawn in that template,
+ * with its title card inset — and the build asks for the template first.
+ * Picking re-skins the deck at once; no rebuild. The camera-bubble setting is
+ * the same one the Deep Dive uses (one camera, one machine).
  */
 import { useMemo, useState } from 'react';
-import { Palette } from 'lucide-react';
+import { Check, Palette } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import TemplatePicker from '../deepdive/TemplatePicker';
-import { templateFor, type DeckTemplate } from '../deepdive/templates';
 import { BubbleControl, useBubbleSettings } from '../deepdive/bubble';
-import { beatCount } from '../deepdive/v2/types';
 import { StoryThumb } from './stage/StoryShow';
 import { storyStage } from './stage/story';
-import type { DailyShow } from './useDailyShow';
+import { NEWS_TEMPLATES, newsTemplateFor, type NewsTemplate, type NewsTemplateId } from './stage/newsTemplates';
+import type { DailyShow, Slide } from './useDailyShow';
 
 export default function DeckLook({ show }: { show: DailyShow }) {
   const { deckTemplate, chooseDeckTemplate } = show;
   const [open, setOpen] = useState(false);
   const [bubble, setBubble] = useBubbleSettings();
-  const tpl = templateFor(deckTemplate, 'v2');
+  const tpl = newsTemplateFor(deckTemplate);
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2" data-deck-look={tpl.id}>
-      <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => setOpen(true)} title="Pick the deck's design (the Deep Dive templates)">
+      <Button variant="outline" size="sm" className="h-8 gap-2" onClick={() => setOpen(true)} title="Pick the deck's design (the AI News templates)">
         <Palette className="h-3.5 w-3.5" />
-        <span className="flex gap-0.5" aria-hidden>{[tpl.ink, tpl.paper, tpl.accent].map((c, i) => <span key={i} className="h-2.5 w-2.5 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}</span>
+        <span className="flex gap-0.5" aria-hidden>{[tpl.bg, tpl.ink, tpl.accent].map((c, i) => <span key={i} className="h-2.5 w-2.5 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}</span>
         Template: <span className="font-semibold">{tpl.name}</span>
       </Button>
       <BubbleControl value={bubble} onChange={setBubble} />
@@ -38,32 +38,46 @@ export default function DeckLook({ show }: { show: DailyShow }) {
   );
 }
 
+/** A story to preview when the deck has none yet (the build asks for a template before it exists). */
+const SAMPLE: Slide = {
+  id: 'sample',
+  topicLabel: 'A new AI model you can download for free',
+  teleprompterScript: 'A company just released a new AI model. You can download it for free. It runs on your own computer. It beats some bigger models on tests. And it costs nothing to try.',
+  bestSourceName: 'TechCrunch',
+  bestSourceUrl: 'https://techcrunch.com/',
+  stageJson: JSON.stringify({
+    v: 2,
+    cover: { eyebrow: 'Model release', heading: 'A free AI model you can *download*', lede: 'It runs on your own computer, and it costs nothing to try.' },
+    scenes: [{ kind: 'list', eyebrow: 'What happened', heading: 'Three things to *know*', data: { items: ['Free to download', 'Runs on your own computer', 'Beats some bigger models'] }, cues: ['You can download', 'It runs on', 'It beats some'] }],
+  }),
+} as Slide;
+
 /** The template picker for the daily deck — on the Go-live card, and FIRST on every
  *  build (Jake 2026-10-06: "every new deck asks you for the template you want first"). */
 export function DeckTemplateDialog({ show, open, onOpenChange, onPick, building = false }: {
   show: DailyShow; open: boolean; onOpenChange: (o: boolean) => void; onPick: (template: string) => void; building?: boolean;
 }) {
   const { slides, deckTemplate } = show;
+  const current = newsTemplateFor(deckTemplate).id;
 
-  // The preview story: the first one with built visuals (else the first).
+  // The preview story: the first one with built visuals (else a sample).
   const sample = useMemo(() => {
-    const i = Math.max(0, slides.findIndex((s) => !storyStage(s).fallback));
-    const slide = slides[i];
-    if (!slide) return null;
+    const i = slides.findIndex((s) => !storyStage(s).fallback);
+    const slide = i >= 0 ? slides[i] : SAMPLE;
     const st = storyStage(slide);
-    // The first scene, fully built (it sits on the template's light surface when it has one).
-    const sceneBeat = st.scenes[0] ? beatCount(st.scenes[0]) : 0;
-    return { slide, number: i + 1, sceneBeat };
+    // Its first info slide, fully revealed.
+    const first = st.screens.findIndex((x) => x.kind === 'scene');
+    let beat = 0;
+    st.beats.forEach((b, k) => { if (b.screen === first) beat = k; });
+    return { slide, number: i >= 0 ? i + 1 : 1, beat };
   }, [slides]);
 
-  const preview = (t: DeckTemplate) => sample && (
+  const preview = (t: NewsTemplate) => (
     <div className="relative">
-      <StoryThumb slide={sample.slide} beat={sample.sceneBeat} number={sample.number} template={t} />
-      {sample.sceneBeat > 0 && (
-        <div className="absolute bottom-1.5 right-1.5 w-[38%] overflow-hidden rounded shadow-lg ring-1 ring-black/40">
-          <StoryThumb slide={sample.slide} beat={0} number={sample.number} template={t} />
-        </div>
-      )}
+      <StoryThumb slide={sample.slide} beat={sample.beat} number={sample.number} template={t} />
+      <div className="absolute bottom-1.5 right-1.5 w-[38%] overflow-hidden rounded shadow-lg ring-1 ring-black/40">
+        <StoryThumb slide={sample.slide} beat={0} number={sample.number} template={t} titleCard />
+      </div>
     </div>
   );
 
@@ -75,10 +89,28 @@ export function DeckTemplateDialog({ show, open, onOpenChange, onPick, building 
         </DialogTitle>
         <p className="-mt-1 text-xs text-muted-foreground">
           {building
-            ? 'The same templates as Deep Dive. The deck is built in the one you pick; you can still change it later on the Go-live card without rebuilding.'
-            : "The same templates as Deep Dive. Each preview is one of today's stories drawn in that template. Picking one re-skins the audience and display screens, the slide previews and every thumbnail at once — the stories, beats and scripts stay as they are."}
+            ? 'The AI News templates — plainer than the Deep Dive on purpose, so the Deep Dive stays the special one. You can still change it later on the Go-live card without rebuilding.'
+            : "The AI News templates. Each preview is one of today's stories (an info slide + its title card) drawn in that template. Picking one re-skins the audience and display screens, the slide previews and every thumbnail at once — the stories, beats and scripts stay as they are. Each story opens on its source page either way; Shift shows its video."}
         </p>
-        <TemplatePicker value={deckTemplate} format="v2" preview={sample ? preview : undefined} onChange={onPick} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" data-news-picker>
+          {NEWS_TEMPLATES.map((t) => {
+            const on = t.id === current;
+            return (
+              <button key={t.id} type="button" onClick={() => onPick(t.id as NewsTemplateId)} data-template-card={t.id}
+                className={`group rounded-lg border p-2 text-left transition-colors ${on ? 'border-primary ring-2 ring-primary/40' : 'border-border hover:border-muted-foreground/50'}`}>
+                <div className="pointer-events-none overflow-hidden rounded-md">{preview(t)}</div>
+                <div className="mt-2 flex items-center gap-2">
+                  <span className="flex shrink-0 gap-0.5" aria-hidden>
+                    {[t.bg, t.ink, t.accent].map((c, i) => <span key={i} className="h-3 w-3 rounded-full ring-1 ring-black/20" style={{ background: c }} />)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-sm font-semibold">{t.name}{t.id === 'studio' ? ' (default)' : ''}</span>
+                  {on && <Check className="h-4 w-4 shrink-0 text-primary" />}
+                </div>
+                <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">{t.blurb}</p>
+              </button>
+            );
+          })}
+        </div>
       </DialogContent>
     </Dialog>
   );

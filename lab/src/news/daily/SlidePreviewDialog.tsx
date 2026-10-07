@@ -1,6 +1,6 @@
 /**
  * Preview a slide: the audience view — the story as the stage shows it
- * (cover, then each beat; daily/stage, 2026-10-06), steppable here with the
+ * (source → info slides, beat by beat; daily/stage, 2026-10-07; the video is Shift, not a beat), steppable here with the
  * arrows under it — beside the presenter notes, which can be edited in place.
  */
 import { useEffect, useState } from 'react';
@@ -15,22 +15,19 @@ import NotesEditor, { parseKeyPoints } from './NotesEditor';
 import type { Slide } from './useDailyShow';
 import { StoryThumb } from './stage/StoryShow';
 import { beatLabel, storyBeats, storyStage } from './stage/story';
-import { templateFor } from '../deepdive/templates';
-import { useBubbleSettings } from '../deepdive/bubble';
+import { newsTemplateFor } from './stage/newsTemplates';
 
 interface Props {
   slide: Slide | null;
   /** Its place in the show (1-based), for the scenes' number badge. */
   number?: number;
-  /** The deck's template id ('' = Jake's brand) — the preview is drawn in it. */
+  /** The deck's AI News template id ('' / unknown = the default) — the preview is drawn in it. */
   template?: string;
   onClose: () => void;
   onNotesUpdated: () => void;
 }
 
 export default function SlidePreviewDialog({ slide, number = 1, template = '', onClose, onNotesUpdated }: Props) {
-  // The safe frame the show screens keep for the camera bubble, so the preview matches them.
-  const [bubble] = useBubbleSettings();
   const [editingNotes, setEditingNotes] = useState(false);
   const [videoBusy, setVideoBusy] = useState<'' | 'find' | 'set'>('');
   const [videoLink, setVideoLink] = useState('');
@@ -78,7 +75,7 @@ export default function SlidePreviewDialog({ slide, number = 1, template = '', o
           <div>
             <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Audience view</p>
             <div data-story-preview>
-              <StoryThumb slide={slide} beat={beat} number={number} live template={templateFor(template, 'v2')} bubble={bubble} />
+              <StoryThumb slide={slide} beat={beat} number={number} live template={newsTemplateFor(template)} />
             </div>
             <div className="mt-1.5 flex items-center gap-2">
               <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => setBeat((b) => Math.max(0, b - 1))} disabled={beat <= 0} aria-label="Previous beat">
@@ -90,13 +87,18 @@ export default function SlidePreviewDialog({ slide, number = 1, template = '', o
               </Button>
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{beatLabel(stage, Math.min(beat, beats - 1))}</span>
             </div>
+            {!stage.shot && (
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground" data-no-source-shot>
+                No source page captured for this story — it opens on a title card. “Redo visuals” in Selections tries again.
+              </p>
+            )}
             {stage.fallback && (
               <p className="mt-1.5 text-[11px] leading-snug text-amber-300/90">
                 No visuals built for this story yet — it shows its key points. Use “Make visuals” in Selections (keeps the script).
               </p>
             )}
 
-            {/* Official release video — full screen on demand (Shift on the presenter), never on a beat. */}
+            {/* The story's video — not a beat: Shift puts it full screen over any beat of the story. */}
             <div className="mt-3 rounded-lg border border-border p-2.5" data-video-panel>
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Story video</p>
@@ -125,7 +127,7 @@ export default function SlidePreviewDialog({ slide, number = 1, template = '', o
                   </Button>
                 </div>
               ) : (
-                <p className="mt-1.5 text-xs text-muted-foreground">No video — this story shows its slides only.</p>
+                <p className="mt-1.5 text-xs text-muted-foreground">No video — this story goes from its source straight to its info slides.</p>
               )}
               {slide.videoReason && <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">{slide.videoReason}</p>}
               <form className="mt-2 flex gap-1.5" onSubmit={(e) => { e.preventDefault(); if (videoLink.trim()) void setVideo(videoLink.trim()); }}>

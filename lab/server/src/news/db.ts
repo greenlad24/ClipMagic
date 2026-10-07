@@ -137,6 +137,8 @@ if (!hasColumn("news_live_sessions", "media_view")) db.exec(`ALTER TABLE news_li
 // Daily Show stage (stage.ts): the story's cover + Deep Dive-style scenes, and
 // which beat of the current story the audience screen is on. Additive only.
 if (!hasColumn("news_slides", "stage_json")) db.exec(`ALTER TABLE news_slides ADD COLUMN stage_json TEXT`);
+// The story's captured source page (sourceShot.ts, 2026-10-07): JSON. Additive only.
+if (!hasColumn("news_slides", "source_shot")) db.exec(`ALTER TABLE news_slides ADD COLUMN source_shot TEXT`);
 if (!hasColumn("news_live_sessions", "current_beat")) db.exec(`ALTER TABLE news_live_sessions ADD COLUMN current_beat REAL`);
 // The deck's design template (2026-10-06): the Deep Dive's templates, picked on
 // the dashboard (web: src/news/deepdive/templates.ts). Empty/NULL = Jake's brand.
@@ -283,6 +285,8 @@ export interface SlideRecord {
   videoCheckedAt?: string;
   /** stage.ts StoryStage as JSON — the story's cover + scenes. Unset on decks built before 2026-10-06. */
   stageJson?: string;
+  /** sourceShot.ts: the captured source page `{file,url,name,w,h,capturedAt}` or `{failed,tried}` as JSON. */
+  sourceShot?: string;
 }
 
 export interface SessionRecord {
@@ -389,6 +393,7 @@ export const slides = makeTable<SlideRecord>(
     videoReason: ["video_reason", "text"],
     videoCheckedAt: ["video_checked_at", "text"],
     stageJson: ["stage_json", "text"],
+    sourceShot: ["source_shot", "text"],
   },
   { created_at: now },
 );

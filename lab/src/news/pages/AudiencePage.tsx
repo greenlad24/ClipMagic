@@ -7,7 +7,7 @@ import { slideMedia } from '../api';
 import { connectLiveSync, type LiveSync } from '../liveSync';
 import StoryShow from '../daily/stage/StoryShow';
 import { useDeckTemplate } from '../daily/stage/deckTemplate';
-import { templateFor } from '../deepdive/templates';
+import { newsTemplateFor } from '../daily/stage/newsTemplates';
 import { bubbleKey, useBubbleSettings } from '../deepdive/bubble';
 
 type SlideType = GetSlidesOutputType['slides'][0];
@@ -19,7 +19,7 @@ export default function AudiencePage() {
   const { user, isLoading: authLoading, loginWithRedirect } = useAuth();
   const [slides, setSlides] = useState<SlideType[]>([]);
   const [deckId, setDeckId] = useState<string | null>(null);
-  // The deck's design (a Deep Dive template, picked on the dashboard; live).
+  // The deck's design (an AI News template, picked on the dashboard; live).
   const [deckTpl0, setDeckTpl0] = useState('');
   const deckTemplate = useDeckTemplate(deckId, deckTpl0);
   // The camera-bubble safe frame (deepdive/bubble.tsx) — B / C / G on this screen.
@@ -96,7 +96,9 @@ export default function AudiencePage() {
     if (!user) return;
     const load = async () => {
       try {
-        const data = await getSlides({});
+        // ?deck=<id> (opened from the presenter): that deck — "today's" is empty after Bangkok midnight.
+        const deckParam = new URLSearchParams(window.location.search).get('deck');
+        const data = await getSlides(deckParam ? { deckId: deckParam } : {});
         if (data.deck && data.slides.length > 0) {
           setSlides(data.slides);
           setDeckId(data.deck.id);
@@ -191,15 +193,18 @@ export default function AudiencePage() {
     );
   }
 
-  // The story in the Deep Dive's style: cover, then its scenes' beats (daily/stage).
+  // The story: source → info slides, beat by beat (daily/stage); Shift = its video.
   const beat = beatAt.idx === currentIdx ? beatAt.beat : 0;
 
   return (
     <div className="fixed inset-0 overflow-hidden select-none" style={{ backgroundColor: '#000', cursor: cursorHidden ? 'none' : 'default' }}>
-      <StoryShow slide={slide} beat={beat} number={currentIdx + 1} template={templateFor(deckTemplate, 'v2')} bubble={bubble} bubbleLayer />
+      <StoryShow slide={slide} beat={beat} number={currentIdx + 1} template={newsTemplateFor(deckTemplate)} bubble={bubble} bubbleLayer />
 
-      {/* Official video: loaded behind the story, full screen while the presenter has it up (Shift) */}
-      {(() => { const m = slideMedia(slide); return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null; })()}
+      {/* The story's video: loaded behind the story, full screen on Shift over ANY beat (it is not a beat). */}
+      {(() => {
+        const m = slideMedia(slide);
+        return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null;
+      })()}
     </div>
   );
 }

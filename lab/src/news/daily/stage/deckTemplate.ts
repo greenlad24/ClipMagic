@@ -1,9 +1,10 @@
 /**
  * The Daily Show deck's design template (Jake, 2026-10-06: "the deck itself
  * will look like the deep dive presentation, with all of the templates that I
- * can choose"). It IS the Deep Dive's template set (deepdive/templates.ts),
- * stored per deck (`news_decks.template`, '' = Jake's brand) and picked on the
- * dashboard's Go-live card.
+ * can choose"). Since 2026-10-07 it is the AI NEWS template set
+ * (newsTemplates.ts — its own, not the Deep Dive's), stored per deck
+ * (`news_decks.template`; '' or an old Deep Dive id = the default) and picked
+ * on the dashboard's Go-live card.
  *
  * Design only, so a pick re-skins every open screen at once, no rebuild:
  *  - same browser (dashboard + audience/display windows): a BroadcastChannel
@@ -30,7 +31,7 @@ export function announceDeckTemplate(deckId: string | null | undefined, template
 /**
  * The template id of deck `deckId` (undefined/null = today's deck), live.
  * `initial` is what the page already knows (e.g. from getSlides) so the first
- * paint is right. Returns '' for "Jake's brand".
+ * paint is right. Returns the raw id — read it with `newsTemplateFor`.
  */
 export function useDeckTemplate(deckId: string | null | undefined, initial = ''): string {
   const [template, setTemplate] = useState(initial);

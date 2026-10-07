@@ -1,140 +1,266 @@
 /**
- * Daily Show — one story on the audience screen, in the Deep Dive's style
- * (Jake, 2026-10-06). The cover, then each scene, stacked full screen and slid
- * into view like the Deep Dive's chapters (`.dd2-track`); a scene is drawn by
- * the Deep Dive's own ChapterView, so its micro-interactions — cards that
- * reveal, numbers that count up, steps that light — are the same components.
+ * Daily Show — one story on the show screens (Jake, 2026-10-07):
+ *   SOURCE (the real article, full screen, scrolling slowly) → INFO slides
+ *   (a few facts, one item per beat). See story.ts for the beat model and how
+ *   every beat gets its cue in the script.
  *
- * The host page owns the beat (keys, live sync); this only draws. The story's
- * video is NOT part of this: it is its own full-screen layer (VideoEmbed),
- * opened with Shift, and no beat ever shows it.
+ * Drawn in the AI News templates (newsTemplates.ts + story.css) — NOT the Deep
+ * Dive's components or look, so the Deep Dive at the end of the show stays the
+ * special one. The host page owns the beat (keys, live sync); this only draws.
  *
- * TEMPLATES (Jake, 2026-10-06): the deck is drawn in one of the Deep Dive's
- * templates (deepdive/templates.ts, stored per deck — deckTemplate.ts). The
- * root gets exactly the variables, pattern layer and paper/dark rhythm a Deep
- * Dive stage gets (`dd2RootProps`, `paperFor`), and the presenter-bubble safe
- * frame (deepdive/bubble.tsx) — nothing here is forked from the Deep Dive.
+ * THE VIDEO is not drawn here and is not a beat: the audience/display pages
+ * keep the story's one VideoEmbed loaded behind the story and Shift puts it
+ * full screen over whatever beat is showing (media-view), so toggling back
+ * lands on the same beat.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Accent, ChapterView, DotField, SHOW_FIT } from '../../deepdive/v2/Chapter';
-import { useFitText } from '../../deepdive/fitText';
-import { dd2RootProps } from '../../deepdive/v2/Show';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useFitText, type FitTarget } from '../../deepdive/fitText';
 import type { Slide } from '../../api';
-import { beatCount } from '../../deepdive/v2/types';
-import { paperFor, templateFor, type DeckTemplate } from '../../deepdive/templates';
 import { BubbleLayer, type BubbleSettings } from '../../deepdive/bubble';
-import { locateBeat, storyStage, beatOfScene, type StoryStage } from './story';
+import { beatAtIndex, beatFor, storyStage, type NewsScene, type SourceShot, type StoryStage } from './story';
+import { newsTemplateFor, newsTemplateStyle, type NewsTemplate } from './newsTemplates';
 import './story.css';
 
 export interface StoryShowProps {
   slide: Slide;
-  /** Story beat: 0 = cover. */
+  /** Story beat: 0 = the source. */
   beat: number;
-  /** Story number in the show (1-based) — the scenes' number badge. */
+  /** Story number in the show (1-based) — the strip's number. */
   number: number;
-  /** Final state, no motion, no video (thumbnails, previews). */
+  /** Final state, no motion (thumbnails, previews). */
   still?: boolean;
-  /** Clicking a step/card on the stage jumps to it (the presenter's screens). */
+  /** Clicking an item on the stage jumps to it (the presenter's screens). */
   onBeat?: (beat: number) => void;
   /** Pre-parsed stage, when the host already has it. */
   stage?: StoryStage;
-  /** The deck's design (deepdive/templates.ts). Absent = Jake's brand. */
-  template?: DeckTemplate | null;
-  /** The presenter's camera bubble: its corner is kept clear (safe frame). */
+  /** The deck's AI News template. Absent = the default. */
+  template?: NewsTemplate | null;
+  /** The presenter's camera bubble (B · C · G overlay on the real audience screen). */
   bubble?: BubbleSettings | null;
-  /** The real audience screen: also draw the bubble guide / camera (B · C · G). */
   bubbleLayer?: boolean;
+  /** Draw the opener as the title card even when a source page exists (the template picker's inset). */
+  titleCard?: boolean;
 }
 
-const ytThumb = (s: Slide): string => (s.videoId && (s.videoKind || 'youtube') === 'youtube' ? `https://i.ytimg.com/vi/${s.videoId}/maxresdefault.jpg` : '');
+// Fit floors (Jake, 2026-10-06: "readable and big, but not overlap") — a nudge, not a shrink.
+const NEWS_FIT: FitTarget[] = [
+  { sel: '.nw-title-h', within: '.nw-title', min: 0.75 },
+  { sel: '.nw-title', min: 0.85, last: true },
+  { sel: '.nw-h', min: 0.9 },
+  { sel: '.nw-body', min: 0.85 },
+  { sel: '.nw-cards', items: '.nw-card', min: 0.85 },
+];
 
-function Cover({ slide, st, on, still }: { slide: Slide; st: StoryStage; on: boolean; still: boolean }) {
-  const c = st.cover;
-  const [bg, setBg] = useState(() => slide.heroImageUrl || ytThumb(slide));
-  useEffect(() => { setBg(slide.heroImageUrl || ytThumb(slide)); }, [slide.id, slide.heroImageUrl, slide.videoId]);
-  const plain = c.heading.replace(/\*/g, '');
-  const size = plain.length > 70 ? 'xl' : plain.length > 42 ? 'l' : '';
-  // The headline, lede and source always fit the screen (deepdive/fitText.ts).
-  const ref = useRef<HTMLElement>(null);
-  useFitText(ref, SHOW_FIT, [c.heading, c.lede, c.eyebrow, c.source, still, on]);
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** `*accent*` → the template's accent (colour or block — never the Deep Dive's italic underline). */
+function Accent({ text }: { text: string }) {
+  const parts = text.split(/\*([^*]+)\*/);
+  return <>{parts.map((p, i) => (i % 2 === 1 ? <span key={i} className="nw-acc">{p}</span> : <span key={i}>{p}</span>))}</>;
+}
+
+function Strip({ number, label }: { number: number; label: string }) {
   return (
-    <section ref={ref} className={`dd2-ch k-title ns-cover ${on ? 'on' : ''} ${still ? 'still' : ''}`}>
-      <div className="ns-cover-bg" aria-hidden>
-        {bg && (
-          <img src={bg} alt="" referrerPolicy="strict-origin-when-cross-origin"
-            // maxres is missing on some YouTube uploads; hq always exists.
-            onError={() => setBg((cur) => (cur.includes('maxresdefault') ? cur.replace('maxresdefault', 'hqdefault') : ''))} />
-        )}
-        <i className="ns-glow" />
-        {/* the Deep Dive title's dot field, in the template's colours */}
-        <DotField still={still || !on} />
-      </div>
-      <div className="dd2-wrap dd2-title ns-cover-wrap">
-        <div><span className="dd2-chip"><span className="av">JD</span>Jake Dawson<span>· AI News</span></span></div>
-        {c.eyebrow && <div className="dd2-eyebrow ns-cover-eyebrow">{c.eyebrow}</div>}
-        <h1 className={`dd2-h1 ns-h1 ${size}`}><Accent text={c.heading} /><span className="full">.</span></h1>
-        {c.lede && <p className="dd2-lede ns-lede">{c.lede}</p>}
-        {(c.source || c.host) && (
-          <div className="ns-src">
-            <span>via</span> <b>{c.source || c.host}</b>
-            {c.host && c.source && <span> · {c.host}</span>}
-            {c.outlets > 1 && <em>{c.outlets} sources</em>}
-          </div>
-        )}
-      </div>
-    </section>
+    <div className="nw-strip">
+      <span className="no">{pad2(number)}</span>
+      {label && <span className="lb">{label}</span>}
+    </div>
   );
 }
 
-export default function StoryShow({ slide, beat, number, still = false, onBeat, stage, template, bubble, bubbleLayer = false }: StoryShowProps) {
+/* ── SOURCE ── */
+
+function SourceScroll({ shot, on, still }: { shot: SourceShot; on: boolean; still: boolean }) {
+  const box = useRef<HTMLDivElement>(null);
+  const img = useRef<HTMLImageElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    const el = img.current, b = box.current;
+    if (!el || !b || !loaded) return;
+    el.getAnimations().forEach((a) => a.cancel());
+    if (still || !on) return;
+    // Like a camera on the real page: hold the top a moment, then a slow, even scroll.
+    const dist = Math.max(0, (shot.h * b.clientWidth) / shot.w - b.clientHeight);
+    if (dist < 4) return;
+    const pxPerSec = b.clientHeight * 0.045; // ≈ 49 px/s on a 1080p screen
+    const anim = el.animate(
+      [{ transform: 'translateY(0)' }, { transform: `translateY(${-dist}px)` }],
+      { duration: Math.max(8000, (dist / pxPerSec) * 1000), delay: 1400, easing: 'cubic-bezier(.42,0,.58,1)', fill: 'forwards' },
+    );
+    return () => anim.cancel();
+  }, [on, still, loaded, shot.src, shot.w, shot.h]);
+  return (
+    <div className="nw-src" ref={box}>
+      <img ref={img} src={shot.src} alt="" onLoad={() => setLoaded(true)} draggable={false} />
+      <div className="nw-src-chip"><i />{shot.name || shot.host}{shot.name && shot.host && <span>{shot.host}</span>}</div>
+    </div>
+  );
+}
+
+function TitleCard({ st, number, on, still }: { st: StoryStage; number: number; on: boolean; still: boolean }) {
+  const c = st.cover;
+  const ref = useRef<HTMLDivElement>(null);
+  useFitText(ref, NEWS_FIT, [c.heading, c.lede, still, on]);
+  return (
+    <div className="nw-pad nw-title" ref={ref}>
+      <Strip number={number} label={c.eyebrow || 'Next story'} />
+      <h1 className="nw-title-h"><Accent text={c.heading} /></h1>
+      {c.lede && <p className="nw-title-lede">{c.lede}</p>}
+      {(c.source || c.host) && <div className="nw-via">via <b>{c.source || c.host}</b>{c.host && c.source && <span>· {c.host}</span>}</div>}
+    </div>
+  );
+}
+
+/* ── INFO ── */
+
+const fmt = (v: unknown): string => (typeof v === 'number' && Number.isFinite(v) ? v.toLocaleString('en-US') : String(v ?? ''));
+
+function SceneBody({ sc, upTo, still, onItem }: { sc: NewsScene; upTo: number; still: boolean; onItem?: (i: number) => void }) {
+  const d = sc.data || {};
+  const it = (i: number, base: string): { className: string; onClick?: () => void } => ({
+    className: `${base} nw-it ${i < upTo ? '' : 'hold'} ${i === upTo - 1 ? 'cur' : ''}`,
+    onClick: onItem ? () => onItem(i) : undefined,
+  });
+  switch (sc.kind) {
+    case 'list':
+      return (
+        <div className="nw-list">
+          {(d.items ?? []).map((x: string, i: number) => (
+            <div key={i} {...it(i, 'row')}><span className="n">{pad2(i + 1)}</span><span className="tx">{x}</span></div>
+          ))}
+        </div>
+      );
+    case 'stats': {
+      const stats = d.stats ?? [];
+      return (
+        <div className={`nw-stats n${stats.length}`}>
+          {stats.map((x: any, i: number) => (
+            <div key={i} {...it(i, 'nw-stat')}>
+              <div className="v">{x.prefix}{x.value !== null && x.value !== undefined ? fmt(x.value) : x.display}{x.suffix && <small>{x.suffix}</small>}</div>
+              <div className="l">{x.label}</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    case 'versus':
+      return (
+        <div className="nw-cards">
+          {(d.options ?? []).map((o: any, i: number) => (
+            <div key={i} {...it(i, 'nw-card')}>
+              <div className="nm">{o.name}</div>
+              <div className="ln">{o.line}</div>
+              {o.points?.length > 0 && <ul>{o.points.map((p: string, k: number) => <li key={k}>{p}</li>)}</ul>}
+            </div>
+          ))}
+        </div>
+      );
+    case 'reveal':
+      return (
+        <div className="nw-cards">
+          {(d.cards ?? []).map((c: any, i: number) => (
+            <div key={i} {...it(i, 'nw-card')}>
+              <div className="nm">{c.name}</div>
+              <div className="big">{c.big || `${c.prefix ?? ''}${fmt(c.countTo)}${c.suffix ?? ''}`}</div>
+              {c.small && <div className="sm">{c.small}</div>}
+            </div>
+          ))}
+        </div>
+      );
+    case 'flow':
+      return (
+        <div className="nw-flow">
+          {(d.steps ?? []).map((x: any, i: number) => (
+            <div key={i} {...it(i, 'nw-step')}>
+              <span className="dot">{i + 1}</span>
+              <div className="lb">{x.label}</div>
+              <div className="tx">{x.text}</div>
+            </div>
+          ))}
+        </div>
+      );
+    case 'timeline':
+      return (
+        <div className="nw-tl">
+          {(d.events ?? []).map((e: any, i: number) => (
+            <div key={i} {...it(i, `nw-ev ${e.soon ? 'soon' : ''}`)}>
+              <div className="dt">{e.date}</div>
+              <div className="lb">{e.label}</div>
+              {e.detail && <div className="tx">{e.detail}</div>}
+            </div>
+          ))}
+        </div>
+      );
+    case 'quote':
+      return (
+        <div {...it(0, 'nw-quote')}>
+          <q>{d.quote}</q>
+          {(d.who || d.role) && <div className="who"><b>{d.who}</b>{d.role && ` · ${d.role}`}</div>}
+        </div>
+      );
+    default:
+      return null;
+  }
+}
+
+function SceneScreen({ sc, number, upTo, on, still, onItem }: { sc: NewsScene; number: number; upTo: number; on: boolean; still: boolean; onItem?: (i: number) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useFitText(ref, NEWS_FIT, [sc, still, on]);
+  return (
+    <div className="nw-pad" ref={ref}>
+      <Strip number={number} label={sc.eyebrow} />
+      <h2 className="nw-h"><Accent text={sc.heading} /></h2>
+      <div className="nw-body"><SceneBody sc={sc} upTo={upTo} still={still} onItem={onItem} /></div>
+    </div>
+  );
+}
+
+export default function StoryShow({ slide, beat, number, still = false, onBeat, stage, template, bubble, bubbleLayer = false, titleCard = false }: StoryShowProps) {
   const st = useMemo(() => stage ?? storyStage(slide), [stage, slide]);
-  const t = template ?? templateFor(null, 'v2');
-  const at = locateBeat(st, beat);
+  const t = template ?? newsTemplateFor(null);
+  const at = beatAtIndex(st, beat);
   // First paint of a story lands without the slide transition.
   const [instant, setInstant] = useState(true);
   useEffect(() => {
     setInstant(true);
-    const t = setTimeout(() => setInstant(false), 60);
-    return () => clearTimeout(t);
+    const id = setTimeout(() => setInstant(false), 60);
+    return () => clearTimeout(id);
   }, [slide.id]);
 
   return (
-    <div className={`dd2 ns-story ${instant || still ? 'instant' : ''}`} {...dd2RootProps(t, bubble)}>
-      <div className="dd2-track" style={{ transform: `translateY(${-at.screen * 100}cqh)` }}>
-        <Cover slide={slide} st={st} on={!still && at.screen === 0} still={still} />
-        {st.scenes.map((c, i) => {
-          const screen = i + 1;
-          const near = Math.abs(screen - at.screen) <= 1;
-          // A scene already passed shows its last beat; one ahead shows its first.
-          const b = screen === at.screen ? at.sceneBeat : screen < at.screen ? beatCount(c) - 1 : 0;
-          return (
-            <ChapterView
-              key={c.id}
-              chapter={c}
-              index={number}
-              beat={b}
-              diveId=""
-              active={!still && screen === at.screen}
-              still={still || !near}
-              // The template's rhythm. Jake's brand alternates: cover black → first scene
-              // on paper → second black; all-dark / all-light templates stay so.
-              paper={paperFor(t, i, false)}
-              onBeat={onBeat ? (sb) => onBeat(beatOfScene(st, i, sb)) : undefined}
-            />
-          );
+    <div className={`nw ${instant || still ? 'instant' : ''} ${still ? 'still' : ''}`} data-deco={t.deco} data-mark={t.mark} data-template={t.id} style={newsTemplateStyle(t)}>
+      <div className="nw-deck">
+        {st.screens.map((sc, i) => {
+          const on = i === at.screen;
+          const cls = `nw-screen k-${sc.kind} ${on ? 'on' : i < at.screen ? 'past' : ''}`;
+          let body: ReactNode = null;
+          if (sc.kind === 'open') {
+            body = st.shot && !titleCard
+              ? <SourceScroll shot={st.shot} on={on} still={still} />
+              : <TitleCard st={st} number={number} on={on} still={still} />;
+          } else {
+            const scene = st.scenes[sc.scene];
+            // A slide already passed shows all its items; one ahead shows none yet.
+            const upTo = on ? at.upTo : i < at.screen ? 99 : 0;
+            body = (
+              <SceneScreen sc={scene} number={number} upTo={upTo} on={on} still={still}
+                onItem={onBeat ? (k) => onBeat(beatFor(st, i, k + 1)) : undefined} />
+            );
+          }
+          return <section key={i} className={cls} data-screen={sc.kind}>{body}</section>;
         })}
       </div>
-      {bubbleLayer && bubble && !still && <BubbleLayer settings={bubble} scope=".dd2-ch.on" trigger={`${slide.id}:${beat}`} />}
+      {bubbleLayer && bubble && !still && <BubbleLayer settings={bubble} scope=".nw-screen.on" trigger={`${slide.id}:${beat}`} />}
     </div>
   );
 }
 
 /** One story as a still 16:9 thumbnail at a given beat (presenter monitor, dashboard). */
-export function StoryThumb({ slide, beat, number, live = false, template, bubble }: { slide: Slide; beat: number; number: number; live?: boolean; template?: DeckTemplate | null; bubble?: BubbleSettings | null }) {
+export function StoryThumb({ slide, beat, number, live = false, template, titleCard = false }: { slide: Slide; beat: number; number: number; live?: boolean; template?: NewsTemplate | null; titleCard?: boolean }) {
   return (
     <div style={{ position: 'relative', aspectRatio: '16 / 9', width: '100%', overflow: 'hidden', borderRadius: 8, background: '#000' }}>
       <div style={{ position: 'absolute', inset: 0 }}>
-        <StoryShow slide={slide} beat={beat} number={number} still={!live} template={template} bubble={bubble} />
+        <StoryShow slide={slide} beat={beat} number={number} still={!live} template={template} titleCard={titleCard} />
       </div>
     </div>
   );

@@ -4,7 +4,7 @@ import { useAuth } from '../auth';
 import { GetSlidesOutputType } from '../api';
 import StoryShow from '../daily/stage/StoryShow';
 import { useDeckTemplate } from '../daily/stage/deckTemplate';
-import { templateFor } from '../deepdive/templates';
+import { newsTemplateFor } from '../daily/stage/newsTemplates';
 import { bubbleKey, useBubbleSettings } from '../deepdive/bubble';
 import VideoEmbed from '../components/VideoEmbed';
 import { slideMedia } from '../api';
@@ -37,7 +37,7 @@ export default function DisplayPage() {
   const idxRef = useRef(0);
   const [bgColor] = useState(() => localStorage.getItem(BG_KEY) || '#ffffff');
   const channelRef = useRef<BroadcastChannel | null>(null);
-  // The deck's design (a Deep Dive template, picked on the dashboard; live).
+  // The deck's design (an AI News template, picked on the dashboard; live).
   const deckTemplate = useDeckTemplate(slide?.deck ?? null);
   // The camera-bubble safe frame (deepdive/bubble.tsx) — B / C / G on this screen.
   const [bubble, setBubble] = useBubbleSettings();
@@ -111,11 +111,14 @@ export default function DisplayPage() {
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ backgroundColor: '#000' }}>
-      {/* The story in the Deep Dive's style: cover, then its scenes' beats (daily/stage). */}
-      <StoryShow slide={slide} beat={beat} number={idx + 1} template={templateFor(deckTemplate, 'v2')} bubble={bubble} bubbleLayer />
+      {/* The story: source → info slides, beat by beat (daily/stage); Shift = its video. */}
+      <StoryShow slide={slide} beat={beat} number={idx + 1} template={newsTemplateFor(deckTemplate)} bubble={bubble} bubbleLayer />
 
-      {/* Official video: loaded behind the story, full screen while the presenter has it up (Shift) */}
-      {(() => { const m = slideMedia(slide); return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null; })()}
+      {/* The story's video: loaded behind the story, full screen on Shift over ANY beat (it is not a beat). */}
+      {(() => {
+        const m = slideMedia(slide);
+        return m ? <VideoEmbed key={m.key} media={m} active={mediaView === 'video'} /> : null;
+      })()}
     </div>
   );
 }

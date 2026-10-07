@@ -92,7 +92,7 @@ const PAGE_W = 1280;
 const PAGE_VIEW_H = 900;
 const MAX_PAGE_CSS_H = 30000;
 const TILE_CSS_H = 2400;
-const CHROME_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+export const CHROME_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
 export const videoCacheDir = (): string => path.join(config.dataDir, "news-deepdive", "_videos");
 const hash = (s: string) => crypto.createHash("sha1").update(s).digest("hex").slice(0, 16);
@@ -415,21 +415,21 @@ export function cutClip(diveId: string, videoId: string, start: number, end: num
 
 /* ── 4. capturing a release page ──────────────────────────────────────────── */
 
-async function loadPuppeteer(): Promise<any> {
+export async function loadPuppeteer(): Promise<any> {
   const mod: any = await import("puppeteer-core");
   return mod?.default ?? mod;
 }
 
-const FAILED_PAGE_RE = /couldn['’]t load|could not be loaded|access denied|just a moment|attention required|verify you are human|are you a robot|enable javascript and cookies|request blocked|403 forbidden|404 not found|page not found/i;
+export const FAILED_PAGE_RE = /couldn['’]t load|could not be loaded|access denied|just a moment|attention required|verify you are human|are you a robot|enable javascript and cookies|request blocked|403 forbidden|404 not found|page not found/i;
 
 // Page-side scripts are strings: the server's tsconfig has no DOM lib.
-const STEALTH_SCRIPT = `(() => {
+export const STEALTH_SCRIPT = `(() => {
   try { Object.defineProperty(navigator, 'webdriver', { get: () => false }); } catch (e) {}
   try { Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] }); } catch (e) {}
   try { if (!window.chrome) window.chrome = { runtime: {} }; else if (!window.chrome.runtime) window.chrome.runtime = {}; } catch (e) {}
 })();`;
 
-const DISMISS_COOKIES = `(() => {
+export const DISMISS_COOKIES = `(() => {
   const re = /^(accept( all)?( cookies)?|allow( all)?( cookies)?|agree|i agree|got it|ok(ay)?|reject( all)?|decline|only necessary|necessary only|continue|close)$/i;
   let n = 0;
   for (const el of document.querySelectorAll('button, a[role="button"], [role="button"], input[type="button"]')) {
@@ -502,7 +502,7 @@ const pageInflight = new Map<string, Promise<PageAsset | null>>();
 let browserQueue: Promise<unknown> = Promise.resolve();
 
 /** One Chromium at a time: a 2× 30k-px page is heavy. */
-function serialBrowser<T>(work: () => Promise<T>): Promise<T> {
+export function serialBrowser<T>(work: () => Promise<T>): Promise<T> {
   const p = browserQueue.then(work, work);
   browserQueue = p.catch(() => undefined);
   return p;

@@ -89,6 +89,8 @@ export interface Slide {
   videoCheckedAt?: string;
   /** The story's on-screen stage as JSON (server stage.ts) — read it with `daily/stage/story.ts`. Unset on older decks. */
   stageJson?: string;
+  /** The captured source page (server sourceShot.ts) as JSON — read it with `daily/stage/story.ts` `sourceShotOf`. */
+  sourceShot?: string;
 }
 
 export interface GetSlidesOutputType { deck: Deck | null; slides: Slide[] }
@@ -234,7 +236,7 @@ export const collectNews = (input: Record<string, never>) =>
 export const buildDeckFromStories = (input: { template?: string }) =>
   streamingCall<{ success: boolean; slidesCreated: number; deckId: string; message: string }>('buildDeckFromStories', input);
 export const getSlides = (input: { deckId?: string }) => call<GetSlidesOutputType>('getSlides', input);
-/** The deck's design template (the Deep Dive's templates; '' = Jake's brand). No deckId = today's deck. */
+/** The deck's design template (the AI News templates, daily/stage/newsTemplates.ts; '' = the default). No deckId = today's deck. */
 export const getDeckTemplate = (input: { deckId?: string }) => call<{ deckId: string | null; template: string }>('getDeckTemplate', input);
 export const setDeckTemplate = (input: { deckId?: string; template: string }) => call<{ deckId: string; template: string }>('setDeckTemplate', input);
 export const updateSlide = (input: {
@@ -271,7 +273,7 @@ export const setSlideVideo = (input: { slideId: string; videoId: string | null }
 
 /** Make the on-screen stage for slides that have none (older decks); `force` redoes all. Scripts are untouched. */
 export const buildSlideStages = (input: { deckId?: string; force?: boolean }) =>
-  call<{ built: number; failed: number; skipped: number }>('buildSlideStages', input);
+  call<{ built: number; failed: number; skipped: number; sources?: { captured: number; failed: number; skipped: number } }>('buildSlideStages', input);
 
 /** YouTube embed for the audience screens: muted, looping, autoplay, as little chrome as YouTube allows. */
 export function youtubeEmbedUrl(videoId: string, opts: { autoplay?: boolean; jsApi?: boolean } = {}): string {

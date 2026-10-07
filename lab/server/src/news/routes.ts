@@ -58,6 +58,8 @@ import { startDemoJob, latestDemoJob, liveDemoState, attachDemoToDive } from "./
 const generateDeepDive = (write: (chunk: string) => void | Promise<void>, input: { id?: string; fresh?: boolean }) =>
   (deepDives.get(String(input?.id ?? ""))?.format === "v2" ? generateDeepDiveV2(write, input) : generateDeepDiveV1(write, input));
 import path from "node:path";
+import { newsTemplateInput } from "./newsTemplates.js";
+import { SHOT_FILE_RE, shotDir } from "./sourceShot.js";
 
 type Handler = (input: any) => Promise<unknown> | unknown;
 
@@ -158,7 +160,7 @@ const getDeckTemplate: Handler = (input) => {
 const setDeckTemplate: Handler = (input) => {
   const deck = deckFor(str(input?.deckId));
   if (!deck) throw Object.assign(new Error("No deck yet — build the presentation first."), { status: 400 });
-  const template = templateInput(input?.template);
+  const template = newsTemplateInput(input?.template);
   if (template === undefined) throw Object.assign(new Error("Unknown template."), { status: 400 });
   decks.update(deck.id, { template });
   return { deckId: deck.id, template };
@@ -579,7 +581,7 @@ type Streamer = (write: (chunk: string) => void, input: any) => Promise<unknown>
 const STREAMERS: Record<string, Streamer> = {
   collectNews,
   buildDeckFromStories: (write, input) => {
-    const template = input?.template === undefined ? undefined : templateInput(input.template);
+    const template = input?.template === undefined ? undefined : newsTemplateInput(input.template);
     if (input?.template !== undefined && template === undefined) throw Object.assign(new Error("Unknown template."), { status: 400 });
     return buildDeckFromStories(write, { template });
   },
@@ -630,6 +632,18 @@ newsRouter.get("/dd-asset/:dive/:file", (req: Request, res: Response) => {
   // sendFile answers Range requests (206) itself — the clip player seeks.
   const type = file.endsWith(".mp4") ? "video/mp4" : file.endsWith(".webm") ? "video/webm" : file.endsWith(".gif") ? "image/gif" : "image/jpeg";
   res.sendFile(path.join(assetDir(dive), file), { headers: { "Content-Type": type, "Accept-Ranges": "bytes" } }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
+});
+
+/**
+ * A story's captured source page (sourceShot.ts) — the full-screen scroll that
+ * opens each story. Signed-in like every /api/news route; only names the
+ * capture itself writes are served.
+ */
+newsRouter.get("/source-shot/:file", (req: Request, res: Response) => {
+  const file = String(req.params.file);
+  if (!SHOT_FILE_RE.test(file)) { res.status(404).end(); return; }
+  res.setHeader("Cache-Control", "private, max-age=86400");
+  res.sendFile(path.join(shotDir(), file), { headers: { "Content-Type": "image/jpeg" } }, (err) => { if (err && !res.headersSent) res.status(404).end(); });
 });
 
 newsRouter.post("/:fn", express.json({ limit: "2mb" }), async (req: Request, res: Response) => {

@@ -10,6 +10,8 @@ import { callNewsModel } from './ai.js';
 import { pickReadableSource } from './access.js';
 import { findVideoForStory, slideVideoFields, uniqueVideos, type VideoResult } from './video.js';
 import { generateStageForStory, type StoryStage } from './stage.js';
+import { captureDeckSources } from './sourceShot.js';
+import { isNewsTemplate } from './newsTemplates.js';
 
 // Official/company blog sources of a story
 interface BlogSource { company: string; url: string; title: string; isOfficial: boolean; }
@@ -332,11 +334,18 @@ function stageSourceLines(blogSources: BlogSource[], articleSources: ArticleSour
  * `force` regenerates every slide's stage. Sequential-ish: 3 at a time.
  */
 const stagesRunning = new Set<string>();
-export async function buildStagesForDeck(deckId: string, force = false): Promise<{ built: number; failed: number; skipped: number }> {
+export async function buildStagesForDeck(deckId: string, force = false): Promise<{ built: number; failed: number; skipped: number; sources: { captured: number; failed: number; skipped: number } }> {
   // A second click while the first run is going would pay for every stage twice.
   if (stagesRunning.has(deckId)) throw Object.assign(new Error('Visuals are already being made for this deck.'), { status: 409 });
   stagesRunning.add(deckId);
-  try { return await buildStages(deckId, force); } finally { stagesRunning.delete(deckId); }
+  try {
+    // The visuals and the source pages (sourceShot.ts) side by side: one is the model, the other Chromium.
+    const [r, sources] = await Promise.all([
+      buildStages(deckId, force),
+      captureDeckSources(deckId, { force }).catch((e) => { console.warn('[news:sources] capture failed:', e); return { captured: 0, failed: 0, skipped: 0 }; }),
+    ]);
+    return { ...r, sources };
+  } finally { stagesRunning.delete(deckId); }
 }
 
 async function buildStages(deckId: string, force: boolean): Promise<{ built: number; failed: number; skipped: number }> {
@@ -394,7 +403,8 @@ export async function buildDeckFromStories(
       if (opts.template !== undefined) decks.update(deck.id, { template: opts.template });
     } else {
       // A new day's deck takes the template picked for this build, else the look Jake last picked; none = his brand.
-      const lastLook = decks.where("template IS NOT NULL AND template != '' ORDER BY created_at DESC LIMIT 1")[0]?.template ?? "";
+      // (only an AI News template — a Deep Dive id picked before 2026-10-07 is not inherited)
+      const lastLook = decks.where("template IS NOT NULL AND template != '' ORDER BY created_at DESC LIMIT 20").map((d) => d.template).find(isNewsTemplate) ?? "";
       deck = decks.insert({ deckDate: today, totalSlides: 0, template: opts.template ?? lastLook });
     }
 
@@ -503,6 +513,16 @@ export async function buildDeckFromStories(
     // Bulk create slides
     slides.insertMany(slideRecords as Record<string, unknown>[]);
     decks.update(deck!.id, { totalSlides: slideRecords.length });
+
+    // Each story opens on its source page, full screen (sourceShot.ts) — a capture per story.
+    await prog(`Capturing the source pages (${slideRecords.length})…`, 92);
+    try {
+      const src = await captureDeckSources(deck!.id, { log: (m) => { void prog(m, 94); } });
+      await prog(`Source pages: ${src.captured} captured${src.failed ? `, ${src.failed} not showable (they open on a title card)` : ''}.`, 98);
+    } catch (e) {
+      console.warn('[news:sources] capture failed:', e);
+      await prog('Source pages could not be captured — stories open on a title card. Redo visuals tries again.', 98);
+    }
 
     await prog(`Done! ${slideRecords.length} slides built with presenter notes and teleprompter scripts.`, 100);
     return { success: true, slidesCreated: slideRecords.length, deckId: deck!.id, message: `Created ${slideRecords.length} slides` };

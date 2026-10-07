@@ -58,9 +58,13 @@ export default function RundownPane({ show, onBuild, onPreview }: Props) {
   const makeStages = async (force: boolean) => {
     setStagesBusy(true);
     try {
-      const r = await buildSlideStages({ deckId: slides[0]?.deck, force });
-      if (r.failed) toast.warning(`Visuals made for ${r.built} ${r.built === 1 ? 'story' : 'stories'}; ${r.failed} failed (those show their key points).`);
-      else toast.success(`Visuals made for ${r.built} ${r.built === 1 ? 'story' : 'stories'}`);
+      // The deck on screen — never "today's", which is another (empty) deck after Bangkok midnight.
+      const deckId = show.deck?.id ?? slides[0]?.deck;
+      if (!deckId) { toast.error('No deck loaded'); return; }
+      const r = await buildSlideStages({ deckId, force });
+      const src = r.sources ? ` · source pages: ${r.sources.captured + r.sources.skipped} of ${slides.length}` : '';
+      if (r.failed) toast.warning(`Visuals made for ${r.built} ${r.built === 1 ? 'story' : 'stories'}; ${r.failed} failed (those show their key points)${src}.`);
+      else toast.success(`Visuals made for ${r.built} ${r.built === 1 ? 'story' : 'stories'}${src}`);
       await show.loadSlides();
     } catch (e: any) { toast.error(e?.message || 'Could not make the visuals'); }
     finally { setStagesBusy(false); }
@@ -135,18 +139,18 @@ export default function RundownPane({ show, onBuild, onPreview }: Props) {
               <Play className="h-4 w-4" /> Start show
             </Button>
           </div>
-          {/* The deck's design: the Deep Dive templates + the camera-bubble safe frame. */}
+          {/* The deck's design: the AI News templates + the camera-bubble setting. */}
           <DeckLook show={show} />
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground" data-stages={missingStages}>
             <span className="flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5" />
               {missingStages > 0
                 ? `${missingStages} of ${slides.length} ${slides.length === 1 ? 'story has' : 'stories have'} no visuals yet (they show key points).`
-                : 'Every story has its visuals (cover + beats).'}
+                : 'Every story has its visuals (source page → info slides; Shift = video).'}
             </span>
             <Button variant={missingStages > 0 ? 'secondary' : 'ghost'} size="sm" className="h-7 gap-1 text-xs"
               disabled={stagesBusy || building} onClick={() => void makeStages(missingStages === 0)}
-              title="Makes each story's on-screen visuals from its script. Scripts, notes and videos are not touched.">
+              title="Makes each story's info slides from its script and captures its source page. Scripts, notes and videos are not touched.">
               {stagesBusy ? 'Making visuals…' : missingStages > 0 ? 'Make visuals' : 'Redo visuals'}
             </Button>
           </div>
@@ -163,7 +167,7 @@ export default function RundownPane({ show, onBuild, onPreview }: Props) {
             <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Other screens</p>
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
               {SCREENS.map(s => (
-                <a key={s.href} href={s.href} target="_blank" rel="noopener noreferrer"
+                <a key={s.href} href={s.href === '/news-gatherer/present/audience' && show.deck?.id ? `${s.href}?deck=${encodeURIComponent(show.deck.id)}` : s.href} target="_blank" rel="noopener noreferrer"
                   className="group flex items-center gap-2 rounded-md border border-border px-2.5 py-2 transition-colors hover:border-primary/50 hover:bg-muted/50">
                   <s.icon className="h-4 w-4 shrink-0 text-muted-foreground group-hover:text-primary" />
                   <span className="min-w-0">

@@ -57,6 +57,15 @@ const WALL_TEXT = [
   /become a (?:member|subscriber) to (?:continue|read)/i,
 ];
 
+/** The sign-in / subscription wall phrase in a page's visible text, if any (also used on a rendered page by sourceShot.ts). */
+export function wallPhrase(text: string): string | null {
+  for (const re of WALL_TEXT) { const m = text.match(re); if (m) return m[0]; }
+  return null;
+}
+
+/** A subscription site (logged-out readers hit a wall). */
+export const isHardPaywall = (url: string): boolean => { const h = hostOf(url); return HARD_PAYWALL.some((d) => onHost(h, d)); };
+
 const hostOf = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, "").toLowerCase(); } catch { return ""; } };
 const onHost = (host: string, d: string) => host === d || host.endsWith(`.${d}`);
 
