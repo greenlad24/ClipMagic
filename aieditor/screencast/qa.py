@@ -82,7 +82,7 @@ def _camera_series(cam, ev, dur, fps):
     """Per-output-frame zoom of one clip from its camera.json (same evaluator as the render)."""
     p = camera.params()
     p.update({k: v for k, v in cam.get("params", {}).items() if k in p})
-    eases = {"in": camera.bezier(*p["zoom_in_ease"]), "out": camera.bezier(*p["zoom_out_ease"])}
+    eases = camera.make_eases(p)
     W, H = ev["capture"]["w"], ev["capture"]["h"]
     cfps = ev["capture"]["fps"]
     f0 = cam.get("f0", 0)
@@ -92,6 +92,23 @@ def _camera_series(cam, ev, dur, fps):
         f = f0 + o / fps * cfps
         out.append(camera.camera_at(moves, f, p, eases, W, H)[0])
     return out
+
+
+def target_fit(m, W, H, p):
+    """A framed target (move end view + its box) is fully in view and clear of the facecam zone
+    (SYSTEM.md §3a). None when the move has no target box."""
+    if len(m) < 6 or not m[5] or m[3][0] <= 1.0:
+        return None
+    z, cx, cy = m[3]
+    vw, vh = W / z, H / z
+    l, t = cx - vw / 2, cy - vh / 2
+    x, y, bw, bh = m[5]
+    inside = x >= l - 0.01 * vw and x + bw <= l + 1.01 * vw and y >= t - 0.01 * vh and y + bh <= t + 1.01 * vh
+    zx0, zy0, zx1, zy1 = p["bubble_zone"]
+    ax0, ay0, ax1, ay1 = (x - l) / vw, (y - t) / vh, (x + bw - l) / vw, (y + bh - t) / vh
+    ov = max(0.0, min(ax1, zx1) - max(ax0, zx0)) * max(0.0, min(ay1, zy1) - max(ay0, zy0))
+    clear = ov / max(1e-6, (ax1 - ax0) * (ay1 - ay0)) < 0.08
+    return bool(inside and clear)
 
 
 def edit_metrics(edit_dir, video):
@@ -111,6 +128,8 @@ def edit_metrics(edit_dir, video):
         spans.append((t, total))
     sc_dur = sum(b - a for a, b in spans)
     zin, holds, cuts, n_moves, zoom_series, deep = [], [], 0, 0, [], 0
+    pans, pan_frames, pan_peaks, n_xf, xf_frames, hard_page, fits = 0, [], [], 0, [], 0, []
+    cp = camera.params()
     for i, seg in enumerate(plan["segments"]):
         cam_p = edit_dir / f"sc-{i:02d}-1920.mp4.camera.json"
         ev_p = edit_dir / f"seg-{i:02d}" / "rec" / "events.json"
@@ -130,11 +149,33 @@ def edit_metrics(edit_dir, video):
                 continue                                    # holds run across its in-span jump cuts
             n_moves += 1
             z0, z1 = m[2][0], m[3][0]
+            # a pan = a move at constant zoom (older plans labelled them "in")
+            if m[4] == "pan" or (z0 > 1.05 and abs(math.log(z1 / z0)) < 0.03
+                                 and math.hypot(m[3][1] - m[2][1], m[3][2] - m[2][2]) > 1):
+                pans += 1
+                pan_frames.append(m[1] / cfps * camera.REF_FPS)
+                # peak screen speed of the eased pan (output px @1080p per second)
+                W_, H_ = ev["capture"]["w"], ev["capture"]["h"]
+                dist = math.hypot(m[3][1] - m[2][1], m[3][2] - m[2][2]) * z0 * 1080 / H_
+                ease = camera.bezier(*cp["pan_ease"])
+                us = [ease(j / 200) for j in range(201)]
+                vmax = max(b - a for a, b in zip(us, us[1:])) * 200 / (m[1] / cfps)
+                pan_peaks.append(dist * vmax)
             if z1 > z0 + 0.02:
                 zin.append(z1)
                 deep += z1 > 1.6 + 1e-6
             times.append(((m[0] - f0) / cfps, m[1] / cfps))
         cuts += sum(1 for e in ev["events"] if e["type"] in ("cut", "nav") and 0.05 < e["t"] < dur)
+        xfs = [x for x in cam.get("xfades", []) if 0 <= x[0] < dur]
+        n_xf += len(xfs)
+        xf_frames += [x[1] for x in xfs]
+        xf_t = [x[0] for x in xfs]
+        # full-screen changes that stayed HARD cuts (page changes without a dissolve)
+        hard_page += sum(1 for t_ in camera.page_changes(ev) if 0.05 < t_ < dur and not any(abs(t_ - x) < 0.05 for x in xf_t))
+        for m in ms:
+            f_ = target_fit(m, ev["capture"]["w"], ev["capture"]["h"], cp)
+            if f_ is not None:
+                fits.append(f_)
         # holds: from the end of a move to the start of the next move/cut (or the span end)
         times.sort()
         for (s0, d0), (s1, _) in zip(times, times[1:] + [(dur, 0)]):
@@ -152,7 +193,17 @@ def edit_metrics(edit_dir, video):
         "hold_median_s": round(st.median(holds), 2) if holds else 0.0,
         "short_holds_pct": round(100 * sum(h < 1.5 for h in holds) / len(holds), 1) if holds else 0.0,
         "cuts_per_min": round(cuts / mins, 2),
+        "pans_per_min": round(pans / mins, 2),
+        "pan_frames_median": round(st.median(pan_frames), 1) if pan_frames else 0.0,
+        "pan_peak_px_s": round(st.median(pan_peaks)) if pan_peaks else 0,
+        "dissolve_share_pct": round(100 * n_xf / (n_xf + hard_page), 1) if n_xf + hard_page else 0.0,
+        "dissolve_frames_median": round(st.median(xf_frames), 1) if xf_frames else 0.0,
+        "target_fit_pct": round(100 * sum(fits) / len(fits), 1) if fits else 100.0,
     }
+    # a curve/length metric only means something when the edit has that event at all
+    for k_, n_ in (("pan_frames_median", pans), ("pan_peak_px_s", pans), ("dissolve_frames_median", n_xf)):
+        if not n_:
+            m.pop(k_)
     m.update(frame_metrics(video, spans))
     return m
 

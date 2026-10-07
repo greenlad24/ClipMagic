@@ -149,19 +149,30 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     plan = json.load(open(w / "direct.json"))["plan"]
     W, H = size
     segs = []
-    for i, seg in enumerate(plan["segments"]):
+    allsegs = plan["segments"]
+    xf_s = compose_long.xfade_s(fps)
+    for i, seg in enumerate(allsegs):
         sd = w / f"seg-{i:02d}"
         if not (sd / "rec" / "events.json").exists():
             continue
-        progress(f"Screencast {i + 1}: camera…", 0.1 + 0.4 * i / max(1, len(plan["segments"])))
+        progress(f"Screencast {i + 1}: camera…", 0.1 + 0.4 * i / max(1, len(allsegs)))
         clip = f"sc-{i:02d}-{W}.mp4"
+        # two screencasts back to back = a change of world (a new recording): the next one
+        # DISSOLVES in over this one (SYSTEM.md §3b), so this clip runs a few frames longer
+        nxt = allsegs[i + 1] if i + 1 < len(allsegs) else None
+        into_next = bool(nxt and abs(nxt["t0"] - seg["t1"]) < 0.05
+                         and (w / f"seg-{i + 1:02d}" / "rec" / "events.json").exists())
         _docker(["python3", "/a/screencast/camera.py", f"/w/seg-{i:02d}/rec", f"/w/{clip}", "--size", f"{W}x{H}",
-                 "--from", "0", "--to", f"{seg['t1'] - seg['t0']:.3f}", "--fps", f"{fps:.8f}"],
+                 "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + (xf_s if into_next else 0):.3f}", "--fps", f"{fps:.8f}"],
                 [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-cam")
         cam = json.load(open(w / f"{clip}.camera.json"))
         kept = compose_long.trim_blank({"t0": seg["t0"], "t1": seg["t1"], "clip": clip, "bubble": True,
                                         "bubble_hide": cam["bubble_hide"]}, cam)
         if kept:
+            if into_next and kept["t1"] == seg["t1"]:
+                kept["tail"] = xf_s
+            if segs and segs[-1].get("tail") and abs(segs[-1]["t1"] - kept["t0"]) < 0.05:
+                kept["fade_in"] = segs[-1]["tail"]
             segs.append(kept)
     # the presenter's face (for the bubble crop and the A-roll push anchor)
     face_p = d / "face.json"

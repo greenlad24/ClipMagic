@@ -148,12 +148,21 @@ SHOT GRAMMAR (Jake's own reference tutorial — follow it, it is how the result 
   canvas. Give "deep": true only for a small detail he reads out (a table row, one price); it
   zooms to 2×. Prefer the main content area; elements tucked in a corner (a logo, a sidebar link)
   make a poor shot to hold on.
+- WHERE THE CAMERA GOES (Jake's tutorials, measured): it zooms ~1.2–1.4× to the input box he
+  types into, the generated result he shows, the panel/list he walks through, the paragraph he
+  reads; ~1.5–1.6× only for one small button/detail (deep). It does NOT zoom on a whole page he
+  only names, a gallery/grid overview, or while he clicks through menus.
+- MOVES INSIDE A ZOOM: when the next thing is NEAR the current one (prompt box → the result above
+  it, the next row/item of the same list, the next card of a row, the button he names next), just
+  read/hover/click it — the camera GLIDES there at the same zoom (~1.2 s). Do not jump between
+  far-apart corners; go down a list in order.
 - A WIDE CARD OR BANNER (a full-width plan card, a hero): read the block of its heading + the
   line he quotes (e.g. the "p" with "250 introductory credits … No credit card required"), with
   "deep": true when he reads a detail out — a full-width box cannot be zoomed and stays small.
 - NAVIGATION IS A CUT: when a click opens another page or a big panel, the recorder cuts straight
   to the loaded result (loading never shows). So just click; do not "hold" for a load. Never
-  show a spinner, a blank canvas or an empty page.
+  show a spinner, a blank canvas or an empty page. A goto (another page/site) and a wait_for
+  (an AI generation finishing) DISSOLVE instead — the edit's "meanwhile / somewhere else".
 - RESULT FIRST, BIG: when he talks about a result (designs, a campaign, a generated output), that
   result is on screen from his first word — open the existing document. A DESIGN CANVAS IS FRAMED
   FOR YOU: whenever a canvas page opens (goto, or a click that opens a document) the recorder

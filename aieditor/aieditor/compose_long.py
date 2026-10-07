@@ -27,6 +27,11 @@ SCREENCAST = config.CODE / "screencast"
 FACECAM = {"centre": [1701.9, 253.7], "video_d": 344.6, "outer_d": 358.6, "crop_px": 715,
            "fade_out_s": 7 / 29.97, "fade_in_s": 11 / 29.97}
 MUSIC_UNDER_VOICE_DB = 23       # reference 2: bed ~23 LU under the voice, no ducking
+XFADE_REF_FRAMES = 5            # screencast → screencast dissolve (refs 2–5: 3–8 f, SYSTEM.md §3b)
+
+
+def xfade_s(fps=30000 / 1001):
+    return round(XFADE_REF_FRAMES / (30000 / 1001), 4)
 
 
 def _run(cmd, mounts, cancelled=lambda: False, image=SC_IMAGE, memory=None):
@@ -88,8 +93,11 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
     for i, s in enumerate(segments):
         ins.append(f"-i /job/{s['clip']}")
         n = len(ins) - 1
-        chain.append(f"[{n}:v]setpts=PTS-STARTPTS+{s['t0']:.4f}/TB[sc{i}];"
-                     f"[{cur}][sc{i}]overlay=eof_action=pass:enable='between(t,{s['t0']:.4f},{s['t1']:.4f})'[vs{i}]")
+        # a screencast that follows another back to back dissolves in over its tail (linear)
+        fin = (f",format=rgba,fade=t=in:st=0:d={s['fade_in']:.4f}:alpha=1" if s.get("fade_in") else "")
+        t1 = s["t1"] + s.get("tail", 0)
+        chain.append(f"[{n}:v]setpts=PTS-STARTPTS{fin},setpts=PTS+{s['t0']:.4f}/TB[sc{i}];"
+                     f"[{cur}][sc{i}]overlay=eof_action=pass{':format=auto' if fin else ''}:enable='between(t,{s['t0']:.4f},{t1:.4f})'[vs{i}]")
         cur = f"vs{i}"
     bub = [s for s in segments if s.get("bubble", True)]
     if bub:

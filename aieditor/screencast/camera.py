@@ -53,6 +53,23 @@ DEFAULTS = {
     # right after it cost 2 of v9's 13 moves. When a target follows within this many seconds,
     # the page scrolls under the held framing and ONE move goes to that target. (v10)
     "scroll_direct_s": 3.0,
+    # ── refs 2–5 (2026-10-07, SYSTEM.md §3b/§3c, reference-specs/sc4-*.json) ──
+    # MOVES INSIDE A ZOOM: when the camera is zoomed and the next target wants about the same
+    # zoom, it PANS there at constant zoom (refs: zoom ratio 0.95–1.01 across a pan) instead of
+    # pulling out and pushing back in. Curve = the per-ref median free fit (ref 2 .331/.031/.275/.96,
+    # ref 3 .329/.007/.262/1.0, ref 4 .355/−.053/.298/.943, ref 5 .328/.032/.26/.929);
+    # D (ref frames) ≈ 24 + 0.035·distance(output px @1080p), refs median 32–38 f.
+    "pan_ease": [0.33, 0.02, 0.27, 0.96],
+    "pan_frames_base": 24.0, "pan_frames_per_px": 0.035, "pan_frames_minmax": [26, 56],
+    "pan_zoom_tol": 1.15,         # a framing within ×/÷ this of the held zoom keeps the zoom and pans
+    "pan_max_screen": 0.55,       # farther than this (share of the output width) → a normal move
+    # SCREEN-TO-SCREEN DISSOLVE: a change of WORLD (goto another page/app, a skipped generation or
+    # submit = time skip) is a linear opacity dissolve, the framing HELD through it; then the camera
+    # zooms out / moves on. Refs: 3–8 f, medians 3 (ref 2), 6 (ref 3), 5 (ref 4), 4 (ref 5).
+    # Same-page state changes and click navigations inside one app stay HARD cuts.
+    "xfade_frames": 5,
+    "xfade_kinds": ["nav", "wait", "enter"],
+    "xfade_target_s": 3.0,        # a target this soon after a dissolve: go straight to it (no out-and-in)
 }
 STYLE = {
     "highlight_rgba": (255, 214, 10, 0.42),       # reads #99831C on blue, text #F7F26C — multiply-like
@@ -74,6 +91,11 @@ def params():
 
 
 # ── easing ───────────────────────────────────────────────────────────────────
+def make_eases(p):
+    """in / out (zoom) and pan curves — one dict for the render and qa.py."""
+    return {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"]), "pan": bezier(*p["pan_ease"])}
+
+
 def bezier(p1x, p1y, p2x, p2y):
     def f(x):
         if x <= 0:
@@ -330,6 +352,30 @@ def page_changes(ev):
                   and e["t"] > 0.05)
 
 
+def xfade_cues(ev, p):
+    """{t: kind} of the screen changes that DISSOLVE (refs 2–5, SYSTEM.md §3b): a goto (another
+    page / site = a change of world), a skipped wait (a generation finishing = a time skip) and a
+    submit with Enter whose result was cut to. Click navigations and same-page state changes
+    stay hard cuts (the refs' jump cuts)."""
+    kinds = set(p.get("xfade_kinds") or [])
+    out = {}
+    for e in ev["events"]:
+        if e["t"] <= 0.05:
+            continue
+        if e["type"] == "nav" and "nav" in kinds:
+            out[round(e["t"], 4)] = "nav"
+        elif e["type"] == "wait" and e.get("found", True) and "wait" in kinds:
+            out[round(e["t"], 4)] = "wait"
+        elif e["type"] == "cut" and e.get("why") == "enter" and "enter" in kinds:
+            out[round(e["t"], 4)] = "enter"
+    return out
+
+
+def pan_frames(dist_px_1080, p):
+    lo, hi = p["pan_frames_minmax"]
+    return min(max(p["pan_frames_base"] + p["pan_frames_per_px"] * dist_px_1080, lo), hi)
+
+
 def plan_moves(ev, fps, f0, n_frames, p):
     """[(start_frame, frames, view_from, view_to, ease, box)] — reference 2's camera (SYSTEM.md §3):
     an entry push-in, then eased moves to the targets the narration is about, never sooner
@@ -341,6 +387,9 @@ def plan_moves(ev, fps, f0, n_frames, p):
     full = (1.0, W / 2, H / 2)
     pages = page_changes(ev)
     scrolls = [e["t"] for e in ev["events"] if e["type"] == "scroll"]
+    xcues = xfade_cues(ev, p)
+    xf_n = p.get("xfade_frames", 0)
+    free_after = None                         # a dissolve just ended: the next move may start at once
 
     def nav_click(e):
         return e["type"] == "click" and any(0 <= c - e["t"] <= p["nav_click_window_s"] + (e.get("end", e["t"]) - e["t"])
@@ -370,6 +419,23 @@ def plan_moves(ev, fps, f0, n_frames, p):
         v = avoid_bubble(framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1), box, W, H, p)
         return clear_bubble(v, box, e.get("_sm"), W, H, p), box
 
+    def retarget(view, tgt, box, e):
+        """(target view, kind, frames) for a move from `view`. MOVE INSIDE THE ZOOM (refs 2–5):
+        zoomed, and the next framing wants about the same zoom → keep the zoom and PAN there
+        (prompt → result, the next row of a list, across to the next card / button)."""
+        dur = (p["zoom_in_frames_big"] if tgt[0] > p["big_zoom"] else p["zoom_in_frames"]) * k
+        mkind = "in" if tgt[0] >= view[0] else "out"
+        if view[0] > 1.05 and max(tgt[0] / view[0], view[0] / tgt[0]) <= p["pan_zoom_tol"]:
+            pz = clamp(view[0], tgt[1], tgt[2], W, H)
+            pz = clear_bubble(pz, box, e.get("_sm"), W, H, {**p, "zoom_min": view[0], "zoom_max": view[0]})
+            pz = clamp(view[0], pz[1], pz[2], W, H)
+            d1080 = math.hypot(pz[1] - view[1], pz[2] - view[2]) * view[0] * 1080 / H
+            if d1080 < 12:
+                return None, None, 0
+            if d1080 / 1920 <= p["pan_max_screen"]:
+                return pz, "pan", pan_frames(d1080, p) * k
+        return tgt, mkind, dur
+
     first = focus[0] if focus else None
     if first is None or first["t"] > 0.4 or framing(first, first["t"])[0][0] <= 1.0:
         # entry push-in toward the first target's area (or the centre) — reference: every span
@@ -384,8 +450,11 @@ def plan_moves(ev, fps, f0, n_frames, p):
         moves.append((s0, p["entry_frames"] * k, view, v, "in", box))
         starts.append(s0)
         view, last_move_end = v, s0 + p["entry_frames"] * k
+    page_keys = {round(t, 4) for t in pages}
     cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in pages]
-                  + [(t, "scroll", None) for t in scrolls], key=lambda c: c[0])
+                  + [(t, "scroll", None) for t in scrolls]
+                  + [(t, "xf", None) for t, kd in xcues.items() if t not in page_keys and xf_n > 0],
+                  key=lambda c: c[0])
     last_target_end = 0.0
     scroll_cut = None                         # end of a scroll whose next target lands by a cut
     for t, kind, e in cues:
@@ -402,6 +471,36 @@ def plan_moves(ev, fps, f0, n_frames, p):
             if not soon and view[0] > 1.0 and fr >= last_move_end:
                 moves.append((fr, p["zoom_out_frames"] * k, view, full, "out"))
                 view, last_move_end = full, fr + p["zoom_out_frames"] * k
+            continue
+        if kind == "xf":
+            # a time skip on the same page (a generation finishing): dissolve, framing HELD; the
+            # camera then glides to the result (ref 3 1:44.7: 5 f dissolve, then a 27 f pan up)
+            moves.append((fr, 0, view, view, "xfade", None, xf_n))
+            last_move_end = max(last_move_end, fr + xf_n * k)
+            free_after = fr + xf_n * k
+            continue
+        if kind == "nav" and xf_n > 0 and round(t, 4) in xcues:
+            # a change of world (another page / site, a submit's result): DISSOLVE with the framing
+            # held (refs 2–5: the incoming screen arrives at the outgoing zoom), then zoom out to the
+            # full frame at once (0–20 f later) unless a target follows within xfade_target_s — then the
+            # camera goes straight to it from the held framing
+            moves.append((fr, 0, view, view, "xfade", None, xf_n))
+            xend = fr + xf_n * k
+            nxt_page = next((c for c in pages if c > t + 1e-6), 1e9)
+            soon = next((o for o in focus if t < o["t"] <= min(t + p.get("xfade_target_s", 3.0), nxt_page)), None)
+            last_move_end = max(last_move_end, xend)
+            if view != full and soon is not None:
+                if not in_view(soon["box"], view, W, H, 1080, p, readable=False):
+                    tg, bx = framing(soon, soon["t"])
+                    tg, mk, du = retarget(view, tg, bx, soon) if tg[0] > 1.0 else (full, "out", p["zoom_out_frames"] * k)
+                    if tg is not None:
+                        moves.append((xend, du, view, tg, mk, bx if tg != full else None))
+                        view, last_move_end = tg, xend + du
+            elif view != full:
+                moves.append((xend, p["zoom_out_frames"] * k, view, full, "out", None))
+                view, last_move_end = full, xend + p["zoom_out_frames"] * k
+            free_after = xend
+            last_target_end = t
             continue
         if kind == "nav":
             if p["nav_resets"] and view != full:
@@ -429,10 +528,13 @@ def plan_moves(ev, fps, f0, n_frames, p):
         tgt, box = framing(e, t)
         if tgt == view or tgt[0] <= 1.0:          # a whole-page target never pulls the camera out
             continue
-        dur = (p["zoom_in_frames_big"] if tgt[0] > p["big_zoom"] else p["zoom_in_frames"]) * k
+        tgt, mkind, dur = retarget(view, tgt, box, e)
+        if tgt is None:
+            continue                              # already there
         # out of a full frame (after a cut / at the start) the move may come at once; from a
-        # framed view the camera holds at least hold_min_s first
-        gap = 0 if view == full else p["hold_min_s"] * fps
+        # framed view the camera holds at least hold_min_s first — and right after a dissolve
+        # the camera moves on at once (refs: the move starts 0–20 f after the dissolve)
+        gap = 0 if view == full or (free_after is not None and fr - free_after < 2.5 * fps) else p["hold_min_s"] * fps
         last_cut = max([c for c in pages if c <= t + 1e-6], default=None)
         s0 = max(fr - p["lead_s"] * fps, last_move_end + gap, f0 + p["entry_delay_frames"] * k,
                  f0 + last_cut * fps + p["entry_delay_frames"] * k if last_cut is not None else 0)
@@ -449,7 +551,7 @@ def plan_moves(ev, fps, f0, n_frames, p):
             continue
         if not entry and not budget_ok(s0):
             continue
-        moves.append((s0, dur, view, tgt, "in" if tgt[0] >= view[0] else "out", box))
+        moves.append((s0, dur, view, tgt, mkind, box))
         if not entry:
             starts.append(s0)
         view, last_move_end = tgt, s0 + dur
@@ -477,7 +579,7 @@ def camera_at(moves, f, p, eases, W, H):
         if dur <= 0 or f >= s0 + dur:
             view = b
             continue
-        u = eases["out" if kind == "out" else "in"]((f - s0) / dur)
+        u = eases.get(kind, eases["in"])((f - s0) / dur)
         view = clamp(*_view_between(a, b, u), W, H)
         break
     return view
@@ -570,7 +672,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         raise RuntimeError(f"recording is {vw}x{vh}, events say {W}x{H}")
     f0 = ev["pre_frames"] if ev.get("virtual_time") else marker_frame(raw, W, H)
     p = params()
-    eases = {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"])}
+    eases = make_eases(p)
     hl_in, hl_out = bezier(*p["hl_ease"]), bezier(*p["hl_out_ease"])
     drop_empty_targets(ev, raw, f0, fps, p)
     keys = plan_moves(ev, fps, f0, n_all, p)
@@ -595,6 +697,10 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
                             "-r", f"{ofps:.6f}", "-i", "-", "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
                             "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], stdin=subprocess.PIPE)
     fb = W * H * 3
+    # dissolves (SYSTEM.md §3b): (source frame, length in ref frames) — the outgoing picture is the
+    # last output frame before the change, held, under a linear opacity ramp of the incoming one
+    xfades = [(m[0], m[6]) for m in keys if m[4] == "xfade" and len(m) > 6 and m[6] > 0]
+    xf_hold, prev_img = {}, None
     cur_src, frame_src, last = a - 1, None, None
     good, held_src = None, []               # last non-blank source frame; output seconds held on it
     for o in range(n_out):
@@ -691,6 +797,15 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         sx = (cx_t[f] - x0) * ow / cw - hot[0]
         sy = (cy_t[f] - y0) * oh / ch - hot[1]
         paste(img, spr, sx, sy)
+        for xs0, xn in xfades:
+            if xs0 <= f < xs0 + xn * kref + 1 and prev_img is not None:
+                if xs0 not in xf_hold:
+                    xf_hold[xs0] = prev_img
+                w = min(1.0, ((f - xs0) / kref + 1) / xn)
+                if w < 1.0:
+                    img = cv2.addWeighted(xf_hold[xs0], 1 - w, img, w, 0)
+                break
+        prev_img = img
         enc.stdin.write(img.tobytes())
     dec.stdout.close()
     enc.stdin.close()
@@ -712,6 +827,8 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     scroll_t = [round(e["t"] - (t_from or 0), 3) for e in ev["events"] if e["type"] == "scroll"]
     json.dump({"f0": f0, "moves": keys, "bubble_hide": spans, "held_blank_frames": len(held_src), "blank": [b_ for b_ in bl if b_[1] - b_[0] >= 0.5],
                "scrolls": scroll_t,
+               "xfades": [[round((s_ - f0) / fps - (t_from or 0), 3), n_] for s_, n_ in xfades],
+               "pans": sum(1 for m in keys if m[4] == "pan"),
                "params": p}, open(str(out) + ".camera.json", "w"), indent=1)
     return keys
 

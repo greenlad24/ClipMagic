@@ -1,4 +1,4 @@
-# Screencast production system (reference 2)
+# Screencast production system (references 2–5)
 
 What the Auto Editor's screencasts must look like, and how the pipeline gets there. The source is
 **reference 2**: Jake's own tutorial `kwysV2smgfY` (11:39, 1080p, 29.97 fps). Every number below was
@@ -28,8 +28,8 @@ measured from that video unless it is marked as a rule of ours.
 | sparse frames (<8 % content) | 6.3 % | 7.0 % |
 | zoom curve | in: cubic-bezier(.31,.10,.22,1) on log-zoom, 43 f (56 f above 1.45×); out: (.345,0,.33,.91), 50 f, lands on exactly 1.0 | same (already built) |
 | span opening | push-in to ~1.36× from the 1st–2nd frame, 40 f, on the first action | yes, but the first action was usually a 2× corner zoom |
-| page change inside a span | hard cut (sometimes a 6–10 f crossfade). The zoom state carries across jump cuts | camera stayed zoomed on the old page's corner (no navigation event) |
-| scroll | native wheel flicks only, about 200 px each over 9–16 f. No synthetic pans | ok |
+| page change inside a span | hard cut within one app; a 3–8 f DISSOLVE on a change of world (re-measured 2026-10-07: 7 dissolves vs 7 hard cuts, §3b). The zoom state carries across jump cuts | camera stayed zoomed on the old page's corner (no navigation event) |
+| scroll | native wheel flicks, about 200 px each over 9–16 f. Constant-zoom PANS do exist (0.8 / min, §3c) — the 2026-10-05 spec counted them as re-targets | ok |
 | cursor | native arrow/hand, no click ring, idle drift. Typing appears at once (paste or cut) | synthetic arrow, Bézier paths (ok) |
 | facecam bubble | on every screencast frame, never on A-roll, cuts with the span, top-right, fades out only under a top-right target | ok |
 | marker | yellow L→R wipe on phrases he reads, out when the camera next moves | ok |
@@ -61,7 +61,7 @@ so the designs are large. Small thumbnails on a sea of empty canvas are a defect
 
 | rule | value |
 |---|---|
-| zoom level for a target | fit the target at 62 % of the view, clamped to **1.25–1.45×** (cap 1.6). **2.0× only for `deep: true`** (one small detail he reads out) |
+| zoom level for a target | fit the target at 62 % of the view, clamped to **1.2–1.4×** (cap 1.6; was 1.25–1.45 before refs 3–5, §3a). **2.0× only for `deep: true`** (one small detail he reads out) |
 | move durations / curves | measured: see §1 |
 | min hold between moves from a framed view | **3.0 s** (a move out of a full frame, e.g. after a cut, may come at once) |
 | move budget | **≤ 3 eased moves per rolling 30 s** (≈ 6 / min; the reference is 3–4 / min) |
@@ -71,6 +71,121 @@ so the designs are large. Small thumbnails on a sea of empty canvas are a defect
 | placement | centre on the target, clamp into the frame (10 of 17 reference moves end clamped), shift away from the bubble zone when the frame allows |
 | loading / blank source frames | never shown: the last good frame holds (`is_blank`, judged on the frame CENTRE with 15 % margins off so app chrome around a loading canvas does not count: std < 7 or < 2.5 % content) |
 | bubble | fades out (6 f) while the held target is under x > 1480, y < 470 (≥ 8 % overlap), and back in over 11 f |
+
+## 3a–3c. The camera grammar from refs 2–5 (measured 2026-10-07)
+
+Jake (2026-10-07): "more references from the same editor so you have the system detailed to a tee".
+Refs **3** `3Jq-L6uLd28` (VEED, 13:34), **4** `Geg9TyNoi3w` (Claude skills, 13:50) and **5**
+`AZxFgIVgHjg` (Claude + Higgsfield, 15:44) are the same editor as ref 2. All four went through ONE
+frame pipeline (`/opt/aieditor-work/reference/work/sc5/bin`: per-frame ECC affine between consecutive
+320×180 frames with the facecam masked, full-frame blend tests for dissolves, a free cubic-bezier fit
+per move), then every class of event was checked on contact sheets. Numbers + timestamped examples:
+`motion/reference-specs/sc4-refs2-5.{json,md}`. Spread = per-ref medians (ref 2 / 3 / 4 / 5).
+
+### 3a. Zoom targeting — where, how much, and when not
+
+**Rule.** Zoom to the ONE region the sentence is about, at the smallest zoom that makes it the
+subject: 1.2–1.4×, ~1.5–1.65× only for a single small control he names (a Subscribe button, one
+row). Centre on it, then clamp the view into the frame — side panels end flush with the left edge,
+prompt boxes flush with the bottom.
+
+**Why.** The UI is already magnified in the recording; a mild zoom removes the browser chrome and the
+unrelated half of the screen while keeping enough context to see where on the page we are. Big zooms
+are kept for "click exactly this".
+
+| target | zoom | framing | example |
+|---|---|---|---|
+| generated result (video/image) | 1.19–1.3, often a centred slow push | centred, result fills ~60 % of the height | ref 3 0:13.6 ×1.27 |
+| prompt / input box he types into | 1.35–1.45 | centred horizontally, clamped to the bottom | ref 3 1:40.3 ×1.39 |
+| side panel / settings list he walks | 1.25 | clamped left (or right) + top | ref 3 1:30.1 ×1.26 |
+| text block / doc section he reads | 1.3–1.35 | the paragraph centred | ref 4 0:26.8 ×1.35 |
+| landing hero (headline + prompt) | 1.37 | upper-left of centre | ref 3 2:04.9 |
+| dashboard row of items | 1.43 | the row centred | ref 3 3:44.1 |
+| one small button / CTA | 1.5–1.65 (2.0 once in ref 2) | button centre-left, clear of the bubble | ref 3 1:11.7 ×1.64 |
+
+- **Zoom-in levels:** median **1.35 / 1.27 / 1.28 / 1.25** (4-ref IQR ≈ 1.23–1.32). Ref 2 alone
+  (1.37) was the high end, so the system median is now **1.27** (`zoom_min` 1.2, `zoom_max` 1.4,
+  `entry_zoom` 1.28).
+- **Curve / length:** zoom-in D median **42.6 / 35.8 / 36.3 / 38.5 f** → 38 f; free-fit curve
+  medians (.319,.103,.236,.996) (.326,.061,.229,.998) (.327,.061,.267,.92) (.313,.051,.274,1.0) —
+  the ref-2 curve (.31,.10,.22,1) stays. Zoom-out D 34 / 40 / 26 / 39 → **40 f**, curve
+  (.33,0,.31,.93) (refs (.324,.002,.326,.903) (.33,0,.298,.974) (.333,.004,.325,.919)).
+- **Held zoom before a zoom-out:** 1.25 / 1.26 / 1.16 / 1.29.
+- **Centred pushes** (no target, slow, on a result or a chat column): 12 / 12 / 24 / 41 % of zoom-ins.
+- **Facecam:** targets are framed left of / below the top-right bubble; the bubble never moves.
+- **Spans may open already framed** (the cut from A-roll lands zoomed, e.g. ref 3 4:11.7, 8:36.6);
+  most open at 1.0 and push in from frame 1–2.
+- **When NOT to zoom:** a whole page he only names (a gallery, a YouTube channel page — ref 3 0:59.6,
+  1:26.5: scrolled at 1.0 with native ~95–190 px wheel flicks over 6–8 f), an overview of the tool
+  while he talks about it in general (ref 3 5:00–5:56), during menu click-chains, and anything that
+  already fills the frame.
+
+### 3b. Screencast-to-screencast transitions — cut or dissolve
+
+**Rule.** Same world → **hard cut**. Change of world → **dissolve**.
+
+| the next screen is… | join | measured |
+|---|---|---|
+| the same page, a later state (typing done, a list loaded, a menu item clicked) | hard cut | ref 3 1:44.0 prompt text appears at once |
+| the next page of the same app after a click | hard cut (white load skipped) | ref 3 1:40.1, 3:52.0 |
+| another app / site / window, another project, another account | dissolve | ref 4 0:10.1 (8 f), ref 2 4:00.4 (3 f), ref 3 0:43.2 (6 f) |
+| the same page after a long wait (a generation finishing = a time skip) | dissolve, zoom held | ref 3 1:44.7 (5 f) |
+| a click that lands somewhere far (landing → dashboard) | short dissolve | ref 3 2:09.6 (3 f) |
+
+**Why.** A hard cut says "continuing"; a dissolve says "meanwhile / somewhere else / later". The refs
+use it exactly where a hard cut would read as a glitch: the layout changes completely or time passed.
+
+**How.**
+- Length **3–8 f**: medians 3 / 6 / 5 / 4 → **5 f** (`xfade_frames`).
+- Curve: **linear opacity** — the blend weight rises by 0.16–0.27 per frame (ref 3 0:39.7:
+  .16 .32 .48 .65 .82), uniform over the whole frame.
+- **Zoom state:** the framing is HELD through the dissolve — the incoming screen arrives at the
+  outgoing zoom and position. Then, within 0–20 f, the camera zooms out to 1.0 (D ≈ 40 f; ref 3
+  0:43.3, 3:36.2; ref 4 7:25.0) or glides to the new subject (ref 3 0:39.9 pan, 1:44.8 pan).
+- **Facecam:** untouched (an overlay above both). **Cursor:** part of each recording, it blends.
+- **How often:** dissolves / (dissolves + full-screen hard cuts) = 50 / 60 / 76 / 29 %; 0.4–1.4
+  dissolves per minute of screencast.
+- Ref 2's spec said page changes are "usually hard cuts, sometimes 6–10 f crossfades". With the same
+  test as refs 3–5, ref 2 has **7 dissolves and 7 full-screen hard cuts** (3–5 f) — updated here.
+
+**In the pipeline.** `camera.py` `xfade_cues`: a `nav` (goto), a found `wait` (wait_for) and a
+`cut` whose `why` is `enter` dissolve (5 f, framing held, then zoom-out unless a target follows within
+3 s (`xfade_target_s`) — then the camera moves straight to it, pan or zoom). `cut` events from clicks stay hard.
+Two screencast segments back to back in the edit dissolve too (`longedit.compose` renders the
+outgoing clip 5 f longer, `compose_long` fades the next one in with alpha).
+
+### 3c. Moves inside a zoom — why, how, how much
+
+**Rule.** When the camera is zoomed and the next thing he talks about wants about the same zoom
+(within ×/÷1.15), it **pans** there at constant zoom instead of pulling out and pushing back in.
+
+**Why** (every verified pan):
+- input → output: prompt box → the result above it after a generation, and back (ref 3 0:37.3,
+  1:48.8, 1:53.4);
+- reading down: the next section of a panel/list (ref 3 1:32.2), a chat thread up to his prompt or
+  down to the reply (ref 5 6:40.8, 7:59.2);
+- the next action: across to the button he clicks next (ref 3 2:07.5, hero → Sign up);
+- something that just opened at the side (ref 3 4:25.7, template panel);
+- across a row of cards (ref 3 8:36.6, 9:13.3, pricing).
+
+**How.**
+- Zoom constant: ratio 0.95–1.01 across the pan.
+- Curve: one eased in-out, free-fit medians (.331,.031,.275,.96) (.329,.007,.262,1.0)
+  (.355,−.053,.298,.943) (.328,.032,.26,.929) → **cubic-bezier(.33,.02,.27,.96)** (`pan_ease`).
+- Duration: D medians **36 / 38 / 32 / 34 f** (≈1.1–1.3 s). D grows with distance:
+  D ≈ 22–31 f + 0.02–0.08 f per px → **D = 24 + 0.035·px**, clamped 26–56 f (`pan_frames_*`).
+- Peak speed: medians 651 / 624 / 704 / 306 px/s (output px at 1080p); the fastest is 1185 px/s.
+- Direction follows the layout: refs 3 and 4 mix vertical/horizontal/diagonal; ref 5 (a chat) is
+  all vertical.
+
+**How much.**
+- Distance: medians **374 / 350 / 268 / 171 px** (IQR 124–506 px). The longest is ~720 px
+  (0.37 of the screen); beyond ~0.55 of the screen the system makes a normal move instead.
+- Frequency: **0.82 / 2.49 / 0.63 / 1.33 pans per minute** of screencast. Moves of every kind:
+  5.5 / 6.6 / 4.7 / 5.7 per min; median gap between moves 10.8 / 8.1 / 14.7 / 10.5 s.
+- Holds: the view is pixel-static between moves (no drift, no cursor follow).
+- Native wheel scrolls (≤ 8 f flicks, ~95–270 px) are not pans; they are in the recording.
+
 
 ## 4. Recorder rules (`agent_rec.mjs`, `agentrec.py`)
 
@@ -107,7 +222,7 @@ so the designs are large. Small thumbnails on a sea of empty canvas are a defect
 | a small detail he reads (a price, a row) | `deep: true` → up to 2×, hold ≥ 1 s, then zoom out (50 f) |
 | talking about something not on screen | stay on the current calm screen; never wander or scroll aimlessly |
 
-## 6. QA: "close to reference 2" (`qa.py`)
+## 6. QA: "close to references 2–5" (`qa.py`)
 
 `python3 screencast/qa.py edit <job>/edit-NN <job>/edit-NN.mp4` measures the edit and scores each
 metric against the reference band:
@@ -120,15 +235,24 @@ metric against the reference band:
 |---|---|---|---|
 | screencast_share_pct | 74.9 | 65–85 | 1 |
 | span_median_s | 19.9 | 14–35 | 0.5 |
-| moves_per_min | 3.1 | 2.5–6 | 2 |
-| zoom_in_median | 1.37 | 1.28–1.48 | 2 |
+| moves_per_min (all moves ≥ 15 f, refs 2–5) | 5.6 | 3.5–7 | 2 |
+| zoom_in_median (refs 1.35 / 1.27 / 1.28 / 1.25) | 1.27 | 1.2–1.4 | 2 |
 | deep_zoom_pct (> 1.6×) | 5 | 0–10 | 1.5 |
 | time_zoomed_pct | 62 | 45–80 | 1 |
-| mean_zoom | 1.24 | 1.15–1.33 | 1 |
+| mean_zoom | 1.24 | 1.12–1.33 | 1 |
 | hold_median_s | 13.7 | 4–20 | 1.5 |
 | short_holds_pct (< 1.5 s) | 7.4 | 0–12 | 1 |
 | cuts_per_min (in-span) | 7.2 | 2–12 | 1 |
 | blank_pct | 0.29 | 0–1 | 2.5 |
+| pans_per_min (refs 0.82 / 2.49 / 0.63 / 1.33) | 1.1 | 0.5–2.6 | 1.5 |
+| pan_frames_median (refs 36 / 38 / 32 / 34) | 35 | 28–44 | 1 |
+| pan_peak_px_s (refs 651 / 624 / 704 / 306) | 620 | 250–950 | 0.5 |
+| dissolve_share_pct (dissolves ÷ (dissolves + full-screen hard cuts): 50 / 60 / 76 / 29) | 50 | 25–80 | 1 |
+| dissolve_frames_median (3 / 6 / 5 / 4) | 5 | 3–8 | 0.5 |
+| target_fit_pct (rule: framed targets fully in view and clear of the bubble) | 100 | 85–100 | 2 |
+
+Pan / dissolve length metrics are only scored when the edit has a pan / dissolve. A move at constant
+zoom counts as a pan even in older plans that labelled it "in".
 | sparse_pct | 6.3 | 0–12 | 1 |
 
 The blank and sparse percentages come from the same frame code on both videos (2 fps samples, bubble

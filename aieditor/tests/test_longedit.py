@@ -1,4 +1,5 @@
 """Long-form full edit: director validation, blank trimming, camera framing, bubble fades."""
+import math
 import sys
 from pathlib import Path
 
@@ -107,8 +108,41 @@ try:
     mv2 = camera.plan_moves({"capture": {"w": W, "h": H, "fps": 30.0}, "events": evs2, "end": 14}, 30.0, 0, 420, P)
     check("a scroll with a target right after it: no zoom-out first", not any(m[4] == "out" for m in mv2))
     check("...and the target lands by a jump cut at the scroll's end", any(m[4] == "cut" and m[1] == 0 and abs(m[0] - 8.8 * 30) < 1 and m[3][0] > 1 for m in mv2))
+    # ── refs 2–5 (2026-10-07): moves inside a zoom, dissolves, target fit ──
+    cap = {"w": W, "h": H, "fps": 30.0}
+    evs3 = [{"t": 0, "type": "begin"}, {"t": 0.5, "type": "read", "box": [700, 1000, 500, 160], "end": 3.0},
+            {"t": 9.0, "type": "read", "box": [200, 100, 400, 120], "end": 12.0}]
+    mv3 = camera.plan_moves({"capture": cap, "events": evs3, "end": 14}, 30.0, 0, 420, P)
+    pans = [m for m in mv3 if m[4] == "pan"]
+    check("next target at the same zoom → a PAN, not out-and-in", len(pans) == 1 and not any(m[4] == "out" for m in mv3))
+    check("...the pan keeps the zoom", abs(pans[0][2][0] - pans[0][3][0]) < 1e-9 and pans[0][3][0] > 1.05)
+    d1080 = math.hypot(pans[0][3][1] - pans[0][2][1], pans[0][3][2] - pans[0][2][2]) * pans[0][3][0] * 1080 / H
+    check("...pan length from the measured D ≈ 24 + 0.035·px (26–56 f)", abs(pans[0][1] / (30.0 / camera.REF_FPS) - camera.pan_frames(d1080, P)) < 1e-6
+          and 26 <= pans[0][1] <= 56)
+    ease = camera.make_eases(P)["pan"]
+    check("pan ease: eased in and out, monotonic", ease(0.1) < 0.1 and ease(0.9) > 0.9
+          and all(ease(i / 20) <= ease((i + 1) / 20) + 1e-9 for i in range(20)))
+    evs4 = [{"t": 0, "type": "begin"}, {"t": 0.5, "type": "read", "box": [700, 500, 500, 160], "end": 3.0},
+            {"t": 5.0, "type": "nav", "url": "https://x/other"}]
+    mv4 = camera.plan_moves({"capture": cap, "events": evs4, "end": 10}, 30.0, 0, 300, P)
+    xf = [m for m in mv4 if m[4] == "xfade"]
+    check("a goto DISSOLVES (5 f), framing held through it", len(xf) == 1 and xf[0][6] == P["xfade_frames"] and xf[0][2] == xf[0][3])
+    check("...then zooms out to the full frame right after", any(m[4] == "out" and abs(m[0] - (150 + P["xfade_frames"])) < 1 and m[3][0] == 1.0 for m in mv4))
+    check("...and no hard cut back to full at the goto", not any(m[4] == "cut" and abs(m[0] - 150) < 1 for m in mv4))
+    evs5 = [{"t": 0, "type": "begin"}, {"t": 0.5, "type": "read", "box": [700, 500, 500, 160], "end": 3.0},
+            {"t": 5.0, "type": "cut", "why": "click", "big": True}]
+    mv5 = camera.plan_moves({"capture": cap, "events": evs5, "end": 10}, 30.0, 0, 300, P)
+    check("a click navigation stays a HARD cut", not any(m[4] == "xfade" for m in mv5) and any(m[4] == "cut" for m in mv5))
+    evs6 = [{"t": 0, "type": "begin"}, {"t": 0.5, "type": "read", "box": [700, 1000, 500, 160], "end": 3.0},
+            {"t": 8.0, "type": "wait", "text": "done", "found": True}, {"t": 8.3, "type": "read", "box": [200, 100, 400, 120], "end": 11.0}]
+    mv6 = camera.plan_moves({"capture": cap, "events": evs6, "end": 12}, 30.0, 0, 360, P)
+    check("a skipped generation: dissolve, then glide to the result at once", any(m[4] == "xfade" for m in mv6)
+          and any(m[4] == "pan" and m[0] <= 8.3 * 30 for m in mv6))
     import qa
-    ideal = {k: (v["band"][0] + v["band"][1]) / 2 for k, v in qa.system()["qa"]["metrics"].items()}
+    check("target fit: in view + clear of the bubble", qa.target_fit((0, 30, (1.0, 1280, 720), (1.3, 1000, 800), "in", [800, 700, 300, 150]), W, H, P))
+    check("target fit: under the facecam = a miss", not qa.target_fit((0, 30, (1.0, 1280, 720), (1.3, 1800, 500), "in", [2300, 120, 220, 120]), W, H, P))
+    check("compose: the screencast dissolve is ~5 ref frames", abs(compose_long.xfade_s() - 5 / 29.97) < 0.002)
+    ideal ={k: (v["band"][0] + v["band"][1]) / 2 for k, v in qa.system()["qa"]["metrics"].items()}
     check("QA: a video inside every band scores 100", qa.score(ideal)["score"] == 100.0)
     check("QA: v5-like camera (2x, 16 moves/min) scores low",
           qa.score({**ideal, "zoom_in_median": 2.0, "moves_per_min": 15.7, "deep_zoom_pct": 69})["score"] < 80)

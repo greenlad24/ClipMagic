@@ -1,6 +1,6 @@
 {
- "about": "Screencast production SYSTEM (motion + rules, design-free) derived from reference 2 (kwysV2smgfY, Jake's own tutorial). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here.",
- "source": "reference-specs/kwys-screencast.json (+ seg.txt shot segmentation, zoom_events.json) measured 2026-10-05/06",
+ "about": "Screencast production SYSTEM (motion + rules, design-free) derived from Jake's own tutorials: reference 2 (kwysV2smgfY) + refs 3\u20135 (3Jq-L6uLd28, Geg9TyNoi3w, AZxFgIVgHjg, measured 2026-10-07). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here.",
+ "source": "reference-specs/kwys-screencast.json (ref 2, 2026-10-05/06) + reference-specs/sc4-refs2-5.{md,json} (same frame pipeline on refs 2\u20135, 2026-10-07)",
  "camera": {
   "zoom_in_ease": [
    0.31,
@@ -8,21 +8,21 @@
    0.22,
    1.0
   ],
-  "zoom_in_frames": 43,
+  "zoom_in_frames": 38,
   "zoom_in_frames_big": 56,
   "big_zoom": 1.45,
   "zoom_out_ease": [
-   0.345,
-   0.0,
    0.33,
-   0.91
+   0.0,
+   0.31,
+   0.93
   ],
-  "zoom_out_frames": 50,
-  "zoom_min": 1.25,
-  "zoom_max": 1.45,
+  "zoom_out_frames": 40,
+  "zoom_min": 1.2,
+  "zoom_max": 1.4,
   "zoom_cap": 1.6,
   "zoom_deep": 2.0,
-  "entry_zoom": 1.36,
+  "entry_zoom": 1.28,
   "entry_delay_frames": 1.5,
   "entry_frames": 40,
   "fit": 0.62,
@@ -35,7 +35,28 @@
   "nav_resets": true,
   "nav_click_window_s": 2.5,
   "blank_std": 7.0,
-  "blank_content": 0.025
+  "blank_content": 0.025,
+  "pan_ease": [
+   0.33,
+   0.02,
+   0.27,
+   0.96
+  ],
+  "pan_frames_base": 24.0,
+  "pan_frames_per_px": 0.035,
+  "pan_frames_minmax": [
+   26,
+   56
+  ],
+  "pan_zoom_tol": 1.15,
+  "pan_max_screen": 0.55,
+  "xfade_frames": 5,
+  "xfade_kinds": [
+   "nav",
+   "wait",
+   "enter"
+  ],
+  "xfade_target_s": 3.0
  },
  "recorder": {
   "settle_after_click": true,
@@ -145,19 +166,19 @@
     "weight": 0.5
    },
    "moves_per_min": {
-    "ref": 3.1,
+    "ref": 5.6,
     "band": [
-     2.5,
-     6.0
+     3.5,
+     7.0
     ],
     "scale": 3,
     "weight": 2.0
    },
    "zoom_in_median": {
-    "ref": 1.37,
+    "ref": 1.27,
     "band": [
-     1.28,
-     1.48
+     1.2,
+     1.4
     ],
     "scale": 0.15,
     "weight": 2.0
@@ -183,7 +204,7 @@
    "mean_zoom": {
     "ref": 1.24,
     "band": [
-     1.15,
+     1.12,
      1.33
     ],
     "scale": 0.15,
@@ -233,6 +254,60 @@
     ],
     "scale": 15,
     "weight": 1.0
+   },
+   "pans_per_min": {
+    "ref": 1.1,
+    "band": [
+     0.5,
+     2.6
+    ],
+    "scale": 1.0,
+    "weight": 1.5
+   },
+   "pan_frames_median": {
+    "ref": 35,
+    "band": [
+     28,
+     44
+    ],
+    "scale": 8,
+    "weight": 1.0
+   },
+   "pan_peak_px_s": {
+    "ref": 620,
+    "band": [
+     250,
+     950
+    ],
+    "scale": 250,
+    "weight": 0.5
+   },
+   "dissolve_share_pct": {
+    "ref": 50,
+    "band": [
+     25,
+     80
+    ],
+    "scale": 20,
+    "weight": 1.0
+   },
+   "dissolve_frames_median": {
+    "ref": 5,
+    "band": [
+     3,
+     8
+    ],
+    "scale": 3,
+    "weight": 0.5
+   },
+   "target_fit_pct": {
+    "ref": 100,
+    "band": [
+     85,
+     100
+    ],
+    "scale": 15,
+    "weight": 2.0
    }
   }
  }
