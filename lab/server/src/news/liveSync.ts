@@ -34,6 +34,7 @@
 import type { Server as HttpServer } from "node:http";
 import { Server, type Socket } from "socket.io";
 import { sessions } from "./db.js";
+import { activeForToken, infoFor, setChannelNotifier } from "./followChannel.js";
 
 /** The shared state of one live session, as every screen sees it. */
 interface SyncState {
@@ -192,8 +193,51 @@ export function attachNewsLiveSync(server: HttpServer): Server {
 
   const ns = io.of("/news-tp");
 
+  /**
+   * THE STABLE FOLLOWER LINK (followChannel.ts). Two kinds of socket carry
+   * `live=<token>` instead of a session id:
+   *   · channel=1 — joins `channel:<token>` and hears `live-session` (which
+   *     session is active: an opaque key + kind, or null) — nothing else;
+   *   · otherwise — joined, server-side, to the ACTIVE session's room and
+   *     handled exactly like a `?session=` socket below. It also sits in
+   *     `livesess:<token>`, so a switch can drop it from the old session.
+   */
+  setChannelNotifier({
+    switched(token, info) {
+      ns.to(`channel:${token}`).emit("live-session", info);
+      void ns.in(`livesess:${token}`).fetchSockets().then((list) => {
+        const active = activeForToken(token);
+        for (const sk of list) if (sk.data?.liveSession !== active) sk.disconnect(true);
+      });
+    },
+    revoked(oldToken) {
+      ns.to(`channel:${oldToken}`).emit("live-revoked");
+      void ns.in(`channel:${oldToken}`).fetchSockets().then((l) => l.forEach((sk) => sk.disconnect(true)));
+      void ns.in(`livesess:${oldToken}`).fetchSockets().then((l) => l.forEach((sk) => sk.disconnect(true)));
+    },
+  });
+
   ns.on("connection", (socket: Socket) => {
-    const sessionId = String(socket.handshake.query.session || "").trim();
+    const liveToken = String(socket.handshake.query.live || "").trim();
+    let sessionId = String(socket.handshake.query.session || "").trim();
+    if (liveToken) {
+      const active = activeForToken(liveToken);
+      if (active === undefined) {
+        // A wrong or rotated token: say so (the page shows "replaced"), then close.
+        socket.emit("live-revoked");
+        socket.disconnect(true);
+        return;
+      }
+      if (String(socket.handshake.query.channel || "") === "1") {
+        void socket.join(`channel:${liveToken}`);
+        socket.emit("live-session", infoFor(liveToken, active));
+        return;
+      }
+      if (!active) { socket.disconnect(true); return; }
+      sessionId = active;
+      socket.data.liveSession = active;
+      void socket.join(`livesess:${liveToken}`);
+    }
     // No id, no room. The id IS the credential, exactly as it is for the
     // public state read, and an unscoped socket would be a way to listen to
     // whatever happened to be broadcasting.

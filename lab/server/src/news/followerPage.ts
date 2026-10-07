@@ -138,6 +138,14 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   var PARA_SPLIT = /\n\s*\n/;
   var params = new URLSearchParams(location.search);
   var sessionId = params.get('session') || '';
+  // THE STABLE LINK (?live=<token>, server followChannel.ts): the server says
+  // which show is live; this page follows it AI News ⇄ Deep Dive without a
+  // reload. liveKey = opaque id of the session being shown (never the id itself).
+  var liveToken = params.get('live') || '';
+  var liveKeyNow = null;
+  var chanSock = null;
+  var gen = 0;          // bumps on every switch: late answers for an old show are dropped
+  var revoked = false;
 
   var slides = [];
   // Deep Dive mode: its sections, and every beat of the show in order
@@ -172,11 +180,17 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   function clampIndex(i, total) { return total <= 0 ? 0 : Math.max(0, Math.min(total - 1, i)); }
 
   function fetchState(withSlides) {
-    return fetch('/news-follow/state?session=' + encodeURIComponent(sessionId) + (withSlides ? '&slides=1' : ''), { cache: 'no-store' })
-      .then(function (r) { if (!r.ok) throw new Error('status ' + r.status); return r.json(); });
+    var q = liveToken ? 'live=' + encodeURIComponent(liveToken) : 'session=' + encodeURIComponent(sessionId);
+    return fetch('/news-follow/state?' + q + (withSlides ? '&slides=1' : ''), { cache: 'no-store' })
+      .then(function (r) {
+        if (liveToken && r.status === 404) return r.json().then(function (j) { if (j && j.revoked) return j; throw new Error('status 404'); });
+        if (!r.ok) throw new Error('status ' + r.status);
+        return r.json();
+      });
   }
 
   function message(title, sub) {
+    scrollEl = pillEl = scriptEl = null;
     root.innerHTML = '<div class="center"><p style="color:#555;font-size:16px"></p><p style="color:#1e1e1e;font-size:13px"></p></div>';
     root.querySelectorAll('p')[0].textContent = title;
     root.querySelectorAll('p')[1].textContent = sub || '';
@@ -189,6 +203,9 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     scrollEl = document.getElementById('scroll');
     pillEl = document.getElementById('pill');
     scriptEl = document.getElementById('script');
+    // A new show builds a new scroller, so its listeners are attached here, every build.
+    scrollEl.addEventListener('click', toggleFromFollower);
+    scrollEl.addEventListener('scroll', publishScroll, { passive: true });
     document.getElementById('mirror').addEventListener('click', function () {
       mirror = !mirror;
       try { sessionStorage.setItem('tp2-mirror', String(mirror)); } catch (e) {}
@@ -422,16 +439,19 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
 
   function connectSocket() {
     if (typeof io === 'undefined') return; // script blocked: the page still reads
-    sock = io('/news-tp', { path: '/news-tp/socket.io', query: { session: sessionId }, transports: ['websocket', 'polling'] });
+    // On the stable link the SERVER puts this socket in the live show's room (query: the token only).
+    var me = sock = io('/news-tp', { path: '/news-tp/socket.io', query: liveToken ? { live: liveToken } : { session: sessionId }, transports: ['websocket', 'polling'], forceNew: true });
+    // A socket of a show we already left must not touch this screen.
+    function on(ev, fn) { me.on(ev, function (a) { if (me === sock) fn(a); }); }
 
-    sock.on('connect', function () {
+    on('connect', function () {
       connected = true; renderPill();
       burstSyncClock();                 // agree on the clock before trusting an anchor
       sock.emit('request-current-state');
     });
-    sock.on('disconnect', function () { connected = false; renderPill(); });
+    on('disconnect', function () { connected = false; renderPill(); });
 
-    sock.on('time-pong', function (m) {
+    on('time-pong', function (m) {
       var rtt = Date.now() - m.clientSendTime;
       if (rtt <= bestRtt) { bestRtt = rtt; serverOffset = (m.serverTime + rtt / 2) - Date.now(); }
     });
@@ -462,9 +482,9 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
         });
       }
     }
-    sock.on('scroll-sync', applySync);
-    sock.on('beat', setBeat);
-    sock.on('current-state', function (sn) {
+    on('scroll-sync', applySync);
+    on('beat', setBeat);
+    on('current-state', function (sn) {
       applySync(sn);
       if (typeof sn.beat === 'number') setBeat({ idx: sn.idx, beat: sn.beat });
       var changed = false;
@@ -473,12 +493,12 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
       if (sn.textWidth && WIDTH_PX[sn.textWidth] && state.width !== sn.textWidth) { state.width = sn.textWidth; changed = true; }
       if (changed) renderScript();
     });
-    sock.on('text-size', function (v) { state.fontSize = v; renderScript(); });
-    sock.on('line-height', function (v) { state.lineHeight = v; renderScript(); });
-    sock.on('text-width', function (v) { if (WIDTH_PX[v]) { state.width = v; renderScript(); } });
+    on('text-size', function (v) { state.fontSize = v; renderScript(); });
+    on('line-height', function (v) { state.lineHeight = v; renderScript(); });
+    on('text-width', function (v) { if (WIDTH_PX[v]) { state.width = v; renderScript(); } });
 
-    setInterval(burstSyncClock, 15000);
   }
+  setInterval(burstSyncClock, 15000);
 
   /**
    * ⚠️ THE FOLLOWER CAN DRIVE. Tapping the script plays or pauses EVERY screen,
@@ -594,8 +614,12 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
   // Resync when the device wakes / the tab becomes visible again.
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState !== 'visible') return;
+    var my = gen;
     fetchState(false).then(function (data) {
-      if (!data.session) return;
+      if (my !== gen) return;
+      // The stable link: another show went live (or none) while this screen slept — follow it.
+      if (liveToken && (data.revoked || data.waiting || data.liveKey !== liveKeyNow)) { onLive(data); return; }
+      if (!data.session || !scriptEl) return;
       var s = data.session;
       state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, total()) : 0;
       applySettings(s);
@@ -613,51 +637,119 @@ export const FOLLOWER_PAGE = String.raw`<!doctype html>
     }).catch(function () {});
   });
 
-  if (!sessionId) { message('No deck found.', 'Build a deck first from the Dashboard, then start the show.'); return; }
-
-  fetchState(true).then(function (data) {
-    slides = data.slides || [];
-    if (data.kind === 'deep-dive' && Array.isArray(data.sections)) {
-      dd = { title: data.title || '', sections: data.sections };
-      flat = [];
-      dd.sections.forEach(function (sec, i) {
-        var n = Math.max(1, Math.floor(sec.beats) || 1);
-        for (var b = 0; b < n; b++) flat.push({ section: i, beat: b });
-      });
-      if (dd.title) document.title = dd.title + ' · Teleprompter';
-    }
-    if (!data.session || !slides.length) {
-      message('No deck found.', 'Build a deck first from the Dashboard, then start the show.');
-      return;
-    }
-    var s = data.session;
-    state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, total()) : 0;
-    applySettings(s);
-    if (typeof s.tpRevision === 'number') lastSeq = s.tpRevision;
-    build();
-    // The one-off HTTP read above supplies the SLIDES; the socket supplies the
-    // live position from here on, and request-current-state on connect lands
-    // this screen on whatever the show is already doing.
-    if (typeof s.tpScrollPct === 'number') {
-      sync.position = s.tpScrollPct;
-      requestAnimationFrame(function () { applyScrollPct(s.tpScrollPct); renderPos = scrollEl.scrollTop; });
-    }
-    connectSocket();
-    if (scrollEl) {
-      scrollEl.addEventListener('click', toggleFromFollower);
-      scrollEl.addEventListener('scroll', publishScroll, { passive: true });
-    }
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); nudge(1); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); nudge(-1); }
-      else if (e.key === ' ') { e.preventDefault(); toggleFromFollower(); }
-      else if (dd && (e.key === 'ArrowRight' || e.key === 'PageDown')) { e.preventDefault(); stepBeat(1); }
-      else if (dd && (e.key === 'ArrowLeft' || e.key === 'PageUp')) { e.preventDefault(); stepBeat(-1); }
-    });
-    requestAnimationFrame(tick);
-  }).catch(function () {
-    message('No deck found.', 'Build a deck first from the Dashboard, then start the show.');
+  // Keys and the render loop: once for the page, whatever show it follows.
+  document.addEventListener('keydown', function (e) {
+    if (!scriptEl) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); nudge(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); nudge(-1); }
+    else if (e.key === ' ') { e.preventDefault(); toggleFromFollower(); }
+    else if (dd && (e.key === 'ArrowRight' || e.key === 'PageDown')) { e.preventDefault(); stepBeat(1); }
+    else if (dd && (e.key === 'ArrowLeft' || e.key === 'PageUp')) { e.preventDefault(); stepBeat(-1); }
   });
+  requestAnimationFrame(tick);
+
+  /** Leave the show on screen: its socket, its timers, its scroller. */
+  function dropShow() {
+    gen++;
+    var old = sock; sock = null;
+    if (old) { try { old.disconnect(); } catch (e) {} }
+    if (seekTimer) { clearTimeout(seekTimer); seekTimer = null; }
+    pendingSeek = null;
+    slides = []; dd = null; flat = [];
+    state.idx = 0; state.playing = false;
+    beatAt = { idx: 0, beat: 0 };
+    sync = { position: 0, anchorTime: 0, isPlaying: false, rate: 0 };
+    lastSeq = 0; renderPos = 0; lastProgScroll = -1;
+    document.title = 'Teleprompter';
+  }
+
+  function waiting() {
+    message('Waiting for the presenter…', 'This screen follows whichever show is live — AI News or Deep Dive.');
+  }
+  function replaced() {
+    revoked = true;
+    dropShow();
+    if (chanSock) { try { chanSock.disconnect(); } catch (e) {} chanSock = null; }
+    message('This follower link was replaced.', 'Ask for the new link.');
+  }
+
+  /** Open the show the server says is live (or the ?session= one) and land where the presenter is. */
+  function startShow() {
+    dropShow();
+    var my = gen;
+    return fetchState(true).then(function (data) {
+      if (my !== gen) return;
+      if (liveToken) {
+        if (data.revoked) { replaced(); return; }
+        liveKeyNow = data.liveKey || null;
+        if (data.waiting || !data.session) { waiting(); return; }
+      }
+      slides = data.slides || [];
+      if (data.kind === 'deep-dive' && Array.isArray(data.sections)) {
+        dd = { title: data.title || '', sections: data.sections };
+        flat = [];
+        dd.sections.forEach(function (sec, i) {
+          var n = Math.max(1, Math.floor(sec.beats) || 1);
+          for (var b = 0; b < n; b++) flat.push({ section: i, beat: b });
+        });
+        if (dd.title) document.title = dd.title + ' · Teleprompter';
+      }
+      if (!data.session || !slides.length) {
+        if (liveToken) waiting();
+        else message('No deck found.', 'Build a deck first from the Dashboard, then start the show.');
+        return;
+      }
+      var s = data.session;
+      state.idx = typeof s.currentSlideIndex === 'number' ? clampIndex(s.currentSlideIndex, total()) : 0;
+      applySettings(s);
+      if (typeof s.tpRevision === 'number') lastSeq = s.tpRevision;
+      build();
+      // The one-off HTTP read above supplies the SLIDES; the socket supplies the
+      // live position from here on, and request-current-state on connect lands
+      // this screen on whatever the show is already doing.
+      if (typeof s.tpScrollPct === 'number') {
+        sync.position = s.tpScrollPct;
+        requestAnimationFrame(function () { if (my !== gen || !scrollEl) return; applyScrollPct(s.tpScrollPct); renderPos = scrollEl.scrollTop; });
+      }
+      connectSocket();
+    }).catch(function () {
+      if (my !== gen) return;
+      if (liveToken) waiting();
+      else message('No deck found.', 'Build a deck first from the Dashboard, then start the show.');
+    });
+  }
+
+  /** The stable link heard which show is live: same one → nothing; another → switch; none → wait. */
+  function onLive(info) {
+    if (revoked) return;
+    if (info && info.revoked) { replaced(); return; }
+    var key = info && (info.key || info.liveKey) || null;
+    if (!key) { if (liveKeyNow === null && !scriptEl && !sock) return; liveKeyNow = null; dropShow(); waiting(); return; }
+    if (key === liveKeyNow && (scriptEl || sock)) return;
+    liveKeyNow = key;
+    startShow();
+  }
+
+  if (liveToken) {
+    // Push: the channel socket says when the live show changes. Poll: every 5 s, in case a push is missed.
+    if (typeof io !== 'undefined') {
+      chanSock = io('/news-tp', { path: '/news-tp/socket.io', query: { live: liveToken, channel: '1' }, transports: ['websocket', 'polling'], forceNew: true });
+      chanSock.on('live-session', function (info) { onLive(info || null); });
+      chanSock.on('live-revoked', replaced);
+    }
+    setInterval(function () {
+      if (revoked) return;
+      fetchState(false).then(function (data) {
+        if (data.revoked) { replaced(); return; }
+        onLive(data.waiting || !data.session ? null : { key: data.liveKey });
+      }).catch(function () {});
+    }, 5000);
+    startShow();
+    return;
+  }
+
+  if (!sessionId) { message('No deck found.', 'Build a deck first from the Dashboard, then start the show.'); return; }
+  startShow();
 })();
 </script>
 </body>

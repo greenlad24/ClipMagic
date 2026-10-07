@@ -51,6 +51,7 @@ import {
 import { assetDir, removeAssets, ASSET_FILE_RE, type Visual } from "./deepDiveVisuals.js";
 import { MEDIA_FILE_RE } from "./deepDiveMedia.js";
 import { deepDiveFollowerSlides } from "./deepDiveFollow.js";
+import { activeForToken, followSessionEnded, followToken, liveKey, rotateFollowToken, setFollowActive as markFollowActive } from "./followChannel.js";
 import { generateDeepDiveV2, mediaChoices, editChapter } from "./deepDiveV2.js";
 import { startDemoJob, latestDemoJob, liveDemoState, attachDemoToDive } from "./deepDiveDemo.js";
 
@@ -322,6 +323,8 @@ const endSession: Handler = (input) => {
   const session = sessions.get(sessionId);
   if (!session) return { success: false };
   sessions.update(sessionId, { endedAt: new Date().toISOString(), blackout: false });
+  // The stable follower link was following this show: it now waits for the next one.
+  followSessionEnded(sessionId);
   if (session.deck) {
     decks.update(session.deck, {
       presentedAt: new Date().toISOString(),
@@ -330,6 +333,15 @@ const endSession: Handler = (input) => {
   }
   return { success: true };
 };
+
+/* ── the stable follower link (followChannel.ts) ─────────────────────────── */
+
+/** The one follower link's token — the same link from the AI News and the Deep Dive presenter. */
+const getFollowLink: Handler = () => ({ token: followToken() });
+/** A new link; every old one stops working. */
+const rotateFollowLink: Handler = () => ({ token: rotateFollowToken() });
+/** "I'm presenting this session now": the stable link follows it (the last presenter to act wins). */
+const setFollowActive: Handler = (input) => ({ success: markFollowActive(need(str(input?.sessionId), "sessionId")) });
 
 const logSlideStats: Handler = (input) => {
   slideStats.insert({
@@ -561,6 +573,9 @@ const HANDLERS: Record<string, Handler> = {
   getSession,
   updateSession,
   endSession,
+  getFollowLink,
+  rotateFollowLink,
+  setFollowActive,
   logSlideStats,
   findSlideVideo,
   findDeckVideos,
@@ -736,17 +751,30 @@ function loadCueMarks() {
 }
 
 followerRouter.get("/state", async (req: Request, res: Response) => {
-  const id = String(req.query.session ?? "");
+  res.setHeader("Cache-Control", "no-store");
+  // The stable link (?live=<token>): the server resolves which session is
+  // active — the page never names one. Wrong / rotated token → 404 revoked;
+  // nothing live → 200 waiting.
+  const liveToken = typeof req.query.live === "string" ? req.query.live : "";
+  let id = String(req.query.session ?? "");
+  if (liveToken) {
+    const active = activeForToken(liveToken);
+    if (active === undefined) { res.status(404).json({ session: null, revoked: true, serverTime: Date.now() }); return; }
+    if (!active) { res.json({ session: null, waiting: true, serverTime: Date.now() }); return; }
+    id = active;
+  }
   const withSlides = req.query.slides === "1";
   const session = /^[0-9a-f-]{36}$/i.test(id) ? sessions.get(id) : undefined;
-  res.setHeader("Cache-Control", "no-store");
   if (!session || session.endedAt) {
     res.status(404).json({ session: null, serverTime: Date.now() });
     return;
   }
   const safe: Record<string, unknown> = {};
   for (const k of FOLLOWER_SESSION_FIELDS) if (session[k] !== undefined) safe[k] = session[k];
+  // On the stable link the session id is not handed out — only an opaque key that changes with it.
+  if (liveToken) delete safe.id;
   const out: Record<string, unknown> = { session: safe, serverTime: Date.now() };
+  if (liveToken) out.liveKey = liveKey(liveToken, session.id);
   // A Deep Dive's live session (its deck id is the dive's id): that dive's
   // scripts per beat, nothing else — see deepDiveFollow.ts.
   const dive = withSlides && session.deck && !decks.get(session.deck) ? deepDiveFollowerSlides(session.deck) : null;

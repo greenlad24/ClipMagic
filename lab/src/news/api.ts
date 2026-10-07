@@ -258,6 +258,10 @@ export const updateSession = (input: UpdateSessionInput) =>
   call<{ success: boolean; seq?: number; serverTime: number }>('updateSession', input);
 export const endSession = (input: { sessionId: string; totalDurationSeconds: number }) =>
   call<{ success: boolean }>('endSession', input);
+/** The ONE stable follower link (server followChannel.ts): its token, a new one (old links die), and "I'm presenting this session". */
+export const getFollowLink = () => call<{ token: string }>('getFollowLink', {});
+export const rotateFollowLink = () => call<{ token: string }>('rotateFollowLink', {});
+export const setFollowActive = (input: { sessionId: string }) => call<{ success: boolean }>('setFollowActive', input);
 export const logSlideStats = (input: { sessionId: string; slideId: string; timeSpentSeconds: number; navigationOrder: number }) =>
   call<{ success: boolean }>('logSlideStats', input);
 

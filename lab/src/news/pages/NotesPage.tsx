@@ -13,7 +13,7 @@ import { clampSrcY, srcStep } from '../daily/stage/sourceScroll';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import {
-  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, EndButton, ScreenButton,
+  D, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider, FollowerLinkButton, useFollowActive, EndButton, ScreenButton,
   ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl, WidthToggle, BeatDots,
 } from '../presenter/chrome';
 
@@ -119,6 +119,8 @@ export default function NotesPage() {
   const teleprompterRef = useRef<HTMLDivElement>(null);
   const scrollAnimRef = useRef<number | undefined>();
   const ctxRef = useRef({ currentIdx: 0, slides: [] as SlideType[], sessionId: '', blackout: false });
+  // The ONE stable follower link follows whichever presenter acted last (chrome.tsx).
+  useFollowActive(sessionId);
   // Set around our OWN programmatic scrolls, so the scrub listener can tell a
   // user dragging from the animation loop moving the element itself. Without
   // it every rendered frame looks like a seek and re-anchors the whole room.

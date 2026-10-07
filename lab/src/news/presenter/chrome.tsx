@@ -13,8 +13,9 @@
  * step a beat, publish a speed over the socket) stays with each page, because
  * the two shows have different state.
  */
-import type { CSSProperties, ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { toast } from 'sonner';
+import { getFollowLink, rotateFollowLink, setFollowActive } from '../api';
 
 /** The presenter palette (dark, whatever the rest of the app is doing). */
 export const D = {
@@ -41,6 +42,45 @@ export const WIDTH_PX: Record<TpWidth, number> = { narrow: 420, medium: 660, wid
  */
 export const followerUrl = (sessionId: string): string =>
   `${window.location.origin}/news-gatherer/present/teleprompter?follow=1&session=${sessionId}`;
+
+/**
+ * THE STABLE FOLLOWER LINK (Jake, 2026-10-07): ONE link for every show — it
+ * follows whichever presentation Jake is presenting (AI News ⇄ Deep Dive), so
+ * the phone never needs a new link. The token is the credential (server
+ * news/followChannel.ts); "New link" replaces it and every old link stops.
+ * Old per-session links (`followerUrl`) still work.
+ */
+export const stableFollowerUrl = (token: string): string =>
+  `${window.location.origin}/news-gatherer/present/teleprompter?follow=1&live=${encodeURIComponent(token)}`;
+
+/**
+ * "I'm presenting this session": the stable link follows it. Sent when the
+ * session is known, and again (at most every 4 s) whenever Jake acts on this
+ * page — a key, a click, the window gaining focus — so the LAST presenter to
+ * act wins. The server only tells the followers when the session changes.
+ */
+export function useFollowActive(sessionId: string | null | undefined): void {
+  useEffect(() => {
+    if (!sessionId) return;
+    let last = 0;
+    const mark = (force = false) => {
+      const now = Date.now();
+      if (!force && now - last < 4000) return;
+      last = now;
+      setFollowActive({ sessionId }).catch(() => { last = 0; });
+    };
+    mark(true);
+    const onAct = () => mark();
+    window.addEventListener('keydown', onAct, true);
+    window.addEventListener('pointerdown', onAct, true);
+    window.addEventListener('focus', onAct);
+    return () => {
+      window.removeEventListener('keydown', onAct, true);
+      window.removeEventListener('pointerdown', onAct, true);
+      window.removeEventListener('focus', onAct);
+    };
+  }, [sessionId]);
+}
 
 /** A thin vertical rule between groups. `spaced` = the bottom bar's variant. */
 export function Divider({ spaced = false }: { spaced?: boolean }) {
@@ -110,32 +150,58 @@ export function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: V
  * `getSessionId` is read at click time (the session can arrive after render).
  */
 export function FollowerLinkButton({ getSessionId, synced = false }: { getSessionId: () => string | null | undefined; synced?: boolean }) {
+  const [menu, setMenu] = useState(false);
+  const copy = (url: string, msg: string) => navigator.clipboard.writeText(url).then(() => {
+    toast.success(msg);
+  }, () => {
+    // No clipboard (an insecure origin or a denied permission): show the
+    // link instead of failing silently.
+    toast.message('Follower link', { description: url, duration: 20000 });
+  });
+  const btn: CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 5,
+    background: synced ? 'rgba(96,165,250,0.12)' : D.card,
+    border: `1px solid ${synced ? 'rgba(96,165,250,0.4)' : D.border}`,
+    borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
+    color: synced ? D.blue : D.muted, whiteSpace: 'nowrap',
+    transition: 'all 0.3s',
+  };
   return (
-    <button
-      data-follower-link
-      onClick={() => {
-        const sid = getSessionId();
-        const url = sid ? followerUrl(sid) : window.location.href;
-        navigator.clipboard.writeText(url).then(() => {
-          toast.success('Follower link copied! Open it on your phone or iPad.');
-        }, () => {
-          // No clipboard (an insecure origin or a denied permission): show the
-          // link instead of failing silently.
-          toast.message('Follower link', { description: url, duration: 20000 });
-        });
-      }}
-      title="Copy a follower link — read-only, follows this monitor"
-      style={{
-        display: 'flex', alignItems: 'center', gap: 5,
-        background: synced ? 'rgba(96,165,250,0.12)' : D.card,
-        border: `1px solid ${synced ? 'rgba(96,165,250,0.4)' : D.border}`,
-        borderRadius: 4, padding: '2px 9px', fontSize: 11, cursor: 'pointer',
-        color: synced ? D.blue : D.muted, whiteSpace: 'nowrap',
-        transition: 'all 0.3s',
-      }}>
-      <span style={{ fontSize: 10 }}>{synced ? '⟳' : '📱'}</span>
-      {synced ? 'Synced' : 'Follower link'}
-    </button>
+    <div style={{ position: 'relative', display: 'flex', gap: 2 }}>
+      <button
+        data-follower-link
+        onClick={() => {
+          // The ONE stable link (same from the AI News and the Deep Dive presenter);
+          // if it cannot be fetched, this session's own link as before.
+          getFollowLink().then(
+            ({ token }) => copy(stableFollowerUrl(token), 'Follower link copied! It follows whichever show you present — AI News or Deep Dive.'),
+            () => { const sid = getSessionId(); copy(sid ? followerUrl(sid) : window.location.href, 'Follower link copied! Open it on your phone or iPad.'); },
+          );
+        }}
+        title="Copy the follower link — read-only; one link that follows whichever show you are presenting"
+        style={btn}>
+        <span style={{ fontSize: 10 }}>{synced ? '⟳' : '📱'}</span>
+        {synced ? 'Synced' : 'Follower link'}
+      </button>
+      <button data-follower-menu onClick={() => setMenu((m) => !m)} title="Follower link options" style={{ ...btn, padding: '2px 5px' }}>▾</button>
+      {menu && (
+        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 50, background: D.panel, border: `1px solid ${D.border}`, borderRadius: 6, padding: 4, minWidth: 230, boxShadow: '0 8px 24px rgba(0,0,0,.5)' }}>
+          <button
+            data-follower-rotate
+            onClick={() => {
+              setMenu(false);
+              if (!window.confirm('Make a new follower link? Every screen on the old link stops following until you open the new one.')) return;
+              rotateFollowLink().then(
+                ({ token }) => copy(stableFollowerUrl(token), 'New follower link copied — the old one no longer works.'),
+                () => toast.error('Could not make a new link.'),
+              );
+            }}
+            style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none', color: D.text, fontSize: 12, padding: '6px 8px', cursor: 'pointer', borderRadius: 4 }}>
+            ↻ New link <span style={{ color: D.muted }}>(old links stop working)</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

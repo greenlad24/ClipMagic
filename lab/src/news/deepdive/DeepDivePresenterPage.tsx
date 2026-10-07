@@ -44,7 +44,7 @@ import { startSession, getSession, endSession } from '../api';
 import { connectLiveSync, type LiveSync } from '../liveSync';
 import {
   D, SCRIPT_FONT, WIDTH_PX, type TpWidth, type ViewMode, NoteCard, NavStepper, TopicLabel, ViewToggle, Divider,
-  FollowerLinkButton, SourceButton, EndButton, ScreenButton, ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl,
+  FollowerLinkButton, useFollowActive, SourceButton, EndButton, ScreenButton, ScrollPill, ControlsBar, PlayButton, SpeedControl, SizeControl,
   WidthToggle, BeatDots,
 } from '../presenter/chrome';
 import { getDeepDive, editorPath, stagePath, KIND_LABEL, type DeepDive, type Section } from './api';
@@ -89,6 +89,8 @@ export default function DeepDivePresenterPage() {
   const [sections, setSections] = useState<Section[]>([]);
   const [loadError, setLoadError] = useState('');
   const [sessionId, setSessionId] = useState('');
+  // The ONE stable follower link follows whichever presenter acted last (chrome.tsx).
+  useFollowActive(sessionId);
   const [connected, setConnected] = useState(false);
   const [current, setCurrent] = useState(0);
   const [playing, setPlaying] = useState(false);
