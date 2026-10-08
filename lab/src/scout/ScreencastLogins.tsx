@@ -7,6 +7,7 @@
  * "paste your session" fallback for sites that block the server's sign-in.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import { CheckCircle2, CircleDashed, LogIn, MonitorPlay, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,15 +19,26 @@ const fmtDate = (iso: string) =>
 
 export default function ScreencastLogins() {
   const [tools, setTools] = useState<ScoutTool[] | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [open, setOpen] = useState(false);
   const [slug, setSlug] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try { setTools((await listTools()).tools); } catch { setTools([]); }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (expanded && tools === null) void load(); }, [expanded, tools, load]);
 
   const openFor = (s: string | null) => { setSlug(s); setOpen(true); };
+
+  // Collapsed by default and placed at the bottom of Settings (Jake: "so it's not easy to find").
+  if (!expanded) {
+    return (
+      <button type="button" onClick={() => setExpanded(true)}
+        className="flex items-center gap-1 text-xs text-muted-foreground/70 hover:text-muted-foreground focus-visible:outline-none focus-visible:underline">
+        <ChevronRight className="h-3 w-3" /> Screencast logins
+      </button>
+    );
+  }
 
   return (
     <section className="mb-6 rounded-xl border border-border bg-card p-5">
@@ -41,9 +53,12 @@ export default function ScreencastLogins() {
             refuses the server's sign-in, use <strong className="text-foreground">Can't log in here? Paste your session</strong> in the login window.
           </p>
         </div>
-        <Button variant="outline" size="sm" className="shrink-0 gap-1.5" onClick={() => openFor(null)}>
-          <Plus className="h-3.5 w-3.5" /> Add an app
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => openFor(null)}>
+            <Plus className="h-3.5 w-3.5" /> Add an app
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setExpanded(false)}>Hide</Button>
+        </div>
       </div>
 
       <div className="mt-4 divide-y divide-border">

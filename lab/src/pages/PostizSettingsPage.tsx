@@ -136,8 +136,6 @@ export default function PostizSettingsPage() {
           </p>
         </header>
 
-        <ScreencastLogins />
-
         {/* Security + reachability notices */}
         <div className="mb-6 space-y-3">
           <div className="flex items-start gap-3 rounded-xl border border-border bg-muted/30 p-4 text-sm">
@@ -209,6 +207,11 @@ export default function PostizSettingsPage() {
             ))}
           </div>
         )}
+
+        {/* Kept at the bottom and collapsed on purpose (Jake 2026-10-08). */}
+        <div className="mt-10">
+          <ScreencastLogins />
+        </div>
       </div>
 
       {/* Sticky action bar */}
