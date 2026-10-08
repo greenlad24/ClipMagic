@@ -122,16 +122,35 @@ def call(content, system, max_tokens=24000, effort="high"):
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                                           "content-type": "application/json"})
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        res = json.load(r)
-    text = "".join(b.get("text", "") for b in res["content"] if b["type"] == "text")
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        raise RuntimeError("Claude returned no JSON")
-    u = res.get("usage", {})
-    usd = u.get("input_tokens", 0) * 4e-6 + u.get("output_tokens", 0) * 20e-6
-    events.api(MODEL, usd, time.time() - t0, f"Claude director ({effort} effort)", u)
-    return json.loads(m.group(0)), {"usd": round(usd, 4), "seconds": round(time.time() - t0)}
+    total = 0.0
+    # Factory rule: retry, don't fail. A malformed answer (2026-10-08: "Expecting ',' delimiter"
+    # sank a creative job at graphics) gets one more call that asks for strictly valid JSON.
+    for attempt in (1, 2):
+        with urllib.request.urlopen(req, timeout=1800) as r:
+            res = json.load(r)
+        text = "".join(b.get("text", "") for b in res["content"] if b["type"] == "text")
+        u = res.get("usage", {})
+        usd = u.get("input_tokens", 0) * 4e-6 + u.get("output_tokens", 0) * 20e-6
+        total += usd
+        events.api(MODEL, usd, time.time() - t0, f"Claude director ({effort} effort)"
+                   + (" — retry for valid JSON" if attempt == 2 else ""), u)
+        m = re.search(r"\{.*\}", text, re.S)
+        try:
+            if not m:
+                raise ValueError("no JSON object in the answer")
+            return json.loads(m.group(0)), {"usd": round(total, 4), "seconds": round(time.time() - t0)}
+        except ValueError as e:                       # json.JSONDecodeError is a ValueError
+            if attempt == 2:
+                raise RuntimeError(f"Claude returned invalid JSON twice: {e}") from None
+            events.emit("log", f"director answer was not valid JSON ({e}) — asking again", level="warn")
+            body["messages"] = [{"role": "user", "content": content},
+                                {"role": "assistant", "content": text or "(empty)"},
+                                {"role": "user", "content": f"That was not valid JSON ({e}). Reply with the "
+                                 "complete answer again as ONE valid JSON object only — no prose, no code fence, "
+                                 "every string escaped."}]
+            req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
+                                         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
+                                                  "content-type": "application/json"})
 
 
 def validate(plan, video, sites):
