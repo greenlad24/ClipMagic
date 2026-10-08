@@ -49,7 +49,7 @@ CFG = config.WORK / "factory.json"
 LEASES = config.WORK / "factory-leases"
 TAG_JOB = "clipmagic-factory-job"
 TAG_IMAGE = "clipmagic-factory-image"
-IMAGES = ("hyperframes-runner:0.8.30", "aieditor-aligner:0.1", "aieditor-screencast:0.1")
+IMAGES = ("hyperframes-runner:0.8.30", "aieditor-aligner:0.1", "aieditor-screencast:0.1", "aieditor-motion:1")
 SHIP_KEYS = ("ANTHROPIC_API_KEY", "GROQ_API_KEY")
 LAB_OWNED = ("queue.json", "cancel", "request.json", "plan.edit.json", "joins.edit.json")
 LIVE_FILES = ("status.json", "events.jsonl", "log.txt")
@@ -421,7 +421,15 @@ def build_image(log=print):
             a = api("POST", f"/droplets/{did}/actions", {"type": "snapshot", "name": name})["action"]
             log("  snapshotting…")
             wait_action(a["id"], timeout=5400)
-            snaps = [x for x in api("GET", f"/droplets/{did}/snapshots")["snapshots"] if x["name"] == name]
+            # the account's snapshot list catches up a little after the action completes
+            # (2026-10-08: the per-droplet list was still empty) — look it up by name, with retries
+            snaps = []
+            for _ in range(12):
+                snaps = [x for x in api("GET", "/snapshots?resource_type=droplet&per_page=200")["snapshots"]
+                         if x["name"] == name]
+                if snaps:
+                    break
+                time.sleep(10)
             if not snaps:
                 raise DOError("snapshot not found after the action completed")
             new_id = snaps[0]["id"]

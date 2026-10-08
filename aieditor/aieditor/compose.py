@@ -6,6 +6,7 @@ PNGs numbered by OUTPUT frame. Composite: the cut's preview + every event's fram
 their place on the timeline + the Lab's word-by-word captions (motion/captions.mjs —
 the short-form editor's own engine, keepClear = bottom band) → edit-NN.mp4.
 """
+import os
 import json
 import shutil
 import subprocess
@@ -14,7 +15,11 @@ from pathlib import Path
 
 from . import config, events as ev_log, graphics, sfx
 
-LAB_IMAGE = "clipmagic-lab:latest"
+# The motion renderer (motion/render.mjs + Chromium + fonts) from the Lab image, pinned under its
+# own tag: factory servers carry it in their snapshot (cloud.IMAGES), and a moving "latest"
+# would make every Lab deploy invalidate that snapshot. Re-tag + `aieditor-factory image`
+# when motion/render.mjs changes.
+LAB_IMAGE = os.environ.get("AIEDITOR_MOTION_IMAGE", "aieditor-motion:1")
 MOTION = config.CODE / "motion"
 CAPTION_STYLE = {"template": "white-mont", "overrides": {"wordColor": "#FF2E6A"}}   # t7: active word pink
 
