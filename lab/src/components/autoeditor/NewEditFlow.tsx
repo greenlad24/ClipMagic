@@ -7,19 +7,29 @@ import {
   ChevronDown,
   ChevronRight,
   Film,
+  Link2,
   Loader2,
   RectangleHorizontal,
   RectangleVertical,
   Scissors,
   Sparkles,
+  Upload,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { autoEditorCreate, type AutoRunOn, type AutoWorkflow } from 'zite-endpoints-sdk';
+import {
+  autoEditorCreate,
+  autoEditorLabEdits,
+  type AutoLabEdit,
+  type AutoRunOn,
+  type AutoSourceInput,
+  type AutoWorkflow,
+} from 'zite-endpoints-sdk';
 import { cn } from '@/lib/utils';
 import { getFactory, type FactoryState } from './FactoryPanel';
+import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from './useSourceUpload';
 
 /**
  * New edit — a guided, one-question-per-screen flow (Jake 2026-10-08: "a consumer app like
@@ -27,7 +37,12 @@ import { getFactory, type FactoryState } from './FactoryPanel';
  * autoEditorCreate({ url, workflow, format, sponsored, script (cut only), title, sites (long
  * only), runOn }) — control.ts createJob validates the same fields.
  *
- * Steps: workflow → link → format → sponsored → [script: cut only] → [sites: long only] → review.
+ * Steps: workflow → [source: creative only] → link | labedit | upload → format → sponsored →
+ * [script: cut only] → [sites: long only] → review.
+ * Creative edits may start from a Descript link, a finished Lab edit of workflow 1, or a file
+ * uploaded from the computer (Jake 2026-10-08) — request.json "source", see control.ts.
+ * The upload runs in the background while the remaining questions are answered; Start
+ * waits for it.
  * Card answers advance on click; text steps advance on Enter (Ctrl/⌘+Enter in a textarea).
  * Sponsored is never pre-filled (Jake: "important you know if it's sponsored or not").
  */
@@ -82,16 +97,24 @@ const WORKFLOWS: {
     promise: 'Already edited? Nothing is cut — it goes straight to the creative edit.',
     gets: ['Pre-production plan', 'Screencasts + graphics', 'The 4K final'],
     hint: [
-      'Paste the share link of the narration you already edited in Descript.',
+      'Start from the narration you already edited: a Descript share link, a finished Lab edit, or a video file from your computer.',
       'It is transcribed and re-timed, the timeline is kept exactly as it is, then pre-production plans the visuals.',
       'Screencasts, graphics and music are added and you render the final.',
     ],
   },
 ];
 
+type SourceKind = 'descript' | 'job' | 'upload';
+
+const SOURCE_STAGE: Record<SourceKind, string> = {
+  descript: 'Download from Descript',
+  job: 'Use the Lab edit',
+  upload: 'Use the uploaded file',
+};
+
 /** The stages the worker will run — mirrors control.ts stagesFor(). */
-function plannedStages(wf: AutoWorkflow, format: 'short' | 'long'): string[] {
-  const head = ['Download from Descript', 'Extract audio', 'Transcribe', 'Re-time every word'];
+function plannedStages(wf: AutoWorkflow, format: 'short' | 'long', source: SourceKind): string[] {
+  const head = [SOURCE_STAGE[source], 'Extract audio', 'Transcribe', 'Re-time every word'];
   const mid = wf === 'cut' ? ['Pick the best takes', 'Build the cut', 'Sound check'] : ['Keep the edited timeline', 'Pre-production'];
   const tail =
     format === 'long'
@@ -100,7 +123,25 @@ function plannedStages(wf: AutoWorkflow, format: 'short' | 'long'): string[] {
   return [...head, ...mid, ...tail];
 }
 
-type StepId = 'workflow' | 'link' | 'format' | 'sponsored' | 'script' | 'sites' | 'review';
+type StepId = 'workflow' | 'source' | 'link' | 'labedit' | 'upload' | 'format' | 'sponsored' | 'script' | 'sites' | 'review';
+const SUB_STEP: Record<SourceKind, StepId> = { descript: 'link', job: 'labedit', upload: 'upload' };
+
+type LabPick = { edit: AutoLabEdit; video: AutoLabEdit['videos'][number] };
+
+function mmss(sec: number | null | undefined): string {
+  if (!sec || !Number.isFinite(sec)) return '—';
+  const s = Math.round(sec);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+function dims(w: number | null, h: number | null): string {
+  if (!w || !h) return '';
+  const short = Math.min(w, h);
+  return short >= 2160 ? `${w}×${h} (4K)` : `${w}×${h}`;
+}
+function dateOf(t: number | null): string {
+  if (!t) return '';
+  return new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+}
 
 function median(xs: number[]): number | null {
   if (!xs.length) return null;
@@ -189,30 +230,51 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   const [busy, setBusy] = useState(false);
   const [hintOpen, setHintOpen] = useState(false);
   const [factory, setFactory] = useState<FactoryState | null>(null);
+  const [sourceKind, setSourceKind] = useState<SourceKind | null>(null); // nothing pre-selected
+  const [labEdits, setLabEdits] = useState<AutoLabEdit[] | null>(null);
+  const [labError, setLabError] = useState<string | null>(null);
+  const [pick, setPick] = useState<LabPick | null>(null);
+  const up = useSourceUpload();
 
   useEffect(() => {
     getFactory().then(setFactory).catch(() => setFactory(null));
   }, []);
 
   const creative = workflow === 'creative';
+  // the cut workflow starts from a Descript link only
+  const kind: SourceKind = creative ? (sourceKind ?? 'descript') : 'descript';
   const steps: StepId[] = useMemo(() => {
-    const s: StepId[] = ['workflow', 'link', 'format', 'sponsored'];
+    const s: StepId[] = creative ? ['workflow', 'source', SUB_STEP[kind], 'format', 'sponsored'] : ['workflow', 'link', 'format', 'sponsored'];
     if (!creative) s.push('script');
     if (format === 'long') s.push('sites');
     s.push('review');
     return s;
-  }, [creative, format]);
+  }, [creative, format, kind]);
   const idx = Math.max(0, steps.indexOf(step));
   const urlOk = SHARE_RE.test(url.trim());
+  const uploadDone = up.state.status === 'done' && !!up.state.uploadId;
+  const sourceOk = kind === 'descript' ? urlOk : kind === 'job' ? !!pick : uploadDone;
+
+  // the Lab edits, loaded once when that screen is first opened
+  useEffect(() => {
+    if (step !== 'labedit' || labEdits) return;
+    autoEditorLabEdits({})
+      .then((r) => setLabEdits(r.edits))
+      .catch((e) => setLabError(e instanceof Error ? e.message : String(e)));
+  }, [step, labEdits]);
 
   const canNext: Record<StepId, boolean> = {
     workflow: !!workflow,
+    source: true,
     link: urlOk,
+    labedit: !!pick,
+    // the questions after it can be answered while the file uploads
+    upload: up.state.status === 'uploading' || uploadDone,
     format: !!format,
     sponsored: sponsored !== null,
     script: true,
     sites: true,
-    review: !!(workflow && urlOk && format && sponsored !== null),
+    review: !!(workflow && sourceOk && format && sponsored !== null),
   };
 
   const go = (to: StepId) => setStep(to);
@@ -235,7 +297,18 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     const first = lsGet(LS.hint(wf)) !== '1';
     setHintOpen(first);
     if (first) lsSet(LS.hint(wf), '1');
-    go('link');
+    go(wf === 'creative' ? 'source' : 'link');
+  };
+  const pickSource = (k: SourceKind) => {
+    setSourceKind(k);
+    setHintOpen(false);
+    go(SUB_STEP[k]);
+  };
+  const pickLabVideo = (edit: AutoLabEdit, video: AutoLabEdit['videos'][number]) => {
+    setPick({ edit, video });
+    // a Shorts edit stays 9:16, a long-form one 16:9
+    if (edit.format === 'short' || edit.format === 'long') setFormat(edit.format);
+    go('format');
   };
   const dismissHint = () => {
     if (workflow) lsSet(LS.hint(workflow), '1');
@@ -243,11 +316,18 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   };
 
   const submit = async () => {
-    if (!workflow || !format || sponsored === null || !urlOk) return;
+    if (!workflow || !format || sponsored === null || !sourceOk) return;
+    const source: AutoSourceInput | undefined =
+      kind === 'job' && pick
+        ? { kind: 'job', job: pick.edit.id, file: pick.video.file }
+        : kind === 'upload' && up.state.uploadId
+          ? { kind: 'upload', upload: up.state.uploadId }
+          : undefined;
     setBusy(true);
     try {
       const r = await autoEditorCreate({
-        url: url.trim(),
+        url: kind === 'descript' ? url.trim() : undefined,
+        source,
         workflow,
         format,
         sponsored,
@@ -259,6 +339,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
       lsSet(LS.format, format);
       lsSet(LS.runOn, runOn);
       if (workflow) lsSet(LS.hint(workflow), '1');
+      if (kind === 'upload') up.consumed();
       toast.success('Started — the worker picks it up in a few seconds.');
       onCreated(r.id);
     } catch (err) {
@@ -277,7 +358,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     if ((e.target as HTMLElement).tagName === 'BUTTON') return;
     e.preventDefault();
     if (step === 'review') void submit();
-    else next();
+    else if (step !== 'source') next();
   };
   // focus the step's field so Enter works straight away
   useEffect(() => {
@@ -335,34 +416,83 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
           </>
         )}
 
+        {(step === 'link' || step === 'source') && hintOpen && wfDef && (step === 'source' || !creative) && (
+          <div className="relative rounded-xl border border-primary/30 bg-primary/5 p-4 pr-9">
+            <button
+              type="button"
+              onClick={dismissHint}
+              className="absolute right-2.5 top-2.5 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+              aria-label="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <p className="mb-2 text-xs font-medium text-foreground">How this works</p>
+            <ol className="space-y-1.5">
+              {wfDef.hint.map((h, k) => (
+                <li key={k} className="flex gap-2 text-xs leading-snug text-muted-foreground">
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] text-primary">
+                    {k + 1}
+                  </span>
+                  {h}
+                </li>
+              ))}
+            </ol>
+            <button type="button" onClick={dismissHint} className="mt-3 text-xs text-primary hover:underline">
+              Got it
+            </button>
+          </div>
+        )}
+
+        {step === 'source' && (
+          <>
+            <Question sub="The narration you already edited.">Where is the video?</Question>
+            <div className="grid gap-3">
+              <BigChoice
+                selected={sourceKind === 'descript'}
+                onClick={() => pickSource('descript')}
+                icon={Link2}
+                title="Descript share link"
+                sub="Published from Descript with download allowed."
+              />
+              <BigChoice
+                selected={sourceKind === 'job'}
+                onClick={() => pickSource('job')}
+                icon={Film}
+                title="A finished Lab edit"
+                sub="A video made here with “Cut an unedited narration”."
+              />
+              <BigChoice
+                selected={sourceKind === 'upload'}
+                onClick={() => pickSource('upload')}
+                icon={Upload}
+                title="Upload from your computer"
+                sub={`${VIDEO_EXTS.join(' ').replace(/\./g, '').toUpperCase()} · up to 20 GB · keeps uploading while you answer the rest`}
+              />
+            </div>
+          </>
+        )}
+
+        {step === 'labedit' && (
+          <>
+            <Question sub="The full-resolution final is used when there is one.">Which Lab edit?</Question>
+            <LabEditPicker edits={labEdits} error={labError} pick={pick} onPick={pickLabVideo} />
+          </>
+        )}
+
+        {step === 'upload' && (
+          <>
+            <Question sub="The edited narration, straight from your computer.">Upload the video</Question>
+            <UploadBox
+              state={up.state}
+              onFile={(f) => void up.start(f)}
+              onCancel={up.cancel}
+              onRetry={up.canRetry ? up.retry : undefined}
+            />
+          </>
+        )}
+
         {step === 'link' && (
           <>
-            {hintOpen && wfDef && (
-              <div className="relative rounded-xl border border-primary/30 bg-primary/5 p-4 pr-9">
-                <button
-                  type="button"
-                  onClick={dismissHint}
-                  className="absolute right-2.5 top-2.5 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                  aria-label="Dismiss"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-                <p className="mb-2 text-xs font-medium text-foreground">How this works</p>
-                <ol className="space-y-1.5">
-                  {wfDef.hint.map((h, k) => (
-                    <li key={k} className="flex gap-2 text-xs leading-snug text-muted-foreground">
-                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] text-primary">
-                        {k + 1}
-                      </span>
-                      {h}
-                    </li>
-                  ))}
-                </ol>
-                <button type="button" onClick={dismissHint} className="mt-3 text-xs text-primary hover:underline">
-                  Got it
-                </button>
-              </div>
-            )}
             <Question sub={creative ? 'The narration you already edited, published from Descript.' : 'The RAW recording, published from Descript with download allowed.'}>
               Paste the Descript share link
             </Question>
@@ -477,7 +607,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
               {(
                 [
                   ['Workflow', wfDef?.title ?? '', 'workflow'],
-                  ['Recording', url.trim().replace('https://', ''), 'link'],
+                  sourceRow(kind, url, pick, up.state),
                   ['Format', format === 'short' ? 'Shorts (9:16)' : 'Long-form (16:9)', 'format'],
                   ['Sponsored', sponsored ? 'Sponsored' : 'Not sponsored', 'sponsored'],
                   ...(!creative ? [['Script', script.trim() ? `${script.trim().split(/\s+/).length} words` : 'None', 'script']] : []),
@@ -497,7 +627,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">It runs these steps, live on the next screen</p>
               <ol className="flex flex-wrap gap-1.5">
-                {plannedStages(workflow, format).map((s, k) => (
+                {plannedStages(workflow, format, kind).map((s, k) => (
                   <li key={s} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
                     {k + 1}. {s}
                   </li>
@@ -566,9 +696,22 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
             </div>
 
             <Button size="lg" className="h-12 w-full gap-2 text-base" disabled={busy || !canNext.review} onClick={() => void submit()}>
-              {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : creative ? <Film className="h-5 w-5" /> : <Scissors className="h-5 w-5" />}
-              {creative ? 'Start the creative edit' : 'Start cutting'}
+              {busy || (kind === 'upload' && up.state.status === 'uploading') ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : creative ? (
+                <Film className="h-5 w-5" />
+              ) : (
+                <Scissors className="h-5 w-5" />
+              )}
+              {kind === 'upload' && up.state.status === 'uploading'
+                ? `Waiting for the upload… ${pct(up.state)}%`
+                : creative
+                  ? 'Start the creative edit'
+                  : 'Start cutting'}
             </Button>
+            {kind === 'upload' && up.state.status !== 'uploading' && !uploadDone && (
+              <p className="text-center text-xs text-red-400">The upload did not finish — open “Source” above to retry.</p>
+            )}
           </>
         )}
       </div>
@@ -579,7 +722,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
           <Button variant="ghost" size="sm" className="gap-1.5" onClick={back}>
             <ArrowLeft className="h-4 w-4" /> Back
           </Button>
-          {step !== 'review' && (
+          {step !== 'review' && step !== 'source' && (
             <div className="flex items-center gap-3">
               <span className="hidden text-[11px] text-muted-foreground sm:inline">
                 {step === 'script' || step === 'sites' ? 'Ctrl + Enter ↵' : 'Enter ↵'}
@@ -600,4 +743,287 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
       )}
     </div>
   );
+}
+
+function pct(s: SourceUploadState): number {
+  return s.size ? Math.floor((s.received / s.size) * 100) : 0;
+}
+
+/** The review screen's source row: [label, value, step to edit it]. */
+function sourceRow(kind: SourceKind, url: string, pick: LabPick | null, up: SourceUploadState): [string, string, StepId] {
+  if (kind === 'job') {
+    const v = pick?.video;
+    const value = pick && v
+      ? `Lab edit: ${pick.edit.title} · ${v.file}${v.width ? ` · ${v.width}×${v.height}` : ''} · ${mmss(v.duration)}${v.quality === 'preview' ? ' (preview quality)' : ''}`
+      : 'Choose a Lab edit';
+    return ['Source', value, 'labedit'];
+  }
+  if (kind === 'upload') {
+    const value = up.status === 'done'
+      ? `Uploaded: ${up.name} · ${fmtBytes(up.size)}`
+      : up.status === 'uploading'
+        ? `Uploading ${up.name} — ${pct(up)}%`
+        : up.name ? `${up.name} — not uploaded` : 'Choose a file';
+    return ['Source', value, 'upload'];
+  }
+  return ['Recording', url.trim().replace('https://', ''), 'link'];
+}
+
+function LabEditPicker({
+  edits,
+  error,
+  pick,
+  onPick,
+}: {
+  edits: AutoLabEdit[] | null;
+  error: string | null;
+  pick: LabPick | null;
+  onPick: (edit: AutoLabEdit, video: AutoLabEdit['videos'][number]) => void;
+}) {
+  if (error) return <p className="text-sm text-red-400">{error}</p>;
+  if (!edits) {
+    return (
+      <p className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading your edits…
+      </p>
+    );
+  }
+  if (!edits.length) {
+    return (
+      <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
+        No finished Lab edits yet — make one with “Cut an unedited narration” first, or go back and choose another source.
+      </p>
+    );
+  }
+  return (
+    <div className="max-h-[26rem] space-y-3 overflow-y-auto pr-1">
+      {edits.map((e) => (
+        <div key={e.id} className="space-y-1.5">
+          {e.videos.length > 1 && (
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{e.title}</span> · {e.videos.length} videos · {dateOf(e.createdAt)}
+            </p>
+          )}
+          {e.videos.map((v) => {
+            const selected = pick?.edit.id === e.id && pick.video.file === v.file;
+            const vertical = (v.height ?? 0) > (v.width ?? 0);
+            return (
+              <button
+                key={v.file}
+                type="button"
+                onClick={() => onPick(e, v)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-all',
+                  selected ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'border-border hover:border-muted-foreground/40 hover:bg-muted/30',
+                )}
+              >
+                <span
+                  className={cn(
+                    'flex shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted',
+                    vertical ? 'h-16 w-9' : 'h-12 w-20 sm:h-14 sm:w-24',
+                  )}
+                >
+                  <video
+                    src={`/api/aieditor/files/${e.id}/${v.file}#t=2`}
+                    preload="metadata"
+                    muted
+                    playsInline
+                    className="h-full w-full object-cover"
+                  />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-foreground">
+                    {e.videos.length > 1 ? v.title || `Video ${v.k}` : e.title}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                    {[e.videos.length > 1 ? null : dateOf(e.createdAt), mmss(v.duration), dims(v.width, v.height), v.file]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </span>
+                  {v.quality === 'preview' && (
+                    <span className="mt-1 inline-block rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300">
+                      preview quality (1080p) — no final rendered yet
+                    </span>
+                  )}
+                </span>
+                <span
+                  className={cn(
+                    'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                    selected ? 'border-primary bg-primary text-primary-foreground' : 'border-border',
+                  )}
+                >
+                  {selected && <Check className="h-3 w-3" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UploadBox({
+  state,
+  onFile,
+  onCancel,
+  onRetry,
+}: {
+  state: SourceUploadState;
+  onFile: (f: File) => void;
+  onCancel: () => void;
+  onRetry?: () => void;
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+  const choose = () => input.current?.click();
+  const fileInput = (
+    <input
+      ref={input}
+      type="file"
+      accept={`video/*,${VIDEO_EXTS.join(',')}`}
+      className="hidden"
+      onChange={(e) => {
+        const f = e.target.files?.[0];
+        if (f) onFile(f);
+        e.target.value = '';
+      }}
+    />
+  );
+
+  if (state.status === 'uploading' || state.status === 'done') {
+    const p = pct(state);
+    const eta = state.etaSec;
+    return (
+      <div className="space-y-3 rounded-xl border border-border p-4">
+        {fileInput}
+        <div className="flex items-start gap-3">
+          <span
+            className={cn(
+              'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+              state.status === 'done' ? 'bg-green-500/15 text-green-400' : 'bg-primary/15 text-primary',
+            )}
+          >
+            {state.status === 'done' ? <Check className="h-[18px] w-[18px]" /> : <Upload className="h-[18px] w-[18px]" />}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-foreground">{state.name}</p>
+            <p className="text-xs text-muted-foreground">
+              {state.status === 'done'
+                ? `Uploaded · ${fmtBytes(state.size)}`
+                : `${fmtBytes(state.received)} of ${fmtBytes(state.size)}`}
+            </p>
+          </div>
+          <span className="text-sm font-medium tabular-nums text-foreground">{p}%</span>
+        </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn('h-full rounded-full transition-[width] duration-300', state.status === 'done' ? 'bg-green-500' : 'bg-primary')}
+            style={{ width: `${p}%` }}
+          />
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="tabular-nums">
+            {state.status === 'done'
+              ? 'Ready — continue with the next questions.'
+              : state.retry
+                ? `Connection hiccup — retrying (${state.retry} of 3)…`
+                : [
+                    state.rate ? `${(state.rate / 1024 ** 2).toFixed(1)} MB/s` : 'Starting…',
+                    eta !== null && state.rate ? `${fmtEta(eta)} left` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+          </span>
+          <span className="flex gap-3">
+            {state.status === 'done' && (
+              <button type="button" onClick={choose} className="text-primary hover:underline">
+                Choose another file
+              </button>
+            )}
+            <button type="button" onClick={onCancel} className="hover:text-foreground hover:underline">
+              {state.status === 'done' ? 'Remove' : 'Cancel'}
+            </button>
+          </span>
+        </div>
+        {state.status === 'uploading' && (
+          <p className="text-[11px] text-muted-foreground">You can continue with the next questions — keep this tab open.</p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {fileInput}
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOver(false);
+          const f = e.dataTransfer.files?.[0];
+          if (f) onFile(f);
+        }}
+        onClick={choose}
+        role="button"
+        tabIndex={0}
+        data-autofocus
+        onKeyDown={(e) => {
+          if (e.key === ' ') {
+            e.preventDefault();
+            choose();
+          }
+        }}
+        className={cn(
+          'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-10 text-center transition-colors',
+          over ? 'border-primary bg-primary/10' : 'border-border hover:border-muted-foreground/50 hover:bg-muted/20',
+        )}
+      >
+        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
+          <Upload className="h-5 w-5" />
+        </span>
+        <p className="text-sm text-foreground">
+          Drop the video here or <span className="text-primary underline-offset-2 hover:underline">choose a file</span>
+        </p>
+        <p className="text-xs text-muted-foreground">MP4, MOV, M4V, MKV or WebM · up to 20 GB</p>
+      </div>
+      {state.status === 'interrupted' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs">
+          <span className="text-amber-200">
+            {state.name} stopped at {pct(state)}% — choose the same file to continue where it left off.
+          </span>
+          <button type="button" onClick={onCancel} className="text-muted-foreground hover:text-foreground hover:underline">
+            Discard
+          </button>
+        </div>
+      )}
+      {state.status === 'error' && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2 text-xs">
+          <span className="text-red-300">
+            {state.name ? `${state.name}: ` : ''}
+            {state.error}
+          </span>
+          {state.uploadId && onRetry ? (
+            <button type="button" onClick={onRetry} className="text-primary hover:underline">
+              Retry
+            </button>
+          ) : state.uploadId ? (
+            <span className="text-muted-foreground">Choose the same file again to continue.</span>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtEta(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
 }

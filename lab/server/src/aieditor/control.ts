@@ -13,6 +13,7 @@
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { claimUpload, getUpload, UPLOAD_ID_RE } from "./uploads.js";
 
 const ROOT = process.env.AIEDITOR_WORK || "/aieditor-work";
 const JOBS = path.join(ROOT, "jobs");
@@ -54,10 +55,36 @@ export function workflowOf(req: any): Workflow {
   return req?.workflow === "creative" ? "creative" : "cut";
 }
 
-export function stagesFor(workflow: Workflow, format: string): { id: string; title: string }[] {
+/**
+ * Where source.mp4 comes from — request.json "source.kind" (the worker: aieditor/sources.py).
+ *   descript  a Descript share link, downloaded (every job before 2026-10-08)
+ *   job       a finished Lab edit of workflow 1 (final-NN.mp4, else preview-NN.mp4)
+ *   upload    a file uploaded from the computer (aieditor/uploads.ts)
+ * The last two are hard-linked into the job on the host. Jake 2026-10-08: the creative
+ * workflow may start from any of the three; the cut workflow keeps Descript only.
+ */
+export type SourceKind = "descript" | "job" | "upload";
+export const SOURCE_KINDS: Record<Workflow, SourceKind[]> = {
+  cut: ["descript"],
+  creative: ["descript", "job", "upload"],
+};
+const LAB_FILE_RE = /^(final|preview)-\d{2}\.mp4$/;
+
+export function sourceKindOf(req: any): SourceKind {
+  const k = req?.source?.kind;
+  return k === "job" || k === "upload" ? k : "descript";
+}
+
+const SOURCE_STAGE_TITLE: Record<SourceKind, string> = {
+  descript: "Download from Descript",
+  job: "Use the Lab edit",
+  upload: "Use the uploaded file",
+};
+
+export function stagesFor(workflow: Workflow, format: string, source: SourceKind = "descript"): { id: string; title: string }[] {
   const t = (id: string, title: string) => ({ id, title });
   const head = [
-    t("download", "Download from Descript"),
+    t("download", SOURCE_STAGE_TITLE[source] ?? SOURCE_STAGE_TITLE.descript),
     t("audio", "Extract audio"),
     t("transcribe", "Transcribe (word level)"),
     t("align", "Re-time every word"),
@@ -275,7 +302,10 @@ export async function serviceStatus() {
 }
 
 export interface CreateInput {
+  /** a Descript share link (source kind "descript") */
   url?: string;
+  /** a Lab edit or an upload instead of a link (creative workflow) */
+  source?: { kind?: string; job?: string; file?: string; upload?: string };
   format?: string;
   sponsored?: boolean | null;
   script?: string;
@@ -311,15 +341,118 @@ function parseSites(raw: unknown): { url: string; note: string }[] {
   return out;
 }
 
-export async function createJob(input: CreateInput) {
+/** A finished Lab edit of workflow 1 that may be a creative edit's source. */
+export interface LabEdit {
+  id: string;
+  title: string;
+  format: string | null;
+  createdAt: number | null;
+  videos: {
+    file: string; k: number; quality: "final" | "preview"; title: string | null;
+    duration: number | null; width: number | null; height: number | null; bytes: number; modifiedAt: number;
+  }[];
+}
+
+/** final-NN.mp4 = the source resolution; preview-NN.mp4 = 1080 on the short side */
+function dimsOf(quality: "final" | "preview", src: any): [number | null, number | null] {
+  const w = Number(src?.width), h = Number(src?.height);
+  if (!(w > 0 && h > 0)) return [null, null];
+  if (quality === "final") return [w, h];
+  const s = 1080 / Math.min(w, h);
+  return [Math.round((w * s) / 2) * 2, Math.round((h * s) / 2) * 2];
+}
+
+/**
+ * Finished edits of workflow 1 ("cut", or no workflow = cut) — per video the full-resolution
+ * final-NN.mp4, else the newest preview-NN.mp4 (1080p). Jobs with no video are left out.
+ */
+export async function listLabEdits(): Promise<LabEdit[]> {
+  let names: string[] = [];
+  try { names = await fsp.readdir(JOBS); } catch { return []; }
+  const out: LabEdit[] = [];
+  for (const id of names) {
+    if (!ID_RE.test(id)) continue;
+    const dir = path.join(JOBS, id);
+    const req = await readJson<any>(path.join(dir, "request.json"));
+    if (!req || workflowOf(req) !== "cut") continue;
+    const src = await readJson<any>(path.join(dir, "source.json"));
+    const edl = await readJson<any>(path.join(dir, "edl.json"));
+    const byK = new Map<number, LabEdit["videos"][number]>();
+    let files: string[] = [];
+    try { files = await fsp.readdir(dir); } catch { continue; }
+    for (const f of files) {
+      const m = /^(final|preview)-(\d{2})\.mp4$/.exec(f);
+      if (!m) continue;
+      const st = await fsp.stat(path.join(dir, f)).catch(() => null);
+      if (!st?.isFile() || st.size === 0) continue;
+      const quality = m[1] as "final" | "preview";
+      const k = Number(m[2]);
+      const have = byK.get(k);
+      // a final always wins; between two of the same kind the newer one
+      if (have && (have.quality === "final" && quality === "preview")) continue;
+      if (have && have.quality === quality && have.modifiedAt >= st.mtimeMs / 1000) continue;
+      const v = edl?.videos?.[k - 1];
+      const [width, height] = dimsOf(quality, src);
+      byK.set(k, {
+        file: f, k, quality, title: v?.title ?? null,
+        duration: Number.isFinite(Number(v?.duration)) ? Number(v.duration) : null,
+        width, height, bytes: st.size, modifiedAt: st.mtimeMs / 1000,
+      });
+    }
+    if (!byK.size) continue;
+    out.push({
+      id,
+      title: req.title || src?.title || id,
+      format: req.format ?? null,
+      // (one hand-made job wrote milliseconds)
+      createdAt: Number(req.created_at) > 1e11 ? Number(req.created_at) / 1000 : req.created_at ?? null,
+      videos: [...byK.values()].sort((a, b) => a.k - b.k),
+    });
+  }
+  return out.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+/** The request.json "source" for a new job, validated (path-safe names, the file exists). */
+export async function parseSource(input: CreateInput, workflow: Workflow): Promise<
+  { kind: "descript"; url: string } | { kind: "job"; job: string; file: string; title: string }
+  | { kind: "upload"; upload: string; name: string }
+> {
+  const kind: SourceKind = input.source?.kind === "job" || input.source?.kind === "upload" ? input.source.kind : "descript";
+  if (!SOURCE_KINDS[workflow].includes(kind)) {
+    throw new Error("This workflow starts from a Descript share link.");
+  }
+  if (kind === "job") {
+    const job = String(input.source?.job ?? "");
+    const file = String(input.source?.file ?? "");
+    if (!ID_RE.test(job) || !LAB_FILE_RE.test(file)) throw new Error("Choose a finished Lab edit.");
+    const req = await readJson<any>(path.join(JOBS, job, "request.json"));
+    if (!req) throw new Error("That Lab edit no longer exists.");
+    if (workflowOf(req) !== "cut") throw new Error("Only edits made with “Cut an unedited narration” can be used.");
+    const st = await fsp.lstat(path.join(JOBS, job, file)).catch(() => null);
+    if (!st?.isFile() || st.size === 0) throw new Error(`That Lab edit has no ${file}.`);
+    const src = await readJson<any>(path.join(JOBS, job, "source.json"));
+    return { kind, job, file, title: String(req.title || src?.title || job).slice(0, 120) };
+  }
+  if (kind === "upload") {
+    const upload = String(input.source?.upload ?? "");
+    if (!UPLOAD_ID_RE.test(upload)) throw new Error("Upload the video first.");
+    const up = await getUpload(upload);
+    if (!up.complete) throw new Error("The upload has not finished yet.");
+    return { kind, upload, name: up.name };     // createJob claims it (not taken by another job)
+  }
   const url = String(input.url ?? "").trim();
   if (!SHARE_RE.test(url)) {
     throw new Error("Paste a Descript share link like https://share.descript.com/view/AbC123xyz");
   }
+  return { kind, url };
+}
+
+export async function createJob(input: CreateInput) {
   if (input.workflow !== "cut" && input.workflow !== "creative") {
     throw new Error("Choose the workflow: cut an unedited narration, or creative edit an edited one.");
   }
   const workflow: Workflow = input.workflow;
+  const source = await parseSource(input, workflow);
   if (input.format !== "short" && input.format !== "long") throw new Error("Choose Shorts or Long-form.");
   // Jake: "important you know if it's sponsored or not" — never defaulted.
   if (input.sponsored !== true && input.sponsored !== false) throw new Error("Say whether the video is sponsored.");
@@ -327,14 +460,20 @@ export async function createJob(input: CreateInput) {
   const script = String(input.script ?? "");
   if (script.length > MAX_SCRIPT) throw new Error("The script is too long.");
   const stamp = new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "");
-  const slug = String(input.title || url.split("/").filter(Boolean).pop() || "job")
+  const fallback = source.kind === "descript" ? source.url.split("/").filter(Boolean).pop()
+    : source.kind === "job" ? source.title : source.name.replace(/\.[^.]+$/, "");
+  const slug = String(input.title || fallback || "job")
     .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "job";
   const id = `${slug}-${stamp}-${randomBytes(2).toString("hex")}`;
   const dir = path.join(JOBS, id);
+  if (source.kind === "upload") {
+    // complete + not taken; marks it as this job's (the abandoned-upload sweep keeps it)
+    await claimUpload(source.upload, id);
+  }
   await fsp.mkdir(dir, { recursive: true });
   await writeJson(path.join(dir, "request.json"), {
     id,
-    source: { kind: "descript", url },
+    source,
     workflow,
     format: input.format,
     sponsored: input.sponsored,
@@ -347,7 +486,7 @@ export async function createJob(input: CreateInput) {
   await writeJson(path.join(dir, "status.json"), {
     state: "queued",
     message: "Waiting for the worker…",
-    stages: Object.fromEntries(stagesFor(workflow, input.format).map((s) => [s.id, { state: "pending" }])),
+    stages: Object.fromEntries(stagesFor(workflow, input.format, source.kind).map((s) => [s.id, { state: "pending" }])),
     workflow,
     cost_usd: 0,
     updated_at: Date.now() / 1000,
@@ -453,7 +592,7 @@ export async function getJob(id: string) {
     }
   }
   const workflow = workflowOf(req);
-  const stageList = stagesFor(workflow, req.format);
+  const stageList = stagesFor(workflow, req.format, sourceKindOf(req));
   return {
     id,
     busyWith,

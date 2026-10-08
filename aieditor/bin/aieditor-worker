@@ -8,6 +8,9 @@ the browser tab and a Lab rebuild. One job at a time.
 
 LAYOUT (the filesystem is the database) — /opt/aieditor-work/jobs/<id>/
   request.json      what Jake asked for (Lab writes): source, format, sponsored, script
+                    source = {"kind": "descript", url} | {"kind": "job", job, file} (a finished
+                    Lab edit) | {"kind": "upload", upload, name} (jobs/_uploads/<id>/, from the
+                    Lab's chunked upload) — the last two are hard-linked in: aieditor/sources.py
   queue.json        {"action": "run" | "rebuild" | "recut" | "render"} (Lab writes, worker
                     claims + deletes). run = the whole pipeline (video preview at the end);
                     rebuild/recut = new cut + sound check only, the video is NOT re-rendered
@@ -63,7 +66,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, takes, transcribe  # noqa: E402
+from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, sources, takes, transcribe  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -236,8 +239,13 @@ def run_job(job, action):
     if action == "final":
         return run_final(job, fmt)
 
-    # 1 download
+    # 1 download (a Descript link) — or a Lab edit / an uploaded file already on this volume:
+    # hard-linked into the job as source.mp4 (aieditor/sources.py; for a factory job that
+    # happens on the main box before the folder is sent: execute_cloud)
     def do_download():
+        if sources.kind_of(req) != "descript":
+            return sources.prepare(d, req, config.JOBS, media.probe,
+                                   progress=lambda m, f=None: job.progress(m, f))
         src = req.get("source", {})
         facts = descript.download(src.get("url"), d / "source.part",
                                   progress=lambda m, f=None: job.progress(m, f),
@@ -759,6 +767,18 @@ def execute_cloud(job, action):
             f.write(json.dumps({"t": round(now(), 3), "stage": "factory", "kind": "log", "level": level,
                                 "msg": msg}, ensure_ascii=False) + "\n")
     try:
+        # a Lab edit / an upload lives only on this box: put it in the job folder first, so it
+        # travels with the folder (the server's "download" stage then just probes it)
+        try:
+            how = sources.materialise(job.d, job.req, config.JOBS)
+            if how:
+                note(f"source placed in the job folder ({'hard link, no copy' if how == 'link' else 'copied'})")
+        except sources.SourceError as exc:
+            note(f"source: {exc}", "error")
+            j = Job(job.d)
+            j.st["stages"].setdefault("download", {}).update(state="failed", note=str(exc)[:200], finished_at=now())
+            j.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
+            return
         cloud.run_remote(job.d, action, note, job.cancelled)
     except Exception as exc:                               # noqa: BLE001
         note(f"factory server failed: {str(exc)[:300]}", "error")

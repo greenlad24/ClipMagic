@@ -7533,6 +7533,8 @@ const hfpEditorAttest = editorCall(async (i) => ({
  */
 const autoEditorStatus = editorCall(() => autoEditor.serviceStatus());
 const autoEditorJobs = editorCall(async () => ({ jobs: await autoEditor.listJobs() }));
+// creative edit sources: finished edits of workflow 1 (the upload source: aieditor/uploads.ts routes)
+const autoEditorLabEdits = editorCall(async () => ({ edits: await autoEditor.listLabEdits() }));
 const autoEditorJob = editorCall((i) => autoEditor.getJob(i.id));
 const autoEditorCreate = editorCall((i) => autoEditor.createJob(i));
 const autoEditorSaveEdits = editorCall((i) => autoEditor.saveEdits(i.id, i.videos));
@@ -7964,6 +7966,7 @@ export const HANDLERS: Record<string, Handler> = {
   // Auto Editor (LAB tool)
   autoEditorStatus,
   autoEditorJobs,
+  autoEditorLabEdits,
   autoEditorJob,
   autoEditorCreate,
   autoEditorSaveEdits,

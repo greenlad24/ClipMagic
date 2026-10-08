@@ -466,7 +466,13 @@ export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; liv
     return m;
   }, [events]);
 
-  const list = job.stageList?.length ? job.stageList : FALLBACK_STAGES;
+  // the first stage is named after the job's source (the server already does; this covers the fallback list)
+  const srcKind = job.request.source?.kind;
+  const list = (job.stageList?.length ? job.stageList : FALLBACK_STAGES).map((s) =>
+    s.id === 'download' && (srcKind === 'job' || srcKind === 'upload')
+      ? { ...s, title: srcKind === 'job' ? 'Use the Lab edit' : 'Use the uploaded file' }
+      : s,
+  );
   // a stage still marked "running" in an idle job was cut off (an old run, a restart): say Stopped, not Running
   const stageOf = (id: string): AutoStageStatus | undefined => {
     const st = job.status.stages?.[id];

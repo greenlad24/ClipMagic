@@ -33,6 +33,7 @@ import { googleDocsOAuthRouter } from "./scriptgen/docsOauthRoutes.js";
 import { hyperframesApiRouter } from "./hyperframes/api.js";
 import { audioSlice as aieditorAudioSlice } from "./aieditor/control.js";
 import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor/factory.js";
+import { aieditorUploadsRouter } from "./aieditor/uploads.js";
 import { getDigitalOceanToken } from "./settings/postizSecrets.js";
 import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
@@ -299,6 +300,12 @@ app.post("/api/aieditor/factory/image", auth, async (_req, res) => {
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+// Auto Editor — a video uploaded from the computer as a creative edit's source: a resumable,
+// offset-based chunked upload streamed to <jobs>/_uploads/<id>/ (multi-GB 4K files; the
+// chunks are raw application/octet-stream, which express.json above leaves untouched).
+// Behind requireSession (global) + `auth` like every /api/aieditor route. aieditor/uploads.ts
+app.use("/api/aieditor/uploads", auth, aieditorUploadsRouter());
 
 // Auto Editor — a short slice (<= 12 s) of a job's original recording as WAV, for the
 // review page's cut editor: Jake nudges a cut and hears it in the browser at once.

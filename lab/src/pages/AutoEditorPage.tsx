@@ -769,6 +769,11 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
             {WORKFLOW_LABEL[(job.workflow ?? job.request.workflow ?? 'cut') as AutoWorkflow]} ·{' '}
             {job.request.format === 'short' ? 'Shorts' : 'Long-form'} ·{' '}
             {job.request.sponsored ? 'Sponsored' : 'Not sponsored'}
+            {job.request.source?.kind === 'job'
+              ? ` · from the Lab edit ${job.request.source.title || job.request.source.job} (${job.request.source.file})`
+              : job.request.source?.kind === 'upload'
+                ? ` · uploaded ${job.request.source.name}`
+                : ''}
             {job.source?.duration ? ` · raw ${mmss(job.source.duration)}` : ''}
             {job.source?.width ? ` · ${job.source.width}×${job.source.height}` : ''}
           </p>

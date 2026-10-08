@@ -3811,7 +3811,9 @@ export interface AutoJobDetail {
   stageList?: { id: string; title: string }[];
   /** typical seconds per stage for this source length (null = no history yet) */
   expect?: Record<string, number | null>;
-  request: { format: 'short' | 'long'; sponsored: boolean; script: string | null; source: { url: string }; title: string | null;
+  request: { format: 'short' | 'long'; sponsored: boolean; script: string | null;
+    source: { kind?: 'descript' | 'job' | 'upload'; url?: string; job?: string; file?: string; title?: string; upload?: string; name?: string };
+    title: string | null;
     sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
@@ -3819,7 +3821,8 @@ export interface AutoJobDetail {
     action?: string; workflow?: AutoWorkflow;
     stages?: Record<string, AutoStageStatus>;
   };
-  source: { title?: string; width?: number; height?: number; duration?: number; fps?: number } | null;
+  source: { title?: string; width?: number; height?: number; duration?: number; fps?: number;
+    kind?: 'job' | 'upload'; from_job?: string; from_file?: string; filename?: string; quality?: 'final' | 'preview' } | null;
   review: {
     sentences: AutoSentence[]; videos: AutoVideoPlan[]; reasons: Record<string, string>;
     notes: string; edited: boolean;
@@ -3869,10 +3872,21 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
 }>("autoEditorStatus");
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
+/** request.json "source": a Descript link (url), a finished Lab edit, or an upload (creative only) */
+export type AutoSourceInput = { kind: 'job'; job: string; file: string } | { kind: 'upload'; upload: string };
 export const autoEditorCreate = endpoint<{
-  url: string; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string; title?: string; sites?: string;
-  runOn?: AutoRunOn;
+  url?: string; source?: AutoSourceInput; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string;
+  title?: string; sites?: string; runOn?: AutoRunOn;
 }, { id: string }>("autoEditorCreate");
+/** A finished edit of workflow 1 — per video final-NN.mp4, else the newest preview-NN.mp4 (1080p). */
+export interface AutoLabEdit {
+  id: string; title: string; format: 'short' | 'long' | null; createdAt: number | null;
+  videos: {
+    file: string; k: number; quality: 'final' | 'preview'; title: string | null;
+    duration: number | null; width: number | null; height: number | null; bytes: number; modifiedAt: number;
+  }[];
+}
+export const autoEditorLabEdits = endpoint<Record<string, never>, { edits: AutoLabEdit[] }>("autoEditorLabEdits");
 /** the structured log from byte `after` on (0 = from the start); `replace` = discard what you have */
 export const autoEditorEvents = endpoint<{ id: string; after: number }, {
   events: AutoEvent[]; next: number; replace: boolean; legacy: boolean; truncated: boolean;
