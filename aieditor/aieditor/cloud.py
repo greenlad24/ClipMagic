@@ -24,6 +24,15 @@ Safety:
     never the Lab database.
   * The droplet's firewall (ufw, baked into the snapshot) accepts SSH from the VPC only.
 
+EGRESS (Jake 2026-10-08 — his factory job recorded Cloudflare's "Verify you are human" page: Cloudflare
+ties a logged-in session to the IP it was made from, this box 139.59.250.178): a droplet's screencast
+browsers leave the internet THROUGH this box. bin/aieditor-egress-proxy (systemd
+aieditor-egress-proxy.service, unit file next to it) is a stdlib HTTP CONNECT proxy listening ONLY on
+the VPC address EGRESS (10.104.0.3:8899; ufw: allow from 10.104.0.0/20 to that port only; it refuses
+other clients, ports other than 80/443 and private destinations). run_remote exports
+AIEDITOR_EGRESS_PROXY=EGRESS on the droplet → config.EGRESS_PROXY → agent_rec.mjs / vrecord.mjs /
+inventory.mjs add --proxy-server (screencast/macchrome.mjs). On this box no proxy is used.
+
 Settings: WORK/factory.json (created with DEFAULTS on first use). The snapshot is rebuilt
 automatically when the local Docker images change (manifest of image ids)."""
 import json
@@ -41,6 +50,7 @@ from pathlib import Path
 from . import config
 
 API = "https://api.digitalocean.com/v2"
+EGRESS = os.environ.get("AIEDITOR_FACTORY_EGRESS", "http://10.104.0.3:8899")
 SECRETS = Path("/var/lib/docker/volumes/clipmagic_clipmagic-lab-data/_data/postiz-settings.json")
 LAB_DATA = Path("/var/lib/docker/volumes/clipmagic_clipmagic-lab-data/_data")
 SSH_KEY = Path("/root/.ssh/factory_ed25519")
@@ -49,7 +59,7 @@ CFG = config.WORK / "factory.json"
 LEASES = config.WORK / "factory-leases"
 TAG_JOB = "clipmagic-factory-job"
 TAG_IMAGE = "clipmagic-factory-image"
-IMAGES = ("hyperframes-runner:0.8.30", "aieditor-aligner:0.1", "aieditor-screencast:0.1", "aieditor-motion:1")
+IMAGES = ("hyperframes-runner:0.8.30", "aieditor-aligner:0.1", "aieditor-screencast:0.2", "aieditor-motion:1")
 SHIP_KEYS = ("ANTHROPIC_API_KEY", "GROQ_API_KEY")
 LAB_OWNED = ("queue.json", "cancel", "request.json", "plan.edit.json", "joins.edit.json")
 LIVE_FILES = ("status.json", "events.jsonl", "log.txt")
@@ -541,10 +551,12 @@ def run_remote(job_dir, action, log, cancelled):
             # ";" not "&&": only the worker may go to the background — a backgrounded "a && b &"
             # list keeps ssh's stdout open and the call blocked until the job ENDED (trial 1)
             ssh(ip, "cd {code}; mem=$(awk '/MemTotal/{{print int($2/1048576*0.85)}}' /proc/meminfo); "
-                    "export AIEDITOR_CPUSET=0-$(( $(nproc) - 1 )) AIEDITOR_MEMORY=${{mem}}g PYTHONUNBUFFERED=1; "
+                    "export AIEDITOR_CPUSET=0-$(( $(nproc) - 1 )) AIEDITOR_MEMORY=${{mem}}g PYTHONUNBUFFERED=1 "
+                    "AIEDITOR_EGRESS_PROXY={egress}; "
                     "setsid nohup python3 bin/aieditor-worker --once {jid} {action} "
                     "> {work}/remote.log 2>&1 < /dev/null & echo $! > {work}/remote.pid".format(
-                        code=config.CODE, jid=shlex.quote(jid), action=shlex.quote(action), work=config.WORK))
+                        code=config.CODE, jid=shlex.quote(jid), action=shlex.quote(action), work=config.WORK,
+                        egress=shlex.quote(EGRESS)))
             log(f"job started on the factory server ({time.time() - t_start:.0f}s after the request)")
             runner(job_dir, state="running", running_since=time.time())
             sent_cancel = False

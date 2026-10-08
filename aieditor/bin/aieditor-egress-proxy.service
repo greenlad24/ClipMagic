@@ -1,0 +1,14 @@
+[Unit]
+Description=Auto Editor egress proxy (factory screencast browsers leave through the main box; VPC only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/clipmagic/aieditor/bin/aieditor-egress-proxy --host 10.104.0.3 --port 8899
+Restart=always
+RestartSec=3
+DynamicUser=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

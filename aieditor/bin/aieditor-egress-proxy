@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""EGRESS PROXY for factory servers' screencast browsers (Jake 2026-10-08).
+
+Cloudflare ties a logged-in session (ChatGPT …) to the IP the login was made from — the main box
+(139.59.250.178). A factory server's browser therefore leaves the internet THROUGH this box:
+cloud.run_remote sets AIEDITOR_EGRESS_PROXY=http://10.104.0.3:8899 on the server, agent_rec.mjs /
+vrecord.mjs add --proxy-server.
+
+A small HTTP proxy (CONNECT for https/wss, absolute-URI forwarding for plain http), standard library
+only. Safety: it listens ONLY on the VPC address, refuses any client outside the VPC (10.104.0.0/20)
+or loopback, only connects to ports 80/443, and never to private/VPC/loopback destinations.
+ufw: `ufw allow from 10.104.0.0/20 to 10.104.0.3 port 8899 proto tcp`.
+systemd: aieditor-egress-proxy.service (bin/aieditor-egress-proxy.service).
+
+    aieditor-egress-proxy [--host 10.104.0.3] [--port 8899]
+"""
+import argparse
+import asyncio
+import ipaddress
+import socket
+import sys
+import time
+
+ALLOW_CLIENTS = [ipaddress.ip_network("10.104.0.0/20"), ipaddress.ip_network("127.0.0.0/8")]
+PORTS = {80, 443}
+
+
+def private(host):
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return True
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return True
+    return False
+
+
+async def pipe(r, w):
+    try:
+        while True:
+            b = await r.read(65536)
+            if not b:
+                break
+            w.write(b)
+            await w.drain()
+    except (ConnectionError, asyncio.CancelledError, OSError):
+        pass
+    finally:
+        try:
+            w.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def log(msg):
+    print(time.strftime("%H:%M:%S"), msg, flush=True)
+
+
+async def handle(cr, cw):
+    peer = cw.get_extra_info("peername")[0]
+    if not any(ipaddress.ip_address(peer) in n for n in ALLOW_CLIENTS):
+        cw.close()
+        return
+    try:
+        head = await asyncio.wait_for(cr.readuntil(b"\r\n\r\n"), 30)
+    except Exception:  # noqa: BLE001
+        cw.close()
+        return
+    line = head.split(b"\r\n", 1)[0].decode("latin-1")
+    try:
+        method, target, ver = line.split(" ", 2)
+    except ValueError:
+        cw.close()
+        return
+    if method == "CONNECT":
+        host, _, port = target.rpartition(":")
+        port = int(port or 443)
+        rest = b""
+    else:
+        if not target.startswith("http://"):
+            cw.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            cw.close()
+            return
+        hp, _, path = target[7:].partition("/")
+        host, _, port = hp.partition(":")
+        port = int(port or 80)
+        rest = (f"{method} /{path} {ver}\r\n".encode() + head.split(b"\r\n", 1)[1])
+    host = host.strip("[]")
+    if port not in PORTS or private(host):
+        cw.write(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+        cw.close()
+        log(f"refused {peer} -> {host}:{port}")
+        return
+    try:
+        ur, uw = await asyncio.wait_for(asyncio.open_connection(host, port), 20)
+    except Exception as e:  # noqa: BLE001
+        cw.write(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+        cw.close()
+        log(f"502 {host}:{port} {type(e).__name__}")
+        return
+    if method == "CONNECT":
+        cw.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        await cw.drain()
+    else:
+        uw.write(rest)
+        await uw.drain()
+    await asyncio.gather(pipe(cr, uw), pipe(ur, cw))
+
+
+async def main(host, port):
+    srv = await asyncio.start_server(handle, host, port, limit=1 << 20)
+    log(f"egress proxy on {host}:{port} (clients: {', '.join(map(str, ALLOW_CLIENTS))})")
+    async with srv:
+        await srv.serve_forever()
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--host", default="10.104.0.3")
+    ap.add_argument("--port", type=int, default=8899)
+    a = ap.parse_args()
+    try:
+        asyncio.run(main(a.host, a.port))
+    except KeyboardInterrupt:
+        sys.exit(0)
