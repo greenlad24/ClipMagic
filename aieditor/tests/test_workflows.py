@@ -1,7 +1,7 @@
 """The two workflows + the structured event log, with every docker / API call stubbed.
 
   workflow "creative" (Creative Edit an edited narration): no takes/cut/sound check, the
-      whole timeline is kept (edl.passthrough), "preprod" is skipped while aieditor/preprod.py
+      whole timeline is kept (edl.passthrough), "preprod" (aieditor/preprod.py) decides what can be screencast
       does not exist and CALLED when it does
   workflow "cut" (the default): takes → cut → listen, as before
   events.jsonl: every line is JSON, filed under the stage it happened in; API calls carry
@@ -109,6 +109,19 @@ def main():
     W.longedit.plan_and_record = fake_plan
     W.longedit.compose = lambda d, k, base, fps, size, cancelled, progress, out_name, **kw: Path(d, f"{out_name}.mp4").write_bytes(b"x")
 
+    # pre-production derives the sites from the narration: no Scout app, no Claude call here
+    from aieditor import sites as sites_mod
+    sites_mod.scout_tools = lambda: []
+    asked = []
+    sites_mod._ask_claude = lambda text: (asked.append(text) or ({"tools": []}, 0.01))
+    seen_sites = []
+    _fp = fake_plan
+
+    def fake_plan2(d, k, v, sites, *a):
+        seen_sites.append(list(sites))
+        return _fp(d, k, v, sites, *a)
+    W.longedit.plan_and_record = fake_plan2
+
     with tempfile.TemporaryDirectory() as root:
         root = Path(root)
 
@@ -124,7 +137,12 @@ def main():
             events.set_sink(None)
         st = job.st["stages"]
         check(st["timeline"]["state"] == "done", f"timeline done: {st['timeline']}")
-        check(st["preprod"]["state"] == "skipped", f"preprod skipped without the module: {st['preprod']}")
+        check(st["preprod"]["state"] == "done", f"preprod ran: {st['preprod']}")
+        gate = json.loads((d / "preprod" / "gate.json").read_text())
+        check(gate["status"] == "aroll_only" and gate["sites"] == [], f"nothing to screencast → A-roll gate: {gate}")
+        check(asked and "edited narration" in asked[0], "the narration was read to find the tools")
+        check(seen_sites == [[]], f"the edit got the gate's (empty) sites: {seen_sites}")
+        check("A-roll + overlays only" in (d / "log.txt").read_text(), "the job log says there is no screencast")
         check(st["preview"]["state"] == "done" and st["graphics"]["state"] == "done" and st["compose"]["state"] == "done",
               "preview + graphics + compose ran")
         check(not (d / "listen-01.mp4").exists() and "listen-01" not in rendered, "no sound check in creative")
@@ -147,8 +165,8 @@ def main():
         procs = [x for x in evs if x["kind"] == "proc" and x["stage"] == "preview"]
         check(len(procs) == 2 and procs[-1]["phase"] == "done", f"render proc start/done under preview: {procs}")
         stage_evs = [x for x in evs if x["kind"] == "stage"]
-        check(any(x["stage"] == "preprod" and x["state"] == "skipped" for x in stage_evs), "preprod skip event")
-        check(abs(job.st["cost_live_usd"] - 0.25) < 1e-6, f"live cost {job.st.get('cost_live_usd')}")
+        check(any(x["stage"] == "preprod" and x["state"] == "done" for x in stage_evs), "preprod done event")
+        check(abs(job.st["cost_live_usd"] - 0.26) < 1e-6, f"live cost {job.st.get('cost_live_usd')}")
 
         # preprod present → called, with only the kwargs it names; its $ joins the cost
         got = {}

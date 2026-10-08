@@ -64,17 +64,29 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     edl_at = (d / "edl.json").stat().st_mtime
     video = {"title": v.get("title", ""), "duration": v["duration"], "words": v["words"]}
     usd = 0.0
-    # a site the UX Scout is logged in to → the real app, driven by the agent recorder
-    scout = next((x for x in (agentrec.scout_for(s["url"]) for s in sites) if x), None)
-    knowledge = scout["report"] if scout else None
-    if scout:
+    # a site the UX Scout is logged in to → the real app, driven by the agent recorder (one browser per
+    # app; several apps in one video each get their own); any other site → the scripted recorder
+    scouts = {}
+    for s in sites:
+        x = agentrec.scout_for(s["url"])
+        if x and x["slug"] not in scouts:
+            scouts[x["slug"]] = x
+    gate = {}
+    if (d / "preprod" / "gate.json").exists():
+        gate = {r.get("scout"): r for r in json.load(open(d / "preprod" / "gate.json")).get("sites", []) if r.get("scout")}
+    knowledge = None
+    for x in scouts.values():
         # what already EXISTS in the account (its own browser history): the plan may only ask
         # the screen for things that exist or that the segment itself makes (v5: the plan asked
         # for "a campaign generated beforehand with Jake's own brand" that was never made)
-        pages = agentrec.known_pages(scout["profile"])
+        part = (x["report"] or "")
+        pages = agentrec.known_pages(x["profile"])
         if pages:
-            knowledge = (knowledge or "") + "\n\nPAGES THAT EXIST IN THIS ACCOUNT (from its history):\n" + \
+            part += "\n\nPAGES THAT EXIST IN THIS ACCOUNT (from its history):\n" + \
                 "\n".join(f"- {u}  ({t})" for u, t in pages)
+        x["knowledge"] = part
+        knowledge = (knowledge + "\n\n" if knowledge else "") + (f"=== {x['slug']} ===\n" if len(scouts) > 1 else "") + part
+    scout = next(iter(scouts.values()), None)
     plan_p = w / "direct.json"
     if not _fresh(plan_p, edl_at):
         progress("Claude is planning the edit (screencasts + graphics)…", 0.02)
@@ -95,35 +107,54 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         os.utime(plan_p, (edl_at + 1, edl_at + 1)) if plan_p.stat().st_mtime < edl_at else None
     segs = plan["segments"]
     n_recorded = 0
-    if scout:
-        log(f"edit {k}: logged in to {scout['slug']} through the UX Scout — recording the real app")
+    by_scout = {}
+    for i, seg in enumerate(segs):
+        x = agentrec.scout_for(seg.get("url", ""))
+        if x and x["slug"] in scouts:
+            by_scout.setdefault(x["slug"], []).append(i)
+    for slug, idx in by_scout.items():
+        x = scouts[slug]
+        dark = bool(gate.get(slug, {}).get("dark"))
+        log(f"edit {k}: logged in to {slug} through the UX Scout — recording the real app"
+            f"{' (dark theme)' if dark else ''}: {len(idx)} screencast(s)")
         sess = None
         try:
-            for i, seg in enumerate(segs):
+            for n, i in enumerate(idx):
+                seg = segs[i]
                 if (w / f"seg-{i:02d}" / "rec" / "events.json").exists():
                     continue
                 ev_log.set_sub(f"screencast {i + 1}/{len(segs)}")
                 ev_log.emit("step", f"screencast {i + 1}/{len(segs)}: {seg['t0']:.1f}–{seg['t1']:.1f}s on {seg.get('url', '')}"
                             f" — {str(seg.get('intent', ''))[:160]}")
                 if sess is None:
-                    sess = agentrec.Session(w, scout["profile"], cancelled)
-                progress(f"Screencast {i + 1} of {len(segs)}: Claude is showing it in {scout['slug']} "
+                    sess = agentrec.Session(w, x["profile"], cancelled, dark=dark,
+                                            profile_name="profile" if len(by_scout) == 1 else f"profile-{slug}")
+                progress(f"Screencast {i + 1} of {len(segs)}: Claude is showing it in {slug} "
                          f"({seg['t1'] - seg['t0']:.0f} s, frame by frame)…", 0.1 + 0.75 * i / max(1, len(segs)))
+                out_rel = f"seg-{i:02d}/rec"
                 try:
-                    usd += agentrec.record_segment(sess, seg, video, knowledge, f"seg-{i:02d}/rec", log=log, first=(i == 0))
+                    usd += agentrec.record_segment(sess, seg, video, x["knowledge"], out_rel,
+                                                   log=log, first=(n == 0))
                 except RuntimeError as err:
                     # a stuck/dead browser: a fresh session and one more try for this segment
                     log(f"edit {k}: screencast {i + 1} — {err}; restarting the browser and trying again")
                     sess.close()
-                    sess = agentrec.Session(w, scout["profile"], cancelled)
-                    usd += agentrec.record_segment(sess, seg, video, knowledge, f"seg-{i:02d}/rec", log=log, first=True)
+                    sess = agentrec.Session(w, x["profile"], cancelled, dark=dark,
+                                            profile_name="profile" if len(by_scout) == 1 else f"profile-{slug}")
+                    try:
+                        usd += agentrec.record_segment(sess, seg, video, x["knowledge"], out_rel,
+                                                       log=log, first=True)
+                    except RuntimeError as err2:
+                        # factory rule: route, don't fail — this moment stays A-roll
+                        log(f"edit {k}: screencast {i + 1} failed twice ({err2}) — that moment stays A-roll")
         finally:
             ev_log.set_sub(None)
             if sess:
                 sess.close()
-        n_recorded = len(segs)
-        segs = []                                   # recorded: skip the scripted path below
-    for i, seg in enumerate(segs):
+        n_recorded += len(idx)
+    done = {i for idx in by_scout.values() for i in idx}
+    scripted = [(i, seg) for i, seg in enumerate(segs) if i not in done]
+    for i, seg in scripted:
         sd = w / f"seg-{i:02d}"
         sd.mkdir(exist_ok=True)
         base = 0.1 + 0.75 * i / max(1, len(segs))
@@ -151,8 +182,12 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     progress("Rendering the overlays…", 0.88)
     evs = graphics_long.render(w, plan["overlays"], video, fps, tag="gfx", cancelled=cancelled)
     json.dump(evs, open(w / "overlays.json", "w"), indent=1)
-    n = n_recorded if scout else len(segs)
-    return f"{n} screencast(s){' in the logged-in app' if scout else ''}, {len(evs)} overlay(s)", usd
+    n_ok = sum(1 for i in range(len(segs)) if (w / f"seg-{i:02d}" / "rec" / "events.json").exists())
+    if not segs:
+        log(f"edit {k}: no screencast in the plan — "
+            + ("no site could be screencast (A-roll + overlays only)" if not sites else "the director placed none"))
+    return (f"{n_ok}/{len(segs)} screencast(s)" + (f" ({n_recorded} in the logged-in app)" if n_recorded else "")
+            + f", {len(evs)} overlay(s)"), usd
 
 
 def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=None, face_src=None):
@@ -205,9 +240,11 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         if kept:
             if into_next and kept["t1"] == seg["t1"]:
                 kept["tail"] = xf_s
-            elif not into_next:
+            elif not into_next and kept["t1"] < media.probe(d / base)["duration"] - 0.05:
                 kept["tail"] = compose_long.aroll_tail_s()
                 kept["aroll_out"] = True
+            # (a screencast that runs to the video's last frame has no A-roll after it: no bubble-first
+            # exit — the whole frame fades to black instead, TR08; review v12 #28)
             if segs and segs[-1].get("tail") and not segs[-1].get("aroll_out") and abs(segs[-1]["t1"] - kept["t0"]) < 0.05:
                 kept["fade_in"] = segs[-1]["tail"]
             elif kept["t0"] > 0.05:
@@ -249,7 +286,8 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     progress("Compositing (screencasts, bubble, overlays, music)…", 0.75)
     out = compose_long.composite(w, cam_base, segs, events, music, out_name, size, fps, face,
                                  bubble_src=plain.name, crf=17 if W == 1920 else 16, cancelled=cancelled,
-                                 gfx_tag="gfx" if W == 1920 else f"gfx-{W}")
+                                 gfx_tag="gfx" if W == 1920 else f"gfx-{W}",
+                                 end_fade_from=max((w_["end"] for w_ in _video(d, k)["words"]), default=None))
     final = d / f"{out_name}.mp4"
     Path(out).replace(final)
     (w / cam_base).unlink(missing_ok=True)

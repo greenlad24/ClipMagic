@@ -81,10 +81,10 @@ def known_pages(profile, limit=25):
 class Session:
     """The agent_rec.mjs process (one per video)."""
 
-    def __init__(self, workdir, profile_src, cancelled=lambda: False):
+    def __init__(self, workdir, profile_src, cancelled=lambda: False, dark=False, profile_name="profile"):
         self.workdir = Path(workdir)
         self.workdir.mkdir(parents=True, exist_ok=True)
-        self.profile = self.workdir / "profile"
+        self.profile = self.workdir / profile_name          # one copy per app when a video shows several
         if profile_src and not self.profile.exists():
             # a COPY: the Scout's own session is never written to by a recording
             shutil.copytree(profile_src, self.profile, symlinks=True,
@@ -95,7 +95,7 @@ class Session:
         self.cancelled = cancelled
         self.name = f"aieditor-agent-{uuid.uuid4().hex[:8]}"
         cmd = ["docker", "run", "-i", "--rm", "--name", self.name, "--cpuset-cpus", config.CPUSET, "--shm-size", "1g",
-               "--memory", config.MEMORY, "-e", "AGENT_WEBGL=1",   # app canvases (Linearity's editor) need WebGL
+               "--memory", config.MEMORY, "-e", "AGENT_WEBGL=1", "-e", f"AGENT_DARK={'1' if dark else '0'}",   # app canvases (Linearity's editor) need WebGL
                "-v", f"{config.CODE / 'screencast'}:/app/screencast", "-v", f"{config.CODE / 'motion'}:/app/motion:ro",
                "-v", f"{self.workdir}:/w"]
         if profile_src:

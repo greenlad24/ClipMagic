@@ -464,12 +464,21 @@ def running(job_id):
         return job_id in ACTIVE
 
 
-def _scout_bundle(req, stage_dir):
+def _scout_bundle(req, stage_dir, job_dir=None):
     """The Scout profiles + rows a screencast job needs, nothing else."""
     from . import agentrec
     sites = [s.get("url") for s in req.get("sites") or [] if s.get("url")]
+    derived = Path(job_dir) / "sites.json" if job_dir else None
+    if not sites and derived and derived.exists():
+        sites = [s.get("url") for s in json.loads(derived.read_text()).get("sites", []) if s.get("url")]
     found = [agentrec.scout_for(u) for u in sites]
     slugs = sorted({f["slug"] for f in found if f})
+    if not sites and req.get("workflow") == "creative" and not (derived and derived.exists()):
+        # no sites given: pre-production derives them from the narration ON the server (the transcript
+        # is made there) — so every screencastable logged-in Scout app goes along (aieditor/sites.py;
+        # private inboxes never do). A job that already derived them (sites.json) sends only those.
+        from . import sites as sites_mod
+        slugs = sorted(set(sites_mod.candidate_slugs()))
     if not slugs:
         return []
     db = stage_dir / "clipmagic.db"
@@ -519,9 +528,9 @@ def run_remote(job_dir, action, log, cancelled):
             # the job folder, source video included (VPC: free + fast)
             rsync(str(job_dir), f"root@{ip}:{config.JOBS}/", "--exclude", "cancel", "--exclude", "queue.json",
                   "--exclude", "tmp-*")
-            if action in ("run", "edit") and req.get("sites"):
+            if action in ("run", "edit") and (req.get("sites") or req.get("workflow") == "creative"):
                 with tempfile.TemporaryDirectory(prefix="factory-scout-") as td:
-                    slugs = _scout_bundle(req, Path(td))
+                    slugs = _scout_bundle(req, Path(td), job_dir)
                     if slugs:
                         ssh(ip, f"mkdir -p {LAB_DATA / 'db'} {LAB_DATA / 'scout/profiles'}")
                         rsync(str(Path(td) / "clipmagic.db"), f"root@{ip}:{LAB_DATA / 'db'}/")

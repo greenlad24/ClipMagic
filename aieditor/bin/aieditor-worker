@@ -67,6 +67,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, sources, takes, transcribe  # noqa: E402
+from aieditor import sites as sites_mod  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -307,10 +308,15 @@ def run_job(job, action):
         })
 
         def do_timeline():
-            v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"])
+            # optional request.json "excerpt": [[t0, t1], ...] source seconds — a short test of the edit
+            v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"],
+                                excerpt=req.get("excerpt"))
             jdump(d / "edl.json", {"fps": fps, "fps_num": info["fps_num"], "fps_den": info["fps_den"],
                                    "width": info["width"], "height": info["height"], "videos": [v],
                                    "workflow": "creative"})
+            if v.get("excerpt"):
+                return (f"excerpt kept: {v['duration']:.0f}s of " + ", ".join(f"{a:.0f}–{b:.0f}s" for a, b in v["excerpt"])
+                        + f", {len(v['words'])} words")
             return f"whole timeline kept: {v['duration']:.0f}s, {len(v['words'])} words, no cuts"
         step("timeline", do_timeline, lambda: (d / "edl.json").exists(), rerun=rebuild)
         if action in ("run", "edit"):
@@ -527,6 +533,17 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
     if fmt == "long" and action in ("run", "render", "edit") and not req.get("no_edit"):
         e = jload(d / "edl.json")
         sites = req.get("sites") or []
+        gate = jload(d / "preprod" / "gate.json")
+        if gate is not None:
+            # pre-production decided what can be screencast (given or derived from the narration, and ready)
+            sites = [{"url": r["url"], "note": r.get("note", "")} for r in gate.get("sites", [])]
+        elif not sites and workflow_of(req) == "creative":
+            v0 = e["videos"][0]
+            sites, u = sites_mod.resolve(d, req, {"title": v0.get("title", ""), "duration": v0["duration"],
+                                                  "words": v0["words"]}, log=job.log)
+            job.st["cost_usd"] = round(job.st["cost_usd"] + u, 4)
+        if not sites:
+            job.log("no screencast site for this edit — A-roll + overlays only")
 
         def do_graphics_long():
             notes, usd = [], 0.0

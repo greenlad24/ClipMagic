@@ -553,7 +553,35 @@ def build(video, sents, by_id, audio, fps, exact_gap=False, nudges=None):
             "text": " ".join(w["w"] for w in kept), "warnings": video.get("warnings", [])}
 
 
-def passthrough(words, by_id, duration, fps, title="Video 1"):
+def excerpt_ranges(words, duration, excerpt):
+    """request.json "excerpt": [[t0, t1], ...] in SOURCE seconds → the kept ranges, each edge moved
+    into the nearest pause so no word is cut in half (a test of a creative edit on ~2 min)."""
+    out = []
+    ws = sorted(words, key=lambda w: w["s"])
+    for a, b in excerpt:
+        a, b = max(0.0, float(a)), min(float(duration), float(b))
+        if b - a < 1.0:
+            continue
+        # a word straddling an edge: the edge moves to the pause before (start) / after (end) it
+        for w in ws:
+            if w["s"] < a < w["e"]:
+                a = w["s"]
+            if w["s"] < b < w["e"]:
+                b = w["e"]
+        prev = [w for w in ws if w["e"] <= a + 1e-6]
+        nxt = [w for w in ws if w["s"] >= a]
+        if prev and nxt:
+            a = max(prev[-1]["e"], nxt[0]["s"] - 0.15)
+        after = [w for w in ws if w["s"] >= b - 1e-6]
+        before = [w for w in ws if w["e"] <= b]
+        if before and after:
+            b = min(after[0]["s"], before[-1]["e"] + 0.25)
+        inside = [w for w in ws if w["s"] >= a - 1e-6 and w["e"] <= b + 1e-6]
+        out.append((a, b, inside, []))
+    return out
+
+
+def passthrough(words, by_id, duration, fps, title="Video 1", excerpt=None):
     """Workflow 2 ("Creative Edit an edited narration", Jake 2026-10-08): the narration is
     ALREADY edited, so the whole timeline is kept as it is — one piece from the first frame
     to the last whole frame, no cuts, no pause re-timing, no room tone. Same shape as
@@ -561,8 +589,10 @@ def passthrough(words, by_id, duration, fps, title="Video 1"):
     the final) works on it unchanged."""
     n = max(1, int(math.floor(duration * fps + 1e-6)))
     end = n / fps
-    pieces, frames = pieces_for([(0.0, end, list(words), [])], fps, None)
+    ranges = excerpt_ranges(words, end, excerpt) if excerpt else []
+    pieces, frames = pieces_for(ranges or [(0.0, end, list(words), [])], fps, None)
     return {"title": title, "pieces": pieces, "frames": frames,
-            "duration": round(frames / fps, 3), "cuts": 0,
+            "duration": round(frames / fps, 3), "cuts": max(0, len(pieces) - 1),
             "words": output_words(pieces, by_id, fps), "joins": [],
-            "text": " ".join(w["w"] for w in words), "warnings": [], "passthrough": True}
+            "text": " ".join(w["w"] for w in words), "warnings": [], "passthrough": True,
+            **({"excerpt": [[round(r[0], 3), round(r[1], 3)] for r in ranges]} if ranges else {})}
