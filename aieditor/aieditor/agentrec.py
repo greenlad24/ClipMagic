@@ -200,6 +200,12 @@ post, never change account, billing or security settings. Creating a brand, runn
 generation, opening documents, resizing, editing text/fonts/colours in a design are fine — the
 account owner allows it ("it spends what it needs").
 
+SET DRESSING (RULEBOOK S, Jake 2026-10-08): the project on camera looks neat and professional — results
+arranged tidily in the order he names them, clean names, empty fields, no open pop-ups. Never delete or
+rename anything that existed before; move/sort/filter/scroll it out of view instead. NEVER show the
+"Blue Bottle Coffee" brand/document (Linearity test brand — RULEBOOK C4): keep it out of frame by
+choosing another view, document, sort or scroll position; never open the brand switcher list.
+
 PREFER WHAT EXISTS: when the narration SHOWS a result ("look at this", "here are the designs"),
 open a finished document that already exists instead of making a new one. Make something new only
 when the narration walks through making it. Long AI work: start it, then {"type":"wait_for",
@@ -266,7 +272,9 @@ is zoomed onto its designs by the recorder itself after every load (do NOT zoom 
 For a long page whose subject is further down (a pricing card, a section he names), scroll so
 that subject is in the middle of the screen. Never open on a page that has no purpose for the first
 words (no Home/dashboard as a stop on the way). If the segment opens on a page the previous segment
-left a dropdown/menu/typed text on, clean it up. Nothing you do now is recorded and "at" is
+left a dropdown/menu/typed text on, clean it up. SET DRESSING: tidy what will be shown (close pop-ups,
+clear fields, arrange/sort results neatly, open the right brand/document) — never delete/rename existing
+items, never show "Blue Bottle Coffee" (keep it out of the view instead). Nothing you do now is recorded and "at" is
 ignored. The page runs in REAL time here: a heavy editor can take 10–20 s to draw after goto —
 {"type":"hold","s":6} really waits. Reply {"ready": true} when the screen is right (also if it
 already is)."""
