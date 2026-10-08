@@ -1,15 +1,19 @@
-"""A-roll camera of reference 2 (kwys-annotations-layouts.json C_camera), sub-pixel:
+"""A-roll camera, sub-pixel (cv2 warp) — driven by the per-video MOTION PLAN of aroll_plan.py:
 
-  · the video OPENS zoomed 1.548× and eases out to 1.0 over 31 f, bezier(.089,.443,.126,.834)
-    on log scale;
-  · every A-roll BLOCK (between screencasts) pushes in linearly ~1.8 %/s from 1.0,
-    capped at 1.124× (it runs across jump cuts — they are inside the block);
+  · TR07: the video OPENS zoomed ×1.548 and eases out to 1.0 over 31 f, bezier(.089,.443,.126,.834)
+    on log scale (all 4 refs: the same preset);
+  · AR01: every A-roll block — and every reference-length piece of a long A-roll stretch, cut at a
+    sentence start — pushes in linearly 2.25 %/s from ×1.00, capped at ×1.13 (refs 2–5 measured,
+    see aroll_plan.py); jump cuts inside a piece keep the framing (refs: scale ratio 0.97–1.01);
+  · AR02: ×1.22 punch while the social icons are on;
   · the last 30 f fade to black.
-ffmpeg's zoompan rounds the crop to whole pixels and judders on a 1.8 %/s push, so this
-warps each frame with cv2 (INTER_CUBIC) instead.
+ffmpeg's zoompan rounds the crop to whole pixels and judders on a slow push, so this warps each
+frame with cv2 (INTER_CUBIC) instead.
 
     python3 aroll_camera.py <in.mp4> <out.mp4> <blocks.json> [--anchor x,y]
-blocks.json = {"blocks": [[t0, t1], ...] (A-roll spans, output seconds), "fps": 29.97}
+blocks.json = {"blocks": [[t0, t1], ...] (A-roll spans, output seconds), "fps": 29.97,
+               "words": [{word,start,end}, ...] (output times), "overlays": [{template,t0,t1}, ...]}
+→ <out.mp4>.cuts.json (picture jump cuts found) + <out.mp4>.plan.json (the motion plan rendered)
 """
 import json
 import subprocess
@@ -18,36 +22,15 @@ import sys
 import cv2
 import numpy as np
 
-from camera import bezier
+from camera import bezier  # noqa: F401  (kept for callers)
+import aroll_plan
 
-OPEN_ZOOM, OPEN_FRAMES, OPEN_EASE = 1.548, 31, (0.089, 0.443, 0.126, 0.834)
-# ROUND 3 (review N12, TECHNIQUES AR01): ~1–3 %/s from 1.00, capping ×1.12–1.16 (ref 3 0:08–0:13 1.00 → 1.14,
-# ≈2.8 %/s; ref 2 1.8 %/s) → 2.2 %/s, cap 1.14. (Endpoint check, round 2: edit vs base at 39.0 s = ×1.119 — the
-# push ran; the reviewer's frame-to-frame ORB sum under-reads a 0.06 %/frame scale.)
-PUSH_PER_S, PUSH_CAP = 0.022, 1.14
-# CUT07 (refs 3–5): A-roll jump cuts alternate the base medium framing and a ~1.3–1.5× close-up about the face
-PUNCH = 1.32
-HOLD_AFTER_S = 0.3     # N09: the block's last framing holds through the screencast's dissolve-in (no snap to 1.0)
 FADE_FRAMES = 30
 REF_FPS = 30000 / 1001
 
 
-def zoom_at(t, blocks, fps, cuts=()):
-    ease = bezier(*OPEN_EASE)
-    z = 1.0
-    if t * REF_FPS < OPEN_FRAMES:
-        u = ease(t * REF_FPS / OPEN_FRAMES)
-        z = OPEN_ZOOM ** (1 - u)                         # log-scale ease from 1.548 to 1
-    for a, b in blocks:
-        if a <= t < b + HOLD_AFTER_S:
-            tt = min(t, b - 1e-3)
-            z *= min(PUSH_CAP, 1 + PUSH_PER_S * (tt - a))
-            # CUT07: every jump cut inside the block toggles medium ↔ close-up (the first shot is medium)
-            n = sum(1 for c in cuts if a + 0.05 < c <= tt)
-            if n % 2 == 1:
-                z *= PUNCH
-            break
-    return z
+def zoom_at(t, plan):
+    return aroll_plan.zoom_at(t, plan)
 
 
 def find_cuts(src, blocks, fps):
@@ -87,6 +70,8 @@ def main(src, dst, blocks_path, anchor=None):
     ax, ay = anchor or (w / 2, h / 2)
     cuts = find_cuts(src, blocks, fps)
     json.dump({"cuts": cuts}, open(dst + ".cuts.json", "w"))
+    plan = aroll_plan.plan(blocks, spec.get("words") or [], cuts, spec.get("overlays") or [], dur)
+    json.dump(plan, open(dst + ".plan.json", "w"), indent=1)
     dec = subprocess.Popen(["ffmpeg", "-v", "error", "-i", src, "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], stdout=subprocess.PIPE)
     enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}", "-r", f"{fps:.6f}",
                             "-i", "-", "-i", src, "-map", "0:v", "-map", "1:a?", "-c:v", "libx264", "-preset", "veryfast",
@@ -101,7 +86,7 @@ def main(src, dst, blocks_path, anchor=None):
             break
         img = np.frombuffer(buf, np.uint8).reshape(h, w, 3)
         t = n / fps
-        z = zoom_at(t, blocks, fps, cuts)
+        z = zoom_at(t, plan)
         if z > 1.0005:
             # zoom about the anchor (the presenter), kept inside the frame
             M = np.array([[z, 0, ax - z * ax], [0, z, ay - z * ay]], np.float32)

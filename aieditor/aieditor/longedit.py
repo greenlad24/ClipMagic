@@ -266,7 +266,11 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         t = s["t1"]
     if t < dur:
         blocks.append([t, dur])
-    json.dump({"blocks": blocks, "fps": fps}, open(w / "blocks.json", "w"))
+    # the A-roll MOTION PLAN (screencast/aroll_plan.py) is word-timed: sentence starts are its reset
+    # points, the overlays its AR02 beats — measured on Jake's references 2–5
+    json.dump({"blocks": blocks, "fps": fps, "words": _video(d, k)["words"],
+               "overlays": [{"template": o.get("template"), "t0": o["t0"], "t1": o["t1"]} for o in plan["overlays"]]},
+              open(w / "blocks.json", "w"))
     progress("A-roll camera (opening zoom, slow push-ins, end fade)…", 0.55)
     anchor = f"{(face[0] + face[2] / 2) * W:.1f},{(face[1] + face[3] * 0.8) * H:.1f}"
     cam_base = f"base-cam-{W}.mp4"
@@ -290,6 +294,9 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
                                  end_fade_from=max((w_["end"] for w_ in _video(d, k)["words"]), default=None))
     final = d / f"{out_name}.mp4"
     Path(out).replace(final)
+    for ext in (".plan.json", ".cuts.json"):            # keep the motion plan with the edit (QA reads it)
+        if (w / f"{cam_base}{ext}").exists():
+            os.replace(w / f"{cam_base}{ext}", w / f"aroll{ext}")
     (w / cam_base).unlink(missing_ok=True)
     plain.unlink(missing_ok=True)
     return final

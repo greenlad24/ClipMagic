@@ -80,12 +80,15 @@ try:
     check("the move budget holds (moves_per_min_max / 2 per 30 s, drifts aside)", len(eased) <= P["moves_per_min_max"] / 2)
     gaps = [(b[0] - (a[0] + a[1])) / 30 for a, b in zip(mv, mv[1:]) if a[1] > 0 and b[1] > 0 and a[3][0] > 1.0
             and b[4] != "drift" and not (len(b) > 5 and b[5] == [30, 120, 300, 40])]   # a nav click lands on its press
-    check("holds of at least hold_min_s between moves from a framed view", all(g >= P["hold_min_s"] - 0.05 for g in gaps))
+    # loop round 1 (RULEBOOK M1/M6, ruling R1): moves are word-timed — a beat that comes too soon is a
+    # framed CUT, so the old "hold_min_s between moves" floor is gone; moves still never overlap
+    check("moves from a framed view never overlap", all(g >= -0.05 for g in gaps))
     navz = [m for m in mv if len(m) > 5 and m[5] == [30, 120, 300, 40]]
     check("#11 a navigation click gets a quick zoom that lands on its press, then the cut",
           not navz or (navz[0][1] <= P["nav_click_frames"] * 1.01 and abs(navz[0][0] + navz[0][1] - 12.5 * 30) < 2))
     check("a settle cut resets the camera with a hard cut", any(m[4] == "cut" and abs(m[0] - 12.6 * 30) < 1 for m in mv))
-    check("every zoom-in stays <= the cap", all(m[3][0] <= P["zoom_cap"] + 1e-6 for m in mv))
+    check("every zoom-in stays <= the cap (drifts: RULEBOOK F3 ×1.65)",
+          all(m[3][0] <= (1.65 if m[4] == "drift" else P["zoom_cap"]) + 1e-6 for m in mv))
     import numpy as np
     white = np.full((1440, 2560, 3), 250, np.uint8)
     check("a white loading frame is blank", camera.is_blank(white, P))
@@ -114,7 +117,7 @@ try:
     # ── refs 2–5 (2026-10-07): moves inside a zoom, dissolves, target fit ──
     cap = {"w": W, "h": H, "fps": 30.0}
     evs3 = [{"t": 0, "type": "begin"}, {"t": 0.5, "type": "read", "box": [700, 1000, 500, 160], "end": 3.0},
-            {"t": 6.0, "type": "read", "box": [200, 100, 400, 120], "end": 9.0}]
+            {"t": 4.0, "type": "read", "box": [200, 100, 400, 120], "end": 9.0}]   # (no ZM10 drift between them)
     mv3 = camera.plan_moves({"capture": cap, "events": evs3, "end": 9}, 30.0, 0, 270, P)
     pans = [m for m in mv3 if m[4] == "pan"]
     check("next target at the same zoom → a PAN, not out-and-in", len(pans) == 1 and not any(m[4] == "out" for m in mv3))
@@ -139,8 +142,9 @@ try:
     evs6 = [{"t": 0, "type": "begin"}, {"t": 0.5, "type": "read", "box": [700, 1000, 500, 160], "end": 3.0},
             {"t": 8.0, "type": "wait", "text": "done", "found": True}, {"t": 8.3, "type": "read", "box": [200, 100, 400, 120], "end": 11.0}]
     mv6 = camera.plan_moves({"capture": cap, "events": evs6, "end": 12}, 30.0, 0, 360, P)
-    check("a skipped generation: dissolve, then glide to the result at once", any(m[4] == "xfade" for m in mv6)
-          and any(m[4] == "pan" and m[0] <= 8.3 * 30 for m in mv6))
+    # loop round 2 (D5, RULEBOOK K2/T4): the dissolve arrives at the result, framed at once
+    check("a skipped generation: dissolve, then the result framed at once", any(m[4] == "xfade" for m in mv6)
+          and any(m[4] in ("pan", "cut", "in", "out") and m[0] <= 8.4 * 30 and m[5] == [200, 100, 400, 120] for m in mv6 if len(m) > 5))
     import qa
     check("target fit: in view", qa.target_fit((0, 30, (1.0, 1280, 720), (1.3, 1000, 800), "in", [800, 700, 300, 150]), W, H, P))
     check("target fit: under the facecam still counts (the bubble stays put, Jake 2026-10-07)",
@@ -209,12 +213,15 @@ try:
     evb = {"events": [{"t": 1.0, "type": "read", "box": [2200, 100, 200, 100], "end": 3.0},
                       {"t": 4.0, "type": "click", "box": [2200, 100, 200, 100], "press": 4.8, "end": 5.1}]}
     check("bubble: a read under it does not hide it", not camera.action_targets(evb, 2.0))
-    check("bubble: a click under it does, from just before the press", camera.action_targets(evb, 4.6) and not camera.action_targets(evb, 4.0))
+    # loop round 1 (review v12 #21): hidden from when the cursor sets off for the click, not 0.35 s before the press
+    check("bubble: a click under it does, from when the cursor sets off", camera.action_targets(evb, 4.0)
+          and camera.action_targets(evb, 4.6) and not camera.action_targets(evb, 3.5))
     check("bubble: back right after the action", not camera.action_targets(evb, 5.5))
     # 5 / 6 compose: bubble-first A-roll transitions, the text gradient
     env = compose_long.bubble_env_expr([{"t0": 10.0, "t1": 20.0, "aroll_in": True, "aroll_out": True, "tail": compose_long.aroll_tail_s()}])
     check("#5 the bubble env fades in after the screencast and out before it", "clip((T-10.1" in env and "(1-clip((T-19.86" in env)
-    check("#5 the A-roll dissolve is 10 f", abs(compose_long.aroll_tail_s() - 10 / 29.97) < 0.002)
+    # loop round 1 (review v12 #13, RULEBOOK T5): Jake's "so fast it isn't noticed" — 4 f bubble, then a 5 f screen dissolve
+    check("#5 the A-roll dissolve is 5 f", abs(compose_long.aroll_tail_s() - 5 / 29.97) < 0.002)
     gs = compose_long.gradient_spans([{"template": "lower_title", "start_frame": 300, "n_frames": 90, "t1": 13},
                                       {"template": "lower_title", "start_frame": 400, "n_frames": 60, "t1": 15.3},
                                       {"template": "subscribe", "start_frame": 600, "n_frames": 90, "t1": 23}], 30.0)

@@ -105,8 +105,8 @@ Before the first recorded frame, an agent works hands-on in the demoed software 
 ## 10. A-roll
 | # | Rule |
 |---|---|
-| A1 | Each A-roll block starts at ×1.00 and pushes linearly at **1–3 % per second**, capping at ×1.12–1.16 then holding (AR01) |
-| A2 | A take change inside an A-roll block that keeps the same framing gets a punch-in alternation of ×1.3–1.5 about the face (CUT07, refs 3–5); no jump cut with identical framing within 1 s of a transition |
+| A1 | Each A-roll block starts at ×1.00 and pushes linearly at **1–3 % per second** (house 2.25 %/s), capping at ×1.12–1.16 (house ×1.13) then holding (AR01; re-measured R7) |
+| A2 | ~~Punch-in alternation ×1.3–1.5 on jump cuts (CUT07)~~ — **not in the references** (ruling R7): jump cuts inside a presenter stretch keep the framing and the AR01 push runs on across them. A long A-roll stretch (no screencast/graphic to cut to) is split at SENTENCE STARTS into reference-length pushes (each from ×1.00, reset ≈ 6 s in, ≤ 10 s; a picture jump cut next to the sentence start is the preferred reset) so the picture is never still > 3 s (P1) — screencast/aroll_plan.py |
 | A3 | No scale pop at A-roll entries (T5) |
 
 ## 11. Reviewer rulings log (append-only)
@@ -116,3 +116,4 @@ Before the first recorded frame, an agent works hands-on in the demoed software 
 - R4 (round 1): Jake's T5 numbers override TR05's 10 f + 8 f.
 - R5 (2026-10-08, Jake): the Blue Bottle Coffee brand/document must NOT be deleted or renamed; keep it out of frame (C4).
 - R6 (round 2): builder claims require frame-measured evidence (§0.3); six round-2 claims were false.
+- R7 (2026-10-08, A-roll re-measured on refs 2–5: ORB+RANSAC similarity scale on every 2nd non-screencast frame, 9 006 presenter frames): push rate p50 1.98 / 2.55 / 2.62 / 1.85 %/s, cap p50 ×1.12 / 1.14 / 1.13 / 1.10, camera moving 77–84 % of presenter time; scale ratio across 106 presenter→presenter jump cuts p10–p90 0.97–1.01, only 3 changed ≥ 8 % → CUT07 alternation dropped (A2); TR07 opening identical in all 4 refs (≈ ×1.5 → 1.0 in ~1 s); AR02 outro punch ×1.22–1.23 (r3 13:11, r4 13:17, r5 15:01).

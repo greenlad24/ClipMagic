@@ -116,7 +116,7 @@ def params():
 # ── easing ───────────────────────────────────────────────────────────────────
 def make_eases(p):
     """in / out (zoom) and pan curves — one dict for the render and qa.py."""
-    return {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"]), "pan": bezier(*p["pan_ease"]),
+    return {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"]), "release": bezier(*p["zoom_out_ease"]), "pan": bezier(*p["pan_ease"]),
             "drift": bezier(*p.get("drift_ease", p["pan_ease"])),
             # TECHNIQUES TR07 opening punch-out: 1.55 → 1.0 over ~31 f, strong ease-out (kwys C1)
             "open": bezier(*p.get("open_ease", [0.089, 0.443, 0.126, 0.834]))}
@@ -872,14 +872,27 @@ def fill_holds(moves, ev, fps, f0, n_frames, p):
             # ROUND 3 (review N11): ZM10 is a PUSH (×1.06–1.26 over 24–46 f) — never outward, never alternating;
             # no room for a whole push = no drift at all
             z2 = z * p["drift_zoom"]
-            if z2 > p.get("drift_cap", 1.85):
-                break
+            if c == g0:
+                z_land = z                                   # the framing the beat landed on
+            # RULEBOOK F3: nothing past ×1.65 (one small control). Constant motion (Jake rule 2, P1 ≤ 3 s
+            # still) on a long read: instead of freezing, an M3 RELEASE back to the beat's own framing
+            # (ratio ≥ 0.76, 40 f, curve (.33,0,.31,.93) — never below it, so F4 holds), then push again
+            if z2 > p.get("drift_cap", 1.65):
+                if z / z_land < 1.05:
+                    break
+                Do = p.get("zoom_out_frames", 40) * k
+                if s0 + Do > g1 - 0.2 * fps:
+                    break
+                drifts.append((s0, Do, (z, cx, cy), clamp(max(z_land, z * 0.76), cx, cy, W, H, overscan_of((z, cx, cy), W, H)),
+                               "release", None))
+                c = s0 + Do
+                continue
             drifts.append((s0, D, (z, cx, cy), clamp(z2, cx, cy, W, H, overscan_of((z, cx, cy), W, H)), "drift", None))
             c = s0 + D
     if not drifts:
         return moves
     out, view = [], (1.0, W / 2, H / 2)
-    for m in sorted(moves + drifts, key=lambda m: (m[0], m[4] != "drift")):
+    for m in sorted(moves + drifts, key=lambda m: (m[0], m[4] not in ("drift", "release"))):
         m = list(m)
         if m[4] == "xfade":
             m[2] = m[3] = view

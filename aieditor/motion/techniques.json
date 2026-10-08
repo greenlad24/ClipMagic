@@ -389,8 +389,8 @@
     }
    ],
    "jake_rule": null,
-   "correction": "kwys-annotations C2 said \"no digital punch-ins at jump cuts\" — true for ref 2 only; refs 3–5 do alternate framings.",
-   "confidence": "med",
+   "correction": "kwys-annotations C2 said \"no digital punch-ins at jump cuts\" — true for ref 2 only; refs 3–5 do alternate framings. | 2026-10-08 re-measure (RULEBOOK R7): across 106 presenter→presenter jump cuts in refs 2–5 the scale ratio is p10–p90 0.97–1.01; only 3 cuts changed framing ≥ 8 % (0–0.5 per presenter-minute) — alternation is NOT a reference habit; the house plan keeps the framing across jump cuts (screencast/aroll_plan.py).",
+   "confidence": "low",
    "params": {},
    "frames": [
     "/opt/aieditor-work/reference/techniques/CUT07_aroll_jump_punch__ref3_3m25.00.jpg",
@@ -1971,7 +1971,7 @@
    "looks": "Medium shot (head + mic, brick wall), very slow digital push-in during the block.",
    "when": "Every A-roll block.",
    "why": "Keeps the face alive.",
-   "how": "Starts at 1.00 after each screencast; ~1–3 %/s linear (r2 1.8 %/s, r3 ≈ 2.8 %/s 0:08–0:13); caps ≈ 1.12–1.16 and holds (kwys C2 + re-measured).",
+   "how": "Starts at 1.00 after each screencast; ~1–3 %/s linear (r2 1.8 %/s, r3 ≈ 2.8 %/s 0:08–0:13); caps ≈ 1.12–1.16 and holds (kwys C2 + re-measured). Re-measured 2026-10-08 (RULEBOOK R7): the push continues across jump cuts; long stretches are reset at sentence starts by the house plan (aroll_plan.py).",
    "how_often": "Every block. A-roll/other ≈ 26–32 % of runtime; blocks p50 5.1–6.5 s.",
    "examples": [
     {
@@ -1989,8 +1989,31 @@
    ],
    "jake_rule": null,
    "correction": null,
-   "confidence": "med",
-   "params": {},
+   "confidence": "high",
+   "params": {
+    "rate_per_s_p50": {
+     "r2": 0.0198,
+     "r3": 0.0255,
+     "r4": 0.0262,
+     "r5": 0.0185
+    },
+    "cap_p50": {
+     "r2": 1.122,
+     "r3": 1.141,
+     "r4": 1.13,
+     "r5": 1.096
+    },
+    "moving_frac": {
+     "r2": 0.77,
+     "r3": 0.8,
+     "r4": 0.84,
+     "r5": 0.78
+    },
+    "house": {
+     "rate_per_s": 0.0225,
+     "cap": 1.13
+    }
+   },
    "frames": [
     "/opt/aieditor-work/reference/techniques/AR01_base_push__ref3_0m08.00.jpg"
    ]
@@ -2015,7 +2038,14 @@
    "jake_rule": null,
    "correction": null,
    "confidence": "med",
-   "params": {},
+   "params": {
+    "zoom": 1.22,
+    "measured": {
+     "r3": "13:11 ×1.22–1.24",
+     "r4": "13:17 ×1.22",
+     "r5": "15:01 ×1.22–1.23"
+    }
+   },
    "frames": [
     "/opt/aieditor-work/reference/techniques/AR02_socials_camera__ref2_10m59.80.jpg"
    ]
