@@ -24,11 +24,13 @@ url = sys.argv[3] if len(sys.argv) > 3 else "https://chatgpt.com/"
 wd.mkdir(parents=True, exist_ok=True)
 sc = agentrec.scout_for(url)
 assert sc and sc["slug"] == slug, f"no Scout profile for {url}"
+page_text = ""
 sess = agentrec.Session(wd, sc["profile"], dark=(slug == "chatgpt"))
 out = {"proxy": config.EGRESS_PROXY or None}
 try:
     out["open"] = sess.send({"cmd": "open", "url": url, "settle": 8})
     out["whoami"] = sess.send({"cmd": "whoami"})
+    page_text = out["whoami"].pop("text", "") or ""
     g = sess.send({"cmd": "guard"})
     if g.get("wall"):
         g = sess.send({"cmd": "reload", "settle": 10})
@@ -52,7 +54,7 @@ finally:
 ev = json.loads((wd / "rec" / "events.json").read_text()) if (wd / "rec" / "events.json").exists() else {}
 out["walls_recorded"] = ev.get("walls")
 out["browser"] = ev.get("browser")
-allt = " ".join(out.get("texts", []) + out.get("texts_shortcuts", []))
+allt = " ".join(out.get("texts", []) + out.get("texts_shortcuts", [])) + " " + page_text
 out["logged_in_as"] = "Jake Dawson" in allt
 out["plus"] = "Plus" in allt
 out["cmd_hints"] = "⌘" in allt
