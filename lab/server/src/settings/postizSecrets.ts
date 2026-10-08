@@ -663,6 +663,15 @@ export function getHiggsfieldCredentials(): { key: string; secret: string } | nu
   return key && secret ? { key, secret } : null;
 }
 
+/**
+ * INTERNAL, SERVER-ONLY: the Auto Editor video factory's DigitalOcean token. The Lab
+ * only READS with it (the droplets tagged clipmagic-factory-job, for the spend view) —
+ * creating and destroying servers is the host worker's job. Never in a response, never logged.
+ */
+export function getDigitalOceanToken(): string | null {
+  return (process.env.DO_API_TOKEN || "").trim() || readStore().DO_API_TOKEN || null;
+}
+
 export function getSelfHostAvatarUrl(): string | null {
   return (process.env.INFINITETALK_SELFHOST_URL || "").trim() || readStore().INFINITETALK_SELFHOST_URL || null;
 }

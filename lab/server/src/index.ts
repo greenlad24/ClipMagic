@@ -32,6 +32,8 @@ import { failOrphanedRuns } from "./db/scriptRuns.js";
 import { googleDocsOAuthRouter } from "./scriptgen/docsOauthRoutes.js";
 import { hyperframesApiRouter } from "./hyperframes/api.js";
 import { audioSlice as aieditorAudioSlice } from "./aieditor/control.js";
+import { getFactory, saveFactorySettings, requestImageRebuild } from "./aieditor/factory.js";
+import { getDigitalOceanToken } from "./settings/postizSecrets.js";
 import { failOrphanedQueueItems } from "./db/scriptQueue.js";
 import { failInterruptedRuns as failInterruptedAudits } from "./db/auditRuns.js";
 import { startMonitor } from "./engage/monitor.js";
@@ -265,6 +267,38 @@ app.use(
     index: false,
   })
 );
+
+// Auto Editor — the VIDEO FACTORY panel (one DigitalOcean server per heavy job, host
+// side: aieditor/cloud.py). Reads the host's lease/history/image files; writes only the
+// panel's settings subset of factory.json and the image-rebuild request file. The
+// DigitalOcean token stays on this server (one read: the factory-tagged droplets).
+const factoryDeps = { token: getDigitalOceanToken };
+app.get("/api/aieditor/factory", auth, async (_req, res) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await getFactory(factoryDeps));
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+app.post("/api/aieditor/factory", auth, async (req, res) => {
+  try {
+    const b = req.body ?? {};
+    res.json(await saveFactorySettings(
+      { enabled: b.enabled, size: b.size, maxParallel: b.maxParallel, fallbackLocal: b.fallbackLocal },
+      factoryDeps,
+    ));
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+app.post("/api/aieditor/factory/image", auth, async (_req, res) => {
+  try {
+    res.json(await requestImageRebuild());
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
 
 // Auto Editor — a short slice (<= 12 s) of a job's original recording as WAV, for the
 // review page's cut editor: Jake nudges a cut and hears it in the browser at once.

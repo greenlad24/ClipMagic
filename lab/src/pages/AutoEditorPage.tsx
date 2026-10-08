@@ -33,10 +33,12 @@ import {
   type AutoJobDetail,
   type AutoVideoPlan,
   type AutoWorkflow,
+  type AutoRunOn,
 } from 'zite-endpoints-sdk';
 import { cn } from '@/lib/utils';
 import { CutEditor } from '@/components/autoeditor/CutEditor';
 import { JobProgress } from '@/components/autoeditor/JobProgress';
+import { FactoryPanel } from '@/components/autoeditor/FactoryPanel';
 
 /**
  * Auto Editor — raw narration in, clean edit out.
@@ -124,6 +126,7 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
   const [script, setScript] = useState('');
   const [showScript, setShowScript] = useState(false);
   const [sites, setSites] = useState('');
+  const [runOn, setRunOn] = useState<AutoRunOn>('auto');
   const [busy, setBusy] = useState(false);
 
   const ready = url.trim() && workflow && format && sponsored !== null;
@@ -135,7 +138,7 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
     try {
       const r = await autoEditorCreate({ url: url.trim(), workflow, format, sponsored,
         script: creative ? undefined : script, title: title.trim() || undefined,
-        sites: format === 'long' ? sites : undefined });
+        sites: format === 'long' ? sites : undefined, runOn });
       toast.success('Queued — the worker picks it up in a few seconds.');
       setUrl('');
       setTitle('');
@@ -144,6 +147,7 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
       setFormat(null);
       setSponsored(null);
       setWorkflow(null);
+      setRunOn('auto');
       onCreated(r.id);
     } catch (err) {
       toast.error(errText(err));
@@ -238,6 +242,25 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
           + Add the script (optional)
         </button>
       )}
+      <div className="space-y-1">
+        <label className="text-[11px] text-muted-foreground">Run on</label>
+        <Choice<AutoRunOn>
+          value={runOn}
+          onChange={setRunOn}
+          options={[
+            { value: 'auto', label: 'Auto' },
+            { value: 'factory', label: 'Factory server' },
+            { value: 'box', label: 'Main box' },
+          ]}
+        />
+        <p className="text-[10px] leading-snug text-muted-foreground">
+          {runOn === 'auto'
+            ? 'A factory server when the Video factory is on, else the main box.'
+            : runOn === 'factory'
+              ? 'Its own server even while the factory is off — deleted when the job ends.'
+              : 'Never leaves the main box (slower, no server cost).'}
+        </p>
+      </div>
       <Button className="w-full gap-1.5" disabled={!ready || busy} onClick={() => void submit()}>
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : creative ? <Film className="h-4 w-4" /> : <Scissors className="h-4 w-4" />}
         {creative ? 'Start the creative edit' : 'Clean up the narration'}
@@ -972,6 +995,10 @@ export default function AutoEditorPage() {
               Refresh
             </Button>
           </div>
+        </div>
+
+        <div className="mb-4">
+          <FactoryPanel />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">

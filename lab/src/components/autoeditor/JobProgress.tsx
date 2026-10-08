@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, Loader2, MinusCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, HardDrive, Loader2, MinusCircle, Server } from 'lucide-react';
 import {
   autoEditorEvents,
   type AutoEvent,
   type AutoJobDetail,
+  type AutoRunner,
   type AutoStageState,
   type AutoStageStatus,
 } from 'zite-endpoints-sdk';
@@ -78,6 +79,78 @@ function clock(t: number): string {
 
 const money = (usd: number | null | undefined) =>
   usd === null || usd === undefined ? '' : usd >= 0.995 || usd === 0 ? `$${usd.toFixed(2)}` : `$${usd.toFixed(usd < 0.01 ? 4 : 3)}`;
+
+/**
+ * Where this job runs — the Video factory (one DigitalOcean server per job, deleted after)
+ * or the main box. runner.json is written by the host worker; it describes the current run,
+ * or the last one when the job is idle.
+ */
+const RUNNER_PHASE: Record<string, { text: string; frac: number }> = {
+  creating: { text: 'creating…', frac: 0.1 },
+  sending: { text: 'sending job', frac: 0.25 },
+  running: { text: 'running', frac: 0.5 },
+  pulling: { text: 'results back', frac: 0.9 },
+  done: { text: 'done', frac: 1 },
+  failed: { text: 'failed', frac: 1 },
+};
+
+function runnerStageState(r: AutoRunner | null | undefined): AutoStageState {
+  if (!r?.state) return 'pending';
+  if (r.state === 'done') return 'done';
+  if (r.state === 'failed') return 'failed';
+  return 'running';
+}
+
+function RunnerBadge({ runner, runOn, jobState, now }: {
+  runner: AutoRunner | null | undefined; runOn?: string; jobState: string; now: number;
+}) {
+  const active = jobState === 'running';
+  if (!runner || !runner.kind) {
+    // never routed yet: say what was asked for
+    const asked = runOn === 'factory' ? 'Factory server (requested)' : runOn === 'box' ? 'Main box' : null;
+    if (!asked) return null;
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+        {runOn === 'factory' ? <Server className="h-3 w-3" /> : <HardDrive className="h-3 w-3" />}
+        {asked}
+      </span>
+    );
+  }
+  if (runner.kind === 'box') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+        <HardDrive className="h-3 w-3" />
+        Main box{active ? '' : ' · last run'}
+      </span>
+    );
+  }
+  const st = runner.state ?? 'creating';
+  const live = st !== 'done' && st !== 'failed';
+  const start = runner.started ?? null;
+  const secs = start ? (live ? now : runner.ended ?? now) - start : null;
+  const usdNow = live && secs !== null ? (secs / 3600) * (runner.price_hourly ?? 1) : runner.usd ?? 0;
+  const runSecs = runner.running_since ? (live ? now : runner.ended ?? now) - runner.running_since : null;
+  let text: string;
+  if (st === 'running' && runSecs !== null) text = `running ${dur(runSecs)}`;
+  else if (st === 'done') text = runner.destroyed === false ? 'results back · DELETE NOT CONFIRMED' : 'results back · server deleted';
+  else if (st === 'failed') text = runner.destroyed === false ? 'failed · DELETE NOT CONFIRMED' : 'failed · server deleted';
+  if (st === 'failed' && active) text += ' → running on the main box';
+  else text = RUNNER_PHASE[st]?.text ?? st;
+  return (
+    <span
+      className={cn(
+        'inline-flex flex-wrap items-center gap-x-1.5 rounded px-2 py-0.5 text-[11px]',
+        live ? 'bg-blue-500/15 text-blue-300' : st === 'failed' || runner.destroyed === false ? 'bg-red-500/10 text-red-300' : 'bg-muted text-muted-foreground',
+      )}
+      title={runner.droplet ? `DigitalOcean droplet #${runner.droplet}${runner.region ? ` in ${runner.region}` : ''}` : undefined}
+    >
+      {live ? <Loader2 className="h-3 w-3 animate-spin" /> : <Server className="h-3 w-3" />}
+      Factory server {runner.size ?? ''} · {text}
+      {usdNow > 0 && <span className="tabular-nums text-emerald-400">· ${usdNow.toFixed(2)}</span>}
+      {!live && !active && <span className="text-muted-foreground/70">(last run)</span>}
+    </span>
+  );
+}
 
 interface StageView {
   id: string;
@@ -341,8 +414,25 @@ export function JobProgress({ job, live }: { job: AutoJobDetail; live: boolean }
   const jobEvents = byStage.get('job') ?? [];
   const totalIssues = events.filter((e) => e.level !== 'info').length;
 
+  // the factory's own lifecycle (create → send → run → pull → delete) as a pseudo-stage on top
+  const runner = job.runner;
+  const factoryEvents = byStage.get('factory') ?? [];
+  const showFactory = runner?.kind === 'factory' || factoryEvents.length > 0;
+  const factoryState: AutoStageState = runner?.kind === 'factory' ? runnerStageState(runner) : factoryEvents.some((e) => e.level === 'error') ? 'failed' : 'done';
+  const factoryFrac = runner?.kind === 'factory' ? RUNNER_PHASE[runner.state ?? '']?.frac ?? 0 : 1;
+  const factoryElapsed = runner?.kind === 'factory' && runner.started
+    ? (factoryState === 'running' ? now : runner.ended ?? now) - runner.started : null;
+  const factoryUsd = runner?.kind === 'factory'
+    ? factoryState === 'running' && factoryElapsed !== null ? (factoryElapsed / 3600) * (runner.price_hourly ?? 1) : runner.usd ?? 0
+    : 0;
+
   return (
     <div className="space-y-3 rounded-lg border border-border p-3">
+      {(runner?.kind || job.request.run_on === 'factory' || job.request.run_on === 'box') && (
+        <div className="flex flex-wrap items-center gap-2">
+          <RunnerBadge runner={runner} runOn={job.request.run_on} jobState={state} now={now} />
+        </div>
+      )}
       <div className="space-y-1.5">
         <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
           <span className="font-medium text-foreground">
@@ -364,6 +454,43 @@ export function JobProgress({ job, live }: { job: AutoJobDetail; live: boolean }
       </div>
 
       <div className="divide-y divide-border/60 rounded-md border border-border">
+        {showFactory && (() => {
+          const I = ICON[factoryState] ?? ICON.pending;
+          const Icon = I.icon;
+          const isOpen = open.has('factory');
+          const warn = factoryEvents.filter((e) => e.level === 'warn').length;
+          const err = factoryEvents.filter((e) => e.level === 'error').length;
+          return (
+            <div>
+              <button
+                type="button"
+                onClick={() => toggle('factory')}
+                className="grid w-full grid-cols-[14px_14px_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-muted/30 sm:grid-cols-[14px_14px_minmax(0,14rem)_minmax(0,1fr)_auto]"
+              >
+                {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                <Icon className={cn('h-3.5 w-3.5', I.cls)} />
+                <span className="truncate text-xs text-foreground">Factory server (create → send → run → pull → delete)</span>
+                <div className="col-span-3 sm:col-span-1">
+                  <Bar frac={factoryFrac} state={factoryState} thin />
+                </div>
+                <span className="col-span-3 flex flex-wrap items-center gap-x-2 text-[10.5px] tabular-nums text-muted-foreground sm:col-span-1 sm:justify-end">
+                  <span className={cn(factoryState === 'failed' && 'text-red-400')}>
+                    {runner?.kind === 'factory' ? RUNNER_PHASE[runner.state ?? '']?.text ?? runner.state : I.label}
+                  </span>
+                  {factoryElapsed !== null && <span>{dur(factoryElapsed)}</span>}
+                  {factoryUsd > 0 && <span className="text-emerald-400">{money(factoryUsd)}</span>}
+                  {warn > 0 && <span className="rounded bg-amber-500/15 px-1 text-amber-300">⚠ {warn}</span>}
+                  {err > 0 && <span className="rounded bg-red-500/15 px-1 text-red-300">✖ {err}</span>}
+                </span>
+              </button>
+              {isOpen && (
+                <div className="px-2 pb-2 pl-[46px]">
+                  <StageLog events={factoryEvents} />
+                </div>
+              )}
+            </div>
+          );
+        })()}
         {views.map((v) => {
           const I = ICON[v.state] ?? ICON.pending;
           const Icon = I.icon;

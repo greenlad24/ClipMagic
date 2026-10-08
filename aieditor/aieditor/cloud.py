@@ -53,6 +53,9 @@ IMAGES = ("hyperframes-runner:0.8.30", "aieditor-aligner:0.1", "aieditor-screenc
 SHIP_KEYS = ("ANTHROPIC_API_KEY", "GROQ_API_KEY")
 LAB_OWNED = ("queue.json", "cancel", "request.json", "plan.edit.json", "joins.edit.json")
 LIVE_FILES = ("status.json", "events.jsonl", "log.txt")
+HISTORY = config.WORK / "factory-history.jsonl"     # one line per server: job, minutes, $ (the Lab's spend view)
+IMAGE_REQUEST = config.WORK / "factory-image.request"   # the Lab asks for a snapshot rebuild
+IMAGE_STATE = config.WORK / "factory-image.json"        # {state, started, finished, log[]} for the Lab
 
 DEFAULTS = {
     "enabled": False,               # flipped on once a snapshot exists and the trial passed
@@ -91,9 +94,30 @@ def save_settings(s):
     tmp.replace(CFG)
 
 
-def enabled_for(action):
+def enabled_for(action, req=None):
+    """request.json "run_on": "auto" (default: the factory when it is on) | "factory" | "box"."""
+    run_on = (req or {}).get("run_on", "auto")
+    if run_on == "box":
+        return False
     s = settings()
-    return bool(s["enabled"] and s["snapshot_id"] and action in s["actions"] and token())
+    if not (s["snapshot_id"] and action in s["actions"] and token()):
+        return False
+    return bool(s["enabled"] or run_on == "factory")
+
+
+def runner(job_dir, **kw):
+    """job/runner.json — where this job runs right now, for the Lab's badge. Never pulled over
+    by the server's copy (the server has none)."""
+    p = Path(job_dir) / "runner.json"
+    cur = {}
+    try:
+        cur = json.loads(p.read_text())
+    except (OSError, ValueError):
+        pass
+    cur.update(kw, updated_at=time.time())
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cur))
+    tmp.replace(p)
 
 
 # ── DigitalOcean API ────────────────────────────────────────────────────────
@@ -332,6 +356,32 @@ def image_current():
     return bool(s["snapshot_id"]) and s.get("snapshot_manifest") == local_manifest()
 
 
+def image_state(**kw):
+    cur = {}
+    try:
+        cur = json.loads(IMAGE_STATE.read_text())
+    except (OSError, ValueError):
+        pass
+    cur.update(kw)
+    IMAGE_STATE.write_text(json.dumps(cur))
+
+
+def build_image_tracked():
+    """build_image() with its progress in IMAGE_STATE (what the Lab's Rebuild button shows)."""
+    lines = []
+
+    def log(msg):
+        lines.append(time.strftime("%H:%M:%S ") + msg)
+        image_state(log=lines[-40:])
+    image_state(state="building", started=time.time(), finished=None, error=None, log=[])
+    try:
+        sid = build_image(log)
+        image_state(state="done", finished=time.time(), snapshot_id=sid)
+    except Exception as e:                                # noqa: BLE001
+        image_state(state="failed", finished=time.time(), error=str(e)[:500])
+        raise
+
+
 def build_image(log=print):
     """Provision a small builder droplet, load the images + models, snapshot it, destroy it."""
     s = settings()
@@ -438,8 +488,11 @@ def run_remote(job_dir, action, log, cancelled):
     req = json.loads((job_dir / "request.json").read_text())
     did = None
     t_start = time.time()
+    ok_run = False
     with _slots:
         ACTIVE[jid] = None
+    runner(job_dir, kind="factory", state="creating", action=action, size=s["size"], region=s["region"],
+           started=t_start, droplet=None, usd=0.0, price_hourly=_price(s["size"]), ended=None)
     try:
         did = create(f"factory-{jid[:40]}-{int(time.time()) % 100000}", s["size"], int(s["snapshot_id"]), TAG_JOB)
         with _slots:
@@ -449,6 +502,7 @@ def run_remote(job_dir, action, log, cancelled):
             ip, _ = wait_active(did)
             wait_ssh(ip)
             log(f"factory server up at {ip} after {time.time() - t_start:.0f}s — sending the job")
+            runner(job_dir, state="sending", droplet=did, up_after_s=round(time.time() - t_start))
             # code (always the current one: the snapshot only carries images + models)
             rsync(str(config.CODE) + "/", f"root@{ip}:{config.CODE}/", "--delete",
                   "--exclude", "__pycache__", "--exclude", "tests", "--exclude", "node_modules")
@@ -475,6 +529,7 @@ def run_remote(job_dir, action, log, cancelled):
                     "> {work}/remote.log 2>&1 < /dev/null & echo $! > {work}/remote.pid".format(
                         code=config.CODE, jid=shlex.quote(jid), action=shlex.quote(action), work=config.WORK))
             log(f"job started on the factory server ({time.time() - t_start:.0f}s after the request)")
+            runner(job_dir, state="running", running_since=time.time())
             sent_cancel = False
             fails = 0
             while True:
@@ -493,6 +548,7 @@ def run_remote(job_dir, action, log, cancelled):
                     if fails > 24:                       # ~3 min unreachable: give up, the job is lost
                         raise DOError("lost contact with the factory server")
                     continue
+                runner(job_dir, usd=round((time.time() - t_start) / 3600 * _price(s["size"]), 3))
                 if alive == "no":
                     break
                 if time.time() - t_start > s["max_hours"] * 3600:
@@ -503,16 +559,29 @@ def run_remote(job_dir, action, log, cancelled):
             src_local = job_dir / "source.mp4"
             if src_local.exists():
                 excl += ["--exclude", "source.mp4"]
+            runner(job_dir, state="pulling")
             rsync(f"root@{ip}:{rjob}/", str(job_dir) + "/", *excl, "--exclude", "tmp-*")
+            ok_run = True
             tail = ssh(ip, f"tail -5 {config.WORK}/remote.log", check=False)
             log(f"results back after {time.time() - t_start:.0f}s total")
             return tail
     finally:
+        ok = True
         if did:
             ok = destroy(did)
             hours = (time.time() - t_start) / 3600
             log(f"factory server {did} destroyed — {hours * 60:.1f} min ≈ ${hours * _price(s['size']):.2f}"
                 if ok else f"factory server {did} DELETE NOT CONFIRMED — the watchdog will retry")
+        hours = (time.time() - t_start) / 3600
+        usd = round(hours * _price(s["size"]), 3) if did else 0.0
+        runner(job_dir, state="done" if ok_run else "failed", destroyed=ok, ended=time.time(), usd=usd)
+        try:
+            with open(HISTORY, "a") as f:
+                f.write(json.dumps({"job": jid, "action": action, "droplet": did, "size": s["size"],
+                                    "started": t_start, "ended": time.time(), "minutes": round(hours * 60, 2),
+                                    "usd": usd, "ok": ok_run, "destroyed": ok}) + "\n")
+        except OSError:
+            pass
         with _slots:
             ACTIVE.pop(jid, None)
 

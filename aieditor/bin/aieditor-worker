@@ -792,7 +792,7 @@ def main():
     def skip(d, action):
         if cloud.running(d.name):
             return True
-        return cloud.enabled_for(action) and cloud.busy() >= cloud.settings()["max_parallel"]
+        return cloud.enabled_for(action, jload(d / "request.json", {})) and cloud.busy() >= cloud.settings()["max_parallel"]
 
     while not STOP:
         jdump(hb, {"at": now(), "pid": os.getpid(), "factory_jobs": cloud.busy()})
@@ -801,14 +801,17 @@ def main():
             time.sleep(2)
             continue
         start(job, action)
-        if cloud.enabled_for(action):
+        if cloud.enabled_for(action, job.req):
             # Heavy work goes to a per-job server; this loop keeps claiming.
             threading.Thread(target=execute_cloud, args=(job, action), daemon=True,
                              name=f"factory-{job.id}").start()
             time.sleep(1)
             continue
+        cloud.runner(job.d, kind="box", state="running", action=action, started=now(), droplet=None,
+                     usd=0.0, ended=None)
         with LOCAL:
             execute(job, action)
+        cloud.runner(job.d, state="done", ended=now())
 
 
 def once(job_id, action):

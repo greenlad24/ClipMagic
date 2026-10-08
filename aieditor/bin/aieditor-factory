@@ -72,14 +72,17 @@ def main(argv):
     if cmd == "status":
         status()
     elif cmd == "image":
-        cloud.build_image(log)
+        cloud.build_image_tracked()
     elif cmd == "smoke":
         smoke()
     elif cmd == "trial":
         return trial(argv[2], argv[3:])
     elif cmd == "watchdog":
-        for _ in cloud.watchdog(log):
-            pass
+        cloud.watchdog(log)
+        # the Lab's "Rebuild server image" button drops a request file; build it here (host side)
+        if cloud.IMAGE_REQUEST.exists():
+            cloud.IMAGE_REQUEST.unlink()
+            cloud.build_image_tracked()
     elif cmd in ("enable", "disable"):
         s = cloud.settings()
         s["enabled"] = cmd == "enable"

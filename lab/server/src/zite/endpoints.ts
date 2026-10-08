@@ -7537,7 +7537,7 @@ const autoEditorJob = editorCall((i) => autoEditor.getJob(i.id));
 const autoEditorCreate = editorCall((i) => autoEditor.createJob(i));
 const autoEditorSaveEdits = editorCall((i) => autoEditor.saveEdits(i.id, i.videos));
 const autoEditorResetEdits = editorCall((i) => autoEditor.resetEdits(i.id));
-const autoEditorContinue = editorCall((i) => autoEditor.continueJob(i.id));
+const autoEditorContinue = editorCall((i) => autoEditor.continueJob(i.id, i.runOn));
 const autoEditorCancel = editorCall((i) => autoEditor.cancelJob(i.id));
 const autoEditorDelete = editorCall((i) => autoEditor.deleteJob(i.id));
 const autoEditorSaveNudges = editorCall((i) => autoEditor.saveNudges(i.id, i.nudges, i.apply === true));

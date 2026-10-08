@@ -3786,6 +3786,16 @@ export const hfpEditorAttest = endpoint<{
 export type AutoStageState = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'interrupted';
 /** "cut" = 1. Cut an unedited narration · "creative" = 2. Creative edit an edited narration */
 export type AutoWorkflow = 'cut' | 'creative';
+/** where the heavy steps run: auto = a factory server when the factory is on */
+export type AutoRunOn = 'auto' | 'factory' | 'box';
+/** job/runner.json — where the current/last run executes (host: aieditor/cloud.runner) */
+export interface AutoRunner {
+  kind?: 'factory' | 'box';
+  state?: 'creating' | 'sending' | 'running' | 'pulling' | 'done' | 'failed' | string;
+  action?: string; size?: string; region?: string; droplet?: number | null;
+  started?: number; running_since?: number; ended?: number | null; usd?: number;
+  price_hourly?: number; up_after_s?: number; destroyed?: boolean; updated_at?: number;
+}
 export interface AutoJobSummary {
   id: string; title: string; format: 'short' | 'long'; sponsored: boolean; workflow?: AutoWorkflow;
   state: string; message: string | null; createdAt: number | null; updatedAt: number | null;
@@ -3802,7 +3812,7 @@ export interface AutoJobDetail {
   /** typical seconds per stage for this source length (null = no history yet) */
   expect?: Record<string, number | null>;
   request: { format: 'short' | 'long'; sponsored: boolean; script: string | null; source: { url: string }; title: string | null;
-    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow };
+    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
     cost_usd?: number; cost_live_usd?: number; updated_at?: number; started_at?: number; finished_at?: number;
@@ -3830,6 +3840,8 @@ export interface AutoJobDetail {
   nudgesPending?: boolean;
   edlAt: number | null;
   log: string;
+  /** null = this job was never routed (or ran before the factory existed) */
+  runner?: AutoRunner | null;
 }
 /** One stage in status.json (the worker keeps progress / cost / counts per stage). */
 export interface AutoStageStatus {
@@ -3859,6 +3871,7 @@ export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSum
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
 export const autoEditorCreate = endpoint<{
   url: string; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string; title?: string; sites?: string;
+  runOn?: AutoRunOn;
 }, { id: string }>("autoEditorCreate");
 /** the structured log from byte `after` on (0 = from the start); `replace` = discard what you have */
 export const autoEditorEvents = endpoint<{ id: string; after: number }, {
@@ -3867,7 +3880,7 @@ export const autoEditorEvents = endpoint<{ id: string; after: number }, {
 export const autoEditorSaveEdits =
   endpoint<{ id: string; videos: AutoVideoPlan[] }, { ok: boolean }>("autoEditorSaveEdits");
 export const autoEditorResetEdits = endpoint<{ id: string }, { ok: boolean }>("autoEditorResetEdits");
-export const autoEditorContinue = endpoint<{ id: string }, { ok: boolean }>("autoEditorContinue");
+export const autoEditorContinue = endpoint<{ id: string; runOn?: AutoRunOn }, { ok: boolean }>("autoEditorContinue");
 export const autoEditorCancel = endpoint<{ id: string }, { ok: boolean }>("autoEditorCancel");
 export const autoEditorDelete = endpoint<{ id: string }, { ok: boolean }>("autoEditorDelete");
 export const autoEditorSaveNudges =

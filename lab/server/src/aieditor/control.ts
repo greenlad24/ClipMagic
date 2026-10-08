@@ -284,6 +284,16 @@ export interface CreateInput {
   sites?: string;
   /** "cut" = 1. Cut an unedited narration, "creative" = 2. Creative edit an edited narration */
   workflow?: string;
+  /** where the heavy steps run: "auto" (a factory server when the factory is on), "factory", "box" */
+  runOn?: string;
+}
+
+export type RunOn = "auto" | "factory" | "box";
+/** request.json "run_on" — the worker honours it (aieditor/cloud.enabled_for). */
+export function parseRunOn(v: unknown): RunOn {
+  if (v === undefined || v === null || v === "") return "auto";
+  if (v === "auto" || v === "factory" || v === "box") return v;
+  throw new Error("Run on must be auto, factory or box.");
 }
 
 /** "one URL per line (optional: url — note)" → [{url, note}], public http(s) only, ≤ 6 */
@@ -313,6 +323,7 @@ export async function createJob(input: CreateInput) {
   if (input.format !== "short" && input.format !== "long") throw new Error("Choose Shorts or Long-form.");
   // Jake: "important you know if it's sponsored or not" — never defaulted.
   if (input.sponsored !== true && input.sponsored !== false) throw new Error("Say whether the video is sponsored.");
+  const runOn = parseRunOn(input.runOn);
   const script = String(input.script ?? "");
   if (script.length > MAX_SCRIPT) throw new Error("The script is too long.");
   const stamp = new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "");
@@ -330,6 +341,7 @@ export async function createJob(input: CreateInput) {
     script: script.trim() || null,
     title: input.title ? String(input.title).slice(0, 120) : null,
     sites: input.format === "long" ? parseSites(input.sites) : [],
+    run_on: runOn,
     created_at: Date.now() / 1000,
   });
   await writeJson(path.join(dir, "status.json"), {
@@ -449,7 +461,7 @@ export async function getJob(id: string) {
     stageList,
     /** typical seconds per stage for this source length (null = no history yet) */
     expect: await expectedSeconds(stageList, req.format, Number(source?.duration) || null),
-    request: { ...req, workflow, script: req.script ? String(req.script).slice(0, 2000) : null },
+    request: { ...req, workflow, run_on: req.run_on ?? "auto", script: req.script ? String(req.script).slice(0, 2000) : null },
     status: { ...status, state: queued && status.state !== "running" ? "queued" : status.state },
     source,
     review,
@@ -467,6 +479,8 @@ export async function getJob(id: string) {
     nudgesPending,
     edlAt: (await fsp.stat(path.join(dir, "edl.json")).catch(() => null))?.mtimeMs ?? null,
     log,
+    /** where the current/last run executed (host writes it: aieditor/cloud.runner) — null = never routed */
+    runner: await readJson<any>(path.join(dir, "runner.json")),
   };
 }
 
@@ -633,10 +647,15 @@ export async function resetEdits(id: string) {
   return { ok: true };
 }
 
-export async function continueJob(id: string) {
+export async function continueJob(id: string, runOn?: unknown) {
   const dir = jobDir(id);
   const st = await readJson<any>(path.join(dir, "status.json"));
   if (st?.state === "running") throw new Error("It is already running.");
+  if (runOn !== undefined && runOn !== null && runOn !== "") {
+    const req = await readJson<any>(path.join(dir, "request.json"));
+    if (!req) throw new Error("Unknown job.");
+    await writeJson(path.join(dir, "request.json"), { ...req, run_on: parseRunOn(runOn) });
+  }
   await writeJson(path.join(dir, "queue.json"), { action: "run" });
   return { ok: true };
 }
