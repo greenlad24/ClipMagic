@@ -1,6 +1,6 @@
 {
- "about": "Screencast production SYSTEM (motion + rules, design-free) derived from Jake's own tutorials: reference 2 (kwysV2smgfY) + refs 3\u20135 (3Jq-L6uLd28, Geg9TyNoi3w, AZxFgIVgHjg, measured 2026-10-07). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here. 2026-10-07: Jake's 19-point review of v11 (SYSTEM.md \u00a70) overrides earlier rules: subject centre-middle, constant motion (holds \u2264 6 s), bubble fixed (fades only for actions under it), bubble-first transitions to/from full-screen narration, gradient behind every text overlay.",
- "source": "reference-specs/kwys-screencast.json (ref 2, 2026-10-05/06) + reference-specs/sc4-refs2-5.{md,json} (same frame pipeline on refs 2\u20135, 2026-10-07)",
+ "about": "Screencast production SYSTEM (motion + rules, design-free) derived from Jake's own tutorials: reference 2 (kwysV2smgfY) + refs 3–5 (3Jq-L6uLd28, Geg9TyNoi3w, AZxFgIVgHjg, measured 2026-10-07). Explained in aieditor/screencast/SYSTEM.md. camera.py reads ['camera'], agent_rec.mjs reads ['recorder'] (via env), qa.py reads ['qa']. Colours/cursor sprite/marker colour = STYLE in camera.py, not here. 2026-10-07: Jake's 19-point review of v11 (SYSTEM.md §0) overrides earlier rules: subject centre-middle, constant motion (holds ≤ 6 s), bubble fixed (fades only for actions under it), bubble-first transitions to/from full-screen narration, gradient behind every text overlay.",
+ "source": "reference-specs/kwys-screencast.json (ref 2, 2026-10-05/06) + reference-specs/sc4-refs2-5.{md,json} (same frame pipeline on refs 2–5, 2026-10-07)",
  "camera": {
   "zoom_in_ease": [
    0.31,
@@ -58,15 +58,15 @@
   ],
   "xfade_target_s": 3.0,
   "avoid_bubble": false,
-  "hold_target_s": 3.0,
-  "hold_max_s": 6.0,
-  "drift_frames": 54,
-  "drift_zoom": 1.08,
+  "hold_target_s": 1.3,
+  "hold_max_s": 3.0,
+  "drift_frames": 40,
+  "drift_zoom": 1.15,
   "drift_ease": [
-   0.33,
-   0.02,
-   0.27,
-   0.96
+   0.25,
+   0.25,
+   0.75,
+   0.75
   ],
   "word_lead_s": 0.0,
   "entry_target_s": 1.0,
@@ -80,8 +80,10 @@
    "select"
   ],
   "overscan_max": 0.25,
-  "cluster_note": "Jake #1/#2 (2026-10-07): each named thing gets its own centred framing \u2014 clustering only within 2 s (was 6 s, one framing for a whole list)",
-  "moves_budget_note": "Jake #2 constant motion (2026-10-07): the 6/min budget (refs' clean moves only) dropped named beats (v12b: the Resize click at 0:23); refs have 17\u201325 motion events/min"
+  "cluster_note": "Jake #1/#2 (2026-10-07): each named thing gets its own centred framing — clustering only within 2 s (was 6 s, one framing for a whole list)",
+  "moves_budget_note": "Jake #2 constant motion (2026-10-07): the 6/min budget (refs' clean moves only) dropped named beats (v12b: the Resize click at 0:23); refs have 17–25 motion events/min",
+  "hold_note_round2": "ROUND 2 ruling (review D16): no hold > ~3 s without a catalogued move — a ZM10 slow centred push (×1.08 over 46 f, refs ×1.06–1.26 over 24–46 f) starts 1.5 s after the last motion when the gap is ≥ 3 s.",
+  "drift_note_round3": "ROUND 3 (review N11): rendered drifts were ×1.02–1.04 in 19–23 f (ease tails + alternating push/pull, one outward ×0.96). Now one inward ZM10 push ×1.12 over 42 f (catalogue ×1.06–1.26, D 24–46 f), skipped when the hold cannot fit the whole push."
  },
  "recorder": {
   "settle_after_click": true,
@@ -198,7 +200,7 @@
     ],
     "scale": 3,
     "weight": 2.0,
-    "note": "Jake #2 constant motion (drifts) raised the upper bound; refs 4.7\u20136.6 moves + 17\u201325 motion events / min"
+    "note": "Jake #2 constant motion (drifts) raised the upper bound; refs 4.7–6.6 moves + 17–25 motion events / min"
    },
    "zoom_in_median": {
     "ref": 1.27,
@@ -271,7 +273,7 @@
     ],
     "scale": 1.0,
     "weight": 1.5,
-    "note": "refs band; Jake's constant-motion rule (2026-10-07) pushes this up \u2014 moves inside a zoom are how the camera keeps moving"
+    "note": "refs band; Jake's constant-motion rule (2026-10-07) pushes this up — moves inside a zoom are how the camera keeps moving"
    },
    "pan_frames_median": {
     "ref": 35,
@@ -420,10 +422,11 @@
     "weight": 2.5,
     "note": "distance from centre beyond what the page edge forces (camera compliance with Jake #1)"
    }
-  }
+  },
+  "fail_round_on_out_of_band": true
  },
  "measured_2026_10_07": {
-  "about": "refs 2\u20135 (sc5 per-frame data, /opt/aieditor-work/reference/work/sc5) re-measured for Jake's review; scripts in the session scratchpad copied to reference/work/sc6/bin",
+  "about": "refs 2–5 (sc5 per-frame data, /opt/aieditor-work/reference/work/sc5) re-measured for Jake's review; scripts in the session scratchpad copied to reference/work/sc6/bin",
   "subject_centre_after_move": {
    "what": "distance of the content centroid (edge-weighted, bubble masked) from the frame centre after zoom-ins/pans, in frame units (hypot of dx/W, dy/H)",
    "edge_centroid_p25_50_75_90": [
@@ -500,7 +503,7 @@
    }
   },
   "aroll_transition": {
-   "what": "screencast <-> full-screen narration (A-roll) boundaries, refs 2\u20135",
+   "what": "screencast <-> full-screen narration (A-roll) boundaries, refs 2–5",
    "hard_cut_share": {
     "out": 0.88,
     "in": 0.94
@@ -541,34 +544,40 @@
      0.06,
      0.14
     ],
-    "order": "the bubble is gone while the screen dissolve is still < ~40 % (out); in: the screen dissolves in first, the bubble fades in over 3\u20135 f during its second half",
+    "order": "the bubble is gone while the screen dissolve is still < ~40 % (out); in: the screen dissolves in first, the bubble fades in over 3–5 f during its second half",
     "examples": [
-     "ref5 0:35.80 bubble 23\u219226 f then screen from f28",
-     "ref3 5:19.55 bubble 24\u219226 then screen from f29",
-     "ref5 9:19.83 bubble 22\u219226 then screen from f29",
+     "ref5 0:35.80 bubble 23→26 f then screen from f28",
+     "ref3 5:19.55 bubble 24→26 then screen from f29",
+     "ref5 9:19.83 bubble 22→26 then screen from f29",
      "ref3 0:47.35 7 f linear screen, bubble gone mid-way"
     ]
    }
   },
   "text_gradient": {
-   "what": "black\u2192transparent full-width gradient behind ref 2's lower titles and 'Link in the description' (kwysV2smgfY f1720\u20131822, f13548\u201313620)",
-   "direction": "bottom \u2192 up",
+   "what": "black→transparent full-width gradient behind ref 2's lower titles and 'Link in the description' (kwysV2smgfY f1720–1822, f13548–13620)",
+   "direction": "bottom → up",
    "opacity_bottom": 0.63,
    "transparent_above_y": 0.15,
-   "profile": "alpha(y) = 0.63 \u00b7 clip((y/H \u2212 0.15)/0.85, 0, 1)^1.23  (rows: y .50 \u2192 .21, y .76 \u2192 .42, y .98 \u2192 .62)",
+   "profile": "alpha(y) = 0.63 · clip((y/H − 0.15)/0.85, 0, 1)^1.23  (rows: y .50 → .21, y .76 → .42, y .98 → .62)",
    "fade_in_frames": 22,
-   "fade_in_curve": "\u2248 linear (norm .08 .16 .25 .34 .44 .55 .65 .76 .84 .92 .96 1 every 2 f)",
+   "fade_in_curve": "≈ linear (norm .08 .16 .25 .34 .44 .55 .65 .76 .84 .92 .96 1 every 2 f)",
    "fade_out_frames": 8,
    "fade_out_curve": "norm 1 .96 .74 .34 .15 .07 0 every 2 f from the text exit",
-   "spans": "starts with the first title (on the cut), stays across back-to-back titles (Hey everyone \u2192 I'm Jake Dawson), fades with the last title's exit"
+   "spans": "starts with the first title (on the cut), stays across back-to-back titles (Hey everyone → I'm Jake Dawson), fades with the last title's exit"
   }
  },
  "transition": {
-  "aroll_bubble_fade_frames": 6,
-  "aroll_screen_dissolve_frames": 10,
+  "aroll_bubble_fade_frames": 4,
+  "aroll_screen_dissolve_frames": 5,
   "aroll_screen_delay_frames": 2,
-  "note": "Jake #5: bubble first, then the screencast. Exit: bubble fades over 6 f from t1\u22124 f, the screencast dissolves into the A-roll over 10 f from t1. Entry: the screencast dissolves in over 10 f from t0, the bubble fades in over 6 f from t0+5 f. (The refs' 3 f is the ring-blue test's reading; that test reads a true 6 f fade as ~3 f.)",
-  "aroll_bubble_lead_frames": 4
+  "note": "Jake #5: bubble first, then the screencast. Exit: bubble fades over 6 f from t1−4 f, the screencast dissolves into the A-roll over 10 f from t1. Entry: the screencast dissolves in over 10 f from t0, the bubble fades in over 6 f from t0+5 f. (The refs' 3 f is the ring-blue test's reading; that test reads a true 6 f fade as ~3 f.)",
+  "aroll_bubble_lead_frames": 4,
+  "note_loop1": "Loop round 1 (review v12 #13): bubble out 4 f ending on the boundary, then a 4 f screen dissolve; entry mirrored. 10 f showed a 50/50 face ghost. TECHNIQUES TR05 order, CUT04/CUT05 ~99 % hard in refs.",
+  "end_fade_frames": 30,
+  "end_fade_note": "TECHNIQUES TR08: the whole composite fades to black over 30 f (ref 2 11:38.1); a screencast running to the end has no bubble-first exit.",
+  "jake_override_of_TR05": "Jake rule 5 (2026-10-07): bubble 4 f then screen 4 f — overrides TR05's ~10 f lead + ~8 f dissolve (ref 5 0:35.8), kept as the house setting by the main-session ruling on review D17.",
+  "end_fade_from": "last word end (TR08 triggers on the last word; review D20)",
+  "note_round2": "Round 2: screen dissolve 5 f (was 4): with 4 f the per-frame blend step measured 0.56 at one boundary (qa max_step ≤ 0.5); 5 f keeps it 'so fast it isn't noticed' (Jake #5)."
  },
  "text_gradient": {
   "opacity_bottom": 0.63,
@@ -584,6 +593,75 @@
    "list",
    "number"
   ],
-  "note": "design-free motion+opacity; colour black. Upper-half overlays get the mirrored (top \u2192 down) gradient."
+  "note": "design-free motion+opacity; colour black. Upper-half overlays get the mirrored (top → down) gradient."
+ },
+ "beats": {
+  "about": "Loop round 1 (2026-10-07): scripted word-timed beats. SYSTEM.md §0b R2/R3.",
+  "move_lead_s": 0.8,
+  "move_lead_ref": "TECHNIQUES 'Timing vs words': moves start ~0.8 s before the named word (ref 3, -0.8..+1.35 s)",
+  "land_by_s": 0.3,
+  "min_move_frames": 18,
+  "explicit_zoom_pan_tol": 1.03,
+  "levels": {
+   "campaign_group": 1.25,
+   "one_design": 1.4,
+   "small_artboard": 1.65,
+   "tall_artboard": 1.3,
+   "brand_card": 1.4,
+   "paragraph": 1.3,
+   "input_field": 1.35,
+   "prompt_box": 1.4,
+   "opened_panel": 1.4,
+   "small_cta": 1.6,
+   "read_line_on_wide_card": 1.65,
+   "signup_form": 1.3,
+   "signin_buttons": 1.45,
+   "design_plus_toolbar": 1.4
+  },
+  "click_press_on_word": true,
+  "read_hold_deferred": true,
+  "canvas_glide_ends_on_word_s": 1.0,
+  "late_beat_cut_s": 0.3,
+  "bubble_hide_from_cursor_travel": true,
+  "bubble_hide_box_share": 0.25,
+  "cut_if_shorter_than": 0.8,
+  "cut_lead_s": 0.1,
+  "micro_move_zoom": 1.05,
+  "micro_move_px": 60,
+  "click_zoom_lands_on_press": true,
+  "center_canvas_in_cut": true,
+  "landing_full_through_dissolve": true,
+  "zm07_push": {
+   "hold_s": [
+    1.0,
+    1.5
+   ],
+   "zoom": 1.3,
+   "frames": [
+    38,
+    48
+   ]
+  },
+  "opening_punch": 1.45,
+  "open_frames": 31,
+  "open_ease": [
+   0.089,
+   0.443,
+   0.126,
+   0.834
+  ],
+  "paste_visible_s": 0.15
+ },
+ "qa_content": {
+  "on_word_inside": 0.9,
+  "on_word_centre_tol": 0.08,
+  "late_max_s": 0.4,
+  "nav_tol_s": 0.15,
+  "forbid_default": [
+   "Blue Bottle"
+  ],
+  "about": "screencast/qa_content.py — named subject / brand / garbled-text checks (review v12 root cause 6)",
+  "canvas_edge_excused": false,
+  "fail_round_on_any": true
  }
 }

@@ -582,7 +582,13 @@
    },
    "frames": [
     "/opt/aieditor-work/reference/techniques/TR05_bubble_first_to_broll__ref5_0m35.55.jpg"
-   ]
+   ],
+   "house_setting": {
+    "bubble_frames": 4,
+    "screen_frames": 4,
+    "lead_frames": 0,
+    "why": "Jake rule 5 'so fast it isn't noticed' overrides the ref numbers (main-session ruling on review round 1 D17, 2026-10-07)"
+   }
   },
   {
    "id": "TR06",

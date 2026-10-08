@@ -81,7 +81,7 @@ contact sheets, plus Whisper word timings of all four refs (`/opt/aieditor-work/
 - **TR02** — Frames: `TR02_dissolve_timeskip__ref3_0m37.10.jpg`, `TR02_dissolve_timeskip__ref3_1m44.50.jpg`
 - **TR03** — Frames: `TR03_dissolve_then_zoomout__ref3_3m35.80.jpg`, `TR03_dissolve_then_zoomout__ref3_5m14.60.jpg`
 - **TR04** — **Jake's rule:** Rule 5 makes the bubble-first fast fade (TR05) the house transition for screencast ↔ narration. · Frames: `TR04_sc_aroll_dissolve__ref3_0m47.10.jpg`
-- **TR05** — **Jake's rule:** Rule 5 (Jake): copy this for EVERY screencast ↔ full-screen narration change, both directions, "so fast it isn't noticed". · Frames: `TR05_bubble_first_to_broll__ref5_0m35.55.jpg`
+- **TR05** — **Jake's rule:** Rule 5 (Jake): copy this for EVERY screencast ↔ full-screen narration change, both directions, "so fast it isn't noticed". · **House setting (main-session ruling 2026-10-07, review round 1 D17):** bubble out 4 f ending on the boundary, then a 4 f screen dissolve (entry mirrored) — Jake's "so fast it isn't noticed" overrides the ~10 f lead + ~8 f dissolve measured here; a 10 f dissolve ghosted the face (v12 #13). · Frames: `TR05_bubble_first_to_broll__ref5_0m35.55.jpg`
 - **TR06** — **Correction:** Plates/typography: titles-lists.md (pink glow plate) applies. · Frames: `TR06_card_crossfade__ref5_0m11.80.jpg`
 - **TR07** — Frames: `TR07_open_zoom_out__ref2_0m00.00.jpg`, `TR07_open_zoom_out__ref3_0m00.00.jpg`
 - **TR08** — Frames: `TR08_fade_to_black__ref2_11m37.50.jpg`, `TR08_fade_to_black__ref5_15m41.50.jpg`

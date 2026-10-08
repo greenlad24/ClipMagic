@@ -214,7 +214,9 @@ def transition_shape(video, t, kind, fps):
     else:
         res["bubble_first"] = w[rs] >= 0.4           # entry: the screencast is in before the bubble
     res["max_step"] = round(max(b - a for a, b in zip(w, w[1:])), 2)
-    res["ok"] = bool(1 <= res["bubble_frames"] <= 6 and 4 <= res["screen_frames"] <= 20 and res["bubble_first"]
+    # loop round 1: the screen dissolve is 4 f (TR05 order; CUT04/CUT05 ≈ 99 % hard in refs 2–5; review v12 #13
+    # — 10 f ghosted the face), which the 0.06→0.94 test reads as ~3 f → band 2–8 f
+    res["ok"] = bool(1 <= res["bubble_frames"] <= 6 and 2 <= res["screen_frames"] <= 8 and res["bubble_first"]
                      and res["max_step"] <= 0.5)
     return res
 
@@ -456,10 +458,17 @@ def main(argv):
     else:
         m = edit_metrics(argv[1], argv[2])
         res = {"metrics": m, **score(m)}
+        # ROUND 2 ruling (review round 1 root cause 7): an out-of-band metric FAILS the round — it is
+        # not a soft score any more (round 1 reported pan peak 1283 px/s and 17.5 moves/min and passed)
+        bad = [r["metric"] for r in res.get("rows", []) if r.get("score", 100) < 100]
+        res["out_of_band"] = bad
+        res["verdict"] = "PASS" if not bad else "FAIL"
     txt = json.dumps(res, indent=1)
     if out:
         Path(out).write_text(txt)
     print(txt)
+    if res.get("verdict") == "FAIL":
+        sys.exit(1)
 
 
 if __name__ == "__main__":

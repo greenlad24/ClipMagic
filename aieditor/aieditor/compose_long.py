@@ -32,8 +32,14 @@ XFADE_REF_FRAMES = 5            # screencast → screencast dissolve (refs 2–5
 # the BUBBLE fades first (3 f), then the screencast dissolves (10 f linear) — and mirrored on entry
 # (the refs' "3 f" was read with the ring-blue test, which drops below its threshold half-way
 # through a fade: through the same test our true 3 f fade read as 1 f, a true 6 f fade reads 3 f)
-AROLL_BUBBLE_F = 6
-AROLL_SCREEN_F = 10
+# LOOP ROUND 1 (2026-10-07, review v12 #13): the 10 f screen dissolve showed a 50/50 ghost of the face
+# through the app and a milky wash on white pages — "noticed". TECHNIQUES.md CUT04/CUT05: the refs cut
+# screencast ↔ A-roll HARD in ≈ 99 % of 262 boundaries; TR05 (bubble-first, ref 5 0:35.8) is Jake's rule 5.
+# → bubble out over 4 f ENDING on t1 (gone before the screen changes), then a 4 f screen dissolve
+# (50 % at 2 f — under the TR01 3–8 f band's low end, so it reads as a soft cut); entry mirrored:
+# the screen in over 4 f, the bubble in over 4 f right after it.
+AROLL_BUBBLE_F = 4
+AROLL_SCREEN_F = 5
 AROLL_BUBBLE_LEAD_F = 4          # exit: the bubble starts fading 4 f before the screencast does
 # black → transparent gradient behind every text overlay (Jake #6; ref 2 f1720–1822, f13548–13620)
 TEXT_GRADIENT = {"opacity": 0.63, "top": 0.15, "power": 1.23, "in_f": 22, "out_f": 8, "merge_gap_s": 1.0,
@@ -60,7 +66,7 @@ def bubble_env_expr(segments):
     terms = []
     for s in segments:
         a, b = s["t0"], s["t1"] + (s.get("tail", 0) if s.get("aroll_out") else 0)
-        f_in = (f"clip((T-{a + _f(AROLL_SCREEN_F - AROLL_BUBBLE_F + 1):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1)"
+        f_in = (f"clip((T-{a + _f(AROLL_SCREEN_F):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1)"
                 if s.get("aroll_in") else "1")
         f_out = (f"(1-clip((T-{s['t1'] - _f(AROLL_BUBBLE_LEAD_F):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1))"
                  if s.get("aroll_out") else "1")
@@ -134,7 +140,7 @@ def _vis_expr(spans, fo, fi):
 
 
 def composite(job, base, segments, events, music, out_name, size, fps, face, cancelled=lambda: False, crf=18,
-              preset="veryfast", bubble_src=None, gfx_tag="gfx-long"):
+              preset="veryfast", bubble_src=None, gfx_tag="gfx-long", end_fade_from=None):
     """base: the cut with the A-roll camera already applied (aroll_camera.py); bubble_src:
     the cut WITHOUT it (the bubble shows the presenter steady). segments carry t0, t1, clip
     and bubble_hide (clip-relative spans from camera.py)."""
@@ -216,7 +222,19 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         chain.append(f"[{n}:v]setpts=PTS-STARTPTS+{ev['start_frame']}/({fps}*TB)[g{m}];"
                      f"[{cur}][g{m}]overlay=eof_action=pass:format=auto[vg{m}]")
         cur = f"vg{m}"
-    chain.append(f"[{cur}]format=yuv420p[vout]")
+    # TECHNIQUES TR08 (every ref ends on a 30 f fade to black — ref 2 11:38.1, ref 5 15:42.3): the A-roll
+    # camera fades the BASE, but a screencast running to the last frame sat on top unfaded and the
+    # bubble was caught mid-fade (review v12 #28) → the fade applies to the whole composite
+    vdur = media.probe(job / base)["duration"]
+    # ROUND 2 (review D20): TR08 triggers on the LAST WORD — the fade starts when it ends (never earlier),
+    # 30 f at most
+    # ROUND 3 (review N16): TR08 = ~30 f near-linear fade + 3 black frames (ref 2 11:37.6–11:38.7). The cut ends
+    # 0.23 s after the last word, so the picture is EXTENDED (last frame held) to fit the whole fade after it
+    f_st = end_fade_from if end_fade_from else vdur - 30 / (30000 / 1001)
+    fd = 30 / (30000 / 1001)
+    out_dur = max(vdur, f_st + fd + 3 / (30000 / 1001))
+    pad = max(0.0, out_dur - vdur + 0.05)
+    chain.append(f"[{cur}]tpad=stop_mode=clone:stop_duration={pad:.3f},fade=t=out:st={f_st:.4f}:d={fd:.4f},format=yuv420p[vout]")
 
     a_ins, a_graph = sfx.filter_for(events, len(ins) + (1 if music else 0))
     # the voice comes from input 1 (the untouched cut), not the camera pass's re-encode
@@ -234,6 +252,8 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         chain.append("[asfx][mus]amix=inputs=2:normalize=0:duration=first[aout]")
     else:
         chain.append(a_graph)
+    chain[-1] = chain[-1].replace("[aout]", "[aout0]")
+    chain.append("[aout0]apad[aout]")                    # silence under the extended end fade
     (job / f"{out_name}.filter.txt").write_text(";".join(chain))
     big = W > 1920
     if big:
@@ -247,7 +267,7 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
            f"-map [vout] -map [aout] -r {fps} -c:v libx264 -preset {preset} -crf {crf} "
            + (f"-filter_complex_threads {ft} -threads {xt} -x264-params rc-lookahead=8:sync-lookahead=0 " if big else "")
            + f"-c:a aac -b:a 192k "
-           f"-movflags +faststart -t {media.probe(job / base)['duration']:.3f} "
+           f"-movflags +faststart -t {out_dur:.3f} "
            f"/job/{out_name}.part.mp4")
     mounts = [(job, "/job"), (fdir, "/fc"), (sfx.LIB, "/sfx")]
     if events:

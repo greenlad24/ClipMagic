@@ -39,15 +39,27 @@ const W = Math.round(CSS_W * SCALE), H = Math.round(CSS_H * SCALE);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 
+// Same browser identity as the Lab's login console (lab/server/src/browser/runtime.ts): a desktop
+// Chrome UA and no automation flag. Cloudflare-protected apps (chatgpt.com, 2026-10-08) challenge the
+// default HeadlessChrome UA, so a session logged in through the console must be replayed with it.
+const UA = process.env.BROWSER_UA ||
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
 const browser = await puppeteer.launch({
   executablePath: "/usr/bin/chromium", headless: true, userDataDir: profileDir || undefined,
   protocolTimeout: 600000,             // software WebGL: a heavy canvas frame can take minutes
-  args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars", "--disable-features=Translate",
+  args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars",
+         "--disable-blink-features=AutomationControlled", `--user-agent=${UA}`, "--disable-features=Translate",
          "--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none", "--lang=en-US",
          "--renderer-process-limit=1", "--disable-site-isolation-trials",
          ...(process.env.AGENT_WEBGL === "1" ? [] : ["--disable-webgl", "--disable-3d-apis"])],
 });
 let page = (await browser.pages())[0] ?? (await browser.newPage());
+await page.setUserAgent(UA).catch(() => {});
+// Dark screencasts (Jake 2026-10-08: "I want the screencast to be on a dark theme ChatGPT"): every
+// page reports prefers-color-scheme: dark, so apps on a "System" theme render dark.
+const DARK = process.env.AGENT_DARK === "1";
+const darken = (pg) => DARK ? pg.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }]).catch(() => {}) : null;
+await darken(page);
 await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
 let cdp = await page.createCDPSession();
 // a link that opens a new tab: follow it in THIS tab (the recording is one tab)
@@ -57,20 +69,29 @@ browser.on("targetcreated", async (tg) => {
 });
 
 let rec = null;            // {ff, frame, events, cursor, dir}
+const NET = [];
 let cx = CSS_W * 0.62, cy = CSS_H * 0.58;
 let obsN = 0;
 const t = () => (rec ? rec.frame / FPS : 0);
 const toCap = (b) => b && [b.x * SCALE, b.y * SCALE, b.width * SCALE, b.height * SCALE].map(Math.round);
 
-async function pause() { await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" }).catch(() => {}); }
-async function realtime() { await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance" }).catch(() => {}); }
+// ⚠️ 2026-10-08 (pre-production, ChatGPT): policy "advance" FAST-FORWARDS the page clock whenever it is idle
+// (Date.now ran ~155 days ahead) — uploads/XHRs then time out at once ("Upload failed"). Virtual time is
+// therefore only switched on by the first recording; until then the page runs on the real clock.
+let vtOn = false;
+async function pause() { vtOn = true; await cdp.send("Emulation.setVirtualTimePolicy", { policy: "pause" }).catch(() => {}); }
+async function realtime() { if (!vtOn) return; await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance" }).catch(() => {}); }
 let crashed = false, lastUrl = null, stepTimer = null;
 function watch(pg) {
+  darken(pg);   // new tabs and recovered pages stay dark too
   // a JS dialog (alert/confirm/beforeunload) freezes every evaluate until it is closed:
   // a double-click on Linearity's canvas left the recorder waiting 15 min (2026-10-06)
   pg.on("dialog", async (d) => { try { await d.dismiss(); } catch {} });
   pg.on("error", (e) => { crashed = true; process.stderr.write(`PAGE ERROR EVENT: ${e?.message}\n`); });   // the renderer died
   pg.on("framenavigated", (f) => { if (f === pg.mainFrame()) lastUrl = f.url(); });
+  // pre-production diagnostics: failed requests / HTTP errors (ring buffer, {"cmd":"net"})
+  pg.on("requestfailed", (r) => { NET.push({ t: Date.now(), m: r.method(), url: r.url().slice(0, 200), err: r.failure()?.errorText }); if (NET.length > 80) NET.shift(); });
+  pg.on("response", (r) => { if (r.status() >= 400) { NET.push({ t: Date.now(), m: r.request().method(), url: r.url().slice(0, 200), status: r.status() }); if (NET.length > 80) NET.shift(); } });
 }
 watch(page);
 async function recover() {
@@ -99,6 +120,7 @@ async function step(silent = false) {
     new Promise(async (resolve) => {
       const done = () => { cdp.off("Emulation.virtualTimeBudgetExpired", done); resolve(true); };
       cdp.on("Emulation.virtualTimeBudgetExpired", done);
+      vtOn = true;
       await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: DT })
         .catch((e) => { process.stderr.write(`VT REJECT: ${e?.message}\n`); resolve(false); });
     }),
@@ -251,8 +273,15 @@ async function measureDesigns0() {
     for (let y = Math.floor(j * ch); y < Math.floor((j + 1) * ch); y++) for (let x = Math.floor(i * cw); x < Math.floor((i + 1) * cw); x++) hist[g[y * w + x] >> 2]++;
   const bg = hist.indexOf(Math.max(...hist)) * 4 + 2;
   const content = new Uint8Array(FIT_GX * FIT_GY);
+  // a cell next to app UI floating over the canvas (the prompt pill's soft shadow/halo, a toolbar's
+  // drop shadow) is NOT a design: the halo joined the designs into one group touching the bottom
+  // edge and fit_designs oscillated reveal up/down and gave up (loop round 1, 2026-10-07) → cells
+  // within 2 of a non-canvas cell never count as content
+  const nearUI = (i, j) => { for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++) { const ni = i + di, nj = j + dj;
+    if (ni >= 0 && nj >= 0 && ni < FIT_GX && nj < FIT_GY && !cells[nj * FIT_GX + ni]) return true; } return false; };
   for (let j = 0; j < FIT_GY; j++) for (let i = 0; i < FIT_GX; i++) {
     if (!cells[j * FIT_GX + i]) continue;
+    if (nearUI(i, j)) continue;
     let n = 0, k = 0;
     for (let y = Math.floor(j * ch); y < Math.floor((j + 1) * ch); y++) for (let x = Math.floor(i * cw); x < Math.floor((i + 1) * cw); x++) { k++; if (Math.abs(g[y * w + x] - bg) > 14) n++; }
     content[j * FIT_GX + i] = n / Math.max(1, k) >= 0.15 ? 1 : 0;
@@ -340,9 +369,14 @@ async function fitDesigns(target = 0.78) {
   //    designs join up (at 10 % the far-off Story merged into the group and the fit came out
   //    small, 2026-10-06): a group cut by ONE edge (the header over the top row) is PANNED into
   //    view at the same scale; only a group cut on opposite sides zooms out.
+  const revealed = [];
   for (let k = 0; k < 4 && clippedAny(m); k++) {
     const c = m.clipped;
-    if ((c.l && c.r) || (c.t && c.b)) {
+    // a reveal that undoes the previous one (top then bottom) = the group is taller/wider than the
+    // area at this scale: zoom out instead of oscillating
+    const flip = revealed.length && ((revealed.at(-1) === "t" && c.b) || (revealed.at(-1) === "b" && c.t) || (revealed.at(-1) === "l" && c.r) || (revealed.at(-1) === "r" && c.l));
+    revealed.push(c.t ? "t" : c.b ? "b" : c.l ? "l" : "r");
+    if ((c.l && c.r) || (c.t && c.b) || flip) {
       await wheelZoom(...centre(m.U), -0.8, units);
       steps.push("out");
     } else {
@@ -422,14 +456,17 @@ async function wheelZoom(x, y, log2z, unitsPer2x) {
   await page.keyboard.up("Control");
   await sleep(900);
 }
+// round 3 (review N10): page-clock ticks that record NO frame — a re-pan inside a cut used recorded 0.1 s holds,
+// so the cut landed mis-framed for 3 frames and jumped again when the correction glide finished
+async function tick(n) { for (let j = 0; j < n; j++) await step(true); }
 async function holdUntil(sec) { while (rec && t() < sec - 1e-6) await step(); }
 async function hold(s) { const n = Math.round(s * FPS); for (let i = 0; i < n; i++) await step(); }
 // the clip second of the WORD the agent tied this action to: the camera starts its zoom on it
 // (Jake #11 — "zoom to the login button only when he says it")
-let curAt = null;
+let curAt = null, curMeta = {};
 function log(type, extra = {}) {
   const e = { t: t(), type, ...extra };
-  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type"].includes(type)) e.at = curAt;
+  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
   if (rec) rec.events.push(e);
   return e;
 }
@@ -449,14 +486,22 @@ async function load(url, settle = 2.5) {
       prev = cur;
     }
   } catch {}
-  await autoFit("load");
+  let fr = await autoFit("load");
+  // a heavy editor draws its canvas only seconds after the page is "stable" (loop round 1: the
+  // campaign document came back "no design canvas" once; v12 0:17 / 1:19 showed the whole canvas at
+  // 17 % for the same reason) — a document address gets up to 4 more tries, still off camera
+  for (let k = 0; k < 4 && !fr && /\/(file|design|doc|edit)\//.test(page.url()) && lastFit && /no design canvas|never showed/.test(lastFit.error || ""); k++) {
+    await sleep(3000);
+    fr = await autoFit("load-retry");
+  }
   if (rec) await pause();         // off camera the page keeps real time (a WebGL editor needs it to load)
 }
 
 async function moveTo(x, y) {
   const d = Math.hypot(x - cx, y - cy);
   if (d < 1) return;
-  const dur = Math.min(1100, 280 + 160 * Math.log2(1 + d / 40)) / 1000;
+  // round 2: a beat in a fast chain may ask for a quicker travel ("travel_ms") so its press stays on the word
+  const dur = (travelMs ?? Math.min(1100, 280 + 160 * Math.log2(1 + d / 40))) / 1000;
   const n = Math.max(4, Math.round(dur * FPS));
   const nx = -(y - cy) / d, ny = (x - cx) / d, bow = Math.min(60, d * 0.12) * (obsN % 2 ? -1 : 1);
   const x0 = cx, y0 = cy, p1 = [x0 + (x - x0) * 0.3 + nx * bow, y0 + (y - y0) * 0.3 + ny * bow],
@@ -502,7 +547,10 @@ async function observe() {
     new Promise((_, rej) => { timer = setTimeout(() => { crashed = true; rej(new Error("screenshot timed out — the page was reopened; observe again")); }, 180000); }),
   ]).finally(() => clearTimeout(timer));
   fs.writeFileSync(shot, Buffer.from(s.data, "base64"));
-  return { t: t(), ...info, shot, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)] };
+  // mean luminance 0-255 of the screen (pre-production readiness: dark theme check)
+  let lum = null;
+  try { const g = await tiny(); let sum = 0; for (const v of g) sum += v; lum = Math.round(sum / g.length * 10) / 10; } catch {}
+  return { t: t(), ...info, shot, lum, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)] };
 }
 
 async function boxOf(ref, tight = false) {
@@ -527,10 +575,13 @@ async function boxOf(ref, tight = false) {
 // Jake #1 (subject centre-middle): a design he names on a FITTED canvas is glided to the middle
 // of the canvas area by a visible wheel pan (~0.9 s, eased) — the camera then frames it centred
 // instead of clamping at the canvas edge. Returns the target's box after the pan.
-async function centreOnCanvas(b) {
+let lastMoved = null, travelMs = null;
+async function centreOnCanvas(b, late = false, force = false) {
   if (!b || !fitArea || !panGain || page.url() !== fittedUrl || !["region", "point"].includes(b.tag)) return b;
-  if (b.width > fitArea.w * 0.9 || b.height > fitArea.h * 0.9) return b;
-  const mx = fitArea.x + fitArea.w / 2, my = fitArea.y + fitArea.h / 2;
+  if (!force && (b.width > fitArea.w * 0.9 || b.height > fitArea.h * 0.9)) return b;
+  // force (a centre cut): the middle of the CAPTURE — the frame centre the camera lands on — not the
+  // canvas area's middle (header / tool rail made it 0.05–0.08 off, round 2 QA)
+  const mx = force ? CSS_W / 2 : fitArea.x + fitArea.w / 2, my = force ? CSS_H / 2 : fitArea.y + fitArea.h / 2;
   const off = [b.x + b.width / 2 - mx, b.y + b.height / 2 - my];
   if (Math.abs(off[0]) < 0.06 * CSS_W && Math.abs(off[1]) < 0.06 * CSS_H) return b;
   const e = log("pan", { by: off.map((v) => Math.round(v * SCALE)) });
@@ -545,13 +596,16 @@ async function centreOnCanvas(b) {
       const u = i / n, ez = u < 0.5 ? 4 * u ** 3 : 1 - (-2 * u + 2) ** 3 / 2, d = ez - prev;
       prev = ez;
       await page.mouse.wheel({ deltaX: gx * dx * d, deltaY: gy * dy * d }).catch(() => {});
-      if (rec) await step(); else await sleep(30);
+      if (rec) await step(late); else await sleep(30);
     }
   };
   let gx = panGain, gy = panGain, moved = [0, 0];
+  // a beat that can no longer land on its word with a visible glide CUTS to it (review v12 #2:
+  // "if a beat cannot land within ~0.3 s of its word, cut to it"; TECHNIQUES CUT06 lands framed)
+  if (late) { e.late = true; log("cut", { why: "late beat", big: true }); }
   let before = await grey10();
   await glide(off[0], off[1], 0.9, gx, gy);
-  if (rec) await hold(0.1); else await sleep(300);
+  if (rec) await (late ? tick(3) : hold(0.1)); else await sleep(300);
   let after = await grey10();
   let sh = before && after ? bestShift(before, after, [-off[0] / 10, -off[1] / 10]) : null;
   if (sh) {
@@ -562,16 +616,18 @@ async function centreOnCanvas(b) {
       if (Math.abs(moved[1]) > 8) gy = Math.max(-4, Math.min(4, gy * -off[1] / moved[1]));
       before = after;
       await glide(left[0], left[1], 0.6, gx, gy);
-      if (rec) await hold(0.1); else await sleep(300);
+      if (rec) await (late ? tick(3) : hold(0.1)); else await sleep(300);
       after = await grey10();
       const sh2 = before && after ? bestShift(before, after, [-left[0] / 10, -left[1] / 10]) : null;
       if (sh2) moved = [moved[0] + sh2[0] * 10, moved[1] + sh2[1] * 10];
     }
   } else moved = [-off[0], -off[1]];
-  if (rec) await hold(0.1); else await sleep(200);
+  if (rec) await (late ? tick(3) : hold(0.1)); else await sleep(200);
   await page.mouse.move(cx, cy).catch(() => {});
   e.end = t();
   e.moved = moved.map((v) => Math.round(v * SCALE));
+  lastMoved = moved;
+  if (late && fitArea) await page.mouse.move(fitArea.x + 6, fitArea.y + fitArea.h - 6).catch(() => {});   // no hover ring on a design
   return { ...b, x: b.x + moved[0], y: b.y + moved[1], at: b.at ? [b.at[0] + moved[0], b.at[1] + moved[1]] : b.at };
 }
 async function grey10() {
@@ -602,12 +658,52 @@ function bestShift(A, B, expect = [0, 0]) {
   return best;
 }
 
-const LEAD = { click: 0.75, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3 };
+// QA (loop round 1, review v12 root cause 6: "QA scores geometry, never whether the thing he names is
+// on screen"): every acted-on beat records what the viewer can READ there — the page title + url and
+// the DOM text inside the framed box — so qa_content.py can check brand / named subject / garbled text
+async function seen(b) {
+  try {
+    const r = b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null;
+    const txt = await page.evaluate((r) => {
+      const out = [];
+      for (const el of document.querySelectorAll("body *")) {
+        if (el.children.length && !["P", "H1", "H2", "H3", "BUTTON", "A", "LABEL", "LI", "SPAN"].includes(el.tagName)) continue;
+        const q = el.getBoundingClientRect();
+        if (q.width < 2 || q.height < 2 || q.bottom < 0 || q.top > innerHeight) continue;
+        const cx = q.x + q.width / 2, cy = q.y + q.height / 2;
+        if (r && (cx < r.x || cx > r.x + r.w || cy < r.y || cy > r.y + r.h)) continue;
+        const t = (el.innerText || el.value || el.getAttribute("aria-label") || el.alt || "").trim().replace(/\s+/g, " ");
+        if (t && !out.includes(t)) out.push(t.slice(0, 80));
+        if (out.length > 40) break;
+      }
+      return out.join(" | ").slice(0, 600);
+    }, r);
+    return { title: await page.title(), url: page.url(), vis: txt };
+  } catch { return {}; }
+}
+// round 2 (review D18): a long cursor travel (up to 1.1 s + 0.12 s settle) made presses 0.35 s late with a
+// 0.75 s lead — the press itself still waits for its word (holdUntil(at) before mouse.click)
+const LEAD = { click: 1.25, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3 };
+// LOOP ROUND 1 (review v12 #2/#5/#16/#27: beats 1–3 s late, some dropped): a READ used to hold its
+// whole "ms" before returning, so every later beat started after it — chained lateness. A read now
+// returns at once and its hold is DEFERRED: the next action with an "at" simply waits for its own
+// word (cutting the read short), one without "at" first finishes the read's hold.
+let openRead = null;
 async function act(a) {
+  if (openRead) {
+    if (a.at == null && rec) await holdUntil(openRead.until);
+    openRead.e.end = Math.max(openRead.e.t + 0.1, Math.min(t(), openRead.until, a.at != null ? Math.max(t(), a.at - 0.05) : 1e9));
+    if (a.at != null && rec && a.at - 0.05 > t()) openRead.e.end = Math.min(openRead.until, a.at - 0.05);
+    openRead = null;
+  }
+  // beat metadata the camera reads (a scripted beat list): explicit zoom, the sentence start the
+  // move may not begin before ("from"), "beat" = a word-timed beat that must not be dropped
+  curMeta = {};
+  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames"]) if (a[k] != null) curMeta[k] = a[k];
   // a page scroll ENDS on its word (0.4 s per ~200 px chunk): the thing he names is on screen as
   // he names it — v10 pricing: a scroll that STARTED on "free" showed the Free card 1.6 s late
   const scrollLead = a.type === "scroll" && !a.zoom ? 0.4 * Math.max(1, Math.round(Math.abs(a.by || 0) / 200)) : 0;
-  const startAt = a.at != null ? a.at - (LEAD[a.type] ?? scrollLead) : null;
+  const startAt = a.at != null ? a.at - (a.travel_ms != null && LEAD[a.type] != null ? a.travel_ms / 1000 + 0.12 : (LEAD[a.type] ?? scrollLead)) : null;
   // non-pointer actions wait here; pointer actions wait after their target is found (an off-screen
   // target is scrolled to first, and that scroll must END by the word, not start on it)
   const pointer = ["click", "dblclick", "hover", "move", "read", "highlight"].includes(a.type) && a.ref;
@@ -661,6 +757,17 @@ async function act(a) {
       const r = el.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(), text: (el.innerText || "").trim().slice(0, 80), href: null, blank: false };
     }, label).catch(() => null);
+    // pre-production / set dressing: a CSS selector (an icon button without text, e.g. "Remove <file>")
+    // ("nth": the n-th match in DOCUMENT order, scrolled into view first — e.g. the 1st generated image of a chat)
+    if (!b && a.selector) {
+      const els = await page.$$(a.selector).catch(() => []);
+      const el = els[a.nth || 0];
+      if (el) {
+        if (a.nth != null) { await el.evaluate((e) => e.scrollIntoView({ block: "center" })).catch(() => {}); await sleep(400); }
+        b = await el.evaluate((e) => { const r = e.getBoundingClientRect();
+          return { x: r.x, y: r.y, width: r.width, height: r.height, tag: e.tagName.toLowerCase(), text: "", href: null, blank: false }; }).catch(() => null);
+      }
+    }
     // coordinates come in SCREENSHOT pixels (the agent sees a 1280×720 shot of the 1920×1080 page)
     const raw = a.to || a.xy || (a.x != null && a.y != null ? [a.x, a.y] : null);
     const xy = raw ? [raw[0] * SHOT_F, raw[1] * SHOT_F] : null;
@@ -671,12 +778,47 @@ async function act(a) {
     if (!b && xy) b = { x: xy[0] - 1, y: xy[1] - 1, width: 2, height: 2, tag: "point", text: "", href: null, blank: false };
   }
   curAt = a.at != null ? +a.at : null;
+  // "frame" (screenshot px): what the CAMERA frames for this action when it is not the element itself
+  // (the button + the menu it opens, the post + its toolbar) — the cursor still acts on the element
+  let fb = Array.isArray(a.frame) && a.frame.length === 4 ? { x: a.frame[0] * SHOT_F, y: a.frame[1] * SHOT_F, width: a.frame[2] * SHOT_F, height: a.frame[3] * SHOT_F } : null;
+  lastMoved = null;
+  travelMs = a.travel_ms ?? null;
+  if (rec && Array.isArray(a.pre_keys) && a.pre_keys.length) {
+    // round 3 (review N10): menus/edit modes are closed INSIDE the cut of this beat (silent keys, no frames) —
+    // a recorded Escape showed the parent Resize menu for 2 f and bare canvas for 4 f before the cut
+    const clicky0 = a.type === "click" || a.type === "dblclick";
+    // (with a quick travel the keys go just before IT — a LEAD-based time closed the font list / picker the
+    // moment they opened, round 3 frames 88.4 / 89.2)
+    const lead0 = clicky0 ? (a.travel_ms != null ? a.travel_ms / 1000 + 0.15 : (LEAD[a.type] ?? 0) + 0.2) : 0.1;
+    if (a.at != null) await holdUntil(Math.max(t(), a.at - lead0));
+    for (const k of a.pre_keys) { await pressCombo(k); await tick(4); }
+    if (Array.isArray(a.pre_poke)) {
+      // round 3 (review N03e): a silent click on blank canvas deselects (Escape alone leaves the headline
+      // selected, so the logo click never selected the logo) — the real pointer only, the drawn cursor stays
+      await page.mouse.click(a.pre_poke[0] * SHOT_F, a.pre_poke[1] * SHOT_F).catch(() => {}); await tick(6);
+      await page.mouse.move(cx, cy).catch(() => {});
+    }
+    if (!a.center) log("cut", { why: "keys", big: !!a.pre_keys_big });
+  }
+  if (rec && a.center === "cut" && b) {
+    // ROUND 2 (review round 1 D1/D3/D4): a canvas target is brought to the MIDDLE of the capture by a
+    // canvas pan done INSIDE a cut (silent frames) — the camera then lands framed and centred on it
+    // (TECHNIQUES CUT06 "cut that lands already framed"; CUT03 cut chain for items 0.7–1.5 s apart).
+    // The artboards sat at the capture's left edge, so every ×1.4 framing clamped at x ≈ 27 %.
+    const clicky = a.type === "click" || a.type === "dblclick";
+    if (a.at != null) await holdUntil(Math.max(t(), a.at - (clicky ? (a.travel_ms != null ? a.travel_ms / 1000 + 0.15 : (LEAD[a.type] ?? 0) + 0.15) : 0.05)));
+    const b0 = b;
+    b = await centreOnCanvas(b, true, true);
+    if (fb && lastMoved) fb = { ...fb, x: fb.x + lastMoved[0], y: fb.y + lastMoved[1] };
+    if (b === b0) lastMoved = null;
+  }
   if (rec && ["read", "highlight", "hover", "move", "click", "dblclick"].includes(a.type)) {
     // the glide happens ON the word (the pan, then the read holds the centred design); for a click
     // it comes just before, so the click itself still lands on its word (Jake: 1:23 = the action centred)
     const clicky = a.type === "click" || a.type === "dblclick";
-    if (a.at != null) await holdUntil(Math.max(t(), clicky ? a.at - 0.95 - (LEAD[a.type] ?? 0) : a.at));
-    b = await centreOnCanvas(b);
+    // the glide (~1 s) now ENDS on the word for a read too (it started ON the word: +1 s late, v12 #2)
+    if (a.at != null && a.glide !== false) await holdUntil(Math.max(t(), clicky ? a.at - 0.95 - (LEAD[a.type] ?? 0) : a.at - 1.0));
+    if (a.glide !== false && a.center !== "cut") b = await centreOnCanvas(b, a.at != null && rec && t() > a.at + 0.3 - (clicky ? 0.95 + (LEAD[a.type] ?? 0) : 1.0));
   }
   if (pointer && startAt != null && rec) await holdUntil(Math.max(t(), startAt));
   if (need && !b) return { ok: false, error: `no element for ${JSON.stringify({ ref: a.ref, text: a.text, target: a.target })} — observe again and use a ref from the list` };
@@ -686,28 +828,56 @@ async function act(a) {
     return { ok: true, t: t(), note: "ignored: the recorder already framed this canvas (designs fill the screen) — do not zoom the canvas" };
   switch (a.type) {
     case "fit_designs": case "fit": { const r = await fitDesigns(a.fill ?? 0.78); if (rec) log("cut", { why: "fit designs", big: true }); return { ...r, t: t() }; }
-    case "move": case "hover": { const e = log(a.type, { box: toCap(b), text: b.text }); await moveTo(...c); e.end = t(); break; }
+    case "move": case "hover": { const e = log(a.type, { box: toCap(fb || b), abox: toCap(b), text: b.text }); Object.assign(e, await seen(fb || b)); await moveTo(...c); e.end = t(); break; }
     case "click": case "dblclick": {
-      const e = log("click", { box: toCap(b), text: b.text });
+      const e = log("click", { box: toCap(fb || b), abox: toCap(b), text: b.text });
+      Object.assign(e, await seen(fb || b));
       await moveTo(...c);
       if (rec) await hold(0.12);
+      // the PRESS lands on its word (Jake #11 "the click lands on 'click'"): LEAD is only the cursor's
+      // travel budget — with the cursor already there (dblclick after a click) it pressed 0.64 s early
+      // (loop round 1, seg 0 30.26 for "designed" at 30.90)
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
       let pre = null;
       try { if (rec) pre = await tiny(); } catch {}
       await page.mouse.click(cx, cy, { clickCount: a.type === "dblclick" ? 2 : 1 }).catch(() => {});
       e.press = t();
+      if (rec && a.then_type) {
+        // round 3 (review N15): the brand menu opens ALREADY FILTERED — its search is typed on silent ticks
+        // inside the opening (no frames), so the Scout's test brand never shows
+        for (const ch of a.then_type) { await page.keyboard.type(ch); await step(true); }
+        await tick(4);
+      }
       // let the page react on the frozen clock: a handful of frames
-      if (b.href && b.blank) { log("nav", { url: b.href }); await load(b.href, a.settle ?? 2.5); }
+      if (a.goto) {
+        // the click's destination is forced (loop round 1, seg 5): Linearity's sidebar "Brands" always
+        // opens the NEWEST brand (the Blue Bottle test brand), never the account owner's — the page the
+        // narration names ("your brand name") is loaded inside the cut instead (CUT02: cut on click)
+        lastNavT = t(); log("nav", { url: a.goto, cut: true, why: "click" }); await load(a.goto, a.settle ?? 2.5);
+      } else if (b.href && b.blank) { log("nav", { url: b.href, cut: true, why: "click" }); await load(b.href, a.settle ?? 2.5); }   // a click = CUT02 hard cut, not a dissolve
       else if (rec && a.cut !== false) await settleCut("click", pre);
-      if (rec) await hold(0.3); else await sleep(300);
+      if (rec) await hold(a.after ?? 0.3); else await sleep(300);
       e.end = t();
       break;
     }
     case "type": {
       if (b) { await moveTo(...c); await page.mouse.click(cx, cy).catch(() => {}); }
+      // pre-production / set dressing: focus a field by CSS selector (a rich-text composer has no ref/text)
+      else if (a.selector) {
+        const el = await page.$(a.selector).catch(() => null);
+        if (!el) return { ok: false, error: `no element for selector ${a.selector}` };
+        await el.click().catch(() => {}); await el.focus().catch(() => {});
+      }
       const popups = () => page.evaluate(() => [...document.querySelectorAll('[role=listbox],[role=option],[class*="suggest" i],[class*="autocomplete" i]')]
         .filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 40 && r.height > 12 && st.visibility !== "hidden" && st.display !== "none" && +st.opacity > 0.2; }).length).catch(() => 0);
       const nPop = await popups();
-      const e = log("type", { box: toCap(b), text: a.text, paste: !!a.paste });
+      if (a.clear) {
+        // review v12 #18: Linearity keeps a draft in its prompt box — retries piled up into a garbled
+        // prompt. Select-all + delete first, acknowledged by SILENT ticks (no frames, nothing shown)
+        await pressCombo("Control+a"); if (rec) await step(true);
+        await page.keyboard.press("Backspace"); if (rec) { for (let j = 0; j < 3; j++) await step(true); }
+      }
+      const e = log("type", { box: toCap(fb || b), abox: toCap(b), text: a.text, paste: !!a.paste });
       if (a.paste) {
         // Jake #8: an address / a name goes in WHOLE, at once (a paste), never letter by letter
         // set the focused field's value in one go (React-safe native setter + input event). Key
@@ -716,7 +886,7 @@ async function act(a) {
         // real key events (the JS value setter did not render in Linearity's field, v12c 1:02), each
         // acknowledged by a SILENT clock tick: the page sees typing, the recording sees it all at once
         for (const ch of a.text) { await page.keyboard.type(ch); if (rec) await step(true); }
-        if (rec) { for (let j = 0; j < 3; j++) await step(true); await hold(0.4); }
+        if (rec) { for (let j = 0; j < 3; j++) await step(true); await hold(a.after ?? 0.4); }   // "after": how long the pasted state shows
       } else {
         const perChar = FPS / (a.cps ?? 16);
         let acc = 0;
@@ -727,6 +897,9 @@ async function act(a) {
         }
       }
       e.end = t();
+      // what the field holds now (QA: a stale draft + the new text = a garbled prompt, review v12 #18)
+      e.value = await page.evaluate(() => { const x = document.activeElement; return x ? (x.value ?? x.innerText ?? "") : ""; }).catch(() => null);
+      Object.assign(e, await seen(b));
       // Jake #8 clean screens: an autocomplete / search-suggestion list that opened under the
       // field is closed (Escape) unless the next step submits with Enter
       if (!a.enter && a.dismiss !== false) {
@@ -748,6 +921,9 @@ async function act(a) {
         const n = Math.max(1, Math.round(Math.abs(a.by || 0) / 200));
         // input needs frames to be acknowledged: tick the page clock WITHOUT recording frames
         for (let k = 0; k < n; k++) { await page.mouse.wheel({ deltaY: (a.by || 0) / n }).catch(() => {}); for (let j = 0; j < 6; j++) await step(true); }
+        // round 2: the page SMOOTH-scrolls over the next ~0.5 s — let it finish inside the cut, or an
+        // observe right after reads the old positions (the Free card / kit boxes framed 150 px off)
+        for (let j = 0; j < 24; j++) await step(true);
         return { ok: true, t: t(), note: "scrolled inside the cut (right after the goto) — nothing of it is shown" };
       }
       if (a.zoom) {
@@ -774,9 +950,11 @@ async function act(a) {
     case "read": case "highlight": {
       const markable = a.type === "highlight" && !["input", "textarea", "select", "img", "video", "canvas"].includes(b.tag) && b.text;
       const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text, ...(a.deep ? { deep: true } : {}) });
-      // a beat is a calm screen (SYSTEM.md §2): never shorter than ~1.8 s
-      if (rec) await hold(Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000);
-      e.end = t();
+      Object.assign(e, await seen(b));
+      // a beat is a calm screen (SYSTEM.md §2): never shorter than ~1.8 s — but DEFERRED (see openRead)
+      const ms = Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000;
+      if (rec && a.at != null) { e.end = t() + ms; openRead = { e, until: t() + ms }; }
+      else { if (rec) await hold(ms); e.end = t(); }
       break;
     }
     case "wait_for": {
@@ -800,11 +978,38 @@ async function act(a) {
       if (!found) return { ok: false, t: t(), error: `"${a.text}" did not ${a.gone ? "go away" : "appear"} in ${a.timeout ?? 180} s` };
       break;
     }
+    case "drag": {
+      // set-up only (off camera): drag from → to (SCREENSHOT px), e.g. move an artboard by its title
+      const f = a.from.map((v) => v * SHOT_F), g = a.to.map((v) => v * SHOT_F);
+      await moveTo(...f); await page.mouse.down();
+      for (let i = 1; i <= 12; i++) { await page.mouse.move(f[0] + (g[0] - f[0]) * i / 12, f[1] + (g[1] - f[1]) * i / 12); if (rec) await step(); else await sleep(60); }
+      cx = g[0]; cy = g[1]; await page.mouse.up(); log("drag", { from: a.from, to: a.to });
+      if (rec) await hold(0.3); else await sleep(500);
+      break;
+    }
+    case "upload": {
+      // pre-production / set dressing (off camera): put files (paths under /w) into the page's file
+      // input — the composer's attach input on ChatGPT. "accept" picks the input whose accept list
+      // contains it (default image); the first visible-or-hidden match is used.
+      const files = (a.files || []).filter((f) => fs.existsSync(f));
+      if (!files.length) return { ok: false, error: `no such files: ${JSON.stringify(a.files)}` };
+      const inputs = await page.$$("input[type=file]");
+      let inp = null;
+      for (const h of inputs) {
+        const acc = await h.evaluate((e) => (e.accept || "") + "|" + (e.multiple ? "m" : "")).catch(() => "");
+        if (!a.accept || acc.includes(a.accept)) { inp = h; if (acc.includes("image") || acc.startsWith("|")) break; }
+      }
+      if (!inp) return { ok: false, error: `no file input on the page (${inputs.length} inputs)` };
+      await inp.uploadFile(...files);
+      log("upload", { files: files.map((f) => path.basename(f)) });
+      if (rec) await hold(a.s ?? 1); else await sleep((a.s ?? 2) * 1000);
+      break;
+    }
     case "hold": if (rec) await hold(a.s ?? 1); else await sleep(Math.min(a.s ?? 1, 30) * 1000); break;
-    case "goto": lastNavT = t(); log("nav", { url: a.url, ...(a.fade ? { fade: true } : {}), ...(a.cut ? { cut: true } : {}) }); lastFit = null; await load(a.url, a.settle ?? 2.5); if (lastFit) return { ok: true, t: t(), fit: lastFit }; break;
+    case "goto": { lastNavT = t(); const e = log("nav", { url: a.url, ...(a.fade ? { fade: true } : {}), ...(a.cut ? { cut: true } : {}) }); lastFit = null; await load(a.url, a.settle ?? 2.5); Object.assign(e, await seen(null)); } if (lastFit) return { ok: true, t: t(), fit: lastFit }; break;
     default: return { ok: false, error: `unknown action ${a.type}` };
   }
-  return { ok: true, t: t() };
+  return { ok: true, t: t(), ...(lastMoved ? { moved: lastMoved.map((v) => +(v / SHOT_F).toFixed(1)) } : {}) };
 }
 
 async function pressCombo(k) {
@@ -829,6 +1034,7 @@ async function startSegment(dir) {
 }
 async function endSegment(until) {
   if (!rec) return;
+  if (openRead) { openRead.e.end = Math.min(openRead.until, until ?? openRead.until); openRead = null; }
   if (until) await holdUntil(until);
   const r = rec;
   rec.ff.stdin.end();
@@ -849,6 +1055,74 @@ for await (const line of rl) {
     if (m.cmd === "open") { lastFit = null; await load(m.url, m.settle ?? 2.5); out({ ok: true, url: page.url(), fit: lastFit }); }
     else if (m.cmd === "segment") { await startSegment(m.out); out({ ok: true }); }
     else if (m.cmd === "observe") out({ ok: true, ...(await observe()) });
+    else if (m.cmd === "shot") { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 80, clip: await vclip(1 / SHOT_F) }); const f = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); out({ ok: true, shot: f }); }
+    else if (m.cmd === "count") { const n = await page.$$eval(m.selector, (els) => els.length).catch(() => -1); out({ ok: n >= 0, n }); }
+    else if (m.cmd === "net") { out({ ok: true, net: NET.slice(-(m.n || 40)) }); }
+    else if (m.cmd === "text") {
+      // pre-production readiness: the page's visible text (+ url/title, h1s, the composer's draft)
+      const r = await page.evaluate(() => ({ url: location.href, title: document.title,
+        h1: [...document.querySelectorAll("h1")].map((e) => e.innerText.trim()).filter(Boolean),
+        draft: (document.querySelector("[contenteditable=true]")?.innerText || "").trim(),
+        text: document.body.innerText.slice(0, 20000) })).catch((e) => ({ error: String(e) }));
+      out({ ok: !r.error, ...r });
+    }
+    else if (m.cmd === "find") {
+      // pre-production readiness: where each label lives — visible elements whose own text / aria-label /
+      // title contains it (case-insensitive), innermost first, with a selector hint and state attributes
+      const r = await page.evaluate((texts, exact) => {
+        const vis = (e) => { const b = e.getBoundingClientRect(); const s = getComputedStyle(e);
+          return b.width > 2 && b.height > 2 && b.bottom > 0 && b.top < innerHeight && b.right > 0 && b.left < innerWidth && s.visibility !== "hidden" && s.display !== "none"; };
+        const lab = (e) => (e.getAttribute("aria-label") || e.innerText || e.getAttribute("title") || e.getAttribute("placeholder") || e.getAttribute("data-placeholder") || "").trim().replace(/\s+/g, " ");
+        const hint = (e) => { const tid = e.getAttribute("data-testid"); const al = e.getAttribute("aria-label");
+          return tid ? `[data-testid="${tid}"]` : al ? `${e.tagName.toLowerCase()}[aria-label="${al}"]` : `${e.tagName.toLowerCase()}${e.getAttribute("role") ? `[role="${e.getAttribute("role")}"]` : ""}:has-text("${lab(e).slice(0, 40)}")`; };
+        const res = {};
+        for (const t of texts) {
+          const want = t.toLowerCase();
+          const hits = [...document.querySelectorAll("body *")].filter((e) => { const l = lab(e).toLowerCase(); return vis(e) && (exact ? l === want : l.includes(want)); });
+          // innermost first; then labels that START with the text, then the smallest box
+          const area = (e) => { const b = e.getBoundingClientRect(); return b.width * b.height; };
+          const inner = hits.filter((e) => !hits.some((o) => o !== e && e.contains(o)))
+            .sort((a, b) => (lab(a).toLowerCase().startsWith(want) ? 0 : 1) - (lab(b).toLowerCase().startsWith(want) ? 0 : 1) || area(a) - area(b));
+          res[t] = inner.slice(0, 4).map((e) => { const b = e.getBoundingClientRect();
+            const cl = e.closest("button,a,[role=button],[role=menuitem],[role=option],[role=tab],[role=radio]") || e;
+            return { tag: e.tagName.toLowerCase(), text: lab(e).slice(0, 80), selector: hint(cl), box: [b.x, b.y, b.width, b.height].map(Math.round),
+              state: { pressed: cl.getAttribute("aria-pressed"), selected: cl.getAttribute("aria-selected"), checked: cl.getAttribute("aria-checked"),
+                       dataState: cl.getAttribute("data-state"), disabled: cl.hasAttribute("disabled") || cl.getAttribute("aria-disabled") === "true" } }; });
+        }
+        return res;
+      }, m.texts || [], !!m.exact).catch((e) => ({ __error: String(e) }));
+      out({ ok: !r.__error, found: r });
+    }
+    else if (m.cmd === "grab") {
+      // pre-production: save an on-page image (a generation) as a file → {ok, file, w, h, via}.
+      // {"ref": "r12"} | {"largest": true} (the biggest visible <img>); "out" = path under /w.
+      // The image's own bytes (natural size) when the page can fetch its src; else a screenshot of its box.
+      const info = await page.evaluate((ref, sel, nth) => {
+        const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 40 && r.height > 40 && r.bottom > 0 && r.top < innerHeight; };
+        let el = ref ? document.querySelector(`[data-agent-ref="${ref}"]`) : null;
+        if (!el && sel) { const c = document.querySelectorAll(sel)[nth || 0]; if (c) { c.scrollIntoView({ block: "center" }); el = c.tagName === "IMG" ? c : c.querySelector("img") || c; } }
+        if (!el) el = [...document.querySelectorAll("img")].filter(vis).sort((a, b) => b.width * b.height - a.width * a.height)[0];
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { src: el.currentSrc || el.src || null, nw: el.naturalWidth, nh: el.naturalHeight, box: [r.x, r.y, r.width, r.height] };
+      }, m.ref || null, m.selector || null, m.nth || 0).catch(() => null);
+      if (!info) out({ ok: false, error: "no image found" });
+      else {
+        const file = m.out || path.join(workdir, `grab-${Date.now()}.png`);
+        let via = "src", data = null;
+        if (info.src) data = await page.evaluate(async (u) => {
+          try { const r = await fetch(u, { credentials: "include" }); if (!r.ok) return null; const b = new Uint8Array(await r.arrayBuffer());
+            let s = ""; for (let i = 0; i < b.length; i += 32768) s += String.fromCharCode(...b.subarray(i, i + 32768)); return [r.headers.get("content-type"), btoa(s)]; } catch { return null; }
+        }, info.src).catch(() => null);
+        if (data && data[1]) fs.writeFileSync(file, Buffer.from(data[1], "base64"));
+        else {
+          via = "screenshot";
+          const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: { x: info.box[0], y: info.box[1], width: info.box[2], height: info.box[3], scale: SCALE } });
+          fs.writeFileSync(file, Buffer.from(s.data, "base64"));
+        }
+        out({ ok: true, file, via, type: data ? data[0] : "image/png", w: info.nw, h: info.nh, box: info.box });
+      }
+    }
     else if (m.cmd === "act") out(await act(m.action || {}));
     else if (m.cmd === "end") { await endSegment(m.until); out({ ok: true }); }
     else if (m.cmd === "quit") {

@@ -149,6 +149,225 @@ Director + agent rule 9: scroll only to reach the one thing he names next.
   zoom straight to it that lands on the press, then the page change (`nav_click_zoom`). Typing right
   after a dissolve opens out instead of framing the box.
 
+## 0b. Loop round 1 (2026-10-07) — rules from the independent v12 review (28 findings)
+
+Source: `/tmp/.../rev/REVIEW-v12.md` (finding numbers #N below) + the technique catalogue
+`screencast/TECHNIQUES.md` (ids in brackets). These rules were found because the screen did not show
+what Jake said; they win over older text in §2–§5 where they disagree.
+
+### R1 — the account must SHOW Jake's own world (#4 #18 #19 #23 #25 #27)
+- **Rule.** Before recording, the account is set up so that every "my / your" in the narration is
+  Jake's: his brand is the ACTIVE brand (Home prompt chip, Brand page), the result document is a
+  campaign generated WITH his brand from the prompt he types on camera, and no other company's
+  brand is visible when he says "my colors / my logo / your brand". QA `brand` forbids the test
+  brand's name in every beat's title / framed text.
+- **Why.** v12 showed Blue Bottle Coffee (the Scout's test brand, the only finished campaign) for "my
+  colors", "my logo", "already look like your brand" and "your brand name" — the sentence was false.
+- **How (this account, round 1).** Brand chip on Home set to Jake Dawson (and Blue Bottle removed from
+  the multi-select); one generation "An Instagram post for my channel about AI for business owners"
+  with the Jake Dawson brand (4 square posts, ~3 % credits), then Resize → Email Header 600×200,
+  Ad (Landscape) 1200×628, Instagram Story 1080×1920 (~1¾ min) → document "Jake Dawson AI For
+  Business Owners Post"; the 3 resized artboards dragged next to the squares so all 7 sit in one
+  row without overlap (story/ad overlapped after the resize). Linearity's sidebar "Brands" always
+  opens the NEWEST brand (Blue Bottle) — it cannot be switched, so the "Click brand" beat loads
+  Jake's brand page inside the click's cut (`click.goto`, CUT02).
+- **Numbers.** Credits 97 % → 94 % (generation) → Resize job (no further % change shown).
+
+### R2 — every beat lands ON its word; nothing is dropped (#2 #5 #6 #15 #16 #27)
+- **Rule.** A beat is (word time `at`, the clause start `from`, target box, zoom). The camera move starts
+  ≈ 0.8 s before the word but never before the clause that names it, and lands by word + 0.3 s.
+  Back-to-back named items (a list: "an Instagram ad, an email header, a wide ad, a story") get one
+  move each, shortened to fit (≥ 18 f), never dropped by the hold minimum or the move budget.
+- **Why.** Refs: moves START ≈ 0.8 s before the named word and land on it (ref 3, 16 moves, −0.8…+1.35 s;
+  TECHNIQUES "Timing vs words"). v12: reads HELD their whole 2.5 s before the next action could start,
+  so every later beat slid 1–3 s; "wide ad" and "a story" were never framed.
+- **How.** `agent_rec.mjs`: a read with `at` returns at once and its hold is DEFERRED (the next action
+  with `at` cuts it short); a click's PRESS waits for its word after the cursor arrives (a dblclick on
+  the same spot pressed 0.64 s early); canvas glides now END on the word (start at − 1.0 s) and a beat
+  that is already > 0.3 s late glides silently inside a jump cut (`late beat` cut, CUT06).
+  `camera.py`: events carry `beat`/`from`/`zoom`; a beat's move uses `from`, no `hold_min_s`, no budget.
+  `run_loop.py` (sandbox driver) writes the beats from the narration's word times — no LLM picks them.
+- **Numbers.** Seg 0 list beats: Instagram 3.39 / email 4.77 / wide 5.88 / story 7.16 → each move 18–33 f.
+  QA `on_word`: view at word + 0.3 s holds ≥ 90 % of the box, centred within 0.2 (clamped edges
+  excused), `late_s` ≤ 0.4.
+
+### R3 — catalogue levels per target (#1 #3 #9 #14 #17 #20 #24 #25 #26)
+Levels stay inside the catalogue bands (zoom-ins ×1.2–1.4, ZM02 ×1.5–1.65 only for ONE small named thing).
+A first cut used 1.6 for designs and 2.0 for small artboards (readability, #3) — qa.py zoom_in_median 1.6 vs
+band 1.2–1.4 → brought back into the bands.
+| target | zoom | technique | example in round 1 |
+|---|---|---|---|
+| the whole campaign ("a full marketing campaign") | 1.25, centred, lands framed on frame 0 | ZM05 + CUT06 | seg 0 0:00 |
+| one design he names | 1.4 | ZM05 (×1.19–1.30; 1.4 = band top) | main post 0:03.4, 0:18.4 |
+| a small artboard (email header, wide ad) | 1.65 | ZM02 (×1.5–1.65 one small named thing) | 0:04.8, 0:05.9 |
+| a tall artboard (story) | 1.3 | ZM05 | 0:07.2 |
+| a brand-kit card (Logo, Colors) | 1.4 | ZM05/ZM08 | 0:09.5, 0:11.1, 1:08.8 |
+| a paragraph he reads | 1.3, centred | ZM06 (ref 4 0:26.8 ×1.35) | 1:10.9 |
+| an input field he pastes into | 1.35 | ZM03 | 1:00.5 |
+| a prompt box he points at ("that big box") | 1.4 | ZM03 | 2:08 |
+| a dropdown/panel that opens (Resize formats, brand menu) | 1.4, clamped top/left | ZM04 | 0:23, 2:25 |
+| a small CTA (Log in) | 1.6 | ZM02 | 1:44.5 |
+| one line he reads on a full-width card (Free plan) | 1.65 | ZM02 | 0:52 |
+| sign-up form / sign-in buttons | 1.3 / 1.45 | ZM06 / PN01 | 1:48.8, 1:52.4 |
+| the edited design + its toolbar | 1.4 (toolbar 727 px wide must fit) | ZM05 | 0:28, 1:23 |
+- A scripted beat's own zoom is honoured: it PANS only when the level is within ×1.03 (was 1.15,
+  which kept a 1.4 view for a 1.25 group).
+- The CAMERA box may differ from the element acted on (`frame`): the button + the menu it opens, the
+  post + the toolbar it shows. The camera target and the clicked element are the SAME place on screen
+  (#20: v12 clicked a headline the camera was not framing).
+- A design at the capture's left edge (the main post) is clamped, not centred (refs clamp: ZM01 "centre on
+  target then clamp to the capture edge"); overscan only past FLAT canvas, not the app's tool rail.
+
+### R4 — reveal / release / A-roll transitions (#6 #7 #13 #22 #28)
+- Before a dissolve to the landing page the zoom is RELEASED on the old page (ZM11, 0.8 s), so the
+  landing arrives at 1.0 with the logo in view and stays still (ZM07 "hold at 1.0"; Jake #3) — v12
+  carried a 1.6 zoom through the dissolve and drifted out on the landing.
+- Screencast ↔ A-roll: bubble out over 4 f ENDING on the boundary, then a 4 f screen dissolve; entry
+  mirrored (screen 4 f, then bubble 4 f). TR05 order + CUT04/CUT05 (≈ 99 % hard in refs): short
+  enough that no 50/50 face ghost or white-page wash shows (v12 used 10 f).
+- A screencast that runs to the last frame has no bubble-first exit; the whole composite fades to
+  black over 30 f (TR08; v12 ended with the bubble at 60 %).
+
+### R5 — the recorder's canvas fit must not give up (#8 #19)
+- `fit_designs` ignores cells within 2 of app UI floating over the canvas (the prompt pill's halo joined
+  the designs into one group touching the bottom edge → reveal up/down oscillation → "never fit" →
+  the whole canvas at 17 %); a reveal that undoes the previous one zooms out instead; a document
+  address retries the fit 4× (3 s) when the canvas has not drawn yet.
+
+### R6 — clean screens and the right page (#10 #18 #21 #23)
+- Typing into a prompt box first clears it (`type.clear`: Ctrl+A, Backspace on silent ticks) — Linearity
+  keeps drafts. The PREPARE of a Home segment clears the draft off camera.
+- "Resize" is two clicks (Resize → "Resize ›") — the formats panel is what "web, mobile, print" shows.
+- The sign-up story is recorded in a LOGGED-OUT browser (fresh profile): linearity.io "Log in" →
+  auth.linearity.io/register ("Hello there 👋", Google / Apple / SSO / email).
+- The bubble hides for a click from the moment the cursor sets off for the target (was 0.35 s before
+  the press — "Log in" sat under the opaque bubble while the camera landed on it), and also when the
+  clicked box (not only the cursor point) is ≥ 25 % inside the bubble zone (BB01, Jake's action-only rule).
+
+### R7 — content QA (`screencast/qa_content.py`)
+Checks per beat from the recorder's own log (title, url, DOM text inside the framed box, typed value) and
+the camera plan: `delivered`, `on_word` (+ `late_s`), `nav_on_word`, `brand` (forbidden strings),
+`must` (per-beat expected text from the narration, `expect.json`), `typed` (exact text — catches a
+garbled draft). It complements qa.py (geometry), which cannot see any of the above.
+
+## 0c. Loop round 2 (2026-10-07) — rules from the round-1 review (D1–D20) + the main-session rulings
+
+Source: `rev1/REVIEW-round1.md` (78-event ledger, 32 ✓ = 41 %). These win over §0b where they differ.
+
+### S1 — the canvas target is centred in the CAPTURE, inside a cut (D1, D4) — CUT06 / CUT03
+- **Rule.** Before a canvas beat is framed, the design canvas itself is panned so the named artboard
+  sits at the middle of the capture; the pan happens INSIDE a cut (silent frames) and the camera lands
+  framed on it. A camera may clamp only at a REAL page edge — a design canvas scrolls, so its capture
+  edge is no excuse.
+- **Why.** Round 1: Jake's artboards fill the capture width with the main post at its left edge, so every
+  ×1.3–1.4 framing clamped and ended at x ≈ 27 % (11 events). Ref 3 0:13.6, 2:07.5: the subject ends
+  centred.
+- **How.** `agent_rec.mjs` action `"center": "cut"` → `centreOnCanvas(b, late=true, force=true)` (wheel pan
+  measured by thumbnail best-shift, one correction) logs a `late beat` big cut; the act result returns
+  `moved` (shot px) so the driver shifts every later canvas coordinate. QA `on_word` centre tolerance
+  0.08 with no edge excuse on `/file/` pages.
+
+### S2 — never squeeze a move; cut instead (D3, D13, D14) — CUT06 / CUT03
+- **Rule.** A word-timed move whose available time (clause start or word − 0.8 s → word + 0.3 s, a click's
+  zoom → the press) is shorter than 0.8 × its catalogue duration becomes a CUT that lands framed at
+  word − 0.1 s. Items named 0.7–1.5 s apart (a list) are a cut chain. Moves under ×1.05 and < 60 px are
+  dropped (no technique matches a twitch).
+- **Numbers.** Catalogue durations: ZM02 45–58 f, ZM03/ZM06 32–55 f, ZM05 34–51 f, ZM11 34–40 f, PN D ≈
+  24 + 0.035·px (26–56 f); 20 % tolerance. Round 1 had 14–20 f moves and a 3768 px/s whip.
+- **Refs.** Cut chains ref 5 1:59.0–2:03.0 (cuts on "Images … videos … feed"), ref 3 1:00.4 / 1:04.3.
+
+### S3 — dissolves arrive framed; landings get ZM07 (D5, D6) — TR02 / TR03 / ZM07
+- A goto into a document dissolves straight into the framed view (the render holds the outgoing OUTPUT
+  image, so a cut to the new framing at the dissolve's first frame never jumps the old picture).
+- A dissolve to a tool's LANDING page cuts the camera to 1.0 at its first frame (Jake #3), holds ~1–1.5 s,
+  then pushes ×1.3 onto the hero + prompt with the logo kept in frame (ZM07: ref 3 2:04.9, D 38–48 f).
+
+### S4 — content beats the words name (D2, D8) — Jake: words = screen; rule 8 clean screens
+- "fonts" → the font list; "colors" → the Fill colour picker (Linearity docks it at the LEFT screen edge,
+  so that beat shows the whole screen); "the logo itself" → the face-logo element selected.
+- The pasted domain shows for 0.15 s, then the time-skip dissolve (TR02) — "Reading the site…", the Import
+  spinner and "This brand is already set up" never reach the video (`type.after`).
+
+### S5 — containers, not text lines (D7, D10) — ZM06 / ZM09
+- The brand-kit page is scrolled 200 px inside the dissolve so title, Jump-to-section row and paragraph
+  are all on screen; the paragraph is then centred at ×1.3 with a full-length move.
+- Linearity's Free plan is a FULL-WIDTH banner (1218 / 1280 px): no ZM level can hold the whole card,
+  so the ×1.25 frame holds its left 80 % (title, credits line, What's included), centred vertically —
+  ruling needed if that is not acceptable.
+
+### S6 — keeping the test brand off screen without touching the account (D11)
+- Home shots are framed on heading + prompt box at ×1.35 (the Recents row, which lists the Scout's
+  "Blue Bottle Coffee Spring Sale" document, stays below the frame).
+- The brand menu is filtered by its own search ("Jake Dawson", typed inside the opening — no frames), so
+  only "MY PRIVATE BRANDS · Jake Dawson ✓" shows, then Jake Dawson is ticked (menu closes).
+
+### S7 — bubble, presses, holds, opening, end (D12, D15–D18, D20)
+- **Bubble (Jake's BB01 exception):** hides only when the clicked/typed element's on-screen BOX intersects
+  the disc (r 179 px at 1702, 254 @1080p). Cursor path and the old zone rectangle no longer count.
+- **Presses** land on the word; a click's zoom lands ON the press (CUT02/ZM12); the cursor is placed first
+  (a hover at the shot's start) when the press comes early in a shot.
+- **Holds:** no camera-still stretch over 3.0 s — a ZM10 slow centred push (×1.08, 46 f) starts 1.5 s after
+  the last motion (`hold_max_s` 3.0, `hold_target_s` 1.5, `drift_frames` 46).
+- **Opening:** no reference has a screencast cold open → the refs' video opening (TR07): frame 0 punched
+  in ×1.45 of the landing framing, easing out over 31 f (0.089, 0.443, 0.126, 0.834).
+- **A-roll transitions (D17):** Jake's rule 5 OVERRIDES TR05's numbers: bubble out 4 f ending on the
+  boundary, then a 4 f screen dissolve ("so fast it isn't noticed", v12 #13). Reference TR05 (bubble ~10 f
+  ahead of an ~8 f dissolve, ref 5 0:35.8) is kept as the reference fact, not the house setting.
+- **End (D20):** TR08's fade starts when the LAST WORD ends (here 148.75 s → 7 f to the end), never earlier.
+
+### S8 — QA fails the round (root cause 7)
+`qa.py` returns verdict FAIL (exit 1) on ANY out-of-band metric; `qa_content.py` returns FAIL on any
+failed check (centre 0.08, no canvas-edge excuse).
+
+## 0d. Loop round 3 (2026-10-08) — rules from the round-2 review (N01–N17)
+
+Source: `rev2/REVIEW-round2.md` (57/96 = 59 %). **Process rule (main session):** no fix is claimed until it
+is measured ON THE RENDERED FRAMES with the reviewer's tools — `screencast/qa_frames/` (copied from
+rev2/tools: per-frame ORB similarity transform + bubble-ring colour → events; `verify_frames.py`: twitches,
+zoom-outs, double cuts, flashes, bubble hides vs the acted box's disc distance, holds, end luma, a beat sheet
+of the output frame at every word + 0.3 s). Recorder logs alone proved six round-2 claims false.
+
+- **T1 Free card (N01).** Scroll the page inside the cut until the card's own box is mid-capture (two silent
+  scrolls: measure, correct), frame its left 2/3 (title, credits line, What's included) at ×1.35 — the card's
+  right end stays clear of the bubble, the logo strip falls in the lower part. Clamp only at the page edge.
+- **T2 No release on a design canvas (N02, N03a).** A dissolve INTO a `/file/` page never zooms out after it
+  (Jake rule 4 overrides TR03); the 14 s idle-out is off on canvases; a canvas re-centring cut within 0.25 s
+  of a goto belongs to that goto (it hid the beat from the dissolve → release).
+- **T3 The edit chain inside the approved shot (N03).** headline click / double-click / font list in the post +
+  toolbar framing (×1.3, centred); "colors": a silent Escape closes the font list (a click on Fill with the
+  list open only closed the list), Fill opens the picker, which Linearity docks at the LEFT screen edge →
+  a CUT06 onto it (ZM04, clamped at the real edge); "the logo itself": silent Escape×2 + a silent click on
+  blank canvas (Escape alone keeps the headline selected) inside the cut, then the logo click → image toolbar
+  (Edit with Prompt / Crop / Remove Background / Upscale) replaces "Helvetica 120".
+- **T4 Clean prompt box (N04).** The Home draft is cleared in PREPARE (off camera); the on-camera type has no
+  `clear`.
+- **T5 Pop-ups (N05).** After a paste, any frame holding the pasted text also holds "Reading the site…" +
+  Import (they appear in the same frame) → 1 frame of the pasted field, then a HARD cut (CUT01) to the kit.
+- **T6 Paragraph (N06).** Zoom increases title (×1.2) → row (×1.3) → paragraph's first 5 lines (×1.4, 36 f),
+  each framed by its own box, centred.
+- **T7 Bubble (N07, N03b).** Decided ONCE per action at the frame before its press, from the ACTED element's
+  box (`abox`, not the camera frame box) in output px vs the disc (1701.9, 253.7) r 179.3. Log in is framed at
+  ×1.65 so its box ends 184 px from the disc centre (ZM02 top of band) — no hide.
+- **T8 Typing (N08).** Home at 1.0 with no camera move while typing (Jake #10). The Recents grid was made
+  Jake's by generating 10 Jake-brand documents (≈6 % credits) — the Scout's test document is now 12th, off
+  screen (row 3); nothing deleted or renamed.
+- **T9 A-roll (N09, N12).** The A-roll framing holds 0.3 s past its block end (no ×0.89 snap under the entry
+  dissolve); push 2.2 %/s capped ×1.14 (AR01); jump cuts inside a block (grey 64×36 diff ≥ 2.5 and ≥ 3× the
+  local median, merged within 0.3 s) toggle a ×1.32 punch-in (CUT07).
+- **T10 Drifts (N11).** One inward ZM10 push ×1.08 over 42 f with a LINEAR ramp (≥ 0.0018 log-scale per frame,
+  so the whole push registers on the frames — eased tails measured as ×1.04 in 20 f), starting 1.3 s after the
+  last motion, only when the whole push fits; never outward, never alternating. A planned pan after a drift
+  keeps the beat's own zoom.
+- **T11 Durations (N13).** A beat may name its catalogue duration (`frames`, e.g. ZM07 46 f); a move starts
+  (duration − 0.3 s) before its word, never before its clause.
+- **T12 Brand menu (N15).** The arrow is clicked on "arrow"; the menu's search is typed on silent ticks inside
+  the opening ("MY PRIVATE BRANDS · Jake Dawson ✓", no test brand); its search also lists PUBLIC look-alike
+  brands, so Jake Dawson is ticked on "up" (~0.4 s later) and the menu closes.
+- **T13 End (N16).** The picture is extended past the cut (last frame held, audio padded) so TR08's full 30 f
+  fade to black + 3 black frames runs after the last word.
+- **T14 Pointer.** After a re-centring cut the REAL pointer is parked on blank canvas (a hover ring sat on a
+  design, N02); the drawn cursor is unchanged.
+
 ## 1. What the reference does: the measured facts
 
 | | reference 2 | v5 (2026-10-06, before this system) |
