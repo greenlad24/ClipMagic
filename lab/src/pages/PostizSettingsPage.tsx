@@ -9,6 +9,7 @@ import {
 } from 'zite-endpoints-sdk';
 import { toast } from 'sonner';
 import Layout from '@/components/Layout';
+import ScreencastLogins from '@/scout/ScreencastLogins';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -134,6 +135,8 @@ export default function PostizSettingsPage() {
             <strong className="text-foreground">Save &amp; restart Postiz</strong> to apply.
           </p>
         </header>
+
+        <ScreencastLogins />
 
         {/* Security + reachability notices */}
         <div className="mb-6 space-y-3">
