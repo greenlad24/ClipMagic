@@ -326,13 +326,11 @@ export function CutEditor({
   const shown = onlyEdited ? joins.filter((j) => edited.has(j.k)) : joins;
 
   return (
-    <div className="space-y-2 rounded-lg border border-border p-3">
+    <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-medium text-foreground">Cuts</h3>
           <p className="text-[11px] text-muted-foreground">
-            Pick a cut, nudge either side a few ms and hear it instantly. Saving rebuilds the sound check only — the
-            video renders when you press Render video.
+            Saving rebuilds the sound check only — the video renders when you press Render video.
           </p>
         </div>
         <div className="flex gap-1.5">

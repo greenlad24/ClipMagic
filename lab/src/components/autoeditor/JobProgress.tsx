@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, HardDrive, Loader2, MinusCircle, Server } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Circle, HardDrive, Loader2, MinusCircle, RotateCcw, Server } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
   autoEditorEvents,
   type AutoEvent,
@@ -134,8 +135,8 @@ function RunnerBadge({ runner, runOn, jobState, now }: {
   if (st === 'running' && runSecs !== null) text = `running ${dur(runSecs)}`;
   else if (st === 'done') text = runner.destroyed === false ? 'results back · DELETE NOT CONFIRMED' : 'results back · server deleted';
   else if (st === 'failed') text = runner.destroyed === false ? 'failed · DELETE NOT CONFIRMED' : 'failed · server deleted';
-  if (st === 'failed' && active) text += ' → running on the main box';
   else text = RUNNER_PHASE[st]?.text ?? st;
+  if (st === 'failed' && active) text += ' → running on the main box';
   return (
     <span
       className={cn(
@@ -304,7 +305,109 @@ function StageLog({ events }: { events: AutoEvent[] }) {
   );
 }
 
-export function JobProgress({ job, live }: { job: AutoJobDetail; live: boolean }) {
+/**
+ * One stage, drawn for its moment: the RUNNING stage is the big one (bar, %, ETA, message,
+ * its live log open), a FAILED/STOPPED one is loud with Continue right beside it, DONE ones
+ * are a single compact line, PENDING/SKIPPED ones are quiet text. Every number stays — the
+ * bar and the full log of any stage are one click away.
+ */
+function StageRow({
+  id, title, state, frac, elapsed, eta, etaGuess, expect, cost, warn, err, msg, note, label, events, isOpen, onToggle, onContinue,
+}: {
+  id: string; title: string; state: AutoStageState; frac: number; elapsed: number | null; eta: number | null; etaGuess?: boolean;
+  expect: number | null; cost: number | null; warn: number; err: number; msg?: string | null; note?: string | null; label?: string;
+  events: AutoEvent[]; isOpen: boolean; onToggle: () => void; onContinue?: () => void;
+}) {
+  const I = ICON[state] ?? ICON.pending;
+  const Icon = I.icon;
+  const loud = state === 'running' || state === 'failed' || state === 'interrupted';
+  const quiet = state === 'pending' || state === 'skipped';
+  const line = state === 'running' ? msg : note ?? (state === 'failed' || state === 'interrupted' ? msg : null);
+  return (
+    <div
+      data-stage={id}
+      className={cn(
+        'rounded-md',
+        state === 'running' && 'border border-blue-500/30 bg-blue-500/5',
+        state === 'failed' && 'border border-red-500/40 bg-red-500/5',
+        state === 'interrupted' && 'border border-amber-500/40 bg-amber-500/5',
+        loud && 'my-1',
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn('flex w-full items-center gap-2 px-2 text-left hover:bg-muted/30', loud ? 'pt-2 pb-1' : 'py-1')}
+      >
+        <Icon className={cn('h-3.5 w-3.5 shrink-0', I.cls)} />
+        <span
+          className={cn(
+            'shrink-0 truncate',
+            loud ? 'text-[13px] font-medium text-foreground' : quiet ? 'text-xs text-muted-foreground/70' : 'text-xs text-foreground/90',
+            'max-w-[60%] sm:max-w-[45%]',
+          )}
+        >
+          {title}
+        </span>
+        {!loud && line && <span className="hidden min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground/70 sm:block">{line}</span>}
+        <span className={cn('ml-auto flex shrink-0 items-center gap-x-2 text-[10.5px] tabular-nums', quiet ? 'text-muted-foreground/60' : 'text-muted-foreground')}>
+          {state === 'running' && <span className="text-blue-300">{label ?? `${Math.round(frac * 100)}%`}</span>}
+          {(state === 'failed' || state === 'interrupted') && (
+            <span className={state === 'failed' ? 'text-red-400' : 'text-amber-400'}>{I.label}</span>
+          )}
+          {state === 'skipped' && <span>Skipped</span>}
+          {elapsed !== null && state !== 'pending' && <span>{dur(elapsed)}</span>}
+          {state === 'running' && eta !== null && (
+            <span>
+              ETA {etaGuess ? '~' : ''}
+              {dur(eta)}
+            </span>
+          )}
+          {state === 'pending' && expect !== null && <span>~{dur(expect)}</span>}
+          {cost !== null && cost > 0 && <span className="text-emerald-400">{money(cost)}</span>}
+          {warn > 0 && <span className="rounded bg-amber-500/15 px-1 text-amber-300">⚠ {warn}</span>}
+          {err > 0 && <span className="rounded bg-red-500/15 px-1 text-red-300">✖ {err}</span>}
+          {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5 opacity-50" />}
+        </span>
+      </button>
+      {loud && (
+        <div className="space-y-1.5 px-2 pb-2 pl-[30px]">
+          <Bar frac={frac} state={state} />
+          {line && (
+            <div className="flex items-start gap-2">
+              <p
+                className={cn(
+                  'min-w-0 flex-1 text-[11px] leading-snug',
+                  state === 'failed' ? 'text-red-300' : state === 'interrupted' ? 'text-amber-300' : 'text-blue-300',
+                )}
+              >
+                {line}
+              </p>
+            </div>
+          )}
+          {(state === 'failed' || state === 'interrupted') && onContinue && (
+            <Button size="sm" className="h-7 gap-1.5 text-xs" onClick={onContinue}>
+              <RotateCcw className="h-3.5 w-3.5" /> Continue from here
+            </Button>
+          )}
+        </div>
+      )}
+      {isOpen && (
+        <div className="space-y-1.5 px-2 pb-2 pl-[30px]">
+          {!loud && (
+            <>
+              <Bar frac={frac} state={state} thin />
+              {line && <p className="text-[10.5px] text-muted-foreground">{line}</p>}
+            </>
+          )}
+          <StageLog events={events} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; live: boolean; onContinue?: () => void }) {
   const [now, setNow] = useState(() => Date.now() / 1000);
   useEffect(() => {
     if (!live) {
@@ -364,10 +467,15 @@ export function JobProgress({ job, live }: { job: AutoJobDetail; live: boolean }
   }, [events]);
 
   const list = job.stageList?.length ? job.stageList : FALLBACK_STAGES;
-  const views = list.map((s) => stageView(s, job.status.stages?.[s.id], job.expect?.[s.id] ?? null, now));
+  // a stage still marked "running" in an idle job was cut off (an old run, a restart): say Stopped, not Running
+  const stageOf = (id: string): AutoStageStatus | undefined => {
+    const st = job.status.stages?.[id];
+    return st && !live && st.state === 'running' ? { ...st, state: 'interrupted' } : st;
+  };
+  const views = list.map((s) => stageView(s, stageOf(s.id), job.expect?.[s.id] ?? null, now));
   // stages the status knows that the list does not (an older job's extra stage): still shown
   for (const id of Object.keys(job.status.stages ?? {})) {
-    if (!list.some((s) => s.id === id)) views.push(stageView({ id, title: id }, job.status.stages?.[id], null, now));
+    if (!list.some((s) => s.id === id)) views.push(stageView({ id, title: id }, stageOf(id), null, now));
   }
 
   // ── overall: weighted by each stage's typical duration; "final" counts once it is asked for ──
@@ -411,6 +519,7 @@ export function JobProgress({ job, live }: { job: AutoJobDetail; live: boolean }
       return n;
     });
   const [showAll, setShowAll] = useState(false);
+  const [showJob, setShowJob] = useState(false);
   const jobEvents = byStage.get('job') ?? [];
   const totalIssues = events.filter((e) => e.level !== 'info').length;
 
@@ -426,146 +535,131 @@ export function JobProgress({ job, live }: { job: AutoJobDetail; live: boolean }
     ? factoryState === 'running' && factoryElapsed !== null ? (factoryElapsed / 3600) * (runner.price_hourly ?? 1) : runner.usd ?? 0
     : 0;
 
+  const doneCount = views.filter((v) => v.state === 'done').length;
+  const skippedCount = views.filter((v) => v.state === 'skipped').length;
+  const failedView = ['failed', 'interrupted', 'cancelled'].includes(state)
+    ? views.find((v) => v.state === 'failed' || v.state === 'interrupted')
+    : undefined;
+  // "final" only belongs on the list once it has been asked for
+  const shown = views.filter((v) => !(v.id === 'final' && v.state === 'pending'));
+  const finished = !live && !failedView;
+  const pendingCount = shown.filter((v) => v.state === 'pending').length;
+  const [expanded, setExpanded] = useState<boolean | null>(null);
+  const isExpanded = expanded ?? !finished;
+  const runningFactory = showFactory && factoryState === 'running';
+
   return (
-    <div className="space-y-3 rounded-lg border border-border p-3">
-      {(runner?.kind || job.request.run_on === 'factory' || job.request.run_on === 'box') && (
-        <div className="flex flex-wrap items-center gap-2">
-          <RunnerBadge runner={runner} runOn={job.request.run_on} jobState={state} now={now} />
-        </div>
-      )}
+    <div className="space-y-2.5 rounded-lg border border-border p-3">
+      {/* summary: one line + the overall bar */}
       <div className="space-y-1.5">
-        <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
           <span className="font-medium text-foreground">
-            Overall {Math.round(overall * 100)}%
-            {running && <span className="font-normal text-muted-foreground"> — {running.title}</span>}
+            {finished
+              ? `${state === 'cancelled' ? 'Cancelled' : 'Done'} · ${doneCount} step${doneCount === 1 ? '' : 's'}${
+                  skippedCount ? ` · ${skippedCount} skipped` : ''}${pendingCount && state === 'cancelled' ? ` · ${pendingCount} not run` : ''}`
+              : state === 'queued'
+                ? 'Waiting to start'
+                : failedView
+                  ? `Stopped at ${failedView.title}`
+                  : `${Math.round(overall * 100)}%`}
+            {running && <span className="font-normal text-muted-foreground"> · {running.title}</span>}
           </span>
-          <span className="text-muted-foreground">
-            {runElapsed !== null && state === 'running' && <>this run {dur(runElapsed)} · </>}
+          <span className="ml-auto flex flex-wrap items-center gap-x-2 tabular-nums text-muted-foreground">
+            {runElapsed !== null && (state === 'running' || finished) && <span>{dur(runElapsed)}</span>}
             {live && (remaining > 0 || unknown) && (
-              <>
+              <span>
                 ETA {unknown ? '≥ ' : '~'}
-                {dur(remaining)} ·{' '}
-              </>
+                {dur(remaining)}
+              </span>
             )}
-            {money(cost)} so far
+            <span className="text-emerald-400">{money(cost)}</span>
+            <button type="button" onClick={() => setExpanded(!isExpanded)} className="text-primary hover:underline">
+              {isExpanded ? 'Hide steps' : 'Show steps'}
+            </button>
           </span>
         </div>
-        <Bar frac={overall} state={state === 'failed' ? 'failed' : state === 'running' ? 'running' : overall >= 1 ? 'done' : 'pending'} />
+        {!finished && (
+          <Bar frac={overall} state={state === 'failed' ? 'failed' : state === 'running' ? 'running' : overall >= 1 ? 'done' : 'pending'} />
+        )}
+        {(runner?.kind || job.request.run_on === 'factory' || job.request.run_on === 'box') &&
+          (isExpanded || runningFactory) &&
+          // the factory row below already tells the story — the badge stays for the box, and for a server not confirmed deleted
+          (!showFactory || runner?.destroyed === false || (runner?.state === 'failed' && state === 'running')) && (
+          <RunnerBadge runner={runner} runOn={job.request.run_on} jobState={state} now={now} />
+        )}
       </div>
 
-      <div className="divide-y divide-border/60 rounded-md border border-border">
-        {showFactory && (() => {
-          const I = ICON[factoryState] ?? ICON.pending;
-          const Icon = I.icon;
-          const isOpen = open.has('factory');
-          const warn = factoryEvents.filter((e) => e.level === 'warn').length;
-          const err = factoryEvents.filter((e) => e.level === 'error').length;
-          return (
-            <div>
-              <button
-                type="button"
-                onClick={() => toggle('factory')}
-                className="grid w-full grid-cols-[14px_14px_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-muted/30 sm:grid-cols-[14px_14px_minmax(0,14rem)_minmax(0,1fr)_auto]"
-              >
-                {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                <Icon className={cn('h-3.5 w-3.5', I.cls)} />
-                <span className="truncate text-xs text-foreground">Factory server (create → send → run → pull → delete)</span>
-                <div className="col-span-3 sm:col-span-1">
-                  <Bar frac={factoryFrac} state={factoryState} thin />
-                </div>
-                <span className="col-span-3 flex flex-wrap items-center gap-x-2 text-[10.5px] tabular-nums text-muted-foreground sm:col-span-1 sm:justify-end">
-                  <span className={cn(factoryState === 'failed' && 'text-red-400')}>
-                    {runner?.kind === 'factory' ? RUNNER_PHASE[runner.state ?? '']?.text ?? runner.state : I.label}
-                  </span>
-                  {factoryElapsed !== null && <span>{dur(factoryElapsed)}</span>}
-                  {factoryUsd > 0 && <span className="text-emerald-400">{money(factoryUsd)}</span>}
-                  {warn > 0 && <span className="rounded bg-amber-500/15 px-1 text-amber-300">⚠ {warn}</span>}
-                  {err > 0 && <span className="rounded bg-red-500/15 px-1 text-red-300">✖ {err}</span>}
-                </span>
-              </button>
-              {isOpen && (
-                <div className="px-2 pb-2 pl-[46px]">
-                  <StageLog events={factoryEvents} />
-                </div>
-              )}
-            </div>
-          );
-        })()}
-        {views.map((v) => {
-          const I = ICON[v.state] ?? ICON.pending;
-          const Icon = I.icon;
-          const evs = byStage.get(v.id) ?? [];
-          const isOpen = open.has(v.id);
-          const warn = v.st?.warnings ?? evs.filter((e) => e.level === 'warn').length;
-          const err = v.st?.errors ?? evs.filter((e) => e.level === 'error').length;
-          return (
-            <div key={v.id}>
-              <button
-                type="button"
-                onClick={() => toggle(v.id)}
-                className="grid w-full grid-cols-[14px_14px_minmax(0,1fr)] items-center gap-x-2 gap-y-1 px-2 py-1.5 text-left hover:bg-muted/30 sm:grid-cols-[14px_14px_minmax(0,14rem)_minmax(0,1fr)_auto]"
-              >
-                {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                <Icon className={cn('h-3.5 w-3.5', I.cls)} />
-                <span className="truncate text-xs text-foreground">{v.title}</span>
-                <div className="col-span-3 sm:col-span-1">
-                  <Bar frac={v.frac} state={v.state} thin />
-                </div>
-                <span className="col-span-3 flex flex-wrap items-center gap-x-2 text-[10.5px] tabular-nums text-muted-foreground sm:col-span-1 sm:justify-end">
-                  <span className={cn(v.state === 'failed' && 'text-red-400', v.state === 'interrupted' && 'text-amber-400')}>
-                    {v.state === 'running' ? `${Math.round(v.frac * 100)}%` : I.label}
-                  </span>
-                  {v.elapsed !== null && <span>{dur(v.elapsed)}</span>}
-                  {v.state === 'running' && v.eta !== null && (
-                    <span>
-                      ETA {v.etaGuess ? '~' : ''}
-                      {dur(v.eta)}
-                    </span>
-                  )}
-                  {v.state === 'pending' && v.expect !== null && <span>~{dur(v.expect)}</span>}
-                  {v.cost !== null && v.cost > 0 && <span className="text-emerald-400">{money(v.cost)}</span>}
-                  {warn > 0 && <span className="rounded bg-amber-500/15 px-1 text-amber-300">⚠ {warn}</span>}
-                  {err > 0 && <span className="rounded bg-red-500/15 px-1 text-red-300">✖ {err}</span>}
-                </span>
-              </button>
-              {(v.state === 'running' ? v.st?.message : v.st?.note) && (
-                <p
-                  className={cn(
-                    'truncate px-2 pb-1.5 pl-[46px] text-[10.5px]',
-                    v.state === 'failed' ? 'text-red-400' : v.state === 'running' ? 'text-blue-300' : 'text-muted-foreground',
-                  )}
-                  title={(v.state === 'running' ? v.st?.message : v.st?.note) ?? ''}
-                >
-                  {v.state === 'running' ? v.st?.message : v.st?.note}
-                </p>
-              )}
-              {isOpen && (
-                <div className="px-2 pb-2 pl-[46px]">
-                  <StageLog events={evs} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {jobEvents.length > 0 && (
-        <details className="rounded-md border border-border">
-          <summary className="cursor-pointer px-3 py-1.5 text-[11px] text-muted-foreground">
-            Job events (claims, restarts, failures outside a stage) — {jobEvents.length}
-          </summary>
-          <div className="px-2 pb-2">
-            <LogView events={jobEvents} maxH="max-h-48" />
-          </div>
-        </details>
+      {isExpanded && (
+        <div className="space-y-px">
+          {showFactory && (
+            <StageRow
+              id="factory"
+              title={`Factory server${runner?.kind === 'factory' && runner.size ? ` ${runner.size}` : ''}`}
+              state={factoryState}
+              frac={factoryFrac}
+              elapsed={factoryElapsed}
+              eta={null}
+              expect={null}
+              cost={factoryUsd}
+              warn={factoryEvents.filter((e) => e.level === 'warn').length}
+              err={factoryEvents.filter((e) => e.level === 'error').length}
+              label={runner?.kind === 'factory' ? RUNNER_PHASE[runner.state ?? '']?.text ?? runner.state : undefined}
+              note={
+                runner?.kind === 'factory' && (runner.state === 'done' || runner.state === 'failed')
+                  ? runner.destroyed === false
+                    ? 'DELETE NOT CONFIRMED — check DigitalOcean'
+                    : `${runner.state === 'done' ? 'results back' : 'failed'} · server deleted${runner.droplet ? ` · droplet #${runner.droplet}` : ''}`
+                  : 'create → send → run → pull → delete'
+              }
+              msg={runner?.kind === 'factory' ? `create → send → run → pull → delete · now: ${RUNNER_PHASE[runner.state ?? '']?.text ?? runner.state}` : null}
+              events={factoryEvents}
+              isOpen={open.has('factory')}
+              onToggle={() => toggle('factory')}
+            />
+          )}
+          {shown.map((v) => {
+            const evs = byStage.get(v.id) ?? [];
+            return (
+              <StageRow
+                key={v.id}
+                id={v.id}
+                title={v.title}
+                state={v.state}
+                frac={v.frac}
+                elapsed={v.elapsed}
+                eta={v.eta}
+                etaGuess={v.etaGuess}
+                expect={v.expect}
+                cost={v.cost}
+                warn={v.st?.warnings ?? evs.filter((e) => e.level === 'warn').length}
+                err={v.st?.errors ?? evs.filter((e) => e.level === 'error').length}
+                msg={v.st?.message ?? (v.state === 'failed' ? job.status.message : null)}
+                note={v.st?.note}
+                events={evs}
+                isOpen={open.has(v.id)}
+                onToggle={() => toggle(v.id)}
+                onContinue={onContinue}
+              />
+            );
+          })}
+        </div>
       )}
-      <div className="space-y-1.5">
-        <button type="button" onClick={() => setShowAll(!showAll)} className="text-[11px] text-primary hover:underline">
-          {showAll ? 'Hide the full log' : `Show the full log, every stage (${events.length} lines${totalIssues ? `, ${totalIssues} warnings/errors` : ''})`}
-        </button>
-        {logNote && <p className="text-[10.5px] text-muted-foreground">{logNote}</p>}
-        {showAll && <LogView events={events} showStage maxH="max-h-[32rem]" />}
-      </div>
+
+      {(isExpanded || showAll || showJob) && !(state === 'queued' && events.length === 0) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 pt-2 text-[11px]">
+          <button type="button" onClick={() => setShowAll(!showAll)} className="text-primary hover:underline">
+            {showAll ? 'Hide the full log' : `Full log · ${events.length} lines${totalIssues ? ` · ${totalIssues} warnings/errors` : ''}`}
+          </button>
+          {jobEvents.length > 0 && (
+            <button type="button" onClick={() => setShowJob(!showJob)} className="text-muted-foreground hover:text-foreground">
+              {showJob ? 'Hide job events' : `Job events (claims, restarts, failures outside a stage) · ${jobEvents.length}`}
+            </button>
+          )}
+          {logNote && <span className="text-[10.5px] text-muted-foreground">{logNote}</span>}
+        </div>
+      )}
+      {showJob && <LogView events={jobEvents} maxH="max-h-48" />}
+      {showAll && <LogView events={events} showStage maxH="max-h-[32rem]" />}
     </div>
   );
 }

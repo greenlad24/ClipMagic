@@ -55,7 +55,7 @@ async function rest<T>(url: string, body?: unknown): Promise<T> {
   return json as T;
 }
 
-const getFactory = () => rest<FactoryState>('/api/aieditor/factory');
+export const getFactory = () => rest<FactoryState>('/api/aieditor/factory');
 const saveFactory = (patch: Partial<{ enabled: boolean; size: string; maxParallel: number; fallbackLocal: boolean }>) =>
   rest<FactoryState>('/api/aieditor/factory', patch);
 const rebuildImage = () => rest<{ requested: boolean; state: string; message: string }>('/api/aieditor/factory/image', {});
@@ -163,7 +163,7 @@ export function FactoryPanel() {
 
   if (!data) {
     return (
-      <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+      <div className="rounded-lg border border-border/60 px-3 py-1.5 text-xs text-muted-foreground">
         {error ? <span className="text-red-400">Video factory: {error}</span> : 'Video factory …'}
       </div>
     );
@@ -194,11 +194,11 @@ export function FactoryPanel() {
   const runs = allRuns ? data.history : data.history.slice(0, 8);
 
   return (
-    <div className="rounded-lg border border-border bg-card">
+    <div className={cn('rounded-lg border', open ? 'border-border bg-card' : 'border-border/60')}>
       <button
         type="button"
         onClick={toggleOpen}
-        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-left text-xs hover:bg-muted/30"
+        className="flex w-full items-center gap-x-2 px-3 py-1.5 text-left text-xs hover:bg-muted/30"
       >
         {open ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
         <Server className="h-3.5 w-3.5 text-muted-foreground" />
@@ -211,7 +211,7 @@ export function FactoryPanel() {
         >
           {s.enabled ? 'On' : 'Off'}
         </span>
-        <span className="text-muted-foreground">
+        <span className="hidden text-muted-foreground sm:inline">
           {s.size}
           {size ? ` · ${size.vcpu} vCPU` : ''}
         </span>
@@ -222,8 +222,12 @@ export function FactoryPanel() {
           </span>
         )}
         {warnings.length > 0 && <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />}
-        <span className="ml-auto tabular-nums text-muted-foreground">
-          {usd(total)} this month of {usd(data.month.budgetUsd).replace('.00', '')} (incl. {usd(data.month.volumeUsd).replace('.00', '')} storage)
+        <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">
+          {/* servers first: the $50 Volume is fixed, so the total alone hid what jobs cost */}
+          <span className="text-foreground">{usd(data.month.serverUsd + liveUsd)}</span> servers
+          <span className="hidden sm:inline"> + {usd(data.month.volumeUsd).replace('.00', '')} storage</span>
+          {' · '}{usd(total)} / {usd(data.month.budgetUsd).replace('.00', '')}
+          <span className="hidden sm:inline"> this month</span>
         </span>
       </button>
 

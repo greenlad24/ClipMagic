@@ -12,6 +12,10 @@ import {
   Save,
   Scissors,
   Film,
+  Plus,
+  ChevronDown,
+  ChevronRight,
+  Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,6 +43,7 @@ import { cn } from '@/lib/utils';
 import { CutEditor } from '@/components/autoeditor/CutEditor';
 import { JobProgress } from '@/components/autoeditor/JobProgress';
 import { FactoryPanel } from '@/components/autoeditor/FactoryPanel';
+import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
 
 /**
  * Auto Editor — raw narration in, clean edit out.
@@ -63,6 +68,7 @@ const errText = (err: unknown) => (err instanceof Error ? err.message : String(e
 
 function ago(ts: number | null | undefined): string {
   if (!ts) return '';
+  if (ts > 1e12) ts /= 1000; // some request.json created_at were written in ms
   const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
@@ -113,158 +119,6 @@ function Choice<T extends string | boolean>({
           {o.label}
         </button>
       ))}
-    </div>
-  );
-}
-
-function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
-  const [url, setUrl] = useState('');
-  const [workflow, setWorkflow] = useState<AutoWorkflow | null>(null);
-  const [format, setFormat] = useState<'short' | 'long' | null>(null);
-  const [sponsored, setSponsored] = useState<boolean | null>(null);
-  const [title, setTitle] = useState('');
-  const [script, setScript] = useState('');
-  const [showScript, setShowScript] = useState(false);
-  const [sites, setSites] = useState('');
-  const [runOn, setRunOn] = useState<AutoRunOn>('auto');
-  const [busy, setBusy] = useState(false);
-
-  const ready = url.trim() && workflow && format && sponsored !== null;
-  const creative = workflow === 'creative';
-
-  const submit = async () => {
-    if (!workflow || !format || sponsored === null) return;
-    setBusy(true);
-    try {
-      const r = await autoEditorCreate({ url: url.trim(), workflow, format, sponsored,
-        script: creative ? undefined : script, title: title.trim() || undefined,
-        sites: format === 'long' ? sites : undefined, runOn });
-      toast.success('Queued — the worker picks it up in a few seconds.');
-      setUrl('');
-      setTitle('');
-      setScript('');
-      setSites('');
-      setFormat(null);
-      setSponsored(null);
-      setWorkflow(null);
-      setRunOn('auto');
-      onCreated(r.id);
-    } catch (err) {
-      toast.error(errText(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="space-y-3 rounded-lg border border-border p-3">
-      <h2 className="text-sm font-medium text-foreground">New edit</h2>
-      <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">Workflow</label>
-        <div className="grid gap-1.5">
-          {([
-            { value: 'cut', label: '1. Cut an unedited narration',
-              hint: 'Raw recording → best takes picked, junk cut, frame-exact — then graphics and screencasts.' },
-            { value: 'creative', label: '2. Creative edit an edited narration',
-              hint: 'Already edited → nothing is cut. Straight to pre-production, screencasts, graphics and the final.' },
-          ] as const).map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => setWorkflow(o.value)}
-              className={cn(
-                'rounded-md border px-2 py-1.5 text-left transition-colors',
-                workflow === o.value ? 'border-primary bg-primary/15' : 'border-border hover:bg-muted/40',
-              )}
-            >
-              <span className={cn('block text-xs', workflow === o.value ? 'text-foreground' : 'text-muted-foreground')}>{o.label}</span>
-              <span className="block text-[10px] leading-snug text-muted-foreground">{o.hint}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">
-          Descript share link to the {creative ? 'EDITED narration' : 'RAW recording'}
-        </label>
-        <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://share.descript.com/view/…" />
-      </div>
-      <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">Format</label>
-        <Choice<'short' | 'long'>
-          value={format}
-          onChange={setFormat}
-          options={[
-            { value: 'short', label: 'Shorts (9:16)' },
-            { value: 'long', label: 'Long-form (16:9)' },
-          ]}
-        />
-      </div>
-      <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">Is this video sponsored?</label>
-        <Choice<boolean>
-          value={sponsored}
-          onChange={setSponsored}
-          options={[
-            { value: true, label: 'Sponsored' },
-            { value: false, label: 'Not sponsored' },
-          ]}
-        />
-        <p className="text-[10px] leading-snug text-muted-foreground">
-          {sponsored === true
-            ? 'Every good line stays — only retakes, slips, crew talk and fillers come out.'
-            : sponsored === false
-              ? 'Retakes and junk come out, and sentences that just repeat a point may be cut too.'
-              : 'Required — it decides whether repeated points may be cut.'}
-        </p>
-      </div>
-      {format === 'long' && (
-        <div className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">Websites to show in screencasts (optional, one per line)</label>
-          <Textarea value={sites} onChange={(e) => setSites(e.target.value)} rows={2} className="text-xs"
-            placeholder={'linearity.io — the tool this video is about'} />
-          <p className="text-[10px] leading-snug text-muted-foreground">
-            The editor records these sites itself, timed to what you say. Public pages only for now.
-          </p>
-        </div>
-      )}
-      <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">Name (optional)</label>
-        <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Cowork tutorial" />
-      </div>
-      {creative ? null : showScript ? (
-        <div className="space-y-1">
-          <label className="text-[11px] text-muted-foreground">Script (optional — helps match takes to lines)</label>
-          <Textarea value={script} onChange={(e) => setScript(e.target.value)} rows={6} className="text-xs" />
-        </div>
-      ) : (
-        <button type="button" className="text-[11px] text-primary hover:underline" onClick={() => setShowScript(true)}>
-          + Add the script (optional)
-        </button>
-      )}
-      <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">Run on</label>
-        <Choice<AutoRunOn>
-          value={runOn}
-          onChange={setRunOn}
-          options={[
-            { value: 'auto', label: 'Auto' },
-            { value: 'factory', label: 'Factory server' },
-            { value: 'box', label: 'Main box' },
-          ]}
-        />
-        <p className="text-[10px] leading-snug text-muted-foreground">
-          {runOn === 'auto'
-            ? 'A factory server when the Video factory is on, else the main box.'
-            : runOn === 'factory'
-              ? 'Its own server even while the factory is off — deleted when the job ends.'
-              : 'Never leaves the main box (slower, no server cost).'}
-        </p>
-      </div>
-      <Button className="w-full gap-1.5" disabled={!ready || busy} onClick={() => void submit()}>
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : creative ? <Film className="h-4 w-4" /> : <Scissors className="h-4 w-4" />}
-        {creative ? 'Start the creative edit' : 'Clean up the narration'}
-      </Button>
     </div>
   );
 }
@@ -473,6 +327,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   };
 
   const finalFile = job.finals?.[tab];
+  const canFinal = (job.request.format === 'short' && !!edit) || (job.request.format === 'long' && !!job.edlAt);
   // a final made before the latest cut edits is not the cut on screen any more
   const finalStale = !!finalFile && !!job.edlAt && finalFile.modifiedAt * 1000 < job.edlAt - 1000;
   const [sitesText, setSitesText] = useState(() =>
@@ -523,52 +378,75 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
 
       <div className={cn('grid gap-4', vertical ? 'md:grid-cols-[280px_minmax(0,1fr)]' : 'grid-cols-1')}>
         <div className="space-y-2">
-          {running && preview && (
-            <p className="rounded bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
-              A new version is rendering — this is the previous one until it lands.
-            </p>
-          )}
           {(listen || preview) && (
             <div className="flex flex-wrap items-center gap-1.5">
-              <Choice<'listen' | 'video' | 'edit'>
-                value={shownFile === listen ? 'listen' : shownFile === edit && edit ? 'edit' : 'video'}
-                onChange={setMode}
-                options={[
-                  ...(listen ? [{ value: 'listen' as const, label: 'Sound check' }] : []),
-                  ...(preview ? [{ value: 'video' as const, label: videoStale ? 'Video (older)' : 'Video' }] : []),
-                  ...(edit ? [{ value: 'edit' as const, label: 'With graphics' }] : []),
-                ]}
-              />
-              {rendering ? (
-                <Button size="sm" variant="ghost" className="gap-1.5 text-red-400 hover:text-red-300" onClick={() => void cancelRender()}>
-                  <Ban className="h-3.5 w-3.5" /> Cancel render
-                </Button>
-              ) : (
-                <Button size="sm" variant="ghost" className="gap-1.5" disabled={running} onClick={() => void renderVideo()}>
-                  <Film className="h-3.5 w-3.5" /> Render video
-                </Button>
+              <div className="w-full sm:w-auto sm:min-w-[16rem]">
+                <Choice<'listen' | 'video' | 'edit'>
+                  value={shownFile === listen ? 'listen' : shownFile === edit && edit ? 'edit' : 'video'}
+                  onChange={setMode}
+                  options={[
+                    ...(listen ? [{ value: 'listen' as const, label: 'Sound check' }] : []),
+                    ...(preview ? [{ value: 'video' as const, label: videoStale ? 'Video (older)' : 'Video' }] : []),
+                    ...(edit ? [{ value: 'edit' as const, label: 'With graphics' }] : []),
+                  ]}
+                />
+              </div>
+              <div className="ml-auto flex flex-wrap gap-1.5">
+                {rendering ? (
+                  <Button size="sm" variant="ghost" className="gap-1.5 text-red-400 hover:text-red-300" onClick={() => void cancelRender()}>
+                    <Ban className="h-3.5 w-3.5" /> Cancel render
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="ghost" className="gap-1.5" disabled={running} onClick={() => void renderVideo()}>
+                    <Film className="h-3.5 w-3.5" /> Render video
+                  </Button>
+                )}
+                {canFinal && (
+                  <Button
+                    size="sm"
+                    variant={finalFile && !finalStale ? 'ghost' : 'default'}
+                    className="gap-1.5"
+                    disabled={running}
+                    onClick={() => void renderFinal()}
+                  >
+                    <Film className="h-3.5 w-3.5" /> {finalFile ? 'Re-render final (4K)' : 'Render final (4K)'}
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+          {finalFile && (
+            <div
+              className={cn(
+                'flex flex-wrap items-center gap-2 rounded-md px-3 py-2 text-xs',
+                finalStale ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400',
               )}
-              {((job.request.format === 'short' && edit) || (job.request.format === 'long' && !!job.edlAt)) && (
-                <Button size="sm" variant="ghost" className="gap-1.5" disabled={running} onClick={() => void renderFinal()}>
-                  <Film className="h-3.5 w-3.5" /> Render final (4K)
-                </Button>
-              )}
+            >
+              <span className="min-w-0 flex-1">
+                {finalStale ? 'Older final — made before your latest edits' : 'Final ready'} · {(finalFile.bytes / 1e6).toFixed(0)} MB
+              </span>
+              <Button asChild size="sm" variant={finalStale ? 'ghost' : 'default'} className="h-7 gap-1.5 text-xs">
+                <a href={`/api/aieditor/files/${job.id}/${finalFile.name}`} download>
+                  <Download className="h-3.5 w-3.5" /> Download {finalFile.name}
+                </a>
+              </Button>
             </div>
           )}
           {rendering && (
             <p className="rounded bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
               {job.status.message || 'Rendering…'}
               {typeof job.status.progress === 'number' && job.status.progress > 0 ? ` ${Math.round(job.status.progress * 100)}%` : ''}
+              {preview ? ' — showing the previous version until it lands.' : ''}
             </p>
           )}
-          {shownFile === listen && listen && (
-            <p className="text-[11px] text-muted-foreground">
-              The current cut's exact sound over the first frame — judge the cuts by ear here.
+          {running && !rendering && preview && (
+            <p className="rounded bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
+              A new version is on its way — this is the previous one until it lands.
             </p>
           )}
           {shownFile === preview && videoStale && (
             <p className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
-              This video is from before your latest edits — its timings differ from the cut list. Render video to update it.
+              This video is from before your latest edits — press Render video to update it.
             </p>
           )}
           {shownFile ? (
@@ -586,75 +464,92 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               {running ? 'Rendering…' : 'No preview yet'}
             </div>
           )}
-          {job.request.format === 'long' && !!job.edlAt && (
-            <div className="space-y-1.5 rounded-md border border-border p-2">
-              <p className="text-[11px] font-medium">Full edit — screencasts, facecam, titles, music</p>
-              <Textarea value={sitesText} onChange={(e) => setSitesText(e.target.value)} rows={2} className="text-xs"
-                placeholder={'Websites to show, one per line — e.g. linearity.io — the tool this video is about'} />
-              <Button size="sm" variant="secondary" className="gap-1.5" disabled={running} onClick={() => void buildEdit()}>
-                <Film className="h-3.5 w-3.5" /> {edit ? 'Rebuild the edit' : 'Build the edit'}
-              </Button>
-              <p className="text-[10px] leading-snug text-muted-foreground">
-                Claude plans where screencasts and graphics go, records the websites timed to your words, and puts it all
-                together. Watch it under "With graphics"; Render final (4K) then renders this edit.
-              </p>
-            </div>
-          )}
-          {finalFile && (
-            <p className="rounded bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-400">
-              {finalStale ? 'Older final, from before your latest edits' : 'Final ready'} ({(finalFile.bytes / 1e6).toFixed(0)} MB) —{' '}
-              <a className="underline" href={`/api/aieditor/files/${job.id}/${finalFile.name}`} download>
-                download {finalFile.name}
-              </a>
-            </p>
-          )}
-          {shownFile === edit && edit && gfx.length > 0 && (
-            <div className="space-y-1 rounded-md border border-border p-2">
-              <p className="text-[11px] font-medium">Graphics ({gfx.length}) — click to jump</p>
-              {gfx.map((g, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  title={g.why}
-                  onClick={() => {
-                    if (player.current) player.current.currentTime = g.t0;
-                  }}
-                  className="block w-full truncate text-left text-[11px] text-muted-foreground hover:text-foreground"
-                >
-                  {mmss(g.t0)} {g.template}:{' '}
-                  {Object.values(g.fields ?? {})
-                    .filter((x) => typeof x === 'string' || typeof x === 'number')
-                    .join(' · ')}
-                </button>
-              ))}
-            </div>
-          )}
           {info && (
             <p className="text-[11px] text-muted-foreground">
               {mmss(info.duration)} · {info.cuts} cuts · {info.words} words
+              {shownFile === listen && listen && ' · sound check: the exact cut over the first frame'}
               {preview && (
                 <>
                   {' · '}
                   <a className="text-primary hover:underline" href={`/api/aieditor/files/${job.id}/${preview.name}`} download>
-                    Download
+                    Download preview
                   </a>
                 </>
               )}
             </p>
           )}
-          {(video?.warnings ?? []).map((w, k) => (
-            <p key={k} className="rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
-              {w}
-            </p>
-          ))}
+          {job.request.format === 'long' && !!job.edlAt && (
+            <details className="group rounded-md border border-border" open={!!sitesText.trim() && !edit}>
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
+                <span className="text-foreground">Full edit</span>
+                <span className="truncate text-muted-foreground">
+                  {edit ? 'built — watch it under “With graphics”' : 'screencasts, facecam, titles, music'}
+                </span>
+              </summary>
+              <div className="space-y-1.5 px-3 pb-3">
+                <Textarea value={sitesText} onChange={(e) => setSitesText(e.target.value)} rows={2} className="text-xs"
+                  placeholder={'Websites to show, one per line — e.g. linearity.io — the tool this video is about'} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button size="sm" variant="secondary" className="gap-1.5" disabled={running} onClick={() => void buildEdit()}>
+                    <Film className="h-3.5 w-3.5" /> {edit ? 'Rebuild the edit' : 'Build the edit'}
+                  </Button>
+                  <p className="text-[10.5px] leading-snug text-muted-foreground">
+                    Claude places screencasts + graphics and records the sites timed to your words. Render final (4K) then renders this edit.
+                  </p>
+                </div>
+              </div>
+            </details>
+          )}
+          {shownFile === edit && edit && gfx.length > 0 && (
+            <details className="group rounded-md border border-border">
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
+                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
+                Graphics ({gfx.length}) <span className="text-muted-foreground">— click to jump</span>
+              </summary>
+              <div className="space-y-1 px-3 pb-2">
+                {gfx.map((g, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    title={g.why}
+                    onClick={() => {
+                      if (player.current) player.current.currentTime = g.t0;
+                    }}
+                    className="block w-full truncate text-left text-[11px] text-muted-foreground hover:text-foreground"
+                  >
+                    {mmss(g.t0)} {g.template}:{' '}
+                    {Object.values(g.fields ?? {})
+                      .filter((x) => typeof x === 'string' || typeof x === 'number')
+                      .join(' · ')}
+                  </button>
+                ))}
+              </div>
+            </details>
+          )}
+          {(video?.warnings ?? []).length > 0 && (
+            <details className="group rounded-md border border-amber-500/30 bg-amber-500/5" open>
+              <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-amber-400">
+                <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+                {video.warnings!.length} thing{video.warnings!.length === 1 ? '' : 's'} to check
+              </summary>
+              <ul className="space-y-1.5 px-3 pb-2.5 pl-8">
+                {video.warnings!.map((w, k) => (
+                  <li key={k} className="list-disc text-[11px] leading-snug text-amber-300/90">
+                    {w}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
 
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
               {creative
-                ? 'Creative edit — the narration is kept exactly as edited (no cuts). The transcript is here for reference.'
-                : 'Kept lines in white, removed lines struck through with the reason. Click a word to cut or restore it.'}
+                ? 'Transcript (for reference — nothing is cut in a creative edit)'
+                : 'Click a word to cut or restore it. Struck-through lines show why they went.'}
             </p>
             {!creative && (
             <div className="flex gap-1.5">
@@ -773,11 +668,28 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               );
             })}
           </div>
-          {review.notes && <p className="text-[11px] text-muted-foreground">Claude: {review.notes}</p>}
+          {review.notes && (
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground">
+                <ChevronRight className="h-3 w-3 transition-transform group-open:rotate-90" /> Claude's notes on this cut
+              </summary>
+              <p className="mt-1 pl-[18px] text-[11px] leading-relaxed text-muted-foreground">{review.notes}</p>
+            </details>
+          )}
         </div>
       </div>
 
       {!creative && info && (info.joins?.length ?? 0) > 0 && (
+        <details className="group rounded-lg border border-border" open={!!job.nudgesPending}>
+          <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2.5 text-xs">
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
+            <span className="text-foreground">Fine-tune cuts</span>
+            <span className="text-muted-foreground">
+              {info.joins.length} cuts · nudge any join a few ms and hear it instantly
+              {job.nudgesPending ? ' · unapplied changes' : ''}
+            </span>
+          </summary>
+          <div className="px-3 pb-3">
         <CutEditor
           jobId={job.id}
           joins={info.joins}
@@ -794,6 +706,8 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
           disabled={running}
           onSaved={onSaved}
         />
+          </div>
+        </details>
       )}
     </div>
   );
@@ -835,15 +749,21 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
     }
   };
 
+  const stageStates = Object.values(job.status.stages ?? {}).map((x) => x?.state);
+  const stoppedInStage = stageStates.some((x) => x === 'failed' || x === 'interrupted');
+  const canContinue = state === 'failed' || state === 'cancelled' || state === 'interrupted';
+  const doContinue = () => void act(() => autoEditorContinue({ id }), 'Continuing — finished steps are reused.');
+  const creative = (job.workflow ?? job.request.workflow) === 'creative';
+
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="space-y-4">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="truncate text-lg font-semibold text-foreground">
               {job.request.title || job.source?.title || job.id}
             </h2>
-            <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', badge.cls)}>{badge.text}</span>
+            <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', badge.cls)}>{badge.text}</span>
           </div>
           <p className="text-xs text-muted-foreground">
             {WORKFLOW_LABEL[(job.workflow ?? job.request.workflow ?? 'cut') as AutoWorkflow]} ·{' '}
@@ -851,90 +771,70 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
             {job.request.sponsored ? 'Sponsored' : 'Not sponsored'}
             {job.source?.duration ? ` · raw ${mmss(job.source.duration)}` : ''}
             {job.source?.width ? ` · ${job.source.width}×${job.source.height}` : ''}
-            {(() => {
-              const c = job.status.cost_live_usd ?? job.status.cost_usd;
-              return typeof c === 'number' && c > 0 ? ` · $${c.toFixed(2)} so far` : '';
-            })()}
           </p>
-          {state === 'queued' && job.busyWith && (
-            <p className="mt-1 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
-              Saved and queued — the editor runs one job at a time and is finishing “{job.busyWith.title || job.busyWith.id}”
-              {job.busyWith.message ? ` (${job.busyWith.message})` : ''}. Your changes start right after it.
-            </p>
-          )}
         </div>
-        <div className="flex gap-1.5">
-          {live ? (
+        <div className="flex shrink-0 gap-1">
+          {live && (
             <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => void act(() => autoEditorCancel({ id }), 'Cancelling…')}>
               <Ban className="h-3.5 w-3.5" /> Cancel
             </Button>
-          ) : (
-            (state === 'failed' || state === 'cancelled' || state === 'interrupted') && (
-              <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => void act(() => autoEditorContinue({ id }), 'Continuing — finished steps are reused.')}>
-                <RotateCcw className="h-3.5 w-3.5" /> Continue
-              </Button>
-            )
+          )}
+          {canContinue && (
+            <Button size="sm" className="gap-1.5" onClick={doContinue}>
+              <RotateCcw className="h-3.5 w-3.5" /> Continue
+            </Button>
           )}
           {!live && (
             <Button
-              size="sm"
+              size="icon"
               variant="ghost"
-              className="gap-1.5 text-red-400"
+              title="Delete this edit"
+              className="h-8 w-8 text-muted-foreground hover:text-red-400"
               onClick={() => {
                 if (!confirm('Delete this edit and all its files from the server?')) return;
                 void autoEditorDelete({ id }).then(onDeleted).catch((e) => toast.error(errText(e)));
               }}
             >
-              <Trash2 className="h-3.5 w-3.5" /> Delete
+              <Trash2 className="h-3.5 w-3.5" />
             </Button>
           )}
         </div>
       </div>
 
-      {state === 'failed' && job.status.message && (
-        <p className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{job.status.message}</p>
+      {state === 'queued' && job.busyWith && (
+        <p className="rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+          Queued behind “{job.busyWith.title || job.busyWith.id}”{job.busyWith.message ? ` (${job.busyWith.message})` : ''} — the editor
+          runs one job at a time. Yours starts right after.
+        </p>
       )}
-      <JobProgress job={job} live={live} />
+      {(state === 'failed' || state === 'interrupted') && job.status.message && !stoppedInStage && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-red-500/40 bg-red-500/5 px-3 py-2">
+          <p className="min-w-0 flex-1 text-xs text-red-300">{job.status.message}</p>
+          <Button size="sm" className="h-7 gap-1.5 text-xs" onClick={doContinue}>
+            <RotateCcw className="h-3.5 w-3.5" /> Continue
+          </Button>
+        </div>
+      )}
+      <JobProgress job={job} live={live} onContinue={canContinue ? doContinue : undefined} />
 
       {job.review ? (
         <Review job={job} onSaved={() => void load()} />
       ) : (
-        <p className="text-xs text-muted-foreground">
-          {(job.workflow ?? job.request.workflow) === 'creative'
-            ? 'The transcript and the videos appear here once the narration is transcribed and re-timed.'
-            : 'The review appears here once Claude has picked the takes. A 15-minute raw recording takes about 10 minutes; a 45-minute one about 30.'}
-        </p>
+        live && (
+          <p className="text-xs text-muted-foreground">
+            {creative
+              ? 'The transcript and videos appear here as soon as they are ready.'
+              : 'Your review appears here once Claude has picked the takes (~10 min per 15 min of recording).'}
+          </p>
+        )
       )}
 
       {job.log && (
-        <details className="rounded-md border border-border">
-          <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground">Raw worker log (log.txt, last 8 KB)</summary>
+        <details className="rounded-md border border-border/60">
+          <summary className="cursor-pointer px-3 py-1.5 text-[11px] text-muted-foreground">Raw worker log (log.txt, last 8 KB)</summary>
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 pb-3 text-[10px] text-muted-foreground">{job.log}</pre>
         </details>
       )}
-    </div>
-  );
-}
-
-function HowItWorks() {
-  return (
-    <div className="space-y-3 rounded-lg border border-border p-5 text-sm text-muted-foreground">
-      <h2 className="text-base font-medium text-foreground">Two workflows</h2>
-      <p className="text-xs">
-        <span className="text-foreground">1. Cut an unedited narration</span> — the steps below.{' '}
-        <span className="text-foreground">2. Creative edit an edited narration</span> — the narration is already edited, so
-        nothing is cut: it is transcribed and re-timed, then goes straight to pre-production, screencasts, graphics and
-        the final. Every step shows its own progress bar, timing, cost and full live log.
-      </p>
-      <h2 className="text-base font-medium text-foreground">1. Raw narration → clean edit</h2>
-      <ol className="list-decimal space-y-1.5 pl-5">
-        <li>Publish the RAW recording in Descript (download allowed) and paste the share link.</li>
-        <li>The worker transcribes it word by word and re-times every word against the audio.</li>
-        <li>Claude picks the best take of every line, cuts crew talk, false starts, "uh"s and stacked "so"s, and caps every pause at 0.35 s — your Descript routine.</li>
-        <li>You get a sound check of each video in minutes (the exact cut, first frame held), then the frame-exact video preview. Every removed sentence is listed with the reason — restore anything with one click.</li>
-        <li>Any single cut can be nudged a few ms either way under Cuts and heard instantly — no re-render.</li>
-      </ol>
-      <p className="text-xs">One recording can hold several shorts — each script becomes its own video.</p>
     </div>
   );
 }
@@ -965,77 +865,80 @@ export default function AutoEditorPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="mx-auto max-w-6xl px-4 py-6">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+      <div className="mx-auto max-w-6xl px-4 py-5">
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
             <Link to="/">
-              <Button variant="ghost" size="sm" className="gap-1.5">
+              <Button variant="ghost" size="sm" className="gap-1.5 px-2">
                 <ArrowLeft className="h-4 w-4" />
-                Tools
+                <span className="hidden sm:inline">Tools</span>
               </Button>
             </Link>
-            <div>
-              <h1 className="text-xl font-semibold text-foreground">Auto Editor</h1>
-              <p className="text-xs text-muted-foreground">
-                Raw narration in — best takes picked, junk cut, frame-exact. Graphics, screencasts and music come next.
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
+            <h1 className="truncate text-lg font-semibold text-foreground">Auto Editor</h1>
             <span
+              title={workerAlive === null ? 'Checking the worker…' : workerAlive ? 'Worker running' : 'Worker not responding'}
               className={cn(
-                'text-xs',
+                'flex items-center gap-1.5 text-[11px]',
                 workerAlive === null ? 'text-muted-foreground' : workerAlive ? 'text-green-400' : 'text-red-400',
               )}
             >
-              {workerAlive === null ? 'Worker …' : workerAlive ? '● Worker running' : '● Worker not responding'}
+              <span className={cn('h-1.5 w-1.5 rounded-full', workerAlive === null ? 'bg-muted-foreground' : workerAlive ? 'bg-green-400' : 'bg-red-400 animate-pulse')} />
+              <span className={cn(workerAlive ? 'hidden sm:inline' : '')}>{workerAlive === false ? 'Worker not responding' : 'Worker online'}</span>
             </span>
-            <Button variant="ghost" size="sm" onClick={() => void refresh()} className="gap-1.5">
-              <RefreshCw className="h-4 w-4" />
-              Refresh
-            </Button>
           </div>
+          <Button variant="ghost" size="icon" onClick={() => void refresh()} title="Refresh" className="h-8 w-8">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
         </div>
 
-        <div className="mb-4">
+        <div className="mb-5">
           <FactoryPanel />
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)]">
-          <div className="space-y-4">
-            <NewEdit
-              onCreated={(id) => {
-                void refresh();
-                navigate(`/auto-editor/${id}`);
-              }}
-            />
-            <div className="rounded-lg border border-border">
-              <div className="border-b border-border px-3 py-2.5">
-                <h2 className="text-sm font-medium text-foreground">Edits</h2>
-              </div>
+        <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+          {/* sidebar: on a phone it only shows on the start screen, below the flow */}
+          <div className={cn('space-y-3', selected ? 'hidden lg:block' : 'order-2 lg:order-none')}>
+            <Button
+              variant={selected ? 'secondary' : 'outline'}
+              className="hidden w-full gap-1.5 lg:flex"
+              onClick={() => navigate('/auto-editor')}
+              disabled={!selected}
+            >
+              <Plus className="h-4 w-4" /> New edit
+            </Button>
+            <div>
+              <h2 className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Edits</h2>
               {!loaded ? (
-                <p className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</p>
+                <p className="px-1 py-4 text-xs text-muted-foreground">Loading…</p>
               ) : jobs.length === 0 ? (
-                <p className="px-3 py-6 text-center text-xs text-muted-foreground">No edits yet.</p>
+                <p className="px-1 py-4 text-xs text-muted-foreground">No edits yet.</p>
               ) : (
-                <div className="divide-y divide-border">
+                <div className="space-y-0.5">
                   {jobs.map((j) => {
                     const b = STATE_BADGE[j.state] ?? STATE_BADGE.queued;
+                    const busy = j.state === 'running' || j.state === 'queued';
                     return (
                       <button
                         key={j.id}
                         type="button"
                         onClick={() => navigate(`/auto-editor/${j.id}`)}
                         className={cn(
-                          'block w-full px-3 py-2.5 text-left transition-colors hover:bg-muted/40',
+                          'block w-full rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted/40',
                           selected === j.id && 'bg-muted/60',
                         )}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate text-sm text-foreground">{j.title}</span>
-                          <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', b.cls)}>{b.text}</span>
+                          <span className="truncate text-[13px] text-foreground">{j.title}</span>
+                          {j.state === 'done' ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-green-400" title={b.text} />
+                          ) : (
+                            <span className={cn('flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium', b.cls)}>
+                              {busy && j.state === 'running' && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+                              {b.text}
+                            </span>
+                          )}
                         </div>
-                        <div className="mt-0.5 text-[11px] text-muted-foreground">
+                        <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
                           {WORKFLOW_LABEL[j.workflow ?? 'cut']} · {j.format === 'short' ? 'Shorts' : 'Long-form'} ·{' '}
                           {j.sponsored ? 'Sponsored' : 'Not sponsored'} · {ago(j.createdAt)}
                         </div>
@@ -1049,17 +952,29 @@ export default function AutoEditorPage() {
 
           <div className="min-w-0">
             {selected ? (
-              <JobDetail
-                key={selected}
-                id={selected}
-                onChanged={refresh}
-                onDeleted={() => {
-                  void refresh();
-                  navigate('/auto-editor');
-                }}
-              />
+              <>
+                <Link to="/auto-editor" className="mb-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground lg:hidden">
+                  <ArrowLeft className="h-3.5 w-3.5" /> All edits
+                </Link>
+                <JobDetail
+                  key={selected}
+                  id={selected}
+                  onChanged={refresh}
+                  onDeleted={() => {
+                    void refresh();
+                    navigate('/auto-editor');
+                  }}
+                />
+              </>
             ) : (
-              <HowItWorks />
+              <div className="py-2 sm:rounded-xl sm:border sm:border-border sm:px-8 sm:py-10">
+                <NewEditFlow
+                  onCreated={(id) => {
+                    void refresh();
+                    navigate(`/auto-editor/${id}`);
+                  }}
+                />
+              </div>
             )}
           </div>
         </div>
