@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import config, events
 
-SC_IMAGE = "aieditor-screencast:0.1"
+SC_IMAGE = config.SC_IMAGE
 LAB_DATA = Path("/var/lib/docker/volumes/clipmagic_clipmagic-lab-data/_data")
 SCOUT_PROFILES = LAB_DATA / "scout" / "profiles"
 MAX_STEPS = 45
@@ -78,6 +78,22 @@ def known_pages(profile, limit=25):
     return out
 
 
+class WallError(RuntimeError):
+    """The app showed a bot check (Cloudflare "Verify you are human", a captcha) or a login wall where the
+    session should be logged in — the segment must not be recorded (Jake 2026-10-08)."""
+
+    def __init__(self, wall):
+        self.wall = wall or {}
+        super().__init__(f"{self.wall.get('kind', 'wall')}: {self.wall.get('why', '')} at {self.wall.get('url', '')}")
+
+
+def wall_message(slug, wall):
+    name = {"chatgpt": "ChatGPT", "linearity": "Linearity"}.get(slug, slug)
+    if (wall or {}).get("kind") == "login":
+        return f"{name} showed a login page — screencast skipped, A-roll used"
+    return f"{name} asked for a human check — screencast skipped, A-roll used"
+
+
 class Session:
     """The agent_rec.mjs process (one per video)."""
 
@@ -96,6 +112,7 @@ class Session:
         self.name = f"aieditor-agent-{uuid.uuid4().hex[:8]}"
         cmd = ["docker", "run", "-i", "--rm", "--name", self.name, "--cpuset-cpus", config.CPUSET, "--shm-size", "1g",
                "--memory", config.MEMORY, "-e", "AGENT_WEBGL=1", "-e", f"AGENT_DARK={'1' if dark else '0'}",   # app canvases (Linearity's editor) need WebGL
+               "-e", "TZ=Asia/Bangkok", "-e", f"AGENT_PROXY={config.EGRESS_PROXY}",   # Jake's timezone; factory egress via the main box
                "-v", f"{config.CODE / 'screencast'}:/app/screencast", "-v", f"{config.CODE / 'motion'}:/app/motion:ro",
                "-v", f"{self.workdir}:/w"]
         if profile_src:
@@ -344,6 +361,14 @@ def record_segment(sess, seg, video, knowledge, out_rel, log=print, first=False)
         sess.send({"cmd": "open", "url": seg["url"], "settle": 3})
         sess.opened = True
     usd = prepare(sess, seg, said, system, log)
+    # GUARD before the first frame: a bot check or a login wall is never recorded — reload once, then the
+    # caller retries on a fresh profile copy, then the segment stays A-roll (WallError)
+    g = sess.send({"cmd": "guard"}).get("wall")
+    if g:
+        log(f"recorder: {g.get('kind')} page before recording ({g.get('why')}) — reloading once")
+        g = sess.send({"cmd": "reload", "settle": 8}).get("wall")
+        if g:
+            raise WallError(g)
     sess.send({"cmd": "segment", "out": out_rel})
     history = []
     for n in range(MAX_STEPS):
@@ -352,6 +377,11 @@ def record_segment(sess, seg, video, knowledge, out_rel, log=print, first=False)
             if str(obs.get("shot", "")).startswith("/w"):
                 (Path(sess.workdir) / Path(obs["shot"]).relative_to("/w")).unlink(missing_ok=True)
             break
+        if (obs.get("wall") or {}).get("kind") == "challenge":
+            # a bot check appeared mid-recording: close the file and throw the segment away
+            sess.send({"cmd": "end", "until": round(obs.get("t", 0) + 0.1, 3)})
+            shutil.rmtree(Path(sess.workdir) / out_rel, ignore_errors=True)
+            raise WallError(obs["wall"])
         if not obs.get("ok", True) and "items" not in obs:
             history.append({"t": obs.get("t", 0), "action": {"type": "observe"}, "result": obs.get("error", "observe failed")})
             continue
@@ -396,6 +426,10 @@ Next single step?"""})
                     level="info" if res.get("ok") else "warn", frac=round(min(1.0, obs.get("t", 0) / max(dur, 0.1)), 3))
         if not res.get("ok"):
             log(f"agent step failed: {json.dumps(a)[:120]} — {res.get('error')}")
+    g = sess.send({"cmd": "guard"}).get("wall")          # (recorded into events.json "walls" if any)
     sess.send({"cmd": "end", "until": round(dur + 0.5, 3)})
+    if g and g.get("kind") == "challenge":
+        shutil.rmtree(Path(sess.workdir) / out_rel, ignore_errors=True)
+        raise WallError(g)
     json.dump(history, open(Path(sess.workdir) / out_rel / "agent-steps.json", "w"), indent=1)
     return usd

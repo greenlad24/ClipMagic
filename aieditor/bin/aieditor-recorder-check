@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Recorder identity check: record a few seconds of a logged-in Scout app and save frames + what the
+page sees (UA, platform, UA-CH, webdriver, timezone, WebGL) — proof that the screencast browser acts
+like real Chrome on a Mac, is logged in, dark where the rulebook says so, and hit no bot check.
+
+    aieditor-recorder-check <workdir> [slug=chatgpt] [url=https://chatgpt.com/]
+
+Writes <workdir>/check.json + frame-*.jpg. Runs the same on a factory server (AIEDITOR_EGRESS_PROXY set:
+the browser leaves through the main box). Never types, sends, deletes or changes anything: it opens
+the page, opens the keyboard-shortcut list (⌘/) and closes it again.
+"""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from aieditor import agentrec, config  # noqa: E402
+
+wd = Path(sys.argv[1]).resolve()
+slug = sys.argv[2] if len(sys.argv) > 2 else "chatgpt"
+url = sys.argv[3] if len(sys.argv) > 3 else "https://chatgpt.com/"
+wd.mkdir(parents=True, exist_ok=True)
+sc = agentrec.scout_for(url)
+assert sc and sc["slug"] == slug, f"no Scout profile for {url}"
+sess = agentrec.Session(wd, sc["profile"], dark=(slug == "chatgpt"))
+out = {"proxy": config.EGRESS_PROXY or None}
+try:
+    out["open"] = sess.send({"cmd": "open", "url": url, "settle": 8})
+    out["whoami"] = sess.send({"cmd": "whoami"})
+    g = sess.send({"cmd": "guard"})
+    if g.get("wall"):
+        g = sess.send({"cmd": "reload", "settle": 10})
+    out["guard"] = g
+    sess.send({"cmd": "segment", "out": "rec"})
+    sess.send({"cmd": "act", "action": {"type": "hold", "s": 1.5}})
+    obs = sess.send({"cmd": "observe"})
+    out["texts"] = [i["text"] for i in obs.get("items", [])][:400]
+    out["wall_during"] = obs.get("wall")
+    Path(obs.get("shot", "x").replace("/w", str(wd), 1)).unlink(missing_ok=True) if obs.get("shot") else None
+    sess.send({"cmd": "act", "action": {"type": "key", "key": "Meta+/"}})
+    sess.send({"cmd": "act", "action": {"type": "hold", "s": 2.0}})
+    obs = sess.send({"cmd": "observe"})
+    out["texts_shortcuts"] = [i["text"] for i in obs.get("items", [])][:400]
+    Path(obs.get("shot", "x").replace("/w", str(wd), 1)).unlink(missing_ok=True) if obs.get("shot") else None
+    sess.send({"cmd": "act", "action": {"type": "key", "key": "Escape"}})
+    sess.send({"cmd": "act", "action": {"type": "hold", "s": 1.0}})
+    sess.send({"cmd": "end", "until": 5.0})
+finally:
+    sess.close()
+ev = json.loads((wd / "rec" / "events.json").read_text()) if (wd / "rec" / "events.json").exists() else {}
+out["walls_recorded"] = ev.get("walls")
+out["browser"] = ev.get("browser")
+allt = " ".join(out.get("texts", []) + out.get("texts_shortcuts", []))
+out["logged_in_as"] = "Jake Dawson" in allt
+out["plus"] = "Plus" in allt
+out["cmd_hints"] = "⌘" in allt
+(wd / "check.json").write_text(json.dumps(out, indent=1, ensure_ascii=False))
+subprocess.run(["docker", "run", "--rm", "-v", f"{wd}:/w", config.SC_IMAGE, "sh", "-c",
+                "for t in 1.0 3.0 4.5; do ffmpeg -v error -y -ss $t -i /w/rec/raw.mp4 -frames:v 1 -q:v 3 /w/frame-$t.jpg; done"],
+               check=False)
+print(json.dumps({k: out[k] for k in ("proxy", "logged_in_as", "plus", "cmd_hints", "walls_recorded")}, ensure_ascii=False))
+print(json.dumps(out.get("whoami"), ensure_ascii=False)[:900])

@@ -39,22 +39,25 @@ const W = Math.round(CSS_W * SCALE), H = Math.round(CSS_H * SCALE);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 
-// Same browser identity as the Lab's login console (lab/server/src/browser/runtime.ts): a desktop
-// Chrome UA and no automation flag. Cloudflare-protected apps (chatgpt.com, 2026-10-08) challenge the
-// default HeadlessChrome UA, so a session logged in through the console must be replayed with it.
+// REAL CHROME ON A MAC (macchrome.mjs — Jake 2026-10-08): Google Chrome stable when the image has it,
+// a Mac Chrome UA that matches the engine's real version, UA-CH "Google Chrome"/macOS, platform MacIntel,
+// webdriver false, Asia/Bangkok, hidden scrollbars, Mac font aliases; AGENT_PROXY = egress via the main box.
+import { execFileSync } from "node:child_process";
+import { CHROME, launchArgs, identity, dress, wall } from "./macchrome.mjs";
+const VER = (() => { try { return execFileSync(CHROME, ["--version"]).toString().match(/(\d+)\./)[1]; } catch { return "155"; } })();
 const UA = process.env.BROWSER_UA ||
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36";
+  `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${VER}.0.0.0 Safari/537.36`;
+process.env.BROWSER_UA = UA;
 const browser = await puppeteer.launch({
-  executablePath: "/usr/bin/chromium", headless: true, userDataDir: profileDir || undefined,
+  executablePath: CHROME, headless: true, userDataDir: profileDir || undefined,
   protocolTimeout: 600000,             // software WebGL: a heavy canvas frame can take minutes
-  args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars",
-         "--disable-blink-features=AutomationControlled", `--user-agent=${UA}`, "--disable-features=Translate",
-         "--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none", "--lang=en-US",
+  args: launchArgs([`--user-agent=${UA}`, "--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none",
          "--renderer-process-limit=1", "--disable-site-isolation-trials",
-         ...(process.env.AGENT_WEBGL === "1" ? [] : ["--disable-webgl", "--disable-3d-apis"])],
+         ...(process.env.AGENT_WEBGL === "1" ? [] : ["--disable-webgl", "--disable-3d-apis"])]),
 });
+const ID = await identity(browser);
 let page = (await browser.pages())[0] ?? (await browser.newPage());
-await page.setUserAgent(UA).catch(() => {});
+await dress(page, ID);
 // Dark screencasts (Jake 2026-10-08: "I want the screencast to be on a dark theme ChatGPT"): every
 // page reports prefers-color-scheme: dark, so apps on a "System" theme render dark.
 const DARK = process.env.AGENT_DARK === "1";
@@ -98,6 +101,7 @@ async function recover() {
   // a dead renderer never answers: open a fresh tab at the same address and carry on
   try { await page.close().catch(() => {}); } catch {}
   page = await browser.newPage();
+  await dress(page, ID);
   await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
   cdp = await page.createCDPSession();
   watch(page);
@@ -112,6 +116,30 @@ async function vclip(scale) {
   let x = 0, y = 0;
   try { const m = await cdp.send("Page.getLayoutMetrics"); const v = m.cssVisualViewport || m.visualViewport || {}; x = v.pageX || 0; y = v.pageY || 0; } catch {}
   return { x, y, width: CSS_W, height: CSS_H, scale };
+}
+// ⚠️ 2026-10-08: under paused virtual time Chrome paints only when something changes — on a STATIC page the
+// 2nd captureScreenshot never returned (the recorder hung for good: the old 30 s guard covered only the
+// clock). macchrome.mjs's heartbeat keeps frames coming; this guard re-plants it if a page lost it, gives
+// the clock one more frame, and as the last resort takes the shot from the view (fromSurface: false).
+const HEARTBEAT = `(() => { if (document.getElementById("__amhb")) return; const d = document.createElement("div"); d.id = "__amhb";
+  d.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;pointer-events:none;z-index:2147483647;background:#000;opacity:.011;transition:none";
+  d.animate([{ opacity: 0.011 }, { opacity: 0.012 }], { duration: 1000, iterations: Infinity, direction: "alternate" });
+  document.documentElement.appendChild(d); })()`;
+function withTimeout(p, ms) {
+  let tm; return Promise.race([p, new Promise((_, rej) => { tm = setTimeout(() => rej(new Error("timeout")), ms); })]).finally(() => clearTimeout(tm));
+}
+async function frameShot() {
+  const opts = async (extra = {}) => ({ format: "jpeg", quality: 92, clip: await vclip(SCALE), ...extra });
+  try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts()), 15000); } catch (e) {
+    process.stderr.write(`frame capture stalled (${e?.message}) — heartbeat + one more frame\n`);
+  }
+  await cdp.send("Runtime.evaluate", { expression: HEARTBEAT }).catch(() => {});
+  await withTimeout(new Promise(async (res) => { cdp.once("Emulation.virtualTimeBudgetExpired", res);
+    await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 1 }).catch(res); }), 10000).catch(() => {});
+  try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts()), 15000); } catch {}
+  try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts({ fromSurface: false })), 15000); } catch {}
+  crashed = true;
+  throw new Error("the page stopped painting — it was reopened; observe again");
 }
 let stalls = 0;
 async function step(silent = false) {
@@ -136,7 +164,7 @@ async function step(silent = false) {
     if (stalls > 20) { crashed = true; throw new Error("the page stopped responding — it was reopened; observe again"); }
   } else if (!ok) { crashed = true; throw new Error("the page stopped responding — it was reopened; observe again"); }
   if (!rec || silent) return;          // silent: the page clock moves, nothing is recorded (inside a cut)
-  const shot = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 92, clip: await vclip(SCALE) });
+  const shot = await frameShot();
   const buf = Buffer.from(shot.data, "base64");
   if (!rec.ff.stdin.write(buf)) await new Promise((r) => rec.ff.stdin.once("drain", r));
   rec.cursor.push([t(), cx * SCALE, cy * SCALE]);
@@ -550,7 +578,10 @@ async function observe() {
   // mean luminance 0-255 of the screen (pre-production readiness: dark theme check)
   let lum = null;
   try { const g = await tiny(); let sum = 0; for (const v of g) sum += v; lum = Math.round(sum / g.length * 10) / 10; } catch {}
-  return { t: t(), ...info, shot, lum, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)] };
+  // GUARD: a bot check / login wall is never recorded — reported to agentrec.py, which drops the segment
+  const w = await wall(page);
+  if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); }
+  return { t: t(), ...info, shot, lum, f: SHOT_F, cursor: [Math.round(cx / SHOT_F), Math.round(cy / SHOT_F)], wall: w };
 }
 
 async function boxOf(ref, tight = false) {
@@ -1041,7 +1072,8 @@ async function endSegment(until) {
   await new Promise((res) => r.ff.on("close", res));
   fs.writeFileSync(path.join(r.dir, "events.json"), JSON.stringify({
     capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0, url: r.url,
-    end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events }, null, 1));
+    end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
+    browser: { exe: CHROME, ua: UA, version: ID.full } }, null, 1));
   rec = null;
   await realtime();
 }
@@ -1052,7 +1084,10 @@ for await (const line of rl) {
   let m;
   try { m = JSON.parse(line); } catch { out({ ok: false, error: "bad json" }); continue; }
   try {
-    if (m.cmd === "open") { lastFit = null; await load(m.url, m.settle ?? 2.5); out({ ok: true, url: page.url(), fit: lastFit }); }
+    if (m.cmd === "open") { lastFit = null; await load(m.url, m.settle ?? 2.5); out({ ok: true, url: page.url(), fit: lastFit, wall: await wall(page) }); }
+    else if (m.cmd === "guard") { const w = await wall(page); if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); } out({ ok: true, wall: w, url: page.url() }); }
+    else if (m.cmd === "reload") { await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {}); await sleep((m.settle ?? 6) * 1000); out({ ok: true, wall: await wall(page), url: page.url() }); }
+    else if (m.cmd === "whoami") { out({ ok: true, ...(await page.evaluate(() => ({ ua: navigator.userAgent, platform: navigator.platform, webdriver: navigator.webdriver, languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, uaData: navigator.userAgentData ? navigator.userAgentData.toJSON() : null, gl: (() => { try { const g = document.createElement("canvas").getContext("webgl"); const x = g.getExtension("WEBGL_debug_renderer_info"); return [g.getParameter(x.UNMASKED_VENDOR_WEBGL), g.getParameter(x.UNMASKED_RENDERER_WEBGL)]; } catch (e) { return String(e); } })() })).catch((e) => ({ error: String(e) }))), exe: CHROME }); }
     else if (m.cmd === "segment") { await startSegment(m.out); out({ ok: true }); }
     else if (m.cmd === "observe") out({ ok: true, ...(await observe()) });
     else if (m.cmd === "shot") { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 80, clip: await vclip(1 / SHOT_F) }); const f = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); out({ ok: true, shot: f }); }

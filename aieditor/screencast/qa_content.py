@@ -23,6 +23,7 @@ expect.json: {"forbid": ["Blue Bottle"], "segments": {"0": [{"at": 3.39, "must":
 (`at` = segment-relative word time of the beat the requirement belongs to, matched within 0.05 s.)
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -118,6 +119,12 @@ def check_segment(sd, clip_cam, exp_beats, forbid):
         if e["type"] == "type" and e.get("value") is not None:
             want = e.get("text", "")
             out.append({"check": "typed", "ok": e["value"].strip() == want.strip(), "value": e["value"][:120], "want": want})
+    # GUARD (Jake 2026-10-08): no bot check / captcha page may ever be in a recording
+    walls = [x for x in ev.get("walls", []) if x.get("kind") == "challenge"]
+    out.append({"check": "no_challenge", "ok": not walls, "walls": walls[:3]})
+    for e in ev["events"]:
+        if re.search(r"just a moment|verify you are human|attention required", str(e.get("title", "")) + " " + str(e.get("vis", "")), re.I):
+            out.append({"check": "no_challenge", "ok": False, "t": round(e["t"], 2), "title": e.get("title")})
     for req in exp_beats:
         hits = [e for e in ev["events"] if abs((e.get("at") if e.get("at") is not None else e["t"]) - req["at"]) <= 0.12]
         txt = " ".join(" ".join(str(e.get(k, "")) for k in ("title", "vis", "value", "url", "text")) for e in hits)

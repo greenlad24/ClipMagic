@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import agentrec, compose_long, config, director, events as ev_log, graphics_long, media
 
-SC_IMAGE = "aieditor-screencast:0.1"
+SC_IMAGE = config.SC_IMAGE
 SCREENCAST = config.CODE / "screencast"
 MUSIC_DIR = Path("/opt/aieditor-work/music")
 VOICE_LUFS = -14.0                   # render.py normalises the voice to −14 LUFS
@@ -29,7 +29,7 @@ VOICE_LUFS = -14.0                   # render.py normalises the voice to −14 L
 def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None):
     cname = f"{name}-{uuid.uuid4().hex[:8]}"
     cmd = ["docker", "run", "--rm", "--name", cname, "--cpuset-cpus", cpus or config.CPUSET, "--shm-size", "1g",
-           "--memory", config.MEMORY]
+           "--memory", config.MEMORY, "-e", "TZ=Asia/Bangkok", "-e", f"AGENT_PROXY={config.EGRESS_PROXY}"]
     for a, b in mounts:
         cmd += ["-v", f"{a}:{b}"]
     cmd += [SC_IMAGE] + args
@@ -136,17 +136,27 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
                     usd += agentrec.record_segment(sess, seg, video, x["knowledge"], out_rel,
                                                    log=log, first=(n == 0))
                 except RuntimeError as err:
-                    # a stuck/dead browser: a fresh session and one more try for this segment
+                    # a stuck/dead browser or a bot check: a fresh session and one more try for this segment
+                    # (a bot check / login wall → also a FRESH copy of the Scout profile)
                     log(f"edit {k}: screencast {i + 1} — {err}; restarting the browser and trying again")
                     sess.close()
-                    sess = agentrec.Session(w, x["profile"], cancelled, dark=dark,
-                                            profile_name="profile" if len(by_scout) == 1 else f"profile-{slug}")
+                    pname = "profile" if len(by_scout) == 1 else f"profile-{slug}"
+                    if isinstance(err, agentrec.WallError):
+                        shutil.rmtree(w / pname, ignore_errors=True)
+                    shutil.rmtree(w / f"seg-{i:02d}" / "rec", ignore_errors=True)
+                    sess = agentrec.Session(w, x["profile"], cancelled, dark=dark, profile_name=pname)
                     try:
                         usd += agentrec.record_segment(sess, seg, video, x["knowledge"], out_rel,
                                                        log=log, first=True)
                     except RuntimeError as err2:
                         # factory rule: route, don't fail — this moment stays A-roll
-                        log(f"edit {k}: screencast {i + 1} failed twice ({err2}) — that moment stays A-roll")
+                        shutil.rmtree(w / f"seg-{i:02d}" / "rec", ignore_errors=True)
+                        if isinstance(err2, agentrec.WallError):
+                            msg = agentrec.wall_message(slug, err2.wall)
+                            log(f"edit {k}: screencast {i + 1}: {msg} ({err2})")
+                            ev_log.emit("log", msg, level="warn")
+                        else:
+                            log(f"edit {k}: screencast {i + 1} failed twice ({err2}) — that moment stays A-roll")
         finally:
             ev_log.set_sub(None)
             if sess:
@@ -203,6 +213,12 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     for i, seg in enumerate(allsegs):
         sd = w / f"seg-{i:02d}"
         if not (sd / "rec" / "events.json").exists():
+            continue
+        walls = [x for x in json.load(open(sd / "rec" / "events.json")).get("walls", []) if x.get("kind") == "challenge"]
+        if walls:
+            # GUARD (Jake 2026-10-08): a frame of a bot check can never reach an edit
+            ev_log.emit("log", f"screencast {i + 1}: a human-check page was recorded ({walls[0].get('why')}) — "
+                        "dropped, A-roll used", level="warn")
             continue
         clip = f"sc-{i:02d}-{W}.mp4"
         # two screencasts back to back = a change of world (a new recording): the next one

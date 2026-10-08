@@ -5,8 +5,10 @@
 import fs from "node:fs";
 import puppeteer from "puppeteer-core";
 const [url, out, shot] = process.argv.slice(2);
-const b = await puppeteer.launch({ executablePath: "/usr/bin/chromium", headless: "new", args: ["--no-sandbox", "--disable-dev-shm-usage"] });
+import { CHROME, launchArgs, identity, dress } from "./macchrome.mjs";
+const b = await puppeteer.launch({ executablePath: CHROME, headless: true, args: launchArgs() });
 const p = await b.newPage();
+await dress(p, await identity(b));
 await p.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 1 });
 await p.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
 await new Promise((r) => setTimeout(r, 4000));

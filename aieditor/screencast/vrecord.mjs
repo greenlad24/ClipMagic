@@ -25,16 +25,18 @@ const FPS = script.fps ?? 30000 / 1001;
 const DT = 1000 / FPS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// real Chrome on a Mac (macchrome.mjs): identity, fonts, hidden scrollbars, factory egress proxy
+import { CHROME, launchArgs, identity, dress } from "./macchrome.mjs";
 const browser = await puppeteer.launch({
-  executablePath: "/usr/bin/chromium", headless: true, userDataDir: script.profileDir || undefined,
-  args: ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars", "--disable-features=Translate",
-         "--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none", `--lang=${script.lang ?? "en-US"}`,
+  executablePath: CHROME, headless: true, userDataDir: script.profileDir || undefined,
+  args: launchArgs(["--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none",
          // no GPU on the render box: software WebGL costs seconds per frame (linearity.io
          // ~5 s/f). Off by default — pages fall back to their static look; a script can
          // opt back in with "webgl": true
-         ...(script.webgl ? [] : ["--disable-webgl", "--disable-3d-apis"])],
+         ...(script.webgl ? [] : ["--disable-webgl", "--disable-3d-apis"])]),
 });
 const page = await browser.newPage();
+await dress(page, await identity(browser));
 await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
 const cdp = await page.createCDPSession();
 

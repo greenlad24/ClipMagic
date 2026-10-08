@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import config, events as ev_log, media, sfx
 
-SC_IMAGE = "aieditor-screencast:0.1"
+SC_IMAGE = config.SC_IMAGE
 SCREENCAST = config.CODE / "screencast"
 
 # reference 2 facecam (kwys-screencast.json), px at 1080p
