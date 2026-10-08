@@ -59,7 +59,7 @@ def main():
         asked.append(text)
         return {"tools": [{"name": "Canva", "url": "https://www.canva.com/", "why": "polish the copy"},
                           {"name": "Figma", "url": "https://www.figma.com/", "why": "never said"},
-                          {"name": "Linearity", "url": "https://www.linearity.io/", "why": "dup"}]}, 0.02
+                          {"name": "Linearity", "url": "https://www.linearity.com", "why": "dup, wrong domain"}]}, 0.02
     doc = sites.derive(ws, tools=TOOLS, ask=ask, check=lambda u: (True, u))
     urls = [s["url"] for s in doc["sites"]]
     check(urls == ["https://www.linearity.io/", "https://www.canva.com/"], f"public Canva added, Figma not named: {urls}")

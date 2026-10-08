@@ -146,11 +146,15 @@ def derive(words, script=None, title=None, ask=True, check=check_public, tools=N
             raw = {}
             why.append(f"tool lookup failed ({type(e).__name__}: {str(e)[:80]}) — logged-in apps only")
         have = {agentrec._domain(s["url"]) for s in sites}
+        names = set()
+        for n, t in counts:
+            if n > 0:
+                names |= _aliases(t)
         for t in (raw or {}).get("tools", [])[:6]:
             url = str(t.get("url", "")).strip()
             dom = agentrec._domain(url) if url else ""
-            if not dom or dom in have or dom in PRIVATE_DOMAINS:
-                continue
+            if not dom or dom in have or dom in PRIVATE_DOMAINS or _norm(t.get("name", "")) in names:
+                continue                     # (a logged-in app already covers it — Claude's domain guess may differ)
             if mentions(words, {"name": t.get("name", ""), "slug": "", "domain": dom}, script) <= 0:
                 why.append(f"{t.get('name')}: not named in the narration — skipped")
                 continue
