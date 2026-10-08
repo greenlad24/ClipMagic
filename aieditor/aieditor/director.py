@@ -14,7 +14,7 @@ import re
 import time
 import urllib.request
 
-from . import config
+from . import config, events
 
 MODEL = config.TAKES_MODEL
 PRIORITY = {"link": 2, "subscribe": 2, "lower_title": 2, "socials": 2}
@@ -130,6 +130,7 @@ def call(content, system, max_tokens=24000, effort="high"):
         raise RuntimeError("Claude returned no JSON")
     u = res.get("usage", {})
     usd = u.get("input_tokens", 0) * 4e-6 + u.get("output_tokens", 0) * 20e-6
+    events.api(MODEL, usd, time.time() - t0, f"Claude director ({effort} effort)", u)
     return json.loads(m.group(0)), {"usd": round(usd, 4), "seconds": round(time.time() - t0)}
 
 

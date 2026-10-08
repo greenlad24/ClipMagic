@@ -1,5 +1,7 @@
 # Screencast production system (references 2–5)
 
+> **Technique catalogue:** every cut, transition, zoom, pan, hold, overlay and A-roll move in refs 2–5, with trigger / why / how / how often / timestamped examples / frames: [`TECHNIQUES.md`](TECHNIQUES.md) (data: `motion/techniques.json`, 2026-10-07).
+
 What the Auto Editor's screencasts must look like, and how the pipeline gets there. The source is
 **reference 2**: Jake's own tutorial `kwysV2smgfY` (11:39, 1080p, 29.97 fps). Every number below was
 measured from that video unless it is marked as a rule of ours.

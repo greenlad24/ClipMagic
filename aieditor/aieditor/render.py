@@ -16,7 +16,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import camera, config
+from . import camera, config, events as ev_log
 
 FADE = 0.012               # 12 ms fade at every audio join: no clicks
 TONE_RAMP = 0.006          # speech <-> room tone crossfade inside a muted span
@@ -122,23 +122,33 @@ def render(job, video, fps, out_name, size, source="source.mp4", crf=20, preset=
     cmd = ["docker", "run", "--rm", "--name", name, "--cpuset-cpus", config.CPUSET, "--memory", config.MEMORY,
            "-v", f"{job}:/job", "-v", f"{tmp}:/tmp-dir", "--entrypoint", "sh",
            config.FFMPEG_IMAGE, "/tmp-dir/run.sh"]
+    ev_log.emit("proc", f"render {out_name} — started ({n} piece(s), {size}, "
+                f"{'sound only' if audio_only else ('direct ' if direct else '') + preset + ' crf ' + str(crf)}, {total:.0f}s of video)",
+                proc=name, phase="start")
+    t_start = time.time()
     p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
     while p.poll() is None:
         if cancelled():
             subprocess.run(["docker", "kill", name], capture_output=True)
             p.wait()
             shutil.rmtree(tmp, ignore_errors=True)
+            ev_log.emit("proc", f"render {out_name} — cancelled after {time.time() - t_start:.0f}s", level="warn",
+                        proc=name, phase="cancelled")
             raise RenderCancelled()
         if progress and not audio_only:
             # a piece file appears when its encode starts, so the count lags by one
             try:   # a progress hook that raises (job cancelled) must not orphan the container
-                progress(max(0, len(list(tmp.glob("*.ts"))) - 1) / max(1, n))
+                progress(max(0, len(list(tmp.glob("*.ts" if direct else "*.mkv"))) - 1) / max(1, n))
             except Exception:                                 # noqa: BLE001
                 pass   # the cancelled() check above kills it on the next pass
         time.sleep(2)
     err = p.stderr.read() if p.stderr else ""
     if p.returncode != 0:
+        ev_log.emit("proc", f"render {out_name} — FAILED after {time.time() - t_start:.0f}s: {err[-600:]}", level="error",
+                    proc=name, phase="failed")
         raise RuntimeError("render failed: " + err[-800:])
+    ev_log.emit("proc", f"render {out_name} — done in {time.time() - t_start:.0f}s", proc=name, phase="done",
+                secs=round(time.time() - t_start, 2))
     os.replace(job / f"{out_name}.part.mp4", job / f"{out_name}.mp4")
     shutil.rmtree(tmp, ignore_errors=True)
     return job / f"{out_name}.mp4"

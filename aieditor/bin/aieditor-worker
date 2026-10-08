@@ -31,8 +31,25 @@ LAYOUT (the filesystem is the database) — /opt/aieditor-work/jobs/<id>/
                     long-form = the full edit at source resolution when one exists, else the cut alone
   edit-NN/          long-form full edit: direct.json (plan), seg-SS/ (inventory, script, rec/), gfx/,
                     overlays.json — longedit.py; request.json "sites" = [{url, note}] to screencast
-  log.txt           what happened
+  log.txt           what happened (plain text, kept for humans)
+  events.jsonl      the SAME story, structured, one JSON object per line (aieditor/events.py):
+                    {t, stage, kind: log|progress|api|proc|step|stage, level, msg, sub, …} — the Lab's
+                    per-stage live log. Sub-processes (renders, recorder, aligner) and every paid
+                    API call (model + $) report here; status.json stages[*] carry progress,
+                    message, cost_usd, api_calls, warnings, errors for the progress bars
+
+WORKFLOWS (request.json "workflow", Jake 2026-10-08: "there are 2 workflows"):
+  cut       1. Cut an unedited narration (the default; jobs from before have no field):
+            download → audio → transcribe → align → takes → cut → listen → graphics/preview → compose
+  creative  2. Creative Edit an edited narration: the narration is already edited, so takes/cut
+            are skipped and the whole timeline is kept as-is (edl.passthrough):
+            download → audio → transcribe → align → timeline → preprod → graphics/preview → compose
+            "preprod" = PRE-PRODUCTION, stage 0 of the creative edit — aieditor/preprod.py, built
+            separately (sandbox: /opt/aieditor-work/loop/aieditor/aieditor/preprod.py). The worker
+            calls it when the module exists and skips the stage otherwise (see run_preprod).
 """
+import importlib
+import inspect
 import json
 import os
 import shutil
@@ -45,9 +62,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aieditor import align, camera, compose, config, descript, edl, graphics, longedit, media, render, takes, transcribe  # noqa: E402
+from aieditor import align, camera, compose, config, descript, edl, events, graphics, longedit, media, render, takes, transcribe  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
+# workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
+CREATIVE_STAGES = ["download", "audio", "transcribe", "align", "timeline", "preprod", "graphics", "preview", "compose"]
+
+
+def workflow_of(req):
+    return "creative" if (req or {}).get("workflow") == "creative" else "cut"
+
+
+def stages_for(req):
+    return CREATIVE_STAGES if workflow_of(req) == "creative" else STAGES
 STOP = False
 
 
@@ -78,29 +105,85 @@ class Job:
         self.id = self.d.name
         self.req = jload(self.d / "request.json", {})
         self.st = jload(self.d / "status.json", {}) or {}
-        self.st.setdefault("stages", {s: {"state": "pending"} for s in STAGES})
+        self.st.setdefault("stages", {})
+        for s in stages_for(self.req):
+            self.st["stages"].setdefault(s, {"state": "pending"})
         self.st.setdefault("cost_usd", 0.0)
+        self.st["workflow"] = workflow_of(self.req)
+        self.cur = None                 # the running stage: events are filed under it
+        self._last_msg = None
+
+    # ── the structured event log (events.jsonl) — aieditor/events.py's sink ──
+    def event(self, ev):
+        ev.setdefault("stage", self.cur or "job")
+        with open(self.d / "events.jsonl", "a") as f:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        s = self.st["stages"].get(self.cur) if self.cur else None
+        if s is not None:
+            if ev.get("level") == "warn":
+                s["warnings"] = s.get("warnings", 0) + 1
+            elif ev.get("level") == "error":
+                s["errors"] = s.get("errors", 0) + 1
+            if ev.get("kind") == "api":
+                s["api_calls"] = s.get("api_calls", 0) + 1
+                if ev.get("usd"):
+                    s["api_usd"] = round(s.get("api_usd", 0.0) + ev["usd"], 5)
+                    self.save()                               # the live cost moves now
 
     def log(self, msg):
         with open(self.d / "log.txt", "a") as f:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+        if not (msg.startswith("stage ") and msg.split(" ")[2:3] in (["start"], ["done"])):
+            events.emit("log", msg, level=events.level_of(msg))     # (stage start/done: a "stage" event says it)
 
     def save(self, **kw):
         self.st.update(kw)
         self.st["updated_at"] = now()
+        # cost so far INCLUDING the running stage's API calls (most stages add their
+        # total to cost_usd only when they finish)
+        live = self.st.get("cost_usd", 0.0)
+        s = self.st["stages"].get(self.cur) if self.cur else None
+        if s and s.get("state") == "running":
+            added = live - s.get("cost_at_start", live)
+            live += max(0.0, s.get("api_usd", 0.0) - added)
+            s["cost_usd"] = round(max(added, s.get("api_usd", 0.0)), 4)
+        self.st["cost_live_usd"] = round(live, 4)
         jdump(self.d / "status.json", self.st)
 
     def stage(self, name, state, note=None):
         s = self.st["stages"].setdefault(name, {})
+        prev = s.get("state")
         s["state"] = state
         if state == "running":
             s["started_at"] = now()
-            s.pop("finished_at", None)
-            s.pop("note", None)
-        if state in ("done", "failed", "skipped"):
+            for k in ("finished_at", "note", "message", "api_usd", "api_calls", "warnings", "errors", "cost_usd"):
+                s.pop(k, None)
+            s["progress"] = 0
+            s["cost_at_start"] = self.st.get("cost_usd", 0.0)
+            self.cur = name
+            self._last_msg = None
+            events.set_sub(None)
+        if state in ("done", "failed", "skipped", "interrupted"):
             s["finished_at"] = now()
+            if note == "reused" and prev != "running":
+                s.pop("started_at", None)                    # nothing ran: no elapsed time
+            if prev == "running":
+                added = self.st.get("cost_usd", 0.0) - s.get("cost_at_start", self.st.get("cost_usd", 0.0))
+                s["cost_usd"] = round(max(added, s.get("api_usd", 0.0)), 4)
+            if state == "done":
+                s["progress"] = 1
         if note is not None:
             s["note"] = note
+        if state == "running":
+            events.emit("stage", f"▶ {name} started", stage=name, state=state)
+        else:
+            took = (s["finished_at"] - s["started_at"]) if s.get("started_at") and s.get("finished_at") else None
+            events.emit("stage", f"{'✓' if state == 'done' else '■'} {name} {state}"
+                        + (f" in {took:.1f}s" if took is not None and prev == "running" else "")
+                        + (f" — {note}" if note else ""), stage=name, state=state,
+                        level="error" if state == "failed" else "warn" if state == "interrupted" else "info")
+        if state != "running" and self.cur == name:
+            self.cur = None
         self.save(stage=name if state == "running" else self.st.get("stage"))
 
     def progress(self, msg=None, frac=None):
@@ -111,6 +194,15 @@ class Job:
             kw["message"] = msg
         if frac is not None:
             kw["progress"] = round(frac, 3)
+        s = self.st["stages"].get(self.cur) if self.cur else None
+        if s is not None:
+            if msg is not None:
+                s["message"] = msg
+            if frac is not None:
+                s["progress"] = round(max(0.0, min(1.0, frac)), 3)
+        if msg is not None and msg != self._last_msg:
+            self._last_msg = msg
+            events.emit("progress", msg, frac=round(frac, 3) if frac is not None else None)
         self.save(**kw)
 
     def cancelled(self):
@@ -134,10 +226,11 @@ def run_job(job, action):
         job.progress(None, 0)
         job.log(f"stage {name} start")
         note = fn()
-        job.stage(name, "done", note)
         job.log(f"stage {name} done {note or ''}")
+        job.stage(name, "done", note)
 
     rebuild = action in ("rebuild", "recut")
+    creative = workflow_of(req) == "creative"
 
     if action == "final":
         return run_final(job, fmt)
@@ -165,7 +258,9 @@ def run_job(job, action):
         job.progress("Transcribing with Groq Whisper…")
         doc = transcribe.transcribe(d / "audio16k.mp3", d / "words.json", wav16k=d / "audio16k.wav",
                                     job=d, audio=edl.Audio(d / "audio16k.wav"))
-        job.st["cost_usd"] = round(job.st["cost_usd"] + (doc.get("duration") or 0) / 3600 * 0.04, 4)
+        usd = (doc.get("duration") or 0) / 3600 * 0.04
+        job.st["cost_usd"] = round(job.st["cost_usd"] + usd, 4)
+        events.api(config.GROQ_MODEL, usd, None, f"Groq Whisper transcription of {(doc.get('duration') or 0) / 60:.1f} min")
         fixed = [r for r in doc["repairs"] if "->" in r]
         for r in doc["repairs"]:
             job.log("transcript repair " + r)
@@ -185,6 +280,96 @@ def run_job(job, action):
         w["s"], w["e"] = float(aligned[w["i"]]["start"]), float(aligned[w["i"]]["end"])
     by_id = {w["i"]: w for w in words}
     audio = edl.Audio(d / "audio16k.wav")
+
+    if creative:
+        # workflow 2: the narration is already edited — every sentence is kept, in order
+        if not (d / "plan.json").exists():
+            jdump(d / "plan.json", {
+                "videos": [{"title": req.get("title") or "Video 1",
+                            "segments": [{"s": n, "drop": []} for n in range(len(sents))]}],
+                "removed": [],
+                "notes": "Creative edit: the narration was already edited, so every word is kept — no cuts.",
+            })
+        plan = jload(d / "plan.json")
+        jdump(d / "review.json", {
+            "sentences": [{"s": n, "start": round(s[0]["s"], 2), "end": round(s[-1]["e"], 2),
+                           "words": [{"i": w["i"], "w": w["w"]} for w in s]} for n, s in enumerate(sents)],
+            "videos": plan["videos"], "reasons": {}, "notes": plan.get("notes", ""), "edited": False,
+        })
+
+        def do_timeline():
+            v = edl.passthrough(words, by_id, info["duration"], fps, plan["videos"][0]["title"])
+            jdump(d / "edl.json", {"fps": fps, "fps_num": info["fps_num"], "fps_den": info["fps_den"],
+                                   "width": info["width"], "height": info["height"], "videos": [v],
+                                   "workflow": "creative"})
+            return f"whole timeline kept: {v['duration']:.0f}s, {len(v['words'])} words, no cuts"
+        step("timeline", do_timeline, lambda: (d / "edl.json").exists(), rerun=rebuild)
+        if action in ("run", "edit"):
+            run_preprod(job, req, info, fps)
+    else:
+        run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_id, audio, step, rebuild)
+        if rebuild and any(d.glob("preview-*.mp4")):
+            return
+    run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step)
+
+
+def run_preprod(job, req, info, fps):
+    """PRE-PRODUCTION — stage 0 of the creative edit (workflow 2). ⚠️ STAGE SLOT: the module
+    is built separately (sandbox /opt/aieditor-work/loop/aieditor/aieditor/preprod.py) and
+    lands here as aieditor/preprod.py. Until it exists this stage is SKIPPED.
+
+    Contract the worker calls: preprod.run(job_dir, **kw) where kw is whichever of these the
+    function's signature names (or all of them with **kwargs):
+        req       request.json            edl       edl.json (the kept timeline)
+        info      source.json             fps       source frame rate
+        progress  progress(msg, frac)     cancelled ()->bool (raise/return early when True)
+        log       log(line)               events    aieditor.events (api()/proc()/emit())
+    It returns a note (str), or (note, usd), or {"note": ..., "usd": ...}; usd joins the job cost.
+    It caches its own output in the job dir — it is called on every run of the creative edit."""
+    d = job.d
+    try:
+        preprod = importlib.import_module("aieditor.preprod")    # optional, built separately
+    except ModuleNotFoundError as exc:
+        if exc.name not in ("aieditor.preprod", "preprod"):
+            raise                                        # the module exists but a dependency is missing
+        job.log("pre-production module not installed yet (aieditor/preprod.py) — stage skipped")
+        job.stage("preprod", "skipped", "pre-production is not installed yet")
+        return
+    fn = getattr(preprod, "run", None)
+    if not callable(fn):
+        job.stage("preprod", "skipped", "aieditor/preprod.py has no run()")
+        return
+    offer = {"req": req, "edl": jload(d / "edl.json"), "info": info, "fps": fps,
+             "progress": lambda m=None, f=None: job.progress(m, f), "cancelled": job.cancelled,
+             "log": job.log, "events": events}
+    try:
+        params = inspect.signature(fn).parameters
+        if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            offer = {k: v for k, v in offer.items() if k in params}
+    except (TypeError, ValueError):
+        pass
+    job.stage("preprod", "running")
+    job.progress("Pre-production…", 0)
+    job.log("stage preprod start")
+    try:
+        out = fn(d, **offer)
+    except InterruptedError:
+        raise Cancelled()
+    note, usd = out, 0.0
+    if isinstance(out, tuple):
+        note, usd = (list(out) + [0.0])[:2]
+    elif isinstance(out, dict):
+        note, usd = out.get("note"), out.get("usd") or 0.0
+    if usd:
+        job.st["cost_usd"] = round(job.st["cost_usd"] + float(usd), 4)
+    note = (str(note) if note else "done") + (f", ${float(usd):.2f}" if usd else "")
+    job.log(f"stage preprod done {note}")
+    job.stage("preprod", "done", note)
+
+
+def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_id, audio, step, rebuild):
+    """Workflow 1 (cut an unedited narration): takes → review data → cut → sound check."""
+    d = job.d
 
     # 5 takes
     def do_takes():
@@ -257,6 +442,10 @@ def run_job(job, action):
             job.stage("compose", "skipped", "older than the cut — press Render video")
         return
 
+
+def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
+    """Both workflows from here: graphics / screencasts, preview, compose."""
+    d = job.d
     # 8a phase 2 (shorts): Claude plans the graphics on the cut's word ids (reused until
     # the cut changes), the camera framings follow from them (camera.py), and the
     # measured recipes render every graphic. Long-form graphics are not built yet.
@@ -312,8 +501,10 @@ def run_job(job, action):
         for k, v in enumerate(e["videos"], 1):
             job.progress(f"Rendering preview {k} of {len(e['videos'])}…", (k - 1) / len(e["videos"]))
             try:
+                n_v = len(e["videos"])
                 render.render(d, framed(k, v), fps, f"preview-{k:02d}", size, cancelled=job.cancelled,
-                              room_tone_start=audio.room_tone(), src_size=(info["width"], info["height"]))
+                              room_tone_start=audio.room_tone(), src_size=(info["width"], info["height"]),
+                              progress=lambda f, k=k: job.progress(f"Rendering preview {k} of {n_v}…", (k - 1 + f) / n_v))
             except render.RenderCancelled:
                 raise Cancelled()
         for stale in d.glob("preview-*.mp4"):                # videos that no longer exist
@@ -501,9 +692,17 @@ def recover():
         if s and s.get("state") == "running":
             s.update(state="interrupted", message="The worker restarted mid-job. Press Continue.",
                      updated_at=now())
-            for v in s.get("stages", {}).values():
+            for name, v in s.get("stages", {}).items():
                 if v.get("state") == "running":
                     v["state"] = "interrupted"
+                    v["finished_at"] = now()
+                    try:
+                        with open(st.parent / "events.jsonl", "a") as f:
+                            f.write(json.dumps({"t": round(now(), 3), "stage": name, "kind": "stage", "level": "warn",
+                                                "state": "interrupted",
+                                                "msg": f"■ {name} interrupted — the worker restarted mid-job"}) + "\n")
+                    except OSError:
+                        pass
             jdump(st, s)
 
 
@@ -527,20 +726,27 @@ def main():
                 (job.d / f).unlink(missing_ok=True)
         job.save(state="running", message="Starting…", progress=0, error=None, action=action,
                  started_at=now())
-        job.log(f"claimed action={action}")
+        events.set_sink(job.event)
+        events.set_sub(None)
+        job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
         try:
             run_job(job, action)
             job.save(state="done", message="Ready to review", progress=1, finished_at=now())
+            events.emit("stage", "job finished — ready to review", stage="job")
         except Cancelled:
-            job.save(state="cancelled", message="Cancelled")
             job.log("cancelled")
-        except Exception as exc:                               # noqa: BLE001
-            for s in job.st["stages"].values():
+            for name, s in list(job.st["stages"].items()):
                 if s.get("state") == "running":
-                    s["state"] = "failed"
+                    job.stage(name, "interrupted", "cancelled")
+            job.save(state="cancelled", message="Cancelled")
+        except Exception as exc:                               # noqa: BLE001
+            job.log("FAILED " + traceback.format_exc())       # filed under the stage that failed
+            for name, s in list(job.st["stages"].items()):
+                if s.get("state") == "running":
+                    job.stage(name, "failed", str(exc)[:200])
             job.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
-            job.log("FAILED " + traceback.format_exc())
         finally:
+            events.set_sink(None)
             (job.d / "cancel").unlink(missing_ok=True)
             for t in job.d.glob("tmp-*"):
                 shutil.rmtree(t, ignore_errors=True)

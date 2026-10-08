@@ -7544,6 +7544,7 @@ const autoEditorSaveNudges = editorCall((i) => autoEditor.saveNudges(i.id, i.nud
 const autoEditorRenderVideo = editorCall((i) => autoEditor.renderVideo(i.id));
 const autoEditorRenderFinal = editorCall((i) => autoEditor.renderFinal(i.id));
 const autoEditorBuildEdit = editorCall((i) => autoEditor.buildEdit(i.id, typeof i.sites === "string" ? i.sites : undefined));
+const autoEditorEvents = editorCall((i) => autoEditor.getEvents(i.id, i.after));
 
 export const HANDLERS: Record<string, Handler> = {
   // data
@@ -7974,6 +7975,7 @@ export const HANDLERS: Record<string, Handler> = {
   autoEditorRenderVideo,
   autoEditorRenderFinal,
   autoEditorBuildEdit,
+  autoEditorEvents,
 };
 
 void config;

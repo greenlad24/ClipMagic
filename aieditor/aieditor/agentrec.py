@@ -19,7 +19,7 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from . import config
+from . import config, events
 
 SC_IMAGE = "aieditor-screencast:0.1"
 LAB_DATA = Path("/var/lib/docker/volumes/clipmagic_clipmagic-lab-data/_data")
@@ -103,6 +103,7 @@ class Session:
         cmd += [SC_IMAGE, "node", "/app/screencast/agent_rec.mjs", "/w"] + (["/prof"] if profile_src else [])
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                   text=True, bufsize=1)
+        events.emit("proc", f"recorder browser {self.name} — started", proc=self.name, phase="start")
 
     def send(self, msg):
         if self.cancelled():
@@ -229,6 +230,7 @@ def _call(content, system_blocks, max_tokens=1500):
     req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
                                  headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                                           "content-type": "application/json"})
+    t0 = time.time()
     for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=300) as r:
@@ -236,6 +238,7 @@ def _call(content, system_blocks, max_tokens=1500):
             break
         except urllib.error.HTTPError as e:
             if e.code in (429, 500, 502, 503, 529) and attempt < 3:
+                events.emit("api", f"recorder agent: HTTP {e.code}, retrying ({attempt + 1}/3)", level="warn")
                 time.sleep(5 * (attempt + 1))
                 continue
             raise
@@ -252,6 +255,7 @@ def _call(content, system_blocks, max_tokens=1500):
     u = res.get("usage", {})
     usd = (u.get("input_tokens", 0) * 4e-6 + u.get("cache_read_input_tokens", 0) * 0.4e-6
            + u.get("cache_creation_input_tokens", 0) * 5e-6 + u.get("output_tokens", 0) * 20e-6)
+    events.api(config.TAKES_MODEL, usd, time.time() - t0, "recorder agent (low effort)", u)
     return reply if isinstance(reply, dict) else {}, usd
 
 
@@ -304,6 +308,8 @@ Next set-up step, or {{"ready": true}}?"""})
         a = {k: v for k, v in reply["action"].items() if k != "at"}
         res = sess.send({"cmd": "act", "action": a})
         history.append({"a": a, "r": "ok" if res.get("ok") else res.get("error", "failed")})
+        events.emit("step", f"set-up (off camera): {json.dumps(a)[:160]} → {history[-1]['r']}",
+                    level="info" if res.get("ok") else "warn")
     # DETERMINISTIC: a design canvas opens "fit all" (designs = small thumbnails) and the agent
     # never zoomed it reliably (3 runs) — the recorder measures the designs and zooms/pans them
     # to ~78 % of the canvas area. No-op (ok false) on a page without a design canvas.
@@ -366,8 +372,10 @@ Next single step?"""})
         reply, u = _call(content, system)
         usd += u
         if reply.get("done"):
+            events.emit("step", f"agent: segment fully shown at {obs.get('t', 0):.1f}s — {str(reply.get('why', ''))[:120]}")
             break
         if not isinstance(reply.get("action"), dict):
+            events.emit("step", "agent: unreadable reply — asking again", level="warn")
             history.append({"t": obs.get("t", 0), "action": {}, "result": "unreadable reply — answer with ONE JSON object"})
             continue
         a = reply["action"]
@@ -375,6 +383,9 @@ Next single step?"""})
             log(f"agent step @{obs.get('t', 0):.2f}: {json.dumps(a)[:160]}")
         res = sess.send({"cmd": "act", "action": a})
         history.append({"t": obs.get("t", 0), "action": a, "result": "ok" if res.get("ok") else res.get("error", "failed")})
+        events.emit("step", f"agent step {n + 1} @ {obs.get('t', 0):.1f}s of {dur:.1f}s: {json.dumps(a)[:160]}"
+                    f"{' — ' + str(reply.get('why'))[:80] if reply.get('why') else ''} → {history[-1]['result']}",
+                    level="info" if res.get("ok") else "warn", frac=round(min(1.0, obs.get("t", 0) / max(dur, 0.1)), 3))
         if not res.get("ok"):
             log(f"agent step failed: {json.dumps(a)[:120]} — {res.get('error')}")
     sess.send({"cmd": "end", "until": round(dur + 0.5, 3)})

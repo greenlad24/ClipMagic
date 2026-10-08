@@ -3784,8 +3784,10 @@ export const hfpEditorAttest = endpoint<{
 
 // ── Auto Editor (raw narration → clean edit; aieditor-worker on the host) ──
 export type AutoStageState = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'interrupted';
+/** "cut" = 1. Cut an unedited narration · "creative" = 2. Creative edit an edited narration */
+export type AutoWorkflow = 'cut' | 'creative';
 export interface AutoJobSummary {
-  id: string; title: string; format: 'short' | 'long'; sponsored: boolean;
+  id: string; title: string; format: 'short' | 'long'; sponsored: boolean; workflow?: AutoWorkflow;
   state: string; message: string | null; createdAt: number | null; updatedAt: number | null;
 }
 export interface AutoSentence { s: number; start: number; end: number; words: { i: number; w: string }[] }
@@ -3794,12 +3796,18 @@ export interface AutoJobDetail {
   id: string;
   /** set while this job is queued behind another running job */
   busyWith?: { id: string; title: string | null; message: string | null } | null;
+  workflow?: AutoWorkflow;
+  /** the stages of THIS job's workflow + format, in the order the worker runs them */
+  stageList?: { id: string; title: string }[];
+  /** typical seconds per stage for this source length (null = no history yet) */
+  expect?: Record<string, number | null>;
   request: { format: 'short' | 'long'; sponsored: boolean; script: string | null; source: { url: string }; title: string | null;
-    sites?: { url: string; note: string }[] };
+    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
-    cost_usd?: number; updated_at?: number;
-    stages?: Record<string, { state: AutoStageState; note?: string; started_at?: number; finished_at?: number }>;
+    cost_usd?: number; cost_live_usd?: number; updated_at?: number; started_at?: number; finished_at?: number;
+    action?: string; workflow?: AutoWorkflow;
+    stages?: Record<string, AutoStageStatus>;
   };
   source: { title?: string; width?: number; height?: number; duration?: number; fps?: number } | null;
   review: {
@@ -3823,6 +3831,19 @@ export interface AutoJobDetail {
   edlAt: number | null;
   log: string;
 }
+/** One stage in status.json (the worker keeps progress / cost / counts per stage). */
+export interface AutoStageStatus {
+  state: AutoStageState; note?: string; started_at?: number; finished_at?: number;
+  progress?: number; message?: string; cost_usd?: number; api_usd?: number; api_calls?: number;
+  warnings?: number; errors?: number;
+}
+/** One line of the job's structured log (events.jsonl). */
+export interface AutoEvent {
+  t: number; stage: string; kind: 'log' | 'progress' | 'api' | 'proc' | 'step' | 'stage' | string;
+  level: 'info' | 'warn' | 'error'; msg: string;
+  sub?: string; model?: string; usd?: number; secs?: number; frac?: number; proc?: string; phase?: string;
+  state?: string; tokens?: Record<string, number>;
+}
 /** One cut of the edited video, for the cut editor. Times are SOURCE seconds. */
 export interface AutoJoin {
   k: number; out: number; left_id: number; right_id: number;
@@ -3837,8 +3858,12 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
 export const autoEditorCreate = endpoint<{
-  url: string; format: 'short' | 'long'; sponsored: boolean; script?: string; title?: string; sites?: string;
+  url: string; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string; title?: string; sites?: string;
 }, { id: string }>("autoEditorCreate");
+/** the structured log from byte `after` on (0 = from the start); `replace` = discard what you have */
+export const autoEditorEvents = endpoint<{ id: string; after: number }, {
+  events: AutoEvent[]; next: number; replace: boolean; legacy: boolean; truncated: boolean;
+}>("autoEditorEvents");
 export const autoEditorSaveEdits =
   endpoint<{ id: string; videos: AutoVideoPlan[] }, { ok: boolean }>("autoEditorSaveEdits");
 export const autoEditorResetEdits = endpoint<{ id: string }, { ok: boolean }>("autoEditorResetEdits");

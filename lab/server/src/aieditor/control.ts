@@ -34,6 +34,208 @@ export const STAGES: { id: string; title: string }[] = [
   { id: "final", title: "Final render (full resolution)" },
 ];
 
+/**
+ * Jake 2026-10-08: "there are 2 workflows: 1. Cut an unedited narration 2. Creative Edit an
+ * edited narration." request.json "workflow" — jobs from before the field are "cut".
+ *   cut       download → … → takes → cut → sound check → graphics/preview → compose
+ *   creative  the narration is already edited: takes/cut/sound check are skipped, the whole
+ *             timeline is kept, then pre-production (stage 0 of the creative edit — the
+ *             worker runs aieditor/preprod.py when it exists, else marks it skipped)
+ * The stage ORDER follows what the worker does: long-form renders the preview first (it is
+ * the full edit's base), shorts plan the graphics first (the camera framings need them).
+ */
+export type Workflow = "cut" | "creative";
+export const WORKFLOWS: { id: Workflow; title: string }[] = [
+  { id: "cut", title: "Cut an unedited narration" },
+  { id: "creative", title: "Creative edit an edited narration" },
+];
+
+export function workflowOf(req: any): Workflow {
+  return req?.workflow === "creative" ? "creative" : "cut";
+}
+
+export function stagesFor(workflow: Workflow, format: string): { id: string; title: string }[] {
+  const t = (id: string, title: string) => ({ id, title });
+  const head = [
+    t("download", "Download from Descript"),
+    t("audio", "Extract audio"),
+    t("transcribe", "Transcribe (word level)"),
+    t("align", "Re-time every word"),
+  ];
+  const cut = workflow === "cut"
+    ? [t("takes", "Pick the best takes"), t("cut", "Build the cut"), t("listen", "Sound check")]
+    : [t("timeline", "Keep the edited timeline (no cuts)"), t("preprod", "Pre-production")];
+  const tail = format === "long"
+    ? [
+      t("preview", "Render video preview (the edit's base)"),
+      t("graphics", "Screencasts + overlays (plan, record, render)"),
+      t("compose", "Compose the full edit (camera, bubble, overlays, music)"),
+    ]
+    : [
+      t("graphics", "Plan graphics + camera, render graphics"),
+      t("preview", "Render video preview"),
+      t("compose", "Composite graphics + captions + SFX"),
+    ];
+  return [...head, ...cut, ...tail, t("final", "Final render (full resolution)")];
+}
+
+/**
+ * Typical seconds per stage for a job with `minutes` of source — the median, per minute of
+ * source, of every finished (not reused) run of that stage in the other jobs on disk. It
+ * drives the overall progress bar and the ETA of stages that report no fraction of their own.
+ * Cached for a minute (it reads every job's status.json).
+ */
+let expectCache: { at: number; rates: Record<string, number> } | null = null;
+async function stageRates(): Promise<Record<string, number>> {
+  if (expectCache && Date.now() - expectCache.at < 60_000) return expectCache.rates;
+  const samples: Record<string, number[]> = {};
+  let names: string[] = [];
+  try { names = await fsp.readdir(JOBS); } catch { names = []; }
+  for (const id of names) {
+    if (!ID_RE.test(id)) continue;
+    const st = await readJson<any>(path.join(JOBS, id, "status.json"));
+    const src = await readJson<any>(path.join(JOBS, id, "source.json"));
+    const req = await readJson<any>(path.join(JOBS, id, "request.json"));
+    const mins = Number(src?.duration) / 60;
+    if (!st?.stages || !(mins > 0.1)) continue;
+    for (const [name, s] of Object.entries<any>(st.stages)) {
+      if (s?.state !== "done" || s.note === "reused" || !s.started_at || !s.finished_at) continue;
+      const secs = s.finished_at - s.started_at;
+      if (!(secs >= 0) || secs > 6 * 3600) continue;
+      const key = ["preview", "graphics", "compose", "final"].includes(name) ? `${name}:${req?.format}` : name;
+      (samples[key] ??= []).push(secs / mins);
+    }
+  }
+  const rates: Record<string, number> = {};
+  for (const [k, xs] of Object.entries(samples)) {
+    xs.sort((a, b) => a - b);
+    rates[k] = xs[Math.floor(xs.length / 2)];
+  }
+  expectCache = { at: Date.now(), rates };
+  return rates;
+}
+
+async function expectedSeconds(stages: { id: string }[], format: string, sourceSeconds: number | null) {
+  const out: Record<string, number | null> = {};
+  const rates = await stageRates();
+  const mins = sourceSeconds ? sourceSeconds / 60 : null;
+  for (const s of stages) {
+    const r = rates[`${s.id}:${format}`] ?? rates[s.id];
+    out[s.id] = mins && r !== undefined ? Math.round(r * mins * 10) / 10 : null;
+  }
+  return out;
+}
+
+/** One line of events.jsonl (see aieditor/events.py). */
+export interface AutoEvent {
+  t: number; stage: string; kind: string; level: "info" | "warn" | "error"; msg: string;
+  sub?: string; model?: string; usd?: number; secs?: number; frac?: number; proc?: string; phase?: string;
+  state?: string; tokens?: Record<string, number>;
+}
+
+function levelOf(msg: string): "info" | "warn" | "error" {
+  const low = msg.toLowerCase();
+  if (msg.startsWith("FAILED") || low.includes("traceback") || low.slice(0, 200).includes(" error")) return "error";
+  if (["failed", "dropped", "stopped early", "warning", "retry", "trying again", "not enough", "skipped", "restarting"]
+    .some((w) => low.includes(w))) return "warn";
+  return "info";
+}
+
+/**
+ * log.txt → events, for jobs (or the parts of a job) the worker ran before events.jsonl
+ * existed: "stage X start" opens a stage, untimestamped lines (tracebacks) continue the
+ * previous entry. The worker writes UTC (the box runs UTC).
+ */
+function parseLegacyLog(text: string): AutoEvent[] {
+  const out: AutoEvent[] = [];
+  let stage = "job";
+  for (const line of text.split("\n")) {
+    const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) (.*)$/.exec(line);
+    if (!m) {
+      if (out.length && line.trim()) out[out.length - 1].msg += "\n" + line;
+      continue;
+    }
+    const t = Date.parse(`${m[1]}T${m[2]}Z`) / 1000;
+    const msg = m[3];
+    const st = /^stage (\w+) (start|done)\b ?(.*)$/.exec(msg);
+    if (st) {
+      if (st[2] === "start") {
+        stage = st[1];
+        out.push({ t, stage, kind: "stage", level: "info", msg: `▶ ${st[1]} started`, state: "running" });
+      } else {
+        out.push({ t, stage: st[1], kind: "stage", level: "info", msg: `✓ ${st[1]} done${st[3] ? ` — ${st[3]}` : ""}`, state: "done" });
+        stage = "job";
+      }
+      continue;
+    }
+    if (msg.startsWith("claimed action=")) stage = "job";
+    out.push({ t, stage, kind: "log", level: levelOf(msg), msg });
+    if (msg.startsWith("FAILED") || msg === "cancelled") stage = "job";
+  }
+  return out;
+}
+
+const EVENTS_MAX_BYTES = 3 * 1024 * 1024;     // the first read of a huge log starts here from the end
+
+/**
+ * The job's structured log, incrementally: `after` = the byte offset the page already has
+ * (0 on the first call). Returns the new events and the offset to ask from next time.
+ * `replace` = drop what you have and show these (the first read, or a legacy-only job).
+ */
+export async function getEvents(id: string, after: unknown) {
+  const dir = jobDir(id);
+  const file = path.join(dir, "events.jsonl");
+  let size = 0;
+  try { size = (await fsp.stat(file)).size; } catch { size = -1; }
+  let from = Math.max(0, Math.floor(Number(after) || 0));
+  if (size < 0) {
+    // no structured log yet (an older job, or the worker before events.jsonl): log.txt
+    let text = "";
+    try { text = await fsp.readFile(path.join(dir, "log.txt"), "utf8"); } catch { text = ""; }
+    const truncated = text.length > EVENTS_MAX_BYTES;
+    if (truncated) text = text.slice(text.indexOf("\n", text.length - EVENTS_MAX_BYTES) + 1);
+    return { events: parseLegacyLog(text), next: 0, replace: true, legacy: true, truncated };
+  }
+  if (from > size) from = 0;                     // the file was replaced: start over
+  const replace = from === 0;
+  let truncated = false;
+  if (replace && size > EVENTS_MAX_BYTES) {
+    from = size - EVENTS_MAX_BYTES;
+    truncated = true;
+  }
+  const fh = await fsp.open(file, "r");
+  let buf: Buffer;
+  try {
+    const len = Math.min(size - from, EVENTS_MAX_BYTES);
+    buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, from);
+  } finally {
+    await fh.close();
+  }
+  // only whole lines: a line the worker is still writing waits for the next poll
+  let text = buf.toString("utf8");
+  let start = 0;
+  if (truncated) start = text.indexOf("\n") + 1;
+  const end = text.lastIndexOf("\n") + 1;
+  const next = from + Buffer.byteLength(text.slice(0, end), "utf8");
+  text = text.slice(start, end);
+  const events: AutoEvent[] = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    try { events.push(JSON.parse(line)); } catch { /* a torn line: skip it */ }
+  }
+  let legacyHead: AutoEvent[] = [];
+  if (replace && !truncated) {
+    // a job that started under the old worker: its earlier history only exists in log.txt
+    try {
+      const firstT = events[0]?.t ?? Infinity;
+      const old = parseLegacyLog(await fsp.readFile(path.join(dir, "log.txt"), "utf8"));
+      legacyHead = old.filter((e) => e.t < firstT - 1);
+    } catch { legacyHead = []; }
+  }
+  return { events: [...legacyHead, ...events], next, replace, legacy: false, truncated };
+}
+
 async function readJson<T>(file: string): Promise<T | null> {
   try {
     return JSON.parse(await fsp.readFile(file, "utf8")) as T;
@@ -80,6 +282,8 @@ export interface CreateInput {
   title?: string;
   /** long-form: websites the screencasts may show, one per line */
   sites?: string;
+  /** "cut" = 1. Cut an unedited narration, "creative" = 2. Creative edit an edited narration */
+  workflow?: string;
 }
 
 /** "one URL per line (optional: url — note)" → [{url, note}], public http(s) only, ≤ 6 */
@@ -102,6 +306,10 @@ export async function createJob(input: CreateInput) {
   if (!SHARE_RE.test(url)) {
     throw new Error("Paste a Descript share link like https://share.descript.com/view/AbC123xyz");
   }
+  if (input.workflow !== "cut" && input.workflow !== "creative") {
+    throw new Error("Choose the workflow: cut an unedited narration, or creative edit an edited one.");
+  }
+  const workflow: Workflow = input.workflow;
   if (input.format !== "short" && input.format !== "long") throw new Error("Choose Shorts or Long-form.");
   // Jake: "important you know if it's sponsored or not" — never defaulted.
   if (input.sponsored !== true && input.sponsored !== false) throw new Error("Say whether the video is sponsored.");
@@ -116,6 +324,7 @@ export async function createJob(input: CreateInput) {
   await writeJson(path.join(dir, "request.json"), {
     id,
     source: { kind: "descript", url },
+    workflow,
     format: input.format,
     sponsored: input.sponsored,
     script: script.trim() || null,
@@ -126,7 +335,8 @@ export async function createJob(input: CreateInput) {
   await writeJson(path.join(dir, "status.json"), {
     state: "queued",
     message: "Waiting for the worker…",
-    stages: Object.fromEntries(STAGES.map((s) => [s.id, { state: "pending" }])),
+    stages: Object.fromEntries(stagesFor(workflow, input.format).map((s) => [s.id, { state: "pending" }])),
+    workflow,
     cost_usd: 0,
     updated_at: Date.now() / 1000,
   });
@@ -153,6 +363,7 @@ export async function listJobs() {
       id,
       title: req.title || src?.title || id,
       format: req.format,
+      workflow: workflowOf(req),
       sponsored: req.sponsored,
       state: (await exists(path.join(dir, "queue.json"))) && st.state !== "running" ? "queued" : st.state,
       message: st.message ?? null,
@@ -229,10 +440,16 @@ export async function getJob(id: string) {
       busyWith = null;
     }
   }
+  const workflow = workflowOf(req);
+  const stageList = stagesFor(workflow, req.format);
   return {
     id,
     busyWith,
-    request: { ...req, script: req.script ? String(req.script).slice(0, 2000) : null },
+    workflow,
+    stageList,
+    /** typical seconds per stage for this source length (null = no history yet) */
+    expect: await expectedSeconds(stageList, req.format, Number(source?.duration) || null),
+    request: { ...req, workflow, script: req.script ? String(req.script).slice(0, 2000) : null },
     status: { ...status, state: queued && status.state !== "running" ? "queued" : status.state },
     source,
     review,
@@ -256,6 +473,9 @@ export async function getJob(id: string) {
 /** Jake's edits on the review screen: the kept sentences (and dropped words) per video. */
 export async function saveEdits(id: string, videos: unknown) {
   const dir = jobDir(id);
+  if (workflowOf(await readJson<any>(path.join(dir, "request.json"))) === "creative") {
+    throw new Error("A creative edit keeps the narration as it is — there is no cut to edit.");
+  }
   if (!Array.isArray(videos) || videos.length === 0) throw new Error("Nothing to save.");
   const clean = videos.slice(0, 50).map((v: any, k: number) => ({
     title: String(v?.title ?? `Video ${k + 1}`).slice(0, 120),

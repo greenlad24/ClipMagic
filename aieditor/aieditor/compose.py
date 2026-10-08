@@ -12,7 +12,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import config, graphics, sfx
+from . import config, events as ev_log, graphics, sfx
 
 LAB_IMAGE = "clipmagic-lab:latest"
 MOTION = config.CODE / "motion"
@@ -25,17 +25,20 @@ def _docker(args, cancelled, mounts):
     for a, b in mounts:
         cmd += ["-v", f"{a}:{b}"]
     cmd += args
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    import time
-    while p.poll() is None:
-        if cancelled():
-            subprocess.run(["docker", "kill", name], capture_output=True)
-            p.wait()
-            raise InterruptedError()
-        time.sleep(1)
-    out, err = p.communicate()
-    if p.returncode != 0:
-        raise RuntimeError(f"{args[-3:]} failed: {err[-800:]}")
+    script = next((a for a in args if isinstance(a, str) and a.endswith((".mjs", ".py"))), None)
+    label = f"graphics container ({script.rsplit('/', 1)[-1]})" if script else "ffmpeg composite"
+    with ev_log.proc(label, name):
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        import time
+        while p.poll() is None:
+            if cancelled():
+                subprocess.run(["docker", "kill", name], capture_output=True)
+                p.wait()
+                raise InterruptedError()
+            time.sleep(1)
+        out, err = p.communicate()
+        if p.returncode != 0:
+            raise RuntimeError(f"{args[-3:]} failed: {err[-800:]}")
     return out
 
 

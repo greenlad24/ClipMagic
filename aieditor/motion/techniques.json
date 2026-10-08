@@ -1,0 +1,2018 @@
+{
+ "version": "2026-10-07",
+ "refs": {
+  "r2": "kwysV2smgfY",
+  "r3": "3Jq-L6uLd28",
+  "r4": "Geg9TyNoi3w",
+  "r5": "AZxFgIVgHjg"
+ },
+ "sources": [
+  "aieditor/motion/reference-specs/*",
+  "/opt/aieditor-work/reference/work/{sc5,sc6,tech}"
+ ],
+ "precedence": "jake_rule fields override the reference numbers (auto-editor-screencast-review-1)",
+ "pacing": {
+  "screencast_share": {
+   "r2": 0.736,
+   "r3": 0.681,
+   "r4": 0.684,
+   "r5": 0.72
+  },
+  "span_len_s_p10_25_50_75_90": {
+   "r2": [
+    3.1,
+    13.1,
+    18.0,
+    36.0,
+    72.9
+   ],
+   "r3": [
+    3.9,
+    4.8,
+    10.5,
+    22.5,
+    30.3
+   ],
+   "r4": [
+    3.0,
+    6.1,
+    10.0,
+    16.7,
+    25.2
+   ],
+   "r5": [
+    3.5,
+    7.1,
+    13.1,
+    23.3,
+    53.4
+   ]
+  },
+  "non_screencast_block_s_p10_25_50_75_90": {
+   "r2": [
+    1.9,
+    3.0,
+    6.5,
+    7.6,
+    14.4
+   ],
+   "r3": [
+    2.0,
+    2.6,
+    5.1,
+    7.9,
+    9.7
+   ],
+   "r4": [
+    2.9,
+    3.3,
+    5.2,
+    7.8,
+    9.6
+   ],
+   "r5": [
+    2.6,
+    4.2,
+    6.5,
+    8.6,
+    8.9
+   ]
+  },
+  "per_min_of_screencast": {
+   "zoom_in": [
+    2.9,
+    3.3,
+    4.8,
+    3.1
+   ],
+   "zoom_out": [
+    2.6,
+    1.5,
+    2.0,
+    2.3
+   ],
+   "pan": [
+    2.7,
+    3.5,
+    1.9,
+    2.4
+   ],
+   "dissolve": [
+    2.5,
+    1.4,
+    1.9,
+    1.1
+   ],
+   "hard_page_cut": [
+    1.9,
+    1.2,
+    0.7,
+    1.7
+   ]
+  },
+  "motion_events_per_min": "17–25 (moves + cuts + dissolves)",
+  "camera_moves_per_min": "4.7–6.6 (≥ 15 f)",
+  "spans_end_zoomed": {
+   "r2": "8/19",
+   "r3": "17/40",
+   "r4": "21/41",
+   "r5": "12/34"
+  },
+  "move_vs_named_word": "moves START ≈ 0.8 s before the named word (r3, 16 moves: −0.8…+1.35 s) and land on or just after it",
+  "note": "per_min lists are [r2, r3, r4, r5]; event counts use the sc5 detector (pans ≥ 60 px)."
+ },
+ "techniques": [
+  {
+   "id": "CUT01",
+   "family": "cuts",
+   "name": "State jump cut (same screen, later state)",
+   "looks": "Same page, same framing; the content jumps to its next state in one frame (prompt text appears complete, a list finishes loading, a menu item is already open).",
+   "when": "Typing, loading or any wait inside one screen: he describes the action (\"you just hand it a script\"), the cut shows the finished state.",
+   "why": "Waiting and letter-by-letter typing are dead time; the cut keeps the beat on the words without changing where the viewer looks.",
+   "how": "Hard cut, 1 frame, zoom/position carried unchanged across the cut. No dissolve when the layout is unchanged.",
+   "how_often": "In-span hard cuts (all kinds) 0.7–1.9 / min of screencast; state jumps are most of the non-page ones.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:44.0",
+     "note": "prompt text appears at once (typing skipped)"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "2:31.9",
+     "note": "Claude chat: empty box → full prompt in one cut"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "4:12.0",
+     "note": "prompt bar text appears between f7602–7608"
+    }
+   ],
+   "jake_rule": "Rule 8: paste the whole domain/prompt at once, nothing pops up (suggestion lists).",
+   "correction": null,
+   "confidence": "high",
+   "params": {
+    "frames": 1,
+    "zoom": "carried"
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT01_state_jump__ref3_1m43.70.jpg",
+    "/opt/aieditor-work/reference/techniques/CUT01_state_jump__ref4_2m31.40.jpg"
+   ]
+  },
+  {
+   "id": "CUT02",
+   "family": "cuts",
+   "name": "Cut on click to the next page (load skipped)",
+   "looks": "Cursor clicks a nav item/button; the next frame is the loaded destination page. White/blank loading never shows.",
+   "when": "He says \"click on X / head to X\" and clicks; the picture lands on the result while he is still on the sentence.",
+   "why": "A click inside one app means \"continuing\" — a hard cut reads as instant software.",
+   "how": "Hard cut on (or ≤ 3 f after) the press. The incoming page usually arrives at 1.0 (or already framed if the next target is named within ~1.5 s) and then gets a push-in or pan.",
+   "how_often": "Full-frame in-span hard cuts: r2 1.9, r3 1.2, r4 0.7, r5 1.7 per min (16/11/7/19 total).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:40.1",
+     "note": "editor → Generate panel (menu click)"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "5:07.1",
+     "note": "dashboard → \"Generate Talking Head Videos\" page"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "2:00.0",
+     "note": "top-bar \"Images\" → menu"
+    }
+   ],
+   "jake_rule": "Rule 11: a navigating click gets a quick zoom that lands on the press, then the page change; no wandering.",
+   "correction": null,
+   "confidence": "high",
+   "params": {
+    "frames": 1
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT02_nav_click__ref3_1m39.80.jpg",
+    "/opt/aieditor-work/reference/techniques/CUT02_nav_click__ref3_5m06.90.jpg"
+   ]
+  },
+  {
+   "id": "CUT03",
+   "family": "cuts",
+   "name": "Cut chain through menus / onboarding",
+   "looks": "Several hard cuts 0.7–1.5 s apart, each on a click, stepping through a sign-up form, onboarding questions or a menu tour, no camera moves between them.",
+   "when": "He narrates a quick tour or a boring necessary flow (\"answer honestly, it takes 10 seconds … and we're in. Images are over here, videos over here\").",
+   "why": "Compresses a necessary but dull flow to its milestones while staying literal.",
+   "how": "Hard cuts on each click/word; zoom 1.0; 3–6 cuts in 5–8 s.",
+   "how_often": "Rare: 1–2 chains per video.",
+   "examples": [
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "1:51.3",
+     "note": "onboarding questions, cuts at 1:51.3 / 1:54.7"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "1:59.0",
+     "note": "dashboard tour: cuts 1:59.0, 2:00.0, 2:02.2, 2:03.0 on \"Images…videos…feed\""
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:00.4",
+     "note": "gallery: two quick cuts 1:00.4, 1:04.3"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT03_cut_chain__ref5_1m57.50.jpg"
+   ]
+  },
+  {
+   "id": "CUT04",
+   "family": "cuts",
+   "name": "Hard cut screencast → full-screen narration (A-roll)",
+   "looks": "Screencast and bubble vanish together in one frame; the next frame is the full-screen presenter.",
+   "when": "At the end of a sentence/idea, before he starts talking about the next thing (opinion, transition, CTA).",
+   "why": "The alternation screen ↔ face is the main rhythm device; it also ends most holds (37 % of all ≥ 3 s holds end on this cut).",
+   "how": "Hard cut, picture leads the next sentence by ~0.1 s (median, 79–98 % of cuts within 0.6 s of a sentence start). The screencast is NOT zoomed out first: 8 / 17 / 21 / 12 spans end still zoomed (r2/r3/r4/r5), ≤ 1 per ref zooms out before the cut.",
+   "how_often": "≈ 99 % of the 134 exits (frame-checked). 1.4–3.0 exits per minute of video.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:22.9",
+     "note": "coffee video → A-roll"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:52.0",
+     "note": "YouTube channel → A-roll"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:57.3",
+     "note": "Seedance result → A-roll"
+    }
+   ],
+   "jake_rule": "Rule 5: Jake asked for a very short bubble-first fade on screencast ↔ full-screen narration (\"so fast it isn't noticed\") — use TR05 timing, not a plain hard cut. Rule wins over the ref statistics.",
+   "correction": "sc6/SYSTEM §0 rule 5 said 88 % / 94 % hard and the rest \"the dissolve variant\". Frame check of all 24 non-hard detections: 21 are bubble hide/return events INSIDE a screencast (BB01/BB02). True dissolve boundaries: 1 to A-roll (r3 0:47.35) + 1 bubble-first to B-roll (r5 0:35.8). So ≈ 99 % of A-roll boundaries are hard cuts.",
+   "confidence": "high",
+   "params": {
+    "picture_lead_s": 0.1,
+    "within_sentence_start_s": 0.6
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT04_sc_to_aroll_hard__ref3_0m22.75.jpg",
+    "/opt/aieditor-work/reference/techniques/CUT04_sc_to_aroll_hard__ref4_0m51.60.jpg"
+   ]
+  },
+  {
+   "id": "CUT05",
+   "family": "cuts",
+   "name": "Hard cut A-roll → screencast (opens at 1.0, then moves)",
+   "looks": "Presenter → screencast with the bubble on frame 1. Most spans open unzoomed and still; ~30 % start a push-in or pan on frame 2.",
+   "when": "When he starts the sentence that names what is on screen (\"So what is VEED?\", \"Let me show you\").",
+   "why": "The face sets up the idea, the screen pays it off; starting at 1.0 tells the viewer where they are (the whole app) before the zoom isolates the subject.",
+   "how": "Hard cut; first move (if any) starts at +2 f (p25–p75 2–3 f). Entry move: zoom-in 8/12/7/10, pan 3/7/3/1, none 6/19/31/23 spans (r2/r3/r4/r5).",
+   "how_often": "≈ 99 % of 128 entries hard.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:30.0",
+     "note": "\"So what is VEED?\" → editor, push-in from +2 f"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "4:48.5",
+     "note": "A-roll → Higgsfield page"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:27.2",
+     "note": "A-roll → ChatGPT, push-in ×1.41 from +2 f"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {
+    "entry_move_delay_f": 2
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT05_aroll_to_sc_hard__ref3_1m29.85.jpg",
+    "/opt/aieditor-work/reference/techniques/CUT05_aroll_to_sc_hard__ref5_4m48.30.jpg"
+   ]
+  },
+  {
+   "id": "CUT06",
+   "family": "cuts",
+   "name": "Cut that lands already framed (zoom carried into the cut)",
+   "looks": "The first screencast frame after a cut (from A-roll or another page) is already a zoomed view, and the camera pans from there.",
+   "when": "When the next thing he names is a detail the viewer already knows the context of (the same pricing table again, the same editor).",
+   "why": "Skips a re-establishing push the viewer does not need.",
+   "how": "Cut lands at the held zoom (≈1.25–1.37); a pan (D 30–40 f) follows within 0–2 s.",
+   "how_often": "Spans that open with a pan: 3 / 7 / 3 / 1.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "8:36.5",
+     "note": "cut from A-roll lands zoomed on pricing; pan to \"Creator\""
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "4:11.7",
+     "note": "cut lands zoomed on the preview; glides to the timeline"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "9:13.3",
+     "note": "lands zoomed; pan to \"Pro\""
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT06_lands_framed__ref3_4m09.60.jpg",
+    "/opt/aieditor-work/reference/techniques/CUT06_lands_framed__ref3_8m36.30.jpg"
+   ]
+  },
+  {
+   "id": "CUT07",
+   "family": "cuts",
+   "name": "A-roll jump cut with framing change (punch-in alternation)",
+   "looks": "Inside one A-roll block, jump cuts alternate between the base medium framing and a tighter close-up (~1.3–1.5×, face larger, mic lower).",
+   "when": "On a new sentence/beat inside a talking-head stretch, especially an emphatic line.",
+   "why": "Hides the jump cut and adds energy without B-roll.",
+   "how": "Hard cut; scale changes ~1.3–1.5× about the face. Ref 2 (oldest) keeps the same framing across jump cuts (one close-up at 5:05); refs 3–5 alternate.",
+   "how_often": "Refs 3–5: roughly every 2nd–3rd A-roll jump cut.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "3:25.0",
+     "note": "medium 3:25 → close 3:26 → medium 3:27"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "4:49.0",
+     "note": "close-up block 4:49–4:51"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "2:25.0",
+     "note": "close-up 2:25–2:29 after medium 2:13"
+    }
+   ],
+   "jake_rule": null,
+   "correction": "kwys-annotations C2 said \"no digital punch-ins at jump cuts\" — true for ref 2 only; refs 3–5 do alternate framings.",
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CUT07_aroll_jump_punch__ref3_3m25.00.jpg",
+    "/opt/aieditor-work/reference/techniques/CUT07_aroll_jump_punch__ref3_4m49.00.jpg"
+   ]
+  },
+  {
+   "id": "TR01",
+   "family": "transitions",
+   "name": "Dissolve screencast → screencast on a change of world",
+   "looks": "Short uniform cross-dissolve between two different apps/sites/projects; the facecam bubble stays solid on top.",
+   "when": "Going to another app, site, window, project or account (\"let's go back to the dashboard\", \"then over in Claude\").",
+   "why": "A hard cut between unrelated layouts reads as a glitch; a dissolve says \"somewhere else\".",
+   "how": "3–8 f (medians 3/6/5/4 → 5 f), linear opacity (+0.16–0.27 per frame), uniform over the frame. Framing of the outgoing view is held through it.",
+   "how_often": "0.4–1.4 / min of screencast; dissolves ÷ (dissolves + full hard page cuts) = 50 / 60 / 76 / 29 %.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:43.2",
+     "note": "coffee project → avatar project (6 f)"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:10.1",
+     "note": "Claude app → Windows desktop (8 f)"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "2:58.8",
+     "note": "Claude auth popup → Higgsfield page"
+    }
+   ],
+   "jake_rule": "Approved by Jake: v11 1:04 (dialog → brand kit dissolve).",
+   "correction": null,
+   "confidence": "high",
+   "params": {
+    "frames": 5,
+    "range": [
+     3,
+     8
+    ],
+    "curve": "linear"
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR01_dissolve_world__ref3_0m43.00.jpg",
+    "/opt/aieditor-work/reference/techniques/TR01_dissolve_world__ref4_0m09.90.jpg",
+    "/opt/aieditor-work/reference/techniques/TR01_dissolve_world__ref5_2m58.60.jpg"
+   ]
+  },
+  {
+   "id": "TR02",
+   "family": "transitions",
+   "name": "Dissolve as a time skip (same page, later)",
+   "looks": "Same page and framing; the generated result fades in where the empty/loading state was.",
+   "when": "After \"hit generate\" / \"a few moments later\" — a generation or render finishing.",
+   "why": "Says \"time passed\" without showing the wait.",
+   "how": "3–6 f linear; zoom HELD; usually followed within 0–5 f by a pan to the result (PN05) or a zoom-out (TR03).",
+   "how_often": "A few per video (every generation).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:37.3",
+     "note": "prompt → coffee video appears above it, then pan up"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:44.7",
+     "note": "prompt → result (5 f), then pan up-left"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:42.3",
+     "note": "\"Then hit generate\" → result, zoom-out"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR02_dissolve_timeskip__ref3_0m37.10.jpg",
+    "/opt/aieditor-work/reference/techniques/TR02_dissolve_timeskip__ref3_1m44.50.jpg"
+   ]
+  },
+  {
+   "id": "TR03",
+   "family": "transitions",
+   "name": "Dissolve with held zoom, then release",
+   "looks": "The new screen dissolves in at the outgoing zoom and position, then the camera zooms out to 1.0 (or glides to the new subject).",
+   "when": "Arriving on an overview page after a zoomed detail (\"let's go back to the dashboard\").",
+   "why": "Keeps the motion continuous: the zoom-out reveals the new place.",
+   "how": "Dissolve 6–7 f; zoom-out starts 0–5 f after the dissolve starts, ×0.76–0.82, D ≈ 40 f, curve (.33,0,.31,.93).",
+   "how_often": "Most dissolves that leave a zoomed state.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "3:36.0",
+     "note": "editor → dashboard, then ×0.82 D41"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "5:14.8",
+     "note": "\"we hit Generate\" → result, zoom-out ×0.78"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:43.3",
+     "note": "avatar project, ×0.76 D41"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR03_dissolve_then_zoomout__ref3_3m35.80.jpg",
+    "/opt/aieditor-work/reference/techniques/TR03_dissolve_then_zoomout__ref3_5m14.60.jpg"
+   ]
+  },
+  {
+   "id": "TR04",
+   "family": "transitions",
+   "name": "Dissolve screencast → A-roll (rare)",
+   "looks": "Screen and bubble cross-dissolve into the presenter over ~6 f.",
+   "when": "Once in four refs, at a soft sentence (\"It's free to start\").",
+   "why": "A softer exit when the screen content continues the thought.",
+   "how": "~6 f linear, bubble fades with the screen.",
+   "how_often": "1 of 134 exits.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:47.35",
+     "note": "avatar editor → A-roll"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:15.0",
+     "note": "A-roll → AI B-roll clip, 8 f dissolve (kwys spec)"
+    }
+   ],
+   "jake_rule": "Rule 5 makes the bubble-first fast fade (TR05) the house transition for screencast ↔ narration.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR04_sc_aroll_dissolve__ref3_0m47.10.jpg"
+   ]
+  },
+  {
+   "id": "TR05",
+   "family": "transitions",
+   "name": "Bubble-first exit (bubble fades, then the screen dissolves)",
+   "looks": "The facecam bubble fades out first (~3–5 f), then the screencast cross-dissolves to the next full-screen shot.",
+   "when": "Leaving a screencast for a full-screen shot that has no bubble.",
+   "why": "The bubble disappearing first makes the screen change feel like one smooth move instead of two things popping.",
+   "how": "Bubble 1→0 over ~4 f starting ~10 f before the screen dissolve; screen dissolve ~8 f (50 % at ~4 f). r5 0:35.8: bubble gone at +12 f, screen fully replaced at +16 f.",
+   "how_often": "Measured once to B-roll (r5 0:35.8); the same order appears on bubble hides inside screencasts (BB01).",
+   "examples": [
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:35.8",
+     "note": "Claude chat → 3-clip B-roll plate"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "3:06.0",
+     "note": "Claude settings → Artlist landing (bubble out, dissolve)"
+    }
+   ],
+   "jake_rule": "Rule 5 (Jake): copy this for EVERY screencast ↔ full-screen narration change, both directions, \"so fast it isn't noticed\".",
+   "correction": null,
+   "confidence": "med",
+   "params": {
+    "bubble_fade_f": 4,
+    "screen_dissolve_f": 8
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR05_bubble_first_to_broll__ref5_0m35.55.jpg"
+   ]
+  },
+  {
+   "id": "TR06",
+   "family": "transitions",
+   "name": "Graphic card fade-in / crossfade between cards",
+   "looks": "A full-screen graphic plate fades up from white with the logos settling in, holds, then crossfades to the next card.",
+   "when": "Naming the two tools being combined in the hook (\"connect it to Higgsfield\").",
+   "why": "A clean, branded reveal of the topic.",
+   "how": "Fade-in ~8–16 f from white; hold ~1.5 s; crossfade ~8 f to the next card (toggle switching on).",
+   "how_often": "1–2 per video (hook only).",
+   "examples": [
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:12.0",
+     "note": "Higgsfield MCP × Claude card"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:14.2",
+     "note": "crossfade to \"Higgsfield MCP\" toggle card"
+    }
+   ],
+   "jake_rule": null,
+   "correction": "Plates/typography: titles-lists.md (pink glow plate) applies.",
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR06_card_crossfade__ref5_0m11.80.jpg"
+   ]
+  },
+  {
+   "id": "TR07",
+   "family": "transitions",
+   "name": "Opening punch-out (video starts zoomed in)",
+   "looks": "Frame 0 is the presenter punched in ~1.4–1.55×; it eases out to the base framing in ~1 s while the first title builds.",
+   "when": "The very first line of the video (the hook).",
+   "why": "An energetic first frame.",
+   "how": "Scale 1.55→1.0 over ~31 f, strong ease-out (0.089,0.443,0.126,0.834) about the centre (kwys C1). Re-measured scale at t=0: 1.46 / 1.38 / 1.36 / 1.50 (r2–r5).",
+   "how_often": "Every video (4/4).",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:00.0",
+     "note": "\"UGC AI videos\" ×1.55 → 1.0"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:00.0",
+     "note": "\"I used to lose\" ×1.38 → 1.0"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:00.0",
+     "note": "\"What if\" ×1.5 → 1.0"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR07_open_zoom_out__ref2_0m00.00.jpg",
+    "/opt/aieditor-work/reference/techniques/TR07_open_zoom_out__ref3_0m00.00.jpg"
+   ]
+  },
+  {
+   "id": "TR08",
+   "family": "transitions",
+   "name": "Fade to black at the end",
+   "looks": "The last A-roll frames fade to black over ~1 s; audio not faded.",
+   "when": "Last word of the outro.",
+   "why": "A clean end.",
+   "how": "30 f near-linear video fade, 3 black frames after (kwys C4).",
+   "how_often": "Every video.",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "11:38.1",
+     "note": "end fade 30 f"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "15:42.3",
+     "note": "end fade"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "13:33",
+     "note": "end fade"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TR08_fade_to_black__ref2_11m37.50.jpg",
+    "/opt/aieditor-work/reference/techniques/TR08_fade_to_black__ref5_15m41.50.jpg"
+   ]
+  },
+  {
+   "id": "ZM01",
+   "family": "zooms",
+   "name": "Entry push-in (span opener)",
+   "looks": "From the first or second frame of a screencast span the view pushes in toward the region the sentence is about.",
+   "when": "A span opens on a screen whose subject is a part of the page (a result, a panel, a box).",
+   "why": "Removes the browser chrome and points the eye straight away; motion on the cut hides the cut.",
+   "how": "Starts +2 f after the cut; ×1.27–1.41 (pooled median ≈1.28); D 34–48 f. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Opens 8/12/7/10 spans (r2–r5) = 20–40 % of spans.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:13.6",
+     "note": "×1.27 D34 onto the generated video"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:27.3",
+     "note": "×1.41 D48 onto the ChatGPT model dropdown"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:30.1",
+     "note": "×1.26 D39 onto the AI-tools panel (left-clamped)"
+    }
+   ],
+   "jake_rule": "Rule 1: the subject ENDS centre-middle (beats the old left-of-bubble rule). Rule 11: start only when the sentence names it.",
+   "correction": null,
+   "confidence": "high",
+   "params": {
+    "zoom": [
+     1.27,
+     1.41
+    ],
+    "D_f": [
+     34,
+     48
+    ],
+    "delay_f": 2
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM01_entry_push__ref2_0m27.15.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM01_entry_push__ref3_0m13.45.jpg"
+   ]
+  },
+  {
+   "id": "ZM02",
+   "family": "zooms",
+   "name": "Zoom to a single small control / CTA (deep zoom)",
+   "looks": "A larger zoom onto one button or one table row he names.",
+   "when": "\"hit the subscribe button\", reading one row of a model table.",
+   "why": "\"Click exactly this\": the only case where the camera goes past ~1.45×.",
+   "how": "×1.5–1.65 (once 2.03 in r2), D 45–58 f; hold ≥ 1 s; then zoom out (D ~60 f) or cut. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Big zoom-ins (>1.5×): 2 / 1 / 1 / 0 per video.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:11.7",
+     "note": "×1.64 D45 onto YouTube header + Subscribe on \"hit the subscribe button\""
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "4:25.3",
+     "note": "×2.03 D58 onto one model-table row (Seedance 2.5)"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {
+    "zoom": [
+     1.5,
+     1.65
+    ],
+    "max": 2.03,
+    "D_f": [
+     45,
+     58
+    ]
+   },
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM02_cta_button_deep__ref2_4m25.00.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM02_cta_button_deep__ref3_1m11.60.jpg"
+   ]
+  },
+  {
+   "id": "ZM03",
+   "family": "zooms",
+   "name": "Zoom to the input / prompt box",
+   "looks": "Push onto the prompt bar, view clamped to the bottom edge, prompt centred horizontally.",
+   "when": "He is about to type or reads what is typed (\"here you just hand it a script\").",
+   "why": "Makes the prompt readable.",
+   "how": "×1.35–1.47, D 34–55 f, clamped bottom. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Most prompt beats in r2; r3 also shows typing at 1.0 (CR01).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:40.3",
+     "note": "×1.39 D34 onto the prompt box after a menu cut"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "4:11.5",
+     "note": "×1.43 prompt bar centred"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "5:10.7",
+     "note": "×1.44 bottom-clamped prompt"
+    }
+   ],
+   "jake_rule": "Rule 10 OVERRIDES: typing the prompt reads better ZOOMED OUT; then fade to the result. Do not push onto the box while typing.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM03_input_box__ref2_4m11.20.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM03_input_box__ref3_1m40.20.jpg"
+   ]
+  },
+  {
+   "id": "ZM04",
+   "family": "zooms",
+   "name": "Zoom to a side panel / settings list",
+   "looks": "Push toward a left (or right) panel; view clamped to the panel edge and top.",
+   "when": "He walks through a panel's options (\"on the bottom left panel\", \"AI tools\").",
+   "why": "The panel is the subject; the canvas is context.",
+   "how": "×1.25–1.30, D 39–42 f, clamped left/top. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Common in editor-type apps (r3).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:30.1",
+     "note": "×1.26 onto AI tools"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "3:56.9",
+     "note": "×1.30 \"on the bottom left panel\""
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "7:22.4",
+     "note": "×1.31 AI-tools panel on \"background noise removal\""
+    }
+   ],
+   "jake_rule": "Rule 1: end with the panel content centre-middle where the capture allows (clamp only at real edges).",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM04_side_panel__ref3_1m29.95.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM04_side_panel__ref3_3m56.80.jpg"
+   ]
+  },
+  {
+   "id": "ZM05",
+   "family": "zooms",
+   "name": "Zoom to a result / card / design (centred)",
+   "looks": "Push that centres a generated video/image/card so it fills ~60 % of the height.",
+   "when": "\"look at this\", a result arriving, \"watch the mouth line up\".",
+   "why": "The result is the payoff; make it big.",
+   "how": "×1.19–1.30, D 34–51 f, centred. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Every result beat.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:13.6",
+     "note": "×1.27 generated video"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "5:46.9",
+     "note": "×1.25 avatar result"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "6:48.8",
+     "note": "×1.30 \"watch the mouth line up\""
+    }
+   ],
+   "jake_rule": "Approved: v11 1:10 zoom-in on the brand kit. Rule 4: never the whole canvas — go straight to the main section zoomed.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM05_result_centre__ref3_0m13.45.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM05_result_centre__ref3_5m46.70.jpg"
+   ]
+  },
+  {
+   "id": "ZM06",
+   "family": "zooms",
+   "name": "Zoom to a text block he reads",
+   "looks": "Push that centres the paragraph/section being read.",
+   "when": "He reads or paraphrases text on screen (\"your actual instructions\").",
+   "why": "Readable text = the viewer follows the narration.",
+   "how": "×1.30–1.35, D 32–35 f, paragraph centred. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Docs/skill pages (r4).",
+   "examples": [
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:26.8",
+     "note": "×1.35 skill page instructions"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:34.7",
+     "note": "×1.30 \"You built it. You own it.\" skill header"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "6:00.7",
+     "note": "×1.47 prompt text (before marker wipes)"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM06_text_block__ref4_0m26.70.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM06_text_block__ref4_0m34.60.jpg"
+   ]
+  },
+  {
+   "id": "ZM07",
+   "family": "zooms",
+   "name": "Landing-page hero zoom (tool reveal)",
+   "looks": "The tool's marketing page at 1.0 (logo visible), then a push onto the hero headline + CTA/prompt.",
+   "when": "He names the tool / \"let's go over to veed.io\".",
+   "why": "Reveal: the brand, then what it promises.",
+   "how": "Hold the landing at 1.0 ~1–2 s, then ×1.25–1.37 D 38–48 f to the hero; often a pan to the CTA he clicks next (PN01). zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Once per tool.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:04.9",
+     "note": "\"go over to VEED.io\" ×1.37 onto hero"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "2:20.0",
+     "note": "Higgsfield Cinema Studio hero ×1.25"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "1:39–2:01",
+     "note": "Higgsfield landing shown at 1.0 while he names it"
+    }
+   ],
+   "jake_rule": "Rule 3: naming the tool = full-screen narration OR the landing page (logo, hero, unzoomed). Rule 7: landing unzoomed, then CUT to the zoomed Free section of pricing.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM07_landing_hero__ref3_2m04.70.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM07_landing_hero__ref5_2m19.50.jpg"
+   ]
+  },
+  {
+   "id": "ZM08",
+   "family": "zooms",
+   "name": "Zoom to a row / list of items",
+   "looks": "Push that centres a horizontal row (recent videos, gallery row).",
+   "when": "\"once you've got a video here, hover over…\".",
+   "why": "Isolates the set he is choosing from.",
+   "how": "×1.40–1.43, D 45–51 f. zoom-in curve cubic-bezier(.31,.10,.22,1) on log-zoom; view rect lerps with width progress; centre on target then clamp to the capture edge.",
+   "how_often": "Occasional.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "3:44.1",
+     "note": "×1.43 D51 onto Recent Videos"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "8:20.8",
+     "note": "×1.38 left-clamped grid"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM08_row_list__ref3_3m44.00.jpg"
+   ]
+  },
+  {
+   "id": "ZM09",
+   "family": "zooms",
+   "name": "Pricing table zoom + card-by-card pans",
+   "looks": "Pricing page pushed to ×1.26–1.29 showing 3–4 tiers, then pans tier to tier as he names them (PN04).",
+   "when": "\"There are five tiers\", \"Creator is the solo plan\", \"Pro is where the good stuff lives\".",
+   "why": "Walks the viewer through prices in spoken order.",
+   "how": "×1.26–1.29, D 31–38 f; pans ~320–450 px D 30–35 f per named tier.",
+   "how_often": "One pricing section per video (r3 8:15–10:43, r5 13:39–14:07).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "8:15.2",
+     "note": "×1.26 \"There are five tiers\""
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "8:28.3",
+     "note": "×1.29 \"3-person team on Pro\""
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "13:43",
+     "note": "Higgsfield plans"
+    }
+   ],
+   "jake_rule": "Rule 7 OVERRIDES: never show all the prices — landing page unzoomed, then CUT straight to the zoomed FREE section.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM09_pricing__ref3_8m15.00.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM09_pricing__ref3_8m28.10.jpg"
+   ]
+  },
+  {
+   "id": "ZM10",
+   "family": "zooms",
+   "name": "Slow centred push (no target, constant motion)",
+   "looks": "A gentle centred zoom on a dark list/chat/settings modal; nothing specific is targeted.",
+   "when": "He talks over a screen that has no single subject (settings modal, chat column, skills list).",
+   "why": "Constant motion: something moves when nothing else does.",
+   "how": "Centred (translation < 30 px), ×1.06–1.26, D 24–46 f (slower feel). 12 / 12 / 24 / 41 % of zoom-ins (r2–r5); small zoom-ins (<1.15×): 4 / 7 / 17 / 7.",
+   "how_often": "r4/r5 use it most.",
+   "examples": [
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:01.9",
+     "note": "×1.19 D46 settings modal"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:54.1",
+     "note": "×1.26 D24 skills list"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "2:05.4",
+     "note": "×1.09 D93 hero (slow drift)"
+    }
+   ],
+   "jake_rule": "Rule 2: if there is no cut there must be movement (move → hold ~3 s → pan → next move).",
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM10_slow_centred_push__ref4_0m01.80.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM10_slow_centred_push__ref4_0m54.00.jpg"
+   ]
+  },
+  {
+   "id": "ZM11",
+   "family": "zooms",
+   "name": "Zoom-out / release",
+   "looks": "The view eases back toward 1.0, revealing the whole screen.",
+   "when": "Before a new subject elsewhere on the page, after a dissolve to an overview (TR03), after a deep zoom, or when he moves to \"the whole thing\".",
+   "why": "Re-establishes context before the next push.",
+   "how": "Ratio p50 0.83 / 0.82 / 0.90 / 0.80; D median 34 / 40 / 26 / 39 f → 40 f; curve (.33,0,.31,.93); lands exactly on 1.0 when it is a full release. Not used before a cut to A-roll (≤ 1 per ref).",
+   "how_often": "2.6 / 1.5 / 2.0 / 2.3 per min of screencast.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "4:36.2",
+     "note": "×0.67 D50 subtitles panel → editor"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "10:50.1",
+     "note": "×0.69 D36 1.45 → 1.0"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "4:28.3",
+     "note": "2.03 → 1.0 D62 after the deep row zoom"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM11_zoom_out_release__ref3_10m50.00.jpg",
+    "/opt/aieditor-work/reference/techniques/ZM11_zoom_out_release__ref3_4m36.10.jpg"
+   ]
+  },
+  {
+   "id": "ZM12",
+   "family": "zooms",
+   "name": "Quick zoom on a click",
+   "looks": "A short, small zoom (D 9–20 f, ×1.07–1.15) right at a click or page change.",
+   "when": "A click that changes the page or opens a panel.",
+   "why": "A small kick that marks the click.",
+   "how": "D 9–20 f, ×1.07–1.15, often with a cut on the same beat.",
+   "how_often": "Short zoom-ins (D < 20 f) ≈ 10–25 % of zoom-ins; many are detector artefacts of in-app animations.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:26.9",
+     "note": "×1.12 D15 with cut to the editor (bubble hides for the Edit Scene panel)"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:19.9",
+     "note": "×1.07 D9 \"start generating videos right there\""
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:20.3",
+     "note": "×1.13 D15 toward Share/Schedule"
+    }
+   ],
+   "jake_rule": "Rule 11: a navigating click gets a quick ~24 f zoom straight to it that lands on the press (pipeline nav_click_zoom). Refs support it only weakly.",
+   "correction": null,
+   "confidence": "low",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/ZM12_quick_click_zoom__ref3_0m26.80.jpg"
+   ]
+  },
+  {
+   "id": "PN01",
+   "family": "pans",
+   "name": "Follow to the next target",
+   "looks": "At constant zoom the view glides to the button/panel he will use next.",
+   "when": "\"…and click on the sign up button\", something that just opened at the side.",
+   "why": "Keeps the zoom while moving the subject to the centre; no out-and-in.",
+   "how": "Distance 350–700 px; constant zoom (ratio 0.95–1.01); curve cubic-bezier(.33,.02,.27,.96); D ≈ 24 + 0.035·px f (26–56); peak ~300–1200 px/s.",
+   "how_often": "Part of 0.6–2.5 pans / min.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:07.5",
+     "note": "hero → Sign up, 696 px D40 peak 1185 px/s"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "4:25.7",
+     "note": "left 596 px D41 to the template panel that opened"
+    }
+   ],
+   "jake_rule": "Rule 11: straight to the target, no wandering; Rule 1: end centre-middle.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/PN01_follow_next_target__ref3_2m07.40.jpg",
+    "/opt/aieditor-work/reference/techniques/PN01_follow_next_target__ref3_4m25.60.jpg"
+   ]
+  },
+  {
+   "id": "PN02",
+   "family": "pans",
+   "name": "Reading pan (down a panel / chat)",
+   "looks": "Slow vertical glide down (or up) a panel, list or chat thread at constant zoom.",
+   "when": "He reads down the list / the reply, or goes back up to his prompt.",
+   "why": "Follows the reading order.",
+   "how": "Vertical 150–290 px; D 33–48 f; peak 250–660 px/s. r5 (chat) is all vertical (13 of 15). constant zoom (ratio 0.95–1.01); curve cubic-bezier(.33,.02,.27,.96); D ≈ 24 + 0.035·px f (26–56); peak ~300–1200 px/s.",
+   "how_often": "r5 1.3 / min, r3 2.5 / min (all pans).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:32.2",
+     "note": "down 278 px D35 AI-tools → Generate"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "6:40.8",
+     "note": "up 219 px D48 back to the prompt"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "7:59.2",
+     "note": "down 218 px D36 to the reply/composer"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/PN02_reading_pan__ref3_1m32.10.jpg",
+    "/opt/aieditor-work/reference/techniques/PN02_reading_pan__ref5_6m40.70.jpg"
+   ]
+  },
+  {
+   "id": "PN03",
+   "family": "pans",
+   "name": "Input ↔ output pan",
+   "looks": "Glide between the prompt box and the generated result above it, and back.",
+   "when": "\"turns them into a finished video\", \"give it the rough idea\".",
+   "why": "Shows cause and effect at one zoom.",
+   "how": "Diagonal ~350 px, D 41–50 f. constant zoom (ratio 0.95–1.01); curve cubic-bezier(.33,.02,.27,.96); D ≈ 24 + 0.035·px f (26–56); peak ~300–1200 px/s.",
+   "how_often": "Each generation beat.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:48.8",
+     "note": "result → prompt 356 px D41"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:53.4",
+     "note": "prompt → result 350 px D50"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:37.3",
+     "note": "up-left 271 px to the result"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/PN03_input_output__ref3_1m48.80.jpg",
+    "/opt/aieditor-work/reference/techniques/PN03_input_output__ref3_1m53.30.jpg"
+   ]
+  },
+  {
+   "id": "PN04",
+   "family": "pans",
+   "name": "Glide across cards (tiers, columns)",
+   "looks": "Horizontal pan from card to card at constant zoom.",
+   "when": "Each tier/plan/column he names (\"Now Creator is…\", \"Pro is where…\").",
+   "why": "Spoken order = camera order.",
+   "how": "Horizontal 320–450 px, D 30–35 f, starts −0.3…+0.35 s around the tier name. constant zoom (ratio 0.95–1.01); curve cubic-bezier(.33,.02,.27,.96); D ≈ 24 + 0.035·px f (26–56); peak ~300–1200 px/s.",
+   "how_often": "Pricing sections.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "8:36.6",
+     "note": "319 px \"Creator\""
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "9:13.3",
+     "note": "352 px \"Pro\""
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "9:59.8",
+     "note": "447 px \"the studio plan\""
+    }
+   ],
+   "jake_rule": "Rule 7 limits pricing to the Free section — so this applies to other card rows, not price tables.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/PN04_across_cards__ref3_8m36.50.jpg",
+    "/opt/aieditor-work/reference/techniques/PN04_across_cards__ref3_9m13.20.jpg"
+   ]
+  },
+  {
+   "id": "PN05",
+   "family": "pans",
+   "name": "Pan after a dissolve",
+   "looks": "The incoming screen arrives at the held zoom, then glides to its subject within ~0–6 f.",
+   "when": "After TR01/TR02 when the new subject is not where the old one was.",
+   "why": "Continuous motion through the change.",
+   "how": "Starts 0–6 f after the dissolve starts; 266–340 px, D 32–37 f. constant zoom (ratio 0.95–1.01); curve cubic-bezier(.33,.02,.27,.96); D ≈ 24 + 0.035·px f (26–56); peak ~300–1200 px/s.",
+   "how_often": "Common after time-skip dissolves.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:39.9",
+     "note": "pan 340 px right after the 6 f dissolve"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:44.8",
+     "note": "pan up-left 266 px after the result dissolve"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:57.1",
+     "note": "pan 239 px after a dissolve"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/PN05_pan_after_dissolve__ref3_0m39.60.jpg"
+   ]
+  },
+  {
+   "id": "HD01",
+   "family": "holds",
+   "name": "Static hold (pixel-still view)",
+   "looks": "The view does not move: no drift, no cursor follow, zoom constant ±0.001.",
+   "when": "While he talks about what is already framed.",
+   "why": "Calm reading time after each move.",
+   "how": "Camera holds p25/50/75/90/95 = 0.27/0.83/3.1/7.4/9.4 s (r2), 0.47/1.4/3.6/6.1/9.4 (r3), 0.2/0.9/2.9/5.2/6.9 (r4), 0.07/0.77/3.0/6.5/8.6 (r5). Max 18–33 s (rare). What ends a ≥ 3 s hold (214 holds): cut to A-roll 37 %, dissolve 17 %, zoom-in 12 %, zoom-out 10 %, in-app change 10 %, pan 8 %, hard page cut 5 %.",
+   "how_often": "17–25 motion events / min (moves + cuts + dissolves).",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:14.9",
+     "note": "push then hold ~8 s until the cut to A-roll at 0:22.9"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "8:40",
+     "note": "pricing hold between tier pans"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "5:00–5:56",
+     "note": "overview shots at 1.0 while he talks about the tool in general"
+    }
+   ],
+   "jake_rule": "Rule 2: constant motion — a hold may last ~3 s, then pan/move; QA p90 ≤ 6.5 s, max ≤ 9 s. Jake: move 0:00–0:02 → hold → pan 0:05–0:07 → move 0:08.",
+   "correction": "SYSTEM.md §1 \"hold after a move median 13.7 s\" (ref 2, 2026-10-05) is superseded: camera holds median 0.8–1.4 s, p90 5–7.4 s.",
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/HD01_static_hold__ref3_0m14.80.jpg",
+    "/opt/aieditor-work/reference/techniques/HD01_static_hold__ref3_8m40.00.jpg"
+   ]
+  },
+  {
+   "id": "SC01",
+   "family": "scrolls",
+   "name": "Native wheel scroll (in the recording)",
+   "looks": "Short real mouse-wheel flicks at 1.0 (page moves, not the camera).",
+   "when": "Whole pages he only names (gallery, YouTube channel, landing page).",
+   "why": "Shows there is more without a camera move.",
+   "how": "~95–270 px per flick over 6–16 f; never a synthetic camera scroll. Long scrolls are replaced by a cut (CUT01) or a reading pan (PN02).",
+   "how_often": "Few per video.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:59.6",
+     "note": "gallery flicks 96 px / 6 f"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "1:26.5",
+     "note": "landing page flick 195 px"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:34.7",
+     "note": "flicks f1041–1049"
+    }
+   ],
+   "jake_rule": "Rule 9: no unnecessary scroll — only to reach the one thing he names next.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/SC01_native_scroll__ref3_0m59.50.jpg",
+    "/opt/aieditor-work/reference/techniques/SC01_native_scroll__ref3_1m26.40.jpg"
+   ]
+  },
+  {
+   "id": "CR01",
+   "family": "cursor",
+   "name": "Native cursor, no click emphasis; typing appears in chunks/at once",
+   "looks": "Real OS arrow/hand captured in the recording; scales with the zoom; idle drift; no ring/ripple/highlight on clicks. Prompt text appears at once or in 2–3 chunks (jump cuts), the bar at 1.0.",
+   "when": "Every action.",
+   "why": "Authentic, unobtrusive.",
+   "how": "Cursor ~12–14×18 px at 1.0. Clicks visible only as the pointer→hand change and the UI reaction.",
+   "how_often": "All refs.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:21.5",
+     "note": "prompt typed in chunks at 1.0, bar at the bottom"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "2:07.5",
+     "note": "cursor travels to Sign up during the pan"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "7:40",
+     "note": "native cursor, idle drift (kwys spec)"
+    }
+   ],
+   "jake_rule": "Rule 10: typing zoomed OUT, then a fade to the result; Rule 8: paste whole domain/prompt, nothing pops up.",
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/CR01_typing_unzoomed__ref3_2m21.50.jpg"
+   ]
+  },
+  {
+   "id": "BB01",
+   "family": "facecam",
+   "name": "Facecam bubble: fixed overlay, fades out when the subject goes under it",
+   "looks": "Circle Ø 358.6 at (1701.9, 253.7) @1080p, ring #000357→#4117C9, never moves/scales. Fades out (opacity only) when the framed subject or clicked item enters its top-right zone, stays hidden while that framing holds.",
+   "when": "A zoom/pan/click targets something top-right (Share/Run buttons, Edit Scene panel, Character panel, Upgrade/credits).",
+   "why": "Never cover what he is talking about.",
+   "how": "Fade-out ~6–15 f, often riding the zoom toward the target; back in 11 f (BB02). Never moved or scaled.",
+   "how_often": "Hide events: ≈ 2 / 3 / 5 / 3 per video (r2–r5).",
+   "examples": [
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:20.4",
+     "note": "zoom toward Share/Schedule → bubble fades over ~12 f"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:27.0",
+     "note": "Edit Scene panel (top-right) → bubble fades"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "4:53.1",
+     "note": "Character panel → hidden until 4:57.7"
+    }
+   ],
+   "jake_rule": "Rule 1 (Jake): the bubble is NOT moved/faded/hidden to make room for framing; hide it ONLY while a click/type acts on an item under it, bring it back when the action finishes.",
+   "correction": "kwys-screencast said the bubble hides only twice (ref 2) and sc6 counted these fades as A-roll \"dissolve\" boundaries. Frame check: 13 bubble hides across refs 2–5, all inside screencasts, triggered by top-right framing — more than reads/clicks only. Jake's narrower rule still wins.",
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/BB01_bubble_hide_target__ref3_0m26.85.jpg",
+    "/opt/aieditor-work/reference/techniques/BB01_bubble_hide_target__ref4_0m20.30.jpg"
+   ]
+  },
+  {
+   "id": "BB02",
+   "family": "facecam",
+   "name": "Bubble return",
+   "looks": "The bubble fades back in as the camera releases away from the top-right subject.",
+   "when": "Zoom-out / pan away / dissolve to a page without a top-right subject.",
+   "why": "Restores the presenter.",
+   "how": "Fade-in ~11 f linear, usually during the zoom-out or a dissolve.",
+   "how_often": "Once per hide.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "4:57.7",
+     "note": "returns during the zoom-out ×0.82"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "5:28.1",
+     "note": "returns during zoom-out"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:23.3",
+     "note": "returns with the dissolve to \"You received a skill\""
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/BB02_bubble_return__ref3_4m57.35.jpg"
+   ]
+  },
+  {
+   "id": "BB03",
+   "family": "facecam",
+   "name": "Bubble hidden on a full-screen landing reveal",
+   "looks": "Landing hero shown full-frame with no bubble, then sign-in, then the bubble returns.",
+   "when": "Logging into / revealing a site (\"Now let's log on to Artlist\").",
+   "why": "Hero video/visual gets the whole frame.",
+   "how": "Bubble fades ~4 f, then 6–8 f dissolve to the landing; back in 11 f a few seconds later.",
+   "how_often": "Once (r2).",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "3:06.0",
+     "note": "Artlist landing, bubble hidden 3:06–3:12.8"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/BB03_bubble_hidden_reveal__ref2_3m05.80.jpg"
+   ]
+  },
+  {
+   "id": "BB04",
+   "family": "facecam",
+   "name": "Bubble hidden for a full-bleed result",
+   "looks": "Bubble fades and the result gallery fills the frame without it.",
+   "when": "Showing a grid of results (\"all three models all at once… look\").",
+   "why": "The results are the star.",
+   "how": "Bubble out ~6 f, dissolve; hidden ~10 s.",
+   "how_often": "Once (r5).",
+   "examples": [
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "9:19.8",
+     "note": "coffee gallery, bubble hidden until ~9:31"
+    }
+   ],
+   "jake_rule": "Rule 1 says the bubble is not hidden for framing — treat as reference-only, do not copy.",
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/BB04_bubble_hidden_fullbleed__ref5_9m19.60.jpg"
+   ]
+  },
+  {
+   "id": "TX01",
+   "family": "text",
+   "name": "Lower-centre title (per-word/char build)",
+   "looks": "White bold words build up in the lower-centre over the presenter (hook lines, \"Hey guys / if you're new here\", \"I'm Jake Dawson\").",
+   "when": "Hook lines and the intro, word-synced to his speech.",
+   "why": "Reinforces the key line.",
+   "how": "Per-character fade+drop 36 px over 12 f, stagger 4.15 f per line; exit rises 60 px (kwys-text-cta §1). Roboto Bold 75–94 px.",
+   "how_often": "3–6 lines in the first minute; rare later.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:00.3",
+     "note": "\"I used to lose / a whole day…\""
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:37.0",
+     "note": "\"Hey guys / if you're new here\", \"I'm Jake Dawson\""
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:59.0",
+     "note": "\"Hey everyone welcome back to the channel\""
+    }
+   ],
+   "jake_rule": "Rule 6: ALWAYS on a black→transparent gradient (alpha 0.63·clip((y/H−0.15)/0.85)^1.23, in 22 f, out 8 f).",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX01_lower_title__ref3_0m00.00.jpg",
+    "/opt/aieditor-work/reference/techniques/TX01_lower_title__ref4_0m36.60.jpg"
+   ]
+  },
+  {
+   "id": "TX02",
+   "family": "text",
+   "name": "\"Link in the description\"",
+   "looks": "Rigid white line slides up from below the frame, holds ~1.2 s, slides down; can sit lower-centre, lower-left or lower-right (near his pointing hand).",
+   "when": "On the word \"link\".",
+   "why": "Literal CTA.",
+   "how": "Fixed 69 f clip: in 20 f, hold 37 f, out 12 f (kwys-text-cta §2); appears −3…+5 f of \"link\".",
+   "how_often": "2–4 per video.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:48.9",
+     "note": "lower-centre"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "1:19.9",
+     "note": "lower-right then lower-centre"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "11:11",
+     "note": "lower-right, 11:13 lower-left"
+    }
+   ],
+   "jake_rule": "Rule 6 gradient behind it.",
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX02_link_description__ref3_0m48.60.jpg",
+    "/opt/aieditor-work/reference/techniques/TX02_link_description__ref5_1m19.70.jpg"
+   ]
+  },
+  {
+   "id": "TX03",
+   "family": "text",
+   "name": "Question / key-phrase lower line",
+   "looks": "A single white line lower-centre (\"Is it the best AI video generator?\").",
+   "when": "A rhetorical question that opens a section.",
+   "why": "Signposts the section.",
+   "how": "Same per-char build as TX01, smaller (~40 px), held for the sentence.",
+   "how_often": "1–2 per video.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "11:36.9",
+     "note": "\"Is it the best AI video generator?\""
+    }
+   ],
+   "jake_rule": "Rule 6 gradient.",
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX03_question_lower__ref3_11m36.50.jpg"
+   ]
+  },
+  {
+   "id": "TX04",
+   "family": "text",
+   "name": "Tool logo lower third",
+   "looks": "The tool's logo in its brand colour with a glow, lower-centre over the A-roll.",
+   "when": "The moment he names the tool (\"called Higgsfield\").",
+   "why": "Brand reveal on the face shot (the A-roll version of rule 3).",
+   "how": "Appears ~0.1–0.6 s after the name, holds ~1.5 s, exits; often followed by TX02.",
+   "how_often": "Once per tool.",
+   "examples": [
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "1:17.4",
+     "note": "\"today is called Higgsfield\" → logo"
+    }
+   ],
+   "jake_rule": "Rule 3: reveal scene on naming the tool.",
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX04_logo_lower_third__ref5_1m17.30.jpg"
+   ]
+  },
+  {
+   "id": "TX05",
+   "family": "text",
+   "name": "Subscribe button (+ cursor click, bell)",
+   "looks": "Red box scales in along X, label, cursor clicks → \"SUBSCRIBED\" + bell.",
+   "when": "\"subscribe\" in the intro/outro.",
+   "why": "Literal CTA.",
+   "how": "kwys-text-cta §3 (box 552×124 #FD1728, 27 f scale-in, click on the word).",
+   "how_often": "1–2 per video.",
+   "examples": [
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "0:46.4",
+     "note": "intro"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "14:56.0",
+     "note": "outro"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "1:05.8",
+     "note": "intro (spec instance)"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX05_subscribe__ref4_0m46.20.jpg",
+    "/opt/aieditor-work/reference/techniques/TX05_subscribe__ref5_14m56.00.jpg"
+   ]
+  },
+  {
+   "id": "TX06",
+   "family": "text",
+   "name": "Social icons (TikTok, Instagram)",
+   "looks": "Icons rise from the bottom with a slight overshoot, left then right, on the spoken names.",
+   "when": "\"follow me on TikTok … Instagram\".",
+   "why": "Literal CTA.",
+   "how": "17 f back-out rise; stagger set by the words; joint fade 22 f; A-roll camera punch-in/pan rides along (AR02). kwys-text-cta §4.",
+   "how_often": "Outro, every video.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "13:10.8",
+     "note": "TikTok then Instagram"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "15:01.0",
+     "note": "outro"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "11:00.7",
+     "note": "spec instance"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX06_socials__ref3_13m10.50.jpg",
+    "/opt/aieditor-work/reference/techniques/TX06_socials__ref5_15m00.50.jpg"
+   ]
+  },
+  {
+   "id": "TX07",
+   "family": "text",
+   "name": "Full-screen logo / concept card",
+   "looks": "Full-frame light plate with soft pink/lime glow, logos or a UI toggle.",
+   "when": "Hook: naming the combination of tools.",
+   "why": "Branded concept beat.",
+   "how": "See TR06; plates in titles-lists.md.",
+   "how_often": "Hook only.",
+   "examples": [
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:12.0",
+     "note": "Higgsfield MCP × Claude"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:14.5",
+     "note": "Higgsfield MCP toggle"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX07_fullscreen_card__ref5_0m12.00.jpg"
+   ]
+  },
+  {
+   "id": "TX08",
+   "family": "text",
+   "name": "Mint card row (concept list)",
+   "looks": "Mint background; small video cards with labels pop in left→right (\"Writing / Filming / Editing\").",
+   "when": "Listing the steps in the hook.",
+   "why": "Visual list.",
+   "how": "Card per word, staggered on the spoken words; titles-lists.md / pills-cards.md for motion.",
+   "how_often": "Hook only.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:04.0",
+     "note": "Writing → Filming → Editing"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX08_mint_cards__ref3_0m03.80.jpg"
+   ]
+  },
+  {
+   "id": "TX09",
+   "family": "text",
+   "name": "B-roll plate (AI clips on a plate)",
+   "looks": "Three vertical AI video panels on a mint or glow plate; panels rise in staggered.",
+   "when": "Showing what the tool produces, hook or after a reveal.",
+   "why": "Proof up front.",
+   "how": "kwys-annotations B1: rise 1.1 s bezier(.35,.25,.29,.905), stagger 0.25 s, group push +2 %/s; hard-cut exit.",
+   "how_often": "1–2 per video.",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:07.2",
+     "note": "three bag panels on mint"
+    },
+    {
+     "ref": "r5",
+     "ref_id": "AZxFgIVgHjg",
+     "t": "0:36.0",
+     "note": "three UGC clips on glow plate (after TR05)"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX09_broll_plate__ref2_0m08.00.jpg",
+    "/opt/aieditor-work/reference/techniques/TX09_broll_plate__ref5_0m36.20.jpg"
+   ]
+  },
+  {
+   "id": "TX10",
+   "family": "text",
+   "name": "Full-screen screenshot (comments) with bubble",
+   "looks": "A dark YouTube-comments screenshot full frame, slowly scrolling, bubble on.",
+   "when": "\"Leave a comment… I read every one\".",
+   "why": "Social proof.",
+   "how": "Slow upward drift; bubble present.",
+   "how_often": "Outro.",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "10:56.5",
+     "note": "comments"
+    },
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "13:03",
+     "note": "comments"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/TX10_comments_fullscreen__ref2_10m56.50.jpg"
+   ]
+  },
+  {
+   "id": "HL01",
+   "family": "highlights",
+   "name": "Marker wipe on read text",
+   "looks": "Yellow highlight sweeps left→right over the phrase he reads; one wipe per line; earlier lines stay.",
+   "when": "He reads a phrase from the screen.",
+   "why": "Points the eye at the exact words.",
+   "how": "bezier(.264,.139,.361,.897), T = clamp(13.3+0.071·w_px, 18, 35) f; starts ~12 f after the camera starts moving to the text; exit = 19.5 f fade when the camera next moves (kwys-annotations A1).",
+   "how_often": "Rare: 7 wipes in r2, a few in r4.",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "6:01.4",
+     "note": "H1–H4 inside the prompt"
+    },
+    {
+     "ref": "r4",
+     "ref_id": "Geg9TyNoi3w",
+     "t": "5:40.7",
+     "note": "yellow on \"And when you're genuinely unsure…\" during a zoom"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "6:34.6",
+     "note": "H6–H7"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/HL01_marker_wipe__ref2_6m01.20.jpg",
+    "/opt/aieditor-work/reference/techniques/HL01_marker_wipe__ref4_5m40.40.jpg"
+   ]
+  },
+  {
+   "id": "HL02",
+   "family": "highlights",
+   "name": "Orange label box",
+   "looks": "Opaque orange box wiped behind a model name.",
+   "when": "Naming one item in a dense table.",
+   "why": "Picks one item out of a list.",
+   "how": "Same wipe curve; vanishes over 2–3 f mid zoom-out.",
+   "how_often": "Once (r2).",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "4:26.4",
+     "note": "\"Seedance 2.5,\""
+    }
+   ],
+   "jake_rule": null,
+   "correction": "No boxes, arrows, circles, spotlights or click ripples exist in any of refs 2–5.",
+   "confidence": "high",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/HL02_orange_label__ref2_4m26.20.jpg"
+   ]
+  },
+  {
+   "id": "AR01",
+   "family": "aroll",
+   "name": "Base framing + slow push-in",
+   "looks": "Medium shot (head + mic, brick wall), very slow digital push-in during the block.",
+   "when": "Every A-roll block.",
+   "why": "Keeps the face alive.",
+   "how": "Starts at 1.00 after each screencast; ~1–3 %/s linear (r2 1.8 %/s, r3 ≈ 2.8 %/s 0:08–0:13); caps ≈ 1.12–1.16 and holds (kwys C2 + re-measured).",
+   "how_often": "Every block. A-roll/other ≈ 26–32 % of runtime; blocks p50 5.1–6.5 s.",
+   "examples": [
+    {
+     "ref": "r3",
+     "ref_id": "3Jq-L6uLd28",
+     "t": "0:08.0",
+     "note": "1.00 → 1.14 over 5 s"
+    },
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "0:57.3",
+     "note": "1.00 → 1.16 over 14 s (Subscribe block)"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/AR01_base_push__ref3_0m08.00.jpg"
+   ]
+  },
+  {
+   "id": "AR02",
+   "family": "aroll",
+   "name": "A-roll camera move for outro graphics",
+   "looks": "Punch-in ×1.22 anchored to one side, pan across, zoom back out, following the social icons.",
+   "when": "Social icons / CTAs in the outro.",
+   "why": "Gives the icons room and motion.",
+   "how": "Punch 32 f bezier(.317,.093,.238,1) → pan 24 f → zoom-out (kwys-text-cta §4).",
+   "how_often": "Outro.",
+   "examples": [
+    {
+     "ref": "r2",
+     "ref_id": "kwysV2smgfY",
+     "t": "11:00.7",
+     "note": "TikTok/Instagram"
+    }
+   ],
+   "jake_rule": null,
+   "correction": null,
+   "confidence": "med",
+   "params": {},
+   "frames": [
+    "/opt/aieditor-work/reference/techniques/AR02_socials_camera__ref2_10m59.80.jpg"
+   ]
+  }
+ ]
+}

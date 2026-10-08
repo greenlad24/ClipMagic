@@ -7,7 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import config, events as ev_log
 
 
 def _docker(entry, args, mounts, check=True, capture=True):
@@ -15,9 +15,11 @@ def _docker(entry, args, mounts, check=True, capture=True):
     for host, inner, mode in mounts:
         cmd += ["-v", f"{host}:{inner}:{mode}"]
     cmd += ["--entrypoint", entry, config.FFMPEG_IMAGE, *args]
-    p = subprocess.run(cmd, capture_output=capture, text=True)
-    if check and p.returncode != 0:
-        raise RuntimeError(f"{entry} failed: {(p.stderr or '')[-800:]}")
+    what = next((a for a in args if isinstance(a, str) and a.startswith("/") and not a.startswith("/in/")), "")
+    with ev_log.proc(f"{entry}", f"{Path(str(what)).name}" if what else None):
+        p = subprocess.run(cmd, capture_output=capture, text=True)
+        if check and p.returncode != 0:
+            raise RuntimeError(f"{entry} failed: {(p.stderr or '')[-800:]}")
     return p
 
 

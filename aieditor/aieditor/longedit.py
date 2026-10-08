@@ -18,7 +18,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import agentrec, compose_long, config, director, graphics_long, media
+from . import agentrec, compose_long, config, director, events as ev_log, graphics_long, media
 
 SC_IMAGE = "aieditor-screencast:0.1"
 SCREENCAST = config.CODE / "screencast"
@@ -33,17 +33,22 @@ def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None):
     for a, b in mounts:
         cmd += ["-v", f"{a}:{b}"]
     cmd += [SC_IMAGE] + args
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    import time
-    while p.poll() is None:
-        if cancelled():
-            subprocess.run(["docker", "kill", cname], capture_output=True)
-            p.wait()
-            raise InterruptedError()
-        time.sleep(1)
-    out, err = p.communicate()
-    if p.returncode != 0:
-        raise RuntimeError(f"{args[:3]} failed: {err[-800:]}")
+    script = next((a for a in args if isinstance(a, str) and a.endswith((".mjs", ".py"))), "")
+    labels = {"inventory.mjs": "page inventory (screenshot + elements)", "vrecord.mjs": "screencast recorder (virtual time)",
+              "camera.py": "screencast camera (zoom/pan)", "facecam.py": "face finder",
+              "aroll_camera.py": "A-roll camera (zoom-out, push-ins, end fade)"}
+    with ev_log.proc(labels.get(script.rsplit("/", 1)[-1], script.rsplit("/", 1)[-1] or name), cname):
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        import time
+        while p.poll() is None:
+            if cancelled():
+                subprocess.run(["docker", "kill", cname], capture_output=True)
+                p.wait()
+                raise InterruptedError()
+            time.sleep(1)
+        out, err = p.communicate()
+        if p.returncode != 0:
+            raise RuntimeError(f"{args[:3]} failed: {err[-800:]}")
     return out
 
 
@@ -97,6 +102,9 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             for i, seg in enumerate(segs):
                 if (w / f"seg-{i:02d}" / "rec" / "events.json").exists():
                     continue
+                ev_log.set_sub(f"screencast {i + 1}/{len(segs)}")
+                ev_log.emit("step", f"screencast {i + 1}/{len(segs)}: {seg['t0']:.1f}–{seg['t1']:.1f}s on {seg.get('url', '')}"
+                            f" — {str(seg.get('intent', ''))[:160]}")
                 if sess is None:
                     sess = agentrec.Session(w, scout["profile"], cancelled)
                 progress(f"Screencast {i + 1} of {len(segs)}: Claude is showing it in {scout['slug']} "
@@ -110,6 +118,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
                     sess = agentrec.Session(w, scout["profile"], cancelled)
                     usd += agentrec.record_segment(sess, seg, video, knowledge, f"seg-{i:02d}/rec", log=log, first=True)
         finally:
+            ev_log.set_sub(None)
             if sess:
                 sess.close()
         n_recorded = len(segs)
@@ -118,6 +127,9 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         sd = w / f"seg-{i:02d}"
         sd.mkdir(exist_ok=True)
         base = 0.1 + 0.75 * i / max(1, len(segs))
+        ev_log.set_sub(f"screencast {i + 1}/{len(segs)}")
+        ev_log.emit("step", f"screencast {i + 1}/{len(segs)}: {seg['t0']:.1f}–{seg['t1']:.1f}s on {seg.get('url', '')}"
+                    + (" (recorded earlier — reused)" if (sd / "rec" / "events.json").exists() else ""))
         if not (sd / "script.json").exists():
             progress(f"Screencast {i + 1} of {len(segs)}: reading {seg['url']}…", base)
             _docker(["node", "/app/screencast/inventory.mjs", seg["url"], "/s/inventory.json", "/s/inventory.jpg"],
@@ -135,6 +147,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         ev = json.load(open(sd / "rec" / "events.json"))
         if ev.get("failed"):
             log(f"edit {k}: screencast {i + 1} recording stopped early: {ev['failed']}")
+    ev_log.set_sub(None)
     progress("Rendering the overlays…", 0.88)
     evs = graphics_long.render(w, plan["overlays"], video, fps, tag="gfx", cancelled=cancelled)
     json.dump(evs, open(w / "overlays.json", "w"), indent=1)
@@ -155,6 +168,7 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         sd = w / f"seg-{i:02d}"
         if not (sd / "rec" / "events.json").exists():
             continue
+        ev_log.set_sub(f"screencast {i + 1}/{len(allsegs)}")
         progress(f"Screencast {i + 1}: camera…", 0.1 + 0.4 * i / max(1, len(allsegs)))
         clip = f"sc-{i:02d}-{W}.mp4"
         # two screencasts back to back = a change of world (a new recording): the next one
@@ -182,6 +196,7 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
             elif kept["t0"] > 0.05:
                 kept["aroll_in"] = True              # (the video's own first frame does not fade in)
             segs.append(kept)
+    ev_log.set_sub(None)
     # the presenter's face (for the bubble crop and the A-roll push anchor)
     face_p = d / "face.json"
     if not face_p.exists():

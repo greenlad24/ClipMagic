@@ -551,3 +551,18 @@ def build(video, sents, by_id, audio, fps, exact_gap=False, nudges=None):
             "duration": round(frames / fps, 3), "cuts": max(0, len(pieces) - 1),
             "words": output_words(pieces, by_id, fps), "joins": joins_for(pieces, by_id, fps),
             "text": " ".join(w["w"] for w in kept), "warnings": video.get("warnings", [])}
+
+
+def passthrough(words, by_id, duration, fps, title="Video 1"):
+    """Workflow 2 ("Creative Edit an edited narration", Jake 2026-10-08): the narration is
+    ALREADY edited, so the whole timeline is kept as it is — one piece from the first frame
+    to the last whole frame, no cuts, no pause re-timing, no room tone. Same shape as
+    build(), so everything downstream (sound check, preview, graphics, the full edit,
+    the final) works on it unchanged."""
+    n = max(1, int(math.floor(duration * fps + 1e-6)))
+    end = n / fps
+    pieces, frames = pieces_for([(0.0, end, list(words), [])], fps, None)
+    return {"title": title, "pieces": pieces, "frames": frames,
+            "duration": round(frames / fps, 3), "cuts": 0,
+            "words": output_words(pieces, by_id, fps), "joins": [],
+            "text": " ".join(w["w"] for w in words), "warnings": [], "passthrough": True}

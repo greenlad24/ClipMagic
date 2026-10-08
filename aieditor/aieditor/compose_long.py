@@ -18,7 +18,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import config, media, sfx
+from . import config, events as ev_log, media, sfx
 
 SC_IMAGE = "aieditor-screencast:0.1"
 SCREENCAST = config.CODE / "screencast"
@@ -104,17 +104,18 @@ def _run(cmd, mounts, cancelled=lambda: False, image=SC_IMAGE, memory=None):
     for a, b in mounts:
         full += ["-v", f"{a}:{b}"]
     full += [image, "sh", "-c", cmd]
-    p = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    import time
-    while p.poll() is None:
-        if cancelled():
-            subprocess.run(["docker", "kill", name], capture_output=True)
-            p.wait()
-            raise InterruptedError()
-        time.sleep(1)
-    out, err = p.communicate()
-    if p.returncode != 0:
-        raise RuntimeError(f"compose_long failed: {err[-1200:]}")
+    with ev_log.proc("long-form composite (ffmpeg)", name):
+        p = subprocess.Popen(full, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        import time
+        while p.poll() is None:
+            if cancelled():
+                subprocess.run(["docker", "kill", name], capture_output=True)
+                p.wait()
+                raise InterruptedError()
+            time.sleep(1)
+        out, err = p.communicate()
+        if p.returncode != 0:
+            raise RuntimeError(f"compose_long failed: {err[-1200:]}")
     return out
 
 

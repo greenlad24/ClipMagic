@@ -8,9 +8,6 @@ import {
   Trash2,
   Ban,
   RotateCcw,
-  CheckCircle2,
-  Circle,
-  AlertTriangle,
   Undo2,
   Save,
   Scissors,
@@ -35,10 +32,11 @@ import {
   type AutoJobSummary,
   type AutoJobDetail,
   type AutoVideoPlan,
-  type AutoStageState,
+  type AutoWorkflow,
 } from 'zite-endpoints-sdk';
 import { cn } from '@/lib/utils';
 import { CutEditor } from '@/components/autoeditor/CutEditor';
+import { JobProgress } from '@/components/autoeditor/JobProgress';
 
 /**
  * Auto Editor — raw narration in, clean edit out.
@@ -52,16 +50,12 @@ import { CutEditor } from '@/components/autoeditor/CutEditor';
  * service on the host picks up, and polls — closing the tab stops nothing.
  */
 
-const STAGES: { id: string; title: string }[] = [
-  { id: 'download', title: 'Download from Descript' },
-  { id: 'audio', title: 'Extract audio' },
-  { id: 'transcribe', title: 'Transcribe (word level)' },
-  { id: 'align', title: 'Re-time every word' },
-  { id: 'takes', title: 'Pick the best takes' },
-  { id: 'cut', title: 'Build the cut' },
-  { id: 'listen', title: 'Sound check' },
-  { id: 'preview', title: 'Render video preview' },
-];
+// Jake 2026-10-08: "there are 2 workflows: 1. Cut an unedited narration 2. Creative Edit an
+// edited narration." Picked when the job is created; the worker branches on it.
+const WORKFLOW_LABEL: Record<AutoWorkflow, string> = {
+  cut: 'Cut',
+  creative: 'Creative edit',
+};
 
 const errText = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
@@ -89,15 +83,6 @@ const STATE_BADGE: Record<string, { text: string; cls: string }> = {
   failed: { text: 'Failed', cls: 'bg-red-500/15 text-red-400' },
   cancelled: { text: 'Cancelled', cls: 'bg-muted text-muted-foreground' },
   interrupted: { text: 'Interrupted', cls: 'bg-amber-500/15 text-amber-400' },
-};
-
-const STAGE_ICON: Record<AutoStageState, { icon: typeof Circle; cls: string }> = {
-  pending: { icon: Circle, cls: 'text-muted-foreground/50' },
-  running: { icon: Loader2, cls: 'text-blue-400 animate-spin' },
-  done: { icon: CheckCircle2, cls: 'text-green-400' },
-  skipped: { icon: CheckCircle2, cls: 'text-muted-foreground' },
-  failed: { icon: AlertTriangle, cls: 'text-red-400' },
-  interrupted: { icon: AlertTriangle, cls: 'text-amber-400' },
 };
 
 function Choice<T extends string | boolean>({
@@ -132,6 +117,7 @@ function Choice<T extends string | boolean>({
 
 function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
   const [url, setUrl] = useState('');
+  const [workflow, setWorkflow] = useState<AutoWorkflow | null>(null);
   const [format, setFormat] = useState<'short' | 'long' | null>(null);
   const [sponsored, setSponsored] = useState<boolean | null>(null);
   const [title, setTitle] = useState('');
@@ -140,13 +126,15 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
   const [sites, setSites] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const ready = url.trim() && format && sponsored !== null;
+  const ready = url.trim() && workflow && format && sponsored !== null;
+  const creative = workflow === 'creative';
 
   const submit = async () => {
-    if (!format || sponsored === null) return;
+    if (!workflow || !format || sponsored === null) return;
     setBusy(true);
     try {
-      const r = await autoEditorCreate({ url: url.trim(), format, sponsored, script, title: title.trim() || undefined,
+      const r = await autoEditorCreate({ url: url.trim(), workflow, format, sponsored,
+        script: creative ? undefined : script, title: title.trim() || undefined,
         sites: format === 'long' ? sites : undefined });
       toast.success('Queued — the worker picks it up in a few seconds.');
       setUrl('');
@@ -155,6 +143,7 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
       setSites('');
       setFormat(null);
       setSponsored(null);
+      setWorkflow(null);
       onCreated(r.id);
     } catch (err) {
       toast.error(errText(err));
@@ -167,7 +156,33 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
     <div className="space-y-3 rounded-lg border border-border p-3">
       <h2 className="text-sm font-medium text-foreground">New edit</h2>
       <div className="space-y-1">
-        <label className="text-[11px] text-muted-foreground">Descript share link to the RAW recording</label>
+        <label className="text-[11px] text-muted-foreground">Workflow</label>
+        <div className="grid gap-1.5">
+          {([
+            { value: 'cut', label: '1. Cut an unedited narration',
+              hint: 'Raw recording → best takes picked, junk cut, frame-exact — then graphics and screencasts.' },
+            { value: 'creative', label: '2. Creative edit an edited narration',
+              hint: 'Already edited → nothing is cut. Straight to pre-production, screencasts, graphics and the final.' },
+          ] as const).map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => setWorkflow(o.value)}
+              className={cn(
+                'rounded-md border px-2 py-1.5 text-left transition-colors',
+                workflow === o.value ? 'border-primary bg-primary/15' : 'border-border hover:bg-muted/40',
+              )}
+            >
+              <span className={cn('block text-xs', workflow === o.value ? 'text-foreground' : 'text-muted-foreground')}>{o.label}</span>
+              <span className="block text-[10px] leading-snug text-muted-foreground">{o.hint}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="space-y-1">
+        <label className="text-[11px] text-muted-foreground">
+          Descript share link to the {creative ? 'EDITED narration' : 'RAW recording'}
+        </label>
         <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://share.descript.com/view/…" />
       </div>
       <div className="space-y-1">
@@ -213,7 +228,7 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
         <label className="text-[11px] text-muted-foreground">Name (optional)</label>
         <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Cowork tutorial" />
       </div>
-      {showScript ? (
+      {creative ? null : showScript ? (
         <div className="space-y-1">
           <label className="text-[11px] text-muted-foreground">Script (optional — helps match takes to lines)</label>
           <Textarea value={script} onChange={(e) => setScript(e.target.value)} rows={6} className="text-xs" />
@@ -224,8 +239,8 @@ function NewEdit({ onCreated }: { onCreated: (id: string) => void }) {
         </button>
       )}
       <Button className="w-full gap-1.5" disabled={!ready || busy} onClick={() => void submit()}>
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Scissors className="h-4 w-4" />}
-        Clean up the narration
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : creative ? <Film className="h-4 w-4" /> : <Scissors className="h-4 w-4" />}
+        {creative ? 'Start the creative edit' : 'Clean up the narration'}
       </Button>
     </div>
   );
@@ -291,6 +306,8 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   useEffect(() => setPlan(review.videos), [review.videos]);
   const dirty = JSON.stringify(plan) !== JSON.stringify(review.videos);
   const running = job.status.state === 'running' || job.status.state === 'queued';
+  // workflow 2: the narration was already edited — the transcript is for reference, not for cutting
+  const creative = (job.workflow ?? job.request.workflow) === 'creative';
 
   const sentence = useMemo(() => new Map(review.sentences.map((s) => [s.s, s])), [review.sentences]);
   const startOf = useCallback((n: number) => sentence.get(n)?.start ?? 0, [sentence]);
@@ -612,8 +629,11 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
         <div className="min-w-0 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted-foreground">
-              Kept lines in white, removed lines struck through with the reason. Click a word to cut or restore it.
+              {creative
+                ? 'Creative edit — the narration is kept exactly as edited (no cuts). The transcript is here for reference.'
+                : 'Kept lines in white, removed lines struck through with the reason. Click a word to cut or restore it.'}
             </p>
+            {!creative && (
             <div className="flex gap-1.5">
               {review.edited && (
                 <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => void reset()} disabled={running}>
@@ -625,6 +645,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                 Save
               </Button>
             </div>
+            )}
           </div>
           <div className="max-h-[70vh] space-y-1 overflow-y-auto rounded-md border border-border p-2">
             {rows.map(({ s, kept }) => {
@@ -632,7 +653,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               if (!sen) return null;
               const seg = video.segments.find((g) => g.s === s);
               const why = review.reasons[String(s)] ?? 'removed by you';
-              const alts = kept ? altsOf(s) : [];
+              const alts = kept && !creative ? altsOf(s) : [];
               return (
                 <div key={s}>
                 <div
@@ -645,9 +666,9 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                       return (
                         <span
                           key={w.i}
-                          onClick={kept ? () => toggleWord(s, w.i) : undefined}
+                          onClick={kept && !creative ? () => toggleWord(s, w.i) : undefined}
                           className={cn(
-                            kept && 'cursor-pointer rounded hover:bg-primary/20',
+                            kept && !creative && 'cursor-pointer rounded hover:bg-primary/20',
                             dropped ? 'text-muted-foreground line-through' : 'text-foreground',
                           )}
                         >
@@ -670,6 +691,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                       Takes ({alts.length + 1})
                     </button>
                   )}
+                  {!creative && (
                   <button
                     type="button"
                     onClick={() => toggleSentence(s, !kept)}
@@ -677,6 +699,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                   >
                     {kept ? 'Remove' : 'Restore'}
                   </button>
+                  )}
                 </div>
                 {kept && openTakes === s && alts.length > 0 && (
                   <div className="mb-1 ml-14 space-y-1 rounded-md border border-primary/30 bg-primary/5 p-2">
@@ -731,7 +754,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
         </div>
       </div>
 
-      {info && (info.joins?.length ?? 0) > 0 && (
+      {!creative && info && (info.joins?.length ?? 0) > 0 && (
         <CutEditor
           jobId={job.id}
           joins={info.joins}
@@ -800,11 +823,15 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
             <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-medium', badge.cls)}>{badge.text}</span>
           </div>
           <p className="text-xs text-muted-foreground">
+            {WORKFLOW_LABEL[(job.workflow ?? job.request.workflow ?? 'cut') as AutoWorkflow]} ·{' '}
             {job.request.format === 'short' ? 'Shorts' : 'Long-form'} ·{' '}
             {job.request.sponsored ? 'Sponsored' : 'Not sponsored'}
             {job.source?.duration ? ` · raw ${mmss(job.source.duration)}` : ''}
             {job.source?.width ? ` · ${job.source.width}×${job.source.height}` : ''}
-            {typeof job.status.cost_usd === 'number' && job.status.cost_usd > 0 ? ` · $${job.status.cost_usd.toFixed(2)} so far` : ''}
+            {(() => {
+              const c = job.status.cost_live_usd ?? job.status.cost_usd;
+              return typeof c === 'number' && c > 0 ? ` · $${c.toFixed(2)} so far` : '';
+            })()}
           </p>
           {state === 'queued' && job.busyWith && (
             <p className="mt-1 rounded bg-amber-500/10 px-2 py-1 text-[11px] text-amber-400">
@@ -841,45 +868,24 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
         </div>
       </div>
 
-      <div className="rounded-lg border border-border p-3">
-        <div className="grid gap-1.5 sm:grid-cols-2">
-          {STAGES.map((s) => {
-            const st = job.status.stages?.[s.id];
-            const I = STAGE_ICON[(st?.state ?? 'pending') as AutoStageState] ?? STAGE_ICON.pending;
-            const Icon = I.icon;
-            return (
-              <div key={s.id} className="flex items-center gap-2 text-xs">
-                <Icon className={cn('h-3.5 w-3.5 shrink-0', I.cls)} />
-                <span className="text-foreground">{s.title}</span>
-                {st?.note && <span className="truncate text-muted-foreground">— {st.note}</span>}
-              </div>
-            );
-          })}
-        </div>
-        {(live || state === 'failed') && job.status.message && (
-          <div className="mt-3 space-y-1.5">
-            <p className={cn('text-xs', state === 'failed' ? 'text-red-400' : 'text-muted-foreground')}>{job.status.message}</p>
-            {live && typeof job.status.progress === 'number' && job.status.progress > 0 && (
-              <div className="h-1 overflow-hidden rounded bg-muted">
-                <div className="h-full bg-primary transition-all" style={{ width: `${Math.round(job.status.progress * 100)}%` }} />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {state === 'failed' && job.status.message && (
+        <p className="rounded bg-red-500/10 px-2 py-1 text-xs text-red-400">{job.status.message}</p>
+      )}
+      <JobProgress job={job} live={live} />
 
       {job.review ? (
         <Review job={job} onSaved={() => void load()} />
       ) : (
         <p className="text-xs text-muted-foreground">
-          The review appears here once Claude has picked the takes. A 15-minute raw recording takes about 10 minutes;
-          a 45-minute one about 30.
+          {(job.workflow ?? job.request.workflow) === 'creative'
+            ? 'The transcript and the videos appear here once the narration is transcribed and re-timed.'
+            : 'The review appears here once Claude has picked the takes. A 15-minute raw recording takes about 10 minutes; a 45-minute one about 30.'}
         </p>
       )}
 
       {job.log && (
         <details className="rounded-md border border-border">
-          <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground">Worker log</summary>
+          <summary className="cursor-pointer px-3 py-2 text-xs text-muted-foreground">Raw worker log (log.txt, last 8 KB)</summary>
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 pb-3 text-[10px] text-muted-foreground">{job.log}</pre>
         </details>
       )}
@@ -890,7 +896,14 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
 function HowItWorks() {
   return (
     <div className="space-y-3 rounded-lg border border-border p-5 text-sm text-muted-foreground">
-      <h2 className="text-base font-medium text-foreground">Raw narration → clean edit</h2>
+      <h2 className="text-base font-medium text-foreground">Two workflows</h2>
+      <p className="text-xs">
+        <span className="text-foreground">1. Cut an unedited narration</span> — the steps below.{' '}
+        <span className="text-foreground">2. Creative edit an edited narration</span> — the narration is already edited, so
+        nothing is cut: it is transcribed and re-timed, then goes straight to pre-production, screencasts, graphics and
+        the final. Every step shows its own progress bar, timing, cost and full live log.
+      </p>
+      <h2 className="text-base font-medium text-foreground">1. Raw narration → clean edit</h2>
       <ol className="list-decimal space-y-1.5 pl-5">
         <li>Publish the RAW recording in Descript (download allowed) and paste the share link.</li>
         <li>The worker transcribes it word by word and re-times every word against the audio.</li>
@@ -996,7 +1009,8 @@ export default function AutoEditorPage() {
                           <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', b.cls)}>{b.text}</span>
                         </div>
                         <div className="mt-0.5 text-[11px] text-muted-foreground">
-                          {j.format === 'short' ? 'Shorts' : 'Long-form'} · {j.sponsored ? 'Sponsored' : 'Not sponsored'} · {ago(j.createdAt)}
+                          {WORKFLOW_LABEL[j.workflow ?? 'cut']} · {j.format === 'short' ? 'Shorts' : 'Long-form'} ·{' '}
+                          {j.sponsored ? 'Sponsored' : 'Not sponsored'} · {ago(j.createdAt)}
                         </div>
                       </button>
                     );

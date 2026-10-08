@@ -17,7 +17,7 @@ import re
 import time
 import urllib.request
 
-from . import config
+from . import config, events
 
 FILLERS = {"um", "uh", "umm", "uhh", "uhm", "erm", "mm-hmm", "mhm", "hmm"}
 
@@ -236,6 +236,7 @@ def call_claude(prompt, system, max_tokens=64000):
     if not m:
         raise RuntimeError("Claude returned no JSON")
     usd = usage.get("input_tokens", 0) * 4e-6 + usage.get("output_tokens", 0) * 20e-6
+    events.api(config.TAKES_MODEL, usd, time.time() - t0, "Claude (high effort)", usage)
     return json.loads(m.group(0)), {"usage": usage, "usd": round(usd, 4), "seconds": round(time.time() - t0)}
 
 
