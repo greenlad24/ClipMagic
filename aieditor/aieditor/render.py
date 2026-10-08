@@ -44,12 +44,14 @@ def render(job, video, fps, out_name, size, source="source.mp4", crf=20, preset=
     shutil.rmtree(tmp, ignore_errors=True)
     tmp.mkdir()
     lines = ["set -e"]
+    pieces = []                      # one script per piece: run several at once on a big box
     if not (job / "roomtone.wav").exists():
         # the room's own noise, never digital silence: a muted click or a held frame
         # used to drop to -120 dB, which Jake heard as a dropout at 0:51
         lines.append(f"ffmpeg -v error -y -ss {room_tone_start:.3f} -t 2 -i /job/full48k.wav "
                      f"-c:a pcm_s16le /job/roomtone.wav")
     for k, p in enumerate(video["pieces"]):
+        start = len(lines)
         t = p["src_frame"] / fps
         dur = p["frames"] / fps
         hf, tf = p.get("hold_head", 0), p.get("hold_tail", 0)
@@ -90,7 +92,20 @@ def render(job, video, fps, out_name, size, source="source.mp4", crf=20, preset=
             lines.append(
                 f"ffmpeg -v error -y -ss {t:.6f} -i /job/full48k.wav "
                 f"-filter_complex \"{base},{fades}[out]\" -map \"[out]\" -c:a pcm_s16le /tmp-dir/{k:05d}.wav")
+        pieces.append(lines[start:])
+        del lines[start:]
     n = len(video["pieces"])
+    # x264 at 4K saturates ~8 cores per encode; the factory's 32 cores run 4 pieces at once.
+    # On the 3-core box this is 1 — exactly the old serial order.
+    # A 1080p preview from a 4K source is decode-bound (~4 cores each): twice as many at once.
+    try:
+        wide = int(str(size).split(":")[0]) > 1920
+    except ValueError:
+        wide = True
+    par = max(1, config.cpu_count() // (8 if wide else 4))
+    for k, cmds in enumerate(pieces):
+        (tmp / f"p{k:05d}.sh").write_text("set -e\n" + "\n".join(cmds) + "\n")
+    lines.append(f"ls /tmp-dir/p*.sh | sort | xargs -P {par} -n 1 sh" if pieces else "true")
     (tmp / "v.txt").write_text("".join(f"file '{k:05d}.{'ts' if direct else 'mkv'}'\n" for k in range(n)))
     (tmp / "a.txt").write_text("".join(f"file '{k:05d}.wav'\n" for k in range(n)))
     total = sum(p["frames"] for p in video["pieces"]) / fps
@@ -138,7 +153,7 @@ def render(job, video, fps, out_name, size, source="source.mp4", crf=20, preset=
         if progress and not audio_only:
             # a piece file appears when its encode starts, so the count lags by one
             try:   # a progress hook that raises (job cancelled) must not orphan the container
-                progress(max(0, len(list(tmp.glob("*.ts" if direct else "*.mkv"))) - 1) / max(1, n))
+                progress(max(0, len(list(tmp.glob("*.ts" if direct else "*.mkv"))) - par) / max(1, n))
             except Exception:                                 # noqa: BLE001
                 pass   # the cancelled() check above kills it on the next pass
         time.sleep(2)

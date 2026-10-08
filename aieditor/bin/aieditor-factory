@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""aieditor-factory — the per-job DigitalOcean servers (aieditor/cloud.py).
+
+  aieditor-factory status      settings, snapshot, tagged droplets + leases (no secrets)
+  aieditor-factory image       (re)build the factory snapshot: images + models baked in
+  aieditor-factory smoke       create a job server from the snapshot, check it, destroy it
+  aieditor-factory trial <job dir> <action>…   run actions for a job folder OUTSIDE the
+                               Lab's list on a factory server (speed trial); prints timings
+  aieditor-factory watchdog    destroy tagged droplets nobody holds (systemd timer, 5 min)
+  aieditor-factory enable|disable
+"""
+import json
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from aieditor import cloud  # noqa: E402
+
+
+def log(msg):
+    print(time.strftime("%H:%M:%S ") + msg, flush=True)
+
+
+def status():
+    s = cloud.settings()
+    print(json.dumps({k: v for k, v in s.items() if k != "snapshot_manifest"}, indent=2))
+    print("token:", "set" if cloud.token() else "MISSING")
+    print("snapshot current with local images:", cloud.image_current())
+    for tag in (cloud.TAG_JOB, cloud.TAG_IMAGE):
+        for d in cloud.tagged(tag):
+            print(f"  {tag}: {d['id']} {d['name']} {d['size_slug']} {d['status']} since {d['created_at']}")
+
+
+def smoke():
+    s = cloud.settings()
+    t0 = time.time()
+    did = cloud.create(f"factory-smoke-{int(t0) % 100000}", s["size"], int(s["snapshot_id"]), cloud.TAG_JOB)
+    try:
+        with cloud.Heartbeat(did, job="smoke"):
+            ip, pub = cloud.wait_active(did)
+            log(f"active after {time.time() - t0:.0f}s at {ip}")
+            cloud.wait_ssh(ip)
+            log(f"ssh after {time.time() - t0:.0f}s")
+            out = cloud.ssh(ip, "nproc; free -g | awk '/Mem/{print $2}'; df -BG --output=avail / | tail -1; "
+                                "docker images --format '{{.Repository}}:{{.Tag}}'; du -sh /opt/aieditor-work/models; "
+                                "ufw status | head -4; curl -s -o /dev/null -w '%{http_code}' https://api.anthropic.com")
+            print(out)
+    finally:
+        log("destroyed" if cloud.destroy(did) else "DELETE NOT CONFIRMED")
+        log(f"total {time.time() - t0:.0f}s")
+
+
+def trial(job_dir, actions):
+    job_dir = Path(job_dir).resolve()
+    for action in actions:
+        t0 = time.time()
+        tail = cloud.run_remote(job_dir, action, log, lambda: (job_dir / "cancel").exists())
+        st = json.loads((job_dir / "status.json").read_text())
+        log(f"{action}: {st.get('state')} in {time.time() - t0:.0f}s — {st.get('message')}")
+        for k, v in st.get("stages", {}).items():
+            if v.get("started_at") and v.get("finished_at"):
+                log(f"   {k:10s} {v.get('state'):8s} {v['finished_at'] - v['started_at']:7.0f}s")
+        if st.get("state") != "done":
+            print(tail)
+            return 1
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "status"
+    if cmd == "status":
+        status()
+    elif cmd == "image":
+        cloud.build_image(log)
+    elif cmd == "smoke":
+        smoke()
+    elif cmd == "trial":
+        return trial(argv[2], argv[3:])
+    elif cmd == "watchdog":
+        for _ in cloud.watchdog(log):
+            pass
+    elif cmd in ("enable", "disable"):
+        s = cloud.settings()
+        s["enabled"] = cmd == "enable"
+        cloud.save_settings(s)
+        print("factory", cmd + "d")
+    else:
+        print(__doc__)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

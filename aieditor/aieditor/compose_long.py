@@ -240,9 +240,12 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         # 4K: a dozen inputs each holding a few 4K frames + x264's look-ahead went past 3 GB
         # (OOM-killed at 3.1 GB, 2026-10-06): one decoder thread per input, short look-ahead
         ins = [f"-threads 1 {x}" if not x.startswith("-loop") else x for x in ins]
+    # threads follow the cores this machine may use: 3 here, 32 on a factory server
+    cores = config.cpu_count()
+    ft, xt = max(2, cores // 4), max(3, cores)
     cmd = (f"ffmpeg -v error -y {' '.join(ins)} -filter_complex_script /job/{out_name}.filter.txt "
            f"-map [vout] -map [aout] -r {fps} -c:v libx264 -preset {preset} -crf {crf} "
-           + ("-filter_complex_threads 2 -threads 3 -x264-params rc-lookahead=8:sync-lookahead=0 " if big else "")
+           + (f"-filter_complex_threads {ft} -threads {xt} -x264-params rc-lookahead=8:sync-lookahead=0 " if big else "")
            + f"-c:a aac -b:a 192k "
            f"-movflags +faststart -t {media.probe(job / base)['duration']:.3f} "
            f"/job/{out_name}.part.mp4")
@@ -251,7 +254,7 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         mounts.append((job / gfx_tag, "/g"))
     if music:
         mounts.append((Path(music["path"]).parent, "/music"))
-    _run(cmd, mounts, cancelled, memory="4500m" if big else None)
+    _run(cmd, mounts, cancelled, memory="4500m" if big and cores < 16 else None)
     (job / f"{out_name}.part.mp4").replace(job / f"{out_name}.mp4")
     return job / f"{out_name}.mp4"
 

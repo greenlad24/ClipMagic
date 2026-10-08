@@ -55,6 +55,7 @@ import os
 import shutil
 import signal
 import sys
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -62,7 +63,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aieditor import align, camera, compose, config, descript, edl, events, graphics, longedit, media, render, takes, transcribe  # noqa: E402
+from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, takes, transcribe  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -665,9 +666,10 @@ def run_final_long(job):
 QUICK = ("rebuild", "recut")     # Jake's edits: cut + sound check, minutes
 
 
-def claim():
+def claim(skip=None):
     # Jake's own edits go first: a save waited 26 min behind a 4K test render (2026-10-05)
-    # and looked lost. Then oldest first.
+    # and looked lost. Then oldest first. skip(job_dir, action) leaves a request queued
+    # (its job is on a factory server right now, or every factory slot is taken).
     def rank(q):
         try:
             action = (jload(q, {}) or {}).get("action", "run")
@@ -676,6 +678,8 @@ def claim():
         return (0 if action in QUICK else 1, q.stat().st_mtime)
     best = None
     for q in sorted(config.JOBS.glob("*/queue.json"), key=rank):
+        if skip and skip(q.parent, (jload(q, {}) or {}).get("action", "run")):
+            continue
         best = q
         break
     if not best:
@@ -706,6 +710,76 @@ def recover():
             jdump(st, s)
 
 
+def start(job, action):
+    (job.d / "cancel").unlink(missing_ok=True)
+    if action in ("rebuild", "recut"):
+        for f in ("edl.json",):
+            (job.d / f).unlink(missing_ok=True)
+    job.save(state="running", message="Starting…", progress=0, error=None, action=action,
+             started_at=now())
+
+
+def execute(job, action):
+    """One claimed request, start to finish, on THIS machine (the box, or a factory server)."""
+    events.set_sink(job.event)
+    events.set_sub(None)
+    job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
+    try:
+        run_job(job, action)
+        job.save(state="done", message="Ready to review", progress=1, finished_at=now())
+        events.emit("stage", "job finished — ready to review", stage="job")
+    except Cancelled:
+        job.log("cancelled")
+        for name, s in list(job.st["stages"].items()):
+            if s.get("state") == "running":
+                job.stage(name, "interrupted", "cancelled")
+        job.save(state="cancelled", message="Cancelled")
+    except Exception as exc:                               # noqa: BLE001
+        job.log("FAILED " + traceback.format_exc())       # filed under the stage that failed
+        for name, s in list(job.st["stages"].items()):
+            if s.get("state") == "running":
+                job.stage(name, "failed", str(exc)[:200])
+        job.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
+    finally:
+        events.set_sink(None)
+        (job.d / "cancel").unlink(missing_ok=True)
+        for t in job.d.glob("tmp-*"):
+            shutil.rmtree(t, ignore_errors=True)
+
+
+def execute_cloud(job, action):
+    """The same request on its own DigitalOcean droplet (aieditor/cloud.py). The droplet's
+    worker writes status/events/log; this thread mirrors them back and always destroys it.
+    If no server can be had, the job runs here instead (factory rule: route, don't fail)."""
+    def note(msg, level="info"):
+        # Written straight to the files, NOT through events' global sink: another job may own it.
+        with open(job.d / "log.txt", "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + "factory: " + msg + "\n")
+        with open(job.d / "events.jsonl", "a") as f:
+            f.write(json.dumps({"t": round(now(), 3), "stage": "factory", "kind": "log", "level": level,
+                                "msg": msg}, ensure_ascii=False) + "\n")
+    try:
+        cloud.run_remote(job.d, action, note, job.cancelled)
+    except Exception as exc:                               # noqa: BLE001
+        note(f"factory server failed: {str(exc)[:300]}", "error")
+        st = jload(job.d / "status.json", {}) or {}
+        if st.get("state") == "running" and cloud.settings().get("fallback_local"):
+            note("running this job on the main box instead")
+            fresh = Job(job.d)
+            fresh.save(state="running", message="Running on the main box (factory server unavailable)")
+            with LOCAL:
+                execute(fresh, action)
+            return
+        if st.get("state") == "running":
+            Job(job.d).save(state="failed", message=f"factory server failed: {str(exc)[:300]}",
+                            error=str(exc)[:2000])
+    finally:
+        (job.d / "cancel").unlink(missing_ok=True)
+
+
+LOCAL = threading.Lock()            # one job at a time on THIS box
+
+
 def main():
     def stop(*_):
         global STOP
@@ -714,43 +788,38 @@ def main():
     config.JOBS.mkdir(parents=True, exist_ok=True)
     recover()
     hb = config.WORK / "worker-heartbeat.json"
+
+    def skip(d, action):
+        if cloud.running(d.name):
+            return True
+        return cloud.enabled_for(action) and cloud.busy() >= cloud.settings()["max_parallel"]
+
     while not STOP:
-        jdump(hb, {"at": now(), "pid": os.getpid()})
-        job, action = claim()
+        jdump(hb, {"at": now(), "pid": os.getpid(), "factory_jobs": cloud.busy()})
+        job, action = claim(skip)
         if not job:
             time.sleep(2)
             continue
-        (job.d / "cancel").unlink(missing_ok=True)
-        if action in ("rebuild", "recut"):
-            for f in ("edl.json",):
-                (job.d / f).unlink(missing_ok=True)
-        job.save(state="running", message="Starting…", progress=0, error=None, action=action,
-                 started_at=now())
-        events.set_sink(job.event)
-        events.set_sub(None)
-        job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
-        try:
-            run_job(job, action)
-            job.save(state="done", message="Ready to review", progress=1, finished_at=now())
-            events.emit("stage", "job finished — ready to review", stage="job")
-        except Cancelled:
-            job.log("cancelled")
-            for name, s in list(job.st["stages"].items()):
-                if s.get("state") == "running":
-                    job.stage(name, "interrupted", "cancelled")
-            job.save(state="cancelled", message="Cancelled")
-        except Exception as exc:                               # noqa: BLE001
-            job.log("FAILED " + traceback.format_exc())       # filed under the stage that failed
-            for name, s in list(job.st["stages"].items()):
-                if s.get("state") == "running":
-                    job.stage(name, "failed", str(exc)[:200])
-            job.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
-        finally:
-            events.set_sink(None)
-            (job.d / "cancel").unlink(missing_ok=True)
-            for t in job.d.glob("tmp-*"):
-                shutil.rmtree(t, ignore_errors=True)
+        start(job, action)
+        if cloud.enabled_for(action):
+            # Heavy work goes to a per-job server; this loop keeps claiming.
+            threading.Thread(target=execute_cloud, args=(job, action), daemon=True,
+                             name=f"factory-{job.id}").start()
+            time.sleep(1)
+            continue
+        with LOCAL:
+            execute(job, action)
+
+
+def once(job_id, action):
+    """`aieditor-worker --once <job id> <action>` — what a factory server runs."""
+    job = Job(config.JOBS / job_id)
+    job.save(state="running", action=action, host=os.uname().nodename)
+    execute(job, action)
+    return 0 if job.st.get("state") == "done" else 1
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 4 and sys.argv[1] == "--once":
+        sys.exit(once(sys.argv[2], sys.argv[3]))
     main()

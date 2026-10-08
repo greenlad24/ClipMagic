@@ -12,7 +12,7 @@ from . import config, events as ev_log
 
 def align(job, progress=lambda done, total: None):
     job = Path(job).resolve()
-    threads = str(len(config.CPUSET.split(",")))
+    threads = str(config.cpu_count())
     cmd = ["docker", "run", "--rm", "--cpuset-cpus", config.CPUSET, "--memory", config.MEMORY,
            "-e", f"THREADS={threads}", "-e", "TORCH_HOME=/models",
            "-v", f"{config.MODELS}:/models", "-v", f"{config.CODE / 'aligner'}:/code:ro",

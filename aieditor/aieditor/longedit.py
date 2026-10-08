@@ -164,12 +164,11 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     segs = []
     allsegs = plan["segments"]
     xf_s = compose_long.xfade_s(fps)
+    jobs = []
     for i, seg in enumerate(allsegs):
         sd = w / f"seg-{i:02d}"
         if not (sd / "rec" / "events.json").exists():
             continue
-        ev_log.set_sub(f"screencast {i + 1}/{len(allsegs)}")
-        progress(f"Screencast {i + 1}: camera…", 0.1 + 0.4 * i / max(1, len(allsegs)))
         clip = f"sc-{i:02d}-{W}.mp4"
         # two screencasts back to back = a change of world (a new recording): the next one
         # DISSOLVES in over this one (SYSTEM.md §3b), so this clip runs a few frames longer
@@ -179,9 +178,27 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         # the clip also runs past its end for the dissolve back into the full-screen narration
         # (Jake #5: the bubble fades first, then the screencast) — both need extra frames
         tail = xf_s if into_next else compose_long.aroll_tail_s()
+        jobs.append((i, seg, clip, into_next, tail))
+
+    def camera(job):
+        i, seg, clip, _, tail = job
         _docker(["python3", "/a/screencast/camera.py", f"/w/seg-{i:02d}/rec", f"/w/{clip}", "--size", f"{W}x{H}",
                  "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + tail:.3f}", "--fps", f"{fps:.8f}"],
                 [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-cam")
+    # the camera renders are independent: several at once on a factory server (1 on the box)
+    par = max(1, min(len(jobs), config.cpu_count() // 4))
+    progress(f"Screencasts: camera on {len(jobs)} clip(s), {par} at a time…", 0.1)
+    if par == 1:
+        for n, jb in enumerate(jobs):
+            ev_log.set_sub(f"screencast {jb[0] + 1}/{len(allsegs)}")
+            progress(f"Screencast {jb[0] + 1}: camera…", 0.1 + 0.4 * n / max(1, len(jobs)))
+            camera(jb)
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(par) as ex:
+            for n, _ in enumerate(ex.map(camera, jobs)):
+                progress(f"Screencast cameras: {n + 1}/{len(jobs)} done", 0.1 + 0.4 * (n + 1) / max(1, len(jobs)))
+    for i, seg, clip, into_next, tail in jobs:
         cam = json.load(open(w / f"{clip}.camera.json"))
         kept = compose_long.trim_blank({"t0": seg["t0"], "t1": seg["t1"], "clip": clip, "bubble": True,
                                         "bubble_hide": cam["bubble_hide"]}, cam)

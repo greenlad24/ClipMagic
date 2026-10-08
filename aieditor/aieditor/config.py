@@ -15,6 +15,15 @@ ALIGNER_IMAGE = "aieditor-aligner:0.1"
 CPUSET = os.environ.get("AIEDITOR_CPUSET", "1,2,3")
 MEMORY = os.environ.get("AIEDITOR_MEMORY", "3g")
 
+
+def cpu_count():
+    """Cores in CPUSET ("1,2,3" here; "0-31" on a factory server)."""
+    n = 0
+    for part in CPUSET.split(","):
+        a, _, b = part.strip().partition("-")
+        n += (int(b) - int(a) + 1) if b else 1
+    return max(1, n)
+
 TAKES_MODEL = "claude-opus-5-5"
 GROQ_MODEL = "whisper-large-v3-turbo"
 
