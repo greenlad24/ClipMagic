@@ -18,7 +18,7 @@ for k in ("AIEDITOR_API_LEDGER", "AIEDITOR_API_JOB_CAP_USD", "AIEDITOR_API_DAILY
 (TMP / "work").mkdir()
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from aieditor import accountlock, agentrec, apiledger, cloud, config, director, llm, takes  # noqa: E402
+from aieditor import accountlock, agentrec, apiledger, cloud, config, director, llm, recorder, takes  # noqa: E402
 
 n = 0
 
@@ -64,12 +64,16 @@ check(L[0]["job"] == "job-a" and L[0]["stage"] == "graphics" and L[0]["ok"] is T
 sent.clear()
 takes.call_claude("prompt", "system")
 director.call([{"type": "text", "text": "x"}], "system")
-agentrec._call([{"type": "text", "text": "x"}], [{"type": "text", "text": "s"}])
-check(len(sent) == 3 and len(lines()) == 4, "takes / director / recorder agent each: one call, one ledger line")
+# p7: the only agent near the recorder is the capped OFF-CAMERA beat repair (one turn here)
+_pb = {"app": "x", "actions": {"a": {"kind": "click", "label": "A", "selectors": ["#a"], "proven": True}}}
+_sc = {"steps": [{"type": "click", "selector": "#a", "beat_id": "b0", "at": 1.0}], "beats": []}
+recorder.repair_beat(None, _pb, _sc, {"id": "b0", "steps": [0], "action": "a", "word": "w"}, "failed",
+                     recorder.RepairBudget(), turns=1)
+check(len(sent) == 3 and len(lines()) == 4, "takes / director / beat repair each: one call, one ledger line")
 check(sent[0].get("stream") is True and sent[0]["output_config"]["effort"] == "high", "takes: streamed, high effort")
-check("thinking" not in sent[2] and sent[2]["output_config"]["effort"] == "low", "recorder step: low effort, no thinking")
+check("thinking" not in sent[2] and sent[2]["output_config"]["effort"] == "medium", "beat repair: medium effort, no thinking")
 check({x["purpose"] for x in lines()[1:]} == {"Claude (high effort)", "Claude director (high effort)",
-                                             "recorder agent (low effort)"}, "purposes named")
+                                             "beat repair b0 (off camera)"}, "purposes named")
 
 
 # a failed call still gets its ledger line (ok false), retried codes are retried
@@ -159,8 +163,9 @@ for f in list((ROOT / "aieditor").glob("*.py")) + list((ROOT / "bin").glob("*"))
     if f.is_file() and "api.anthropic.com" in f.read_text(errors="replace"):
         hits.append(f.relative_to(ROOT).as_posix())
 check(hits == ["aieditor/llm.py"], f"api.anthropic.com only in llm.py: {hits}")
-for f in ("takes.py", "director.py", "agentrec.py"):
-    check("llm.messages(" in (ROOT / "aieditor" / f).read_text(), f"{f} calls through llm.py")
+for f in ("takes.py", "director.py", "recorder.py"):
+    check("llm.messages" in (ROOT / "aieditor" / f).read_text(), f"{f} calls through llm.py")
+check("llm.messages(" not in (ROOT / "aieditor" / "agentrec.py").read_text(), "agentrec.py makes no model call (no on-camera agent)")
 check("llm.API_HOST" in (ROOT / "bin" / "aieditor-factory").read_text(), "the factory smoke check reads llm.py's host")
 
 # ── the droplet key (cloud.droplet_env) ──

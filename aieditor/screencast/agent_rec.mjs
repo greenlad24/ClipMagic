@@ -17,10 +17,16 @@
 //   {"cmd":"observe"}                              → {t,url,title,items:[{ref,tag,text,box}],shot}
 //   {"cmd":"act","action":{...}}                   → {ok,t,error?}
 //   {"cmd":"end","until":S}                        hold to S, close the file, write events.json
+//   {"cmd":"abort"}                                drop the take: close the file, delete its dir (NO events.json)
+//   {"cmd":"state"}                                first-frame facts (account, h1, sidebar, draft, popups…) + a shot
+//   {"cmd":"assert", ...}                          after a beat: url whitelist, texts present/absent, field text
 //   {"cmd":"quit"}
 // Actions: click|dblclick|hover|move {ref}; type {ref?,text,cps?,enter?}; key {key};
 //   scroll {by}; read|highlight {ref,ms}; wait_for {text,timeout} (real time, clock frozen);
-//   hold {s}; goto {url}. Any action may carry "at" (clip seconds).
+//   hold {s} (≤ 3 s while recording: no still > 3 s, RULEBOOK P1); goto {url}; drag {from,to};
+//   draw {strokes, box?}; upload {files}; reveal {url, asset} (K2 time-skip dissolve to a result made
+//   off camera). Any action may carry "at" (clip seconds); a click with "press": false moves the cursor
+//   and logs the click without pressing (a send whose result is revealed from assets.json).
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -48,7 +54,7 @@ import { CHROME, launchArgs, identity, dress, wall as wallOf, accountName, HB_ON
 // billing, checkout, delete, share, publish or log out. AGENT_SESSION=outside only for a fresh profile.
 import { check as guardCheck, describeInPage } from "./clickguard.mjs";
 const SESSION = process.env.AGENT_SESSION || (profileDir ? "logged_in" : "outside");
-import { privacySampler, privateSelectors } from "./privacy_dom.mjs";   // RULEBOOK C7: private boxes every 0.25 s
+import { privacySampler, privateSelectors, privacyBoxes } from "./privacy_dom.mjs";   // RULEBOOK C7: private boxes every 0.25 s
 // the Scout account this session belongs to (first name, noted on the first clean page; AGENT_ACCOUNT overrides)
 let ACCOUNT = process.env.AGENT_ACCOUNT || null;
 async function wall(pg) {
@@ -87,7 +93,8 @@ let rec = null;            // {ff, frame, events, cursor, dir}
 const NET = [];
 let cx = CSS_W * 0.62, cy = CSS_H * 0.58;
 let obsN = 0;
-const t = () => (rec ? rec.frame / FPS : 0);
+// a single-beat retake (p7 recorder) records a PIECE that starts at its beat's window in segment time (t0)
+const t = () => (rec ? (rec.t0 || 0) + rec.frame / FPS : 0);
 const toCap = (b) => b && [b.x * SCALE, b.y * SCALE, b.width * SCALE, b.height * SCALE].map(Math.round);
 
 // ⚠️ 2026-10-08 (pre-production, ChatGPT): policy "advance" FAST-FORWARDS the page clock whenever it is idle
@@ -226,6 +233,24 @@ function pngGray(buf) {
 async function tiny() {
   const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.05) });
   return pngGray(Buffer.from(s.data, "base64")).g;
+}
+// 64-bit dHash of the screen (p7: a beat's expected end-state fingerprint; = beatscript.dhash on the same grid)
+async function fingerprint() {
+  const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.05) });
+  const { w, h, g } = pngGray(Buffer.from(s.data, "base64"));
+  let bits = 0n;
+  for (let r = 0; r < 8; r++) {
+    const y0 = Math.floor(r * h / 8), y1 = Math.max(y0 + 1, Math.floor((r + 1) * h / 8));
+    const row = [];
+    for (let c = 0; c < 9; c++) {
+      const x0 = Math.floor(c * w / 9), x1 = Math.max(x0 + 1, Math.floor((c + 1) * w / 9));
+      let sum = 0, n = 0;
+      for (let y = y0; y < Math.min(y1, h); y++) for (let x = x0; x < Math.min(x1, w); x++) { sum += g[y * w + x]; n++; }
+      row.push(sum / Math.max(1, n));
+    }
+    for (let c = 0; c < 8; c++) bits = (bits << 1n) | (row[c] < row[c + 1] ? 1n : 0n);
+  }
+  return bits.toString(16).padStart(16, "0");
 }
 const changedShare = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 12) n++; return n / a.length; };
 function blankish(g) {
@@ -513,7 +538,7 @@ async function hold(s) { const n = Math.round(s * FPS); for (let i = 0; i < n; i
 let curAt = null, curMeta = {};
 function log(type, extra = {}) {
   const e = { t: t(), type, ...extra };
-  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
+  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type", "drag", "draw", "upload", "key"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
   if (rec) rec.events.push(e);
   return e;
 }
@@ -617,8 +642,14 @@ async function boxOf(ref, tight = false) {
       if (t.width > 4 && t.height > 4 && t.width * t.height < r.width * r.height * 0.8) r = t;
     }
     const a = el.closest("a");
+    // a stable selector for the compiled beat script (G3: a rehearsal resolves every target once)
+    const cl = el.closest("button,a,[role=button],[role=menuitem],[role=option],[role=tab],input,textarea,[contenteditable=true]") || el;
+    const tid = cl.getAttribute("data-testid"), al = cl.getAttribute("aria-label");
+    const hint = tid ? `[data-testid="${tid}"]` : al ? `${cl.tagName.toLowerCase()}[aria-label="${al.replace(/"/g, '\\"')}"]`
+      : cl.isContentEditable ? '[contenteditable="true"]' : null;
     return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(),
-             text: (el.innerText || "").trim().slice(0, 80), href: a ? a.href : null, blank: a ? a.target === "_blank" : false };
+             text: (el.innerText || "").trim().slice(0, 80), href: a ? a.href : null, blank: a ? a.target === "_blank" : false,
+             hint, label: (al || el.innerText || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 80) };
   }, ref, tight);
 }
 
@@ -733,7 +764,7 @@ async function seen(b) {
 }
 // round 2 (review D18): a long cursor travel (up to 1.1 s + 0.12 s settle) made presses 0.35 s late with a
 // 0.75 s lead — the press itself still waits for its word (holdUntil(at) before mouse.click)
-const LEAD = { click: 1.25, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3 };
+const LEAD = { click: 1.25, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3, drag: 0.9, draw: 0.9 };
 // LOOP ROUND 1 (review v12 #2/#5/#16/#27: beats 1–3 s late, some dropped): a READ used to hold its
 // whole "ms" before returning, so every later beat started after it — chained lateness. A read now
 // returns at once and its hold is DEFERRED: the next action with an "at" simply waits for its own
@@ -743,17 +774,23 @@ let openRead = null;
 async function guard(a) {
   const ty = String(a.type || "");
   let q = null;
-  if (["click", "dblclick"].includes(ty)) q = a.ref ? { ref: a.ref } : a.x != null ? { x: a.x * SHOT_F, y: a.y * SHOT_F } : null;
+  if (["click", "dblclick"].includes(ty)) q = a.ref ? { ref: a.ref } : a.x != null ? { x: a.x * SHOT_F, y: a.y * SHOT_F }
+    : a.selector ? { selector: a.selector } : null;
+  else if (ty === "drag") { const p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from; if (Array.isArray(p0)) q = { x: p0[0] * SHOT_F, y: p0[1] * SHOT_F }; }
   else if (ty === "key") q = { focused: true };
   else if (ty === "type") q = a.ref ? { ref: a.ref } : a.selector ? { selector: a.selector } : { focused: true };
   const target = q ? await page.evaluate(describeInPage, q).catch(() => null) : null;
-  const g = guardCheck(a, target, SESSION);
+  // p7: a drag is a press where it starts; a K2 reveal is a navigation to the asset's page; an upload / draw
+  // presses nothing a deny rule names (their files / strokes come from assets.json)
+  const ga = ty === "drag" ? { ...a, type: "click" } : ty === "reveal" ? { type: "goto", url: a.url } : a;
+  const g = guardCheck(ga, target, SESSION);
   if (!g.ok) {
     process.stderr.write(`clickguard: refused ${JSON.stringify(a).slice(0, 200)} — ${g.why}\n`);
     if (rec) rec.events.push({ t: t(), type: "refused", rule: g.refused, why: g.why });
   }
   return g;
 }
+const MAX_STILL = 3.0;          // seconds: no recorded still longer (G3 spec 2; BASELINE no still > 3 s)
 async function act(a) {
   const g = await guard(a);
   // a refusal is a BEAT FAILURE — the caller must not retry the same action
@@ -767,11 +804,11 @@ async function act(a) {
   // beat metadata the camera reads (a scripted beat list): explicit zoom, the sentence start the
   // move may not begin before ("from"), "beat" = a word-timed beat that must not be dropped
   curMeta = {};
-  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames"]) if (a[k] != null) curMeta[k] = a[k];
+  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames", "ledger", "word_t", "live", "beat_id", "word", "cursor_at"]) if (a[k] != null) curMeta[k] = a[k];
   // a page scroll ENDS on its word (0.4 s per ~200 px chunk): the thing he names is on screen as
   // he names it — v10 pricing: a scroll that STARTED on "free" showed the Free card 1.6 s late
   const scrollLead = a.type === "scroll" && !a.zoom ? 0.4 * Math.max(1, Math.round(Math.abs(a.by || 0) / 200)) : 0;
-  const startAt = a.at != null ? a.at - (a.travel_ms != null && LEAD[a.type] != null ? a.travel_ms / 1000 + 0.12 : (LEAD[a.type] ?? scrollLead)) : null;
+  const startAt = a.at != null ? a.at - (a.travel_ms != null && LEAD[a.type] != null ? a.travel_ms / 1000 + (a.settle_s ?? 0.12) : (LEAD[a.type] ?? scrollLead)) : null;
   // non-pointer actions wait here; pointer actions wait after their target is found (an off-screen
   // target is scrolled to first, and that scroll must END by the word, not start on it)
   const pointer = ["click", "dblclick", "hover", "move", "read", "highlight"].includes(a.type) && a.ref;
@@ -901,14 +938,17 @@ async function act(a) {
       const e = log("click", { box: toCap(fb || b), abox: toCap(b), text: b.text });
       Object.assign(e, await seen(fb || b));
       await moveTo(...c);
-      if (rec) await hold(0.12);
+      if (rec) await hold(a.settle_s ?? 0.12);
       // the PRESS lands on its word (Jake #11 "the click lands on 'click'"): LEAD is only the cursor's
       // travel budget — with the cursor already there (dblclick after a click) it pressed 0.64 s early
       // (loop round 1, seg 0 30.26 for "designed" at 30.90)
       if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
       let pre = null;
       try { if (rec) pre = await tiny(); } catch {}
-      await page.mouse.click(cx, cy, { clickCount: a.type === "dblclick" ? 2 : 1 }).catch(() => {});
+      // "press": false (G3 generations off camera): the viewer sees the cursor click send / Remove BG on the
+      // word, the page is NOT pressed — the result made off camera follows as a K2 reveal (assets.json)
+      if (a.press !== false) await page.mouse.click(cx, cy, { clickCount: a.type === "dblclick" ? 2 : 1 }).catch(() => {});
+      else e.dry = true;
       e.press = t();
       if (rec && a.then_type) {
         // round 3 (review N15): the brand menu opens ALREADY FILTERED — its search is typed on silent ticks
@@ -923,8 +963,8 @@ async function act(a) {
         // narration names ("your brand name") is loaded inside the cut instead (CUT02: cut on click)
         lastNavT = t(); log("nav", { url: a.goto, cut: true, why: "click" }); await load(a.goto, a.settle ?? 2.5);
       } else if (b.href && b.blank) { log("nav", { url: b.href, cut: true, why: "click" }); await load(b.href, a.settle ?? 2.5); }   // a click = CUT02 hard cut, not a dissolve
-      else if (rec && a.cut !== false) await settleCut("click", pre);
-      if (rec) await hold(a.after ?? 0.3); else await sleep(300);
+      else if (rec && a.cut !== false && a.press !== false) await settleCut("click", pre);
+      if (rec) await hold(Math.min(a.after ?? 0.3, MAX_STILL)); else await sleep(300);
       e.end = t();
       break;
     }
@@ -956,7 +996,12 @@ async function act(a) {
           }
         }
       }
+      // a compiled beat (G3): the field is focused and cleared BEFORE the word; the paste itself lands on it.
+      // A field that is still not empty here aborts the take (RULEBOOK C3 — never append to a stale draft)
+      if (a.beat && a.clear !== false && (await fieldText())) return { ok: false, error: `field not empty before typing: "${(await fieldText()).slice(0, 60)}"` };
+      if (rec && a.beat && a.at != null) await holdUntil(Math.max(t(), a.at));
       const e = log("type", { box: toCap(fb || b), abox: toCap(b), text: a.text, paste: !!a.paste });
+      e.press = t();
       if (a.paste) {
         // Jake #8: an address / a name goes in WHOLE, at once (a paste), never letter by letter
         // set the focused field's value in one go (React-safe native setter + input event). Key
@@ -1031,7 +1076,7 @@ async function act(a) {
       const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text, ...(a.deep ? { deep: true } : {}) });
       Object.assign(e, await seen(b));
       // a beat is a calm screen (SYSTEM.md §2): never shorter than ~1.8 s — but DEFERRED (see openRead)
-      const ms = Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000;
+      const ms = Math.min(MAX_STILL, Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000);
       if (rec && a.at != null) { e.end = t() + ms; openRead = { e, until: t() + ms }; }
       else { if (rec) await hold(ms); e.end = t(); }
       break;
@@ -1039,31 +1084,97 @@ async function act(a) {
     case "wait_for": {
       // long work (an AI generation): wait in REAL time with the clock frozen — the viewer
       // sees the result arrive, not the wait. `show` seconds of the waiting state first.
-      if (a.show && rec) await hold(a.show);
+      // G3 live counter beat: the in-progress card stays on camera until its payoff word ("until", clip s) —
+      // the finished result never lands before it (gap #22); then a K2 time-skip dissolve (fade) to the result
+      if (a.until != null && rec) await holdUntil(Math.max(t(), a.until));
+      else if (a.show && rec) await hold(a.show);
       await realtime();
       const until = Date.now() + (a.timeout ?? 180) * 1000;
       let found = false;
       while (Date.now() < until) {
-        found = await page.evaluate((txt, gone) => {
-          const has = document.body.innerText.toLowerCase().includes(txt.toLowerCase());
+        found = await page.evaluate((txt, gone, sel, min) => {
+          // a finished generation by selector (G3 live counter beat): more matches than "min", none still loading
+          const has = sel ? document.querySelectorAll(sel).length > (min || 0) && !document.querySelector('[aria-busy="true"]')
+            : document.body.innerText.toLowerCase().includes(String(txt).toLowerCase());
           return gone ? !has : has;
-        }, a.text, !!a.gone).catch(() => false);
+        }, a.text, !!a.gone, a.selector || null, a.min ?? 0).catch(() => false);
         if (found) break;
         await sleep(1500);
       }
       await sleep((a.settle ?? 1.5) * 1000);
       if (rec) await pause();
-      log("wait", { text: a.text, found });
+      log("wait", { text: a.text, found, ...(a.k2 ? { fade: true, k2: { frames: Math.max(3, Math.min(8, a.k2.frames ?? 6)) }, until: a.until ?? null } : {}),
+                    ...(a.ledger != null ? { ledger: a.ledger } : {}), ...(a.word_t != null ? { word_t: a.word_t } : {}),
+                    ...(a.beat_id != null ? { beat_id: a.beat_id } : {}), ...(a.live ? { live: true } : {}) });
       if (!found) return { ok: false, t: t(), error: `"${a.text}" did not ${a.gone ? "go away" : "appear"} in ${a.timeout ?? 180} s` };
       break;
     }
     case "drag": {
-      // set-up only (off camera): drag from → to (SCREENSHOT px), e.g. move an artboard by its title
-      const f = a.from.map((v) => v * SHOT_F), g = a.to.map((v) => v * SHOT_F);
-      await moveTo(...f); await page.mouse.down();
-      for (let i = 1; i <= 12; i++) { await page.mouse.move(f[0] + (g[0] - f[0]) * i / 12, f[1] + (g[1] - f[1]) * i / 12); if (rec) await step(); else await sleep(60); }
-      cx = g[0]; cy = g[1]; await page.mouse.up(); log("drag", { from: a.from, to: a.to });
+      // drag from → to (SCREENSHOT px): a markup box over the label, a file onto the chat, an artboard.
+      // On camera too (G3 #31): the press lands on its word, the drag runs at human pace (~0.6 s, eased)
+      // a compiled beat carries drag_from/drag_to ("from" is then its clause start for the camera)
+      const p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from, p1 = Array.isArray(a.drag_to) ? a.drag_to : a.to;
+      if (!Array.isArray(p0) || !Array.isArray(p1)) return { ok: false, error: "drag needs from/to [x, y]" };
+      const f = p0.map((v) => v * SHOT_F), g = p1.map((v) => v * SHOT_F);
+      const e = log("drag", { from: p0, to: p1, box: toCap({ x: Math.min(f[0], g[0]), y: Math.min(f[1], g[1]), width: Math.abs(g[0] - f[0]) || 2, height: Math.abs(g[1] - f[1]) || 2 }) });
+      await moveTo(...f);
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+      await page.mouse.down(); e.press = t();
+      const n = rec ? Math.max(8, Math.round((a.ms ?? 600) / 1000 * FPS)) : 12;
+      for (let i = 1; i <= n; i++) { const u = i / n, ez = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
+        cx = f[0] + (g[0] - f[0]) * ez; cy = f[1] + (g[1] - f[1]) * ez; await page.mouse.move(cx, cy); if (rec) await step(); else await sleep(40); }
+      await page.mouse.up(); e.end = t();
       if (rec) await hold(0.3); else await sleep(500);
+      break;
+    }
+    case "draw": {
+      // draw strokes with the mouse (G3 #23: the Sketch canvas gets the drawing the narration describes).
+      // strokes = [[[x, y], ...], ...] in "space" units (preprod.doodle_svg's 1024 canvas by default) mapped
+      // into "box" (SCREENSHOT px, the canvas on screen); without a box they are screenshot px
+      const strokes = Array.isArray(a.strokes) ? a.strokes.filter((st) => Array.isArray(st) && st.length >= 2) : [];
+      if (!strokes.length) return { ok: false, error: "draw needs strokes [[[x,y],...],...]" };
+      let bx = Array.isArray(a.box) && a.box.length === 4 ? a.box : null;
+      if (!bx && a.selector) {
+        // the drawing surface by selector (the Sketch canvas): its on-screen box, in SCREENSHOT px
+        const r = await page.evaluate((sel) => { const els = [...document.querySelectorAll(sel)].map((e) => e.getBoundingClientRect())
+          .filter((q) => q.width > 60 && q.height > 60).sort((p, q) => q.width * q.height - p.width * p.height); return els[0] ? [els[0].x, els[0].y, els[0].width, els[0].height] : null; }, a.selector).catch(() => null);
+        if (!r) return { ok: false, error: `no drawing surface ${a.selector}` };
+        const side = Math.min(r[2], r[3]);                        // a square drawing space centred in the surface
+        bx = [(r[0] + (r[2] - side) / 2) / SHOT_F, (r[1] + (r[3] - side) / 2) / SHOT_F, side / SHOT_F, side / SHOT_F];
+      }
+      const sp = a.space ?? 1024;
+      const map = ([x, y]) => bx ? [(bx[0] + x / sp * bx[2]) * SHOT_F, (bx[1] + y / sp * bx[3]) * SHOT_F] : [x * SHOT_F, y * SHOT_F];
+      const e = log("draw", { strokes: strokes.length, ...(bx ? { box: toCap({ x: bx[0] * SHOT_F, y: bx[1] * SHOT_F, width: bx[2] * SHOT_F, height: bx[3] * SHOT_F }) } : {}) });
+      // human pace: ~900 css px per second of pen travel, a short lift between strokes
+      for (const [k, st] of strokes.entries()) {
+        const pts = st.map(map);
+        await moveTo(...pts[0]);
+        if (k === 0 && rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+        if (k === 0) e.press = t();
+        await page.mouse.down();
+        for (let j = 1; j < pts.length; j++) {
+          const d = Math.hypot(pts[j][0] - cx, pts[j][1] - cy), n = rec ? Math.max(1, Math.round(d / 900 * FPS)) : 1;
+          const x0 = cx, y0 = cy;
+          for (let i = 1; i <= n; i++) { cx = x0 + (pts[j][0] - x0) * i / n; cy = y0 + (pts[j][1] - y0) * i / n; await page.mouse.move(cx, cy); if (rec) await step(); }
+          if (!rec) await sleep(8);
+        }
+        await page.mouse.up();
+        if (rec) await hold(0.08);
+      }
+      e.end = t();
+      break;
+    }
+    case "reveal": {
+      // K2 TIME-SKIP DISSOLVE (BASELINE §2c; sync/G1 r3 5:14.05 +0.59 s): the finished result was made OFF
+      // CAMERA (assets.json, its chat URL); the page is swapped inside a 3–8 f dissolve, nothing loads on camera
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+      lastNavT = t();
+      const e = log("nav", { url: a.url, fade: true, k2: { frames: Math.max(3, Math.min(8, a.frames ?? 6)), asset: a.asset || null }, ...curMeta });
+      lastFit = null;
+      await load(a.url, a.settle ?? 3);
+      if (a.selector) { const els = await page.$$(a.selector).catch(() => []); const el = els[a.nth ?? els.length - 1];
+        if (el) { await el.evaluate((x) => x.scrollIntoView({ block: "center" })).catch(() => {}); for (let j = 0; j < 12; j++) await step(true); } }
+      Object.assign(e, await seen(null));
       break;
     }
     case "upload": {
@@ -1079,16 +1190,21 @@ async function act(a) {
         if (!a.accept || acc.includes(a.accept)) { inp = h; if (acc.includes("image") || acc.startsWith("|")) break; }
       }
       if (!inp) return { ok: false, error: `no file input on the page (${inputs.length} inputs)` };
+      // on camera (G3 #35 "Upload the photo"): the file lands in the composer ON its word
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+      const eu = log("upload", { files: files.map((f) => path.basename(f)) });
+      eu.press = t();
       await inp.uploadFile(...files);
-      log("upload", { files: files.map((f) => path.basename(f)) });
-      if (rec) await hold(a.s ?? 1); else await sleep((a.s ?? 2) * 1000);
+      if (rec) await hold(Math.min(MAX_STILL, a.s ?? 1)); else await sleep((a.s ?? 2) * 1000);
       break;
     }
-    case "hold": if (rec) await hold(a.s ?? 1); else await sleep(Math.min(a.s ?? 1, 30) * 1000); break;
+    // no still longer than 3 s on camera (RULEBOOK P1/M5; G3: an agent "hold" of 9 s read a tooltip)
+    case "hold": if (rec) await hold(Math.min(a.s ?? 1, MAX_STILL)); else await sleep(Math.min(a.s ?? 1, 30) * 1000); break;
     case "goto": { lastNavT = t(); const e = log("nav", { url: a.url, ...(a.fade ? { fade: true } : {}), ...(a.cut ? { cut: true } : {}) }); lastFit = null; await load(a.url, a.settle ?? 2.5); Object.assign(e, await seen(null)); } if (lastFit) return { ok: true, t: t(), fit: lastFit }; break;
     default: return { ok: false, error: `unknown action ${a.type}` };
   }
-  return { ok: true, t: t(), ...(lastMoved ? { moved: lastMoved.map((v) => +(v / SHOT_F).toFixed(1)) } : {}) };
+  return { ok: true, t: t(), ...(lastMoved ? { moved: lastMoved.map((v) => +(v / SHOT_F).toFixed(1)) } : {}),
+           ...(b && b.tag !== "point" && b.tag !== "region" ? { resolved: { hint: b.hint || null, label: b.label || b.text || "", tag: b.tag } } : {}) };
 }
 
 async function pressCombo(k) {
@@ -1100,7 +1216,7 @@ async function pressCombo(k) {
   await page.keyboard.press(parts[parts.length - 1]);
   for (const m of mods.reverse()) await page.keyboard.up(m);
 }
-async function startSegment(dir) {
+async function startSegment(dir, t0 = 0) {
   const full = path.join(workdir, dir);
   fs.mkdirSync(full, { recursive: true });
   const ff = spawn("ffmpeg", ["-v", "error", "-y", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "mjpeg", "-i", "-",
@@ -1109,7 +1225,7 @@ async function startSegment(dir) {
     { stdio: ["pipe", "ignore", "inherit"] });
   await heartbeat(true);          // static pages keep painting under paused virtual time
   await pause();                  // the recorded clock only moves frame by frame
-  rec = { ff, frame: 0, events: [], cursor: [], dir: full, url: page.url() };
+  rec = { ff, frame: 0, t0: +t0 || 0, events: [], cursor: [], dir: full, url: page.url() };
   log("begin");
 }
 async function endSegment(until) {
@@ -1122,7 +1238,7 @@ async function endSegment(until) {
   r.priv?.flush(path.join(r.dir, "privacy.json"));
   fs.writeFileSync(path.join(r.dir, "events.json"), JSON.stringify({
     capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0, url: r.url,
-    end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
+    t0: r.t0 || 0, end: (r.t0 || 0) + r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
     browser: { exe: CHROME, ua: UA, version: ID.full }, account: ACCOUNT }, null, 1));
   rec = null;
   await heartbeat(false);
@@ -1167,7 +1283,7 @@ for await (const line of rl) {
     else if (m.cmd === "guard") { const w = await wall(page); if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); } out({ ok: true, wall: w, url: page.url(), account: ACCOUNT }); }
     else if (m.cmd === "reload") { const g = await guard({ type: "reload", url: page.url() }); if (!g.ok) { out({ ok: false, refused: g.refused, error: g.why }); continue; } await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {}); await sleep((m.settle ?? 6) * 1000); out({ ok: true, wall: await wall(page), url: page.url() }); }
     else if (m.cmd === "whoami") { out({ ok: true, ...(await page.evaluate(() => ({ ua: navigator.userAgent, platform: navigator.platform, webdriver: navigator.webdriver, languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, text: (document.body?.innerText || "").slice(0, 20000), uaData: navigator.userAgentData ? navigator.userAgentData.toJSON() : null, gl: (() => { try { const g = document.createElement("canvas").getContext("webgl"); const x = g.getExtension("WEBGL_debug_renderer_info"); return [g.getParameter(x.UNMASKED_VENDOR_WEBGL), g.getParameter(x.UNMASKED_RENDERER_WEBGL)]; } catch (e) { return String(e); } })() })).catch((e) => ({ error: String(e) }))), exe: CHROME }); }
-    else if (m.cmd === "segment") { await startSegment(m.out); out({ ok: true }); }
+    else if (m.cmd === "segment") { await startSegment(m.out, m.t0 ?? 0); out({ ok: true, t0: m.t0 ?? 0 }); }
     else if (m.cmd === "observe") out({ ok: true, ...(await observe()) });
     else if (m.cmd === "shot") { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 80, clip: await vclip(1 / SHOT_F) }); const f = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); out({ ok: true, shot: f }); }
     else if (m.cmd === "count") { const n = await page.$$eval(m.selector, (els) => els.length).catch(() => -1); out({ ok: n >= 0, n }); }
@@ -1239,6 +1355,68 @@ for await (const line of rl) {
     }
     else if (m.cmd === "act") out(await act(m.action || {}));
     else if (m.cmd === "end") { await endSegment(m.until); out({ ok: true }); }
+    else if (m.cmd === "abort") {
+      // G3 retake: a failed take is DROPPED — the file is closed and its directory removed; no events.json,
+      // so nothing downstream can mistake it for a finished recording
+      if (openRead) openRead = null;
+      if (rec) { const r = rec; r.ff.stdin.end(); await new Promise((res) => r.ff.on("close", res)); rec = null;
+        try { fs.rmSync(r.dir, { recursive: true, force: true }); } catch {}
+        await heartbeat(false); await realClock(); }
+      out({ ok: true, aborted: true });
+    }
+    else if (m.cmd === "state") {
+      // FIRST-FRAME FACTS (G3; screencast/first_frame.py verdict): what frame 1 would show, read from the DOM
+      const d = await page.evaluate(() => {
+        const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
+          return r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+            && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.15; };
+        const h1 = [...document.querySelectorAll("h1")].filter(vis).map((e) => e.innerText.trim()).filter(Boolean);
+        // the history sidebar: a visible nav/aside wider than an icon rail that lists chats
+        const side = [...document.querySelectorAll("nav, aside, #stage-slideover-sidebar, [data-testid*=sidebar i]")].filter(vis)
+          .some((e) => { const r = e.getBoundingClientRect(); return r.width >= 180 && r.left < 40 && /recents|new chat|library/i.test(e.innerText || ""); });
+        const comp = document.querySelector('[contenteditable="true"]#prompt-textarea, [contenteditable="true"]');
+        const draft = comp ? (comp.innerText || "").trim() : "";
+        const attachments = [...document.querySelectorAll('button[aria-label^="Remove "]')].filter(vis).length;
+        const popups = [...document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[class*="suggest" i],[class*="autocomplete" i]')]
+          .filter((e) => vis(e) && e.getBoundingClientRect().width > 60).length;
+        const tooltips = [...document.querySelectorAll('[role=tooltip]')].filter(vis).length;
+        const tg = [...document.querySelectorAll('button,[role=tab],[role=radio]')].filter((e) => vis(e) && /^(Chat|Work)$/.test((e.innerText || "").trim()));
+        const on = tg.find((e) => e.getAttribute("aria-selected") === "true" || e.getAttribute("aria-checked") === "true" || e.getAttribute("data-state") === "active" || e.getAttribute("aria-pressed") === "true");
+        const mode = on ? on.innerText.trim().toLowerCase() : (h1.some((h) => /what should we work on/i.test(h)) ? "work" : null);
+        const busy = !!document.querySelector('[aria-busy="true"], [data-testid="loading"], .animate-spin') && !h1.length;
+        return { url: location.href, h1, sidebar: side, draft, attachments, popups, tooltips, mode, loading: busy,
+                 text: (document.body?.innerText || "").slice(0, 3000) };
+      }).catch((e) => ({ error: String(e) }));
+      let lum = null, blank = null;
+      try { const g = await tiny(); let sum = 0; for (const v of g) sum += v; lum = Math.round(sum / g.length * 10) / 10; blank = blankish(g); } catch {}
+      const who = await accountName(page);
+      const w = await wall(page);
+      const shot = path.join(workdir, `ff-${String(++obsN).padStart(4, "0")}.jpg`);
+      try { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 90, clip: await vclip(1 / SHOT_F) }); fs.writeFileSync(shot, Buffer.from(s.data, "base64")); } catch {}
+      let fp = null; try { fp = await fingerprint(); } catch {}
+      const priv = await privacyBoxes(page, privateSelectors(), 1);          // C7: private boxes in this frame (CSS px)
+      out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot, fp, private: priv });
+    }
+    else if (m.cmd === "fp") { let fp = null; try { fp = await fingerprint(); } catch {} out({ ok: fp != null, fp, url: page.url() }); }
+    else if (m.cmd === "assert") {
+      // AFTER EACH BEAT (G3 spec 2): url in the whitelist, texts present / absent, the focused / named field's text
+      const r = await page.evaluate((m) => {
+        const fail = [], url = location.href;
+        if (Array.isArray(m.url_allow) && m.url_allow.length && !m.url_allow.some((u) => url.startsWith(u) || new RegExp(u).test(url))) fail.push(`url ${url} not in the whitelist`);
+        const body = document.body?.innerText || "";
+        for (const tx of m.present || []) if (!body.toLowerCase().includes(String(tx).toLowerCase()) && !document.querySelector(`[aria-label="${tx}"]`)) fail.push(`missing "${tx}"`);
+        for (const tx of m.absent || []) if (body.toLowerCase().includes(String(tx).toLowerCase())) fail.push(`unexpected "${tx}"`);
+        const fld = m.field ? document.querySelector(m.field) : document.activeElement;
+        const val = fld ? String(fld.value ?? fld.innerText ?? "").replace(/\u00a0/g, " ").trim() : null;
+        if (m.field_empty && val) fail.push(`field not empty: "${val.slice(0, 60)}"`);
+        if (m.field_equals != null && val !== String(m.field_equals).trim()) fail.push(`field "${(val || "").slice(0, 80)}" != script "${String(m.field_equals).slice(0, 80)}"`);
+        for (const sel of m.selector_present || []) if (!document.querySelector(sel)) fail.push(`no ${sel}`);
+        return { fail, url, value: val };
+      }, m).catch((e) => ({ fail: [String(e)] }));
+      const w = await wall(page);
+      if (w) r.fail.push(`${w.kind}: ${w.why}`);
+      out({ ok: !r.fail.length, ...r, wall: w });
+    }
     else if (m.cmd === "quit") {
       // a segment still open at quit is UNFINISHED (cancel/failure): drop it — writing its
       // events.json made a half-recorded segment look done and get skipped (2026-10-06)

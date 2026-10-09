@@ -1,0 +1,256 @@
+# ── segment scripts (ROUND 2): prepare=True does the off-camera set-up, else yields the beats ──
+# Technique ids per beat; review-round-1 deviation ids (D#) in brackets.
+HERO = [0, 30, 985, 500]            # landing hero + prompt, logo kept in frame (ZM07 ×1.3)
+ROW = [373, 346, 746, 126]           # brand kit "Jump to section" row (Logo … Voice & Tone)
+FIELD = [240, 383, 507, 47]          # New Brand: website field
+HOMEHERO = [533, 90, 427, 320]       # Home: heading + prompt box (Recents row excluded at ×1.35)
+REG_TOP = [146, 105, 352, 340]       # sign-up: logo … sign-in buttons
+
+
+def union_box(*bs):
+    x0 = min(b[0] for b in bs); y0 = min(b[1] for b in bs)
+    x1 = max(b[0] + b[2] for b in bs); y1 = max(b[1] + b[3] for b in bs)
+    return [round(x0), round(y0), round(x1 - x0), round(y1 - y0)]
+
+
+def shotbox(it):
+    return [round(v / 1.2) for v in it["box"]]
+
+
+def seg0(sess, rel, prepare, ctx=None):
+    if prepare:
+        r = sess.send({"cmd": "open", "url": DOC, "settle": 10})
+        assert r.get("fit", {}).get("ok"), r
+        log(f"  fit {r['fit']['box']}")
+        yield {"canvas": Canvas(r["fit"]["box"])}
+        return
+    C = lambda: ctx["canvas"]
+    rd = lambda box, z, at, frm, **k: {"type": "read", "box": C().r(box), "zoom": z, "at": rel(at), "from": rel(frm),
+                                       "beat": True, "glide": False, "ms": 900, **k}
+    # TR07-style opening punch-out ×1.45 → the whole campaign ×1.25 (D15 ruling), centred (fit centres the set)
+    yield {**rd(G, 1.25, 0.0, 0.0), "land": True, "punch": 1.45}
+    # CUT03 cut chain, each CUT06 landing centred (canvas centred inside the cut) [D1 D3 D4]
+    yield lambda: rd(A, 1.4, wt("Instagram", 3.4), wt("A", 1.3), center="cut")
+    yield lambda: rd(EMAIL, 1.65, wt("email", 4.8), wt("an", 4.55), center="cut")
+    yield lambda: rd(WIDE, 1.65, wt("wide", 5.9), wt("a", 5.71), center="cut")
+    yield lambda: rd(STORY, 1.3, wt("story,", 7.16), wt("a", 7.0), center="cut")
+    yield lambda: rd(G, 1.25, wt("much", 7.86), wt("and", 7.68), center="cut")
+    yield {"type": "goto", "url": BRAND, "cut": True, "at": rel(wt("All", 8.97))}           # CUT02
+    # the whole Jump-to-section row ONCE, held through "colors … logo" (ruling for D3 / PN04 whips)
+    yield {"type": "read", "box": ROW, "zoom": 1.25, "at": rel(wt("colors,", 9.53)), "from": rel(wt("All", 8.97)),
+           "beat": True, "glide": False, "ms": 1500}
+    # TR01 dissolve ON "Linearity"; landing at 1.0 (camera cuts to full inside the dissolve)
+    yield {"type": "goto", "url": WWW, "at": rel(wt("Linearity", 12.99))}
+    # ZM07: hold ~1.1 s at 1.0, then ×1.3 onto the hero, logo kept in frame [D6]
+    yield {"type": "read", "box": HERO, "zoom": 1.3, "at": rel(wt("from", 14.91)), "from": rel(wt("all", 14.35)),
+           "beat": True, "glide": False, "ms": 1500}
+    # TR01 back into the app, arriving ALREADY FRAMED on the campaign (D5)
+    yield {"type": "goto", "url": DOC, "at": rel(wt("By", 17.24))}
+    yield lambda: rd(G, 1.25, wt("By", 17.24) + 0.03, wt("By", 17.24))
+    # ZM12/ZM04: Resize → "Resize ›" → the formats panel before "web" (D18)
+    yield {"type": "click", "x": RESIZE_BTN[0], "y": RESIZE_BTN[1], "box": RESIZE_PANEL, "zoom": 1.4,
+           "at": rel(wt("fits", 22.57)), "from": rel(21.77), "beat": True, "glide": False}
+    yield {"type": "click", "x": RESIZE_ITEM[0], "y": RESIZE_ITEM[1], "box": RESIZE_PANEL, "zoom": 1.4,
+           "at": rel(wt("size,", 23.36)), "beat": True, "glide": False}
+    yield {"type": "read", "box": [414, 45, 300, 445], "zoom": 1.4, "at": rel(wt("web,", 24.14)),
+           "beat": True, "glide": False, "ms": 2500}
+    yield {"type": "key", "key": "Escape", "at": rel(wt("You'll", 27.15))}
+    # the approved v11 0:23–0:32 shot, now centre-middle: the post centred inside a cut (CUT06), click ON "right"
+    yield lambda: {"type": "click", "x": C().p(HEADLINE)[0], "y": C().p(HEADLINE)[1], "box": C().r(A), "zoom": 1.3,
+                   "at": rel(wt("right", 28.07)), "beat": True, "glide": False, "center": "cut"}
+    yield lambda: {"type": "dblclick", "x": C().p(HEADLINE)[0], "y": C().p(HEADLINE)[1], "box": C().r(A), "zoom": 1.3,
+                   "at": rel(wt("designed", 30.9)), "beat": True, "glide": False}
+
+
+def seg1(sess, rel, prepare, ctx=None):
+    if prepare:
+        sess.send({"cmd": "open", "url": WWW, "settle": 8})
+        yield {}
+        return
+    # ZM07: landing at 1.0 ~1.5 s, then ×1.3 onto the hero (logo in frame) [D6]
+    yield {"type": "read", "box": HERO, "zoom": 1.3, "at": rel(wt("Linearity.", 50.81)), "from": rel(wt("today", 49.91)),
+           "beat": True, "glide": False, "ms": 900}
+    yield {"type": "goto", "url": PRICING, "cut": True, "at": rel(wt("free", 51.96))}      # Jake #7: CUT to Free
+    yield {"type": "scroll", "by": 1030}                                                   # inside the cut: card mid-screen
+
+    def free_card():
+        o = sess.send({"cmd": "observe"})
+        h3 = find(o, lambda it: it["tag"] == "h3" and "Linearity Free" in it["text"])
+        assert h3, "Free card not found"
+        hb = shotbox(h3)
+        card = [hb[0] - 25, hb[1] - 37, 1218, 127]          # the card container (title 37 px below its top edge)
+        # the card is a FULL-WIDTH banner (1218 of 1280 px): at ×1.25 the frame holds its left 80 % — title,
+        # "250 introductory credits … No credit card required", "What's included" — centred vertically (ZM09/ZM02) [D7]
+        return {"type": "read", "box": [card[0], card[1], 980, card[3]], "zoom": 1.25, "at": rel(wt("free", 51.96) + 0.03),
+                "from": rel(wt("free", 51.96)), "beat": True, "glide": False, "ms": 1500}
+    yield free_card
+
+
+def seg2(sess, rel, prepare, ctx=None):
+    if prepare:
+        sess.send({"cmd": "open", "url": BRAND, "settle": 6})
+        o = sess.send({"cmd": "observe"})
+        b = find(o, lambda it: it["tag"] == "button" and it["text"] == "Jake Dawson" and it["box"][0] > 250 and it["box"][1] < 60)
+        act(sess, {"type": "click", "ref": b["ref"]})
+        act(sess, {"type": "hold", "s": 2})
+        o = sess.send({"cmd": "observe"})
+        act(sess, {"type": "click", "ref": find(o, lambda it: it["text"] == "New Brand" and it["box"][1] > 100)["ref"]})
+        act(sess, {"type": "hold", "s": 3})
+        o = sess.send({"cmd": "observe"})
+        inp = find(o, lambda it: it["tag"] == "input" and "Website" in it["text"])
+        assert inp, "no website field"
+        yield {"input": inp["ref"], "inbox": shotbox(inp)}
+        return
+    # CUT06: opens framed ON the field, centred (no correcting pan) [D19]
+    yield {"type": "read", "box": ctx["inbox"], "zoom": 1.35, "at": 0.0, "from": 0.0, "land": True, "beat": True,
+           "glide": False, "ms": 900}
+    # whole domain at once ON "website"; only 0.15 s of the pasted field shows, then the TR02 time-skip
+    # dissolve leaves "Reading the site…" / Import / "already set up" out of the video [D8]
+    yield {"type": "type", "ref": ctx["input"], "text": "jakedaw.com", "paste": True, "zoom": 1.35, "after": 0.15,
+           "at": rel(wt("website", 62.23)), "beat": True}
+    yield {"type": "goto", "url": BRAND, "fade": True, "at": rel(wt("website", 62.23) + 0.2)}
+    yield {"type": "scroll", "by": 200}                    # inside the cut: title, row and paragraph all on screen
+
+    def kit():
+        o = sess.send({"cmd": "observe"})
+        h1 = find(o, lambda it: it["tag"] == "h1" and "Jake Dawson" in it["text"])
+        lo = find(o, lambda it: it["tag"] == "button" and it["text"] == "Logo")
+        vt = find(o, lambda it: it["tag"] == "button" and "Voice" in it["text"])
+        pp = find(o, lambda it: it["tag"] == "p" and it["text"].startswith("Jake Dawson is a"))
+        assert h1 and lo and vt and pp, "kit layout"
+        ctx["row"] = union_box(shotbox(lo), shotbox(vt))
+        pb = shotbox(pp)
+        ctx["para"] = [pb[0], pb[1], pb[2], min(pb[3], 720 - pb[1])]
+        ctx["top"] = union_box(shotbox(h1), ctx["row"])
+        # arrives ALREADY FRAMED on the kit through the dissolve (TR02/TR03, D5)
+        return {"type": "read", "box": ctx["top"], "zoom": 1.25, "at": rel(wt("website", 62.23) + 0.25),
+                "beat": True, "glide": False, "ms": 900}
+    yield kit
+    # "it holds your logo, your colors": the whole row ONCE (ZM04/ZM08 ×1.4), held [D3/D9]
+    yield lambda: {"type": "read", "box": ctx["row"], "zoom": 1.4, "at": rel(wt("logo,", 68.83)), "from": rel(wt("it", 67.93)),
+                   "beat": True, "glide": False, "ms": 900}
+    # ZM06: the paragraph centred ×1.3, a full-length move [D10 D13]
+    yield lambda: {"type": "read", "box": ctx["para"], "zoom": 1.3, "at": rel(wt("write-up", 70.92)), "from": rel(69.95),
+                   "beat": True, "glide": False, "ms": 900}
+    yield {"type": "goto", "url": HOME, "cut": True, "at": rel(wt("And", 73.95))}
+    # Home framed on heading + prompt (the Recents row with the Scout's test document stays out) [D11]
+    yield {"type": "read", "box": HOMEHERO, "zoom": 1.35, "at": rel(wt("And", 73.95) + 0.03), "beat": True, "glide": False,
+           "ms": 900}
+
+    def typing():
+        o = sess.send({"cmd": "observe"})
+        ta = find(o, lambda it: it["tag"] == "textarea")
+        assert ta, "no prompt box"
+        return {"type": "type", "ref": ta["ref"], "text": PROMPT, "cps": 24, "clear": True, "enter": False, "zoom": 1.35,
+                "at": rel(wt("type", 75.07))}                                               # Jake #10: typed, not pushed in
+    yield typing
+    yield {"type": "goto", "url": DOC, "fade": True, "at": rel(wt("designs", 78.14))}      # TR02 time skip
+    # arrives framed + centred on the 4 designs (canvas centred inside the dissolve) [D5 D1]
+    yield lambda: {"type": "read", "box": ctx["canvas"].r(SQUARES), "zoom": 1.3, "at": rel(wt("designs", 78.14) + 0.03),
+                   "beat": True, "glide": False, "ms": 900, "center": "cut"}
+    yield lambda: {"type": "read", "box": ctx["canvas"].r(A), "zoom": 1.3, "at": rel(wt("Every", 81.11)), "from": rel(80.32),
+                   "beat": True, "glide": False, "ms": 900, "center": "cut"}
+    yield lambda: {"type": "click", "x": ctx["canvas"].p(HEADLINE)[0], "y": ctx["canvas"].p(HEADLINE)[1], "box": ctx["canvas"].r(A),
+                   "zoom": 1.3, "at": rel(wt("click", 83.86)), "beat": True, "glide": False}
+    yield lambda: {"type": "dblclick", "x": ctx["canvas"].p(HEADLINE)[0], "y": ctx["canvas"].p(HEADLINE)[1], "box": ctx["canvas"].r(A),
+                   "zoom": 1.3, "at": rel(wt("headlines,", 87.11)), "beat": True, "glide": False}
+
+    def font():
+        o = sess.send({"cmd": "observe"})
+        f = find(o, lambda it: it["tag"] == "button" and it["text"] in ("Helvetica", "Inter", "Avenir Next"))
+        assert f, "no font button"
+        fb = shotbox(f)
+        lst = [fb[0] - 30, fb[1] + 40, 212, 265]           # the font list opens under the font button
+        ctx["fill"] = find(o, lambda it: it["tag"] == "button" and it["text"] == "Fill")
+        return {"type": "click", "ref": f["ref"], "frame": union_box(ctx["canvas"].r(A), lst), "zoom": 1.3,
+                "at": rel(wt("fonts,", 88.06)), "beat": True}
+    yield font
+    yield {"type": "key", "key": "Escape", "at": rel(88.55)}
+    # D2: "colors" → the Fill colour picker opens (a left-docked panel: the whole screen shows it, ZM11 by cut)
+    yield lambda: {"type": "click", "ref": ctx["fill"]["ref"], "frame": [0, 0, 1280, 720], "zoom": 1.0,
+                   "at": rel(wt("colors,", 88.88)), "beat": True}
+    yield {"type": "key", "key": "Escape", "at": rel(89.30)}
+    yield {"type": "key", "key": "Escape", "at": rel(89.45)}
+    # D2: "even the logo itself" → the face logo selected, centred (CUT06)
+    yield lambda: {"type": "click", "x": ctx["canvas"].p(LOGO_PT)[0], "y": ctx["canvas"].p(LOGO_PT)[1], "box": ctx["canvas"].r(A),
+                   "zoom": 1.3, "at": rel(wt("logo", 89.96)), "beat": True, "glide": False}
+
+
+def seg3(sess, rel, prepare, ctx=None):
+    if prepare:
+        sess.send({"cmd": "open", "url": WWW, "settle": 8})
+        o = sess.send({"cmd": "observe"})
+        li = find(o, lambda it: it["tag"] == "a" and it["text"].startswith("Log in"))
+        assert li, "no Log in"
+        yield {"login": li["ref"]}
+        return
+    # ZM07: landing 1.0, then ×1.3 onto the hero ON "linearity.io" [D6]
+    yield {"type": "read", "box": HERO, "zoom": 1.3, "at": rel(wt("linearity.io", 102.33)), "from": rel(wt("head", 101.49)),
+           "beat": True, "glide": False, "ms": 900}
+    # ZM02 ×1.6 on Log in from "top right corner", LANDING ON THE PRESS at "there" (CUT02) [D18]; the bubble
+    # stays (Log in is not under the disc — Jake's rule) [D12]
+    yield {"type": "click", "ref": ctx["login"], "zoom": 1.6, "at": rel(wt("there.", 106.10)), "from": rel(wt("top", 105.32)),
+           "beat": True}
+    yield {"type": "read", "box": REG_FORM, "zoom": 1.3, "at": rel(wt("signup", 108.80)), "from": rel(wt("If", 106.73)),
+           "beat": True, "glide": False, "ms": 2500}
+    # logo kept in frame (D16 of the review: the 1.45 push cut it) — a full-length zoom move
+    yield {"type": "read", "box": REG_TOP, "zoom": 1.45, "at": rel(wt("pick", 112.41)), "from": rel(111.65),
+           "beat": True, "glide": False, "ms": 2000}
+
+
+def seg4(sess, rel, prepare, ctx=None):
+    if prepare:
+        sess.send({"cmd": "open", "url": HOME, "settle": 8})
+        o = sess.send({"cmd": "observe"})
+        ta = find(o, lambda it: it["tag"] == "textarea")
+        act(sess, {"type": "click", "ref": ta["ref"]})
+        act(sess, {"type": "key", "key": "Control+a"})
+        act(sess, {"type": "key", "key": "Backspace"})
+        act(sess, {"type": "click", "x": 1150, "y": 650})
+        act(sess, {"type": "hold", "s": 2})
+        o = sess.send({"cmd": "observe"})
+        ta = find(o, lambda it: it["tag"] == "textarea")
+        log(f"  prompt box: {ta['text']!r}")
+        yield {"ta": ta["ref"]}
+        return
+    # lands framed on heading + box (Recents row out of frame) [D11]
+    yield {"type": "read", "box": HOMEHERO, "zoom": 1.35, "at": 0.0, "from": 0.0, "land": True, "beat": True,
+           "glide": False, "ms": 900}
+    yield {"type": "read", "box": PROMPTBOX, "zoom": 1.45, "at": rel(wt("box", 128.07)), "from": rel(127.0),
+           "beat": True, "glide": False, "ms": 2500}                                        # ZM03 full-length [D13]
+    yield {"type": "click", "ref": ctx["ta"], "frame": PROMPTBOX, "zoom": 1.45, "at": rel(wt("everything", 131.95)),
+           "beat": True}                                                                    # no re-frame (D14)
+
+
+def seg5(sess, rel, prepare, ctx=None):
+    if prepare:
+        sess.send({"cmd": "open", "url": HOME, "settle": 8})
+        o = sess.send({"cmd": "observe"})
+        br = find(o, lambda it: it["tag"] == "a" and it["text"] == "Brands")
+        yield {"brands": br["ref"]}
+        return
+    # lands on the sidebar (ZM04 ×1.25, real left edge) with the cursor already going to "Brands"
+    yield {"type": "hover", "ref": ctx["brands"], "frame": SIDEBAR, "zoom": 1.25, "at": 0.0, "from": 0.0, "land": True,
+           "beat": True}
+    yield {"type": "click", "ref": ctx["brands"], "frame": SIDEBAR, "zoom": 1.25, "at": rel(wt("brand", 142.66)),
+           "beat": True, "goto": BRAND}                                                      # press ON "brand" [D18]
+
+    def name():
+        o = sess.send({"cmd": "observe"})
+        b = find(o, lambda it: it["tag"] == "button" and it["text"] == "Jake Dawson" and it["box"][0] > 250 and it["box"][1] < 60)
+        ctx["name"] = b["ref"]
+        return {"type": "click", "ref": b["ref"], "frame": BRANDMENU, "zoom": 1.4, "at": rel(wt("arrow", 147.04)),
+                "from": rel(wt("with", 146.42)), "beat": True, "cut": False, "after": 0}
+    yield name
+    # the menu's own search, typed inside the opening (no frames): only "MY PRIVATE BRANDS · Jake Dawson ✓"
+    # shows — the Scout's test brand stays off screen without touching the account [D11]
+    yield {"type": "type", "text": "Jake Dawson", "paste": True, "after": 0.25, "dismiss": False, "zoom": 1.4, "at": rel(wt("arrow", 147.04) + 0.02)}
+
+    def tick():
+        o = sess.send({"cmd": "observe"})
+        jd = find(o, lambda it: it["tag"] == "button" and it["text"].startswith("Jake Dawson jakedaw"))
+        return {"type": "click", "ref": jd["ref"], "frame": BRANDMENU, "zoom": 1.4, "at": rel(wt("top", 147.75)),
+                "beat": True, "cut": False} if jd else None
+    yield tick
+
+

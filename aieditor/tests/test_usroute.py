@@ -14,7 +14,7 @@ for k in ("AIEDITOR_US_PROXY", "AIEDITOR_ON_CAMERA_AGENT", "AIEDITOR_FACTORY_SER
 (TMP / "work").mkdir()
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from aieditor import agentrec, cloud, config, director, graphics_long, longedit, usroute  # noqa: E402
+from aieditor import agentrec, cloud, recorder, config, director, graphics_long, longedit, usroute  # noqa: E402
 
 n = 0
 
@@ -131,25 +131,60 @@ plan = {"segments": [seg_in, seg_out], "overlays": [], "dropped": [], "beats": [
 calls = {"record": 0, "session": 0, "docker": [], "plan": 0}
 
 
-def boom(*a, **k):
-    calls["record"] += 1
-    raise AssertionError("the on-camera agent must not record")
-
-
 class NoSession:
     def __init__(self, *a, **k):
         calls["session"] += 1
-        raise AssertionError("no logged-in browser may start")
+        raise AssertionError("no browser may start for a segment that cannot be compiled")
 
 
-saved = (agentrec.scout_for, agentrec.known_pages, agentrec.record_segment, agentrec.Session, director.plan,
-         director.validate, director.write_script, graphics_long.render, longedit._docker, usroute.route_for_job)
+class FakeOutside:
+    """agent_rec.mjs stand-in for the outside view: a clean public pricing page, records on cue."""
+
+    def __init__(self, workdir, profile_src, cancelled=None, env=None, **k):
+        calls["session"] += 1
+        calls["envs"].append((profile_src, dict(env or {})))
+        self.workdir, self.account, self.out, self._recording = Path(workdir), None, None, False
+
+    def send(self, m):
+        c = m.get("cmd")
+        if c == "segment":
+            self.out = self.workdir / m["out"]
+            self.out.mkdir(parents=True, exist_ok=True)
+            (self.out / "raw.mp4").write_bytes(b"x")
+            return {"ok": True}
+        if c == "end":
+            (self.out / "events.json").write_text(json.dumps({"t0": 0, "events": [], "cursor": [], "walls": []}))
+            return {"ok": True}
+        if c == "state":
+            return {"ok": True, "h1": ["Pricing"], "popups": 0, "tooltips": 0, "loading": False, "blank": False,
+                    "text": "Free Plus Pro", "shot": None, "fp": "00ff00ff00ff00ff"}
+        if c == "fp":
+            return {"ok": True, "fp": "00ff00ff00ff00ff"}
+        return {"ok": True}
+
+    def close(self):
+        pass
+
+
+class FakeMedia:
+    def concat(self, rec, pieces):
+        (Path(rec) / "raw.mp4").write_bytes(b"x")
+
+    def motion(self, rec, src="raw.take.mp4"):
+        return [None] + [0.0] * 200                              # a still public page
+
+    def render(self, rec, frames, src="raw.take.mp4"):
+        (Path(rec) / "raw.mp4").write_bytes(b"y")
+
+
+saved = (agentrec.scout_for, agentrec.known_pages, agentrec.Session, director.plan, director.validate,
+         graphics_long.render, longedit._docker, usroute.route_for_job, recorder.DockerMedia, recorder.docker_verdict)
 try:
     agentrec.scout_for = lambda url: ({"slug": "chatgpt", "profile": str(TMP / "prof"), "report": "", "logged_in_at": 1}
                                       if "chatgpt.com" in url else None)
     agentrec.known_pages = lambda profile, limit=25: []
-    agentrec.record_segment = boom
     agentrec.Session = NoSession
+    calls["envs"] = []
 
     def fake_plan(video, sites, sponsored, knowledge, facts=None):
         calls["plan"] += 1
@@ -159,6 +194,8 @@ try:
     graphics_long.render = lambda w, ov, video, fps, tag="gfx", cancelled=None: []
     longedit._docker = lambda args, mounts, cancelled, name="x", cpus=None, tz="", env=None: calls["docker"].append((args, env))
     usroute.route_for_job = lambda: None                              # us_route disabled: no proxy
+    recorder.DockerMedia = lambda cancelled=None: FakeMedia()
+    recorder.docker_verdict = lambda w, i, expect_p=None, account=None, cancelled=None: {"ok": True, "problems": [], "reasons": []}
     logs = []
     check(config.recorder() == {"mode": "scripted", "on_camera_agent": False}, "recorder: scripted, agent off")
     os.environ["AIEDITOR_ON_CAMERA_AGENT"] = "1"
@@ -169,44 +206,36 @@ try:
     check(calls["record"] == 0 and calls["session"] == 0, "no on-camera agent call, no logged-in browser")
     check(calls["docker"] == [], f"nothing recorded (no browser left this box): {calls['docker']}")
     r0 = json.loads((d / "edit-01" / "seg-00" / "recording.json").read_text())
-    check(r0["status"] == "needs_scripted_recorder", f"logged-in segment waits for the scripted recorder: {r0}")
+    check(r0["status"] == "needs_primitive", f"a logged-in segment without playbook beats is needs_primitive (p7): {r0}")
     r1 = json.loads((d / "edit-01" / "seg-01" / "recording.json").read_text())
     check(r1["status"] == "no_us_route", f"outside segment is not recorded without a US route: {r1}")
     held = longedit.held_reasons(d)
-    check({h["reason"] for h in held} == {"needs_scripted_recorder", "no US route"}, f"held reasons: {held}")
+    check({h["reason"] for h in held} == {"needs_primitive", "no US route"}, f"held reasons: {held}")
     check(any("job is held" in m for m in logs) and "2 held" in summary, f"logged as warnings: {summary}")
 
-    # with a US route: the outside segment records in the fresh outside Chrome through it
+    # with a US route: the outside segment records in the fresh outside Chrome through it (scripted recorder)
     for sub in ("seg-01",):
         for f in (d / "edit-01" / sub).glob("*"):
             f.unlink()
     longedit.clear_held(d)
     usroute.route_for_job = lambda: "http://203.0.113.50:8899"
-
-    def fake_docker(args, mounts, cancelled, name="x", cpus=None, tz="", env=None):
-        calls["docker"].append((args, env))
-        sd = Path(mounts[1][0])
-        if "inventory.mjs" in args[1]:
-            (sd / "inventory.json").write_text("{}")
-            (sd / "inventory.jpg").write_bytes(b"x")
-        else:
-            (sd / "rec").mkdir(exist_ok=True)
-            (sd / "rec" / "events.json").write_text("{}")
-    longedit._docker = fake_docker
-    director.write_script = lambda seg, video, inv, jpg: ({"steps": [{"goto": seg["url"]}, {"begin": True}]}, {"usd": 0.0})
+    agentrec.Session = FakeOutside
+    seg_out["beats"] = [{"id": "o1", "word_id": 26, "t_word": 13.0, "action": "camera", "subject": "screen"}]
     longedit.plan_and_record(d, 1, v, [{"url": "https://chatgpt.com/", "note": ""}], False, 30,
                              lambda m, f: None, lambda: False, logs.append)
-    check(len(calls["docker"]) == 2, f"inventory + recorder for the outside segment only: {len(calls['docker'])}")
-    for args, env in calls["docker"]:
-        check(env and env["AGENT_PROXY"] == "http://203.0.113.50:8899" and env["TZ"] == "America/New_York"
-              and env["AGENT_SESSION"] == "outside" and env["AGENT_PROFILE_DIR"] == "/s/outside-profile",
-              f"outside env on {args[1]}: {env}")
-    sc = json.loads((d / "edit-01" / "seg-01" / "script.json").read_text())
-    check(sc["session"] == "outside" and sc["profileDir"] == "/s/outside-profile", "vrecord runs the outside session")
-    check({h["reason"] for h in longedit.held_reasons(d)} == {"needs_scripted_recorder"}, "only the logged-in one is held")
+    check(calls["docker"] == [], f"no vrecord / inventory container any more: {calls['docker']}")
+    check(len(calls["envs"]) == 1, f"one browser, the outside one: {calls['envs']}")
+    prof_src, env = calls["envs"][0]
+    check(prof_src is None, "the outside view never gets a Scout profile copy")
+    check(env["AGENT_PROXY"] == "http://203.0.113.50:8899" and env["TZ"] == "America/New_York"
+          and env["AGENT_SESSION"] == "outside" and Path(env["AGENT_PROFILE_DIR"]).name.startswith("outside-profile-"),
+          f"outside env: {env}")
+    r1 = json.loads((d / "edit-01" / "seg-01" / "recording.json").read_text())
+    check(r1["status"] == "ok" and (d / "edit-01" / "seg-01" / "rec" / "events.json").exists(), f"outside recorded: {r1}")
+    check({h["reason"] for h in longedit.held_reasons(d)} == {"needs_primitive"}, "only the logged-in one is held")
 finally:
-    (agentrec.scout_for, agentrec.known_pages, agentrec.record_segment, agentrec.Session, director.plan,
-     director.validate, director.write_script, graphics_long.render, longedit._docker, usroute.route_for_job) = saved
+    (agentrec.scout_for, agentrec.known_pages, agentrec.Session, director.plan, director.validate,
+     graphics_long.render, longedit._docker, usroute.route_for_job, recorder.DockerMedia, recorder.docker_verdict) = saved
 
 # the worker ends a held job with that message (until p4 renders "held")
 wk = (ROOT / "bin" / "aieditor-worker").read_text()

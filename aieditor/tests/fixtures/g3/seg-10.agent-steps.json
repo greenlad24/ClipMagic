@@ -1,0 +1,446 @@
+[
+ {
+  "t": 0,
+  "action": {
+   "type": "type",
+   "at": 3.9,
+   "ref": "r13",
+   "text": "Upscale this photo photorealistically",
+   "paste": true
+  },
+  "result": "no element for {\"ref\":\"r13\",\"text\":\"Upscale this photo photorealistically\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 3.6036,
+  "action": {
+   "type": "click",
+   "at": 3.6,
+   "x": 700,
+   "y": 324
+  },
+  "result": "ok"
+ },
+ {
+  "t": 4.971633333333333,
+  "action": {
+   "type": "type",
+   "at": 4.97,
+   "x": 700,
+   "y": 324,
+   "text": "Upscale this photo photorealistically",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 5.372033333333333,
+  "action": {
+   "type": "type",
+   "at": 7.7,
+   "ref": "r63",
+   "text": "Remove the man",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 8.2082,
+  "action": {
+   "type": "key",
+   "at": 8.21,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 8.441766666666666,
+  "action": {
+   "type": "type",
+   "at": 8.44,
+   "ref": "r63",
+   "text": "Remove the man",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 8.842166666666667,
+  "action": {
+   "type": "click",
+   "at": 8.84,
+   "ref": "r63"
+  },
+  "result": "no element for {\"ref\":\"r63\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 8.842166666666667,
+  "action": {
+   "type": "click",
+   "at": 8.9,
+   "ref": "r62"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 9.809800000000001,
+  "action": {
+   "type": "key",
+   "at": 9.85,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.076733333333333,
+  "action": {
+   "type": "key",
+   "at": 10.1,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.3103,
+  "action": {
+   "type": "click",
+   "at": 10.31,
+   "ref": "r62"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.744066666666667,
+  "action": {
+   "type": "key",
+   "at": 10.74,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.944266666666667,
+  "action": {
+   "type": "type",
+   "at": 10.94,
+   "ref": "r62",
+   "text": "Bring me into the Grand Canyon",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 11.344666666666667,
+  "action": {
+   "type": "click",
+   "at": 11.34,
+   "ref": "r63"
+  },
+  "result": "no element for {\"ref\":\"r63\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 11.344666666666667,
+  "action": {
+   "type": "click",
+   "at": 11.34,
+   "ref": "r62"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.1121,
+  "action": {
+   "type": "key",
+   "at": 12.2,
+   "key": "Meta+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.4124,
+  "action": {
+   "type": "key",
+   "at": 12.45,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.679333333333334,
+  "action": {
+   "type": "click",
+   "at": 12.7,
+   "x": 720,
+   "y": 324
+  },
+  "result": "ok"
+ },
+ {
+  "t": 13.646966666666668,
+  "action": {
+   "type": "type",
+   "at": 13.65,
+   "x": 720,
+   "y": 324,
+   "text": "Make this look Ghibli style",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.047366666666667,
+  "action": {
+   "type": "read",
+   "at": 15.6,
+   "ref": "r63",
+   "ms": 3000
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.6156,
+  "action": {
+   "type": "key",
+   "at": 21.0,
+   "key": "Meta+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 21.2212,
+  "action": {
+   "type": "type",
+   "at": 21.22,
+   "ref": "r63",
+   "text": "Make this look anime style",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 21.9219,
+  "action": {
+   "type": "key",
+   "at": 21.95,
+   "key": "Meta+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 22.155466666666666,
+  "action": {
+   "type": "key",
+   "at": 22.2,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 22.4224,
+  "action": {
+   "type": "type",
+   "at": 24.1,
+   "x": 720,
+   "y": 324,
+   "text": "Make this look claymation style",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 24.2242,
+  "action": {
+   "type": "read",
+   "at": 24.3,
+   "ref": "r63",
+   "ms": 3000
+  },
+  "result": "ok"
+ },
+ {
+  "t": 24.3243,
+  "action": {
+   "type": "key",
+   "at": 32.2,
+   "key": "Meta+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 32.4324,
+  "action": {
+   "type": "type",
+   "at": 32.45,
+   "ref": "r63",
+   "text": "Restore this old photo, but preserve the people",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 32.8328,
+  "action": {
+   "type": "key",
+   "at": 32.85,
+   "key": "Meta+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 33.06636666666667,
+  "action": {
+   "type": "type",
+   "at": 33.1,
+   "ref": "r63",
+   "text": "Restore this old photo, but preserve the people",
+   "paste": true
+  },
+  "result": "no element for {\"ref\":\"r63\",\"text\":\"Restore this old photo, but preserve the people\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 33.06636666666667,
+  "action": {
+   "type": "type",
+   "at": 33.1,
+   "ref": "r62",
+   "text": "Restore this old photo, but preserve the people",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 34.00063333333333,
+  "action": {
+   "type": "click",
+   "at": 34.0,
+   "ref": "r63"
+  },
+  "result": "no element for {\"ref\":\"r63\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 34.00063333333333,
+  "action": {
+   "type": "click",
+   "at": 34.0,
+   "ref": "r62"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 34.76806666666667,
+  "action": {
+   "type": "key",
+   "at": 34.8,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 35.00163333333333,
+  "action": {
+   "type": "type",
+   "at": 35.4,
+   "ref": "r62",
+   "text": "Colorize this black and white photo, keep it subtle",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 35.50213333333333,
+  "action": {
+   "type": "key",
+   "at": 35.5,
+   "key": "Control+Shift+Home"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 35.702333333333335,
+  "action": {
+   "type": "type",
+   "at": 35.7,
+   "ref": "r63",
+   "text": "Colorize this black and white photo, keep it subtle",
+   "paste": true
+  },
+  "result": "no element for {\"ref\":\"r63\",\"text\":\"Colorize this black and white photo, keep it subtle\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 35.702333333333335,
+  "action": {
+   "type": "key",
+   "at": 35.7,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 35.90253333333333,
+  "action": {
+   "type": "click",
+   "at": 35.9,
+   "x": 700,
+   "y": 324
+  },
+  "result": "ok"
+ },
+ {
+  "t": 36.903533333333336,
+  "action": {
+   "type": "type",
+   "at": 36.9,
+   "x": 700,
+   "y": 324,
+   "text": "Colorize this black and white photo, keep it subtle",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 37.30393333333333,
+  "action": {
+   "type": "click",
+   "at": 44.4,
+   "ref": "r63"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 44.711333333333336,
+  "action": {
+   "type": "key",
+   "at": 45.4,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 45.612233333333336,
+  "action": {
+   "type": "type",
+   "at": 45.61,
+   "ref": "r63",
+   "text": "Turn this into a stunning portrait",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 46.01263333333333,
+  "action": {
+   "type": "key",
+   "at": 46.01,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 46.212833333333336,
+  "action": {
+   "type": "key",
+   "at": 46.21,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ }
+]
