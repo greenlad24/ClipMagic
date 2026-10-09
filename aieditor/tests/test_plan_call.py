@@ -351,13 +351,13 @@ def test_content_first():
     check(a["photo2"]["status"] == "ready" and len(a["photo2"]["checks"]) == 1, "a matching picture passes first time")
     gaps = [b - x for x, b in zip(res["generations_at"], res["generations_at"][1:])]
     check(len(gaps) == config.GEN_REGENS + 1 and all(g >= 45 - 1e-9 for g in gaps), f"generations spaced >= 45 s (fake clock): {gaps}")
-    check(len(FAKE.bodies) == 4 and all(b["model"] == config.VISION_MODEL for b in FAKE.bodies), "one Sonnet vision call each")
+    check(len(FAKE.bodies) == config.GEN_REGENS + 2 and all(b["model"] == config.VISION_MODEL for b in FAKE.bodies), "one Sonnet vision call each")
     img = FAKE.bodies[0]["messages"][0]["content"][0]
     check(img["type"] == "image" and "napkin" in FAKE.bodies[0]["messages"][0]["content"][1]["text"], "the check sees the picture")
     check(FAKE.bodies[0]["output_config"]["format"]["schema"] == preprod.GEN_CHECK_SCHEMA, "{matches, missing_objects}")
     held = preprod.held_items({}, res)
     check([h["reason"] for h in held] == ["needs_asset"] and "napkin" in held[0]["detail"], f"needs_asset → held: {held}")
-    check(config.GEN_SPACING_S == 45 and config.GEN_REGENS == 2, "defaults: 45 s spacing, 2 regenerations")
+    check(config.GEN_SPACING_S == 45 and config.GEN_REGENS == 9, "defaults: 45 s spacing, 9 regenerations (up to 10 tries, Jake)")
 
 
 def test_call_count(good):
