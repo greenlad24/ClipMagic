@@ -204,7 +204,8 @@ def render(job, events, video, fps_out, size=(1920, 1080), cancelled=lambda: Fal
             # spoken words (motiontemplates.beats), the prompt box in the app's UI kit (none → neutral box, logged)
             p = (ev.get("params") or {})
             kit = uikits.for_app(p.get("app"), log=lambda msg: _log(f"overlay {m + 1}: {msg}"))[0] \
-                if ev.get("template") in ("prompt_menu", "prompt_card_3d", "prompt_highlight", "prompt_result") else None
+                if ev.get("template") in ("prompt_menu", "prompt_card_3d", "prompt_highlight", "long_prompt_scroll",
+                                          "prompt_result") else None
             sc = motiontemplates.scene(ev, video, fps_out, size, kit=kit, result=p.get("result"))
             d = g / f"ev-{m:02d}"
             (g / f"ev-{m:02d}.json").write_text(json.dumps(sc))

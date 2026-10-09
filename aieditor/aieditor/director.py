@@ -52,6 +52,8 @@ per video, >= 4 s apart; each counts as a 'first'-zone overlay AND as a plate; t
   fields: prompt, chips, app.
 - prompt_highlight (MO06): the app's prompt box, camera pushing in while the prompt types, marker highlights on the
   1-3 key phrases as he SAYS them ("the key part is…"). fields: prompt, phrases (exact substrings of prompt), app.
+- long_prompt_scroll (MO07): a LONG structured prompt/document (too long for prompt_highlight): zoom in, slow readable
+  scroll, 1-5 marker highlights accumulating as he calls the parts out. fields: prompt, phrases, app.
 (The hook's "you just type one sentence … and it …" PROMPT → RESULT (MO05) is placed by code, never here.)
 Prompt boxes always draw the REAL app's UI (its UI kit); name the app in "app" (the job's app ids are given)."""
 
@@ -849,7 +851,7 @@ def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, pl
 OVERLAY_SYSTEM = """You place the text overlays of Jake Dawson's YouTube tutorial: on the A-roll (his face) only, on
 the words that say them, within the reference budget. Answer with the JSON overlay list only."""
 BASE_OVERLAYS = ("lower_title", "link", "subscribe", "socials", "keyword", "list", "number", "question")
-MOTION_OVERLAYS = ("verb_swap", "tagline_build", "prompt_menu", "prompt_card_3d", "prompt_highlight")
+MOTION_OVERLAYS = ("verb_swap", "tagline_build", "prompt_menu", "prompt_card_3d", "prompt_highlight", "long_prompt_scroll")
 OVERLAY_TEMPLATES = BASE_OVERLAYS + MOTION_OVERLAYS        # all known; offered only while motion templates are on
 
 
@@ -928,7 +930,7 @@ def _fields(o):
     if t in MOTION_OVERLAYS:
         keys = {"verb_swap": ("prefix", "verbs", "suffix"), "tagline_build": ("words",),
                 "prompt_menu": ("items", "pick", "app"), "prompt_card_3d": ("prompt", "chips", "app"),
-                "prompt_highlight": ("prompt", "phrases", "app")}[t]
+                "prompt_highlight": ("prompt", "phrases", "app"), "long_prompt_scroll": ("prompt", "phrases", "app")}[t]
         return {k: o.get(k) for k in keys if o.get(k) not in (None, "", [])}
     if t == "number":
         v = o.get("value")

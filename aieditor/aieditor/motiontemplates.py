@@ -8,6 +8,8 @@
   MO05 prompt_result   (hook only) the prompt card, then the app's REAL result in the app's own result UI
   MO06 prompt_highlight the app's prompt box (camera push-in, prompt typing) with marker highlights on the key
                        phrases as the narration says them (5th clip, Claude.ai composer, 2026-10-09)
+  MO07 long_prompt_scroll a long structured prompt/message: zoom in, slow readable scroll, marker highlights
+                       accumulating on the phrases he calls out (6th clip, Claude chat view)
 
 Jake's words (binding): "add them as options to overlays"; "The prompt boxes should always look like the actual UI
 that the narration is prompting (… 1 to 1 …)"; "add specific instructions to how to use each one of them"; the
@@ -52,9 +54,11 @@ def ids():
     return tuple((rules().get("ids") or {}).keys())
 
 
-IDS = ("verb_swap", "tagline_build", "prompt_menu", "prompt_card_3d", "prompt_highlight", "prompt_result")
+IDS = ("verb_swap", "tagline_build", "prompt_menu", "prompt_card_3d", "prompt_highlight", "long_prompt_scroll",
+       "prompt_result")
 TECHNIQUE = {"verb_swap": "MO01", "tagline_build": "MO02", "prompt_menu": "MO03", "prompt_card_3d": "MO04",
-             "prompt_highlight": "MO06", "prompt_result": "MO05"}
+             "prompt_highlight": "MO06", "long_prompt_scroll": "MO07",
+             "prompt_result": "MO05"}
 
 
 def spec(tid):
@@ -143,10 +147,10 @@ def validate_params(tid, fields):
         out[name] = v
     if tid == "prompt_menu" and not errs and not 0 <= out["pick"] < len(out["items"]):
         errs.append(f"prompt_menu: pick {out['pick']} is not one of the {len(out['items'])} items")
-    if tid == "prompt_highlight" and not errs:
+    if tid in ("prompt_highlight", "long_prompt_scroll") and not errs:
         miss = [p for p in out["phrases"] if str(p) not in str(out["prompt"])]
         if miss:
-            errs.append(f"prompt_highlight: phrase '{str(miss[0])[:40]}' is not in the prompt (phrases are exact substrings)")
+            errs.append(f"{tid}: phrase '{str(miss[0])[:40]}' is not in the prompt (phrases are exact substrings)")
     if tid == "tagline_build" and not errs:
         out["words"] = str(out["words"])
     return out, errs
@@ -227,7 +231,7 @@ def beats(ev, video, t0=None, t1=None):
                 out["pick"] = round(w["start"] - t0, 3)
         except (ValueError, IndexError, TypeError):
             pass
-    elif tid == "prompt_highlight":
+    elif tid in ("prompt_highlight", "long_prompt_scroll"):
         prev = None
         for k, ph in enumerate(_as_list(f.get("phrases")) if not isinstance(f.get("phrases"), str) else [f["phrases"]]):
             w = _find_word(ws, ph, prev)
@@ -354,7 +358,7 @@ def check(evs, video, segments=(), plates=(), kits=None, facts=None, log=None):
         elif cap and used + d > cap + 0.25:
             why = (f"plates + motion templates would be {used + d:.1f} s > {cap:.1f} s (structure.plates_max_frac of the "
                    "runtime; REFERENCE-BASELINE §1a)")
-        if why is None and tid in ("prompt_menu", "prompt_card_3d", "prompt_highlight", "prompt_result"):
+        if why is None and tid in ("prompt_menu", "prompt_card_3d", "prompt_highlight", "long_prompt_scroll", "prompt_result"):
             app = params.get("app")
             kit = kits.get(app) if app in kits else uikits.for_app(app)[0] if app else None
             if tid == "prompt_result":
