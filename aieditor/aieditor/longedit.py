@@ -301,7 +301,8 @@ def content_qa(w, expect_p, cancelled):
         _docker(["sh", "-c", f"python3 /a/screencast/qa_content.py /w /w/{Path(expect_p).name} --out /w/{out.name}"
                  " > /dev/null; true"], [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-qacontent")
         return json.loads(out.read_text())
-    except (OSError, ValueError, subprocess.CalledProcessError):
+    except (OSError, ValueError, RuntimeError):
+        # no content QA = D1 stays "not measured" in the verdict (held), never a silent pass
         return {}
 
 
