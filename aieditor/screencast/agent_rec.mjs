@@ -853,44 +853,61 @@ async function act(a) {
       e.end = t();
       b = await boxOf(a.ref, a.type === "read" || a.type === "highlight");
     }
-    const label = a.target || (a.type !== "type" ? a.text : null);
-    if (!b && label) b = await page.evaluate((txt, only) => {
-      const want = String(txt).toLowerCase().replace(/\s+/g, " ").trim();
-      const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight; };
-      // whitespace folded: ChatGPT's Resize menu item reads "Square\n1:1" (the playbook says "Square 1:1")
-      const lab = (e) => (e.innerText || e.getAttribute("aria-label") || "").toLowerCase().replace(/\s+/g, " ").trim();
-      const hits = [...document.querySelectorAll("body *")].filter((e) => vis(e) && lab(e).includes(want));
-      // an EXACT label beats a containing one: "Chat" is the Chat/Work switch, not the "ChatGPT" logo
-      // (playbook proving run 2026-10-09: chat_mode clicked the logo and Work mode stayed on)
-      const exact = hits.filter((e) => lab(e) === want);
-      // "exact": the WHOLE label or nothing — on a chat page there is no Chat/Work switch, and a containing
-      // match for "Chat" was "New chat" (it navigated away from the chat)
-      const pool = exact.length ? exact : only ? [] : hits;
-      const el = pool.find((e) => !pool.some((o) => o !== e && e.contains(o)));
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(), text: (el.innerText || "").trim().slice(0, 80), href: null, blank: false };
-    }, label, !!a.exact).catch(() => null);
-    // pre-production / set dressing: a CSS selector (an icon button without text, e.g. "Remove <file>")
-    // ("nth": the n-th match in DOCUMENT order, scrolled into view first — e.g. the 1st generated image of a chat)
-    if (!b && a.selector) {
-      const els = await page.$$(a.selector).catch(() => []);
-      // without "nth" the first VISIBLE match: ChatGPT keeps a second, hidden button[aria-label="Hide sidebar"]
-      // FIRST in the document — its box was clicked, nothing happened, and the sidebar with the old chats stayed
-      // (playbook proving run 2026-10-09)
-      let el = a.nth != null ? els[a.nth] : null;
-      if (a.nth == null) {
-        for (const e of els) {
-          if (await e.evaluate((x) => { const r = x.getBoundingClientRect(), s = getComputedStyle(x);
-            return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
-              && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.05; }).catch(() => false)) { el = e; break; }
+    const fromLabelOrSelector = async () => {
+      const label = a.target || (a.type !== "type" ? a.text : null);
+      let b = null;
+      if (label) b = await page.evaluate((txt, only) => {
+        const want = String(txt).toLowerCase().replace(/\s+/g, " ").trim();
+        const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight; };
+        // whitespace folded: ChatGPT's Resize menu item reads "Square\n1:1" (the playbook says "Square 1:1")
+        const lab = (e) => (e.innerText || e.getAttribute("aria-label") || "").toLowerCase().replace(/\s+/g, " ").trim();
+        const hits = [...document.querySelectorAll("body *")].filter((e) => vis(e) && lab(e).includes(want));
+        // an EXACT label beats a containing one: "Chat" is the Chat/Work switch, not the "ChatGPT" logo
+        // (playbook proving run 2026-10-09: chat_mode clicked the logo and Work mode stayed on)
+        const exact = hits.filter((e) => lab(e) === want);
+        // "exact": the WHOLE label or nothing — on a chat page there is no Chat/Work switch, and a containing
+        // match for "Chat" was "New chat" (it navigated away from the chat)
+        const pool = exact.length ? exact : only ? [] : hits;
+        const el = pool.find((e) => !pool.some((o) => o !== e && e.contains(o)));
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(), text: (el.innerText || "").trim().slice(0, 80), href: null, blank: false };
+      }, label, !!a.exact).catch(() => null);
+      // pre-production / set dressing: a CSS selector (an icon button without text, e.g. "Remove <file>")
+      // ("nth": the n-th match in DOCUMENT order, scrolled into view first — e.g. the 1st generated image of a chat)
+      if (!b && a.selector) {
+        const els = await page.$$(a.selector).catch(() => []);
+        // without "nth" the first VISIBLE match: ChatGPT keeps a second, hidden button[aria-label="Hide sidebar"]
+        // FIRST in the document — its box was clicked, nothing happened, and the sidebar with the old chats stayed
+        // (playbook proving run 2026-10-09)
+        let el = a.nth != null ? els[a.nth] : null;
+        if (a.nth == null) {
+          for (const e of els) {
+            if (await e.evaluate((x) => { const r = x.getBoundingClientRect(), s = getComputedStyle(x);
+              return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+                && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.05; }).catch(() => false)) { el = e; break; }
+          }
+          el ??= els[0];
         }
-        el ??= els[0];
+        if (el) {
+          if (a.nth != null) { await el.evaluate((e) => e.scrollIntoView({ block: "center" })).catch(() => {}); await sleep(400); }
+          b = await el.evaluate((e) => { const r = e.getBoundingClientRect();
+            return { x: r.x, y: r.y, width: r.width, height: r.height, tag: e.tagName.toLowerCase(), text: "", href: null, blank: false }; }).catch(() => null);
+        }
       }
-      if (el) {
-        if (a.nth != null) { await el.evaluate((e) => e.scrollIntoView({ block: "center" })).catch(() => {}); await sleep(400); }
-        b = await el.evaluate((e) => { const r = e.getBoundingClientRect();
-          return { x: r.x, y: r.y, width: r.width, height: r.height, tag: e.tagName.toLowerCase(), text: "", href: null, blank: false }; }).catch(() => null);
+      return b;
+    };
+    if (!b && (a.target || a.text || a.selector)) {
+      b = await fromLabelOrSelector();
+      // a target that is still MOVING (the image viewer's toolbar slides in) is measured again until it holds
+      // still: a press on the first box hit the empty place it was leaving (proving run 2026-10-09, Markup 1/3)
+      for (let k = 0; b && k < 12; k++) {
+        await sleep(120);
+        const b2 = await fromLabelOrSelector();
+        if (!b2) break;
+        const still = Math.abs(b2.x - b.x) < 1 && Math.abs(b2.y - b.y) < 1 && Math.abs(b2.width - b.width) < 1 && Math.abs(b2.height - b.height) < 1;
+        b = b2;
+        if (still) break;
       }
     }
     // coordinates come in SCREENSHOT pixels (the agent sees a 1280×720 shot of the 1920×1080 page)
