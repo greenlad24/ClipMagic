@@ -34,7 +34,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import agentrec, config, director, takes
+from . import agentrec, config, director, planfit, takes
 
 ALL_STEPS = ["readiness", "shotlist", "assets", "set_dressing", "dryrun", "gate"]
 LOOP = config.CODE / "screencast"             # RULEBOOK.md + INSIGHTS.md (copied from the loop sandbox)
@@ -272,6 +272,42 @@ class ChatGPT:
                       "('Sketching it out', 'Setting the scene') over a dotted canvas with a % pill counting up",
     }
 
+    # what a PLAN BEAT may ask for, per readiness check (planfit.Facts reads these from readiness.json
+    # "features"): the words that name the feature, and the honest route when the account lacks it
+    PLUS_SKETCH = {"route": "rewrite", "how": "click '+' (Add files and more), then 'Sketch' (the Sketch plugin canvas)",
+                   "via": "sketch_plus_menu"}
+    FEATURES = {
+        "at_sketch": {"patterns": [r"@\s?sketch", r"\bat[- ]sketch\b", r"\bat symbol\b"], "alternative": PLUS_SKETCH},
+        "tb_sketch": {"patterns": [r"\bsketch button\b", r"\bclick(?:s|ing)? (?:on )?sketch\b", r"\bsketch (?:on|in) the (?:image )?toolbar\b",
+                                   r"\btoolbar\b[^;]{0,40}\bsketch\b"], "alternative": PLUS_SKETCH},
+        "slash_newbg": {"patterns": [r"/\s?new\s?bg\b", r"\bnewbg\b", r"\bbackground (?:skill|option|command)\b",
+                                     r"\bafter the (?:slash )?command\b"], "alternative": None},
+        "slash_add_object": {"patterns": [r"/\s?add[ _]?object\b", r"\badd[ _]object\b"], "alternative": None},
+        "updated_label": {"patterns": [r"\bupdated\b"], "alternative": None},
+        "tb_templates": {"patterns": [r"\btemplates? (?:on|in) the (?:image )?toolbar\b", r"\btoolbar\b[^;]{0,40}\btemplates?\b"],
+                         "alternative": {"route": "rewrite", "how": "goto https://chatgpt.com/images, then the 'Templates' tab",
+                                         "url": "https://chatgpt.com/images"}},
+        "image_option": {"patterns": [r"\bcreate image\b"], "alternative": None},
+        "upload": {"patterns": [r"\badd photos & files\b"], "alternative": None},
+        # RULEBOOK L4 (R7/R9/R10): pricing is never shown from inside the account — a separate never-logged-in
+        # en-US browser through a US route shows the public page
+        "pricing_in_app": {"patterns": [r"/pricing\b", r"\bpricing page\b", r"\b(?:free|plus|pro|go|team|business)\s+(?:plan\s+)?card\b",
+                                        r"\bplan cards?\b", r"\bupgrade (?:modal|your plan)\b", r"\bprices\b"],
+                           "alternative": {"route": "public", "url": "https://chatgpt.com/pricing", "locale": "en-US",
+                                           "timezone": "America/New_York", "currency": "USD", "egress": "US"}},
+    }
+    # measured facts that need no probe (a probe of the in-account pricing would itself open the
+    # account's billing screen, which RULEBOOK §S S5 / L4 forbid)
+    STATIC_CHECKS = [
+        {"id": "pricing_in_app", "label": "pricing inside the logged-in account", "status": "not_found",
+         "where": {"url": "https://chatgpt.com/pricing", "logged_in": "opens the 'Upgrade your plan' modal in the account's currency"},
+         "note": "logged in, /pricing is the 'Upgrade your plan' billing modal (Plus = 'Your current plan', Thai baht) — "
+                 "there is no Free card for a Plus account (measured 2026-10-08/09, RULEBOOK R7)"},
+    ]
+
+    def features(self, checks):
+        return features_of(self, checks)
+
     def warnings(self, sl):
         out = []
         for sh in sl["shots"]:
@@ -453,10 +489,28 @@ class ChatGPT:
             add("tb_resize_options", "Resize shapes", "pass" if all(_first(fr, k) for k in self.RESIZE) else "fail",
                 where={k: (_first(fr, k) or {}).get("box") for k in self.RESIZE})
             self.click_label(p, "Close viewer")
+        checks += [dict(c) for c in self.STATIC_CHECKS]
         return checks
 
 
 APPS = {"chatgpt.com": ChatGPT}
+
+
+def features_of(app, checks):
+    """readiness checks + the adapter's FEATURES → the plan-facing feature list (planfit.Facts):
+    [{id, exists, patterns, alternative, note}] — exists:false = a beat may never ask for it."""
+    by = {c["id"]: c for c in checks}
+    out = []
+    for fid, f in (getattr(app, "FEATURES", None) or {}).items():
+        c = by.get(fid)
+        if c is None:
+            continue
+        alt = f.get("alternative")
+        if alt and alt.get("via") and by.get(alt["via"], {}).get("status") != "pass":
+            alt = None                                # the honest route itself is not there either
+        out.append({"id": fid, "label": c.get("label"), "exists": c.get("status") == "pass",
+                    "patterns": f.get("patterns", []), "alternative": alt, "note": c.get("note") or ""})
+    return out
 
 
 def adapter_for(url):
@@ -1257,19 +1311,303 @@ def gate(sl, readiness, assets, setd, dry, ranges, app_warnings=None):
 
 # ────────────────────────────── driver ──────────────────────────────
 
+class EdlJob(Job):
+    """The factory's job: the narration exactly as the EDIT keeps it — edl.json words on the OUTPUT
+    timeline, so every shot-list word_id / time is the one the recorder and compose use."""
+
+    def __init__(self, job_dir, req, video):
+        self.dir = Path(job_dir)
+        self.request = req
+        self.words = [{"i": w["i"], "w": str(w["word"]).strip(), "s": float(w["start"]), "e": float(w["end"])}
+                      for w in video["words"] if str(w["word"]).strip()]
+        self.by_id = {w["i"]: w for w in self.words}
+        self.sents = []
+        for k, s in enumerate(takes.sentences(self.words)):
+            self.sents.append({"s": k, "ids": [w["i"] for w in s], "t0": s[0]["s"], "t1": s[-1]["e"],
+                               "text": " ".join(w["w"] for w in s)})
+        self.script = req.get("script") or ""
+        self.sites = req.get("sites") or []
+        self.kept, self.removed = {}, {}
+        self.fps, self.pieces, self.word_piece = 30000 / 1001, [], {}
+        self.duration = float(video["duration"])
+
+    def out_time(self, i, end=False):
+        w = self.by_id.get(i)
+        return None if w is None else round(w["e"] if end else w["s"], 3)
+
+    def whole(self):
+        """The whole narration as one range (the factory plans the whole video)."""
+        s0, s1 = self.sents[0], self.sents[-1]
+        return {"asked": [0.0, round(self.duration, 2)], "src": [round(s0["t0"], 3), round(s1["t1"], 3)],
+                "src_fmt": [fmt_t(s0["t0"]), fmt_t(s1["t1"])], "sentences": [s["s"] for s in self.sents],
+                "first_words": " ".join(s0["text"].split()[:8]), "last_words": " ".join(s1["text"].split()[-8:]),
+                "out": [round(s0["t0"], 3), round(s1["t1"], 3)]}
+
+
+# ── beat ledger + narrated objects (gap list G2) ──
+
+DOODLE_SHAPE = {"bottle": "bottle", "picnic table": "table", "table": "table", "sun": "sun", "chili pepper": "pepper",
+                "pepper": "pepper", "chili": "pepper", "tree": "tree", "olive tree": "tree", "person": "person",
+                "man": "person", "woman": "person", "house": "house", "cloud": "cloud"}
+DRAW_RE = re.compile(r"\b(draw|drew|drawn|drawing|doodle|sketched)\b", re.I)
+DOODLE_SLOT = [(r"\bmiddle|centre|center\b", [400, 300, 230, 400]), (r"\btop right\b", [720, 70, 240, 240]),
+               (r"\btop left\b", [60, 70, 240, 240]), (r"\bunder\b|\bbelow\b|\bbottom\b", [170, 650, 680, 300]),
+               (r"\bleft\b", [80, 420, 260, 260]), (r"\bright\b", [690, 420, 260, 260])]
+
+
+def ledger_fields(sl, job):
+    """Every shot-list beat → the ledger row the recorder and QA read: word_id, t_word (= edl
+    words[word_id].start), clause_start, subject, technique_id, action, must_text, typed_text,
+    result_assertion (RULEBOOK §1 C1-C3, §3 M1; BASELINE §2b)."""
+    pf_words = [{"i": w["i"], "word": w["w"], "start": w["s"], "end": w["e"]} for w in job.words]
+    pos = {w["i"]: n for n, w in enumerate(pf_words)}
+    for sh in sl.get("shots", []):
+        for b in sh.get("beats", []):
+            k = pos.get(b.get("word_id"))
+            if k is None:
+                continue
+            c = planfit.clause_start(pf_words, k)
+            tgt = b.get("target") or ""
+            act, tid, typed, must = planfit.classify(f"{b.get('what', '')}")
+            b["t_word"] = pf_words[k]["start"]
+            b["clause_start"] = pf_words[c]["start"]
+            b["clause_word_id"] = pf_words[c]["i"]
+            b["technique_id"] = (b.get("technique_ids") or [tid])[0]
+            b["typed_text"] = b.get("text") if b.get("action") == "type" else typed
+            b["must_text"] = [tgt] if tgt and not tgt.startswith(("image:", "result:")) else must
+            b["subject"] = (f"asset:{tgt.split(':', 1)[1]}" if tgt.startswith(("image:", "result:"))
+                            else f"ui:{tgt}" if tgt else (f"ui:{must[0]}" if must else "screen"))
+            b["result_assertion"] = planfit.RESULTS.get(
+                {"open_image": "click", "send": "click", "wait_result": "dissolve", "key": "click", "read": "zoom",
+                 "none": "show"}.get(b.get("action"), b.get("action") or act), planfit.RESULTS["show"])
+    return sl
+
+
+def ensure_objects(sl, job):
+    """Every object a screencast shot shows (its narration + its beats) must be IN a produced asset
+    before anything is recorded (RULEBOOK §S S1/S2; G2: the napkin, the sun, the picnic table…).
+    Missing ones are added to the asset the shot needs (a doodle item / a phrase of the photo prompt);
+    what cannot be added is reported. → sl["objects"] rows."""
+    assets = sl.setdefault("assets", [])
+    by = {a["id"]: a for a in assets}
+    facts = planfit.Facts(None, {"assets": assets})
+    rows = []
+    for sh in sl.get("shots", []):
+        if sh.get("kind") not in ("screencast", "graphic"):
+            continue
+        text = " ".join([sh.get("words", "")] + [str(b.get("what", "")) for b in sh.get("beats", [])])
+        typed = [str(b.get("text") or "") for b in sh.get("beats", []) if b.get("action") == "type"]
+        for o in planfit.scan_objects(text):
+            need = [by[n] for n in sh.get("needs", []) if n in by]
+            have = None
+            for a in need:
+                if (o in planfit.KIND_OBJECTS and a.get("kind") in planfit.KIND_OBJECTS[o][1]) or \
+                        (o not in planfit.KIND_OBJECTS and planfit._obj_rx(o).search(facts.asset_text(a))):
+                    have = a["id"]
+                    break
+            if have:
+                rows.append({"object": o, "shot": sh["id"], "asset": have, "status": "in_asset"})
+                continue
+            if o not in planfit.KIND_OBJECTS and any(planfit._obj_rx(o).search(t) for t in typed):
+                rows.append({"object": o, "shot": sh["id"], "asset": None, "status": "made_on_camera"})
+                continue
+            if o in planfit.KIND_OBJECTS:
+                kind = planfit.KIND_OBJECTS[o][1][0]
+                a = next((x for x in assets if x.get("kind") in planfit.KIND_OBJECTS[o][1]), None)
+                if not a:
+                    sents = [s["text"] for s in job.sents if planfit.KIND_OBJECTS[o][0].search(s["text"])][:3]
+                    a = {"id": o.replace(" ", "_"), "kind": kind, "desc": f"{o} the narration shows",
+                         **({"prompt": " ".join(sents) or o} if kind == "photo" else {"doodle": []})}
+                    assets.append(a)
+                    by[a["id"]] = a
+                if a["id"] not in sh.setdefault("needs", []):
+                    sh["needs"].append(a["id"])
+                rows.append({"object": o, "shot": sh["id"], "asset": a["id"], "status": "added"})
+                continue
+            # the sentence that names it (in this shot first) says WHICH picture holds it: drawn → the doodle,
+            # otherwise the most-made picture the shot shows (an edit of a photo keeps the rest)
+            ks = [k for k in sh.get("sentences", []) if k < len(job.sents)] + list(range(len(job.sents)))
+            k = next((k for k in ks if planfit._obj_rx(o).search(job.sents[k]["text"])), None)
+            where = job.sents[k]["text"] if k is not None else ""
+            drawn = k is not None and any(DRAW_RE.search(job.sents[j]["text"]) for j in range(max(0, k - 2), k + 1))
+            order = ("sketch", "app_generation", "photo") if drawn else ("app_generation", "photo")
+            tgt = next((a for k in order for a in need if a.get("kind") == k), None)
+            if tgt is None:
+                rows.append({"object": o, "shot": sh["id"], "asset": None, "status": "missing",
+                             "why": "the shot needs no producible sketch/photo/app generation to add it to"})
+                continue
+            if tgt["kind"] == "sketch":
+                shape = DOODLE_SHAPE.get(o)
+                if not shape:
+                    rows.append({"object": o, "shot": sh["id"], "asset": tgt["id"], "status": "missing",
+                                 "why": "no doodle shape for it (preprod.doodle_svg)", "said": where[:160]})
+                    continue
+                m = planfit._obj_rx(o).search(where)
+                clause = re.split(r"[,.;]", where[m.end():] if m else "")[0]
+                hits = [(mm.start(), b) for rx, b in DOODLE_SLOT for mm in [re.search(rx, clause, re.I)] if mm]
+                used = [d.get("box") for d in tgt.get("doodle", [])]
+                box = min(hits)[1] if hits else next((b for b in ([80, 80, 220, 220], [700, 640, 260, 200], [80, 640, 260, 200])
+                                                      if b not in used), [80, 80, 220, 220])
+                tgt.setdefault("doodle", []).append({"shape": shape, "box": box, "color": "#111"})
+            else:
+                tgt["prompt"] = (tgt.get("prompt") or tgt.get("desc", "")).rstrip(". ") + f", with {_article(o)} clearly visible"
+            rows.append({"object": o, "shot": sh["id"], "asset": tgt["id"], "status": "added", "said": where[:160]})
+    sl["objects"] = rows
+    return rows
+
+
+def _article(o):
+    return ("an " if o[0] in "aeiou" else "a ") + o
+
+
+def expect_rows(sl):
+    """expect.json: what every screencast beat must put on screen, and by when (QA, G4)."""
+    out = []
+    for sh in sl.get("shots", []):
+        if sh.get("kind") != "screencast":
+            continue
+        for b in sh.get("beats", []):
+            if b.get("t_word") is None:
+                continue
+            out.append({"shot": sh["id"], "word_id": b["word_id"], "word": b.get("word"), "t_word": b["t_word"],
+                        "clause_start": b.get("clause_start"), "action": b.get("action"), "subject": b.get("subject"),
+                        "technique_id": b.get("technique_id"), "must_text": b.get("must_text"),
+                        "typed_text": b.get("typed_text"), "framed_by": round(b["t_word"] + 0.30, 3),
+                        "result_window": [round(b["t_word"] + 0.2, 3), round(b["t_word"] + 1.4, 3)],
+                        "result_assertion": b.get("result_assertion")})
+    return {"rules": "RULEBOOK §1 C1 (framed by word + 0.30 s), C2 (result +0.2…+1.4 s, BASELINE §2b), C3 (typed text)",
+            "beats": out}
+
+
+def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_budget=3.0, cancelled=None, say=None):
+    """readiness → shot list (+ beat ledger, narrated objects) → assets → set dressing → dry run → gate
+    (+ expect.json). Live browser work stays behind the adapter: app.probe(workdir) and app.dry_run(...)
+    when the adapter has them (a test's fake), else the off-camera Probe / dry_run below."""
+    steps = steps or ALL_STEPS
+    say = say or log
+    stop = cancelled or (lambda: False)
+
+    def check():
+        if stop():
+            raise InterruptedError()
+    site = app.site
+    costs = json.loads((out / "costs.json").read_text()) if (out / "costs.json").exists() else {"claude_usd": 0, "image_api_usd": 0}
+    if (job.dir / "request.json").exists() and job.dir.resolve() != out.resolve():
+        shutil.copyfile(job.dir / "request.json", out / "request.json")
+
+    if "readiness" in steps:
+        df = shutil.disk_usage("/").free / 1e9
+        mk = getattr(app, "probe", None)
+        p = mk(out / "session") if mk else Probe(out / "session", app.site, dark=True)
+        try:
+            checks = app.readiness(p, out)
+            # automatic remedy: a failed global check is retried once on a fresh load
+            for c in checks:
+                if c["id"] in REQUIRED_GLOBAL and c["status"] != "pass":
+                    say(f"readiness {c['id']} failed — retrying once")
+                    again = {x["id"]: x for x in app.readiness(p, out)}
+                    if again.get(c["id"], {}).get("status") == "pass":
+                        c.update(again[c["id"]], note=(again[c["id"]].get("note", "") + " (pass on retry)"))
+        finally:
+            p.close()
+        sc = getattr(p, "scout", None) or {}
+        jdump({"app": site, "scout_profile": sc.get("slug"), "logged_in_at": sc.get("logged_in_at"),
+               "disk_free_gb": round(df, 1), "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "checks": checks,
+               "features": features_of(app, checks)}, out / "readiness.json")
+        say(f"readiness: {sum(c['status'] == 'pass' for c in checks)}/{len(checks)} pass")
+    readiness = json.loads((out / "readiness.json").read_text())
+    if set(steps) <= {"readiness"}:
+        return None
+    check()
+
+    elem_names = sorted(p.name for p in Path(elements).glob("*")) if elements and Path(elements).is_dir() else []
+    if "shotlist" in steps:
+        _, tech_ids, _ = techniques_digest()
+        prompt = shot_prompt(job, ranges, readiness, elem_names)
+        (out / "shotlist.prompt.txt").write_text(prompt)
+        sl, meta = director.call([{"type": "text", "text": prompt}], SHOT_SYSTEM, max_tokens=32000, effort="medium")
+        costs["claude_usd"] = round(costs.get("claude_usd", 0) + meta["usd"], 4)
+        jdump(costs, out / "costs.json")
+        sl, problems = validate_shots(sl, job, ranges, tech_ids, readiness)
+        ledger_fields(sl, job)
+        objs = ensure_objects(sl, job)
+        sl.update(ranges=ranges, problems=problems, model=director.MODEL, cost=meta)
+        jdump(sl, out / "shotlist.json")
+        (out / "SHOTLIST.md").write_text(shotlist_md(sl, ranges))
+        say(f"shot list: {len(sl['shots'])} shots, {len(sl.get('assets', []))} assets, "
+            f"{sum(o['status'] == 'added' for o in objs)} narrated object(s) added to assets, "
+            f"{sum(o['status'] == 'missing' for o in objs)} missing, problems {problems}, ${meta['usd']}")
+    if not (out / "shotlist.json").exists():
+        return None
+    sl = json.loads((out / "shotlist.json").read_text())
+    check()
+
+    if "assets" in steps:
+        assets = build_assets(sl, out, elements, image_budget - costs.get("image_api_usd", 0))
+        assets["objects"] = sl.get("objects", [])
+        costs["image_api_usd"] = round(costs.get("image_api_usd", 0) + assets["image_api_usd"], 4)
+        jdump(costs, out / "costs.json")
+        jdump(assets, out / "assets.json")
+        say("assets: " + ", ".join(f"{a['id']}={a['status']}" for a in assets["assets"]))
+    if not (out / "assets.json").exists():
+        return None
+    assets = json.loads((out / "assets.json").read_text())
+
+    if "set_dressing" in steps:
+        setd = set_dressing_plan(sl, assets, app)
+        jdump(setd, out / "set_dressing.json")
+    setd = json.loads((out / "set_dressing.json").read_text())
+    check()
+
+    if "dryrun" in steps:
+        if shutil.disk_usage("/").free / 1e9 < 2:
+            raise RuntimeError("disk below 2 GB — no browser session")
+        fn = getattr(app, "dry_run", None)
+        dry = fn(job, sl, assets, setd, out, max_gens) if fn else dry_run(job, sl, assets, setd, app, out, max_gens=max_gens)
+        jdump(dry, out / "dryrun.json")
+        jdump(assets, out / "assets.json")         # in-app generations now ready (file, chat URL)
+        # the plan now carries the real chat URLs + verification results of the replay
+        for seg in setd["segments"]:
+            r = next((x for x in dry.get("set_dressing", []) if x["shot"] == seg["shot"]), None)
+            seg["verified"] = bool(r and r["ok"])
+            seg["first_frame"] = r and r.get("first_frame")
+        setd["chat_urls"] = {k: v.get("chat_url") for k, v in dry.get("produced", {}).items()}
+        setd["image_index"] = {k: v.get("image_index", 0) for k, v in dry.get("produced", {}).items()}
+        # a chat that gained newer images after the asset is no longer pristine: the recording stage re-makes the
+        # asset in a fresh chat first (its produce_first steps; 1 generation each) and uses that chat's URL
+        setd["refresh_before_record"] = [{"asset": ob["id"].split(":", 1)[1], "why": ob["note"]}
+                                         for ob in dry.get("observations", []) if ob["id"].startswith("stale_after:")]
+        jdump(setd, out / "set_dressing.json")
+    dry = json.loads((out / "dryrun.json").read_text()) if (out / "dryrun.json").exists() else {"actions": []}
+
+    jdump(expect_rows(sl), out / "expect.json")
+    g = None
+    if "gate" in steps:
+        g = gate(sl, readiness, assets, setd, dry, ranges, app.warnings(sl) if hasattr(app, "warnings") else None)
+        g["costs"] = costs
+        jdump(g, out / "gate.json")
+        say(f"GATE: {g['status']} — failing {[f['item'] for f in g['failing']]}")
+    jdump(costs, out / "costs.json")
+    return g
+
+
 DARK_APPS = {"chatgpt"}                        # RULEBOOK S7: ChatGPT is recorded in dark theme
+FACTORY_FILES = ("readiness.json", "shotlist.json", "assets.json", "set_dressing.json", "dryrun.json", "expect.json")
 
 
-def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, **_):
+def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, adapter=None, **_):
     """The worker's PRE-PRODUCTION stage of the creative edit (bin/aieditor-worker run_preprod).
-    Unattended, machine-readable only (Jake: "an automated factory"): decides WHAT can be
-    screencast and whether each app is ready, and writes preprod/gate.json, which the recorder
-    (longedit.plan_and_record) reads:
+    Unattended, machine-readable only (Jake: "an automated factory"):
       sites      request.json "sites", else derived from the narration (aieditor/sites.py)
       readiness  per site: Scout profile copy available + logged in (agentrec.scout_for), theme
-      gate.json  {"go", "status", "sites": [{url, scout, dark, ready}], "fallbacks", "aroll_motion"}
+      the FULL flow for the whole narration on the first ready app that has an adapter (APPS):
+                 readiness.json (+ "features" the plan may use), shotlist.json (beat ledger: every
+                 beat on its edl word), assets.json (every narrated object produced first),
+                 set_dressing.json, dryrun.json, expect.json — the director plans from these
+                 (longedit → director.plan / validate, planfit.Facts)
+      gate.json  {"go", "status", "sites": [{url, scout, dark, ready}], "fallbacks", "flow", ...}
     A site that is not ready is dropped from the gate (its moments stay A-roll) — never a stop.
-    The heavier shot-list / assets / dry-run flow (run_ranges, ChatGPT adapter) is the CLI below."""
+    The flow's files are reused while they are newer than edl.json (it costs Claude + images)."""
     from . import sites as sites_mod
     d = Path(job_dir)
     out = d / "preprod"
@@ -1300,18 +1638,51 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, **_
          "sites": rows, "fallbacks": fallbacks,
          "aroll_motion": "planned at compose from the final A-roll blocks (aieditor/arollplan.py)",
          "costs": {"claude_usd": usd}}
-    jdump(g, out / "gate.json")
     note = (f"{len(rows)} screencast site(s): " + ", ".join(r["scout"] or r["url"] for r in rows)) if rows \
         else "nothing can be screencast — A-roll + overlays only"
+    # the full pre-production for the whole narration, on the first ready app with an adapter
+    row = next((r for r in rows if adapter is not None or adapter_for(r["url"])), None)
+    edl_at = (d / "edl.json").stat().st_mtime if (d / "edl.json").exists() else 0
+    if row and video["words"]:
+        app = adapter or adapter_for(row["url"])
+        fresh = all((out / f).exists() and (out / f).stat().st_mtime >= edl_at for f in FACTORY_FILES)
+        try:
+            if fresh:
+                fg = json.loads((out / "flow-gate.json").read_text()) if (out / "flow-gate.json").exists() else {}
+                log("pre-production: readiness/shot list/assets/dry run are newer than the edit — reused")
+            else:
+                if progress:
+                    progress("Pre-production: readiness, shot list, assets, dry run…", 0.2)
+                job = EdlJob(d, req, video)
+                fg = _flow(job, out, [job.whole()], app, elements=(d / "elements") if (d / "elements").is_dir() else None,
+                           cancelled=cancelled, say=log) or {}
+                jdump(fg, out / "flow-gate.json")
+            costs = json.loads((out / "costs.json").read_text()) if (out / "costs.json").exists() else {}
+            usd += float(costs.get("claude_usd", 0) or 0) + float(costs.get("image_api_usd", 0) or 0) if not fresh else 0.0
+            g["flow"] = {"app": row["url"], "status": fg.get("status"), "files": list(FACTORY_FILES),
+                         "failing": [f["item"] for f in fg.get("failing", [])], "shot_overrides": fg.get("shot_overrides", {})}
+            g["costs"].update(costs)
+            if fg and not fg.get("go", True):
+                # the app is not usable (e.g. not logged in): its moments stay A-roll — never a stop
+                rows.remove(row)
+                fallbacks.append({**row, "ready": False, "why": f"pre-production gate: {fg.get('status')} "
+                                  f"({', '.join(g['flow']['failing'][:4])})"})
+                g["status"] = "go" if rows else "aroll_only"
+            note += f"; pre-production {fg.get('status') or 'done'}"
+        except InterruptedError:
+            raise
+        except Exception as e:  # noqa: BLE001 — factory rule: route, don't fail
+            log(f"pre-production flow failed ({type(e).__name__}: {e}) — the plan runs on the Scout report only")
+            g["flow"] = {"app": row["url"], "status": "failed", "error": f"{type(e).__name__}: {e}"[:400]}
+            note += "; pre-production flow failed (see log)"
+    jdump(g, out / "gate.json")
     return {"note": note, "usd": usd}
 
 
 def run_ranges(job_dir, out_dir, ranges_arg, elements=None, steps=None, max_gens=1, image_budget=3.0):
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    steps = steps or ALL_STEPS
     job = Job(job_dir)
-    costs = json.loads((out / "costs.json").read_text()) if (out / "costs.json").exists() else {"claude_usd": 0, "image_api_usd": 0}
     ranges = []
     for r in ranges_arg:
         a, b = r.split("-")
@@ -1322,88 +1693,7 @@ def run_ranges(job_dir, out_dir, ranges_arg, elements=None, steps=None, max_gens
     app = adapter_for(site)
     if not app:
         raise SystemExit(f"no pre-production adapter for {site} (add one to APPS)")
-    shutil.copyfile(job.dir / "request.json", out / "request.json")
-
-    if "readiness" in steps:
-        df = shutil.disk_usage("/").free / 1e9
-        p = Probe(out / "session", app.site, dark=True)
-        try:
-            checks = app.readiness(p, out)
-            # automatic remedy: a failed global check is retried once on a fresh load
-            for c in checks:
-                if c["id"] in REQUIRED_GLOBAL and c["status"] != "pass":
-                    log(f"readiness {c['id']} failed — retrying once")
-                    again = {x["id"]: x for x in app.readiness(p, out)}
-                    if again.get(c["id"], {}).get("status") == "pass":
-                        c.update(again[c["id"]], note=(again[c["id"]].get("note", "") + " (pass on retry)"))
-        finally:
-            p.close()
-        jdump({"app": site, "scout_profile": p.scout["slug"], "logged_in_at": p.scout["logged_in_at"],
-               "disk_free_gb": round(df, 1), "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "checks": checks},
-              out / "readiness.json")
-        log(f"readiness: {sum(c['status'] == 'pass' for c in checks)}/{len(checks)} pass")
-    readiness = json.loads((out / "readiness.json").read_text())
-    if set(steps) <= {"readiness"}:
-        return out
-
-    elem_names = sorted(p.name for p in Path(elements).glob("*")) if elements and Path(elements).is_dir() else []
-    if "shotlist" in steps:
-        _, tech_ids, _ = techniques_digest()
-        prompt = shot_prompt(job, ranges, readiness, elem_names)
-        (out / "shotlist.prompt.txt").write_text(prompt)
-        sl, meta = director.call([{"type": "text", "text": prompt}], SHOT_SYSTEM, max_tokens=32000, effort="medium")
-        costs["claude_usd"] = round(costs.get("claude_usd", 0) + meta["usd"], 4)
-        jdump(costs, out / "costs.json")
-        sl, problems = validate_shots(sl, job, ranges, tech_ids, readiness)
-        sl.update(ranges=ranges, problems=problems, model=director.MODEL, cost=meta)
-        jdump(sl, out / "shotlist.json")
-        (out / "SHOTLIST.md").write_text(shotlist_md(sl, ranges))
-        log(f"shot list: {len(sl['shots'])} shots, {len(sl.get('assets', []))} assets, problems {problems}, ${meta['usd']}")
-    if not (out / "shotlist.json").exists():
-        return out
-    sl = json.loads((out / "shotlist.json").read_text())
-
-    if "assets" in steps:
-        assets = build_assets(sl, out, elements, image_budget - costs.get("image_api_usd", 0))
-        costs["image_api_usd"] = round(costs.get("image_api_usd", 0) + assets["image_api_usd"], 4)
-        jdump(costs, out / "costs.json")
-        jdump(assets, out / "assets.json")
-        log("assets: " + ", ".join(f"{a['id']}={a['status']}" for a in assets["assets"]))
-    if not (out / "assets.json").exists():
-        return out
-    assets = json.loads((out / "assets.json").read_text())
-
-    if "set_dressing" in steps:
-        setd = set_dressing_plan(sl, assets, app)
-        jdump(setd, out / "set_dressing.json")
-    setd = json.loads((out / "set_dressing.json").read_text())
-
-    if "dryrun" in steps:
-        if shutil.disk_usage("/").free / 1e9 < 2:
-            raise SystemExit("disk below 2 GB — no browser session")
-        dry = dry_run(job, sl, assets, setd, app, out, max_gens=max_gens)
-        jdump(dry, out / "dryrun.json")
-        jdump(assets, out / "assets.json")         # in-app generations now ready (file, chat URL)
-        # the plan now carries the real chat URLs + verification results of the replay
-        for seg in setd["segments"]:
-            r = next((x for x in dry["set_dressing"] if x["shot"] == seg["shot"]), None)
-            seg["verified"] = bool(r and r["ok"])
-            seg["first_frame"] = r and r.get("first_frame")
-        setd["chat_urls"] = {k: v.get("chat_url") for k, v in dry.get("produced", {}).items()}
-        setd["image_index"] = {k: v.get("image_index", 0) for k, v in dry.get("produced", {}).items()}
-        # a chat that gained newer images after the asset is no longer pristine: the recording stage re-makes the
-        # asset in a fresh chat first (its produce_first steps; 1 generation each) and uses that chat's URL
-        setd["refresh_before_record"] = [{"asset": ob["id"].split(":", 1)[1], "why": ob["note"]}
-                                         for ob in dry.get("observations", []) if ob["id"].startswith("stale_after:")]
-        jdump(setd, out / "set_dressing.json")
-    dry = json.loads((out / "dryrun.json").read_text()) if (out / "dryrun.json").exists() else {"actions": []}
-
-    if "gate" in steps:
-        g = gate(sl, readiness, assets, setd, dry, ranges, app.warnings(sl) if hasattr(app, "warnings") else None)
-        g["costs"] = costs
-        jdump(g, out / "gate.json")
-        log(f"GATE: {g['status']} — failing {[f['item'] for f in g['failing']]}")
-    jdump(costs, out / "costs.json")
+    _flow(job, out, ranges, app, elements, steps, max_gens, image_budget)
     return out
 
 

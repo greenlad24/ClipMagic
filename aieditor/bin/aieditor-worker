@@ -338,9 +338,12 @@ def run_job(job, action):
 
 
 def run_preprod(job, req, info, fps):
-    """PRE-PRODUCTION — stage 0 of the creative edit (workflow 2). ⚠️ STAGE SLOT: the module
-    is built separately (sandbox /opt/aieditor-work/loop/aieditor/aieditor/preprod.py) and
-    lands here as aieditor/preprod.py. Until it exists this stage is SKIPPED.
+    """PRE-PRODUCTION — stage 0 of the creative edit (workflow 2): aieditor/preprod.py run(). For the
+    whole narration it resolves the sites and, on the first ready app with an adapter, runs the full
+    flow (readiness → shot list → assets → set dressing → dry run → gate) and writes
+    preprod/{readiness,shotlist,assets,set_dressing,dryrun,expect,gate}.json — the director then plans
+    only what the account can show, from produced assets (longedit.preprod_facts → planfit). If the
+    module is missing the stage is SKIPPED.
 
     Contract the worker calls: preprod.run(job_dir, **kw) where kw is whichever of these the
     function's signature names (or all of them with **kwargs):

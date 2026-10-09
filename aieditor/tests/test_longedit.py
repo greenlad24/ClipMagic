@@ -238,4 +238,90 @@ try:
 except ImportError:
     ok_cam = False
 
+# ── plan fit (gap list G2): readiness, assets, beat ledger, reference structure ──
+from aieditor import planfit  # noqa: E402
+import random as _rnd  # noqa: E402
+import statistics as _st  # noqa: E402
+
+_r = _rnd.Random(3)
+VOCAB = "the photo bottle label really works nicely here and that is what you get with this simple trick".split()
+lw, t = [], 0.3
+OPEN = "Now look at this on the left, a sauce bottle I drew. And on the right, what came back."
+for w in OPEN.split():
+    lw.append({"i": len(lw), "word": w, "start": round(t, 3), "end": round(t + 0.28, 3)})
+    t += 0.36
+while t < 600:
+    n = _r.randint(6, 14)
+    for k in range(n):
+        w = _r.choice(VOCAB) + ("." if k == n - 1 else "")
+        lw.append({"i": len(lw), "word": w, "start": round(t, 3), "end": round(t + 0.28, 3)})
+        t += 0.36
+    t += 0.25
+# a spoken UI step on a missing feature, a pricing line and an instruction stretch
+def say(text):
+    global t
+    out = []
+    for w in text.split():
+        lw.append({"i": len(lw), "word": w, "start": round(t, 3), "end": round(t + 0.28, 3)})
+        out.append(lw[-1])
+        t += 0.36
+    t += 0.25
+    return out
+at = say("Then type at Sketch in the message box.")
+free = say("It is free on every plan with a cap.")
+for _ in range(20):
+    say("and that is what you get with this simple trick here.")
+up = say("To copy a look, upload yours and then upload the second photo as a reference, and tell it to match.")
+up2 = say("Upload both and you will see it match the look of the reference photo perfectly every time.")
+for _ in range(25):
+    say("and that is what you get with this simple trick here.")
+LV = {"title": "t", "duration": round(t + 1, 2), "words": lw}
+first_after_hook = next(w for w in lw if w["start"] > 12)
+before_up = next(w for w in reversed(lw) if w["end"] < up[0]["start"] - 0.1)
+raw = {"segments": [
+    {"start": first_after_hook["i"], "end": before_up["i"], "url": "https://chatgpt.com/",
+     "intent": f"on 'type at Sketch': '@Sketch' is typed and picked from the pop-up; on 'free on every plan': cut to "
+               f"https://chatgpt.com/pricing, the Free plan card; on 'the photo': the 'Bakery Image Prompt' chat"},
+    {"start": up2[-1]["i"] + 1, "end": lw[-1]["i"], "url": "https://chatgpt.com/", "intent": "on 'simple trick': zoom on the napkin"}],
+    "overlays": []}
+RD = {"checks": [{"id": "upload", "status": "pass"}, {"id": "sketch_plus_menu", "status": "pass"}],
+      "features": [{"id": "at_sketch", "exists": False, "patterns": [r"@\s?sketch", r"\bat[- ]sketch\b"],
+                    "alternative": {"route": "rewrite", "how": "click '+', then 'Sketch'"}, "note": "no @ picker"},
+                   {"id": "pricing_in_app", "exists": False, "patterns": [r"/pricing\b", r"\bfree plan card\b"],
+                    "alternative": {"route": "public", "url": "https://chatgpt.com/pricing", "locale": "en-US",
+                                    "timezone": "America/New_York"}, "note": "upgrade modal"},
+                   {"id": "upload", "exists": True, "patterns": []}]}
+AS = {"assets": [{"id": "phone_photo", "kind": "photo", "desc": "phone photo of a sauce bottle", "status": "ready",
+                  "prompt": "a sauce bottle with a label on a kitchen counter"},
+                 {"id": "doodle", "kind": "sketch", "desc": "mouse doodle of the bottle", "status": "ready"}]}
+fp = director.validate(raw, LV, [{"url": "https://chatgpt.com/"}], planfit.Facts(RD, AS))
+B = fp["beats"]
+by_cue = {b["cue"]: b for b in B}
+check("ledger: every resolved beat sits on its edl word", all(b.get("t_word") == lw[b["word_id"]]["start"]
+                                                               for b in B if b.get("word_id") is not None))
+check("ledger rows carry the G2 fields", all({"word_id", "t_word", "clause_start", "subject", "technique_id", "action",
+                                              "must_text", "typed_text", "result_assertion"} <= set(b)
+                                             for b in B if b.get("word_id") is not None))
+check("@Sketch is rewritten to '+' → Sketch", by_cue["type at Sketch"]["route"] == "rewrite" and "'+'" in by_cue["type at Sketch"]["body"])
+check("pricing → the public page in a never-logged-in US browser (L4)", by_cue["free on every plan"]["route"] == "public"
+      and by_cue["free on every plan"]["session"]["locale"] == "en-US")
+check("an invented chat is never asked for", by_cue["the photo"]["route"] != "keep")
+check("a napkin no asset holds is not shown", by_cue["simple trick"]["route"] in ("aroll", "drop"))
+check("public pricing is its own segment", any((s.get("session") or {}).get("kind") == "public" for s in fp["segments"]))
+st = fp["structure"]
+check(f"span max <= 30 s ({st['span_max']})", st["span_max"] <= planfit.SPAN_MAX)
+check(f"span median 10-18 s ({st['span_p50']})", planfit.SPAN_P50[0] <= st["span_p50"] <= planfit.SPAN_P50[1])
+check(f"screencast share 72-76 % ({st['share']})", planfit.SHARE[0] <= st["share"] <= planfit.SHARE[1])
+check(f"3-6 boundaries per minute ({st['bounds_per_min']})", 3.0 <= st["bounds_per_min"] <= 6.0)
+check(f"A-roll beats 5-7 s ({st['aroll_p50']})", planfit.AROLL_BEAT[0] <= st["aroll_p50"] <= planfit.AROLL_BEAT[1])
+check("the hook points at a thing → one plate beat with the produced assets",
+      len(fp["plates"]) == 1 and fp["plates"][0]["t1"] <= 40 and fp["plates"][0]["assets"]
+      and fp["plates"][0]["t1"] - fp["plates"][0]["t0"] <= 0.015 * LV["duration"] + 0.01)
+check("the upload stretch gets a segment or a why", fp["aroll_actions"] and all(
+    x.get("segment") is not None or x.get("why") for x in fp["aroll_actions"]))
+check("segments never overlap", all(a["t1"] <= b["t0"] + 1e-6 for a, b in zip(fp["segments"], fp["segments"][1:])))
+nofacts = director.validate(raw, LV, [{"url": "https://chatgpt.com/"}])
+check("without pre-production facts nothing is rejected", all(b["route"] in ("keep", "drop") or "span structure" in str(b["why"])
+                                                              for b in nofacts["beats"]))
+
 print(f"test_longedit: {N} checks passed" + ("" if ok_cam else " (camera checks skipped: no cv2 here)"))

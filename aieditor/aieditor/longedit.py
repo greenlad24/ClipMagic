@@ -26,10 +26,10 @@ MUSIC_DIR = Path("/opt/aieditor-work/music")
 VOICE_LUFS = -14.0                   # render.py normalises the voice to −14 LUFS
 
 
-def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None):
+def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None, tz="Asia/Bangkok"):
     cname = f"{name}-{uuid.uuid4().hex[:8]}"
     cmd = ["docker", "run", "--rm", "--name", cname, "--cpuset-cpus", cpus or config.CPUSET, "--shm-size", "1g",
-           "--memory", config.MEMORY, "-e", "TZ=Asia/Bangkok", "-e", f"AGENT_PROXY={config.EGRESS_PROXY}"]
+           "--memory", config.MEMORY, "-e", f"TZ={tz}", "-e", f"AGENT_PROXY={config.EGRESS_PROXY}"]
     for a, b in mounts:
         cmd += ["-v", f"{a}:{b}"]
     cmd += [SC_IMAGE] + args
@@ -52,8 +52,32 @@ def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None):
     return out
 
 
+def _tz(seg):
+    """RULEBOOK L4: a public (outside-the-account) view runs on a US timezone."""
+    return (seg.get("session") or {}).get("timezone") or "Asia/Bangkok"
+
+
 def _fresh(path, than):
     return path.exists() and path.stat().st_mtime >= than
+
+
+def preprod_facts(d, scouts=None):
+    """planfit.Facts from the job's pre-production (readiness.json + assets.json) and the Scout's
+    known pages; empty facts (no checks) when pre-production did not run."""
+    pre = Path(d) / "preprod"
+
+    def load(name):
+        try:
+            return json.loads((pre / name).read_text())
+        except (OSError, ValueError):
+            return None
+    pages = []
+    for x in (scouts or {}).values():
+        try:
+            pages += agentrec.known_pages(x["profile"])
+        except Exception:  # noqa: BLE001 — a page list is a nicety
+            pass
+    return director.planfit.Facts(load("readiness.json"), load("assets.json"), pages)
 
 
 def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
@@ -87,10 +111,13 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         x["knowledge"] = part
         knowledge = (knowledge + "\n\n" if knowledge else "") + (f"=== {x['slug']} ===\n" if len(scouts) > 1 else "") + part
     scout = next(iter(scouts.values()), None)
+    # what pre-production measured and produced (readiness features + assets): the plan may only ask
+    # for beats the account can show, about objects a produced asset holds (gap list G2)
+    facts = preprod_facts(d, scouts)
     plan_p = w / "direct.json"
     if not _fresh(plan_p, edl_at):
         progress("Claude is planning the edit (screencasts + graphics)…", 0.02)
-        plan, raw, meta = director.plan(video, sites, sponsored, knowledge)
+        plan, raw, meta = director.plan(video, sites, sponsored, knowledge, facts=facts)
         usd += meta["usd"]
         json.dump({"plan": plan, "raw": raw, "meta": meta, "sites": sites}, open(plan_p, "w"), indent=1)
         for x in plan["dropped"]:
@@ -100,17 +127,28 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     doc = json.load(open(plan_p))
     # re-validate the cached answer every run: a fixed rule reaches existing jobs, and a trim
     # only ever shortens a segment, so its recording stays valid
-    plan = director.validate(doc["raw"], video, doc.get("sites", sites))
+    plan = director.validate(doc["raw"], video, doc.get("sites", sites), facts)
     if plan != doc["plan"]:
+        old = [(x.get("start"), x.get("url"), x.get("session")) for x in doc["plan"].get("segments", [])]
+        if old != [(x.get("start"), x.get("url"), x.get("session")) for x in plan["segments"]]:
+            # the segments were re-cut (structure / readiness): recordings are indexed by segment
+            log(f"edit {k}: the plan was re-cut ({len(old)} → {len(plan['segments'])} screencasts) — recordings redone")
+            for old_seg in w.glob("seg-*"):
+                shutil.rmtree(old_seg, ignore_errors=True)
         doc["plan"] = plan
         json.dump(doc, open(plan_p, "w"), indent=1)
         os.utime(plan_p, (edl_at + 1, edl_at + 1)) if plan_p.stat().st_mtime < edl_at else None
+    json.dump({"beats": plan.get("beats", []), "plates": plan.get("plates", []), "objects": plan.get("objects", {}),
+               "aroll_actions": plan.get("aroll_actions", []), "structure": plan.get("structure", {})},
+              open(w / "beats.json", "w"), indent=1)
     segs = plan["segments"]
     n_recorded = 0
     by_scout = {}
     for i, seg in enumerate(segs):
         x = agentrec.scout_for(seg.get("url", ""))
-        if x and x["slug"] in scouts:
+        # RULEBOOK L4: a public (logged-out) beat is never recorded in the logged-in browser — it goes to the
+        # scripted recorder's fresh, never-logged-in Chrome (en-US)
+        if x and x["slug"] in scouts and (seg.get("session") or {}).get("kind") != "public":
             by_scout.setdefault(x["slug"], []).append(i)
     for slug, idx in by_scout.items():
         x = scouts[slug]
@@ -174,7 +212,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         if not (sd / "script.json").exists():
             progress(f"Screencast {i + 1} of {len(segs)}: reading {seg['url']}…", base)
             _docker(["node", "/app/screencast/inventory.mjs", seg["url"], "/s/inventory.json", "/s/inventory.jpg"],
-                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-inv")
+                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-inv", tz=_tz(seg))
             script, meta = director.write_script(seg, video, json.load(open(sd / "inventory.json")),
                                                  (sd / "inventory.jpg").read_bytes())
             usd += meta["usd"]
@@ -184,7 +222,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             progress(f"Screencast {i + 1} of {len(segs)}: recording {seg['t1'] - seg['t0']:.0f} s (frame by frame)…", base + 0.05)
             (sd / "rec").mkdir(exist_ok=True)
             _docker(["node", "/app/screencast/vrecord.mjs", "/s/script.json", "/s/rec"],
-                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-rec")
+                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-rec", tz=_tz(seg))
         ev = json.load(open(sd / "rec" / "events.json"))
         if ev.get("failed"):
             log(f"edit {k}: screencast {i + 1} recording stopped early: {ev['failed']}")

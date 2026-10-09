@@ -14,7 +14,7 @@ import re
 import time
 import urllib.request
 
-from . import config, events
+from . import config, events, planfit
 
 MODEL = config.TAKES_MODEL
 PRIORITY = {"link": 2, "subscribe": 2, "lower_title": 2, "socials": 2}
@@ -35,7 +35,30 @@ the video is about. You decide where the edit cuts to SCREENCASTS of those websi
 text graphics go. Return ONLY JSON."""
 
 
-def build_prompt(video, sites, sponsored, knowledge=None):
+def facts_block(facts):
+    """What pre-production measured (readiness features) and produced (assets) — the only things a
+    beat may ask the screen for (gap list G2)."""
+    if facts is None or facts.empty:
+        return ""
+    out = ["APP FACTS (measured on screen in Jake's account before planning — a beat may NEVER ask for a "
+           "feature marked MISSING; use the honest route given, or leave those words to the presenter):"]
+    for f in facts.features:
+        alt = f.get("alternative") or {}
+        route = alt.get("how") or ({"public": f"the PUBLIC page {alt.get('url')} (we record it in a separate "
+                                              "never-logged-in US browser)"}.get(alt.get("route")))
+        out.append(f"- {f['id']} ({f.get('label')}): {'exists' if f.get('exists') else 'MISSING'}"
+                   + (f" — {f['note']}" if f.get("note") and not f.get("exists") else "")
+                   + (f" → instead: {route}" if route and not f.get("exists") else ""))
+    out.append("PRODUCED ASSETS (the only pictures/files that exist; every object you name in a picture must be "
+               "in one of them; never name a chat, document or picture that is not here):")
+    for a in facts.assets:
+        out.append(f"- {a.get('id')} [{a.get('kind')}, {a.get('status')}]: {a.get('desc', '')}"
+                   + (f" — prompt: {str(a.get('prompt') or (a.get('source') or {}).get('prompt') or '')[:240]}"
+                      if (a.get('prompt') or (a.get('source') or {}).get('prompt')) else ""))
+    return "\n".join(out) + "\n"
+
+
+def build_prompt(video, sites, sponsored, knowledge=None, facts=None):
     access_rule = (
         "We are LOGGED IN to the app (the UX Scout's account), so every screen the speaker describes can be "
         "shown for real — inside the app, not the marketing site. A walkthrough of the app is below; plan "
@@ -73,8 +96,9 @@ JAKE'S SCREENCAST RULES (his review of the v11 sample, 2026-10-07 — they overr
 - NEVER THE WHOLE CANVAS: do not ask for "all artboards zoomed to fit"/"zoomed out on the canvas" as a
   beat. Go straight to the main section/design he names (zoomed), or leave that moment to the
   full-screen narration for a bigger wow.
-- PRICING: on the plan/price talk show the LANDING page unzoomed with the logo first, then CUT straight
-  to the pricing page's FREE (or the named) plan section, zoomed. Never show all the prices.
+- PRICING (RULEBOOK L3/L4): on the plan/price talk use the product's PUBLIC pricing page (we record it in a
+  separate never-logged-in US browser, US dollars): top of the page unzoomed with the logo, then CUT straight
+  to the FREE (or the named) plan card, zoomed. Never the in-account upgrade/billing modal, never all prices.
 - CLEAN SCREENS: an address/name is pasted whole (no letter-by-letter), no popups or search
   suggestions left open, no cookie banners.
 - NO UNNECESSARY SCROLL: never scroll to "show more" of a page; only to reach the one thing he names.
@@ -94,9 +118,13 @@ segment itself makes on screen — never a document/brand/campaign that is not t
 screencasts use the APP's address; the marketing site only when he says to go to the website.
 
 RULES
-1. Pacing like the reference (Jake's own tutorial): about three quarters of a tutorial is screencast.
-   A-roll stretches 6-12 s (his intro, the subscribe/link asks, opinions, transitions), screencast
-   stretches 15-35 s or longer while he walks through steps.
+1. Pacing like the references (REFERENCE-BASELINE §1): 72-76 % of the runtime is screencast; screencast
+   spans of 10-18 s (never over 30 s) separated by 5-7 s A-roll beats (his opinions, transitions, the
+   intro, the subscribe/link asks) — 3-6 screen<->face switches per minute. Leave his opinion lines to the
+   A-roll; every stretch where he tells the viewer to upload/click/type/drag/select/open is a screencast,
+   or give the reason in "aroll_why": [{{"start": <id>, "end": <id>, "why": "..."}}].
+   HOOK: if the first 40 s point at a thing ("look at this", "on the left/right"), plan NO screencast over
+   those words — a full-screen plate of the produced asset is placed there.
 2. Segments: "start"/"end" = word ids (the segment starts slightly before "start" and ends after
    "end"). Never overlap; at least 3 s of A-roll between two screencasts.
 3. Overlays sit on A-roll only, one at a time, 1.5-4.5 s, >= 0.6 s apart. Text must be what is said.
@@ -106,10 +134,12 @@ RULES
 {"6. SPONSORED video: no claims beyond what is said." if sponsored else ""}
 
 {walkthrough}
+{facts_block(facts)}
 TRANSCRIPT (id:word@seconds) — "{video['title']}", {video['duration']:.1f} s:
 {words}
 
 Return {{"segments": [{{"start": <id>, "end": <id>, "url": "...", "intent": "..."}}],
+ "aroll_why": [{{"start": <id>, "end": <id>, "why": "..."}}],
  "overlays": [{{"template": "...", "start": <id>, "end": <id>, "fields": {{...}}, "why": "<6-12 words>"}}]}}"""
 
 
@@ -153,31 +183,19 @@ def call(content, system, max_tokens=24000, effort="high"):
                                                   "content-type": "application/json"})
 
 
-def validate(plan, video, sites):
+def validate(plan, video, sites, facts=None):
+    """The director's answer → a plan the edit can honestly record. Word ids and hosts are checked
+    here; planfit then resolves every "on 'X'" beat to its word (the beat ledger), rewrites or routes
+    each beat the account / produced assets cannot show (facts = readiness + assets from
+    pre-production), adds the hook plate and re-cuts the screencast into the reference span
+    structure (REFERENCE-BASELINE §1: spans p50 10-18 s, max 30 s, A-roll beats 5-7 s, 72-76 %)."""
     ids = {w["i"]: w for w in video["words"]}
     order = [w["i"] for w in video["words"]]
     pos = {i: n for n, i in enumerate(order)}
     dur = video["duration"]
     hosts = [".".join(re.sub(r"^https?://(www\.)?", "", s["url"]).split("/")[0].split(".")[-2:]) for s in sites]
-    # the presenter's own moments stay A-roll (rule 5 — Claude does not always keep it):
-    # a spoken "subscribe", "link … description", "I'm Jake Dawson"
-    norm = [re.sub(r"[^a-z]", "", w["word"].lower()) for w in video["words"]]
-    keep_out = []
-    for i, n in enumerate(norm):
-        w = video["words"][i]
-        # windows = what those graphics really occupy (graphics_long / recipes2): the link slide
-        # runs 69 f (2.3 s) from "link"; the subscribe button appears ~2.4 s before its click
-        if n in ("subscribe", "subscribed"):
-            keep_out.append((w["start"] - 2.8, w["end"] + 2.6))
-        elif n in ("link", "links") and "description" in norm[i:i + 12]:
-            keep_out.append((w["start"] - 0.6, w["start"] + 2.6))
-        elif n == "dawson" and i and norm[i - 1] == "jake":
-            keep_out.append((w["start"] - 1.5, w["end"] + 1.2))
-        elif n == "welcome" and norm[i + 1:i + 2] == ["back"]:
-            # "Hey everyone, welcome back to the channel" — the welcome title starts on "hey"
-            hey = next((video["words"][j] for j in range(max(0, i - 3), i) if norm[j] in ("hey", "hi", "hello")), w)
-            keep_out.append((hey["start"] - 0.6, w["end"] + 1.5))
-    segs, dropped, last = [], [], -1e9
+    facts = facts if facts is not None else planfit.Facts()
+    raw_segs, dropped = [], []
     for s in sorted(plan.get("segments", []), key=lambda s: pos.get(s.get("start"), 1e9)):
         a, b = s.get("start"), s.get("end")
         why = None
@@ -185,26 +203,24 @@ def validate(plan, video, sites):
             why = "word ids not in this cut"
         elif not any(h and h in str(s.get("url", "")) for h in hosts):
             why = "url is not one of the job's sites"
-        if why is None:
-            t0 = max(0.0, ids[a]["start"] - 0.25)
-            t1 = min(dur, ids[b]["end"] + 0.35)
-            for a, b in keep_out:
-                if t0 < b and a < t1:
-                    if a - t0 >= 3.0:
-                        t1 = a                     # end the screencast before the moment
-                    elif t1 - b >= 3.0:
-                        t0 = b                     # or start it after
-                    else:
-                        why = "covers a presenter moment (subscribe / link / name)"
-            if why is None and t1 - t0 < 2.5:
-                why = "shorter than 2.5 s"
-            elif t0 < last + 3.0:
-                why = "less than 3 s of A-roll after the previous screencast"
+        elif raw_segs and pos[a] <= pos[raw_segs[-1]["end"]]:
+            why = "overlaps the previous screencast"
         if why:
             dropped.append({**s, "dropped": why})
             continue
-        segs.append({**s, "t0": round(t0, 3), "t1": round(t1, 3)})
-        last = t1
+        raw_segs.append(s)
+    fitted = planfit.fit(raw_segs, video, facts, aroll_why=plan.get("aroll_why"),
+                         site_url=sites[0]["url"] if sites else None)
+    dropped += [{"start": None, "end": None, "dropped": f"beat seg-{d['seg']:02d} '{d['cue']}': {d['dropped']}"}
+                for d in fitted["dropped"]]
+    segs = []
+    for s in fitted["segments"]:
+        if s["t1"] - s["t0"] < planfit.MIN_SPAN:
+            dropped.append({**s, "dropped": "shorter than 2.5 s"})
+            continue
+        if segs and 0.05 < s["t0"] - segs[-1]["t1"] < planfit.MIN_GAP:
+            segs[-1]["t1"] = s["t0"]               # < 3 s of A-roll is a flash: the screens join instead
+        segs.append(s)
     ovs, last_end = [], -1e9
     for ev in sorted(plan.get("overlays", []), key=lambda e: pos.get(e.get("start"), 1e9)):
         a, b, t = ev.get("start"), ev.get("end"), ev.get("template")
@@ -240,12 +256,32 @@ def validate(plan, video, sites):
             continue
         ovs.append({**ev, "t0": round(t0, 3), "t1": round(t1, 3)})
         last_end = t1
-    return {"segments": segs, "overlays": ovs, "dropped": dropped}
+    return {"segments": segs, "overlays": ovs, "dropped": dropped, "plates": fitted["plates"],
+            "beats": fitted["beats"], "objects": fitted["objects"], "aroll_actions": fitted["aroll_actions"],
+            "structure": fitted["structure"]}
 
 
-def plan(video, sites, sponsored, knowledge=None):
-    raw, meta = call(build_prompt(video, sites, sponsored, knowledge), SYSTEM)
-    return validate(raw, video, sites), raw, meta
+def plan(video, sites, sponsored, knowledge=None, facts=None):
+    prompt = build_prompt(video, sites, sponsored, knowledge, facts)
+    raw, meta = call(prompt, SYSTEM)
+    out = validate(raw, video, sites, facts)
+    # G2 spec 5: an instructional stretch left on the presenter gets ONE repair call — segments for it,
+    # or the reason why not
+    todo = [x for x in out.get("aroll_actions", []) if x.get("segment") is None and not x.get("compiled")]
+    if todo and sites:
+        ask = "\n".join(f'- words {x["start"]}-{x["end"]} ({x["t0"]:.1f}-{x["t1"]:.1f} s): "{x["words"]}"' for x in todo)
+        more, m2 = call(prompt + f"""
+
+YOUR PLAN LEFT THESE INSTRUCTIONAL STRETCHES ON THE PRESENTER (he tells the viewer to upload/click/type/
+drag/select/open). Plan a screencast for each, using only existing features and produced assets, or say why
+it cannot be shown:
+{ask}
+Return ONLY {{"segments": [...], "aroll_why": [...]}} for these stretches.""", SYSTEM)
+        meta = {"usd": round(meta["usd"] + m2["usd"], 4), "seconds": meta["seconds"] + m2["seconds"]}
+        raw = {**raw, "segments": list(raw.get("segments", [])) + list(more.get("segments", [])),
+               "aroll_why": list(raw.get("aroll_why", [])) + list(more.get("aroll_why", []))}
+        out = validate(raw, video, sites, facts)
+    return out, raw, meta
 
 
 # ── recording scripts ─────────────────────────────────────────────────────────
