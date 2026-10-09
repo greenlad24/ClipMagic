@@ -579,7 +579,11 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
             if int(stale.stem.split("-")[1]) > len(e["videos"]):
                 stale.unlink()
         return f"{len(e['videos'])} preview(s)"
-    step("preview", do_preview, lambda: any(d.glob("preview-*.mp4")), rerun=(action == "render" or fmt == "short"))
+    factory = longedit.factory_mode(req)            # p8: no preview / 1080p compose — a 540p draft, then 4K
+    if longedit.wants_preview(req, fmt):
+        step("preview", do_preview, lambda: any(d.glob("preview-*.mp4")), rerun=(action == "render" or fmt == "short"))
+    else:
+        job.stage("preview", "skipped", "factory mode: the 540p draft replaces the 1080p preview")
 
     # 8c long-form: the FULL EDIT — screencasts (planned, recorded, camera-zoomed), facecam
     # bubble, overlays, A-roll camera, music bed (reference 2, kwysV2smgfY) → edit-NN.mp4
@@ -624,6 +628,18 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
             job.stage("compose", "skipped", "held — see the job message")
             raise Held(held)
 
+        def do_compose_factory():
+            out = []
+            for k, v in enumerate(e["videos"], 1):
+                try:
+                    r = longedit.factory_edit(d, k, v, fps, (info["width"], info["height"]), job.cancelled,
+                                              lambda m, f, k=k: job.progress(f"Video {k}: {m}", f),
+                                              room_tone_start=audio.room_tone(), workers=longedit.chunk_workers_of(req))
+                except (render.RenderCancelled, InterruptedError):
+                    raise Cancelled()
+                out.append("draft held, no 4K" if r["held"] else "4K final" if r["final"] else "draft")
+            return f"{len(e['videos'])} edit(s): " + ", ".join(out)
+
         def do_compose_long():
             size = render.preview_size(info["width"], info["height"])
             w, h = (int(x) for x in size.split(":"))
@@ -634,7 +650,7 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
                 except InterruptedError:
                     raise Cancelled()
             return f"{len(e['videos'])} edited video(s)"
-        step("compose", do_compose_long, rerun=True)
+        step("compose", do_compose_factory if factory else do_compose_long, rerun=True)
     elif fmt == "long":
         job.stage("graphics", "skipped", "press Build the edit (screencasts + graphics)")
         job.stage("compose", "skipped", "press Build the edit (screencasts + graphics)")
@@ -725,6 +741,19 @@ def run_final_long(job):
                            f"needs about {need / 1e9:.0f} GB")
     edited = all((d / f"edit-{k:02d}" / "direct.json").exists() for k in range(1, len(e["videos"]) + 1))
     job.stage("final", "running")
+    if edited and longedit.factory_mode(job.req):
+        # factory mode: the 4K final of each draft that shipped, in chunks (unchanged chunks reused);
+        # a held draft gets no 4K render
+        made = 0
+        for k, v in enumerate(e["videos"], 1):
+            try:
+                made += bool(longedit.factory_final(d, k, v, fps, (w, h), job.cancelled,
+                                                    lambda m, f, k=k: job.progress(f"Final {k}: {m}", f),
+                                                    audio.room_tone(), longedit.chunk_workers_of(job.req)))
+            except (render.RenderCancelled, InterruptedError):
+                raise Cancelled()
+        job.stage("final", "done", f"{made} final video(s) at {w}×{h}" + ("" if made == len(e["videos"]) else " (held edits get none)"))
+        return
     for k, v in enumerate(e["videos"], 1):
         label = f"Final {k} of {len(e['videos'])} ({w}×{h})"
         if edited:

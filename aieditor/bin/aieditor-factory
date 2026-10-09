@@ -4,8 +4,11 @@
   aieditor-factory status      settings, snapshot, tagged droplets + leases (no secrets)
   aieditor-factory image       (re)build the factory snapshot: images + models baked in
   aieditor-factory smoke       create a job server from the snapshot, check it, destroy it
-  aieditor-factory trial <job dir> <action>…   run actions for a job folder OUTSIDE the
-                               Lab's list on a factory server (speed trial); prints timings
+  aieditor-factory trial [--factory|--no-factory] [--workers N] <job dir> <action>…
+                               run actions for a job folder OUTSIDE the Lab's list on a factory
+                               server (speed trial); prints timings. --factory = factory mode (no
+                               preview / 1080p compose: a 540p draft, the 4K final only if it ships,
+                               chunked); --workers = chunks rendered at once (default: per CPU)
   aieditor-factory watchdog    destroy tagged droplets nobody holds (systemd timer, 5 min)
   aieditor-factory enable|disable
 """
@@ -58,8 +61,40 @@ def smoke():
         log(f"total {time.time() - t0:.0f}s")
 
 
-def trial(job_dir, actions):
+def trial_options(argv):
+    """[--factory|--no-factory] [--workers N] <job dir> <action>… -> (job dir, actions, request.json updates)"""
+    upd, rest = {}, []
+    it = iter(argv)
+    for a in it:
+        if a in ("--factory", "--no-factory"):
+            upd["factory"] = a == "--factory"
+        elif a == "--workers" or a.startswith("--workers="):
+            n = int(a.split("=", 1)[1] if "=" in a else next(it))
+            if n < 1:
+                raise ValueError("--workers must be at least 1")
+            upd["chunk_workers"] = n
+        else:
+            rest.append(a)
+    if not rest:
+        raise ValueError("trial needs a job dir")
+    return rest[0], rest[1:], upd
+
+
+def set_request(job_dir, upd):
+    """The factory flag + worker count travel in the job's request.json (rsynced to the server, read by the
+    worker: longedit.factory_mode / chunk_workers_of)."""
+    if not upd:
+        return
+    p = Path(job_dir) / "request.json"
+    req = json.loads(p.read_text())
+    req.update(upd)
+    p.write_text(json.dumps(req, indent=1))
+    log("request: " + ", ".join(f"{k}={v}" for k, v in upd.items()))
+
+
+def trial(job_dir, actions, upd=None):
     job_dir = Path(job_dir).resolve()
+    set_request(job_dir, upd)
     for action in actions:
         t0 = time.time()
         tail = cloud.run_remote(job_dir, action, log, lambda: (job_dir / "cancel").exists())
@@ -83,7 +118,8 @@ def main(argv):
     elif cmd == "smoke":
         smoke()
     elif cmd == "trial":
-        return trial(argv[2], argv[3:])
+        job_dir, actions, upd = trial_options(argv[2:])
+        return trial(job_dir, actions, upd)
     elif cmd == "watchdog":
         cloud.watchdog(log)
         # the Lab's "Rebuild server image" button drops a request file; build it here (host side)
