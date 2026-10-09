@@ -58,7 +58,8 @@ export function workflowOf(req: any): Workflow {
 /**
  * Where source.mp4 comes from — request.json "source.kind" (the worker: aieditor/sources.py).
  *   descript  a Descript share link, downloaded (every job before 2026-10-08)
- *   job       a finished Lab edit of workflow 1 (final-NN.mp4, else preview-NN.mp4)
+ *   job       a finished Lab edit of workflow 1 (final-NN.mp4, else preview-NN.mp4) — a
+ *             preview only when its cut was reviewed (REVIEW GATE below)
  *   upload    a file uploaded from the computer (aieditor/uploads.ts)
  * The last two are hard-linked into the job on the host. Jake 2026-10-08: the creative
  * workflow may start from any of the three; the cut workflow keeps Descript only.
@@ -316,6 +317,8 @@ export interface CreateInput {
   workflow?: string;
   /** where the heavy steps run: "auto" (a factory server when the factory is on), "factory", "box" */
   runOn?: string;
+  /** Jake's explicit "use it anyway" for a Lab edit that is an unreviewed automatic cut (REVIEW GATE) */
+  allowUnreviewed?: boolean;
 }
 
 export type RunOn = "auto" | "factory" | "box";
@@ -341,6 +344,47 @@ function parseSites(raw: unknown): { url: string; note: string }[] {
   return out;
 }
 
+/**
+ * ⚠️ REVIEW GATE (Jake 2026-10-09: "it also did cuts inside the narration that I didn't ask
+ * for"). A cut job writes preview-NN.mp4 as soon as its AUTOMATIC cut exists, before Jake has
+ * seen one removal; the factory edit he watched started from such a preview (factory-e2e-test:
+ * 53 joins incl. 3 whole sentences, review.json edited:false, no final). Mirrors
+ * aieditor/sources.py review_status():
+ *   final       the final itself, or a preview whose final-NN.mp4 exists
+ *   reviewed    review.json edited:true (Jake changed the cut) or approved:true
+ *   verified    wordiff.json: a factory-policy cut with 0 unapproved removals
+ *   unreviewed  anything else — "Unreviewed automatic cut"; a creative edit may start from it
+ *               only with allowUnreviewed (Jake's explicit tick)
+ */
+export type ReviewStatus = "final" | "reviewed" | "verified" | "unreviewed";
+export const REVIEW_LABEL: Record<ReviewStatus, string> = {
+  final: "Final render",
+  reviewed: "Reviewed cut",
+  verified: "Factory cut — every word kept",
+  unreviewed: "Unreviewed automatic cut",
+};
+const ACCEPTED: ReviewStatus[] = ["final", "reviewed", "verified"];
+
+/** Pure: the review status of one video file of a cut job + the spoken words its joins removed. */
+export function reviewStatusOf(
+  file: string, hasFinal: boolean, review: any, edl: any, wordiff: any,
+): { review: ReviewStatus; removedWords: number | null; removals: number | null } {
+  const m = /^(final|preview)-(\d{2})\.mp4$/.exec(file);
+  const k = m ? Number(m[2]) : 1;
+  const v = edl?.videos?.[k - 1];
+  const joins: any[] = Array.isArray(v?.joins) ? v.joins : [];
+  const words = (j: any) => String(j?.removed ?? "").split(/\s+/).filter(Boolean).length;
+  const removedWords = v ? joins.reduce((n, j) => n + words(j), 0) : null;
+  const removals = v ? joins.filter((j) => words(j) > 0).length : null;
+  const out = { removedWords, removals };
+  if (m?.[1] === "final" || hasFinal) return { review: "final", ...out };
+  if (review?.edited === true || review?.approved === true) return { review: "reviewed", ...out };
+  if (wordiff?.policy === "factory" && wordiff?.unapproved === 0 && "approved_by" in wordiff) {
+    return { review: "verified", ...out };
+  }
+  return { review: "unreviewed", ...out };
+}
+
 /** A finished Lab edit of workflow 1 that may be a creative edit's source. */
 export interface LabEdit {
   id: string;
@@ -350,6 +394,8 @@ export interface LabEdit {
   videos: {
     file: string; k: number; quality: "final" | "preview"; title: string | null;
     duration: number | null; width: number | null; height: number | null; bytes: number; modifiedAt: number;
+    /** see REVIEW GATE; label = what the picker says ("Unreviewed automatic cut") */
+    review: ReviewStatus; reviewLabel: string; removedWords: number | null; removals: number | null;
   }[];
 }
 
@@ -377,6 +423,8 @@ export async function listLabEdits(): Promise<LabEdit[]> {
     if (!req || workflowOf(req) !== "cut") continue;
     const src = await readJson<any>(path.join(dir, "source.json"));
     const edl = await readJson<any>(path.join(dir, "edl.json"));
+    const review = await readJson<any>(path.join(dir, "review.json"));
+    const wordiff = await readJson<any>(path.join(dir, "wordiff.json"));
     const byK = new Map<number, LabEdit["videos"][number]>();
     let files: string[] = [];
     try { files = await fsp.readdir(dir); } catch { continue; }
@@ -393,10 +441,12 @@ export async function listLabEdits(): Promise<LabEdit[]> {
       if (have && have.quality === quality && have.modifiedAt >= st.mtimeMs / 1000) continue;
       const v = edl?.videos?.[k - 1];
       const [width, height] = dimsOf(quality, src);
+      const rs = reviewStatusOf(f, files.includes(`final-${m[2]}.mp4`), review, edl, wordiff);
       byK.set(k, {
         file: f, k, quality, title: v?.title ?? null,
         duration: Number.isFinite(Number(v?.duration)) ? Number(v.duration) : null,
         width, height, bytes: st.size, modifiedAt: st.mtimeMs / 1000,
+        review: rs.review, reviewLabel: REVIEW_LABEL[rs.review], removedWords: rs.removedWords, removals: rs.removals,
       });
     }
     if (!byK.size) continue;
@@ -414,7 +464,8 @@ export async function listLabEdits(): Promise<LabEdit[]> {
 
 /** The request.json "source" for a new job, validated (path-safe names, the file exists). */
 export async function parseSource(input: CreateInput, workflow: Workflow): Promise<
-  { kind: "descript"; url: string } | { kind: "job"; job: string; file: string; title: string }
+  { kind: "descript"; url: string }
+  | { kind: "job"; job: string; file: string; title: string; allow_unreviewed?: true }
   | { kind: "upload"; upload: string; name: string }
 > {
   const kind: SourceKind = input.source?.kind === "job" || input.source?.kind === "upload" ? input.source.kind : "descript";
@@ -431,7 +482,24 @@ export async function parseSource(input: CreateInput, workflow: Workflow): Promi
     const st = await fsp.lstat(path.join(JOBS, job, file)).catch(() => null);
     if (!st?.isFile() || st.size === 0) throw new Error(`That Lab edit has no ${file}.`);
     const src = await readJson<any>(path.join(JOBS, job, "source.json"));
-    return { kind, job, file, title: String(req.title || src?.title || job).slice(0, 120) };
+    const hasFinal = /^preview-/.test(file)
+      ? !!(await fsp.lstat(path.join(JOBS, job, file.replace(/^preview-/, "final-"))).catch(() => null))?.isFile()
+      : false;
+    const rs = reviewStatusOf(file, hasFinal,
+      await readJson<any>(path.join(JOBS, job, "review.json")),
+      await readJson<any>(path.join(JOBS, job, "edl.json")),
+      await readJson<any>(path.join(JOBS, job, "wordiff.json")));
+    const title = String(req.title || src?.title || job).slice(0, 120);
+    if (!ACCEPTED.includes(rs.review)) {
+      if (input.allowUnreviewed !== true) {
+        throw new Error(
+          `That Lab edit is an unreviewed automatic cut${rs.removedWords ? ` (${rs.removedWords} spoken words removed)` : ""}. ` +
+          "Review it in the Lab first, or tick “Use it anyway”.",
+        );
+      }
+      return { kind, job, file, title, allow_unreviewed: true };
+    }
+    return { kind, job, file, title };
   }
   if (kind === "upload") {
     const upload = String(input.source?.upload ?? "");

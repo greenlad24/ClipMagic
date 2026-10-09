@@ -8,7 +8,9 @@
  *   control.ts   createJob source validation: a Lab edit (cut workflow only, strict names, the
  *                file must exist), an upload (complete, claimed by one job only), the cut
  *                workflow keeps Descript only; listLabEdits (final > preview, per video, cut
- *                jobs only, _uploads ignored); stage title of the "download" stage
+ *                jobs only, _uploads ignored); stage title of the "download" stage; the
+ *                REVIEW GATE (an unreviewed automatic cut is labelled and refused without
+ *                allowUnreviewed — factory-e2e-test fixture)
  * Run:
  *   cd lab/server && npx tsx src/scripts/aieditor-sources.test.ts
  */
@@ -211,6 +213,60 @@ async function main() {
     assert.equal((await ctl.getJob(jid)).stageList[0].title, "Use the uploaded file");
     await rejects(ctl.createJob({ ...base, source: { kind: "upload", upload: id } }), /already used by another job/);
     await rejects(up.cancelUpload(id), /already uses/, 409);
+  });
+  // ── REVIEW GATE: the factory-e2e-test fixture = the cut Jake's factory edit started from
+  // (no_edit, review.json edited:false, no final; 53 joins: So 32, uh 6, um 1, pause-only 8,
+  // 3 whole sentences, 3 asides = 45 removals, 49 words) ──
+  const e2eJoins = [
+    ...Array.from({ length: 32 }, () => ({ removed: "So" })),
+    ...Array.from({ length: 6 }, () => ({ removed: "uh," })),
+    { removed: "um," },
+    ...Array.from({ length: 8 }, () => ({ removed: "" })),
+    { removed: "Cool." }, { removed: "Try for yourself." }, { removed: "Okay." },
+    { removed: "I'm talking about" }, { removed: "Hold," }, { removed: "It's," },
+  ];
+  w("factory-e2e-test/request.json", { id: "factory-e2e-test", title: "Factory end-to-end test (delete me)", format: "long", no_edit: true, created_at: 500 });
+  w("factory-e2e-test/source.json", { width: 3840, height: 2160 });
+  w("factory-e2e-test/edl.json", { videos: [{ title: "ChatGPT Images 2.5", duration: 880.2, joins: e2eJoins }] });
+  w("factory-e2e-test/review.json", { edited: false, videos: [] });
+  w("factory-e2e-test/preview-01.mp4", "P");
+  await check("reviewStatusOf: final / reviewed / verified / unreviewed (pure)", () => {
+    const edl = { videos: [{ joins: [{ removed: "So" }, { removed: "" }, { removed: "Try for yourself." }] }] };
+    assert.deepEqual(ctl.reviewStatusOf("preview-01.mp4", false, { edited: false }, edl, null),
+      { review: "unreviewed", removedWords: 4, removals: 2 });
+    assert.equal(ctl.reviewStatusOf("preview-01.mp4", true, null, edl, null).review, "final");
+    assert.equal(ctl.reviewStatusOf("final-01.mp4", false, null, edl, null).review, "final");
+    assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, { edited: true }, edl, null).review, "reviewed");
+    assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, { approved: true }, edl, null).review, "reviewed");
+    assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, null, edl, { policy: "factory", unapproved: 0, approved_by: null }).review, "verified");
+    assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, null, edl, { policy: "factory", unapproved: 3, approved_by: null }).review, "unreviewed");
+    assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, null, null, null).removedWords, null);
+  });
+  await check("listLabEdits labels factory-e2e-test an Unreviewed automatic cut (49 words removed)", async () => {
+    const edits = await ctl.listLabEdits();
+    const e2e = edits.find((e) => e.id === "factory-e2e-test")!;
+    assert.ok(e2e, "listed (it can still be picked with Jake's tick)");
+    assert.deepEqual([e2e.videos[0].review, e2e.videos[0].reviewLabel, e2e.videos[0].removedWords, e2e.videos[0].removals],
+      ["unreviewed", "Unreviewed automatic cut", 49, 45]);
+    const lin = edits.find((e) => e.id === "linearity-10050728-8866")!;
+    assert.equal(lin.videos[0].review, "final");
+    const sh = edits.find((e) => e.id === "shorts-t7-1005-aaaa")!;
+    assert.deepEqual(sh.videos.map((v) => v.review), ["final", "unreviewed"]);     // preview-02 has no final-02
+    assert.equal(edits.find((e) => e.id === "onlypreview-1005-bbbb")!.videos[0].review, "unreviewed");
+  });
+  await check("createJob refuses an unreviewed automatic cut unless Jake ticks “use it anyway”", async () => {
+    const src = { kind: "job", job: "factory-e2e-test", file: "preview-01.mp4" };
+    await rejects(ctl.createJob({ ...base, source: src }), /unreviewed automatic cut \(49 spoken words removed\)/);
+    await rejects(ctl.createJob({ ...base, source: src, allowUnreviewed: "yes" as any }), /unreviewed automatic cut/);
+    const { id: jid } = await ctl.createJob({ ...base, source: src, allowUnreviewed: true });
+    const req = JSON.parse(fs.readFileSync(path.join(jobs, jid, "request.json"), "utf8"));
+    assert.deepEqual(req.source, { ...src, title: "Factory end-to-end test (delete me)", allow_unreviewed: true });
+    // Jake approves the cut as it is: accepted, no override recorded
+    w("factory-e2e-test/review.json", { edited: false, approved: true, videos: [] });
+    const { id: j2 } = await ctl.createJob({ ...base, source: src });
+    const r2 = JSON.parse(fs.readFileSync(path.join(jobs, j2, "request.json"), "utf8"));
+    assert.equal(r2.source.allow_unreviewed, undefined);
+    assert.equal((await ctl.listLabEdits()).find((e) => e.id === "factory-e2e-test")!.videos[0].review, "reviewed");
   });
   await check("sweep: removes uploads idle > 2 days, keeps one a job still waits for", async () => {
     const old = await up.createUpload({ name: "old.mp4", size: 3 });

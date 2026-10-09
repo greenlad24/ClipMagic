@@ -3877,13 +3877,18 @@ export type AutoSourceInput = { kind: 'job'; job: string; file: string } | { kin
 export const autoEditorCreate = endpoint<{
   url?: string; source?: AutoSourceInput; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string;
   title?: string; sites?: string; runOn?: AutoRunOn;
+  /** Jake's explicit "use it anyway" for a Lab edit that is an unreviewed automatic cut */
+  allowUnreviewed?: boolean;
 }, { id: string }>("autoEditorCreate");
+/** control.ts REVIEW GATE: only a final / reviewed / verified cut is a creative source by default */
+export type AutoReviewStatus = 'final' | 'reviewed' | 'verified' | 'unreviewed';
 /** A finished edit of workflow 1 — per video final-NN.mp4, else the newest preview-NN.mp4 (1080p). */
 export interface AutoLabEdit {
   id: string; title: string; format: 'short' | 'long' | null; createdAt: number | null;
   videos: {
     file: string; k: number; quality: 'final' | 'preview'; title: string | null;
     duration: number | null; width: number | null; height: number | null; bytes: number; modifiedAt: number;
+    review: AutoReviewStatus; reviewLabel: string; removedWords: number | null; removals: number | null;
   }[];
 }
 export const autoEditorLabEdits = endpoint<Record<string, never>, { edits: AutoLabEdit[] }>("autoEditorLabEdits");
