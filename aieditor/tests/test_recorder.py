@@ -516,6 +516,17 @@ check(any(p[2] == "reveal" for p in cam), "the result is revealed (K2) in the ta
 send_cam = [m["action"] for m in p10.sent if m.get("cmd") == "act" and m["action"].get("beat_id") == "b3" and m["action"]["type"] == "click"]
 check(send_cam and all(a.get("press") is False for a in send_cam), "the send is a dry press (no generation on camera)")
 
+# the ONE live generation is never pressed twice: a live beat failing after its press holds the segment
+live = dict(SEG, beats=SEG["beats"][:2] + [beat("b3", "two", "send", live=True,
+                                                wait_talk={"t0": wid("the", 1)["start"], "t1": wid("right")["start"] + 0.3})])
+w11 = TMP / "e11"
+p11 = FakePage(w11, fail_wait=True)
+out, _ = rec(w11, p11, plan_segs=[live], media=FakeMedia())
+sends = [m for m in p11.sent if m.get("cmd") == "act" and m["action"].get("beat_id") == "b3" and m["action"]["type"] == "click"
+         and m["action"].get("press") is not False]
+check(out["segments"][0]["status"] == "held" and "second live generation" in out["segments"][0]["why"], f"live failure held: {out['segments'][0]}")
+check(len(sends) == 1, f"the live send was pressed once ({len(sends)})")
+
 # ── 7. the elastic assembler on frames (short-lived screencast-image containers) ──
 IMAGE = config.SC_IMAGE
 

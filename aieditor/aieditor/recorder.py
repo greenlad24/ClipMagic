@@ -954,6 +954,13 @@ class Recorder:
                 else:
                     sess.send({"cmd": "abort"})
                     shutil.rmtree(self.w / out_rel, ignore_errors=True)
+                if isinstance(e, Retake) and sc["beats"][kf].get("live"):
+                    # the ONE live generation was already pressed on camera: a retake would generate a second time
+                    # in the account (spacing / 'Unusual activity', <= 1 live generation per video) -> held
+                    shutil.rmtree(rec, ignore_errors=True)
+                    set_state(sd, takes=state["takes"], beat_retakes=state["beat_retakes"], beat_log=state.get("log", []))
+                    return self._status(sd, "held", seg, f"the live generation beat {sc['beats'][kf]['id']} failed after its "
+                                        f"press ({str(e)[:200]}); a second live generation is not allowed", beats=[{"beat": sc["beats"][kf]["id"]}])
                 n = state["beat_retakes"].get(sc["beats"][kf]["id"], 0) + 1
                 state["beat_retakes"][sc["beats"][kf]["id"]] = n
                 ev = {"beat": sc["beats"][kf]["id"], "retake": n, "why": str(e)[:300]}
@@ -1050,6 +1057,10 @@ class Recorder:
         bid, t0, t1 = windows[k]
         n = state["beat_retakes"].get(bid, 0) + 1
         if n > MAX_BEAT_RETAKES:
+            return False
+        if sc["beats"][k].get("live"):
+            self.log(f"recorder: beat {bid} is the live generation — not re-recorded (a second live generation is not "
+                     "allowed); compose salvages around it")
             return False
         state["beat_retakes"][bid] = n
         state.setdefault("log", []).append({"beat": bid, "retake": n, "why": str(why)[:300]})
