@@ -1069,7 +1069,9 @@ def main():
                 pass
         # factory jobs wait (never drop to the main box) while every server slot is taken
         # or the rolling $20/24 h cap is reached
-        return cloud.busy() >= cloud.settings()["max_parallel"] or cloud.over_daily_cap()
+        # Jake: always a 32-core server — with none free in the region, the job waits queued
+        return (cloud.busy() >= cloud.settings()["max_parallel"] or cloud.over_daily_cap()
+                or not cloud.capacity_ok())
 
     last_chain = 0.0
     while not STOP:

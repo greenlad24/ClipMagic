@@ -772,9 +772,25 @@ def run_remote(job_dir, action, log, cancelled):
             ACTIVE.pop(jid, None)
 
 
-SIZE_FALLBACKS = ["c-32", "c2-32vcpu-64gb", "c-16", "c2-16vcpu-32gb", "g-16vcpu-64gb",
-                  "s-8vcpu-32gb-amd", "s-8vcpu-32gb-640gb-intel", "s-8vcpu-16gb-amd"]
+# Jake 2026-10-09: "I always want a 32-core" — only 32-vCPU sizes; never a smaller server.
+SIZE_FALLBACKS = ["c-32", "c2-32vcpu-64gb"]
 _PRICES = {}
+_CAP = {"at": 0.0, "ok": True}
+
+
+def capacity_ok(max_age=60):
+    """Is a 32-core size available in the region right now? Cached for max_age s (the worker asks
+    every loop). With no capacity the worker leaves factory jobs QUEUED and asks again later."""
+    now = time.time()
+    if now - _CAP["at"] < max_age:
+        return _CAP["ok"]
+    try:
+        pick_size(settings(), log=lambda *_: None)
+        ok = True
+    except DOError as e:
+        ok = "no factory-size server" not in str(e)
+    _CAP.update(at=now, ok=ok)
+    return ok
 
 
 def pick_size(s, log=print):
