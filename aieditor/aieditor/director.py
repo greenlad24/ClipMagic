@@ -423,14 +423,29 @@ def _json_answer(text):
         return json.loads(m.group(0))
 
 
+PLAN_MAX_TOKENS = 64000
+
+
 def plan_call(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None, msgs=None):
     """THE plan call: one Opus request, effort high, the answer constrained to plan_schema(apps).
     msgs = the whole conversation for a re-ask (append-only). → (answer dict, reply)."""
     if msgs is None:
         msgs = [{"role": "user", "content": plan_prompt(video, apps, facts, sponsored, knowledge, rulebook)}]
     n = sum(1 for m in msgs if m["role"] == "user")
-    r = llm.messages(PLAN_MODEL, PLAN_SYSTEM, None, 32000, effort="high", msgs=msgs, schema=plan_schema(apps),
-                     stage="preprod.plan", purpose="Claude plan call (high effort)" + (f" — re-ask {n - 1}" if n > 1 else ""))
+    tag = f" — re-ask {n - 1}" if n > 1 else ""
+    # 2026-10-09: a 15-min narration spent all 32k output tokens (thinking + plan) and returned no answer,
+    # so the hand-off job failed on an empty reply. Room for a long plan, streamed; if the ceiling is
+    # still hit, one retry at medium effort (less thinking, same schema) instead of failing the job.
+    r = llm.messages(PLAN_MODEL, PLAN_SYSTEM, None, PLAN_MAX_TOKENS, effort="high", msgs=msgs, schema=plan_schema(apps),
+                     stage="preprod.plan", purpose="Claude plan call (high effort)" + tag, stream=True)
+    if r.get("stop_reason") == "max_tokens" or not (r.text or "").strip():
+        events.emit("log", f"plan call hit its {PLAN_MAX_TOKENS}-token ceiling without a full answer — "
+                    "retrying once at medium effort", level="warn")
+        r2 = llm.messages(PLAN_MODEL, PLAN_SYSTEM, None, PLAN_MAX_TOKENS, effort="medium", msgs=msgs,
+                          schema=plan_schema(apps), stage="preprod.plan", stream=True,
+                          purpose="Claude plan call (medium effort, after the token ceiling)" + tag)
+        r2["usd"] = round(float(r2.get("usd") or 0) + float(r.get("usd") or 0), 5)
+        r = r2
     return _json_answer(r.text), r
 
 
