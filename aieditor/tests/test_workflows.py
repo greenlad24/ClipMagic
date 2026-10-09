@@ -21,6 +21,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import os  # noqa: E402
+# never the live API ledger / caps: preprod_factory's fake Claude calls are priced and logged like real ones
+os.environ.setdefault("AIEDITOR_API_LEDGER", str(Path(tempfile.mkdtemp(prefix="wf-ledger-")) / "api.jsonl"))
 from aieditor import edl, events  # noqa: E402
 
 N = 0
