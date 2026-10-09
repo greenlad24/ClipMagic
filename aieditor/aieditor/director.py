@@ -202,11 +202,11 @@ def validate_overlays(overlays, video, segs):
 
 
 
-def plan(video, sites, sponsored, knowledge=None, facts=None, playbooks=None, rulebook=None):
+def plan(video, sites, sponsored, knowledge=None, facts=None, playbooks=None, rulebook=None, handoff=False):
     """The whole decision: the plan call + check (re-asks) and the overlay call. → (plan, raw, meta) where plan
     is validate()'s recorder form + "needs_primitive" / "held" / "plan_check", raw is what validate re-reads on
     every run (segments + their schema beats, aroll whys, overlays)."""
-    res = plan_and_check(video, sites, facts, sponsored, knowledge, playbooks, rulebook)
+    res = plan_and_check(video, sites, facts, sponsored, knowledge, playbooks, rulebook, handoff=handoff)
     raw = res["raw"] or {"segments": [], "aroll_why": [], "plates": [], "overlays": []}
     segs = (res["checked"] or {}).get("segments", [])
     ovs, r2 = overlay_plan(video, segs, sponsored)
@@ -271,7 +271,7 @@ def _host(url):
     return re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0].lower()
 
 
-def apps_for(sites, playbooks=None):
+def apps_for(sites, playbooks=None, proven_only=True):
     """{app: {"pb": playbook | None, "actions": {id: action} PROVEN only (rules.json playbooks.allow_unproven),
     "url": start url, "hosts": [...]}} for the job's sites. A site with no playbook is a 'web:<host>' app: only
     the code primitives (camera.zoom, outside.goto). playbooks = {app: playbook dict} (tests), default = the
@@ -290,7 +290,7 @@ def apps_for(sites, playbooks=None):
         if pb:
             aid = pb["app"]
             if aid not in apps:
-                apps[aid] = {"pb": pb, "actions": playbook.actions(pb), "url": pb.get("start_state", {}).get("url") or s["url"],
+                apps[aid] = {"pb": pb, "actions": playbook.actions(pb, proven_only=proven_only), "url": pb.get("start_state", {}).get("url") or s["url"],
                              "hosts": list(pb.get("hosts", []))}
         else:
             apps.setdefault(f"web:{h}", {"pb": None, "actions": {}, "url": s["url"], "hosts": [h]})
@@ -564,7 +564,7 @@ def _err(code, msg, sent=None, word_ids=None, proposed=None):
             "proposed": proposed}
 
 
-def check_plan(ans, video, apps, facts=None, sites=()):
+def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
     """Checkpoint 1. → (errors, info) — errors [{code, msg, sentence, word_ids, proposed}], info {"plan": the
     normalized plan, "raw": to_raw, "checked": validate() output}. Pure code, no call."""
     facts = facts if facts is not None else planfit.Facts()
@@ -613,7 +613,8 @@ def check_plan(ans, video, apps, facts=None, sites=()):
                            if act in known else "no such action") + ") — needs_primitive, never an improvised step")
                 errs.append(_err("action", f"{where}: {why}", sent, proposed={"needs_primitive": act}))
             ids = [x for x in (bt.get("asset_id"), bt["subject"][6:] if str(bt["subject"]).startswith("asset:") else None) if x]
-            for x in ids:
+            # hand-off: a human editor records the screencasts — an asset is a note for them, not a file we need
+            for x in ([] if handoff else ids):
                 if x not in assets:
                     errs.append(_err("asset", f"{where}: asset '{x}' was not produced (produced: {sorted(assets)})", sent))
                 elif x not in usable:
@@ -753,22 +754,30 @@ def as_needs_primitive(errors):
 
 
 def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, playbooks=None, rulebook=None,
-                   max_reasks=None):
+                   max_reasks=None, handoff=False):
     """The single plan call + checkpoint 1: ask, check, re-ask with the error list (<= config.PLAN_REASKS
     times). → {"answer", "plan", "raw", "checked", "attempts", "needs_primitive", "held", "calls", "usd", "seconds"}.
     held = something is still missing (needs_primitive): the job stops with the list — never A-roll filler."""
     max_reasks = config.PLAN_REASKS if max_reasks is None else max_reasks
-    apps = apps_for(sites, playbooks)
+    # hand-off (graphics only): the screencast beats are INSTRUCTIONS for a human editor, so every known action
+    # of the app may be named, proven or not (2026-10-09: the proven-only list rejected 120 beats of a hand-off
+    # plan and each re-ask grew towards the token ceiling)
+    apps = apps_for(sites, playbooks, proven_only=not handoff)
     t0 = time.time()
     msgs = [{"role": "user", "content": plan_prompt(video, apps, facts, sponsored, knowledge, rulebook)}]
     attempts, usd, info, errs, ans = [], 0.0, {}, [], {}
     for n in range(max_reasks + 1):
         ans, r = plan_call(video, apps, facts, msgs=msgs)
         usd += r["usd"]
-        errs, info = check_plan(ans, video, apps, facts, sites)
+        errs, info = check_plan(ans, video, apps, facts, sites, handoff=handoff)
         attempts.append({"answer": n + 1, "errors": errs, "usd": r["usd"]})
-        events.emit("log", f"plan check {n + 1}/{max_reasks + 1}: " + (f"{len(errs)} error(s)" if errs else "pass"),
-                    level="warn" if errs else "info")
+        by = {}
+        for e in errs:
+            by[e["code"]] = by.get(e["code"], 0) + 1
+        events.emit("log", f"plan check {n + 1}/{max_reasks + 1}: " + (
+            f"{len(errs)} error(s) — " + ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda x: -x[1]))
+            + " — e.g. " + "; ".join(e["msg"][:160] for e in errs[:3]) if errs else "pass"),
+            level="warn" if errs else "info")
         if not errs:
             break
         if n < max_reasks:
