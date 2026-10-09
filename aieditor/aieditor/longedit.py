@@ -847,19 +847,10 @@ def _video(d, k):
 
 
 def pick_music(base_path):
-    """Jake's library (Lab music tracks copied to /opt/aieditor-work/music). The bed sits
-    ~23 LU under the voice (reference 2), no ducking. None if the library is empty."""
-    tracks = sorted(p for p in MUSIC_DIR.glob("*") if p.suffix.lower() in (".wav", ".mp3", ".m4a", ".ogg", ".flac"))
-    if not tracks:
-        return None
-    t = tracks[0]
-    meta = MUSIC_DIR / f"{t.name}.lufs"
-    if meta.exists():
-        lufs = float(meta.read_text())
-    else:
-        out = subprocess.run(["docker", "run", "--rm", "-v", f"{MUSIC_DIR}:/m", "--entrypoint", "sh", config.FFMPEG_IMAGE, "-c",
-                              f"ffmpeg -hide_banner -nostats -i '/m/{t.name}' -af ebur128 -f null - 2>&1 | grep -E '^ +I:' | tail -1"],
-                             capture_output=True, text=True).stdout
-        lufs = float(out.split()[1]) if out.split() else -14.0
-        meta.write_text(str(lufs))
-    return {"path": str(t), "gain_db": compose_long.music_gain(VOICE_LUFS, lufs), "fade_in": 1.0, "fade_out": 1.0}
+    """The job's music bed (aieditor/music.py): request.json "music" — a library track, Auto (the library
+    default) or "none" — loudness-matched ~23 LU under the voice (reference 2) + the job's gain_lu, no
+    ducking. `base_path` is a file in the job folder. None = no music (chosen, or an empty library)."""
+    from . import music
+    m = music.pick(Path(base_path).parent)
+    ev_log.emit("log", f"music: {music.describe(m)}")
+    return m

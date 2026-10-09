@@ -146,6 +146,7 @@ def creative_request(cut_id, cut_req, title, jid):
         "sites": cut_req.get("sites") or [],
         "run_on": cut_req.get("run_on") or "auto",
         "chained_from": cut_id,
+        **({"music": cut_req["music"]} if isinstance(cut_req.get("music"), dict) else {}),   # aieditor/music.py
         "created_at": _now(),
     }
 

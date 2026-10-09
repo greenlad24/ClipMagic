@@ -290,6 +290,8 @@ def run_job(job, action):
 
     if action == "final" and not handoff.wanted(req):      # (a hand-off job: its package IS the deliverable)
         return run_final(job, fmt)
+    if action == "remusic":                                 # "Change music": the sound only (aieditor/music.py)
+        return run_remusic(job)
 
     # 1 download (a Descript link) — or a Lab edit / an uploaded file already on this volume:
     # hard-linked into the job as source.mp4 (aieditor/sources.py; for a factory job that
@@ -879,7 +881,24 @@ def run_final_long(job):
     job.stage("final", "done", f"{len(e['videos'])} final video(s) at {w}×{h}")
 
 
-QUICK = ("rebuild", "recut")     # Jake's edits: cut + sound check, minutes
+def run_remusic(job):
+    """Queue action "remusic" (Lab: "Change music" on a finished job): every finished output gets the music
+    request.json "music" asks for — a new soundtrack under the same picture (stream copy), the hand-off's
+    music stem + preview sound + zip. Nothing is re-recorded, re-planned, re-aligned or re-cut; on the box
+    (no heavy render: the cut's sound alone + remuxes)."""
+    from aieditor import music
+    job.stage("music", "running")
+    job.progress("Changing the music…", 0)
+    job.log("stage music start")
+    try:
+        note = music.remusic(job.d, job.cancelled, lambda m=None, f=None: job.progress(m, f), job.log)
+    except (render.RenderCancelled, InterruptedError):
+        raise Cancelled()
+    job.log(f"stage music done {note}")
+    job.stage("music", "done", note)
+
+
+QUICK = ("rebuild", "recut", "remusic")     # Jake's edits: cut + sound check / a music change, minutes
 
 
 def claim(skip=None):
@@ -1040,6 +1059,14 @@ def execute_cloud(job, action):
             how = sources.materialise(job.d, job.req, config.JOBS)
             if how:
                 note(f"source placed in the job folder ({'hard link, no copy' if how == 'link' else 'copied'})")
+            # the chosen music travels with the job (the server image's library may be older): aieditor/music.py
+            try:
+                from aieditor import music
+                tid = music.materialise(job.d, job.req)
+                if tid:
+                    note(f"music: {tid} placed in the job folder")
+            except Exception as exc:                          # noqa: BLE001 — the server's own library then
+                note(f"music: could not place the track in the job folder ({str(exc)[:200]})", "warn")
         except sources.SourceError as exc:
             note(f"source: {exc}", "error")
             j = Job(job.d)
