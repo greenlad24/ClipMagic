@@ -12,9 +12,8 @@ import base64
 import json
 import re
 import time
-import urllib.request
 
-from . import config, events, planfit
+from . import config, events, llm, planfit
 
 MODEL = config.TAKES_MODEL
 PRIORITY = {"link": 2, "subscribe": 2, "lower_title": 2, "socials": 2}
@@ -144,26 +143,17 @@ Return {{"segments": [{{"start": <id>, "end": <id>, "url": "...", "intent": "...
 
 
 def call(content, system, max_tokens=24000, effort="high"):
-    key = config.env_key("ANTHROPIC_API_KEY")
-    body = {"model": MODEL, "max_tokens": max_tokens, "thinking": {"type": "adaptive"},
-            "output_config": {"effort": effort}, "system": system,
-            "messages": [{"role": "user", "content": content}]}
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
-                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                                          "content-type": "application/json"})
+    """One director call through llm.py (the API ledger + caps). → (JSON object, meta)."""
     t0 = time.time()
     total = 0.0
+    msgs = [{"role": "user", "content": content}]
     # Factory rule: retry, don't fail. A malformed answer (2026-10-08: "Expecting ',' delimiter"
     # sank a creative job at graphics) gets one more call that asks for strictly valid JSON.
     for attempt in (1, 2):
-        with urllib.request.urlopen(req, timeout=1800) as r:
-            res = json.load(r)
-        text = "".join(b.get("text", "") for b in res["content"] if b["type"] == "text")
-        u = res.get("usage", {})
-        usd = u.get("input_tokens", 0) * 4e-6 + u.get("output_tokens", 0) * 20e-6
-        total += usd
-        events.api(MODEL, usd, time.time() - t0, f"Claude director ({effort} effort)"
-                   + (" — retry for valid JSON" if attempt == 2 else ""), u)
+        r = llm.messages(MODEL, system, None, max_tokens, effort=effort, msgs=msgs,
+                         purpose=f"Claude director ({effort} effort)" + (" — retry for valid JSON" if attempt == 2 else ""))
+        text = r["text"]
+        total += r["usd"]
         m = re.search(r"\{.*\}", text, re.S)
         try:
             if not m:
@@ -173,14 +163,11 @@ def call(content, system, max_tokens=24000, effort="high"):
             if attempt == 2:
                 raise RuntimeError(f"Claude returned invalid JSON twice: {e}") from None
             events.emit("log", f"director answer was not valid JSON ({e}) — asking again", level="warn")
-            body["messages"] = [{"role": "user", "content": content},
-                                {"role": "assistant", "content": text or "(empty)"},
-                                {"role": "user", "content": f"That was not valid JSON ({e}). Reply with the "
-                                 "complete answer again as ONE valid JSON object only — no prose, no code fence, "
-                                 "every string escaped."}]
-            req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
-                                         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                                                  "content-type": "application/json"})
+            msgs = [{"role": "user", "content": content},
+                    {"role": "assistant", "content": text or "(empty)"},
+                    {"role": "user", "content": f"That was not valid JSON ({e}). Reply with the "
+                     "complete answer again as ONE valid JSON object only — no prose, no code fence, "
+                     "every string escaped."}]
 
 
 def validate(plan, video, sites, facts=None):

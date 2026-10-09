@@ -32,6 +32,39 @@ def cpu_count():
 TAKES_MODEL = "claude-opus-5-5"
 GROQ_MODEL = "whisper-large-v3-turbo"
 
+# ── recorder mode (architecture recommendation step 1, "stop the bleeding") ──────────────────
+# Code records, single model calls decide, agents work ONLY off camera. The per-step AI loop that
+# chose each action on camera (agentrec.record_segment) is switched OFF; a logged-in segment waits
+# for the scripted recorder (package p7) and the job is held, never filled with A-roll quietly.
+RECORDER = {"mode": "scripted", "on_camera_agent": False}
+# a factory server (cloud.run_remote exports this) ignores every override below
+FACTORY_SERVER = os.environ.get("AIEDITOR_FACTORY_SERVER") == "1"
+
+
+def recorder(factory=None):
+    """The recorder mode in force. Off the factory a developer may set AIEDITOR_ON_CAMERA_AGENT=1
+    for a manual experiment; in factory mode the env is ignored and the defaults above hold."""
+    factory = FACTORY_SERVER if factory is None else factory
+    out = dict(RECORDER)
+    if not factory and os.environ.get("AIEDITOR_ON_CAMERA_AGENT") == "1":
+        out["on_camera_agent"] = True
+    return out
+
+
+# ── Claude API spend: one ledger line per call (aieditor/llm.py → apiledger.py) ──────────────
+# On a factory server cloud.run_remote points this at <job>/api-ledger.jsonl and merges it back.
+API_LEDGER = Path(os.environ.get("AIEDITOR_API_LEDGER", str(WORK / "ledger" / "api.jsonl")))
+# $ per million tokens (claude-api skill, cached 2026-09-25). Cache writes are 1.25× input
+# (5-minute TTL), cache reads as listed. An unknown model is priced as Opus (the dearest we use).
+API_PRICES = {
+    "claude-opus-5-5":   {"in": 4.0, "out": 20.0, "cache_read": 0.20, "cache_write": 5.0},
+    "claude-sonnet-5-5": {"in": 2.0, "out": 10.0, "cache_read": 0.20, "cache_write": 2.5},
+    "claude-haiku-4-5":  {"in": 1.0, "out": 5.0, "cache_read": 0.10, "cache_write": 1.25},
+}
+API_PRICE_DEFAULT = "claude-opus-5-5"
+# a factory server reaches US-only pages (pricing / visitor views) through the job's US proxy
+US_PROXY = os.environ.get("AIEDITOR_US_PROXY", "")
+
 
 def env_key(name):
     v = os.environ.get(name)

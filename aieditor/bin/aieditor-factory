@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from aieditor import cloud  # noqa: E402
+from aieditor import apiledger, cloud, llm  # noqa: E402
 
 
 def log(msg):
@@ -27,6 +27,13 @@ def status():
     print(json.dumps({k: v for k, v in s.items() if k != "snapshot_manifest"}, indent=2))
     print("token:", "set" if cloud.token() else "MISSING")
     print("snapshot current with local images:", cloud.image_current())
+    job_cap, day_cap = apiledger.caps("creative")
+    print(f"servers: ${cloud.spent_24h():.2f} of ${s['daily_cap_usd']} in 24 h; "
+          f"Claude API: ${apiledger.daily_total():.2f} of ${day_cap:.2f} in 24 h"
+          + (" (daily API cap PENDING Jake)" if s.get("api_daily_cap_pending_jake") else "")
+          + f"; per job creative ${job_cap:.2f} / cut ${apiledger.caps('cut')[0]:.2f}")
+    print("droplet API key:", "separate key set" if cloud.droplet_key_set() else
+          ("MISSING — jobs refused" if s.get("require_droplet_key") else "not set — the org key is shipped (warning)"))
     for tag in (cloud.TAG_JOB, cloud.TAG_IMAGE):
         for d in cloud.tagged(tag):
             print(f"  {tag}: {d['id']} {d['name']} {d['size_slug']} {d['status']} since {d['created_at']}")
@@ -44,7 +51,7 @@ def smoke():
             log(f"ssh after {time.time() - t0:.0f}s")
             out = cloud.ssh(ip, "nproc; free -g | awk '/Mem/{print $2}'; df -BG --output=avail / | tail -1; "
                                 "docker images --format '{{.Repository}}:{{.Tag}}'; du -sh /opt/aieditor-work/models; "
-                                "ufw status | head -4; curl -s -o /dev/null -w '%{http_code}' https://api.anthropic.com")
+                                "ufw status | head -4; curl -s -o /dev/null -w '%{http_code}' https://" + llm.API_HOST)
             print(out)
     finally:
         log("destroyed" if cloud.destroy(did) else "DELETE NOT CONFIRMED")

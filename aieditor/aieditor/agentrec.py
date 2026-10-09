@@ -14,12 +14,10 @@ import re
 import shutil
 import sqlite3
 import subprocess
-import time
-import urllib.request
 import uuid
 from pathlib import Path
 
-from . import config, events
+from . import config, events, llm
 
 SC_IMAGE = config.SC_IMAGE
 LAB_DATA = Path("/var/lib/docker/volumes/clipmagic_clipmagic-lab-data/_data")
@@ -119,6 +117,7 @@ class Session:
         for lock in self.profile.glob("Singleton*"):
             lock.unlink(missing_ok=True)
         self.cancelled = cancelled
+        self._recording = False
         self.name = f"aieditor-agent-{uuid.uuid4().hex[:8]}"
         cmd = ["docker", "run", "-i", "--rm", "--name", self.name, "--cpuset-cpus", config.CPUSET, "--shm-size", "1g",
                "--memory", config.MEMORY, "-e", "AGENT_WEBGL=1", "-e", f"AGENT_DARK={'1' if dark else '0'}",   # app canvases (Linearity's editor) need WebGL
@@ -126,13 +125,30 @@ class Session:
                "-v", f"{config.CODE / 'screencast'}:/app/screencast", "-v", f"{config.CODE / 'motion'}:/app/motion:ro",
                "-v", f"{self.workdir}:/w"]
         if profile_src:
-            cmd += ["-v", f"{self.profile}:/prof"]
+            # clickguard.mjs: a logged-in session never opens pricing/billing and never logs out
+            cmd += ["-v", f"{self.profile}:/prof", "-e", "AGENT_SESSION=logged_in"]
         cmd += [SC_IMAGE, "node", "/app/screencast/agent_rec.mjs", "/w"] + (["/prof"] if profile_src else [])
         self.p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                   text=True, bufsize=1)
         events.emit("proc", f"recorder browser {self.name} — started", proc=self.name, phase="start")
 
+    # RECORDING: frames are being captured. No model call may happen meanwhile (llm.OnCameraCall) —
+    # defence in depth behind config.RECORDER["on_camera_agent"] = False.
+    @property
+    def recording(self):
+        return self._recording
+
+    @recording.setter
+    def recording(self, on):
+        self._recording = bool(on)
+        llm.set_recording(self, self._recording)
+
     def send(self, msg):
+        cmd = msg.get("cmd")
+        if cmd == "segment":
+            self.recording = True
+        elif cmd in ("end", "quit"):
+            self.recording = False
         if self.cancelled():
             self.close()
             raise InterruptedError()
@@ -151,6 +167,7 @@ class Session:
         return json.loads(line)
 
     def close(self):
+        self.recording = False
         try:
             self.p.stdin.write(json.dumps({"cmd": "quit"}) + "\n")
             self.p.stdin.flush()
@@ -257,25 +274,10 @@ or {"done": true, "why": "..."} when the segment's narration is fully shown."""
 
 
 def _call(content, system_blocks, max_tokens=1500):
-    key = config.env_key("ANTHROPIC_API_KEY")
-    body = {"model": config.TAKES_MODEL, "max_tokens": max_tokens, "system": system_blocks,
-            "output_config": {"effort": "low"}, "messages": [{"role": "user", "content": content}]}
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
-                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                                          "content-type": "application/json"})
-    t0 = time.time()
-    for attempt in range(4):
-        try:
-            with urllib.request.urlopen(req, timeout=300) as r:
-                res = json.load(r)
-            break
-        except urllib.error.HTTPError as e:
-            if e.code in (429, 500, 502, 503, 529) and attempt < 3:
-                events.emit("api", f"recorder agent: HTTP {e.code}, retrying ({attempt + 1}/3)", level="warn")
-                time.sleep(5 * (attempt + 1))
-                continue
-            raise
-    text = "".join(b.get("text", "") for b in res["content"] if b["type"] == "text")
+    """One low-effort step through llm.py (ledger + caps; refused while a take is being recorded)."""
+    r = llm.messages(config.TAKES_MODEL, system_blocks, content, max_tokens, effort="low", thinking=False,
+                     purpose="recorder agent (low effort)", timeout=300)
+    text = r["text"]
     # the FIRST complete JSON object (it sometimes sends two: "Extra data" killed a run)
     reply = {}
     i = text.find("{")
@@ -285,11 +287,7 @@ def _call(content, system_blocks, max_tokens=1500):
             break
         except json.JSONDecodeError:
             i = text.find("{", i + 1)
-    u = res.get("usage", {})
-    usd = (u.get("input_tokens", 0) * 4e-6 + u.get("cache_read_input_tokens", 0) * 0.4e-6
-           + u.get("cache_creation_input_tokens", 0) * 5e-6 + u.get("output_tokens", 0) * 20e-6)
-    events.api(config.TAKES_MODEL, usd, time.time() - t0, "recorder agent (low effort)", u)
-    return reply if isinstance(reply, dict) else {}, usd
+    return reply if isinstance(reply, dict) else {}, r["usd"]
 
 
 PREPARE = """OFF CAMERA, before the recording starts: get the app to the screen the segment should OPEN on, so

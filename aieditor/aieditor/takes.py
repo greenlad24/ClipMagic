@@ -14,11 +14,9 @@ Jake's rules (2026-10-04), all in SYSTEM below:
 """
 import json
 import re
-import time
-import urllib.request
 from difflib import SequenceMatcher
 
-from . import config, events
+from . import config, llm
 
 FILLERS = {"um", "uh", "umm", "uhh", "uhm", "erm", "mm-hmm", "mhm", "hmm"}
 
@@ -382,41 +380,15 @@ def build_prompt(sents, feats, script=None):
 
 
 def call_claude(prompt, system, max_tokens=64000):
-    key = config.env_key("ANTHROPIC_API_KEY")
-    if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set in /opt/clipmagic/.env")
-    body = {"model": config.TAKES_MODEL, "max_tokens": max_tokens, "thinking": {"type": "adaptive"},
-            "output_config": {"effort": "high"}, "stream": True,
-            "system": system, "messages": [{"role": "user", "content": prompt}]}
-    req = urllib.request.Request("https://api.anthropic.com/v1/messages", data=json.dumps(body).encode(),
-                                 headers={"x-api-key": key, "anthropic-version": "2023-06-01",
-                                          "content-type": "application/json"})
-    t0 = time.time()
-    text, usage, stop = [], {}, None
-    with urllib.request.urlopen(req, timeout=1800) as resp:
-        for raw in resp:
-            line = raw.decode().strip()
-            if not line.startswith("data:"):
-                continue
-            ev = json.loads(line[5:])
-            if ev["type"] == "message_start":
-                usage.update(ev["message"]["usage"])
-            elif ev["type"] == "content_block_delta" and ev["delta"].get("type") == "text_delta":
-                text.append(ev["delta"]["text"])
-            elif ev["type"] == "message_delta":
-                usage.update(ev.get("usage", {}))
-                stop = ev["delta"].get("stop_reason")
-            elif ev["type"] == "error":
-                raise RuntimeError(f"Claude error: {ev.get('error')}")
-    if stop == "max_tokens":
+    """One streamed Opus call through llm.py (the API ledger + caps). → (JSON object, meta)."""
+    r = llm.messages(config.TAKES_MODEL, system, prompt, max_tokens, effort="high",
+                     purpose="Claude (high effort)", stream=True)
+    if r["stop_reason"] == "max_tokens":
         raise RuntimeError("Claude's answer was cut off (max_tokens)")
-    text = "".join(text)
-    m = re.search(r"\{.*\}", text, re.S)
+    m = re.search(r"\{.*\}", r["text"], re.S)
     if not m:
         raise RuntimeError("Claude returned no JSON")
-    usd = usage.get("input_tokens", 0) * 4e-6 + usage.get("output_tokens", 0) * 20e-6
-    events.api(config.TAKES_MODEL, usd, time.time() - t0, "Claude (high effort)", usage)
-    return json.loads(m.group(0)), {"usage": usage, "usd": round(usd, 4), "seconds": round(time.time() - t0)}
+    return json.loads(m.group(0)), {"usage": r["usage"], "usd": round(r["usd"], 4), "seconds": round(r["seconds"])}
 
 
 def validate(plan, sents):
