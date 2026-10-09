@@ -47,6 +47,7 @@ import { FactoryPanel } from '@/components/autoeditor/FactoryPanel';
 import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
 import { StoredFiles } from '@/components/autoeditor/StoredFiles';
 import { HeldPanel } from '@/components/autoeditor/HeldPanel';
+import { OverlayCatalog, overlayName, overlayTemplate } from '@/components/autoeditor/overlayTemplates';
 
 /**
  * Auto Editor — raw narration in, clean edit out.
@@ -532,13 +533,14 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
                   <button
                     key={i}
                     type="button"
-                    title={g.why}
+                    title={[overlayTemplate(g.template)?.description, g.why].filter(Boolean).join('\n\n') || undefined}
                     onClick={() => {
                       if (player.current) player.current.currentTime = g.t0;
                     }}
                     className="block w-full truncate text-left text-[11px] text-muted-foreground hover:text-foreground"
                   >
-                    {mmss(g.t0)} {g.template}:{' '}
+                    {mmss(g.t0)} <span className="text-foreground/80">{overlayName(g.template)}</span>
+                    {overlayTemplate(g.template)?.zone && ` (zone: ${overlayTemplate(g.template)!.zone})`}:{' '}
                     {Object.values(g.fields ?? {})
                       .filter((x) => typeof x === 'string' || typeof x === 'number')
                       .join(' · ')}
@@ -547,6 +549,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               </div>
             </details>
           )}
+          <OverlayCatalog />
           {(video?.warnings ?? []).length > 0 && (
             <details className="group rounded-md border border-amber-500/30 bg-amber-500/5" open>
               <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-amber-400">
