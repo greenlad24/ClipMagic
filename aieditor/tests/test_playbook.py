@@ -124,8 +124,9 @@ def test_load_and_proven():
     st = playbook.resolve(pb, "paste_prompt", {"text": "a cup of coffee"})
     check(st[0]["type"] == "type" and st[0]["paste"] is True and st[0]["text"] == "a cup of coffee"
           and st[0]["selector"] == '[contenteditable="true"]' and st[0]["alt"] == [{"selector": "#prompt-textarea"}], f"paste {st}")
-    check(playbook.resolve(pb, "send")[0] == {"type": "click", "selector": 'button[data-testid="send-button"]',
-                                              "playbook": "chatgpt:send"}, "send selector from G3 CHATGPT_SEND")
+    check(playbook.resolve(pb, "send")[0] == {"type": "click", "selector": 'button[aria-label="Send"]',
+                                              "alt": [{"selector": 'button[data-testid="send-button"]'}],
+                                              "playbook": "chatgpt:send"}, "send selector measured live (aria-label), the G3 testid as alt")
     check(playbook.resolve(pb, "plus_sketch")[0]["target"] == "Sketch", "text= selector → target label")
     check([s["key"] for s in playbook.resolve(pb, "clear_composer")] == ["Meta+a", "Backspace"], "key defaults")
     check(playbook.resolve(pb, "slash_menu")[1] == {"type": "key", "key": "/", "playbook": "chatgpt:slash_menu"}, "slash key")
