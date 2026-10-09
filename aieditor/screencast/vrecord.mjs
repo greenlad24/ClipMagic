@@ -26,7 +26,7 @@ const DT = 1000 / FPS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // real Chrome on a Mac (macchrome.mjs): identity, fonts, hidden scrollbars, factory egress proxy
-import { CHROME, launchArgs, identity, dress } from "./macchrome.mjs";
+import { CHROME, launchArgs, identity, dress, HB_ON } from "./macchrome.mjs";
 const browser = await puppeteer.launch({
   executablePath: CHROME, headless: true, userDataDir: script.profileDir || undefined,
   args: launchArgs(["--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none",
@@ -37,6 +37,7 @@ const browser = await puppeteer.launch({
 });
 const page = await browser.newPage();
 await dress(page, await identity(browser));
+await page.evaluateOnNewDocument(HB_ON);   // static pages keep painting under virtual time (macchrome.mjs)
 await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
 const cdp = await page.createCDPSession();
 

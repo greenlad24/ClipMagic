@@ -50,29 +50,27 @@ const INIT = `(() => {
       const gp = C.prototype.getParameter;
       C.prototype.getParameter = function (p) { if (p === 37445) return V; if (p === 37446) return R; return gp.call(this, p); };
     }
-    const css = document.createElement("style");
     // macOS overlay scrollbars: hidden until you scroll
-    // + HEARTBEAT: a 1 px, 1 %-opacity square with an endless compositor animation. Under paused virtual
-    //   time Chrome only produces a new frame when something on the page changes — on a STATIC page
-    //   (example.com, Wikipedia, ChatGPT's idle home 2026-10-08) the 2nd Page.captureScreenshot then
-    //   waits forever and the recorder hangs. The heartbeat keeps one frame coming per step; invisible.
-    css.textContent = "::-webkit-scrollbar{width:0!important;height:0!important;background:transparent!important}"
-      + "@keyframes __amhb{from{opacity:.011}to{opacity:.012}}"
-      + "#__amhb{position:fixed!important;left:0;top:0;width:1px;height:1px;pointer-events:none;z-index:2147483647;"
-      + "background:#000;animation:__amhb 1s linear infinite alternate}";
-    const hb = document.createElement("div");
-    hb.id = "__amhb"; hb.setAttribute("aria-hidden", "true");
-    const add = () => {
-      const root = document.documentElement;
-      if (!root) return;
-      if (!css.isConnected) (document.head || root).appendChild(css);
-      if (!hb.isConnected) root.appendChild(hb);
-    };
-    if (document.documentElement) add();
-    document.addEventListener("DOMContentLoaded", add);
-    setInterval(add, 1000);                 // an app that rebuilds <html>/<head> gets them back
+    const css = document.createElement("style");
+    css.textContent = "::-webkit-scrollbar{width:0!important;height:0!important;background:transparent!important}";
+    const add = () => (document.head || document.documentElement).appendChild(css);
+    if (document.documentElement) add(); else document.addEventListener("DOMContentLoaded", add);
   } catch (e) {}
 })();`;
+
+// HEARTBEAT (recording only): a 1 px, 1 %-opacity square with an endless compositor animation. Under paused
+// virtual time Chrome paints only when something changes — on a STATIC page (example.com, Wikipedia,
+// ChatGPT's idle home, 2026-10-08) the 2nd Page.captureScreenshot never returned and the recorder hung.
+// ON only while frames are being captured: outside a recording the page clock FAST-FORWARDS when idle
+// (virtual time "advance") and an endless animation there kept Chrome busy at ~270 % CPU (a factory
+// click took 9.7 min). HB_OFF removes it.
+export const HB_ON = `(() => { const go = () => { if (!document.documentElement || document.getElementById("__amhb")) return;
+  const d = document.createElement("div"); d.id = "__amhb"; d.setAttribute("aria-hidden", "true");
+  d.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;pointer-events:none;z-index:2147483647;background:#000;opacity:.011";
+  document.documentElement.appendChild(d);
+  d.animate([{ opacity: 0.011 }, { opacity: 0.012 }], { duration: 1000, iterations: Infinity, direction: "alternate" }); };
+  go(); document.addEventListener("DOMContentLoaded", go); })()`;
+export const HB_OFF = `(() => { const d = document.getElementById("__amhb"); if (d) d.remove(); })()`;
 
 // apply to one page (and again to every page the recorder opens)
 export async function dress(page, id) {

@@ -43,7 +43,7 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 // a Mac Chrome UA that matches the engine's real version, UA-CH "Google Chrome"/macOS, platform MacIntel,
 // webdriver false, Asia/Bangkok, hidden scrollbars, Mac font aliases; AGENT_PROXY = egress via the main box.
 import { execFileSync } from "node:child_process";
-import { CHROME, launchArgs, identity, dress, wall } from "./macchrome.mjs";
+import { CHROME, launchArgs, identity, dress, wall, HB_ON, HB_OFF } from "./macchrome.mjs";
 const VER = (() => { try { return execFileSync(CHROME, ["--version"]).toString().match(/(\d+)\./)[1]; } catch { return "155"; } })();
 const UA = process.env.BROWSER_UA ||
   `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${VER}.0.0.0 Safari/537.36`;
@@ -104,6 +104,8 @@ async function recover() {
   await dress(page, ID);
   await page.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
   cdp = await page.createCDPSession();
+  hbScript = null;
+  if (rec) await heartbeat(true);
   watch(page);
   crashed = false;
   if (lastUrl) await load(lastUrl, 3);
@@ -121,10 +123,14 @@ async function vclip(scale) {
 // 2nd captureScreenshot never returned (the recorder hung for good: the old 30 s guard covered only the
 // clock). macchrome.mjs's heartbeat keeps frames coming; this guard re-plants it if a page lost it, gives
 // the clock one more frame, and as the last resort takes the shot from the view (fromSurface: false).
-const HEARTBEAT = `(() => { if (document.getElementById("__amhb")) return; const d = document.createElement("div"); d.id = "__amhb";
-  d.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;pointer-events:none;z-index:2147483647;background:#000;opacity:.011;transition:none";
-  d.animate([{ opacity: 0.011 }, { opacity: 0.012 }], { duration: 1000, iterations: Infinity, direction: "alternate" });
-  document.documentElement.appendChild(d); })()`;
+// heartbeat while recording (macchrome.mjs HB_ON): on in startSegment (+ every new document of the
+// segment), off in endSegment
+let hbScript = null;
+async function heartbeat(on) {
+  if (hbScript) { await cdp.send("Page.removeScriptToEvaluateOnNewDocument", { identifier: hbScript }).catch(() => {}); hbScript = null; }
+  if (on) hbScript = (await cdp.send("Page.addScriptToEvaluateOnNewDocument", { source: HB_ON }).catch(() => ({}))).identifier || null;
+  await cdp.send("Runtime.evaluate", { expression: on ? HB_ON : HB_OFF }).catch(() => {});
+}
 function withTimeout(p, ms) {
   let tm; return Promise.race([p, new Promise((_, rej) => { tm = setTimeout(() => rej(new Error("timeout")), ms); })]).finally(() => clearTimeout(tm));
 }
@@ -133,7 +139,7 @@ async function frameShot() {
   try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts()), 15000); } catch (e) {
     process.stderr.write(`frame capture stalled (${e?.message}) — heartbeat + one more frame\n`);
   }
-  await cdp.send("Runtime.evaluate", { expression: HEARTBEAT }).catch(() => {});
+  await cdp.send("Runtime.evaluate", { expression: HB_ON }).catch(() => {});
   await withTimeout(new Promise(async (res) => { cdp.once("Emulation.virtualTimeBudgetExpired", res);
     await cdp.send("Emulation.setVirtualTimePolicy", { policy: "advance", budget: 1 }).catch(res); }), 10000).catch(() => {});
   try { return await withTimeout(cdp.send("Page.captureScreenshot", await opts()), 15000); } catch {}
@@ -1059,6 +1065,7 @@ async function startSegment(dir) {
     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-x264-params", "rc-lookahead=0:sync-lookahead=0", "-threads", "2",
     "-pix_fmt", "yuv420p", "-r", String(FPS), path.join(full, "raw.mp4")],   // ~100 MB, not ~470 (the box swaps)
     { stdio: ["pipe", "ignore", "inherit"] });
+  await heartbeat(true);          // static pages keep painting under paused virtual time
   await pause();                  // the recorded clock only moves frame by frame
   rec = { ff, frame: 0, events: [], cursor: [], dir: full, url: page.url() };
   log("begin");
@@ -1075,7 +1082,30 @@ async function endSegment(until) {
     end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
     browser: { exe: CHROME, ua: UA, version: ID.full } }, null, 1));
   rec = null;
-  await realtime();
+  await heartbeat(false);
+  await realClock();
+}
+// Between recordings the page must run on the REAL clock: virtual time cannot be switched off once on,
+// and its "advance" policy fast-forwards an idle page — ChatGPT then burned ~280 % CPU and, 37 min into a
+// factory job, one off-camera click took 9.7 min (2026-10-09). A fresh tab at the same address (same
+// profile, cookies and identity) has no virtual time; the old tab is closed.
+async function realClock() {
+  const url = page.url(), old = page;
+  try {
+    // close FIRST: the tabs share one renderer process (--renderer-process-limit=1) and a tab opened
+    // next to the virtual-time one loaded half-way (spinner, a placeholder account) — 2026-10-09
+    await old.close().catch(() => {});
+    const p = await browser.newPage();
+    await dress(p, ID);
+    await p.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
+    const c = await p.createCDPSession();
+    page = p; cdp = c; hbScript = null; vtOn = false;
+    watch(page);
+    if (url && /^https?:/.test(url)) await load(url, 3);
+  } catch (e) {
+    process.stderr.write(`fresh tab failed (${e?.message}) — reopening\n`);
+    lastUrl = url; await recover();
+  }
 }
 
 await realtime();
