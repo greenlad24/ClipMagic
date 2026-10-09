@@ -1430,12 +1430,11 @@ def ensure_objects(sl, job):
             k = next((k for k in ks if planfit._obj_rx(o).search(job.sents[k]["text"])), None)
             where = job.sents[k]["text"] if k is not None else ""
             drawn = k is not None and any(DRAW_RE.search(job.sents[j]["text"]) for j in range(max(0, k - 2), k + 1))
-            order = ("sketch",) if drawn else ("app_generation", "photo")
+            order = ("sketch", "app_generation", "photo") if drawn else ("app_generation", "photo")
             tgt = next((a for k in order for a in need if a.get("kind") == k), None)
             if tgt is None:
                 rows.append({"object": o, "shot": sh["id"], "asset": None, "status": "missing",
-                             "why": "the shot needs no producible " + ("sketch" if drawn else "photo/app generation")
-                                    + " to add it to"})
+                             "why": "the shot needs no producible sketch/photo/app generation to add it to"})
                 continue
             if tgt["kind"] == "sketch":
                 shape = DOODLE_SHAPE.get(o)

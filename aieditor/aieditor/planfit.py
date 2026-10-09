@@ -908,8 +908,12 @@ def fit(segments, video, facts, aroll_why=None, site_url=None):
     # instructional stretches that ended up inside a screencast are covered
     for x in aroll_actions:
         seg = next((n for n, s in enumerate(out) if s["t0"] <= x["t0"] + 0.5 and x["t1"] - 0.5 <= s["t1"]), None)
+        if seg is None and x.get("compiled"):
+            seg = next((n for n, s in enumerate(out) if s["t0"] < x["t1"] and x["t0"] < s["t1"]), None)
         if seg is not None:
             x.update(segment=seg, why=None)
+        elif not x.get("why"):
+            x["why"] = "its compiled screencast did not survive the span structure — kept on the presenter"
     objects = {}
     for b in ledger:
         for o, a in (b.get("objects") or {}).items():

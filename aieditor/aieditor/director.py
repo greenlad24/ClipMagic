@@ -35,7 +35,30 @@ the video is about. You decide where the edit cuts to SCREENCASTS of those websi
 text graphics go. Return ONLY JSON."""
 
 
-def build_prompt(video, sites, sponsored, knowledge=None):
+def facts_block(facts):
+    """What pre-production measured (readiness features) and produced (assets) — the only things a
+    beat may ask the screen for (gap list G2)."""
+    if facts is None or facts.empty:
+        return ""
+    out = ["APP FACTS (measured on screen in Jake's account before planning — a beat may NEVER ask for a "
+           "feature marked MISSING; use the honest route given, or leave those words to the presenter):"]
+    for f in facts.features:
+        alt = f.get("alternative") or {}
+        route = alt.get("how") or ({"public": f"the PUBLIC page {alt.get('url')} (we record it in a separate "
+                                              "never-logged-in US browser)"}.get(alt.get("route")))
+        out.append(f"- {f['id']} ({f.get('label')}): {'exists' if f.get('exists') else 'MISSING'}"
+                   + (f" — {f['note']}" if f.get("note") and not f.get("exists") else "")
+                   + (f" → instead: {route}" if route and not f.get("exists") else ""))
+    out.append("PRODUCED ASSETS (the only pictures/files that exist; every object you name in a picture must be "
+               "in one of them; never name a chat, document or picture that is not here):")
+    for a in facts.assets:
+        out.append(f"- {a.get('id')} [{a.get('kind')}, {a.get('status')}]: {a.get('desc', '')}"
+                   + (f" — prompt: {str(a.get('prompt') or (a.get('source') or {}).get('prompt') or '')[:240]}"
+                      if (a.get('prompt') or (a.get('source') or {}).get('prompt')) else ""))
+    return "\n".join(out) + "\n"
+
+
+def build_prompt(video, sites, sponsored, knowledge=None, facts=None):
     access_rule = (
         "We are LOGGED IN to the app (the UX Scout's account), so every screen the speaker describes can be "
         "shown for real — inside the app, not the marketing site. A walkthrough of the app is below; plan "
@@ -73,8 +96,9 @@ JAKE'S SCREENCAST RULES (his review of the v11 sample, 2026-10-07 — they overr
 - NEVER THE WHOLE CANVAS: do not ask for "all artboards zoomed to fit"/"zoomed out on the canvas" as a
   beat. Go straight to the main section/design he names (zoomed), or leave that moment to the
   full-screen narration for a bigger wow.
-- PRICING: on the plan/price talk show the LANDING page unzoomed with the logo first, then CUT straight
-  to the pricing page's FREE (or the named) plan section, zoomed. Never show all the prices.
+- PRICING (RULEBOOK L3/L4): on the plan/price talk use the product's PUBLIC pricing page (we record it in a
+  separate never-logged-in US browser, US dollars): top of the page unzoomed with the logo, then CUT straight
+  to the FREE (or the named) plan card, zoomed. Never the in-account upgrade/billing modal, never all prices.
 - CLEAN SCREENS: an address/name is pasted whole (no letter-by-letter), no popups or search
   suggestions left open, no cookie banners.
 - NO UNNECESSARY SCROLL: never scroll to "show more" of a page; only to reach the one thing he names.
@@ -94,9 +118,13 @@ segment itself makes on screen — never a document/brand/campaign that is not t
 screencasts use the APP's address; the marketing site only when he says to go to the website.
 
 RULES
-1. Pacing like the reference (Jake's own tutorial): about three quarters of a tutorial is screencast.
-   A-roll stretches 6-12 s (his intro, the subscribe/link asks, opinions, transitions), screencast
-   stretches 15-35 s or longer while he walks through steps.
+1. Pacing like the references (REFERENCE-BASELINE §1): 72-76 % of the runtime is screencast; screencast
+   spans of 10-18 s (never over 30 s) separated by 5-7 s A-roll beats (his opinions, transitions, the
+   intro, the subscribe/link asks) — 3-6 screen<->face switches per minute. Leave his opinion lines to the
+   A-roll; every stretch where he tells the viewer to upload/click/type/drag/select/open is a screencast,
+   or give the reason in "aroll_why": [{{"start": <id>, "end": <id>, "why": "..."}}].
+   HOOK: if the first 40 s point at a thing ("look at this", "on the left/right"), plan NO screencast over
+   those words — a full-screen plate of the produced asset is placed there.
 2. Segments: "start"/"end" = word ids (the segment starts slightly before "start" and ends after
    "end"). Never overlap; at least 3 s of A-roll between two screencasts.
 3. Overlays sit on A-roll only, one at a time, 1.5-4.5 s, >= 0.6 s apart. Text must be what is said.
@@ -106,10 +134,12 @@ RULES
 {"6. SPONSORED video: no claims beyond what is said." if sponsored else ""}
 
 {walkthrough}
+{facts_block(facts)}
 TRANSCRIPT (id:word@seconds) — "{video['title']}", {video['duration']:.1f} s:
 {words}
 
 Return {{"segments": [{{"start": <id>, "end": <id>, "url": "...", "intent": "..."}}],
+ "aroll_why": [{{"start": <id>, "end": <id>, "why": "..."}}],
  "overlays": [{{"template": "...", "start": <id>, "end": <id>, "fields": {{...}}, "why": "<6-12 words>"}}]}}"""
 
 
@@ -231,9 +261,27 @@ def validate(plan, video, sites, facts=None):
             "structure": fitted["structure"]}
 
 
-def plan(video, sites, sponsored, knowledge=None):
-    raw, meta = call(build_prompt(video, sites, sponsored, knowledge), SYSTEM)
-    return validate(raw, video, sites), raw, meta
+def plan(video, sites, sponsored, knowledge=None, facts=None):
+    prompt = build_prompt(video, sites, sponsored, knowledge, facts)
+    raw, meta = call(prompt, SYSTEM)
+    out = validate(raw, video, sites, facts)
+    # G2 spec 5: an instructional stretch left on the presenter gets ONE repair call — segments for it,
+    # or the reason why not
+    todo = [x for x in out.get("aroll_actions", []) if x.get("segment") is None and not x.get("compiled")]
+    if todo and sites:
+        ask = "\n".join(f'- words {x["start"]}-{x["end"]} ({x["t0"]:.1f}-{x["t1"]:.1f} s): "{x["words"]}"' for x in todo)
+        more, m2 = call(prompt + f"""
+
+YOUR PLAN LEFT THESE INSTRUCTIONAL STRETCHES ON THE PRESENTER (he tells the viewer to upload/click/type/
+drag/select/open). Plan a screencast for each, using only existing features and produced assets, or say why
+it cannot be shown:
+{ask}
+Return ONLY {{"segments": [...], "aroll_why": [...]}} for these stretches.""", SYSTEM)
+        meta = {"usd": round(meta["usd"] + m2["usd"], 4), "seconds": meta["seconds"] + m2["seconds"]}
+        raw = {**raw, "segments": list(raw.get("segments", [])) + list(more.get("segments", [])),
+               "aroll_why": list(raw.get("aroll_why", [])) + list(more.get("aroll_why", []))}
+        out = validate(raw, video, sites, facts)
+    return out, raw, meta
 
 
 # ── recording scripts ─────────────────────────────────────────────────────────
