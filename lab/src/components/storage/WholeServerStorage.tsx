@@ -18,6 +18,9 @@ import {
 // Everything here comes from the host `storage-agent` service (via
 // server/src/zite/serverStorage.ts). The agent enforces every protection — a
 // lock icon here only mirrors a refusal the server would make anyway.
+// Two disks: the main disk and the 500 GB factory volume (the Auto Editor's jobs). Each
+// has its own used/free, largest files, types and folders; files reached through a bind
+// mount are listed once, under their canonical path.
 
 interface Disk { total: number; free: number; used: number }
 interface FileRec {
@@ -26,7 +29,9 @@ interface FileRec {
 }
 interface TypeRow { type: string; label: string; bytes: number; files: number }
 interface LinkGroup { ino: number; size: number; nlink: number; linksFound: number; paths: string[]; protected?: string | null }
+interface DiskInfo { id: string; label: string; browse: string; disk: Disk; ready: boolean; files: number; builtAt: number | null; indexed: number | null }
 interface Summary {
+  diskId?: string; disks?: DiskInfo[];
   available: boolean; reason?: string; ready?: boolean; indexing?: boolean; progress?: number;
   builtAt?: number | null; duration?: number | null; files?: number; error?: string | null;
   disk?: Disk; types?: TypeRow[]; largest?: FileRec[]; hardlinks?: LinkGroup[]; indexed?: number;
@@ -35,9 +40,11 @@ interface TreeEntry {
   name: string; path: string; kind: 'dir' | 'file' | 'link' | 'other'; size: number | null;
   files?: number; shared?: number; nlink?: number; type?: string; mtime: number; mount?: boolean;
   protected?: string | null; target?: string;
+  /** another indexed disk (its mount point) or a bind-mount alias: opens `path` on that disk */
+  disk?: string; alias?: string;
 }
 interface Tree {
-  available: boolean; path: string; parent: string | null; size: number | null; files: number | null;
+  available: boolean; path: string; parent: string | null; size: number | null; files: number | null; disk?: string | null;
   protected?: string | null; entries: TreeEntry[]; totalEntries: number; truncated: boolean; error?: string;
 }
 interface PlanTarget {
@@ -81,6 +88,7 @@ interface Sel { size: number; nlink?: number }
 
 export default function WholeServerStorage() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [diskId, setDiskId] = useState('main');
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('largest');   // real files first, not the root's system folders
   const [cwd, setCwd] = useState('/');
@@ -98,13 +106,13 @@ export default function WholeServerStorage() {
 
   const loadSummary = useCallback(async () => {
     try {
-      setSummary((await serverStorageSummary({})) as Summary);
+      setSummary((await serverStorageSummary({ disk: diskId } as never)) as Summary);
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not reach the storage agent');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [diskId]);
 
   const loadTree = useCallback(async (p: string) => {
     setTreeLoading(true);
@@ -112,6 +120,7 @@ export default function WholeServerStorage() {
       const t = (await serverStorageTree({ path: p })) as Tree;
       setTree(t);
       setCwd(t.path ?? p);
+      if (t.disk) setDiskId(t.disk);      // a folder on the other disk: show that disk's numbers
     } catch (e: any) {
       toast.error(e?.message ?? 'Could not list that folder');
     } finally {
@@ -119,20 +128,28 @@ export default function WholeServerStorage() {
     }
   }, []);
 
-  useEffect(() => { loadSummary(); loadTree('/'); }, [loadSummary, loadTree]);
+  useEffect(() => { loadTree('/'); }, [loadTree]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+  const switchDisk = (d: DiskInfo) => {
+    if (d.id === diskId) return;
+    setDiskId(d.id);
+    setTypeSel(null);
+    setTypeFiles(null);
+    loadTree(d.browse);
+  };
 
   // While the agent is (re-)indexing, poll so sizes fill in when it lands.
   useEffect(() => {
     if (!summary?.indexing) return;
     const t = setInterval(async () => {
-      const s = (await serverStorageSummary({}).catch(() => null)) as Summary | null;
+      const s = (await serverStorageSummary({ disk: diskId } as never).catch(() => null)) as Summary | null;
       if (s) {
         setSummary(s);
         if (!s.indexing) loadTree(cwd);
       }
     }, 5000);
     return () => clearInterval(t);
-  }, [summary?.indexing, cwd, loadTree]);
+  }, [summary?.indexing, cwd, loadTree, diskId]);
 
   useEffect(() => {
     if (tab === 'log') {
@@ -144,7 +161,7 @@ export default function WholeServerStorage() {
     setTypeSel(t);
     setTypeFiles(null);
     try {
-      const r = (await serverStorageType({ type: t })) as { files: FileRec[] };
+      const r = (await serverStorageType({ type: t, disk: diskId } as never)) as { files: FileRec[] };
       setTypeFiles(r.files ?? []);
     } catch (e: any) {
       toast.error(e?.message ?? 'Failed');
@@ -163,7 +180,7 @@ export default function WholeServerStorage() {
   const reindex = async () => {
     try {
       await serverStorageRefresh({});
-      toast.success('Re-indexing the whole disk — takes a couple of minutes');
+      toast.success('Re-indexing both disks — takes a couple of minutes');
       await loadSummary();
     } catch (e: any) {
       toast.error(e?.message ?? 'Failed');
@@ -217,6 +234,8 @@ export default function WholeServerStorage() {
   }
 
   const disk = summary?.disk;
+  const disks = summary?.disks ?? [];
+  const diskLabel = disks.find((d) => d.id === (summary?.diskId ?? diskId))?.label ?? 'Disk';
   const pct = disk ? Math.round((disk.used / disk.total) * 100) : 0;
   const okTargets = plan?.targets.filter((t) => t.ok) ?? [];
   const typedOk = !plan?.needsTypedConfirm || confirmText.trim() === plan.confirmWord;
@@ -295,10 +314,33 @@ export default function WholeServerStorage() {
         </div>
       </div>
 
+      {disks.length > 1 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {disks.map((d) => {
+            const dp = d.disk.total ? Math.round((d.disk.used / d.disk.total) * 100) : 0;
+            return (
+              <button
+                key={d.id}
+                onClick={() => switchDisk(d)}
+                className={`rounded-lg border px-3 py-2 text-left space-y-1 ${d.id === diskId ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/40'}`}
+              >
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-medium truncate">{d.label}</span>
+                  <span className="font-mono text-[11px] text-muted-foreground shrink-0">{fmtBytes(d.disk.used)} used · {fmtBytes(d.disk.free)} free</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <div className={`h-full ${dp > 90 ? 'bg-destructive' : 'bg-primary'}`} style={{ width: `${dp}%` }} />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {disk && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-medium">Disk</span>
+            <span className="font-medium">{diskLabel}</span>
             <span className="text-muted-foreground font-mono">
               {fmtBytes(disk.free)} free · {fmtBytes(disk.used)} used of {fmtBytes(disk.total)}
             </span>
@@ -382,13 +424,15 @@ export default function WholeServerStorage() {
           <div className="divide-y divide-border/50 max-h-[32rem] overflow-y-auto">
             {(tree?.entries ?? []).map((e) => (
               <div key={e.path} className="px-3 py-1.5 flex items-center gap-2.5 hover:bg-muted/30">
-                <CheckCell path={e.path} size={e.size ?? 0} nlink={e.nlink} protectedWhy={e.mount ? 'a separate filesystem' : e.protected} />
+                <CheckCell path={e.path} size={e.size ?? 0} nlink={e.nlink} protectedWhy={e.mount ? (e.disk ? 'another disk — open it to see what is inside' : 'a separate filesystem') : e.protected} />
                 {e.kind === 'dir' ? <Folder className="w-3.5 h-3.5 text-primary/80 shrink-0" /> : e.kind === 'link' ? <LinkIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" /> : <FileIcon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                 <div className="min-w-0 flex-1">
-                  {e.kind === 'dir' && !e.mount ? (
+                  {e.kind === 'dir' && (!e.mount || e.disk) ? (
                     <button className="text-xs truncate max-w-full text-left hover:underline flex items-center gap-1 text-foreground" onClick={() => loadTree(e.path)}
-                      title={`Open ${e.path}`}>
-                      {e.name}/ <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+                      title={e.alias ? `${e.alias} is the same folder as ${e.path} — listed once, there` : `Open ${e.path}`}>
+                      {e.name}/{e.disk && e.disk !== diskId ? <span className="text-[10px] text-muted-foreground">({disks.find((d) => d.id === e.disk)?.label ?? e.disk})</span> : null}
+                      {e.alias ? <span className="text-[10px] text-muted-foreground">= {e.path}</span> : null}
+                      <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
                     </button>
                   ) : (
                     <span className="text-xs truncate block">{e.name}{e.target ? ` → ${e.target}` : ''}</span>

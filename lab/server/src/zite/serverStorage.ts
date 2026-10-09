@@ -15,8 +15,12 @@
  * `serverStorageDelete(planId)` acts, and the agent re-verifies everything against
  * the disk at that moment. Over 1 GB the agent requires confirm === "DELETE".
  *
+ * TWO DISKS: the agent indexes the root filesystem and the 500 GB factory volume (the Auto
+ * Editor's jobs, /mnt/factory_media = /opt/aieditor-work/jobs). summary / type take a `disk`
+ * id ("main" | "factory"); the tree picks the disk from the path itself.
+ *
  * Independent of the data-volume cards in storage.ts — their partition invariant is
- * untouched. The Lab's own volume shows up here as part of /var/lib/docker, which
+ * untouched (the factory volume is not part of the Lab's data volume). The Lab's own volume shows up here as part of /var/lib/docker, which
  * the agent lists but never deletes from.
  */
 import http from "node:http";
@@ -79,9 +83,14 @@ async function orUnavailable<T extends object>(fn: () => Promise<T>): Promise<T 
 }
 
 const str = (v: unknown, max = 4096) => (typeof v === "string" && v.length <= max ? v : undefined);
+const diskQ = (input: any) => {
+  const d = str(input?.disk, 32);
+  return d && /^[a-z0-9-]+$/.test(d) ? `disk=${d}` : "";
+};
 
-export async function serverStorageSummary() {
-  return orUnavailable(() => agentRequest<object>("GET", "/summary"));
+export async function serverStorageSummary(input?: any) {
+  const q = diskQ(input);
+  return orUnavailable(() => agentRequest<object>("GET", `/summary${q ? `?${q}` : ""}`));
 }
 
 export async function serverStorageTree(input: any) {
@@ -91,7 +100,8 @@ export async function serverStorageTree(input: any) {
 
 export async function serverStorageType(input: any) {
   const t = str(input?.type, 40) ?? "";
-  return orUnavailable(() => agentRequest<object>("GET", `/type?type=${encodeURIComponent(t)}`));
+  const q = diskQ(input);
+  return orUnavailable(() => agentRequest<object>("GET", `/type?type=${encodeURIComponent(t)}${q ? `&${q}` : ""}`));
 }
 
 export async function serverStorageRefresh() {
