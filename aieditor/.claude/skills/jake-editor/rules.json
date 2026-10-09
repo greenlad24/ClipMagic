@@ -70,6 +70,25 @@
   "src": "recommendation §4.3 coverage gate",
   "min_kept_frac": 0.95
  },
+ "screen_reference": {
+  "src": "RULEBOOK R13 / C8 (Jake 2026-10-09): every sentence in which the narrator shows or refers to something on screen is a screencast (hand-off: a slot) — never full-screen A-roll. aieditor/screenref.py reads this group; the plan check enforces it (error code screen_ref).",
+  "min_cover": 0.8,
+  "note": "case-insensitive regexes over ONE sentence's words (planfit.sentences); a sentence the presenter_re skips (his own calls to action / sign-off) is never flagged",
+  "cues": [
+   {"id": "look_at", "re": "\\b(?:now\\s+)?look(?:ing)? at (?:this|that|these|those|it|the|everything|where|how|what)\\b"},
+   {"id": "check_out", "re": "\\bcheck (?:this|that|it) out\\b|\\bcheck out (?:this|that|the)\\b"},
+   {"id": "watch_this", "re": "\\bwatch (?:this|that|the|it|what)\\b"},
+   {"id": "here_is", "re": "\\bhere(?:'s|’s| is| are)\\b(?! (?:what|where|why|how|when|the (?:part|thing|deal|catch|problem|real|bit|kicker|question|trick|point|good|bad)\\b))|\\bthere it is\\b|\\bthere you go\\b"},
+   {"id": "this_one", "re": "\\b(?:this|that) one\\b"},
+   {"id": "you_can_see", "re": "\\b(?:as )?you (?:can |could |'ll |will )?see\\b"},
+   {"id": "position", "re": "\\bon the (?:left|right|top|bottom)\\b|\\b(?:top|bottom|upper|lower) (?:left|right)(?: corner)?\\b|\\bat the (?:top|bottom)\\b"},
+   {"id": "pointing", "re": "\\b(?:over here|(?<!go )over there|right here|right there|up here|down here|in here)\\b"},
+   {"id": "this_ui", "re": "\\b(?:this|that|these|those) (?:button|menu|panel|tab|image|result|prompt|toolbar|icon|box|field|option|window|page|screen|canvas|photo|picture|list|card|setting|dropdown|sidebar|thread|counter|label|tool|feature|template|layout)s?\\b"},
+   {"id": "named_ui", "re": "\\b(?:the|a) [\\w'’-]+ (?:button|menu|tab|panel|toolbar|icon|tool|feature|option|box|bar|field|template|counter)\\b|\\b(?:message|search|text|chat) box\\b"},
+   {"id": "ui_step", "re": "\\b(?:click\\w*|open(?:s|ed|ing)?(?: up)?|typ(?:e|es|ed|ing)(?! of)|paste\\w*|select\\w*|drag\\w*|scroll\\w*|upload\\w*|highlight(?:s|ed|ing)?\\b|zoom(?:s|ed|ing)? in(?:to)?|choose|pick (?:the|a)|hit (?:send|enter)|press (?:send|enter))\\b"},
+   {"id": "reads_screen", "re": "\\b(?:it|this|that) says\\b|\\bthe word\\b|\\bon (?:the|my|your) screen\\b|\\bon screen\\b"}
+  ]
+ },
  "caps": {
   "src": "Jake: $20 per rolling 24 h server cap (cloud.py daily_cap_usd); recommendation §5 + Jake decision 1 (api_daily pending)",
   "server_daily_usd": 20,

@@ -22,7 +22,7 @@ import json
 import re
 import time
 
-from . import config, events, llm, motiontemplates, planfit, playbook, skill
+from . import config, events, llm, motiontemplates, planfit, playbook, screenref, skill
 
 MODEL = config.TAKES_MODEL                 # director.call (write_script, tests)
 PLAN_MODEL = config.PLAN_MODEL
@@ -788,6 +788,16 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                                  proposed=hr or None))
         elif planfit.ACTION_RE.search(txt) and not (acts or has_why or in_span):
             errs.append(_err("coverage", f"a UI step at {t0:.1f}-{t1:.1f} s (\"{txt[:160]}\") has no beat and no why", s))
+    # R13 / C8 (Jake 2026-10-09): a sentence that shows or refers to the screen is never full-screen A-roll
+    # (aieditor/screenref.py, cues in rules.json "screen_reference"); planned screencasts are never shrunk for it.
+    # A hook plate WITH its produced picture shows the thing full screen too, so it covers its words.
+    shown = spans + [(p["t0"], p["t1"]) for p in checked.get("plates") or []
+                     if p.get("assets") and not p.get("missing") and p.get("t0") is not None and p.get("t1") is not None]
+    for f in screenref.uncovered(screenref.flag(ws), shown):
+        errs.append(_err("screen_ref", f"he refers to the screen at {f['t0']:.1f}-{f['t1']:.1f} s (\"{f['text'][:160]}\") "
+                                       "but it stays on the presenter: put the whole sentence inside a screencast (extend "
+                                       "the neighbouring one or add one) — RULEBOOK R13/C8",
+                         [w for w in ws if w["i"] in set(f["word_ids"])]))
     seen, out = set(), []
     for e in errs:
         if e["msg"] not in seen:

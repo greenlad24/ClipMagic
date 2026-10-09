@@ -111,7 +111,8 @@ def preprod_factory(root):
         props = fmt.get("properties", {})
         if body["model"] == config.PLAN_MODEL:
             calls.append("plan")
-            ans = {"segments": [{"start_word": wid("Here's"), "end_word": ws[-1]["i"], "app": "chatgpt", "session": "logged_in",
+            # R13/C8: "Now look at this…" refers to the screen, so the screencast starts on it
+            ans = {"segments": [{"start_word": ws[0]["i"], "end_word": ws[-1]["i"], "app": "chatgpt", "session": "logged_in",
                                  "beats": [{"word_id": wid("phone"), "action": "camera.zoom", "body": "the produced phone photo, framed",
                                             "subject": "asset:phone_photo", "text": None, "url": None, "asset_id": "phone_photo",
                                             "live": False, "wait_end_word": None},

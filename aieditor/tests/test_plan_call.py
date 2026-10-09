@@ -135,6 +135,22 @@ def corrected_answer(ans):
         for e in errs:
             wids = set(e["word_ids"])
             prop = e.get("proposed")
+            if e["code"] == "screen_ref":          # R13/C8: the sentence's uncovered words get their own screencast
+                taken = {POS[w["i"]] for s in ans["segments"] for w in WORDS[POS[s["start_word"]]:POS[s["end_word"]] + 1]}
+                free = sorted(POS[i] for i in wids if POS[i] not in taken)
+                if free:
+                    run = [free[0]]
+                    for k in free[1:]:
+                        if k != run[-1] + 1:
+                            break
+                        run.append(k)
+                    ans["segments"].append({"start_word": WORDS[run[0]]["i"], "end_word": WORDS[run[-1]]["i"], "app": "chatgpt",
+                                            "session": "logged_in", "beats": [
+                        {"word_id": WORDS[run[0]]["i"], "action": "camera.zoom", "body": "the screen he refers to",
+                         "subject": "screen", "text": None, "url": None, "asset_id": None, "live": False,
+                         "wait_end_word": None}]})
+                    ans["segments"].sort(key=lambda s: POS[s["start_word"]])
+                continue
             if e["code"] == "session" or (isinstance(prop, dict) and prop.get("session") == "outside"):
                 outside |= wids
                 continue
