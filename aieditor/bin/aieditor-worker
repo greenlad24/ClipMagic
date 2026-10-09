@@ -51,6 +51,10 @@ WORKFLOWS (request.json "workflow", Jake 2026-10-08: "there are 2 workflows"):
             "preprod" = PRE-PRODUCTION, stage 0 of the creative edit — aieditor/preprod.py, built
             separately (sandbox: /opt/aieditor-work/loop/aieditor/aieditor/preprod.py). The worker
             calls it when the module exists and skips the stage otherwise (see run_preprod).
+  handoff   creative + request.json "handoff": true (Lab: "Graphics only — editor adds screencasts", Jake
+            2026-10-09): plan only (no browser) → overlays → the hand-off package for a human editor
+            (handoff-NN/ + handoff-NN.zip: Premiere XML + FCPXML, A-roll, ProRes 4444 graphics, stems,
+            the screencast brief, a preview with a card in every slot) — aieditor/handoff.py, run_handoff
 """
 import importlib
 import inspect
@@ -70,6 +74,7 @@ sys.path.insert(0, str(ROOT))
 from aieditor import align, camera, cloud, compose, config, descript, edl, events, gates, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
 from aieditor import sites as sites_mod  # noqa: E402
 from aieditor import accountlock, apiledger, llm  # noqa: E402
+from aieditor import handoff  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -81,6 +86,8 @@ def workflow_of(req):
 
 
 def stages_for(req):
+    if handoff.wanted(req):
+        return handoff.STAGES
     return CREATIVE_STAGES if workflow_of(req) == "creative" else STAGES
 STOP = False
 
@@ -249,7 +256,7 @@ def run_job(job, action):
     rebuild = action in ("rebuild", "recut")
     creative = workflow_of(req) == "creative"
 
-    if action == "final":
+    if action == "final" and not handoff.wanted(req):      # (a hand-off job: its package IS the deliverable)
         return run_final(job, fmt)
 
     # 1 download (a Descript link) — or a Lab edit / an uploaded file already on this volume:
@@ -340,6 +347,8 @@ def run_job(job, action):
                         + f", {len(v['words'])} words")
             return f"whole timeline kept: {v['duration']:.0f}s, {len(v['words'])} words, no cuts"
         step("timeline", do_timeline, lambda: (d / "edl.json").exists(), rerun=rebuild)
+        if handoff.wanted(req):
+            return run_handoff(job, action, req, info, fps, step)
         if action in ("run", "edit"):
             run_preprod(job, req, info, fps)
     else:
@@ -418,6 +427,49 @@ def run_preprod(job, req, info, fps):
         for h in held:
             reasons = longedit.add_held(d, h.get("reason", "held"), h.get("detail", ""))
         raise Held(reasons)
+
+
+def run_handoff(job, action, req, info, fps, step):
+    """GRAPHICS ONLY — the editor adds the screencasts (aieditor/handoff.py). The plan (one plan call + check +
+    overlay call, no browser, never held for a missing primitive) → the overlays → the hand-off package. No
+    screencast is recorded, so no Scout account is locked and nothing waits for one."""
+    d = job.d
+    e = jload(d / "edl.json")
+    size = (info["width"], info["height"])
+    audio = edl.Audio(d / "audio16k.wav")
+
+    def do_plan():
+        out = handoff.plan(d, req, e, log=job.log, progress=lambda m=None, f=None: job.progress(m, f))
+        job.st["cost_usd"] = round(job.st["cost_usd"] + out["usd"], 4)
+        return out["note"] + (f", ${out['usd']:.2f}" if out["usd"] else "")
+    step("preprod", do_plan, lambda: handoff.plan_fresh(d))
+
+    def do_overlays():
+        notes, usd = [], 0.0
+        for k, v in enumerate(e["videos"], 1):
+            try:
+                note, u = handoff.overlays(d, k, v, fps, size, job.cancelled, lambda m, f=None: job.progress(f"Video {k}: {m}", f),
+                                           job.log)
+            except InterruptedError:
+                raise Cancelled()
+            notes.append(note)
+            usd += u
+        job.st["cost_usd"] = round(job.st["cost_usd"] + usd, 4)
+        return "; ".join(notes)
+    step("graphics", do_overlays, lambda: handoff.overlays_fresh(d, len(e["videos"])), rerun=(action not in ("run", "final")))
+
+    def do_package():
+        notes = []
+        for k, v in enumerate(e["videos"], 1):
+            try:
+                r = handoff.build(d, k, v, fps, info, job.cancelled, lambda m, f=None: job.progress(f"Video {k}: {m}", f),
+                                  job.log, room_tone_start=audio.room_tone(), workers=longedit.chunk_workers_of(req),
+                                  aroll_codec=req.get("handoff_aroll") if req.get("handoff_aroll") in handoff.AROLL_CODECS else "h264")
+            except (render.RenderCancelled, InterruptedError):
+                raise Cancelled()
+            notes.append(r["note"])
+        return "; ".join(notes)
+    step("handoff", do_package, rerun=True)
 
 
 def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_id, audio, step, rebuild):
@@ -1003,7 +1055,7 @@ def main():
         if not cloud.enabled_for(action, req):
             return False
         # one job per logged-in account: a job whose Scout account is in use stays queued
-        if action in ("run", "edit") and (req.get("sites") or workflow_of(req) == "creative"):
+        if action in ("run", "edit") and (req.get("sites") or workflow_of(req) == "creative") and not handoff.wanted(req):
             try:
                 if any(accountlock.busy(slug) for slug in cloud.scout_slugs(req, d)):
                     return True
