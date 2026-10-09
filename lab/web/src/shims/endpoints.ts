@@ -3798,7 +3798,17 @@ export interface AutoRunner {
 }
 export interface AutoJobSummary {
   id: string; title: string; format: 'short' | 'long'; sponsored: boolean; workflow?: AutoWorkflow;
-  state: string; message: string | null; createdAt: number | null; updatedAt: number | null;
+  /** "held" = the edit failed the ship rule / a gate: not shipped, see AutoJobDetail.held */
+  state: string; message: string | null; createdAt: number | null; updatedAt: number | null; held?: boolean;
+}
+/** One reason a HELD edit was not shipped (held.json / status.held_failures; dim "held" = a stage stopped it). */
+export interface AutoHeldFailure {
+  dim: string; beat: string | null; t: number | null; why: string; remedies_tried: string[]; edit?: number;
+}
+export interface AutoHeld {
+  failures: AutoHeldFailure[];
+  /** per edit: the rubric's dimension scores (null = not measured) and the ship rule's verdict */
+  scores: ({ dims: Record<string, number | null>; overall: number | null; ship: { ship: boolean; fails: string[] } | null } | null)[];
 }
 export interface AutoSentence { s: number; start: number; end: number; words: { i: number; w: string }[] }
 export interface AutoVideoPlan { title: string; segments: { s: number; drop: number[] }[]; warnings?: string[] }
@@ -3845,6 +3855,10 @@ export interface AutoJobDetail {
   log: string;
   /** null = this job was never routed (or ran before the factory existed) */
   runner?: AutoRunner | null;
+  /** set when the job is HELD (architecture §4): why, one line per failure — never a finished edit */
+  held?: AutoHeld | null;
+  /** a held job's edit files, kept for inspection only (not finished edits, not creative sources) */
+  heldEdits?: { name: string; bytes: number; modifiedAt: number }[];
 }
 /** One stage in status.json (the worker keeps progress / cost / counts per stage). */
 export interface AutoStageStatus {

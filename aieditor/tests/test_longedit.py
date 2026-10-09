@@ -304,4 +304,77 @@ nofacts = director.validate(raw, LV, [{"url": "https://chatgpt.com/"}])
 check("without pre-production facts nothing is rejected", all(b["route"] in ("keep", "drop") or "span structure" in str(b["why"])
                                                               for b in nofacts["beats"]))
 
+# ── compose gates (gap list G4 + recommendation §4): salvage pieces, verdict.json, the held job ──
+import importlib.machinery  # noqa: E402
+import importlib.util  # noqa: E402
+import json as _json  # noqa: E402
+import tempfile as _tf  # noqa: E402
+from aieditor import gates, longedit  # noqa: E402
+
+ROOT = Path(__file__).resolve().parent.parent
+_FX = Path(__file__).resolve().parent / "fixtures" / "g4"
+_JOB = _json.loads((_FX / "failed_job.json").read_text())
+_W = [{"i": n, "word": w, "start": s, "end": e} for n, (w, s, e) in enumerate(_JOB["words"])]
+_QA1 = _json.loads((_FX / "frames-qa-v1.json").read_text())
+with _tf.TemporaryDirectory() as td:
+    job = Path(td) / "failed-job"
+    w = job / "edit-01"
+    for i, _ in enumerate(_JOB["segments"]):
+        rec = w / f"seg-{i:02d}" / "rec"
+        rec.mkdir(parents=True)
+        (rec / "events.json").write_text(_json.dumps({"end": _JOB["rec_end"][f"{i:02d}"], "walls": _JOB["walls"][f"{i:02d}"],
+                                                      "events": []}))
+    pieces, lost = longedit.screen_pieces(w, _JOB["segments"], _QA1, _W, None)
+    by = {}
+    for p in pieces:
+        by.setdefault(p["i"], []).append(p)
+    check("compose: seg-07 is salvaged on both sides, not dropped", len(by.get(7, [])) == 2)
+    check("compose: seg-02 keeps both sides", len(by.get(2, [])) == 2)
+    check("compose: the foreign-account take shows nothing", 12 not in by)
+    check("compose: pieces are ordered and never overlap", all(a["t1"] <= b["t0"] + 1e-6 for a, b in zip(pieces, pieces[1:])))
+    check("compose: every loss is a D1 failure line", lost and all(f["dim"] == "D1" for f in lost))
+    check("compose: a clean segment is kept (edges on sentences)", len(by.get(3, [])) == 1 and by[3][0]["t1"] - by[3][0]["t0"] > 70)
+    check("compose: a never-recorded segment is a D1 failure", any("never recorded" in f["why"] for f in
+          longedit.screen_pieces(Path(td) / "nothing", _JOB["segments"][:1], {}, _W)[1]))
+    # the compose tail: verdict.json from blocks + plan + rubric (no video needed)
+    (job / "request.json").write_text(_json.dumps({"workflow": "creative", "source": {"kind": "descript", "url": "x"}}))
+    (w / "blocks.json").write_text(_json.dumps({"blocks": _JOB["blocks"], "words": _W, "overlays": _JOB["overlays"]}))
+    plan = {"segments": _JOB["segments"], "overlays": []}
+    v = longedit.edit_verdict(job, 1, w, plan, lost, _QA1)
+    on_disk = _json.loads((w / "verdict.json").read_text())
+    check("compose writes edit-NN/verdict.json", on_disk["held"] is True and on_disk["failures"] == v["failures"])
+    check("verdict: coverage and structure failed", not on_disk["coverage"]["ok"] and not on_disk["structure"]["ok"])
+    check("verdict: the rubric's code dimensions are in it", {"D2", "D7", "D9"} <= set(on_disk["dims"]))
+    check("verdict: the judged dimensions are not invented", on_disk["dims"].get("D1") is None)
+    # the expectations the take gate and content QA check against
+    (w / "beats.json").write_text(_json.dumps({"beats": []}))
+    ep = longedit.write_expect(w, {"segments": [{"t0": 0.0, "t1": 10.0, "beats": [
+        {"id": "b1", "word_id": 1, "t_word": 2.0, "action": "x.open", "must_text": ["Sketch"]}]}]}, {"words": _W})
+    check("write_expect: plan-schema beats", _json.loads(ep.read_text())["segments"]["0"][0]["must"] == ["Sketch"])
+
+    # the worker: a held verdict ends the job HELD (never "done"), with held.json and no notification
+    _loader = importlib.machinery.SourceFileLoader("aieditor_worker", str(ROOT / "bin" / "aieditor-worker"))
+    _spec = importlib.util.spec_from_loader("aieditor_worker", _loader)
+    worker = importlib.util.module_from_spec(_spec)
+    _loader.exec_module(worker)
+    (job / "edl.json").write_text(_json.dumps({"videos": [{"words": []}]}))
+    (job / "held.json").write_text(_json.dumps({"reasons": [{"reason": "needs_scripted_recorder", "detail": "edit 1 screencast 3"}]}))
+    jb = worker.Job(job)
+    worker.run_job = lambda j, a: None
+    worker.execute(jb, "run")
+    st = _json.loads((job / "status.json").read_text())
+    check("worker: the job state is 'held'", st["state"] == "held" and st["held"] is True)
+    check("worker: the failure list is in status.json", st["held_failures"] and st["held_failures"][0]["dim"] == "held")
+    hd = _json.loads((job / "held.json").read_text())
+    check("worker: held.json keeps the other reasons and lists the failures", hd["reasons"] and hd["failures"])
+    check("worker: a held job is never 'Ready to review'", "Ready" not in st["message"] and st["message"].startswith("Held"))
+    # a later run whose edit ships clears it
+    (w / "verdict.json").write_text(_json.dumps({"held": False, "failures": []}))
+    (job / "held.json").unlink()
+    jb = worker.Job(job)
+    worker.execute(jb, "run")
+    st = _json.loads((job / "status.json").read_text())
+    check("worker: a shipping edit ends done", st["state"] == "done" and st.get("held") is False)
+    check("worker: --once treats held as handled", "in (\"done\", \"held\")" in (ROOT / "bin" / "aieditor-worker").read_text())
+
 print(f"test_longedit: {N} checks passed" + ("" if ok_cam else " (camera checks skipped: no cv2 here)"))
