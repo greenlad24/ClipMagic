@@ -4,9 +4,11 @@
   {"kind": "job", "job": <id>, "file": "final-01.mp4"}  a finished Lab edit of workflow 1 (cut)
   {"kind": "upload", "upload": <id>, "name": <file>}    a file uploaded from Jake's computer
                                                         (the Lab streams it to jobs/_uploads/<id>/data)
-  {"kind": "job_source", "job": <id>, "name": <file>,   the uploaded narration of an EARLIER job whose
-   "upload": <id>}                                      _uploads folder is gone (uploads made before the
-                                                        library existed): that job's source.mp4
+  {"kind": "job_source", "job": <id>,                  ANY earlier job's narration: that job's source.mp4
+   "name": <label>, "origin": <label>,                  (a Descript download, an upload, a Lab edit —
+   "upload": <id>?}                                     Jake 2026-10-09: "I want to reuse a narration from
+                                                        another job"). "upload" only when that narration
+                                                        was an upload (the library key of an old upload)
 
 The two local kinds are MATERIALISED into the job's own folder as source.mp4 BEFORE the job
 runs (on this box, or before the folder is sent to a factory server — that server can see no
@@ -19,7 +21,8 @@ os.replace()s it, i.e. a NEW inode, never truncating the shared one.
 NARRATION LIBRARY (Jake 2026-10-09: "so I can reuse uploaded narration videos"): an upload is
 KEPT after use — any number of jobs hard-link the same _uploads/<id>/data, and only the Lab's
 "Remove from library" deletes the folder (jobs keep their own link). source.json records kind,
-filename and from_upload / from_job.
+filename and from_upload / from_job; a job_source also records "origin" — where the narration
+first came from ("Descript: <title>", "Uploaded: <file>", "Lab edit of <job title>", origin_of).
 
 ⚠️ SOURCE GATE — AUTOMATIC, no human step (Jake 2026-10-09: "it also did cuts inside the
 narration that I didn't ask for", then "when a job is being submitted for a new video - I
@@ -45,8 +48,7 @@ FILE_RE = re.compile(r"^(final|preview)-\d{2}\.mp4$")
 UPLOAD_RE = re.compile(r"^u[0-9a-f]{24}$")
 UPLOADS_DIR = "_uploads"
 LOCAL_KINDS = ("job", "upload", "job_source")
-# kinds of an earlier job's source.json that make its source.mp4 an uploaded narration
-NARRATION_KINDS = ("upload", "job_source")
+VIDEO_EXT_RE = re.compile(r"\.(mp4|mov|m4v|mkv|webm|avi)$", re.I)
 
 
 class SourceError(RuntimeError):
@@ -154,27 +156,77 @@ def resolve(src, jobs_root, self_id=None):
             raise SourceError("the earlier job to reuse the narration of is not a valid job name")
         if jid == self_id:
             raise SourceError("a job cannot use its own video as its source")
-        jdir = jobs_root / jid
+        jdir = _job_dir(jobs_root, jid)
         path = jdir / "source.mp4"
         if _jload(jdir / "request.json") is None:
             raise SourceError(f"the job {jid} no longer exists")
         if path.is_symlink() or not path.is_file():
             raise SourceError(f"the job {jid} has no source.mp4 any more")
-        sj = _jload(jdir / "source.json", {}) or {}
-        if sj.get("kind") not in NARRATION_KINDS:
-            raise SourceError(f"the source of {jid} is not an uploaded narration")
-        name = str(src.get("name") or sj.get("filename") or "upload")[:200]
-        return path, _job_source_facts(jid, name, src.get("upload") or sj.get("from_upload") or sj.get("upload"))
+        sj = _jload(jdir / "source.json")
+        if not isinstance(sj, dict):
+            # source.json is written after source.mp4: without it the download never finished
+            raise SourceError(f"the job {jid} has not finished getting its narration")
+        origin = origin_of(jobs_root, jid)
+        name = str(src.get("name") or _label_name(sj) or jid)[:200]
+        return path, _job_source_facts(jid, name, src.get("upload") or sj.get("from_upload") or sj.get("upload"),
+                                       origin)
     raise SourceError(f"unknown source kind {kind!r}")
+
+
+def _job_dir(jobs_root, jid):
+    """jobs_root/<jid> — a real folder directly inside the jobs folder (never a symlink out)."""
+    jobs_root = Path(jobs_root)
+    jdir = jobs_root / jid
+    if jdir.is_symlink() or (jdir.exists() and jdir.resolve().parent != jobs_root.resolve()):
+        raise SourceError(f"the job {jid} is not a job folder")
+    return jdir
+
+
+def _label_name(sj):
+    """The short name of a job's narration from its source.json: the uploaded file name, the
+    Lab edit's / Descript project's title."""
+    sj = sj or {}
+    return str(sj.get("filename") or sj.get("title") or sj.get("share_id") or "")
+
+
+def origin_of(jobs_root, jid, depth=0):
+    """Where job <jid>'s narration came from, for a person: "Descript: <title or share id>",
+    "Uploaded: <file name>" or "Lab edit of <job title>" (a job_source: its own origin, else the
+    earlier job's). Mirrors lab/server/src/aieditor/library.ts originOf()."""
+    jdir = Path(jobs_root) / jid
+    sj = _jload(jdir / "source.json", {}) or {}
+    req = _jload(jdir / "request.json", {}) or {}
+    rsrc = req.get("source") or {}
+    k = sj.get("kind") or rsrc.get("kind") or "descript"
+    if k == "job":
+        fj = str(sj.get("from_job") or rsrc.get("job") or "")
+        t = sj.get("title") or rsrc.get("title")
+        if not t and JOB_RE.match(fj):
+            t = (_jload(Path(jobs_root) / fj / "request.json", {}) or {}).get("title")
+        return f"Lab edit of {t or fj or 'an earlier job'}"
+    if k == "upload":
+        return f"Uploaded: {sj.get('filename') or rsrc.get('name') or 'a file'}"
+    if k == "job_source":
+        if sj.get("origin") or rsrc.get("origin"):
+            return str(sj.get("origin") or rsrc.get("origin"))
+        if sj.get("from_upload") or rsrc.get("upload"):
+            return f"Uploaded: {sj.get('filename') or rsrc.get('name') or 'a file'}"
+        fj = str(sj.get("from_job") or rsrc.get("job") or "")
+        if depth < 8 and JOB_RE.match(fj) and fj != jid:
+            return origin_of(jobs_root, fj, depth + 1)
+        return f"Reused narration of {fj or jid}"
+    sid = sj.get("share_id") or str(rsrc.get("url") or "").rstrip("/").split("/")[-1]
+    return f"Descript: {sj.get('title') or sid or 'share link'}"
 
 
 def _upload_facts(uid, name):
     return {"kind": "upload", "upload": uid, "from_upload": uid, "filename": name, "title": Path(name).stem}
 
 
-def _job_source_facts(jid, name, uid=None):
+def _job_source_facts(jid, name, uid=None, origin=None):
     uid = str(uid) if uid and UPLOAD_RE.match(str(uid)) else None
-    return {"kind": "job_source", "from_job": jid, "filename": name, "title": Path(name).stem,
+    return {"kind": "job_source", "from_job": jid, "filename": name, "title": VIDEO_EXT_RE.sub("", name) or name,
+            "origin": str(origin or f"Reused narration of {jid}")[:240],
             **({"upload": uid, "from_upload": uid} if uid else {})}
 
 
@@ -226,10 +278,17 @@ def facts_for(job_dir, req, jobs_root):
                 "quality": "final" if fname.startswith("final-") else "preview",
                 **({"review": rs["status"], "removed_words": rs.get("removed_words")}
                    if (Path(jobs_root) / jid / "request.json").exists() and rs else {})}
-    name = str(src.get("name") or "upload")[:200]
     if src.get("kind") == "job_source":
-        return _job_source_facts(str(src.get("job") or ""), name, src.get("upload"))
-    return _upload_facts(src.get("upload"), name)
+        jid = str(src.get("job") or "")
+        origin, uid, name = src.get("origin"), src.get("upload"), src.get("name")
+        if JOB_RE.match(jid) and (Path(jobs_root) / jid / "request.json").exists():
+            # while the earlier job still exists (on this box, not on a factory server)
+            origin = origin or origin_of(jobs_root, jid)
+            sj = _jload(Path(jobs_root) / jid / "source.json", {}) or {}
+            uid = uid or sj.get("from_upload") or sj.get("upload")
+            name = name or _label_name(sj)
+        return _job_source_facts(jid, str(name or jid)[:200], uid, origin)
+    return _upload_facts(src.get("upload"), str(src.get("name") or "upload")[:200])
 
 
 def note_for(facts, info):
@@ -243,7 +302,7 @@ def note_for(facts, info):
     if facts.get("kind") == "upload":
         return f"Uploaded: {facts.get('filename')} · {dims}"
     if facts.get("kind") == "job_source":
-        return f"Uploaded (reused from {facts.get('from_job')}): {facts.get('filename')} · {dims}"
+        return f"Reused from {facts.get('from_job')}: {facts.get('origin') or facts.get('filename')} · {dims}"
     return dims
 
 
@@ -251,7 +310,8 @@ def prepare(job_dir, req, jobs_root, probe, progress=lambda msg, frac=None: None
     """The "download" stage for a local source: materialise (when not done yet), probe, write
     source.json. Returns the stage note."""
     job_dir = Path(job_dir)
-    progress("Using the Lab edit…" if kind_of(req) == "job" else "Using the uploaded file…", 0.1)
+    progress({"job": "Using the Lab edit…", "job_source": "Using the earlier job's narration…"}.get(
+        kind_of(req), "Using the uploaded file…"), 0.1)
     if not (job_dir / "source.mp4").exists():
         materialise(job_dir, req, jobs_root)
     if not (job_dir / "source.mp4").exists():

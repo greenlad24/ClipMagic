@@ -3,8 +3,9 @@
   materialise   hard link into <job>/source.mp4 (same inode, no copy), copy fallback when
                 the link is refused, never touches the source job's file, KEEPS the upload
                 (the narration library: one upload hard-linked into 2 jobs), idempotent
-  job_source    an earlier job's uploaded narration (its source.mp4) when its _uploads folder is
-                gone: hard link, strict names, only an uploaded narration, never itself
+  job_source    ANY earlier job's narration (its source.mp4: a Descript download, an upload, a
+                Lab edit) — no upload id needed: hard link, strict names, no symlinked file or
+                job folder, a finished download only, never itself; source.json from_job + origin
   resolve       strict names (no traversal, no symlinks), the source job / file / upload must
                 exist, an unfinished upload is refused, a job cannot use itself
   prepare       = the worker's "download" stage: probe → source.json (+ kind/from_job/filename)
@@ -201,27 +202,81 @@ def main():
         note = sources.prepare(d9, req9, jobs, fake_probe)
         sj = json.loads((d9 / "source.json").read_text())
         check(sj["kind"] == "job_source" and sj["from_job"] == "creative-u-1" and sj["filename"] == "my video.mov"
-              and sj["from_upload"] == uid, f"job_source facts {sj}")
-        check(note.startswith("Uploaded (reused from creative-u-1): my video.mov"), f"note {note!r}")
+              and sj["from_upload"] == uid and sj["origin"] == "Uploaded: my video.mov", f"job_source facts {sj}")
+        check(note.startswith("Reused from creative-u-1: Uploaded: my video.mov"), f"note {note!r}")
         check(sources.kind_of(req9) == "job_source", "kind_of job_source")
-        # a job_source of a job_source works too (the chain of reuse)
+        # a job_source of a job_source works too (the chain of reuse) — and needs no upload id
         d10, req10 = new_job(jobs, "creative-js-2", {"kind": "job_source", "job": "creative-js-1"})
         check(sources.materialise(d10, req10, jobs) == "link", "job_source of a job_source")
-        # validation: strict names, no traversal, no symlink, only an uploaded narration, not itself
+        sources.prepare(d10, req10, jobs, fake_probe)
+        sj10 = json.loads((d10 / "source.json").read_text())
+        check(sj10["from_job"] == "creative-js-1" and sj10["origin"] == "Uploaded: my video.mov"
+              and sj10["from_upload"] == uid, f"origin carried through the chain {sj10}")
+
+        # ── job_source WITHOUT an upload id: ANY job's narration (Jake 2026-10-09: "I want to
+        #    reuse a narration from another job") — a Descript download, a Lab edit ──
+        dd = jobs / "linearity-descript-1"
+        dd.mkdir()
+        (dd / "request.json").write_text(json.dumps({"id": dd.name, "title": "Linearity", "source": {
+            "kind": "descript", "url": "https://share.descript.com/view/r5vpQtmHP2d"}}))
+        (dd / "source.mp4").write_bytes(b"MP4!raw descript narration")
+        dino = (dd / "source.mp4").stat().st_ino
+        # downloading (source.json not written yet): refused
+        raises(lambda: mat({"kind": "job_source", "job": dd.name}), "has not finished getting its narration")
+        (dd / "source.json").write_text(json.dumps({"share_id": "r5vpQtmHP2d", "title": "Linearity", **INFO}))
+        check(sources.origin_of(jobs, dd.name) == "Descript: Linearity", "origin: Descript title")
+        d11, req11 = new_job(jobs, "cut-from-descript-1", {"kind": "job_source", "job": dd.name})
+        req11["workflow"] = "cut"
+        check(sources.materialise(d11, req11, jobs) == "link", "a Descript job's narration: hard link, no download")
+        check((d11 / "source.mp4").stat().st_ino == dino, "same inode as the Descript job's source.mp4")
+        check((dd / "source.mp4").stat().st_nlink == 2, "zero copies")
+        note = sources.prepare(d11, req11, jobs, fake_probe)
+        sj = json.loads((d11 / "source.json").read_text())
+        check(sj["kind"] == "job_source" and sj["from_job"] == dd.name and sj["origin"] == "Descript: Linearity"
+              and "upload" not in sj and "from_upload" not in sj, f"Descript reuse facts {sj}")
+        check(sj["filename"] == "Linearity" and sj["title"] == "Linearity", f"name from the Descript title {sj}")
+        check(note == f"Reused from {dd.name}: Descript: Linearity · 3840x2160, 16.1 min", f"note {note!r}")
+        # the request's own name/origin win (the Lab computed them); facts_for works without the source job
+        f2 = sources.facts_for(d11, {"source": {"kind": "job_source", "job": "gone-elsewhere-1", "name": "N",
+                                                "origin": "Descript: X"}}, jobs)
+        check(f2["origin"] == "Descript: X" and f2["filename"] == "N" and "upload" not in f2, f"facts_for {f2}")
+        # share id when Descript gave no title
+        (dd / "source.json").write_text(json.dumps({"share_id": "r5vpQtmHP2d", **INFO}))
+        check(sources.origin_of(jobs, dd.name) == "Descript: r5vpQtmHP2d", "origin: share id")
+        # a creative job's source (a Lab edit) is reusable too: its origin names the Lab edit
+        dc, reqc = new_job(jobs, "creative-from-lin-1", {"kind": "job", "job": src.name, "file": "final-01.mp4"})
+        sources.prepare(dc, reqc, jobs, fake_probe)
+        check(sources.origin_of(jobs, dc.name) == "Lab edit of Linearity", "origin: Lab edit")
+        d12, req12 = new_job(jobs, "graphics-from-creative-1", {"kind": "job_source", "job": dc.name})
+        check(sources.materialise(d12, req12, jobs) == "link", "a creative job's source: hard link")
+        check((d12 / "source.mp4").stat().st_ino == (src / "final-01.mp4").stat().st_ino,
+              "the same inode as the Lab edit's final")
+
+        # validation: strict names, no traversal, no symlink, not itself, a finished download
         raises(lambda: mat({"kind": "job_source", "job": "../creative-u-1"}), "not a valid job name")
         raises(lambda: mat({"kind": "job_source", "job": "_uploads"}), "not a valid job name")
         raises(lambda: mat({"kind": "job_source", "job": "creative-u-1/source.mp4"}), "not a valid job name")
+        raises(lambda: mat({"kind": "job_source", "job": "Creative-U-1"}), "not a valid job name")
+        raises(lambda: mat({"kind": "job_source", "job": ""}), "not a valid job name")
         raises(lambda: mat({"kind": "job_source", "job": "no-such-job"}), "no longer exists")
         raises(lambda: mat({"kind": "job_source", "job": "creative-bad"}, jid="creative-bad"), "its own video")
         raises(lambda: mat({"kind": "job_source", "job": src.name}), "has no source.mp4")
-        (src / "source.mp4").write_bytes(b"MP4!descript")
-        (src / "source.json").write_text(json.dumps({"kind": "descript"}))
-        raises(lambda: mat({"kind": "job_source", "job": src.name}), "not an uploaded narration")
-        (src / "source.mp4").unlink()
         (src / "source.mp4").symlink_to(d4 / "source.mp4")
         raises(lambda: mat({"kind": "job_source", "job": src.name}), "has no source.mp4")
         (src / "source.mp4").unlink()
-        (src / "source.json").unlink()
+        (src / "source.mp4").mkdir()
+        raises(lambda: mat({"kind": "job_source", "job": src.name}), "has no source.mp4")
+        (src / "source.mp4").rmdir()
+        # a job folder that is a symlink to somewhere else (outside the jobs folder) is refused
+        outside = Path(tmp) / "outside-job"
+        outside.mkdir()
+        (outside / "request.json").write_text("{}")
+        (outside / "source.mp4").write_bytes(b"MP4!outside")
+        (outside / "source.json").write_text("{}")
+        (jobs / "linked-job-1").symlink_to(outside)
+        raises(lambda: mat({"kind": "job_source", "job": "linked-job-1"}), "not a job folder")
+        check((outside / "source.mp4").stat().st_nlink == 1, "nothing linked from outside the jobs folder")
+        (jobs / "linked-job-1").unlink()
 
         uid2, udir2 = make_upload(jobs, uid="u" + "cd" * 12, complete=False)
         d5, req5 = new_job(jobs, "creative-u-2", {"kind": "upload", "upload": uid2, "name": "x.mp4"})
