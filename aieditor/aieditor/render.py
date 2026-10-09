@@ -175,5 +175,18 @@ def listen_size(width, height):
 
 
 def preview_size(width, height):
-    """1080p preview in the source's orientation."""
+    """1080p preview in the source's orientation. (Not rendered for a long-form factory job: the 540p
+    draft below replaces it — recommendation step 8, longedit.wants_preview.)"""
     return "1080:1920" if height > width else "1920:1080"
+
+
+DRAFT_SHORT_SIDE = 540
+
+
+def draft_size(width, height):
+    """The factory's QA draft: 540 px on the short side (960:540 for a 16:9 source), even sizes. The rubric
+    and the judges score this draft (recommendation §4 checkpoint 4); the 4K final follows only if it ships."""
+    s = DRAFT_SHORT_SIDE
+    if width >= height:
+        return f"{round(s * width / height) // 2 * 2}:{s}"
+    return f"{s}:{round(s * height / width) // 2 * 2}"
