@@ -3,7 +3,12 @@
 
   aieditor-factory status      settings, snapshot, tagged droplets + leases (no secrets)
   aieditor-factory image       (re)build the factory snapshot: images + models baked in
-  aieditor-factory smoke       create a job server from the snapshot, check it, destroy it
+  aieditor-factory smoke [--region R] [--no-tunnel]
+                               create a job server from the snapshot, check it, destroy it. With a
+                               region other than home: copies the snapshot there if needed, SSH over
+                               the public IP, checks ufw + the egress tunnel (leaves as this box)
+  aieditor-factory regions     where a 32-core server is available now, the region order, image copies
+  aieditor-factory copy-image R…   start copying the current snapshot to regions (no wait)
   aieditor-factory trial [--factory|--no-factory] [--workers N] <job dir> <action>…
                                run actions for a job folder OUTSIDE the Lab's list on a factory
                                server (speed trial); prints timings. --factory = factory mode (no
@@ -37,28 +42,87 @@ def status():
           + f"; per job creative ${job_cap:.2f} / cut ${apiledger.caps('cut')[0]:.2f}")
     print("droplet API key:", "separate key set" if cloud.droplet_key_set() else
           ("MISSING — jobs refused" if s.get("require_droplet_key") else "not set — the org key is shipped (warning)"))
-    for tag in (cloud.TAG_JOB, cloud.TAG_IMAGE):
+    for tag in (cloud.TAG_JOB, cloud.TAG_IMAGE, cloud.TAG_US):
         for d in cloud.tagged(tag):
-            print(f"  {tag}: {d['id']} {d['name']} {d['size_slug']} {d['status']} since {d['created_at']}")
+            print(f"  {tag}: {d['id']} {d['name']} {d['size_slug']} {d['region']['slug']} {d['status']} "
+                  f"since {d['created_at']}")
 
 
-def smoke():
+def regions():
     s = cloud.settings()
-    t0 = time.time()
-    did = cloud.create(f"factory-smoke-{int(t0) % 100000}", s["size"], int(s["snapshot_id"]), cloud.TAG_JOB)
+    cloud.poll_transfers(log)
+    s = cloud.settings()
+    print("order:", " → ".join(cloud.region_order(s)))
+    sizes = {x["slug"]: x for x in cloud.api("GET", "/sizes?per_page=200")["sizes"]}
+    for slug in cloud.SIZE_FALLBACKS:
+        x = sizes.get(slug) or {}
+        print(f"  {slug}: ${x.get('price_hourly', 0):.4f}/h in {', '.join(sorted(x.get('regions') or [])) or 'nowhere'}")
     try:
-        with cloud.Heartbeat(did, job="smoke"):
-            ip, pub = cloud.wait_active(did)
-            log(f"active after {time.time() - t0:.0f}s at {ip}")
+        print("next job would use:", cloud.pick_placement(s, log=lambda m: print("  " + m)))
+    except cloud.DOError as e:
+        print("next job would WAIT:", e)
+    img = cloud.api("GET", f"/images/{s['snapshot_id']}")["image"]
+    gb = float(img.get("size_gigabytes") or 0)
+    print(f"snapshot {img['id']} ({gb} GB) in: {', '.join(img['regions'])} — storage ≈ "
+          f"${gb * 0.06 * len(img['regions']):.2f}/month")
+    for r, rec in sorted((s.get("image_regions") or {}).items()):
+        print(f"  {r}: {rec.get('state')} (snapshot {rec.get('snapshot_id')})")
+
+
+def smoke(argv=()):
+    """--region R: run the real away-from-home flow (snapshot copy, public-IP SSH, ufw, egress tunnel)."""
+    s = cloud.settings()
+    region = s["region"]
+    tunnel_wanted = "--no-tunnel" not in argv
+    if "--region" in argv:
+        region = argv[argv.index("--region") + 1]
+    away = region != s["region"]
+    t0 = time.time()
+    if away:
+        cloud.ensure_snapshot(region, log=log, progress=lambda m: log(m))
+        log(f"snapshot ready in {region} after {time.time() - t0:.0f}s")
+    sizes = {x["slug"]: x for x in cloud.api("GET", "/sizes?per_page=200")["sizes"]}
+    size = next((z for z in [s["size"], *cloud.SIZE_FALLBACKS]
+                 if sizes.get(z, {}).get("available") and region in sizes[z]["regions"]), None)
+    if not size:
+        raise SystemExit(f"no 32-core size in {region} right now")
+    price = float(sizes[size]["price_hourly"])
+    t1 = time.time()
+    did = cloud.create(f"factory-smoke-{int(t1) % 100000}", size, int(s["snapshot_id"]), cloud.TAG_JOB,
+                       user_data=cloud.away_user_data(s, tunnel=tunnel_wanted) if away else None,
+                       region=region, vpc=not away)
+    tunnel = None
+    try:
+        with cloud.Heartbeat(did, job="smoke", size=size, region=region):
+            priv, pub = cloud.wait_active(did, private=not away)
+            ip = pub if away else priv
+            cloud.lease(did, ip=ip)
+            log(f"{size} in {region} active after {time.time() - t1:.0f}s at {ip}")
             cloud.wait_ssh(ip)
-            log(f"ssh after {time.time() - t0:.0f}s")
+            log(f"ssh after {time.time() - t1:.0f}s (over the {'public' if away else 'private'} IP)")
             out = cloud.ssh(ip, "nproc; free -g | awk '/Mem/{print $2}'; df -BG --output=avail / | tail -1; "
                                 "docker images --format '{{.Repository}}:{{.Tag}}'; du -sh /opt/aieditor-work/models; "
-                                "ufw status | head -4; curl -s -o /dev/null -w '%{http_code}' https://" + llm.API_HOST)
+                                "ufw status; curl -s -o /dev/null -w '%{http_code}' https://" + llm.API_HOST)
             print(out)
+            if away and tunnel_wanted:
+                tunnel = cloud.Tunnel(ip, log=log, on_start=lambda pid: cloud.lease(did, tunnel_pid=pid)).start()
+                got = cloud.egress_ip_via(ip, tunnel.url)
+                log(f"egress through the tunnel (server host) leaves as {got}")
+                ctr = cloud.ssh(ip, "docker run --rm --entrypoint sh aieditor-screencast:0.2 -c "
+                                    f"\"curl -s -m 15 -x {tunnel.url} https://www.cloudflare.com/cdn-cgi/trace | grep ^ip= "
+                                    f"|| wget -qO- -e use_proxy=yes -e https_proxy={tunnel.url} "
+                                    "https://www.cloudflare.com/cdn-cgi/trace | grep ^ip=\"", check=False, timeout=180)
+                log(f"egress from a screencast container: {ctr.strip() or 'FAILED'}")
+                direct = cloud.ssh(ip, "curl -s -m 15 https://www.cloudflare.com/cdn-cgi/trace | grep ^ip=", check=False)
+                log(f"the server's own address (no proxy): {direct.strip()}")
     finally:
-        log("destroyed" if cloud.destroy(did) else "DELETE NOT CONFIRMED")
-        log(f"total {time.time() - t0:.0f}s")
+        if tunnel:
+            tunnel.close()
+        ok = cloud.destroy(did)
+        gone = cloud.api("GET", f"/droplets/{did}", ok404=True) is None
+        hours = (time.time() - t1) / 3600
+        log(("destroyed" if ok else "DELETE NOT CONFIRMED") + f"; API says {'gone' if gone else 'STILL THERE'}")
+        log(f"total {time.time() - t0:.0f}s; server {hours * 60:.1f} min ≈ ${hours * price:.3f}")
 
 
 def trial_options(argv):
@@ -116,7 +180,12 @@ def main(argv):
     elif cmd == "image":
         cloud.build_image_tracked()
     elif cmd == "smoke":
-        smoke()
+        smoke(argv[2:])
+    elif cmd == "regions":
+        regions()
+    elif cmd == "copy-image":
+        for r in argv[2:]:
+            cloud.start_transfer(r, log=log)
     elif cmd == "trial":
         job_dir, actions, upd = trial_options(argv[2:])
         return trial(job_dir, actions, upd)
