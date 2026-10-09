@@ -116,5 +116,12 @@ extra = HERE / "keyframes_measured.json"   # replica-measured tables (e.g. the L
 if extra.exists():
     LIBRARY["measured"] = json.loads(extra.read_text())
 
+# the motion TEMPLATES (2026-10-09, Jake's four+one reference clips; specs reference-specs/<id>.md): each template's
+# measured keyframes live beside its renderer as templates/<id>.kf.json (seconds relative to the beats, travel in
+# the element's own units); merged here so the whole motion library stays one file
+tk = {p.name[:-len(".kf.json")]: json.loads(p.read_text()) for p in sorted((HERE / "templates").glob("*.kf.json"))}
+if tk:
+    LIBRARY["templates"] = tk
+
 (HERE / "keyframes.json").write_text(json.dumps(LIBRARY, indent=1, ensure_ascii=False))
 print("keyframes.json:", ", ".join(LIBRARY))

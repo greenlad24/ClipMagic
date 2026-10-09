@@ -379,10 +379,11 @@ def _json(p, default=None):
 
 
 def keyframes(tid):
-    """The measured keyframes of a template: keyframes.json "templates" (build_keyframes.py), else <id>.kf.json."""
+    """The measured keyframes of a template: templates/<id>.kf.json (the source), else keyframes.json "templates"
+    (build_keyframes.py merges the sources into the one library)."""
     base = "prompt_card_3d" if tid == "prompt_result" else tid
-    kf = (_json(MOTION / "keyframes.json", {}) or {}).get("templates", {}).get(base)
-    return kf if kf is not None else _json(TDIR / f"{base}.kf.json", {})
+    kf = _json(TDIR / f"{base}.kf.json")
+    return kf if kf is not None else (_json(MOTION / "keyframes.json", {}) or {}).get("templates", {}).get(base, {})
 
 
 def style(tid):

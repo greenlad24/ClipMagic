@@ -28,6 +28,8 @@ they disagree, the RULEBOOK wins and rules.json is the bug.
 | `rules.json` | Machine numbers (structure, sync, camera, aroll, overlays, narration, coverage, caps, playbooks), each group with `src` | code gates (`skill.rules()`) |
 | `schemas/plan.schema.json` | The edit plan: segments → beats (the beat ledger fields), aroll, plates, overlays, `needs_primitive` | the plan call, the plan check, the beat compiler |
 | `schemas/playbook.schema.json` | A per-app playbook: start state, set dressing, actions (selectors, pre/post asserts, replays), features, walls, outside_only, private selectors | `aieditor/playbook.py` |
+| `templates/<id>.md` | Usage instructions of each motion template (MO01–MO06: when / when not / timing / limits / placement / frequency / params / worked example / QA + a machine block merged into rules.json `motion_templates`) | the overlay call (`director.overlay_prompt` reads them), the reviewer |
+| `ui-kits/<app>/` | The real app UI (composer, menu, chips, working state, result views) captured from the live DOM: `kit.json` + icons + screenshots + replica compare; README says how to add an app | `aieditor/uikits.py` → the motion templates' prompt boxes (X5) |
 | `playbooks/<app>.json` | One playbook per app (`chatgpt.json` first). An action is usable on camera only when `proven` (replayed 3/3 from a fresh session) | the plan call (closed action list), the recorder |
 
 Production-system background (how the recorder, camera and compose work): `aieditor/screencast/SYSTEM.md`.
