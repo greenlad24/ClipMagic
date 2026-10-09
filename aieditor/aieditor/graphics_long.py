@@ -113,3 +113,21 @@ def render(job, events, video, fps_out, size=(1920, 1080), cancelled=lambda: Fal
                          f"/g/ev-{m:02d}"], cancelled, [(compose.MOTION, "/app/motion"), (g, "/g")])
         out.append({**ev, "frames_dir": f"ev-{m:02d}", "start_frame": out_first})
     return out
+
+
+def repair_frame_names(g, events):
+    """Overlay frames rendered before the render.mjs fix (2026-10-09) can be named by a float
+    ("f1920.0000000000002.png"): rename them to the integer OUTPUT frame compose expects.
+    Returns the number of renamed files."""
+    import re
+    n = 0
+    for ev in events:
+        d = Path(g) / ev.get("frames_dir", "")
+        if not ev.get("frames_dir") or not d.is_dir():
+            continue
+        for f in list(d.glob("f*.png")):
+            m = re.fullmatch(r"f(\d+\.\d+)\.png", f.name)
+            if m:
+                f.rename(d / f"f{round(float(m.group(1))):05d}.png")
+                n += 1
+    return n

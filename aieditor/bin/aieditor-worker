@@ -558,7 +558,12 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
                 usd += u
             job.st["cost_usd"] = round(job.st["cost_usd"] + usd, 4)
             return "; ".join(notes) + (f", ${usd:.2f}" if usd else "")
-        step("graphics", do_graphics_long, rerun=True)
+        # Continue ("run") after a LATER stage failed reuses the recorded screencasts + overlays (a
+        # compose error once cost a full re-record, 2026-10-09); "edit"/"render" always rebuild
+        graphics_ready = lambda: (job.st["stages"].get("graphics", {}).get("state") == "done"
+                                  and all((d / f"edit-{k:02d}" / "overlays.json").exists()
+                                          for k in range(1, len(e["videos"]) + 1)))
+        step("graphics", do_graphics_long, graphics_ready, rerun=(action != "run"))
 
         def do_compose_long():
             size = render.preview_size(info["width"], info["height"])

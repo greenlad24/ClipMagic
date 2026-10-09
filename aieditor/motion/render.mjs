@@ -43,11 +43,14 @@ try {
   // Keyframes are in the REFERENCE's frames (scene.fps, 24). scene.outFps (e.g. 30 for
   // the shorts) resamples: output frame n shows the moment first + n·fps/outFps, so the
   // measured timing holds in real time. Files are numbered by OUTPUT frame then.
+  // ⚠️ 2026-10-09: a long-form overlay has fps == outFps but a FLOAT `first` (1920.0000000000002):
+  // files were named "f1920.0000000000002.png" and compose found no f01920.png. Names are integers.
   const outFps = scene.outFps || scene.fps;
-  const n = outFps === scene.fps ? last - first + 1 : Math.floor(((last - first) * outFps) / scene.fps) + 1;
+  const same = Math.abs(outFps - scene.fps) < 1e-6;
+  const n = same ? Math.round(last - first) + 1 : Math.floor(((last - first) * outFps) / scene.fps) + 1;
   for (let i = 0; i < n; i++) {
-    const f = outFps === scene.fps ? first + i : first + (i * scene.fps) / outFps;
-    const name = outFps === scene.fps ? first + i : (scene.outFirst || 0) + i;
+    const f = same ? first + i : first + (i * scene.fps) / outFps;
+    const name = (scene.outFirst != null ? scene.outFirst : Math.round(first)) + i;
     await page.evaluate((fr) => window.__seek(fr), f);
     await page.screenshot({ path: path.join(outDir, `f${String(name).padStart(5, "0")}.png`), omitBackground: !scene.backdrop, type: "png" });
   }

@@ -35,4 +35,19 @@ for f in ("agent_rec.mjs", "vrecord.mjs", "inventory.mjs"):
     check("macchrome.mjs" in src and "/usr/bin/chromium" not in src, f"{f} launches through macchrome.mjs")
 qa = (ROOT / "screencast" / "qa_content.py").read_text()
 check("no_challenge" in qa, "QA rejects a recorded challenge page")
+
+# overlay frames named by a float (render.mjs before 2026-10-09) are repaired before compose
+import tempfile  # noqa: E402
+from aieditor import graphics_long  # noqa: E402
+with tempfile.TemporaryDirectory() as td:
+    ev = Path(td) / "ev-03"
+    ev.mkdir()
+    for i in range(3):
+        (ev / f"f{1920.0000000000002 + i}.png").write_text("x")
+    (ev / "f02048.png").write_text("x")
+    k = graphics_long.repair_frame_names(td, [{"frames_dir": "ev-03"}, {"frames_dir": "missing"}, {}])
+    names = sorted(p.name for p in ev.iterdir())
+    check(k == 3 and names == ["f01920.png", "f01921.png", "f01922.png", "f02048.png"], f"frame names repaired: {names}")
+rj = (ROOT / "motion" / "render.mjs").read_text()
+check("Math.round(first)" in rj and "outFirst != null" in rj, "render.mjs names frames by integer output frame")
 print(f"test_guard: {n} checks passed")

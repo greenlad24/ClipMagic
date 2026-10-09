@@ -298,6 +298,8 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     plain.unlink(missing_ok=True)
     os.link(d / (bubble_src or base), plain)
     events = json.load(open(w / "overlays.json"))
+    if graphics_long.repair_frame_names(w / "gfx", events):
+        progress("Overlay frame names repaired", 0.6)
     if W != 1920:                                        # overlays re-rendered at the output size
         progress("Overlays at full resolution…", 0.65)
         events = graphics_long.render(w, plan["overlays"], _video(d, k), fps, size=size, tag=f"gfx-{W}",
