@@ -38,9 +38,16 @@ XFADE_REF_FRAMES = 5            # screencast → screencast dissolve (refs 2–5
 # → bubble out over 4 f ENDING on t1 (gone before the screen changes), then a 4 f screen dissolve
 # (50 % at 2 f — under the TR01 3–8 f band's low end, so it reads as a soft cut); entry mirrored:
 # the screen in over 4 f, the bubble in over 4 f right after it.
+# GAP LIST G6 step 3 (RULEBOOK T5, JAKE>REF: 4 f bubble fade + 4 f dissolve; refs: the picture changes ~0.1 s
+# AHEAD of the sentence, CUT04/CUT05 over 262 boundaries): the screen dissolve is 4 f and it COMPLETES
+# AROLL_LEAD_S before the sentence start — exit: the screen dissolves out over [t1 − 0.1 − 4 f, t1 − 0.1] after
+# the bubble has faded over the 4 f before that; entry (mirrored): the screen dissolves in over
+# [t0 − 0.1 − 4 f, t0 − 0.1] (its first frame held) and the bubble fades in over the next 4 f.
+# TODO(p2): read these from the skill's rules.json through aieditor/skill.py once p2 merges (same values).
 AROLL_BUBBLE_F = 4
-AROLL_SCREEN_F = 5
+AROLL_SCREEN_F = 4
 AROLL_BUBBLE_LEAD_F = 4          # exit: the bubble starts fading 4 f before the screencast does
+AROLL_LEAD_S = 0.1               # the picture change completes this long before the sentence start
 # black → transparent gradient behind every text overlay (Jake #6; ref 2 f1720–1822, f13548–13620)
 TEXT_GRADIENT = {"opacity": 0.63, "top": 0.15, "power": 1.23, "in_f": 22, "out_f": 8, "merge_gap_s": 1.0,
                  "templates": ("lower_title", "link", "keyword", "list", "number")}
@@ -51,7 +58,8 @@ def xfade_s(fps=30000 / 1001):
 
 
 def aroll_tail_s():
-    """How far a screencast clip runs past its end for the dissolve into the A-roll."""
+    """The screen dissolve between a screencast and the full-screen narration (4 f, T5). Since G6 step 3 the
+    dissolve completes AROLL_LEAD_S before t1 (screen_window), so a clip no longer needs to run past t1."""
     return round(AROLL_SCREEN_F / (30000 / 1001), 4)
 
 
@@ -59,16 +67,31 @@ def _f(n):
     return n / (30000 / 1001)
 
 
+def entry_lead_s(s):
+    """How long before its t0 a screencast coming out of the full-screen narration starts dissolving in
+    (its first frame held): 4 f + AROLL_LEAD_S, never before the video's start."""
+    if not s.get("aroll_in") or s.get("fade_in"):
+        return 0.0
+    return round(max(0.0, min(_f(AROLL_SCREEN_F) + AROLL_LEAD_S, s["t0"])), 4)
+
+
+def screen_window(s):
+    """(a, b) output seconds the screencast clip is on screen (its overlay enable window)."""
+    a = s["t0"] - entry_lead_s(s)
+    b = s["t1"] - AROLL_LEAD_S if s.get("aroll_out") else s["t1"] + s.get("tail", 0)
+    return round(a, 4), round(max(b, a + _f(AROLL_SCREEN_F)), 4)
+
+
 def bubble_env_expr(segments):
     """Bubble opacity over time: 1 on a screencast, with the bubble-first fades where a screencast
-    meets the full-screen narration (exit: out over 3 f from t1−2 f; entry: in over 3 f after the
-    screencast has dissolved in), untouched between back-to-back screencasts."""
+    meets the full-screen narration (exit: out over 4 f ending as the 4 f screen dissolve starts;
+    entry: in over 4 f once the screencast has dissolved in), untouched between back-to-back screencasts."""
     terms = []
     for s in segments:
-        a, b = s["t0"], s["t1"] + (s.get("tail", 0) if s.get("aroll_out") else 0)
+        a, b = screen_window(s)
         f_in = (f"clip((T-{a + _f(AROLL_SCREEN_F):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1)"
                 if s.get("aroll_in") else "1")
-        f_out = (f"(1-clip((T-{s['t1'] - _f(AROLL_BUBBLE_LEAD_F):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1))"
+        f_out = (f"(1-clip((T-{b - _f(AROLL_SCREEN_F) - _f(AROLL_BUBBLE_LEAD_F):.4f})/{_f(AROLL_BUBBLE_F):.4f},0,1))"
                  if s.get("aroll_out") else "1")
         terms.append(f"between(T,{a:.4f},{b:.4f})*{f_in}*{f_out}")
     return f"min(1,{'+'.join(terms)})" if terms else "1"
@@ -167,16 +190,18 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         # a screencast that follows another back to back dissolves in over its tail (linear); one
         # that comes out of / goes back to the full-screen narration dissolves too (Jake #5)
         fade = []
+        w0, w1 = screen_window(s)
+        lead = entry_lead_s(s)
+        pad = f",tpad=start_duration={lead:.4f}:start_mode=clone" if lead > 0 else ""
         if s.get("fade_in"):
             fade.append(f"fade=t=in:st=0:d={s['fade_in']:.4f}:alpha=1")
         elif s.get("aroll_in"):
             fade.append(f"fade=t=in:st=0:d={_f(AROLL_SCREEN_F):.4f}:alpha=1")
         if s.get("aroll_out"):
-            fade.append(f"fade=t=out:st={s['t1'] - s['t0']:.4f}:d={s.get('tail', _f(AROLL_SCREEN_F)):.4f}:alpha=1")
+            fade.append(f"fade=t=out:st={w1 - _f(AROLL_SCREEN_F) - w0:.4f}:d={_f(AROLL_SCREEN_F):.4f}:alpha=1")
         fin = ("," + ",".join(["format=rgba"] + fade)) if fade else ""
-        t1 = s["t1"] + s.get("tail", 0)
-        chain.append(f"[{n}:v]setpts=PTS-STARTPTS{fin},setpts=PTS+{s['t0']:.4f}/TB[sc{i}];"
-                     f"[{cur}][sc{i}]overlay=eof_action=pass{':format=auto' if fin else ''}:enable='between(t,{s['t0']:.4f},{t1:.4f})'[vs{i}]")
+        chain.append(f"[{n}:v]setpts=PTS-STARTPTS{pad}{fin},setpts=PTS+{w0:.4f}/TB[sc{i}];"
+                     f"[{cur}][sc{i}]overlay=eof_action=pass{':format=auto' if fin else ''}:enable='between(t,{w0:.4f},{w1:.4f})'[vs{i}]")
         cur = f"vs{i}"
     bub = [s for s in segments if s.get("bubble", True)]
     if bub:
@@ -184,7 +209,7 @@ def composite(job, base, segments, events, music, out_name, size, fps, face, can
         mi = len(ins) - 1
         ins.append("-loop 1 -i /fc/ring.png")
         ri = len(ins) - 1
-        en = "+".join(f"between(t,{s['t0']:.4f},{s['t1'] + (s.get('tail', 0) if s.get('aroll_out') else 0):.4f})" for s in bub)
+        en = "+".join("between(t,{:.4f},{:.4f})".format(*screen_window(s)) for s in bub)
         hides = [(s["t0"] + a, s["t0"] + b) for s in bub for a, b in s.get("bubble_hide", [])]
         vis = _vis_expr(hides, P["fade_out_s"], P["fade_in_s"])
         env = bubble_env_expr(bub)
