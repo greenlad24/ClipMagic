@@ -81,6 +81,93 @@ def read_events(d):
     return out
 
 
+def preprod_factory(root):
+    """G2: preprod.run for a factory request runs the FULL pre-production with a fake adapter (no
+    browser, no Claude, no image API) and writes the six files; every shot-list beat sits on its edl word."""
+    from aieditor import agentrec, preprod
+    from aieditor import sites as sites_mod
+    d = Path(tempfile.mkdtemp(dir=root))
+    text = ("Now look at this, a bottle I drew. Here's the one I'm using, a phone photo of a hot sauce bottle. "
+            "Now let's draw the scene. I want a squat bottle in the middle, a wonky sun up in the top right corner. "
+            "I see a stray napkin sitting next to the bottle and I want it gone. Click the erase feature.").split()
+    ws, t = [], 0.2
+    for k, w in enumerate(text):
+        ws.append({"i": k, "word": w, "start": round(t, 3), "end": round(t + 0.3, 3)})
+        t += 0.42
+    req = {"id": d.name, "workflow": "creative", "format": "long", "sites": [{"url": "https://chatgpt.com/", "note": ""}]}
+    (d / "request.json").write_text(json.dumps(req))
+    edl_doc = {"fps": 30.0, "videos": [{"title": "T", "duration": round(t + 0.5, 2), "words": ws, "pieces": []}]}
+    (d / "edl.json").write_text(json.dumps(edl_doc))
+    sents = preprod.takes.sentences([{"i": w["i"], "w": w["word"], "s": w["start"], "e": w["end"]} for w in ws])
+    sid = lambda word: next(n for n, s in enumerate(sents) if any(x["w"].strip(".,") == word for x in s))
+    nap = next(w for w in ws if w["word"] == "napkin")
+    sun = next(w for w in ws if w["word"] == "sun")
+
+    def fake_call(content, system, **kw):
+        shots = [{"id": "R1-01", "sentences": list(range(sid("napkin"))), "kind": "screencast", "opens_on": "fresh_chat",
+                  "beats": [{"word_id": sun["i"], "action": "read", "target": "image:doodle", "what": "zoom on the sun",
+                             "technique_ids": ["ZM05"]}], "transition_in": "CUT05", "needs": ["photo", "doodle"]},
+                 {"id": "R1-02", "sentences": list(range(sid("napkin"), len(sents))), "kind": "screencast",
+                  "opens_on": "fresh_chat", "beats": [{"word_id": nap["i"], "action": "read", "target": "image:photo",
+                                                       "what": "zoom on the napkin", "technique_ids": ["ZM05"]}],
+                  "transition_in": "CUT05", "needs": ["photo"]}]
+        assets = [{"id": "photo", "kind": "photo", "desc": "phone photo of a hot sauce bottle", "prompt": "a hot sauce bottle on a counter"},
+                  {"id": "doodle", "kind": "sketch", "desc": "mouse doodle", "doodle": [{"shape": "bottle", "box": [400, 300, 230, 400]}]}]
+        return {"shots": shots, "assets": assets}, {"usd": 0.01, "seconds": 0}
+
+    class P:
+        scout = {"slug": "chatgpt", "logged_in_at": 1}
+
+        def close(self):
+            pass
+
+    class Fake(preprod.ChatGPT):
+        def probe(self, workdir):
+            return P()
+
+        def readiness(self, p, out):
+            ok = ["logged_in", "plan", "theme_dark", "chat_mode", "upload", "sketch_plus_menu", "tb_erase"]
+            return ([{"id": c, "label": c, "status": "pass", "where": {"text": c}} for c in ok]
+                    + [{"id": "at_sketch", "label": "@Sketch", "status": "not_found", "note": "no @ picker"}]
+                    + [dict(c) for c in self.STATIC_CHECKS])
+
+        def dry_run(self, job, sl, assets, setd, out, max_gens):
+            return {"generations_used": 0, "actions": [], "produced": {},
+                    "set_dressing": [{"shot": x["shot"], "ok": True, "steps": []} for x in setd["segments"]]}
+
+    saved = (preprod.director.call, preprod.gen_photo, preprod.rasterize, sites_mod.resolve, agentrec.scout_for)
+    prof = d / "profile"
+    (prof / "Default").mkdir(parents=True)
+    try:
+        preprod.director.call = fake_call
+        preprod.gen_photo = lambda prompt, dst, **kw: (Path(dst).write_bytes(b"\x89PNG"), 0.0)[1]
+        preprod.rasterize = lambda src, dst, w, h: (Path(dst).write_bytes(b"\x89PNG"), Path(dst))[1]
+        sites_mod.resolve = lambda d_, r_, v_, log=print: ([{"url": "https://chatgpt.com/", "note": ""}], 0.0)
+        agentrec.scout_for = lambda url: {"slug": "chatgpt", "profile": str(prof), "logged_in_at": 1, "report": ""}
+        res = preprod.run(d, adapter=Fake(), log=lambda m: None)
+    finally:
+        (preprod.director.call, preprod.gen_photo, preprod.rasterize, sites_mod.resolve, agentrec.scout_for) = saved
+    out = d / "preprod"
+    for f in ("readiness.json", "shotlist.json", "assets.json", "set_dressing.json", "dryrun.json", "expect.json"):
+        check((out / f).exists(), f"factory pre-production wrote {f}")
+    sl = json.loads((out / "shotlist.json").read_text())
+    beats = [b for sh in sl["shots"] for b in sh["beats"]]
+    check(beats and all(b["t_word"] == ws[b["word_id"]]["start"] for b in beats), "every beat on its edl word start")
+    check(all({"clause_start", "subject", "technique_id", "must_text", "typed_text", "result_assertion"} <= set(b) for b in beats),
+          "ledger fields on every beat")
+    rd = json.loads((out / "readiness.json").read_text())
+    feats = {f["id"]: f for f in rd["features"]}
+    check(feats["at_sketch"]["exists"] is False and feats["at_sketch"]["alternative"], "features: @Sketch missing, '+' route")
+    check(feats["pricing_in_app"]["alternative"]["route"] == "public", "features: pricing → public page")
+    objs = {o["object"]: o for o in json.loads((out / "assets.json").read_text())["objects"]}
+    check(objs["napkin"]["asset"] == "photo" and objs["napkin"]["status"] == "added", f"napkin produced in the photo: {objs.get('napkin')}")
+    check(objs["sun"]["asset"] == "doodle", f"the drawn sun goes into the doodle: {objs.get('sun')}")
+    a = {x["id"]: x for x in json.loads((out / "assets.json").read_text())["assets"]}
+    check("napkin" in a["photo"]["source"]["prompt"], "the photo is generated with the napkin in it")
+    g = json.loads((out / "gate.json").read_text())
+    check(g["sites"] and g["flow"]["files"] and res["usd"] >= 0.01, f"gate keeps the sites + the flow: {g.get('flow')}")
+
+
 def main():
     W = load_worker()
     rendered = []
@@ -219,6 +306,8 @@ def main():
         check(e["videos"][0]["cuts"] >= 1, "the cut path cuts")
         evs = read_events(d)
         check(any(x["kind"] == "api" and x["stage"] == "takes" for x in evs), "takes API call logged")
+
+        preprod_factory(root)
 
     print(f"test_workflows: {N} checks passed")
 
