@@ -195,7 +195,7 @@ async function main() {
     await rejects(mk("creative-1005-cccc", "final-01.mp4"), /Cut an unedited narration/);
     await rejects(mk("_uploads", "final-01.mp4"), /Choose a finished Lab edit/);
   });
-  await check("the cut workflow keeps Descript only; Descript jobs unchanged", async () => {
+  await check("the cut workflow never takes a Lab edit; Descript jobs unchanged", async () => {
     await rejects(ctl.createJob({ ...base, workflow: "cut", source: { kind: "job", job: "linearity-10050728-8866", file: "final-01.mp4" } }),
       /Descript share link/);
     await rejects(ctl.createJob({ ...base, workflow: "cut", url: "https://example.com/x" }), /Descript share link/);

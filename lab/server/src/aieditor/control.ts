@@ -65,14 +65,16 @@ export function workflowOf(req: any): Workflow {
  *             preview only when its cut was reviewed (REVIEW GATE below)
  *   upload    a file uploaded from the computer (aieditor/uploads.ts) — kept as a library
  *             narration after use (./library.ts), any number of jobs may use it
- *   job_source  an uploaded narration whose _uploads folder is gone (before the library):
- *             the source.mp4 of an earlier job that used it (./library.ts)
+ *   job_source  ANY earlier job's narration — its source.mp4 (a Descript download, an upload, a
+ *             Lab edit): "Previously used narrations" (./library.ts)
  * The last three are hard-linked into the job on the host. Jake 2026-10-08: the creative
- * workflow may start from any of the three; the cut workflow keeps Descript only.
+ * workflow may start from any of the three. Jake 2026-10-09: "I want to reuse a narration from
+ * another job" — the cut workflow (and so a Full edit) may also start from a library narration
+ * (an upload or an earlier job's source.mp4); a Lab EDIT is never cut again.
  */
 export type SourceKind = "descript" | "job" | "upload" | "job_source";
 export const SOURCE_KINDS: Record<Workflow, SourceKind[]> = {
-  cut: ["descript"],
+  cut: ["descript", "upload", "job_source"],
   creative: ["descript", "job", "upload", "job_source"],
 };
 const LAB_FILE_RE = /^(final|preview)-\d{2}\.mp4$/;
@@ -86,7 +88,7 @@ const SOURCE_STAGE_TITLE: Record<SourceKind, string> = {
   descript: "Download from Descript",
   job: "Use the Lab edit",
   upload: "Use the uploaded file",
-  job_source: "Use the uploaded file",
+  job_source: "Use the earlier narration",
 };
 
 export function stagesFor(workflow: Workflow, format: string, source: SourceKind = "descript"): { id: string; title: string }[] {
@@ -314,7 +316,7 @@ export interface CreateInput {
   url?: string;
   /** a Lab edit or an upload instead of a link (creative workflow) */
   source?: { kind?: string; job?: string; file?: string; upload?: string };
-  // kind "job_source" = a library narration of an earlier job (./library.ts): {kind, job}
+  // kind "job_source" = any earlier job's narration (./library.ts): {kind, job} — no upload id
   format?: string;
   sponsored?: boolean | null;
   script?: string;
@@ -487,12 +489,12 @@ export async function parseSource(input: CreateInput, workflow: Workflow): Promi
   { kind: "descript"; url: string }
   | { kind: "job"; job: string; file: string; title: string }
   | { kind: "upload"; upload: string; name: string }
-  | { kind: "job_source"; job: string; upload: string; name: string }
+  | { kind: "job_source"; job: string; name: string; origin: string; upload?: string }
 > {
   const sk = input.source?.kind;
   const kind: SourceKind = sk === "job" || sk === "upload" || sk === "job_source" ? sk : "descript";
   if (!SOURCE_KINDS[workflow].includes(kind)) {
-    throw new Error("This workflow starts from a Descript share link.");
+    throw new Error("This workflow starts from a Descript share link or a previously used narration.");
   }
   if (kind === "job") {
     const job = String(input.source?.job ?? "");

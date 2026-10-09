@@ -76,14 +76,16 @@ async function main() {
   w("old-upload-1001-cccc/source.json", { kind: "upload", upload: OLD, filename: "old take.mp4", width: 1920, height: 1080, duration: 300 });
   w("old-upload-1001-cccc/source.mp4", BIG);
   w("old-upload-1001-cccc/preview-01.mp4", "P");
-  // a Descript job: not a narration
+  // a Descript job: its narration is listed too (not deletable from the library)
   w("descript-1001-dddd/request.json", { id: "descript-1001-dddd", workflow: "cut", format: "long", created_at: 10, source: { kind: "descript", url: "x" } });
   w("descript-1001-dddd/source.json", { width: 1920, height: 1080 });
   w("descript-1001-dddd/source.mp4", BIG);
 
   await check("listLibrary: kept upload (2 jobs) + the pre-library upload as job_source, newest first", async () => {
     const list = await lib.listLibrary();
-    assert.deepEqual(list.map((e) => [e.key, e.kind]), [[U, "upload"], [OLD, "job_source"]]);
+    assert.deepEqual(list.map((e) => [e.key, e.kind]), [[U, "upload"], [OLD, "job_source"], ["job:descript-1001-dddd", "job_source"]]);
+    assert.deepEqual(list.map((e) => [e.origin, e.stage, e.deletable]), [
+      ["Uploaded: narration.mov", "edited", true], ["Uploaded: old take.mp4", "edited", true], ["Descript: x", "raw", false]]);
     const e = list[0];
     assert.equal(e.name, "narration.mov");
     assert.equal(e.uploadedAt, 2_000_000_000);
@@ -121,14 +123,17 @@ async function main() {
   await check("createJob from a job_source library entry (strict checks)", async () => {
     const { id: jid } = await ctl.createJob({ ...base, source: { kind: "job_source", job: "old-upload-1001-cccc" } });
     const req = JSON.parse(fs.readFileSync(path.join(jobs, jid, "request.json"), "utf8"));
-    assert.deepEqual(req.source, { kind: "job_source", job: "old-upload-1001-cccc", upload: OLD, name: "old take.mp4" });
+    assert.deepEqual(req.source, { kind: "job_source", job: "old-upload-1001-cccc", upload: OLD, name: "old take.mp4", origin: "Uploaded: old take.mp4" });
     assert.match(jid, /^old-take-/);
-    assert.equal((await ctl.getJob(jid)).stageList[0].title, "Use the uploaded file");
+    assert.equal((await ctl.getJob(jid)).stageList[0].title, "Use the earlier narration");
     await rejects(ctl.createJob({ ...base, source: { kind: "job_source", job: "../old-upload-1001-cccc" } }), /Choose a narration/);
     await rejects(ctl.createJob({ ...base, source: { kind: "job_source", job: "_uploads" } }), /Choose a narration/);
     await rejects(ctl.createJob({ ...base, source: { kind: "job_source", job: "gone-1001-eeee" } }), /no longer exists/);
-    await rejects(ctl.createJob({ ...base, source: { kind: "job_source", job: "descript-1001-dddd" } }), /not an uploaded narration/);
-    await rejects(ctl.createJob({ ...base, workflow: "cut", source: { kind: "job_source", job: "old-upload-1001-cccc" } }), /Descript share link/);
+    // a Descript job's narration (no upload id) and the cut workflow are fine now
+    const { id: dj } = await ctl.createJob({ ...base, workflow: "cut", source: { kind: "job_source", job: "descript-1001-dddd" } });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(jobs, dj, "request.json"), "utf8")).source,
+      { kind: "job_source", job: "descript-1001-dddd", name: "descript-1001-dddd", origin: "Descript: x" });
+    fs.rmSync(path.join(jobs, dj), { recursive: true });
     // the new job is queued and has no source.mp4 yet: it now NEEDS old-upload's source.mp4
     const list = await lib.listLibrary();
     const o = list.find((e) => e.key === OLD)!;
