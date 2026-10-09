@@ -44,3 +44,7 @@ backups/
 # UX Scout runner: per-job transcripts and scratch dirs (runtime data)
 scout-runner/logs/
 scout-runner/work/
+
+# Python bytecode (tests and the worker write it; never tracked)
+__pycache__/
+*.pyc
