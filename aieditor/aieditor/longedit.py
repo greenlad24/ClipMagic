@@ -201,6 +201,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
 
 
 MIN_KEEP_S = 6.0          # a screencast cut short by the guard keeps at least this much, else A-roll
+GUARD_EVERY_S = 1.5       # qa_frames.py sampling interval
 
 
 def frame_guard(w, cancelled):
@@ -215,7 +216,7 @@ def frame_guard(w, cancelled):
         accts = [json.load(open(r.parent / "events.json")).get("account") for r in raws if (r.parent / "events.json").exists()]
         acct = max(set(a for a in accts if a), key=accts.count, default=None)
         # the result goes to a FILE: a big JSON on the pipe would block a container nobody reads yet
-        _docker(["python3", "/a/screencast/qa_frames.py", "/w", "--out", f"/w/{cache.name}"]
+        _docker(["python3", "/a/screencast/qa_frames.py", "/w", "--out", f"/w/{cache.name}", "--every", str(GUARD_EVERY_S)]
                 + (["--account", acct] if acct else []), [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-qaframes")
     try:
         return json.loads(cache.read_text()).get("segments", {})
@@ -248,7 +249,8 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
             continue
         first = min(float(x.get("t", 0)) for x in hits)
         why = next(x for x in hits if float(x.get("t", 0)) == first)
-        keep = first - 0.5
+        # frames are OCR'd every GUARD_EVERY_S: the bad state may have begun up to one interval earlier
+        keep = first - (GUARD_EVERY_S + 0.5 if why in bad.get(f"{i:02d}", []) else 0.5)
         if keep >= MIN_KEEP_S:
             # the clean beginning stays; the screencast ends before the bad frame, A-roll takes over
             usable[i] = {**seg, "t1": seg["t0"] + keep}
