@@ -1,6 +1,6 @@
 # Screencast production system (references 2–5)
 
-> **Technique catalogue:** every cut, transition, zoom, pan, hold, overlay and A-roll move in refs 2–5, with trigger / why / how / how often / timestamped examples / frames: [`TECHNIQUES.md`](TECHNIQUES.md) (data: `motion/techniques.json`, 2026-10-07).
+> **Technique catalogue:** every cut, transition, zoom, pan, hold, overlay and A-roll move in refs 2–5, with trigger / why / how / how often / timestamped examples / frames: [`TECHNIQUES.md`](../.claude/skills/jake-editor/TECHNIQUES.md) (data: `motion/techniques.json`, 2026-10-07).
 
 What the Auto Editor's screencasts must look like, and how the pipeline gets there. The source is
 **reference 2**: Jake's own tutorial `kwysV2smgfY` (11:39, 1080p, 29.97 fps). Every number below was
@@ -152,7 +152,7 @@ Director + agent rule 9: scroll only to reach the one thing he names next.
 ## 0b. Loop round 1 (2026-10-07) — rules from the independent v12 review (28 findings)
 
 Source: `/tmp/.../rev/REVIEW-v12.md` (finding numbers #N below) + the technique catalogue
-`screencast/TECHNIQUES.md` (ids in brackets). These rules were found because the screen did not show
+`.claude/skills/jake-editor/TECHNIQUES.md` (ids in brackets). These rules were found because the screen did not show
 what Jake said; they win over older text in §2–§5 where they disagree.
 
 ### R1 — the account must SHOW Jake's own world (#4 #18 #19 #23 #25 #27)

@@ -13,3 +13,8 @@ Source: v12 independent review, loop rounds 1–2 reviews, technique catalogue c
 21. Pricing: landing → cut to the Free card only [L3]. 22. Opening punched in, eases out ~1 s [T6]. 23. Ending 1 s fade to true black [T7].
 24. A-roll push 1–3 %/s capping 1.12–1.16 [A1]. 25. Same-framing jump cuts alternate 1.3–1.5× [A2]. 26. Text only over A-roll/plates, on the gradient; no boxes/arrows over screencasts [X1, X2].
 27. Claims must be measured on frames [§0.3]. 28. Every rule cites a reference timestamp [§0.1].
+
+## Added 2026-10-09 (the factory end-to-end run, gap review items 8/10/11/14/19, Jake's rulings of the day)
+29. Natural pauses are never trimmed and no cut is added to the narration; reference numbers never justify one [R11].
+30. An improvising agent on camera invents features (@Sketch picker, '/background', 'Updated' badge, a 'Bakery Image Prompt' chat, a Free card inside a Plus account). The plan may only name actions proven 3/3 in the app's playbook; anything else is `needs_primitive`, proven off camera first [playbooks/, schemas/plan.schema.json].
+31. Pricing and visitor views come only from a separate never-logged-in Chrome through a US route; never log out of anything [L4, R9, R10]. Private information is always blurred [C7].

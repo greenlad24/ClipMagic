@@ -12,7 +12,7 @@ contact sheets, plus Whisper word timings of all four refs (`/opt/aieditor-work/
   Everything else is what the references do. Where no ref covers a case, it says so.
 - **Confidence:** high = measured + seen on frames in ≥ 2 refs; med = seen, few instances or partly inferred; low = weak/possibly detector artefact.
 - Detailed recipes stay in the specs this file points to: `reference-specs/sc4-refs2-5.*` (camera numbers), `kwys-screencast.*`,
-  `kwys-annotations-layouts.*`, `kwys-text-cta.*`, `titles-lists.*`, `pills-cards.*`; rules in `screencast/SYSTEM.md`.
+  `kwys-annotations-layouts.*`, `kwys-text-cta.*`, `titles-lists.*`, `pills-cards.*`; rules in `screencast/SYSTEM.md` (aieditor/screencast/SYSTEM.md).
 
 ## Index
 

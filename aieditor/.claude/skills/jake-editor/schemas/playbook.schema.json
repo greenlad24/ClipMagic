@@ -1,0 +1,262 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "jake-editor/playbook.schema.json",
+ "title": "App playbook",
+ "description": "One app's proven actions (recommendation §3.1). An action may appear on camera only when proven (replayed n/n from a fresh session, rules.json playbooks.replays_required). Validated by aieditor/playbook.py (hand validator, no dependency); load also rejects any action whose label or url hits the click guard deny rules.",
+ "type": "object",
+ "required": [
+  "app",
+  "hosts",
+  "version",
+  "start_state",
+  "actions",
+  "features"
+ ],
+ "properties": {
+  "app": {
+   "type": "string",
+   "pattern": "^[a-z0-9_-]+$"
+  },
+  "hosts": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "minItems": 1
+  },
+  "version": {
+   "type": "string"
+  },
+  "source": {
+   "type": "string"
+  },
+  "start_state": {
+   "type": "object",
+   "required": [
+    "url",
+    "asserts"
+   ],
+   "properties": {
+    "url": {
+     "type": "string"
+    },
+    "asserts": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/assert"
+     }
+    },
+    "fingerprint": {
+     "type": [
+      "object",
+      "null"
+     ],
+     "description": "thumbnail fingerprint of the clean start frame (filled by onboarding)"
+    }
+   }
+  },
+  "set_dressing": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "action ids run off camera, in order, to reach the start state"
+  },
+  "actions": {
+   "type": "object",
+   "additionalProperties": {
+    "$ref": "#/$defs/action"
+   }
+  },
+  "features": {
+   "type": "object",
+   "additionalProperties": {
+    "type": "object",
+    "required": [
+     "exists"
+    ],
+    "properties": {
+     "exists": {
+      "type": "boolean"
+     },
+     "honest_route": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "an action id (or 'outside:<url>') that honestly shows what the narration means; null = no route (needs_primitive / A-roll)"
+     },
+     "patterns": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "description": "regexes over a beat's text that name this feature"
+     },
+     "fact": {
+      "type": "string"
+     },
+     "source": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  "walls": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "regexes: page text that means a challenge/wall (stop, never record)"
+  },
+  "outside_only": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "regexes over URLs that may only be shown from the separate never-logged-in US Chrome (RULEBOOK L4)"
+  },
+  "private_selectors": {
+   "type": "array",
+   "items": {
+    "type": "string"
+   },
+   "description": "CSS selectors always blurred (RULEBOOK C7; read by the privacy blur)"
+  }
+ },
+ "$defs": {
+  "assert": {
+   "type": "object",
+   "required": [
+    "kind"
+   ],
+   "properties": {
+    "kind": {
+     "enum": [
+      "text",
+      "selector",
+      "absent",
+      "theme",
+      "account"
+     ]
+    },
+    "value": {
+     "type": "string"
+    },
+    "selector": {
+     "type": "string"
+    },
+    "why": {
+     "type": "string"
+    }
+   },
+   "description": "text: value present (in the element's text when selector is set; value may hold {param}); selector: an element matches; absent: value/selector not present; theme: 'dark'|'light' by screen luminance; account: the logged-in account name is shown"
+  },
+  "action": {
+   "type": "object",
+   "required": [
+    "kind",
+    "label",
+    "proven",
+    "source"
+   ],
+   "properties": {
+    "kind": {
+     "enum": [
+      "click",
+      "type",
+      "paste",
+      "key",
+      "upload",
+      "drag",
+      "draw",
+      "goto",
+      "wait_for",
+      "reveal",
+      "scroll"
+     ]
+    },
+    "selectors": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "CSS selectors, first that matches wins; 'text=<label>' finds by visible label"
+    },
+    "label": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "params": {
+     "type": "object",
+     "description": "name -> {type, required?, enum?}"
+    },
+    "intents": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "regexes over a beat's text that this action honestly shows"
+    },
+    "pre": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/assert"
+     }
+    },
+    "post": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/assert"
+     }
+    },
+    "generates": {
+     "type": "boolean",
+     "description": "starts a generation (costs one of the account's generations; never replayed blindly)"
+    },
+    "typical_latency_s": {
+     "type": "number"
+    },
+    "proven": {
+     "type": "boolean"
+    },
+    "replays": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "required": [
+       "ts",
+       "ok"
+      ],
+      "properties": {
+       "ts": {
+        "type": "string"
+       },
+       "ok": {
+        "type": "boolean"
+       },
+       "why": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      }
+     }
+    },
+    "source": {
+     "type": "string"
+    },
+    "requires": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "description": "action ids run first (off camera) so that 'pre' can hold, e.g. open_plus_menu before plus_sketch"
+    }
+   }
+  }
+ }
+}

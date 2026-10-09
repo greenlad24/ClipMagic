@@ -34,10 +34,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import agentrec, config, director, planfit, takes
+from . import agentrec, config, director, planfit, skill, takes
 
 ALL_STEPS = ["readiness", "shotlist", "assets", "set_dressing", "dryrun", "gate"]
-LOOP = config.CODE / "screencast"             # RULEBOOK.md + INSIGHTS.md (copied from the loop sandbox)
 DARK_LUM = 60                                  # mean screen luminance (0-255) below this = dark theme
 STOP = {"the", "and", "a", "an", "of", "to", "it", "is", "in", "on", "at", "for", "with", "this", "that", "you", "i",
         "your", "my", "me", "be", "are", "was", "but", "not"}
@@ -536,7 +535,7 @@ def techniques_digest():
 
 def shot_prompt(job, ranges, readiness, elements):
     tech, _, pacing = techniques_digest()
-    rb = (LOOP / "RULEBOOK.md").read_text() if (LOOP / "RULEBOOK.md").exists() else ""
+    rb = skill.rulebook_text()                  # the ONE RULEBOOK (skill folder; Jake rulings > rulebook > techniques)
     ui = []
     for c in readiness.get("checks", []):
         ui.append(f'- {c["label"]}: {c["status"]} — {json.dumps(c.get("where"), ensure_ascii=False)[:260]} {c.get("note", "")}')
