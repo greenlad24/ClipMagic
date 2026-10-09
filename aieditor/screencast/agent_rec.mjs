@@ -17,10 +17,16 @@
 //   {"cmd":"observe"}                              → {t,url,title,items:[{ref,tag,text,box}],shot}
 //   {"cmd":"act","action":{...}}                   → {ok,t,error?}
 //   {"cmd":"end","until":S}                        hold to S, close the file, write events.json
+//   {"cmd":"abort"}                                drop the take: close the file, delete its dir (NO events.json)
+//   {"cmd":"state"}                                first-frame facts (account, h1, sidebar, draft, popups…) + a shot
+//   {"cmd":"assert", ...}                          after a beat: url whitelist, texts present/absent, field text
 //   {"cmd":"quit"}
 // Actions: click|dblclick|hover|move {ref}; type {ref?,text,cps?,enter?}; key {key};
 //   scroll {by}; read|highlight {ref,ms}; wait_for {text,timeout} (real time, clock frozen);
-//   hold {s}; goto {url}. Any action may carry "at" (clip seconds).
+//   hold {s} (≤ 3 s while recording: no still > 3 s, RULEBOOK P1); goto {url}; drag {from,to};
+//   draw {strokes, box?}; upload {files}; reveal {url, asset} (K2 time-skip dissolve to a result made
+//   off camera). Any action may carry "at" (clip seconds); a click with "press": false moves the cursor
+//   and logs the click without pressing (a send whose result is revealed from assets.json).
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
@@ -617,8 +623,14 @@ async function boxOf(ref, tight = false) {
       if (t.width > 4 && t.height > 4 && t.width * t.height < r.width * r.height * 0.8) r = t;
     }
     const a = el.closest("a");
+    // a stable selector for the compiled beat script (G3: a rehearsal resolves every target once)
+    const cl = el.closest("button,a,[role=button],[role=menuitem],[role=option],[role=tab],input,textarea,[contenteditable=true]") || el;
+    const tid = cl.getAttribute("data-testid"), al = cl.getAttribute("aria-label");
+    const hint = tid ? `[data-testid="${tid}"]` : al ? `${cl.tagName.toLowerCase()}[aria-label="${al.replace(/"/g, '\\"')}"]`
+      : cl.isContentEditable ? '[contenteditable="true"]' : null;
     return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(),
-             text: (el.innerText || "").trim().slice(0, 80), href: a ? a.href : null, blank: a ? a.target === "_blank" : false };
+             text: (el.innerText || "").trim().slice(0, 80), href: a ? a.href : null, blank: a ? a.target === "_blank" : false,
+             hint, label: (al || el.innerText || el.getAttribute("placeholder") || "").trim().replace(/\s+/g, " ").slice(0, 80) };
   }, ref, tight);
 }
 
@@ -733,7 +745,7 @@ async function seen(b) {
 }
 // round 2 (review D18): a long cursor travel (up to 1.1 s + 0.12 s settle) made presses 0.35 s late with a
 // 0.75 s lead — the press itself still waits for its word (holdUntil(at) before mouse.click)
-const LEAD = { click: 1.25, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3 };
+const LEAD = { click: 1.25, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3, drag: 0.9, draw: 0.9 };
 // LOOP ROUND 1 (review v12 #2/#5/#16/#27: beats 1–3 s late, some dropped): a READ used to hold its
 // whole "ms" before returning, so every later beat started after it — chained lateness. A read now
 // returns at once and its hold is DEFERRED: the next action with an "at" simply waits for its own
@@ -754,6 +766,7 @@ async function guard(a) {
   }
   return g;
 }
+const MAX_STILL = 3.0;          // seconds: no recorded still longer (G3 spec 2; BASELINE no still > 3 s)
 async function act(a) {
   const g = await guard(a);
   // a refusal is a BEAT FAILURE — the caller must not retry the same action
@@ -908,7 +921,10 @@ async function act(a) {
       if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
       let pre = null;
       try { if (rec) pre = await tiny(); } catch {}
-      await page.mouse.click(cx, cy, { clickCount: a.type === "dblclick" ? 2 : 1 }).catch(() => {});
+      // "press": false (G3 generations off camera): the viewer sees the cursor click send / Remove BG on the
+      // word, the page is NOT pressed — the result made off camera follows as a K2 reveal (assets.json)
+      if (a.press !== false) await page.mouse.click(cx, cy, { clickCount: a.type === "dblclick" ? 2 : 1 }).catch(() => {});
+      else e.dry = true;
       e.press = t();
       if (rec && a.then_type) {
         // round 3 (review N15): the brand menu opens ALREADY FILTERED — its search is typed on silent ticks
@@ -923,8 +939,8 @@ async function act(a) {
         // narration names ("your brand name") is loaded inside the cut instead (CUT02: cut on click)
         lastNavT = t(); log("nav", { url: a.goto, cut: true, why: "click" }); await load(a.goto, a.settle ?? 2.5);
       } else if (b.href && b.blank) { log("nav", { url: b.href, cut: true, why: "click" }); await load(b.href, a.settle ?? 2.5); }   // a click = CUT02 hard cut, not a dissolve
-      else if (rec && a.cut !== false) await settleCut("click", pre);
-      if (rec) await hold(a.after ?? 0.3); else await sleep(300);
+      else if (rec && a.cut !== false && a.press !== false) await settleCut("click", pre);
+      if (rec) await hold(Math.min(a.after ?? 0.3, MAX_STILL)); else await sleep(300);
       e.end = t();
       break;
     }
@@ -1031,7 +1047,7 @@ async function act(a) {
       const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text, ...(a.deep ? { deep: true } : {}) });
       Object.assign(e, await seen(b));
       // a beat is a calm screen (SYSTEM.md §2): never shorter than ~1.8 s — but DEFERRED (see openRead)
-      const ms = Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000;
+      const ms = Math.min(MAX_STILL, Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000);
       if (rec && a.at != null) { e.end = t() + ms; openRead = { e, until: t() + ms }; }
       else { if (rec) await hold(ms); e.end = t(); }
       break;
@@ -1058,12 +1074,59 @@ async function act(a) {
       break;
     }
     case "drag": {
-      // set-up only (off camera): drag from → to (SCREENSHOT px), e.g. move an artboard by its title
+      // drag from → to (SCREENSHOT px): a markup box over the label, a file onto the chat, an artboard.
+      // On camera too (G3 #31): the press lands on its word, the drag runs at human pace (~0.6 s, eased)
       const f = a.from.map((v) => v * SHOT_F), g = a.to.map((v) => v * SHOT_F);
-      await moveTo(...f); await page.mouse.down();
-      for (let i = 1; i <= 12; i++) { await page.mouse.move(f[0] + (g[0] - f[0]) * i / 12, f[1] + (g[1] - f[1]) * i / 12); if (rec) await step(); else await sleep(60); }
-      cx = g[0]; cy = g[1]; await page.mouse.up(); log("drag", { from: a.from, to: a.to });
+      const e = log("drag", { from: a.from, to: a.to, box: toCap({ x: Math.min(f[0], g[0]), y: Math.min(f[1], g[1]), width: Math.abs(g[0] - f[0]) || 2, height: Math.abs(g[1] - f[1]) || 2 }) });
+      await moveTo(...f);
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+      await page.mouse.down(); e.press = t();
+      const n = rec ? Math.max(8, Math.round((a.ms ?? 600) / 1000 * FPS)) : 12;
+      for (let i = 1; i <= n; i++) { const u = i / n, ez = u < 0.5 ? 2 * u * u : 1 - (-2 * u + 2) ** 2 / 2;
+        cx = f[0] + (g[0] - f[0]) * ez; cy = f[1] + (g[1] - f[1]) * ez; await page.mouse.move(cx, cy); if (rec) await step(); else await sleep(40); }
+      await page.mouse.up(); e.end = t();
       if (rec) await hold(0.3); else await sleep(500);
+      break;
+    }
+    case "draw": {
+      // draw strokes with the mouse (G3 #23: the Sketch canvas gets the drawing the narration describes).
+      // strokes = [[[x, y], ...], ...] in "space" units (preprod.doodle_svg's 1024 canvas by default) mapped
+      // into "box" (SCREENSHOT px, the canvas on screen); without a box they are screenshot px
+      const strokes = Array.isArray(a.strokes) ? a.strokes.filter((st) => Array.isArray(st) && st.length >= 2) : [];
+      if (!strokes.length) return { ok: false, error: "draw needs strokes [[[x,y],...],...]" };
+      const sp = a.space ?? 1024, bx = Array.isArray(a.box) && a.box.length === 4 ? a.box : null;
+      const map = ([x, y]) => bx ? [(bx[0] + x / sp * bx[2]) * SHOT_F, (bx[1] + y / sp * bx[3]) * SHOT_F] : [x * SHOT_F, y * SHOT_F];
+      const e = log("draw", { strokes: strokes.length, ...(bx ? { box: toCap({ x: bx[0] * SHOT_F, y: bx[1] * SHOT_F, width: bx[2] * SHOT_F, height: bx[3] * SHOT_F }) } : {}) });
+      // human pace: ~900 css px per second of pen travel, a short lift between strokes
+      for (const [k, st] of strokes.entries()) {
+        const pts = st.map(map);
+        await moveTo(...pts[0]);
+        if (k === 0 && rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+        if (k === 0) e.press = t();
+        await page.mouse.down();
+        for (let j = 1; j < pts.length; j++) {
+          const d = Math.hypot(pts[j][0] - cx, pts[j][1] - cy), n = rec ? Math.max(1, Math.round(d / 900 * FPS)) : 1;
+          const x0 = cx, y0 = cy;
+          for (let i = 1; i <= n; i++) { cx = x0 + (pts[j][0] - x0) * i / n; cy = y0 + (pts[j][1] - y0) * i / n; await page.mouse.move(cx, cy); if (rec) await step(); }
+          if (!rec) await sleep(8);
+        }
+        await page.mouse.up();
+        if (rec) await hold(0.08);
+      }
+      e.end = t();
+      break;
+    }
+    case "reveal": {
+      // K2 TIME-SKIP DISSOLVE (BASELINE §2c; sync/G1 r3 5:14.05 +0.59 s): the finished result was made OFF
+      // CAMERA (assets.json, its chat URL); the page is swapped inside a 3–8 f dissolve, nothing loads on camera
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+      lastNavT = t();
+      const e = log("nav", { url: a.url, fade: true, k2: { frames: Math.max(3, Math.min(8, a.frames ?? 6)), asset: a.asset || null } });
+      lastFit = null;
+      await load(a.url, a.settle ?? 3);
+      if (a.selector) { const els = await page.$$(a.selector).catch(() => []); const el = els[a.nth ?? els.length - 1];
+        if (el) { await el.evaluate((x) => x.scrollIntoView({ block: "center" })).catch(() => {}); for (let j = 0; j < 12; j++) await step(true); } }
+      Object.assign(e, await seen(null));
       break;
     }
     case "upload": {
@@ -1084,11 +1147,13 @@ async function act(a) {
       if (rec) await hold(a.s ?? 1); else await sleep((a.s ?? 2) * 1000);
       break;
     }
-    case "hold": if (rec) await hold(a.s ?? 1); else await sleep(Math.min(a.s ?? 1, 30) * 1000); break;
+    // no still longer than 3 s on camera (RULEBOOK P1/M5; G3: an agent "hold" of 9 s read a tooltip)
+    case "hold": if (rec) await hold(Math.min(a.s ?? 1, MAX_STILL)); else await sleep(Math.min(a.s ?? 1, 30) * 1000); break;
     case "goto": { lastNavT = t(); const e = log("nav", { url: a.url, ...(a.fade ? { fade: true } : {}), ...(a.cut ? { cut: true } : {}) }); lastFit = null; await load(a.url, a.settle ?? 2.5); Object.assign(e, await seen(null)); } if (lastFit) return { ok: true, t: t(), fit: lastFit }; break;
     default: return { ok: false, error: `unknown action ${a.type}` };
   }
-  return { ok: true, t: t(), ...(lastMoved ? { moved: lastMoved.map((v) => +(v / SHOT_F).toFixed(1)) } : {}) };
+  return { ok: true, t: t(), ...(lastMoved ? { moved: lastMoved.map((v) => +(v / SHOT_F).toFixed(1)) } : {}),
+           ...(b && b.tag !== "point" && b.tag !== "region" ? { resolved: { hint: b.hint || null, label: b.label || b.text || "", tag: b.tag } } : {}) };
 }
 
 async function pressCombo(k) {
@@ -1239,6 +1304,65 @@ for await (const line of rl) {
     }
     else if (m.cmd === "act") out(await act(m.action || {}));
     else if (m.cmd === "end") { await endSegment(m.until); out({ ok: true }); }
+    else if (m.cmd === "abort") {
+      // G3 retake: a failed take is DROPPED — the file is closed and its directory removed; no events.json,
+      // so nothing downstream can mistake it for a finished recording
+      if (openRead) openRead = null;
+      if (rec) { const r = rec; r.ff.stdin.end(); await new Promise((res) => r.ff.on("close", res)); rec = null;
+        try { fs.rmSync(r.dir, { recursive: true, force: true }); } catch {}
+        await heartbeat(false); await realClock(); }
+      out({ ok: true, aborted: true });
+    }
+    else if (m.cmd === "state") {
+      // FIRST-FRAME FACTS (G3; screencast/first_frame.py verdict): what frame 1 would show, read from the DOM
+      const d = await page.evaluate(() => {
+        const vis = (e) => { if (!e) return false; const r = e.getBoundingClientRect(); const s = getComputedStyle(e);
+          return r.width > 4 && r.height > 4 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+            && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.15; };
+        const h1 = [...document.querySelectorAll("h1")].filter(vis).map((e) => e.innerText.trim()).filter(Boolean);
+        // the history sidebar: a visible nav/aside wider than an icon rail that lists chats
+        const side = [...document.querySelectorAll("nav, aside, #stage-slideover-sidebar, [data-testid*=sidebar i]")].filter(vis)
+          .some((e) => { const r = e.getBoundingClientRect(); return r.width >= 180 && r.left < 40 && /recents|new chat|library/i.test(e.innerText || ""); });
+        const comp = document.querySelector('[contenteditable="true"]#prompt-textarea, [contenteditable="true"]');
+        const draft = comp ? (comp.innerText || "").trim() : "";
+        const attachments = [...document.querySelectorAll('button[aria-label^="Remove "]')].filter(vis).length;
+        const popups = [...document.querySelectorAll('[role=menu],[role=listbox],[role=dialog],[data-radix-popper-content-wrapper],[class*="suggest" i],[class*="autocomplete" i]')]
+          .filter((e) => vis(e) && e.getBoundingClientRect().width > 60).length;
+        const tooltips = [...document.querySelectorAll('[role=tooltip]')].filter(vis).length;
+        const tg = [...document.querySelectorAll('button,[role=tab],[role=radio]')].filter((e) => vis(e) && /^(Chat|Work)$/.test((e.innerText || "").trim()));
+        const on = tg.find((e) => e.getAttribute("aria-selected") === "true" || e.getAttribute("aria-checked") === "true" || e.getAttribute("data-state") === "active" || e.getAttribute("aria-pressed") === "true");
+        const mode = on ? on.innerText.trim().toLowerCase() : (h1.some((h) => /what should we work on/i.test(h)) ? "work" : null);
+        const busy = !!document.querySelector('[aria-busy="true"], [data-testid="loading"], .animate-spin') && !h1.length;
+        return { url: location.href, h1, sidebar: side, draft, attachments, popups, tooltips, mode, loading: busy,
+                 text: (document.body?.innerText || "").slice(0, 3000) };
+      }).catch((e) => ({ error: String(e) }));
+      let lum = null, blank = null;
+      try { const g = await tiny(); let sum = 0; for (const v of g) sum += v; lum = Math.round(sum / g.length * 10) / 10; blank = blankish(g); } catch {}
+      const who = await accountName(page);
+      const w = await wall(page);
+      const shot = path.join(workdir, `ff-${String(++obsN).padStart(4, "0")}.jpg`);
+      try { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 90, clip: await vclip(1 / SHOT_F) }); fs.writeFileSync(shot, Buffer.from(s.data, "base64")); } catch {}
+      out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot });
+    }
+    else if (m.cmd === "assert") {
+      // AFTER EACH BEAT (G3 spec 2): url in the whitelist, texts present / absent, the focused / named field's text
+      const r = await page.evaluate((m) => {
+        const fail = [], url = location.href;
+        if (Array.isArray(m.url_allow) && m.url_allow.length && !m.url_allow.some((u) => url.startsWith(u) || new RegExp(u).test(url))) fail.push(`url ${url} not in the whitelist`);
+        const body = document.body?.innerText || "";
+        for (const tx of m.present || []) if (!body.toLowerCase().includes(String(tx).toLowerCase()) && !document.querySelector(`[aria-label="${tx}"]`)) fail.push(`missing "${tx}"`);
+        for (const tx of m.absent || []) if (body.toLowerCase().includes(String(tx).toLowerCase())) fail.push(`unexpected "${tx}"`);
+        const fld = m.field ? document.querySelector(m.field) : document.activeElement;
+        const val = fld ? String(fld.value ?? fld.innerText ?? "").replace(/\u00a0/g, " ").trim() : null;
+        if (m.field_empty && val) fail.push(`field not empty: "${val.slice(0, 60)}"`);
+        if (m.field_equals != null && val !== String(m.field_equals).trim()) fail.push(`field "${(val || "").slice(0, 80)}" != script "${String(m.field_equals).slice(0, 80)}"`);
+        for (const sel of m.selector_present || []) if (!document.querySelector(sel)) fail.push(`no ${sel}`);
+        return { fail, url, value: val };
+      }, m).catch((e) => ({ fail: [String(e)] }));
+      const w = await wall(page);
+      if (w) r.fail.push(`${w.kind}: ${w.why}`);
+      out({ ok: !r.fail.length, ...r, wall: w });
+    }
     else if (m.cmd === "quit") {
       // a segment still open at quit is UNFINISHED (cancel/failure): drop it — writing its
       // events.json made a half-recorded segment look done and get skipped (2026-10-06)
