@@ -131,12 +131,20 @@ many = [{"t0": i, "t1": i + 0.5, "box": [10 * i, 0, 50, 50], "kind": "email", "w
 check(len(P.cap_windows(many)) == P.MAX_WINDOWS, "the filter graph is capped")
 
 # ── the ffmpeg graph ────────────────────────────────────────────────────────────
-g = P.blur_filter([{"t0": 1.0, "t1": 2.5, "box": [101, 50, 301, 41]}], offset=0.5)
-check("crop=300:40:101:50" in g, f"even crop sizes: {g}")
+g = P.blur_filter([{"t0": 1.0, "t1": 2.5, "box": [101, 50, 301, 41]}], offset=0.5, size=(1920, 1080))
+check("crop=302:42:'100':'50'" in g, f"even crop sizes and offsets, rounded OUT (the box stays covered): {g}")
 sig = [float(s) for s in re.findall(r"gblur=sigma=([\d.]+)", g)]
 check(sig and min(sig) >= 20, "gblur sigma >= 20")
 check(g.count("between(t,1.500,3.000)") == 2, "blur and overlay share the enable window, shifted by the pre-frames")
 check(P.blur_filter([]) == "[0:v]null[v]", "no window: a pass-through graph")
+seq = [{"t0": 3 * i, "t1": 3 * i + 3, "box": [600 + 10 * i, 400, 520, 60]} for i in range(25)]
+check(len(P.lanes(seq)) == 1, "25 windows one after another share ONE branch (a branch costs every frame)")
+g25 = P.blur_filter(seq, size=(1920, 1080))
+check(g25.count("crop=") == 1 and g25.count("overlay=") == 1 and "if(between(t,0.000,3.000),600" in g25,
+      "... its crop/overlay position follows the windows per frame")
+check(len(P.lanes(seq + [{"t0": 1, "t1": 2, "box": [0, 0, 100, 30]}])) == 2, "boxes on screen at once get their own branch")
+check(len(P.lanes([{"t0": 0, "t1": 1, "box": [0, 0, 100, 30]}, {"t0": 2, "t1": 3, "box": [0, 0, 1000, 600]}])) == 2,
+      "a small box never shares a branch with a much bigger one (no needless blur)")
 
 evs = [{"t": 0, "type": "begin"}, {"t": 1.0, "type": "click", "at": 1.2}, {"t": 4.0, "type": "nav"}, {"t": 5.0, "type": "type"}]
 check(P.beat_of(evs, 4.5)["i"] == 1 and P.beat_of(evs, 6)["type"] == "type", "a hit belongs to the last action before it")

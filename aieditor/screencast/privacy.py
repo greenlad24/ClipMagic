@@ -360,22 +360,65 @@ def cap_windows(ws, cap=MAX_WINDOWS):
     return ws
 
 
-def blur_filter(wins, offset=0.0, sigma=SIGMA):
-    """ffmpeg filter graph: per window crop -> gblur -> overlay, each only inside its enable window.
-    offset: video seconds of recording t=0 (vrecord's pre-frames)."""
+def lanes(wins, grow=2.5):
+    """Windows that never overlap in time share one filter branch ("lane"): a branch costs ~1 ms per
+    frame whether it is enabled or not (25 branches = 0.7x realtime at 1080p), so the graph has as many
+    branches as there are boxes AT ONCE, not boxes in total. A lane's crop has one size (its largest
+    window); a window joins a lane only when that size stays within `grow` x its own area."""
+    out = []
+    for w in sorted(wins, key=lambda w: (w["t0"], w["t1"])):
+        a = max(1, w["box"][2] * w["box"][3])
+        best = None
+        for ln in out:
+            if ln["t1"] > w["t0"] + 1e-6:
+                continue
+            lw, lh = max(ln["w"], w["box"][2]), max(ln["h"], w["box"][3])
+            if lw * lh <= grow * min(a, ln["amin"]):
+                if best is None or lw * lh < best[1]:
+                    best = (ln, lw * lh, lw, lh)
+        if best is None:
+            out.append({"wins": [w], "t1": w["t1"], "w": w["box"][2], "h": w["box"][3], "amin": a})
+        else:
+            ln, _, lw, lh = best
+            ln["wins"].append(w)
+            ln.update(t1=w["t1"], w=lw, h=lh, amin=min(ln["amin"], a))
+    return out
+
+
+def blur_filter(wins, offset=0.0, sigma=SIGMA, size=None):
+    """ffmpeg filter graph: per lane crop -> gblur -> overlay; the crop/overlay position follows the lane's
+    windows (per-frame expressions) and both are enabled only inside them.
+    offset: video seconds of recording t=0 (vrecord's pre-frames). size: (W, H) of the video."""
     if not wins:
         return "[0:v]null[v]"
-    n = len(wins)
+    W, H = size or (max(w["box"][0] + w["box"][2] for w in wins), max(w["box"][1] + w["box"][3] for w in wins))
+    ls = lanes(wins)
+    n = len(ls)
     parts = [f"[0:v]split={n + 1}[base]" + "".join(f"[s{i}]" for i in range(n))]
     prev = "base"
-    for i, w in enumerate(wins):
-        x, y, bw, bh = w["box"]
-        bw, bh = bw - bw % 2, bh - bh % 2   # yuv420p: even crop sizes
-        a, b = w["t0"] + offset, w["t1"] + offset
-        en = f"between(t,{a:.3f},{b:.3f})"
-        parts.append(f"[s{i}]crop={bw}:{bh}:{x}:{y},gblur=sigma={sigma}:steps=3:enable='{en}'[b{i}]")
+    for i, ln in enumerate(ls):
+        lw, lh = min(W - W % 2, ln["w"] + ln["w"] % 2), min(H - H % 2, ln["h"] + ln["h"] % 2)   # yuv420p: even
+        xs, ys, en = [], [], []
+        for w in ln["wins"]:
+            x, y, bw, bh = w["box"]
+            # the window's box inside the lane-sized crop (centred, kept in frame, even offsets)
+            cx = min(max(0, x - (lw - bw) // 2), W - lw)
+            cy = min(max(0, y - (lh - bh) // 2), H - lh)
+            cx, cy = cx - cx % 2, cy - cy % 2
+            span = f"between(t,{w['t0'] + offset:.3f},{w['t1'] + offset:.3f})"
+            xs.append((span, cx))
+            ys.append((span, cy))
+            en.append(span)
+
+        def pick(vals):
+            e = str(vals[-1][1])
+            for span, v in reversed(vals[:-1]):
+                e = f"if({span},{v},{e})"
+            return e
+        enable = "+".join(en)
+        parts.append(f"[s{i}]crop={lw}:{lh}:'{pick(xs)}':'{pick(ys)}',gblur=sigma={sigma}:steps=3:enable='{enable}'[b{i}]")
         out = "v" if i == n - 1 else f"o{i}"
-        parts.append(f"[{prev}][b{i}]overlay={x}:{y}:enable='{en}'[{out}]")
+        parts.append(f"[{prev}][b{i}]overlay=x='{pick(xs)}':y='{pick(ys)}':eval=frame:enable='{enable}'[{out}]")
         prev = out
     return ";".join(parts)
 
@@ -568,7 +611,7 @@ def apply_blur(raw, out, wins, offset=0.0, crf=14, preset="superfast"):
         except OSError:
             shutil.copyfile(raw, out)
         return 0.0
-    graph = blur_filter(wins, offset)
+    graph = blur_filter(wins, offset, size=_probe(raw)[:2])
     t = time.time()
     script = out.with_name(out.stem + ".filter.txt")
     script.write_text(graph)
