@@ -377,4 +377,51 @@ with _tf.TemporaryDirectory() as td:
     check("worker: a shipping edit ends done", st["state"] == "done" and st.get("held") is False)
     check("worker: --once treats held as handled", "in (\"done\", \"held\")" in (ROOT / "bin" / "aieditor-worker").read_text())
 
+# ── plan cases (package p6): the single plan call's plan is the one the edit records ──
+from aieditor import graphics_long as _gl  # noqa: E402
+import os as _os  # noqa: E402
+
+# validate carries the plan call's sessions + schema beats to the fitted pieces; an 'outside' segment records
+# in the never-logged-in en-US session
+_raw = {"segments": [
+    {"start": LV["words"][40]["i"], "end": LV["words"][80]["i"], "url": "https://chatgpt.com/", "app": "chatgpt",
+     "session_name": "logged_in", "intent": f"on '{LV['words'][50]['word']}': zoom on the photo",
+     "actions": [{"id": "b001", "word_id": 50, "t_word": LV["words"][50]["start"], "action": "camera.zoom"}]},
+    {"start": free[0]["i"], "end": free[-1]["i"], "url": "https://chatgpt.com/pricing", "app": "chatgpt",
+     "session_name": "outside", "intent": f"on '{free[0]['word']}': the public pricing page https://chatgpt.com/pricing",
+     "actions": [{"id": "b002", "word_id": free[0]["i"], "t_word": free[0]["start"], "action": "outside.goto"}]}],
+    "aroll_why": [], "overlays": []}
+_vp = director.validate(_raw, LV, [{"url": "https://chatgpt.com/"}], planfit.Facts(RD, AS))
+_out = [x for x in _vp["segments"] if any(a["action"] == "outside.goto" for a in x.get("actions", []))]
+check("validate: an 'outside' segment records in the never-logged-in en-US session",
+      _out and all((x.get("session") or {}).get("locale") == "en-US" for x in _out))
+check("validate: schema beats ride with the fitted pieces",
+      any(a["id"] == "b001" for x in _vp["segments"] for a in x.get("actions", [])))
+check("validate: the overlay budget is reported", "overlay_budget" in _vp)
+
+# longedit reuses pre-production's plan.json (no second plan call) and holds a plan that needs a primitive
+with _tf.TemporaryDirectory() as td:
+    jd = Path(td)
+    v0 = {"title": "t", "duration": LV["duration"], "words": LV["words"]}
+    (jd / "edl.json").write_text(_json.dumps({"videos": [v0]}))
+    (jd / "preprod").mkdir()
+    pp = {"plan": {"segments": [], "overlays": [], "dropped": [], "needs_primitive": [
+              {"sentence": "type at Sketch", "why": "no proven action types '@Sketch'"}], "held": True},
+          "raw": {"segments": [], "aroll_why": [], "overlays": []}, "meta": {"usd": 0.6}, "sites": [], "held": []}
+    (jd / "preprod" / "plan.json").write_text(_json.dumps(pp))
+    _t = (jd / "edl.json").stat().st_mtime + 5
+    _os.utime(jd / "preprod" / "plan.json", (_t, _t))
+    _saved = (director.plan, _gl.render)
+    try:
+        director.plan = lambda *a, **k: (_ for _ in ()).throw(AssertionError("a second plan call"))
+        _gl.render = lambda *a, **k: []
+        note, usd = longedit.plan_and_record(jd, 1, v0, [], False, 29.97, lambda m, f: None, lambda: False, lambda m: None)
+    finally:
+        director.plan, _gl.render = _saved
+    dj = _json.loads((jd / "edit-01" / "direct.json").read_text())
+    check("longedit: the edit records pre-production's plan (no second plan call)",
+          dj["meta"].get("from") == "preprod/plan.json" and usd == 0.0)
+    check("longedit: a plan with needs_primitive holds the job",
+          [r["reason"] for r in longedit.held_reasons(jd)] == ["needs_primitive"])
+
 print(f"test_longedit: {N} checks passed" + ("" if ok_cam else " (camera checks skipped: no cv2 here)"))

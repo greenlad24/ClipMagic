@@ -82,9 +82,11 @@ def read_events(d):
 
 
 def preprod_factory(root):
-    """G2: preprod.run for a factory request runs the FULL pre-production with a fake adapter (no
-    browser, no Claude, no image API) and writes the six files; every shot-list beat sits on its edl word."""
-    from aieditor import agentrec, preprod
+    """G2 + p6: preprod.run for a factory request runs the FULL pre-production with a fake adapter and a fake
+    Claude transport (no browser, no API, no image API) in the recommended ORDER — readiness → assets (content
+    first: manifest from the narration, generation check) → ONE Opus plan call → plan check → ONE Sonnet overlay
+    call — and writes its files; every plan beat sits on its edl word."""
+    from aieditor import agentrec, config, llm, preprod
     from aieditor import sites as sites_mod
     d = Path(tempfile.mkdtemp(dir=root))
     text = ("Now look at this, a bottle I drew. Here's the one I'm using, a phone photo of a hot sauce bottle. "
@@ -98,22 +100,30 @@ def preprod_factory(root):
     (d / "request.json").write_text(json.dumps(req))
     edl_doc = {"fps": 30.0, "videos": [{"title": "T", "duration": round(t + 0.5, 2), "words": ws, "pieces": []}]}
     (d / "edl.json").write_text(json.dumps(edl_doc))
-    sents = preprod.takes.sentences([{"i": w["i"], "w": w["word"], "s": w["start"], "e": w["end"]} for w in ws])
-    sid = lambda word: next(n for n, s in enumerate(sents) if any(x["w"].strip(".,") == word for x in s))
-    nap = next(w for w in ws if w["word"] == "napkin")
-    sun = next(w for w in ws if w["word"] == "sun")
+    wid = lambda word: next(w["i"] for w in ws if w["word"].strip(".,") == word)
+    calls = []
 
-    def fake_call(content, system, **kw):
-        shots = [{"id": "R1-01", "sentences": list(range(sid("napkin"))), "kind": "screencast", "opens_on": "fresh_chat",
-                  "beats": [{"word_id": sun["i"], "action": "read", "target": "image:doodle", "what": "zoom on the sun",
-                             "technique_ids": ["ZM05"]}], "transition_in": "CUT05", "needs": ["photo", "doodle"]},
-                 {"id": "R1-02", "sentences": list(range(sid("napkin"), len(sents))), "kind": "screencast",
-                  "opens_on": "fresh_chat", "beats": [{"word_id": nap["i"], "action": "read", "target": "image:photo",
-                                                       "what": "zoom on the napkin", "technique_ids": ["ZM05"]}],
-                  "transition_in": "CUT05", "needs": ["photo"]}]
-        assets = [{"id": "photo", "kind": "photo", "desc": "phone photo of a hot sauce bottle", "prompt": "a hot sauce bottle on a counter"},
-                  {"id": "doodle", "kind": "sketch", "desc": "mouse doodle", "doodle": [{"shape": "bottle", "box": [400, 300, 230, 400]}]}]
-        return {"shots": shots, "assets": assets}, {"usd": 0.01, "seconds": 0}
+    def fake_transport(body, stream, timeout):
+        fmt = (body.get("output_config") or {}).get("format", {}).get("schema", {})
+        props = fmt.get("properties", {})
+        if body["model"] == config.PLAN_MODEL:
+            calls.append("plan")
+            ans = {"segments": [{"start_word": wid("Here's"), "end_word": ws[-1]["i"], "app": "chatgpt", "session": "logged_in",
+                                 "beats": [{"word_id": wid("phone"), "action": "camera.zoom", "body": "the produced phone photo, framed",
+                                            "subject": "asset:phone_photo", "text": None, "url": None, "asset_id": "phone_photo",
+                                            "live": False, "wait_end_word": None},
+                                           {"word_id": wid("napkin"), "action": "camera.zoom", "body": "zoom on the napkin in the photo",
+                                            "subject": "asset:phone_photo", "text": None, "url": None, "asset_id": "phone_photo",
+                                            "live": False, "wait_end_word": None}]}],
+                   "aroll": [], "plates": [], "needs_primitive": []}
+        elif "overlays" in props:
+            calls.append("overlays")
+            ans = {"overlays": []}
+        else:
+            calls.append("gencheck")
+            ans = {"matches": True, "missing_objects": []}
+        return {"content": [{"type": "text", "text": json.dumps(ans)}], "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1000, "output_tokens": 200}}
 
     class P:
         scout = {"slug": "chatgpt", "logged_in_at": 1}
@@ -135,37 +145,54 @@ def preprod_factory(root):
             return {"generations_used": 0, "actions": [], "produced": {},
                     "set_dressing": [{"shot": x["shot"], "ok": True, "steps": []} for x in setd["segments"]]}
 
-    saved = (preprod.director.call, preprod.gen_photo, preprod.rasterize, sites_mod.resolve, agentrec.scout_for)
+    saved = (llm.TRANSPORT, preprod.gen_photo, preprod.rasterize, sites_mod.resolve, agentrec.scout_for, config.GEN_SPACING_S)
     prof = d / "profile"
     (prof / "Default").mkdir(parents=True)
     try:
-        preprod.director.call = fake_call
+        llm.TRANSPORT = fake_transport
+        config.GEN_SPACING_S = 0.0
         preprod.gen_photo = lambda prompt, dst, **kw: (Path(dst).write_bytes(b"\x89PNG"), 0.0)[1]
         preprod.rasterize = lambda src, dst, w, h: (Path(dst).write_bytes(b"\x89PNG"), Path(dst))[1]
         sites_mod.resolve = lambda d_, r_, v_, log=print: ([{"url": "https://chatgpt.com/", "note": ""}], 0.0)
         agentrec.scout_for = lambda url: {"slug": "chatgpt", "profile": str(prof), "logged_in_at": 1, "report": ""}
         res = preprod.run(d, adapter=Fake(), log=lambda m: None)
     finally:
-        (preprod.director.call, preprod.gen_photo, preprod.rasterize, sites_mod.resolve, agentrec.scout_for) = saved
+        (llm.TRANSPORT, preprod.gen_photo, preprod.rasterize, sites_mod.resolve, agentrec.scout_for,
+         config.GEN_SPACING_S) = saved
     out = d / "preprod"
-    for f in ("readiness.json", "shotlist.json", "assets.json", "set_dressing.json", "dryrun.json", "expect.json"):
+    for f in ("readiness.json", "manifest.json", "assets.json", "plan.json", "shotlist.json", "set_dressing.json",
+              "dryrun.json", "expect.json"):
         check((out / f).exists(), f"factory pre-production wrote {f}")
+    pdoc = json.loads((out / "plan.json").read_text())
+    check(calls and calls.count("plan") == 1 and calls.count("overlays") == 1,
+          f"one plan + one overlay call: {calls} {pdoc['plan'].get('plan_check')}")
+    first_plan = calls.index("plan")
+    check(all(c == "gencheck" for c in calls[:first_plan]) and calls[first_plan + 1:] == ["overlays"],
+          f"order: assets (generation checks) → plan call → overlay call: {calls}")
+    pdoc = json.loads((out / "plan.json").read_text())
+    check(pdoc["order"] == ["assets", "plan_call", "plan_check", "overlay_plan"] and not pdoc["held"], f"plan.json: {pdoc['held']}")
     sl = json.loads((out / "shotlist.json").read_text())
     beats = [b for sh in sl["shots"] for b in sh["beats"]]
     check(beats and all(b["t_word"] == ws[b["word_id"]]["start"] for b in beats), "every beat on its edl word start")
     check(all({"clause_start", "subject", "technique_id", "must_text", "typed_text", "result_assertion"} <= set(b) for b in beats),
           "ledger fields on every beat")
+    check(all(b["playbook_action"] == "camera.zoom" for b in beats), "the closed list (chatgpt.json proves nothing yet)")
     rd = json.loads((out / "readiness.json").read_text())
     feats = {f["id"]: f for f in rd["features"]}
     check(feats["at_sketch"]["exists"] is False and feats["at_sketch"]["alternative"], "features: @Sketch missing, '+' route")
     check(feats["pricing_in_app"]["alternative"]["route"] == "public", "features: pricing → public page")
-    objs = {o["object"]: o for o in json.loads((out / "assets.json").read_text())["objects"]}
-    check(objs["napkin"]["asset"] == "photo" and objs["napkin"]["status"] == "added", f"napkin produced in the photo: {objs.get('napkin')}")
-    check(objs["sun"]["asset"] == "doodle", f"the drawn sun goes into the doodle: {objs.get('sun')}")
-    a = {x["id"]: x for x in json.loads((out / "assets.json").read_text())["assets"]}
-    check("napkin" in a["photo"]["source"]["prompt"], "the photo is generated with the napkin in it")
+    adoc = json.loads((out / "assets.json").read_text())
+    objs = {}
+    for o in adoc["objects"]:
+        objs.setdefault(o["object"], o)
+    check(objs["napkin"]["asset"] == "phone_photo" and objs["napkin"]["status"] == "added", f"napkin produced in the photo: {objs.get('napkin')}")
+    check(objs["sun"]["asset"] == "sketch", f"the drawn sun goes into the doodle: {objs.get('sun')}")
+    a = {x["id"]: x for x in adoc["assets"]}
+    check("napkin" in a["phone_photo"]["source"]["prompt"], "the photo is generated with the napkin in it")
+    check(a["phone_photo"]["checks"] and a["phone_photo"]["checks"][0]["matches"], "the generation was checked")
     g = json.loads((out / "gate.json").read_text())
-    check(g["sites"] and g["flow"]["files"] and res["usd"] >= 0.01, f"gate keeps the sites + the flow: {g.get('flow')}")
+    check(g["sites"] and g["flow"]["files"] and "plan.json" in g["flow"]["files"] and g["held"] == [] and res["usd"] > 0,
+          f"gate keeps the sites + the flow: {g.get('flow')}")
 
 
 def main():
@@ -279,6 +306,31 @@ def main():
         check(job2.st["stages"]["preprod"]["state"] == "done" and "brief + shot list" in job2.st["stages"]["preprod"]["note"],
               f"preprod done: {job2.st['stages']['preprod']}")
         check(abs(job2.st["stages"]["preprod"]["cost_usd"] - 0.1) < 1e-6, "preprod cost on its stage")
+
+        # p6: the plan still needs a primitive / an asset failed its check → HELD right after pre-production
+        def run_held(job_dir, req, progress, log):
+            (Path(job_dir) / "preprod").mkdir(exist_ok=True)
+            (Path(job_dir) / "preprod" / "gate.json").write_text(json.dumps({"sites": [], "held": [
+                {"reason": "needs_primitive", "detail": "'/new BG': no proven action"},
+                {"reason": "needs_asset", "detail": "photo: misses napkin"}]}))
+            return "plan held", 0.0
+        fake.run = run_held
+        sys.modules["aieditor.preprod"] = fake
+        try:
+            job3 = W.Job(d)
+            raised = None
+            try:
+                W.run_preprod(job3, job3.req, json.loads((d / "source.json").read_text()), 30.0)
+            except W.Held as exc:
+                raised = exc
+        finally:
+            del sys.modules["aieditor.preprod"]
+        check(raised is not None and {r["reason"] for r in raised.reasons} == {"needs_primitive", "needs_asset"},
+              f"held after pre-production: {raised}")
+        held_doc = json.loads((d / "held.json").read_text())
+        check(len(held_doc["reasons"]) == 2, f"held.json lists both: {held_doc}")
+        (d / "preprod" / "gate.json").write_text(json.dumps({"sites": [], "held": []}))
+        W.longedit.clear_held(d)
 
         # ── workflow 1: cut (no "workflow" field = the default, as every older job) ──
         d = make_job(root, None)
