@@ -102,6 +102,44 @@ def verdict(facts, account="Jake"):
     return not out, out
 
 
+def account_of(start_state, default="Jake"):
+    """The first name the frame must greet / show: the playbook start_state's account assert ('Jake Dawson')."""
+    for a in (start_state or {}).get("asserts") or []:
+        if a.get("kind") == "account" and a.get("value"):
+            return str(a["value"]).split()[0]
+    return default
+
+
+def start_state_fails(facts, start_state):
+    """The app playbook's start_state asserts (p2 schema) on the frame's DOM / OCR text and theme.
+    Selector asserts are checked in the page by the recorder ({"cmd": "assert"}), not here."""
+    fail = []
+    d = facts.get("dom") or {}
+    text = " ".join([str(facts.get("text") or ""), str(d.get("text") or ""), " ".join(d.get("h1") or [])])
+    low = text.lower()
+    for a in (start_state or {}).get("asserts") or []:
+        k, v = a.get("kind"), str(a.get("value") or "")
+        if k == "theme":
+            dark = d.get("dark")
+            if dark is not None and (dark is True) != (v == "dark"):
+                fail.append(f"start state: theme is not {v}")
+        elif k == "absent" and v and v.lower() in low:
+            fail.append(f"start state: '{v}' is on screen ({a.get('why', '')})".rstrip(" ()"))
+        elif k == "text" and v and not a.get("selector") and v.lower() not in low:
+            fail.append(f"start state: '{v}' is not on screen")
+        elif k == "account" and v and (d.get("account") or "") and str(d["account"]).split()[0].lower() != v.split()[0].lower():
+            fail.append(f"start state: account {d['account']}, not {v}")
+    return fail
+
+
+def verdict_for(facts, start_state=None, account=None):
+    """verdict() with the account from the playbook start_state + its asserts."""
+    acc = account or account_of(start_state)
+    ok, why = verdict(facts, acc)
+    why = why + [f for f in start_state_fails(facts, start_state) if f not in why]
+    return not why, why
+
+
 # ───────────────────────── pixels (screencast image only) ─────────────────────────
 
 def _ocr(g):
