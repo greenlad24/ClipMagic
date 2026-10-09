@@ -2,8 +2,10 @@
 
   plan      director.plan: screencast segments on the job's `sites` + A-roll overlays,
             anchored to word ids (direct-NN.json; reused while edl.json is unchanged)
-  scripts   per segment: page inventory + screenshot → director.write_script
-  record    screencast/vrecord.mjs — VIRTUAL TIME, frame-exact on this CPU box
+  record    recorder.record_all — the plan's playbook beats compiled onto the words (beatscript), rehearsed off
+            camera, recorded by code in VIRTUAL TIME with per-beat asserts + single-beat retakes, re-timed by the
+            elastic assembler (logged-in app through the Scout profile copy; outside views in the separate
+            never-logged-in Chrome through the job's US route)
   camera    screencast/camera.py — the measured zoom/pan, highlight wipes, bubble-hide spans
   overlays  graphics_long — titles / link / subscribe / socials / keyword / list / number
   compose   aroll_camera (opening zoom-out, slow push-ins, end fade) + compose_long
@@ -18,7 +20,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import agentrec, compose_long, config, director, events as ev_log, gates, graphics_long, media, rubric, usroute
+from . import agentrec, compose_long, config, director, events as ev_log, gates, graphics_long, media, playbook, rubric, usroute
 
 SC_IMAGE = config.SC_IMAGE
 SCREENCAST = config.CODE / "screencast"
@@ -65,7 +67,6 @@ def _tz(seg):
 # ── HELD: a job that cannot honestly be finished stops with its reasons (never quiet A-roll) ──
 # p4 renders the held state in the Lab; until then the worker ends the job with these messages.
 HELD = "held.json"
-NEEDS_SCRIPTED = "needs_scripted_recorder"
 
 
 def _held_doc(d):
@@ -154,7 +155,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     for s in sites:
         x = agentrec.scout_for(s["url"])
         if x and x["slug"] not in scouts:
-            scouts[x["slug"]] = x
+            scouts[x["slug"]] = {**x, "home": s["url"]}
     gate = {}
     if (d / "preprod" / "gate.json").exists():
         gate = {r.get("scout"): r for r in json.load(open(d / "preprod" / "gate.json")).get("sites", []) if r.get("scout")}
@@ -203,134 +204,93 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
               open(w / "beats.json", "w"), indent=1)
     write_expect(w, plan, video)
     segs = plan["segments"]
-    n_recorded = 0
-    by_scout = {}
-    for i, seg in enumerate(segs):
-        x = agentrec.scout_for(seg.get("url", ""))
-        # RULEBOOK L4: a public (logged-out) beat is never recorded in the logged-in browser — it goes to the
-        # scripted recorder's fresh, never-logged-in Chrome (en-US)
-        if x and x["slug"] in scouts and (seg.get("session") or {}).get("kind") != "public":
-            by_scout.setdefault(x["slug"], []).append(i)
-    rec_mode = config.recorder()
-    n_held = 0
-    if not rec_mode["on_camera_agent"]:
-        # Recommendation step 1: the on-camera agent is OFF (config.RECORDER). A logged-in segment waits for
-        # the scripted recorder (package p7) and the job is HELD — never recorded by an improvising model,
-        # never quietly left as A-roll.
-        for slug, idx in by_scout.items():
-            for i in idx:
-                sd = w / f"seg-{i:02d}"
-                if (sd / "rec" / "events.json").exists():
-                    continue
-                seg = segs[i]
-                _not_recorded(sd, NEEDS_SCRIPTED, seg, f"logged-in {slug} segment: recorder mode "
-                              f"'{rec_mode['mode']}' with the on-camera agent off — needs the scripted recorder")
-                msg = (f"edit {k}: screencast {i + 1} ({seg['t0']:.1f}–{seg['t1']:.1f}s in {slug}) is not recorded — "
-                       "the on-camera agent is off and this app has no scripted recording yet; the job is held")
-                log(msg)
-                ev_log.emit("log", msg, level="warn")
-                add_held(d, NEEDS_SCRIPTED, f"edit {k} screencast {i + 1} ({slug})")
-                n_held += 1
-        by_scout_rec = {}
-    else:
-        by_scout_rec = by_scout
-    for slug, idx in by_scout_rec.items():
-        x = scouts[slug]
-        dark = bool(gate.get(slug, {}).get("dark"))
-        log(f"edit {k}: logged in to {slug} through the UX Scout — recording the real app"
-            f"{' (dark theme)' if dark else ''}: {len(idx)} screencast(s)")
-        sess = None
+    n_recorded, n_held = 0, 0
+    # EVERY screencast — the logged-in app and the outside view alike — goes through the scripted recorder
+    # (recommendation §3.5, step 5): compiled from the plan's playbook beats, rehearsed off camera, recorded
+    # by code with per-beat asserts and single-beat retakes, re-timed by the elastic assembler. No model acts
+    # on camera (the per-step agent loop is gone; config.RECORDER "on_camera_agent" has nothing to switch on).
+    if config.recorder().get("on_camera_agent"):
+        log(f"edit {k}: AIEDITOR_ON_CAMERA_AGENT is set but no on-camera agent exists any more — ignored")
+    from . import recorder, skill
+    playbooks = {}
+    for app in skill.playbooks():
         try:
-            for n, i in enumerate(idx):
-                seg = segs[i]
-                if (w / f"seg-{i:02d}" / "rec" / "events.json").exists():
-                    continue
-                ev_log.set_sub(f"screencast {i + 1}/{len(segs)}")
-                ev_log.emit("step", f"screencast {i + 1}/{len(segs)}: {seg['t0']:.1f}–{seg['t1']:.1f}s on {seg.get('url', '')}"
-                            f" — {str(seg.get('intent', ''))[:160]}")
-                if sess is None:
-                    sess = agentrec.Session(w, x["profile"], cancelled, dark=dark,
-                                            profile_name="profile" if len(by_scout) == 1 else f"profile-{slug}")
-                progress(f"Screencast {i + 1} of {len(segs)}: Claude is showing it in {slug} "
-                         f"({seg['t1'] - seg['t0']:.0f} s, frame by frame)…", 0.1 + 0.75 * i / max(1, len(segs)))
-                out_rel = f"seg-{i:02d}/rec"
-                try:
-                    usd += agentrec.record_segment(sess, seg, video, x["knowledge"], out_rel,
-                                                   log=log, first=(n == 0))
-                except RuntimeError as err:
-                    # a stuck/dead browser or a bot check: a fresh session and one more try for this segment
-                    # (a bot check / login wall → also a FRESH copy of the Scout profile)
-                    log(f"edit {k}: screencast {i + 1} — {err}; restarting the browser and trying again")
-                    sess.close()
-                    pname = "profile" if len(by_scout) == 1 else f"profile-{slug}"
-                    if isinstance(err, agentrec.WallError):
-                        shutil.rmtree(w / pname, ignore_errors=True)
-                    shutil.rmtree(w / f"seg-{i:02d}" / "rec", ignore_errors=True)
-                    sess = agentrec.Session(w, x["profile"], cancelled, dark=dark, profile_name=pname)
-                    try:
-                        usd += agentrec.record_segment(sess, seg, video, x["knowledge"], out_rel,
-                                                       log=log, first=True)
-                    except RuntimeError as err2:
-                        # factory rule: route, don't fail — this moment stays A-roll
-                        shutil.rmtree(w / f"seg-{i:02d}" / "rec", ignore_errors=True)
-                        if isinstance(err2, agentrec.WallError):
-                            msg = agentrec.wall_message(slug, err2.wall)
-                            log(f"edit {k}: screencast {i + 1}: {msg} ({err2})")
-                            ev_log.emit("log", msg, level="warn")
-                        else:
-                            log(f"edit {k}: screencast {i + 1} failed twice ({err2}) — that moment stays A-roll")
-        finally:
-            ev_log.set_sub(None)
-            if sess:
-                sess.close()
-        n_recorded += len(idx)
-    done = {i for idx in by_scout.values() for i in idx}
-    scripted = [(i, seg) for i, seg in enumerate(segs) if i not in done]
+            playbooks[app] = playbook.load(app)
+        except playbook.PlaybookError as e:
+            log(f"edit {k}: playbook {app} refused ({e}) — its screencasts are held")
+    sched = recorder.schema_segments(plan, video["words"], playbooks, allow_intent=recorder.intent_ledger_allowed())
     us_proxy = usroute.route_for_job()
-    for i, seg in scripted:
+    todo = []
+    for i, seg in enumerate(sched):
         sd = w / f"seg-{i:02d}"
-        sd.mkdir(exist_ok=True)
-        env = None
-        if _outside(seg) and not (sd / "rec" / "events.json").exists():
-            if not us_proxy:
-                # RULEBOOK L4 / R10: an outside view never goes out through the Singapore box
-                _not_recorded(sd, "no_us_route", seg, "pricing / visitor view needs the job's US route")
-                msg = (f"edit {k}: screencast {i + 1} ({seg['t0']:.1f}–{seg['t1']:.1f}s, {seg.get('url', '')}) is an "
-                       "outside view and this job has no US route — not recorded; the job is held")
-                log(msg)
-                ev_log.emit("log", msg, level="warn")
-                add_held(d, usroute.NO_ROUTE, f"edit {k} screencast {i + 1}")
+        if (sd / "rec" / "events.json").exists() and (recorder._load(sd / "recording.json", {}) or {}).get("status") == "ok":
+            n_recorded += 1
+            continue
+        why, reason = None, None
+        if seg["session"] == "outside" and not us_proxy:
+            # RULEBOOK L4 / R10: an outside view never goes out through the Singapore box
+            why, reason, status = "pricing / visitor view needs the job's US route", usroute.NO_ROUTE, "no_us_route"
+        elif seg["session"] == "logged_in":
+            x = agentrec.scout_for(seg.get("url", ""))
+            if not (x and x["slug"] in scouts):
+                why, reason, status = "no logged-in UX Scout account for this app", "no logged-in account", "no_scout_login"
+        if why:
+            _not_recorded(sd, status, seg, why)
+            msg = (f"edit {k}: screencast {i + 1} ({seg['t0']:.1f}–{seg['t1']:.1f}s, {seg.get('url', '')}) is not recorded — "
+                   f"{why}; the job is held")
+            log(msg)
+            ev_log.emit("log", msg, level="warn")
+            add_held(d, reason, f"edit {k} screencast {i + 1}")
+            n_held += 1
+            continue
+        todo.append(i)
+    # one job per logged-in account: on a factory server the dispatcher holds the lock (cloud.run_remote);
+    # a run on this box takes it here, for the recording only
+    lock = None
+    slugs = sorted({x["slug"] for x in scouts.values()})
+    if todo and slugs and not config.FACTORY_SERVER:
+        from . import accountlock
+        lock = accountlock.AccountLock(slugs, d.name)
+        busy = lock.try_acquire()
+        if busy:
+            add_held(d, "account busy", f"another job is using the {busy} account")
+            log(f"edit {k}: the {busy} account is in use by another job — screencasts not recorded, held")
+            todo, lock = [], None
+    if todo:
+        assets = recorder._load(d / "preprod" / "assets.json", None) or {"assets": []}
+        multi = len({sched[i].get("app") for i in todo if sched[i]["session"] == "logged_in"}) > 1
+
+        def new_session(app, kind, fresh):
+            if kind == "outside":
+                prof = usroute.fresh_profile(w / "outside")          # a NEW, empty, never-logged-in profile
+                return agentrec.Session(w, None, cancelled, env=usroute.outside_chrome_env(us_proxy, prof))
+            x = next((s for s in scouts.values() if recorder.app_for(s.get("home") or "", playbooks) == app
+                      or s["slug"] == app), None) or next(iter(scouts.values()))
+            pname = f"profile-{x['slug']}" if multi else "profile"
+            if fresh:
+                shutil.rmtree(w / pname, ignore_errors=True)        # a fresh COPY of the Scout profile after a wall
+            # RULEBOOK S7: the playbook's start state names the theme (ChatGPT: dark)
+            dark = bool(gate.get(x["slug"], {}).get("dark")) or any(
+                a.get("kind") == "theme" and a.get("value") == "dark"
+                for a in ((playbooks.get(app) or {}).get("start_state") or {}).get("asserts", []))
+            return agentrec.Session(w, x["profile"], cancelled, dark=dark, profile_name=pname)
+
+        res = recorder.record_all(
+            plan, playbooks, assets, w=w, video=video, new_session=new_session,
+            verdict=lambda w_, i, sc: recorder.docker_verdict(w_, i, w / "expect.json", recorder.ACCOUNT, cancelled),
+            media=recorder.DockerMedia(cancelled), log=log, cancelled=cancelled, only=set(todo),
+            allow_intent=recorder.intent_ledger_allowed(),
+            progress=lambda m, f: progress(m, f), held=lambda reason, detail: add_held(d, reason, f"edit {k} {detail}"))
+        usd += res["usd"]
+        if lock:
+            lock.release()
+        for i, doc in res["segments"].items():
+            if doc.get("status") == "ok":
+                n_recorded += 1
+            else:
                 n_held += 1
-                continue
-            prof = sd / "outside-profile"                 # a fresh, empty, never-logged-in profile per take
-            shutil.rmtree(prof, ignore_errors=True)
-            env = usroute.outside_chrome_env(us_proxy, prof)
-            env["AGENT_PROFILE_DIR"] = "/s/outside-profile"
-        base = 0.1 + 0.75 * i / max(1, len(segs))
-        ev_log.set_sub(f"screencast {i + 1}/{len(segs)}")
-        ev_log.emit("step", f"screencast {i + 1}/{len(segs)}: {seg['t0']:.1f}–{seg['t1']:.1f}s on {seg.get('url', '')}"
-                    + (" (recorded earlier — reused)" if (sd / "rec" / "events.json").exists() else ""))
-        if not (sd / "script.json").exists():
-            progress(f"Screencast {i + 1} of {len(segs)}: reading {seg['url']}…", base)
-            _docker(["node", "/app/screencast/inventory.mjs", seg["url"], "/s/inventory.json", "/s/inventory.jpg"],
-                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-inv", tz=_tz(seg), env=env)
-            script, meta = director.write_script(seg, video, json.load(open(sd / "inventory.json")),
-                                                 (sd / "inventory.jpg").read_bytes())
-            usd += meta["usd"]
-            script["until"] = round(seg["t1"] - seg["t0"] + 0.5, 2)
-            json.dump(script, open(sd / "script.json", "w"), indent=1)
-        if env:
-            script = json.load(open(sd / "script.json"))
-            script.update(session="outside", profileDir="/s/outside-profile")
-            json.dump(script, open(sd / "script.json", "w"), indent=1)
-        if not (sd / "rec" / "events.json").exists():
-            progress(f"Screencast {i + 1} of {len(segs)}: recording {seg['t1'] - seg['t0']:.0f} s (frame by frame)…", base + 0.05)
-            (sd / "rec").mkdir(exist_ok=True)
-            _docker(["node", "/app/screencast/vrecord.mjs", "/s/script.json", "/s/rec"],
-                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-rec", tz=_tz(seg), env=env)
-        ev = json.load(open(sd / "rec" / "events.json"))
-        if ev.get("failed"):
-            log(f"edit {k}: screencast {i + 1} recording stopped early: {ev['failed']}")
+                ev_log.emit("log", f"edit {k}: screencast {i + 1} held — {doc.get('status')}: {str(doc.get('why'))[:200]}",
+                            level="warn")
     ev_log.set_sub(None)
     progress("Rendering the overlays…", 0.88)
     evs = graphics_long.render(w, plan["overlays"], video, fps, tag="gfx", cancelled=cancelled)
