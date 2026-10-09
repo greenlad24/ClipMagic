@@ -658,11 +658,18 @@ RESULT_ACTIONS = ("dissolve", "reveal", "show_result", "generate", "send", "subm
 CAMERA_ACTIONS = ("zoom", "push", "hold", "release", "hover", "pan", "read")
 
 
+def plan_beats(seg):
+    """The plan-schema beats of one fitted segment. director.validate (single plan call, p6) attaches them as
+    "actions"; the fitted piece's own "beats" are planfit's G2 ledger rows. Schema beats win when present."""
+    acts = seg.get("actions")
+    return list(acts) if acts is not None else list(seg.get("beats") or [])
+
+
 def beats_from_plan(seg):
     """Plan-schema beats (skill schemas/plan.schema.json: segments[].beats[] with t_word, action,
     must_text, typed_text, result_assertion, asset_id, subject) -> expectation beats."""
     out = []
-    for b in seg.get("beats") or []:
+    for b in plan_beats(seg):
         if b.get("t_word") is None:
             continue
         act = str(b.get("action") or "")
@@ -691,7 +698,7 @@ def expectations(plan, words, ledger=None, forbid=("Blue Bottle",)):
     Coffee never in frame."""
     segs = {}
     for i, seg in enumerate(plan.get("segments", [])):
-        beats = beats_from_plan(seg) if seg.get("beats") else []
+        beats = beats_from_plan(seg) if plan_beats(seg) else []
         if not beats and ledger:
             beats = beats_from_ledger(ledger, i, seg)
         if not beats:

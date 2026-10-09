@@ -716,7 +716,7 @@ def schema_segments(plan, words, playbooks, allow_intent=False):
         sess = s.get("session")
         seg["session"] = "outside" if (sess.get("kind") if isinstance(sess, dict) else sess) in ("public", "outside", "visitor") else "logged_in"
         seg["app"] = s.get("app") or app_for(s.get("url"), playbooks)
-        beats = s.get("beats")
+        beats = gates.plan_beats(s)              # the single plan call's schema beats (director.validate "actions")
         if not beats and allow_intent and seg["app"] in (playbooks or {}):
             beats = B.beats_from_intent(s, words, playbooks[seg["app"]], i)
         seg["beats"] = [dict(b, id=b.get("id") or f"s{i:02d}b{k:02d}") for k, b in enumerate(beats or [])]

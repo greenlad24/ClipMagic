@@ -391,10 +391,76 @@ def test_call_count(good):
           and again["overlays"] == plan["overlays"], "validate(raw) is stable")
 
 
+def test_handoff(good):
+    """Integration p6 -> p7/p4: the checked plan's schema beats (director.validate "actions") are what the scripted
+    recorder compiles and what the take gate expects; the two code primitives compile without a playbook action."""
+    from aieditor import beatscript, gates, recorder
+    errs, info = director.check_plan(good, VIDEO, APPS, FACTS, SITES)
+    check(not errs, "the corrected plan passes")
+    segs = info["checked"]["segments"]
+    sched = recorder.schema_segments({"segments": segs}, WORDS, PBS)
+    for s, x in zip(segs, sched):
+        if s.get("actions") is not None:
+            check([b["action"] for b in x["beats"]] == [b["action"] for b in s["actions"]],
+                  "the recorder compiles the plan call's schema beats, not planfit's G2 ledger rows")
+    outs = [x for x in sched if x["session"] == "outside"]
+    check(outs and all(x["app"] == "chatgpt" for x in outs), "pricing segments reach the recorder as 'outside'")
+    cp = beatscript.compile_plan(sched, WORDS, PBS, assets={"assets": []})
+    for x, c in zip(sched, cp["segments"]):
+        why = str((c.get("blocked") or {}).get("why") or "")
+        check("camera.zoom" not in why and "outside.goto" not in why, f"a code primitive never blocks a segment: {why}")
+        if x["session"] == "outside":
+            check(not c.get("blocked"), f"the outside segment compiles: {why}")
+            check(c["steps"][0]["type"] == "goto" and c["steps"][0]["url"].startswith("https://chatgpt.com/pricing"),
+                  f"outside.goto opens the public pricing page first: {c['steps'][:1]}")
+            check(all(st["type"] in ("goto", "read") for st in c["steps"]), "the outside view only opens and frames")
+            check(c["steps"][0]["url"] in c["url_allow"], "the outside.goto url is allowed for the session")
+    # an in-app action in the outside session, or outside.goto in the logged-in one, is needs_primitive (held)
+    o = dict(outs[0], beats=[dict(outs[0]["beats"][0], action="send")] + outs[0]["beats"][1:])
+    try:
+        beatscript.compile_segment(o, WORDS, PB, 0)
+        check(False, "an app action in the outside session must not compile")
+    except beatscript.NeedsPrimitive:
+        check(True, "app action in the outside session -> needs_primitive")
+    li = dict(outs[0], session="logged_in")
+    try:
+        beatscript.compile_segment(li, WORDS, PB, 0)
+        check(False, "outside.goto in a logged-in session must not compile")
+    except beatscript.NeedsPrimitive:
+        check(True, "outside.goto in the logged-in session -> needs_primitive")
+    # the take gate's expectations come from the same schema beats
+    exp = gates.expectations({"segments": segs}, WORDS)
+    for i, s in enumerate(segs):
+        if s.get("actions"):
+            check(len(exp["segments"][str(i)]) == len([b for b in s["actions"] if b.get("t_word") is not None]),
+                  "expect.json beats = the plan call's beats")
+    # params the plan call cannot name directly: an enum option is read from the beat's own words
+    ra = PB["actions"]["resize_option"]
+    check(beatscript.fill_params(ra, {}, {"subject": "ui:Square 1:1", "body": "picks the square"}) == {"shape": "Square 1:1"},
+          "resize_option.shape from the subject")
+    check("shape" not in beatscript.fill_params(ra, {}, {"subject": "screen", "body": "picks a size"}), "no guess")
+    try:
+        beatscript._resolve(PB, "resize_option", {})
+        check(False, "a missing required param must not crash the compile")
+    except beatscript.CompileError:
+        check(True, "missing param -> CompileError (blocked, held)")
+    # the plan check refuses a paste with no script text and a resize with no option (re-asked, never recorded)
+    bad = copy.deepcopy(good)
+    seg = next(s for s in bad["segments"] if s["session"] == "logged_in" and s["beats"])
+    b0 = seg["beats"][0]
+    seg["beats"][0] = dict(b0, action="paste_prompt", text=None)
+    errs, _ = director.check_plan(bad, VIDEO, APPS, FACTS, SITES)
+    check(any("pastes text" in e["msg"] for e in errs), "paste without its text is a plan-check error")
+    seg["beats"][0] = dict(b0, action="resize_option", subject="screen", body="the size menu", text=None)
+    errs, _ = director.check_plan(bad, VIDEO, APPS, FACTS, SITES)
+    check(any("needs its shape" in e["msg"] for e in errs), "resize without an option is a plan-check error")
+
+
 def main():
     good, _ = test_failed_plan()
     test_enum()
     test_structure(good)
+    test_handoff(good)
     test_overlays()
     test_content_first()
     test_call_count(good)

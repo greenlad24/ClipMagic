@@ -603,6 +603,16 @@ def check_plan(ans, video, apps, facts=None, sites=()):
                     errs.append(_err("asset", f"{where}: asset '{x}' was not produced (produced: {sorted(assets)})", sent))
                 elif x not in usable:
                     errs.append(_err("asset", f"{where}: asset '{x}' is {assets[x].get('status')} — not usable", sent))
+            pa = ((app["pb"] or {}).get("actions") or {}).get(act) or {}
+            if pa.get("kind") in ("paste", "type") and not bt.get("typed_text"):
+                errs.append(_err("schema", f"{where}: '{act}' pastes text on camera — give the exact text in 'text' "
+                                           "(the recorder pastes exactly the script)", sent))
+            from . import beatscript
+            filled = beatscript.fill_params(pa, bt["params"], bt)
+            for pn, spec in (pa.get("params") or {}).items():
+                if spec.get("required") and spec.get("enum") and pn not in filled:
+                    errs.append(_err("schema", f"{where}: '{act}' needs its {pn} — name exactly one of "
+                                               f"{spec['enum']} in subject (ui:<option>)", sent))
             text = " ".join(x for x in (bt["body"], bt.get("typed_text") or "", bt["params"].get("url") or "") if x)
             if app["pb"] is not None:
                 m = playbook.match_beat(app["pb"], text, s["session"])

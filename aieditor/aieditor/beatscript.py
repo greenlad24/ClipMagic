@@ -61,6 +61,13 @@ FULL_SCREEN = (0, 0, 1280, 720)     # a camera beat with no named target frames 
 
 PRESS_KINDS = ("click", "type", "paste", "key", "upload", "drag", "draw")
 CAMERA = ("camera", "read", "zoom", "hold", "pan", "ease")       # built-in: frames what is there, changes nothing
+# the plan call's two code primitives (director.CAMERA_ACTIONS / OUTSIDE_ACTIONS): never playbook actions
+CAMERA_PRIMITIVES = ("camera.zoom",)
+OUTSIDE_GOTO = "outside.goto"
+
+
+def is_camera(aid):
+    return aid in CAMERA or aid in CAMERA_PRIMITIVES
 EDIT_KEYS = re.compile(r"^(?:(?:control|ctrl|meta|cmd|shift)\+)*(?:a|backspace|delete|home|end|arrowleft|arrowright)$", re.I)
 NEEDS_PRIMITIVE = "needs_primitive"
 NEEDS_ASSET = "needs_asset"
@@ -471,7 +478,27 @@ def _playbook_actions(pb, allow_unproven=None):
 
 def _resolve(pb, aid, params):
     from . import playbook as PB
-    return PB.resolve(pb, aid, params)
+    try:
+        return PB.resolve(pb, aid, params)
+    except PB.PlaybookError as e:          # a beat the playbook cannot run as planned: blocked (held), never a crash
+        raise CompileError(f"{aid}: {e}") from e
+
+
+def fill_params(action, params, beat):
+    """The plan call names an action, its typed text and url, not every playbook param: a required param with
+    an enum (resize_option.shape) is read from the beat's own words (subject / text / body) when exactly
+    one option is named there. Anything else stays missing and the compile refuses the beat."""
+    out = dict(params or {})
+    said = " ".join(str(beat.get(k) or "") for k in ("subject", "typed_text", "body", "cue")).lower()
+    for name, spec in ((action or {}).get("params") or {}).items():
+        if name in out or not spec.get("enum"):
+            continue
+        hits = [v for v in spec["enum"] if str(v).lower() in said]
+        if len(hits) != 1:
+            hits = [v for v in spec["enum"] if re.search(r"\b" + re.escape(str(v).split()[0].lower()) + r"\b", said)]
+        if len(hits) == 1:
+            out[name] = hits[0]
+    return out
 
 
 def _expected_end(pb, aid, params, beat):
@@ -502,9 +529,22 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
     if not beats:
         raise NeedsPrimitive(f"segment {seg_idx} has no plan-schema beats (the plan must name playbook actions)", [])
     missing = []
+    outside_seg = _session_kind(seg) == "outside"
     for b in beats:
         a = b.get("action")
-        if a in CAMERA:
+        if is_camera(a):
+            continue
+        if a == OUTSIDE_GOTO:
+            if not outside_seg:
+                missing.append({"beat": b.get("id"), "action": a, "status": "missing", "t_word": b["t_word"],
+                                "why": "outside.goto runs only in the never-logged-in outside session (RULEBOOK L4)"})
+            elif not (b.get("params") or {}).get("url"):
+                raise CompileError(f"{b.get('id')}: outside.goto without a url")
+            continue
+        if outside_seg:
+            # the outside view is a fresh, never-logged-in browser: only the code primitives run there
+            missing.append({"beat": b.get("id"), "action": a, "status": "missing", "t_word": b["t_word"],
+                            "why": f"'{a}' is an in-app action; the outside session only runs outside.goto + camera.zoom"})
             continue
         if a not in acts:
             missing.append({"beat": b.get("id"), "action": a, "status": "missing", "t_word": b["t_word"],
@@ -539,7 +579,7 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
     for n, b in enumerate(beats):
         aid = b["action"]
         a = acts.get(aid) or {}
-        kind = a.get("kind") if aid not in CAMERA else "camera"
+        kind = "camera" if is_camera(aid) else "goto" if aid == OUTSIDE_GOTO else a.get("kind")
         tw = rel(b["t_word"])
         cs_abs = b.get("clause_start")
         if cs_abs is None:
@@ -553,7 +593,7 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
         floor = max(0.0, rel(lead_in if lead_in is not None and lead_in < cs_abs else cs_abs))
         at = press_at(tw)
         cur, travel, settle = cursor_plan(tw, at, floor)
-        params = dict(b.get("params") or {})
+        params = fill_params(a, b.get("params"), b)
         if kind in ("paste", "type") and b.get("typed_text") and "text" not in params:
             params["text"] = b["typed_text"]
         meta = {"beat": True, "beat_id": b.get("id") or f"b{n:02d}", "ledger": n, "word": b.get("word") or b.get("cue"),
@@ -610,7 +650,7 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
                           "at": round(tw + K2_AFTER, 6), **meta, "result_of": src[0].get("id"),
                           "assert_": {"present_asset": rid}})
         elif kind == "goto":
-            st = _resolve(pb, aid, params)[0]
+            st = {"type": "goto", "url": params["url"]} if aid == OUTSIDE_GOTO else _resolve(pb, aid, params)[0]
             st.update(at=tw, cut=True, **meta)
             steps.append(st)
         elif kind == "wait_for":
@@ -677,7 +717,8 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
             s.setdefault("beat_id", meta["beat_id"])
             if "assert_" in s:
                 s["assert"] = s.pop("assert_")
-            s["playbook"] = s.get("playbook") or (f"{pb.get('app')}:{aid}" if aid not in CAMERA else "camera")
+            s["playbook"] = s.get("playbook") or ("camera" if is_camera(aid) else aid if aid == OUTSIDE_GOTO
+                                                  else f"{pb.get('app')}:{aid}")
         out_beats.append({"id": meta["beat_id"], "n": n, "action": aid, "kind": kind, "word": meta["word"], "t_word": tw,
                           "at": steps[i0]["at"] if len(steps) > i0 else tw, "from": meta["from"], "live": live,
                           "steps": list(range(i0, len(steps))),
@@ -708,7 +749,9 @@ def compile_segment(seg, words, pb, seg_idx=0, assets=None, live_left=1, rehears
     validate_script(steps)
     return {"seg": seg_idx, "t0": t0, "t1": float(seg["t1"]), "app": pb.get("app"), "session": _session_kind(seg),
             "steps": steps, "beats": out_beats, "live": used_live, "assets": assets, "start_state": start_state,
-            "url_allow": url_allow or [u for u in [seg.get("url")] + ["https://" + h + "/" for h in pb.get("hosts", [])] if u]}
+            "url_allow": url_allow or [u for u in [seg.get("url")]
+                                       + [(b.get("params") or {}).get("url") for b in beats if b.get("action") == OUTSIDE_GOTO]
+                                       + ["https://" + h + "/" for h in pb.get("hosts", [])] if u]}
 
 
 def _session_kind(seg):
