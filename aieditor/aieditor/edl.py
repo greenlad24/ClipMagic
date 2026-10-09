@@ -14,10 +14,20 @@ import sys
 import wave
 
 GAP_CAP = 0.35
-# Long-form: a natural pause is left exactly as recorded up to 0.7 s — shortening it
-# would be a jump cut to save ~0.2 s (388 of 553 cuts in the first Cowork cut, Jake:
-# "too many in between cuts"). Longer pauses become exactly GAP_CAP. Shorts keep 0.35.
-LONG_PAUSE_KEEP = 0.70
+# Long-form: a natural pause is left exactly as recorded — shortening it is a cut to save
+# ~0.2 s (388 of 553 cuts in the first Cowork cut, Jake: "too many in between cuts") —
+# but only up to the REFERENCE pause profile (REFERENCE-BASELINE §7, the 100 % mark:
+# refs 2-5 have 1.9-4.0 pauses >= 0.5 s per minute, none >= 1.0 s, the longest
+# 0.76-0.92 s, 181-184 wpm). The old flat 0.70 s keep left 8.9 pauses >= 0.5 s a minute
+# (factory-e2e-test, 130 in 14.7 min). So:
+#   * a pause up to PAUSE_REF plays as recorded (no cut);
+#   * a pause over LONG_PAUSE_KEEP is always rebuilt to exactly GAP_CAP;
+#   * between the two, PAUSE_BUDGET_PER_MIN of them per minute stay natural — the
+#     SHORTEST ones (fewest seconds of dead air) — and the rest are rebuilt. Fewest cuts
+#     that still reach the reference profile. Shorts keep 0.35.
+LONG_PAUSE_KEEP = 0.90
+PAUSE_REF = 0.50
+PAUSE_BUDGET_PER_MIN = 3.0
 HEAD_PAD = 0.12          # kept before a word that follows a cut
 TAIL_PAD = 0.18          # kept after a word that precedes a cut
 SR_OUT = 48000
@@ -263,13 +273,43 @@ def _pre_sound(audio, w, s_lo, lo):
     return ("blob", start, end)
 
 
+def pause_budget(kept, audio, per_min=None):
+    """Long-form: which natural pauses between consecutive kept words are shortened to reach
+    the reference pause profile (see PAUSE_BUDGET_PER_MIN). Returns {left word id: keep
+    limit} for the pauses that must be rebuilt (limit just under PAUSE_REF); every other
+    pair keeps the module default. A pause whose quiet stretch is already <= PAUSE_REF is
+    sound (a word the transcript missed): it cannot be shortened and uses budget first."""
+    per_min = PAUSE_BUDGET_PER_MIN if per_min is None else per_min
+    if len(kept) < 2:
+        return {}
+    est, cands = 0.0, []
+    for p, w in zip(kept, kept[1:]):
+        est += max(0.0, p["e"] - p["s"])
+        g = w["s"] - p["e"]
+        if p["i"] != w["i"] - 1:
+            est += GAP_CAP
+            continue
+        est += min(max(0.0, g), LONG_PAUSE_KEEP)
+        if PAUSE_REF <= g <= LONG_PAUSE_KEEP:
+            cands.append((g, p))
+    est += max(0.0, kept[-1]["e"] - kept[-1]["s"])
+    budget = int(per_min * est / 60.0)
+    fixed, free = [], []
+    for g, p in cands:
+        q = _quiet_span(audio, p["e"], p["e"] + g) if audio is not None else (p["e"], p["e"] + g)
+        (fixed if q is None or q[1] - q[0] < PAUSE_REF else free).append((g, p))
+    budget -= len(fixed)
+    free.sort(key=lambda x: (x[0], x[1]["i"]))
+    return {p["i"]: PAUSE_REF - 0.01 for _g, p in free[max(0, budget):]}
+
+
 def ranges_for(kept, by_id, audio, exact_gap=False, nudges=None, starts=None):
     """Kept words -> source ranges (a, b, words, muted, hold_head, hold_tail).
     muted = source-time spans inside the range whose audio becomes room tone;
     hold_head/hold_tail are always 0: Jake ruled frames are never held.
 
-    Words that follow each other in the source with a pause <= 0.35 s (long-form: 0.7 s)
-    form a run and play as recorded. Between runs (a cut, or a pause > 0.35 s) the pause is rebuilt:
+    Words that follow each other in the source with a pause <= 0.35 s (long-form: up to
+    0.9 s, within the reference pause budget — pause_budget()) form a run and play as recorded. Between runs (a cut, or a pause > 0.35 s) the pause is rebuilt:
       long-form (exact_gap): EXACTLY 0.35 s — Jake: "they should be 0.35 not below it".
         At least 0.35 s of the source's own silence; a click in it (Jake heard one at
         1:51) becomes room tone. Never into a neighbouring word's sound and never a held
@@ -278,10 +318,12 @@ def ranges_for(kept, by_id, audio, exact_gap=False, nudges=None, starts=None):
       shorts: a tighter 0.12 s head / 0.18 s tail, snapped to the quietest point.
     """
     keep_pause = LONG_PAUSE_KEEP if exact_gap else GAP_CAP
+    keep_of = pause_budget(kept, audio) if exact_gap else {}
     runs, quiet = [], {}
     for w in kept:
         p = runs[-1][-1] if runs else None
-        if p and p["i"] == w["i"] - 1 and w["s"] >= p["e"] - 0.05 and w["s"] - p["e"] <= keep_pause:
+        kp = keep_of.get(p["i"], keep_pause) if p else keep_pause
+        if p and p["i"] == w["i"] - 1 and w["s"] >= p["e"] - 0.05 and w["s"] - p["e"] <= kp:
             runs[-1].append(w)
         elif (p and p["i"] == w["i"] - 1 and w["s"] < p["e"] - 0.05 and w["e"] > p["e"]
               and f"a:{w['i']}" not in (nudges or {})):       # Jake already fixed this join by hand
@@ -297,7 +339,7 @@ def ranges_for(kept, by_id, audio, exact_gap=False, nudges=None, starts=None):
             # Measured: if the longest quiet stretch is no longer than keep_pause it is
             # speech, played as recorded; otherwise only that stretch is shortened.
             q = _quiet_span(audio, p["e"], w["s"])
-            if q is None or q[1] - q[0] <= keep_pause:
+            if q is None or q[1] - q[0] <= kp:
                 runs[-1].append(w)
             else:
                 quiet[p["i"]] = q
@@ -447,6 +489,24 @@ def ranges_for(kept, by_id, audio, exact_gap=False, nudges=None, starts=None):
                  + [x for x in fill if x[1] - x[0] > 0.004])
         # no held frames, ever (Jake) — the last two fields stay for the piece format
         out.append((a, max(b, a + 0.04), run, muted, 0.0, 0.0, {"auto_a": auto_a, "auto_b": auto_b}))
+    return _no_overlap(out)
+
+
+def _no_overlap(out):
+    """A range never starts before the previous one ends in the source (src_a < src_b at a
+    join = that stretch of audio plays TWICE: factory-e2e-test join at 730.76, a=755.138
+    b=755.348, 0.21 s of "below." heard again under "All"). Both edges move to one cut
+    point between the two words; muted spans are clipped to the new edges."""
+    for k in range(1, len(out)):
+        pa, pb, prun, pm = out[k - 1][:4]
+        a, b, run, m = out[k][:4]
+        if a >= pb - 1e-6 or run[0]["i"] < prun[-1]["i"]:
+            continue
+        c = min(max((a + pb) / 2, prun[-1]["e"]), max(run[0]["s"], prun[-1]["e"]))
+        pm = [[x, min(y, c)] for x, y in pm if x < c]
+        m = [[max(x, c), y] for x, y in m if y > c]
+        out[k - 1] = (pa, max(c, pa + 0.04), prun, pm) + tuple(out[k - 1][4:])
+        out[k] = (c, max(b, c + 0.04), run, m) + tuple(out[k][4:])
     return out
 
 

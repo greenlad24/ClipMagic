@@ -158,18 +158,42 @@ r = mk(); check(sorted(takes.protect_opening(r, ss, sponsored=True)) == [5, 50],
 r = mk(); r["removed"][0]["why"] = "retake: earlier take"
 check(takes.protect_opening(r, ss, sponsored=False) == [], "retakes before 5:00 are still cut")
 
-# ---- long-form: pauses up to 0.7 s play as recorded; longer ones and cuts are exactly 0.35 s
-ws = words([("a", 1.0, 1.3), ("b", 1.9, 2.2), ("c", 4.0, 4.3), ("d", 9.0, 9.3)])   # pauses 0.6, 1.8, 4.7
+# ---- long-form: pauses under 0.5 s play as recorded; 0.5-0.9 s ones within the reference
+# budget (REFERENCE-BASELINE §7: 1.9-4.0 per minute) too; longer ones and cuts are exactly 0.35 s
+ws = words([("a", 1.0, 1.3), ("b", 1.75, 2.2), ("c", 4.0, 4.3), ("d", 9.0, 9.3)])   # pauses 0.45, 1.8, 4.7
 by = {w["i"]: w for w in ws}
 wav = speech_wav([(w["w"], w["s"], w["e"]) for w in ws], 12)
 rl = edl.ranges_for(ws, by, edl.Audio(wav), exact_gap=True)
-check(len(rl) == 3 and [w["i"] for w in rl[0][2]] == [0, 1], f"0.6 s pause kept inside the run: {[[w['i'] for w in r[2]] for r in rl]}")
+check(len(rl) == 3 and [w["i"] for w in rl[0][2]] == [0, 1], f"0.45 s pause kept inside the run: {[[w['i'] for w in r[2]] for r in rl]}")
 for r1, r2 in zip(rl, rl[1:]):
     pause = (r1[1] + r1[5] - r1[2][-1]["e"]) + (r2[2][0]["s"] - r2[0] + r2[4])
     check(abs(pause - 0.35) < 0.051 or pause > 0.35, f"rebuilt pause is 0.35 s (or the words' own sound needs more): {pause:.3f}")
 check(all(x[1] - x[0] > 0 for x in rl), "long-form ranges forward")
 rs = edl.ranges_for(ws, by, edl.Audio(wav), exact_gap=False)
 check(len(rs) == 4, "shorts still split every pause over 0.35 s")
+
+# ---- the reference pause budget: ~68 s of speech with eleven 0.55-0.80 s pauses. The refs
+# allow 1.9-4.0 pauses >= 0.5 s a minute (3/min budget): the 3 SHORTEST stay natural, the
+# rest are rebuilt to 0.35 s; a 1.2 s pause is always rebuilt (refs: none >= 1.0 s)
+spec, t = [], 0.5
+for k in range(60):
+    spec.append((f"w{k}", t, t + 0.9))
+    gap = 0.55 + 0.025 * (k // 5) if k % 5 == 4 else (1.2 if k == 31 else 0.12)
+    t += 0.9 + gap
+ws = words(spec)
+by = {w["i"]: w for w in ws}
+pb_wav = speech_wav([(w["w"], w["s"], w["e"]) for w in ws], 12)
+kb = edl.pause_budget(ws, edl.Audio(pb_wav))
+long_ones = [w["i"] for w, n in zip(ws, ws[1:]) if n["s"] - w["e"] >= 0.5 and n["s"] - w["e"] <= edl.LONG_PAUSE_KEEP]
+check(len(long_ones) == 11 and len(kb) == 11 - 3, f"budget keeps 3 of 11 natural pauses: {len(long_ones)} / {len(kb)}")
+check(all(i not in kb for i in long_ones[:3]), "the 3 shortest pauses are the ones kept")
+rb = edl.ranges_for(ws, by, edl.Audio(pb_wav), exact_gap=True)
+pp_b, nf_b = edl.pieces_for(rb, 30.0)
+ow_b = edl.output_words(pp_b, by, 30.0)
+gb = [b["start"] - a["end"] for a, b in zip(ow_b, ow_b[1:])]
+mins_b = nf_b / 30.0 / 60
+check(sum(g >= 0.5 for g in gb) / mins_b <= 4.0, f"pauses >= 0.5 s within the refs' 4.0/min: {sum(g >= 0.5 for g in gb) / mins_b:.2f}")
+check(max(gb) < 0.92 and not any(g >= 1.0 for g in gb), f"longest pause within the refs' 0.92 s: {max(gb):.2f}")
 
 # ---- transcript repair splices in place and never reorders the rest
 doc = {"words": [{"word": "using", "start": 10.0, "end": 10.3}, {"word": "in", "start": 10.5, "end": 10.6},
