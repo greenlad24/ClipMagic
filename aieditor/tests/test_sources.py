@@ -1,8 +1,10 @@
 """Local sources of a creative edit (aieditor/sources.py): a finished Lab edit or an upload.
 
   materialise   hard link into <job>/source.mp4 (same inode, no copy), copy fallback when
-                the link is refused, never touches the source job's file, removes the upload
-                folder once the bytes live in the job, idempotent
+                the link is refused, never touches the source job's file, KEEPS the upload
+                (the narration library: one upload hard-linked into 2 jobs), idempotent
+  job_source    an earlier job's uploaded narration (its source.mp4) when its _uploads folder is
+                gone: hard link, strict names, only an uploaded narration, never itself
   resolve       strict names (no traversal, no symlinks), the source job / file / upload must
                 exist, an unfinished upload is refused, a job cannot use itself
   prepare       = the worker's "download" stage: probe → source.json (+ kind/from_job/filename)
@@ -172,14 +174,54 @@ def main():
         d4, req4 = new_job(jobs, "creative-u-1", {"kind": "upload", "upload": uid, "name": "my video.mov"})
         note = sources.prepare(d4, req4, jobs, fake_probe)
         check((d4 / "source.mp4").stat().st_ino == ino, "upload hard-linked in")
-        check(not udir.exists(), "the upload folder is removed once the job holds the bytes")
-        check((d4 / "source.mp4").read_bytes() == b"MP4!upload", "bytes intact after the folder is gone")
+        check(udir.exists() and (udir / "data").is_file(), "the upload is KEPT (narration library)")
         sj = json.loads((d4 / "source.json").read_text())
-        check(sj["kind"] == "upload" and sj["filename"] == "my video.mov" and sj["upload"] == uid, f"facts {sj}")
+        check(sj["kind"] == "upload" and sj["filename"] == "my video.mov" and sj["upload"] == uid
+              and sj["from_upload"] == uid, f"facts {sj}")
         check(note == "Uploaded: my video.mov · 3840x2160, 16.1 min", f"note {note!r}")
-        # rerun after the upload folder is gone: source.mp4 is there → still fine
+        # the SAME upload reused by a second job: both are links of one inode, the library keeps it
+        d4b, req4b = new_job(jobs, "creative-u-1b", {"kind": "upload", "upload": uid, "name": "my video.mov"})
+        check(sources.materialise(d4b, req4b, jobs) == "link", "second job: hard link too")
+        check((d4b / "source.mp4").stat().st_ino == ino, "second job shares the inode")
+        check((udir / "data").stat().st_nlink == 3, "library + 2 jobs = 3 links, zero copies")
+        check(udir.exists(), "still in the library after the second job")
+        check(sources.materialise(d4b, req4b, jobs) is None, "idempotent")
+        # removed from the library later: the jobs keep their bytes
+        shutil.rmtree(udir)
+        check((d4 / "source.mp4").read_bytes() == b"MP4!upload" and (d4b / "source.mp4").read_bytes() == b"MP4!upload",
+              "jobs keep their copy after the library entry is removed")
         (d4 / "source.json").unlink()
         check(sources.prepare(d4, req4, jobs, fake_probe).startswith("Uploaded: my video.mov"), "re-probe works")
+
+        # ── job_source: an earlier job's uploaded narration (its _uploads folder is gone) ──
+        js = {"kind": "job_source", "job": "creative-u-1", "name": "my video.mov", "upload": uid}
+        d9, req9 = new_job(jobs, "creative-js-1", js)
+        check(sources.materialise(d9, req9, jobs) == "link", "job_source: hard link")
+        check((d9 / "source.mp4").stat().st_ino == ino, "job_source: same inode as the earlier job")
+        note = sources.prepare(d9, req9, jobs, fake_probe)
+        sj = json.loads((d9 / "source.json").read_text())
+        check(sj["kind"] == "job_source" and sj["from_job"] == "creative-u-1" and sj["filename"] == "my video.mov"
+              and sj["from_upload"] == uid, f"job_source facts {sj}")
+        check(note.startswith("Uploaded (reused from creative-u-1): my video.mov"), f"note {note!r}")
+        check(sources.kind_of(req9) == "job_source", "kind_of job_source")
+        # a job_source of a job_source works too (the chain of reuse)
+        d10, req10 = new_job(jobs, "creative-js-2", {"kind": "job_source", "job": "creative-js-1"})
+        check(sources.materialise(d10, req10, jobs) == "link", "job_source of a job_source")
+        # validation: strict names, no traversal, no symlink, only an uploaded narration, not itself
+        raises(lambda: mat({"kind": "job_source", "job": "../creative-u-1"}), "not a valid job name")
+        raises(lambda: mat({"kind": "job_source", "job": "_uploads"}), "not a valid job name")
+        raises(lambda: mat({"kind": "job_source", "job": "creative-u-1/source.mp4"}), "not a valid job name")
+        raises(lambda: mat({"kind": "job_source", "job": "no-such-job"}), "no longer exists")
+        raises(lambda: mat({"kind": "job_source", "job": "creative-bad"}, jid="creative-bad"), "its own video")
+        raises(lambda: mat({"kind": "job_source", "job": src.name}), "has no source.mp4")
+        (src / "source.mp4").write_bytes(b"MP4!descript")
+        (src / "source.json").write_text(json.dumps({"kind": "descript"}))
+        raises(lambda: mat({"kind": "job_source", "job": src.name}), "not an uploaded narration")
+        (src / "source.mp4").unlink()
+        (src / "source.mp4").symlink_to(d4 / "source.mp4")
+        raises(lambda: mat({"kind": "job_source", "job": src.name}), "has no source.mp4")
+        (src / "source.mp4").unlink()
+        (src / "source.json").unlink()
 
         uid2, udir2 = make_upload(jobs, uid="u" + "cd" * 12, complete=False)
         d5, req5 = new_job(jobs, "creative-u-2", {"kind": "upload", "upload": uid2, "name": "x.mp4"})

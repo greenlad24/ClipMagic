@@ -4,6 +4,9 @@
   {"kind": "job", "job": <id>, "file": "final-01.mp4"}  a finished Lab edit of workflow 1 (cut)
   {"kind": "upload", "upload": <id>, "name": <file>}    a file uploaded from Jake's computer
                                                         (the Lab streams it to jobs/_uploads/<id>/data)
+  {"kind": "job_source", "job": <id>, "name": <file>,   the uploaded narration of an EARLIER job whose
+   "upload": <id>}                                      _uploads folder is gone (uploads made before the
+                                                        library existed): that job's source.mp4
 
 The two local kinds are MATERIALISED into the job's own folder as source.mp4 BEFORE the job
 runs (on this box, or before the folder is sent to a factory server — that server can see no
@@ -13,7 +16,10 @@ refused). The source job's files are never moved or modified — and a hard link
 when the source job re-renders its final later: every render writes `<name>.part.mp4` and
 os.replace()s it, i.e. a NEW inode, never truncating the shared one.
 
-An upload folder is removed as soon as its bytes live in the job (the link keeps them).
+NARRATION LIBRARY (Jake 2026-10-09: "so I can reuse uploaded narration videos"): an upload is
+KEPT after use — any number of jobs hard-link the same _uploads/<id>/data, and only the Lab's
+"Remove from library" deletes the folder (jobs keep their own link). source.json records kind,
+filename and from_upload / from_job.
 
 ⚠️ SOURCE GATE — AUTOMATIC, no human step (Jake 2026-10-09: "it also did cuts inside the
 narration that I didn't ask for", then "when a job is being submitted for a new video - I
@@ -38,7 +44,9 @@ JOB_RE = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 FILE_RE = re.compile(r"^(final|preview)-\d{2}\.mp4$")
 UPLOAD_RE = re.compile(r"^u[0-9a-f]{24}$")
 UPLOADS_DIR = "_uploads"
-LOCAL_KINDS = ("job", "upload")
+LOCAL_KINDS = ("job", "upload", "job_source")
+# kinds of an earlier job's source.json that make its source.mp4 an uploaded narration
+NARRATION_KINDS = ("upload", "job_source")
 
 
 class SourceError(RuntimeError):
@@ -139,8 +147,35 @@ def resolve(src, jobs_root, self_id=None):
         if not meta.get("complete"):
             raise SourceError("the upload did not finish — upload the file again")
         name = str(src.get("name") or meta.get("name") or "upload")[:200]
-        return path, {"kind": "upload", "upload": uid, "filename": name, "title": Path(name).stem}
+        return path, _upload_facts(uid, name)
+    if kind == "job_source":
+        jid = str(src.get("job") or "")
+        if not JOB_RE.match(jid):
+            raise SourceError("the earlier job to reuse the narration of is not a valid job name")
+        if jid == self_id:
+            raise SourceError("a job cannot use its own video as its source")
+        jdir = jobs_root / jid
+        path = jdir / "source.mp4"
+        if _jload(jdir / "request.json") is None:
+            raise SourceError(f"the job {jid} no longer exists")
+        if path.is_symlink() or not path.is_file():
+            raise SourceError(f"the job {jid} has no source.mp4 any more")
+        sj = _jload(jdir / "source.json", {}) or {}
+        if sj.get("kind") not in NARRATION_KINDS:
+            raise SourceError(f"the source of {jid} is not an uploaded narration")
+        name = str(src.get("name") or sj.get("filename") or "upload")[:200]
+        return path, _job_source_facts(jid, name, src.get("upload") or sj.get("from_upload") or sj.get("upload"))
     raise SourceError(f"unknown source kind {kind!r}")
+
+
+def _upload_facts(uid, name):
+    return {"kind": "upload", "upload": uid, "from_upload": uid, "filename": name, "title": Path(name).stem}
+
+
+def _job_source_facts(jid, name, uid=None):
+    uid = str(uid) if uid and UPLOAD_RE.match(str(uid)) else None
+    return {"kind": "job_source", "from_job": jid, "filename": name, "title": Path(name).stem,
+            **({"upload": uid, "from_upload": uid} if uid else {})}
 
 
 def place(src_path, dst):
@@ -159,12 +194,6 @@ def place(src_path, dst):
     return how
 
 
-def _drop_upload(src, jobs_root):
-    uid = str((src or {}).get("upload") or "")
-    if UPLOAD_RE.match(uid):
-        shutil.rmtree(Path(jobs_root) / UPLOADS_DIR / uid, ignore_errors=True)
-
-
 def materialise(job_dir, req, jobs_root):
     """Put a local source's bytes at <job>/source.mp4 (no-op when already there, or for a
     Descript source). Returns "link" / "copy" / None (nothing done). Safe to call twice."""
@@ -174,14 +203,10 @@ def materialise(job_dir, req, jobs_root):
         return None
     dst = job_dir / "source.mp4"
     if dst.exists():
-        if src.get("kind") == "upload":
-            _drop_upload(src, jobs_root)
         return None
     path, _facts = resolve(src, jobs_root, self_id=job_dir.name)
-    how = place(path, dst)
-    if src.get("kind") == "upload":
-        _drop_upload(src, jobs_root)                  # the job's link keeps the bytes
-    return how
+    # the library entry (an upload folder / the earlier job) is never removed: the link is ours
+    return place(path, dst)
 
 
 def facts_for(job_dir, req, jobs_root):
@@ -202,7 +227,9 @@ def facts_for(job_dir, req, jobs_root):
                 **({"review": rs["status"], "removed_words": rs.get("removed_words")}
                    if (Path(jobs_root) / jid / "request.json").exists() and rs else {})}
     name = str(src.get("name") or "upload")[:200]
-    return {"kind": "upload", "upload": src.get("upload"), "filename": name, "title": Path(name).stem}
+    if src.get("kind") == "job_source":
+        return _job_source_facts(str(src.get("job") or ""), name, src.get("upload"))
+    return _upload_facts(src.get("upload"), name)
 
 
 def note_for(facts, info):
@@ -215,6 +242,8 @@ def note_for(facts, info):
         return f"Lab edit: {facts.get('title')} · {facts.get('from_file')} · {dims}{extra}"
     if facts.get("kind") == "upload":
         return f"Uploaded: {facts.get('filename')} · {dims}"
+    if facts.get("kind") == "job_source":
+        return f"Uploaded (reused from {facts.get('from_job')}): {facts.get('filename')} · {dims}"
     return dims
 
 
