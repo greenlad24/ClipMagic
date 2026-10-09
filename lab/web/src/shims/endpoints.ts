@@ -3824,7 +3824,7 @@ export interface AutoJobDetail {
   request: { format: 'short' | 'long'; sponsored: boolean; script: string | null;
     source: { kind?: 'descript' | 'job' | 'upload'; url?: string; job?: string; file?: string; title?: string; upload?: string; name?: string };
     title: string | null;
-    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn };
+    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn; handoff?: boolean };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
     cost_usd?: number; cost_live_usd?: number; updated_at?: number; started_at?: number; finished_at?: number;
@@ -3859,6 +3859,8 @@ export interface AutoJobDetail {
   held?: AutoHeld | null;
   /** a held job's edit files, kept for inspection only (not finished edits, not creative sources) */
   heldEdits?: { name: string; bytes: number; modifiedAt: number }[];
+  /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip); null for other jobs */
+  handoff?: { zip: string; bytes: number; modifiedAt: number; slots: { n: number; start_tc: string; end_tc: string; label: string }[] }[] | null;
 }
 /** One stage in status.json (the worker keeps progress / cost / counts per stage). */
 export interface AutoStageStatus {
@@ -3893,6 +3895,8 @@ export const autoEditorCreate = endpoint<{
   title?: string; sites?: string; runOn?: AutoRunOn;
   /** Jake's explicit "use it anyway" for a Lab edit that is an unreviewed automatic cut */
   allowUnreviewed?: boolean;
+  /** "Graphics only — editor adds screencasts" (long-form creative): the hand-off package, no screencasts */
+  handoff?: boolean;
 }, { id: string }>("autoEditorCreate");
 /** control.ts REVIEW GATE: only a final / reviewed / verified cut is a creative source by default */
 export type AutoReviewStatus = 'final' | 'reviewed' | 'verified' | 'unreviewed';

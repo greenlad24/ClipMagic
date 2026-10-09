@@ -105,6 +105,25 @@ const WORKFLOWS: {
   },
 ];
 
+/**
+ * The third creative option (Jake 2026-10-09): the whole creative edit WITHOUT screencasts, as a hand-off package
+ * for his editor (Premiere Pro / DaVinci Resolve), who records only the screencasts. It is workflow "creative" +
+ * request.json "handoff" (control.ts → aieditor/handoff.py), long-form only.
+ */
+const HANDOFF_OPTION: (typeof WORKFLOWS)[number] = {
+  id: 'creative',
+  icon: Film,
+  title: 'Graphics only — editor adds screencasts',
+  promise: 'Everything except the screencasts, packed for your editor in Premiere Pro or DaVinci Resolve.',
+  gets: ['A-roll + motion graphics', 'Premiere XML + FCPXML', 'A brief for every screencast'],
+  hint: [
+    'Start from the narration you already edited: a Descript share link, a finished Lab edit, or a video file.',
+    'The edit is planned and built — camera moves, overlays, facecam bubble, music, sound effects — but no screen is recorded.',
+    'You get one zip: timelines for Premiere and Resolve, every graphic with transparency, audio stems, a brief per screencast slot and a preview.',
+  ],
+};
+const handoffPlanned = (stages: string[]) => [...stages.slice(0, 5), 'Plan the edit (no browser)', 'Render the overlays', 'Build the hand-off package'];
+
 type SourceKind = 'descript' | 'job' | 'upload';
 
 const SOURCE_STAGE: Record<SourceKind, string> = {
@@ -249,6 +268,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   const [labError, setLabError] = useState<string | null>(null);
   const [pick, setPick] = useState<LabPick | null>(null);
   const [allowUnreviewed, setAllowUnreviewed] = useState(false);
+  const [handoff, setHandoff] = useState(false); // HANDOFF_OPTION picked
   const up = useSourceUpload();
 
   useEffect(() => {
@@ -354,6 +374,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
         sites: format === 'long' ? sites : undefined,
         runOn,
         allowUnreviewed: kind === 'job' && isUnreviewed(pick?.video) ? allowUnreviewed : undefined,
+        handoff: handoff && creative ? true : undefined,
       });
       lsSet(LS.format, format);
       lsSet(LS.runOn, runOn);
@@ -395,7 +416,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     runOn === 'box' ? 'Main box' : runOn === 'factory' || factoryOn ? `Factory server${size ? ` (${size.id}, ${size.vcpu} vCPU)` : ''}` : 'Main box';
   const onFactory = runOn === 'factory' || (runOn === 'auto' && factoryOn);
 
-  const wfDef = WORKFLOWS.find((w) => w.id === workflow);
+  const wfDef = handoff && workflow === 'creative' ? HANDOFF_OPTION : WORKFLOWS.find((w) => w.id === workflow);
   const total = steps.length;
 
   return (
@@ -421,7 +442,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
             <Question sub="Pick what you're starting from.">What are we editing today?</Question>
             <div className="grid gap-3">
               {WORKFLOWS.map((w) => (
-                <BigChoice key={w.id} selected={workflow === w.id} onClick={() => pickWorkflow(w.id)} icon={w.icon} title={w.title} sub={w.promise}>
+                <BigChoice key={w.id} selected={workflow === w.id && !handoff} onClick={() => { setHandoff(false); pickWorkflow(w.id); }} icon={w.icon} title={w.title} sub={w.promise}>
                   <span className="mt-2.5 flex flex-wrap gap-1.5">
                     {w.gets.map((g) => (
                       <span key={g} className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -431,6 +452,25 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                   </span>
                 </BigChoice>
               ))}
+              <BigChoice
+                selected={handoff && workflow === 'creative'}
+                onClick={() => {
+                  pickWorkflow('creative');
+                  setHandoff(true);
+                  setFormat('long'); // the hand-off is long-form only
+                }}
+                icon={HANDOFF_OPTION.icon}
+                title={HANDOFF_OPTION.title}
+                sub={HANDOFF_OPTION.promise}
+              >
+                <span className="mt-2.5 flex flex-wrap gap-1.5">
+                  {HANDOFF_OPTION.gets.map((g) => (
+                    <span key={g} className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                      {g}
+                    </span>
+                  ))}
+                </span>
+              </BigChoice>
             </div>
           </>
         )}
@@ -664,7 +704,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">It runs these steps, live on the next screen</p>
               <ol className="flex flex-wrap gap-1.5">
-                {plannedStages(workflow, format, kind).map((s, k) => (
+                {(handoff && creative ? handoffPlanned(plannedStages(workflow, format, kind)) : plannedStages(workflow, format, kind)).map((s, k) => (
                   <li key={s} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
                     {k + 1}. {s}
                   </li>

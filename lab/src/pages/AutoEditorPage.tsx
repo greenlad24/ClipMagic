@@ -330,7 +330,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   };
 
   const finalFile = job.finals?.[tab];
-  const canFinal = job.status.state !== 'held' &&
+  const canFinal = !job.request.handoff && job.status.state !== 'held' &&
     ((job.request.format === 'short' && !!edit) || (job.request.format === 'long' && !!job.edlAt));
   // a final made before the latest cut edits is not the cut on screen any more
   const finalStale = !!finalFile && !!job.edlAt && finalFile.modifiedAt * 1000 < job.edlAt - 1000;
@@ -436,6 +436,20 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               </Button>
             </div>
           )}
+          {/* "Graphics only — editor adds screencasts": the package for the editor (aieditor/handoff.py) */}
+          {(job.handoff ?? []).map((p) => (
+            <div key={p.zip} className="flex flex-wrap items-center gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-400">
+              <span className="min-w-0 flex-1">
+                Hand-off package ready · {p.slots.length} screencast slot{p.slots.length === 1 ? '' : 's'} for the editor ·{' '}
+                {(p.bytes / 1e9).toFixed(2)} GB · the video below shows a card in every slot
+              </span>
+              <Button asChild size="sm" className="h-7 gap-1.5 text-xs">
+                <a href={`/api/aieditor/files/${job.id}/${p.zip}`} download>
+                  <Download className="h-3.5 w-3.5" /> Download hand-off package
+                </a>
+              </Button>
+            </div>
+          ))}
           {rendering && (
             <p className="rounded bg-blue-500/10 px-2 py-1 text-[11px] text-blue-400">
               {job.status.message || 'Rendering…'}
@@ -482,7 +496,7 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
               )}
             </p>
           )}
-          {job.request.format === 'long' && !!job.edlAt && (
+          {job.request.format === 'long' && !!job.edlAt && !job.request.handoff && (
             <details className="group rounded-md border border-border" open={!!sitesText.trim() && !edit}>
               <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
                 <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
