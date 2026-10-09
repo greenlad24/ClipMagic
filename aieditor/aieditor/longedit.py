@@ -18,7 +18,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import agentrec, compose_long, config, director, events as ev_log, graphics_long, media
+from . import agentrec, compose_long, config, director, events as ev_log, graphics_long, media, usroute
 
 SC_IMAGE = config.SC_IMAGE
 SCREENCAST = config.CODE / "screencast"
@@ -26,10 +26,14 @@ MUSIC_DIR = Path("/opt/aieditor-work/music")
 VOICE_LUFS = -14.0                   # render.py normalises the voice to −14 LUFS
 
 
-def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None, tz="Asia/Bangkok"):
+def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None, tz="Asia/Bangkok", env=None):
     cname = f"{name}-{uuid.uuid4().hex[:8]}"
+    env = dict(env or {})
     cmd = ["docker", "run", "--rm", "--name", cname, "--cpuset-cpus", cpus or config.CPUSET, "--shm-size", "1g",
-           "--memory", config.MEMORY, "-e", f"TZ={tz}", "-e", f"AGENT_PROXY={config.EGRESS_PROXY}"]
+           "--memory", config.MEMORY, "-e", f"TZ={env.pop('TZ', tz)}",
+           "-e", f"AGENT_PROXY={env.pop('AGENT_PROXY', config.EGRESS_PROXY)}"]
+    for k, val in env.items():
+        cmd += ["-e", f"{k}={val}"]
     for a, b in mounts:
         cmd += ["-v", f"{a}:{b}"]
     cmd += [SC_IMAGE] + args
@@ -55,6 +59,52 @@ def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None, tz="Asia/Ban
 def _tz(seg):
     """RULEBOOK L4: a public (outside-the-account) view runs on a US timezone."""
     return (seg.get("session") or {}).get("timezone") or "Asia/Bangkok"
+
+
+# ── HELD: a job that cannot honestly be finished stops with its reasons (never quiet A-roll) ──
+# p4 renders the held state in the Lab; until then the worker ends the job with these messages.
+HELD = "held.json"
+NEEDS_SCRIPTED = "needs_scripted_recorder"
+
+
+def add_held(d, reason, detail=""):
+    p = Path(d) / HELD
+    cur = held_reasons(d)
+    item = {"reason": reason, "detail": detail}
+    if item not in cur:
+        cur.append(item)
+        p.write_text(json.dumps({"reasons": cur}, indent=1))
+    return cur
+
+
+def held_reasons(d):
+    try:
+        return list(json.loads((Path(d) / HELD).read_text()).get("reasons") or [])
+    except (OSError, ValueError):
+        return []
+
+
+def clear_held(d, reason=None):
+    """All reasons, or only those of one kind (the worker drops "API cap" when a run starts)."""
+    if reason is None:
+        (Path(d) / HELD).unlink(missing_ok=True)
+        return
+    keep = [r for r in held_reasons(d) if r.get("reason") != reason]
+    if keep:
+        (Path(d) / HELD).write_text(json.dumps({"reasons": keep}, indent=1))
+    else:
+        (Path(d) / HELD).unlink(missing_ok=True)
+
+
+def _outside(seg):
+    """A pricing / visitor view (planfit routes these to a never-logged-in session, RULEBOOK L4)."""
+    return (seg.get("session") or {}).get("kind") in ("public", "outside")
+
+
+def _not_recorded(sd, status, seg, why):
+    sd.mkdir(parents=True, exist_ok=True)
+    json.dump({"status": status, "t0": seg.get("t0"), "t1": seg.get("t1"), "url": seg.get("url"),
+               "intent": seg.get("intent"), "why": why}, open(sd / "recording.json", "w"), indent=1)
 
 
 def _fresh(path, than):
@@ -150,7 +200,30 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         # scripted recorder's fresh, never-logged-in Chrome (en-US)
         if x and x["slug"] in scouts and (seg.get("session") or {}).get("kind") != "public":
             by_scout.setdefault(x["slug"], []).append(i)
-    for slug, idx in by_scout.items():
+    rec_mode = config.recorder()
+    n_held = 0
+    if not rec_mode["on_camera_agent"]:
+        # Recommendation step 1: the on-camera agent is OFF (config.RECORDER). A logged-in segment waits for
+        # the scripted recorder (package p7) and the job is HELD — never recorded by an improvising model,
+        # never quietly left as A-roll.
+        for slug, idx in by_scout.items():
+            for i in idx:
+                sd = w / f"seg-{i:02d}"
+                if (sd / "rec" / "events.json").exists():
+                    continue
+                seg = segs[i]
+                _not_recorded(sd, NEEDS_SCRIPTED, seg, f"logged-in {slug} segment: recorder mode "
+                              f"'{rec_mode['mode']}' with the on-camera agent off — needs the scripted recorder")
+                msg = (f"edit {k}: screencast {i + 1} ({seg['t0']:.1f}–{seg['t1']:.1f}s in {slug}) is not recorded — "
+                       "the on-camera agent is off and this app has no scripted recording yet; the job is held")
+                log(msg)
+                ev_log.emit("log", msg, level="warn")
+                add_held(d, NEEDS_SCRIPTED, f"edit {k} screencast {i + 1} ({slug})")
+                n_held += 1
+        by_scout_rec = {}
+    else:
+        by_scout_rec = by_scout
+    for slug, idx in by_scout_rec.items():
         x = scouts[slug]
         dark = bool(gate.get(slug, {}).get("dark"))
         log(f"edit {k}: logged in to {slug} through the UX Scout — recording the real app"
@@ -202,9 +275,26 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         n_recorded += len(idx)
     done = {i for idx in by_scout.values() for i in idx}
     scripted = [(i, seg) for i, seg in enumerate(segs) if i not in done]
+    us_proxy = usroute.route_for_job()
     for i, seg in scripted:
         sd = w / f"seg-{i:02d}"
         sd.mkdir(exist_ok=True)
+        env = None
+        if _outside(seg) and not (sd / "rec" / "events.json").exists():
+            if not us_proxy:
+                # RULEBOOK L4 / R10: an outside view never goes out through the Singapore box
+                _not_recorded(sd, "no_us_route", seg, "pricing / visitor view needs the job's US route")
+                msg = (f"edit {k}: screencast {i + 1} ({seg['t0']:.1f}–{seg['t1']:.1f}s, {seg.get('url', '')}) is an "
+                       "outside view and this job has no US route — not recorded; the job is held")
+                log(msg)
+                ev_log.emit("log", msg, level="warn")
+                add_held(d, usroute.NO_ROUTE, f"edit {k} screencast {i + 1}")
+                n_held += 1
+                continue
+            prof = sd / "outside-profile"                 # a fresh, empty, never-logged-in profile per take
+            shutil.rmtree(prof, ignore_errors=True)
+            env = usroute.outside_chrome_env(us_proxy, prof)
+            env["AGENT_PROFILE_DIR"] = "/s/outside-profile"
         base = 0.1 + 0.75 * i / max(1, len(segs))
         ev_log.set_sub(f"screencast {i + 1}/{len(segs)}")
         ev_log.emit("step", f"screencast {i + 1}/{len(segs)}: {seg['t0']:.1f}–{seg['t1']:.1f}s on {seg.get('url', '')}"
@@ -212,17 +302,21 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         if not (sd / "script.json").exists():
             progress(f"Screencast {i + 1} of {len(segs)}: reading {seg['url']}…", base)
             _docker(["node", "/app/screencast/inventory.mjs", seg["url"], "/s/inventory.json", "/s/inventory.jpg"],
-                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-inv", tz=_tz(seg))
+                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-inv", tz=_tz(seg), env=env)
             script, meta = director.write_script(seg, video, json.load(open(sd / "inventory.json")),
                                                  (sd / "inventory.jpg").read_bytes())
             usd += meta["usd"]
             script["until"] = round(seg["t1"] - seg["t0"] + 0.5, 2)
             json.dump(script, open(sd / "script.json", "w"), indent=1)
+        if env:
+            script = json.load(open(sd / "script.json"))
+            script.update(session="outside", profileDir="/s/outside-profile")
+            json.dump(script, open(sd / "script.json", "w"), indent=1)
         if not (sd / "rec" / "events.json").exists():
             progress(f"Screencast {i + 1} of {len(segs)}: recording {seg['t1'] - seg['t0']:.0f} s (frame by frame)…", base + 0.05)
             (sd / "rec").mkdir(exist_ok=True)
             _docker(["node", "/app/screencast/vrecord.mjs", "/s/script.json", "/s/rec"],
-                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-rec", tz=_tz(seg))
+                    [(SCREENCAST, "/app/screencast"), (sd, "/s")], cancelled, "aieditor-rec", tz=_tz(seg), env=env)
         ev = json.load(open(sd / "rec" / "events.json"))
         if ev.get("failed"):
             log(f"edit {k}: screencast {i + 1} recording stopped early: {ev['failed']}")
@@ -235,7 +329,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
         log(f"edit {k}: no screencast in the plan — "
             + ("no site could be screencast (A-roll + overlays only)" if not sites else "the director placed none"))
     return (f"{n_ok}/{len(segs)} screencast(s)" + (f" ({n_recorded} in the logged-in app)" if n_recorded else "")
-            + f", {len(evs)} overlay(s)"), usd
+            + (f", {n_held} held" if n_held else "") + f", {len(evs)} overlay(s)"), usd
 
 
 MIN_KEEP_S = 6.0          # a screencast cut short by the guard keeps at least this much, else A-roll

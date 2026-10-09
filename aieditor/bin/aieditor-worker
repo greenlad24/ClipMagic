@@ -68,6 +68,7 @@ sys.path.insert(0, str(ROOT))
 
 from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
 from aieditor import sites as sites_mod  # noqa: E402
+from aieditor import accountlock, apiledger, llm  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -81,6 +82,15 @@ def workflow_of(req):
 def stages_for(req):
     return CREATIVE_STAGES if workflow_of(req) == "creative" else STAGES
 STOP = False
+
+
+class Held(Exception):
+    """The job cannot honestly be finished (a segment needs the scripted recorder, no US route, the API
+    cap): it stops with its reasons instead of shipping quiet A-roll. p4 renders the held state."""
+    def __init__(self, reasons):
+        self.reasons = reasons
+        super().__init__("Held — " + "; ".join(
+            f"{r['reason']}" + (f" ({r['detail']})" if r.get("detail") else "") for r in reasons))
 
 
 class Cancelled(Exception):
@@ -168,6 +178,7 @@ class Job:
             self.cur = name
             self._last_msg = None
             events.set_sub(None)
+            llm.set_context(stage=name)                      # every Claude call's ledger line names its stage
         if state in ("done", "failed", "skipped", "interrupted"):
             s["finished_at"] = now()
             if note == "reused" and prev != "running":
@@ -587,6 +598,7 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
             job.log("no screencast site for this edit — A-roll + overlays only")
 
         def do_graphics_long():
+            longedit.clear_held(d)                            # this run decides afresh what is held
             notes, usd = [], 0.0
             for k, v in enumerate(e["videos"], 1):
                 try:
@@ -605,6 +617,11 @@ def run_edit_part(job, action, req, fmt, sponsored, info, fps, audio, step):
                                   and all((d / f"edit-{k:02d}" / "overlays.json").exists()
                                           for k in range(1, len(e["videos"]) + 1)))
         step("graphics", do_graphics_long, graphics_ready, rerun=(action != "run"))
+        held = longedit.held_reasons(d)
+        if held:
+            # never compose a video with holes quietly filled by A-roll (recommendation §4)
+            job.stage("compose", "skipped", "held — see the job message")
+            raise Held(held)
 
         def do_compose_long():
             size = render.preview_size(info["width"], info["height"])
@@ -794,11 +811,28 @@ def execute(job, action):
     """One claimed request, start to finish, on THIS machine (the box, or a factory server)."""
     events.set_sink(job.event)
     events.set_sub(None)
+    llm.set_context(job=job.id, workflow=workflow_of(job.req), stage=None)
+    longedit.clear_held(job.d, apiledger.BudgetExceeded.reason)   # a new run gets a new chance at the cap
     job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
     try:
-        run_job(job, action)
+        try:
+            run_job(job, action)
+        except apiledger.BudgetExceeded as exc:
+            # refused BEFORE the call was sent: the job is held, reason "API cap"
+            raise Held(longedit.add_held(job.d, apiledger.BudgetExceeded.reason, str(exc))) from None
+        if llm.refusals():
+            # a stage swallowed the refusal ("route, don't fail") — the job is still held
+            raise Held(longedit.add_held(job.d, apiledger.BudgetExceeded.reason, llm.refusals()[0]))
         job.save(state="done", message="Ready to review", progress=1, finished_at=now())
         events.emit("stage", "job finished — ready to review", stage="job")
+    except Held as exc:
+        job.log(str(exc))
+        for name, s in list(job.st["stages"].items()):
+            if s.get("state") == "running":
+                job.stage(name, "failed", "held")
+        events.emit("stage", str(exc)[:500], stage="job", level="warn")
+        job.save(state="failed", held=True, held_reasons=exc.reasons, message=str(exc)[:500], error=None,
+                 finished_at=now())
     except Cancelled:
         job.log("cancelled")
         for name, s in list(job.st["stages"].items()):
@@ -813,6 +847,7 @@ def execute(job, action):
         job.save(state="failed", message=str(exc)[:500], error=str(exc)[:2000])
     finally:
         events.set_sink(None)
+        llm.clear_context()
         (job.d / "cancel").unlink(missing_ok=True)
         for t in job.d.glob("tmp-*"):
             shutil.rmtree(t, ignore_errors=True)
@@ -861,6 +896,7 @@ def execute_cloud(job, action):
 
 
 LOCAL = threading.Lock()            # one job at a time on THIS box
+API_ACTIONS = ("run", "edit", "rebuild", "recut")   # the actions that call Claude
 
 
 def main():
@@ -875,8 +911,19 @@ def main():
     def skip(d, action):
         if cloud.running(d.name):
             return True
-        if not cloud.enabled_for(action, jload(d / "request.json", {})):
+        req = jload(d / "request.json", {})
+        # the rolling 24 h Claude API cap: jobs that call Claude wait in the queue (like the server cap)
+        if action in API_ACTIONS and apiledger.over_daily_cap():
+            return True
+        if not cloud.enabled_for(action, req):
             return False
+        # one job per logged-in account: a job whose Scout account is in use stays queued
+        if action in ("run", "edit") and (req.get("sites") or workflow_of(req) == "creative"):
+            try:
+                if any(accountlock.busy(slug) for slug in cloud.scout_slugs(req, d)):
+                    return True
+            except Exception:                                 # noqa: BLE001 — run_remote waits on the lock anyway
+                pass
         # factory jobs wait (never drop to the main box) while every server slot is taken
         # or the rolling $20/24 h cap is reached
         return cloud.busy() >= cloud.settings()["max_parallel"] or cloud.over_daily_cap()
