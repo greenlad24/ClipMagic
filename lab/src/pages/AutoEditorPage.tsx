@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   Scissors,
   Film,
   Plus,
+  HardDrive,
   ChevronDown,
   ChevronRight,
   Download,
@@ -44,6 +45,7 @@ import { CutEditor } from '@/components/autoeditor/CutEditor';
 import { JobProgress } from '@/components/autoeditor/JobProgress';
 import { FactoryPanel } from '@/components/autoeditor/FactoryPanel';
 import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
+import { StoredFiles } from '@/components/autoeditor/StoredFiles';
 import { HeldPanel } from '@/components/autoeditor/HeldPanel';
 
 /**
@@ -789,7 +791,7 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
             {job.request.sponsored ? 'Sponsored' : 'Not sponsored'}
             {job.request.source?.kind === 'job'
               ? ` · from the Lab edit ${job.request.source.title || job.request.source.job} (${job.request.source.file})`
-              : job.request.source?.kind === 'upload'
+              : job.request.source?.kind === 'upload' || job.request.source?.kind === 'job_source'
                 ? ` · uploaded ${job.request.source.name}`
                 : ''}
             {job.source?.duration ? ` · raw ${mmss(job.source.duration)}` : ''}
@@ -837,6 +839,12 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
             <RotateCcw className="h-3.5 w-3.5" /> Continue
           </Button>
         </div>
+      )}
+      {job.deleted && job.deleted.length > 0 && (
+        <p className="rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          Deleted from the server:{' '}
+          {job.deleted.map((d) => `${d.files.join(', ')} (${new Date(d.at * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })})`).join(' · ')}
+        </p>
       )}
       {job.chain && <ChainLinks chain={job.chain} />}
       {state === 'held' && job.held && <HeldPanel held={job.held} />}
@@ -909,6 +917,9 @@ function ChainLinks({ chain }: { chain: NonNullable<AutoJobDetail['chain']> }) {
 export default function AutoEditorPage() {
   const { id: selected } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // /auto-editor?view=files — what the edits keep on the factory volume (StoredFiles.tsx)
+  const [search] = useSearchParams();
+  const filesView = !selected && search.get('view') === 'files';
   const [jobs, setJobs] = useState<AutoJobSummary[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [workerAlive, setWorkerAlive] = useState<boolean | null>(null);
@@ -964,14 +975,21 @@ export default function AutoEditorPage() {
 
         <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
           {/* sidebar: on a phone it only shows on the start screen, below the flow */}
-          <div className={cn('space-y-3', selected ? 'hidden lg:block' : 'order-2 lg:order-none')}>
+          <div className={cn('space-y-3', selected || filesView ? 'hidden lg:block' : 'order-2 lg:order-none')}>
             <Button
               variant={selected ? 'secondary' : 'outline'}
               className="hidden w-full gap-1.5 lg:flex"
               onClick={() => navigate('/auto-editor')}
-              disabled={!selected}
+              disabled={!selected && !filesView}
             >
               <Plus className="h-4 w-4" /> New edit
+            </Button>
+            <Button
+              variant={filesView ? 'secondary' : 'ghost'}
+              className="w-full justify-start gap-1.5 text-muted-foreground"
+              onClick={() => navigate('/auto-editor?view=files')}
+            >
+              <HardDrive className="h-4 w-4" /> Stored files
             </Button>
             <div>
               <h2 className="px-1 pb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Edits</h2>
@@ -1032,6 +1050,13 @@ export default function AutoEditorPage() {
                     navigate('/auto-editor');
                   }}
                 />
+              </>
+            ) : filesView ? (
+              <>
+                <Link to="/auto-editor" className="mb-3 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground lg:hidden">
+                  <ArrowLeft className="h-3.5 w-3.5" /> New edit
+                </Link>
+                <StoredFiles />
               </>
             ) : (
               <div className="py-2 sm:rounded-xl sm:border sm:border-border sm:px-8 sm:py-10">

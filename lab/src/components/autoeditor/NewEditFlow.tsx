@@ -7,6 +7,7 @@ import {
   ChevronDown,
   ChevronRight,
   Film,
+  History,
   Link2,
   Loader2,
   RectangleHorizontal,
@@ -23,7 +24,9 @@ import { Textarea } from '@/components/ui/textarea';
 import {
   autoEditorCreate,
   autoEditorLabEdits,
+  autoEditorUploads,
   type AutoLabEdit,
+  type AutoNarration,
   type AutoRunOn,
   type AutoSourceInput,
   type AutoWorkflow,
@@ -31,6 +34,7 @@ import {
 import { cn } from '@/lib/utils';
 import { getFactory, type FactoryState } from './FactoryPanel';
 import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from './useSourceUpload';
+import { NarrationLibrary } from './NarrationLibrary';
 
 /**
  * New edit — a guided, one-question-per-screen flow (Jake 2026-10-08: "a consumer app like
@@ -38,7 +42,7 @@ import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from '.
  * autoEditorCreate({ url, workflow, format, sponsored, script (cut only), title, sites (long
  * only), runOn }) — control.ts createJob validates the same fields.
  *
- * Steps: workflow → [source: creative only] → link | labedit | upload → format → sponsored →
+ * Steps: workflow → [source: creative only] → link | labedit | upload | library → format → sponsored →
  * [script: cut + full] → [sites: long only] → review.
  * The third card, "Full edit" (Jake 2026-10-09: "when a job is being submitted for a new video - I
  * don't want a review step from my side - everything should be made automatically"), asks what the
@@ -46,7 +50,9 @@ import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from '.
  * edit and its final by itself (aieditor/chain.py). There is no review/approval step anywhere here:
  * the Lab-edit picker only offers final / reviewed / word-verified cuts, with no override tick.
  * Creative edits may start from a Descript link, a finished Lab edit of workflow 1, or a file
- * uploaded from the computer (Jake 2026-10-08) — request.json "source", see control.ts.
+ * uploaded from the computer (Jake 2026-10-08), or a narration uploaded before ("Previously
+ * uploaded", Jake 2026-10-09: "so I can reuse uploaded narration videos" — every upload is kept
+ * in the narration library, NarrationLibrary.tsx) — request.json "source", see control.ts.
  * The upload runs in the background while the remaining questions are answered; Start
  * waits for it.
  * Card answers advance on click; text steps advance on Enter (Ctrl/⌘+Enter in a textarea).
@@ -145,12 +151,13 @@ const HANDOFF_OPTION: (typeof WORKFLOWS)[number] = {
 };
 const handoffPlanned = (stages: string[]) => [...stages.slice(0, 5), 'Plan the edit (no browser)', 'Render the overlays', 'Build the hand-off package'];
 
-type SourceKind = 'descript' | 'job' | 'upload';
+type SourceKind = 'descript' | 'job' | 'upload' | 'library';
 
 const SOURCE_STAGE: Record<SourceKind, string> = {
   descript: 'Download from Descript',
   job: 'Use the Lab edit',
   upload: 'Use the uploaded file',
+  library: 'Use the uploaded file',
 };
 
 /** The stages the worker will run — mirrors control.ts stagesFor(). */
@@ -177,8 +184,8 @@ function plannedStages(wf: FlowId, format: 'short' | 'long', source: SourceKind)
   return [...head, ...mid, ...tail];
 }
 
-type StepId = 'workflow' | 'source' | 'link' | 'labedit' | 'upload' | 'format' | 'sponsored' | 'script' | 'sites' | 'review';
-const SUB_STEP: Record<SourceKind, StepId> = { descript: 'link', job: 'labedit', upload: 'upload' };
+type StepId = 'workflow' | 'source' | 'link' | 'labedit' | 'upload' | 'library' | 'format' | 'sponsored' | 'script' | 'sites' | 'review';
+const SUB_STEP: Record<SourceKind, StepId> = { descript: 'link', job: 'labedit', upload: 'upload', library: 'library' };
 
 type LabPick = { edit: AutoLabEdit; video: AutoLabEdit['videos'][number] };
 
@@ -288,6 +295,9 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   const [labEdits, setLabEdits] = useState<AutoLabEdit[] | null>(null);
   const [labError, setLabError] = useState<string | null>(null);
   const [pick, setPick] = useState<LabPick | null>(null);
+  const [narrations, setNarrations] = useState<AutoNarration[] | null>(null);
+  const [narrError, setNarrError] = useState<string | null>(null);
+  const [narration, setNarration] = useState<AutoNarration | null>(null);
   const [handoff, setHandoff] = useState(false); // HANDOFF_OPTION picked
   const up = useSourceUpload();
 
@@ -311,7 +321,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   const uploadDone = up.state.status === 'done' && !!up.state.uploadId;
   // the picker only lists accepted sources (control.ts listLabEdits): no tick, nothing to confirm
   const pickOk = !!pick;
-  const sourceOk = kind === 'descript' ? urlOk : kind === 'job' ? pickOk : uploadDone;
+  const sourceOk = kind === 'descript' ? urlOk : kind === 'job' ? pickOk : kind === 'library' ? !!narration : uploadDone;
 
   // the Lab edits, loaded once when that screen is first opened
   useEffect(() => {
@@ -321,11 +331,29 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
       .catch((e) => setLabError(e instanceof Error ? e.message : String(e)));
   }, [step, labEdits]);
 
+  // the narration library, loaded when its screen opens (and again after a delete)
+  const loadNarrations = () => {
+    autoEditorUploads({})
+      .then((r) => {
+        setNarrations(r.uploads);
+        setNarrError(null);
+        // a removed pick is no longer a source
+        setNarration((cur) => (cur && r.uploads.some((u) => u.key === cur.key) ? cur : null));
+      })
+      .catch((e) => setNarrError(e instanceof Error ? e.message : String(e)));
+  };
+  useEffect(() => {
+    if (step !== 'library' || narrations) return;
+    loadNarrations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, narrations]);
+
   const canNext: Record<StepId, boolean> = {
     workflow: !!workflow,
     source: true,
     link: urlOk,
     labedit: pickOk,
+    library: !!narration,
     // the questions after it can be answered while the file uploads
     upload: up.state.status === 'uploading' || uploadDone,
     format: !!format,
@@ -368,6 +396,10 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     if (edit.format === 'short' || edit.format === 'long') setFormat(edit.format);
     go('format');
   };
+  const pickNarration = (n: AutoNarration) => {
+    setNarration(n);
+    go('format');
+  };
   const dismissHint = () => {
     if (workflow) lsSet(LS.hint(workflow), '1');
     setHintOpen(false);
@@ -380,7 +412,11 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
         ? { kind: 'job', job: pick.edit.id, file: pick.video.file }
         : kind === 'upload' && up.state.uploadId
           ? { kind: 'upload', upload: up.state.uploadId }
-          : undefined;
+          : kind === 'library' && narration
+            ? narration.kind === 'upload'
+              ? { kind: 'upload', upload: narration.key }
+              : { kind: 'job_source', job: narration.job ?? '' }
+            : undefined;
     setBusy(true);
     try {
       const r = await autoEditorCreate({
@@ -548,6 +584,13 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                 title="Upload from your computer"
                 sub={`${VIDEO_EXTS.join(' ').replace(/\./g, '').toUpperCase()} · up to 20 GB · keeps uploading while you answer the rest`}
               />
+              <BigChoice
+                selected={sourceKind === 'library'}
+                onClick={() => pickSource('library')}
+                icon={History}
+                title="Previously uploaded"
+                sub="A narration you uploaded before — no need to upload it again."
+              />
             </div>
           </>
         )}
@@ -556,6 +599,19 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
           <>
             <Question sub="The full-resolution final is used when there is one.">Which Lab edit?</Question>
             <LabEditPicker edits={labEdits} error={labError} pick={pick} onPick={pickLabVideo} />
+          </>
+        )}
+
+        {step === 'library' && (
+          <>
+            <Question sub="Every uploaded narration is kept here for reuse.">Which narration?</Question>
+            <NarrationLibrary
+              items={narrations}
+              error={narrError}
+              selected={narration?.key ?? null}
+              onPick={pickNarration}
+              onChanged={loadNarrations}
+            />
           </>
         )}
 
@@ -687,7 +743,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
               {(
                 [
                   ['Workflow', wfDef?.title ?? '', 'workflow'],
-                  sourceRow(kind, url, pick, up.state),
+                  sourceRow(kind, url, pick, up.state, narration),
                   ['Format', format === 'short' ? 'Shorts (9:16)' : 'Long-form (16:9)', 'format'],
                   ['Sponsored', sponsored ? 'Sponsored' : 'Not sponsored', 'sponsored'],
                   ...(!creative ? [['Script', script.trim() ? `${script.trim().split(/\s+/).length} words` : 'None', 'script']] : []),
@@ -834,7 +890,13 @@ function pct(s: SourceUploadState): number {
 }
 
 /** The review screen's source row: [label, value, step to edit it]. */
-function sourceRow(kind: SourceKind, url: string, pick: LabPick | null, up: SourceUploadState): [string, string, StepId] {
+function sourceRow(kind: SourceKind, url: string, pick: LabPick | null, up: SourceUploadState, narration: AutoNarration | null): [string, string, StepId] {
+  if (kind === 'library') {
+    const value = narration
+      ? `Uploaded before: ${narration.name}${narration.duration ? ` · ${mmss(narration.duration)}` : ''} · ${fmtBytes(narration.bytes)}`
+      : 'Choose a narration';
+    return ['Source', value, 'library'];
+  }
   if (kind === 'job') {
     const v = pick?.video;
     const value = pick && v
