@@ -14,6 +14,17 @@ when the source job re-renders its final later: every render writes `<name>.part
 os.replace()s it, i.e. a NEW inode, never truncating the shared one.
 
 An upload folder is removed as soon as its bytes live in the job (the link keeps them).
+
+⚠️ REVIEW GATE (Jake 2026-10-09: "it also did cuts inside the narration that I didn't ask
+for"). A cut job writes preview-NN.mp4 the moment its AUTOMATIC cut exists — before Jake
+has looked at a single removal. The factory edit he watched started from exactly that
+(factory-e2e-test/preview-01.mp4: 53 joins, review.json edited:false, no final). So a
+preview is a source only when the cut was reviewed (review_status):
+  final       final-NN.mp4 itself, or a preview whose final-NN.mp4 exists
+  reviewed    review.json edited:true (Jake changed it) or approved:true (approved as is)
+  verified    wordiff.json of a factory-policy cut with 0 unapproved removals
+  unreviewed  anything else — refused unless the request carries allow_unreviewed:true,
+              which only Jake sets (the Lab's "use it anyway" tick)
 """
 import json
 import os
@@ -30,6 +41,41 @@ LOCAL_KINDS = ("job", "upload")
 
 class SourceError(RuntimeError):
     pass
+
+
+class UnreviewedSource(SourceError):
+    """The Lab edit is an automatic cut nobody reviewed (see REVIEW GATE)."""
+    def __init__(self, msg, status):
+        super().__init__(msg)
+        self.status = status
+
+
+ACCEPTED = ("final", "reviewed", "verified")
+
+
+def review_status(jobs_root, jid, fname):
+    """{"status": final|reviewed|verified|unreviewed, "removed_words": n|None,
+    "removals": n|None} of a cut job's video file (see REVIEW GATE). removed_words counts
+    the spoken words removed at the joins of that video (edl.json)."""
+    jdir = Path(jobs_root) / jid
+    m = re.match(r"^(final|preview)-(\d{2})\.mp4$", fname or "")
+    k = int(m.group(2)) if m else 1
+    edl = _jload(jdir / "edl.json", {}) or {}
+    vids = edl.get("videos") or []
+    v = vids[k - 1] if 0 < k <= len(vids) else {}
+    joins = v.get("joins") or []
+    removed = sum(len(str(j.get("removed") or "").split()) for j in joins) if v else None
+    removals = sum(1 for j in joins if str(j.get("removed") or "").strip()) if v else None
+    out = {"removed_words": removed, "removals": removals}
+    if fname.startswith("final-") or (jdir / f"final-{k:02d}.mp4").is_file():
+        return {**out, "status": "final"}
+    rv = _jload(jdir / "review.json", {}) or {}
+    if rv.get("edited") is True or rv.get("approved") is True:
+        return {**out, "status": "reviewed"}
+    wd = _jload(jdir / "wordiff.json", {}) or {}
+    if wd.get("policy") == "factory" and wd.get("unapproved") == 0 and "approved_by" in wd:
+        return {**out, "status": "verified"}
+    return {**out, "status": "unreviewed"}
 
 
 def kind_of(req):
@@ -64,8 +110,17 @@ def resolve(src, jobs_root, self_id=None):
         if path.is_symlink() or not path.is_file():
             raise SourceError(f"the Lab edit {jid} has no {fname} any more")
         title = req.get("title") or (_jload(jdir / "source.json", {}) or {}).get("title") or jid
+        rs = review_status(jobs_root, jid, fname)
+        if rs["status"] not in ACCEPTED and src.get("allow_unreviewed") is not True:
+            n = rs.get("removed_words")
+            raise UnreviewedSource(
+                f"the Lab edit {jid} ({fname}) is an unreviewed automatic cut"
+                + (f" ({n} spoken word(s) removed)" if n else "")
+                + " — review it in the Lab first, or tick 'use it anyway'", rs["status"])
         return path, {"kind": "job", "from_job": jid, "from_file": fname, "title": title,
-                      "quality": "final" if fname.startswith("final-") else "preview"}
+                      "quality": "final" if fname.startswith("final-") else "preview",
+                      "review": rs["status"], "removed_words": rs.get("removed_words"),
+                      **({"allow_unreviewed": True} if rs["status"] not in ACCEPTED else {})}
     if kind == "upload":
         uid = str(src.get("upload") or "")
         if not UPLOAD_RE.match(uid):
@@ -134,9 +189,13 @@ def facts_for(job_dir, req, jobs_root):
         if JOB_RE.match(jid):
             r = _jload(Path(jobs_root) / jid / "request.json") or {}
             title = r.get("title") or (_jload(Path(jobs_root) / jid / "source.json", {}) or {}).get("title")
+        rs = review_status(jobs_root, jid, fname) if JOB_RE.match(jid) else {}
         return {"kind": "job", "from_job": jid, "from_file": fname,
                 "title": src.get("title") or title or jid,
-                "quality": "final" if fname.startswith("final-") else "preview"}
+                "quality": "final" if fname.startswith("final-") else "preview",
+                **({"review": rs["status"], "removed_words": rs.get("removed_words")}
+                   if (Path(jobs_root) / jid / "request.json").exists() and rs else {}),
+                **({"allow_unreviewed": True} if src.get("allow_unreviewed") is True else {})}
     name = str(src.get("name") or "upload")[:200]
     return {"kind": "upload", "upload": src.get("upload"), "filename": name, "title": Path(name).stem}
 
@@ -144,7 +203,11 @@ def facts_for(job_dir, req, jobs_root):
 def note_for(facts, info):
     dims = f"{info['width']}x{info['height']}, {info['duration'] / 60:.1f} min"
     if facts.get("kind") == "job":
-        return f"Lab edit: {facts.get('title')} · {facts.get('from_file')} · {dims}"
+        extra = ""
+        if facts.get("review") == "unreviewed":
+            n = facts.get("removed_words")
+            extra = " · UNREVIEWED automatic cut" + (f" ({n} words removed)" if n else "")
+        return f"Lab edit: {facts.get('title')} · {facts.get('from_file')} · {dims}{extra}"
     if facts.get("kind") == "upload":
         return f"Uploaded: {facts.get('filename')} · {dims}"
     return dims

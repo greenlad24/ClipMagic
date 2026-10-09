@@ -8,6 +8,11 @@
   prepare       = the worker's "download" stage: probe → source.json (+ kind/from_job/filename)
                 and the stage note; an unreadable file fails with a clear message
   worker        run_job's download stage takes the local path (no Descript call)
+  review gate   a cut job's preview is a source only when the cut was reviewed (review.json
+                edited/approved), has a final, or is a factory cut with 0 unapproved removals;
+                an unreviewed automatic cut is refused unless allow_unreviewed (Jake's tick) —
+                checked on a scratch copy of the real factory-e2e-test (Jake 2026-10-09:
+                "it also did cuts inside the narration that I didn't ask for")
 
 Run: python3 tests/test_sources.py
 """
@@ -15,6 +20,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -214,7 +220,87 @@ def main():
         check(st.get("note") == "Lab edit: Linearity · final-01.mp4 · 3840x2160, 16.1 min", f"stage note {st}")
         check((d8 / "source.mp4").stat().st_ino == before.st_ino, "worker hard-linked the Lab edit")
 
+        review_gate(jobs)
+
     print(f"test_sources: {N} checks passed")
+
+
+def unreviewed(fn):
+    try:
+        fn()
+    except sources.UnreviewedSource as exc:
+        check(exc.status == "unreviewed" and "unreviewed automatic cut" in str(exc), f"refusal {exc!r}")
+        return str(exc)
+    raise AssertionError("expected UnreviewedSource")
+
+
+REAL_E2E = Path(os.environ.get("AIEDITOR_E2E_JOB", "/opt/aieditor-work/jobs/factory-e2e-test"))
+
+
+def review_gate(jobs):
+    # ── synthetic cut job: preview only, the automatic cut nobody looked at ──
+    cut = jobs / "auto-cut-1009-aaaa"
+    cut.mkdir()
+    (cut / "request.json").write_text(json.dumps({"id": cut.name, "title": "Auto", "format": "long", "no_edit": True}))
+    (cut / "preview-01.mp4").write_bytes(b"MP4!preview")
+    (cut / "edl.json").write_text(json.dumps({"videos": [{"joins": [
+        {"removed": "So"}, {"removed": "uh,"}, {"removed": ""}, {"removed": "Try for yourself."}]}]}))
+    (cut / "review.json").write_text(json.dumps({"edited": False}))
+    rs = sources.review_status(jobs, cut.name, "preview-01.mp4")
+    check(rs == {"status": "unreviewed", "removed_words": 5, "removals": 3}, f"review_status {rs}")
+    src = {"kind": "job", "job": cut.name, "file": "preview-01.mp4"}
+    msg = unreviewed(lambda: sources.resolve(src, jobs))
+    check("5 spoken word(s) removed" in msg, msg)
+    d, req = new_job(jobs, "creative-g-1", src)
+    unreviewed(lambda: sources.materialise(d, req, jobs))
+    check(not (d / "source.mp4").exists(), "nothing placed from a refused source")
+    # Jake ticked "use it anyway": accepted, and the facts say what it is
+    p, facts = sources.resolve({**src, "allow_unreviewed": True}, jobs)
+    check(p == cut / "preview-01.mp4" and facts["review"] == "unreviewed" and facts["allow_unreviewed"] is True
+          and facts["removed_words"] == 5, f"allowed facts {facts}")
+    d2, req2 = new_job(jobs, "creative-g-2", {**src, "allow_unreviewed": True})
+    note = sources.prepare(d2, req2, jobs, fake_probe)
+    check("UNREVIEWED automatic cut (5 words removed)" in note, f"note says so: {note!r}")
+    check(json.loads((d2 / "source.json").read_text())["review"] == "unreviewed", "source.json records it")
+    unreviewed(lambda: sources.resolve({**src, "allow_unreviewed": "true"}, jobs))      # only a real true
+    # a factory cut whose word-diff found an unapproved removal stays unreviewed
+    (cut / "wordiff.json").write_text(json.dumps({"policy": "factory", "unapproved": 2, "approved_by": None}))
+    unreviewed(lambda: sources.resolve(src, jobs))
+    (cut / "wordiff.json").write_text(json.dumps({"policy": "factory", "unapproved": 0, "approved_by": None}))
+    check(sources.resolve(src, jobs)[1]["review"] == "verified", "factory cut with 0 unapproved removals: verified")
+    (cut / "wordiff.json").unlink()
+    (cut / "review.json").write_text(json.dumps({"edited": True}))
+    check(sources.resolve(src, jobs)[1]["review"] == "reviewed", "Jake edited the cut: reviewed")
+    (cut / "review.json").write_text(json.dumps({"edited": False, "approved": True}))
+    check(sources.resolve(src, jobs)[1]["review"] == "reviewed", "Jake approved the cut: reviewed")
+    (cut / "review.json").write_text(json.dumps({"edited": False}))
+    (cut / "final-01.mp4").write_bytes(b"MP4!final")
+    check(sources.resolve(src, jobs)[1]["review"] == "final", "a final exists: the preview is a reviewed cut")
+    check(sources.resolve({**src, "file": "final-01.mp4"}, jobs)[1]["review"] == "final", "the final itself")
+
+    # ── a SCRATCH COPY of the real factory-e2e-test (read only; skipped when not on this box) ──
+    if not (REAL_E2E / "review.json").exists():
+        print("  (factory-e2e-test not on this box: real-job gate check skipped)")
+        return
+    copy = jobs / "factory-e2e-test"
+    copy.mkdir()
+    for f in ("request.json", "review.json", "edl.json", "source.json", "plan.json"):
+        if (REAL_E2E / f).exists():
+            shutil.copyfile(REAL_E2E / f, copy / f)
+    (copy / "preview-01.mp4").write_bytes(b"MP4!stand-in for the 1080p preview")
+    real = {"kind": "job", "job": "factory-e2e-test", "file": "preview-01.mp4"}
+    rs = sources.review_status(jobs, "factory-e2e-test", "preview-01.mp4")
+    check(rs["status"] == "unreviewed" and rs["removals"] == 45 and rs["removed_words"] == 49,
+          f"factory-e2e-test: an unreviewed automatic cut, 45 removals / 49 words: {rs}")
+    unreviewed(lambda: sources.resolve(real, jobs))
+    rv = json.loads((copy / "review.json").read_text())
+    rv["approved"] = True
+    (copy / "review.json").write_text(json.dumps(rv))
+    check(sources.resolve(real, jobs)[1]["review"] == "reviewed", "approved:true in the scratch review.json: accepted")
+
+
+def test_sources():          # pytest entry point
+    main()
 
 
 if __name__ == "__main__":
