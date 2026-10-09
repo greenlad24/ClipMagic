@@ -76,23 +76,49 @@ def _rx(entry):
         return re.compile(re.escape(entry), re.I)
 
 
+def _phrase(entry):
+    """p1's phrase match (clickguard.phrase_re): word boundaries, a space also matches '-', '_' or nothing."""
+    words = [re.escape(w) for w in re.split(r"[\s_-]+", str(entry).lower().strip()) if w]
+    return re.compile(r"(?<![a-z0-9])" + r"[\s_-]*".join(words) + r"(?![a-z0-9])", re.I)
+
+
 def guard_rules(path=None):
-    """(label regexes, url regexes): the shared clickguard.rules.json (p1) when present + the inline copy."""
-    labels, urls = list(DENY_LABELS), list(DENY_URLS)
+    """(label regexes, url regexes, allow regexes): the shared clickguard.rules.json (p1) when present +
+    the inline copy. p1's schema is read by its keys — playbook actions run in the logged-in session, so
+    deny_labels / deny_urls_logged_in / deny_hosts apply and allow_labels ('Remove background') are taken
+    out before the deny check; any other shape falls back to collecting deny words by key name."""
+    labels, urls, allow = list(DENY_LABELS), list(DENY_URLS), []
     p = Path(path) if path else CLICKGUARD_JSON
     if p.exists():
         try:
             shared = json.loads(p.read_text())
-            labels += _collect(shared, ("label", "word", "text", "deny"), [], avoid=("url", "path", "href", "host"))
+            if isinstance(shared, dict) and "deny_labels" in shared:
+                lab_p1 = [x for x in shared.get("deny_labels") or [] if isinstance(x, str)]
+                allow = [x for x in shared.get("allow_labels") or [] if isinstance(x, str)]
+                url_p1 = [x for x in shared.get("deny_urls_logged_in") or [] if isinstance(x, str)]
+                hosts = [x for x in shared.get("deny_hosts") or [] if isinstance(x, str)]
+                return ([_rx(x) for x in dict.fromkeys(labels)] + [_phrase(x) for x in dict.fromkeys(lab_p1)],
+                        [_rx(x) for x in dict.fromkeys(urls)]
+                        + [re.compile(r"(?<![\w.-])" + re.escape(x.lstrip("#")) + r"(?![\w-])", re.I)
+                           for x in dict.fromkeys(url_p1)]
+                        + [re.compile(r"//([\w-]+\.)*" + re.escape(h) + r"(?![\w.-])", re.I) for h in dict.fromkeys(hosts)],
+                        [_phrase(x) for x in dict.fromkeys(allow)])
+            labels += _collect(shared, ("label", "word", "text", "deny"), [], avoid=("url", "path", "href", "host", "allow"))
             urls += _collect(shared, ("url", "path", "href"), [])
         except (ValueError, OSError):
             pass
-    return [_rx(x) for x in dict.fromkeys(labels)], [_rx(x) for x in dict.fromkeys(urls)]
+    return [_rx(x) for x in dict.fromkeys(labels)], [_rx(x) for x in dict.fromkeys(urls)], []
 
 
 def guard_hit(label=None, url=None, rules=None):
     """The deny rule an action's label/url hits, or None."""
-    lab_rx, url_rx = rules or guard_rules()
+    rules = rules or guard_rules()
+    lab_rx, url_rx = rules[0], rules[1]
+    allow_rx = rules[2] if len(rules) > 2 else []
+    if label:
+        label = str(label)
+        for a in allow_rx:
+            label = a.sub(" ", label)
     for r in lab_rx:
         if label and r.search(label):
             return f"label {label!r} hits deny rule {r.pattern!r}"

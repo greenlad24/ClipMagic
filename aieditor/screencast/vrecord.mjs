@@ -34,6 +34,7 @@ import { check as guardCheck, describeInPage } from "./clickguard.mjs";
 const SESSION = (script.session || process.env.AGENT_SESSION) === "outside" ? "outside" : "logged_in";
 const PROFILE = profileFor(SESSION === "outside" ? "outside" : "any", script.profileDir || process.env.AGENT_PROFILE_DIR);
 class Refused extends Error {}
+import { privacySampler, privateSelectors } from "./privacy_dom.mjs";   // RULEBOOK C7
 const browser = await puppeteer.launch({
   executablePath: CHROME, headless: true, userDataDir: PROFILE || undefined,
   args: launchArgs(["--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none",
@@ -53,6 +54,7 @@ const ff = spawn("ffmpeg", ["-v", "error", "-y", "-f", "image2pipe", "-framerate
   "-r", String(FPS), path.join(outDir, "raw.mp4")], { stdio: ["pipe", "ignore", "inherit"] });
 
 let frame = 0, written = 0, preFrames = 0;
+const priv = privacySampler({ scale: SCALE, extra: privateSelectors(script.private_selectors) });
 const events = [], cursor = [];
 let cx = CSS_W / 2, cy = CSS_H / 2;
 const t = () => frame / FPS;
@@ -80,6 +82,7 @@ async function step() {
     clip: await vclip() });   // CDP ignores the dpr: scale = SCALE (probed)
   const buf = Buffer.from(shot.data, "base64");
   if (!ff.stdin.write(buf)) await new Promise((r) => ff.stdin.once("drain", r));
+  await priv.tick(page, written / FPS);       // video clock (pre-frames included); flush() shifts to t
   cursor.push([t(), cx * SCALE, cy * SCALE]);
   if (process.env.VR_TIMING && frame % 30 === 0) console.error(`frame ${written} at ${(performance.now() / 1000).toFixed(1)} s`);
   frame += 1;
@@ -237,6 +240,7 @@ const endT = t();
 ff.stdin.end();
 await new Promise((r) => ff.on("close", r));
 await browser.close();
+priv.flush(path.join(outDir, "privacy.json"), preFrames / FPS);
 fs.writeFileSync(path.join(outDir, "events.json"), JSON.stringify({
   capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true,
   marker: "none — video frame pre_frames is begin (t=0)", pre_frames: preFrames, end: endT, failed, cursor, events }, null, 1));

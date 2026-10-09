@@ -48,6 +48,7 @@ import { CHROME, launchArgs, identity, dress, wall as wallOf, accountName, HB_ON
 // billing, checkout, delete, share, publish or log out. AGENT_SESSION=outside only for a fresh profile.
 import { check as guardCheck, describeInPage } from "./clickguard.mjs";
 const SESSION = process.env.AGENT_SESSION || (profileDir ? "logged_in" : "outside");
+import { privacySampler, privateSelectors } from "./privacy_dom.mjs";   // RULEBOOK C7: private boxes every 0.25 s
 // the Scout account this session belongs to (first name, noted on the first clean page; AGENT_ACCOUNT overrides)
 let ACCOUNT = process.env.AGENT_ACCOUNT || null;
 async function wall(pg) {
@@ -184,6 +185,7 @@ async function step(silent = false) {
   const shot = await frameShot();
   const buf = Buffer.from(shot.data, "base64");
   if (!rec.ff.stdin.write(buf)) await new Promise((r) => rec.ff.stdin.once("drain", r));
+  await (rec.priv ??= privacySampler({ scale: SCALE, extra: privateSelectors() })).tick(page, t());
   rec.cursor.push([t(), cx * SCALE, cy * SCALE]);
   rec.frame += 1;
 }
@@ -1117,6 +1119,7 @@ async function endSegment(until) {
   const r = rec;
   rec.ff.stdin.end();
   await new Promise((res) => r.ff.on("close", res));
+  r.priv?.flush(path.join(r.dir, "privacy.json"));
   fs.writeFileSync(path.join(r.dir, "events.json"), JSON.stringify({
     capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0, url: r.url,
     end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
