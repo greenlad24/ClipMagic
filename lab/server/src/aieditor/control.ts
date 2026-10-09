@@ -421,6 +421,7 @@ export async function listLabEdits(): Promise<LabEdit[]> {
     const dir = path.join(JOBS, id);
     const req = await readJson<any>(path.join(dir, "request.json"));
     if (!req || workflowOf(req) !== "cut") continue;
+    if (isHeld(await readJson<any>(path.join(dir, "status.json")))) continue;   // a held edit is not finished
     const src = await readJson<any>(path.join(dir, "source.json"));
     const edl = await readJson<any>(path.join(dir, "edl.json"));
     const review = await readJson<any>(path.join(dir, "review.json"));
@@ -479,6 +480,9 @@ export async function parseSource(input: CreateInput, workflow: Workflow): Promi
     const req = await readJson<any>(path.join(JOBS, job, "request.json"));
     if (!req) throw new Error("That Lab edit no longer exists.");
     if (workflowOf(req) !== "cut") throw new Error("Only edits made with “Cut an unedited narration” can be used.");
+    if (isHeld(await readJson<any>(path.join(JOBS, job, "status.json")))) {
+      throw new Error("That Lab edit is held (it failed the quality check) — it is not a finished edit.");
+    }
     const st = await fsp.lstat(path.join(JOBS, job, file)).catch(() => null);
     if (!st?.isFile() || st.size === 0) throw new Error(`That Lab edit has no ${file}.`);
     const src = await readJson<any>(path.join(JOBS, job, "source.json"));
@@ -563,6 +567,50 @@ export async function createJob(input: CreateInput) {
   return { id };
 }
 
+/**
+ * HELD (architecture recommendation §4): an edit that fails the ship rule or a gate is never shipped
+ * quietly. The worker ends such a job in state "held" (status.held = true) and lists why in held.json
+ * {reasons (stages that stopped it), failures [{dim, beat, t, why, remedies_tried}]} and in each
+ * edit-NN/verdict.json. A held edit is never listed as a finished edit or offered as a creative source.
+ */
+export interface HeldFailure {
+  dim: string; beat: string | null; t: number | null; why: string; remedies_tried: string[]; edit?: number;
+}
+export function isHeld(st: any): boolean {
+  return st?.state === "held" || st?.held === true;
+}
+/** Pure: held.json + status.json + the edits' verdicts -> the failure list the Lab shows. */
+export function heldFailuresOf(status: any, heldDoc: any, verdicts: any[]): HeldFailure[] {
+  const norm = (f: any): HeldFailure => ({
+    dim: String(f?.dim ?? "held"), beat: f?.beat ?? null, t: Number.isFinite(Number(f?.t)) && f?.t !== null ? Number(f.t) : null,
+    why: String(f?.why ?? ""), remedies_tried: Array.isArray(f?.remedies_tried) ? f.remedies_tried.map(String) : [],
+    ...(f?.edit ? { edit: Number(f.edit) } : {}),
+  });
+  if (Array.isArray(status?.held_failures) && status.held_failures.length) return status.held_failures.map(norm);
+  const out: HeldFailure[] = [];
+  for (const r of heldDoc?.reasons ?? []) {
+    out.push(norm({ dim: "held", why: `${r?.reason ?? ""}${r?.detail ? ` (${r.detail})` : ""}` }));
+  }
+  for (const f of heldDoc?.failures ?? []) out.push(norm(f));
+  verdicts.forEach((v, n) => {
+    if (v?.held && !heldDoc?.failures?.length) for (const f of v.failures ?? []) out.push(norm({ ...f, edit: n + 1 }));
+  });
+  return out;
+}
+
+async function heldOf(dir: string, status: any) {
+  if (!isHeld(status)) return null;
+  const heldDoc = await readJson<any>(path.join(dir, "held.json"));
+  const verdicts: any[] = [];
+  try {
+    for (const d of (await fsp.readdir(dir)).filter((x) => /^edit-\d{2}$/.test(x)).sort()) {
+      verdicts.push(await readJson<any>(path.join(dir, d, "verdict.json")));
+    }
+  } catch { /* no edits */ }
+  const scores = verdicts.map((v) => (v ? { dims: v.dims ?? {}, overall: v.overall ?? null, ship: v.ship ?? null } : null));
+  return { failures: heldFailuresOf(status, heldDoc, verdicts), scores };
+}
+
 export async function listJobs() {
   let names: string[] = [];
   try {
@@ -584,8 +632,9 @@ export async function listJobs() {
       format: req.format,
       workflow: workflowOf(req),
       sponsored: req.sponsored,
-      state: (await exists(path.join(dir, "queue.json"))) && st.state !== "running" ? "queued" : st.state,
+      state: (await exists(path.join(dir, "queue.json"))) && st.state !== "running" ? "queued" : (isHeld(st) ? "held" : st.state),
       message: st.message ?? null,
+      held: isHeld(st),
       createdAt: req.created_at ?? null,
       updatedAt: st.updated_at ?? null,
     });
@@ -661,6 +710,13 @@ export async function getJob(id: string) {
   }
   const workflow = workflowOf(req);
   const stageList = stagesFor(workflow, req.format, sourceKindOf(req));
+  // a HELD edit is not a finished edit: its files are kept for inspection, never listed as edits/finals
+  const held = await heldOf(dir, status);
+  const heldEdits = held ? [...edits, ...finals] : [];
+  if (held) {
+    edits = [];
+    finals = [];
+  }
   return {
     id,
     busyWith,
@@ -669,7 +725,10 @@ export async function getJob(id: string) {
     /** typical seconds per stage for this source length (null = no history yet) */
     expect: await expectedSeconds(stageList, req.format, Number(source?.duration) || null),
     request: { ...req, workflow, run_on: req.run_on ?? "auto", script: req.script ? String(req.script).slice(0, 2000) : null },
-    status: { ...status, state: queued && status.state !== "running" ? "queued" : status.state },
+    status: { ...status, state: queued && status.state !== "running" ? "queued" : (held ? "held" : status.state) },
+    /** set when the job is HELD: why (one line per failure) + the edits' rubric scores */
+    held,
+    heldEdits,
     source,
     review,
     videos: (edl?.videos ?? []).map((v: any) => ({
@@ -787,6 +846,7 @@ export async function renderFinal(id: string) {
   }
   const st = await readJson<any>(path.join(dir, "status.json"));
   if (st?.state === "running") throw new Error("Wait for the current step to finish.");
+  if (isHeld(st)) throw new Error("This edit is held — it failed the quality check, so there is no final to render.");
   await writeJson(path.join(dir, "queue.json"), { action: "final" });
   return { ok: true };
 }

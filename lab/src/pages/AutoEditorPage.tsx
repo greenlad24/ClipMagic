@@ -44,6 +44,7 @@ import { CutEditor } from '@/components/autoeditor/CutEditor';
 import { JobProgress } from '@/components/autoeditor/JobProgress';
 import { FactoryPanel } from '@/components/autoeditor/FactoryPanel';
 import { NewEditFlow } from '@/components/autoeditor/NewEditFlow';
+import { HeldPanel } from '@/components/autoeditor/HeldPanel';
 
 /**
  * Auto Editor — raw narration in, clean edit out.
@@ -89,6 +90,8 @@ const STATE_BADGE: Record<string, { text: string; cls: string }> = {
   running: { text: 'Running', cls: 'bg-blue-500/15 text-blue-400' },
   done: { text: 'Ready', cls: 'bg-green-500/15 text-green-400' },
   failed: { text: 'Failed', cls: 'bg-red-500/15 text-red-400' },
+  // failed the ship rule / a quality gate: never shipped, never a finished edit (architecture §4)
+  held: { text: 'Held', cls: 'bg-amber-500/15 text-amber-400' },
   cancelled: { text: 'Cancelled', cls: 'bg-muted text-muted-foreground' },
   interrupted: { text: 'Interrupted', cls: 'bg-amber-500/15 text-amber-400' },
 };
@@ -327,7 +330,8 @@ function Review({ job, onSaved }: { job: AutoJobDetail; onSaved: () => void }) {
   };
 
   const finalFile = job.finals?.[tab];
-  const canFinal = (job.request.format === 'short' && !!edit) || (job.request.format === 'long' && !!job.edlAt);
+  const canFinal = job.status.state !== 'held' &&
+    ((job.request.format === 'short' && !!edit) || (job.request.format === 'long' && !!job.edlAt));
   // a final made before the latest cut edits is not the cut on screen any more
   const finalStale = !!finalFile && !!job.edlAt && finalFile.modifiedAt * 1000 < job.edlAt - 1000;
   const [sitesText, setSitesText] = useState(() =>
@@ -751,7 +755,7 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
 
   const stageStates = Object.values(job.status.stages ?? {}).map((x) => x?.state);
   const stoppedInStage = stageStates.some((x) => x === 'failed' || x === 'interrupted');
-  const canContinue = state === 'failed' || state === 'cancelled' || state === 'interrupted';
+  const canContinue = state === 'failed' || state === 'cancelled' || state === 'interrupted' || state === 'held';
   const doContinue = () => void act(() => autoEditorContinue({ id }), 'Continuing — finished steps are reused.');
   const creative = (job.workflow ?? job.request.workflow) === 'creative';
 
@@ -820,6 +824,7 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
           </Button>
         </div>
       )}
+      {state === 'held' && job.held && <HeldPanel held={job.held} />}
       <JobProgress job={job} live={live} onContinue={canContinue ? doContinue : undefined} />
 
       {job.review ? (
