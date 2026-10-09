@@ -199,9 +199,17 @@ def units(video, windows=()):
         u["k"] = k
         u["next_t0"] = res[k + 1]["t0"] if k + 1 < len(res) else video["duration"]
         u["dur"] = max(0.0, u["next_t0"] - u["t0"])
-        u["hard"] = any(a <= w["start"] < b for a, b in windows for w in u["words"]) or bool(PRESENTER_RE.search(u["text"]))
+        u["hard"] = any(a <= w["start"] < b for a, b in windows for w in u["words"]) or bool(PRESENTER_RE.search(u["text"])) \
+            or _outro_question(u, video)
         u["act"] = bool(ACTION_RE.search(u["text"]))
     return res
+
+
+def _outro_question(u, video):
+    """The outro's question to the viewer ("What are you editing first?") is the presenter's moment: it stays
+    A-roll and carries the TX03 line (r3 11:36; gap item 78)."""
+    return (video["duration"] >= LONG_STRUCTURE_S and u["t0"] >= video["duration"] - 60.0
+            and bool(re.search(r"\?[\"')\]]*$", u["text"].strip())) and bool(re.search(r"\byou\b|\byour\b", u["text"], re.I)))
 
 
 # ────────────────────────────── beats (the ledger) ──────────────────────────────
@@ -300,8 +308,8 @@ def scan_objects(text):
             if o not in found:
                 found.append(o)
     kinds = [k for k, (rx, _) in KIND_OBJECTS.items() if rx.search(text)]
-    return [o for o in found if o not in KIND_OBJECTS] + [k for k in kinds if k not in found] + \
-        [o for o in found if o in KIND_OBJECTS and o not in kinds]
+    # (a kind object named both ways — "a phone photo of …" — is listed once, not dropped)
+    return [o for o in found if o not in KIND_OBJECTS] + kinds + [o for o in found if o in KIND_OBJECTS and o not in kinds]
 
 
 # ────────────────────────────── facts ──────────────────────────────
@@ -926,7 +934,7 @@ def fit(segments, video, facts, aroll_why=None, site_url=None):
             "made_on_camera" if e["asset"] else "missing"
     stats = structure_stats(U, dur)
     return {"segments": out, "plates": [plate] if plate else [], "beats": ledger, "objects": objects,
-            "dropped": dropped, "aroll_actions": aroll_actions, "structure": stats,
+            "dropped": dropped, "aroll_actions": aroll_actions, "structure": stats, "sources": segments,
             "units": [{"t0": round(u["t0"], 2), "label": u["label"], "seg": u.get("seg"),
                        **({"why": "presenter"} if u["hard"] else {}), **({"pacing": True} if u.get("pacing") else {}),
                        **({"fill": True} if u.get("fill") else {}), **({"forced": True} if u.get("forced") else {})}
@@ -989,3 +997,148 @@ def _piece(p, segments, ledger, video, n):
 
 def video_word(video, i):
     return next((w["word"] for w in video["words"] if w["i"] == i), "")
+
+
+# ────────────────────────────── overlay budget (gap list G7 items 78, 79, 83) ──────────────────────────────
+# REFERENCE-BASELINE §5 + rubric D10 (skill rules.json "overlays"): 7-9 overlays per video, 3-5 in the
+# first 80 s, mid-video only link / like / question lines at <= 0.2 per minute, 3-4 in the outro. The outro
+# set is enforced: a viewer question gets a TX03 line, "subscribe" / "notification bell" a TX05 pill.
+OV_TOTAL = (7, 9)
+OV_FIRST_S = 80.0
+OV_FIRST = (3, 5)
+OV_MID_PER_MIN = 0.2
+OV_OUTRO_S = 60.0                 # the outro = the last 60 s
+OV_OUTRO = (3, 4)
+OV_GAP = 0.6                      # >= 0.6 s between two overlays (director rule 3)
+OV_MID_KINDS = ("link", "like", "question")
+OV_PRIORITY = {"subscribe": 3, "link": 3, "socials": 3, "lower_title": 2, "question": 2, "like": 2,
+               "number": 1, "keyword": 0, "list": 0}
+QUESTION_RE = re.compile(r"\byou\b|\byour\b", re.I)
+BELL_RE = re.compile(r"\b(subscribe\w*|notification)\b", re.I)
+
+
+def overlay_kind(ev):
+    """link | like | question | subscribe | socials | lower_title | keyword | list | number."""
+    t = ev.get("template")
+    if ev.get("technique") == "TX03":
+        return "question"
+    if t in ("keyword", "lower_title") and re.search(r"\blike\b", " ".join(str(v) for v in (ev.get("fields") or {}).values()), re.I):
+        return "like"
+    return t
+
+
+def _outro_t0(video):
+    return max(0.0, video["duration"] - OV_OUTRO_S)
+
+
+def _free(evs, t0, t1, segments, me=None):
+    """No other overlay within OV_GAP and no screencast under [t0, t1]."""
+    if any(s["t0"] - 0.2 < t1 and t0 < s["t1"] + 0.2 for s in segments):
+        return False
+    return not any(e is not me and e["t0"] - OV_GAP < t1 and t0 < e["t1"] + OV_GAP for e in evs)
+
+
+def _outro_set(evs, video, segments, notes):
+    """TX03 on the outro's viewer question, TX05 on 'subscribe' / 'notification bell' (last 60 s)."""
+    ws = video["words"]
+    o0 = _outro_t0(video)
+    nm = [norm(w["word"]) for w in ws]
+    # TX05: the subscribe / bell ask
+    for k, w in enumerate(ws):
+        if w["start"] < o0 or not BELL_RE.search(w["word"]):
+            continue
+        if nm[k] == "notification" and "bell" not in nm[k + 1:k + 3]:
+            continue
+        end_w = ws[min(len(ws) - 1, k + 1)] if nm[k] == "notification" else w
+        if any(e.get("template") == "subscribe" and e["t0"] <= w["start"] and e["t1"] >= end_w["end"] for e in evs):
+            break
+        t0 = round(max(0.0, w["start"] - 0.15), 3)
+        t1 = round(min(video["duration"], max(end_w["end"] + 2.3, t0 + 4.6)), 3)
+        clash = [e for e in evs if e["t0"] - OV_GAP < t1 and t0 < e["t1"] + OV_GAP]
+        for e in clash:                                # the CTA wins over a decorative card
+            if OV_PRIORITY.get(overlay_kind(e), 0) < OV_PRIORITY["subscribe"]:
+                evs.remove(e)
+                notes.append({**e, "dropped": "gave way to the outro TX05 subscribe/bell pill"})
+        if _free(evs, t0, t1, segments):
+            evs.append({"template": "subscribe", "technique": "TX05", "start": w["i"], "end": end_w["i"], "fields": {},
+                        "t0": t0, "t1": t1, "why": f"he asks for the {'bell' if nm[k] == 'notification' else 'subscribe'} in "
+                        "the outro (TX05; gap item 79)", "auto": "overlays_fit"})
+        else:
+            notes.append({"template": "subscribe", "t0": t0, "t1": t1, "dropped": "TX05 has no free A-roll window"})
+        break
+    # TX03: the first viewer question of the outro (+ the comment ask that follows it)
+    for s in sentences(ws):
+        if s[0]["start"] < o0 or not re.search(r"\?[\"')\]]*$", s[-1]["word"]) or not QUESTION_RE.search(
+                " ".join(w["word"] for w in s)):
+            continue
+        if any(e.get("technique") == "TX03" for e in evs):
+            break
+        q = " ".join(w["word"] for w in s)
+        after = [w for w in ws if s[-1]["end"] <= w["start"] <= s[-1]["end"] + 8.0]
+        tail = s[-1]
+        for k, w in enumerate(after):                  # the window runs on through "leave a comment … below."
+            if norm(w["word"]) == "comment":
+                tail = next((x for x in after[k:] if re.search(r"[.?!]$", x["word"])), w)
+                break
+            tail = w if re.search(r"\?$", w["word"]) else tail
+        nxt = min([e["t0"] for e in evs if e["t0"] > s[0]["start"]] + [video["duration"]])
+        prv = max([e["t1"] for e in evs if e["t1"] <= s[0]["start"]] + [-1e9])
+        t0 = round(max(prv + OV_GAP, s[0]["start"] - 0.5), 3)
+        t1 = round(min(nxt - OV_GAP, tail["end"] + 0.5, video["duration"]), 3)
+        for sg in segments:                            # never over a screencast: keep the A-roll part
+            if sg["t0"] < t1 and t0 < sg["t1"]:
+                if sg["t0"] - 0.2 <= t0:
+                    t0 = round(sg["t1"] + 0.2, 3)
+                else:
+                    t1 = round(sg["t0"] - 0.2, 3)
+        if t1 - t0 >= 1.5:
+            line = q if len(q.split()) <= 6 else " ".join(q.split()[:6])
+            evs.append({"template": "lower_title", "technique": "TX03", "start": s[0]["i"], "end": tail["i"],
+                        "fields": {"line1": line, "line2": ""}, "t0": t0, "t1": t1,
+                        "why": "the outro's viewer question on the gradient (TX03; gap item 78)", "auto": "overlays_fit"})
+        else:
+            notes.append({"template": "lower_title", "technique": "TX03", "t0": t0, "t1": t1,
+                          "dropped": "the outro question has no free A-roll window"})
+        break
+
+
+def overlays_fit(overlays, video, segments=()):
+    """The overlay budget on a validated overlay list ({template, t0, t1, fields, …}).
+    → {"overlays": kept (time order), "dropped": [...], "budget": counts, "ok": bool}.
+    Long-form only (>= 120 s): a 20 s test keeps what it has."""
+    segments = [{"t0": s["t0"], "t1": s["t1"]} for s in segments]
+    evs = [dict(e) for e in overlays]
+    dropped = []
+    dur = video["duration"]
+    if dur < LONG_STRUCTURE_S:
+        return {"overlays": evs, "dropped": [], "budget": {}, "ok": True}
+    o0 = _outro_t0(video)
+    _outro_set(evs, video, segments, dropped)
+    zone = lambda e: "first" if e["t0"] < OV_FIRST_S else "outro" if e["t0"] >= o0 else "mid"
+    prio = lambda e: (OV_PRIORITY.get(overlay_kind(e), 0), -e["t0"])
+
+    def drop(e, why):
+        evs.remove(e)
+        dropped.append({**e, "dropped": why})
+    # mid-video: only link / like / question lines …
+    for e in sorted([e for e in evs if zone(e) == "mid" and overlay_kind(e) not in OV_MID_KINDS], key=prio):
+        drop(e, f"mid-video {overlay_kind(e)} card: mid-video overlays are link / like / question lines only "
+                "(BASELINE §5, rubric D10; gap item 83)")
+    # … at <= 0.2 per minute
+    mid_min = max(0.0, o0 - OV_FIRST_S) / 60.0
+    cap_mid = int(OV_MID_PER_MIN * mid_min + 1e-9)
+    while sum(zone(e) == "mid" for e in evs) > cap_mid:
+        drop(min([e for e in evs if zone(e) == "mid"], key=prio), f"over the mid-video budget ({cap_mid} = 0.2/min)")
+    for z, (_, hi) in (("first", OV_FIRST), ("outro", OV_OUTRO)):
+        while sum(zone(e) == z for e in evs) > hi:
+            drop(min([e for e in evs if zone(e) == z], key=prio), f"over the {z} budget ({hi})")
+    while len(evs) > OV_TOTAL[1]:
+        drop(min(evs, key=lambda e: (zone(e) != "mid", ) + prio(e)), f"over the total budget ({OV_TOTAL[1]})")
+    evs.sort(key=lambda e: e["t0"])
+    n = {z: sum(zone(e) == z for e in evs) for z in ("first", "mid", "outro")}
+    budget = {"total": len(evs), **n, "mid_per_min": round(n["mid"] / mid_min, 3) if mid_min else 0.0,
+              "bands": {"total": OV_TOTAL, "first_80s": OV_FIRST, "mid_max_per_min": OV_MID_PER_MIN, "outro": OV_OUTRO},
+              "src": "REFERENCE-BASELINE §5 + rubric D10"}
+    ok = (OV_TOTAL[0] <= len(evs) <= OV_TOTAL[1] and OV_FIRST[0] <= n["first"] <= OV_FIRST[1]
+          and budget["mid_per_min"] <= OV_MID_PER_MIN + 1e-9 and OV_OUTRO[0] <= n["outro"] <= OV_OUTRO[1])
+    return {"overlays": evs, "dropped": dropped, "budget": budget, "ok": ok}
