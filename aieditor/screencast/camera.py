@@ -1,7 +1,10 @@
 """Screencast camera: events.json (record.mjs) → a zoom/pan path → rendered clip.
 
 Runs inside the aieditor-screencast image (numpy + cv2 + ffmpeg):
-    python3 camera.py <recdir> <out.mp4> [--size 3840x2160] [--from S --to S] [--plan plan.json]
+    python3 camera.py <recdir> <out.mp4> [--size 3840x2160] [--from S --to S] [--fps F] [--words words.json]
+
+--words (or <recdir>/words.json): the narration words on the CLIP clock ({word, start, end}) — a camera
+target whose text is spoken in its clause is timed from that word (gap list G5 step 2).
 
 The camera is a list of KEYS (frame, zoom, cx, cy) in capture pixels; between keys it
 eases with the measured curve. Motion constants come from motion/keyframes.json
@@ -11,12 +14,16 @@ rest of the motion library (Jake: "save mostly the animation keyframes").
 """
 import json
 import math
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-import cv2
-import numpy as np
+try:
+    import cv2
+    import numpy as np
+except ImportError:          # the planner (plan_moves) is pure python; the render needs the screencast image
+    cv2 = np = None
 
 HERE = Path(__file__).resolve().parent
 
@@ -27,7 +34,7 @@ DEFAULTS = {
     "zoom_in_frames": 43, "zoom_in_frames_big": 56, "big_zoom": 1.45,
     "zoom_out_ease": [0.345, 0.0, 0.33, 0.91], "zoom_out_frames": 50,
     # zoom-in levels: reference median 1.37 (IQR 1.31–1.46), > 1.6 in 1 of 22 moves (a table row)
-    "zoom_min": 1.25, "zoom_max": 1.45, "zoom_cap": 1.6, "zoom_deep": 2.0,
+    "zoom_min": 1.25, "zoom_max": 1.45, "zoom_cap": 1.65, "zoom_deep": 1.65,   # F3: nothing past ×1.65
     "entry_zoom": 1.36, "entry_delay_frames": 1.5, "entry_frames": 40,
     "fit": 0.62,                  # the target fills at most this much of the view
     "readable_px": 34,            # a target already this tall on screen needs no zoom
@@ -70,7 +77,7 @@ DEFAULTS = {
     "xfade_frames": 5,
     "xfade_kinds": ["nav", "wait", "enter"],
     "xfade_target_s": 3.0,        # a target this soon after a dissolve: go straight to it (no out-and-in)
-    "xfade_same_site": True,      # a goto inside the same site dissolves too (Jake APPROVED v11 1:04: dialog → brand kit)
+    "xfade_same_site": False,     # G5 step 8 (T1/T2): a same-app goto/reload is a 1 f hard cut with the zoom carried
                                   # — a goto the agent marks "cut": true is a hard cut (Jake #7: landing → CUT to the pricing card)
     # ── Jake's review of v11 (2026-10-07, SYSTEM.md §0) ──
     # #1 every move ENDS with the subject CENTRE-MIDDLE: centre on the target, clamp only where the
@@ -86,13 +93,14 @@ DEFAULTS = {
     "drift_frames": 54, "drift_zoom": 1.08, "drift_ease": [0.33, 0.02, 0.27, 0.96],
     # #11 a zoom starts ON the word that names the target (not lead_s before it); the entry push-in
     # only heads for a target named in the first entry_target_s, else it is a centred push
-    "word_lead_s": 0.0, "entry_target_s": 1.0,
+    "word_lead_s": 0.8, "entry_target_s": 1.0,   # G5 step 2 / M1: moves start 0.5–0.9 s before the word (REF)
     # #10 typing a prompt is shown zoomed OUT (no zoom-in on a type target; a held zoom opens out)
     "type_zoom": False,
     "nav_click_zoom": True, "nav_click_frames": 24,   # a click that navigates gets a quick zoom landing on the press
     # bubble (Jake 2026-10-07): exact position + size on every screencast frame; it fades out
     # (7 f) ONLY while a click / type / drag acts on something under it, and back in (11 f) after
     "bubble_hide_actions": ["click", "dblclick", "type", "drag", "select"],
+    "push_ease": [0.25, 0.25, 0.75, 0.75],        # M5 / ZM10 slow centred push (gap filler)
 }
 STYLE = {
     "highlight_rgba": (255, 214, 10, 0.42),       # reads #99831C on blue, text #F7F26C — multiply-like
@@ -118,6 +126,8 @@ def make_eases(p):
     """in / out (zoom) and pan curves — one dict for the render and qa.py."""
     return {"in": bezier(*p["zoom_in_ease"]), "out": bezier(*p["zoom_out_ease"]), "release": bezier(*p["zoom_out_ease"]), "pan": bezier(*p["pan_ease"]),
             "drift": bezier(*p.get("drift_ease", p["pan_ease"])),
+            # M5 / ZM10 gap-filler push (camera.json files from before G5 name it "drift"/"release")
+            "push": bezier(*p.get("push_ease", [0.25, 0.25, 0.75, 0.75])),
             # TECHNIQUES TR07 opening punch-out: 1.55 → 1.0 over ~31 f, strong ease-out (kwys C1)
             "open": bezier(*p.get("open_ease", [0.089, 0.443, 0.126, 0.834]))}
 
@@ -500,326 +510,498 @@ def pan_frames(dist_px_1080, p):
     return min(max(p["pan_frames_base"] + p["pan_frames_per_px"] * dist_px_1080, lo), hi)
 
 
-def plan_moves(ev, fps, f0, n_frames, p):
-    """[(start_frame, frames, view_from, view_to, ease, box)] — reference 2's camera (SYSTEM.md §3):
-    an entry push-in, then eased moves to the targets the narration is about, never sooner
-    than hold_min_s after the last one and within a rolling per-minute budget; one framing
-    covers the next few seconds of targets when it can; a page change is a hard cut back
-    to the full frame (then a fresh push-in); navigation clicks are not zoom targets."""
-    W, H = ev["capture"]["w"], ev["capture"]["h"]
-    k = fps / REF_FPS                        # reference frames → this clip's frames
-    full = (1.0, W / 2, H / 2)
-    pages = page_changes(ev)
-    scrolls = [e["t"] for e in ev["events"] if e["type"] == "scroll"]
-    xcues = xfade_cues(ev, p)
-    xf_n = p.get("xfade_frames", 0)
-    free_after = None                         # a dissolve just ended: the next move may start at once
+# ── the reference camera (gap list G5, RULEBOOK §2–§6) ─────────────────────────────────────────
+# Targeted, eased moves timed from the words; no pumping (the old untargeted drift/release loop is
+# gone); typing at ×1.00; the subject is the CONTAINER, centred; cuts only where the page changes.
+# TODO(p2): read these numbers from the skill's rules.json through aieditor/skill.py once p2 merges;
+# until then they live here with the same values (RULEBOOK §2 F1–F4, §3 M1–M7, §4 P1–P2, §5 T1–T8, §6 B2).
+REF = {
+    "in_frames": (34, 48), "deep_in_frames": (34, 58), "deep_zoom": 1.45,   # M1 (ZM01–ZM08), ZM02 deep 45–58
+    "out_frames": (34, 40), "out_ratio": (0.76, 0.90),                      # M3 (ZM11)
+    # a word-timed move has at most 0.9 + 0.3 s = 36 f between its start and its landing (M1), so the
+    # nominal in-move is 35 f and a deep zoom shortens to fit (never below 34 f; below that it is M6)
+    "in_nominal_f": 35, "deep_nominal_f": 45, "out_nominal_f": 36,
+    "word_lead_s": (0.5, 0.9), "land_after_word_s": 0.30,                   # M1 timing vs the naming word
+    "bands": {"control": (1.50, 1.65), "row": (1.40, 1.43),                 # F3 by target class
+              "text": (1.30, 1.35), "result": (1.19, 1.30)},
+    "zoom_cap": 1.65,                                                       # F3: nothing past ×1.65
+    "min_target_px": 120,                                                   # F2: smaller → its container
+    "point_px": 8,                                                          # a cursor point is never a target
+    "centre_tol": (0.06, 0.08),                                             # F1 (share of W, of H)
+    "black_max": 0.05,                                                      # F4: ≤ 5 % black / off-page
+    "push_zoom": 1.12, "push_band": (1.06, 1.26), "push_frames": 40,        # M5 / ZM10 gap filler (24–46 f)
+    "hold_max_s": 3.0, "push_after_s": 1.3,                                 # P1: one push in a hold > 3 s
+    "flash_f": 6,                                                           # T8: no cut/flash shorter than 6 f
+    "lead_skip_s": 0.5,                                                     # ≤ 1 transition in a span's first 0.5 s
+    "end_still_s": 0.3, "end_tail_s": 0.2,                                  # spans end still zoomed (T5/CUT04)
+    "bubble_margin_px": 24,                                                 # B2: disc + 24 px margin
+    "events_per_min": (17, 25, 30),                                         # P2 (refs 17–25, Jake cap 30)
+}
+DISC_1080 = (1701.9, 253.7, 179.3)                                          # B1: centre + outer radius, output px
+STOP = {"the", "and", "for", "you", "your", "this", "that", "with", "from", "into", "are", "was", "its", "it's",
+        "click", "open", "here", "there", "then", "just", "now", "let", "lets", "see", "look", "all", "one", "out"}
 
-    def word_t(e):
-        """When the narration names this target: the agent's requested word time ("at"), else the
-        click's press, else the end of a hover's cursor travel, else the event time."""
-        if e.get("at") is not None:
-            return e["at"]
-        if e["type"] in ("click", "dblclick") and e.get("press") is not None:
-            return e["press"] - 0.35
-        if e["type"] in ("hover", "move") and e.get("end") is not None:
-            return min(e["end"], e["t"] + 0.6)
-        return e["t"]
+
+def _toks(s):
+    return [t for t in re.findall(r"[a-z0-9]+", str(s or "").lower()) if len(t) >= 3 and t not in STOP]
+
+
+def _stem(t):
+    return t[:-1] if len(t) > 3 and t.endswith("s") else t
+
+
+def clauses(words):
+    """[(t0, t1)] spoken clauses: split after , . ! ? ; : or a pause ≥ 0.25 s (the 'from' of M1)."""
+    out, start = [], None
+    for k, w in enumerate(words):
+        s, e = float(w["start"]), float(w["end"])
+        if start is None:
+            start = s
+        nxt = words[k + 1] if k + 1 < len(words) else None
+        if nxt is None or str(w["word"]).rstrip().endswith((",", ".", "!", "?", ";", ":")) or float(nxt["start"]) - e >= 0.25:
+            out.append((start, e))
+            start = None
+    return out
+
+
+def target_label(e):
+    if e.get("label"):
+        return e["label"]
+    if e["type"] == "type":
+        return e.get("text", "")
+    return e.get("text") or str(e.get("vis", "")).split("|")[0]
+
+
+def word_match(e, words, cl=None):
+    """(word, clause_start) when the event's target text is SPOKEN in its clause (G5 step 2), else None.
+    The anchor is the agent's requested word time (at), else the press, else the event."""
+    if not words:
+        return None
+    toks = {_stem(t) for t in _toks(target_label(e))}
+    if not toks:
+        return None
+    anchor = e.get("at") if e.get("at") is not None else e.get("press", e["t"])
+    best = None
+    for w in words:
+        if abs(float(w["start"]) - anchor) > 3.0:
+            continue
+        if any(_stem(t) in toks for t in _toks(w["word"])):
+            if best is None or abs(float(w["start"]) - anchor) < abs(float(best["start"]) - anchor):
+                best = w
+    if best is None:
+        return None
+    cl = cl if cl is not None else clauses(words)
+    c0 = next((a for a, b in cl if a - 1e-6 <= float(best["start"]) <= b + 1e-6), float(best["start"]))
+    return best, c0
+
+
+def is_point(box, p=REF):
+    return box is not None and max(box[2], box[3]) <= p["point_px"]
+
+
+def _component_box(box, sm, W, H):
+    """The container around a small box in the frame (640 px wide): the connected region of page
+    CONTENT (not the flat background) that holds it, after closing small gaps."""
+    if sm is None or cv2 is None:
+        return None
+    bg = _bg(sm)
+    if bg is None:
+        return None
+    s = sm.shape[1] / W
+    mask = (np.abs(sm.astype(int) - bg).max(axis=2) > 8).astype(np.uint8)
+    mask = cv2.dilate(mask, np.ones((5, 5), np.uint8))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    x, y, bw, bh = box
+    x0, y0 = int(max(0, x * s)), int(max(0, y * s))
+    x1, y1 = int(min(sm.shape[1] - 1, (x + bw) * s)), int(min(sm.shape[0] - 1, (y + bh) * s))
+    roi = lab[y0:y1 + 1, x0:x1 + 1].ravel()
+    roi = roi[roi > 0]
+    if roi.size == 0:
+        return None
+    k = np.bincount(roi).argmax()
+    cx, cy, cw, ch, _ = stats[k]
+    return [cx / s, cy / s, cw / s, ch / s]
+
+
+def container(box, sm, W, H, p=REF):
+    """RULEBOOK F2: the subject is the CONTAINER being talked about — a box under min_target_px grows to
+    the content region that holds it (message box, toolbar row, image, grid); without a frame, to a
+    neighbourhood of min_target_px rows around the control."""
+    mp = p["min_target_px"]
+    c = _component_box(box, sm, W, H)
+    if c and max(c[2], c[3]) >= mp and c[2] <= 0.8 * W and c[3] <= 0.8 * H and c[2] * c[3] <= 0.35 * W * H \
+            and c[0] <= box[0] + 1 and c[1] <= box[1] + 1 and c[0] + c[2] >= box[0] + box[2] - 1 and c[1] + c[3] >= box[1] + box[3] - 1:
+        return [round(v, 1) for v in c]
+    x, y, bw, bh = box
+    nw, nh = max(bw, 2 * mp), max(bh, mp)
+    nx = min(max(0.0, x + bw / 2 - nw / 2), W - nw)
+    ny = min(max(0.0, y + bh / 2 - nh / 2), H - nh)
+    return [round(nx, 1), round(ny, 1), round(nw, 1), round(nh, 1)]
+
+
+def camera_box(e, W, H, p=None):
+    """The box the camera frames for an event, or None when it is not a camera target. A compiled beat's
+    target_box (p7) wins; otherwise the ACTED element (abox). Reads, hovers and cursor moves never move
+    the camera (G5 step 4) — only compiled beats name what to frame."""
+    if e.get("empty"):
+        return None
+    if e.get("target_box"):
+        b = list(e["target_box"])
+    elif e["type"] in ("click", "dblclick", "highlight", "drag", "select"):
+        b = list(e.get("abox") or e.get("box") or []) or None
+    else:
+        return None
+    if not b or is_point(b):
+        return None
+    if max(b[2], b[3]) < REF["min_target_px"]:
+        b = container(b, e.get("_sm"), W, H)
+    return b
+
+
+def classify(box, W, H):
+    """F3 target classes: 'result' (card/design/result/panel), 'text' (text block or input), 'row'
+    (toolbar/list row), 'control' (one small control)."""
+    fw, fh = box[2] / W, box[3] / H
+    if fh >= 0.25 or (fw >= 0.35 and fh >= 0.15):
+        return "result"
+    if fw >= 0.25 and fh >= 0.045:
+        return "text"
+    if box[2] >= 3 * box[3]:
+        return "row"
+    return "control"
+
+
+def black_share(sm, view, W, H):
+    """Share of the view that lies off the captured page (F4: the black void a clamp-free framing or an
+    overscan leaves). A dark-theme page is page, not void, so only the geometry counts (`sm` unused)."""
+    z, cx, cy = view
+    vw, vh = W / z, H / z
+    x0, y0 = cx - vw / 2, cy - vh / 2
+    inside = max(0.0, min(W, x0 + vw) - max(0.0, x0)) * max(0.0, min(H, y0 + vh) - max(0.0, y0))
+    return max(0.0, 1 - inside / (vw * vh))
+
+
+def disc_gap(box, view, W, H):
+    """Output-px distance (1080p) from the facecam disc centre to the box's nearest point, minus the
+    disc radius: ≤ 0 means the box sits under the bubble."""
+    z, cx, cy = view
+    cw, ch = W / z, H / z
+    X0, X1 = (box[0] - (cx - cw / 2)) / cw * 1920, (box[0] + box[2] - (cx - cw / 2)) / cw * 1920
+    Y0, Y1 = (box[1] - (cy - ch / 2)) / ch * 1080, (box[1] + box[3] - (cy - ch / 2)) / ch * 1080
+    qx, qy = min(max(DISC_1080[0], X0), X1), min(max(DISC_1080[1], Y0), Y1)
+    return math.hypot(qx - DISC_1080[0], qy - DISC_1080[1]) - DISC_1080[2]
+
+
+def landing_offset(box, view, W, H):
+    """(dx share of W, dy share of H) of the subject centre from the frame centre after a move (F1)."""
+    z, cx, cy = view
+    return abs(box[0] + box[2] / 2 - cx) * z / W, abs(box[1] + box[3] / 2 - cy) * z / H
+
+
+def edge_limited(box, view, W, H, tol=None):
+    """F1's 'as close as the page edge allows': the subject is off-centre only because the view already
+    sits against the capture edge on that side (a centred view would show more than the F4 budget off-page)."""
+    tol = tol or REF["centre_tol"]
+    z, cx, cy = view
+    hw, hh = W / z / 2, H / z / 2
+    bx, by = box[0] + box[2] / 2, box[1] + box[3] / 2
+    dx, dy = landing_offset(box, view, W, H)
+    okx = dx <= tol[0] + 1e-6 or (bx < cx and cx - hw <= 1.0 + REF["black_max"] * hw) or (bx > cx and cx + hw >= W - 1.0 - REF["black_max"] * hw)
+    oky = dy <= tol[1] + 1e-6 or (by < cy and cy - hh <= 1.0 + REF["black_max"] * hh) or (by > cy and cy + hh >= H - 1.0 - REF["black_max"] * hh)
+    return okx and oky
+
+
+def touches_edge(box, W, H, m=0.03):
+    """F1's one exception: the subject sits on a REAL capture edge (docked sidebar, top bar)."""
+    return box[0] <= m * W or box[1] <= m * H or box[0] + box[2] >= (1 - m) * W or box[1] + box[3] >= (1 - m) * H
+
+
+def _room(sm, p):
+    """Overscan allowed past each capture edge: only onto a FLAT canvas edge (edge_room) and never more
+    than half the F4 black budget per side, so a landing never shows more than 5 % off-page."""
+    r = edge_room(sm, p) if sm is not None else None
+    cap = REF["black_max"] / 2
+    return tuple(min(v, cap) for v in r) if r else None
+
+
+def frame_target(box, W, H, p, sm=None, zoom=None, cls=None):
+    """(zoom, cx, cy) for a subject box — F3 band for its class, centred (F1) as far as the page edge
+    allows (a subject near an edge takes the band's higher zoom when that centres it better), never more
+    than 5 % off-page (F4), and kept clear of the bubble disc when a zoom inside the band allows it
+    (G5 step 5; F5: the bubble never forces the framing past the band)."""
+    full = (1.0, W / 2, H / 2)
+    cls = cls or classify(box, W, H)
+    lo, hi = REF["bands"][cls]
+    fit = min(0.95 * W / max(box[2], 1), 0.95 * H / max(box[3], 1), REF["zoom_cap"])
+    if zoom is not None:
+        z = min(float(zoom), REF["zoom_cap"])
+    else:
+        z = min(max(p.get("fit", 0.62) * min(W / max(box[2], 1), H / max(box[3], 1)), lo), hi)
+    z = min(z, fit)
+    if z < REF["push_band"][0]:
+        return full
+    room = _room(sm, p)
+    tcx, tcy = box[0] + box[2] / 2, box[1] + box[3] / 2
+
+    def off(v):
+        dx, dy = landing_offset(box, v, W, H)
+        return max(dx / REF["centre_tol"][0], dy / REF["centre_tol"][1])
+    view = clamp(z, tcx, tcy, W, H, room)
+    if off(view) > 1 and zoom is None:
+        # edge-limited: a deeper zoom inside the band brings the subject closer to the centre
+        zz = z
+        while zz + 0.02 <= min(hi, fit) + 1e-9 and off(view) > 1:
+            zz = round(zz + 0.02, 4)
+            v2 = clamp(zz, tcx, tcy, W, H, room)
+            if off(v2) < off(view) - 1e-3:
+                view = v2
+    z = view[0]
+    if disc_gap(box, view, W, H) <= 0:
+        zz = z
+        while zz - 0.02 >= max(lo, REF["push_band"][0]) - 1e-9:
+            zz = round(zz - 0.02, 4)
+            v2 = clamp(zz, tcx, tcy, W, H, room)
+            if disc_gap(box, v2, W, H) > 0 and black_share(sm, v2, W, H) <= REF["black_max"]:
+                return v2
+    return view
+
+
+def page_states(ev, p):
+    """[{t, kind: 'cut'|'xfade', n}] — where the recorded picture changes state, in clip seconds. A change
+    of WORLD (another site) or a TIME SKIP (a generation finishing, a submit's result) dissolves (T4);
+    every same-app change — a goto/reload inside the site, a click's new state — is a 1 f hard cut with
+    the zoom carried (T1/T2). Changes closer than 6 f are one change (T8), and the first lead_skip_s of
+    a span shows the state after its opening changes (≤ 1 transition there: the span's own entry)."""
+    xn = p.get("xfade_frames", 5)
+    out, raw = [], []
+    site = _site(ev.get("url"))
+    for e in ev["events"]:
+        kind = None
+        if e["type"] == "nav":
+            prev, site = site, _site(e.get("url")) or site
+            kind = "xfade" if (prev and site and prev != site and not e.get("cut")) else "cut"
+        elif e["type"] == "wait" and e.get("found", True):
+            kind = "xfade"
+        elif e["type"] == "cut":
+            kind = "xfade" if e.get("why") == "enter" else "cut"
+        if kind is None:
+            continue
+        t = float(e["t"])
+        raw.append(t)
+        if out and t - out[-1]["t"] < REF["flash_f"] / REF_FPS:
+            if kind == "xfade":
+                out[-1]["kind"] = "xfade"
+            continue
+        out.append({"t": t, "kind": kind, "n": xn if kind == "xfade" else 0})
+    skip = max([t for t in raw if t <= REF["lead_skip_s"]], default=0.0)
+    return [s for s in out if s["t"] > REF["lead_skip_s"]], skip
+
+
+def lead_skip(ev, p):
+    """Clip seconds the render jumps past at the span start (the state changes inside its first 0.5 s)."""
+    return page_states(ev, p)[1]
+
+
+def camera_targets(ev, p, words=None):
+    """The events the camera frames, each with the word that names it: [{e, box, t_word, t_from, matched, typing}]."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    words = sorted(words or [], key=lambda w: float(w["start"]))
+    cl = clauses(words)
+    out = []
+    for e in ev["events"]:
+        typing = e["type"] == "type"
+        box = camera_box(e, W, H, p) if not typing else (e.get("abox") or e.get("box"))
+        if box is None and not typing:
+            continue
+        m = word_match(e, words, cl) if (not typing and words) else None
+        if m is not None:
+            wt, c0, matched = float(m[0]["start"]), m[1], True
+        else:
+            wt = e.get("at") if e.get("at") is not None else (e["press"] - 0.35 if e.get("press") is not None else e["t"])
+            c0, matched = e.get("from"), bool(e.get("beat"))
+        out.append({"e": e, "box": box, "t_word": float(wt), "t_from": c0, "matched": matched, "typing": typing})
+    return sorted(out, key=lambda x: (x["e"]["t"] if x["typing"] else x["t_word"]))
+
+
+def _near(a, b, W, H):
+    return abs(math.log(a[0] / b[0])) < 0.04 and abs(a[1] - b[1]) * a[0] / W < 0.02 and abs(a[2] - b[2]) * a[0] / H < 0.02
+
+
+def plan_moves(ev, fps, f0, n_frames, p, words=None, span_end=None, why=None):
+    """[(start_frame, frames, view_from, view_to, kind, box[, xfade_frames])] — the reference camera:
+
+      · a camera target is a compiled beat's target_box or the acted element (abox, grown to its container
+        under 120 px); reads, hovers and cursor points never move the camera;
+      · each target's move is timed from the word that names it (its text spoken in the clause, a beat, or
+        the agent's 'at'): it starts 0.5–0.9 s before the word, never before the clause, never before the
+        page state that shows it, and lands by word + 0.3 s; 34–48 f in (45–58 deep), 34–40 f out, a pan
+        at the same zoom (M2); with less than its minimum it is a cut that lands framed (M6), on the page
+        change when there is one;
+      · zoom by class (F3), centred (F1), ≤ ×1.65, ≤ 5 % black (F4), clear of the bubble when the band allows;
+      · typing/paste at ×1.00 (K1); same-app page changes keep the zoom (T1/T2); dissolves only for a new
+        site or a time skip (T4); no cut/flash under 6 f; spans end still zoomed (no move to ×1.00 in the
+        last 0.3 s before the A-roll);
+      · a camera-still hold longer than 3 s gets ONE inward ZM10 push (M5) — never outward, never a release.
+
+    why: an optional list that receives (event, reason) for every camera target that got no move."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    k = fps / REF_FPS
+    full = (1.0, W / 2, H / 2)
+    states, skip = page_states(ev, p)
+    st_t = [s["t"] for s in states]
+    end_s = span_end if span_end is not None else float(ev.get("end") or (n_frames - f0) / fps)
+    moves = []
+    view, free = full, float(skip)                 # (seconds) the camera is free from here
+    for s in states:
+        if s["kind"] == "xfade":
+            moves.append((f0 + s["t"] * fps, 0, None, None, "xfade", None, s["n"]))
+
+    def state_start(t):
+        return max([x for x in st_t if x <= t + 1e-6], default=skip)
+
+    def boundary_in(a, b):
+        return next((x for x in st_t if a - 1e-6 <= x <= b + 1e-6), None)
+
+    type_t = sorted(float(e["t"]) for e in ev["events"] if e["type"] == "type")
+    big = page_changes(ev)                         # navigations + the recorder's big settle cuts
 
     def nav_click(e):
-        return e["type"] == "click" and any(0 <= c - e["t"] <= p["nav_click_window_s"] + (e.get("end", e["t"]) - e["t"])
-                                            for c in pages)
-    focus = [e for e in ev["events"] if e.get("box") and not e.get("empty")
-             and e["type"] in ("click", "type", "read", "highlight", "move", "hover")
-             and (not nav_click(e) or p.get("nav_click_zoom"))]
-    navc = {id(e) for e in focus if nav_click(e)}
-    moves, view, last_move_end = [], full, -1e9
-    starts = []                               # move start frames (the rolling budget)
+        if e["type"] not in ("click", "dblclick") or e.get("target_box"):
+            return False
+        a = float(e.get("press", e["t"]))
+        return any(a - 0.05 <= x <= float(e.get("end", a)) + 1.0 for x in big)
 
-    def budget_ok(s0):
-        # rolling budget over a 30 s window (a 30 s clip may not spend a whole minute's moves)
-        recent = [x for x in starts if s0 - 30 * fps < x <= s0]
-        return len(recent) < p["moves_per_min_max"] / 2
+    def add(s0, dur, v_to, kind, box):
+        nonlocal view, free
+        moves.append((f0 + s0 * fps, dur * fps, view, v_to, kind, box))
+        view, free = v_to, s0 + dur
 
-    def framing(e, t):
-        # one framing for this target and the ones right after it on the same page, when the
-        # union still zooms: fewer, calmer moves (reference: one move per 13–17 s)
-        nxt_page = next((c for c in pages if c > t), 1e9)
-        group = [e["box"]]
-        if e.get("zoom"):
-            # a scripted beat names its own level (loop round 1): main design 1.4–1.6, a small
-            # artboard deep 2.0 (TECHNIQUES ZM02 ×1.5–2.03 for one small named thing), a group ZM05
-            # 1.2–1.3. Never clustered with its neighbours: each named thing is its own framing
-            # (Jake #1/#2; PN04 one pan per named card).
-            b = e["box"]
-            z = min(float(e["zoom"]), p["zoom_deep"])
-            return clamp(z, b[0] + b[2] / 2, b[1] + b[3] / 2, W, H, edge_room(e.get("_sm"), p)), b
-        for o in focus:
-            if t < o["t"] <= t + p["cluster_s"] and o["t"] < nxt_page - 1e-6 and o is not e:
-                cand = framing_for(union(group + [o["box"]]), W, H, p)
-                if cand[0] < p["zoom_min"] - 1e-6:
-                    break
-                group.append(o["box"])
-        box = union(group)
-        v = framing_for(box, W, H, p, deep=bool(e.get("deep")) and len(group) == 1, room=edge_room(e.get("_sm"), p))
-        if p.get("avoid_bubble"):                 # off since Jake's review: centre-middle wins
-            v = clear_bubble(avoid_bubble(v, box, W, H, p), box, e.get("_sm"), W, H, p)
-        return v, box
+    def no_move(e, reason):
+        if why is not None:
+            why.append((e, reason))
 
-    def retarget(view, tgt, box, e):
-        """(target view, kind, frames) for a move from `view`. MOVE INSIDE THE ZOOM (refs 2–5):
-        zoomed, and the next framing wants about the same zoom → keep the zoom and PAN there
-        (prompt → result, the next row of a list, across to the next card / button)."""
-        dur = (p["zoom_in_frames_big"] if tgt[0] > p["big_zoom"] else p["zoom_in_frames"]) * k
-        mkind = "in" if tgt[0] >= view[0] else "out"
-        # a scripted beat's own zoom is honoured: it pans only when the level is (almost) the same
-        tol = 1.03 if e.get("zoom") else p["pan_zoom_tol"]
-        if view[0] > 1.05 and max(tgt[0] / view[0], view[0] / tgt[0]) <= tol:
-            pz = clamp(view[0], tgt[1], tgt[2], W, H, edge_room(e.get("_sm"), p))
-            if p.get("avoid_bubble"):
-                pz = clear_bubble(pz, box, e.get("_sm"), W, H, {**p, "zoom_min": view[0], "zoom_max": view[0]})
-                pz = clamp(view[0], pz[1], pz[2], W, H)
+    for tg in camera_targets(ev, p, words):
+        e, box = tg["e"], tg["box"]
+        if tg["typing"]:
+            # K1: typing / pasting is shown at ×1.00 — a held zoom opens out to land as the typing starts
+            # (the move's target is the whole page the prompt appears on)
+            if view[0] <= 1.0 + 1e-6:
+                continue
+            box = list(box) if box else [0, 0, W, H]
+            land = max(float(e["t"]), skip)
+            lo_f, hi_f = REF["out_frames"]
+            s0 = max(land - REF["out_nominal_f"] / REF_FPS, free)
+            if land - s0 >= lo_f / REF_FPS - 1e-6:
+                add(s0, land - s0, full, "out", box)
+            else:
+                bt = boundary_in(free, land)
+                add(bt if bt is not None else max(free, land - 0.05), 0.0, full, "cut", box)
+            continue
+        if nav_click(e) and not tg["matched"]:
+            no_move(e, "unnamed navigation click")      # T2: the page change itself is the cut
+            continue
+        tgt = frame_target(box, W, H, p, e.get("_sm"), zoom=e.get("zoom"))
+        if tgt[0] <= 1.0:
+            no_move(e, "subject fills the frame")
+            continue
+        if _near(tgt, view, W, H):
+            no_move(e, "already framed")
+            continue
+        wt = tg["t_word"]
+        nt = next((t for t in type_t if t >= wt - 1e-6), None)
+        if nt is not None and nt - (wt + REF["land_after_word_s"]) < (REF["in_frames"][0] + REF["out_frames"][0]) / REF_FPS:
+            no_move(e, "typing follows")
+            continue                                 # typing right after: no in-and-straight-out (pumping, K1)
+        lead_lo, lead_hi = REF["word_lead_s"]
+        start_lo = max(wt - lead_hi, free, state_start(float(e["t"])))
+        if tg["t_from"] is not None:
+            start_lo = max(start_lo, float(tg["t_from"]))
+        land_hi = wt + REF["land_after_word_s"]
+        if view[0] > 1.05 and max(tgt[0] / view[0], view[0] / tgt[0]) <= p.get("pan_zoom_tol", 1.15):
+            pz = clamp(view[0], tgt[1], tgt[2], W, H, _room(e.get("_sm"), p))
             d1080 = math.hypot(pz[1] - view[1], pz[2] - view[2]) * view[0] * 1080 / H
-            if d1080 < 12:
-                return None, None, 0
-            if d1080 / 1920 <= p["pan_max_screen"]:
-                return pz, "pan", pan_frames(d1080, p) * k
-        return tgt, mkind, dur
-
-    entry_untargeted = False
-    first = focus[0] if focus else None
-    if first is not None and first.get("land") and word_t(first) <= 0.5:
-        # TECHNIQUES CUT06 "cut that lands already framed": frame 0 is already the framing of the
-        # first beat (review v12 #1: never the whole canvas with its chrome as the first frame)
-        tgt, box = framing(first, first["t"])
-        if first.get("punch"):
-            # ROUND 2 ruling (review D15): no ref has a screencast cold open — use the refs' VIDEO opening
-            # (TR07: frame 0 punched in ×1.36–1.55, easing out to the framing over ~31 f) so the first
-            # frame is never pixel-still (Jake rule 2)
-            z0 = min(tgt[0] * float(first["punch"]), p["zoom_deep"] * 1.3)
-            v0 = clamp(z0, tgt[1], tgt[2], W, H)
-            moves.append((f0, 0, full, v0, "cut", None))
-            moves.append((f0 + 1, p.get("open_frames", 31) * k, v0, tgt, "open", box))
-            view, last_move_end = tgt, f0 + 1 + p.get("open_frames", 31) * k
-        else:
-            moves.append((f0, 0, full, tgt, "cut", box))
-            view, last_move_end = tgt, f0
-        first = None
-        focus = focus[1:]
-    elif first is None or first["t"] > 0.4 or framing(first, first["t"])[0][0] <= 1.0:
-        # entry push-in toward the first target's area (or the centre) — reference: every span
-        # that starts unzoomed pushes in to ~1.36× from its 1st–2nd frame. Jake #11: it heads for a
-        # target only when that target is named at the very start; a later one (the Log in button
-        # at 3.8 s) gets its zoom ON its word, so the entry is a centred push
-        if first is not None and (not pages or first["t"] < pages[0]) and \
-                word_t(first) <= p.get("entry_target_s", 1e9) and not (first["type"] == "type" and not p.get("type_zoom", True)):
-            tgt, box = framing(first, first["t"])
-            cxy = (tgt[1], tgt[2]) if tgt[0] > 1.0 else (box[0] + box[2] / 2, box[1] + box[3] / 2)
-            v = clamp(p["entry_zoom"], *cxy, W, H, edge_room(first.get("_sm"), p))
-            if p.get("avoid_bubble"):
-                v = clear_bubble(v, box, first.get("_sm"), W, H, p)
-        else:
-            # Jake #11 (v11 1:45): "from NO zoom to the login button only when he says it" — a span
-            # whose first beat is a CLICK named later opens at 1.0; one that opens on a result he
-            # describes (the designs at 0:00) still gets the refs' centred push from frame 1-2
-            first_click = first is not None and first["type"] in ("click", "dblclick", "type")
-            # Jake #3/#7: a tool's LANDING page stays unzoomed (the logo in view)
-            landing = str(ev.get("url", "")).split("//")[-1].split("/")[0].startswith("www.")
-            ccx, ccy = ev.get("_centroid") or (W / 2, H / 2)
-            # a scripted beat list decides its own moves: no untargeted entry push before its first
-            # beat (review v12 #25: Home opened zoomed, the sidebar labels cut at the left edge; the
-            # plan said unzoomed — TECHNIQUES CUT05 "opens at 1.0, then moves")
-            v = None if (first_click or landing or first.get("beat")) else clamp(p["entry_zoom"], ccx, ccy, W, H, ev.get("_room"))
-            box = None
-            entry_untargeted = True
-        if v is not None:
-            s0 = f0 + p["entry_delay_frames"] * k
-            moves.append((s0, p["entry_frames"] * k, view, v, "in", box))
-            starts.append(s0)
-            view, last_move_end = v, s0 + p["entry_frames"] * k
-    page_keys = {round(t, 4) for t in pages}
-    cues = sorted([(e["t"], "focus", e) for e in focus] + [(t, "nav", None) for t in pages]
-                  + [(t, "scroll", None) for t in scrolls]
-                  + [(t, "xf", None) for t, kd in xcues.items() if t not in page_keys and xf_n > 0],
-                  key=lambda c: (c[0], 0 if c[1] in ("nav", "xf") else 1 if c[1] == "scroll" else 2))
-    # (a target logged at the very instant of a page change belongs to the NEW page: the change first)
-    last_target_end = 0.0
-    scroll_cut = None                         # end of a scroll whose next target lands by a cut
-    for t, kind, e in cues:
-        fr = f0 + t * fps
-        if kind == "scroll":
-            # the page moves under the view: open back out to the full frame as it starts
-            soon = any(0 < o["t"] - t <= p["scroll_direct_s"] for o in focus)
-            if soon:
-                # the target right after the scroll lands by a JUMP CUT at the scroll's end, already
-                # framed (reference 2 re-targets by cut far more than by move; a 56-frame deep move
-                # after the scroll reached the Free plan card only as the segment ended — v10)
-                se = next((x for x in ev["events"] if x["type"] == "scroll" and abs(x["t"] - t) < 1e-6), {})
-                scroll_cut = se.get("end", t)
-            if not soon and view[0] > 1.0 and fr >= last_move_end:
-                moves.append((fr, p["zoom_out_frames"] * k, view, full, "out"))
-                view, last_move_end = full, fr + p["zoom_out_frames"] * k
-            continue
-        if kind == "xf":
-            # a time skip on the same page (a generation finishing): dissolve, framing HELD; the
-            # camera then glides to the result (ref 3 1:44.7: 5 f dissolve, then a 27 f pan up)
-            moves.append((fr, 0, view, view, "xfade", None, xf_n))
-            last_move_end = max(last_move_end, fr + xf_n * k)
-            free_after = fr + xf_n * k
-            continue
-        if kind == "nav" and xf_n > 0 and round(t, 4) in xcues:
-            # a change of world (another page / site, a submit's result): DISSOLVE with the framing
-            # held (refs 2–5: the incoming screen arrives at the outgoing zoom), then zoom out to the
-            # full frame at once (0–20 f later) unless a target follows within xfade_target_s — then the
-            # camera goes straight to it from the held framing
-            moves.append((fr, 0, view, view, "xfade", None, xf_n))
-            xend = fr + xf_n * k
-            landing_nav = str(_nav_url(ev, t)).split("//")[-1].startswith("www.")
-            if view != full and landing_nav:
-                # ROUND 2: a tool's LANDING page arrives at 1.0 straight through the dissolve (Jake #3;
-                # ZM07 "hold the landing at 1.0 ~1–2 s, then push to the hero") — the render holds the
-                # OUTGOING output image during a dissolve, so this cut does not jump the old picture
-                moves.append((fr, 0, view, full, "cut", None))
-                view = full
-            nxt_page = next((c for c in pages if c > t + 1e-6), 1e9)
-            soon = next((o for o in focus if t - 1e-6 <= o["t"] <= min(t + p.get("xfade_target_s", 3.0), nxt_page - 1e-6)), None)
-            last_move_end = max(last_move_end, xend)
-            if soon is not None and soon.get("beat") and soon.get("zoom") and not landing_nav and soon["t"] - t <= 1.0:
-                # ROUND 2 ruling (review D5, TR02/TR03): a scripted beat right after a dissolve — the
-                # incoming screen arrives ALREADY FRAMED on it (the render holds the outgoing output image)
-                tg, bx = framing(soon, soon["t"])
-                moves.append((fr, 0, view, tg, "cut", bx))
-                view, last_move_end, free_after, last_target_end = tg, fr, xend, t
-                continue
-            if soon is not None and soon["type"] == "type" and not p.get("type_zoom", True) and view != full:
-                # typing after a dissolve (Jake #10: zoomed OUT): the incoming screen arrives at the
-                # full frame — a held zoom on the new page showed the wrong corner for 1.3 s (v12b 1:15)
-                moves.append((fr, 0, view, full, "cut", None))
-                view, soon = full, None
-            if view != full and soon is not None:
-                if not framed(soon["box"], view, W, H, p, room=edge_room(soon.get("_sm"), p)):
-                    tg, bx = framing(soon, soon["t"])
-                    tg, mk, du = retarget(view, tg, bx, soon) if tg[0] > 1.0 else (full, "out", p["zoom_out_frames"] * k)
-                    if tg is not None:
-                        moves.append((xend, du, view, tg, mk, bx if tg != full else None))
-                        view, last_move_end = tg, xend + du
-            elif view != full and "/file/" not in str(_nav_url(ev, t)):
-                # (never on a design canvas — Jake rule 4 "never the whole canvas" overrides TR03, review N02)
-                moves.append((xend, p["zoom_out_frames"] * k, view, full, "out", None))
-                view, last_move_end = full, xend + p["zoom_out_frames"] * k
-            free_after = xend
-            last_target_end = t
-            continue
-        if kind == "nav":
-            if p["nav_resets"] and view != full:
-                moves.append((fr, 0, view, full, "cut"))
-            view, last_move_end = full, min(last_move_end, fr)
-            last_target_end = t
-            continue
-        end = e.get("end", t)
-        if scroll_cut is not None and 0 <= t - scroll_cut <= p["scroll_direct_s"]:
-            tgt, box = framing(e, t)
-            if tgt[0] > 1.0:
-                moves.append((f0 + scroll_cut * fps, 0, view, tgt, "cut", box))
-                view, last_move_end, last_target_end = tgt, f0 + scroll_cut * fps, max(last_target_end, end)
-                scroll_cut = None
-                continue
-        scroll_cut = None if scroll_cut is not None and t - scroll_cut > p["scroll_direct_s"] else scroll_cut
-        if t - last_target_end > p["idle_out_s"] and view[0] > 1.0 and fr - last_move_end > p["zoom_out_frames"] * k \
-                and "/file/" not in str(ev.get("url", "")):
-            s0 = f0 + (last_target_end + 1.0) * fps
-            moves.append((s0, p["zoom_out_frames"] * k, view, full, "out"))
-            starts.append(s0)
-            view, last_move_end = full, s0 + p["zoom_out_frames"] * k
-        last_target_end = max(last_target_end, end)
-        if e["type"] == "type" and not p.get("type_zoom", True) and not e.get("paste") and not e.get("zoom"):
-            # Jake #10: typing a prompt reads better zoomed OUT — open a held zoom as typing starts
-            if view != full and fr >= last_move_end:
-                moves.append((fr, p["zoom_out_frames"] * k, view, full, "out"))
-                starts.append(fr)
-                view, last_move_end = full, fr + p["zoom_out_frames"] * k
-            continue
-        if view[0] > 1.05 and not e.get("zoom") and framed(e["box"], view, W, H, p, room=edge_room(e.get("_sm"), p)):
-            continue
-        tgt, box = framing(e, t)
-        if tgt == view or (tgt[0] <= 1.0 and not e.get("zoom")):   # a whole-page target never pulls the camera out
-            # (a scripted beat with zoom ≤ 1 IS a release to the whole screen — TECHNIQUES ZM11)
-            continue
-        tgt, mkind, dur = retarget(view, tgt, box, e)
-        if tgt is None:
-            continue                              # already there
-        if e.get("frames"):
-            dur = float(e["frames"]) * k          # a beat may name its catalogue duration (ZM07 hero push 38–48 f)
-        # ROUND 2 (review D14): a move under ×1.05 and < 60 output px matches no technique (ZM10 needs
-        # ×1.06–1.26 over 24–46 f) — a twitch; drop it
-        if max(tgt[0] / view[0], view[0] / tgt[0]) < 1.05 and math.hypot(tgt[1] - view[1], tgt[2] - view[2]) * view[0] * 1080 / H < 60:
-            continue
-        # out of a full frame (after a cut / at the start) the move may come at once; from a
-        # framed view the camera holds at least hold_min_s first — and right after a dissolve
-        # the camera moves on at once (refs: the move starts 0–20 f after the dissolve)
-        gap = 0 if view == full or (free_after is not None and fr - free_after < 2.5 * fps) else p["hold_min_s"] * fps
-        if entry_untargeted and len(starts) == 1:
-            gap = min(gap, 1.0 * fps)          # after a centred entry push the word wins (Jake #11)
-        # Jake #11: the zoom starts ON the word that names the target, not before it
-        fw = f0 + (word_t(e) - p.get("word_lead_s", p["lead_s"])) * fps
-        last_cut0 = max([c for c in pages if c <= t + 1e-6], default=None)
-        entry0 = view == full and last_cut0 is not None and f0 + last_cut0 * fps >= last_move_end - 1e-6 and t - last_cut0 <= 1.5
-        if e.get("beat") and not entry0:
-            # (a beat right after a page change lands framed ON that cut — the entry path below)
-            # TECHNIQUES "Timing vs words": moves START ≈ 0.8 s before the named word and land on it
-            # (ref 3, 16 moves −0.8…+1.35 s); Jake #11: never before the sentence that names it
-            # ("from"). A word-timed beat is never held back by hold_min_s or the budget (v12 #2:
-            # "wide ad" / "a story" were dropped) — back-to-back named cards pan card to card
-            # (PN04 D 30–35 f) and the move is shortened so it lands by word + 0.3 s.
-            gap = 0
-            wt = word_t(e)
-            # a click's zoom must LAND on the press, so it starts a full catalogue duration before it
-            # (a move needs its whole catalogue duration: it starts that long before it must land — e.g. a ZM07
-            # hero push of 46 f starts 1.2 s before word + 0.3 s — never before the clause, "from")
-            lead = max(0.8, dur / fps) if e["type"] in ("click", "dblclick") else max(0.8, dur / fps - 0.3)
-            lo = max(e.get("from", wt - lead), wt - lead)
-            fw = f0 + lo * fps
-            s_try = max(fw, last_move_end, f0 + p["entry_delay_frames"] * k)
-            # a click's zoom LANDS ON THE PRESS (round 2 ruling, review D18; CUT02/ZM12); others by word + 0.3 s
-            land = f0 + (wt + (0.0 if e["type"] in ("click", "dblclick") else 0.3)) * fps
-            if s_try + dur > land:
-                # ROUND 2 ruling (review D3/D13): never squeeze a move below its catalogue duration
-                # (ZM02 45–58 f, ZM03/ZM06 32–55 f, ZM11 34–40 f, PN D ≈ 24 + 0.035·px; 20 % tolerance).
-                # When the gap to the named item is shorter, CUT to it already framed (CUT06; a
-                # list of items 0.7–1.5 s apart = the CUT03 cut chain, ref 5 1:59–2:03, ref 3 1:00.4)
-                if land - s_try < 0.8 * dur:
-                    cf = max(f0 + (wt - 0.1) * fps, last_move_end)
-                    moves.append((cf, 0, view, tgt, "cut", box))
-                    view, last_move_end = tgt, cf
+            if d1080 / 1920 <= p.get("pan_max_screen", 0.55):
+                if d1080 < 12:
+                    no_move(e, "already framed")
                     continue
-                dur = land - s_try
-        if id(e) in navc:
-            # a click that opens another page (Log in, Brand in the sidebar): a quick zoom straight
-            # to it that LANDS on the press, then the page change cuts (Jake #11, v11 1:45 / 2:21)
-            dur = min(dur, p.get("nav_click_frames", 24) * k)
-            fw = f0 + e.get("press", e.get("end", t)) * fps - dur
-            gap = 0
-        last_cut = max([c for c in pages if c <= t + 1e-6], default=None)
-        s0 = max(fw, last_move_end + gap, f0 + p["entry_delay_frames"] * k,
-                 f0 + last_cut * fps + p["entry_delay_frames"] * k if last_cut is not None else 0)
-        if s0 > max(fw + 1.5 * fps, f0 + (end - 1.0) * fps):     # too late to matter: let it go
+                # M2: a pan keeps the zoom; when the new subject asks for a different level within ±15 %
+                # the pan lands on that level (a combined move, still eased on the pan curve)
+                kind, nominal, dmin, dmax = "pan", pan_frames(d1080, p), p["pan_frames_minmax"][0], p["pan_frames_minmax"][1]
+                tgt = clamp(tgt[0], tgt[1], tgt[2], W, H) if abs(tgt[0] / view[0] - 1) > 0.03 else pz
+            else:
+                kind = None
+        else:
+            kind = None
+        if kind is None:
+            if tgt[0] >= view[0]:
+                deep = tgt[0] > REF["deep_zoom"]
+                band = REF["deep_in_frames"] if deep else REF["in_frames"]
+                kind, nominal = "in", REF["deep_nominal_f"] if deep else REF["in_nominal_f"]
+            else:
+                band = REF["out_frames"]
+                kind, nominal = "out", REF["out_nominal_f"]
+                # M3 / ZM11: a zoom-out pulls back by a ratio of 0.76–0.90 — a subject that still fits a
+                # shallower pull-back takes it (refs never drop from ×1.65 straight to ×1.18 in one move)
+                zr = round(view[0] * REF["out_ratio"][0], 4)
+                if tgt[0] < zr and box[2] <= 0.95 * W / zr and box[3] <= 0.95 * H / zr:
+                    tgt = frame_target(box, W, H, p, e.get("_sm"), zoom=zr)
+            dmin, dmax = band
+        # M1: start 0.5–0.9 s before the word (never before the clause or the page state), land by word + 0.3
+        avail = land_hi - start_lo
+        if avail * REF_FPS >= dmin - 1e-6:
+            dur = min(max(nominal, dmin), dmax, avail * REF_FPS) / REF_FPS
+            s0 = max(start_lo, min(wt - lead_lo, land_hi - dur))
+            dur = min(dur, land_hi - s0) if land_hi - s0 >= dmin / REF_FPS - 1e-6 else dur
+            add(s0, dur, tgt, kind, box)
             continue
-        # a push-in out of the full frame right after a page cut is that screen's ENTRY (the
-        # reference opens every span this way) — it does not spend the move budget
-        entry = view == full and last_cut is not None and f0 + last_cut * fps >= (starts[-1] if starts else -1e9)
-        if entry and t - last_cut <= 1.5:
-            # the reference re-targets by JUMP CUT more often than by a move: a new screen that
-            # is about this target lands already framed, on the cut itself
-            moves.append((f0 + last_cut * fps, 0, full, tgt, "cut", box))
-            view, last_move_end = tgt, f0 + last_cut * fps
+        if not tg["matched"] and e.get("at") is None:
+            no_move(e, "no time and no naming word")
+            continue                                 # an unnamed action never earns a cut
+        # M6: too little time — a cut that lands already framed, on the page change when one is near
+        sst = state_start(float(e["t"]))
+        if sst >= free - 1e-6 and sst >= wt - lead_hi - 1e-6:
+            ct = sst                                 # on the page change that brings the subject
+        else:
+            ct = max(free, wt - 0.1)
+        add(ct, 0.0, tgt, "cut", box)
+    moves = _no_flash(moves, fps, f0)
+    moves = _end_still(moves, fps, f0, end_s)
+    moves = _chain(moves, full)
+    return add_pushes(moves, ev, fps, f0, end_s, p, words)
+
+
+def _no_flash(moves, fps, f0):
+    """T8: two camera cuts closer than 6 f are one cut (the later framing wins)."""
+    out = []
+    for m in sorted(moves, key=lambda m: m[0]):
+        if m[4] == "cut" and out and out[-1][4] == "cut" and m[0] - out[-1][0] < REF["flash_f"] * fps / REF_FPS:
+            out[-1] = (out[-1][0],) + tuple(m[1:])
             continue
-        if not entry and not e.get("beat") and not budget_ok(s0):
-            continue
-        moves.append((s0, dur, view, tgt, mkind, box))
-        if not entry:
-            starts.append(s0)
-        view, last_move_end = tgt, s0 + dur
-    return fill_holds(moves, ev, fps, f0, n_frames, p)
+        out.append(m)
+    return out
+
+
+def _end_still(moves, fps, f0, end_s):
+    """Spans end still zoomed (T5/CUT04): no move back to ×1.00 starting in the span's last 0.3 s
+    (+ the clip's tail past the cut)."""
+    lim = f0 + (end_s - REF["end_still_s"] - REF["end_tail_s"]) * fps
+    return [m for m in moves if not (m[4] in ("cut", "out") and m[3] is not None and m[3][0] <= 1.0 + 1e-6 and m[0] >= lim)]
+
+
+def _chain(moves, full):
+    """Every move starts from where the previous one left the camera (xfades hold the view)."""
+    out, view = [], full
+    for m in sorted(moves, key=lambda m: (m[0], m[4] != "xfade")):
+        m = list(m)
+        if m[4] == "xfade":
+            m[2] = m[3] = view
+        else:
+            m[2] = view
+            if m[4] == "pan" and abs(m[3][0] / max(view[0], 1e-6) - 1) > 0.15:
+                m[4] = "in" if m[3][0] > view[0] else "out"
+        out.append(tuple(m))
+        view = m[3]
+    return out
 
 
 def busy_spans(moves, ev, fps, f0, p):
@@ -840,70 +1022,57 @@ def busy_spans(moves, ev, fps, f0, p):
     return sorted(out)
 
 
-def fill_holds(moves, ev, fps, f0, n_frames, p):
-    """No camera-static hold longer than hold_max_s (refs 2–5 p90 6.0 s): a hold that would run
-    longer gets a slow DRIFT hold_target_s after the last motion — a centred push of ×drift_zoom
-    on what is already framed (a pull-back when that would pass the zoom cap). The subject stays
-    centre-middle. Then every later move starts from the drifted view."""
-    hmax, htgt = p.get("hold_max_s", 0), p.get("hold_target_s", 3.0)
-    if not hmax:
-        return moves
-    k = fps / REF_FPS
+def add_pushes(moves, ev, fps, f0, end_s, p, words=None):
+    """M5 / ZM10: a camera-still hold longer than hold_max_s gets ONE slow centred push inward
+    (×1.12 over 40 f, catalogue ×1.06–1.26 over 24–46 f) hold_target after the last motion — never
+    outward, never alternating, never a release. A hold the push cannot fill stays a hold: a long
+    gap is an upstream failure (the recorder's idle tail), not something the camera hides. No push
+    before typing (typing is shown at ×1.00) nor where it would pass ×1.65."""
     W, H = ev["capture"]["w"], ev["capture"]["h"]
-    D = p.get("drift_frames", 54) * k
-    end = f0 + (ev.get("end") or (n_frames - f0) / fps) * fps
+    k = fps / REF_FPS
+    D = REF["push_frames"] * k
+    end = f0 + end_s * fps
     busy = busy_spans(moves, ev, fps, f0, p)
-    edges, cur = [], f0
+    gaps, cur = [], f0 + lead_skip(ev, p) * fps
     for a, b in busy:
         if a > cur:
-            edges.append((cur, a))
+            gaps.append((cur, a))
         cur = max(cur, b)
     if end > cur:
-        edges.append((cur, end))
+        gaps.append((cur, end))
+    types = sorted(f0 + e["t"] * fps for e in ev["events"] if e["type"] == "type")
+    zmoves = sorted(m[0] for m in moves if m[4] in ("in", "out", "pan", "cut"))
     eases = make_eases(p)
-    drifts = []
-    for g0, g1 in edges:
-        c, sign = g0, 1
-        while g1 - c > hmax * fps:
-            s0 = c + htgt * fps
-            if s0 + D > g1 - 0.2 * fps:
-                break
-            z, cx, cy = camera_at(sorted(moves + drifts, key=lambda m: m[0]), s0, p, eases, W, H)
-            # ROUND 3 (review N11): ZM10 is a PUSH (×1.06–1.26 over 24–46 f) — never outward, never alternating;
-            # no room for a whole push = no drift at all
-            z2 = z * p["drift_zoom"]
-            if c == g0:
-                z_land = z                                   # the framing the beat landed on
-            # RULEBOOK F3: nothing past ×1.65 (one small control). Constant motion (Jake rule 2, P1 ≤ 3 s
-            # still) on a long read: instead of freezing, an M3 RELEASE back to the beat's own framing
-            # (ratio ≥ 0.76, 40 f, curve (.33,0,.31,.93) — never below it, so F4 holds), then push again
-            if z2 > p.get("drift_cap", 1.65):
-                if z / z_land < 1.05:
-                    break
-                Do = p.get("zoom_out_frames", 40) * k
-                if s0 + Do > g1 - 0.2 * fps:
-                    break
-                drifts.append((s0, Do, (z, cx, cy), clamp(max(z_land, z * 0.76), cx, cy, W, H, overscan_of((z, cx, cy), W, H)),
-                               "release", None))
-                c = s0 + Do
-                continue
-            drifts.append((s0, D, (z, cx, cy), clamp(z2, cx, cy, W, H, overscan_of((z, cx, cy), W, H)), "drift", None))
-            c = s0 + D
-    if not drifts:
+    pushes = []
+    for g0, g1 in gaps:
+        if g1 - g0 <= REF["hold_max_s"] * fps:
+            continue
+        s0 = g0 + REF["push_after_s"] * fps
+        if s0 + D > g1 - 0.2 * fps:
+            continue
+        nt = next((t for t in types if t >= s0), None)
+        nm = next((t for t in zmoves if t >= s0), None)
+        if nt is not None and (nm is None or nt <= nm):
+            continue                                  # typing comes before any re-framing: stay at ×1.00
+        z, cx, cy = camera_at(sorted(moves + pushes, key=lambda m: m[0]), s0, p, eases, W, H)
+        z2 = min(z * REF["push_zoom"], REF["zoom_cap"])
+        if z2 / z < REF["push_band"][0]:
+            continue
+        pushes.append((s0, D, (z, cx, cy), clamp(z2, cx, cy, W, H, overscan_of((z, cx, cy), W, H)), "push", None))
+    if not pushes:
         return moves
-    out, view = [], (1.0, W / 2, H / 2)
-    for m in sorted(moves + drifts, key=lambda m: (m[0], m[4] not in ("drift", "release"))):
-        m = list(m)
-        if m[4] == "xfade":
-            m[2] = m[3] = view
-        elif m[1] > 0:
-            m[2] = view
-            if m[4] == "pan" and abs(m[3][0] / max(view[0], 1e-6) - 1) > 0.03:
-                # ROUND 3: after a drift the planned pan's zoom no longer matches — it becomes a zoom move to the
-                # beat's OWN level (round 3 frames: the picker framing stayed at the drifted ×1.63)
-                m[4] = "in" if m[3][0] > view[0] else "out"
-        out.append(tuple(m))
-        view = m[3]
+    return _chain(moves + pushes, (1.0, W / 2, H / 2))
+
+
+def motion_events(moves, ev, fps, f0, end_s, p):
+    """Clip seconds of every motion event (P2): camera moves, camera cuts, dissolves and the recorded
+    page-state cuts — one event per change, changes closer than 6 f merged."""
+    ts = [(m[0] - f0) / fps for m in moves]
+    ts += [s["t"] for s in page_states(ev, p)[0] if s["kind"] == "cut"]
+    out = []
+    for t in sorted(ts):
+        if lead_skip(ev, p) - 1e-6 <= t <= end_s and (not out or t - out[-1] >= REF["flash_f"] / REF_FPS):
+            out.append(t)
     return out
 
 
@@ -933,6 +1102,59 @@ def camera_at(moves, f, p, eases, W, H):
         view = clamp(*_view_between(a, b, u), W, H, tuple(max(x, y) for x, y in zip(oa, ob)))
         break
     return view
+
+
+def acted_box(e, ev, p=REF):
+    """The box an action really acts on (B2): the element, or — for a click on a big element (a photo,
+    a canvas: wider than 0.25 W or taller than 0.25 H) — a small box at the cursor's press point."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    b = e.get("abox") or e.get("box")
+    if not b:
+        return None
+    if e["type"] in ("click", "dblclick") and (b[2] > 0.25 * W or b[3] > 0.25 * H) and ev.get("cursor"):
+        tp = e.get("press", e["t"])
+        c = min(ev["cursor"], key=lambda r: abs(r[0] - tp))
+        s = 20 * ev["capture"].get("scale", 1.0)
+        return [c[1] - s / 2, c[2] - s / 2, s, s]
+    return b
+
+
+def bubble_decisions(ev, keys, fps, f0, p, eases):
+    """{id(event): hide?} — decided ONCE per action, at its press frame, through that frame's camera view."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    out = {}
+    for e_ in ev["events"]:
+        if e_["type"] not in p.get("bubble_hide_actions", ()):
+            continue
+        b = acted_box(e_, ev)
+        if not b:
+            continue
+        tp = e_.get("press", e_.get("end", e_["t"]) if e_["type"] == "type" else e_["t"])
+        # (the frame just BEFORE the press: a navigating press shares its frame with the cut to the next page)
+        view = camera_at(keys, f0 + tp * fps - 1, p, eases, W, H)
+        gap = disc_gap(b, view, W, H)
+        out[id(e_)] = gap <= REF["bubble_margin_px"]
+        e_["_disc_dist_px"] = round(gap + DISC_1080[2], 1)
+    return out
+
+
+def bubble_hide_spans(ev, keys, fps, f0, p, eases, t_from, n_out, ofps, decisions=None):
+    """[[a, b]] output seconds where the bubble fades out (B2): while an action whose acted box meets the
+    disc acts (action_targets), merged over 0.5 s gaps; a flicker shorter than 0.3 s is not an action."""
+    decisions = decisions if decisions is not None else bubble_decisions(ev, keys, fps, f0, p, eases)
+    acts = [e for e in ev["events"] if decisions.get(id(e))]
+    hide = []
+    for o in range(n_out):
+        t = t_from + o / ofps
+        if any(e in acts for e in action_targets({"events": acts}, t)):
+            hide.append(round(o / ofps, 3))
+    spans = []
+    for t_ in hide:
+        if spans and t_ - spans[-1][1] < 0.5:
+            spans[-1][1] = t_
+        else:
+            spans.append([t_, t_])
+    return [s_ for s_ in spans if s_[1] - s_[0] >= 0.3]
 
 
 def move_starts(moves):
@@ -1022,12 +1244,52 @@ def cursor_track(ev, fps, f0, n, smooth_s):
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
-def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, preset="veryfast", out_fps=None):
+def load_words(recdir, words=None):
+    """The narration words on the clip clock: a list, a path, or <recdir>/words.json; [] when none."""
+    if isinstance(words, (list, tuple)):
+        return list(words)
+    for src in ([Path(words)] if words else []) + [Path(recdir) / "words.json"]:
+        try:
+            d = json.loads(src.read_text())
+            return d.get("words", []) if isinstance(d, dict) else d
+        except (OSError, ValueError):
+            continue
+    return []
+
+
+def plan_offline(ev, p=None, words=None, span_end=None, fps=None, why=None):
+    """plan_moves on events.json alone (no raw.mp4: no frame facts) — the offline re-run of the camera."""
+    p = p or params()
+    fps = fps or ev["capture"]["fps"]
+    f0 = ev.get("pre_frames", 0) if ev.get("virtual_time") else 0
+    end = span_end if span_end is not None else float(ev.get("end") or 0)
+    return plan_moves(ev, fps, f0, f0 + int(end * fps) + 1, p, words=words, span_end=end, why=why)
+
+
+def landings(moves, ev, fps, f0, p):
+    """Per framing move: where it landed and how (the G5 acceptance numbers live on these)."""
+    W, H = ev["capture"]["w"], ev["capture"]["h"]
+    out = []
+    for m in moves:
+        if m[4] not in ("in", "out", "pan", "cut") or len(m) < 6 or not m[5] or m[3][0] <= 1.0 + 1e-6:
+            continue
+        dx, dy = landing_offset(m[5], m[3], W, H)
+        out.append({"t": round((m[0] + m[1] - f0) / fps, 3), "kind": m[4], "zoom": round(m[3][0], 3),
+                    "frames": round(m[1] * REF_FPS / fps, 1), "box": [round(v, 1) for v in m[5]],
+                    "dx": round(dx, 3), "dy": round(dy, 3), "edge": touches_edge(m[5], W, H),
+                    "centred": dx <= REF["centre_tol"][0] + 1e-6 and dy <= REF["centre_tol"][1] + 1e-6,
+                    "edge_limited": edge_limited(m[5], m[3], W, H)})
+    return out
+
+
+def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, preset="veryfast", out_fps=None, words=None):
     """t_from/t_to: seconds on the recording's clock (0 = sync marker). The clip is exactly
     (t_to − t_from) long: a recording that ends early holds its last frame. out_fps: the
-    edit's frame rate (frames are picked by time, so 30 → 29.97 never drifts)."""
+    edit's frame rate (frames are picked by time, so 30 → 29.97 never drifts). words: the narration
+    words on the clip clock (or <recdir>/words.json)."""
     recdir = Path(recdir)
     ev = json.loads((recdir / "events.json").read_text())
+    words = load_words(recdir, words)
     W, H = ev["capture"]["w"], ev["capture"]["h"]
     fps = ev["capture"]["fps"]
     raw = recdir / "raw.mp4"
@@ -1043,28 +1305,19 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     hl_in, hl_out = bezier(*p["hl_ease"]), bezier(*p["hl_out_ease"])
     drop_empty_targets(ev, raw, f0, fps, p)
     first_frame_facts(ev, raw, f0, p)
-    keys = plan_moves(ev, fps, f0, n_all, p)
+    span_end = (t_to - (t_from or 0)) if t_to is not None else None
+    keys = plan_moves(ev, fps, f0, n_all, p, words=words, span_end=span_end)
+    skip_s = lead_skip(ev, p)                  # the opening state changes are skipped (≤ 1 transition, the entry)
     starts = move_starts(keys)
     kref = fps / REF_FPS
-    hide = []                                  # output seconds where the bubble must fade out
     # ROUND 3 (review N07/N03b): the bubble decision is made ONCE per action, at its PRESS frame, from the
     # ACTED element's box (abox — not the camera frame box) projected through the camera view of that frame
     # into output pixels, against the disc (1701.9, 253.7) r 179.3 @1080p. Round 2 tested every frame of
     # the cursor travel and used the frame box: "Log in" 228 px from the centre still hid the bubble.
-    hide_decision = {}
-    for e_ in ev["events"]:
-        if e_["type"] not in p.get("bubble_hide_actions", ()) or not (e_.get("abox") or e_.get("box")):
-            continue
-        tp = e_.get("press", e_.get("end", e_["t"]) if e_["type"] == "type" else e_["t"])
-        # (the frame just BEFORE the press: a navigating press shares its frame with the cut to the next page)
-        zv, cxv, cyv = camera_at(keys, f0 + tp * fps - 1, p, eases, W, H)
-        cwv, chv = W / zv, H / zv
-        bx_, by_, bw_, bh_ = e_.get("abox") or e_["box"]
-        X0 = (bx_ - (cxv - cwv / 2)) / cwv * 1920; X1 = (bx_ + bw_ - (cxv - cwv / 2)) / cwv * 1920
-        Y0 = (by_ - (cyv - chv / 2)) / chv * 1080; Y1 = (by_ + bh_ - (cyv - chv / 2)) / chv * 1080
-        qx_, qy_ = min(max(1701.9, X0), X1), min(max(253.7, Y0), Y1)
-        hide_decision[id(e_)] = math.hypot(qx_ - 1701.9, qy_ - 253.7) <= 179.3
-        e_["_disc_dist_px"] = round(math.hypot(qx_ - 1701.9, qy_ - 253.7), 1)
+    # G5 step 7 (B2): only when the box the action ACTS ON intersects the disc + 24 px margin. A click on a
+    # big element (a photo, a canvas) acts at the cursor's press point, not on the whole element: the
+    # photo clicks at sc-03 22.9/25.7, sc-05 9.7/25.3 and sc-06 21.4 hid the bubble with the cursor far away.
+    hide_decision = bubble_decisions(ev, keys, fps, f0, p, eases)
     blank = []                                 # output seconds showing an (almost) empty screen
     a = f0 + round((t_from or 0) * fps)
     b_req = n_all if t_to is None else f0 + round(t_to * fps)
@@ -1091,6 +1344,8 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     good, held_src = None, []               # last non-blank source frame; output seconds held on it
     for o in range(n_out):
         f = a + int(o / ofps * fps + 1e-6)              # source frame shown at this output frame
+        if skip_s and f < f0 + skip_s * fps + 1:
+            f = int(f0 + skip_s * fps + 1)              # the state after the opening changes (no flash, CUT05)
         while cur_src < min(f, b - 1):
             buf = dec.stdout.read(fb)
             if len(buf) < fb:
@@ -1165,33 +1420,6 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         if key not in sprite_cache:
             sprite_cache[key] = cursor_sprite(key)
         spr, hot = sprite_cache[key]
-        # facecam: the bubble hides while a target sits under it on screen
-        # the target the camera is HOLDING on counts for as long as it holds
-        # Jake 2026-10-07: the bubble keeps its exact place; it fades ONLY while an ACTION (click,
-        # type, drag) lands on something under it — never for a read, a hover or a held framing
-        targets = [e for e in action_targets(ev, t) if e["type"] in p.get("bubble_hide_actions", ())]
-        for e in targets:
-            # the target's on-screen box (0..1) against the bubble's zone: hide when a real
-            # share of the target sits under it (its centre alone missed a wide headline)
-            bx, by, bw2, bh2 = e["box"]
-            ax0, ay0 = (bx - x0) / cw, (by - y0) / ch
-            ax1, ay1 = (bx + bw2 - x0) / cw, (by + bh2 - y0) / ch
-            zx0, zy0, zx1, zy1 = p["bubble_zone"]
-            ix = max(0.0, min(ax1, zx1) - max(ax0, zx0))
-            iy = max(0.0, min(ay1, zy1) - max(ay0, zy0))
-            area = max(1e-6, (ax1 - ax0) * (ay1 - ay0))
-            # the point being acted on (the cursor at a click) under the disc also counts
-            ux, uy = (cx_t[f] - x0) / cw, (cy_t[f] - y0) / ch
-            dcx, dcy, dr = BUBBLE_DISC
-            on_disc = math.hypot(ux - dcx, (uy - dcy) * 9 / 16) <= dr * 1.05
-            clicky = e["type"] in ("click", "dblclick")
-            # a clicked target whose on-screen box sits under the disc counts too (not only the cursor
-            # point at the press): the viewer must SEE what is clicked as the camera lands on it
-            # ROUND 2 ruling (review D12, Jake's BB01 exception): hide ONLY when the clicked/typed element's
-            # on-screen box intersects the facecam DISC — not the cursor path, not the zone rectangle
-            if hide_decision.get(id(e)):
-                hide.append(round(o / ofps, 3))
-                break
         # blank screens (a page that scrolled into an empty/black section): reported so the
         # edit can cut back to the presenter instead of showing nothing
         small = cv2.resize(img, (96, 54), interpolation=cv2.INTER_AREA)
@@ -1214,15 +1442,7 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
     enc.stdin.close()
     enc.wait()
     dec.wait()
-    # hide frames → spans (output seconds), merged over 0.5 s gaps; a flicker shorter than 0.3 s
-    # (a box crossing the zone while the camera moves) is not an action under the bubble
-    spans = []
-    for t_ in hide:
-        if spans and t_ - spans[-1][1] < 0.5:
-            spans[-1][1] = t_
-        else:
-            spans.append([t_, t_])
-    spans = [s_ for s_ in spans if s_[1] - s_[0] >= 0.3]
+    spans = bubble_hide_spans(ev, keys, fps, f0, p, eases, t_from or 0, n_out, ofps, hide_decision)
     bl = []
     for t_ in blank:
         if bl and t_ - bl[-1][1] < 2.5 / ofps:
@@ -1230,7 +1450,10 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
         else:
             bl.append([t_, t_])
     scroll_t = [round(e["t"] - (t_from or 0), 3) for e in ev["events"] if e["type"] == "scroll"]
-    json.dump({"f0": f0, "moves": keys, "bubble_hide": spans, "held_blank_frames": len(held_src), "blank": [b_ for b_ in bl if b_[1] - b_[0] >= 0.5],
+    end_s = span_end if span_end is not None else (n_all - f0) / fps
+    json.dump({"f0": f0, "moves": keys, "bubble_hide": spans, "lead_skip": skip_s,
+               "landings": landings(keys, ev, fps, f0, p),
+               "motion_events": [round(t_, 3) for t_ in motion_events(keys, ev, fps, f0, end_s, p)], "held_blank_frames": len(held_src), "blank": [b_ for b_ in bl if b_[1] - b_[0] >= 0.5],
                "scrolls": scroll_t,
                "xfades": [[round((s_ - f0) / fps - (t_from or 0), 3), n_] for s_, n_ in xfades],
                "pans": sum(1 for m in keys if m[4] == "pan"),
@@ -1240,8 +1463,9 @@ def render(recdir, out, size=(1920, 1080), t_from=None, t_to=None, crf=16, prese
 
 if __name__ == "__main__":
     args = sys.argv[1:]
-    opt = {k: args[args.index(k) + 1] for k in ("--size", "--from", "--to", "--fps") if k in args}
+    opt = {k: args[args.index(k) + 1] for k in ("--size", "--from", "--to", "--fps", "--words") if k in args}
     size = tuple(int(v) for v in opt.get("--size", "1920x1080").split("x"))
     keys = render(args[0], args[1], size, float(opt["--from"]) if "--from" in opt else None,
-                  float(opt["--to"]) if "--to" in opt else None, out_fps=float(opt["--fps"]) if "--fps" in opt else None)
+                  float(opt["--to"]) if "--to" in opt else None, out_fps=float(opt["--fps"]) if "--fps" in opt else None,
+                  words=opt.get("--words"))
     print(json.dumps({"keys": len(keys)}))

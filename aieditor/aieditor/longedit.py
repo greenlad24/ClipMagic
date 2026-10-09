@@ -404,6 +404,11 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
 
     def camera(job):
         i, seg, clip, _, tail = job
+        # G5 step 2 (p3): the camera times each named target from its spoken word — the narration words on
+        # this clip's clock go next to events.json (camera.load_words reads <recdir>/words.json)
+        (w / f"seg-{i:02d}" / "rec" / "words.json").write_text(json.dumps(
+            [{"word": x["word"], "start": round(x["start"] - seg["t0"], 3), "end": round(x["end"] - seg["t0"], 3)}
+             for x in _video(d, k)["words"] if seg["t0"] - 1.0 <= x["start"] <= seg["t1"] + 1.0]))
         _docker(["python3", "/a/screencast/camera.py", f"/w/seg-{i:02d}/rec", f"/w/{clip}", "--size", f"{W}x{H}",
                  "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + tail:.3f}", "--fps", f"{fps:.8f}"],
                 [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-cam")

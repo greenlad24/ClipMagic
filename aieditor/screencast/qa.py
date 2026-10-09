@@ -272,7 +272,7 @@ def edit_metrics(edit_dir, video):
                 us = [ease(j / 200) for j in range(201)]
                 vmax = max(b - a for a, b in zip(us, us[1:])) * 200 / (m[1] / cfps)
                 pan_peaks.append(dist * vmax)
-            if z1 > z0 + 0.02 and m[4] != "drift":
+            if z1 > z0 + 0.02 and m[4] not in ("drift", "push"):   # (ZM10 gap fillers are not framing zooms)
                 zin.append(z1)
                 deep += z1 > 1.6 + 1e-6
             times.append(((m[0] - f0) / cfps, m[1] / cfps))

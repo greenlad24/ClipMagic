@@ -20,8 +20,8 @@
   "zoom_out_frames": 40,
   "zoom_min": 1.2,
   "zoom_max": 1.4,
-  "zoom_cap": 1.6,
-  "zoom_deep": 2.0,
+  "zoom_cap": 1.65,
+  "zoom_deep": 1.65,
   "entry_zoom": 1.28,
   "entry_delay_frames": 1.5,
   "entry_frames": 40,
@@ -68,10 +68,10 @@
    0.75,
    0.75
   ],
-  "word_lead_s": 0.0,
+  "word_lead_s": 0.8,
   "entry_target_s": 1.0,
   "type_zoom": false,
-  "xfade_same_site": true,
+  "xfade_same_site": false,
   "bubble_hide_actions": [
    "click",
    "dblclick",
@@ -83,7 +83,14 @@
   "cluster_note": "Jake #1/#2 (2026-10-07): each named thing gets its own centred framing — clustering only within 2 s (was 6 s, one framing for a whole list)",
   "moves_budget_note": "Jake #2 constant motion (2026-10-07): the 6/min budget (refs' clean moves only) dropped named beats (v12b: the Resize click at 0:23); refs have 17–25 motion events/min",
   "hold_note_round2": "ROUND 2 ruling (review D16): no hold > ~3 s without a catalogued move — a ZM10 slow centred push (×1.08 over 46 f, refs ×1.06–1.26 over 24–46 f) starts 1.5 s after the last motion when the gap is ≥ 3 s.",
-  "drift_note_round3": "ROUND 3 (review N11): rendered drifts were ×1.02–1.04 in 19–23 f (ease tails + alternating push/pull, one outward ×0.96). Now one inward ZM10 push ×1.12 over 42 f (catalogue ×1.06–1.26, D 24–46 f), skipped when the hold cannot fit the whole push."
+  "drift_note_round3": "ROUND 3 (review N11): rendered drifts were ×1.02–1.04 in 19–23 f (ease tails + alternating push/pull, one outward ×0.96). Now one inward ZM10 push ×1.12 over 42 f (catalogue ×1.06–1.26, D 24–46 f), skipped when the hold cannot fit the whole push.",
+  "push_ease": [
+   0.25,
+   0.25,
+   0.75,
+   0.75
+  ],
+  "g5_note": "GAP LIST G5 (2026-10-09, factory/aligned p3): camera.py plans with the reference numbers in camera.REF (RULEBOOK F1-F4, M1-M7, P1-P2, T1-T8, B2): targets = compiled target_box or the acted element (grown to its container under 120 px), never a read/hover/cursor point; moves start 0.5-0.9 s before the naming word and land by +0.3 s, 34-48 f in / 34-40 f out, M6 cut when there is less; zoom by class (control 1.50-1.65, row 1.40-1.43, text/input 1.30-1.35, result/panel 1.19-1.30), nothing past 1.65 (zoom_deep 2.0 retired); typing at 1.00; same-site gotos are hard cuts with the zoom carried (xfade_same_site false); one inward ZM10 push per hold > 3 s, the outward 'release' is gone; bubble_hide only when the acted box meets the disc + 24 px."
  },
  "recorder": {
   "settle_after_click": true,
