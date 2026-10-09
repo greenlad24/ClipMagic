@@ -3824,7 +3824,9 @@ export interface AutoJobDetail {
   request: { format: 'short' | 'long'; sponsored: boolean; script: string | null;
     source: { kind?: 'descript' | 'job' | 'upload'; url?: string; job?: string; file?: string; title?: string; upload?: string; name?: string };
     title: string | null;
-    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn };
+    sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn;
+    /** "creative" = a Full edit's cut job; chained_from = the cut job a chained creative edit started from */
+    chain?: 'creative'; chained_from?: string };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
     cost_usd?: number; cost_live_usd?: number; updated_at?: number; started_at?: number; finished_at?: number;
@@ -3859,6 +3861,19 @@ export interface AutoJobDetail {
   held?: AutoHeld | null;
   /** a held job's edit files, kept for inspection only (not finished edits, not creative sources) */
   heldEdits?: { name: string; bytes: number; modifiedAt: number }[];
+  /** the cut → creative chain of a Full edit (null = not part of one) */
+  chain?: AutoChain | null;
+}
+export interface AutoChainLink { id: string; title: string; state: string | null }
+export interface AutoChain {
+  /** this is a Full edit's cut job */
+  isChain: boolean;
+  /** where the chain is: final / recut / creative / held (null = waiting for the cut) */
+  step: string | null;
+  /** the creative edit this cut started (null = not created yet) */
+  next: AutoChainLink | null;
+  /** the cut job this creative edit started from */
+  from: AutoChainLink | null;
 }
 /** One stage in status.json (the worker keeps progress / cost / counts per stage). */
 export interface AutoStageStatus {
@@ -3891,10 +3906,10 @@ export type AutoSourceInput = { kind: 'job'; job: string; file: string } | { kin
 export const autoEditorCreate = endpoint<{
   url?: string; source?: AutoSourceInput; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string;
   title?: string; sites?: string; runOn?: AutoRunOn;
-  /** Jake's explicit "use it anyway" for a Lab edit that is an unreviewed automatic cut */
-  allowUnreviewed?: boolean;
+  /** "creative" = Full edit: the cut job carries on into the creative edit by itself (aieditor/chain.py) */
+  chain?: 'creative';
 }, { id: string }>("autoEditorCreate");
-/** control.ts REVIEW GATE: only a final / reviewed / verified cut is a creative source by default */
+/** control.ts REVIEW GATE: only a final / reviewed / verified cut is a creative source (never an unreviewed one) */
 export type AutoReviewStatus = 'final' | 'reviewed' | 'verified' | 'unreviewed';
 /** A finished edit of workflow 1 — per video final-NN.mp4, else the newest preview-NN.mp4 (1080p). */
 export interface AutoLabEdit {

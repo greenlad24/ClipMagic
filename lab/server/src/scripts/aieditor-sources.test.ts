@@ -9,8 +9,9 @@
  *                file must exist), an upload (complete, claimed by one job only), the cut
  *                workflow keeps Descript only; listLabEdits (final > preview, per video, cut
  *                jobs only, _uploads ignored); stage title of the "download" stage; the
- *                REVIEW GATE (an unreviewed automatic cut is labelled and refused without
- *                allowUnreviewed — factory-e2e-test fixture)
+ *                REVIEW GATE (an unreviewed automatic cut is never offered and always refused —
+ *                no override tick — factory-e2e-test fixture); the Full edit's chain request
+ *                (chain: creative → factory takes policy, no_edit) and getJob's chain links
  * Run:
  *   cd lab/server && npx tsx src/scripts/aieditor-sources.test.ts
  */
@@ -151,6 +152,7 @@ async function main() {
   w("onlypreview-1005-bbbb/request.json", { title: "131 test", format: "long", created_at: 50 });
   w("onlypreview-1005-bbbb/source.json", { width: 3840, height: 2160 });
   w("onlypreview-1005-bbbb/preview-01.mp4", "P");
+  w("onlypreview-1005-bbbb/review.json", { edited: true });          // Jake reviewed this cut
   w("creative-1005-cccc/request.json", { title: "A creative one", format: "long", workflow: "creative", created_at: 300 });
   w("creative-1005-cccc/final-01.mp4", "F");
   w("nothing-yet-1005-dddd/request.json", { title: "Running", format: "long", created_at: 400 });
@@ -165,8 +167,8 @@ async function main() {
     assert.deepEqual([lin.videos[0].width, lin.videos[0].height], [3840, 2160]);
     assert.equal(lin.videos[0].duration, 964.13);
     const sh = edits[0];
-    assert.deepEqual(sh.videos.map((v) => [v.file, v.quality, v.title]), [["final-01.mp4", "final", "A"], ["preview-02.mp4", "preview", "B"]]);
-    assert.deepEqual([sh.videos[1].width, sh.videos[1].height], [1080, 1920]);   // a 9:16 preview
+    // preview-02 has no final and nobody reviewed it: an unreviewed automatic cut is not offered
+    assert.deepEqual(sh.videos.map((v) => [v.file, v.quality, v.title]), [["final-01.mp4", "final", "A"]]);
     assert.deepEqual([edits[2].videos[0].width, edits[2].videos[0].height], [1920, 1080]);
     const all = await ctl.listJobs();
     assert.ok(!all.some((j) => j.id.startsWith("_")), "_uploads is not a job");
@@ -242,31 +244,69 @@ async function main() {
     assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, null, edl, { policy: "factory", unapproved: 3, approved_by: null }).review, "unreviewed");
     assert.equal(ctl.reviewStatusOf("preview-01.mp4", false, null, null, null).removedWords, null);
   });
-  await check("listLabEdits labels factory-e2e-test an Unreviewed automatic cut (49 words removed)", async () => {
+  await check("listLabEdits never offers an unreviewed automatic cut (factory-e2e-test, 45 removals)", async () => {
     const edits = await ctl.listLabEdits();
-    const e2e = edits.find((e) => e.id === "factory-e2e-test")!;
-    assert.ok(e2e, "listed (it can still be picked with Jake's tick)");
-    assert.deepEqual([e2e.videos[0].review, e2e.videos[0].reviewLabel, e2e.videos[0].removedWords, e2e.videos[0].removals],
-      ["unreviewed", "Unreviewed automatic cut", 49, 45]);
+    assert.ok(!edits.some((e) => e.id === "factory-e2e-test"), "factory-e2e-test is not in the picker");
     const lin = edits.find((e) => e.id === "linearity-10050728-8866")!;
     assert.equal(lin.videos[0].review, "final");
     const sh = edits.find((e) => e.id === "shorts-t7-1005-aaaa")!;
-    assert.deepEqual(sh.videos.map((v) => v.review), ["final", "unreviewed"]);     // preview-02 has no final-02
-    assert.equal(edits.find((e) => e.id === "onlypreview-1005-bbbb")!.videos[0].review, "unreviewed");
+    assert.deepEqual(sh.videos.map((v) => v.review), ["final"]);              // preview-02 (no final-02) left out
+    assert.equal(edits.find((e) => e.id === "onlypreview-1005-bbbb")!.videos[0].review, "reviewed");
+    assert.deepEqual(ctl.ACCEPTED, ["final", "reviewed", "verified"]);
   });
-  await check("createJob refuses an unreviewed automatic cut unless Jake ticks “use it anyway”", async () => {
+  await check("createJob refuses an unreviewed automatic cut with a clear message — no override", async () => {
     const src = { kind: "job", job: "factory-e2e-test", file: "preview-01.mp4" };
-    await rejects(ctl.createJob({ ...base, source: src }), /unreviewed automatic cut \(49 spoken words removed\)/);
-    await rejects(ctl.createJob({ ...base, source: src, allowUnreviewed: "yes" as any }), /unreviewed automatic cut/);
-    const { id: jid } = await ctl.createJob({ ...base, source: src, allowUnreviewed: true });
-    const req = JSON.parse(fs.readFileSync(path.join(jobs, jid, "request.json"), "utf8"));
-    assert.deepEqual(req.source, { ...src, title: "Factory end-to-end test (delete me)", allow_unreviewed: true });
-    // Jake approves the cut as it is: accepted, no override recorded
+    const e = await rejects(ctl.createJob({ ...base, source: src }), /unreviewed automatic cut \(49 spoken words removed\) that did not pass the word check/);
+    assert.doesNotMatch(String(e.message), /tick|anyway/i);
+    // a stale allowUnreviewed from an old client changes nothing
+    await rejects(ctl.createJob({ ...base, source: src, allowUnreviewed: true } as any), /did not pass the word check/);
+    // the automatic gate: a factory cut whose word check found 0 unapproved removals is accepted
+    w("factory-e2e-test/wordiff.json", { policy: "factory", unapproved: 0, approved_by: null });
+    const { id: j1 } = await ctl.createJob({ ...base, source: src });
+    const r1 = JSON.parse(fs.readFileSync(path.join(jobs, j1, "request.json"), "utf8"));
+    assert.deepEqual(r1.source, { ...src, title: "Factory end-to-end test (delete me)" });
+    assert.equal((await ctl.listLabEdits()).find((x) => x.id === "factory-e2e-test")!.videos[0].review, "verified");
+    fs.rmSync(path.join(jobs, "factory-e2e-test", "wordiff.json"));
+    // Jake approved the cut as it is (optional review screen): accepted too
     w("factory-e2e-test/review.json", { edited: false, approved: true, videos: [] });
     const { id: j2 } = await ctl.createJob({ ...base, source: src });
     const r2 = JSON.parse(fs.readFileSync(path.join(jobs, j2, "request.json"), "utf8"));
     assert.equal(r2.source.allow_unreviewed, undefined);
-    assert.equal((await ctl.listLabEdits()).find((e) => e.id === "factory-e2e-test")!.videos[0].review, "reviewed");
+    assert.equal((await ctl.listLabEdits()).find((x) => x.id === "factory-e2e-test")!.videos[0].review, "reviewed");
+  });
+  await check("Full edit: chain creative → a cut job with the factory policy + the creative inputs", async () => {
+    const url = "https://share.descript.com/view/AbC123xyz";
+    const full = { workflow: "cut", chain: "creative", url, format: "long", sponsored: true, script: "Hi.",
+      sites: "linearity.io — the tool", runOn: "factory", title: "Linearity tour" } as const;
+    const { id: jid } = await ctl.createJob(full);
+    const req = JSON.parse(fs.readFileSync(path.join(jobs, jid, "request.json"), "utf8"));
+    assert.equal(req.workflow, "cut");
+    assert.equal(req.chain, "creative");
+    assert.equal(req.takes_policy, "factory");
+    assert.equal(req.no_edit, true);
+    assert.deepEqual([req.format, req.sponsored, req.script, req.run_on], ["long", true, "Hi.", "factory"]);
+    assert.deepEqual(req.sites, [{ url: "https://linearity.io/", note: "the tool" }]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(jobs, jid, "queue.json"), "utf8")), { action: "run" });
+    await rejects(ctl.createJob({ ...full, workflow: "creative" }), /starts from the raw recording/);
+    await rejects(ctl.createJob({ ...full, chain: "other" as any }), /Unknown chain/);
+    const { id: plain } = await ctl.createJob({ ...full, chain: undefined });
+    const rp = JSON.parse(fs.readFileSync(path.join(jobs, plain, "request.json"), "utf8"));
+    assert.equal(rp.chain, undefined);
+    assert.equal(rp.takes_policy, undefined);
+    assert.equal((await ctl.getJob(plain)).chain, null);
+    // the job view's links: "Next: creative edit (queued)" and "Started from: <cut job>"
+    let j = await ctl.getJob(jid);
+    assert.deepEqual(j.chain, { isChain: true, step: null, next: null, from: null });
+    w(`${jid}/chain.json`, { step: "creative", next: "linearity-tour-edit-10091200-abcd" });
+    w("linearity-tour-edit-10091200-abcd/request.json", { title: "Linearity tour — edit", workflow: "creative", chained_from: jid,
+      format: "long", sponsored: true, source: { kind: "job", job: jid, file: "final-01.mp4" } });
+    w("linearity-tour-edit-10091200-abcd/status.json", { state: "queued" });
+    w("linearity-tour-edit-10091200-abcd/queue.json", { action: "run" });
+    j = await ctl.getJob(jid);
+    assert.deepEqual(j.chain?.next, { id: "linearity-tour-edit-10091200-abcd", title: "Linearity tour — edit", state: "queued" });
+    const c = await ctl.getJob("linearity-tour-edit-10091200-abcd");
+    assert.deepEqual(c.chain?.from, { id: jid, title: "Linearity tour", state: "queued" });
+    assert.equal(c.chain?.isChain, false);
   });
   await check("sweep: removes uploads idle > 2 days, keeps one a job still waits for", async () => {
     const old = await up.createUpload({ name: "old.mp4", size: 3 });

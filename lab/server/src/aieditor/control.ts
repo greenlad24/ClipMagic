@@ -317,8 +317,12 @@ export interface CreateInput {
   workflow?: string;
   /** where the heavy steps run: "auto" (a factory server when the factory is on), "factory", "box" */
   runOn?: string;
-  /** Jake's explicit "use it anyway" for a Lab edit that is an unreviewed automatic cut (REVIEW GATE) */
-  allowUnreviewed?: boolean;
+  /**
+   * "creative" = ONE SUBMISSION = A FINISHED EDIT (the "Full edit: raw narration → finished video"
+   * card): a cut job (factory takes policy, no review step) that the worker carries on into a creative
+   * edit by itself — aieditor/chain.py. Only with workflow "cut".
+   */
+  chain?: string;
 }
 
 export type RunOn = "auto" | "factory" | "box";
@@ -353,8 +357,11 @@ function parseSites(raw: unknown): { url: string; note: string }[] {
  *   final       the final itself, or a preview whose final-NN.mp4 exists
  *   reviewed    review.json edited:true (Jake changed the cut) or approved:true
  *   verified    wordiff.json: a factory-policy cut with 0 unapproved removals
- *   unreviewed  anything else — "Unreviewed automatic cut"; a creative edit may start from it
- *               only with allowUnreviewed (Jake's explicit tick)
+ *   unreviewed  anything else — "Unreviewed automatic cut": NEVER a creative source, not offered
+ *               in the picker, refused by createJob. There is no override (Jake 2026-10-09: "when a
+ *               job is being submitted for a new video - I don't want a review step from my side -
+ *               everything should be made automatically"): a Full edit re-cuts a cut that fails the
+ *               word check by itself (aieditor/chain.py).
  */
 export type ReviewStatus = "final" | "reviewed" | "verified" | "unreviewed";
 export const REVIEW_LABEL: Record<ReviewStatus, string> = {
@@ -363,7 +370,7 @@ export const REVIEW_LABEL: Record<ReviewStatus, string> = {
   verified: "Factory cut — every word kept",
   unreviewed: "Unreviewed automatic cut",
 };
-const ACCEPTED: ReviewStatus[] = ["final", "reviewed", "verified"];
+export const ACCEPTED: ReviewStatus[] = ["final", "reviewed", "verified"];
 
 /** Pure: the review status of one video file of a cut job + the spoken words its joins removed. */
 export function reviewStatusOf(
@@ -410,7 +417,8 @@ function dimsOf(quality: "final" | "preview", src: any): [number | null, number 
 
 /**
  * Finished edits of workflow 1 ("cut", or no workflow = cut) — per video the full-resolution
- * final-NN.mp4, else the newest preview-NN.mp4 (1080p). Jobs with no video are left out.
+ * final-NN.mp4, else the newest preview-NN.mp4 (1080p). Jobs with no video are left out, and so
+ * is every video that is not an ACCEPTED source (an unreviewed automatic cut is never offered).
  */
 export async function listLabEdits(): Promise<LabEdit[]> {
   let names: string[] = [];
@@ -450,6 +458,7 @@ export async function listLabEdits(): Promise<LabEdit[]> {
         review: rs.review, reviewLabel: REVIEW_LABEL[rs.review], removedWords: rs.removedWords, removals: rs.removals,
       });
     }
+    for (const [k, v] of byK) if (!ACCEPTED.includes(v.review)) byK.delete(k);
     if (!byK.size) continue;
     out.push({
       id,
@@ -466,7 +475,7 @@ export async function listLabEdits(): Promise<LabEdit[]> {
 /** The request.json "source" for a new job, validated (path-safe names, the file exists). */
 export async function parseSource(input: CreateInput, workflow: Workflow): Promise<
   { kind: "descript"; url: string }
-  | { kind: "job"; job: string; file: string; title: string; allow_unreviewed?: true }
+  | { kind: "job"; job: string; file: string; title: string }
   | { kind: "upload"; upload: string; name: string }
 > {
   const kind: SourceKind = input.source?.kind === "job" || input.source?.kind === "upload" ? input.source.kind : "descript";
@@ -495,13 +504,11 @@ export async function parseSource(input: CreateInput, workflow: Workflow): Promi
       await readJson<any>(path.join(JOBS, job, "wordiff.json")));
     const title = String(req.title || src?.title || job).slice(0, 120);
     if (!ACCEPTED.includes(rs.review)) {
-      if (input.allowUnreviewed !== true) {
-        throw new Error(
-          `That Lab edit is an unreviewed automatic cut${rs.removedWords ? ` (${rs.removedWords} spoken words removed)` : ""}. ` +
-          "Review it in the Lab first, or tick “Use it anyway”.",
-        );
-      }
-      return { kind, job, file, title, allow_unreviewed: true };
+      throw new Error(
+        `That Lab edit is an unreviewed automatic cut${rs.removedWords ? ` (${rs.removedWords} spoken words removed)` : ""} ` +
+        "that did not pass the word check — only a final render, a reviewed cut or a factory cut with every word kept " +
+        "can start a creative edit. Use “Full edit” to go from the raw recording to the finished video automatically.",
+      );
     }
     return { kind, job, file, title };
   }
@@ -524,6 +531,11 @@ export async function createJob(input: CreateInput) {
     throw new Error("Choose the workflow: cut an unedited narration, or creative edit an edited one.");
   }
   const workflow: Workflow = input.workflow;
+  if (input.chain !== undefined && input.chain !== null && input.chain !== "" && input.chain !== "creative") {
+    throw new Error("Unknown chain.");
+  }
+  const chain = input.chain === "creative";
+  if (chain && workflow !== "cut") throw new Error("A full edit starts from the raw recording (the cut workflow).");
   const source = await parseSource(input, workflow);
   if (input.format !== "short" && input.format !== "long") throw new Error("Choose Shorts or Long-form.");
   // Jake: "important you know if it's sponsored or not" — never defaulted.
@@ -553,6 +565,10 @@ export async function createJob(input: CreateInput) {
     title: input.title ? String(input.title).slice(0, 120) : null,
     sites: input.format === "long" ? parseSites(input.sites) : [],
     run_on: runOn,
+    // ONE SUBMISSION = A FINISHED EDIT: the factory takes policy (only retakes / false starts /
+    // whitelisted fillers; never a pause, never a content cut), no review step, no full edit on the
+    // cut itself — the worker's chain (aieditor/chain.py) carries it on into the creative edit
+    ...(chain ? { chain: "creative", takes_policy: "factory", no_edit: true } : {}),
     created_at: Date.now() / 1000,
   });
   await writeJson(path.join(dir, "status.json"), {
@@ -747,6 +763,46 @@ export async function getJob(id: string) {
     log,
     /** where the current/last run executed (host writes it: aieditor/cloud.runner) — null = never routed */
     runner: await readJson<any>(path.join(dir, "runner.json")),
+    /** the cut → creative chain (aieditor/chain.py): what comes next / where this job started from */
+    chain: await chainOf(dir, req),
+  };
+}
+
+export interface ChainLink { id: string; title: string; state: string | null }
+export interface ChainInfo {
+  /** a Full edit's cut job: the creative edit it created (null = not created yet) */
+  next: ChainLink | null;
+  /** set on a Full edit's cut job: the step the chain is at (final / recut / creative / held) */
+  step: string | null;
+  isChain: boolean;
+  /** a chained creative edit: the cut job it started from */
+  from: ChainLink | null;
+}
+
+async function linkOf(id: unknown): Promise<ChainLink | null> {
+  if (typeof id !== "string" || !ID_RE.test(id)) return null;
+  const dir = path.join(JOBS, id);
+  const req = await readJson<any>(path.join(dir, "request.json"));
+  if (!req) return { id, title: id, state: "deleted" };
+  const st = (await readJson<any>(path.join(dir, "status.json"))) ?? {};
+  const queued = await exists(path.join(dir, "queue.json"));
+  return {
+    id,
+    title: String(req.title || id),
+    state: queued && st.state !== "running" ? "queued" : isHeld(st) ? "held" : st.state ?? null,
+  };
+}
+
+/** Pure-ish: the chain links of one job (request.json chain / chained_from + chain.json). */
+export async function chainOf(dir: string, req: any): Promise<ChainInfo | null> {
+  const isChain = req?.chain === "creative";
+  if (!isChain && !req?.chained_from) return null;
+  const doc = isChain ? await readJson<any>(path.join(dir, "chain.json")) : null;
+  return {
+    isChain,
+    step: doc?.step ?? null,
+    next: isChain ? await linkOf(doc?.next) : null,
+    from: req?.chained_from ? await linkOf(req.chained_from) : null,
   };
 }
 
