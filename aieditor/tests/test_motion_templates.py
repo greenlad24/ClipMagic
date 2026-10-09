@@ -150,6 +150,9 @@ try:
     check(False, "a kit with an e-mail must be refused (C7)")
 except uikits.KitError as ex:
     check("C7" in str(ex), str(ex))
+check(not uikits.privacy_issues({"captured": {"date": "2026-10-09", "at": "2026-10-09T21:02:24Z"}}),
+      "ISO capture dates are not phone numbers")
+check(uikits.privacy_issues({"x": "call +1 415 555 0134"}), "a phone number is still caught")
 (tmp / "keyed").mkdir()
 (tmp / "keyed" / "kit.json").write_text(json.dumps({**good, "app": "keyed", "x": "sk-abcdefghijklmnopqrstu"}))
 check(uikits.for_app("keyed", base=tmp)[0] is None, "a kit with a key falls back to neutral")

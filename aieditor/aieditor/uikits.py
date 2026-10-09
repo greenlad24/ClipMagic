@@ -57,6 +57,8 @@ def _strip_svg_paths(text):
 def privacy_issues(kit):
     """[(what, sample)] of private-looking text in a kit (C7). Only "Jake Dawson" may appear as a name."""
     text = _strip_svg_paths(json.dumps(kit, ensure_ascii=False))
+    # ISO dates / times ("2026-10-09", "2026-10-09T21:02:24Z") are capture stamps, not phone numbers
+    text = re.sub(r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?)?\b", " ", text)
     out = []
     for what, rx in PRIVATE_RES:
         for m in rx.finditer(text):
