@@ -169,6 +169,7 @@ check("llm.messages(" not in (ROOT / "aieditor" / "agentrec.py").read_text(), "a
 check("llm.API_HOST" in (ROOT / "bin" / "aieditor-factory").read_text(), "the factory smoke check reads llm.py's host")
 
 # ── the droplet key (cloud.droplet_env) ──
+cloud.SECRETS = TMP / "lab-secrets.json"     # never the live Lab secrets (Jake's real droplet key is there now)
 (TMP / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-ORG-secret-0001\nGROQ_API_KEY=gsk-groq-secret-0002\n")
 logs = []
 env = cloud.droplet_env(logs.append, {"require_droplet_key": False})
