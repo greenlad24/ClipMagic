@@ -489,6 +489,11 @@ def _fill_assert(a, params):
     return {k: _fill(v, params) for k, v in a.items()}
 
 
+def _wait(a):
+    """How long a live page gets to show an action's post: 2x its latency, 2-15 s."""
+    return min(15.0, max(2.0, 2 * float(a.get("typical_latency_s") or 1)))
+
+
 def _poll(session, c, wait):
     t0 = time.monotonic()
     while True:
@@ -511,13 +516,21 @@ def _run_once(session, pb, action_id, params):
         ok, why = session.check(c)
         if not ok:
             return False, f"start_state: {why}"
+    polls = getattr(session, "polls", False)
     for r in a.get("requires", []):
         for st in resolve(pb, r, params):          # the replay's params reach its requires too (a prompt to clear, a chat url)
             ok, why = session.act(st)
             if not ok:
                 return False, f"requires {r}: {why}"
+        # a required action has LANDED before the next step (its own post, polled): the image viewer is open
+        # before 'Resize' is looked for (proving run 2026-10-09: an instant 'Resize' found nothing, 3/3)
+        ra = pb["actions"][r]
+        rp = _params(ra, dict(params or {}))
+        for c in ra.get("post", []):
+            ok, why = _poll(session, _fill_assert(c, rp), _wait(ra) if polls else 0)
+            if not ok:
+                return False, f"requires {r}: post: {why}"
     p = _params(a, dict(params or {}))
-    polls = getattr(session, "polls", False)
     for c in a.get("pre", []):
         ok, why = _poll(session, _fill_assert(c, p), 4.0 if polls and a.get("requires") else 0)
         if not ok:
@@ -528,7 +541,7 @@ def _run_once(session, pb, action_id, params):
             return False, f"action: {why}"
     # the UI takes its time (ChatGPT's sidebar removes "Hide sidebar" only after its collapse animation: an
     # instant check failed 2 replays in 3, 2026-10-09): a post assert is polled for up to the action's latency
-    wait = min(15.0, max(2.0, 2 * float(a.get("typical_latency_s") or 1))) if polls else 0
+    wait = _wait(a) if polls else 0
     for c in a.get("post", []):
         ok, why = _poll(session, _fill_assert(c, p), wait)
         if not ok:

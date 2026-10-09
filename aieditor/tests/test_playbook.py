@@ -166,7 +166,8 @@ def test_replay_fake():
         check(stored["replays"][1]["ok"] is False and "post" in stored["replays"][1]["why"], "the failed replay says why")
         # a proven action that later fails a replay round loses 'proven'
         r = playbook.replay(lambda: FakeDom(broken=True), playbook.load(path), "plus_sketch", save_to=path)
-        check(r["proven"] is False and "requires open_plus_menu" not in (r["replays"][0]["why"] or "x"), f"{r}")
+        # the '+' did nothing: caught as the REQUIRED action not landing (its own post), before Sketch is looked for
+        check(r["proven"] is False and "requires open_plus_menu: post" in (r["replays"][0]["why"] or "x"), f"{r}")
         r2 = playbook.replay(lambda: FakeDom(), playbook.load(path), "plus_sketch", save_to=path)
         check(r2["proven"] is True, "requires → pre → action → post (canvas)")
         r3 = playbook.replay(lambda: FakeDom(), playbook.load(path), "close_menus", save_to=path)
