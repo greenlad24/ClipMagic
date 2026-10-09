@@ -54,6 +54,18 @@ def schema(name):
     return json.loads(_text(f"schemas/{name}.schema.json"))
 
 
+def template_doc(tid):
+    """templates/<id>.md — the usage instructions of a motion template (the overlay planner reads them)."""
+    p = ROOT / "templates" / f"{tid}.md"
+    return p.read_text() if p.exists() else ""
+
+
+def template_docs():
+    """{id: usage text} for every templates/<id>.md."""
+    d = ROOT / "templates"
+    return {p.stem: p.read_text() for p in sorted(d.glob("*.md"))} if d.is_dir() else {}
+
+
 def playbook_path(app):
     return ROOT / "playbooks" / f"{app}.json"
 

@@ -777,6 +777,67 @@ def hook_plate(U, video, facts):
                    "(BASELINE §1a: r2 0:07-0:11, r3 0:04, r5 0:12; plates <= 1.5 % and only in the first 40 s)"}
 
 
+def hook_prompt_result(U, video, facts, site_url=None, used_s=0.0):
+    """MO05 (Jake 2026-10-09: the prompt motion can show the result "instead of plain boring screencast" when the
+    narration says "you just type one sentence in plain English and it…" — "in the hook part"): a hook sentence
+    of that shape becomes a prompt → result PLATE (the motion prompt card + the app's REAL result in its UI kit)
+    when all of these hold, else nothing changes and the reason is returned (the honest route stays a screencast):
+      - it starts in the first HOOK_S, is not the presenter's moment, and no screencast covers it
+      - the app has a UI kit (uikits; never another app's UI) and pre-production produced a REAL result
+        (an app_generation asset, spaced, up to 10 tries) — never invented
+      - plates + this stay <= PLATE_MAX_FRAC of the runtime (it is a hook graphic in the structure gate)
+    → (plate | None, [notes])"""
+    from . import motiontemplates as MT, uikits
+    notes = []
+    moments = MT.hook_prompt_moments(sentences(video["words"]))
+    if not moments:
+        return None, notes
+    app = uikits.app_for_url(site_url) if site_url else None
+    lo, hi = MT.spec("prompt_result")["duration_s"]
+    cap = PLATE_MAX_FRAC * video["duration"]
+    for s, prompt in moments:
+        ids = {w["i"] for w in s}
+        mine = [u for u in U if set(u["ids"]) & ids]
+        t0, t1 = s[0]["start"], s[-1]["end"]
+        where = f"hook prompt line {t0:.1f}-{t1:.1f} s (\"{' '.join(w['word'] for w in s)[:80]}\")"
+        kit = uikits.for_app(app)[0] if app else None
+        res = MT.result_asset(facts)
+        if any(u["label"] in ("S", "P") for u in mine):
+            notes.append({"t0": t0, "why": f"{where}: a screencast or another plate covers it — MO05 not used",
+                          "code": "covered", "eligible": bool(kit and res), "start": s[0]["i"], "end": s[-1]["i"]})
+            continue
+        if any(u["hard"] for u in mine):
+            notes.append({"t0": t0, "why": f"{where}: the presenter's moment — stays A-roll", "code": "presenter"})
+            continue
+        if not kit:
+            notes.append({"t0": t0, "why": f"{where}: no UI kit for {app or 'the app'} — MO05 needs the real app UI; "
+                                           "the honest route is a screencast", "code": "no_kit"})
+            continue
+        if not res:
+            notes.append({"t0": t0, "why": f"{where}: no REAL result was produced off camera (app_generation asset) — "
+                                           "never invented; the honest route is a screencast", "code": "no_result"})
+            continue
+        a = max(0.0, t0 - LEAD)
+        b = min(max(t1 + 0.3, a + lo), a + hi, mine[-1]["next_t0"] - LEAD if mine else t1, HOOK_S + 0.5)
+        if b - a < lo - 1e-6:
+            notes.append({"t0": t0, "why": f"{where}: only {b - a:.1f} s before the next line (MO05 needs >= {lo} s)",
+                          "code": "short"})
+            continue
+        if used_s + (b - a) > cap + 0.25:
+            notes.append({"t0": t0, "why": f"{where}: plates would be {used_s + b - a:.1f} s > {cap:.1f} s "
+                                           f"({PLATE_MAX_FRAC:.1%} of the runtime)", "code": "plate_cap"})
+            continue
+        for u in mine:
+            u["label"] = "P"
+        return ({"kind": "plate", "technique": "MO05", "template": "prompt_result", "t0": round(a, 3), "t1": round(b, 3),
+                 "start": s[0]["i"], "end": s[-1]["i"], "app": app, "prompt": (res.get("prompt") or
+                                                                              (res.get("source") or {}).get("prompt") or prompt),
+                 "assets": [res["id"]], "missing": [], "words": " ".join(w["word"] for w in s)[:200],
+                 "why": "the hook says 'you just type one sentence … and it …': the prompt card + the app's REAL result "
+                        "(MO05, Jake 2026-10-09; counts as a hook plate)"}, notes)
+    return None, notes
+
+
 def _label(segments, video, facts, windows, aroll_why):
     """Units labelled from the plan + the ledger's routes; the instructional A-roll stretches it left."""
     ws = video["words"]
@@ -886,6 +947,7 @@ def fit(segments, video, facts, aroll_why=None, site_url=None):
             U, ledger, uk, left = _label(segments, video, facts, windows, aroll_why)
             aroll_actions = left + [{**x, "why": None, "compiled": True} for x, _ in covered]
     plate = hook_plate(U, video, facts)
+    mo5, mo5_notes = hook_prompt_result(U, video, facts, site_url, used_s=(plate["t1"] - plate["t0"]) if plate else 0.0)
     shape(U, dur, long_form=dur >= LONG_STRUCTURE_S)
     # beats whose word ended up on A-roll for pacing are reported (the cost function avoids it)
     dropped = []
@@ -933,7 +995,8 @@ def fit(segments, video, facts, aroll_why=None, site_url=None):
         e["status"] = "in_asset" if e["asset"] and not e["asset"].startswith("live:") else \
             "made_on_camera" if e["asset"] else "missing"
     stats = structure_stats(U, dur)
-    return {"segments": out, "plates": [plate] if plate else [], "beats": ledger, "objects": objects,
+    return {"segments": out, "plates": [p for p in (plate, mo5) if p], "motion_notes": mo5_notes,
+            "beats": ledger, "objects": objects,
             "dropped": dropped, "aroll_actions": aroll_actions, "structure": stats, "sources": segments,
             "units": [{"t0": round(u["t0"], 2), "label": u["label"], "seg": u.get("seg"),
                        **({"why": "presenter"} if u["hard"] else {}), **({"pacing": True} if u.get("pacing") else {}),
@@ -1012,7 +1075,9 @@ OV_OUTRO = (3, 4)
 OV_GAP = 0.6                      # >= 0.6 s between two overlays (director rule 3)
 OV_MID_KINDS = ("link", "like", "question")
 OV_PRIORITY = {"subscribe": 3, "link": 3, "socials": 3, "lower_title": 2, "question": 2, "like": 2,
-               "number": 1, "keyword": 0, "list": 0}
+               "number": 1, "keyword": 0, "list": 0,
+               # motion templates (hook only; motiontemplates.check enforces their own limits first)
+               "verb_swap": 1, "tagline_build": 1, "prompt_menu": 1, "prompt_card_3d": 1, "prompt_highlight": 1}
 QUESTION_RE = re.compile(r"\byou\b|\byour\b", re.I)
 BELL_RE = re.compile(r"\b(subscribe\w*|notification)\b", re.I)
 

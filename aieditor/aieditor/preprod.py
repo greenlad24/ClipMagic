@@ -563,7 +563,21 @@ def asset_manifest(job):
             assets.append({"id": "sketch_photo", "kind": "app_generation", "made_from": ["sketch"], "tool": "send",
                            "desc": "the realistic photo the app made from the sketch",
                            "prompt": "Turn this rough sketch into a realistic photo"})
-    ids = [a["id"] for a in assets]
+    # MO05 (Jake 2026-10-09): a HOOK line "you just type one sentence in plain English and it …" may show the
+    # prompt → result in the motion prompt card instead of a screencast — the result must be REAL, so it is made
+    # here, off camera, in the app (the same spaced generation flow, up to 10 tries), from the prompt the line implies
+    from . import motiontemplates
+    for s in job.sents:
+        t = job.out_time(s["ids"][0]) if hasattr(job, "out_time") else s["t0"]
+        t = s["t0"] if t is None else t
+        if t >= motiontemplates.hook_s() or not motiontemplates.is_prompt_result_line(s["text"]):
+            continue
+        prompt = motiontemplates.derive_prompt(s["text"])
+        if prompt and not any(a.get("for") == "MO05" for a in assets):
+            assets.append({"id": "hook_result", "kind": "app_generation", "made_from": [], "tool": "send", "for": "MO05",
+                           "desc": "the REAL result the hook's one-sentence prompt makes in the app (MO05)",
+                           "prompt": prompt, "said": s["text"][:200]})
+    ids = [a["id"] for a in assets if a.get("for") != "MO05"]
     shots = []
     for s in job.sents:
         # a prompt he types / reads out makes its objects ON camera (the generation), a question to the viewer
@@ -888,7 +902,7 @@ def build_assets(sl, out, elements_dir, budget, app=None, check=None, spacer=Non
             row["attempts"].append(str(e)[:300])
         if row.get("file") and row["status"] == "ready":
             files[a["id"]] = row["file"]
-        for f in ("prompt", "made_from", "tool", "text"):
+        for f in ("prompt", "made_from", "tool", "text", "for"):
             if a.get(f) is not None and f not in row:
                 row[f] = a[f]
         rows.append(row)

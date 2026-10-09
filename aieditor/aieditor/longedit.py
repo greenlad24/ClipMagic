@@ -306,7 +306,8 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
                             level="warn")
     ev_log.set_sub(None)
     progress("Rendering the overlays…", 0.88)
-    evs = graphics_long.render(w, plan["overlays"], video, fps, tag="gfx", cancelled=cancelled)
+    evs = graphics_long.render(w, plan["overlays"] + motion_plate_events(d, plan, log), video, fps, tag="gfx",
+                               cancelled=cancelled)
     json.dump(evs, open(w / "overlays.json", "w"), indent=1)
     n_ok = sum(1 for i in range(len(segs)) if (w / f"seg-{i:02d}" / "rec" / "events.json").exists())
     if not segs:
@@ -314,6 +315,38 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             + ("no site could be screencast (A-roll + overlays only)" if not sites else "the director placed none"))
     return (f"{n_ok}/{len(segs)} screencast(s)" + (f" ({n_recorded} in the logged-in app)" if n_recorded else "")
             + (f", {n_held} held" if n_held else "") + f", {len(evs)} overlay(s)"), usd
+
+
+def motion_plate_events(d, plan, log=None):
+    """The hook PROMPT → RESULT plates (MO05, planfit.hook_prompt_result) as motion overlay events, each with the
+    REAL result produced off camera (preprod assets.json). A plate whose result file is gone is NOT rendered (the
+    A-roll shows) and the reason is logged — never an invented result."""
+    from . import motiontemplates as MT
+    assets = {}
+    p = Path(d) / "preprod" / "assets.json"
+    if p.exists():
+        assets = {a.get("id"): a for a in json.load(open(p)).get("assets", [])}
+    out = []
+    for pl in plan.get("plates") or []:
+        if pl.get("technique") != "MO05":
+            continue
+        a = next((assets[x] for x in pl.get("assets", []) if x in assets), None)
+        rv = MT.result_view(a) if a and a.get("status") == "ready" else None
+        if not rv:
+            if log:
+                log(f"MO05 prompt → result at {pl['t0']:.1f} s not rendered: the real result "
+                    f"({', '.join(pl.get('assets', [])) or 'none'}) is not on disk — the A-roll stays (never invented)")
+            continue
+        params, errs = MT.validate_params("prompt_result", {"prompt": pl.get("prompt"), "app": pl.get("app"),
+                                                            "result_asset": a["id"]})
+        if errs:
+            if log:
+                log(f"MO05 at {pl['t0']:.1f} s not rendered: {'; '.join(errs)}")
+            continue
+        out.append({"template": "prompt_result", "technique": "MO05", "t0": pl["t0"], "t1": pl["t1"],
+                    "start": pl.get("start"), "end": pl.get("end"), "fields": {"prompt": pl.get("prompt"), "app": pl.get("app")},
+                    "params": {**params, "result": rv}, "why": pl.get("why", "")})
+    return out
 
 
 GUARD_EVERY_S = gates.GUARD_EVERY_S     # qa_frames.py samples every 0.5 s (gap list G4.2)
@@ -655,8 +688,8 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         progress("Overlay frame names repaired", 0.6)
     if W != 1920:                                        # overlays re-rendered at the output size
         progress("Overlays at full resolution…", 0.65)
-        events = graphics_long.render(w, plan["overlays"], _video(d, k), fps, size=size, tag=f"gfx-{W}",
-                                      cancelled=cancelled)
+        events = graphics_long.render(w, plan["overlays"] + motion_plate_events(d, plan), _video(d, k), fps, size=size,
+                                      tag=f"gfx-{W}", cancelled=cancelled)
     music = pick_music(d / base)
     progress("Compositing (screencasts, bubble, overlays, music)…", 0.75)
     crf = crf or (17 if W == 1920 else 16)

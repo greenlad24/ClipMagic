@@ -33,8 +33,16 @@ try {
   // scene.scale: lay out in design px (e.g. 1080×1920) and render at scale× (2 → 2160×3840)
   await page.setViewport({ width: scene.width, height: scene.height, deviceScaleFactor: scene.scale || 1 });
   await page.goto(`file://${tmpHtml}`);
-  await page.addScriptTag({ path: path.join(here, "engine.js") });
-  await page.evaluate((sc) => window.__load(sc), scene);
+  if (scene.template) {
+    // a motion TEMPLATE (motion/templates/<id>.js on the shared runtime; aieditor/motiontemplates.py)
+    await page.addScriptTag({ path: path.join(here, "templates", "runtime.js") });
+    await page.addScriptTag({ path: path.join(here, "templates", `${scene.template.replace(/[^a-z0-9_]/g, "")}.js`) });
+    await page.evaluate((sc) => window.__loadTemplate(sc), scene);
+  } else {
+    await page.addScriptTag({ path: path.join(here, "engine.js") });
+    await page.evaluate((sc) => window.__load(sc), scene);
+  }
+  await page.evaluate(() => document.fonts.ready.then(() => true));
   if (process.env.MEASURE) {
     // ink boxes only (to size fonts against a measured reference box), no frames
     console.log(JSON.stringify(await page.evaluate(() => window.__inks())));

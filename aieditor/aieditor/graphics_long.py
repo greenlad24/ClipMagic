@@ -21,7 +21,11 @@ import json
 import re
 from pathlib import Path
 
-from . import compose, recipes2 as R2
+from . import compose, events as ev_log, motiontemplates, recipes2 as R2, uikits
+
+
+def _log(msg):
+    ev_log.emit("log", msg)
 
 FPS2 = R2.FPS2
 # TODO(p2): read these from the skill's rules.json through aieditor/skill.py once p2 merges (same values).
@@ -192,6 +196,21 @@ def render(job, events, video, fps_out, size=(1920, 1080), cancelled=lambda: Fal
     scale = size[0] / 1920
     out = []
     for m, ev in enumerate(events):
+        if motiontemplates.is_motion(ev.get("template")):
+            # a motion TEMPLATE (verb_swap … prompt_result): its own DOM renderer on the shared runtime, timed by the
+            # spoken words (motiontemplates.beats), the prompt box in the app's UI kit (none → neutral box, logged)
+            p = (ev.get("params") or {})
+            kit = uikits.for_app(p.get("app"), log=lambda msg: _log(f"overlay {m + 1}: {msg}"))[0] \
+                if ev.get("template") in ("prompt_menu", "prompt_card_3d", "prompt_highlight", "prompt_result") else None
+            sc = motiontemplates.scene(ev, video, fps_out, size, kit=kit, result=p.get("result"))
+            d = g / f"ev-{m:02d}"
+            (g / f"ev-{m:02d}.json").write_text(json.dumps(sc))
+            progress(f"Rendering overlay {m + 1} of {len(events)} ({ev['template']})…", m / max(1, len(events)))
+            compose._docker(["--entrypoint", "node", compose.LAB_IMAGE, "/app/motion/render.mjs", f"/g/ev-{m:02d}.json",
+                             f"/g/ev-{m:02d}"], cancelled, [(compose.MOTION, "/app/motion"), (g, "/g")])
+            out.append({**{k: v for k, v in ev.items() if k != "params"}, "frames_dir": f"ev-{m:02d}",
+                        "start_frame": sc["outFirst"], "full_frame": bool((sc["params"] or {}).get("backdrop", True))})
+            continue
         L, a, b = layers_for(ev, video)
         if not L:
             continue
