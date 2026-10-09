@@ -350,7 +350,7 @@ def test_content_first():
           "every regeneration names the missing object (10 photo tries + the second asset)")
     check(a["photo2"]["status"] == "ready" and len(a["photo2"]["checks"]) == 1, "a matching picture passes first time")
     gaps = [b - x for x, b in zip(res["generations_at"], res["generations_at"][1:])]
-    check(len(gaps) == 3 and all(g >= 45 - 1e-9 for g in gaps), f"generations spaced >= 45 s (fake clock): {gaps}")
+    check(len(gaps) == config.GEN_REGENS + 1 and all(g >= 45 - 1e-9 for g in gaps), f"generations spaced >= 45 s (fake clock): {gaps}")
     check(len(FAKE.bodies) == 4 and all(b["model"] == config.VISION_MODEL for b in FAKE.bodies), "one Sonnet vision call each")
     img = FAKE.bodies[0]["messages"][0]["content"][0]
     check(img["type"] == "image" and "napkin" in FAKE.bodies[0]["messages"][0]["content"][1]["text"], "the check sees the picture")
