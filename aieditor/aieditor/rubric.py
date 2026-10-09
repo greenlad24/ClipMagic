@@ -412,7 +412,7 @@ def _narration(d, req):
     wd = _jload(Path(d) / "wordiff.json") or {}
     out["unapproved"] += int(wd.get("unapproved") or 0)
     src = (req or {}).get("source") or {}
-    if src.get("kind") == "job" and src.get("allow_unreviewed") is not True:
+    if src.get("kind") == "job":
         try:
             from . import sources
             rs = sources.review_status(Path(d).parent, str(src.get("job")), str(src.get("file") or "preview-01.mp4"))

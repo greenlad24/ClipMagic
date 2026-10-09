@@ -10,9 +10,10 @@
   worker        run_job's download stage takes the local path (no Descript call)
   review gate   a cut job's preview is a source only when the cut was reviewed (review.json
                 edited/approved), has a final, or is a factory cut with 0 unapproved removals;
-                an unreviewed automatic cut is refused unless allow_unreviewed (Jake's tick) —
-                checked on a scratch copy of the real factory-e2e-test (Jake 2026-10-09:
-                "it also did cuts inside the narration that I didn't ask for")
+                an unreviewed automatic cut is ALWAYS refused — there is no override tick
+                (Jake 2026-10-09: "I don't want a review step from my side"; a stale
+                allow_unreviewed in an old request is ignored) — checked on a scratch copy of
+                the real factory-e2e-test ("it also did cuts inside the narration that I didn't ask for")
 
 Run: python3 tests/test_sources.py
 """
@@ -254,15 +255,12 @@ def review_gate(jobs):
     d, req = new_job(jobs, "creative-g-1", src)
     unreviewed(lambda: sources.materialise(d, req, jobs))
     check(not (d / "source.mp4").exists(), "nothing placed from a refused source")
-    # Jake ticked "use it anyway": accepted, and the facts say what it is
-    p, facts = sources.resolve({**src, "allow_unreviewed": True}, jobs)
-    check(p == cut / "preview-01.mp4" and facts["review"] == "unreviewed" and facts["allow_unreviewed"] is True
-          and facts["removed_words"] == 5, f"allowed facts {facts}")
+    # no override any more: a stale allow_unreviewed (an old request) is ignored, and nothing is placed
+    msg2 = unreviewed(lambda: sources.resolve({**src, "allow_unreviewed": True}, jobs))
+    check("did not pass the word check" in msg2 and "tick" not in msg2, f"clear message, no tick: {msg2}")
     d2, req2 = new_job(jobs, "creative-g-2", {**src, "allow_unreviewed": True})
-    note = sources.prepare(d2, req2, jobs, fake_probe)
-    check("UNREVIEWED automatic cut (5 words removed)" in note, f"note says so: {note!r}")
-    check(json.loads((d2 / "source.json").read_text())["review"] == "unreviewed", "source.json records it")
-    unreviewed(lambda: sources.resolve({**src, "allow_unreviewed": "true"}, jobs))      # only a real true
+    unreviewed(lambda: sources.prepare(d2, req2, jobs, fake_probe))
+    check(not (d2 / "source.mp4").exists(), "nothing placed from an old allow_unreviewed request")
     # a factory cut whose word-diff found an unapproved removal stays unreviewed
     (cut / "wordiff.json").write_text(json.dumps({"policy": "factory", "unapproved": 2, "approved_by": None}))
     unreviewed(lambda: sources.resolve(src, jobs))

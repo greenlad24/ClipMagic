@@ -15,16 +15,18 @@ os.replace()s it, i.e. a NEW inode, never truncating the shared one.
 
 An upload folder is removed as soon as its bytes live in the job (the link keeps them).
 
-⚠️ REVIEW GATE (Jake 2026-10-09: "it also did cuts inside the narration that I didn't ask
-for"). A cut job writes preview-NN.mp4 the moment its AUTOMATIC cut exists — before Jake
-has looked at a single removal. The factory edit he watched started from exactly that
-(factory-e2e-test/preview-01.mp4: 53 joins, review.json edited:false, no final). So a
-preview is a source only when the cut was reviewed (review_status):
+⚠️ SOURCE GATE — AUTOMATIC, no human step (Jake 2026-10-09: "it also did cuts inside the
+narration that I didn't ask for", then "when a job is being submitted for a new video - I
+don't want a review step from my side - everything should be made automatically"). A cut
+job writes preview-NN.mp4 the moment its AUTOMATIC cut exists. The factory edit he watched
+started from exactly that (factory-e2e-test/preview-01.mp4: 53 joins, 45 removals, no
+final). So a cut is a creative source only when one of these holds (review_status):
   final       final-NN.mp4 itself, or a preview whose final-NN.mp4 exists
   reviewed    review.json edited:true (Jake changed it) or approved:true (approved as is)
-  verified    wordiff.json of a factory-policy cut with 0 unapproved removals
-  unreviewed  anything else — refused unless the request carries allow_unreviewed:true,
-              which only Jake sets (the Lab's "use it anyway" tick)
+  verified    wordiff.json of a factory-policy cut with 0 unapproved removals (the word check)
+  unreviewed  anything else — ALWAYS refused. There is no override tick any more: a cut that
+              fails the word check is re-cut automatically by the chain (aieditor/chain.py),
+              never handed to Jake.
 """
 import json
 import os
@@ -78,6 +80,15 @@ def review_status(jobs_root, jid, fname):
     return {**out, "status": "unreviewed"}
 
 
+def refusal(jid, fname, rs):
+    """The clear message for a refused source (no override exists — see SOURCE GATE)."""
+    n = rs.get("removed_words")
+    return (f"the Lab edit {jid} ({fname}) is an unreviewed automatic cut"
+            + (f" ({n} spoken word(s) removed)" if n else "")
+            + " that did not pass the word check — only a final render, a reviewed cut or a factory cut "
+              "with every word kept can start a creative edit (a Full edit re-cuts automatically)")
+
+
 def kind_of(req):
     k = ((req or {}).get("source") or {}).get("kind") or "descript"
     return k if k in LOCAL_KINDS else "descript"
@@ -111,16 +122,11 @@ def resolve(src, jobs_root, self_id=None):
             raise SourceError(f"the Lab edit {jid} has no {fname} any more")
         title = req.get("title") or (_jload(jdir / "source.json", {}) or {}).get("title") or jid
         rs = review_status(jobs_root, jid, fname)
-        if rs["status"] not in ACCEPTED and src.get("allow_unreviewed") is not True:
-            n = rs.get("removed_words")
-            raise UnreviewedSource(
-                f"the Lab edit {jid} ({fname}) is an unreviewed automatic cut"
-                + (f" ({n} spoken word(s) removed)" if n else "")
-                + " — review it in the Lab first, or tick 'use it anyway'", rs["status"])
+        if rs["status"] not in ACCEPTED:
+            raise UnreviewedSource(refusal(jid, fname, rs), rs["status"])
         return path, {"kind": "job", "from_job": jid, "from_file": fname, "title": title,
                       "quality": "final" if fname.startswith("final-") else "preview",
-                      "review": rs["status"], "removed_words": rs.get("removed_words"),
-                      **({"allow_unreviewed": True} if rs["status"] not in ACCEPTED else {})}
+                      "review": rs["status"], "removed_words": rs.get("removed_words")}
     if kind == "upload":
         uid = str(src.get("upload") or "")
         if not UPLOAD_RE.match(uid):
@@ -194,8 +200,7 @@ def facts_for(job_dir, req, jobs_root):
                 "title": src.get("title") or title or jid,
                 "quality": "final" if fname.startswith("final-") else "preview",
                 **({"review": rs["status"], "removed_words": rs.get("removed_words")}
-                   if (Path(jobs_root) / jid / "request.json").exists() and rs else {}),
-                **({"allow_unreviewed": True} if src.get("allow_unreviewed") is True else {})}
+                   if (Path(jobs_root) / jid / "request.json").exists() and rs else {})}
     name = str(src.get("name") or "upload")[:200]
     return {"kind": "upload", "upload": src.get("upload"), "filename": name, "title": Path(name).stem}
 
