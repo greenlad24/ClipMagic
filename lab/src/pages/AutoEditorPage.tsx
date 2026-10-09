@@ -770,7 +770,7 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
             <span className={cn('shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', badge.cls)}>{badge.text}</span>
           </div>
           <p className="text-xs text-muted-foreground">
-            {WORKFLOW_LABEL[(job.workflow ?? job.request.workflow ?? 'cut') as AutoWorkflow]} ·{' '}
+            {job.chain?.isChain ? 'Full edit · cut' : WORKFLOW_LABEL[(job.workflow ?? job.request.workflow ?? 'cut') as AutoWorkflow]} ·{' '}
             {job.request.format === 'short' ? 'Shorts' : 'Long-form'} ·{' '}
             {job.request.sponsored ? 'Sponsored' : 'Not sponsored'}
             {job.request.source?.kind === 'job'
@@ -824,6 +824,7 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
           </Button>
         </div>
       )}
+      {job.chain && <ChainLinks chain={job.chain} />}
       {state === 'held' && job.held && <HeldPanel held={job.held} />}
       <JobProgress job={job} live={live} onContinue={canContinue ? doContinue : undefined} />
 
@@ -844,6 +845,48 @@ function JobDetail({ id, onChanged, onDeleted }: { id: string; onChanged: () => 
           <summary className="cursor-pointer px-3 py-1.5 text-[11px] text-muted-foreground">Raw worker log (log.txt, last 8 KB)</summary>
           <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 pb-3 text-[10px] text-muted-foreground">{job.log}</pre>
         </details>
+      )}
+    </div>
+  );
+}
+
+const CHAIN_STEP: Record<string, string> = {
+  final: 'waiting for the final cut',
+  recut: 're-cutting (the word check failed once)',
+  held: 'stopped — the cut is held',
+};
+
+/**
+ * The cut → creative chain of a Full edit (aieditor/chain.py): where this job goes next and where it
+ * started from, as links. Informational only — nothing here waits for Jake.
+ */
+function ChainLinks({ chain }: { chain: NonNullable<AutoJobDetail['chain']> }) {
+  const stateText = (s: string | null) => (s === 'done' ? 'finished' : s ?? 'queued');
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs">
+      {chain.from && (
+        <span className="text-muted-foreground">
+          Started from:{' '}
+          <Link to={`/auto-editor/${chain.from.id}`} className="text-primary hover:underline">
+            {chain.from.title}
+          </Link>{' '}
+          (the cut)
+        </span>
+      )}
+      {chain.isChain && (
+        <span className="text-muted-foreground">
+          Next: creative edit{' '}
+          {chain.next ? (
+            <>
+              <Link to={`/auto-editor/${chain.next.id}`} className="text-primary hover:underline">
+                {chain.next.title}
+              </Link>{' '}
+              ({stateText(chain.next.state)})
+            </>
+          ) : (
+            <>({CHAIN_STEP[chain.step ?? ''] ?? 'starts by itself when the cut is final'})</>
+          )}
+        </span>
       )}
     </div>
   );

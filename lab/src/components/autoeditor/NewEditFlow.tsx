@@ -14,6 +14,7 @@ import {
   Scissors,
   Sparkles,
   Upload,
+  Wand2,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -38,7 +39,12 @@ import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from '.
  * only), runOn }) — control.ts createJob validates the same fields.
  *
  * Steps: workflow → [source: creative only] → link | labedit | upload → format → sponsored →
- * [script: cut only] → [sites: long only] → review.
+ * [script: cut + full] → [sites: long only] → review.
+ * The third card, "Full edit" (Jake 2026-10-09: "when a job is being submitted for a new video - I
+ * don't want a review step from my side - everything should be made automatically"), asks what the
+ * cut asks and submits ONE cut job with chain: "creative" — the worker carries it on into the creative
+ * edit and its final by itself (aieditor/chain.py). There is no review/approval step anywhere here:
+ * the Lab-edit picker only offers final / reviewed / word-verified cuts, with no override tick.
  * Creative edits may start from a Descript link, a finished Lab edit of workflow 1, or a file
  * uploaded from the computer (Jake 2026-10-08) — request.json "source", see control.ts.
  * The upload runs in the background while the remaining questions are answered; Start
@@ -50,8 +56,11 @@ import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from '.
 // the server's own check (control.ts SHARE_RE)
 const SHARE_RE = /^https:\/\/share\.descript\.com\/view\/[A-Za-z0-9_-]{6,64}\/?$/;
 
+/** the three cards: the two workflows + "full" = a cut that chains into the creative edit */
+type FlowId = AutoWorkflow | 'full';
+
 const LS = {
-  hint: (wf: AutoWorkflow) => `autoEditor.hintSeen.${wf}`,
+  hint: (wf: FlowId) => `autoEditor.hintSeen.${wf}`,
   format: 'autoEditor.lastFormat',
   runOn: 'autoEditor.lastRunOn',
 };
@@ -71,7 +80,7 @@ const lsSet = (k: string, v: string) => {
 };
 
 const WORKFLOWS: {
-  id: AutoWorkflow;
+  id: FlowId;
   icon: typeof Scissors;
   title: string;
   promise: string;
@@ -103,6 +112,18 @@ const WORKFLOWS: {
       'Screencasts, graphics and music are added and you render the final.',
     ],
   },
+  {
+    id: 'full',
+    icon: Wand2,
+    title: 'Full edit: raw narration → finished video',
+    promise: 'Paste the RAW recording. It cuts, edits and renders the finished video — no review step.',
+    gets: ['Every word checked', 'Creative edit starts by itself', 'The 4K final'],
+    hint: [
+      'Publish the RAW recording in Descript (download allowed) and paste its share link.',
+      'The cut keeps every word you said — only retakes and false starts go — and an automatic word check proves it (a cut that fails is re-cut once by itself).',
+      'The final cut then starts the creative edit on its own: screencasts, graphics, music and the final. Nothing waits for you; the review screen stays there if you want to look.',
+    ],
+  },
 ];
 
 type SourceKind = 'descript' | 'job' | 'upload';
@@ -114,9 +135,22 @@ const SOURCE_STAGE: Record<SourceKind, string> = {
 };
 
 /** The stages the worker will run — mirrors control.ts stagesFor(). */
-function plannedStages(wf: AutoWorkflow, format: 'short' | 'long', source: SourceKind): string[] {
+function plannedStages(wf: FlowId, format: 'short' | 'long', source: SourceKind): string[] {
   const head = [SOURCE_STAGE[source], 'Extract audio', 'Transcribe', 'Re-time every word'];
-  const mid = wf === 'cut' ? ['Pick the best takes', 'Build the cut', 'Sound check'] : ['Keep the edited timeline', 'Pre-production'];
+  const mid = wf === 'creative' ? ['Keep the edited timeline', 'Pre-production'] : ['Pick the best takes', 'Build the cut', 'Sound check'];
+  if (wf === 'full') {
+    // the chain (aieditor/chain.py): the cut, its word check + final, then the creative edit by itself
+    return [
+      ...head,
+      ...mid,
+      'Word check',
+      'Final cut (source quality)',
+      'Creative edit: pre-production',
+      'Screencasts + overlays',
+      'Compose the full edit',
+      'Final render',
+    ];
+  }
   const tail =
     format === 'long'
       ? ['Render video preview', 'Screencasts + overlays', 'Compose the full edit']
@@ -128,19 +162,6 @@ type StepId = 'workflow' | 'source' | 'link' | 'labedit' | 'upload' | 'format' |
 const SUB_STEP: Record<SourceKind, StepId> = { descript: 'link', job: 'labedit', upload: 'upload' };
 
 type LabPick = { edit: AutoLabEdit; video: AutoLabEdit['videos'][number] };
-
-/**
- * control.ts REVIEW GATE (Jake 2026-10-09: "it also did cuts inside the narration that I
- * didn't ask for"): a Lab edit whose cut nobody reviewed is an "Unreviewed automatic cut" —
- * usable only with an explicit tick, and the words it removed are counted on screen.
- */
-function isUnreviewed(v: AutoLabEdit['videos'][number] | undefined): boolean {
-  return v?.review === 'unreviewed';
-}
-
-function removedText(v: AutoLabEdit['videos'][number]): string {
-  return v.removedWords ? `${v.removedWords} spoken word${v.removedWords === 1 ? '' : 's'} removed` : 'words may have been removed';
-}
 
 function mmss(sec: number | null | undefined): string {
   if (!sec || !Number.isFinite(sec)) return '—';
@@ -225,7 +246,7 @@ function Question({ children, sub }: { children: ReactNode; sub?: string }) {
 
 export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) {
   const [step, setStep] = useState<StepId>('workflow');
-  const [workflow, setWorkflow] = useState<AutoWorkflow | null>(null);
+  const [workflow, setWorkflow] = useState<FlowId | null>(null);
   const [url, setUrl] = useState('');
   const [touched, setTouched] = useState(false);
   const [format, setFormat] = useState<'short' | 'long' | null>(() => {
@@ -248,7 +269,6 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   const [labEdits, setLabEdits] = useState<AutoLabEdit[] | null>(null);
   const [labError, setLabError] = useState<string | null>(null);
   const [pick, setPick] = useState<LabPick | null>(null);
-  const [allowUnreviewed, setAllowUnreviewed] = useState(false);
   const up = useSourceUpload();
 
   useEffect(() => {
@@ -256,6 +276,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   }, []);
 
   const creative = workflow === 'creative';
+  const full = workflow === 'full';
   // the cut workflow starts from a Descript link only
   const kind: SourceKind = creative ? (sourceKind ?? 'descript') : 'descript';
   const steps: StepId[] = useMemo(() => {
@@ -268,7 +289,8 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   const idx = Math.max(0, steps.indexOf(step));
   const urlOk = SHARE_RE.test(url.trim());
   const uploadDone = up.state.status === 'done' && !!up.state.uploadId;
-  const pickOk = !!pick && (!isUnreviewed(pick.video) || allowUnreviewed);
+  // the picker only lists accepted sources (control.ts listLabEdits): no tick, nothing to confirm
+  const pickOk = !!pick;
   const sourceOk = kind === 'descript' ? urlOk : kind === 'job' ? pickOk : uploadDone;
 
   // the Lab edits, loaded once when that screen is first opened
@@ -307,7 +329,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     if (p) go(p);
   };
 
-  const pickWorkflow = (wf: AutoWorkflow) => {
+  const pickWorkflow = (wf: FlowId) => {
     setWorkflow(wf);
     // shown once per browser: marked seen the moment it is shown
     const first = lsGet(LS.hint(wf)) !== '1';
@@ -322,11 +344,9 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
   };
   const pickLabVideo = (edit: AutoLabEdit, video: AutoLabEdit['videos'][number]) => {
     setPick({ edit, video });
-    setAllowUnreviewed(false);
     // a Shorts edit stays 9:16, a long-form one 16:9
     if (edit.format === 'short' || edit.format === 'long') setFormat(edit.format);
-    // an unreviewed automatic cut stays on this screen: Jake decides with the tick below
-    if (!isUnreviewed(video)) go('format');
+    go('format');
   };
   const dismissHint = () => {
     if (workflow) lsSet(LS.hint(workflow), '1');
@@ -346,14 +366,15 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
       const r = await autoEditorCreate({
         url: kind === 'descript' ? url.trim() : undefined,
         source,
-        workflow,
+        // a Full edit is ONE cut job that chains into the creative edit (aieditor/chain.py)
+        workflow: full ? 'cut' : workflow,
+        chain: full ? 'creative' : undefined,
         format,
         sponsored,
         script: creative ? undefined : script,
         title: title.trim() || undefined,
         sites: format === 'long' ? sites : undefined,
         runOn,
-        allowUnreviewed: kind === 'job' && isUnreviewed(pick?.video) ? allowUnreviewed : undefined,
       });
       lsSet(LS.format, format);
       lsSet(LS.runOn, runOn);
@@ -495,24 +516,6 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
           <>
             <Question sub="The full-resolution final is used when there is one.">Which Lab edit?</Question>
             <LabEditPicker edits={labEdits} error={labError} pick={pick} onPick={pickLabVideo} />
-            {pick && isUnreviewed(pick.video) && (
-              <div className="space-y-2 rounded-xl border border-red-500/40 bg-red-500/10 p-3 text-sm">
-                <p className="font-medium text-red-300">Unreviewed automatic cut — {removedText(pick.video)}</p>
-                <p className="text-xs text-muted-foreground">
-                  Nobody has reviewed this cut: the words Claude removed (fillers, “So”, asides, whole sentences) are
-                  gone from the narration the creative edit starts from. Review it in the Lab first, or use it anyway.
-                </p>
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
-                  <input
-                    type="checkbox"
-                    checked={allowUnreviewed}
-                    onChange={(e) => setAllowUnreviewed(e.target.checked)}
-                    className="h-4 w-4 accent-red-400"
-                  />
-                  Use it anyway — I accept the removed words
-                </label>
-              </div>
-            )}
           </>
         )}
 
@@ -737,6 +740,8 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : creative ? (
                 <Film className="h-5 w-5" />
+              ) : full ? (
+                <Wand2 className="h-5 w-5" />
               ) : (
                 <Scissors className="h-5 w-5" />
               )}
@@ -744,7 +749,9 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                 ? `Waiting for the upload… ${pct(up.state)}%`
                 : creative
                   ? 'Start the creative edit'
-                  : 'Start cutting'}
+                  : full
+                    ? 'Start the full edit'
+                    : 'Start cutting'}
             </Button>
             {kind === 'upload' && up.state.status !== 'uploading' && !uploadDone && (
               <p className="text-center text-xs text-red-400">The upload did not finish — open “Source” above to retry.</p>
@@ -791,7 +798,7 @@ function sourceRow(kind: SourceKind, url: string, pick: LabPick | null, up: Sour
   if (kind === 'job') {
     const v = pick?.video;
     const value = pick && v
-      ? `Lab edit: ${pick.edit.title} · ${v.file}${v.width ? ` · ${v.width}×${v.height}` : ''} · ${mmss(v.duration)}${v.quality === 'preview' ? ' (preview quality)' : ''}${isUnreviewed(v) ? ` · UNREVIEWED automatic cut (${removedText(v)})` : ''}`
+      ? `Lab edit: ${pick.edit.title} · ${v.file}${v.width ? ` · ${v.width}×${v.height}` : ''} · ${mmss(v.duration)}${v.quality === 'preview' ? ' (preview quality)' : ''}`
       : 'Choose a Lab edit';
     return ['Source', value, 'labedit'];
   }
@@ -882,11 +889,7 @@ function LabEditPicker({
                       preview quality (1080p) — no final rendered yet
                     </span>
                   )}
-                  {isUnreviewed(v) ? (
-                    <span className="ml-1 mt-1 inline-block rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] text-red-300">
-                      {v.reviewLabel || 'Unreviewed automatic cut'} · {removedText(v)}
-                    </span>
-                  ) : v.review && v.review !== 'final' ? (
+                  {v.review && v.review !== 'final' ? (
                     <span className="ml-1 mt-1 inline-block rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
                       {v.reviewLabel}
                     </span>
