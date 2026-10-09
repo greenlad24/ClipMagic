@@ -5,7 +5,9 @@
 <title>Playbook replay fixture</title>
 <!-- A static stand-in for ChatGPT's composer (tests/test_playbook.py): the same selectors the chatgpt
      playbook uses — a rich-text composer, a send button, the '+' menu (Add photos & files / Create image /
-     Sketch) closed by Escape. No network, no scripts from outside. -->
+     Sketch) closed by Escape; the history sidebar ('Hide sidebar' / 'Show sidebar', with a HIDDEN duplicate
+     'Hide sidebar' button first in the document, as on chatgpt.com) and the Chat / Work switch next to a
+     'ChatGPT' logo button (a label that CONTAINS "Chat"). No network, no scripts from outside. -->
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; background: #212121; color: #ececec; font: 16px/1.4 -apple-system, "Segoe UI", sans-serif; }
@@ -19,12 +21,24 @@
   #menu.open { display: block; }
   #menu div { padding: 8px 14px; cursor: pointer; border-radius: 8px; }
   #menu div:hover { background: #424242; }
+  #side { position: fixed; left: 0; top: 0; bottom: 0; width: 260px; background: #181818; padding: 8px; }
+  #side.closed { width: 44px; }
+  #side.closed .open-only, #side:not(.closed) .closed-only { display: none; }
+  #modes { position: fixed; top: 8px; left: 50%; }
   canvas { display: block; margin: 16px auto; background: #fff; }
 </style>
 </head>
 <body>
+<button type="button" aria-label="Hide sidebar" style="display:none" id="hide-dup">x</button>
+<nav id="side">
+  <button type="button" id="logo">ChatGPT</button>
+  <button type="button" aria-label="Hide sidebar" class="open-only" id="hide">&lt;</button>
+  <button type="button" aria-label="Show sidebar" class="closed-only" id="show">&gt;</button>
+  <div class="open-only"><div>Recents</div><a href="#c1">An old chat</a></div>
+</nav>
+<div id="modes"><button type="button" id="chat">Chat</button><button type="button" id="work">Work</button></div>
 <main>
-  <h1>What's on your mind today?</h1>
+  <h1 id="h1">What should we work on?</h1>
   <div id="thread"></div>
   <div class="box">
     <button type="button" aria-label="Add files and more" id="plus">+</button>
@@ -47,6 +61,12 @@
     const c = document.createElement("canvas"); c.width = 320; c.height = 200;
     document.getElementById("canvas-slot").replaceChildren(c);
   });
+  const side = document.getElementById("side"), h1 = document.getElementById("h1");
+  // collapsed, ChatGPT renders neither "Hide sidebar" button (the hidden duplicate goes too)
+  document.getElementById("hide").addEventListener("click", () => { side.classList.add("closed"); document.querySelectorAll('[aria-label="Hide sidebar"]').forEach((e) => e.remove()); });
+  document.getElementById("show").addEventListener("click", () => side.classList.remove("closed"));
+  document.getElementById("chat").addEventListener("click", () => { h1.textContent = "What's on your mind today?"; });
+  document.getElementById("work").addEventListener("click", () => { h1.textContent = "What should we work on?"; });
   document.getElementById("send").addEventListener("click", () => {
     const t = box.innerText.trim(); if (!t) return;
     const p = document.createElement("p"); p.textContent = "Sent: " + t;

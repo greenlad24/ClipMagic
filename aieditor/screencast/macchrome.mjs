@@ -117,15 +117,21 @@ export async function accountName(page) {
     return await page.evaluate(() => {
       // the sidebar account block: "Jake Dawson\nPlus" (name line + plan line)
       const PLAN = /^\s*(?:[A-Z]{1,3}\s*\n)?([A-Z][\w'-]+)(?: [A-Z][\w'.-]+){0,3}\s*\n\s*(?:Free|Plus|Pro|Go|Team|Business|Enterprise|Edu)\s*$/;
+      const seen = (n) => { try { window.__amAccount = n; } catch {} return n; };
       for (const el of document.querySelectorAll('[data-testid="accounts-profile-button"], [aria-label="Open profile menu"], nav div, aside div')) {
         const t = el.innerText || "";
         if (t.length > 60) continue;
         const m = t.match(PLAN);
-        if (m) return m[1];
+        if (m) return seen(m[1]);
       }
       const g = (document.body?.innerText || "").slice(0, 3000)
         .match(/\b(?:Hey|Hi|Hello|Welcome back|Good (?:morning|afternoon|evening)|How can I help|What's on your mind(?: today)?|Ready when you are|Where should we begin)[,!]?\s+([A-Z][a-z'-]+)\b/);
-      return g ? g[1] : null;
+      if (g) return seen(g[1]);
+      // the sidebar HIDDEN (set-dressing, S4/S7: old chats out of frame) leaves an icon rail with no name and the
+      // greeting is often nameless ("What's on the agenda today?") — playbook proving run 2026-10-09. The name
+      // this SAME document showed before the sidebar was hidden still holds: an account switch reloads the page
+      // (a new document has no __amAccount), so a name another account showed is never carried over.
+      return typeof window.__amAccount === "string" ? window.__amAccount : null;
     });
   } catch { return null; }
 }

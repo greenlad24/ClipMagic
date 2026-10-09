@@ -567,6 +567,7 @@ async function load(url, settle = 2.5) {
     fr = await autoFit("load-retry");
   }
   if (rec) await pause();         // off camera the page keeps real time (a WebGL editor needs it to load)
+  else await noteAccount();       // off camera: read the account name before set-dressing hides it
 }
 
 async function moveTo(x, y) {
@@ -775,7 +776,7 @@ async function guard(a) {
   const ty = String(a.type || "");
   let q = null;
   if (["click", "dblclick"].includes(ty)) q = a.ref ? { ref: a.ref } : a.x != null ? { x: a.x * SHOT_F, y: a.y * SHOT_F }
-    : a.selector ? { selector: a.selector } : null;
+    : a.selector ? { selector: a.selector, ...(a.nth != null ? { nth: a.nth } : {}) } : null;
   else if (ty === "drag") { const p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from; if (Array.isArray(p0)) q = { x: p0[0] * SHOT_F, y: p0[1] * SHOT_F }; }
   else if (ty === "key") q = { focused: true };
   else if (ty === "type") q = a.ref ? { ref: a.ref } : a.selector ? { selector: a.selector } : { focused: true };
@@ -853,20 +854,39 @@ async function act(a) {
       b = await boxOf(a.ref, a.type === "read" || a.type === "highlight");
     }
     const label = a.target || (a.type !== "type" ? a.text : null);
-    if (!b && label) b = await page.evaluate((txt) => {
-      const want = String(txt).toLowerCase().trim();
+    if (!b && label) b = await page.evaluate((txt, only) => {
+      const want = String(txt).toLowerCase().replace(/\s+/g, " ").trim();
       const vis = (e) => { const r = e.getBoundingClientRect(); return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight; };
-      const hits = [...document.querySelectorAll("body *")].filter((e) => vis(e) && (e.innerText || e.getAttribute("aria-label") || "").toLowerCase().includes(want));
-      const el = hits.find((e) => !hits.some((o) => o !== e && e.contains(o)));
+      // whitespace folded: ChatGPT's Resize menu item reads "Square\n1:1" (the playbook says "Square 1:1")
+      const lab = (e) => (e.innerText || e.getAttribute("aria-label") || "").toLowerCase().replace(/\s+/g, " ").trim();
+      const hits = [...document.querySelectorAll("body *")].filter((e) => vis(e) && lab(e).includes(want));
+      // an EXACT label beats a containing one: "Chat" is the Chat/Work switch, not the "ChatGPT" logo
+      // (playbook proving run 2026-10-09: chat_mode clicked the logo and Work mode stayed on)
+      const exact = hits.filter((e) => lab(e) === want);
+      // "exact": the WHOLE label or nothing — on a chat page there is no Chat/Work switch, and a containing
+      // match for "Chat" was "New chat" (it navigated away from the chat)
+      const pool = exact.length ? exact : only ? [] : hits;
+      const el = pool.find((e) => !pool.some((o) => o !== e && e.contains(o)));
       if (!el) return null;
       const r = el.getBoundingClientRect();
       return { x: r.x, y: r.y, width: r.width, height: r.height, tag: el.tagName.toLowerCase(), text: (el.innerText || "").trim().slice(0, 80), href: null, blank: false };
-    }, label).catch(() => null);
+    }, label, !!a.exact).catch(() => null);
     // pre-production / set dressing: a CSS selector (an icon button without text, e.g. "Remove <file>")
     // ("nth": the n-th match in DOCUMENT order, scrolled into view first — e.g. the 1st generated image of a chat)
     if (!b && a.selector) {
       const els = await page.$$(a.selector).catch(() => []);
-      const el = els[a.nth || 0];
+      // without "nth" the first VISIBLE match: ChatGPT keeps a second, hidden button[aria-label="Hide sidebar"]
+      // FIRST in the document — its box was clicked, nothing happened, and the sidebar with the old chats stayed
+      // (playbook proving run 2026-10-09)
+      let el = a.nth != null ? els[a.nth] : null;
+      if (a.nth == null) {
+        for (const e of els) {
+          if (await e.evaluate((x) => { const r = x.getBoundingClientRect(), s = getComputedStyle(x);
+            return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+              && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.05; }).catch(() => false)) { el = e; break; }
+        }
+        el ??= els[0];
+      }
       if (el) {
         if (a.nth != null) { await el.evaluate((e) => e.scrollIntoView({ block: "center" })).catch(() => {}); await sleep(400); }
         b = await el.evaluate((e) => { const r = e.getBoundingClientRect();
@@ -1274,6 +1294,35 @@ async function realClock() {
     process.stderr.write(`fresh tab failed (${e?.message}) — reopening\n`);
     lastUrl = url; await recover();
   }
+}
+
+// ACCOUNT ON THE ICON RAIL (playbook proving run 2026-10-09). A logged-in page shows its account name (sidebar
+// block / greeting) a moment AFTER it looks loaded: it is read after every off-camera load (open, goto, the fresh
+// real-clock tab), before set-dressing hides the sidebar, and accountName() keeps it for this document — the
+// first-frame gate can then still prove the account with the sidebar hidden (1 open in 3 had no name yet).
+// ChatGPT keeps a hidden sidebar hidden across reloads (a fresh tab after a recording, a set-up retry): the name is
+// then nowhere on the page. Off camera only, the sidebar is shown for a moment, the name read, and hidden again.
+async function pressVisible(sel) {
+  return page.evaluate((sel) => {
+    const el = [...document.querySelectorAll(sel)].find((x) => { const r = x.getBoundingClientRect(), s = getComputedStyle(x);
+      return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight && s.visibility !== "hidden" && s.display !== "none"; });
+    if (el) el.click();
+    return !!el;
+  }, sel).catch(() => false);
+}
+async function noteAccount() {
+  if (SESSION !== "logged_in") return null;
+  // (the name readers are ChatGPT's: another app gets one read, no 8 s wait on every load)
+  let host = ""; try { host = new URL(page.url()).hostname; } catch {}
+  const tries = /(^|\.)chatgpt\.com$/.test(host) ? 16 : 1;
+  for (let k = 0; k < tries; k++) { const who = await accountName(page); if (who) return who; if (k < tries - 1) await sleep(500); }
+  if (tries === 1) return null;
+  if (rec || !(await pressVisible('button[aria-label="Show sidebar"]'))) return null;
+  let who = null;
+  for (let k = 0; k < 10 && !who; k++) { await sleep(300); who = await accountName(page); }
+  await pressVisible('button[aria-label="Hide sidebar"]');
+  await sleep(500);
+  return who;
 }
 
 await realtime();

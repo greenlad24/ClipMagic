@@ -120,7 +120,15 @@ export function describeInPage(q) {
   let el = null;
   try {
     if (q.ref) el = document.querySelector(`[data-agent-ref="${q.ref}"]`);
-    else if (q.selector) el = document.querySelector(q.selector);
+    else if (q.selector) {
+      // the SAME element agent_rec presses: the nth match, else the first VISIBLE one (a hidden duplicate can
+      // come first in the document — ChatGPT's second "Hide sidebar" button, 2026-10-09)
+      const all = [...document.querySelectorAll(q.selector)];
+      const vis = (x) => { const r = x.getBoundingClientRect(), s = getComputedStyle(x);
+        return r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth
+          && s.visibility !== "hidden" && s.display !== "none" && +s.opacity > 0.05; };
+      el = q.nth != null ? all[q.nth] : (all.find(vis) || all[0]);
+    }
     else if (q.focused) el = document.activeElement;
     else if (q.x != null) el = document.elementFromPoint(q.x, q.y);
   } catch (e) { el = null; }
