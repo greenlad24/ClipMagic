@@ -92,7 +92,7 @@ async function main() {
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(jobs, `_uploads/${U}/upload.json`), "utf8")).probe, { duration: 966, width: 3840, height: 2160 }, "cached");
     assert.deepEqual(e.usedBy.map((u) => u.id), ["narr-b-1009-bbbb", "narr-a-1009-aaaa"]);
     assert.equal(e.bytes, alloc(`_uploads/${U}/data`));
-    assert.equal(e.frees, alloc(`_uploads/${U}/upload.json`), "two jobs still hold the video: deleting the narration alone frees only its upload.json");
+    assert.equal(e.frees, alloc(`_uploads/${U}/upload.json`) + alloc(`_uploads/${U}`), "two jobs still hold the video: deleting the narration alone frees only its upload.json + folder");
     assert.ok(e.freesAll >= e.bytes + 2 * alloc("narr-a-1009-aaaa/final-01.mp4"), "with the jobs: the shared inode once + each job's files");
     assert.equal(e.poster, `/api/aieditor/uploads/${U}/video#t=2`);
     assert.equal(e.blocked, null);
@@ -112,7 +112,7 @@ async function main() {
     const v = list.find((x) => x.key === V)!;
     assert.deepEqual([v.duration, v.width, v.height, v.usedBy.length], [61, 1920, 1080, 0]);
     assert.ok(!list.some((x) => x.name === "half.mp4"), "an unfinished upload is not in the library");
-    assert.equal(v.frees, v.bytes + alloc(`_uploads/${V}/upload.json`), "nobody else holds it: deleting frees all of it");
+    assert.equal(v.frees, v.bytes + alloc(`_uploads/${V}/upload.json`) + alloc(`_uploads/${V}`), "nobody else holds it: deleting frees all of it");
     fs.rmSync(path.join(jobs, "_uploads", V), { recursive: true });
     fs.rmSync(path.join(jobs, "_uploads", "u" + "4".repeat(24)), { recursive: true });
   });
@@ -194,6 +194,7 @@ async function main() {
     assert.equal(a.frees, a.bytes - kinds.source.bytes);
     const all = await sto.walkAll();
     const total = sto.spaceOf(all).bytes;
+    assert.ok(all.some((r) => r.rel === "" && r.dir), "the jobs folder's own blocks count (as storage-agent counts them)");
     const sumOfFiles = all.reduce((s, x) => s + x.bytes, 0);
     assert.ok(total < sumOfFiles, "the volume total counts the shared narration inode once");
   });
@@ -245,8 +246,9 @@ async function main() {
   });
 
   await check("remove narration only: the jobs keep their copy; it never comes back as job_source", async () => {
+    const small = alloc(`_uploads/${U}/upload.json`) + alloc(`_uploads/${U}`);
     const r = await lib.removeFromLibrary(U, "narration", ctl.deleteJob);
-    assert.equal(r.freed, alloc("narr-b-1009-bbbb/request.json"), "job b still holds the video inode: only upload.json (one block) is freed");
+    assert.equal(r.freed, small, "job b still holds the video inode: only upload.json + its folder are freed");
     assert.ok(!fs.existsSync(path.join(jobs, "_uploads", U)));
     assert.equal(fs.readFileSync(path.join(jobs, "narr-b-1009-bbbb/source.mp4")).length, BIG.length);
     const list = await lib.listLibrary();

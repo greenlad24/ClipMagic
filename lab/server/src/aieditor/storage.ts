@@ -173,6 +173,8 @@ export interface FileRec {
   nlink: number;
   bytes: number;          // allocated (st_blocks × 512)
   size: number;           // apparent
+  /** a directory's own blocks (counted like storage-agent does; gone with its folder) */
+  dir?: boolean;
 }
 
 /** every regular file under `dir` (no symlinks followed), rel to the jobs folder */
@@ -183,6 +185,9 @@ export async function walk(dir: string, relBase: string, out: FileRec[] = []): P
     const p = path.join(dir, e.name);
     const rel = relBase ? `${relBase}/${e.name}` : e.name;
     if (e.isDirectory()) {
+      const st = await fsp.lstat(p).catch(() => null);
+      if (!st?.isDirectory()) continue;
+      out.push({ rel, key: `${st.dev}:${st.ino}`, nlink: 1, bytes: Number(st.blocks) * 512, size: 0, dir: true });
       await walk(p, rel, out);
     } else if (e.isFile()) {
       const st = await fsp.lstat(p).catch(() => null);
@@ -225,8 +230,12 @@ function linkOwners(all: FileRec[]): Map<string, Set<string>> {
   return m;
 }
 
+/** every file and folder of the jobs folder, the folder itself included (rel "") */
 export async function walkAll(): Promise<FileRec[]> {
-  return walk(jobsRoot(), "");
+  const out: FileRec[] = [];
+  const st = await fsp.lstat(jobsRoot()).catch(() => null);
+  if (st?.isDirectory()) out.push({ rel: "", key: `${st.dev}:${st.ino}`, nlink: 1, bytes: Number(st.blocks) * 512, size: 0, dir: true });
+  return walk(jobsRoot(), "", out);
 }
 
 export async function volumeOf(): Promise<{ total: number; used: number; free: number } | null> {
@@ -278,9 +287,11 @@ export async function listStoredJobs(all?: FileRec[], jobs?: JobInfo[]): Promise
   }
   const out: JobStorage[] = [];
   for (const j of jobs) {
+    // (the job folder's own record, rel "<id>", has no kind: it only counts in the job total)
     const recs = byJob.get(j.id) ?? [];
     const groups = new Map<FileKind, { recs: FileRec[]; roots: Set<string> }>();
     for (const r of recs) {
+      if (r.rel === j.id) continue;
       const c = classify(r.rel.slice(j.id.length + 1));
       let g = groups.get(c.kind);
       if (!g) groups.set(c.kind, (g = { recs: [], roots: new Set() }));
@@ -295,12 +306,12 @@ export async function listStoredJobs(all?: FileRec[], jobs?: JobInfo[]): Promise
       const shared = new Set<string>();
       for (const r of g.recs) for (const o of owners.get(r.key) ?? []) if (o !== j.id) shared.add(o);
       kinds.push({
-        kind: k.id, title: k.title, bytes: sp.bytes, frees: sp.frees, files: g.recs.length, deletable: k.deletable,
+        kind: k.id, title: k.title, bytes: sp.bytes, frees: sp.frees, files: g.recs.filter((r) => !r.dir).length, deletable: k.deletable,
         blocked: k.deletable ? blockedFor(j, [...g.roots], needs) : null, sharedWith: [...shared].sort(),
       });
     }
     const sp = spaceOf(recs);
-    const allRoots = [...new Set(recs.map((r) => classify(r.rel.slice(j.id.length + 1)).root))];
+    const allRoots = [...new Set(recs.filter((r) => r.rel !== j.id).map((r) => classify(r.rel.slice(j.id.length + 1)).root))];
     out.push({
       id: j.id, title: titleOf(j), state: j.status?.state ?? null, busy: j.busy,
       createdAt: Number(j.req?.created_at) > 1e11 ? Number(j.req.created_at) / 1000 : (j.req?.created_at ?? null),

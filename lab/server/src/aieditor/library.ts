@@ -173,7 +173,7 @@ export async function listLibrary(ctx?: { all?: FileRec[]; jobs?: JobInfo[] }): 
       const fresh = await readMeta(dir);
       if (fresh) await writeMeta(dir, { ...fresh, ...(pr ? { probe: pr } : { probe_failed: true }) }).catch(() => undefined);
     }
-    const mine = all.filter((r) => r.rel.startsWith(`_uploads/${id}/`));
+    const mine = all.filter((r) => r.rel === `_uploads/${id}` || r.rel.startsWith(`_uploads/${id}/`));
     const need = needs.get(`_uploads/${id}`);
     const own = need ? `the ${need} job has not started yet and still needs it` : null;
     out.push({
