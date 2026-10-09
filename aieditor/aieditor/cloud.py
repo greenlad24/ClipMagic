@@ -629,7 +629,8 @@ def run_remote(job_dir, action, log, cancelled):
     ok_run = False
     from . import accountlock, usroute
     workflow = "creative" if req.get("workflow") == "creative" else "cut"
-    screencasts = action in ("run", "edit") and bool(req.get("sites") or workflow == "creative")
+    # a hand-off job (request.json "handoff", aieditor/handoff.py) records nothing: no Scout login, no US route
+    screencasts = action in ("run", "edit") and bool(req.get("sites") or workflow == "creative") and not req.get("handoff")
     # one job per logged-in account: a second job for the same Scout account waits here
     lock = accountlock.AccountLock(scout_slugs(req, job_dir) if screencasts else [], jid)
     if not lock.acquire(wait=True, cancelled=cancelled, log=log):
@@ -660,7 +661,7 @@ def run_remote(job_dir, action, log, cancelled):
             # the job folder, source video included (VPC: free + fast)
             rsync(str(job_dir), f"root@{ip}:{config.JOBS}/", "--exclude", "cancel", "--exclude", "queue.json",
                   "--exclude", "tmp-*", "--exclude", "api-ledger.jsonl")
-            if action in ("run", "edit") and (req.get("sites") or req.get("workflow") == "creative"):
+            if screencasts:
                 with tempfile.TemporaryDirectory(prefix="factory-scout-") as td:
                     slugs = _scout_bundle(req, Path(td), job_dir, slugs=lock.slugs)
                     if slugs:

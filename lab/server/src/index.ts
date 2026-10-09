@@ -321,13 +321,14 @@ app.get("/api/aieditor/audio/:id", auth, async (req, res) => {
 });
 
 // Auto Editor — a job's review renders. Read-only, behind `auth`, and limited to
-// the preview/sound-check/edit (graphics)/final MP4s: the raw source, transcripts and plans stay off
+// the preview/sound-check/edit (graphics)/final MP4s and the editor hand-off zip: the raw source, transcripts and plans stay off
 // the web. express.static serves the range requests the player needs to seek.
 app.use(
   "/api/aieditor/files",
   auth,
   (req, res, next) => {
-    if (!/^\/[a-z0-9][a-z0-9-]{2,63}\/(preview|listen|edit|final)-\d{2}\.mp4$/.test(req.path)) {
+    // + the editor hand-off package (handoff-NN.zip, aieditor/handoff.ts)
+    if (!/^\/[a-z0-9][a-z0-9-]{2,63}\/((preview|listen|edit|final)-\d{2}\.mp4|handoff-\d{2}\.zip)$/.test(req.path)) {
       res.status(404).end();
       return;
     }

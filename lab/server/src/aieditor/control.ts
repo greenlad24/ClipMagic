@@ -14,6 +14,7 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { claimUpload, getUpload, UPLOAD_ID_RE } from "./uploads.js";
+import { handoffPackages, parseHandoff, withHandoff } from "./handoff.js";
 
 const ROOT = process.env.AIEDITOR_WORK || "/aieditor-work";
 const JOBS = path.join(ROOT, "jobs");
@@ -323,6 +324,8 @@ export interface CreateInput {
    * edit by itself — aieditor/chain.py. Only with workflow "cut".
    */
   chain?: string;
+  /** "Graphics only — editor adds screencasts" (./handoff.ts): long-form creative only */
+  handoff?: boolean;
 }
 
 export type RunOn = "auto" | "factory" | "box";
@@ -541,6 +544,7 @@ export async function createJob(input: CreateInput) {
   // Jake: "important you know if it's sponsored or not" — never defaulted.
   if (input.sponsored !== true && input.sponsored !== false) throw new Error("Say whether the video is sponsored.");
   const runOn = parseRunOn(input.runOn);
+  const handoff = parseHandoff(input);
   const script = String(input.script ?? "");
   if (script.length > MAX_SCRIPT) throw new Error("The script is too long.");
   const stamp = new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "");
@@ -569,12 +573,13 @@ export async function createJob(input: CreateInput) {
     // whitelisted fillers; never a pause, never a content cut), no review step, no full edit on the
     // cut itself — the worker's chain (aieditor/chain.py) carries it on into the creative edit
     ...(chain ? { chain: "creative", takes_policy: "factory", no_edit: true } : {}),
+    ...(handoff ? { handoff: true } : {}),
     created_at: Date.now() / 1000,
   });
   await writeJson(path.join(dir, "status.json"), {
     state: "queued",
     message: "Waiting for the worker…",
-    stages: Object.fromEntries(stagesFor(workflow, input.format, source.kind).map((s) => [s.id, { state: "pending" }])),
+    stages: Object.fromEntries(withHandoff(stagesFor(workflow, input.format, source.kind), handoff).map((s) => [s.id, { state: "pending" }])),
     workflow,
     cost_usd: 0,
     updated_at: Date.now() / 1000,
@@ -725,7 +730,7 @@ export async function getJob(id: string) {
     }
   }
   const workflow = workflowOf(req);
-  const stageList = stagesFor(workflow, req.format, sourceKindOf(req));
+  const stageList = withHandoff(stagesFor(workflow, req.format, sourceKindOf(req)), req.handoff === true);
   // a HELD edit is not a finished edit: its files are kept for inspection, never listed as edits/finals
   const held = await heldOf(dir, status);
   const heldEdits = held ? [...edits, ...finals] : [];
@@ -761,6 +766,8 @@ export async function getJob(id: string) {
     nudgesPending,
     edlAt: (await fsp.stat(path.join(dir, "edl.json")).catch(() => null))?.mtimeMs ?? null,
     log,
+    /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip), null for other jobs */
+    handoff: req.handoff === true ? await handoffPackages(dir) : null,
     /** where the current/last run executed (host writes it: aieditor/cloud.runner) — null = never routed */
     runner: await readJson<any>(path.join(dir, "runner.json")),
     /** the cut → creative chain (aieditor/chain.py): what comes next / where this job started from */

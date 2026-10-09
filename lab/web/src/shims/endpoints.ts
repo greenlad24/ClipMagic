@@ -3826,7 +3826,7 @@ export interface AutoJobDetail {
     title: string | null;
     sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn;
     /** "creative" = a Full edit's cut job; chained_from = the cut job a chained creative edit started from */
-    chain?: 'creative'; chained_from?: string };
+    chain?: 'creative'; chained_from?: string; handoff?: boolean };
   status: {
     state?: string; message?: string; progress?: number; stage?: string; error?: string;
     cost_usd?: number; cost_live_usd?: number; updated_at?: number; started_at?: number; finished_at?: number;
@@ -3863,6 +3863,8 @@ export interface AutoJobDetail {
   heldEdits?: { name: string; bytes: number; modifiedAt: number }[];
   /** the cut → creative chain of a Full edit (null = not part of one) */
   chain?: AutoChain | null;
+  /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip); null for other jobs */
+  handoff?: { zip: string; bytes: number; modifiedAt: number; slots: { n: number; start_tc: string; end_tc: string; label: string }[] }[] | null;
 }
 export interface AutoChainLink { id: string; title: string; state: string | null }
 export interface AutoChain {
@@ -3908,6 +3910,8 @@ export const autoEditorCreate = endpoint<{
   title?: string; sites?: string; runOn?: AutoRunOn;
   /** "creative" = Full edit: the cut job carries on into the creative edit by itself (aieditor/chain.py) */
   chain?: 'creative';
+  /** "Graphics only — editor adds screencasts" (long-form creative): the hand-off package, no screencasts */
+  handoff?: boolean;
 }, { id: string }>("autoEditorCreate");
 /** control.ts REVIEW GATE: only a final / reviewed / verified cut is a creative source (never an unreviewed one) */
 export type AutoReviewStatus = 'final' | 'reviewed' | 'verified' | 'unreviewed';
