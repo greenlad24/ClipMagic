@@ -1,6 +1,6 @@
 // Count-up must reproduce the reference's REACH counter (gVPZU1btFA8 f3321–3353) EXACTLY,
 // and the days counter on 22 of 23 frames (the reference skips "08").
-// run: docker run --rm -v /opt/clipmagic/aieditor:/a --entrypoint node clipmagic-lab:latest /a/tests/motion_count_test.mjs
+// run: docker run --rm -v /opt/clipmagic/aieditor:/a:ro --entrypoint node clipmagic-lab:latest /a/tests/motion_count_test.mjs
 import fs from "node:fs";
 globalThis.window = {};
 new Function(fs.readFileSync(new URL("../motion/engine.js", import.meta.url), "utf8"))();
@@ -18,4 +18,23 @@ const days = { count: { from: 1, to: 14, start: 3283.75, dur: 26, ease: [0.65, 0
 let dbad = 0;
 DAYS.forEach((v, i) => { if (at(days, 3284 + i) !== String(v).padStart(2, "0")) dbad++; });
 console.log(`REACH ${REACH.length - bad}/${REACH.length} exact; days ${DAYS.length - dbad}/${DAYS.length}`);
-process.exit(bad ? 1 : 0);
+
+// Gap list G5 (p3): the screencast system the camera reads must carry the reference camera's numbers —
+// nothing past ×1.65 (the old zoom_deep 2.0 is retired), moves timed 0.5–0.9 s ahead of the word, the
+// ZM01 entry curve, same-app gotos as hard cuts, one ZM10 push per hold (no outward release/drift).
+const sys = JSON.parse(fs.readFileSync(new URL("../motion/screencast_system.json", import.meta.url), "utf8"));
+const cam = sys.camera || sys.screencast?.camera;
+const g5 = [
+  ["zoom_cap <= 1.65", cam.zoom_cap <= 1.65],
+  ["zoom_deep <= 1.65 (2.0 retired)", cam.zoom_deep <= 1.65],
+  ["word_lead_s inside 0.5-0.9", cam.word_lead_s >= 0.5 && cam.word_lead_s <= 0.9],
+  ["ZM01 zoom-in curve (.31,.10,.22,1)", JSON.stringify(cam.zoom_in_ease) === JSON.stringify([0.31, 0.1, 0.22, 1.0])],
+  ["same-site goto = hard cut", cam.xfade_same_site === false],
+  ["hold_max_s 3 (P1)", cam.hold_max_s === 3.0],
+  ["ZM10 push curve present", Array.isArray(cam.push_ease) && cam.push_ease.length === 4],
+  ["typing not zoomed (K1)", cam.type_zoom === false],
+];
+const g5bad = g5.filter(([, ok]) => !ok);
+g5bad.forEach(([n]) => console.log(`G5 camera system: FAIL ${n}`));
+console.log(`G5 camera system ${g5.length - g5bad.length}/${g5.length}`);
+process.exit(bad || g5bad.length ? 1 : 0);
