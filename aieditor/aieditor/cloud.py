@@ -565,8 +565,20 @@ def _scout_bundle(req, stage_dir, job_dir=None, slugs=None):
     return slugs
 
 
+def droplet_key():
+    """The separate, revocable Claude key for job servers: the Lab's Settings → Video factory
+    field (stored write-only in the Lab secrets file, like DO_API_TOKEN), else .env."""
+    try:
+        v = (json.loads(SECRETS.read_text()).get(DROPLET_KEY) or "").strip()
+        if v:
+            return v
+    except (OSError, ValueError):
+        pass
+    return config.env_key(DROPLET_KEY)
+
+
 def droplet_key_set():
-    return bool(config.env_key(DROPLET_KEY))
+    return bool(droplet_key())
 
 
 def droplet_env(log, s=None):
@@ -575,19 +587,19 @@ def droplet_env(log, s=None):
     between a warning + the org key and a refusal. Values are NEVER logged — only which key went."""
     s = s or settings()
     vals = {}
-    dk = config.env_key(DROPLET_KEY)
+    dk = droplet_key()
     if dk:
         vals["ANTHROPIC_API_KEY"] = dk
         log("Claude API key for the server: the separate, revocable droplet key")
     elif s.get("require_droplet_key"):
-        raise DOError(f"no droplet API key ({DROPLET_KEY} in .env) and require_droplet_key is on — "
+        raise DOError(f"no droplet API key (Lab Settings → Video factory, or {DROPLET_KEY} in .env) and require_droplet_key is on — "
                       "the org key is never shipped to a server")
     else:
         org = config.env_key("ANTHROPIC_API_KEY")
         if org:
             vals["ANTHROPIC_API_KEY"] = org
         log(f"WARNING: {DROPLET_KEY} is not set — the server gets the org-wide Claude key "
-            "(create a spend-limited droplet key in the Console and add it to .env)")
+            "(create a spend-limited key in the Console and paste it in Lab Settings → Video factory)")
     for k in SHIP_KEYS:
         if k != "ANTHROPIC_API_KEY" and config.env_key(k):
             vals[k] = config.env_key(k)

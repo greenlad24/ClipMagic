@@ -66,6 +66,7 @@ export const POSTIZ_KEY_DEFS: PostizKeyDef[] = [
   // internally via getGoogleDriveApiKey() / getDropboxCredentials(). Same
   // write-only guarantee as the rest: never returned through any HTTP response.
   { key: "DO_API_TOKEN", label: "DigitalOcean API token", group: "Video factory", connects: "Lets the Auto Editor factory create a 32-vCPU render/recording server in SGP1 for each job and DESTROY it when the job ends (powered-off droplets still bill). DigitalOcean → API → Generate New Token, write scope. Used only by this lab server — never sent to the browser." },
+  { key: "AIEDITOR_DROPLET_ANTHROPIC_KEY", label: "Factory servers: Claude API key", group: "Video factory", connects: "A SEPARATE Claude API key used only by the per-job factory servers, so your main key never leaves this server. Create it in the Anthropic Console → API Keys (give it its own spend limit), paste it here. You can revoke it any time without breaking the Lab. Write-only; never sent to the browser." },
   { key: "GOOGLE_DRIVE_API_KEY", label: "Google Drive API key", group: "Cloud sources", connects: "Lets the Bulk Scheduler browse a PUBLIC (\"anyone with the link\") Google Drive folder and pick videos from it. Create an API key in Google Cloud Console (enable the Drive API), then paste it here. Used only for listing — each picked file is fetched via its own direct download URL. Server-only; never sent to the browser." },
   { key: "DROPBOX_APP_KEY", label: "Dropbox app key", group: "Cloud sources", connects: "App key for your Dropbox app (App Console → your app → Settings). Used with the app secret + refresh token to browse a Dropbox folder and pick videos. Server-only; never sent to the browser." },
   { key: "DROPBOX_APP_SECRET", label: "Dropbox app secret", group: "Cloud sources", connects: "App secret for your Dropbox app (App Console → your app → Settings). Paired with the app key to mint a short-lived access token from your refresh token. Server-only; never sent to the browser." },
@@ -262,6 +263,9 @@ const GDOCS_SEQ_PREFIX = "GDOCS_SEQ_";
 const LAB_ONLY_KEYS = new Set([
   "POSTIZ_API_KEY",
   "POSTPEER_API_KEY",
+  // Video factory: used only by the lab server / host worker — never Postiz container config
+  "DO_API_TOKEN",
+  "AIEDITOR_DROPLET_ANTHROPIC_KEY",
   "GOOGLE_DRIVE_API_KEY",
   "DROPBOX_APP_KEY",
   "DROPBOX_APP_SECRET",
