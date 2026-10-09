@@ -74,13 +74,15 @@
   "src": "Jake: $20 per rolling 24 h server cap (cloud.py daily_cap_usd); recommendation §5 + Jake decision 1 (api_daily pending)",
   "server_daily_usd": 20,
   "api_daily_usd": 30,
-  "api_daily_pending": true,
+  "api_daily_pending": false,
+  "onboarding_app_usd": 9.5,
+  "onboarding_src": "Jake 2026-10-09 decision 4: OK, but try to keep a new app's onboarding under $10",
   "api_job_usd": {"creative": 8, "cut": 1}
  },
  "ship": {
-  "src": "rubric.md ship rule; recommendation §4 (Jake decision 2 pending: 0.80 or 0.90)",
+  "src": "rubric.md ship rule; recommendation §4 (Jake decision 2, 2026-10-09: 0.80; a held video is not published)",
   "threshold": 0.80,
-  "threshold_pending": true,
+  "threshold_pending": false,
   "content_sync_min": 80,
   "max_unapproved_word_removals": 0,
   "max_legible_private_frames": 0

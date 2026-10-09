@@ -38,7 +38,7 @@ PLAN_MODEL = "claude-opus-5-5"
 OVERLAY_MODEL = "claude-sonnet-5-5"
 VISION_MODEL = "claude-sonnet-5-5"
 PLAN_REASKS = 2
-GEN_REGENS = 2
+GEN_REGENS = 9                 # Jake 2026-10-09 (decision 5): "try again until succeeding (up to 10 tries)" = 1 + 9 regenerations
 GEN_SPACING_S = float(os.environ.get("AIEDITOR_GEN_SPACING_S") or 45)
 GROQ_MODEL = "whisper-large-v3-turbo"
 

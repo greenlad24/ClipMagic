@@ -43,9 +43,9 @@ def fake(body, stream, timeout):
 llm.TRANSPORT = fake
 lines = lambda: apiledger.rows()   # noqa: E731
 
-# settings: the daily API cap defaults to $30 and is marked pending Jake
+# settings: the daily API cap is $30 (Jake decision 1, 2026-10-09)
 s = cloud.settings()
-check(s["api_daily_cap_usd"] == 30 and s["api_daily_cap_pending_jake"] is True, f"daily cap 30, pending: {s}")
+check(s["api_daily_cap_usd"] == 30 and s["api_daily_cap_pending_jake"] is False, f"daily cap 30, decided: {s}")
 check(s["api_job_cap_usd"] == {"creative": 8, "cut": 1}, "per-job caps creative 8 / cut 1")
 check(s["require_droplet_key"] is False and s["us_route"]["enabled"] is False, "droplet key + US route defaults")
 check(json.loads(cloud.CFG.read_text())["api_daily_cap_usd"] == 30, "written to the settings file")

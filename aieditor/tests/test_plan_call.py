@@ -13,7 +13,7 @@ edit-01/overlays.json (tests/fixtures/p6/make_fixture.py).
       boundaries/min, A-roll beats 5-7 s, a hook plate in 0-14.7 s, 671.4-688.5 s gets a segment or a why
   (d) overlays_fit on the failed job's 11 overlays: 7-9, <= 0.2/min mid-video, TX03 on the outro question
       (836-843 s), TX05 on 'notification bell' (859.19-859.81 s)
-  (e) content first: a photo that keeps missing 'napkin' is regenerated twice, then needs_asset → held; the
+  (e) content first: a photo that keeps missing 'napkin' is regenerated up to GEN_REGENS (9) times, then needs_asset → held; the
       generations are spaced (fake clock); the narrated objects map to assets or are reported
   (f) one Opus plan call + one Sonnet overlay call per plan; preprod.shot_prompt is gone; ledger stage names
 
@@ -321,7 +321,7 @@ def test_content_first():
     check({d["shape"] for d in sk["doodle"]} >= {"sun", "table", "pepper"}, f"the drawn objects are in the doodle: {sk['doodle']}")
     gen = ids["sketch_photo"]["prompt"].lower()
     check("napkin" in gen or "napkin" in ids["phone_photo"].get("prompt", "").lower(), "the napkin is in a generated picture")
-    # generation check: a photo that keeps missing the napkin → 2 regenerations → needs_asset → held
+    # generation check: a photo that keeps missing the napkin → every try fails (1 + GEN_REGENS, Jake: up to 10) → needs_asset → held
     out = TMP / "assets-run"
     out.mkdir()
     sl = {"shots": [{"id": "N1", "needs": ["photo"]}], "assets": [
@@ -337,7 +337,7 @@ def test_content_first():
         Path(dst).write_bytes(b"\x89PNG fake")
         return 0.06
     FAKE.bodies.clear()
-    FAKE.queue(config.VISION_MODEL, *([{"matches": False, "missing_objects": ["napkin"]}] * 3),
+    FAKE.queue(config.VISION_MODEL, *([{"matches": False, "missing_objects": ["napkin"]}] * (config.GEN_REGENS + 1)),
                {"matches": True, "missing_objects": []})
     try:
         preprod.gen_photo = fake_photo
@@ -345,9 +345,9 @@ def test_content_first():
     finally:
         preprod.gen_photo = saved
     a = {x["id"]: x for x in res["assets"]}
-    check(a["photo"]["status"] == "needs_asset" and len(a["photo"]["checks"]) == 3, f"napkin missing 3× → needs_asset: {a['photo']}")
-    check(len(prompts) == 4 and "napkin" in prompts[1] and "It must clearly show napkin" in prompts[2],
-          "2 regenerations name the missing object")
+    check(a["photo"]["status"] == "needs_asset" and len(a["photo"]["checks"]) == config.GEN_REGENS + 1, f"napkin missing on all {config.GEN_REGENS + 1} tries → needs_asset: {a['photo']}")
+    check(len(prompts) == config.GEN_REGENS + 2 and "napkin" in prompts[1] and "It must clearly show napkin" in prompts[2],
+          "every regeneration names the missing object (10 photo tries + the second asset)")
     check(a["photo2"]["status"] == "ready" and len(a["photo2"]["checks"]) == 1, "a matching picture passes first time")
     gaps = [b - x for x, b in zip(res["generations_at"], res["generations_at"][1:])]
     check(len(gaps) == 3 and all(g >= 45 - 1e-9 for g in gaps), f"generations spaced >= 45 s (fake clock): {gaps}")

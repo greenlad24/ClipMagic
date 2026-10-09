@@ -98,7 +98,7 @@ DEFAULTS = {
     # Claude API caps (apiledger.py). The daily figure is Jake's decision 1 — suggested $30, PENDING.
     "api_job_cap_usd": {"creative": 8, "cut": 1},
     "api_daily_cap_usd": 30,
-    "api_daily_cap_pending_jake": True,
+    "api_daily_cap_pending_jake": False,   # Jake 2026-10-09 decision 1: $30 per rolling 24 h
     # the droplet's own revocable API key (decision 6): false = warn and ship the org key until it exists
     "require_droplet_key": False,
     "require_droplet_key_pending_jake": True,
