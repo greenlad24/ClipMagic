@@ -7,9 +7,13 @@ import { cn } from '@/lib/utils';
 import { fmtBytes } from './useSourceUpload';
 
 /**
- * The narration library (lab/server/src/aieditor/library.ts): every finished upload, kept for
- * reuse, newest first. Used by the New edit flow's "Previously uploaded" source (pickable) and
- * by Stored files (manage only).
+ * The narration library (lab/server/src/aieditor/library.ts): every finished upload AND every
+ * job's narration (its source.mp4 — one entry per file on disk), newest first, each labelled
+ * with where it came from and RAW / EDITED. Used by the New edit flow's "Previously used
+ * narrations" source (pickable, with the kind the workflow wants marked "Recommended" — any may
+ * be picked) and by Stored files (manage only, uploads only).
+ *
+ * Only an upload has a delete here; a job's narration is deleted through its job (Stored files).
  *
  * Delete is an in-page confirmation (never window.confirm) with two choices, because the
  * library file and the jobs' source.mp4 are HARD LINKS — space only comes back with the last
@@ -42,8 +46,11 @@ export function NarrationLibrary({
   selected,
   onPick,
   onChanged,
+  recommend,
 }: {
   items: AutoNarration[] | null;
+  /** the stage the chosen workflow works best from (raw: Cut / Full edit; edited: Creative / Graphics only) */
+  recommend?: 'raw' | 'edited';
   error: string | null;
   selected?: string | null;
   /** pickable (the New edit flow); omitted = manage only */
@@ -64,7 +71,7 @@ export function NarrationLibrary({
   if (!items.length) {
     return (
       <p className="rounded-xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-        No uploaded narrations yet — every video you upload is kept here for reuse.
+        No narrations yet — every job’s narration and every video you upload shows up here for reuse.
       </p>
     );
   }
@@ -108,13 +115,29 @@ export function NarrationLibrary({
               )}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium text-foreground">{n.name}</span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm font-medium text-foreground">{n.origin || n.name}</span>
+                {n.stage && (
+                  <span
+                    className={cn(
+                      'shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium uppercase tracking-wide',
+                      n.stage === 'raw' ? 'bg-sky-500/15 text-sky-400' : 'bg-violet-500/15 text-violet-400',
+                    )}
+                    title={n.stage === 'raw' ? 'Raw narration — the source of a cut' : 'Edited narration — a Lab edit or a creative edit’s source'}
+                  >
+                    {n.stage}
+                  </span>
+                )}
+                {recommend && n.stage === recommend && (
+                  <span className="shrink-0 text-[10px] font-medium text-green-400">Recommended</span>
+                )}
+              </span>
               <span className="mt-0.5 block text-xs text-muted-foreground">
                 {[day(n.uploadedAt), mmss(n.duration), res(n.width, n.height), fmtBytes(n.bytes)].filter(Boolean).join(' · ')}
               </span>
               {n.usedBy.length > 0 && (
-                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80">
-                  Used by {n.usedBy.length} edit{n.usedBy.length === 1 ? '' : 's'}
+                <span className="mt-0.5 block truncate text-[11px] text-muted-foreground/80" title={n.usedBy.map((u) => u.title).join('\n')}>
+                  Used by {n.usedBy.map((u) => u.title).join(', ')}
                 </span>
               )}
             </span>
@@ -144,18 +167,20 @@ export function NarrationLibrary({
               ) : (
                 <div className="flex min-w-0 flex-1 items-center gap-3">{body}</div>
               )}
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                title="Remove from library"
-                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-400"
-                onClick={() => setConfirming(open ? null : n.key)}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
+              {n.deletable !== false && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  title="Remove from library"
+                  className="h-8 w-8 shrink-0 text-muted-foreground hover:text-red-400"
+                  onClick={() => setConfirming(open ? null : n.key)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
             </div>
-            {open && (
+            {open && n.deletable !== false && (
               <div className="space-y-2 border-t border-border/60 px-3 py-2.5 text-xs">
                 {n.usedBy.length > 0 ? (
                   <div className="text-muted-foreground">

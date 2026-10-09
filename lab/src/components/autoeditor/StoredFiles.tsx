@@ -87,6 +87,8 @@ export function StoredFiles() {
     );
   }
   const v = data.volume;
+  // the library's deletable entries (uploads); a job's narration is that job's "Source" below
+  const uploaded = data.uploads.filter((u) => u.deletable !== false);
   const pct = v && v.total ? Math.min(100, (v.used / v.total) * 100) : 0;
 
   const confirmRow = (job: AutoStoredJob, kind: AutoFileKind | 'job', what: string, frees: number, shared: string[]) => (
@@ -143,9 +145,10 @@ export function StoredFiles() {
 
       <section className="space-y-2">
         <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Uploaded narrations ({data.uploads.length})
+          Uploaded narrations ({uploaded.length})
         </h3>
-        <NarrationLibrary items={data.uploads} error={null} onChanged={() => void load()} />
+        {/* a job's own narration is its "Source" under Edits below — deleted there, not here */}
+        <NarrationLibrary items={uploaded} error={null} onChanged={() => void load()} />
       </section>
 
       <section className="space-y-2">

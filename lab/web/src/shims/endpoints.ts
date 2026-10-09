@@ -3905,14 +3905,23 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
 }>("autoEditorStatus");
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
-/** request.json "source": a Descript link (url), a finished Lab edit, or an upload (creative only) */
+/** request.json "source": a Descript link (url), a finished Lab edit (creative only), an upload, or any job's narration */
 export type AutoSourceInput =
   | { kind: 'job'; job: string; file: string }
   | { kind: 'upload'; upload: string }
   | { kind: 'job_source'; job: string };
-/** A narration in the library (aieditor/library.ts): a kept upload, or an older job's uploaded source. */
+/**
+ * A narration in the library (aieditor/library.ts): a kept upload, or ANY job's narration (its
+ * source.mp4 — one entry per file on disk, hard-linked copies counted once).
+ */
 export interface AutoNarration {
   key: string; kind: 'upload' | 'job_source'; job: string | null; name: string; uploadedAt: number | null;
+  /** where it came from: "Descript: <title or share id>" | "Uploaded: <file>" | "Lab edit of <job title>" */
+  origin: string;
+  /** raw = the source of a cut job; edited = a Lab edit / a creative job's source / a final; null = unused upload */
+  stage: 'raw' | 'edited' | null;
+  /** false = a job's narration: deleted through that job (Stored files), never from the library */
+  deletable: boolean;
   duration: number | null; width: number | null; height: number | null; bytes: number;
   usedBy: { id: string; title: string; state: string | null; busy: string | null }[];
   poster: string | null;

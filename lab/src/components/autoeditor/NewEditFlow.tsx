@@ -42,7 +42,7 @@ import { NarrationLibrary } from './NarrationLibrary';
  * autoEditorCreate({ url, workflow, format, sponsored, script (cut only), title, sites (long
  * only), runOn }) — control.ts createJob validates the same fields.
  *
- * Steps: workflow → [source: creative only] → link | labedit | upload | library → format → sponsored →
+ * Steps: workflow → source → link | labedit | upload | library → format → sponsored →
  * [script: cut + full] → [sites: long only] → review.
  * The third card, "Full edit" (Jake 2026-10-09: "when a job is being submitted for a new video - I
  * don't want a review step from my side - everything should be made automatically"), asks what the
@@ -50,9 +50,11 @@ import { NarrationLibrary } from './NarrationLibrary';
  * edit and its final by itself (aieditor/chain.py). There is no review/approval step anywhere here:
  * the Lab-edit picker only offers final / reviewed / word-verified cuts, with no override tick.
  * Creative edits may start from a Descript link, a finished Lab edit of workflow 1, or a file
- * uploaded from the computer (Jake 2026-10-08), or a narration uploaded before ("Previously
- * uploaded", Jake 2026-10-09: "so I can reuse uploaded narration videos" — every upload is kept
- * in the narration library, NarrationLibrary.tsx) — request.json "source", see control.ts.
+ * uploaded from the computer (Jake 2026-10-08). EVERY workflow (Cut, Full edit, Creative, Graphics
+ * only) may also start from "Previously used narrations" (Jake 2026-10-09: "so I can reuse uploaded
+ * narration videos", then "I want to reuse a narration from another job"): every upload and every
+ * job's narration (NarrationLibrary.tsx) — raw recommended for Cut / Full edit, edited for Creative /
+ * Graphics only, any allowed. request.json "source", see control.ts.
  * The upload runs in the background while the remaining questions are answered; Start
  * waits for it.
  * Card answers advance on click; text steps advance on Enter (Ctrl/⌘+Enter in a textarea).
@@ -100,7 +102,7 @@ const WORKFLOWS: {
     promise: 'Drop in the raw recording. Get back a clean, frame-exact cut.',
     gets: ['Best take of every line', 'Junk and fillers cut', 'Sound check in minutes'],
     hint: [
-      'Publish the RAW recording in Descript (download allowed) and paste its share link.',
+      'Publish the RAW recording in Descript (download allowed) and paste its share link — or pick a narration an earlier edit already used.',
       'Every word is transcribed and re-timed; Claude keeps the best take of each line and cuts crew talk, false starts and fillers.',
       'You review every removed sentence with its reason and restore anything in one click — then render the video and the 4K final.',
     ],
@@ -113,7 +115,7 @@ const WORKFLOWS: {
     promise: 'Already edited? No new cuts — it goes straight to the creative edit.',
     gets: ['Pre-production plan', 'Screencasts + graphics', 'The 4K final'],
     hint: [
-      'Start from the narration you already edited: a Descript share link, a finished Lab edit, or a video file from your computer.',
+      'Start from the narration you already edited: a Descript share link, a finished Lab edit, a video file from your computer, or a narration an earlier edit already used.',
       'It is transcribed and re-timed, the timeline is kept exactly as it is, then pre-production plans the visuals.',
       'Screencasts, graphics and music are added and you render the final.',
     ],
@@ -125,7 +127,7 @@ const WORKFLOWS: {
     promise: 'Paste the RAW recording. It cuts, edits and renders the finished video — no review step.',
     gets: ['Every word checked', 'Creative edit starts by itself', 'The 4K final'],
     hint: [
-      'Publish the RAW recording in Descript (download allowed) and paste its share link.',
+      'Publish the RAW recording in Descript (download allowed) and paste its share link — or pick a narration an earlier edit already used.',
       'The cut keeps every word you said — only retakes and false starts go — and an automatic word check proves it (a cut that fails is re-cut once by itself).',
       'The final cut then starts the creative edit on its own: screencasts, graphics, music and the final. Nothing waits for you; the review screen stays there if you want to look.',
     ],
@@ -144,7 +146,7 @@ const HANDOFF_OPTION: (typeof WORKFLOWS)[number] = {
   promise: 'Everything except the screencasts, packed for your editor in Premiere Pro or DaVinci Resolve.',
   gets: ['A-roll + motion graphics', 'Premiere XML + FCPXML', 'A brief for every screencast'],
   hint: [
-    'Start from the narration you already edited: a Descript share link, a finished Lab edit, or a video file.',
+    'Start from the narration you already edited: a Descript share link, a finished Lab edit, a video file, or a narration an earlier edit already used.',
     'The edit is planned and built — camera moves, overlays, facecam bubble, music, sound effects — but no screen is recorded.',
     'You get one zip: timelines for Premiere and Resolve, every graphic with transparency, audio stems, a brief per screencast slot and a preview.',
   ],
@@ -157,7 +159,13 @@ const SOURCE_STAGE: Record<SourceKind, string> = {
   descript: 'Download from Descript',
   job: 'Use the Lab edit',
   upload: 'Use the uploaded file',
-  library: 'Use the uploaded file',
+  library: 'Use the earlier narration',
+};
+/** the sources each card offers: the cut (and Full edit) never re-cuts a Lab edit (control.ts SOURCE_KINDS) */
+const FLOW_SOURCES: Record<FlowId, SourceKind[]> = {
+  cut: ['descript', 'library'],
+  full: ['descript', 'library'],
+  creative: ['descript', 'job', 'upload', 'library'],
 };
 
 /** The stages the worker will run — mirrors control.ts stagesFor(). */
@@ -307,10 +315,14 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
 
   const creative = workflow === 'creative';
   const full = workflow === 'full';
-  // the cut workflow starts from a Descript link only
-  const kind: SourceKind = creative ? (sourceKind ?? 'descript') : 'descript';
+  // every card asks where the narration is; the cut / Full edit offer a link or a library narration
+  const kind: SourceKind = sourceKind && workflow && FLOW_SOURCES[workflow].includes(sourceKind) ? sourceKind : 'descript';
+  // (a library upload runs as an upload source — control.ts stagesFor)
+  const stageKind: SourceKind = kind === 'library' && narration?.kind === 'upload' ? 'upload' : kind;
+  /** the narration the workflow works best from (any may be picked) */
+  const recommend: 'raw' | 'edited' = creative ? 'edited' : 'raw';
   const steps: StepId[] = useMemo(() => {
-    const s: StepId[] = creative ? ['workflow', 'source', SUB_STEP[kind], 'format', 'sponsored'] : ['workflow', 'link', 'format', 'sponsored'];
+    const s: StepId[] = ['workflow', 'source', SUB_STEP[kind], 'format', 'sponsored'];
     if (!creative) s.push('script');
     if (format === 'long') s.push('sites');
     s.push('review');
@@ -383,7 +395,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     const first = lsGet(LS.hint(wf)) !== '1';
     setHintOpen(first);
     if (first) lsSet(LS.hint(wf), '1');
-    go(wf === 'creative' ? 'source' : 'link');
+    go('source');
   };
   const pickSource = (k: SourceKind) => {
     setSourceKind(k);
@@ -532,7 +544,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
           </>
         )}
 
-        {(step === 'link' || step === 'source') && hintOpen && wfDef && (step === 'source' || !creative) && (
+        {step === 'source' && hintOpen && wfDef && (
           <div className="relative rounded-xl border border-primary/30 bg-primary/5 p-4 pr-9">
             <button
               type="button"
@@ -559,9 +571,9 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
           </div>
         )}
 
-        {step === 'source' && (
+        {step === 'source' && workflow && (
           <>
-            <Question sub="The narration you already edited.">Where is the video?</Question>
+            <Question sub={creative ? 'The narration you already edited.' : 'The RAW recording.'}>Where is the video?</Question>
             <div className="grid gap-3">
               <BigChoice
                 selected={sourceKind === 'descript'}
@@ -570,26 +582,30 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                 title="Descript share link"
                 sub="Published from Descript with download allowed."
               />
-              <BigChoice
-                selected={sourceKind === 'job'}
-                onClick={() => pickSource('job')}
-                icon={Film}
-                title="A finished Lab edit"
-                sub="A video made here with “Cut an unedited narration”."
-              />
-              <BigChoice
-                selected={sourceKind === 'upload'}
-                onClick={() => pickSource('upload')}
-                icon={Upload}
-                title="Upload from your computer"
-                sub={`${VIDEO_EXTS.join(' ').replace(/\./g, '').toUpperCase()} · up to 20 GB · keeps uploading while you answer the rest`}
-              />
+              {FLOW_SOURCES[workflow].includes('job') && (
+                <BigChoice
+                  selected={sourceKind === 'job'}
+                  onClick={() => pickSource('job')}
+                  icon={Film}
+                  title="A finished Lab edit"
+                  sub="A video made here with “Cut an unedited narration”."
+                />
+              )}
+              {FLOW_SOURCES[workflow].includes('upload') && (
+                <BigChoice
+                  selected={sourceKind === 'upload'}
+                  onClick={() => pickSource('upload')}
+                  icon={Upload}
+                  title="Upload from your computer"
+                  sub={`${VIDEO_EXTS.join(' ').replace(/\./g, '').toUpperCase()} · up to 20 GB · keeps uploading while you answer the rest`}
+                />
+              )}
               <BigChoice
                 selected={sourceKind === 'library'}
                 onClick={() => pickSource('library')}
                 icon={History}
-                title="Previously uploaded"
-                sub="A narration you uploaded before — no need to upload it again."
+                title="Previously used narrations"
+                sub={`A narration an earlier edit already used, or one you uploaded — no download, no upload. ${recommend === 'raw' ? 'Raw' : 'Edited'} ones are recommended here.`}
               />
             </div>
           </>
@@ -604,13 +620,22 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
 
         {step === 'library' && (
           <>
-            <Question sub="Every uploaded narration is kept here for reuse.">Which narration?</Question>
+            <Question
+              sub={
+                recommend === 'raw'
+                  ? 'A RAW narration is recommended — this workflow cuts it. An edited one works too.'
+                  : 'An EDITED narration is recommended — this workflow keeps every word. A raw one works too.'
+              }
+            >
+              Which narration?
+            </Question>
             <NarrationLibrary
               items={narrations}
               error={narrError}
               selected={narration?.key ?? null}
               onPick={pickNarration}
               onChanged={loadNarrations}
+              recommend={recommend}
             />
           </>
         )}
@@ -763,7 +788,7 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground">It runs these steps, live on the next screen</p>
               <ol className="flex flex-wrap gap-1.5">
-                {(handoff && creative ? handoffPlanned(plannedStages(workflow, format, kind)) : plannedStages(workflow, format, kind)).map((s, k) => (
+                {(handoff && creative ? handoffPlanned(plannedStages(workflow, format, stageKind)) : plannedStages(workflow, format, stageKind)).map((s, k) => (
                   <li key={s} className="rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
                     {k + 1}. {s}
                   </li>
@@ -893,7 +918,7 @@ function pct(s: SourceUploadState): number {
 function sourceRow(kind: SourceKind, url: string, pick: LabPick | null, up: SourceUploadState, narration: AutoNarration | null): [string, string, StepId] {
   if (kind === 'library') {
     const value = narration
-      ? `Uploaded before: ${narration.name}${narration.duration ? ` · ${mmss(narration.duration)}` : ''} · ${fmtBytes(narration.bytes)}`
+      ? `${narration.origin || narration.name}${narration.stage ? ` (${narration.stage})` : ''}${narration.duration ? ` · ${mmss(narration.duration)}` : ''} · ${fmtBytes(narration.bytes)}`
       : 'Choose a narration';
     return ['Source', value, 'library'];
   }
