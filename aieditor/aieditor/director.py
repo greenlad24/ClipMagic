@@ -14,7 +14,7 @@ import re
 import time
 import urllib.request
 
-from . import config, events
+from . import config, events, planfit
 
 MODEL = config.TAKES_MODEL
 PRIORITY = {"link": 2, "subscribe": 2, "lower_title": 2, "socials": 2}
@@ -153,31 +153,19 @@ def call(content, system, max_tokens=24000, effort="high"):
                                                   "content-type": "application/json"})
 
 
-def validate(plan, video, sites):
+def validate(plan, video, sites, facts=None):
+    """The director's answer → a plan the edit can honestly record. Word ids and hosts are checked
+    here; planfit then resolves every "on 'X'" beat to its word (the beat ledger), rewrites or routes
+    each beat the account / produced assets cannot show (facts = readiness + assets from
+    pre-production), adds the hook plate and re-cuts the screencast into the reference span
+    structure (REFERENCE-BASELINE §1: spans p50 10-18 s, max 30 s, A-roll beats 5-7 s, 72-76 %)."""
     ids = {w["i"]: w for w in video["words"]}
     order = [w["i"] for w in video["words"]]
     pos = {i: n for n, i in enumerate(order)}
     dur = video["duration"]
     hosts = [".".join(re.sub(r"^https?://(www\.)?", "", s["url"]).split("/")[0].split(".")[-2:]) for s in sites]
-    # the presenter's own moments stay A-roll (rule 5 — Claude does not always keep it):
-    # a spoken "subscribe", "link … description", "I'm Jake Dawson"
-    norm = [re.sub(r"[^a-z]", "", w["word"].lower()) for w in video["words"]]
-    keep_out = []
-    for i, n in enumerate(norm):
-        w = video["words"][i]
-        # windows = what those graphics really occupy (graphics_long / recipes2): the link slide
-        # runs 69 f (2.3 s) from "link"; the subscribe button appears ~2.4 s before its click
-        if n in ("subscribe", "subscribed"):
-            keep_out.append((w["start"] - 2.8, w["end"] + 2.6))
-        elif n in ("link", "links") and "description" in norm[i:i + 12]:
-            keep_out.append((w["start"] - 0.6, w["start"] + 2.6))
-        elif n == "dawson" and i and norm[i - 1] == "jake":
-            keep_out.append((w["start"] - 1.5, w["end"] + 1.2))
-        elif n == "welcome" and norm[i + 1:i + 2] == ["back"]:
-            # "Hey everyone, welcome back to the channel" — the welcome title starts on "hey"
-            hey = next((video["words"][j] for j in range(max(0, i - 3), i) if norm[j] in ("hey", "hi", "hello")), w)
-            keep_out.append((hey["start"] - 0.6, w["end"] + 1.5))
-    segs, dropped, last = [], [], -1e9
+    facts = facts if facts is not None else planfit.Facts()
+    raw_segs, dropped = [], []
     for s in sorted(plan.get("segments", []), key=lambda s: pos.get(s.get("start"), 1e9)):
         a, b = s.get("start"), s.get("end")
         why = None
@@ -185,26 +173,24 @@ def validate(plan, video, sites):
             why = "word ids not in this cut"
         elif not any(h and h in str(s.get("url", "")) for h in hosts):
             why = "url is not one of the job's sites"
-        if why is None:
-            t0 = max(0.0, ids[a]["start"] - 0.25)
-            t1 = min(dur, ids[b]["end"] + 0.35)
-            for a, b in keep_out:
-                if t0 < b and a < t1:
-                    if a - t0 >= 3.0:
-                        t1 = a                     # end the screencast before the moment
-                    elif t1 - b >= 3.0:
-                        t0 = b                     # or start it after
-                    else:
-                        why = "covers a presenter moment (subscribe / link / name)"
-            if why is None and t1 - t0 < 2.5:
-                why = "shorter than 2.5 s"
-            elif t0 < last + 3.0:
-                why = "less than 3 s of A-roll after the previous screencast"
+        elif raw_segs and pos[a] <= pos[raw_segs[-1]["end"]]:
+            why = "overlaps the previous screencast"
         if why:
             dropped.append({**s, "dropped": why})
             continue
-        segs.append({**s, "t0": round(t0, 3), "t1": round(t1, 3)})
-        last = t1
+        raw_segs.append(s)
+    fitted = planfit.fit(raw_segs, video, facts, aroll_why=plan.get("aroll_why"),
+                         site_url=sites[0]["url"] if sites else None)
+    dropped += [{"start": None, "end": None, "dropped": f"beat seg-{d['seg']:02d} '{d['cue']}': {d['dropped']}"}
+                for d in fitted["dropped"]]
+    segs = []
+    for s in fitted["segments"]:
+        if s["t1"] - s["t0"] < planfit.MIN_SPAN:
+            dropped.append({**s, "dropped": "shorter than 2.5 s"})
+            continue
+        if segs and 0.05 < s["t0"] - segs[-1]["t1"] < planfit.MIN_GAP:
+            segs[-1]["t1"] = s["t0"]               # < 3 s of A-roll is a flash: the screens join instead
+        segs.append(s)
     ovs, last_end = [], -1e9
     for ev in sorted(plan.get("overlays", []), key=lambda e: pos.get(e.get("start"), 1e9)):
         a, b, t = ev.get("start"), ev.get("end"), ev.get("template")
@@ -240,7 +226,9 @@ def validate(plan, video, sites):
             continue
         ovs.append({**ev, "t0": round(t0, 3), "t1": round(t1, 3)})
         last_end = t1
-    return {"segments": segs, "overlays": ovs, "dropped": dropped}
+    return {"segments": segs, "overlays": ovs, "dropped": dropped, "plates": fitted["plates"],
+            "beats": fitted["beats"], "objects": fitted["objects"], "aroll_actions": fitted["aroll_actions"],
+            "structure": fitted["structure"]}
 
 
 def plan(video, sites, sponsored, knowledge=None):
