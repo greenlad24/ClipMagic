@@ -87,6 +87,7 @@ const money = (usd: number | null | undefined) =>
  * or the last one when the job is idle.
  */
 const RUNNER_PHASE: Record<string, { text: string; frac: number }> = {
+  'copying-image': { text: 'copying the server image…', frac: 0.05 },
   creating: { text: 'creating…', frac: 0.1 },
   sending: { text: 'sending job', frac: 0.25 },
   running: { text: 'running', frac: 0.5 },
@@ -135,7 +136,7 @@ function RunnerBadge({ runner, runOn, jobState, now }: {
   if (st === 'running' && runSecs !== null) text = `running ${dur(runSecs)}`;
   else if (st === 'done') text = runner.destroyed === false ? 'results back · DELETE NOT CONFIRMED' : 'results back · server deleted';
   else if (st === 'failed') text = runner.destroyed === false ? 'failed · DELETE NOT CONFIRMED' : 'failed · server deleted';
-  else text = RUNNER_PHASE[st]?.text ?? st;
+  else text = (st === 'copying-image' && runner.note) || (RUNNER_PHASE[st]?.text ?? st);
   if (st === 'failed' && active) text += ' → running on the main box';
   return (
     <span
@@ -146,7 +147,7 @@ function RunnerBadge({ runner, runOn, jobState, now }: {
       title={runner.droplet ? `DigitalOcean droplet #${runner.droplet}${runner.region ? ` in ${runner.region}` : ''}` : undefined}
     >
       {live ? <Loader2 className="h-3 w-3 animate-spin" /> : <Server className="h-3 w-3" />}
-      Factory server {runner.size ?? ''} · {text}
+      Factory server {runner.size ?? ''}{runner.region ? ` · ${runner.region}` : ''} · {text}
       {usdNow > 0 && <span className="tabular-nums text-emerald-400">· ${usdNow.toFixed(2)}</span>}
       {!live && !active && <span className="text-muted-foreground/70">(last run)</span>}
     </span>

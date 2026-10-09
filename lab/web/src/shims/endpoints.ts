@@ -3791,7 +3791,9 @@ export type AutoRunOn = 'auto' | 'factory' | 'box';
 /** job/runner.json — where the current/last run executes (host: aieditor/cloud.runner) */
 export interface AutoRunner {
   kind?: 'factory' | 'box';
-  state?: 'creating' | 'sending' | 'running' | 'pulling' | 'done' | 'failed' | string;
+  state?: 'copying-image' | 'creating' | 'sending' | 'running' | 'pulling' | 'done' | 'failed' | string;
+  /** e.g. "copying the server image to lon1… ~12 min" while a job waits for the snapshot copy */
+  note?: string | null;
   action?: string; size?: string; region?: string; droplet?: number | null;
   started?: number; running_since?: number; ended?: number | null; usd?: number;
   price_hourly?: number; up_after_s?: number; destroyed?: boolean; updated_at?: number;
