@@ -32,6 +32,8 @@ import * as hyperframesDensity from "../hyperframes/density.js";
 // software. The `hfp-worker` systemd service on the host runs the pipeline.
 import * as hfpEditor from "../hyperframes/editor.js";
 import * as autoEditor from "../aieditor/control.js";
+import * as autoEditorLibrary from "../aieditor/library.js";
+import * as autoEditorStorage from "../aieditor/storage.js";
 // Tutorial Studio (LAB tool) — the Python reel sidecar.
 import * as tutorial from "../tutorial/client.js";
 import * as tutorialBatches from "../db/tutorialBatches.js";
@@ -7536,6 +7538,20 @@ const autoEditorJobs = editorCall(async () => ({ jobs: await autoEditor.listJobs
 // creative edit sources: finished edits of workflow 1 (the upload source: aieditor/uploads.ts routes)
 const autoEditorLabEdits = editorCall(async () => ({ edits: await autoEditor.listLabEdits() }));
 const autoEditorJob = editorCall((i) => autoEditor.getJob(i.id));
+// the narration library (aieditor/library.ts): finished uploads, reusable by any number of jobs
+const autoEditorUploads = editorCall(async () => ({ uploads: await autoEditorLibrary.listLibrary() }));
+const autoEditorUploadRemove = editorCall((i) => autoEditorLibrary.removeFromLibrary(i.key, i.mode, autoEditor.deleteJob));
+// "Stored files" (aieditor/storage.ts): the factory volume, per job and kind, hard links counted once
+const autoEditorStorage_ = editorCall(async () => {
+  const [all, jobs] = await Promise.all([autoEditorStorage.walkAll(), autoEditorStorage.readJobs()]);
+  const [list, uploads, volume] = await Promise.all([
+    autoEditorStorage.listStoredJobs(all, jobs),
+    autoEditorLibrary.listLibrary({ all, jobs }),
+    autoEditorStorage.volumeOf(),
+  ]);
+  return { volume, jobsBytes: autoEditorStorage.spaceOf(all).bytes, jobs: list, uploads, kinds: autoEditorStorage.KINDS };
+});
+const autoEditorDeleteFiles = editorCall((i) => autoEditorStorage.deleteJobKind(i.id, i.kind));
 const autoEditorCreate = editorCall((i) => autoEditor.createJob(i));
 const autoEditorSaveEdits = editorCall((i) => autoEditor.saveEdits(i.id, i.videos));
 const autoEditorResetEdits = editorCall((i) => autoEditor.resetEdits(i.id));
@@ -7968,6 +7984,10 @@ export const HANDLERS: Record<string, Handler> = {
   autoEditorJobs,
   autoEditorLabEdits,
   autoEditorJob,
+  autoEditorUploads,
+  autoEditorUploadRemove,
+  autoEditorStorage: autoEditorStorage_,
+  autoEditorDeleteFiles,
   autoEditorCreate,
   autoEditorSaveEdits,
   autoEditorResetEdits,

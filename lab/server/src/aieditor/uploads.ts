@@ -20,8 +20,12 @@
  *
  * Files live in <AIEDITOR_WORK>/jobs/_uploads/<id>/{data, upload.json} — the SAME volume
  * as the jobs, so the worker hard-links `data` into the job as source.mp4 (aieditor/
- * sources.py) and then removes the folder. listJobs ignores `_uploads` (not a job id).
- * Abandoned uploads (no write for 2 days) are swept whenever a new upload starts.
+ * sources.py). listJobs ignores `_uploads` (not a job id).
+ *
+ * NARRATION LIBRARY (Jake 2026-10-09: "show previously uploaded narration … so I can reuse
+ * uploaded narration videos"): a FINISHED upload is kept after use — any number of jobs may
+ * hard-link it, and it goes only through "Remove from library" (./library.ts). The sweep
+ * (whenever a new upload starts) removes only INCOMPLETE uploads with no write for 2 days.
  */
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -57,8 +61,11 @@ export interface UploadMeta {
   complete: boolean;
   created_at: number;
   updated_at: number;
-  /** the job that will use it (createJob sets it): the sweep never removes it from under that job */
+  /** (before the library: the one job that used it — no longer written; usage = the jobs' request.json) */
   job?: string;
+  /** ffprobe facts, cached once (./library.ts) */
+  probe?: { duration: number | null; width: number | null; height: number | null } | null;
+  probe_failed?: boolean;
 }
 
 /** read at call time (tests point AIEDITOR_WORK at a temp dir) */
@@ -105,10 +112,10 @@ export function checkChunk(meta: UploadMeta, offset: number, length: number | nu
 
 /** What the browser sees (no paths). */
 export function publicMeta(m: UploadMeta) {
-  return { uploadId: m.id, name: m.name, size: m.size, received: m.received, complete: m.complete, job: m.job ?? null };
+  return { uploadId: m.id, name: m.name, size: m.size, received: m.received, complete: m.complete };
 }
 
-async function readMeta(dir: string): Promise<UploadMeta | null> {
+export async function readMeta(dir: string): Promise<UploadMeta | null> {
   try {
     return JSON.parse(await fsp.readFile(path.join(dir, "upload.json"), "utf8")) as UploadMeta;
   } catch {
@@ -116,7 +123,7 @@ async function readMeta(dir: string): Promise<UploadMeta | null> {
   }
 }
 
-async function writeMeta(dir: string, m: UploadMeta) {
+export async function writeMeta(dir: string, m: UploadMeta) {
   const tmp = path.join(dir, `upload.json.tmp-${randomBytes(3).toString("hex")}`);
   await fsp.writeFile(tmp, JSON.stringify(m));
   await fsp.rename(tmp, path.join(dir, "upload.json"));
@@ -129,8 +136,8 @@ export async function getUpload(id: unknown): Promise<UploadMeta> {
 }
 
 /**
- * Remove uploads with no write for `ttl` (abandoned, or finished but never used). One a job
- * still waits for (its folder exists without a source.mp4 yet) is kept.
+ * Remove INCOMPLETE uploads with no write for `ttl` (abandoned mid-way). A finished upload is a
+ * library narration and is never swept; nothing but an upload folder (u + 24 hex) is touched.
  */
 export async function sweepUploads(now = Date.now(), ttl = UPLOAD_TTL_MS): Promise<string[]> {
   const root = uploadsRoot();
@@ -138,19 +145,14 @@ export async function sweepUploads(now = Date.now(), ttl = UPLOAD_TTL_MS): Promi
   try { names = await fsp.readdir(root); } catch { return []; }
   const removed: string[] = [];
   for (const id of names) {
+    if (!UPLOAD_ID_RE.test(id)) continue;
     const dir = path.join(root, id);
+    const st = await fsp.lstat(dir).catch(() => null);
+    if (!st?.isDirectory()) continue;
     const m = await readMeta(dir);
-    let last = m?.updated_at ?? 0;
-    if (!m) {
-      try { last = (await fsp.stat(dir)).mtimeMs; } catch { continue; }
-    }
+    if (m?.complete) continue;
+    const last = m?.updated_at ?? st.mtimeMs;
     if (now - last < ttl) continue;
-    if (m?.job) {
-      const jobDir = path.join(root, "..", m.job);
-      const waiting = await fsp.access(path.join(jobDir, "request.json")).then(() => true, () => false)
-        && !(await fsp.access(path.join(jobDir, "source.mp4")).then(() => true, () => false));
-      if (waiting) continue;
-    }
     await fsp.rm(dir, { recursive: true, force: true });
     removed.push(id);
   }
@@ -240,22 +242,41 @@ export async function completeUpload(id: unknown): Promise<UploadMeta> {
   return next;
 }
 
+/** jobs whose request.json uses this upload (directly, or as a job_source reuse of it) */
+export async function jobsUsingUpload(id: string): Promise<string[]> {
+  const root = path.join(uploadsRoot(), "..");
+  let names: string[] = [];
+  try { names = await fsp.readdir(root); } catch { return []; }
+  const out: string[] = [];
+  for (const n of names) {
+    if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(n)) continue;
+    try {
+      const req = JSON.parse(await fsp.readFile(path.join(root, n, "request.json"), "utf8"));
+      const s = req?.source ?? {};
+      if ((s.kind === "upload" || s.kind === "job_source") && s.upload === id) out.push(n);
+    } catch { /* not a job */ }
+  }
+  return out;
+}
+
+/**
+ * The upload box's cancel / "choose another file": throws the upload away — unless it is a
+ * library narration a job already used (that goes only through "Remove from library").
+ */
 export async function cancelUpload(id: unknown): Promise<void> {
   const dir = dirOf(id);
   const m = await readMeta(dir);
-  if (m?.job) throw new UploadError("A job already uses this upload.", 409);
+  if (m?.complete && (await jobsUsingUpload(String(id))).length) {
+    throw new UploadError("A job already uses this upload — it stays in the narration library.", 409);
+  }
   await fsp.rm(dir, { recursive: true, force: true });
 }
 
-/** createJob: the upload must be complete and not taken by another job; marks it as this job's. */
-export async function claimUpload(id: unknown, jobId: string): Promise<UploadMeta> {
-  const dir = dirOf(id);
+/** createJob: the upload must be complete. Any number of jobs may use it (the library). */
+export async function claimUpload(id: unknown, _jobId: string): Promise<UploadMeta> {
   const m = await getUpload(id);
   if (!m.complete) throw new UploadError("The upload has not finished yet.");
-  if (m.job && m.job !== jobId) throw new UploadError("This upload is already used by another job — upload the file again.");
-  const next: UploadMeta = { ...m, job: jobId, updated_at: Date.now() };
-  await writeMeta(dir, next);
-  return next;
+  return m;
 }
 
 function send(res: Response, fn: () => Promise<unknown>) {
@@ -285,6 +306,18 @@ export function aieditorUploadsRouter() {
     }
     const len = req.headers["content-length"] !== undefined ? Number(req.headers["content-length"]) : null;
     send(res, async () => publicMeta(await appendChunk(req.params.id, Number(req.query.offset), req, len)));
+  });
+  // the library poster / preview: the stored file itself (range requests for <video preload="metadata">)
+  r.get("/:id/video", (req, res) => {
+    let dir: string;
+    try { dir = dirOf(req.params.id); } catch { res.status(404).end(); return; }
+    readMeta(dir).then((m) => {
+      if (!m?.complete) { res.status(404).end(); return; }
+      const ext = path.extname(m.name).toLowerCase();
+      res.type(ext === ".mov" ? "video/quicktime" : ext === ".webm" ? "video/webm" : ext === ".mkv" ? "video/x-matroska" : "video/mp4");
+      res.sendFile(path.join(dir, "data"), { dotfiles: "deny", maxAge: 0, headers: { "Cache-Control": "private, no-cache" } },
+        (err) => { if (err && !res.headersSent) res.status(404).end(); });
+    }, () => res.status(404).end());
   });
   r.post("/:id/complete", (req, res) => send(res, async () => publicMeta(await completeUpload(req.params.id))));
   r.delete("/:id", (req, res) => send(res, async () => {

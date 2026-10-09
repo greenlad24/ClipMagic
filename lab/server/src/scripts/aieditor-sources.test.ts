@@ -4,9 +4,10 @@
  *                at offset == received (409 + received otherwise → a retried chunk is never
  *                appended twice), a cut-off chunk does not move `received` and its bytes are
  *                overwritten by the retry, complete = exact size (truncates leftovers),
- *                the 2-day sweep (keeps an upload a job still waits for), cancel
+ *                the 2-day sweep (incomplete uploads only — a finished one is a library
+ *                narration), cancel (refused once a job used it)
  *   control.ts   createJob source validation: a Lab edit (cut workflow only, strict names, the
- *                file must exist), an upload (complete, claimed by one job only), the cut
+ *                file must exist), an upload (complete, reusable by any number of jobs), the cut
  *                workflow keeps Descript only; listLabEdits (final > preview, per video, cut
  *                jobs only, _uploads ignored); stage title of the "download" stage; the
  *                REVIEW GATE (an unreviewed automatic cut is never offered and always refused —
@@ -203,7 +204,7 @@ async function main() {
     assert.deepEqual(req.source, { kind: "descript", url: "https://share.descript.com/view/AbC123xyz" });
     assert.equal((await ctl.getJob(jid)).stageList[0].title, "Download from Descript");
   });
-  await check("createJob from an upload: complete only, claimed by ONE job", async () => {
+  await check("createJob from an upload: complete only, reusable by MANY jobs (the library)", async () => {
     const half = await up.createUpload({ name: "half.mp4", size: 10 });
     await rejects(ctl.createJob({ ...base, source: { kind: "upload", upload: half.id } }), /not finished/);
     await rejects(ctl.createJob({ ...base, source: { kind: "upload", upload: "../../x" } }), /Upload the video first/);
@@ -211,9 +212,10 @@ async function main() {
     const req = JSON.parse(fs.readFileSync(path.join(jobs, jid, "request.json"), "utf8"));
     assert.deepEqual(req.source, { kind: "upload", upload: id, name: "take one.mov" });
     assert.match(jid, /^take-one-/);
-    assert.equal((await up.getUpload(id)).job, jid);
     assert.equal((await ctl.getJob(jid)).stageList[0].title, "Use the uploaded file");
-    await rejects(ctl.createJob({ ...base, source: { kind: "upload", upload: id } }), /already used by another job/);
+    const { id: jid2 } = await ctl.createJob({ ...base, source: { kind: "upload", upload: id } });
+    assert.notEqual(jid2, jid);
+    assert.deepEqual((await up.jobsUsingUpload(id)).sort(), [jid, jid2].sort());
     await rejects(up.cancelUpload(id), /already uses/, 409);
   });
   // ── REVIEW GATE: the factory-e2e-test fixture = the cut Jake's factory edit started from
@@ -308,17 +310,19 @@ async function main() {
     assert.deepEqual(c.chain?.from, { id: jid, title: "Linearity tour", state: "queued" });
     assert.equal(c.chain?.isChain, false);
   });
-  await check("sweep: removes uploads idle > 2 days, keeps one a job still waits for", async () => {
+  await check("sweep: removes only INCOMPLETE uploads idle > 2 days — never a finished (library) one", async () => {
     const old = await up.createUpload({ name: "old.mp4", size: 3 });
-    const now = Date.now() + up.UPLOAD_TTL_MS + 1000;
+    const unused = await up.createUpload({ name: "done-unused.mp4", size: 1 });
+    await up.appendChunk(unused.id, 0, Readable.from([Buffer.from("x")]), 1);
+    await up.completeUpload(unused.id);
+    fs.writeFileSync(path.join(jobs, "_uploads", "library.json"), JSON.stringify({ hidden: [] }));
+    const now = Date.now() + 30 * up.UPLOAD_TTL_MS;
     const removed = await up.sweepUploads(now);
     assert.ok(removed.includes(old.id), "abandoned upload removed");
-    assert.ok(!removed.includes(id), "the claimed upload of a job without source.mp4 is kept");
-    assert.ok(fs.existsSync(path.join(jobs, "_uploads", id)));
-    // once the job holds source.mp4 it is fair game
-    const jid = (await up.getUpload(id)).job!;
-    fs.writeFileSync(path.join(jobs, jid, "source.mp4"), "x");
-    assert.ok((await up.sweepUploads(now)).includes(id));
+    assert.ok(!removed.includes(id), "a finished upload used by jobs is kept");
+    assert.ok(!removed.includes(unused.id), "a finished upload nobody used yet is kept too");
+    assert.ok(fs.existsSync(path.join(jobs, "_uploads", id, "data")));
+    assert.ok(fs.existsSync(path.join(jobs, "_uploads", "library.json")), "library.json is not an upload: never swept");
     assert.deepEqual(await up.sweepUploads(Date.now()), []);                   // fresh ones stay
   });
 

@@ -3822,7 +3822,7 @@ export interface AutoJobDetail {
   /** typical seconds per stage for this source length (null = no history yet) */
   expect?: Record<string, number | null>;
   request: { format: 'short' | 'long'; sponsored: boolean; script: string | null;
-    source: { kind?: 'descript' | 'job' | 'upload'; url?: string; job?: string; file?: string; title?: string; upload?: string; name?: string };
+    source: { kind?: 'descript' | 'job' | 'upload' | 'job_source'; url?: string; job?: string; file?: string; title?: string; upload?: string; name?: string };
     title: string | null;
     sites?: { url: string; note: string }[]; workflow?: AutoWorkflow; run_on?: AutoRunOn;
     /** "creative" = a Full edit's cut job; chained_from = the cut job a chained creative edit started from */
@@ -3841,6 +3841,8 @@ export interface AutoJobDetail {
   } | null;
   videos: { title: string; duration: number; cuts: number; warnings: string[]; words: number; joins: AutoJoin[] }[];
   previews: { name: string; bytes: number; modifiedAt: number }[];
+  /** files removed from the server (Stored files / the narration library) */
+  deleted?: AutoDeletedEntry[];
   /** sound checks: the current cut's exact soundtrack over a black frame */
   listens: { name: string; bytes: number; modifiedAt: number }[];
   /** phase 2 (shorts): the preview + graphics + captions */
@@ -3904,7 +3906,39 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
 /** request.json "source": a Descript link (url), a finished Lab edit, or an upload (creative only) */
-export type AutoSourceInput = { kind: 'job'; job: string; file: string } | { kind: 'upload'; upload: string };
+export type AutoSourceInput =
+  | { kind: 'job'; job: string; file: string }
+  | { kind: 'upload'; upload: string }
+  | { kind: 'job_source'; job: string };
+/** A narration in the library (aieditor/library.ts): a kept upload, or an older job's uploaded source. */
+export interface AutoNarration {
+  key: string; kind: 'upload' | 'job_source'; job: string | null; name: string; uploadedAt: number | null;
+  duration: number | null; width: number | null; height: number | null; bytes: number;
+  usedBy: { id: string; title: string; state: string | null; busy: string | null }[];
+  poster: string | null;
+  /** bytes freed by "Delete narration only" / "… and everything made from it" (hard links counted) */
+  frees: number; freesAll: number;
+  /** why the delete is refused now (a running / queued job needs it) */
+  blocked: string | null; blockedAll: string | null;
+}
+export const autoEditorUploads = endpoint<Record<string, never>, { uploads: AutoNarration[] }>("autoEditorUploads");
+export const autoEditorUploadRemove = endpoint<{ key: string; mode: 'narration' | 'all' }, {
+  ok: boolean; freed: number; removedJobs: string[];
+}>("autoEditorUploadRemove");
+export type AutoFileKind = 'source' | 'preview' | 'final' | 'edit' | 'handoff' | 'screencast' | 'graphics' | 'temp' | 'data';
+export interface AutoDeletedEntry { kind: AutoFileKind; files: string[]; at: number; bytes: number; freed: number }
+export interface AutoStoredJob {
+  id: string; title: string; state: string | null; busy: string | null; createdAt: number | null;
+  bytes: number; frees: number; blocked: string | null; deleted: AutoDeletedEntry[];
+  kinds: { kind: AutoFileKind; title: string; bytes: number; frees: number; files: number; deletable: boolean; blocked: string | null; sharedWith: string[] }[];
+}
+export const autoEditorStorage = endpoint<Record<string, never>, {
+  volume: { total: number; used: number; free: number } | null; jobsBytes: number;
+  jobs: AutoStoredJob[]; uploads: AutoNarration[];
+}>("autoEditorStorage");
+export const autoEditorDeleteFiles = endpoint<{ id: string; kind: AutoFileKind }, {
+  ok: boolean; removed: string[]; freed: number; measured?: number | null;
+}>("autoEditorDeleteFiles");
 export const autoEditorCreate = endpoint<{
   url?: string; source?: AutoSourceInput; workflow: AutoWorkflow; format: 'short' | 'long'; sponsored: boolean; script?: string;
   title?: string; sites?: string; runOn?: AutoRunOn;
@@ -3934,7 +3968,7 @@ export const autoEditorSaveEdits =
 export const autoEditorResetEdits = endpoint<{ id: string }, { ok: boolean }>("autoEditorResetEdits");
 export const autoEditorContinue = endpoint<{ id: string; runOn?: AutoRunOn }, { ok: boolean }>("autoEditorContinue");
 export const autoEditorCancel = endpoint<{ id: string }, { ok: boolean }>("autoEditorCancel");
-export const autoEditorDelete = endpoint<{ id: string }, { ok: boolean }>("autoEditorDelete");
+export const autoEditorDelete = endpoint<{ id: string }, { ok: boolean; freed?: number }>("autoEditorDelete");
 export const autoEditorSaveNudges =
   endpoint<{ id: string; nudges: Record<string, number>; apply?: boolean }, { ok: boolean; count: number }>("autoEditorSaveNudges");
 export const autoEditorRenderVideo = endpoint<{ id: string }, { ok: boolean }>("autoEditorRenderVideo");

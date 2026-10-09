@@ -14,6 +14,8 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { claimUpload, getUpload, UPLOAD_ID_RE } from "./uploads.js";
+import { jobSourceOf } from "./library.js";
+import { assertJobDeletable, freedByJobs, readDeleted, walkAll } from "./storage.js";
 import { handoffPackages, parseHandoff, withHandoff } from "./handoff.js";
 
 const ROOT = process.env.AIEDITOR_WORK || "/aieditor-work";
@@ -61,26 +63,30 @@ export function workflowOf(req: any): Workflow {
  *   descript  a Descript share link, downloaded (every job before 2026-10-08)
  *   job       a finished Lab edit of workflow 1 (final-NN.mp4, else preview-NN.mp4) — a
  *             preview only when its cut was reviewed (REVIEW GATE below)
- *   upload    a file uploaded from the computer (aieditor/uploads.ts)
- * The last two are hard-linked into the job on the host. Jake 2026-10-08: the creative
+ *   upload    a file uploaded from the computer (aieditor/uploads.ts) — kept as a library
+ *             narration after use (./library.ts), any number of jobs may use it
+ *   job_source  an uploaded narration whose _uploads folder is gone (before the library):
+ *             the source.mp4 of an earlier job that used it (./library.ts)
+ * The last three are hard-linked into the job on the host. Jake 2026-10-08: the creative
  * workflow may start from any of the three; the cut workflow keeps Descript only.
  */
-export type SourceKind = "descript" | "job" | "upload";
+export type SourceKind = "descript" | "job" | "upload" | "job_source";
 export const SOURCE_KINDS: Record<Workflow, SourceKind[]> = {
   cut: ["descript"],
-  creative: ["descript", "job", "upload"],
+  creative: ["descript", "job", "upload", "job_source"],
 };
 const LAB_FILE_RE = /^(final|preview)-\d{2}\.mp4$/;
 
 export function sourceKindOf(req: any): SourceKind {
   const k = req?.source?.kind;
-  return k === "job" || k === "upload" ? k : "descript";
+  return k === "job" || k === "upload" || k === "job_source" ? k : "descript";
 }
 
 const SOURCE_STAGE_TITLE: Record<SourceKind, string> = {
   descript: "Download from Descript",
   job: "Use the Lab edit",
   upload: "Use the uploaded file",
+  job_source: "Use the uploaded file",
 };
 
 export function stagesFor(workflow: Workflow, format: string, source: SourceKind = "descript"): { id: string; title: string }[] {
@@ -308,6 +314,7 @@ export interface CreateInput {
   url?: string;
   /** a Lab edit or an upload instead of a link (creative workflow) */
   source?: { kind?: string; job?: string; file?: string; upload?: string };
+  // kind "job_source" = a library narration of an earlier job (./library.ts): {kind, job}
   format?: string;
   sponsored?: boolean | null;
   script?: string;
@@ -480,8 +487,10 @@ export async function parseSource(input: CreateInput, workflow: Workflow): Promi
   { kind: "descript"; url: string }
   | { kind: "job"; job: string; file: string; title: string }
   | { kind: "upload"; upload: string; name: string }
+  | { kind: "job_source"; job: string; upload: string; name: string }
 > {
-  const kind: SourceKind = input.source?.kind === "job" || input.source?.kind === "upload" ? input.source.kind : "descript";
+  const sk = input.source?.kind;
+  const kind: SourceKind = sk === "job" || sk === "upload" || sk === "job_source" ? sk : "descript";
   if (!SOURCE_KINDS[workflow].includes(kind)) {
     throw new Error("This workflow starts from a Descript share link.");
   }
@@ -520,8 +529,9 @@ export async function parseSource(input: CreateInput, workflow: Workflow): Promi
     if (!UPLOAD_ID_RE.test(upload)) throw new Error("Upload the video first.");
     const up = await getUpload(upload);
     if (!up.complete) throw new Error("The upload has not finished yet.");
-    return { kind, upload, name: up.name };     // createJob claims it (not taken by another job)
+    return { kind, upload, name: up.name };     // a library narration: any number of jobs may use it
   }
+  if (kind === "job_source") return jobSourceOf(input.source?.job);
   const url = String(input.url ?? "").trim();
   if (!SHARE_RE.test(url)) {
     throw new Error("Paste a Descript share link like https://share.descript.com/view/AbC123xyz");
@@ -555,8 +565,7 @@ export async function createJob(input: CreateInput) {
   const id = `${slug}-${stamp}-${randomBytes(2).toString("hex")}`;
   const dir = path.join(JOBS, id);
   if (source.kind === "upload") {
-    // complete + not taken; marks it as this job's (the abandoned-upload sweep keeps it)
-    await claimUpload(source.upload, id);
+    await claimUpload(source.upload, id);         // complete (a finished upload is never swept)
   }
   await fsp.mkdir(dir, { recursive: true });
   await writeJson(path.join(dir, "request.json"), {
@@ -759,6 +768,8 @@ export async function getJob(id: string) {
     })),
     previews,
     listens,
+    /** files removed from the server (Stored files / the library) — the view says "deleted" */
+    deleted: await readDeleted(dir),
     edits,
     finals,
     graphics,
@@ -1005,12 +1016,20 @@ export async function cancelJob(id: string) {
   return { ok: true };
 }
 
+/**
+ * Delete a job and all its files. Refused while it is running or queued, and while another
+ * job that has not started yet still needs one of its files as its source (./storage.ts).
+ * `freed` = the bytes that really come back (hard links shared with other jobs or the
+ * narration library stay on disk).
+ */
 export async function deleteJob(id: string) {
   const dir = jobDir(id);
   const st = await readJson<any>(path.join(dir, "status.json"));
   if (st?.state === "running") throw new Error("Cancel it first.");
+  await assertJobDeletable(id);
+  const freed = freedByJobs(await walkAll(), [id]);
   await fsp.rm(dir, { recursive: true, force: true });
-  return { ok: true };
+  return { ok: true, freed };
 }
 
 export const filesRoot = JOBS;
