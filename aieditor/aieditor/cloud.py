@@ -649,6 +649,12 @@ def run_remote(job_dir, action, log, cancelled):
         raise DOError("cancelled while waiting for a logged-in account another job is using")
     with _slots:
         ACTIVE[jid] = None
+    # DigitalOcean sometimes has no CPU-optimized capacity in the region (2026-10-09: "Size is not
+    # available in this region" for every c-/c2-/g- size in sgp1). Take the biggest size the region
+    # can give right now from the preference list instead of failing the job.
+    size, price = pick_size(s, log)
+    s = {**s, "size": size}
+    _PRICES[size] = price
     runner(job_dir, kind="factory", state="creating", action=action, size=s["size"], region=s["region"],
            started=t_start, droplet=None, usd=0.0, price_hourly=_price(s["size"]), ended=None)
     try:
@@ -766,6 +772,32 @@ def run_remote(job_dir, action, log, cancelled):
             ACTIVE.pop(jid, None)
 
 
+SIZE_FALLBACKS = ["c-32", "c2-32vcpu-64gb", "c-16", "c2-16vcpu-32gb", "g-16vcpu-64gb",
+                  "s-8vcpu-32gb-amd", "s-8vcpu-32gb-640gb-intel", "s-8vcpu-16gb-amd"]
+_PRICES = {}
+
+
+def pick_size(s, log=print):
+    """(slug, $/h) of the first size in settings["size_fallbacks"] (default: the configured size, then
+    SIZE_FALLBACKS) that the region offers RIGHT NOW. All big enough for the snapshot (80 GB disk).
+    If the size list cannot be read, the configured size is tried as before."""
+    want = [s["size"]] + [x for x in (s.get("size_fallbacks") or SIZE_FALLBACKS) if x != s["size"]]
+    try:
+        sizes = {x["slug"]: x for x in api("GET", "/sizes?per_page=200")["sizes"]}
+    except DOError:
+        return s["size"], _price(s["size"])
+    for slug in want:
+        x = sizes.get(slug)
+        if x and x.get("available") and s["region"] in x.get("regions", []) and x.get("disk", 0) >= 80:
+            if slug != s["size"]:
+                log(f"{s['size']} is not available in {s['region']} right now — using {slug} "
+                    f"({x['vcpus']} vCPU / {x['memory'] // 1024} GB, ${x['price_hourly']:.3f}/h)")
+            return slug, float(x["price_hourly"])
+    raise DOError(f"no factory-size server is available in {s['region']} right now (tried {', '.join(want)})")
+
+
 def _price(size):
+    if size in _PRICES:
+        return _PRICES[size]
     return {"c-32": 1.0, "c-16": 0.5, "c2-32vcpu-64gb": 1.11905, "s-2vcpu-4gb": 0.03571,
             "s-1vcpu-512mb-10gb": 0.00595, "s-1vcpu-1gb": 0.00893}.get(size, 1.0)
