@@ -15,7 +15,9 @@ with its failure list (never shipped quietly, never sent to Jake as notes).
 HARD RULE (Jake 2026-10-09, "G1 trims pauses - I don't want that at all"; RULEBOOK R11): no remedy trims
 the narration, cuts a pause or adds a cut to it. Every action below works on the SCREEN side only (a
 recording, the camera plan, the blur, an off-camera asset, the screen pieces); tests/test_gates.py checks
-the table statically. Narration integrity (D9) has no automatic remedy at all: it is held for Jake.
+the table statically. Narration integrity (D9) has no screen-side remedy: inside an edit it is HELD (a
+last-resort state, never a request for Jake's review); the word check itself is enforced on the CUT, where
+aieditor/chain.py re-cuts once under the factory policy before anything is built on it.
 
 Who executes an action: p7's recorder (rerecord_beat, retry_once, reassemble), p7's capped off-camera
 repair agent (repair_agent), p6's off-camera content step (regenerate), p5's blur (widen_blur), the
@@ -59,7 +61,7 @@ TABLE = {
     "generation_missing": ["regenerate", "regenerate"],
     "privacy":            ["widen_blur", "cut_beat"],
     "challenge":          ["retry_once", "fallback"],
-    "narration":          [],             # D9: never an automatic remedy — held for Jake
+    "narration":          [],             # D9: no screen-side remedy — held (the chain re-cuts at the cut)
 }
 
 # most serious first: what a take with several problems is remedied for

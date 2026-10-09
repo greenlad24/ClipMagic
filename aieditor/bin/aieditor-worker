@@ -51,6 +51,12 @@ WORKFLOWS (request.json "workflow", Jake 2026-10-08: "there are 2 workflows"):
             "preprod" = PRE-PRODUCTION, stage 0 of the creative edit — aieditor/preprod.py, built
             separately (sandbox: /opt/aieditor-work/loop/aieditor/aieditor/preprod.py). The worker
             calls it when the module exists and skips the stage otherwise (see run_preprod).
+  chain     ONE SUBMISSION = A FINISHED EDIT (Jake 2026-10-09: "I don't want a review step from my
+            side"): a cut job with request.json "chain": "creative" (the Lab's "Full edit" card) is
+            carried on by aieditor/chain.py from the MAIN loop (never inside --once): word check
+            passed → its "final" → a new creative job from final-01.mp4 ("chained_from") → that
+            job's "final" once its gates pass. A failed word check is re-cut once, then HELD.
+            chain.json in each job records the steps; log.txt / events.jsonl say "chain: …".
 """
 import importlib
 import inspect
@@ -69,7 +75,7 @@ sys.path.insert(0, str(ROOT))
 
 from aieditor import align, camera, cloud, compose, config, descript, edl, events, gates, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
 from aieditor import sites as sites_mod  # noqa: E402
-from aieditor import accountlock, apiledger, llm  # noqa: E402
+from aieditor import accountlock, apiledger, chain, llm  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
 # workflow 2: no takes / cut / sound check — the edited timeline is kept, then pre-production
@@ -1013,8 +1019,13 @@ def main():
         # or the rolling $20/24 h cap is reached
         return cloud.busy() >= cloud.settings()["max_parallel"] or cloud.over_daily_cap()
 
+    last_chain = 0.0
     while not STOP:
         jdump(hb, {"at": now(), "pid": os.getpid(), "factory_jobs": cloud.busy()})
+        if now() - last_chain >= CHAIN_EVERY_S:
+            # the cut → creative chain (aieditor/chain.py) — main box only, between claims
+            last_chain = now()
+            chain_tick()
         job, action = claim(skip)
         if not job:
             time.sleep(2)
@@ -1031,6 +1042,19 @@ def main():
         with LOCAL:
             execute(job, action)
         cloud.runner(job.d, state="done", ended=now())
+        chain_tick()                                    # the next link starts without waiting
+        last_chain = now()
+
+
+CHAIN_EVERY_S = 5
+
+
+def chain_tick():
+    """Advance every chained job one step (aieditor/chain.py). Never raises: the loop keeps claiming."""
+    try:
+        chain.tick(config.JOBS, running=cloud.running, log=lambda m: print(m, flush=True))
+    except Exception:                                     # noqa: BLE001
+        traceback.print_exc()
 
 
 def once(job_id, action):
