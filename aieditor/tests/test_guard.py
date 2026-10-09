@@ -50,4 +50,19 @@ with tempfile.TemporaryDirectory() as td:
     check(k == 3 and names == ["f01920.png", "f01921.png", "f01922.png", "f02048.png"], f"frame names repaired: {names}")
 rj = (ROOT / "motion" / "render.mjs").read_text()
 check("Math.round(first)" in rj and "outFirst != null" in rj, "render.mjs names frames by integer output frame")
+
+# the frame guard (OCR) patterns
+sys.path.insert(0, str(ROOT / "screencast"))
+try:
+    import qa_frames  # noqa: E402  (needs cv2: present in the screencast image only)
+except ImportError:
+    qa_frames = None
+if qa_frames:
+    check(qa_frames.CHALLENGE.search("Unusual activity has been detected from your device. Try again later."), "OCR: block")
+    check(qa_frames.ERROR.search("Message delivery timed out. Please try again."), "OCR: error")
+    check(qa_frames.GREET.search("Hey, Keith. Ready to dive in?").group(1) == "Keith", "OCR: greeting")
+le = (ROOT / "aieditor" / "longedit.py").read_text()
+check("frame_guard(" in le and "MIN_KEEP_S" in le, "compose cuts/drops screencasts the frame guard flags")
+ar = (ROOT / "screencast" / "agent_rec.mjs").read_text()
+check('execCommand("selectAll")' in ar, "typing clears a leftover draft first (C3)")
 print(f"test_guard: {n} checks passed")

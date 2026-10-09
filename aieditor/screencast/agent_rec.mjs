@@ -915,11 +915,22 @@ async function act(a) {
       const popups = () => page.evaluate(() => [...document.querySelectorAll('[role=listbox],[role=option],[class*="suggest" i],[class*="autocomplete" i]')]
         .filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 40 && r.height > 12 && st.visibility !== "hidden" && st.display !== "none" && +st.opacity > 0.2; }).length).catch(() => 0);
       const nPop = await popups();
-      if (a.clear) {
-        // review v12 #18: Linearity keeps a draft in its prompt box — retries piled up into a garbled
-        // prompt. Select-all + delete first, acknowledged by SILENT ticks (no frames, nothing shown)
-        await pressCombo("Control+a"); if (rec) await step(true);
-        await page.keyboard.press("Backspace"); if (rec) { for (let j = 0; j < 3; j++) await step(true); }
+      // RULEBOOK C3: the field is EMPTY when the typing beat starts. Any leftover draft is cleared (not only
+      // when the agent asks: "Colorize this black and white photTurn this into…" reached an edit,
+      // 2026-10-09). ⚠️ The browser now says it is a Mac, so apps map select-all to ⌘A and ignore Ctrl+A:
+      // the editing commands are used first (work in inputs and rich-text composers alike), keys as backup.
+      // Acknowledged by SILENT ticks (no frames, nothing shown)
+      const fieldText = () => page.evaluate(() => { const x = document.activeElement; return x ? String(x.value ?? x.innerText ?? "").trim() : ""; }).catch(() => "");
+      if (a.clear !== false && (a.clear || (await fieldText()))) {
+        await page.evaluate(() => { try { document.execCommand("selectAll"); document.execCommand("delete"); } catch {} }).catch(() => {});
+        if (rec) await step(true);
+        if (await fieldText()) {
+          for (const combo of ["Meta+a", "Control+a"]) {
+            await pressCombo(combo); if (rec) await step(true);
+            await page.keyboard.press("Backspace"); if (rec) { for (let j = 0; j < 3; j++) await step(true); }
+            if (!(await fieldText())) break;
+          }
+        }
       }
       const e = log("type", { box: toCap(fb || b), abox: toCap(b), text: a.text, paste: !!a.paste });
       if (a.paste) {
@@ -1087,7 +1098,7 @@ async function endSegment(until) {
   fs.writeFileSync(path.join(r.dir, "events.json"), JSON.stringify({
     capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0, url: r.url,
     end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
-    browser: { exe: CHROME, ua: UA, version: ID.full } }, null, 1));
+    browser: { exe: CHROME, ua: UA, version: ID.full }, account: ACCOUNT }, null, 1));
   rec = null;
   await heartbeat(false);
   await realClock();

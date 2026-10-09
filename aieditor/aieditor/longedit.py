@@ -200,6 +200,29 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             + f", {len(evs)} overlay(s)"), usd
 
 
+MIN_KEEP_S = 6.0          # a screencast cut short by the guard keeps at least this much, else A-roll
+
+
+def frame_guard(w, cancelled):
+    """screencast/qa_frames.py over every recorded segment (cached in frames-qa.json until a raw.mp4
+    changes): {"03": [{"t", "kind", "why"}]} — challenge / error / account hits by recorded second."""
+    w = Path(w)
+    raws = list(w.glob("seg-*/rec/raw.mp4"))
+    if not raws:
+        return {}
+    cache = w / "frames-qa.json"
+    if not cache.exists() or cache.stat().st_mtime < max(r.stat().st_mtime for r in raws):
+        accts = [json.load(open(r.parent / "events.json")).get("account") for r in raws if (r.parent / "events.json").exists()]
+        acct = max(set(a for a in accts if a), key=accts.count, default=None)
+        # the result goes to a FILE: a big JSON on the pipe would block a container nobody reads yet
+        _docker(["python3", "/a/screencast/qa_frames.py", "/w", "--out", f"/w/{cache.name}"]
+                + (["--account", acct] if acct else []), [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-qaframes")
+    try:
+        return json.loads(cache.read_text()).get("segments", {})
+    except (OSError, ValueError):
+        return {}
+
+
 def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=None, face_src=None):
     """Camera per segment at `size`, the A-roll camera on `base`, then the composite."""
     d = Path(d)
@@ -210,22 +233,36 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     allsegs = plan["segments"]
     xf_s = compose_long.xfade_s(fps)
     jobs = []
+    # GUARD (Jake 2026-10-08/09): a bot check, an app error or another account can never reach an edit —
+    # the recorder's live checks (events.json "walls") + the frame guard (OCR of the recorded pixels)
+    bad = frame_guard(w, cancelled)
+    usable = {}
     for i, seg in enumerate(allsegs):
         sd = w / f"seg-{i:02d}"
         if not (sd / "rec" / "events.json").exists():
             continue
-        walls = [x for x in json.load(open(sd / "rec" / "events.json")).get("walls", []) if x.get("kind") in agentrec.DROP_KINDS]
-        if walls:
-            # GUARD (Jake 2026-10-08): a frame of a bot check can never reach an edit
-            ev_log.emit("log", f"screencast {i + 1}: a {walls[0].get('kind')} page was recorded ({walls[0].get('why')}) — "
-                        "dropped, A-roll used", level="warn")
+        ev = json.load(open(sd / "rec" / "events.json"))
+        hits = [x for x in ev.get("walls", []) if x.get("kind") in agentrec.DROP_KINDS] + bad.get(f"{i:02d}", [])
+        if not hits:
+            usable[i] = seg
             continue
+        first = min(float(x.get("t", 0)) for x in hits)
+        why = next(x for x in hits if float(x.get("t", 0)) == first)
+        keep = first - 0.5
+        if keep >= MIN_KEEP_S:
+            # the clean beginning stays; the screencast ends before the bad frame, A-roll takes over
+            usable[i] = {**seg, "t1": seg["t0"] + keep}
+            msg = (f"screencast {i + 1}: {why.get('kind')} at {first:.1f}s ({why.get('why')}) — cut to its first "
+                   f"{keep:.1f}s, A-roll after")
+        else:
+            msg = f"screencast {i + 1}: {why.get('kind')} at {first:.1f}s ({why.get('why')}) — dropped, A-roll used"
+        ev_log.emit("log", msg, level="warn")
+    for i, seg in sorted(usable.items()):
         clip = f"sc-{i:02d}-{W}.mp4"
         # two screencasts back to back = a change of world (a new recording): the next one
         # DISSOLVES in over this one (SYSTEM.md §3b), so this clip runs a few frames longer
-        nxt = allsegs[i + 1] if i + 1 < len(allsegs) else None
-        into_next = bool(nxt and abs(nxt["t0"] - seg["t1"]) < 0.05
-                         and (w / f"seg-{i + 1:02d}" / "rec" / "events.json").exists())
+        nxt = usable.get(i + 1)
+        into_next = bool(nxt and abs(nxt["t0"] - seg["t1"]) < 0.05)
         # the clip also runs past its end for the dissolve back into the full-screen narration
         # (Jake #5: the bubble fades first, then the screencast) — both need extra frames
         tail = xf_s if into_next else compose_long.aroll_tail_s()
