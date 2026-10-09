@@ -172,28 +172,17 @@ check(all(x[1] - x[0] > 0 for x in rl), "long-form ranges forward")
 rs = edl.ranges_for(ws, by, edl.Audio(wav), exact_gap=False)
 check(len(rs) == 4, "shorts still split every pause over 0.35 s")
 
-# ---- the reference pause budget: ~68 s of speech with eleven 0.55-0.80 s pauses. The refs
-# allow 1.9-4.0 pauses >= 0.5 s a minute (3/min budget): the 3 SHORTEST stay natural, the
-# rest are rebuilt to 0.35 s; a 1.2 s pause is always rebuilt (refs: none >= 1.0 s)
+# ---- Jake 2026-10-09: natural pauses up to 0.7 s are NEVER trimmed (no reference pause budget)
 spec, t = [], 0.5
-for k in range(60):
+for k in range(30):
     spec.append((f"w{k}", t, t + 0.9))
-    gap = 0.55 + 0.025 * (k // 5) if k % 5 == 4 else (1.2 if k == 31 else 0.12)
-    t += 0.9 + gap
+    t += 0.9 + (0.6 if k % 3 == 2 else 0.12)
 ws = words(spec)
 by = {w["i"]: w for w in ws}
-pb_wav = speech_wav([(w["w"], w["s"], w["e"]) for w in ws], 12)
-kb = edl.pause_budget(ws, edl.Audio(pb_wav))
-long_ones = [w["i"] for w, n in zip(ws, ws[1:]) if n["s"] - w["e"] >= 0.5 and n["s"] - w["e"] <= edl.LONG_PAUSE_KEEP]
-check(len(long_ones) == 11 and len(kb) == 11 - 3, f"budget keeps 3 of 11 natural pauses: {len(long_ones)} / {len(kb)}")
-check(all(i not in kb for i in long_ones[:3]), "the 3 shortest pauses are the ones kept")
-rb = edl.ranges_for(ws, by, edl.Audio(pb_wav), exact_gap=True)
-pp_b, nf_b = edl.pieces_for(rb, 30.0)
-ow_b = edl.output_words(pp_b, by, 30.0)
-gb = [b["start"] - a["end"] for a, b in zip(ow_b, ow_b[1:])]
-mins_b = nf_b / 30.0 / 60
-check(sum(g >= 0.5 for g in gb) / mins_b <= 4.0, f"pauses >= 0.5 s within the refs' 4.0/min: {sum(g >= 0.5 for g in gb) / mins_b:.2f}")
-check(max(gb) < 0.92 and not any(g >= 1.0 for g in gb), f"longest pause within the refs' 0.92 s: {max(gb):.2f}")
+np_wav = speech_wav([(w["w"], w["s"], w["e"]) for w in ws], 12)
+rn = edl.ranges_for(ws, by, edl.Audio(np_wav), exact_gap=True)
+check(len(rn) == 1, f"long-form keeps every pause up to 0.7 s as recorded (one run, no cuts): {len(rn)} ranges")
+check(not hasattr(edl, "pause_budget"), "no pause budget exists (Jake: no pause trimming)")
 
 # ---- transcript repair splices in place and never reorders the rest
 doc = {"words": [{"word": "using", "start": 10.0, "end": 10.3}, {"word": "in", "start": 10.5, "end": 10.6},

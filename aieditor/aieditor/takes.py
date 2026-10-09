@@ -199,7 +199,7 @@ CONTENT_RULE = {
 # It never removes a sentence-initial "So", an aside ("I'm talking about", "Hold,", a
 # one-word stutter "It's, it's") or a whole sentence said once ("Cool.", "Okay.", "Try for
 # yourself."). Removing spoken words is not something the references license
-# (REFERENCE-BASELINE §7 JAKE>REF); silence trimming is (edl.pause_budget).
+# (REFERENCE-BASELINE §7 JAKE>REF); natural pauses are never trimmed (Jake 2026-10-09).
 POLICY_JAKE = "jake"
 POLICY_FACTORY = "factory"
 FACTORY_FILLER_WHITELIST = frozenset()     # Jake's list of fillers a factory cut may remove
