@@ -64,6 +64,7 @@ inventory.mjs add --proxy-server (screencast/macchrome.mjs). On this box no prox
 Settings: WORK/factory.json (created with DEFAULTS on first use). The snapshot is rebuilt
 automatically when the local Docker images change (manifest of image ids)."""
 import json
+import re
 import os
 import shlex
 import sqlite3
@@ -337,6 +338,44 @@ def rsync(src, dst, *extra, timeout=7200):
                         *extra, src, dst], capture_output=True, timeout=timeout)
     if r.returncode not in (0, 24):          # 24 = files vanished mid-copy (live logs)
         raise DOError(f"rsync {src} → {dst}: {r.stderr.decode('utf-8', 'replace')[-400:]}")
+
+
+_RSYNC_REAL = rsync
+
+
+def rsync_progress(src, dst, *extra, on_progress=None, timeout=7200):
+    """rsync with --info=progress2: on_progress(percent, bytes_done) about every second. Same errors as rsync().
+    When rsync() has been replaced (the tests' fake transport), it delegates to it."""
+    if rsync is not _RSYNC_REAL:
+        rsync(src, dst, *extra, timeout=timeout)
+        if on_progress:
+            on_progress(100, 0)
+        return
+    cmd = ["rsync", "-a", "--partial", "--info=progress2", "--no-inc-recursive",
+           "-e", "ssh " + " ".join(shlex.quote(o) for o in SSH_OPTS), *extra, src, dst]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    t0, last, buf = time.time(), 0.0, b""
+    while True:
+        ch = p.stdout.read(256)
+        if not ch:
+            break
+        buf += ch
+        parts = re.split(rb"[\r\n]", buf)
+        buf = parts[-1]
+        for line in parts[:-1]:
+            m = re.search(rb"^\s*([\d,]+)\s+(\d+)%", line)
+            if m and on_progress and time.time() - last >= 1.0:
+                last = time.time()
+                try:
+                    on_progress(int(m.group(2)), int(m.group(1).replace(b",", b"")))
+                except Exception:  # noqa: BLE001 - a display hiccup never fails the copy
+                    pass
+        if time.time() - t0 > timeout:
+            p.kill()
+            raise DOError(f"rsync {src} → {dst}: timed out after {timeout}s")
+    rc = p.wait()
+    if rc not in (0, 24):
+        raise DOError(f"rsync {src} → {dst}: {p.stderr.read().decode('utf-8', 'replace')[-400:]}")
 
 
 def wait_ssh(ip, timeout=420):
@@ -831,8 +870,40 @@ def run_remote(job_dir, action, log, cancelled):
             src_local = job_dir / "source.mp4"
             if src_local.exists():
                 excl += ["--exclude", "source.mp4"]
+            # Jake 2026-10-09: "the copy process should be part of the progress bar". The server's
+            # final status.json (done) is held back: until every file has arrived the job stays
+            # "running" with "Copying results back … X of Y GB"; the live files come last.
             runner(job_dir, state="pulling")
-            rsync(f"root@{ip}:{rjob}/", str(job_dir) + "/", *excl, "--exclude", "tmp-*")
+            final = {}
+            try:
+                final = json.loads((job_dir / "status.json").read_text())
+            except (OSError, ValueError):
+                pass
+            try:
+                total = int(ssh(ip, f"du -sb --exclude=source.mp4 --exclude='tmp-*' {rjob} | cut -f1",
+                                timeout=120, check=False).strip() or 0)
+            except (ValueError, subprocess.TimeoutExpired):
+                total = 0
+            where = s.get("region", "the factory server")
+
+            def show(pct, done_b):
+                st = dict(final) if final else {}
+                gb = (f"{done_b / 1e9:.1f} of {total / 1e9:.1f} GB" if total else f"{done_b / 1e9:.1f} GB")
+                st.update(state="running", message=f"Copying results back from {where}… {gb} ({pct}%)",
+                          progress=round(0.97 + 0.03 * pct / 100, 4), updated_at=time.time())
+                tmp = job_dir / "status.json.tmp"
+                tmp.write_text(json.dumps(st))
+                tmp.replace(job_dir / "status.json")
+                runner(job_dir, state="pulling", pull_pct=pct, pull_bytes=done_b, pull_total=total)
+            show(0, 0)
+            log(f"copying results back from {where} ({total / 1e9:.1f} GB)…")
+            live_excl = []
+            for f in LIVE_FILES:
+                live_excl += ["--exclude", f]
+            rsync_progress(f"root@{ip}:{rjob}/", str(job_dir) + "/", *excl, *live_excl, "--exclude", "tmp-*",
+                           on_progress=show)
+            for f in LIVE_FILES:                       # the server's own final status/log/events, last
+                rsync(f"root@{ip}:{rjob}/{f}", str(job_dir) + "/", timeout=300)
             ok_run = True
             tail = ssh(ip, f"tail -5 {config.WORK}/remote.log", check=False)
             log(f"results back after {time.time() - t_start:.0f}s total")
