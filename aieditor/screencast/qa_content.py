@@ -120,10 +120,10 @@ def check_segment(sd, clip_cam, exp_beats, forbid):
             want = e.get("text", "")
             out.append({"check": "typed", "ok": e["value"].strip() == want.strip(), "value": e["value"][:120], "want": want})
     # GUARD (Jake 2026-10-08): no bot check / captcha page may ever be in a recording
-    walls = [x for x in ev.get("walls", []) if x.get("kind") == "challenge"]
+    walls = [x for x in ev.get("walls", []) if x.get("kind") in ("challenge", "account", "error")]
     out.append({"check": "no_challenge", "ok": not walls, "walls": walls[:3]})
     for e in ev["events"]:
-        if re.search(r"just a moment|verify you are human|attention required", str(e.get("title", "")) + " " + str(e.get("vis", "")), re.I):
+        if re.search(r"just a moment|verify you are human|attention required|unusual activity has been detected", str(e.get("title", "")) + " " + str(e.get("vis", "")), re.I):
             out.append({"check": "no_challenge", "ok": False, "t": round(e["t"], 2), "title": e.get("title")})
     for req in exp_beats:
         hits = [e for e in ev["events"] if abs((e.get("at") if e.get("at") is not None else e["t"]) - req["at"]) <= 0.12]

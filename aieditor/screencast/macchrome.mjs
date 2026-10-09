@@ -87,11 +87,33 @@ export async function dress(page, id) {
 
 // CHALLENGE / WALL GUARD — a page we must never record: a bot check (Cloudflare "Just a moment" /
 // "Verify you are human" / turnstile, captchas) or, when the session should be logged in, a login wall.
-export async function wall(page) {
+// ACCOUNT: the signed-in person's first name as the app shows it (ChatGPT's sidebar profile button, else its
+// greeting "Hey, Jake." / "How can I help, Jake?"). A Scout profile can hold TWO accounts (2026-10-09: a
+// recording opened on "Hey, Keith") — the recorder notes the first name it sees and wall() flags any other.
+export async function accountName(page) {
   try {
     return await page.evaluate(() => {
+      // the sidebar account block: "Jake Dawson\nPlus" (name line + plan line)
+      const PLAN = /^\s*(?:[A-Z]{1,3}\s*\n)?([A-Z][\w'-]+)(?: [A-Z][\w'.-]+){0,3}\s*\n\s*(?:Free|Plus|Pro|Go|Team|Business|Enterprise|Edu)\s*$/;
+      for (const el of document.querySelectorAll('[data-testid="accounts-profile-button"], [aria-label="Open profile menu"], nav div, aside div')) {
+        const t = el.innerText || "";
+        if (t.length > 60) continue;
+        const m = t.match(PLAN);
+        if (m) return m[1];
+      }
+      const g = (document.body?.innerText || "").slice(0, 3000)
+        .match(/\b(?:Hey|Hi|Hello|Welcome back|Good (?:morning|afternoon|evening)|How can I help|What's on your mind(?: today)?|Ready when you are|Where should we begin)[,!]?\s+([A-Z][a-z'-]+)\b/);
+      return g ? g[1] : null;
+    });
+  } catch { return null; }
+}
+
+export async function wall(page, account = null) {
+  try {
+    const w = await page.evaluate(() => {
       const url = location.href, title = document.title || "";
-      const txt = (document.body?.innerText || "").slice(0, 4000);
+      const body = document.body?.innerText || "";
+      const txt = body.slice(0, 4000), tail = body.slice(-20000);   // tail: the latest messages of a chat
       // only a VISIBLE challenge widget counts (an invisible reCAPTCHA v3 badge sits on many normal pages)
       const shown = [...document.querySelectorAll("iframe")].filter((f) => {
         const r = f.getBoundingClientRect();
@@ -103,6 +125,13 @@ export async function wall(page) {
           || document.querySelector("#challenge-form, #cf-challenge-running, .cf-turnstile"))
         return { kind: "challenge", why: (title || txt.slice(0, 80)).slice(0, 120), url };
       if (/\b(complete|solve) the captcha\b|captcha required/i.test(txt.slice(0, 1500))) return { kind: "challenge", why: "captcha", url };
+      // the app refuses to work for this browser ("Unusual activity has been detected from your device")
+      const m = tail.match(/unusual activity has been detected[^.\n]*|too many requests[^.\n]*/i);
+      if (m) return { kind: "challenge", why: m[0].slice(0, 120), url };
+      // an error banner the viewer would read (a failed send / generation)
+      // (a whole short line: a chat that merely QUOTES the words is not an error)
+      const er = tail.match(/^[ \t]*(?:message delivery timed out|something went wrong|network error)[^\n]{0,80}$/im);
+      if (er) return { kind: "error", why: er[0].trim().slice(0, 120), url };
       const pw = document.querySelector("input[type=password]");
       const loginUrl = /\/\/(auth|login|accounts|signin)\.|\/(log-?in|sign-?in|auth)(\/|\?|$)/i.test(url);
       const buttons = [...document.querySelectorAll("button,a")].map((b) => (b.innerText || "").trim().toLowerCase());
@@ -111,5 +140,9 @@ export async function wall(page) {
         return { kind: "login", why: pw ? "password field" : loginUrl ? "login address" : "log in / sign up buttons", url };
       return null;
     });
+    if (w || !account) return w;
+    const who = await accountName(page);
+    return who && who.toLowerCase() !== String(account).toLowerCase()
+      ? { kind: "account", why: `${who}, not ${account}`, url: page.url() } : null;
   } catch { return null; }
 }

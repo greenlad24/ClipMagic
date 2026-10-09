@@ -214,10 +214,10 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         sd = w / f"seg-{i:02d}"
         if not (sd / "rec" / "events.json").exists():
             continue
-        walls = [x for x in json.load(open(sd / "rec" / "events.json")).get("walls", []) if x.get("kind") == "challenge"]
+        walls = [x for x in json.load(open(sd / "rec" / "events.json")).get("walls", []) if x.get("kind") in agentrec.DROP_KINDS]
         if walls:
             # GUARD (Jake 2026-10-08): a frame of a bot check can never reach an edit
-            ev_log.emit("log", f"screencast {i + 1}: a human-check page was recorded ({walls[0].get('why')}) — "
+            ev_log.emit("log", f"screencast {i + 1}: a {walls[0].get('kind')} page was recorded ({walls[0].get('why')}) — "
                         "dropped, A-roll used", level="warn")
             continue
         clip = f"sc-{i:02d}-{W}.mp4"

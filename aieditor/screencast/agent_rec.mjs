@@ -43,7 +43,14 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 // a Mac Chrome UA that matches the engine's real version, UA-CH "Google Chrome"/macOS, platform MacIntel,
 // webdriver false, Asia/Bangkok, hidden scrollbars, Mac font aliases; AGENT_PROXY = egress via the main box.
 import { execFileSync } from "node:child_process";
-import { CHROME, launchArgs, identity, dress, wall, HB_ON, HB_OFF } from "./macchrome.mjs";
+import { CHROME, launchArgs, identity, dress, wall as wallOf, accountName, HB_ON, HB_OFF } from "./macchrome.mjs";
+// the Scout account this session belongs to (first name, noted on the first clean page; AGENT_ACCOUNT overrides)
+let ACCOUNT = process.env.AGENT_ACCOUNT || null;
+async function wall(pg) {
+  const w = await wallOf(pg, ACCOUNT);
+  if (!w && !ACCOUNT) ACCOUNT = await accountName(pg);
+  return w;
+}
 const VER = (() => { try { return execFileSync(CHROME, ["--version"]).toString().match(/(\d+)\./)[1]; } catch { return "155"; } })();
 const UA = process.env.BROWSER_UA ||
   `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${VER}.0.0.0 Safari/537.36`;
@@ -1094,9 +1101,15 @@ async function realClock() {
   try {
     // close FIRST: the tabs share one renderer process (--renderer-process-limit=1) and a tab opened
     // next to the virtual-time one loaded half-way (spinner, a placeholder account) — 2026-10-09
+    // per-tab state (sessionStorage — e.g. which of the profile's accounts is active) goes along
+    let ss = "{}", origin = null;
+    try { origin = new URL(url).origin; ss = await old.evaluate(() => JSON.stringify(Object.fromEntries(Object.entries(sessionStorage)))); } catch {}
     await old.close().catch(() => {});
     const p = await browser.newPage();
     await dress(p, ID);
+    if (origin && ss !== "{}") await p.evaluateOnNewDocument((o, j) => {
+      try { if (location.origin === o && !sessionStorage.getItem("__amss")) { for (const [k, v] of Object.entries(JSON.parse(j))) sessionStorage.setItem(k, v); sessionStorage.setItem("__amss", "1"); } } catch {}
+    }, origin, ss).catch(() => {});
     await p.setViewport({ width: CSS_W, height: CSS_H, deviceScaleFactor: SCALE });
     const c = await p.createCDPSession();
     page = p; cdp = c; hbScript = null; vtOn = false;
@@ -1115,7 +1128,7 @@ for await (const line of rl) {
   try { m = JSON.parse(line); } catch { out({ ok: false, error: "bad json" }); continue; }
   try {
     if (m.cmd === "open") { lastFit = null; await load(m.url, m.settle ?? 2.5); out({ ok: true, url: page.url(), fit: lastFit, wall: await wall(page) }); }
-    else if (m.cmd === "guard") { const w = await wall(page); if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); } out({ ok: true, wall: w, url: page.url() }); }
+    else if (m.cmd === "guard") { const w = await wall(page); if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); } out({ ok: true, wall: w, url: page.url(), account: ACCOUNT }); }
     else if (m.cmd === "reload") { await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {}); await sleep((m.settle ?? 6) * 1000); out({ ok: true, wall: await wall(page), url: page.url() }); }
     else if (m.cmd === "whoami") { out({ ok: true, ...(await page.evaluate(() => ({ ua: navigator.userAgent, platform: navigator.platform, webdriver: navigator.webdriver, languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, text: (document.body?.innerText || "").slice(0, 20000), uaData: navigator.userAgentData ? navigator.userAgentData.toJSON() : null, gl: (() => { try { const g = document.createElement("canvas").getContext("webgl"); const x = g.getExtension("WEBGL_debug_renderer_info"); return [g.getParameter(x.UNMASKED_VENDOR_WEBGL), g.getParameter(x.UNMASKED_RENDERER_WEBGL)]; } catch (e) { return String(e); } })() })).catch((e) => ({ error: String(e) }))), exe: CHROME }); }
     else if (m.cmd === "segment") { await startSegment(m.out); out({ ok: true }); }

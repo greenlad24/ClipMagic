@@ -78,6 +78,11 @@ def known_pages(profile, limit=25):
     return out
 
 
+# what may never be in a recording: a bot check / "unusual activity" block, ANOTHER account than the
+# Scout's (a ChatGPT profile can hold two: "Hey, Keith" was recorded 2026-10-09), an app error banner
+DROP_KINDS = ("challenge", "account", "error")
+
+
 class WallError(RuntimeError):
     """The app showed a bot check (Cloudflare "Verify you are human", a captcha) or a login wall where the
     session should be logged in — the segment must not be recorded (Jake 2026-10-08)."""
@@ -89,8 +94,13 @@ class WallError(RuntimeError):
 
 def wall_message(slug, wall):
     name = {"chatgpt": "ChatGPT", "linearity": "Linearity"}.get(slug, slug)
-    if (wall or {}).get("kind") == "login":
+    kind = (wall or {}).get("kind")
+    if kind == "login":
         return f"{name} showed a login page — screencast skipped, A-roll used"
+    if kind == "account":
+        return f"{name} opened another account ({(wall or {}).get('why', '')}) — screencast skipped, A-roll used"
+    if kind == "error":
+        return f"{name} showed an error ({(wall or {}).get('why', '')}) — screencast skipped, A-roll used"
     return f"{name} asked for a human check — screencast skipped, A-roll used"
 
 
@@ -377,7 +387,7 @@ def record_segment(sess, seg, video, knowledge, out_rel, log=print, first=False)
             if str(obs.get("shot", "")).startswith("/w"):
                 (Path(sess.workdir) / Path(obs["shot"]).relative_to("/w")).unlink(missing_ok=True)
             break
-        if (obs.get("wall") or {}).get("kind") == "challenge":
+        if (obs.get("wall") or {}).get("kind") in DROP_KINDS:
             # a bot check appeared mid-recording: close the file and throw the segment away
             sess.send({"cmd": "end", "until": round(obs.get("t", 0) + 0.1, 3)})
             shutil.rmtree(Path(sess.workdir) / out_rel, ignore_errors=True)
@@ -428,7 +438,7 @@ Next single step?"""})
             log(f"agent step failed: {json.dumps(a)[:120]} — {res.get('error')}")
     g = sess.send({"cmd": "guard"}).get("wall")          # (recorded into events.json "walls" if any)
     sess.send({"cmd": "end", "until": round(dur + 0.5, 3)})
-    if g and g.get("kind") == "challenge":
+    if g and g.get("kind") in DROP_KINDS:
         shutil.rmtree(Path(sess.workdir) / out_rel, ignore_errors=True)
         raise WallError(g)
     json.dump(history, open(Path(sess.workdir) / out_rel / "agent-steps.json", "w"), indent=1)
