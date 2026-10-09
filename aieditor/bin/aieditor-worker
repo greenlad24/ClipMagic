@@ -834,7 +834,11 @@ def main():
     def skip(d, action):
         if cloud.running(d.name):
             return True
-        return cloud.enabled_for(action, jload(d / "request.json", {})) and cloud.busy() >= cloud.settings()["max_parallel"]
+        if not cloud.enabled_for(action, jload(d / "request.json", {})):
+            return False
+        # factory jobs wait (never drop to the main box) while every server slot is taken
+        # or the rolling $20/24 h cap is reached
+        return cloud.busy() >= cloud.settings()["max_parallel"] or cloud.over_daily_cap()
 
     while not STOP:
         jdump(hb, {"at": now(), "pid": os.getpid(), "factory_jobs": cloud.busy()})

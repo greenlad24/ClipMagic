@@ -81,7 +81,8 @@ DEFAULTS = {
     "max_parallel": 2,
     "max_hours": 10,                # hard ceiling for one job droplet
     "lease_stale_s": 600,
-    "fallback_local": True,         # cloud unavailable → run on this box rather than fail
+    "fallback_local": False,        # Jake 2026-10-09: always the factory server — no main-box fallback
+    "daily_cap_usd": 20,            # rolling 24 h server spend; over it, jobs wait in the queue
 }
 
 
@@ -105,14 +106,42 @@ def save_settings(s):
 
 
 def enabled_for(action, req=None):
-    """request.json "run_on": "auto" (default: the factory when it is on) | "factory" | "box"."""
+    """request.json "run_on": "auto" (default: the factory when it is on) | "factory" | "box".
+    Jake 2026-10-09: "use always the factory server" — with the factory on, heavy work never
+    drops to the main box to save money (an overnight test ran a 2 h composite there); "box"
+    is honoured only when the factory is switched off. Spend is bounded by daily_cap_usd."""
     run_on = (req or {}).get("run_on", "auto")
-    if run_on == "box":
-        return False
     s = settings()
     if not (s["snapshot_id"] and action in s["actions"] and token()):
         return False
     return bool(s["enabled"] or run_on == "factory")
+
+
+def spent_24h():
+    """Server $ in the last 24 h: finished runs (history) + what live servers have cost so far."""
+    now = time.time()
+    usd = 0.0
+    try:
+        for line in HISTORY.read_text().splitlines():
+            r = json.loads(line)
+            if (r.get("ended") or 0) > now - 86400:
+                usd += float(r.get("usd") or 0)
+    except (OSError, ValueError):
+        pass
+    for lp in LEASES.glob("*.json") if LEASES.exists() else []:
+        try:
+            ls = json.loads(lp.read_text())
+            usd += max(0.0, now - ls.get("created", now)) / 3600 * _price(ls.get("size", "c-32"))
+        except (OSError, ValueError):
+            pass
+    return usd
+
+
+def over_daily_cap():
+    """Jake 2026-10-09: "a cap of $20 per 24 hours". Over it, factory jobs WAIT in the queue
+    (they do not fall back to the main box) until the rolling window frees up."""
+    cap = settings().get("daily_cap_usd")
+    return bool(cap) and spent_24h() >= float(cap)
 
 
 def runner(job_dir, **kw):
