@@ -34,6 +34,24 @@ Safety:
     never the Lab database.
   * The droplet's firewall (ufw, baked into the snapshot) accepts SSH from the VPC only.
 
+MULTI-REGION (Jake 2026-10-09: "I always want a 32-core" … "Use another region when Singapore is out").
+pick_placement() takes SGP1 (home: VPC, private IPs) whenever it offers c-32 / c2-32vcpu-64gb; otherwise
+the first region of settings["region_order"] that offers one right now (live /v2/sizes), preferring one the
+snapshot is already copied to. Away from home:
+  * the snapshot is copied first if needed (DO image action "transfer", ensure_snapshot; the job's badge
+    says "copying the server image to lon1… ~N min"); image_regions in factory.json records each copy,
+    a rebuild starts copies of the new snapshot to every region that had one (copy_new_snapshot) and the
+    watchdog marks finished copies available. prewarm_regions are kept copied ahead of need.
+  * no VPC: SSH + rsync go to the droplet's PUBLIC address; its cloud-init (away_user_data) drops the
+    snapshot's VPC rule and accepts SSH from this box's public IP (main_public_ip) only.
+  * logged-in screencasts still leave through this box: a REVERSE SSH tunnel from this box (class Tunnel,
+    `ssh -R 172.17.0.1:8899:10.104.0.3:8899`) over the job's own SSH connection — the egress proxy sees
+    this box as its client, nothing is opened on this box's firewall, the server's ufw lets only its own
+    docker0 containers reach the tunnel port, and the job refuses to start if a request through it does
+    not leave as main_public_ip. logged_in_away="wait" instead keeps those jobs queued for SGP1.
+  * lease, watchdog (a tag lists droplets in every region), $20/24 h cap, API ledger, droplet key and
+    destroy-always are the same code path in every region; prices come from /v2/sizes.
+
 EGRESS (Jake 2026-10-08 — his factory job recorded Cloudflare's "Verify you are human" page: Cloudflare
 ties a logged-in session to the IP it was made from, this box 139.59.250.178): a droplet's screencast
 browsers leave the internet THROUGH this box. bin/aieditor-egress-proxy (systemd
@@ -105,6 +123,21 @@ DEFAULTS = {
     # per-job US exit for pricing / visitor views (usroute.py). Off this round: outside segments are
     # held ("no US route") instead of going out through the Singapore box.
     "us_route": {"enabled": False, "region": "nyc3", "size": "s-1vcpu-512mb-10gb", "port": 8899},
+    # ── multi-region (Jake 2026-10-09: "Use another region when Singapore is out") ──
+    # "region" above stays HOME (sgp1: the VPC, the snapshot's birthplace). Away from home a job
+    # takes the first region in this order that offers a 32-core size right now (live /v2/sizes),
+    # preferring one that already holds the snapshot (a copy takes ~15–30 min).
+    "region_order": ["sgp1", "blr1", "syd1", "lon1", "ams3", "fra1", "nyc1", "nyc3", "sfo2", "sfo3", "tor1"],
+    "main_public_ip": "139.59.250.178",   # the only address an away droplet accepts SSH from
+    # where the snapshot is copied: {region: {snapshot_id, state: transferring|available, action_id, …}}
+    "image_regions": {},
+    # copied ahead of need (≈ $0.06/GB/month each; the snapshot is ~14.5 GB → ≈ $0.87/month per region)
+    "prewarm_regions": ["blr1", "lon1", "nyc1"],
+    "regions_used": [],
+    "transfer_min_per_gb": 0.6,           # sgp1 → blr1 took 8.3 min for 14.5 GB (2026-10-09); first estimate for "copying the image… ~N min"; refined by measurement
+    # logged-in screencasts away from home: "tunnel" = through the main box over the job's own SSH
+    # connection (reverse tunnel, nothing opened on this box); "wait" = they wait for SGP1 capacity
+    "logged_in_away": "tunnel",
 }
 
 
@@ -242,7 +275,9 @@ def create(name, size, image, tag, user_data=None, region=None, vpc=True, ssh_ke
     return api("POST", "/droplets", body)["droplet"]["id"]
 
 
-def wait_active(did, timeout=600):
+def wait_active(did, timeout=600, private=True):
+    """(private ip, public ip) once the droplet is active. private=False (a server outside the home
+    VPC): only the public address is needed."""
     t0 = time.time()
     while time.time() - t0 < timeout:
         d = api("GET", f"/droplets/{did}")["droplet"]
@@ -250,7 +285,7 @@ def wait_active(did, timeout=600):
             nets = d["networks"]["v4"]
             priv = next((n["ip_address"] for n in nets if n["type"] == "private"), None)
             pub = next((n["ip_address"] for n in nets if n["type"] == "public"), None)
-            if priv:
+            if priv if private else pub:
                 return priv, pub
         time.sleep(5)
     raise DOError(f"droplet {did} not active after {timeout}s")
@@ -283,7 +318,7 @@ def wait_action(aid, timeout=3600):
     raise DOError(f"action {aid} timed out")
 
 
-# ── ssh / rsync over the VPC ────────────────────────────────────────────────
+# ── ssh / rsync (VPC at home, the public address away) ────────────────────────────────────────────────
 SSH_OPTS = ["-i", str(SSH_KEY), "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
             "-o", "LogLevel=ERROR", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=8"]
@@ -331,7 +366,9 @@ def lease(did, **kw):
 
 
 def watchdog(log=print):
-    """Destroy every tagged droplet nobody is holding. Safe to run any time, from cron."""
+    """Destroy every tagged droplet nobody is holding, in EVERY region (a tag lists them all).
+    Safe to run any time, from cron. Also closes an away server's egress tunnel a dead worker left
+    behind, and marks finished snapshot copies available."""
     if not token():
         return []
     s = settings()
@@ -355,13 +392,29 @@ def watchdog(log=print):
         elif hb is not None and now - hb > s["lease_stale_s"]:
             why = f"lease stale {int(now - hb)} s"
         if why:
+            try:
+                rec = json.loads(lp.read_text())
+            except (OSError, ValueError):
+                rec = {}
             ok = destroy(did)
+            if _kill_tunnel(rec):
+                log(f"watchdog: closed the egress tunnel to {rec.get('ip')}")
             log(f"watchdog: destroyed {d['name']} ({did}) — {why}" + ("" if ok else " — DELETE NOT CONFIRMED"))
             killed.append(did)
     live = {str(d["id"]) for d in tagged(TAG_JOB) + tagged(TAG_IMAGE) + tagged(TAG_US)}
     for lp in LEASES.glob("*.json") if LEASES.exists() else []:
         if lp.stem not in live:
+            try:
+                rec = json.loads(lp.read_text())
+            except (OSError, ValueError):
+                rec = {}
+            if _kill_tunnel(rec):
+                log(f"watchdog: closed a leftover egress tunnel to {rec.get('ip')}")
             lp.unlink(missing_ok=True)
+    try:
+        poll_transfers(log)
+    except Exception as e:                                # noqa: BLE001 — never stops the sweep
+        log(f"watchdog: image copy check failed: {e}")
     return killed
 
 
@@ -499,9 +552,10 @@ def build_image(log=print):
     finally:
         log(f"builder {did} destroyed" if destroy(did) else f"builder {did} DELETE NOT CONFIRMED")
     old = s.get("snapshot_id")
-    s = settings()
-    s.update(snapshot_id=new_id, snapshot_manifest=man, snapshot_name=name, snapshot_at=time.time())
-    save_settings(s)
+    with _settings_lock:
+        s = settings()
+        s.update(snapshot_id=new_id, snapshot_manifest=man, snapshot_name=name, snapshot_at=time.time())
+        save_settings(s)
     if old and str(old) != str(new_id):
         try:
             api("DELETE", f"/images/{old}", ok404=True)
@@ -509,6 +563,7 @@ def build_image(log=print):
         except DOError as e:
             log(f"old snapshot {old} not deleted: {e}")
     log(f"snapshot {new_id} ready")
+    copy_new_snapshot(new_id, log)
     return new_id
 
 
@@ -637,39 +692,82 @@ def run_remote(job_dir, action, log, cancelled):
     did = None
     ip = None
     proxy = None
+    tunnel = None
     t_start = time.time()
     ok_run = False
     from . import accountlock, usroute
     workflow = "creative" if req.get("workflow") == "creative" else "cut"
     # a hand-off job (request.json "handoff", aieditor/handoff.py) records nothing: no Scout login, no US route
-    screencasts = action in ("run", "edit") and bool(req.get("sites") or workflow == "creative") and not req.get("handoff")
+    screencasts = logged_in_job(req, action)
     # one job per logged-in account: a second job for the same Scout account waits here
     lock = accountlock.AccountLock(scout_slugs(req, job_dir) if screencasts else [], jid)
     if not lock.acquire(wait=True, cancelled=cancelled, log=log):
         raise DOError("cancelled while waiting for a logged-in account another job is using")
     with _slots:
         ACTIVE[jid] = None
-    # DigitalOcean sometimes has no CPU-optimized capacity in the region (2026-10-09: "Size is not
-    # available in this region" for every c-/c2-/g- size in sgp1). Take the biggest size the region
-    # can give right now from the preference list instead of failing the job.
-    size, price = pick_size(s, log)
+    home = s["region"]
+    try:
+        # Jake 2026-10-09: always a 32-core; "Use another region when Singapore is out" (pick_placement).
+        # A logged-in job under logged_in_away="wait" only takes SGP1 (needs_home).
+        region, size, price = pick_placement(s, home_only=needs_home(s, req, action), log=log)
+    except BaseException:
+        lock.release()
+        with _slots:
+            ACTIVE.pop(jid, None)
+        raise
     s = {**s, "size": size}
     _PRICES[size] = price
-    runner(job_dir, kind="factory", state="creating", action=action, size=s["size"], region=s["region"],
-           started=t_start, droplet=None, usd=0.0, price_hourly=_price(s["size"]), ended=None)
+    away = region != home
+    tunnel_needed = away and screencasts
+    if away:
+        log(f"region: {region} (no 32-core server in {home} right now) — SSH over the public internet, "
+            f"open to this box ({s['main_public_ip']}) only"
+            + ("; logged-in screencasts leave through this box via the job's SSH tunnel" if tunnel_needed else ""))
+    else:
+        log(f"region: {region}")
+    runner(job_dir, kind="factory", state="creating", action=action, size=s["size"], region=region,
+           started=t_start, droplet=None, usd=0.0, price_hourly=_price(s["size"]), ended=None, note=None)
     try:
-        did = create(f"factory-{jid[:40]}-{int(time.time()) % 100000}", s["size"], int(s["snapshot_id"]), TAG_JOB)
+        if away:
+            if not snapshot_in(settings(), region):
+                last = [0.0]
+
+                def progress(msg):
+                    runner(job_dir, state="copying-image", note=msg)
+                    if time.time() - last[0] > 300:
+                        last[0] = time.time()
+                        log(msg)
+                ensure_snapshot(region, log=log, progress=progress, cancelled=cancelled)
+                runner(job_dir, state="creating", note=None)
+            update_settings(lambda st: st.__setitem__(
+                "regions_used", sorted({*(st.get("regions_used") or []), region})))
+        t_create = time.time()
+        did = create(f"factory-{jid[:40]}-{int(time.time()) % 100000}", s["size"], int(s["snapshot_id"]), TAG_JOB,
+                     user_data=away_user_data(s, tunnel=tunnel_needed) if away else None, region=region, vpc=not away)
         with _slots:
             ACTIVE[jid] = did
-        with Heartbeat(did, job=jid, action=action, size=s["size"]):
-            log(f"factory server {did} ({s['size']}) creating in {s['region']}…")
-            ip, pub = wait_active(did)
+        with Heartbeat(did, job=jid, action=action, size=s["size"], region=region):
+            log(f"factory server {did} ({s['size']}) creating in {region}…")
+            priv, pub = wait_active(did, private=not away)
+            # home: the VPC address; away: the public one (its ufw accepts SSH from this box only)
+            ip = pub if away else priv
+            lease(did, ip=ip)
             # pricing / visitor views: the job's own US exit, reachable from this server only
             usr = s.get("us_route") or {}
             if usr.get("enabled") and screencasts and workflow == "creative":
                 proxy = usroute.create_us_proxy(jid, allow_ip=pub, log=log)
             wait_ssh(ip)
-            log(f"factory server up at {ip} after {time.time() - t_start:.0f}s — sending the job")
+            egress = EGRESS
+            if tunnel_needed:
+                tunnel = Tunnel(ip, EGRESS, log=log, on_start=lambda pid: lease(did, tunnel_pid=pid)).start()
+                got = egress_ip_via(ip, tunnel.url)
+                if got != s["main_public_ip"]:
+                    raise DOError(f"the egress tunnel does not leave as {s['main_public_ip']} (got {got}) — "
+                                  "logged-in screencasts are not sent from this server")
+                egress = tunnel.url
+                log(f"egress tunnel up: the server's browsers leave as {got}")
+            log(f"factory server up at {ip} after {time.time() - t_start:.0f}s"
+                + (f" ({time.time() - t_create:.0f}s after create)" if away else "") + " — sending the job")
             runner(job_dir, state="sending", droplet=did, up_after_s=round(time.time() - t_start))
             # code (always the current one: the snapshot only carries images + models)
             rsync(str(config.CODE) + "/", f"root@{ip}:{config.CODE}/", "--delete",
@@ -700,7 +798,7 @@ def run_remote(job_dir, action, log, cancelled):
                     "setsid nohup python3 bin/aieditor-worker --once {jid} {action} "
                     "> {work}/remote.log 2>&1 < /dev/null & echo $! > {work}/remote.pid".format(
                         code=config.CODE, jid=shlex.quote(jid), action=shlex.quote(action), work=config.WORK,
-                        egress=shlex.quote(EGRESS),
+                        egress=shlex.quote(egress),
                         extra=" ".join(f"{k}={shlex.quote(v)}" for k, v in extra.items())))
             log(f"job started on the factory server ({time.time() - t_start:.0f}s after the request)")
             runner(job_dir, state="running", running_since=time.time())
@@ -751,6 +849,8 @@ def run_remote(job_dir, action, log, cancelled):
             log(f"API ledger merge failed: {e}")
         if proxy:
             usroute.destroy_us_proxy(jid, proxy, log=log)
+        if tunnel:
+            tunnel.close()
         lock.release()
         ok = True
         if did:
@@ -763,7 +863,7 @@ def run_remote(job_dir, action, log, cancelled):
         runner(job_dir, state="done" if ok_run else "failed", destroyed=ok, ended=time.time(), usd=usd)
         try:
             with open(HISTORY, "a") as f:
-                f.write(json.dumps({"job": jid, "action": action, "droplet": did, "size": s["size"],
+                f.write(json.dumps({"job": jid, "action": action, "droplet": did, "size": s["size"], "region": region,
                                     "started": t_start, "ended": time.time(), "minutes": round(hours * 60, 2),
                                     "usd": usd, "ok": ok_run, "destroyed": ok}) + "\n")
         except OSError:
@@ -775,41 +875,345 @@ def run_remote(job_dir, action, log, cancelled):
 # Jake 2026-10-09: "I always want a 32-core" — only 32-vCPU sizes; never a smaller server.
 SIZE_FALLBACKS = ["c-32", "c2-32vcpu-64gb"]
 _PRICES = {}
-_CAP = {"at": 0.0, "ok": True}
+_CAP = {}
 
 
-def capacity_ok(max_age=60):
-    """Is a 32-core size available in the region right now? Cached for max_age s (the worker asks
-    every loop). With no capacity the worker leaves factory jobs QUEUED and asks again later."""
+def logged_in_job(req, action):
+    """Does this run record logged-in screencasts (Scout profiles, Cloudflare-bound to this box's IP)?"""
+    req = req or {}
+    return (action in ("run", "edit") and bool(req.get("sites") or req.get("workflow") == "creative")
+            and not req.get("handoff"))
+
+
+def needs_home(s, req, action):
+    """A logged-in job with logged_in_away = "wait" may only run in the home region (SGP1)."""
+    return s.get("logged_in_away", "tunnel") != "tunnel" and logged_in_job(req, action)
+
+
+def capacity_ok(req=None, action=None, max_age=60):
+    """Can a 32-core server be had for this job right now, in any allowed region? Cached for max_age s
+    (the worker asks every loop). With none, the worker leaves factory jobs QUEUED and asks again later."""
+    s = settings()
+    home_only = needs_home(s, req, action)
     now = time.time()
-    if now - _CAP["at"] < max_age:
-        return _CAP["ok"]
+    c = _CAP.get(home_only)
+    if c and now - c["at"] < max_age:
+        return c["ok"]
     try:
-        pick_size(settings(), log=lambda *_: None)
+        pick_placement(s, home_only=home_only, log=lambda *_: None)
         ok = True
     except DOError as e:
         ok = "no factory-size server" not in str(e)
-    _CAP.update(at=now, ok=ok)
+    _CAP[home_only] = {"at": now, "ok": ok}
     return ok
 
 
-def pick_size(s, log=print):
-    """(slug, $/h) of the first size in settings["size_fallbacks"] (default: the configured size, then
-    SIZE_FALLBACKS) that the region offers RIGHT NOW. All big enough for the snapshot (80 GB disk).
-    If the size list cannot be read, the configured size is tried as before."""
+def region_order(s):
+    home = s["region"]
+    return [home] + [r for r in (s.get("region_order") or [home]) if r != home]
+
+
+def snapshot_in(s, region):
+    """Is the CURRENT snapshot already usable in region (per the record in factory.json)?"""
+    if region == s["region"]:
+        return True
+    rec = (s.get("image_regions") or {}).get(region) or {}
+    return rec.get("state") == "available" and str(rec.get("snapshot_id")) == str(s.get("snapshot_id"))
+
+
+def pick_placement(s, home_only=False, log=print):
+    """(region, size slug, $/h) for the next job server — Jake 2026-10-09: always a 32-core; "Use another
+    region when Singapore is out". The home region when it has a 32-core size; otherwise the first
+    region in region_order offering one RIGHT NOW (live /v2/sizes, never a hard-coded list), preferring a
+    region the snapshot is already copied to. home_only (a logged-in job under "wait"): SGP1 or nothing.
+    If the size list cannot be read, the home region + configured size are tried as before."""
     want = [s["size"]] + [x for x in (s.get("size_fallbacks") or SIZE_FALLBACKS) if x != s["size"]]
+    home = s["region"]
     try:
         sizes = {x["slug"]: x for x in api("GET", "/sizes?per_page=200")["sizes"]}
     except DOError:
-        return s["size"], _price(s["size"])
-    for slug in want:
-        x = sizes.get(slug)
-        if x and x.get("available") and s["region"] in x.get("regions", []) and x.get("disk", 0) >= 80:
-            if slug != s["size"]:
-                log(f"{s['size']} is not available in {s['region']} right now — using {slug} "
-                    f"({x['vcpus']} vCPU / {x['memory'] // 1024} GB, ${x['price_hourly']:.3f}/h)")
-            return slug, float(x["price_hourly"])
-    raise DOError(f"no factory-size server is available in {s['region']} right now (tried {', '.join(want)})")
+        return home, s["size"], _price(s["size"])
+    cands = []
+    for region in region_order(s):
+        for slug in want:
+            x = sizes.get(slug)
+            if x and x.get("available") and region in x.get("regions", []) and x.get("disk", 0) >= 80:
+                _PRICES[slug] = float(x["price_hourly"])
+                cands.append((region, slug, float(x["price_hourly"])))
+                break
+    if cands and cands[0][0] == home:
+        pick = cands[0]
+    elif home_only:
+        raise DOError(f"no factory-size server is available in {home} right now (tried {', '.join(want)}) — "
+                      "a logged-in screencast job waits for Singapore")
+    elif not cands:
+        raise DOError(f"no factory-size server is available in any region right now (tried {', '.join(want)} in "
+                      f"{', '.join(region_order(s))})")
+    else:
+        pick = next((c for c in cands if snapshot_in(s, c[0])), cands[0])
+        log(f"no 32-core server in {home} right now — using {pick[0]} ({pick[1]}, ${pick[2]:.3f}/h"
+            + (", server image already there)" if snapshot_in(s, pick[0]) else ", the server image is copied there first)"))
+    if pick[1] != s["size"]:
+        x = sizes[pick[1]]
+        log(f"{s['size']} is not available in {pick[0]} right now — using {pick[1]} "
+            f"({x['vcpus']} vCPU / {x['memory'] // 1024} GB, ${x['price_hourly']:.3f}/h)")
+    return pick
+
+
+def pick_size(s, log=print):
+    """(slug, $/h) in the HOME region only (kept for callers that predate multi-region)."""
+    _, slug, price = pick_placement(s, home_only=True, log=log)
+    return slug, price
+
+
+# ── the snapshot in other regions ───────────────────────────────────────────
+_settings_lock = threading.Lock()
+_region_locks = {}
+
+
+def update_settings(fn):
+    """Read-modify-write factory.json under a lock (several job threads record image copies)."""
+    with _settings_lock:
+        s = settings()
+        fn(s)
+        save_settings(s)
+        return s
+
+
+def _record_region(region, **kw):
+    def fn(s):
+        regs = s.setdefault("image_regions", {})
+        regs[region] = {**(regs.get(region) or {}), **kw}
+    return update_settings(fn)
+
+
+def transfer_estimate_min(s, snap_gb=None):
+    gb = snap_gb or s.get("snapshot_gb") or 15
+    return max(1, round(gb * float(s.get("transfer_min_per_gb") or 0.6)))
+
+
+def _image_lists(sid, region, tries=18, poll=10):
+    """The image's region list catches up a minute or so after the transfer action completes
+    (2026-10-09: blr1 completed, listed ~1 min later) — a droplet made before that may fail."""
+    for i in range(tries):
+        try:
+            if region in (api("GET", f"/images/{sid}")["image"].get("regions") or []):
+                return True
+        except DOError:
+            pass
+        if i < tries - 1:
+            time.sleep(poll)
+    return False
+
+
+def start_transfer(region, s=None, log=print):
+    """Ask DigitalOcean to copy the current snapshot to region (no wait). Returns the action id."""
+    s = s or settings()
+    sid = str(s["snapshot_id"])
+    a = api("POST", f"/images/{sid}/actions", {"type": "transfer", "region": region})["action"]
+    _record_region(region, snapshot_id=sid, state="transferring", action_id=a["id"], started=time.time(),
+                   finished=None, error=None)
+    log(f"server image {sid}: copy to {region} started")
+    return a["id"]
+
+
+def ensure_snapshot(region, log=print, progress=None, cancelled=lambda: False, poll=20, timeout=5400):
+    """Make the current snapshot usable in region: already there → return at once; a copy already
+    running (this process or an earlier one, recorded in factory.json) → wait for it; else start one.
+    progress(msg) is told "copying the server image to lon1… ~N min" while it waits."""
+    s = settings()
+    sid = str(s["snapshot_id"])
+    if region == s["region"] or snapshot_in(s, region):
+        return True
+    lock = _region_locks.setdefault(region, threading.Lock())
+    with lock:
+        s = settings()
+        if snapshot_in(s, region):
+            return True
+        img = api("GET", f"/images/{sid}")["image"]
+        gb = float(img.get("size_gigabytes") or 15)
+        if region in (img.get("regions") or []):
+            _record_region(region, snapshot_id=sid, state="available", finished=time.time())
+            return True
+        rec = (s.get("image_regions") or {}).get(region) or {}
+        if rec.get("state") == "transferring" and str(rec.get("snapshot_id")) == sid and rec.get("action_id"):
+            aid, t0 = rec["action_id"], rec.get("started") or time.time()
+            log(f"server image: a copy to {region} is already running — waiting for it")
+        else:
+            aid, t0 = start_transfer(region, s, log), time.time()
+        est = transfer_estimate_min(s, gb)
+        t_start = time.time()
+        while True:
+            if cancelled():
+                raise DOError(f"cancelled while copying the server image to {region}")
+            a = api("GET", f"/actions/{aid}")["action"]
+            if a["status"] == "completed" and _image_lists(sid, region):
+                break
+            if a["status"] == "errored":
+                _record_region(region, state="failed", error=f"action {aid} errored")
+                raise DOError(f"copying the server image to {region} failed (action {aid})")
+            left = max(1, round(est - (time.time() - t0) / 60))
+            if progress:
+                progress(f"copying the server image to {region}… ~{left} min")
+            if time.time() - t_start > timeout:
+                raise DOError(f"copying the server image to {region} took over {timeout // 60} min")
+            time.sleep(poll)
+        took = (time.time() - t0) / 60
+        def fn(s):
+            regs = s.setdefault("image_regions", {})
+            regs[region] = {**(regs.get(region) or {}), "snapshot_id": sid, "state": "available",
+                            "finished": time.time(), "minutes": round(took, 1)}
+            if took > 1:      # learn the real rate for the next estimate
+                s["transfer_min_per_gb"] = round(took / gb, 3)
+            s["snapshot_gb"] = gb
+        update_settings(fn)
+        log(f"server image copied to {region} in {took:.0f} min")
+        return True
+
+
+def poll_transfers(log=print):
+    """Mark finished copies available (the watchdog's 5-min tick; aieditor-factory status)."""
+    s = settings()
+    sid = str(s.get("snapshot_id"))
+    for region, rec in list((s.get("image_regions") or {}).items()):
+        if rec.get("state") != "transferring" or not rec.get("action_id"):
+            continue
+        if str(rec.get("snapshot_id")) != sid:
+            _record_region(region, state="stale")
+            continue
+        try:
+            a = api("GET", f"/actions/{rec['action_id']}")["action"]
+        except DOError:
+            continue
+        if a["status"] == "completed" and _image_lists(sid, region, tries=1):
+            took = (time.time() - (rec.get("started") or time.time())) / 60
+            _record_region(region, state="available", finished=time.time())
+            log(f"server image copy to {region} finished (~{took:.0f} min)")
+        elif a["status"] == "errored":
+            _record_region(region, state="failed", error=f"action {rec['action_id']} errored")
+
+
+def copy_new_snapshot(new_id, log=print):
+    """After a rebuild: every region that held the OLD snapshot (or is pre-warmed, or was used) gets the
+    new one started now; until a copy lands the region counts as not ready (ensure_snapshot waits)."""
+    s = settings()
+    regions = sorted({*((s.get("image_regions") or {}).keys()), *(s.get("prewarm_regions") or []),
+                      *(s.get("regions_used") or [])} - {s["region"]})
+
+    def fn(s):
+        regs = s.setdefault("image_regions", {})
+        for r in list(regs):
+            if str(regs[r].get("snapshot_id")) != str(new_id):
+                regs[r] = {**regs[r], "state": "stale"}
+        regs[s["region"]] = {"snapshot_id": str(new_id), "state": "available", "finished": time.time()}
+    update_settings(fn)
+    for r in regions:
+        try:
+            start_transfer(r, settings(), log)
+        except DOError as e:
+            log(f"server image copy to {r} not started ({e}) — it is copied when a job needs it")
+
+
+# ── away from home: SSH over the public internet, egress through the main box ──
+AWAY_PROXY_HOST = "172.17.0.1"       # docker0 on the job server: what its screencast containers reach
+
+
+def away_user_data(s, tunnel=False):
+    """cloud-init for a job server outside the home region: no VPC there, so SSH is opened to the main
+    box's PUBLIC address only (the snapshot's VPC rule removed). With tunnel=True the server's sshd may
+    bind the reverse tunnel on docker0, and only the local containers may reach that port."""
+    ip = s["main_public_ip"]
+    lines = ["#cloud-config", "runcmd:",
+             "  - ufw default deny incoming",
+             "  - ufw default allow outgoing",
+             f"  - ufw delete allow from {s['vpc_range']} to any port 22 proto tcp",
+             f"  - ufw allow from {ip} to any port 22 proto tcp"]
+    if tunnel:
+        lines += ["  - echo 'GatewayPorts clientspecified' > /etc/ssh/sshd_config.d/60-factory-tunnel.conf",
+                  "  - systemctl reload ssh || systemctl reload sshd",
+                  f"  - ufw allow in on docker0 to {AWAY_PROXY_HOST} port 8899 proto tcp"]
+    lines += ["  - ufw --force enable"]
+    return "\n".join(lines) + "\n"
+
+
+class Tunnel:
+    """The job server's way out for logged-in screencasts when it is outside the VPC: a REVERSE SSH
+    tunnel opened FROM this box (`ssh -R 172.17.0.1:8899:<egress proxy>`), so the browsers' traffic
+    reaches the egress proxy as this box itself and leaves the internet as 139.59.250.178 — the IP
+    Cloudflare tied the sessions to. Nothing is opened on this box's firewall; the tunnel lives only
+    as long as this job's own authenticated SSH connection, and is restarted if it drops. If it is
+    down, the browser's proxy fails (it never falls back to the server's own IP)."""
+
+    def __init__(self, ip, egress=EGRESS, log=print, popen=subprocess.Popen, on_start=None):
+        hostport = egress.split("://", 1)[-1].rstrip("/")
+        self.cmd = ["ssh", *SSH_OPTS, "-N", "-o", "ExitOnForwardFailure=yes",
+                    "-R", f"{AWAY_PROXY_HOST}:8899:{hostport}", f"root@{ip}"]
+        self.ip, self.log, self.popen, self.on_start = ip, log, popen, on_start
+        self.stop, self.p, self.restarts = threading.Event(), None, 0
+        self.url = f"http://{AWAY_PROXY_HOST}:8899"
+
+    def _open(self):
+        self.p = self.popen(self.cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if self.on_start:
+            try:
+                self.on_start(self.p.pid)
+            except OSError:
+                pass
+
+    def start(self):
+        self._open()
+        self.t = threading.Thread(target=self._keep, daemon=True)
+        self.t.start()
+        return self
+
+    def _keep(self):
+        while not self.stop.wait(5):
+            if self.p and self.p.poll() is not None and not self.stop.is_set():
+                self.restarts += 1
+                self.log(f"egress tunnel to {self.ip} dropped — reopening (#{self.restarts})")
+                self._open()
+
+    def pid(self):
+        return self.p.pid if self.p else None
+
+    def close(self):
+        self.stop.set()
+        if self.p and self.p.poll() is None:
+            self.p.terminate()
+            try:
+                self.p.wait(10)
+            except subprocess.TimeoutExpired:
+                self.p.kill()
+
+
+def egress_ip_via(ip, proxy_url, tries=12):
+    """The address a request through proxy_url leaves the internet with, asked ON the job server."""
+    for _ in range(tries):
+        out = ssh(ip, f"curl -s -m 15 -x {shlex.quote(proxy_url)} https://www.cloudflare.com/cdn-cgi/trace", timeout=60,
+                  check=False)
+        got = next((ln[3:].strip() for ln in out.splitlines() if ln.startswith("ip=")), None)
+        if got:
+            return got
+        time.sleep(5)
+    return None
+
+
+def _kill_tunnel(lease_rec):
+    """A tunnel left by a dead worker (watchdog). Only an ssh -R to that lease's server is killed."""
+    pid, ip = lease_rec.get("tunnel_pid"), lease_rec.get("ip")
+    if not pid or not ip:
+        return False
+    try:
+        cmd = Path(f"/proc/{int(pid)}/cmdline").read_bytes().split(b"\0")
+    except (OSError, ValueError):
+        return False
+    if b"ssh" in cmd[0] and b"-R" in cmd and f"root@{ip}".encode() in cmd:
+        try:
+            os.kill(int(pid), 15)
+            return True
+        except OSError:
+            return False
+    return False
 
 
 def _price(size):

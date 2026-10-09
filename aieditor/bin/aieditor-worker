@@ -185,7 +185,7 @@ class Job:
         s["state"] = state
         if state == "running":
             s["started_at"] = now()
-            for k in ("finished_at", "note", "message", "api_usd", "api_calls", "warnings", "errors", "cost_usd"):
+            for k in ("finished_at", "note", "message", "api_usd", "api_calls", "warnings", "errors", "cost_usd", "meta"):
                 s.pop(k, None)
             s["progress"] = 0
             s["cost_at_start"] = self.st.get("cost_usd", 0.0)
@@ -204,6 +204,8 @@ class Job:
                 s["progress"] = 1
         if note is not None:
             s["note"] = note
+        if state == "done" and prev == "running":
+            s["meta"] = stage_meta(self.d, note)          # the ETA model's inputs (lab aieditor/eta.ts)
         if state == "running":
             events.emit("stage", f"▶ {name} started", stage=name, state=state)
         else:
@@ -237,6 +239,30 @@ class Job:
 
     def cancelled(self):
         return STOP or (self.d / "cancel").exists()
+
+
+def stage_meta(d, note):
+    """What the Lab's ETA model (lab/server/src/aieditor/eta.ts) keys a finished stage on: the
+    machine (a factory server's size slug + region from runner.json, else "box"), its vCPUs, and
+    the stage's units (source / output minutes, screencast beats). Never raises."""
+    import re
+    try:
+        meta = {"machine": "box", "cpus": os.cpu_count(), "region": None}
+        if os.environ.get("AIEDITOR_FACTORY_SERVER") == "1":
+            r = jload(d / "runner.json", {}) or {}
+            meta.update(machine=r.get("size") or "factory", region=r.get("region"))
+        dur = (jload(d / "source.json", {}) or {}).get("duration")
+        if dur:
+            meta["src_min"] = round(float(dur) / 60, 3)
+        out = sum(float(v.get("duration") or 0) for v in (jload(d / "edl.json", {}) or {}).get("videos") or [])
+        if out:
+            meta["out_min"] = round(out / 60, 3)
+        m = re.search(r"(\d+)(?:/\d+)? screencast", note or "")
+        if m:
+            meta["beats"] = int(m.group(1))
+        return meta
+    except Exception:                                     # noqa: BLE001 — timing metadata never fails a stage
+        return None
 
 
 def run_job(job, action):
@@ -1069,9 +1095,10 @@ def main():
                 pass
         # factory jobs wait (never drop to the main box) while every server slot is taken
         # or the rolling $20/24 h cap is reached
-        # Jake: always a 32-core server — with none free in the region, the job waits queued
+        # Jake: always a 32-core server — SGP1 first, else another region (cloud.pick_placement); with
+        # none free anywhere (or, for a logged-in job under logged_in_away="wait", none in SGP1) it waits queued
         return (cloud.busy() >= cloud.settings()["max_parallel"] or cloud.over_daily_cap()
-                or not cloud.capacity_ok())
+                or not cloud.capacity_ok(req, action))
 
     last_chain = 0.0
     while not STOP:
