@@ -30,6 +30,16 @@ def cpu_count():
     return max(1, n)
 
 TAKES_MODEL = "claude-opus-5-5"
+# single model calls of pre-production (recommendation §3): ONE Opus plan call (effort high, strict JSON,
+# re-asked at most PLAN_REASKS times with the plan check's errors), the overlay plan and the generation
+# check (vision) on Sonnet. Off-camera generations are spaced GEN_SPACING_S apart (ChatGPT's "Unusual
+# activity" block) and regenerated at most GEN_REGENS times when they miss what the narration names.
+PLAN_MODEL = "claude-opus-5-5"
+OVERLAY_MODEL = "claude-sonnet-5-5"
+VISION_MODEL = "claude-sonnet-5-5"
+PLAN_REASKS = 2
+GEN_REGENS = 2
+GEN_SPACING_S = float(os.environ.get("AIEDITOR_GEN_SPACING_S") or 45)
 GROQ_MODEL = "whisper-large-v3-turbo"
 
 # ── recorder mode (architecture recommendation step 1, "stop the bleeding") ──────────────────

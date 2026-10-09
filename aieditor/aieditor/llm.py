@@ -142,10 +142,11 @@ TRANSPORT = _http
 
 # ── the call ───────────────────────────────────────────────────────────────────
 def messages(model, system, content, max_tokens, effort=None, job=None, stage=None, purpose="", *,
-             msgs=None, thinking=True, stream=False, timeout=1800, retries=3, workflow=None):
+             msgs=None, thinking=True, stream=False, timeout=1800, retries=3, workflow=None, schema=None):
     """One Claude Messages call. content = the user turn (str or blocks); msgs = a whole message list
     instead (a follow-up turn). Returns Reply. Raises BudgetExceeded before sending when a cap would
-    be passed, OnCameraCall while a screencast is being recorded."""
+    be passed, OnCameraCall while a screencast is being recorded. schema = a JSON schema the answer must
+    match (structured outputs: output_config.format json_schema)."""
     if recording():
         raise OnCameraCall(f"Claude call '{purpose}' refused: a screencast is being recorded "
                            "(models decide off camera only)")
@@ -158,6 +159,8 @@ def messages(model, system, content, max_tokens, effort=None, job=None, stage=No
         body["thinking"] = {"type": "adaptive"}
     if effort:
         body["output_config"] = {"effort": effort}
+    if schema is not None:
+        body.setdefault("output_config", {})["format"] = {"type": "json_schema", "schema": schema}
     if stream:
         body["stream"] = True
     est = estimate(model, system, msgs, max_tokens)
