@@ -17,10 +17,22 @@ final value) and the camera plan (camera.json moves):
   brand       no event's title / framed text contains a forbidden string (expect["forbid"], e.g. another
               company's brand used as "my logo")
   must        a beat's title / framed text / url contains one of expect["beats"][...]["must"]
-  typed       a typed field holds EXACTLY the scripted text (a stale draft + new text = garbled)
+  typed       a typed field holds EXACTLY the scripted text (a stale draft + new text = garbled), and a
+              beat's planned typed_text (expect "typed") is what the field holds near its word
 
-expect.json: {"forbid": ["Blue Bottle"], "segments": {"0": [{"at": 3.39, "must": ["Jake Dawson"]}, ...]}}
-(`at` = segment-relative word time of the beat the requirement belongs to, matched within 0.05 s.)
+expect.json: {"forbid": ["Blue Bottle"], "segments": {"0": [{"at": 3.39, "must": ["Jake Dawson"],
+              "typed": "Grandma's Regret", "content": true}, ...]}}
+(`at` = segment-relative word time of the beat the requirement belongs to; aieditor/gates.expectations
+builds it from the plan-schema beats (skill schemas/plan.schema.json: segments[].beats[] with t_word,
+must_text, typed_text, result_assertion), else the G2 beat ledger (edit-NN/beats.json) or the intents.)
+The second argument may also be the PLAN itself (plan.json / direct.json with segments[].beats[]): it is
+turned into expectations by aieditor/gates.beats_from_plan (load_expect), so the checks always follow the
+single plan call's beats; a G2 expect.json is read as it is.
+
+    python3 qa_content.py <edit-NN dir> <expect.json> [--out qa.json] [--only 03,07] [--no-camera]
+
+--no-camera: the take gate right after recording (no camera plan yet) — on_word is judged after compose.
+Gap list G4: the recorder's take gate and compose run this; D1/D2 scores go into the job log.
 """
 import json
 import re
@@ -29,7 +41,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import camera  # noqa: E402
+try:
+    import camera  # noqa: E402  (numpy + cv2: the aieditor-screencast image)
+except ImportError:
+    camera = None
 
 
 CENTRE_TOL = 0.08     # ROUND 2 ruling (review round 1 D1): target centre within 0.08 of the frame centre
@@ -65,8 +80,10 @@ def check_segment(sd, clip_cam, exp_beats, forbid):
     cam = json.load(open(clip_cam)) if clip_cam and Path(clip_cam).exists() else None
     W, H = ev["capture"]["w"], ev["capture"]["h"]
     fps = ev["capture"]["fps"]
-    p = camera.params()
-    eases = camera.make_eases(p)
+    p = camera.params() if cam and camera else None
+    eases = camera.make_eases(p) if p else None
+    if cam and not camera:
+        cam = None
     out = []
     for b in beats:
         a, r = b["action"], b["result"]
@@ -126,21 +143,49 @@ def check_segment(sd, clip_cam, exp_beats, forbid):
         if re.search(r"just a moment|verify you are human|attention required|unusual activity has been detected", str(e.get("title", "")) + " " + str(e.get("vis", "")), re.I):
             out.append({"check": "no_challenge", "ok": False, "t": round(e["t"], 2), "title": e.get("title")})
     for req in exp_beats:
-        hits = [e for e in ev["events"] if abs((e.get("at") if e.get("at") is not None else e["t"]) - req["at"]) <= 0.12]
-        txt = " ".join(" ".join(str(e.get(k, "")) for k in ("title", "vis", "value", "url", "text")) for e in hits)
-        ok = bool(hits) and any(m.lower() in txt.lower() for m in req["must"])
-        out.append({"check": "must", "ok": ok, "at": req["at"], "must": req["must"], "seen": txt[:200]})
+        near = [e for e in ev["events"] if abs((e.get("at") if e.get("at") is not None else e["t"]) - req["at"]) <= 0.12]
+        if req.get("must"):
+            txt = " ".join(" ".join(str(e.get(k, "")) for k in ("title", "vis", "value", "url", "text")) for e in near)
+            ok = bool(near) and any(m.lower() in txt.lower() for m in req["must"])
+            out.append({"check": "must", "ok": ok, "at": req["at"], "must": req["must"], "seen": txt[:200]})
+        if req.get("typed"):
+            # the planned text (beat ledger typed_text) must be what the field shows: typed near its word
+            # (the agent's own "at" may sit up to ~1 s off the word) and the field holding exactly it
+            ty = [e for e in ev["events"] if e["type"] == "type" and abs(float(e.get("at") if e.get("at") is not None
+                                                                              else e["t"]) - req["at"]) <= 1.5]
+            last = ty[-1] if ty else None
+            val = str(last.get("value", "")) if last else ""
+            ok = bool(last) and " ".join(val.split()) == " ".join(str(req["typed"]).split())
+            out.append({"check": "typed", "ok": ok, "at": req["at"], "want": req["typed"], "value": val[:120],
+                        "why": None if last else "never typed near its word"})
     return out
 
 
-def main():
-    edit, expect = Path(sys.argv[1]), json.load(open(sys.argv[2]))
+def load_expect(doc):
+    """An expect.json document, or a plan (plan-schema beats) turned into one. Pure."""
+    if isinstance(doc, dict) and isinstance(doc.get("plan"), dict):
+        doc = doc["plan"]                                  # direct.json {"plan": ...}
+    segs = doc.get("segments") if isinstance(doc, dict) else None
+    if isinstance(segs, list):
+        sys.path.insert(0, str(HERE.parent))               # /a: the aieditor package (stdlib-only gates)
+        from aieditor import gates  # noqa: E402
+        return {"forbid": list(doc.get("forbid") or ["Blue Bottle"]),
+                "segments": {str(i): gates.beats_from_plan(seg) for i, seg in enumerate(segs)}}
+    return doc
+
+
+def run(edit, expect, only=None, use_camera=True):
+    """All segments of an edit dir (or `only` these numbers) -> {"summary", "segments"}."""
+    edit = Path(edit)
+    expect = load_expect(expect)
     res = {}
     for sd in sorted(edit.glob("seg-[0-9][0-9]")):
         if not (sd / "rec" / "events.json").exists():
             continue
         i = int(sd.name[4:])
-        cams = sorted(edit.glob(f"sc-{i:02d}-*.mp4.camera.json"))
+        if only is not None and i not in only:
+            continue
+        cams = sorted(edit.glob(f"sc-{i:02d}-*.mp4.camera.json")) if use_camera else []
         res[sd.name] = check_segment(sd, cams[0] if cams else None, expect.get("segments", {}).get(str(i), []),
                                      expect.get("forbid", []))
     allc = [c for v in res.values() for c in v]
@@ -153,7 +198,14 @@ def main():
         by[k][0] += 1
         by[k][1] += 0 if c["ok"] else 1
     summary["by_check"] = {k: {"n": n, "failed": f} for k, (n, f) in by.items()}
-    out = {"summary": summary, "segments": res}
+    return {"summary": summary, "segments": res}
+
+
+def main():
+    edit, expect = Path(sys.argv[1]), json.load(open(sys.argv[2]))
+    only = {int(x) for x in sys.argv[sys.argv.index("--only") + 1].split(",")} if "--only" in sys.argv else None
+    out = run(edit, expect, only, use_camera="--no-camera" not in sys.argv)
+    summary, res = out["summary"], out["segments"]
     o = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else None
     if o:
         json.dump(out, open(o, "w"), indent=1)
