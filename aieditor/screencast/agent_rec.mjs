@@ -1073,7 +1073,10 @@ async function act(a) {
     }
     case "read": case "highlight": {
       const markable = a.type === "highlight" && !["input", "textarea", "select", "img", "video", "canvas"].includes(b.tag) && b.text;
-      const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text, ...(a.deep ? { deep: true } : {}) });
+      // a compiled camera beat (the plan's camera.zoom) names what to frame: camera.py moves only to a
+      // target_box (G5 step 4: a plain read never moves the camera); filler holds stay unframed
+      const tb = a.camera_only && a.beat && !a.filler ? { target_box: toCap(b) } : {};
+      const e = log(markable ? "highlight" : "read", { box: toCap(b), text: b.text, ...tb, ...(a.deep ? { deep: true } : {}) });
       Object.assign(e, await seen(b));
       // a beat is a calm screen (SYSTEM.md §2): never shorter than ~1.8 s — but DEFERRED (see openRead)
       const ms = Math.min(MAX_STILL, Math.max(a.ms ?? 2500, (SYS.min_beat_s ?? 2.5) * 720) / 1000);

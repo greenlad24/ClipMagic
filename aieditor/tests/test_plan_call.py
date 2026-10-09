@@ -428,6 +428,19 @@ def test_handoff(good):
         check(False, "outside.goto in a logged-in session must not compile")
     except beatscript.NeedsPrimitive:
         check(True, "outside.goto in the logged-in session -> needs_primitive")
+    # a compiled camera.zoom beat reaches the reference camera as a target (p3 moves only to a target_box)
+    cam = [st for c in cp["segments"] for st in c["steps"] if st.get("camera_only") and st.get("beat")]
+    check(cam and all(st["type"] == "read" and not st.get("filler") for st in cam), "camera.zoom -> a camera-only read beat")
+    js = (ROOT / "screencast" / "agent_rec.mjs").read_text()
+    check("a.camera_only && a.beat && !a.filler ? { target_box: toCap(b) }" in js,
+          "agent_rec.mjs logs a compiled camera beat's read with its target_box")
+    sys.path.insert(0, str(ROOT / "screencast"))
+    import camera as CAM
+    W, H = 2560, 1440
+    ev = {"type": "read", "t": 1.0, "box": [800, 400, 600, 300], "target_box": [800, 400, 600, 300], "beat": True}
+    check(CAM.camera_box(ev, W, H) == [800, 400, 600, 300], "camera.py frames the compiled camera beat")
+    check(CAM.camera_box({k: v for k, v in ev.items() if k != "target_box"}, W, H) is None,
+          "a plain read (filler hold) still never moves the camera")
     # the take gate's expectations come from the same schema beats
     exp = gates.expectations({"segments": segs}, WORDS)
     for i, s in enumerate(segs):

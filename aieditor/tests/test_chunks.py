@@ -17,6 +17,7 @@ import math
 import os
 import shutil
 import subprocess
+import threading
 import sys
 import tempfile
 from pathlib import Path
@@ -296,21 +297,25 @@ def sh(cmd):
     return p.stdout + p.stderr
 
 
+_LINK_LOCK = threading.Lock()
+
+
 def local_run(cmd, mounts, cancelled=lambda: False, image=None, memory=None):
     """compose_long._run without docker: the container paths are symlinks to the mounted dirs (we ARE in a
     container). Every chunk shares the same mounts, so the links are made once."""
-    for a, b in mounts:
-        b = b.split(":")[0]
-        link = Path(b)
-        if link.is_symlink() and os.readlink(link) == str(a):
-            continue
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            link.symlink_to(a)
-        except FileExistsError:
-            pass
+    with _LINK_LOCK:                   # parallel chunks call this from threads: link under one lock
+        for a, b in mounts:
+            b = b.split(":")[0]
+            link = Path(b)
+            if link.is_symlink() and os.readlink(link) == str(a):
+                continue
+            if link.is_symlink() or link.exists():
+                link.unlink(missing_ok=True)
+            link.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                link.symlink_to(a)
+            except FileExistsError:
+                pass
     return sh(cmd)
 
 
