@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   autoEditorCreate,
+  autoEditorEstimate,
   autoEditorLabEdits,
   autoEditorUploads,
   type AutoLabEdit,
@@ -35,6 +36,7 @@ import { cn } from '@/lib/utils';
 import { getFactory, type FactoryState } from './FactoryPanel';
 import { fmtBytes, useSourceUpload, VIDEO_EXTS, type SourceUploadState } from './useSourceUpload';
 import { NarrationLibrary } from './NarrationLibrary';
+import { etaText } from './etaLive';
 
 /**
  * New edit — a guided, one-question-per-screen flow (Jake 2026-10-08: "a consumer app like
@@ -475,10 +477,33 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
     el?.focus();
   }, [step]);
 
-  // ── estimate from the factory's own numbers ──
+  // ── estimate: the same timing model as a job's live ETA (server aieditor/eta.ts) ──
   const runs = (factory?.history ?? []).filter((r) => r.action === 'run' && r.ok);
   const medMin = median(runs.map((r) => Number(r.minutes)));
   const medUsd = median(runs.map((r) => Number(r.usd)));
+  const [estimate, setEstimate] = useState<Awaited<ReturnType<typeof autoEditorEstimate>> | null>(null);
+  const srcSeconds =
+    kind === 'job' && pick ? pick.video.duration ?? null : kind === 'library' && narration ? narration.duration ?? null : null;
+  const estSource = kind === 'job' ? 'job' : kind === 'library' ? (narration?.kind === 'upload' ? 'upload' : 'job_source') : kind === 'upload' ? 'upload' : 'descript';
+  useEffect(() => {
+    if (step !== 'review' || !workflow || !format) return;
+    let stop = false;
+    autoEditorEstimate({
+      workflow: full ? 'cut' : (workflow as AutoWorkflow),
+      chain: full ? 'creative' : undefined,
+      handoff: handoff && creative ? true : undefined,
+      format,
+      source: { kind: estSource },
+      sourceSeconds: srcSeconds,
+      sites: format === 'long' ? sites.trim().split('\n').filter(Boolean).length : 0,
+      runOn,
+    })
+      .then((r) => !stop && setEstimate(r))
+      .catch(() => !stop && setEstimate(null));
+    return () => {
+      stop = true;
+    };
+  }, [step, workflow, full, handoff, creative, format, estSource, srcSeconds, sites, runOn]);
   const factoryOn = !!factory?.settings.enabled;
   const size = factory?.sizes.find((z) => z.id === factory.settings.size);
   const resolvedRunOn =
@@ -795,9 +820,17 @@ export function NewEditFlow({ onCreated }: { onCreated: (id: string) => void }) 
                 ))}
               </ol>
               <p className="text-xs text-muted-foreground">
-                {onFactory && medMin !== null
-                  ? `Typically ~${Math.round(medMin)} min on a factory server (~$${(medUsd ?? 0).toFixed(2)}, last ${runs.length} run${runs.length === 1 ? '' : 's'})`
-                  : 'Roughly 10 min per 15 min of recording on the main box'}
+                {estimate?.total
+                  ? `Typically ${etaText(estimate.total)} on ${estimate.machine.key === 'box' ? 'the main box' : `a ${estimate.machine.cpus}-core server`}${
+                      estimate.assumedMinutes ? ` for a ~${estimate.assumedMinutes}-min recording` : ''}${
+                      estimate.machine.key !== 'box' && size ? ` (~$${((estimate.total.sec / 3600) * size.usdHour).toFixed(2)} server time)` : ''}${
+                      estimate.firstRun ? ' — first run on this server size, an estimate' : ''}.`
+                  : estimate?.atLeast
+                    ? `At least ${etaText(estimate.atLeast)} on ${estimate.machine.key === 'box' ? 'the main box' : `a ${estimate.machine.cpus}-core server`}${
+                        estimate.assumedMinutes ? ` for a ~${estimate.assumedMinutes}-min recording` : ''} (no earlier run of: ${estimate.unknown.join(', ')}).`
+                  : onFactory && medMin !== null
+                    ? `Typically ~${Math.round(medMin)} min on a factory server (~$${(medUsd ?? 0).toFixed(2)}, last ${runs.length} run${runs.length === 1 ? '' : 's'})`
+                    : 'Roughly 10 min per 15 min of recording on the main box'}
                 {' '}+ AI calls (about 2¢ per recorded minute). Exact time and cost show live.
               </p>
             </div>

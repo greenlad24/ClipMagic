@@ -10,6 +10,8 @@ import {
   type AutoStageStatus,
 } from 'zite-endpoints-sdk';
 import { cn } from '@/lib/utils';
+import type { AutoPred } from 'zite-endpoints-sdk';
+import { blendLive, etaText, sumPreds } from './etaLive';
 
 /**
  * Jake 2026-10-08: "Be transparent about each part of the process in the UI — show a
@@ -164,14 +166,19 @@ interface StageView {
   eta: number | null;
   etaGuess: boolean;
   expect: number | null;
+  /** the timing model's prior for this stage (server aieditor/eta.ts) */
+  pred: AutoPred | null;
+  /** running: the live-corrected remaining time (etaLive.blendLive) */
+  live: AutoPred | null;
   cost: number | null;
 }
 
 function stageView(
   s: { id: string; title: string },
   st: AutoStageStatus | undefined,
-  expect: number | null,
+  pred: AutoPred | null,
   now: number,
+  reachedAt: number | null = null,
 ): StageView {
   const state = (st?.state ?? 'pending') as AutoStageState;
   const elapsed =
@@ -182,15 +189,36 @@ function stageView(
   const frac = state === 'done' || state === 'skipped' ? 1 : p;
   let eta: number | null = null;
   let etaGuess = false;
+  let live: AutoPred | null = null;
   if (state === 'running' && elapsed !== null) {
-    if (p >= 0.02 && elapsed >= 5) eta = (elapsed * (1 - p)) / p;
-    else if (expect !== null) {
-      eta = Math.max(0, expect - elapsed);
-      etaGuess = true;
+    // the prior, pulled toward the observed rate as the stage reports progress
+    live = blendLive(pred, elapsed, p > 0 ? p : null, reachedAt ?? elapsed);
+    if (live) {
+      eta = live.sec;
+      etaGuess = !live.confident;
     }
   }
+  const expect = pred ? pred.sec : null;
   const cost = typeof st?.cost_usd === 'number' ? st.cost_usd : typeof st?.api_usd === 'number' ? st.api_usd : null;
-  return { id: s.id, title: s.title, st, state, frac, elapsed, eta, etaGuess, expect, cost };
+  return { id: s.id, title: s.title, st, state, frac, elapsed, eta, etaGuess, expect, pred, live, cost };
+}
+
+/** seconds after the stage started at which it FIRST reported its current fraction (its events) */
+function reachedAtOf(st: AutoStageStatus | undefined, evs: AutoEvent[]): number | null {
+  if (!st?.started_at || st.state !== 'running' || typeof st.progress !== 'number' || st.progress <= 0) return null;
+  const p = st.progress;
+  for (const e of evs) {
+    if (e.t >= st.started_at && typeof e.frac === 'number' && e.frac >= p - 0.0005) return Math.max(0, e.t - st.started_at);
+  }
+  return null;
+}
+
+/** an older job (or a server without the model): the plain typical seconds as a loose estimate */
+function predOf(job: AutoJobDetail, id: string): AutoPred | null {
+  const p = job.eta?.stages?.[id];
+  if (p) return p;
+  const x = job.expect?.[id];
+  return typeof x === 'number' ? { sec: x, lo: x * 0.6, hi: x * 1.4, n: 1, confident: false, scaled: false, unit: 'fixed' } : null;
 }
 
 function Bar({ frac, state, thin }: { frac: number; state: string; thin?: boolean }) {
@@ -313,10 +341,10 @@ function StageLog({ events }: { events: AutoEvent[] }) {
  * bar and the full log of any stage are one click away.
  */
 function StageRow({
-  id, title, state, frac, elapsed, eta, etaGuess, expect, cost, warn, err, msg, note, label, events, isOpen, onToggle, onContinue,
+  id, title, state, frac, elapsed, eta, etaGuess, expect, livePred, pred, cost, warn, err, msg, note, label, events, isOpen, onToggle, onContinue,
 }: {
   id: string; title: string; state: AutoStageState; frac: number; elapsed: number | null; eta: number | null; etaGuess?: boolean;
-  expect: number | null; cost: number | null; warn: number; err: number; msg?: string | null; note?: string | null; label?: string;
+  expect: number | null; livePred?: AutoPred | null; pred?: AutoPred | null; cost: number | null; warn: number; err: number; msg?: string | null; note?: string | null; label?: string;
   events: AutoEvent[]; isOpen: boolean; onToggle: () => void; onContinue?: () => void;
 }) {
   const I = ICON[state] ?? ICON.pending;
@@ -359,12 +387,15 @@ function StageRow({
           {state === 'skipped' && <span>Skipped</span>}
           {elapsed !== null && state !== 'pending' && <span>{dur(elapsed)}</span>}
           {state === 'running' && eta !== null && (
-            <span>
-              ETA {etaGuess ? '~' : ''}
-              {dur(eta)}
+            <span title={livePred?.scaled ? 'No run of this step on this server size yet — scaled from other sizes' : undefined}>
+              ETA {livePred ? etaText(livePred) : `${etaGuess ? '~' : ''}${dur(eta)}`}
             </span>
           )}
-          {state === 'pending' && expect !== null && <span>~{dur(expect)}</span>}
+          {state === 'pending' && expect !== null && (
+            <span title={pred?.scaled ? 'No run of this step on this server size yet — scaled from other sizes' : pred ? `${pred.n} earlier run${pred.n === 1 ? '' : 's'}` : undefined}>
+              {pred ? etaText(pred) : `~${dur(expect)}`}
+            </span>
+          )}
           {cost !== null && cost > 0 && <span className="text-emerald-400">{money(cost)}</span>}
           {warn > 0 && <span className="rounded bg-amber-500/15 px-1 text-amber-300">⚠ {warn}</span>}
           {err > 0 && <span className="rounded bg-red-500/15 px-1 text-red-300">✖ {err}</span>}
@@ -479,7 +510,7 @@ export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; liv
     const st = job.status.stages?.[id];
     return st && !live && st.state === 'running' ? { ...st, state: 'interrupted' } : st;
   };
-  const views = list.map((s) => stageView(s, stageOf(s.id), job.expect?.[s.id] ?? null, now));
+  const views = list.map((s) => stageView(s, stageOf(s.id), predOf(job, s.id), now, reachedAtOf(stageOf(s.id), byStage.get(s.id) ?? [])));
   // stages the status knows that the list does not (an older job's extra stage): still shown
   for (const id of Object.keys(job.status.stages ?? {})) {
     if (!list.some((s) => s.id === id)) views.push(stageView({ id, title: id }, stageOf(id), null, now));
@@ -489,17 +520,25 @@ export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; liv
   const counted = views.filter((v) => v.state !== 'skipped' && !(v.id === 'final' && v.state === 'pending'));
   const known = counted.map((v) => v.expect).filter((x): x is number => x !== null && x > 0).sort((a, b) => a - b);
   const typical = known.length ? known[Math.floor(known.length / 2)] : 60;
-  const weight = (v: StageView) => Math.max(1, v.expect ?? v.elapsed ?? typical);
+  // done stages weigh what they took, the running one elapsed + its live remaining (so a stage that
+  // says 75 % a quarter of the way in does not jump the bar), the rest their estimate
+  const weight = (v: StageView) =>
+    Math.max(1, v.state === 'done' && v.elapsed !== null ? v.elapsed
+      : v.state === 'running' && v.elapsed !== null && v.eta !== null ? v.elapsed + v.eta
+        : v.expect ?? v.elapsed ?? typical);
+  const doneShare = (v: StageView) =>
+    v.state === 'running' && v.elapsed !== null && v.eta !== null ? v.elapsed / Math.max(1, v.elapsed + v.eta) : v.frac;
   const total = counted.reduce((a, v) => a + weight(v), 0);
-  const overall = total ? counted.reduce((a, v) => a + weight(v) * v.frac, 0) / total : 0;
-  let remaining = 0;
+  const overall = total ? counted.reduce((a, v) => a + weight(v) * doneShare(v), 0) / total : 0;
+  // the rest of the job: the running stage's live estimate + every stage still to run
+  const restPreds: (AutoPred | null)[] = [];
   let unknown = false;
   for (const v of counted) {
     if (v.state === 'running') {
-      if (v.eta !== null) remaining += v.eta;
+      if (v.live) restPreds.push(v.live);
       else unknown = true;
     } else if (v.state === 'pending' || v.state === 'interrupted' || v.state === 'failed') {
-      if (v.expect !== null) remaining += v.expect;
+      if (v.pred) restPreds.push(v.pred);
       else unknown = true;
     }
   }
@@ -555,6 +594,32 @@ export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; liv
   const isExpanded = expanded ?? !finished;
   const runningFactory = showFactory && factoryState === 'running';
 
+  // ── waits are WAITS (Jake: "waiting for a server", never a made-up ETA) ──
+  // queued: the worker holds it (no free 32-core, a cap, an account in use, the box busy);
+  // copying the server image to another region; waiting for a logged-in account mid-dispatch
+  const lastFactory = factoryEvents.length ? factoryEvents[factoryEvents.length - 1] : null;
+  const thisRunFactory = runner?.kind === 'factory' && !!runStart && (runner.started ?? 0) >= runStart - 5;
+  const waitText: string | null =
+    state === 'queued'
+      ? job.eta?.wait
+        ? job.eta.wait.kind === 'box' ? `Waiting for the main box — ${job.eta.wait.reason}` : `Waiting for a server — ${job.eta.wait.reason}`
+        : 'Waiting for a server'
+      : state === 'running' && thisRunFactory && runner?.state === 'copying-image'
+        ? `Waiting for a server — ${runner.note || 'copying the server image to another region'}`
+        : state === 'running' && !running && lastFactory && /^waiting for the /.test(lastFactory.msg) && (!thisRunFactory || runner?.state === 'creating')
+          ? `Waiting for a server — ${lastFactory.msg.replace(/^waiting for /, '')}`
+          : null;
+  // the factory's own time still to come: start-up → transfer → (stages) → pull + delete
+  const ov = job.eta?.overhead ?? null;
+  const ovRest: (AutoPred | null)[] = [];
+  if (ov && state === 'running' && !waitText) {
+    const rs = thisRunFactory ? runner?.state : 'creating';
+    if (rs === 'creating') ovRest.push(blendLive(ov.startup, runner?.started && thisRunFactory ? Math.max(0, now - runner.started) : 0, null), ov.transfer, ov.wrapup);
+    else if (rs === 'sending') ovRest.push(ov.transfer, ov.wrapup);
+    else if (rs === 'running' || rs === 'pulling') ovRest.push(ov.wrapup);
+  }
+  const rest = waitText ? null : sumPreds([...restPreds, ...ovRest]);
+
   return (
     <div className="space-y-2.5 rounded-lg border border-border p-3">
       {/* summary: one line + the overall bar */}
@@ -565,20 +630,24 @@ export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; liv
               ? `${state === 'cancelled' ? 'Cancelled' : 'Done'} · ${doneCount} step${doneCount === 1 ? '' : 's'}${
                   skippedCount ? ` · ${skippedCount} skipped` : ''}${pendingCount && state === 'cancelled' ? ` · ${pendingCount} not run` : ''}`
               : state === 'queued'
-                ? 'Waiting to start'
+                ? waitText ?? 'Waiting to start'
                 : failedView
                   ? `Stopped at ${failedView.title}`
                   : `${Math.round(overall * 100)}%`}
             {running && <span className="font-normal text-muted-foreground"> · {running.title}</span>}
+            {state === 'running' && waitText && <span className="font-normal text-amber-300"> · {waitText}</span>}
+            {live && !waitText && job.eta?.firstRun && (
+              <span className="font-normal text-amber-300/90"> · first run on this server size ({job.eta.machine.label}) — estimate</span>
+            )}
           </span>
           <span className="ml-auto flex flex-wrap items-center gap-x-2 tabular-nums text-muted-foreground">
             {runElapsed !== null && (state === 'running' || finished) && <span>{dur(runElapsed)}</span>}
-            {live && (remaining > 0 || unknown) && (
-              <span>
-                ETA {unknown ? '≥ ' : '~'}
-                {dur(remaining)}
+            {live && !waitText && rest && (
+              <span title={job.eta ? `${job.eta.machine.label} · ${job.eta.runsOnMachine} earlier run${job.eta.runsOnMachine === 1 ? '' : 's'} on this size` : undefined}>
+                ETA {unknown ? `≥ ${dur(rest.lo)}` : etaText(rest)}
               </span>
             )}
+            {live && !waitText && !rest && unknown && <span>ETA after the first step</span>}
             <span className="text-emerald-400">{money(cost)}</span>
             <button type="button" onClick={() => setExpanded(!isExpanded)} className="text-primary hover:underline">
               {isExpanded ? 'Hide steps' : 'Show steps'}
@@ -637,6 +706,8 @@ export function JobProgress({ job, live, onContinue }: { job: AutoJobDetail; liv
                 eta={v.eta}
                 etaGuess={v.etaGuess}
                 expect={v.expect}
+                livePred={v.live}
+                pred={v.pred}
                 cost={v.cost}
                 warn={v.st?.warnings ?? evs.filter((e) => e.level === 'warn').length}
                 err={v.st?.errors ?? evs.filter((e) => e.level === 'error').length}

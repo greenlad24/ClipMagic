@@ -3823,6 +3823,8 @@ export interface AutoJobDetail {
   stageList?: { id: string; title: string }[];
   /** typical seconds per stage for this source length (null = no history yet) */
   expect?: Record<string, number | null>;
+  /** the timing model (server aieditor/eta.ts): per-stage estimate + range, factory overhead, queue wait */
+  eta?: AutoEta;
   request: { format: 'short' | 'long'; sponsored: boolean; script: string | null;
     source: { kind?: 'descript' | 'job' | 'upload' | 'job_source'; url?: string; job?: string; file?: string; title?: string; upload?: string; name?: string };
     title: string | null;
@@ -3870,6 +3872,30 @@ export interface AutoJobDetail {
   /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip); null for other jobs */
   handoff?: { zip: string; bytes: number; modifiedAt: number; slots: { n: number; start_tc: string; end_tc: string; label: string }[] }[] | null;
 }
+/** One estimate of the ETA model (seconds): a single value when `confident`, else lo–hi. */
+export interface AutoPred {
+  sec: number; lo: number; hi: number;
+  /** runs behind it */
+  n: number;
+  confident: boolean;
+  /** no run of this stage on this machine: scaled by cores from other server sizes */
+  scaled: boolean;
+  unit: 'src' | 'out' | 'beat' | 'fixed';
+  /** reported fraction → share of the stage's time, 21 points: frac 0, 0.05 … 1 (null = linear) */
+  curve?: number[] | null;
+}
+export interface AutoEta {
+  machine: { key: string; label: string; cpus: number };
+  /** no run at all on this server size: every number is scaled by cores */
+  firstRun: boolean;
+  runsOnMachine: number;
+  stages: Record<string, AutoPred | null>;
+  /** factory server start-up, job transfer, wrap-up (pull + delete); null on the main box */
+  overhead: { startup: AutoPred; transfer: AutoPred; wrapup: AutoPred } | null;
+  total: AutoPred | null;
+  /** why a queued job is waiting (no ETA for a wait) */
+  wait: { kind: 'box' | 'slots' | 'cap' | 'api' | 'account' | 'server'; reason: string } | null;
+}
 export interface AutoChainLink { id: string; title: string; state: string | null }
 export interface AutoChain {
   /** this is a Full edit's cut job */
@@ -3907,6 +3933,19 @@ export const autoEditorStatus = endpoint<Record<string, never>, {
 }>("autoEditorStatus");
 export const autoEditorJobs = endpoint<Record<string, never>, { jobs: AutoJobSummary[] }>("autoEditorJobs");
 export const autoEditorJob = endpoint<{ id: string }, AutoJobDetail>("autoEditorJob");
+/** typical time for a job that does not exist yet (the New edit review screen) */
+export const autoEditorEstimate = endpoint<{
+  workflow: AutoWorkflow; chain?: 'creative'; handoff?: boolean; format: 'short' | 'long';
+  source?: { kind: 'descript' | 'job' | 'upload' | 'job_source' }; sourceSeconds?: number | null; sites?: number; runOn?: AutoRunOn;
+}, {
+  total: AutoPred | null;
+  /** total is null (a step never run before): the steps that do have history */
+  atLeast: AutoPred | null;
+  machine: { key: string; label: string; cpus: number }; firstRun: boolean;
+  runsOnMachine: number; unknown: string[];
+  /** no source length yet: this many minutes (the median earlier recording) was assumed */
+  assumedMinutes: number | null;
+}>("autoEditorEstimate");
 /** request.json "source": a Descript link (url), a finished Lab edit (creative only), an upload, or any job's narration */
 export type AutoSourceInput =
   | { kind: 'job'; job: string; file: string }
