@@ -16,7 +16,8 @@ LAYOUT (the filesystem is the database) — /opt/aieditor-work/jobs/<id>/
                     rebuild/recut = new cut + sound check only, the video is NOT re-rendered
                     (Jake: "instead of rerender"); render = the video preview of the current cut
   cancel            stop now (Lab writes)
-  status.json       state, stage, progress, message, per-stage timings, cost (worker)
+  status.json       state, stage, progress, message, per-stage timings, cost (worker); state "held" =
+                    the edit failed the ship rule / a gate (held.json + edit-NN/verdict.json list why)
   source.mp4        the raw video          audio16k.wav / .mp3, full48k.wav
   words.json        Groq transcript        aligned.json   forced-aligned times
   plan.raw.json     Claude's answer        plan.json      validated plan (what is kept)
@@ -66,7 +67,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from aieditor import align, camera, cloud, compose, config, descript, edl, events, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
+from aieditor import align, camera, cloud, compose, config, descript, edl, events, gates, graphics, longedit, media, render, sources, takes, transcribe, wordiff  # noqa: E402
 from aieditor import sites as sites_mod  # noqa: E402
 
 STAGES = ["download", "audio", "transcribe", "align", "takes", "cut", "listen", "graphics", "preview", "compose"]
@@ -790,6 +791,37 @@ def start(job, action):
              started_at=now())
 
 
+def held_failures(d):
+    """Why a job is HELD (architecture recommendation §4: a video that fails the ship rule is never
+    shipped quietly): every edit's verdict.json that says held (structure / coverage / rubric / ship
+    rule, lost screencast seconds) + the reasons other stages left in held.json (scripted recorder
+    missing, no US route, API cap, privacy, plan check). -> [{dim, beat, t, why, remedies_tried}]"""
+    d = Path(d)
+    e = jload(d / "edl.json", {}) or {}
+    out = []
+    for k in range(1, len(e.get("videos") or []) + 1):
+        v = jload(d / f"edit-{k:02d}" / "verdict.json")
+        if isinstance(v, dict) and v.get("held"):
+            out += [{**f, "edit": k} for f in v.get("failures") or []] or \
+                [gates.failure("ship", "; ".join((v.get("ship") or {}).get("fails") or ["held"]))]
+    return [gates.failure("held", r.get("reason", "") + (f" ({r['detail']})" if r.get("detail") else ""))
+            for r in gates.held_doc(d)["reasons"]] + out
+
+
+def finish_held(job, failures):
+    """The job ends HELD: held.json lists every failure, the Lab shows a Held badge with the list, the
+    edit is never offered as finished or as a creative source — and nobody is notified with notes."""
+    gates.write_held(job.d, [f for f in failures if f.get("dim") != "held"])
+    first = failures[0]
+    msg = (f"Held — {len(failures)} failure(s), not shipped: {first.get('dim')} {first.get('why', '')}")[:500]
+    job.log(msg)
+    for f in failures[:40]:
+        job.log(f"  held: {f.get('dim')} {('@' + str(f['t']) + 's ') if f.get('t') is not None else ''}{f.get('why')}")
+    events.emit("stage", "job held — not shipped (see the failure list)", stage="job", level="warn")
+    job.save(state="held", held=True, held_failures=failures[:200], message=msg, error=None, progress=1,
+             finished_at=now())
+
+
 def execute(job, action):
     """One claimed request, start to finish, on THIS machine (the box, or a factory server)."""
     events.set_sink(job.event)
@@ -797,7 +829,13 @@ def execute(job, action):
     job.log(f"claimed action={action} (workflow: {workflow_of(job.req)})")
     try:
         run_job(job, action)
-        job.save(state="done", message="Ready to review", progress=1, finished_at=now())
+        held = held_failures(job.d)
+        if held:
+            finish_held(job, held)
+            return
+        gates.write_held(job.d, [])                    # a run that ships clears an earlier hold's list
+        job.save(state="done", held=False, held_failures=None, message="Ready to review", progress=1,
+                 finished_at=now())
         events.emit("stage", "job finished — ready to review", stage="job")
     except Cancelled:
         job.log("cancelled")
@@ -906,7 +944,7 @@ def once(job_id, action):
     job = Job(config.JOBS / job_id)
     job.save(state="running", action=action, host=os.uname().nodename)
     execute(job, action)
-    return 0 if job.st.get("state") == "done" else 1
+    return 0 if job.st.get("state") in ("done", "held") else 1
 
 
 if __name__ == "__main__":

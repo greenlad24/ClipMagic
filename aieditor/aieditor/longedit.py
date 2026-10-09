@@ -18,7 +18,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
-from . import agentrec, compose_long, config, director, events as ev_log, graphics_long, media
+from . import agentrec, compose_long, config, director, events as ev_log, gates, graphics_long, media, rubric
 
 SC_IMAGE = config.SC_IMAGE
 SCREENCAST = config.CODE / "screencast"
@@ -141,6 +141,7 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     json.dump({"beats": plan.get("beats", []), "plates": plan.get("plates", []), "objects": plan.get("objects", {}),
                "aroll_actions": plan.get("aroll_actions", []), "structure": plan.get("structure", {})},
               open(w / "beats.json", "w"), indent=1)
+    write_expect(w, plan, video)
     segs = plan["segments"]
     n_recorded = 0
     by_scout = {}
@@ -238,28 +239,131 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
             + f", {len(evs)} overlay(s)"), usd
 
 
-MIN_KEEP_S = 6.0          # a screencast cut short by the guard keeps at least this much, else A-roll
-GUARD_EVERY_S = 1.5       # qa_frames.py sampling interval
+GUARD_EVERY_S = gates.GUARD_EVERY_S     # qa_frames.py samples every 0.5 s (gap list G4.2)
 
 
-def frame_guard(w, cancelled):
-    """screencast/qa_frames.py over every recorded segment (cached in frames-qa.json until a raw.mp4
-    changes): {"03": [{"t", "kind", "why"}]} — challenge / error / account hits by recorded second."""
+def write_expect(w, plan, video):
+    """edit-NN/expect.json: per-segment beat expectations (word time, must / typed text, result beats)
+    from the plan-schema beats (single plan call), else the beat ledger (beats.json), else the segment
+    intents — what qa_content.py and the frame guard's empty-canvas rule check every take against."""
+    w = Path(w)
+    ledger = None
+    try:
+        ledger = json.loads((w / "beats.json").read_text()).get("beats")
+    except (OSError, ValueError, AttributeError):
+        pass
+    exp = gates.expectations(plan, video["words"], ledger)
+    p = w / "expect.json"
+    try:
+        same = json.loads(p.read_text()) == exp
+    except (OSError, ValueError):
+        same = False
+    if not same:
+        p.write_text(json.dumps(exp, indent=1))
+    return p
+
+
+def frame_guard(w, cancelled, expect_p=None):
+    """screencast/qa_frames.py over every recorded segment, every 0.5 s (cached in frames-qa.json until a
+    raw.mp4 changes) -> its document: "spans" {"03": [{t0, t1, kind, why}]} (challenge / error / account /
+    idle / idle_tail / empty / garbled / privacy) and the point "segments" hits."""
     w = Path(w)
     raws = list(w.glob("seg-*/rec/raw.mp4"))
     if not raws:
         return {}
     cache = w / "frames-qa.json"
-    if not cache.exists() or cache.stat().st_mtime < max(r.stat().st_mtime for r in raws):
+    stale = not cache.exists() or cache.stat().st_mtime < max(r.stat().st_mtime for r in raws)
+    if not stale:
+        try:
+            stale = "spans" not in json.loads(cache.read_text())      # a 1.5 s point-hit guard from before G4
+        except (OSError, ValueError):
+            stale = True
+    if stale:
         accts = [json.load(open(r.parent / "events.json")).get("account") for r in raws if (r.parent / "events.json").exists()]
         acct = max(set(a for a in accts if a), key=accts.count, default=None)
         # the result goes to a FILE: a big JSON on the pipe would block a container nobody reads yet
         _docker(["python3", "/a/screencast/qa_frames.py", "/w", "--out", f"/w/{cache.name}", "--every", str(GUARD_EVERY_S)]
+                + (["--expect", f"/w/{Path(expect_p).name}"] if expect_p else [])
                 + (["--account", acct] if acct else []), [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-qaframes")
     try:
-        return json.loads(cache.read_text()).get("segments", {})
+        return json.loads(cache.read_text())
     except (OSError, ValueError):
         return {}
+
+
+def content_qa(w, expect_p, cancelled):
+    """screencast/qa_content.py with the camera plans (on_word / late_s / nav_on_word / must / typed) ->
+    qa-content.json; its D1/D2 scores go into the job log (gap list G4.3)."""
+    w = Path(w)
+    out = w / "qa-content.json"
+    try:
+        # qa_content exits 1 on a failed check: the verdict is read from its JSON, not its exit code
+        _docker(["sh", "-c", f"python3 /a/screencast/qa_content.py /w /w/{Path(expect_p).name} --out /w/{out.name}"
+                 " > /dev/null; true"], [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-qacontent")
+        return json.loads(out.read_text())
+    except (OSError, ValueError, subprocess.CalledProcessError):
+        return {}
+
+
+def screen_pieces(w, allsegs, qa, words, expect=None):
+    """compose's take decisions (gap list G4.4): a segment whose frames are clean is kept whole (its edges next
+    to A-roll on sentence starts); one with
+    bad spans (frame guard + the recorder's live walls) keeps the clean footage on BOTH sides, its edges
+    snapped to sentence starts (gates.salvage). Only screen pieces are cut — the narration never is.
+    -> (pieces [{i, n, t0, t1, src0}], lost [held failure lines, every lost second a D1 failure])"""
+    w = Path(w)
+    pieces, lost = [], []
+    for i, seg in enumerate(allsegs):
+        sd = w / f"seg-{i:02d}"
+        beats = ((expect or {}).get("segments") or {}).get(str(i))
+        if not (sd / "rec" / "events.json").exists():
+            lost.append(gates.failure("D1", f"screencast {i + 1}: {seg['t1'] - seg['t0']:.1f} s planned, never recorded",
+                                      t=seg["t0"], remedies_tried=gates.load_state(sd).get("remedies", [])))
+            continue
+        ev = json.load(open(sd / "rec" / "events.json"))
+        walls = [x for x in ev.get("walls", []) if x.get("kind") in agentrec.DROP_KINDS]
+        spans = gates.guard_spans(qa or {}, f"{i:02d}") + gates.spans_from_hits(walls, GUARD_EVERY_S, ev.get("end"))
+        spans = [x for x in spans if x.get("kind") in gates.SPAN_KINDS]
+        # an edge that abuts another screencast stays (screen -> screen dissolve); every edge next to A-roll
+        # goes onto a sentence start (CUT04/CUT05), clean segment or not
+        abut_prev = i > 0 and abs(float(allsegs[i - 1]["t1"]) - float(seg["t0"])) < 0.05
+        abut_next = i + 1 < len(allsegs) and abs(float(allsegs[i + 1]["t0"]) - float(seg["t1"])) < 0.05
+        sv = gates.salvage(seg, spans, words, rec_end=ev.get("end"), keep_start=abut_prev, keep_end=abut_next)
+        for n, p in enumerate(sv["pieces"]):
+            pieces.append({"i": i, "n": n, **p})
+        tried = gates.load_state(sd).get("remedies", []) + (["salvage"] if spans else [])
+        lost += gates.salvage_failures(i, seg, sv, beats, tried)
+        if not spans:
+            continue
+        kinds = ", ".join(sorted({x["kind"] for x in spans}))
+        ev_log.emit("log", f"screencast {i + 1}: {kinds} — kept {len(sv['pieces'])} clean piece(s) on sentence starts, "
+                           f"{sv['lost_s']:.1f} s lost (D1, the edit is held)", level="warn")
+    return sorted(pieces, key=lambda p: p["t0"]), lost
+
+
+def edit_verdict(d, k, w, plan, lost, qa=None, content=None):
+    """The compose tail (recommendation §4 checkpoints 3+4): structure gate + coverage gate + the rubric's
+    code dimensions on the edit -> edit-NN/verdict.json. The worker holds the job when it says held.
+    (Judged dimensions D1/D3/D4 count only from a calibrated judge — judges.py; none runs here yet, so
+    rubric.ship sees them as not measured and the edit is held, never shipped quietly.)"""
+    w = Path(w)
+    blocks = json.load(open(w / "blocks.json"))
+    struct = gates.structure(blocks)
+    cov = gates.coverage(blocks, plan)
+    rb = rubric.score(w, qa)
+    private = sum(1 for sp in ((qa or {}).get("spans") or {}).values() for x in sp if x.get("kind") == "privacy")
+    v = gates.edit_verdict(struct, cov, rb, judged=None, salvage_lost=lost,
+                           held_reasons=gates.held_doc(d)["reasons"], unapproved=rb["measured"]["unapproved"],
+                           private_frames=private)
+    if content:
+        v["content_qa"] = gates.scores(content, lost_beats=sum(1 for f in lost if f.get("beat")))
+    (w / "verdict.json").write_text(json.dumps(v, indent=1))
+    ev_log.emit("log", f"edit {k}: verdict {'HELD' if v['held'] else 'ship'} — "
+                       + ", ".join(f"{x} {y:.0f}" for x, y in v["dims"].items() if y is not None)
+                       + f"; share {cov['share']:.0%}, kept {cov['kept_s']:.0f}/{cov['planned_s']:.0f} s planned"
+                       + (f"; {len(v['failures'])} failure(s)" if v["failures"] else ""),
+                level="warn" if v["held"] else "info")
+    return v
 
 
 def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=None, face_src=None):
@@ -272,36 +376,27 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     allsegs = plan["segments"]
     xf_s = compose_long.xfade_s(fps)
     jobs = []
-    # GUARD (Jake 2026-10-08/09): a bot check, an app error or another account can never reach an edit —
-    # the recorder's live checks (events.json "walls") + the frame guard (OCR of the recorded pixels)
-    bad = frame_guard(w, cancelled)
+    # GUARD (Jake 2026-10-08/09; gap list G4): a bot check, an app error, another account, an idle tail,
+    # an empty canvas or garbled text never reaches an edit — the recorder's live checks (events.json
+    # "walls") + the frame guard (OCR + pixels every 0.5 s). The bad SPAN is cut out, the clean footage on
+    # both sides stays (sentence-snapped), and every lost second holds the job (never silent A-roll).
+    video = _video(d, k)
+    expect_p = write_expect(w, plan, video)
+    expect = json.loads(expect_p.read_text())
+    qa = frame_guard(w, cancelled, expect_p)
+    pieces, lost = screen_pieces(w, allsegs, qa, video["words"], expect)
     usable = {}
-    for i, seg in enumerate(allsegs):
-        sd = w / f"seg-{i:02d}"
-        if not (sd / "rec" / "events.json").exists():
-            continue
-        ev = json.load(open(sd / "rec" / "events.json"))
-        hits = [x for x in ev.get("walls", []) if x.get("kind") in agentrec.DROP_KINDS] + bad.get(f"{i:02d}", [])
-        if not hits:
-            usable[i] = seg
-            continue
-        first = min(float(x.get("t", 0)) for x in hits)
-        why = next(x for x in hits if float(x.get("t", 0)) == first)
-        # frames are OCR'd every GUARD_EVERY_S: the bad state may have begun up to one interval earlier
-        keep = first - (GUARD_EVERY_S + 0.5 if why in bad.get(f"{i:02d}", []) else 0.5)
-        if keep >= MIN_KEEP_S:
-            # the clean beginning stays; the screencast ends before the bad frame, A-roll takes over
-            usable[i] = {**seg, "t1": seg["t0"] + keep}
-            msg = (f"screencast {i + 1}: {why.get('kind')} at {first:.1f}s ({why.get('why')}) — cut to its first "
-                   f"{keep:.1f}s, A-roll after")
-        else:
-            msg = f"screencast {i + 1}: {why.get('kind')} at {first:.1f}s ({why.get('why')}) — dropped, A-roll used"
-        ev_log.emit("log", msg, level="warn")
-    for i, seg in sorted(usable.items()):
-        clip = f"sc-{i:02d}-{W}.mp4"
+    for p in pieces:
+        seg = allsegs[p["i"]]
+        usable[(p["i"], p["n"])] = {**seg, "t0": p["t0"], "t1": p["t1"], "src0": p["src0"], "i": p["i"]}
+    order = sorted(usable, key=lambda key: usable[key]["t0"])
+    for n_, key in enumerate(order):
+        i, pn = key
+        seg = usable[key]
+        clip = f"sc-{i:02d}{'' if pn == 0 else chr(ord('a') + pn)}-{W}.mp4"
         # two screencasts back to back = a change of world (a new recording): the next one
         # DISSOLVES in over this one (SYSTEM.md §3b), so this clip runs a few frames longer
-        nxt = usable.get(i + 1)
+        nxt = usable[order[n_ + 1]] if n_ + 1 < len(order) else None
         into_next = bool(nxt and abs(nxt["t0"] - seg["t1"]) < 0.05)
         # the clip also runs past its end for the dissolve back into the full-screen narration
         # (Jake #5: the bubble fades first, then the screencast) — both need extra frames
@@ -310,8 +405,9 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
 
     def camera(job):
         i, seg, clip, _, tail = job
+        src0 = float(seg.get("src0", 0.0))
         _docker(["python3", "/a/screencast/camera.py", f"/w/seg-{i:02d}/rec", f"/w/{clip}", "--size", f"{W}x{H}",
-                 "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + tail:.3f}", "--fps", f"{fps:.8f}"],
+                 "--from", f"{src0:.3f}", "--to", f"{src0 + seg['t1'] - seg['t0'] + tail:.3f}", "--fps", f"{fps:.8f}"],
                 [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-cam")
     # the camera renders are independent: several at once on a factory server (1 on the box)
     par = max(1, min(len(jobs), config.cpu_count() // 4))
@@ -329,7 +425,7 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     for i, seg, clip, into_next, tail in jobs:
         cam = json.load(open(w / f"{clip}.camera.json"))
         kept = compose_long.trim_blank({"t0": seg["t0"], "t1": seg["t1"], "clip": clip, "bubble": True,
-                                        "bubble_hide": cam["bubble_hide"]}, cam)
+                                        "bubble_hide": cam["bubble_hide"], "i": i, "src0": seg.get("src0", 0.0)}, cam)
         if kept:
             if into_next and kept["t1"] == seg["t1"]:
                 kept["tail"] = xf_s
@@ -350,6 +446,9 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         _docker(["python3", "/a/screencast/facecam.py", "face", f"/j/{face_src or base}", "/j/face.json", "--samples", "20"],
                 [(config.CODE, "/a"), (d, "/j")], cancelled, "aieditor-face")
     face = json.load(open(face_p))["face"]
+    # the kept screen pieces (the rubric reads them: which recording second is on screen when)
+    json.dump([{"i": s_["i"], "t0": s_["t0"], "t1": s_["t1"], "src0": s_.get("src0", 0.0), "clip": s_["clip"]}
+               for s_ in segs], open(w / "pieces.json", "w"), indent=1)
     # A-roll camera: blocks = everything that is not a screencast
     dur = media.probe(d / base)["duration"]
     blocks, t = [], 0.0
@@ -394,6 +493,9 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
             os.replace(w / f"{cam_base}{ext}", w / f"aroll{ext}")
     (w / cam_base).unlink(missing_ok=True)
     plain.unlink(missing_ok=True)
+    # checkpoints 3+4: the edit against the references -> verdict.json (the worker holds a failing job)
+    progress("Checking the edit against the references…", 0.98)
+    edit_verdict(d, k, w, plan, lost, qa, content_qa(w, expect_p, cancelled))
     return final
 
 

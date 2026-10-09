@@ -196,53 +196,72 @@ def decide(segs, qa, rec_dirs, checks_by_seg=None, max_takes=MAX_TAKES):
 
 # ───────────────────────────── salvage ─────────────────────────────
 
-def snap_end(edge, lo, starts, limit=None, snap=SNAP_S, lead=LEAD_S):
-    """The cut for a piece that ENDS near `edge` (A-roll or a bad span after it): ~0.1 s before a
-    sentence start within 0.6 s; never later than `limit` (the last clean, recorded second). With no
-    sentence start that close, the piece ends before the previous sentence start instead. None = no piece."""
+SNAP_MAX_MOVE_S = 4.5      # an edge with no sentence start within 0.6 s moves inward to one at most this far
+                           # (387.41 -> 383.59 in the failed job); further than that, a clause start or the
+                           # clean edge itself: clean footage is never thrown away just to snap
+
+
+def clause_starts(words, pause_s=0.25):
+    """Starts of clauses: a sentence start, a word after , ; : or a dash, a word after a >= 0.25 s pause."""
+    out, prev = [], None
+    for w in words:
+        if prev is None or re.search(r"[,;:\u2014\u2013-][\"'\u2019\u201d)\]]*$", str(prev["word"])) or \
+                _END.search(str(prev["word"])) or w["start"] - prev["end"] >= pause_s:
+            out.append(round(float(w["start"]), 3))
+        prev = w
+    return out
+
+
+def _first_valid(cands, ok):
+    for c in cands:
+        if c is not None and ok(c):
+            return round(c, 3)
+    return None
+
+
+def snap_end(edge, lo, starts, limit=None, clauses=(), max_move=SNAP_MAX_MOVE_S, snap=SNAP_S, lead=LEAD_S):
+    """The cut for a piece that ENDS near `edge` (A-roll or a bad span after it), never later than `limit`
+    (the last clean, recorded second). In order: ~0.1 s before a sentence start within 0.6 s; the previous
+    sentence start (picture leads by 0.1 s) within `max_move`; a clause start within 0.6 s; the clean edge
+    itself. The first that leaves a piece of >= MIN_PIECE_S wins. None = no piece."""
     limit = edge if limit is None else min(edge, limit)
-    near = [s for s in starts if abs(s - edge) <= snap]
-    cut = None
-    if near:
-        s = min(near, key=lambda s: abs(s - edge))
-        if s - lead <= limit:
-            cut = s - lead
-        elif abs(s - limit) <= snap:
-            cut = limit                          # already within 0.6 s of the sentence start
-    if cut is None:
-        before = [s - lead for s in starts if s - lead <= limit]
-        cut = max(before) if before else None
-    return round(cut, 3) if cut is not None and cut - lo >= MIN_PIECE_S else None
+    near = sorted((s for s in starts if abs(s - edge) <= snap), key=lambda s: abs(s - edge))
+    c1 = [s - lead if s - lead <= limit else (limit if abs(s - limit) <= snap else None) for s in near]
+    c2 = [max([s - lead for s in starts if s - lead <= limit and edge - (s - lead) <= max_move], default=None)]
+    c3 = [c - lead for c in sorted(clauses, key=lambda c: abs(c - edge)) if abs(c - edge) <= snap and c - lead <= limit]
+    return _first_valid(c1 + c2 + c3 + [limit], lambda c: c - lo >= MIN_PIECE_S)
 
 
-def snap_start(edge, hi, starts, floor=None, snap=SNAP_S, lead=LEAD_S):
-    """The cut for a piece that STARTS near `edge` (after A-roll or a bad span): ~0.1 s before a sentence
-    start within 0.6 s; never earlier than `floor` (the first clean, recorded second). With no sentence
-    start that close, the piece starts on the next sentence start instead. None = no piece."""
+def snap_start(edge, hi, starts, floor=None, clauses=(), max_move=SNAP_MAX_MOVE_S, snap=SNAP_S, lead=LEAD_S):
+    """The cut for a piece that STARTS near `edge` (after A-roll or a bad span), never earlier than `floor`
+    (the first clean, recorded second): a sentence start within 0.6 s; the next sentence start within
+    `max_move`; a clause start within 0.6 s; the clean edge itself — the first leaving >= MIN_PIECE_S."""
     floor = edge if floor is None else max(edge, floor)
-    near = [s for s in starts if abs(s - edge) <= snap]
-    cut = None
-    if near:
-        s = min(near, key=lambda s: abs(s - edge))
-        if s - lead >= floor:
-            cut = s - lead
-        elif abs(s - floor) <= snap:
-            cut = floor
-    if cut is None:
-        after = [s - lead for s in starts if s - lead >= floor]
-        cut = min(after) if after else None
-    return round(cut, 3) if cut is not None and hi - cut >= MIN_PIECE_S else None
+    near = sorted((s for s in starts if abs(s - edge) <= snap), key=lambda s: abs(s - edge))
+    c1 = [s - lead if s - lead >= floor else (floor if abs(s - floor) <= snap else None) for s in near]
+    c2 = [min([s - lead for s in starts if s - lead >= floor and (s - lead) - edge <= max_move], default=None)]
+    c3 = [max(c - lead, floor) for c in sorted(clauses, key=lambda c: abs(c - edge)) if abs(c - edge) <= snap]
+    return _first_valid(c1 + c2 + c3 + [floor], lambda c: hi - c >= MIN_PIECE_S)
 
 
-def salvage(seg, spans, words, rec_end=None, snap_planned=True):
-    """Excise only the bad spans of a segment whose retakes all failed (spec G4.4).
+def salvage(seg, spans, words, rec_end=None, snap_planned=True, keep_start=False, keep_end=False):
+    """Excise only the bad spans of a segment (spec G4.4) — the sentence-snapped fallback.
 
     seg: {t0, t1} on the output timeline; spans: recording-relative [{t0, t1, kind}]; rec_end: how long
-    the recording runs. Returns {"pieces": [{t0, t1, src0}], "lost": [{t0, t1, why}], "lost_s"}:
-    src0 = where the piece starts on the recording's clock (camera.py --from)."""
+    the recording runs. Every edge next to A-roll is snapped (snap_start / snap_end); keep_start /
+    keep_end leave an edge that abuts another screencast where it is. Only SCREEN pieces are cut: the
+    narration under them plays on untouched (the A-roll shows the presenter over the same words).
+    Returns {"pieces": [{t0, t1, src0}], "lost": [{t0, t1, why}], "lost_s"}: src0 = where the piece
+    starts on the recording's clock (camera.py --from)."""
     T0, T1 = float(seg["t0"]), float(seg["t1"])
     rec_hi = T0 + (rec_end if rec_end is not None else T1 - T0 + 0.5)
     starts = sentence_starts(words)
+    clauses = clause_starts(words)
+    if any(s.get("kind") == "account" for s in spans):
+        # another person's account (the 'Keith' greeting) is the WHOLE take, whatever frames the OCR read:
+        # nothing of it may be shown (RULEBOOK §S / C7) — the segment is lost and re-recorded or held
+        return {"pieces": [], "lost": [{"t0": round(T0, 3), "t1": round(T1, 3), "why": "account"}],
+                "lost_s": round(T1 - T0, 2)}
     bad = merge([[T0 + float(s["t0"]), T0 + float(s["t1"]), s.get("kind")] for s in spans], gap=0.05)
     bad = [b for b in bad if b[1] > T0 and b[0] < T1]
     clean, t = [], T0
@@ -254,10 +273,16 @@ def salvage(seg, spans, words, rec_end=None, snap_planned=True):
         clean.append([t, T1, "planned" if t == T0 else "bad", "planned"])
     pieces = []
     for a, b, a_kind, b_kind in clean:
-        s0 = a if (a_kind == "planned" and not snap_planned) else snap_start(a, b, starts, floor=a)
+        if a_kind == "planned" and (keep_start or not snap_planned):
+            s0 = a if b - a >= MIN_PIECE_S else None
+        else:
+            s0 = snap_start(a, b, starts, floor=a, clauses=clauses)
         if s0 is None:
             continue
-        s1 = b if (b_kind == "planned" and not snap_planned) else snap_end(b, s0, starts, limit=min(b, rec_hi))
+        if b_kind == "planned" and (keep_end or not snap_planned):
+            s1 = min(b, rec_hi)
+        else:
+            s1 = snap_end(b, s0, starts, limit=min(b, rec_hi), clauses=clauses)
         if s1 is None or s1 - s0 < MIN_PIECE_S:
             continue
         pieces.append({"t0": round(s0, 3), "t1": round(s1, 3), "src0": round(s0 - T0, 3)})
@@ -273,22 +298,9 @@ def salvage(seg, spans, words, rec_end=None, snap_planned=True):
     return {"pieces": pieces, "lost": lost, "lost_s": round(sum(x["t1"] - x["t0"] for x in lost), 2)}
 
 
-def snap_clean(seg, words, rec_end=None):
-    """A clean segment's edges, moved onto a sentence start only when one lies within 0.6 s and the
-    recording covers it (no shrink, no drop): the planner already cuts on sentences (G2)."""
-    T0, T1 = float(seg["t0"]), float(seg["t1"])
-    starts = sentence_starts(words)
-    hi = T0 + (rec_end if rec_end is not None else T1 - T0 + 0.5)
-    t0, t1 = T0, T1
-    s = nearest(starts, T0)
-    if s is not None and abs(s - T0) <= SNAP_S and s - LEAD_S >= T0:
-        t0 = round(s - LEAD_S, 3)
-    s = nearest(starts, T1)
-    if s is not None and abs(s - T1) <= SNAP_S and s - LEAD_S <= hi:
-        t1 = round(s - LEAD_S, 3)
-    if t1 - t0 < MIN_PIECE_S:
-        return {**seg}
-    return {**seg, "t0": t0, "t1": t1, "src0": round(t0 - T0, 3)}
+def snap_clean(seg, words, rec_end=None, keep_start=False, keep_end=False):
+    """A clean segment's edges next to A-roll on sentence starts (salvage with no bad span)."""
+    return salvage(seg, [], words, rec_end, keep_start=keep_start, keep_end=keep_end)
 
 
 def beats_lost(expect_beats, seg, lost):
@@ -483,15 +495,86 @@ def failure(dim, why, beat=None, t=None, remedies_tried=None):
 
 def salvage_failures(i, seg, sv, expect_beats=None, remedies_tried=None):
     """Every second a salvage loses is a D1 failure (rubric D1: dropped planned screencast seconds count
-    as fails) — one line per lost span, naming the planned beats it took with it."""
+    as fails) — one line per lost span, naming the planned beats it took with it. (A trim of <= 0.6 s that
+    only puts a cut on its sentence start is cut placement, not lost content; the coverage gate still
+    counts those seconds.)"""
     out = []
-    lost_beats = beats_lost(expect_beats, seg, sv.get("lost", []))
-    for x in sv.get("lost", []):
+    lost_all = [x for x in sv.get("lost", []) if not (x.get("why") == "sentence snap" and x["t1"] - x["t0"] <= SNAP_S)]
+    lost_beats = beats_lost(expect_beats, seg, lost_all)
+    for x in lost_all:
         names = [str(b.get("cue")) for b in lost_beats if x["t0"] <= b["t"] < x["t1"] and b.get("cue")]
         out.append(failure("D1", f"screencast {i + 1}: {x['t1'] - x['t0']:.1f} s of planned screencast lost "
                                  f"({x.get('why') or 'bad take'})" + (f" — beats: {', '.join(names[:4])}" if names else ""),
                            beat=names[0] if names else None, t=x["t0"], remedies_tried=remedies_tried))
     return out
+
+
+HELD = "held.json"
+
+
+def held_doc(d):
+    """The job's held.json: {"reasons": [{reason, detail}] (p1/p5/p6/p7 pre-compose holds),
+    "failures": [{dim, beat, t, why, remedies_tried}] (this module: the edit's verdicts)}."""
+    try:
+        doc = json.loads((Path(d) / HELD).read_text())
+    except (OSError, ValueError):
+        doc = {}
+    return {"reasons": list(doc.get("reasons") or []), "failures": list(doc.get("failures") or [])}
+
+
+def write_held(d, failures):
+    """Record the edit verdicts' failures in held.json, keeping every other package's reasons."""
+    doc = held_doc(d)
+    doc["failures"] = list(failures)
+    if not doc["failures"] and not doc["reasons"]:
+        (Path(d) / HELD).unlink(missing_ok=True)
+        return doc
+    (Path(d) / HELD).write_text(json.dumps(doc, indent=1))
+    return doc
+
+
+def held_list(d):
+    """Every reason the job is held, as failure lines (the Lab's list): pre-compose reasons first."""
+    doc = held_doc(d)
+    pre = [failure("held", r.get("reason", "") + (f" ({r['detail']})" if r.get("detail") else ""))
+           for r in doc["reasons"]]
+    return pre + doc["failures"]
+
+
+def edit_verdict(structure_out, coverage_out, rubric_out, judged=None, salvage_lost=(), held_reasons=(),
+                 unapproved=0, private_frames=0, draft="output"):
+    """The edit's verdict (edit-NN/verdict.json), pure: structure gate + coverage gate + rubric (code
+    dimensions; judged dimensions only from a CALIBRATED judge — `judged` = the binding scores) +
+    rubric.ship. Held when ship fails, a gate fails, or any package left a held reason. Every failure is
+    one line {dim, beat, t, why, remedies_tried}; nothing is dropped silently."""
+    from . import rubric
+    dims = dict((rubric_out or {}).get("dims") or {})
+    for k, v in (judged or {}).items():
+        dims[k] = v
+    findings = list((rubric_out or {}).get("findings") or [])
+    fails = []
+    for f in salvage_lost:
+        fails.append(f if "dim" in f else failure("D1", f.get("why", "planned screencast lost"), f.get("beat"), f.get("t")))
+    if coverage_out and not coverage_out.get("ok", True):
+        for why in coverage_out.get("fails", []):
+            fails.append(failure("D7" if why.startswith("screencast share") else "D1", f"coverage: {why}"))
+    if structure_out and not structure_out.get("ok", True):
+        for why in structure_out.get("fails", []):
+            fails.append(failure("D7", f"structure: {why}"))
+    sh = rubric.ship(dims, findings, unapproved=unapproved, private_frames=private_frames)
+    for why in sh["fails"]:
+        dim = why.split(" ", 1)[0] if why[:1] == "D" else ("D9" if "narration" in why else
+                                                            "privacy" if "private" in why else "critical")
+        fails.append(failure(dim, f"ship rule: {why}"))
+    for f in findings:
+        if f.get("severity") == "critical":
+            fails.append(failure(f["dim"], f["why"], f.get("beat"), f.get("t")))
+    for r in held_reasons:
+        fails.append(failure("held", r.get("reason", "") + (f" ({r['detail']})" if r.get("detail") else "")))
+    held = bool(fails) or not sh["ship"]
+    return {"held": held, "ship": sh, "dims": dims, "overall": rubric.overall(dims),
+            "structure": structure_out, "coverage": coverage_out, "findings": findings,
+            "failures": fails, "draft": draft}
 
 
 # ───────────────────────────── expectations (beats) ─────────────────────────────
