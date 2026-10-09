@@ -16,6 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import puppeteer from "puppeteer-core";
+// HARD RULES IN THE CLICK CODE (clickguard.mjs): goto / click / type / Enter are checked before they happen
+import { check as guardCheck, describeInPage } from "./clickguard.mjs";
 
 const [scriptPath, outDir] = process.argv.slice(2);
 const script = JSON.parse(fs.readFileSync(scriptPath, "utf8"));
@@ -137,6 +139,13 @@ async function moveTo(x, y, opts = {}) {
   }
   cx = x; cy = y;
 }
+const SESSION = (script.session || process.env.AGENT_SESSION) === "outside" ? "outside" : "logged_in";
+class Refused extends Error {}
+async function guard(action, q, extra = {}) {
+  const target = q ? { ...extra, ...((await page.evaluate(describeInPage, q).catch(() => null)) || {}) } : (Object.keys(extra).length ? extra : null);
+  const g = guardCheck(action, target, SESSION);
+  if (!g.ok) { events.push({ t: t(), type: "refused", rule: g.refused, why: g.why }); throw new Refused(`refused by the click guard: ${g.refused} — ${g.why}`); }
+}
 const centre = (b, at) => at ? [b.x + b.width * at[0], b.y + b.height * at[1]] : [b.x + b.width / 2, b.y + b.height / 2];
 
 // Keep logging the resting cursor so the renderer has a sample every ~100 ms.
@@ -158,6 +167,7 @@ for (const [i, s] of script.steps.entries()) {
     beginT = t();
     log("begin");
   } else if (s.goto) {
+    await guard({ type: "goto", url: s.goto }, null);
     const e = log("nav", { url: s.goto });
     // NOT networkidle: pages with analytics/WebGL never go idle (linearity.io sat 55 s
     // at the 60 s timeout). DOM ready, then a settle for fonts/intro animations.
@@ -177,6 +187,7 @@ for (const [i, s] of script.steps.entries()) {
     e.end = t();
   } else if (s.click) {
     const b = await find(s.click, !!s.optional);
+    await guard({ type: "click", click: s.click }, { x: centre(b)[0], y: centre(b)[1] });
     const e = log("click", { box: toCap(b), text: s.click.text });
     await moveTo(...centre(b, s.at), s);
     await sleep(120);
@@ -186,6 +197,7 @@ for (const [i, s] of script.steps.entries()) {
     e.end = t();
   } else if (s.type) {
     const b = s.type.target ? await find(s.type.target, !!s.optional) : null;
+    await guard({ type: "type", text: s.type.text }, b ? { x: centre(b)[0], y: centre(b)[1] } : { focused: true });
     if (b) { await moveTo(...centre(b)); await page.mouse.click(cx, cy); }
     const e = log("type", { box: toCap(b), text: s.type.text });
     for (const ch of s.type.text) {
@@ -193,7 +205,7 @@ for (const [i, s] of script.steps.entries()) {
       await sleep((s.type.cps ? 1000 / s.type.cps : 55) * (0.6 + Math.random() * 0.8));
     }
     e.end = t();
-    if (s.type.enter) { await sleep(250); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); }
+    if (s.type.enter) { await guard({ type: "key", key: "Enter" }, { focused: true }); await sleep(250); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); }
   } else if (s.scroll) {
     // smooth scroll in small wheel steps so the capture shows motion, not jumps
     const e = log("scroll", { by: s.scroll.by });
@@ -220,7 +232,7 @@ for (const [i, s] of script.steps.entries()) {
   // (or carry on when the step says it is optional)
   await page.screenshot({ path: path.join(outDir, `error-step${i}.png`) }).catch(() => {});
   log("error", { step: i, message: String(err?.message ?? err).slice(0, 300) });
-  if (!s.optional) { failed = `step ${i}: ${String(err?.message ?? err).slice(0, 200)}`; break; }
+  if (!s.optional || err instanceof Refused) { failed = `step ${i}: ${String(err?.message ?? err).slice(0, 200)}`; break; }
  }
 }
 await sleep(script.tail ?? 800);

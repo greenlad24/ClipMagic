@@ -26,9 +26,16 @@ const DT = 1000 / FPS;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // real Chrome on a Mac (macchrome.mjs): identity, fonts, hidden scrollbars, factory egress proxy
-import { CHROME, launchArgs, identity, dress, HB_ON } from "./macchrome.mjs";
+import { CHROME, launchArgs, identity, dress, HB_ON, profileFor } from "./macchrome.mjs";
+// HARD RULES IN THE CLICK CODE (clickguard.mjs). "outside" = the never-logged-in outside view (pricing /
+// visitor pages, fresh empty profile, US route — aieditor/usroute.py); anything else is held to the
+// logged-in rules (no pricing, billing, checkout, delete, share, publish, log out).
+import { check as guardCheck, describeInPage } from "./clickguard.mjs";
+const SESSION = (script.session || process.env.AGENT_SESSION) === "outside" ? "outside" : "logged_in";
+const PROFILE = profileFor(SESSION === "outside" ? "outside" : "any", script.profileDir || process.env.AGENT_PROFILE_DIR);
+class Refused extends Error {}
 const browser = await puppeteer.launch({
-  executablePath: CHROME, headless: true, userDataDir: script.profileDir || undefined,
+  executablePath: CHROME, headless: true, userDataDir: PROFILE || undefined,
   args: launchArgs(["--autoplay-policy=no-user-gesture-required", "--font-render-hinting=none",
          // no GPU on the render box: software WebGL costs seconds per frame (linearity.io
          // ~5 s/f). Off by default — pages fall back to their static look; a script can
@@ -138,6 +145,12 @@ async function moveTo(x, y, ms) {
   }
 }
 const centre = (b) => [b.x + b.width / 2, b.y + b.height / 2];
+// the guard: refuses before anything happens; a refusal fails the beat (never skipped as "optional")
+async function guard(action, q, extra = {}) {
+  const target = q ? { ...extra, ...((await page.evaluate(describeInPage, q).catch(() => null)) || {}) } : (Object.keys(extra).length ? extra : null);
+  const g = guardCheck(action, target, SESSION);
+  if (!g.ok) { log("refused", { rule: g.refused, why: g.why }); throw new Refused(`refused by the click guard: ${g.refused} — ${g.why}`); }
+}
 const LEAD = { click: 0.75, move: 0.6, hover: 0.6, type: 0.3, scroll: 0, read: 0, highlight: 0 };
 
 let failed = null, begun = false;
@@ -146,6 +159,7 @@ for (const [i, s] of script.steps.entries()) {
     const kind = Object.keys(LEAD).find((k) => s[k]);
     if (s.at != null && begun) await holdUntil(s.at - (LEAD[kind] ?? 0));
     if (s.goto) {
+      await guard({ type: "goto", url: s.goto }, null);
       log("nav", { url: s.goto });
       await load(s.goto, (s.settle ?? 2500) / 1000);
       _dpr = null;
@@ -165,6 +179,7 @@ for (const [i, s] of script.steps.entries()) {
       if (b) { const e = log(s.hover ? "hover" : "move", { box: toCap(b) }); await moveTo(...centre(b), s.ms); e.end = t(); }
     } else if (s.click) {
       const b = await find(s.click, s.optional);
+      if (b) await guard({ type: "click", click: s.click }, { x: centre(b)[0], y: centre(b)[1] }, { text: b.text, href: b.href });
       if (b) {
         const e = log("click", { box: toCap(b), text: s.click.text });
         await moveTo(...centre(b));
@@ -189,13 +204,14 @@ for (const [i, s] of script.steps.entries()) {
       }
     } else if (s.type) {
       const b = s.type.target ? await find(s.type.target, s.optional) : null;
+      await guard({ type: "type", text: s.type.text }, b ? { x: centre(b)[0], y: centre(b)[1] } : { focused: true });
       if (b) { await moveTo(...centre(b)); await page.mouse.click(cx, cy); }
       const e = log("type", { box: toCap(b), text: s.type.text });
       const perChar = FPS / (s.type.cps ?? 14);
       let acc = 0;
       for (const ch of s.type.text) { await page.keyboard.type(ch); acc += perChar; while (acc >= 1) { await step(); acc -= 1; } }
       e.end = t();
-      if (s.type.enter) { await hold(0.25); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); }
+      if (s.type.enter) { await guard({ type: "key", key: "Enter" }, { focused: true }); await hold(0.25); await page.keyboard.press("Enter"); log("key", { key: "Enter" }); }
     } else if (s.scroll) {
       // native wheel flicks like the reference (~200 px per flick over 9–16 f)
       const e = log("scroll", { by: s.scroll.by });
@@ -212,7 +228,7 @@ for (const [i, s] of script.steps.entries()) {
     if (s.pause) await hold(s.pause / 1000);
   } catch (err) {
     log("error", { step: i, message: String(err?.message ?? err).slice(0, 300) });
-    if (!s.optional) { failed = `step ${i}: ${String(err?.message ?? err).slice(0, 200)}`; break; }
+    if (!s.optional || err instanceof Refused) { failed = `step ${i}: ${String(err?.message ?? err).slice(0, 200)}`; break; }
   }
 }
 if (script.until) await holdUntil(script.until);

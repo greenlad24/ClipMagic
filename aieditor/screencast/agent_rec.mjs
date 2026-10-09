@@ -44,6 +44,10 @@ const out = (o) => process.stdout.write(JSON.stringify(o) + "\n");
 // webdriver false, Asia/Bangkok, hidden scrollbars, Mac font aliases; AGENT_PROXY = egress via the main box.
 import { execFileSync } from "node:child_process";
 import { CHROME, launchArgs, identity, dress, wall as wallOf, accountName, HB_ON, HB_OFF } from "./macchrome.mjs";
+// HARD RULES IN THE CLICK CODE (clickguard.mjs): a Scout profile is a logged-in session — never pricing,
+// billing, checkout, delete, share, publish or log out. AGENT_SESSION=outside only for a fresh profile.
+import { check as guardCheck, describeInPage } from "./clickguard.mjs";
+const SESSION = process.env.AGENT_SESSION || (profileDir ? "logged_in" : "outside");
 // the Scout account this session belongs to (first name, noted on the first clean page; AGENT_ACCOUNT overrides)
 let ACCOUNT = process.env.AGENT_ACCOUNT || null;
 async function wall(pg) {
@@ -733,7 +737,25 @@ const LEAD = { click: 1.25, dblclick: 0.8, move: 0.6, hover: 0.6, type: 0.3 };
 // returns at once and its hold is DEFERRED: the next action with an "at" simply waits for its own
 // word (cutting the read short), one without "at" first finishes the read's hold.
 let openRead = null;
+// the element an action would hit, for the guard (shot px × SHOT_F = CSS px for a canvas spot)
+async function guard(a) {
+  const ty = String(a.type || "");
+  let q = null;
+  if (["click", "dblclick"].includes(ty)) q = a.ref ? { ref: a.ref } : a.x != null ? { x: a.x * SHOT_F, y: a.y * SHOT_F } : null;
+  else if (ty === "key") q = { focused: true };
+  else if (ty === "type") q = a.ref ? { ref: a.ref } : a.selector ? { selector: a.selector } : { focused: true };
+  const target = q ? await page.evaluate(describeInPage, q).catch(() => null) : null;
+  const g = guardCheck(a, target, SESSION);
+  if (!g.ok) {
+    process.stderr.write(`clickguard: refused ${JSON.stringify(a).slice(0, 200)} — ${g.why}\n`);
+    if (rec) rec.events.push({ t: t(), type: "refused", rule: g.refused, why: g.why });
+  }
+  return g;
+}
 async function act(a) {
+  const g = await guard(a);
+  // a refusal is a BEAT FAILURE — the caller must not retry the same action
+  if (!g.ok) return { ok: false, refused: g.refused, error: `refused by the click guard: ${g.why}` };
   if (openRead) {
     if (a.at == null && rec) await holdUntil(openRead.until);
     openRead.e.end = Math.max(openRead.e.t + 0.1, Math.min(t(), openRead.until, a.at != null ? Math.max(t(), a.at - 0.05) : 1e9));
@@ -1138,9 +1160,9 @@ for await (const line of rl) {
   let m;
   try { m = JSON.parse(line); } catch { out({ ok: false, error: "bad json" }); continue; }
   try {
-    if (m.cmd === "open") { lastFit = null; await load(m.url, m.settle ?? 2.5); out({ ok: true, url: page.url(), fit: lastFit, wall: await wall(page) }); }
+    if (m.cmd === "open") { const g = await guard({ type: "open", url: m.url }); if (!g.ok) { out({ ok: false, refused: g.refused, error: g.why }); continue; } lastFit = null; await load(m.url, m.settle ?? 2.5); out({ ok: true, url: page.url(), fit: lastFit, wall: await wall(page) }); }
     else if (m.cmd === "guard") { const w = await wall(page); if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); } out({ ok: true, wall: w, url: page.url(), account: ACCOUNT }); }
-    else if (m.cmd === "reload") { await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {}); await sleep((m.settle ?? 6) * 1000); out({ ok: true, wall: await wall(page), url: page.url() }); }
+    else if (m.cmd === "reload") { const g = await guard({ type: "reload", url: page.url() }); if (!g.ok) { out({ ok: false, refused: g.refused, error: g.why }); continue; } await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {}); await sleep((m.settle ?? 6) * 1000); out({ ok: true, wall: await wall(page), url: page.url() }); }
     else if (m.cmd === "whoami") { out({ ok: true, ...(await page.evaluate(() => ({ ua: navigator.userAgent, platform: navigator.platform, webdriver: navigator.webdriver, languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, text: (document.body?.innerText || "").slice(0, 20000), uaData: navigator.userAgentData ? navigator.userAgentData.toJSON() : null, gl: (() => { try { const g = document.createElement("canvas").getContext("webgl"); const x = g.getExtension("WEBGL_debug_renderer_info"); return [g.getParameter(x.UNMASKED_VENDOR_WEBGL), g.getParameter(x.UNMASKED_RENDERER_WEBGL)]; } catch (e) { return String(e); } })() })).catch((e) => ({ error: String(e) }))), exe: CHROME }); }
     else if (m.cmd === "segment") { await startSegment(m.out); out({ ok: true }); }
     else if (m.cmd === "observe") out({ ok: true, ...(await observe()) });

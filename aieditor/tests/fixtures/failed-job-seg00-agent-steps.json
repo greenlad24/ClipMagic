@@ -1,0 +1,267 @@
+[
+ {
+  "t": 0,
+  "action": {
+   "type": "goto",
+   "at": 0.2,
+   "url": "https://chatgpt.com/c/00000000-0000-0000-0000-000000000000"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 0.20020000000000002,
+  "action": {
+   "type": "goto",
+   "at": 0.2,
+   "url": "https://chatgpt.com/c/00000000-0000-0000-0000-000000000000"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 0.20020000000000002,
+  "action": {
+   "type": "goto",
+   "at": 0.2,
+   "url": "https://chatgpt.com/c/00000000-0000-0000-0000-000000000000",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 0.20020000000000002,
+  "action": {
+   "type": "click",
+   "at": 0.2,
+   "ref": "r3"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 1.6016000000000001,
+  "action": {
+   "type": "key",
+   "at": 1.6,
+   "key": "Escape"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 1.8018,
+  "action": {
+   "type": "goto",
+   "at": 1.8,
+   "url": "https://chatgpt.com/library",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 1.8018,
+  "action": {
+   "type": "type",
+   "at": 1.8,
+   "ref": "r62",
+   "text": "Panetteria",
+   "paste": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 3.2365666666666666,
+  "action": {
+   "type": "hold",
+   "at": 3.3,
+   "s": 0.6
+  },
+  "result": "ok"
+ },
+ {
+  "t": 3.9039,
+  "action": {
+   "type": "click",
+   "at": 3.9,
+   "ref": "r63"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 4.871533333333334,
+  "action": {
+   "type": "goto",
+   "at": 4.9,
+   "url": "https://chatgpt.com/c/00000000-0000-0000-0000-000000000000",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 4.9049000000000005,
+  "action": {
+   "type": "goto",
+   "at": 4.9,
+   "url": "https://chatgpt.com/library",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 4.9049000000000005,
+  "action": {
+   "type": "type",
+   "at": 4.9,
+   "ref": "r62",
+   "text": "Panetteria",
+   "paste": true,
+   "enter": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 6.373033333333334,
+  "action": {
+   "type": "goto",
+   "at": 6.4,
+   "url": "https://chatgpt.com/c/00000000-0000-0000-0000-000000000000",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 6.4064000000000005,
+  "action": {
+   "type": "goto",
+   "at": 6.4,
+   "url": "https://chatgpt.com/library",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 6.4064000000000005,
+  "action": {
+   "type": "click",
+   "at": 6.41,
+   "ref": "r17"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 7.9079,
+  "action": {
+   "type": "click",
+   "at": 7.91,
+   "ref": "r66"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 9.275933333333333,
+  "action": {
+   "type": "read",
+   "at": 10.6,
+   "ref": "r97",
+   "ms": 3000
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.6106,
+  "action": {
+   "type": "click",
+   "at": 14.5,
+   "ref": "r82"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.8148,
+  "action": {
+   "type": "read",
+   "at": 20.6,
+   "ref": "r97",
+   "ms": 3000
+  },
+  "result": "ok"
+ },
+ {
+  "t": 20.6206,
+  "action": {
+   "type": "hover",
+   "at": 25.4,
+   "ref": "r93",
+   "ms": 1000
+  },
+  "result": "ok"
+ },
+ {
+  "t": 25.8258,
+  "action": {
+   "type": "hover",
+   "at": 26.5,
+   "ref": "r94",
+   "ms": 1000
+  },
+  "result": "ok"
+ },
+ {
+  "t": 26.493133333333333,
+  "action": {
+   "type": "read",
+   "at": 27.2,
+   "ref": "r94",
+   "ms": 1500
+  },
+  "result": "ok"
+ },
+ {
+  "t": 27.2272,
+  "action": {
+   "type": "click",
+   "at": 28.7,
+   "ref": "r90"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 29.029,
+  "action": {
+   "type": "type",
+   "at": 29.2,
+   "ref": "r76",
+   "text": "Remove the background and make it transparent.",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 30.4304,
+  "action": {
+   "type": "key",
+   "at": 30.43,
+   "key": "Escape"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 30.6306,
+  "action": {
+   "type": "goto",
+   "at": 31.3,
+   "url": "https://chatgpt.com/pricing",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 31.3313,
+  "action": {
+   "type": "read",
+   "at": 33.0,
+   "ref": "r98",
+   "ms": 2700,
+   "deep": true
+  },
+  "result": "ok"
+ }
+]

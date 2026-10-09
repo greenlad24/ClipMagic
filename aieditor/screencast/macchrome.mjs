@@ -13,10 +13,32 @@
 //   · egress: AGENT_PROXY (set on a factory server by cloud.run_remote) sends the browser out through the
 //     main box, the IP the Scout logins were made from — Cloudflare ties a session to it
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 export const CHROME = process.env.AGENT_CHROME || ["/usr/bin/google-chrome-stable", "/opt/google/chrome/chrome"].find((p) => fs.existsSync(p)) || "/usr/bin/chromium";
 export const TZ = process.env.AGENT_TZ || "Asia/Bangkok";
 const PROXY = process.env.AGENT_PROXY || "";
+
+// PROFILE KIND (aieditor/usroute.py; RULEBOOK L4/R10): profile "outside" = the never-logged-in outside view
+// for pricing / visitor pages. It REFUSES any UX Scout profile (or any profile that already holds data):
+// only a fresh, empty directory, and only with a proxy (the job's US route) — an outside view never leaves
+// through the Singapore box. AGENT_OUTSIDE_ALLOW_LOCAL=1 lifts the proxy rule for a local experiment only.
+export function profileFor(kind, dir) {
+  if (kind !== "outside") return dir || undefined;
+  if (!PROXY && process.env.AGENT_OUTSIDE_ALLOW_LOCAL !== "1")
+    throw new Error("outside view without a US route (AGENT_PROXY) — refused");
+  if (dir) {
+    const real = fs.existsSync(dir) ? fs.realpathSync(dir) : path.resolve(dir);
+    if (/scout[\/\\]profiles/i.test(real) || /scout[\/\\]profiles/i.test(dir))
+      throw new Error(`outside view refuses a Scout profile: ${dir}`);
+    if (fs.existsSync(dir) && fs.readdirSync(dir).length)
+      throw new Error(`outside view needs a FRESH EMPTY profile; ${dir} already holds data`);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  return fs.mkdtempSync(path.join(os.tmpdir(), "outside-profile-"));
+}
 
 export function launchArgs(extra = []) {
   return ["--no-sandbox", "--disable-dev-shm-usage", "--hide-scrollbars", "--password-store=basic",
