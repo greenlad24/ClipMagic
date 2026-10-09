@@ -224,7 +224,9 @@ check({"kind": "text", "selector": '[contenteditable="true"]', "value": next(sc1
       in pb_["end_state"]["asserts"], "a paste beat's end state: the field holds exactly the script (playbook post)")
 
 # ── 4. the plan may only name proven playbook actions ──
-real = PB.playbook_copy("chatgpt")                         # every action proven: false until it replays 3/3
+real = PB.playbook_copy("chatgpt")
+for _a in real["actions"].values():                         # proven: false until it replays 3/3 (the real file is
+    _a["proven"] = False                                    # proven since the 2026-10-09 proving run)
 try:
     B.compile_segment(schema(10, PBX), WORDS, real, 10, allow_unproven=False)
     check(False, "an unproven action compiles")

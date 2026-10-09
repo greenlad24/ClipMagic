@@ -255,6 +255,10 @@
       "type": "string"
      },
      "description": "action ids run first (off camera) so that 'pre' can hold, e.g. open_plus_menu before plus_sketch"
+    },
+    "exact": {
+     "type": "boolean",
+     "description": "a text= target matches the WHOLE visible label only (no containing match): 'Chat' never resolves to 'New chat' / 'ChatGPT'"
     }
    }
   }

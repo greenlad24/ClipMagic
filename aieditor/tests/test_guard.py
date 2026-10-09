@@ -229,7 +229,12 @@ for k, v, why in (("account", "Keith", "account"), ("h1", ["Hey, Keith. Ready to
 ss = PBK["start_state"]
 check(ff.account_of(ss) == "Jake", "the account comes from the playbook start_state")
 ok, why_l = ff.verdict_for({"dom": {**clean_dom, "text": "What should we work on? Recents"}}, ss)
-check(not ok and any("Recents" in w for w in why_l), f"the playbook start_state asserts are checked: {why_l}")
+check(not ok and any("What should we work on?" in w and "start state" in w for w in why_l),
+      f"the playbook start_state asserts are checked: {why_l}")
+# the sidebar hidden leaves an icon rail whose 'Recents' label is page text: that alone is NOT an open sidebar
+# (the start state asks for no 'Hide sidebar' button instead — proving run 2026-10-09)
+check(ff.verdict_for({"dom": {**clean_dom, "text": "New chat Search Recents Library How can I help, Jake?"}}, ss)[0],
+      "the collapsed rail's 'Recents' passes")
 check(ff.verdict_for({"dom": {**clean_dom, "text": "How can I help, Jake?"}}, ss)[0], "a clean start state passes")
 
 # the first-frame gate on real frames from the rejected job (pixels: cv2 + tesseract, screencast image)

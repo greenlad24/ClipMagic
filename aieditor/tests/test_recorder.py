@@ -498,6 +498,8 @@ check(not p7.sent, "no browser action at all (compile refuses before the browser
 check(not (w7 / "seg-00" / "rec").exists() and not (w7 / "blocks.json").exists(), "no recording, no A-roll block replaces it")
 check("a-roll" not in json.dumps(doc).lower() and "aroll" not in json.dumps(doc).lower(), "the held doc names no A-roll fallback")
 unproven = PB.playbook_copy("chatgpt")
+for _a in unproven["actions"].values():                     # the real file is proven since 2026-10-09: unprove a copy
+    _a["proven"] = False
 out, _ = rec(TMP / "e8", FakePage(TMP / "e8"), playbooks={"chatgpt": unproven}, media=FakeMedia())
 check(out["segments"][0]["status"] == "needs_primitive" and "replayed" in out["segments"][0]["why"],
       "an unproven playbook action (proven: false) is needs_primitive too")

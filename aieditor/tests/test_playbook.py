@@ -92,6 +92,9 @@ class FakeDom:
 def fixture_playbook(url):
     """The real chatgpt playbook, re-pointed at a fixture page (start state = the composer is there)."""
     pb = playbook.playbook_copy("chatgpt")
+    for a in pb["actions"].values():          # the live proof is not the fixture's: start unproven
+        a.pop("replays", None)
+        a["proven"] = False
     pb["start_state"] = {"url": url, "asserts": [{"kind": "selector", "selector": '[contenteditable="true"]'}]}
     pb["actions"]["close_menus"]["requires"] = ["open_plus_menu"]      # Escape must close an OPEN menu
     return pb
@@ -101,8 +104,13 @@ def test_load_and_proven():
     pb = playbook.load("chatgpt")
     check(pb["app"] == "chatgpt" and pb["hosts"] == ["chatgpt.com"], "chatgpt playbook loads")
     check(playbook.validate({k: v for k, v in pb.items() if not k.startswith("_")}) == [], "validates")
-    check(all(a["proven"] is False and a["source"].strip() for a in pb["actions"].values()), "every action unproven + source")
-    check(playbook.actions("chatgpt", proven_only=True) == {}, "nothing proven yet → empty closed list")
+    check(all(a["source"].strip() for a in pb["actions"].values()), "every action has a source")
+    # proven = its LAST replays_required replays all passed (the live proving run, 2026-10-09)
+    need = skill.rules().get("playbooks", {}).get("replays_required", 3)
+    proven = {k for k, a in pb["actions"].items() if a["proven"]}
+    check(all(len(pb["actions"][k].get("replays", [])) >= need and all(r["ok"] for r in pb["actions"][k]["replays"][-need:])
+              for k in proven), "every proven action carries its passing replays")
+    check(set(playbook.actions("chatgpt", proven_only=True)) == proven, "the closed list = the proven actions")
     check(len(playbook.actions("chatgpt", proven_only=False)) == len(pb["actions"]) >= 20, "all actions without the filter")
     f = pb["features"]
     check(f["at_sketch"]["exists"] is False and f["at_sketch"]["honest_route"] == "plus_sketch", "@Sketch: no picker, '+ -> Sketch'")
@@ -131,6 +139,7 @@ def test_load_and_proven():
 
 
 def test_replay_fake():
+    before = copy.deepcopy(skill.playbook("chatgpt"))
     tmp = Path(tempfile.mkdtemp(prefix="pb-"))
     try:
         pb = fixture_playbook("file:///fixture")
@@ -172,9 +181,88 @@ def test_replay_fake():
         except playbook.PlaybookError:
             check(True, "")
         # the skill's own playbook file was not touched
-        check(all(a["proven"] is False for a in skill.playbook("chatgpt")["actions"].values()), "chatgpt.json untouched")
+        check(skill.playbook("chatgpt") == before, "chatgpt.json untouched")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+class Transport:
+    """agent_rec.mjs replies for RecorderSession: the page text, a count per selector, the state's account."""
+
+    def __init__(self, text="", counts=None, account=None):
+        self.text, self.counts, self.account, self.sent = text, dict(counts or {}), account, []
+
+    def send(self, m):
+        self.sent.append(m)
+        if m["cmd"] == "text":
+            return {"ok": True, "text": self.text, "draft": ""}
+        if m["cmd"] == "count":
+            return {"ok": True, "n": self.counts.get(m["selector"], 0)}
+        if m["cmd"] == "state":
+            return {"ok": True, "account": self.account}
+        return {"ok": True}
+
+    def close(self):
+        pass
+
+
+def test_harness_rules():
+    """Proving-run fixes (2026-10-09): the account on the icon rail, set-dressing order, polled posts, requires
+    with the replay's params, exact labels."""
+    acc = {"kind": "account", "value": "Jake Dawson"}
+    # the sidebar hidden: no name in the page text → the recorder's own reading (state.account, first name)
+    check(playbook.RecorderSession(Transport("Jake Dawson\nPlus")).check(acc)[0], "name in the page text")
+    check(playbook.RecorderSession(Transport("New chat\nRecents", account="Jake")).check(acc)[0], "name from state on the rail")
+    ok, why = playbook.RecorderSession(Transport("New chat", account="Keith")).check(acc)
+    check(not ok and "Keith" in why, f"another account fails: {why}")
+    check(not playbook.RecorderSession(Transport("New chat")).check(acc)[0], "no readable name fails")
+    # absent-by-selector: the collapsed rail still says 'Recents', the expanded sidebar's button is gone
+    hide = {"kind": "absent", "selector": 'button[aria-label="Hide sidebar"]'}
+    check(playbook.RecorderSession(Transport("Recents")).check(hide)[0], "rail: 'Recents' text, no Hide sidebar button")
+    check(not playbook.RecorderSession(Transport("", {hide["selector"]: 2})).check(hide)[0], "sidebar open fails")
+
+    class Seq:
+        """A session whose page becomes right only after `late` checks (an animation), logging the order."""
+        polls = True
+
+        def __init__(self, late=0):
+            self.late, self.order = late, []
+
+        def open(self, url):
+            self.order.append("open")
+            return True, None
+
+        def act(self, st):
+            self.order.append(("act", st.get("playbook"), st.get("text") or st.get("target") or st.get("selector") or st.get("key")))
+            return True, None
+
+        def check(self, a):
+            self.order.append(("check", a.get("value") or a.get("selector")))
+            self.late -= 1
+            return self.late < 0, "not yet"
+
+        def close(self):
+            pass
+    pb = playbook.playbook_copy("chatgpt")
+    pb["start_state"]["asserts"] = [{"kind": "absent", "value": "START"}]
+    s = Seq()
+    check(playbook._run_once(s, pb, "hide_sidebar", None)[0], "dressing action")
+    acts = [i for i, o in enumerate(s.order) if o[0] == "act"]
+    starts = [i for i, o in enumerate(s.order) if o == ("check", "START")]
+    check(starts and acts and starts[0] > acts[-1], f"a set-dressing action: start_state asserts AFTER it {s.order}")
+    s = Seq()
+    playbook._run_once(s, pb, "open_plus_menu", None)
+    check(s.order.index(("check", "START")) < [i for i, o in enumerate(s.order) if o[0] == "act"][0], "others: start first")
+    s = Seq(late=3)            # start assert passes on check 4: post polled until then
+    pb["start_state"]["asserts"] = []
+    t0 = __import__("time").monotonic()
+    ok, why = playbook._run_once(s, pb, "open_plus_menu", None)
+    check(ok and __import__("time").monotonic() - t0 >= 1.0, f"a post is polled while the UI settles: {ok} {why}")
+    s = Seq()
+    playbook._run_once(s, pb, "clear_composer", {"text": "a prompt"})
+    check(("act", "chatgpt:paste_prompt", "a prompt") in s.order, f"requires get the replay's params: {s.order}")
+    check(playbook.resolve(pb, "chat_mode")[0].get("exact") is True and "exact" not in playbook.resolve(pb, "plus_sketch")[0],
+          "exact label only where the playbook says so")
 
 
 def test_guard_and_outside():
@@ -342,8 +430,11 @@ def test_docker_fixture():
     work = Path(tempfile.mkdtemp(prefix="pb-docker-"))
     try:
         pb = fixture_playbook("file:///f/fixture_page.html")
+        # chat_mode: the exact label "Chat" wins over the "ChatGPT" logo; hide_sidebar: the VISIBLE
+        # button[aria-label="Hide sidebar"], not the hidden duplicate first in the document (proving run 2026-10-09)
         for aid, params, kind in (("paste_prompt", {"text": "Turn this rough sketch into a realistic photo"}, "paste"),
-                                  ("open_plus_menu", None, "click"), ("close_menus", None, "key")):
+                                  ("open_plus_menu", None, "click"), ("close_menus", None, "key"),
+                                  ("chat_mode", None, "click"), ("hide_sidebar", None, "click")):
             check(pb["actions"][aid]["kind"] == kind, f"{aid} is a {kind}")
             r = playbook.replay(lambda: playbook.RecorderSession(DockerRec(work)), pb, aid, params=params)
             print(f"  docker replay {aid}: {r['ok']}/{r['n']} {[x['why'] for x in r['replays'] if not x['ok']]}")
@@ -355,6 +446,7 @@ def test_docker_fixture():
 def main():
     test_load_and_proven()
     test_replay_fake()
+    test_harness_rules()
     test_guard_and_outside()
     test_failed_job_beats()
     test_plan_schema()

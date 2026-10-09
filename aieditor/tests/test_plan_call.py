@@ -222,9 +222,10 @@ def test_enum():
     check(listed == proven, f"the prompt's closed list = the proven ids: {sorted(listed)}")
     check(body["model"] == config.PLAN_MODEL and body["output_config"]["effort"] == "high", "Opus, effort high")
     check(body["output_config"]["format"]["type"] == "json_schema", "strict JSON (structured outputs)")
-    # the real ChatGPT playbook proves nothing yet → only the code primitives
+    # the real ChatGPT playbook → its PROVEN actions (the 2026-10-09 proving run) + the code primitives
     real = director.apps_for(SITES)
-    check(set(director.action_ids(real)) == builtin, "chatgpt.json (proven:false) → only camera.zoom / outside.goto")
+    proven_real = set(playbook.actions("chatgpt", proven_only=True)) if "chatgpt" in real else set()
+    check(set(director.action_ids(real)) == builtin | proven_real, "chatgpt.json → its proven ids + camera.zoom / outside.goto")
     # an unproven action in an answer fails the check (an answer made without the enum, e.g. a recorded one)
     ans = {"segments": [{"start_word": 46, "end_word": 80, "app": "chatgpt", "session": "logged_in", "beats": [
         {"word_id": 50, "action": "viewer_erase", "body": "click Erase", "subject": "ui:Erase", "text": None, "url": None,

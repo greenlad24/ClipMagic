@@ -24,6 +24,7 @@ import copy
 import datetime
 import json
 import re
+import time
 from pathlib import Path
 
 from . import config, skill
@@ -347,6 +348,8 @@ def resolve(app, action_id, params=None):
         raise PlaybookError(f"unknown kind {k}")
     for s in st:
         s.update(extra)
+        if a.get("exact") and s["type"] == "click" and "target" in s:
+            s["exact"] = True                     # the whole label only (agent_rec.mjs), never a containing one
         if alt and s["type"] in ("click", "type"):
             s["alt"] = alt
         s["playbook"] = f"{pb['app']}:{action_id}"
@@ -416,6 +419,8 @@ class RecorderSession:
     agentrec.Session). The harness needs: open(url), act(step) -> (ok, why), check(assert) -> (ok, why),
     close()."""
 
+    polls = True        # a live page: post asserts are polled (_run_once)
+
     def __init__(self, transport):
         self.t = transport
 
@@ -459,6 +464,12 @@ class RecorderSession:
             have = tx.get("draft", "") if "contenteditable" in a["selector"] else body
             ok = have.strip() == a["value"].strip() if "contenteditable" in a["selector"] else a["value"] in have
             return ok, None if ok else f"field text {have[:80]!r} != {a['value'][:80]!r}"
+        if k == "account" and a["value"] not in body:
+            # the sidebar hidden (set-dressing) shows no name and the greeting is often nameless: the recorder's
+            # own reading ({"cmd": "state"} account = the first name this document showed, macchrome.accountName)
+            who = (self.t.send({"cmd": "state"}).get("account") or "").strip()
+            ok = bool(who) and who.split()[0].lower() == a["value"].split()[0].lower()
+            return ok, None if ok else f"account {who or 'not readable'}, not {a['value']!r}"
         if k in ("text", "account"):
             ok = a["value"] in body
             return ok, None if ok else f"{a['value']!r} not on the page"
@@ -478,33 +489,54 @@ def _fill_assert(a, params):
     return {k: _fill(v, params) for k, v in a.items()}
 
 
+def _poll(session, c, wait):
+    t0 = time.monotonic()
+    while True:
+        ok, why = session.check(c)
+        if ok or time.monotonic() - t0 >= wait:
+            return ok, why
+        time.sleep(0.5)
+
+
 def _run_once(session, pb, action_id, params):
+    """start_state -> requires -> pre -> action -> post. A SET-DRESSING action (pb["set_dressing"]: Chat mode,
+    sidebar hidden...) is what MAKES the start state: the session factory opens the page WITHOUT
+    that one action, and the start_state asserts are checked AFTER it, with its post."""
     a = pb["actions"][action_id]
+    dressing = action_id in pb.get("set_dressing", [])
     ok, why = session.open(pb["start_state"]["url"])
     if not ok:
         return False, f"start: {why}"
-    for c in pb["start_state"].get("asserts", []):
+    for c in [] if dressing else pb["start_state"].get("asserts", []):
         ok, why = session.check(c)
         if not ok:
             return False, f"start_state: {why}"
     for r in a.get("requires", []):
-        for st in resolve(pb, r, params if r == action_id else {}):
+        for st in resolve(pb, r, params):          # the replay's params reach its requires too (a prompt to clear, a chat url)
             ok, why = session.act(st)
             if not ok:
                 return False, f"requires {r}: {why}"
     p = _params(a, dict(params or {}))
+    polls = getattr(session, "polls", False)
     for c in a.get("pre", []):
-        ok, why = session.check(_fill_assert(c, p))
+        ok, why = _poll(session, _fill_assert(c, p), 4.0 if polls and a.get("requires") else 0)
         if not ok:
             return False, f"pre: {why}"
     for st in resolve(pb, action_id, params):
         ok, why = session.act(st)
         if not ok:
             return False, f"action: {why}"
+    # the UI takes its time (ChatGPT's sidebar removes "Hide sidebar" only after its collapse animation: an
+    # instant check failed 2 replays in 3, 2026-10-09): a post assert is polled for up to the action's latency
+    wait = min(15.0, max(2.0, 2 * float(a.get("typical_latency_s") or 1))) if polls else 0
     for c in a.get("post", []):
-        ok, why = session.check(_fill_assert(c, p))
+        ok, why = _poll(session, _fill_assert(c, p), wait)
         if not ok:
             return False, f"post: {why}"
+    for c in pb["start_state"].get("asserts", []) if dressing else []:
+        ok, why = session.check(c)
+        if not ok:
+            return False, f"start_state after {action_id}: {why}"
     return True, None
 
 
