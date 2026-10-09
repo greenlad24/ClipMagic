@@ -1,0 +1,60 @@
+{
+ "_doc": "verb_swap look (swappable; the motion is in verb_swap.kf.json). Measured from motion1.mp4 (1920x1080, 30 fps). Sizes as fraction of frame height + px@1080.",
+ "background": "#ffffff",
+ "text_colour": "#000000",
+ "verb_colours": [
+  "#1b86f5",
+  "#f05c03",
+  "#0fe473"
+ ],
+ "font_family": "Inter",
+ "font_file": "Inter.ttf",
+ "font_weight": 400,
+ "font_size_frac": 0.0915,
+ "font_size_px_1080": 98.8,
+ "tracking_em": 0.034,
+ "word_space_em": 0.235,
+ "baseline_y_frac": 0.5315,
+ "baseline_y_px_1080": 574,
+ "centre_x_frac": 0.5034,
+ "centre_x_px_1080": 966.5,
+ "left_margin_frac": 0.0833,
+ "max_line_width_frac": 0.88,
+ "measured_reference": {
+  "font": "SF Pro (Apple system font, Regular) - not free; Inter 400 is the closest OFL match (double-storey a, straight-tailed y, spurless G)",
+  "cap_height_px_1080": 74,
+  "x_height_px_1080": 55,
+  "ink_word_widths_px_1080": {
+   "Grok": 212,
+   "Bot": 145,
+   "can": 155,
+   "now": 183,
+   "search": 296,
+   "read": 190,
+   "analyze": 330,
+   "X": 63
+  },
+  "ink_word_gaps_px_1080": [
+   35,
+   31,
+   37,
+   30,
+   31
+  ],
+  "colours_solid_ink_median": {
+   "search": "#1b87f7",
+   "read": "#f15d04",
+   "analyze": "#10e474"
+  },
+  "colours_core_80pct": {
+   "search": "#1c85f2",
+   "read": "#ef5b02",
+   "analyze": "#0ee471"
+  },
+  "line_ink_centre_x_px_1080": {
+   "search": 958.5,
+   "read": 977.0,
+   "analyze": 966.5
+  }
+ }
+}

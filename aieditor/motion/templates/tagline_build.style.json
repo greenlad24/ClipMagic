@@ -1,0 +1,29 @@
+{
+ "id": "tagline_build",
+ "_note": "Swappable LOOK for tagline_build (the motion lives in tagline_build.kf.json). px at 1080p; frac_h = px / 1080.",
+ "fonts": { "Inter": "Inter.ttf" },
+ "font_family": "Inter, sans-serif",
+ "font_weight": 650,
+ "letter_spacing_em": -0.0245,
+ "text_color": "#141413",
+ "cap_h_px": 92,
+ "cap_h_frac_h": 0.0852,
+ "ink_center_dx_px": 3,
+ "ink_center_dy_px": 3,
+ "max_ink_w_px": 1344,
+ "max_ink_w_frac_w": 0.7,
+ "dot_color": "#0887FF",
+ "backdrop": {
+  "base": "#EDEDEA",
+  "radial": "radial-gradient(ellipse 62% 70% at 50% 39%, #F8F8F5 0%, #F6F6F3 30%, #F1F1EE 62%, #ECECE9 100%)",
+  "grid": { "pitch_px": 120, "line_px": 2, "offset_px": -1, "color": "rgba(0,0,0,0.066)" }
+ },
+ "rail": {
+  "x_px": 1894,
+  "w_px": 26,
+  "color": "#040404",
+  "seam": "rgba(255,255,255,0.13)",
+  "tab": { "w_px": 19, "h_px": 101, "cy_px": 539.5, "radius_px": 12, "fillet_px": 10 }
+ },
+ "ring": { "x_px": 1882, "pitch_px": 19, "d_px": 12.5, "stroke_px": 2.6, "arc_deg": 280, "color": "#0887FF" }
+}

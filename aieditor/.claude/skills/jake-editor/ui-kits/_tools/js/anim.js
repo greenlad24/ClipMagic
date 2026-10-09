@@ -1,0 +1,5 @@
+const st=[...document.querySelectorAll('[role=status]')].find(s=>s.querySelector('span[aria-hidden]')); const outer=st.querySelector('span[aria-hidden]'); 
+const an=document.getAnimations().filter(a=>a.effect && a.effect.target && st.contains(a.effect.target)).map(a=>({target:a.effect.target.tagName+'.'+(a.effect.target.className||'').toString().slice(0,60), name:a.animationName||a.id, kf:a.effect.getKeyframes(), timing:a.effect.getComputedTiming()}));
+const samples=[]; for(let i=0;i<12;i++){ samples.push([performance.now()|0, getComputedStyle(outer).transform, getComputedStyle(outer).width]); await new Promise(r=>setTimeout(r,150)); }
+const cs=getComputedStyle(outer); const inner=outer.firstElementChild; const ci=getComputedStyle(inner);
+return {an, samples, outerCls:outer.className, innerCls:inner.className, outerMask:cs.maskImage||cs.webkitMaskImage, innerBg:ci.backgroundImage, outerStyle:outer.getAttribute('style'), innerStyle:inner.getAttribute('style'), stCls:st.firstElementChild.className, font:getComputedStyle(st.firstElementChild).font};

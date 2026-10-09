@@ -1,0 +1,125 @@
+{
+ "_doc": "verb_swap MEASURED motion (motion1.mp4, 30 fps, frame 1 = t 0). Design-free: times in s relative to the beat named in 'rel', travel in em of the line's font size, easings = fitted cubic-bezier [x1,y1,x2,y2] (max error in brackets). Words POP (opacity 0->1 in one frame, no blur, no scale); motion is horizontal only.",
+ "pop": {
+  "opacity_frames": 0,
+  "blur_px": 0,
+  "scale": 1.0,
+  "dy_em": 0
+ },
+ "drift": {
+  "_doc": "whole line slides LEFT into place while it builds (all words share it). offset(t) = dx_em*(1-E((t-in-start)/dur)); 81 px at the first frame, 0 by +0.70 s. [max err 0.20 px]",
+  "rel": "in",
+  "start_s": -0.03,
+  "dur_s": 0.75,
+  "dx_em": 1.202,
+  "ease": [
+   0.0,
+   0.9,
+   0.7,
+   1.0
+  ]
+ },
+ "word_in": {
+  "_doc": "each prefix word after the first pops in already slightly right of its slot and settles (on top of drift). Measured 3.7 / 5.0 / 8.9 px for Bot / can / now; mean used. [max err 0.47 px]",
+  "rel": "word_k",
+  "start_s": 0.0,
+  "dur_s": 0.225,
+  "dx_em": 0.0575,
+  "ease": [
+   0.2,
+   0.6,
+   0.3,
+   1.0
+  ],
+  "measured_dx_em": [
+   0.0367,
+   0.049,
+   0.087
+  ]
+ },
+ "verb_in": {
+  "_doc": "verb_0 and the suffix pop in together on beat verb_0, right of their slots, and slide left into place; the suffix travels ~1.6x the verb. Prefix does not move (the line is laid out for verb_0 from the first frame). [max err 1.35 px]",
+  "rel": "verb_0",
+  "start_s": -0.033,
+  "dur_s": 0.38,
+  "verb_dx_em": 0.29,
+  "suffix_dx_em": 0.462,
+  "ease": [
+   0.5,
+   0.6,
+   0.0,
+   0.8
+  ]
+ },
+ "swap": {
+  "_doc": "verb i-1 -> verb i: every word's x interpolates from the line laid out (centred) with verb i-1 to the line laid out with verb i; the verb is drawn centred in its interpolated slot. Motion starts lead_s BEFORE the beat; the verb TEXT and colour switch hard ON the beat (no roll, no fade, no blur). The line therefore re-centres with the width change. Default = one bezier fitted to both reference swaps (per-swap timing) [max err 0.056 progress]; measured[i-1] is used for swap i when present.",
+  "rel": "verb_i",
+  "lead_s": 0.05,
+  "dur_s": 0.22,
+  "ease": [
+   0.2,
+   0.6,
+   0.0,
+   0.9
+  ],
+  "text_switch_s": 0.0,
+  "measured": [
+   {
+    "lead_s": 0.07,
+    "dur_s": 0.16,
+    "ease": [
+     0.5,
+     0.9,
+     0.2,
+     0.9
+    ],
+    "_err": "0.021 progress (1.5 px)"
+   },
+   {
+    "lead_s": 0.04,
+    "dur_s": 0.22,
+    "ease": [
+     0.2,
+     0.8,
+     0.0,
+     0.7
+    ],
+    "_err": "0.033 progress (2.6 px)"
+   }
+  ],
+  "min_gap_em": -0.02,
+  "_min_gap_doc": "overlap guard for generalisation: during a swap the prefix/suffix are pushed apart so the displayed verb's advance box never comes closer than min_gap_em to its neighbours (reference minimum ~ -0.03 em at the swap frames, so the guard never alters the reference replica)"
+ },
+ "out": {
+  "_doc": "the reference has NO exit (holds the full line to the clip end, 1.07 s after the last verb). On 'out' (or at duration) the line hard-cuts off, the reference's own pop vocabulary.",
+  "type": "cut"
+ },
+ "timing_defaults": {
+  "_doc": "fallbacks when a beat is missing, from the reference spacing (s)",
+  "prefix_word_offsets_s": [
+   0.0,
+   0.033,
+   0.167,
+   0.3
+  ],
+  "prefix_word_stagger_s": 0.1,
+  "in_to_verb0_s": 0.567,
+  "verb_spacing_s": 0.583,
+  "measured_verb_spacing_s": [
+   0.667,
+   0.5
+  ],
+  "last_prefix_word_to_verb0_min_s": 0.1,
+  "hold_after_last_verb_s": 1.067,
+  "reference_duration_s": 2.833
+ },
+ "reference_beats_s": {
+  "in": 0.0,
+  "word_1": 0.033,
+  "word_2": 0.167,
+  "word_3": 0.3,
+  "verb_0": 0.567,
+  "verb_1": 1.233,
+  "verb_2": 1.733
+ }
+}

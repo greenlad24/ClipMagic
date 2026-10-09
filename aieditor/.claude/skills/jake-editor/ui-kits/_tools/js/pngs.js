@@ -1,0 +1,1 @@
+const out={}; for(const u of ARG){ const r=await fetch(u); const b=new Uint8Array(await r.arrayBuffer()); let s=''; for(let i=0;i<b.length;i+=32768) s+=String.fromCharCode(...b.subarray(i,i+32768)); out[u]=[r.headers.get('content-type'),btoa(s)]; } return out;

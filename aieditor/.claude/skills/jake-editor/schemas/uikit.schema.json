@@ -1,0 +1,82 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "jake-editor/uikit.schema.json",
+ "title": "App UI kit",
+ "description": "One app's real UI (composer, '+'/'/' menu, chips, working state, result views) captured from the live DOM, so a motion template's prompt box looks 1:1 like the app the narration is prompting (Jake 2026-10-09). Loaded by aieditor/uikits.py (load/for_app/scene_kit): app must equal the folder name, composer.{html,css,width,height} are required, and the whole kit is screened for private text (RULEBOOK C7). Strings may hold {{file:assets/x.svg}} and any item may name \"icon\": \"assets/x.svg\"; scene_kit() inlines both. Templates scope every css rule under .kit-<app> (so never put a comma inside :has()/:is(), never use @keyframes; drive animation with CSS variables per frame) and fill html with {{key}} (values escaped unless the key ends in _html; unknown keys become empty).",
+ "type": "object",
+ "required": ["app", "name", "theme", "source", "captured", "fonts", "tokens", "composer", "private_check"],
+ "properties": {
+  "app": {"type": "string", "pattern": "^[a-z0-9_-]+$", "description": "= the folder name under ui-kits/; never another app's UI"},
+  "name": {"type": "string"},
+  "hosts": {"type": "array", "items": {"type": "string"}, "description": "site hosts this kit is for (uikits.app_for_url)"},
+  "theme": {"enum": ["dark", "light"], "description": "the theme Jake records this app in (RULEBOOK S7: ChatGPT dark)"},
+  "source": {"type": "string", "description": "\"live DOM\" (logged in), \"public DOM\" (logged-out page) — never invented"},
+  "captured": {
+   "type": "object",
+   "required": ["date", "theme", "viewport"],
+   "properties": {
+    "date": {"type": "string", "description": "ISO date"},
+    "url_paths": {"type": "array", "items": {"type": "string"}, "description": "paths WITHOUT ids (/c/<id>)"},
+    "theme": {"type": "string"},
+    "viewport": {"type": "object", "required": ["css_w", "css_h", "device_scale_factor"],
+                 "properties": {"css_w": {"type": "number"}, "css_h": {"type": "number"}, "device_scale_factor": {"type": "number"}}},
+    "browser": {"type": "string"}
+   }
+  },
+  "fonts": {"type": "object", "description": "{CSS family: file in motion/fonts} (free/OFL substitutes; the licence file sits beside the font)",
+            "additionalProperties": {"type": "string", "pattern": "\\.(ttf|otf|woff2?)$"}},
+  "font_real": {"type": "string", "description": "the app's real font stack and why the substitute was chosen"},
+  "tokens": {"type": "object", "description": "CSS custom properties (--<prefix>-*) the template sets on the kit root",
+             "propertyNames": {"pattern": "^--"}, "additionalProperties": {"type": "string"}},
+  "composer": {
+   "type": "object",
+   "required": ["width", "height", "css", "html", "placeholder"],
+   "properties": {
+    "width": {"type": "number", "description": "natural CSS px width (templates scale it to the reference composer's on-screen width)"},
+    "height": {"type": "number", "description": "natural height of the default (empty / single-line) state"},
+    "height_multiline": {"type": "number"},
+    "multiline_over_px": {"type": "number", "description": "text wider than this → the app's multi-line layout"},
+    "multiline_rule": {"type": "string"},
+    "placeholder": {"type": "string"},
+    "css": {"type": "string"},
+    "html": {"type": "string", "description": "fills {{prompt}} {{placeholder}} {{chips_html}} {{state_html}} (+ kit-specific optional ones, listed in fill)"},
+    "fill": {"type": "object", "additionalProperties": {"type": "string"}, "description": "every {{key}} the html takes and what to pass"},
+    "prompt_sel": {"type": "string"},
+    "send_sel": {"type": "string"}
+   }
+  },
+  "menu": {
+   "type": "object",
+   "required": ["css", "html", "item_html", "items", "anchor"],
+   "properties": {
+    "css": {"type": "string"},
+    "html": {"type": "string", "description": "fills {{items_html}}"},
+    "item_html": {"type": "string", "description": "fills {{icon_html}} {{label}} (+ optional {{desc}}); its FIRST element is the row (hover_class toggles on it)"},
+    "items": {"type": "array", "items": {"type": "object", "required": ["label"],
+              "properties": {"label": {"type": "string"}, "desc": {"type": "string"}, "icon": {"type": "string"}, "icon_html": {"type": "string"}}},
+              "description": "the app's REAL rows in their live order; templates match narration labels to them for the icon"},
+    "hover_class": {"type": "string"},
+    "anchor": {"enum": ["above", "below"]},
+    "gap": {"type": "number"},
+    "offset_x": {"type": "number"},
+    "row_h": {"type": "number"}
+   }
+  },
+  "chip": {"type": "object", "required": ["css", "html"],
+           "properties": {"css": {"type": "string"}, "html": {"type": "string", "description": "fills {{name}} {{icon_html}} {{kind}} (+ optional {{thumb_html}})"}, "kinds": {"type": "object"}}},
+  "working": {"type": "object", "required": ["css", "html"],
+              "properties": {"css": {"type": "string"}, "html": {"type": "string", "description": "fills {{text}}"}, "texts": {"type": "object"},
+                             "text_source": {"type": "string"}, "shimmer": {"type": "object"}}},
+  "result": {
+   "type": "object",
+   "properties": {
+    "text": {"type": "object", "required": ["css", "html"], "properties": {"css": {"type": "string"}, "html": {"type": "string", "description": "fills {{text_html}} (+ {{actions_html}})"}}},
+    "image": {"type": "object", "required": ["css", "html"], "properties": {"css": {"type": "string"}, "html": {"type": "string", "description": "fills {{src}} {{alt}} (+ {{actions_html}})"}}},
+    "user": {"type": "object", "required": ["css", "html"], "properties": {"css": {"type": "string"}, "html": {"type": "string", "description": "fills {{text}} (+ {{user_actions_html}})"}}}
+   }
+  },
+  "screenshots": {"type": "object", "additionalProperties": {"type": "string"}},
+  "private_check": {"description": "what was verified so the kit holds nothing private beyond the display name 'Jake Dawson' (RULEBOOK C7)",
+                    "type": ["object", "string"]}
+ }
+}
