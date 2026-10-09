@@ -280,6 +280,145 @@ class ConfirmAndOpenFiles(Base):
             fh.close()
 
 
+class TwoDisks(Base):
+    """The factory volume as a second disk: a tmpfs at <tmp>/vol, its jobs/ folder bind-mounted
+    at <tmp>/canon (as /mnt/factory_media/jobs is at /opt/aieditor-work/jobs). Needs root
+    (mount); skipped otherwise."""
+
+    def setUp(self):
+        super().setUp()
+        import subprocess
+        self.vol, self.canon = self.p("vol"), self.p("canon")
+        os.makedirs(self.vol)
+        os.makedirs(self.canon)
+        self.mounted = []
+        if subprocess.run(["mount", "-t", "tmpfs", "-o", "size=64m", "tmpfs", self.vol], capture_output=True).returncode:
+            self.skipTest("cannot mount a tmpfs here")
+        self.mounted.append(self.vol)
+        os.makedirs(os.path.join(self.vol, "jobs"))
+        if subprocess.run(["mount", "--bind", os.path.join(self.vol, "jobs"), self.canon], capture_output=True).returncode:
+            self.skipTest("cannot bind-mount here")
+        self.mounted.insert(0, self.canon)
+        self.rules = sa.Rules(
+            extra_protected=[self.prot], mounts={self.vol, self.canon, os.path.join(self.vol, "jobs")}, binds=set(),
+            job_roots=[self.canon], repo_roots=[self.p("src")], home_roots=[self.p("home")],
+            state_dir=self.state, agent_dir=self.p("agentcode"), aliases={os.path.join(self.vol, "jobs"): self.canon},
+        )
+        self.rules.refresh_dynamic = lambda: None
+        self.agent = sa.Agent(root=self.tmp, state_dir=self.state, rules=self.rules, disks=[
+            {"id": "main", "label": "Main disk", "roots": [self.tmp], "browse": self.tmp},
+            {"id": "factory", "label": "Factory volume (500 GB)", "roots": [self.canon, self.vol], "browse": self.vol},
+        ])
+
+    def tearDown(self):
+        import subprocess
+        for _ in range(3):
+            th = self.agent.scan_thread
+            if th:
+                th.join(30)
+        for m in self.mounted:
+            subprocess.run(["umount", m], capture_output=True)
+        super().tearDown()
+
+    def job(self, name, state="done", source=None, queued=False):
+        d = os.path.join(self.canon, name)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "status.json"), "w") as f:
+            json.dump({"state": state}, f)
+        with open(os.path.join(d, "request.json"), "w") as f:
+            json.dump({"id": name, "source": source or {"kind": "upload", "upload": "u" + "a" * 24}}, f)
+        if queued:
+            with open(os.path.join(d, "queue.json"), "w") as f:
+                f.write("{}")
+        return d
+
+    def test_two_disks_walked_bind_mount_deduped(self):
+        write(self.p("a", "main.bin"), MB)
+        j1 = self.job("job-1")
+        write(os.path.join(j1, "source.mp4"), 2 * MB)
+        j2 = self.job("job-2")
+        os.link(os.path.join(j1, "source.mp4"), os.path.join(j2, "source.mp4"))   # a reused narration
+        write(os.path.join(self.vol, "trial", "x.bin"), MB)
+        self.index()
+        main, fac = self.agent.indexes["main"], self.agent.indexes["factory"]
+        self.assertLess(main.dirs[self.tmp][0], 2 * MB, "the volume is not part of the main disk")
+        self.assertIn(self.vol, main.mounts)
+        self.assertEqual(fac.aliases, {os.path.join(self.vol, "jobs"): self.canon})
+        self.assertEqual(fac.files, 7, "every path once (2 jobs × 2 json + 2 links + trial): the bind mount is not walked twice")
+        # space: the hard-linked narration once, under the canonical path only
+        self.assertGreaterEqual(fac.dirs[self.canon][0], 2 * MB)
+        self.assertLess(fac.dirs[self.canon][0], 3 * MB)
+        self.assertNotIn(os.path.join(self.vol, "jobs"), fac.dirs)
+        self.assertGreaterEqual(fac.dirs[self.vol][0], fac.dirs[self.canon][0] + MB, "the volume total includes jobs/")
+        g = fac.hardlink_groups(min_bytes=0)[0]
+        self.assertEqual(sorted(g["paths"]), sorted([os.path.join(j1, "source.mp4"), os.path.join(j2, "source.mp4")]))
+        st = self.agent.status()
+        self.assertEqual([d["id"] for d in st["disks"]], ["main", "factory"])
+        self.assertEqual(st["disks"][1]["label"], "Factory volume (500 GB)")
+        self.assertEqual(st["disks"][1]["indexed"], fac.dirs[self.vol][0])
+        summ = self.agent.summary("factory")
+        self.assertTrue(summ["ready"])
+        self.assertEqual(summ["diskId"], "factory")
+        self.assertTrue(all(not x["path"].startswith(os.path.join(self.vol, "jobs")) for x in summ["largest"]),
+                        "listed under the canonical path")
+        self.assertTrue(any(x["path"].startswith(self.canon) for x in summ["largest"]))
+        with self.assertRaises(ValueError):
+            self.agent.summary("nope")
+        # the Folders view: the alias opens the canonical folder; the main disk links the volume
+        t = self.agent.tree(self.vol)
+        jobs = next(e for e in t["entries"] if e["name"] == "jobs")
+        self.assertEqual((jobs["path"], jobs["alias"]), (self.canon, os.path.join(self.vol, "jobs")))
+        self.assertEqual(jobs["size"], fac.dirs[self.canon][0])
+        self.assertEqual(t["disk"], "factory")
+        t = self.agent.tree(os.path.join(self.vol, "jobs", "job-1"))
+        self.assertEqual(t["path"], j1)
+        t = self.agent.tree(self.tmp)
+        v = next(e for e in t["entries"] if e["name"] == "vol")
+        self.assertEqual((v["disk"], v["size"]), ("factory", fac.dirs[self.vol][0]))
+
+    def test_volume_jobs_protected_through_either_name(self):
+        run = self.job("job-run", state="running")
+        write(os.path.join(run, "final-01.mp4"))
+        j1 = self.job("job-1")
+        write(os.path.join(j1, "source.mp4"))
+        # a queued job that will reuse j1's narration and has not materialised it yet
+        self.job("job-next", state="queued", queued=True, source={"kind": "job_source", "job": "job-1"})
+        alias = lambda *x: os.path.join(self.vol, "jobs", *x)
+        self.assertIn("running", self.rules.check(alias("job-run", "final-01.mp4")))
+        self.assertIn("running", self.rules.check(os.path.join(run, "final-01.mp4")))
+        self.assertIn("has not started yet", self.rules.check(os.path.join(j1, "source.mp4")))
+        self.assertIn("has not started yet", self.rules.check(alias("job-1")))
+        self.assertIn("mount point", self.rules.check(alias()))
+        self.index()
+        plan = self.agent.preview([alias("job-run", "final-01.mp4"), alias("job-1", "source.mp4")])
+        self.assertEqual(plan["refused"], 2)
+        self.assertTrue(os.path.exists(os.path.join(run, "final-01.mp4")))
+        self.assertTrue(os.path.exists(os.path.join(j1, "source.mp4")))
+
+    def test_hard_linked_narration_delete_frees_space_on_the_volume(self):
+        j1 = self.job("job-1")
+        write(os.path.join(j1, "source.mp4"), 4 * MB)
+        j2 = self.job("job-2")
+        os.link(os.path.join(j1, "source.mp4"), os.path.join(j2, "source.mp4"))
+        self.index()
+        before = sa.disk_free(self.vol)["free"]
+        # through the alias name: resolved to the canonical path, BOTH links go, the space comes back
+        plan, res = self.delete([os.path.join(self.vol, "jobs", "job-2", "source.mp4")])
+        t = plan["targets"][0]
+        self.assertTrue(t["ok"], t)
+        self.assertEqual(t["path"], os.path.join(j2, "source.mp4"))
+        self.assertEqual(t["externalLinks"], [os.path.join(j1, "source.mp4")])
+        self.assertEqual(plan["totalBytes"], 4 * MB, "the shared inode counted once")
+        self.assertTrue(res["results"][0]["ok"])
+        self.assertFalse(os.path.exists(os.path.join(j1, "source.mp4")))
+        self.assertGreaterEqual(res["freedBytes"], 4 * MB - 64 * 1024, "freed is measured on the volume, not the main disk")
+        self.assertIn("factory", res["disks"])
+        self.assertGreaterEqual(sa.disk_free(self.vol)["free"] - before, 4 * MB - 64 * 1024)
+        with open(os.path.join(self.state, "deletions.log")) as f:
+            last = json.loads(f.readlines()[-1])
+        self.assertEqual((last["actor"], last["path"]), ("test", os.path.join(j2, "source.mp4")))
+
+
 class HttpSmoke(Base):
     def test_unix_socket_api(self):
         write(self.p("v", "clip.mp4"))

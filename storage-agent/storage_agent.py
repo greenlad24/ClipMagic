@@ -35,6 +35,16 @@ bind-mount sources of running containers, Auto Editor / Hyperframes jobs that ar
 running or queued, and this agent's own files. A directory is refused when anything
 protected lies inside it.
 
+TWO DISKS (Jake 2026-10-09: "show those files also in the storage manager"): the root
+filesystem, and the 500 GB factory volume (/dev/sda at /mnt/factory_media) where the Auto
+Editor keeps its jobs. The walk of / stays on one st_dev, so the volume is indexed as a
+disk of its own (DISKS). /opt/aieditor-work/jobs is a BIND MOUNT of /mnt/factory_media/jobs
+— the same directory under two names — so every directory is walked once by (st_dev,
+st_ino) and listed under ONE canonical path, /opt/aieditor-work/jobs/…, where the JOB_ROOTS
+protections apply (the other name is an alias: Rules.canonical). Files count once by
+(st_dev, st_ino); hard links once for space. The Lab's Auto Editor "Stored files" view
+(lab/server/src/aieditor/storage.ts) uses the same rule (allocated bytes of unique inodes).
+
 Every delete is appended to /var/lib/storage-agent/deletions.log (JSON lines).
 Python 3 stdlib only.
 """
@@ -155,6 +165,8 @@ class Index:
 
     def __init__(self):
         self.root = "/"
+        self.roots = ["/"]
+        self.aliases = {}      # alias dir path -> canonical path (bind mounts: same dir, two names)
         self.built_at = 0
         self.duration = 0
         self.dirs = {}         # path -> [alloc, files, shared]
@@ -168,11 +180,15 @@ class Index:
 
     # -- build --
     @classmethod
-    def build(cls, root="/", progress=None):
+    def build(cls, root="/", progress=None, roots=None):
+        """Walk `roots` (default [root]) — all on the first root's st_dev, in order: a
+        directory met again under another name (a bind mount) is not walked twice; the
+        first name is canonical, the other is recorded in `aliases`."""
         t0 = time.time()
         ix = cls()
-        ix.root = root
-        rst = os.lstat(root)
+        roots = [r for r in (roots or [root]) if os.path.isdir(r)] or [root]
+        ix.root = roots[0]
+        rst = os.lstat(roots[0])
         rdev = rst.st_dev
         direct = {}            # dir -> [alloc, files]
         multi = {}             # ino -> [alloc, apparent, nlink, paths, mtime, name]
@@ -180,76 +196,101 @@ class Index:
         types = {}
         tops = {}
         seq = 0
-        stack = [root]
-        direct[root] = [alloc_of(rst), 0]
-        nfiles = 0
-        while stack:
-            d = stack.pop()
+        seen_dirs = {}         # (dev, ino) -> first path
+        stack = []
+        walk_roots = []
+        for r in roots:
             try:
-                it = os.scandir(d)
+                st = os.lstat(r)
             except OSError:
+                continue
+            if st.st_dev != rdev:
                 ix.errors += 1
                 continue
-            with it:
-                for e in it:
-                    p = e.path if d != "/" else "/" + e.name
-                    try:
-                        st = e.stat(follow_symlinks=False)
-                    except OSError:
-                        ix.errors += 1
-                        continue
-                    if st.st_dev != rdev:
-                        ix.mounts.append(p)
-                        continue
-                    m = st.st_mode
-                    if stat.S_ISDIR(m):
-                        direct[p] = [alloc_of(st), 0]
-                        if e.name == ".git":
-                            ix.repos.append(d)
-                        stack.append(p)
-                        continue
-                    if not stat.S_ISREG(m):
-                        if stat.S_ISLNK(m):
-                            direct[d][0] += alloc_of(st)
-                        continue
-                    nfiles += 1
-                    if progress and nfiles % 50000 == 0:
-                        progress(nfiles)
-                    a = alloc_of(st)
-                    if st.st_nlink > 1:
-                        k = st.st_ino
-                        rec = multi.get(k)
-                        if rec is None:
-                            multi[k] = [a, st.st_size, st.st_nlink, [p], st.st_mtime, e.name]
+            k = (st.st_dev, st.st_ino)
+            if k in seen_dirs:
+                ix.aliases[r] = seen_dirs[k]
+                continue
+            seen_dirs[k] = r
+            direct[r] = [alloc_of(st), 0]
+            walk_roots.append(r)
+        ix.roots = walk_roots
+        nfiles = 0
+        for wr in walk_roots:
+            stack = [wr]
+            while stack:
+                d = stack.pop()
+                try:
+                    it = os.scandir(d)
+                except OSError:
+                    ix.errors += 1
+                    continue
+                with it:
+                    for e in it:
+                        p = e.path if d != "/" else "/" + e.name
+                        try:
+                            st = e.stat(follow_symlinks=False)
+                        except OSError:
+                            ix.errors += 1
+                            continue
+                        if st.st_dev != rdev:
+                            ix.mounts.append(p)
+                            continue
+                        m = st.st_mode
+                        if stat.S_ISDIR(m):
+                            dk = (st.st_dev, st.st_ino)
+                            if dk in seen_dirs:          # the same directory again (bind mount)
+                                ix.aliases[p] = seen_dirs[dk]
+                                continue
+                            seen_dirs[dk] = p
+                            direct[p] = [alloc_of(st), 0]
+                            if e.name == ".git":
+                                ix.repos.append(d)
+                            stack.append(p)
+                            continue
+                        if not stat.S_ISREG(m):
+                            if stat.S_ISLNK(m):
+                                direct[d][0] += alloc_of(st)
+                            continue
+                        nfiles += 1
+                        if progress and nfiles % 50000 == 0:
+                            progress(nfiles)
+                        a = alloc_of(st)
+                        if st.st_nlink > 1:
+                            k = st.st_ino
+                            rec = multi.get(k)
+                            if rec is None:
+                                multi[k] = [a, st.st_size, st.st_nlink, [p], st.st_mtime, e.name]
+                            else:
+                                rec[3].append(p)
+                                continue     # counted once, at its first path
                         else:
-                            rec[3].append(p)
-                            continue     # counted once, at its first path
-                    else:
-                        dd = direct[d]
-                        dd[0] += a
-                        dd[1] += 1
-                    t = classify(p, e.name)
-                    tt = types.get(t)
-                    if tt is None:
-                        tt = types[t] = [0, 0]
-                        tops[t] = []
-                    tt[0] += a
-                    tt[1] += 1
-                    seq += 1
-                    item = (a, seq, p, st.st_size, st.st_nlink, st.st_mtime, st.st_ino, t)
-                    if len(largest) < TOP_N:
-                        heapq.heappush(largest, item)
-                    elif a > largest[0][0]:
-                        heapq.heapreplace(largest, item)
-                    tp = tops[t]
-                    if len(tp) < TOP_PER_TYPE:
-                        heapq.heappush(tp, item)
-                    elif a > tp[0][0]:
-                        heapq.heapreplace(tp, item)
+                            dd = direct[d]
+                            dd[0] += a
+                            dd[1] += 1
+                        t = classify(p, e.name)
+                        tt = types.get(t)
+                        if tt is None:
+                            tt = types[t] = [0, 0]
+                            tops[t] = []
+                        tt[0] += a
+                        tt[1] += 1
+                        seq += 1
+                        item = (a, seq, p, st.st_size, st.st_nlink, st.st_mtime, st.st_ino, t)
+                        if len(largest) < TOP_N:
+                            heapq.heappush(largest, item)
+                        elif a > largest[0][0]:
+                            heapq.heapreplace(largest, item)
+                        tp = tops[t]
+                        if len(tp) < TOP_PER_TYPE:
+                            heapq.heappush(tp, item)
+                        elif a > tp[0][0]:
+                            heapq.heapreplace(tp, item)
         # roll direct sizes up the tree (deepest first)
         dirs = {p: [v[0], v[1], 0] for p, v in direct.items()}
+        root_set = set(walk_roots)
         for p in sorted(dirs, key=lambda x: x.count("/"), reverse=True):
-            if p == root:
+            if p in root_set:
                 continue
             parent = os.path.dirname(p)
             pv = dirs.get(parent)
@@ -278,6 +319,17 @@ class Index:
             # here, so only inodes with at least one path outside Docker are kept.
             if not all(p.startswith(DOCKER_PREFIXES) for p in paths):
                 ix.multi[str(ino)] = [a, app, nlink, paths]
+        # an alias dir (another name of an indexed dir) counts in the folders above it
+        for a, c in ix.aliases.items():
+            v = dirs.get(c)
+            if not v:
+                continue
+            for anc in ancestors(a):
+                w = dirs.get(anc)
+                if w is not None:
+                    w[0] += v[0]
+                    w[1] += v[1]
+                    w[2] += v[2]
         ix.dirs = dirs
         ix.largest = [cls._item(x, multi) for x in sorted(largest, reverse=True)]
         ix.types = {
@@ -301,7 +353,8 @@ class Index:
     # -- persistence --
     def to_json(self):
         return {
-            "v": 1, "root": self.root, "builtAt": self.built_at, "duration": self.duration,
+            "v": 1, "root": self.root, "roots": self.roots, "aliases": self.aliases,
+            "builtAt": self.built_at, "duration": self.duration,
             "dirs": self.dirs, "types": self.types, "largest": self.largest, "multi": self.multi,
             "mounts": self.mounts, "repos": self.repos, "errors": self.errors, "files": self.files,
         }
@@ -310,6 +363,8 @@ class Index:
     def from_json(cls, d):
         ix = cls()
         ix.root = d["root"]
+        ix.roots = d.get("roots") or [d["root"]]
+        ix.aliases = d.get("aliases") or {}
         ix.built_at = d["builtAt"]
         ix.duration = d["duration"]
         ix.dirs = d["dirs"]
@@ -394,7 +449,18 @@ DOTFILE_OK = {".cache", ".npm"}            # reclaimable caches inside a home di
 TMP_LIVE_PREFIXES = ("claude-", "systemd-private-", "tmux-", ".X11-unix", ".ICE-unix", "snap-private-tmp")
 LAB_DB_SUFFIX = "/_data/db"                # <docker volumes>/clipmagic*-lab-data/_data/db
 JOB_ROOTS = ["/opt/aieditor-work/jobs", "/opt/hyperframes-work/jobs"]
-JOB_FINISHED = {"done", "failed", "error", "cancelled", "canceled", "interrupted", "complete", "completed"}
+JOB_FINISHED = {"done", "failed", "error", "cancelled", "canceled", "interrupted", "complete", "completed", "held"}
+# Other names of a directory (bind mounts): files are listed + protected under the canonical
+# name. The index adds every alias its walk finds (Index.aliases); this one is known up front.
+BIND_ALIASES = {"/mnt/factory_media/jobs": "/opt/aieditor-work/jobs"}
+# The disks the agent indexes. roots: walked in order, all on one st_dev — the first name of
+# a directory wins (canonical). browse: where its Folders view starts.
+DISKS = [
+    {"id": "main", "label": "Main disk", "roots": ["/"], "browse": "/"},
+    {"id": "factory", "label": "Factory volume (500 GB)", "roots": ["/opt/aieditor-work/jobs", "/mnt/factory_media"],
+     "browse": "/mnt/factory_media"},
+]
+NEEDS_TTL = 5.0
 SECRET_EXACT = {".git-credentials", ".netrc", ".npmrc", ".pgpass", "id_rsa", "id_ed25519", "id_ecdsa"}
 
 
@@ -458,7 +524,10 @@ def job_busy(job_dir):
     for name in ("status.json", "job.json"):
         try:
             with open(os.path.join(job_dir, name)) as f:
-                st = json.load(f).get("state")
+                doc = json.load(f)
+                st = doc.get("state")
+                if doc.get("held") is True:
+                    st = "held"
         except (OSError, ValueError, AttributeError):
             continue
         if st and str(st).lower() not in JOB_FINISHED:
@@ -468,17 +537,52 @@ def job_busy(job_dir):
     return None
 
 
+def pending_needs(job_root):
+    """{path: job} — files a busy Auto Editor job has not materialised as its source yet
+    (request.json "source" of a running/queued job with no source.mp4): a Lab edit's video,
+    an earlier job's source.mp4, a library upload folder. Same rule as the Lab
+    (lab/server/src/aieditor/storage.ts pendingNeeds)."""
+    import re
+    out = {}
+    try:
+        names = os.listdir(job_root)
+    except OSError:
+        return out
+    job_re = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+    for n in names:
+        if not job_re.match(n):
+            continue
+        d = os.path.join(job_root, n)
+        if os.path.lexists(os.path.join(d, "source.mp4")) or not job_busy(d):
+            continue
+        try:
+            with open(os.path.join(d, "request.json")) as f:
+                src = (json.load(f) or {}).get("source") or {}
+        except (OSError, ValueError, AttributeError):
+            continue
+        k, j = src.get("kind"), str(src.get("job") or "")
+        if k == "job" and job_re.match(j) and re.match(r"^(final|preview)-\d{2}\.mp4$", str(src.get("file") or "")):
+            out[os.path.join(job_root, j, src["file"])] = n
+        elif k == "job_source" and job_re.match(j):
+            out[os.path.join(job_root, j, "source.mp4")] = n
+        elif k == "upload" and re.match(r"^u[0-9a-f]{24}$", str(src.get("upload") or "")):
+            out[os.path.join(job_root, "_uploads", src["upload"])] = n
+    return out
+
+
 class Rules:
     """Every refusal the agent makes. `check(path)` covers one path (and its parents);
     `check_inside(path, name, is_dir)` covers something met while walking a folder."""
 
     def __init__(self, extra_protected=(), mounts=None, binds=None, job_roots=None, repo_roots=None,
-                 home_roots=None, state_dir=STATE_DIR, agent_dir=AGENT_CODE_DIR, root="/"):
+                 home_roots=None, state_dir=STATE_DIR, agent_dir=AGENT_CODE_DIR, root="/", aliases=None):
         self.root = root
         self.mounts = read_mountpoints() if mounts is None else set(mounts)
         self.binds = docker_bind_sources() if binds is None else set(binds)
         self.swaps = read_swaps()
         self.job_roots = JOB_ROOTS if job_roots is None else list(job_roots)
+        self.aliases = dict(BIND_ALIASES) if aliases is None else dict(aliases)
+        self._needs = {}       # job root -> (at, {path: job})
         self.repo_roots = REPO_ROOTS if repo_roots is None else list(repo_roots)
         self.home_roots = HOME_ROOTS if home_roots is None else list(home_roots)
         self.trees = []        # (prefix, reason)
@@ -502,14 +606,34 @@ class Rules:
         self.binds = docker_bind_sources()
         self.swaps = read_swaps()
 
+    def canonical(self, path):
+        """The canonical name of a path reached through a bind-mount alias (else itself)."""
+        for a in sorted(self.aliases, key=len, reverse=True):
+            if under(path, a):
+                return self.aliases[a] + path[len(a):]
+        return path
+
+    def needs(self, jr):
+        at, v = self._needs.get(jr, (0, None))
+        if v is None or time.time() - at > NEEDS_TTL:
+            v = pending_needs(jr)
+            self._needs[jr] = (time.time(), v)
+        return v
+
     # A path is refused if it, or any parent, is protected.
     def check(self, path):
+        alias = path
+        path = self.canonical(path)
+        if alias != path and alias in self.mounts:
+            return "a mount point"
         if path in self.swaps:
             return "the active swap file"
         if path == "/" or os.path.dirname(path) == "/":
             return "a top-level path of the filesystem (delete what is inside it instead)"
         if path in self.mounts:
             return "a mount point"
+        if os.path.basename(path) == "lost+found" and os.path.dirname(path) in self.mounts:
+            return "the filesystem's recovery folder"
         if path in self.binds:
             return "mounted into a running container (delete what is inside it instead)"
         for prefix, why in self.trees:
@@ -537,6 +661,9 @@ class Rules:
                 why = job_busy(job)
                 if why:
                     return f"a job that is {why} right now ({os.path.basename(job)})"
+                for need, by in self.needs(jr).items():
+                    if under(need, path) or under(path, need):
+                        return f"the source of the {by} job, which has not started yet"
         # inside a git work tree under a source root
         for anc in [path] + ancestors(path):
             if anc in ("/",):
@@ -553,6 +680,9 @@ class Rules:
         for b in self.binds:
             if b.startswith(path + "/"):
                 return f"contains {b}, which is mounted into a running container"
+        for a in self.aliases:
+            if a.startswith(path + "/") and a in self.mounts:
+                return f"contains the mount point {a}"
         for jr in self.job_roots:
             if under(jr, path) and os.path.isdir(jr):
                 try:
@@ -632,13 +762,18 @@ def disk_free(path="/"):
 # ───────────────────────────── the agent ─────────────────────────────
 
 class Agent:
-    def __init__(self, root="/", state_dir=STATE_DIR, rules=None, log_path=None, index_path=None):
+    def __init__(self, root="/", state_dir=STATE_DIR, rules=None, log_path=None, index_path=None, disks=None):
         self.root = root
         self.state_dir = state_dir
         self.rules = rules or Rules()
         self.log_path = log_path or os.path.join(state_dir, "deletions.log")
         self.index_path = index_path or os.path.join(state_dir, "index.json.gz")
-        self.index = None
+        if disks is None:
+            disks = DISKS if root == "/" else [{"id": "main", "label": "Main disk", "roots": [root], "browse": root}]
+        self.disks = [dict(d) for d in disks]       # [0] is the main disk (self.root)
+        self.disks[0]["roots"] = [root]
+        self.disks[0]["browse"] = root
+        self.indexes = {}
         self.lock = threading.Lock()          # one delete at a time
         self.scan_lock = threading.Lock()
         self.scanning = False
@@ -649,12 +784,65 @@ class Agent:
         self.rescan = False      # a delete landed mid-walk: walk again when this one ends
         self.plans = {}
 
+    # -- disks --
+    @property
+    def index(self):
+        return self.indexes.get(self.disks[0]["id"])
+
+    @index.setter
+    def index(self, ix):
+        self.indexes[self.disks[0]["id"]] = ix
+
+    def _index_path(self, d):
+        return self.index_path if d is self.disks[0] else os.path.join(self.state_dir, f"index-{d['id']}.json.gz")
+
+    def live_disks(self):
+        """The disks that exist right now. A second disk counts only when it really is another
+        filesystem (an unmounted volume's folder is just part of the main disk)."""
+        out = [self.disks[0]]
+        try:
+            main_dev = os.lstat(self.root).st_dev
+        except OSError:
+            return out
+        for d in self.disks[1:]:
+            devs = set()
+            for r in d["roots"]:
+                try:
+                    devs.add(os.lstat(r).st_dev)
+                except OSError:
+                    pass
+            if devs and main_dev not in devs and os.path.isdir(d["browse"]):
+                out.append(d)
+        return out
+
+    def disk_of_dev(self, dev):
+        for d in self.live_disks():
+            try:
+                if any(os.lstat(r).st_dev == dev for r in d["roots"] if os.path.exists(r)):
+                    return d
+            except OSError:
+                continue
+        return None
+
+    def disk_by_id(self, disk_id):
+        for d in self.live_disks():
+            if d["id"] == (disk_id or self.disks[0]["id"]):
+                return d
+        raise ValueError(f"Unknown disk {disk_id!r}.")
+
+    def _note_aliases(self):
+        for ix in self.indexes.values():
+            if ix:
+                self.rules.aliases.update(getattr(ix, "aliases", {}) or {})
+
     # -- indexing --
     def load_cached(self):
-        try:
-            self.index = Index.load(self.index_path)
-        except Exception:
-            self.index = None
+        for d in self.live_disks():
+            try:
+                self.indexes[d["id"]] = Index.load(self._index_path(d))
+            except Exception:
+                self.indexes[d["id"]] = None
+        self._note_aliases()
 
     def refresh(self, wait=False):
         if self.scanning:
@@ -669,14 +857,25 @@ class Agent:
                 try:
                     while True:
                         self.rescan = False
-                        ix = Index.build(self.root, progress=lambda n: setattr(self, "scan_progress", n))
+                        built = {}
+                        done = 0
+                        for d in self.live_disks():
+                            built[d["id"]] = Index.build(
+                                d["roots"][0], roots=d["roots"],
+                                progress=lambda n, base=done: setattr(self, "scan_progress", base + n))
+                            done += built[d["id"]].files
                         if not self.rescan:
                             break
-                    self.index = ix
-                    try:
-                        ix.save(self.index_path)
-                    except OSError as e:
-                        self.scan_error = f"index not cached: {e}"
+                    for d in self.live_disks():
+                        ix = built.get(d["id"])
+                        if ix is None:
+                            continue
+                        self.indexes[d["id"]] = ix
+                        try:
+                            ix.save(self._index_path(d))
+                        except OSError as e:
+                            self.scan_error = f"index not cached: {e}"
+                    self._note_aliases()
                 except Exception as e:  # keep serving the old index
                     self.scan_error = str(e)
                     traceback.print_exc()
@@ -689,21 +888,33 @@ class Agent:
             self.scan_thread.start()
         return True
 
-    def status(self):
-        ix = self.index
+    def _disk_info(self, d):
+        ix = self.indexes.get(d["id"])
+        return {
+            "id": d["id"], "label": d["label"], "browse": d["browse"], "disk": disk_free(d["browse"]),
+            "ready": bool(ix), "files": ix.files if ix else 0,
+            "builtAt": int(ix.built_at * 1000) if ix else None,
+            "indexed": ix.dirs.get(d["browse"], [0, 0, 0])[0] if ix else None,
+        }
+
+    def status(self, disk_id=None):
+        d = self.disk_by_id(disk_id)
+        ix = self.indexes.get(d["id"])
         return {
             "indexing": self.scanning, "progress": self.scan_progress,
             "scanStartedAt": int(self.scan_started * 1000) if self.scanning else None,
             "builtAt": int(ix.built_at * 1000) if ix else None,
             "duration": round(ix.duration, 1) if ix else None,
             "files": ix.files if ix else 0, "error": self.scan_error,
-            "disk": disk_free(self.root),
+            "disk": disk_free(d["browse"]), "diskId": d["id"],
+            "disks": [self._disk_info(x) for x in self.live_disks()],
         }
 
     # -- queries --
-    def summary(self):
-        ix = self.index
-        st = self.status()
+    def summary(self, disk_id=None):
+        d = self.disk_by_id(disk_id)
+        ix = self.indexes.get(d["id"])
+        st = self.status(d["id"])
         if not ix:
             return {**st, "ready": False}
         types = [
@@ -716,11 +927,11 @@ class Agent:
             "largest": [self._annotate(x) for x in ix.largest[:150]],
             "hardlinks": [{**g, "protected": self.rules.check(g["paths"][0]) if g["paths"] else None}
                           for g in ix.hardlink_groups(60)],
-            "indexed": ix.dirs.get(self.root, [0, 0, 0])[0],
+            "indexed": ix.dirs.get(d["browse"], [0, 0, 0])[0],
         }
 
-    def by_type(self, t):
-        ix = self.index
+    def by_type(self, t, disk_id=None):
+        ix = self.indexes.get(self.disk_by_id(disk_id)["id"])
         if not ix or t not in ix.types:
             return {"type": t, "files": []}
         return {"type": t, "label": TYPE_LABELS.get(t, t), "files": [self._annotate(x) for x in ix.types[t]["top"]]}
@@ -731,15 +942,19 @@ class Agent:
         return x
 
     def tree(self, path):
-        path = norm(path)
-        ix = self.index
+        path = self.rules.canonical(norm(path))
         entries = []
         total_entries = 0
         try:
             it = os.scandir(path)
+            rdev = os.lstat(path).st_dev
         except OSError as e:
             return {"path": path, "error": str(e), "entries": []}
-        rdev = os.lstat(self.root).st_dev
+        disk = self.disk_of_dev(rdev)
+        ix = self.indexes.get(disk["id"]) if disk else None
+        aliases = dict(self.rules.aliases)
+        if ix:
+            aliases.update(ix.aliases)
         with it:
             for e in it:
                 total_entries += 1
@@ -751,9 +966,26 @@ class Agent:
                 rec = {"name": e.name, "path": p, "mtime": int(st.st_mtime * 1000)}
                 if stat.S_ISDIR(st.st_mode):
                     rec["kind"] = "dir"
-                    if st.st_dev != rdev:
+                    other = self.disk_of_dev(st.st_dev) if st.st_dev != rdev else None
+                    if p in aliases and (st.st_dev == rdev or other):
+                        # another name of an indexed folder (bind mount): list it under its canonical path
+                        canon = aliases[p]
+                        oix = self.indexes.get(other["id"]) if other else ix
+                        v = oix.dirs.get(canon) if oix else None
+                        rec.update(path=canon, alias=p, size=v[0] if v else None)
+                        if v:
+                            rec["files"], rec["shared"] = v[1], v[2]
+                        if other:
+                            rec["disk"] = other["id"]
+                    elif st.st_dev != rdev:
                         rec["mount"] = True
                         rec["size"] = 0
+                        if other:
+                            # another indexed disk: openable (its own sizes)
+                            rec["disk"] = other["id"]
+                            oix = self.indexes.get(other["id"])
+                            v = oix.dirs.get(p) if oix else None
+                            rec["size"] = v[0] if v else None
                     else:
                         v = ix.dirs.get(p) if ix else None
                         if v:
@@ -784,6 +1016,7 @@ class Agent:
         own = ix.dirs.get(path) if ix else None
         return {
             "path": path, "parent": os.path.dirname(path) if path != "/" else None,
+            "disk": disk["id"] if disk else None,
             "size": own[0] if own else None, "files": own[1] if own else None,
             "protected": self.rules.check(path) if path != "/" else "the root of the filesystem",
             "entries": entries, "totalEntries": total_entries, "truncated": total_entries > len(entries),
@@ -804,8 +1037,10 @@ class Agent:
         return out
 
     # -- planning --
-    def _verify_links(self, st, target, ix):
+    def _verify_links(self, st, target, ix=None):
         """Every path of the inode `st` — re-verified by (dev, ino) right now."""
+        d = self.disk_of_dev(st.st_dev)
+        ix = self.indexes.get(d["id"]) if d else None
         cand = set([target])
         if st.st_nlink > 1 and ix:
             cand.update(ix.links_of(st.st_ino))
@@ -823,7 +1058,7 @@ class Agent:
         """What deleting this path would really remove, or why it is refused."""
         res = {"path": raw_path, "ok": False}
         try:
-            path = norm(raw_path)
+            path = self.rules.canonical(norm(raw_path))
         except ValueError as e:
             return {**res, "reason": str(e)}
         res["path"] = path
@@ -838,10 +1073,12 @@ class Agent:
         why = self.rules.check(path)
         if why:
             return {**res, "reason": f"protected: {why}"}
-        rdev = os.lstat(self.root).st_dev
-        if st.st_dev != rdev:
-            return {**res, "reason": "on a different filesystem"}
-        ix = self.index
+        disk = self.disk_of_dev(st.st_dev)
+        if not disk:
+            return {**res, "reason": "on a filesystem the agent does not manage"}
+        rdev = st.st_dev
+        res["disk"] = disk["id"]
+        ix = self.indexes.get(disk["id"])
         inodes = {}          # (dev, ino) -> {"size", "paths": [...], "nlink"}
         dirs = []
         if stat.S_ISDIR(st.st_mode):
@@ -995,7 +1232,12 @@ class Agent:
                     wanted[k] = True
             holders = open_holders(set(wanted))
             os.sync()
-            before = disk_free(self.root)
+            used_disks = {self.disks[0]["id"]: self.disks[0]}
+            for a in analyses:
+                if a["ok"] and a.get("disk"):
+                    used_disks[a["disk"]] = self.disk_by_id(a["disk"])
+            befores = {k: disk_free(d["browse"]) for k, d in used_disks.items()}
+            before = befores[self.disks[0]["id"]]
             results = []
             removed_paths = []
             bytes_by_target = {}
@@ -1064,10 +1306,15 @@ class Agent:
                     "ino": a.get("ino"), "nlink": a.get("nlink"), "externalLinks": removed_links,
                     "heldOpenBytes": hb, "errors": errors[:20], "ok": r["ok"],
                 })
-            after = self._settled_free(before)
-            freed = after["bfree"] - before["bfree"]
-            if self.index and removed_paths:
-                self.index.forget(removed_paths, bytes_by_target)
+            afters = {k: self._settled_free(befores[k], used_disks[k]["browse"]) for k in used_disks}
+            after = afters[self.disks[0]["id"]]
+            freed = sum(afters[k]["bfree"] - befores[k]["bfree"] for k in used_disks)
+            # patch each disk's index with its own targets only (the folders above a volume
+            # path, e.g. /opt, belong to the main disk and must not shrink)
+            target_disk = {a["path"]: a.get("disk") for a in analyses}
+            for did, ix in self.indexes.items():
+                if ix and removed_paths:
+                    ix.forget(removed_paths, {t: b for t, b in bytes_by_target.items() if target_disk.get(t) == did})
             self.plans.pop(plan_id, None)
         finally:
             self.lock.release()
@@ -1075,15 +1322,15 @@ class Agent:
             self.refresh()   # the patched index is approximate; a fresh walk makes it exact
         return {
             "results": results, "expectedBytes": freed_expected, "freedBytes": freed,
-            "heldOpenBytes": held_bytes, "disk": after,
+            "heldOpenBytes": held_bytes, "disk": after, "disks": afters,
         }
 
-    def _settled_free(self, before):
+    def _settled_free(self, before, root=None):
         """statfs after the unlinks, given ext4 a moment to return the extents."""
         last = None
         for _ in range(6):
             os.sync()
-            cur = disk_free(self.root)
+            cur = disk_free(root or self.root)
             if last is not None and cur["bfree"] == last["bfree"]:
                 return cur
             last = cur
@@ -1135,13 +1382,13 @@ def make_handler(agent):
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
             try:
                 if method == "GET" and u.path == "/status":
-                    return self._send(200, agent.status())
+                    return self._send(200, agent.status(q.get("disk")))
                 if method == "GET" and u.path == "/summary":
-                    return self._send(200, agent.summary())
+                    return self._send(200, agent.summary(q.get("disk")))
                 if method == "GET" and u.path == "/tree":
                     return self._send(200, agent.tree(q.get("path", "/")))
                 if method == "GET" and u.path == "/type":
-                    return self._send(200, agent.by_type(q.get("type", "")))
+                    return self._send(200, agent.by_type(q.get("type", ""), q.get("disk")))
                 if method == "GET" and u.path == "/log":
                     return self._send(200, {"entries": agent.log_tail(int(q.get("limit", 50)))})
                 if method == "POST" and u.path == "/refresh":
