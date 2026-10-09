@@ -6,17 +6,23 @@ stage reads (no human reads them):
 
   readiness.json     the app is ready: logged in (name, plan), dark theme, Chat mode, every UI element
                      the narration names exists — and WHERE it lives (selector/text/box)
-  shotlist.json/.md  per sentence of the ranges: A-roll | screencast | graphic, what is ON SCREEN, beats
-                     (trigger word + time), technique ids, zoom target, end state, needed assets
-  assets.json        every file the shots need, with provenance; anything not supplied is PRODUCED here
-                     (programmatic mouse-doodle sketches, phone-style photos from an image model,
-                     prior generations made in the app)
+  manifest.json      CONTENT FIRST (code, no model): every picture the narration presents or names an object
+                     in — the phone photo, the sketch he drew, the photo the app made from it — with every
+                     narrated object (the napkin, the sun, the picnic table …) added to its prompt / doodle
+  assets.json        every asset PRODUCED before the plan: programmatic doodles, phone-style photos from an
+                     image model and in-app generations, spaced config.GEN_SPACING_S apart; each generation is
+                     checked by ONE Sonnet vision call against the objects the narration names and regenerated
+                     at most config.GEN_REGENS times — after that it is needs_asset (the job is held)
+  plan.json          ONE Opus plan call (director.plan_call: the closed action list of each app's proven
+                     playbook actions) + the plan check (re-asked <= 2 times; what is still missing goes to
+                     needs_primitive and the job is held) + ONE Sonnet overlay call (planfit.overlays_fit)
+  shotlist.json      the checked plan in the shot shape set dressing / dry run / gate read (no model call)
   set_dressing.json  the off-camera steps (recorder actions) that put the app in each shot's opening state
   dryrun.json        each UI action rehearsed off camera (no recording; ≤ 1 image generation in total)
   gate.json          go / no-go for the recorder, with the failing items and the automatic remedies tried
 
   python -m aieditor.preprod <job_dir> <out_dir> --ranges 0:00-1:00 7:03-8:03 [--elements DIR]
-         [--steps readiness,shotlist,assets,set_dressing,dryrun,gate] [--max-gens 1] [--image-budget 3]
+         [--steps readiness,assets,plan,set_dressing,dryrun,gate] [--max-gens 1] [--image-budget 3]
 
 The app knowledge (how to reach ChatGPT's image toolbar etc.) lives in APPS — one adapter per site;
 everything else is generic. Safety: never delete, buy, publish, share or change billing/security;
@@ -34,9 +40,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import agentrec, config, director, planfit, skill, takes
+from . import agentrec, config, director, llm, planfit, skill, takes
 
-ALL_STEPS = ["readiness", "shotlist", "assets", "set_dressing", "dryrun", "gate"]
+ALL_STEPS = ["readiness", "assets", "plan", "set_dressing", "dryrun", "gate"]
 DARK_LUM = 60                                  # mean screen luminance (0-255) below this = dark theme
 STOP = {"the", "and", "a", "an", "of", "to", "it", "is", "in", "on", "at", "for", "with", "this", "that", "you", "i",
         "your", "my", "me", "be", "are", "was", "but", "not"}
@@ -518,167 +524,112 @@ def adapter_for(url):
     return cls() if cls else None
 
 
-# ────────────────────────────── 1. shot list (one Claude call) ──────────────────────────────
+# ────────────────────────────── 1. content first: the asset manifest (code) ──────────────────────────────
+# Recommendation §3.2: what a screencast shows is produced and proven BEFORE the plan and the recording. The
+# manifest comes from the narration (no model call): the phone photo he presents, the sketch he drew (with every
+# object he says he drew, preprod.doodle_svg), the photo the app made from the sketch (an in-app generation), and
+# every object the narration names inside a picture (ensure_objects adds it to the prompt / the doodle, or reports
+# it). The single plan call then plans only with these produced assets (director.plan_call).
 
-SHOT_SYSTEM = """You are the shot planner (pre-production) of Jake Dawson's automated YouTube editing factory.
-You turn narration sentences into a machine-readable SHOT LIST the recorder executes without a human.
-Follow the RULEBOOK (Jake's rulings win), the technique catalogue ids, and the REAL app map you are given
-(only use UI labels that exist; when the narration names something the app does not have, show the
-closest real thing and say so in "note"). Return ONLY JSON."""
-
-
-def techniques_digest():
-    t = json.loads((config.CODE / "motion" / "techniques.json").read_text())
-    lines = [f'{x["id"]} {x["name"]} — when: {str(x.get("when", ""))[:160]}' for x in t["techniques"]]
-    return "\n".join(lines), {x["id"] for x in t["techniques"]}, t.get("pacing", {})
+SKETCH_TO_PHOTO_RE = re.compile(r"\b(gave back|turn(?:s|ed)? (?:it|this|that|the sketch|my sketch|the doodle|my doodle) into|"
+                                r"here'?s the photo|real[- ]looking photo|realistic photo|made (?:it )?into a (?:real|realistic) photo)\b",
+                                re.I)
 
 
-def shot_prompt(job, ranges, readiness, elements):
-    tech, _, pacing = techniques_digest()
-    rb = skill.rulebook_text()                  # the ONE RULEBOOK (skill folder; Jake rulings > rulebook > techniques)
-    ui = []
-    for c in readiness.get("checks", []):
-        ui.append(f'- {c["label"]}: {c["status"]} — {json.dumps(c.get("where"), ensure_ascii=False)[:260]} {c.get("note", "")}')
-    blocks = []
-    for k, rg in enumerate(ranges):
-        sents = [job.sents[s] for s in rg["sentences"]]
-        words = []
-        for s in sents:
-            drop = job.kept.get(s["s"], set())
-            cut = "  [SENTENCE REMOVED BY THE CUT]" if s["s"] in job.removed else ""
-            words.append(f'S{s["s"]} ({s["t0"]:.2f}-{s["t1"]:.2f}){cut}: ' + " ".join(
-                f'{w}:{job.by_id[w]["w"]}@{job.by_id[w]["s"]:.2f}' + ("[cut]" if w in drop else "") for w in s["ids"]))
-        blocks.append(f"""RANGE R{k + 1}: source {rg['src_fmt'][0]}–{rg['src_fmt'][1]} ({'the OPENING of the video' if rg['src'][0] < 1 else 'from the middle of the video'})
-JAKE'S SCRIPT AROUND IT (cues like "THE PROMPT:" are what goes on screen / is typed):
-{job.script_excerpt(sents)}
-NARRATION (sentence id (src times): word_id:word@src_seconds; [cut] = removed by the edit):
-""" + "\n".join(words))
-    return f"""RULEBOOK (Jake's rulings > rulebook > techniques):
-{rb}
-
-TECHNIQUE CATALOGUE (ids you must use; reference pacing {json.dumps(pacing)[:600]}):
-{tech}
-
-THE APP — {job.sites[0]['url'] if job.sites else ''} (logged in as the account owner; recorded in DARK theme, Chat mode,
-sidebar hidden; checked on screen minutes ago):
-{chr(10).join(ui)}
-App facts: a generated/uploaded image in a chat opens a full-screen VIEWER when clicked; its floating toolbar
-holds exactly: Markup, Comment, Remove BG, Erase, Resize (Resize → Square 1:1, Portrait 3:4, Story 9:16,
-Landscape 4:3, Widescreen 16:9). Sketch is a '+' menu plugin (canvas, checkmark to attach). Templates live
-on chatgpt.com/images → Templates (Poster, Interior design, Logo, …). Image generation shows progress, then the
-image in the assistant message. The page shows "Jake Dawson · Plus" bottom-left only when the sidebar is open.
-
-EDITING ELEMENTS SUPPLIED BY JAKE (use these files; everything else must be produced): {', '.join(elements) or '(none)'}
-
-{chr(10).join(blocks)}
-
-TASK — one shot list covering EVERY sentence of every range exactly once, in order. Pacing: reference
-(screencast ~70 % of runtime, A-roll blocks 5–12 s for his face moments — welcome/name, subscribe, opinions,
-verdicts; screencast whenever he shows/does/names something in the app or a result); the opening shows the
-RESULT from the first word. A shot = one or more consecutive sentences with one kind:
-  "aroll" (his face; optional text overlay TX01–TX03 on the gradient), "screencast" (the app), "graphic"
-  (full-screen plate, e.g. a before/after side by side on the off-white background, or a number/list card).
-Each beat = one trigger word (word_id from the narration — the word that NAMES the thing / the action word)
-and what happens on it. For screencast beats give the recorder action:
-  action: none | read | click | type | upload | send | open_image | wait_result | key
-  target: an exact UI label from the app map (e.g. "Remove BG"), or "image:<asset_id>" / "result:<asset_id>"
-  technique_ids: catalogue ids (zoom/pan/cut/transition); zoom: target scale per RULEBOOK F3 or null;
-  zoom_target: the CONTAINER framed (F2).
-"opens_on" (screencast shots) = the app state the shot's first frame needs, one of:
-  "fresh_chat" | "chat_result:<asset_id>" (the chat holding that generation, result in view) |
-  "image_viewer:<asset_id>" (that image open in the viewer, toolbar visible) | "images_templates".
-Assets: list every file/content a shot needs with a kind:
-  "element" (one of Jake's files, give "file"), "sketch" (a crude mouse-drawn doodle we draw programmatically:
-  give "doodle": [{{"shape": bottle|table|sun|pepper|circle|rect|line|cloud|tree|person|house|text, "box": [x,y,w,h]
-  in a 1024×1024 canvas, "color": css, "label": optional text}}] laid out exactly as the narration describes),
-  "photo" (a realistic phone photo we generate: give "prompt"), "app_generation" (made IN THE APP during set
-  dressing: give "made_from" = [asset ids], "prompt" = exact text typed (Jake's script wording), "tool" =
-  send|remove_bg|markup|comment|erase|resize|template), "overlay_text" (on-screen prompt text card: "text").
-  Keep the assets the MINIMUM the shots in these ranges need (prior generations they show must exist). A result
-  the narration shows from an earlier part of the video that is not in these ranges is produced ONCE as an
-  app_generation from the earliest step that makes it (reuse it across ranges rather than chaining edits).
-  Generations that the narration itself triggers on camera (e.g. a click that starts a generation) are NOT assets —
-  the recorder makes them live; list them as beats.
-
-Return {{"shots": [{{"id": "R1-01", "range": "R1", "sentences": [ids], "kind": "...", "on_screen": "<concrete>",
-  "opens_on": "...|null", "beats": [{{"word_id": n, "action": "...", "target": "...|null", "text": "typed text|null",
-  "what": "<what the viewer sees>", "technique_ids": [...], "zoom": 1.3|null, "zoom_target": "...|null"}}],
-  "transition_in": "<technique id>", "end_state": "<concrete>", "needs": [asset ids], "overlay": null|{{"template": "...", "text": "..."}},
-  "note": "..."}}],
- "assets": [{{"id": "...", "kind": "...", "desc": "...", ...kind fields}}]}}"""
+PROMPT_SENT_RE = re.compile(r"\b(type|types|typing|typed|the prompt|prompt is|paste\w*|remove the|add an? |bring me|make this|"
+                            r"put it on|turn it into|change the)\b", re.I)
 
 
-def validate_shots(sl, job, ranges, tech_ids, readiness):
-    """Deterministic checks + word-time mapping. Returns (shotlist, problems)."""
-    problems = []
-    want = [s for rg in ranges for s in rg["sentences"]]
-    got = [s for sh in sl.get("shots", []) for s in sh.get("sentences", [])]
-    if sorted(got) != sorted(want):
-        problems.append(f"sentence coverage: missing {sorted(set(want) - set(got))} extra {sorted(set(got) - set(want))}")
-    labels = set()
-    for c in readiness.get("checks", []):
-        w = c.get("where") or {}
-        for v in json.dumps(w).split('"'):
-            labels.add(v)
-    known_assets = {a["id"] for a in sl.get("assets", [])}
-    for sh in sl.get("shots", []):
-        sids = sh.get("sentences", [])
-        ids = [i for s in sids for i in job.sents[s]["ids"]]
-        sh["src"] = [round(job.sents[sids[0]]["t0"], 3), round(job.sents[sids[-1]]["t1"], 3)] if sids else None
-        outs = [job.out_time(i) for i in ids if job.out_time(i) is not None]
-        sh["out"] = [min(outs), max(job.out_time(i, end=True) for i in ids if job.out_time(i) is not None)] if outs else None
-        sh["words"] = " ".join(job.sents[s]["text"] for s in sids)
-        for n in sh.get("needs", []):
-            if n not in known_assets:
-                problems.append(f"{sh['id']}: needs unknown asset {n}")
-        for b in sh.get("beats", []):
-            w = job.by_id.get(b.get("word_id"))
-            if not w or b["word_id"] not in ids:
-                problems.append(f"{sh['id']}: beat word_id {b.get('word_id')} not in its sentences")
-                continue
-            b["word"] = w["w"]
-            b["t_src"] = round(w["s"], 3)
-            b["t_src_end"] = round(w["e"], 3)
-            b["t_out"] = job.out_time(b["word_id"])
-            b["t_shot"] = round(w["s"] - sh["src"][0], 3)
-            bad = [t for t in b.get("technique_ids", []) if t not in tech_ids]
-            if bad:
-                problems.append(f"{sh['id']} beat@{b['word_id']}: unknown technique ids {bad}")
-                b["technique_ids"] = [t for t in b["technique_ids"] if t in tech_ids]
-            tgt = b.get("target") or ""
-            if sh.get("kind") == "screencast" and b.get("action") in ("click", "read") and tgt and not tgt.startswith(("image:", "result:")):
-                b["ui_known"] = tgt in labels
-        if sh.get("transition_in") and sh["transition_in"] not in tech_ids:
-            problems.append(f"{sh['id']}: unknown transition {sh['transition_in']}")
-    return sl, problems
+def asset_manifest(job):
+    """The narration → {"shots": one pseudo shot per sentence that names a picture's object, "assets": [...],
+    "objects": ensure_objects rows} (the shot-list shape build_assets / ensure_objects read)."""
+    texts = [s["text"] for s in job.sents]
+    whole = " ".join(texts)
+    assets = []
+    photo_rx, _ = planfit.KIND_OBJECTS["phone photo"]
+    sketch_rx, _ = planfit.KIND_OBJECTS["sketch"]
+    photo_said = [t for t in texts if photo_rx.search(t)]
+    if photo_said:
+        k = next(n for n, t in enumerate(texts) if photo_rx.search(t))
+        nxt = texts[k + 1] if k + 1 < len(texts) else ""
+        desc = (texts[k] + (" " + nxt if nxt and not DRAW_RE.search(nxt) and not PROMPT_SENT_RE.search(nxt)
+                            and len(nxt.split()) <= 12 else ""))[:300]
+        assets.append({"id": "phone_photo", "kind": "photo", "desc": "the phone photo he presents: " + desc[:160],
+                       "prompt": desc})
+    drew = [t for t in texts if DRAW_RE.search(t) or sketch_rx.search(t)]
+    if drew:
+        assets.append({"id": "sketch", "kind": "sketch", "desc": "crude mouse doodle he drew", "doodle": []})
+        if SKETCH_TO_PHOTO_RE.search(whole):
+            assets.append({"id": "sketch_photo", "kind": "app_generation", "made_from": ["sketch"], "tool": "send",
+                           "desc": "the realistic photo the app made from the sketch",
+                           "prompt": "Turn this rough sketch into a realistic photo"})
+    ids = [a["id"] for a in assets]
+    shots = []
+    for s in job.sents:
+        # a prompt he types / reads out makes its objects ON camera (the generation), a question to the viewer
+        # and the presenter's own lines show nothing: neither adds to a produced picture
+        if PROMPT_SENT_RE.search(s["text"]) or planfit.PRESENTER_RE.search(s["text"]) or \
+                (s["text"].rstrip().endswith("?") and re.search(r"\byour?\b", s["text"], re.I)):
+            continue
+        if planfit.scan_objects(s["text"]):
+            shots.append({"id": f"N{s['s']:03d}", "kind": "screencast", "sentences": [s["s"]], "words": s["text"],
+                          "beats": [], "needs": list(ids)})
+    sl = {"shots": shots, "assets": assets}
+    ensure_objects(sl, job)
+    return sl
 
 
-def shotlist_md(sl, ranges):
-    out = ["# SHOT LIST (machine-generated, pre-production stage 0)", ""]
-    for k, rg in enumerate(ranges):
-        out.append(f"- R{k + 1}: source {rg['src_fmt'][0]}–{rg['src_fmt'][1]} (asked {fmt_t(rg['asked'][0])}–{fmt_t(rg['asked'][1])}), "
-                   f"cut {rg['out'][0]}–{rg['out'][1]} s, sentences S{rg['sentences'][0]}–S{rg['sentences'][-1]}")
-    out.append("")
-    for sh in sl["shots"]:
-        out.append(f"## {sh['id']} · {sh['kind'].upper()} · src {fmt_t(sh['src'][0])}–{fmt_t(sh['src'][1])}"
-                   + (f" (cut {sh['out'][0]:.2f}–{sh['out'][1]:.2f})" if sh.get("out") else ""))
-        out.append(f"> {sh['words']}")
-        out.append(f"- on screen: {sh.get('on_screen')}")
-        if sh.get("opens_on"):
-            out.append(f"- opens on: `{sh['opens_on']}` · transition in: {sh.get('transition_in')}")
-        for b in sh.get("beats", []):
-            out.append(f"  - **{b.get('word')}** @{b.get('t_src')} (cut {b.get('t_out')}): {b.get('action')} "
-                       f"`{b.get('target')}` — {b.get('what')} [{', '.join(b.get('technique_ids', []))}]"
-                       + (f" zoom ×{b['zoom']} on {b.get('zoom_target')}" if b.get("zoom") else ""))
-        out.append(f"- end state: {sh.get('end_state')}")
-        if sh.get("needs"):
-            out.append(f"- assets: {', '.join(sh['needs'])}")
-        if sh.get("overlay"):
-            out.append(f"- overlay: {json.dumps(sh['overlay'], ensure_ascii=False)}")
-        if sh.get("note"):
-            out.append(f"- note: {sh['note']}")
-        out.append("")
-    return "\n".join(out)
+def asset_objects(sl, aid):
+    """The narrated objects a produced asset must show (ensure_objects rows that point at it)."""
+    out = []
+    for o in sl.get("objects", []):
+        if o.get("asset") == aid and o.get("status") in ("in_asset", "added") and o["object"] not in planfit.KIND_OBJECTS \
+                and o["object"] not in out:
+            out.append(o["object"])
+    return out
+
+
+GEN_CHECK_SYSTEM = """You check a generated picture for a video factory. Say whether the picture shows every object in the
+list (each one clearly recognisable), and list the ones it does not show. Answer with the JSON only."""
+GEN_CHECK_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["matches", "missing_objects"],
+                    "properties": {"matches": {"type": "boolean"},
+                                   "missing_objects": {"type": "array", "items": {"type": "string"}}}}
+
+
+def gen_check(asset, path, objects):
+    """The generation check: ONE Sonnet vision call per generated asset → {"matches", "missing_objects", "usd"}."""
+    import base64
+    data = Path(path).read_bytes()
+    mt = "image/png" if data.startswith(b"\x89PNG") else "image/jpeg"
+    content = [{"type": "image", "source": {"type": "base64", "media_type": mt, "data": base64.b64encode(data).decode()}},
+               {"type": "text", "text": f"The narration says this picture ({asset.get('desc', asset['id'])}) shows: "
+                                        + ", ".join(objects) + ". Does it show every one of them?"}]
+    r = llm.messages(config.VISION_MODEL, GEN_CHECK_SYSTEM, content, 1000, effort="low", schema=GEN_CHECK_SCHEMA,
+                     stage="preprod.gencheck", purpose=f"generation check {asset['id']} (Sonnet vision)")
+    try:
+        ans = json.loads(r.text)
+    except ValueError:
+        ans = {"matches": False, "missing_objects": list(objects)}
+    return {"matches": bool(ans.get("matches")) and not ans.get("missing_objects"),
+            "missing_objects": [str(x) for x in ans.get("missing_objects") or []], "usd": r["usd"]}
+
+
+class Spacer:
+    """A minimum gap between off-camera generations (remote image API and in-app; config.GEN_SPACING_S):
+    ChatGPT's "Unusual activity" block came from generations fired back to back."""
+
+    def __init__(self, spacing=None, clock=time.monotonic, sleep=time.sleep):
+        self.spacing = config.GEN_SPACING_S if spacing is None else spacing
+        self.clock, self.sleep, self.last, self.times = clock, sleep, None, []
+
+    def wait(self):
+        if self.last is not None:
+            d = self.spacing - (self.clock() - self.last)
+            if d > 0:
+                self.sleep(d)
+        self.last = self.clock()
+        self.times.append(self.last)
+        return self.last
 
 
 # ────────────────────────────── 2. assets ──────────────────────────────
@@ -830,15 +781,58 @@ PHONE_STYLE = ("Casual smartphone photo, handheld, slightly uneven framing, natu
                "realistic everyday clutter, not a studio shot, no text overlays. ")
 
 
-def build_assets(sl, out, elements_dir, budget):
+def build_assets(sl, out, elements_dir, budget, app=None, check=None, spacer=None, regens=None):
+    """Every asset of the manifest, produced OFF CAMERA before the plan (recommendation §3.2):
+      element         Jake's supplied file
+      sketch          the programmatic doodle (its objects are drawn by code: no check needed)
+      photo           Segmind GPT Image 2 (preprod.gen_photo), spaced, then the generation check
+      app_generation  in the app when the adapter can (app.generate_in_app(asset, dst, files)), spaced + checked;
+                      otherwise pending_in_app (the off-camera dry run makes it)
+      overlay_text    rendered by the graphics stage
+    A generated asset that misses an object the narration names is regenerated (the prompt names the missing
+    objects) at most `regens` times (config.GEN_REGENS); after that it is needs_asset and the job is held."""
     adir = out / "assets"
     adir.mkdir(exist_ok=True)
+    check = gen_check if check is None else check
+    spacer = spacer or Spacer()
+    regens = config.GEN_REGENS if regens is None else regens
     supplied = {p.name: p for p in Path(elements_dir).glob("*")} if elements_dir and Path(elements_dir).is_dir() else {}
     need = {}
     for sh in sl["shots"]:
         for n in sh.get("needs", []):
             need.setdefault(n, []).append(sh["id"])
-    spend, rows = 0.0, []
+    spend, check_usd, rows = 0.0, 0.0, []
+    files = {}
+
+    def checked_generation(a, row, make):
+        """make(prompt, attempt) → (file, usd, source) | None; spaced, checked, regenerated."""
+        nonlocal spend, check_usd
+        objs = asset_objects(sl, a["id"])
+        prompt = a.get("prompt", a.get("desc", ""))
+        row["checks"] = []
+        for attempt in range(regens + 1):
+            spacer.wait()
+            made = make(prompt, attempt)
+            if not made:
+                return
+            f, usd, src = made
+            spend += usd
+            row.update(file=str(f), source=src, status="ready")
+            if not objs:
+                return
+            res = check(a, f, objs)
+            check_usd += float(res.get("usd") or 0)
+            row["checks"].append({"attempt": attempt + 1, "matches": res["matches"], "missing_objects": res["missing_objects"]})
+            if res["matches"]:
+                return
+            if attempt == regens:
+                row.update(status="needs_asset", why=f"after {regens} regeneration(s) the picture still misses "
+                                                     f"{', '.join(res['missing_objects'])} (generation check)")
+                return
+            prompt = (a.get("prompt", a.get("desc", "")).rstrip(". ") + ". It must clearly show "
+                      + ", ".join(res["missing_objects"]) + ".")
+            row["attempts"].append(f"regenerate {attempt + 1}/{regens}: missing {res['missing_objects']}")
+
     for a in sl.get("assets", []):
         row = {"id": a["id"], "kind": a.get("kind"), "desc": a.get("desc", ""), "needed_for": need.get(a["id"], []),
                "status": "missing", "file": None, "source": None, "attempts": []}
@@ -858,34 +852,48 @@ def build_assets(sl, out, elements_dir, budget):
                                                                   "svg": str(svg), "doodle": a.get("doodle")})
             elif k == "photo":
                 dst = adir / f"{a['id']}.png"
-                prompt = PHONE_STYLE + a.get("prompt", a.get("desc", ""))
-                for q in ("medium", "low"):
-                    if spend + {"medium": 0.06, "low": 0.0067}[q] > budget:
-                        row["attempts"].append(f"skip {q}: image budget ${budget}")
-                        continue
-                    try:
-                        usd = gen_photo(prompt, dst, quality=q)
-                        spend += usd
-                        row.update(status="ready", file=str(dst), source={"type": "generated", "api": "segmind gpt-image-2",
-                                                                          "quality": q, "prompt": prompt, "usd": usd})
-                        break
-                    except Exception as e:  # noqa: BLE001
-                        row["attempts"].append(f"segmind {q}: {e}"[:200])
+
+                def make_photo(prompt, attempt, dst=dst, row=row):
+                    for q in ("medium", "low"):
+                        if spend + {"medium": 0.06, "low": 0.0067}[q] > budget:
+                            row["attempts"].append(f"skip {q}: image budget ${budget}")
+                            continue
+                        try:
+                            usd = gen_photo(PHONE_STYLE + prompt, dst, quality=q)
+                            return dst, usd, {"type": "generated", "api": "segmind gpt-image-2", "quality": q,
+                                              "prompt": PHONE_STYLE + prompt, "usd": usd, "attempt": attempt + 1}
+                        except Exception as e:  # noqa: BLE001
+                            row["attempts"].append(f"segmind {q}: {e}"[:200])
+                    return None
+                checked_generation(a, row, make_photo)
             elif k == "app_generation":
+                gen = getattr(app, "generate_in_app", None) if app is not None else None
                 row.update(status="pending_in_app", source={"type": "in-app generation (dry run / set dressing)",
                                                             "made_from": a.get("made_from", []), "prompt": a.get("prompt"),
                                                             "tool": a.get("tool", "send")})
+                if callable(gen) and all(m in files for m in a.get("made_from", [])):
+                    dst = adir / f"{a['id']}.png"
+
+                    def make_in_app(prompt, attempt, dst=dst, a=a):
+                        r = gen({**a, "prompt": prompt}, dst, [files[m] for m in a.get("made_from", [])])
+                        return (dst, 0.0, {"type": "in-app generation (off camera)", "made_from": a.get("made_from", []),
+                                           "prompt": prompt, "tool": a.get("tool", "send"), "attempt": attempt + 1,
+                                           **(r if isinstance(r, dict) else {})}) if Path(dst).exists() else None
+                    checked_generation(a, row, make_in_app)
             elif k == "overlay_text":
                 row.update(status="ready", source={"type": "text (rendered by the graphics stage)", "text": a.get("text")})
             else:
                 row["attempts"].append(f"unknown kind {k}")
         except Exception as e:  # noqa: BLE001
             row["attempts"].append(str(e)[:300])
+        if row.get("file") and row["status"] == "ready":
+            files[a["id"]] = row["file"]
         for f in ("prompt", "made_from", "tool", "text"):
             if a.get(f) is not None and f not in row:
                 row[f] = a[f]
         rows.append(row)
-    return {"assets": rows, "image_api_usd": round(spend, 4)}
+    return {"assets": rows, "image_api_usd": round(spend, 4), "check_usd": round(check_usd, 4),
+            "generations_at": [round(t, 3) for t in spacer.times], "spacing_s": spacer.spacing}
 
 
 # ────────────────────────────── 3. set dressing (plan) ──────────────────────────────
@@ -1354,32 +1362,46 @@ DOODLE_SLOT = [(r"\bmiddle|centre|center\b", [400, 300, 230, 400]), (r"\btop rig
                (r"\bleft\b", [80, 420, 260, 260]), (r"\bright\b", [690, 420, 260, 260])]
 
 
-def ledger_fields(sl, job):
-    """Every shot-list beat → the ledger row the recorder and QA read: word_id, t_word (= edl
-    words[word_id].start), clause_start, subject, technique_id, action, must_text, typed_text,
-    result_assertion (RULEBOOK §1 C1-C3, §3 M1; BASELINE §2b)."""
-    pf_words = [{"i": w["i"], "word": w["w"], "start": w["s"], "end": w["e"]} for w in job.words]
-    pos = {w["i"]: n for n, w in enumerate(pf_words)}
-    for sh in sl.get("shots", []):
-        for b in sh.get("beats", []):
-            k = pos.get(b.get("word_id"))
-            if k is None:
-                continue
-            c = planfit.clause_start(pf_words, k)
-            tgt = b.get("target") or ""
-            act, tid, typed, must = planfit.classify(f"{b.get('what', '')}")
-            b["t_word"] = pf_words[k]["start"]
-            b["clause_start"] = pf_words[c]["start"]
-            b["clause_word_id"] = pf_words[c]["i"]
-            b["technique_id"] = (b.get("technique_ids") or [tid])[0]
-            b["typed_text"] = b.get("text") if b.get("action") == "type" else typed
-            b["must_text"] = [tgt] if tgt and not tgt.startswith(("image:", "result:")) else must
-            b["subject"] = (f"asset:{tgt.split(':', 1)[1]}" if tgt.startswith(("image:", "result:"))
-                            else f"ui:{tgt}" if tgt else (f"ui:{must[0]}" if must else "screen"))
-            b["result_assertion"] = planfit.RESULTS.get(
-                {"open_image": "click", "send": "click", "wait_result": "dissolve", "key": "click", "read": "zoom",
-                 "none": "show"}.get(b.get("action"), b.get("action") or act), planfit.RESULTS["show"])
-    return sl
+SHOT_ACTION = {"click": "click", "paste": "type", "type": "type", "upload": "upload", "key": "key", "goto": "read",
+               "wait_for": "wait_result", "reveal": "wait_result", "scroll": "read", "drag": "click", "draw": "click"}
+
+
+def plan_to_shots(plan, assets, pbs=None):
+    """The checked plan (director.validate form + schema beats) → the shot-list shape set dressing, the dry run,
+    expect.json and the gate read (no model call: the plan call is the only decision)."""
+    from . import playbook as pbmod
+    kinds = {a["id"]: a.get("kind") for a in assets.get("assets", [])}
+    shots = []
+    for n, seg in enumerate(plan.get("segments", [])):
+        pb = (pbs or {}).get(seg.get("app"))
+        if pb is None and seg.get("app") and not str(seg.get("app")).startswith("web:"):
+            try:
+                pb = pbmod.load(seg["app"])
+            except Exception:  # noqa: BLE001
+                pb = None
+        beats, needs = [], []
+        for b in seg.get("actions") or []:
+            pa = ((pb or {}).get("actions") or {}).get(b["action"], {})
+            aid = b.get("asset_id") or (b["subject"][6:] if str(b.get("subject", "")).startswith("asset:") else None)
+            if aid and aid not in needs:
+                needs.append(aid)
+            act = SHOT_ACTION.get(pa.get("kind"), "read")
+            target = (f"image:{aid}" if aid else pa.get("label") or (b["subject"][3:] if str(b.get("subject", "")).startswith("ui:")
+                                                                      else None))
+            beats.append({"id": b.get("id"), "word_id": b["word_id"], "word": b.get("cue"), "t_word": b["t_word"],
+                          "t_src": b["t_word"], "action": act, "playbook_action": b["action"], "target": target,
+                          "text": b.get("typed_text"), "what": b.get("body"), "clause_start": b.get("clause_start"),
+                          "subject": b.get("subject"), "technique_id": None,
+                          "must_text": [pa["label"]] if pa.get("label") and act in ("click",) else [],
+                          "typed_text": b.get("typed_text"),
+                          "result_assertion": planfit.RESULTS.get({"wait_result": "dissolve", "read": "zoom"}.get(act, act),
+                                                                  planfit.RESULTS["show"])})
+        first = next((x for x in needs if kinds.get(x) == "app_generation"), None)
+        shots.append({"id": f"P{n:02d}", "kind": "screencast", "sentences": [], "src": [seg["t0"], seg["t1"]],
+                      "out": [seg["t0"], seg["t1"]], "words": seg.get("intent", "")[:400],
+                      "opens_on": f"chat_result:{first}" if first else "fresh_chat", "beats": beats, "needs": needs,
+                      "session": (seg.get("session") or {}).get("kind") or "app", "app": seg.get("app")})
+    return {"shots": shots, "assets": assets.get("assets", []), "from": "plan.json (single plan call, checked)"}
 
 
 def ensure_objects(sl, job):
@@ -1398,6 +1420,8 @@ def ensure_objects(sl, job):
         typed = [str(b.get("text") or "") for b in sh.get("beats", []) if b.get("action") == "type"]
         for o in planfit.scan_objects(text):
             need = [by[n] for n in sh.get("needs", []) if n in by]
+            if o not in planfit.KIND_OBJECTS and DRAW_RE.search(sh.get("words", "")) and any(x.get("kind") == "sketch" for x in need):
+                need = [x for x in need if x.get("kind") == "sketch"]       # what he says he DREW is in the doodle
             have = None
             for a in need:
                 if (o in planfit.KIND_OBJECTS and a.get("kind") in planfit.KIND_OBJECTS[o][1]) or \
@@ -1429,7 +1453,8 @@ def ensure_objects(sl, job):
             k = next((k for k in ks if planfit._obj_rx(o).search(job.sents[k]["text"])), None)
             where = job.sents[k]["text"] if k is not None else ""
             drawn = k is not None and any(DRAW_RE.search(job.sents[j]["text"]) for j in range(max(0, k - 2), k + 1))
-            order = ("sketch", "app_generation", "photo") if drawn else ("app_generation", "photo")
+            # a drawn object goes into the doodle when code can draw it; otherwise into a generated picture
+            order = ("sketch", "app_generation", "photo") if drawn and DOODLE_SHAPE.get(o) else ("app_generation", "photo")
             tgt = next((a for k in order for a in need if a.get("kind") == k), None)
             if tgt is None:
                 rows.append({"object": o, "shot": sh["id"], "asset": None, "status": "missing",
@@ -1447,6 +1472,9 @@ def ensure_objects(sl, job):
                 used = [d.get("box") for d in tgt.get("doodle", [])]
                 box = min(hits)[1] if hits else next((b for b in ([80, 80, 220, 220], [700, 640, 260, 200], [80, 640, 260, 200])
                                                       if b not in used), [80, 80, 220, 220])
+                if any(d.get("shape") == shape for d in tgt.get("doodle", [])):
+                    rows.append({"object": o, "shot": sh["id"], "asset": tgt["id"], "status": "in_asset", "said": where[:160]})
+                    continue
                 tgt.setdefault("doodle", []).append({"shape": shape, "box": box, "color": "#111"})
             else:
                 tgt["prompt"] = (tgt.get("prompt") or tgt.get("desc", "")).rstrip(". ") + f", with {_article(o)} clearly visible"
@@ -1478,9 +1506,30 @@ def expect_rows(sl):
             "beats": out}
 
 
+def job_video(job, ranges):
+    """The narration the plan covers: the whole edit (EdlJob, output times) or the dev CLI's ranges."""
+    if isinstance(job, EdlJob):
+        return {"title": job.request.get("title", ""), "duration": job.duration,
+                "words": [{"i": w["i"], "word": w["w"], "start": w["s"], "end": w["e"]} for w in job.words]}
+    ids = [i for rg in ranges for s in rg["sentences"] for i in job.sents[s]["ids"]]
+    ws = [{"i": i, "word": job.by_id[i]["w"], "start": job.by_id[i]["s"], "end": job.by_id[i]["e"]} for i in ids]
+    return {"title": job.request.get("title", ""), "duration": (ws[-1]["end"] + 0.5) if ws else 0.0, "words": ws}
+
+
+def held_items(plan, assets):
+    """Why the job cannot be recorded honestly: open needs_primitive rows, assets the check refused."""
+    out = []
+    for n in plan.get("needs_primitive") or []:
+        out.append({"reason": "needs_primitive", "detail": str(n.get("why") or n.get("sentence"))[:300]})
+    for a in assets.get("assets", []):
+        if a.get("status") == "needs_asset":
+            out.append({"reason": "needs_asset", "detail": f"{a['id']}: {a.get('why', '')}"[:300]})
+    return out
+
+
 def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_budget=3.0, cancelled=None, say=None):
-    """readiness → shot list (+ beat ledger, narrated objects) → assets → set dressing → dry run → gate
-    (+ expect.json). Live browser work stays behind the adapter: app.probe(workdir) and app.dry_run(...)
+    """readiness → assets (content first: manifest, spaced generations, generation check) → plan (ONE Opus plan
+    call + plan check + ONE Sonnet overlay call; plan.json) → set dressing → dry run → gate (+ expect.json). Live browser work stays behind the adapter: app.probe(workdir) and app.dry_run(...)
     when the adapter has them (a test's fake), else the off-camera Probe / dry_run below."""
     steps = steps or ALL_STEPS
     say = say or log
@@ -1519,38 +1568,44 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
         return None
     check()
 
-    elem_names = sorted(p.name for p in Path(elements).glob("*")) if elements and Path(elements).is_dir() else []
-    if "shotlist" in steps:
-        _, tech_ids, _ = techniques_digest()
-        prompt = shot_prompt(job, ranges, readiness, elem_names)
-        (out / "shotlist.prompt.txt").write_text(prompt)
-        sl, meta = director.call([{"type": "text", "text": prompt}], SHOT_SYSTEM, max_tokens=32000, effort="medium")
-        costs["claude_usd"] = round(costs.get("claude_usd", 0) + meta["usd"], 4)
-        jdump(costs, out / "costs.json")
-        sl, problems = validate_shots(sl, job, ranges, tech_ids, readiness)
-        ledger_fields(sl, job)
-        objs = ensure_objects(sl, job)
-        sl.update(ranges=ranges, problems=problems, model=director.MODEL, cost=meta)
-        jdump(sl, out / "shotlist.json")
-        (out / "SHOTLIST.md").write_text(shotlist_md(sl, ranges))
-        say(f"shot list: {len(sl['shots'])} shots, {len(sl.get('assets', []))} assets, "
-            f"{sum(o['status'] == 'added' for o in objs)} narrated object(s) added to assets, "
-            f"{sum(o['status'] == 'missing' for o in objs)} missing, problems {problems}, ${meta['usd']}")
-    if not (out / "shotlist.json").exists():
-        return None
-    sl = json.loads((out / "shotlist.json").read_text())
-    check()
-
+    # 2. CONTENT FIRST: the asset manifest from the narration, every asset produced (spaced) and checked
     if "assets" in steps:
-        assets = build_assets(sl, out, elements, image_budget - costs.get("image_api_usd", 0))
-        assets["objects"] = sl.get("objects", [])
+        man = asset_manifest(job)
+        jdump(man, out / "manifest.json")
+        assets = build_assets(man, out, elements, image_budget - costs.get("image_api_usd", 0), app=app)
+        assets["objects"] = man.get("objects", [])
         costs["image_api_usd"] = round(costs.get("image_api_usd", 0) + assets["image_api_usd"], 4)
+        costs["claude_usd"] = round(costs.get("claude_usd", 0) + assets.get("check_usd", 0), 4)
         jdump(costs, out / "costs.json")
         jdump(assets, out / "assets.json")
-        say("assets: " + ", ".join(f"{a['id']}={a['status']}" for a in assets["assets"]))
+        say("assets: " + ", ".join(f"{a['id']}={a['status']}" for a in assets["assets"])
+            + f"; {sum(o['status'] == 'missing' for o in assets['objects'])} narrated object(s) not in any asset")
     if not (out / "assets.json").exists():
         return None
     assets = json.loads((out / "assets.json").read_text())
+    check()
+
+    # 3. THE PLAN: one Opus plan call + the plan check (re-asks) + one Sonnet overlay call
+    if "plan" in steps:
+        video = job_video(job, ranges)
+        sites = job.sites or [{"url": app.site, "note": ""}]
+        facts = planfit.Facts(readiness, assets)
+        plan, raw, meta = director.plan(video, sites, bool(job.request.get("sponsored")), None, facts=facts,
+                                        rulebook=director.rulebook_digest(skill.rulebook_text()))
+        costs["claude_usd"] = round(costs.get("claude_usd", 0) + meta["usd"], 4)
+        jdump(costs, out / "costs.json")
+        held = held_items(plan, assets)
+        jdump({"plan": plan, "raw": raw, "meta": meta, "sites": sites, "held": held,
+               "order": ["assets", "plan_call", "plan_check", "overlay_plan"]}, out / "plan.json")
+        say(f"plan: {len(plan['segments'])} screencast(s), {len(plan['overlays'])} overlay(s), "
+            f"{len(plan.get('needs_primitive', []))} needs_primitive, {meta.get('calls')}, ${meta['usd']}"
+            + (f" — HELD: {', '.join(h['reason'] for h in held)}" if held else ""))
+    if not (out / "plan.json").exists():
+        return None
+    pdoc = json.loads((out / "plan.json").read_text())
+    sl = plan_to_shots(pdoc["plan"], assets)
+    jdump(sl, out / "shotlist.json")
+    check()
 
     if "set_dressing" in steps:
         setd = set_dressing_plan(sl, assets, app)
@@ -1591,7 +1646,8 @@ def _flow(job, out, ranges, app, elements=None, steps=None, max_gens=1, image_bu
 
 
 DARK_APPS = {"chatgpt"}                        # RULEBOOK S7: ChatGPT is recorded in dark theme
-FACTORY_FILES = ("readiness.json", "shotlist.json", "assets.json", "set_dressing.json", "dryrun.json", "expect.json")
+FACTORY_FILES = ("readiness.json", "assets.json", "plan.json", "shotlist.json", "set_dressing.json", "dryrun.json",
+                 "expect.json")
 
 
 def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, adapter=None, **_):
@@ -1600,11 +1656,11 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
       sites      request.json "sites", else derived from the narration (aieditor/sites.py)
       readiness  per site: Scout profile copy available + logged in (agentrec.scout_for), theme
       the FULL flow for the whole narration on the first ready app that has an adapter (APPS):
-                 readiness.json (+ "features" the plan may use), shotlist.json (beat ledger: every
-                 beat on its edl word), assets.json (every narrated object produced first),
-                 set_dressing.json, dryrun.json, expect.json — the director plans from these
-                 (longedit → director.plan / validate, planfit.Facts)
-      gate.json  {"go", "status", "sites": [{url, scout, dark, ready}], "fallbacks", "flow", ...}
+                 readiness.json (+ "features" the plan may use), assets.json (content first: every
+                 narrated object produced and checked), plan.json (the single plan call + check + the
+                 overlay call; longedit reuses it), shotlist.json, set_dressing.json, dryrun.json, expect.json
+      gate.json  {"go", "status", "sites": [{url, scout, dark, ready}], "fallbacks", "flow", "held", ...}
+    held       plan.json "held" (needs_primitive / needs_asset): the worker stops the job HELD after this stage
     A site that is not ready is dropped from the gate (its moments stay A-roll) — never a stop.
     The flow's files are reused while they are newer than edl.json (it costs Claude + images)."""
     from . import sites as sites_mod
@@ -1648,10 +1704,10 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
         try:
             if fresh:
                 fg = json.loads((out / "flow-gate.json").read_text()) if (out / "flow-gate.json").exists() else {}
-                log("pre-production: readiness/shot list/assets/dry run are newer than the edit — reused")
+                log("pre-production: readiness/assets/plan/dry run are newer than the edit — reused")
             else:
                 if progress:
-                    progress("Pre-production: readiness, shot list, assets, dry run…", 0.2)
+                    progress("Pre-production: readiness, assets, plan, dry run…", 0.2)
                 job = EdlJob(d, req, video)
                 fg = _flow(job, out, [job.whole()], app, elements=(d / "elements") if (d / "elements").is_dir() else None,
                            cancelled=cancelled, say=log) or {}
@@ -1668,6 +1724,10 @@ def run(job_dir, req=None, edl=None, log=log, progress=None, cancelled=None, ada
                                   f"({', '.join(g['flow']['failing'][:4])})"})
                 g["status"] = "go" if rows else "aroll_only"
             note += f"; pre-production {fg.get('status') or 'done'}"
+            pdoc = json.loads((out / "plan.json").read_text()) if (out / "plan.json").exists() else {}
+            g["held"] = list(pdoc.get("held") or [])
+            if g["held"]:
+                note += f"; HELD ({', '.join(sorted({h['reason'] for h in g['held']}))})"
         except InterruptedError:
             raise
         except Exception as e:  # noqa: BLE001 — factory rule: route, don't fail

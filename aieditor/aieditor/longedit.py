@@ -175,10 +175,17 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     # for beats the account can show, about objects a produced asset holds (gap list G2)
     facts = preprod_facts(d, scouts)
     plan_p = w / "direct.json"
+    pre_plan = d / "preprod" / "plan.json"
     if not _fresh(plan_p, edl_at):
-        progress("Claude is planning the edit (screencasts + graphics)…", 0.02)
-        plan, raw, meta = director.plan(video, sites, sponsored, knowledge, facts=facts)
-        usd += meta["usd"]
+        if k == 1 and _fresh(pre_plan, edl_at):
+            # pre-production already made THE plan (one Opus call + check + one Sonnet overlay call): reuse it
+            pdoc = json.load(open(pre_plan))
+            plan, raw, meta = pdoc["plan"], pdoc["raw"], {**pdoc.get("meta", {}), "usd": 0.0, "from": "preprod/plan.json"}
+            sites = pdoc.get("sites") or sites
+        else:
+            progress("Claude is planning the edit (screencasts + graphics)…", 0.02)
+            plan, raw, meta = director.plan(video, sites, sponsored, knowledge, facts=facts)
+            usd += meta["usd"]
         json.dump({"plan": plan, "raw": raw, "meta": meta, "sites": sites}, open(plan_p, "w"), indent=1)
         for x in plan["dropped"]:
             log(f"edit {k}: dropped {x.get('template', 'screencast')} ({x['dropped']})")
@@ -188,6 +195,12 @@ def plan_and_record(d, k, v, sites, sponsored, fps, progress, cancelled, log):
     # re-validate the cached answer every run: a fixed rule reaches existing jobs, and a trim
     # only ever shortens a segment, so its recording stays valid
     plan = director.validate(doc["raw"], video, doc.get("sites", sites), facts)
+    for key in ("needs_primitive", "held", "schema_plan", "plan_check"):     # the plan call's verdict rides along
+        if key in doc["plan"]:
+            plan[key] = doc["plan"][key]
+    for n in plan.get("needs_primitive") or []:
+        # the plan check left something no proven action can show: held, never recorded as A-roll filler
+        add_held(d, "needs_primitive", str(n.get("why") or n.get("sentence"))[:300])
     if plan != doc["plan"]:
         old = [(x.get("start"), x.get("url"), x.get("session")) for x in doc["plan"].get("segments", [])]
         if old != [(x.get("start"), x.get("url"), x.get("session")) for x in plan["segments"]]:
