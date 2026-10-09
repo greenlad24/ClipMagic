@@ -32,6 +32,7 @@ Before the first recorded frame, an agent works hands-on in the demoed software 
 | C4 | Any moment | No foreign brand/content in frame: **"Blue Bottle Coffee" (brand, document, Recents thumbnail, brand-menu entry) must never be visible** — Jake forbids deleting/renaming it, so it is kept out by framing, cuts, scrolling or view choice | template/colour match of the Blue Bottle assets + text crops on every 4th frame; 0 hits |
 | C5 | Any moment | No transient UI on screen: pop-ups, toasts, "Reading the site…", spinners, suggestion lists, flashes of a parent menu, half-drawn layouts, blank/loading canvases | frame-to-frame layout jump detector + spinner/toast templates; any 1-frame layout jump = fail |
 | C6 | "sign up", "you'll land on the signup page", "log in" from a logged-out viewpoint | Recorded in a separate LOGGED-OUT profile showing the real auth page | page fingerprint |
+| C7 | PRIVATE INFORMATION IS ALWAYS BLURRED (Jake 2026-10-09): email addresses, passwords and password fields, API keys/tokens/secrets (incl. "sk-…", bearer tokens, webhook URLs with keys), phone numbers, payment/card details, street addresses, account IDs, invoice/billing details, and other people's names/avatars/chats. Detected automatically on every recorded frame (DOM: input[type=password|email], known selectors; plus OCR patterns for emails, keys, phone numbers) and covered with a strong gaussian blur that tracks the element through zoom/pan for its whole time on screen. If an item cannot be located reliably, blur the whole region or cut the beat. Jake's own display name "Jake Dawson" is NOT private (ruled 2026-10-08) — his email address IS. QA fails any frame where such text is legible. |
 
 ## 2. Framing
 | # | Rule | Numbers | Verify |
@@ -94,6 +95,7 @@ Before the first recorded frame, an agent works hands-on in the demoed software 
 | L1 | Naming the tool ("this tool called X") → its landing page (or full-screen narration), arriving within word + 0.30 s (Jake rule 3) |
 | L2 | Landing pages: hold ×1.00 for 1–2 s with the logo fully in frame, then the hero push (F3, M1); pan to the CTA he clicks next if any (ZM07) |
 | L3 | Pricing (Jake rule 7): landing page unzoomed first, then a hard cut straight onto the Free card framed by its box (F2/F3), centred, not under the bubble; no other prices visible |
+| L4 | Prices on screen are ALWAYS in US dollars, and pricing is ALWAYS shown from OUTSIDE the account (Jake 2026-10-09): a SEPARATE, fresh Chrome browser that was never logged in (its own empty profile, no Scout profile copy, no cookies — never the logged-in browser; NEVER log out of a logged-in browser or session to get a logged-out view) going out through a US location (US egress/VPN), en-US locale, US timezone — the product's public pricing page. Never show pricing, plan, upgrade or billing screens from inside the logged-in account (its currency follows the account's country, and it is the account's billing data). If the public page still shows another currency, re-record via the US route or cut that beat to A-roll. A pricing/upgrade modal that pops up uninvited inside the account is closed off camera and never shown. |
 
 ## 9. Text overlays
 | # | Rule |
@@ -105,8 +107,8 @@ Before the first recorded frame, an agent works hands-on in the demoed software 
 ## 10. A-roll
 | # | Rule |
 |---|---|
-| A1 | Each A-roll block starts at ×1.00 and pushes linearly at **1–3 % per second** (house 2.25 %/s), capping at ×1.12–1.16 (house ×1.13) then holding (AR01; re-measured R7) |
-| A2 | ~~Punch-in alternation ×1.3–1.5 on jump cuts (CUT07)~~ — **not in the references** (ruling R7): jump cuts inside a presenter stretch keep the framing and the AR01 push runs on across them. A long A-roll stretch (no screencast/graphic to cut to) is split at SENTENCE STARTS into reference-length pushes (each from ×1.00, reset ≈ 6 s in, ≤ 10 s; a picture jump cut next to the sentence start is the preferred reset) so the picture is never still > 3 s (P1) — screencast/aroll_plan.py |
+| A1 | Each A-roll block starts at ×1.00 and pushes linearly at **1–3 % per second**, capping at ×1.12–1.16 then holding (AR01) |
+| A2 | A take change inside an A-roll block that keeps the same framing gets a punch-in alternation of ×1.3–1.5 about the face (CUT07, refs 3–5); no jump cut with identical framing within 1 s of a transition |
 | A3 | No scale pop at A-roll entries (T5) |
 
 ## 11. Reviewer rulings log (append-only)
@@ -116,4 +118,11 @@ Before the first recorded frame, an agent works hands-on in the demoed software 
 - R4 (round 1): Jake's T5 numbers override TR05's 10 f + 8 f.
 - R5 (2026-10-08, Jake): the Blue Bottle Coffee brand/document must NOT be deleted or renamed; keep it out of frame (C4).
 - R6 (round 2): builder claims require frame-measured evidence (§0.3); six round-2 claims were false.
-- R7 (2026-10-08, A-roll re-measured on refs 2–5: ORB+RANSAC similarity scale on every 2nd non-screencast frame, 9 006 presenter frames): push rate p50 1.98 / 2.55 / 2.62 / 1.85 %/s, cap p50 ×1.12 / 1.14 / 1.13 / 1.10, camera moving 77–84 % of presenter time; scale ratio across 106 presenter→presenter jump cuts p10–p90 0.97–1.01, only 3 changed ≥ 8 % → CUT07 alternation dropped (A2); TR07 opening identical in all 4 refs (≈ ×1.5 → 1.0 in ~1 s); AR02 outro punch ×1.22–1.23 (r3 13:11, r4 13:17, r5 15:01).
+- R7 (2026-10-09, Jake): "that can appear only in dollars (so you need to show always the pricing using a VPN from the US)" → L4. Trigger: the creative edit showed ChatGPT's "Upgrade your plan" modal in Thai baht (฿699 / ฿3,350) at 46–51 s.
+- R8 (2026-10-09, Jake): "all private information like emails, passwords, private apis, should be blurred on screen" → C7.
+- R9 (2026-10-09, Jake): "For pricing - don't use the logged in account - look at it from the outside (on a US browser)" → L4 rewritten: pricing = logged-out US browser only.
+- R10 (2026-10-09, Jake): "That should be in another chrome browser - never log out from a logged in browser" → L4: outside views (pricing, landing pages as a visitor) use a separate never-logged-in Chrome; logging out of any logged-in browser/session is forbidden (it would also kill the saved Scout login).
+- R11 (2026-10-09, Jake): "G1 trims pauses - I don't want that at all" → Natural pauses are never trimmed and no cut is added to Jake's narration (Jake 2026-10-09); long-form keeps pauses <= 0.70 s as recorded (edl.LONG_PAUSE_KEEP = 0.70, rules.json narration.pause_keep / never_trim). No reference number (pause profile, jump-cut count, span length) is ever a reason to cut narration; the rubric does not score pauses.
+
+## 12. Measurement notes (kept from the retired second copy that lived next to SYSTEM.md; merged here 2026-10-09)
+- M1 (measurement note — not the §3 M1 camera move; **conflicts with A2; reviewer to re-confirm**). Originally "R7 (2026-10-08)" of the live copy: A-roll re-measured on refs 2–5: ORB+RANSAC similarity scale on every 2nd non-screencast frame, 9 006 presenter frames): push rate p50 1.98 / 2.55 / 2.62 / 1.85 %/s, cap p50 ×1.12 / 1.14 / 1.13 / 1.10, camera moving 77–84 % of presenter time; scale ratio across 106 presenter→presenter jump cuts p10–p90 0.97–1.01, only 3 changed ≥ 8 % → CUT07 alternation dropped (A2); TR07 opening identical in all 4 refs (≈ ×1.5 → 1.0 in ~1 s); AR02 outro punch ×1.22–1.23 (r3 13:11, r4 13:17, r5 15:01). Until the reviewer re-confirms, A2 (CUT07 on) wins and the switch is rules.json `aroll.cut07.enabled`; CUT07 only reframes existing cuts and never adds a cut to the narration (R11).

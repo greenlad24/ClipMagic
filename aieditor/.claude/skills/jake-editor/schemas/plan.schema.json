@@ -1,0 +1,70 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "jake-editor/plan.schema.json",
+ "title": "Edit plan (single plan call output; beat compiler input)",
+ "description": "Shared by recommendation steps 3 (the single Opus plan call + plan check) and 5 (beat compiler, rehearsal, scripted recorder). A beat may only name an action of the segment app's playbook (proven, unless rules.json playbooks.allow_unproven). A sentence that needs an action the playbook lacks goes to needs_primitive, never into a beat. Beat fields are a superset of the G2 beat ledger (planfit.build_ledger / preprod.ledger_fields).",
+ "type": "object",
+ "required": ["segments"],
+ "properties": {
+  "segments": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": ["t0", "t1", "app", "session", "beats"],
+    "properties": {
+     "t0": {"type": "number", "description": "output seconds"},
+     "t1": {"type": "number"},
+     "app": {"type": "string", "description": "playbook app id (playbooks/<app>.json)"},
+     "session": {"enum": ["logged_in", "outside"], "description": "outside = the separate never-logged-in en-US Chrome through the US route (RULEBOOK L4/R9/R10)"},
+     "start_state": {"type": ["string", "object", "null"], "description": "playbook start_state override or a named state"},
+     "beats": {"type": "array", "items": {"$ref": "#/$defs/beat"}}
+    }
+   }
+  },
+  "aroll": {"type": "array", "items": {"type": "object", "required": ["t0", "t1"], "properties": {"t0": {"type": "number"}, "t1": {"type": "number"}, "why": {"type": "string"}}}},
+  "plates": {"type": "array", "items": {"type": "object", "required": ["t0", "t1"], "properties": {"t0": {"type": "number"}, "t1": {"type": "number"}, "asset_id": {"type": "string"}, "technique_id": {"type": "string"}}}},
+  "overlays": {"type": "array", "items": {"type": "object", "required": ["t0", "kind"], "properties": {"t0": {"type": "number"}, "t1": {"type": "number"}, "kind": {"type": "string"}, "text": {"type": "string"}, "word_id": {"type": "integer"}}}},
+  "needs_primitive": {
+   "type": "array",
+   "items": {
+    "type": "object",
+    "required": ["sentence", "why"],
+    "properties": {
+     "sentence": {"type": "string"},
+     "word_ids": {"type": "array", "items": {"type": "integer"}},
+     "why": {"type": "string"},
+     "proposed": {"type": ["object", "string", "null"], "description": "the action the onboarding agent should add and prove off camera (or the honest route)"}
+    }
+   }
+  }
+ },
+ "$defs": {
+  "beat": {
+   "type": "object",
+   "required": ["id", "word_id", "t_word", "action"],
+   "properties": {
+    "id": {"type": "string"},
+    "word_id": {"type": "integer"},
+    "t_word": {"type": "number", "description": "the naming/action word's start, output seconds"},
+    "clause_start": {"type": "number", "description": "a move never starts before this (RULEBOOK M1)"},
+    "clause_word_id": {"type": "integer"},
+    "action": {"type": "string", "description": "a playbook action id"},
+    "params": {"type": "object"},
+    "subject": {"type": "string", "description": "ui:<label> | asset:<id> | screen"},
+    "technique_id": {"type": ["string", "null"]},
+    "must_text": {"type": "array", "items": {"type": "string"}},
+    "typed_text": {"type": ["string", "null"]},
+    "result_assertion": {"type": ["string", "null"]},
+    "asset_id": {"type": ["string", "null"]},
+    "live": {"type": "boolean", "description": "the in-progress state is shown live (he talks about the wait)"},
+    "wait_talk": {"type": ["object", "null"], "properties": {"t0": {"type": "number"}, "t1": {"type": "number"}}, "description": "the words about the wait: live state held 3.5-6 s, then dissolve on the payoff"},
+    "seg": {"type": "integer"},
+    "cue": {"type": "string"},
+    "body": {"type": "string"},
+    "route": {"type": "string"},
+    "why": {"type": ["string", "null"]},
+    "cue_score": {"type": "number"}
+   }
+  }
+ }
+}

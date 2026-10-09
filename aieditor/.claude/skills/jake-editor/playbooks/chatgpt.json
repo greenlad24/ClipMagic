@@ -1,0 +1,261 @@
+{
+ "app": "chatgpt",
+ "hosts": ["chatgpt.com"],
+ "version": "2026-10-09.1",
+ "source": "Built 2026-10-09 from existing knowledge only (no live session): preprod.py ChatGPT adapter on factory/aligned (FEATURES, new_chat_steps, GENERATING, readiness notes, STATIC_CHECKS; labels measured 2026-10-08 on Jake's Plus account), fix/G3 beatscript.py constants (CHATGPT_COMPOSER, CHATGPT_SEND) and the fix/G3 agent-step fixtures seg-03/10/11 (composer at screenshot (700-720, 324), '/' key, paste-whole prompts). Every action is proven:false until it replays 3/3 from a fresh session (aieditor/playbook.py replay).",
+ "start_state": {
+  "url": "https://chatgpt.com/",
+  "asserts": [
+   {"kind": "account", "value": "Jake Dawson", "why": "Jake's own account (display name is not private, ruled 2026-10-08)"},
+   {"kind": "theme", "value": "dark", "why": "RULEBOOK S7: ChatGPT is recorded in dark theme"},
+   {"kind": "absent", "value": "What should we work on?", "why": "Chat mode, not Work (S7)"},
+   {"kind": "absent", "value": "Recents", "why": "sidebar hidden: old chats out of frame, never deleted (S4/S7)"},
+   {"kind": "selector", "selector": "[contenteditable=\"true\"]", "why": "the composer is there"}
+  ],
+  "fingerprint": null
+ },
+ "set_dressing": ["new_chat", "chat_mode", "hide_sidebar", "close_menus"],
+ "actions": {
+  "new_chat": {
+   "kind": "goto", "label": "Open a fresh chat", "url": "https://chatgpt.com/",
+   "intents": ["\\bnew chat\\b", "\\bstart screen\\b"],
+   "post": [{"kind": "selector", "selector": "[contenteditable=\"true\"]"}],
+   "typical_latency_s": 5, "generates": false, "proven": false, "replays": [],
+   "source": "preprod.ChatGPT.new_chat_steps (open home, settle 5)"
+  },
+  "chat_mode": {
+   "kind": "click", "label": "Chat", "selectors": ["text=Chat"],
+   "post": [{"kind": "absent", "value": "What should we work on?"}],
+   "typical_latency_s": 1.5, "generates": false, "proven": false, "replays": [],
+   "source": "preprod.ChatGPT.set_chat_mode / new_chat_steps (S7: Chat mode, not Work)"
+  },
+  "hide_sidebar": {
+   "kind": "click", "label": "Hide sidebar", "selectors": ["button[aria-label=\"Hide sidebar\"]", "text=Hide sidebar"],
+   "params": {"optional": {"type": "boolean"}},
+   "post": [{"kind": "absent", "value": "Recents"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod.ChatGPT.new_chat_steps (optional; old chats hidden, never deleted)"
+  },
+  "close_menus": {
+   "kind": "key", "label": "Close menus (Escape)",
+   "params": {"key": {"type": "string", "default": "Escape"}},
+   "post": [{"kind": "absent", "value": "Add photos & files"}],
+   "typical_latency_s": 0.3, "generates": false, "proven": false, "replays": [],
+   "source": "preprod.ChatGPT.new_chat_steps (S3: no open menus/pop-ups)"
+  },
+  "clear_composer": {
+   "kind": "key", "label": "Clear the message box",
+   "params": {"keys": {"type": "array", "default": ["Meta+a", "Backspace"]}},
+   "intents": ["\\bbox cleared\\b", "\\bclear(?:ed)? the (?:message )?box\\b"],
+   "post": [{"kind": "text", "selector": "[contenteditable=\"true\"]", "value": ""}],
+   "typical_latency_s": 0.3, "generates": false, "proven": false, "replays": [],
+   "source": "preprod.ChatGPT.clear_composer; agent_rec.mjs 'type' clears with execCommand first (the browser is a Mac: Ctrl+A is ignored, 2026-10-09)"
+  },
+  "paste_prompt": {
+   "kind": "paste", "label": "Paste the prompt into the message box",
+   "selectors": ["[contenteditable=\"true\"]", "#prompt-textarea"],
+   "params": {"text": {"type": "string", "required": true}},
+   "intents": ["\\bpasted?\\b", "\\b(?:type|typed|typing) the prompt\\b", "\\bprompt\\b[^;]{0,40}\\bin whole\\b"],
+   "pre": [{"kind": "selector", "selector": "[contenteditable=\"true\"]"}],
+   "post": [{"kind": "text", "selector": "[contenteditable=\"true\"]", "value": "{text}"}],
+   "typical_latency_s": 0.4, "generates": false, "proven": false, "replays": [],
+   "source": "fix/G3 beatscript CHATGPT_COMPOSER + paste-once into a cleared field (RULEBOOK C3/K1); preprod COMPOSER_SEL; G3 seg-10 steps (paste: true, whole prompt)"
+  },
+  "send": {
+   "kind": "click", "label": "Send", "selectors": ["button[data-testid=\"send-button\"]"],
+   "intents": ["\\bhit send\\b", "\\bclick (?:the )?send\\b", "\\b(?:round )?(?:blue )?arrow\\b", "\\bhit enter\\b", "\\bsend it\\b"],
+   "pre": [{"kind": "selector", "selector": "button[data-testid=\"send-button\"]"}],
+   "post": [{"kind": "absent", "selector": "button[data-testid=\"send-button\"]"}],
+   "typical_latency_s": 40, "generates": true, "proven": false, "replays": [],
+   "source": "fix/G3 beatscript CHATGPT_SEND; preprod GENERATING ('Send'); FACTS.generation ≈ 31-42 s send → finished image"
+  },
+  "plus_sketch": {
+   "kind": "click", "label": "Sketch", "selectors": ["text=Sketch"],
+   "requires": ["open_plus_menu"],
+   "intents": ["\\+['\"]?\\s*(?:->|→|>|,)?\\s*(?:then\\s+)?(?:click\\s+)?['\"]?sketch\\b", "\\bsketch plugin\\b", "\\bplus menu\\b[^;]{0,40}\\bsketch\\b", "\\badd files and more\\b[^;]{0,40}\\bsketch\\b"],
+   "pre": [{"kind": "text", "value": "Add photos & files"}],
+   "post": [{"kind": "selector", "selector": "canvas"}],
+   "typical_latency_s": 1.5, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness 'sketch_plus_menu' (composer '+' → Plugins → 'Sketch'; canvas, checkmark to attach) = the honest route PLUS_SKETCH"
+  },
+  "plus_create_image": {
+   "kind": "click", "label": "Create image", "selectors": ["text=Create image"],
+   "requires": ["open_plus_menu"],
+   "intents": ["\\bcreate image\\b", "\\bimage option\\b"],
+   "pre": [{"kind": "text", "value": "Add photos & files"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness 'image_option' (composer '+' → 'Create image  Visualize anything')"
+  },
+  "open_plus_menu": {
+   "kind": "click", "label": "Add files and more (+)",
+   "selectors": ["button[aria-label=\"Add files and more\"]", "text=Add files and more"],
+   "intents": ["(?:click|open)s?\\s+(?:the\\s+)?['\"]?\\+['\"]?", "\\bplus (?:button|menu)\\b", "\\badd files and more\\b"],
+   "post": [{"kind": "text", "value": "Add photos & files"}],
+   "typical_latency_s": 0.6, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness ('Add files and more' → menu with 'Add photos & files', 'Create image', Plugins → 'Sketch')"
+  },
+  "upload_photo": {
+   "kind": "upload", "label": "Add photos & files", "selectors": ["input[type=file]"],
+   "params": {"files": {"type": "array", "required": true}},
+   "intents": ["\\battach(?:ed)?\\b", "\\bupload\\b", "\\bdrag it\\b"],
+   "post": [{"kind": "selector", "selector": "img"}],
+   "typical_latency_s": 2, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness 'upload' (composer '+' → 'Add photos & files', input[type=file]; recorder action 'upload')"
+  },
+  "open_image_viewer": {
+   "kind": "click", "label": "Open the image", "selectors": ["[data-testid=\"generated-image-preview\"]"],
+   "params": {"nth": {"type": "integer", "default": 0}},
+   "intents": ["\\bclick (?:the )?(?:picture|photo|image)\\b", "\\b(?:image )?editor opens\\b", "\\bopen up the image\\b"],
+   "post": [{"kind": "text", "value": "Close viewer"}],
+   "typical_latency_s": 1.5, "generates": false, "proven": false, "replays": [],
+   "source": "preprod IMAGE_SEL + readiness viewer probe ('Close viewer', toolbar Markup/Comment/Remove BG/Erase/Resize)"
+  },
+  "viewer_markup": {
+   "kind": "click", "label": "Markup", "selectors": ["text=Markup"], "requires": ["open_image_viewer"],
+   "intents": ["\\bmarkup\\b"], "pre": [{"kind": "text", "value": "Close viewer"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod TOOLBAR (readiness tb_markup)"
+  },
+  "viewer_comment": {
+   "kind": "click", "label": "Comment", "selectors": ["text=Comment"], "requires": ["open_image_viewer"],
+   "intents": ["\\bcomment(?:s)?\\b(?! pins)"], "pre": [{"kind": "text", "value": "Close viewer"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod TOOLBAR (readiness tb_comment)"
+  },
+  "viewer_erase": {
+   "kind": "click", "label": "Erase", "selectors": ["text=Erase"], "requires": ["open_image_viewer"],
+   "intents": ["\\berase\\b"], "pre": [{"kind": "text", "value": "Close viewer"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod TOOLBAR (readiness tb_erase)"
+  },
+  "viewer_remove_bg": {
+   "kind": "click", "label": "Remove BG", "selectors": ["text=Remove BG"], "requires": ["open_image_viewer"],
+   "intents": ["\\bremove (?:bg|background)\\b"], "pre": [{"kind": "text", "value": "Close viewer"}],
+   "typical_latency_s": 40, "generates": true, "proven": false, "replays": [],
+   "source": "preprod TOOLBAR + GENERATING + FACTS.remove_bg (canned prompt; transparent cutout as a new message, on the dark chat background)"
+  },
+  "viewer_resize": {
+   "kind": "click", "label": "Resize", "selectors": ["text=Resize"], "requires": ["open_image_viewer"],
+   "intents": ["\\bresize\\b"], "pre": [{"kind": "text", "value": "Close viewer"}],
+   "post": [{"kind": "text", "value": "Square 1:1"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod TOOLBAR/RESIZE (readiness tb_resize, tb_resize_options)"
+  },
+  "resize_option": {
+   "kind": "click", "label": "{shape}", "selectors": ["text={shape}"], "requires": ["viewer_resize"],
+   "params": {"shape": {"type": "string", "required": true, "enum": ["Square 1:1", "Portrait 3:4", "Story 9:16", "Landscape 4:3", "Widescreen 16:9"]}},
+   "intents": ["\\b(?:square 1:1|portrait 3:4|story 9:16|landscape 4:3|widescreen 16:9)\\b"],
+   "typical_latency_s": 40, "generates": true, "proven": false, "replays": [],
+   "source": "preprod RESIZE + GENERATING (each shape starts a generation)"
+  },
+  "close_viewer": {
+   "kind": "click", "label": "Close viewer", "selectors": ["text=Close viewer"],
+   "intents": ["\\bclose (?:the )?(?:editor|viewer)\\b"],
+   "post": [{"kind": "absent", "value": "Close viewer"}],
+   "typical_latency_s": 0.6, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness viewer probe"
+  },
+  "open_images_page": {
+   "kind": "goto", "label": "Images page", "url": "https://chatgpt.com/images",
+   "intents": ["chatgpt\\.com/images\\b", "\\bimages page\\b", "\\bclick images\\b"],
+   "post": [{"kind": "text", "value": "Templates"}],
+   "typical_latency_s": 4, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness 'templates' (https://chatgpt.com/images → tab 'Templates')"
+  },
+  "images_templates_tab": {
+   "kind": "click", "label": "Templates", "selectors": ["text=Templates"], "requires": ["open_images_page"],
+   "intents": ["\\btemplates?\\b"],
+   "post": [{"kind": "text", "value": "Logo"}],
+   "typical_latency_s": 1, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness 'templates' (items Logo, Poster, Interior design) = honest route for 'templates on the toolbar'"
+  },
+  "slash_menu": {
+   "kind": "key", "label": "Type '/' in the message box", "selectors": ["[contenteditable=\"true\"]"],
+   "params": {"key": {"type": "string", "default": "/"}},
+   "intents": ["\\bforward slash\\b", "'/' typed"],
+   "post": [{"kind": "text", "value": "Work in a project"}],
+   "typical_latency_s": 0.8, "generates": false, "proven": false, "replays": [],
+   "source": "preprod readiness note (\"'/' lists only Feedback, Model, Work in a project\"); gap item 19 frame (Add custom GPT / Dictate / Feedback / Model / Work in a project); G3 seg-11 key '/'"
+  },
+  "wait_generation": {
+   "kind": "wait_for", "label": "Wait for the generation (off camera, clock frozen)",
+   "selectors": ["[data-testid=\"generated-image-preview\"]"],
+   "params": {"timeout": {"type": "number", "default": 90}},
+   "typical_latency_s": 40, "generates": false, "proven": false, "replays": [],
+   "source": "preprod FACTS.generation (status line + % pill, 31-42 s)"
+  },
+  "reveal_result": {
+   "kind": "reveal", "label": "Dissolve to the finished result (K2)",
+   "params": {"asset": {"type": "string", "required": true}, "url": {"type": "string"}},
+   "intents": ["\\bdissolve to the result\\b", "\\bfinished image\\b", "\\bthe result appears\\b"],
+   "typical_latency_s": 0, "generates": false, "proven": false, "replays": [],
+   "source": "fix/G3 agent_rec.mjs 'reveal' (K2 time-skip dissolve to a result made off camera; RULEBOOK K2)"
+  },
+  "scroll_thread": {
+   "kind": "scroll", "label": "Scroll the chat thread",
+   "params": {"by": {"type": "number", "required": true}},
+   "intents": ["\\bscroll\\b"],
+   "typical_latency_s": 0.5, "generates": false, "proven": false, "replays": [],
+   "source": "agent_rec.mjs 'scroll' (native wheel, RULEBOOK K3)"
+  }
+ },
+ "features": {
+  "at_sketch": {
+   "exists": false, "honest_route": "plus_sketch",
+   "patterns": ["@\\s?sketch", "\\bat[- ]sketch\\b", "\\bat symbol\\b"],
+   "fact": "@Sketch has no picker in this ChatGPT build (no @-mention picker for Sketch); the honest route is '+' → Sketch",
+   "source": "preprod readiness 'at_sketch' + FEATURES.at_sketch; gap item 11"
+  },
+  "tb_sketch": {
+   "exists": false, "honest_route": "plus_sketch",
+   "patterns": ["\\bsketch button\\b", "\\bclick(?:s|ing)? (?:on )?sketch\\b", "\\bsketch (?:on|in) the (?:image )?toolbar\\b", "\\btoolbar\\b[^;]{0,40}\\bsketch\\b"],
+   "fact": "Sketch is NOT on the image toolbar (toolbar = Markup, Comment, Remove BG, Erase, Resize)",
+   "source": "preprod readiness 'tb_sketch' + FEATURES.tb_sketch; gap item 10"
+  },
+  "tb_templates": {
+   "exists": false, "honest_route": "images_templates_tab",
+   "patterns": ["\\btemplates? (?:on|in) the (?:image )?toolbar\\b", "\\btoolbar\\b[^;]{0,40}\\btemplates?\\b"],
+   "fact": "Templates are NOT on the image toolbar; they live on chatgpt.com/images → Templates",
+   "source": "preprod readiness 'tb_templates' + FEATURES.tb_templates"
+  },
+  "slash_background": {
+   "exists": false, "honest_route": null,
+   "patterns": ["/\\s?background\\b", "\\bslash (?:new ?bg|background)\\b", "\\bbackground (?:skill|option|command)\\b", "/\\s?new\\s?bg\\b", "\\bnewbg\\b", "\\bafter the (?:slash )?command\\b"],
+   "fact": "the '/' menu only has Add custom GPT, Dictate, Feedback, Model, Work in a project — no background skill, '/newbg' does nothing",
+   "source": "preprod readiness 'slash_newbg' + FEATURES.slash_newbg; gap item 19"
+  },
+  "slash_add_object": {
+   "exists": false, "honest_route": null,
+   "patterns": ["/\\s?add[ _]?object\\b", "\\badd[ _]object\\b"],
+   "fact": "no '/add_object' skill in the '/' menu",
+   "source": "preprod readiness 'slash_add_object' + FEATURES.slash_add_object"
+  },
+  "updated_label": {
+   "exists": false, "honest_route": null,
+   "patterns": ["\\bupdated\\b"],
+   "fact": "there is no 'Updated' badge anywhere the image option appears (+ menu, model picker, /images)",
+   "source": "preprod readiness 'updated_label'; gap item 14"
+  },
+  "pricing_in_app": {
+   "exists": false, "honest_route": "outside:https://chatgpt.com/pricing",
+   "patterns": ["/pricing\\b", "#pricing\\b", "\\bpricing page\\b", "\\b(?:free|plus|pro|go|team|business)\\s+(?:plan\\s+)?card\\b", "\\bplan cards?\\b", "\\bupgrade (?:modal|your plan)\\b", "\\bprices\\b"],
+   "fact": "logged in, /pricing is the 'Upgrade your plan' billing modal in the account's currency (Plus = 'Your current plan', Thai baht); there is no Free card for a Plus account. Pricing comes only from the separate never-logged-in en-US Chrome through the US route",
+   "source": "preprod STATIC_CHECKS pricing_in_app + FEATURES.pricing_in_app; RULEBOOK L4, R7, R9, R10"
+  },
+  "named_old_chat": {
+   "exists": false, "honest_route": "reveal_result",
+   "patterns": ["\\bthe '[^']+' chat\\b", "\\bthe \"[^\"]+\" chat\\b", "\\bchat (?:called|named)\\b"],
+   "fact": "recordings start in a fresh chat with old chats out of frame (S7); a named prior chat (e.g. 'Bakery Image Prompt') is not known to exist — a prior result is produced off camera and revealed",
+   "source": "RULEBOOK S7/C4; gap item 8 (the director invented a chat)"
+  },
+  "image_option": {"exists": true, "honest_route": "plus_create_image", "fact": "'+' → 'Create image'", "source": "preprod readiness 'image_option'"},
+  "sketch_plus_menu": {"exists": true, "honest_route": "plus_sketch", "fact": "'+' → Plugins → 'Sketch' (canvas, checkmark to attach)", "source": "preprod readiness 'sketch_plus_menu'"},
+  "upload": {"exists": true, "honest_route": "upload_photo", "fact": "'+' → 'Add photos & files'", "source": "preprod readiness 'upload'"},
+  "templates": {"exists": true, "honest_route": "images_templates_tab", "fact": "chatgpt.com/images → Templates (Poster, Interior design, Logo, …)", "source": "preprod readiness 'templates'"},
+  "image_toolbar": {"exists": true, "honest_route": "open_image_viewer", "fact": "image viewer toolbar holds exactly Markup, Comment, Remove BG, Erase, Resize", "source": "preprod TOOLBAR"},
+  "slash_menu": {"exists": true, "honest_route": "slash_menu", "fact": "'/' lists Add custom GPT, Dictate, Feedback, Model, Work in a project", "source": "preprod readiness note; gap item 19"}
+ },
+ "walls": ["Unusual activity", "Verify you are human", "Just a moment\\.\\.\\.", "Too many requests", "Something went wrong"],
+ "outside_only": ["^(?:https?://)?(?:www\\.)?chatgpt\\.com/(?:#)?pricing\\b", "^(?:https?://)?(?:www\\.)?chatgpt\\.com/[^ ]*#pricing\\b", "^(?:https?://)?(?:www\\.)?openai\\.com/[^ ]*pricing"],
+ "private_selectors": ["input[type=\"email\"]", "input[type=\"password\"]", "[autocomplete=\"cc-number\"]", "[data-testid*=\"email\" i]"]
+}
