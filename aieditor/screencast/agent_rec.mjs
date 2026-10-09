@@ -54,7 +54,7 @@ import { CHROME, launchArgs, identity, dress, wall as wallOf, accountName, HB_ON
 // billing, checkout, delete, share, publish or log out. AGENT_SESSION=outside only for a fresh profile.
 import { check as guardCheck, describeInPage } from "./clickguard.mjs";
 const SESSION = process.env.AGENT_SESSION || (profileDir ? "logged_in" : "outside");
-import { privacySampler, privateSelectors } from "./privacy_dom.mjs";   // RULEBOOK C7: private boxes every 0.25 s
+import { privacySampler, privateSelectors, privacyBoxes } from "./privacy_dom.mjs";   // RULEBOOK C7: private boxes every 0.25 s
 // the Scout account this session belongs to (first name, noted on the first clean page; AGENT_ACCOUNT overrides)
 let ACCOUNT = process.env.AGENT_ACCOUNT || null;
 async function wall(pg) {
@@ -93,7 +93,8 @@ let rec = null;            // {ff, frame, events, cursor, dir}
 const NET = [];
 let cx = CSS_W * 0.62, cy = CSS_H * 0.58;
 let obsN = 0;
-const t = () => (rec ? rec.frame / FPS : 0);
+// a single-beat retake (p7 recorder) records a PIECE that starts at its beat's window in segment time (t0)
+const t = () => (rec ? (rec.t0 || 0) + rec.frame / FPS : 0);
 const toCap = (b) => b && [b.x * SCALE, b.y * SCALE, b.width * SCALE, b.height * SCALE].map(Math.round);
 
 // ⚠️ 2026-10-08 (pre-production, ChatGPT): policy "advance" FAST-FORWARDS the page clock whenever it is idle
@@ -232,6 +233,24 @@ function pngGray(buf) {
 async function tiny() {
   const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.05) });
   return pngGray(Buffer.from(s.data, "base64")).g;
+}
+// 64-bit dHash of the screen (p7: a beat's expected end-state fingerprint; = beatscript.dhash on the same grid)
+async function fingerprint() {
+  const s = await cdp.send("Page.captureScreenshot", { format: "png", clip: await vclip(0.05) });
+  const { w, h, g } = pngGray(Buffer.from(s.data, "base64"));
+  let bits = 0n;
+  for (let r = 0; r < 8; r++) {
+    const y0 = Math.floor(r * h / 8), y1 = Math.max(y0 + 1, Math.floor((r + 1) * h / 8));
+    const row = [];
+    for (let c = 0; c < 9; c++) {
+      const x0 = Math.floor(c * w / 9), x1 = Math.max(x0 + 1, Math.floor((c + 1) * w / 9));
+      let sum = 0, n = 0;
+      for (let y = y0; y < Math.min(y1, h); y++) for (let x = x0; x < Math.min(x1, w); x++) { sum += g[y * w + x]; n++; }
+      row.push(sum / Math.max(1, n));
+    }
+    for (let c = 0; c < 8; c++) bits = (bits << 1n) | (row[c] < row[c + 1] ? 1n : 0n);
+  }
+  return bits.toString(16).padStart(16, "0");
 }
 const changedShare = (a, b) => { let n = 0; for (let i = 0; i < a.length; i++) if (Math.abs(a[i] - b[i]) > 12) n++; return n / a.length; };
 function blankish(g) {
@@ -519,7 +538,7 @@ async function hold(s) { const n = Math.round(s * FPS); for (let i = 0; i < n; i
 let curAt = null, curMeta = {};
 function log(type, extra = {}) {
   const e = { t: t(), type, ...extra };
-  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type", "drag", "draw"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
+  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type", "drag", "draw", "upload", "key"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
   if (rec) rec.events.push(e);
   return e;
 }
@@ -755,11 +774,16 @@ let openRead = null;
 async function guard(a) {
   const ty = String(a.type || "");
   let q = null;
-  if (["click", "dblclick"].includes(ty)) q = a.ref ? { ref: a.ref } : a.x != null ? { x: a.x * SHOT_F, y: a.y * SHOT_F } : null;
+  if (["click", "dblclick"].includes(ty)) q = a.ref ? { ref: a.ref } : a.x != null ? { x: a.x * SHOT_F, y: a.y * SHOT_F }
+    : a.selector ? { selector: a.selector } : null;
+  else if (ty === "drag") { const p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from; if (Array.isArray(p0)) q = { x: p0[0] * SHOT_F, y: p0[1] * SHOT_F }; }
   else if (ty === "key") q = { focused: true };
   else if (ty === "type") q = a.ref ? { ref: a.ref } : a.selector ? { selector: a.selector } : { focused: true };
   const target = q ? await page.evaluate(describeInPage, q).catch(() => null) : null;
-  const g = guardCheck(a, target, SESSION);
+  // p7: a drag is a press where it starts; a K2 reveal is a navigation to the asset's page; an upload / draw
+  // presses nothing a deny rule names (their files / strokes come from assets.json)
+  const ga = ty === "drag" ? { ...a, type: "click" } : ty === "reveal" ? { type: "goto", url: a.url } : a;
+  const g = guardCheck(ga, target, SESSION);
   if (!g.ok) {
     process.stderr.write(`clickguard: refused ${JSON.stringify(a).slice(0, 200)} — ${g.why}\n`);
     if (rec) rec.events.push({ t: t(), type: "refused", rule: g.refused, why: g.why });
@@ -780,11 +804,11 @@ async function act(a) {
   // beat metadata the camera reads (a scripted beat list): explicit zoom, the sentence start the
   // move may not begin before ("from"), "beat" = a word-timed beat that must not be dropped
   curMeta = {};
-  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames", "ledger", "word_t", "live"]) if (a[k] != null) curMeta[k] = a[k];
+  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames", "ledger", "word_t", "live", "beat_id", "word", "cursor_at"]) if (a[k] != null) curMeta[k] = a[k];
   // a page scroll ENDS on its word (0.4 s per ~200 px chunk): the thing he names is on screen as
   // he names it — v10 pricing: a scroll that STARTED on "free" showed the Free card 1.6 s late
   const scrollLead = a.type === "scroll" && !a.zoom ? 0.4 * Math.max(1, Math.round(Math.abs(a.by || 0) / 200)) : 0;
-  const startAt = a.at != null ? a.at - (a.travel_ms != null && LEAD[a.type] != null ? a.travel_ms / 1000 + 0.12 : (LEAD[a.type] ?? scrollLead)) : null;
+  const startAt = a.at != null ? a.at - (a.travel_ms != null && LEAD[a.type] != null ? a.travel_ms / 1000 + (a.settle_s ?? 0.12) : (LEAD[a.type] ?? scrollLead)) : null;
   // non-pointer actions wait here; pointer actions wait after their target is found (an off-screen
   // target is scrolled to first, and that scroll must END by the word, not start on it)
   const pointer = ["click", "dblclick", "hover", "move", "read", "highlight"].includes(a.type) && a.ref;
@@ -914,7 +938,7 @@ async function act(a) {
       const e = log("click", { box: toCap(fb || b), abox: toCap(b), text: b.text });
       Object.assign(e, await seen(fb || b));
       await moveTo(...c);
-      if (rec) await hold(0.12);
+      if (rec) await hold(a.settle_s ?? 0.12);
       // the PRESS lands on its word (Jake #11 "the click lands on 'click'"): LEAD is only the cursor's
       // travel budget — with the cursor already there (dblclick after a click) it pressed 0.64 s early
       // (loop round 1, seg 0 30.26 for "designed" at 30.90)
@@ -1080,7 +1104,8 @@ async function act(a) {
       await sleep((a.settle ?? 1.5) * 1000);
       if (rec) await pause();
       log("wait", { text: a.text, found, ...(a.k2 ? { fade: true, k2: { frames: Math.max(3, Math.min(8, a.k2.frames ?? 6)) }, until: a.until ?? null } : {}),
-                    ...(a.ledger != null ? { ledger: a.ledger } : {}) });
+                    ...(a.ledger != null ? { ledger: a.ledger } : {}), ...(a.word_t != null ? { word_t: a.word_t } : {}),
+                    ...(a.beat_id != null ? { beat_id: a.beat_id } : {}), ...(a.live ? { live: true } : {}) });
       if (!found) return { ok: false, t: t(), error: `"${a.text}" did not ${a.gone ? "go away" : "appear"} in ${a.timeout ?? 180} s` };
       break;
     }
@@ -1191,7 +1216,7 @@ async function pressCombo(k) {
   await page.keyboard.press(parts[parts.length - 1]);
   for (const m of mods.reverse()) await page.keyboard.up(m);
 }
-async function startSegment(dir) {
+async function startSegment(dir, t0 = 0) {
   const full = path.join(workdir, dir);
   fs.mkdirSync(full, { recursive: true });
   const ff = spawn("ffmpeg", ["-v", "error", "-y", "-f", "image2pipe", "-framerate", String(FPS), "-c:v", "mjpeg", "-i", "-",
@@ -1200,7 +1225,7 @@ async function startSegment(dir) {
     { stdio: ["pipe", "ignore", "inherit"] });
   await heartbeat(true);          // static pages keep painting under paused virtual time
   await pause();                  // the recorded clock only moves frame by frame
-  rec = { ff, frame: 0, events: [], cursor: [], dir: full, url: page.url() };
+  rec = { ff, frame: 0, t0: +t0 || 0, events: [], cursor: [], dir: full, url: page.url() };
   log("begin");
 }
 async function endSegment(until) {
@@ -1213,7 +1238,7 @@ async function endSegment(until) {
   r.priv?.flush(path.join(r.dir, "privacy.json"));
   fs.writeFileSync(path.join(r.dir, "events.json"), JSON.stringify({
     capture: { w: W, h: H, fps: FPS, scale: SCALE, css: [CSS_W, CSS_H] }, virtual_time: true, pre_frames: 0, url: r.url,
-    end: r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
+    t0: r.t0 || 0, end: (r.t0 || 0) + r.frame / FPS, failed: null, cursor: r.cursor, events: r.events, walls: r.walls || [],
     browser: { exe: CHROME, ua: UA, version: ID.full }, account: ACCOUNT }, null, 1));
   rec = null;
   await heartbeat(false);
@@ -1258,7 +1283,7 @@ for await (const line of rl) {
     else if (m.cmd === "guard") { const w = await wall(page); if (w && rec) { rec.walls = rec.walls || []; rec.walls.push({ t: t(), ...w }); } out({ ok: true, wall: w, url: page.url(), account: ACCOUNT }); }
     else if (m.cmd === "reload") { const g = await guard({ type: "reload", url: page.url() }); if (!g.ok) { out({ ok: false, refused: g.refused, error: g.why }); continue; } await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {}); await sleep((m.settle ?? 6) * 1000); out({ ok: true, wall: await wall(page), url: page.url() }); }
     else if (m.cmd === "whoami") { out({ ok: true, ...(await page.evaluate(() => ({ ua: navigator.userAgent, platform: navigator.platform, webdriver: navigator.webdriver, languages: navigator.languages, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, text: (document.body?.innerText || "").slice(0, 20000), uaData: navigator.userAgentData ? navigator.userAgentData.toJSON() : null, gl: (() => { try { const g = document.createElement("canvas").getContext("webgl"); const x = g.getExtension("WEBGL_debug_renderer_info"); return [g.getParameter(x.UNMASKED_VENDOR_WEBGL), g.getParameter(x.UNMASKED_RENDERER_WEBGL)]; } catch (e) { return String(e); } })() })).catch((e) => ({ error: String(e) }))), exe: CHROME }); }
-    else if (m.cmd === "segment") { await startSegment(m.out); out({ ok: true }); }
+    else if (m.cmd === "segment") { await startSegment(m.out, m.t0 ?? 0); out({ ok: true, t0: m.t0 ?? 0 }); }
     else if (m.cmd === "observe") out({ ok: true, ...(await observe()) });
     else if (m.cmd === "shot") { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 80, clip: await vclip(1 / SHOT_F) }); const f = path.join(workdir, `obs-${String(++obsN).padStart(4, "0")}.jpg`); fs.writeFileSync(f, Buffer.from(s.data, "base64")); out({ ok: true, shot: f }); }
     else if (m.cmd === "count") { const n = await page.$$eval(m.selector, (els) => els.length).catch(() => -1); out({ ok: n >= 0, n }); }
@@ -1368,8 +1393,11 @@ for await (const line of rl) {
       const w = await wall(page);
       const shot = path.join(workdir, `ff-${String(++obsN).padStart(4, "0")}.jpg`);
       try { const s = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 90, clip: await vclip(1 / SHOT_F) }); fs.writeFileSync(shot, Buffer.from(s.data, "base64")); } catch {}
-      out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot });
+      let fp = null; try { fp = await fingerprint(); } catch {}
+      const priv = await privacyBoxes(page, privateSelectors(), 1);          // C7: private boxes in this frame (CSS px)
+      out({ ok: !d.error, ...d, account: who, expected: ACCOUNT, lum, blank, dark: lum == null ? null : lum < 60, wall: w, shot, fp, private: priv });
     }
+    else if (m.cmd === "fp") { let fp = null; try { fp = await fingerprint(); } catch {} out({ ok: fp != null, fp, url: page.url() }); }
     else if (m.cmd === "assert") {
       // AFTER EACH BEAT (G3 spec 2): url in the whitelist, texts present / absent, the focused / named field's text
       const r = await page.evaluate((m) => {

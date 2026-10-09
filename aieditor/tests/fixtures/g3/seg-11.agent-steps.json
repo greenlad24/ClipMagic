@@ -1,0 +1,296 @@
+[
+ {
+  "t": 0,
+  "action": {
+   "type": "click",
+   "at": 0.7,
+   "x": 720,
+   "y": 324
+  },
+  "result": "ok"
+ },
+ {
+  "t": 1.0010000000000001,
+  "action": {
+   "type": "key",
+   "at": 1.8,
+   "key": "/"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 2.0020000000000002,
+  "action": {
+   "type": "hover",
+   "at": 2.9,
+   "ref": "r68"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 2.8695333333333335,
+  "action": {
+   "type": "key",
+   "at": 8.1,
+   "key": "Escape"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 8.308300000000001,
+  "action": {
+   "type": "type",
+   "at": 10.7,
+   "ref": "r63",
+   "text": "rustic kitchen background",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 11.378033333333333,
+  "action": {
+   "type": "key",
+   "at": 14.2,
+   "key": "Control+A"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.4144,
+  "action": {
+   "type": "key",
+   "at": 14.6,
+   "key": "/"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.8148,
+  "action": {
+   "type": "key",
+   "at": 14.9,
+   "key": "Escape"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.1151,
+  "action": {
+   "type": "key",
+   "at": 15.2,
+   "key": "Control+A"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.4154,
+  "action": {
+   "type": "type",
+   "at": 15.42,
+   "ref": "r63",
+   "text": "/add object ",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.8158,
+  "action": {
+   "type": "click",
+   "at": 15.9,
+   "ref": "r63"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 16.249566666666666,
+  "action": {
+   "type": "key",
+   "at": 16.3,
+   "key": "Control+A"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 16.5165,
+  "action": {
+   "type": "type",
+   "at": 16.6,
+   "ref": "r63",
+   "text": "/add object ",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 16.916900000000002,
+  "action": {
+   "type": "key",
+   "at": 16.92,
+   "key": "Meta+A"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 17.150466666666667,
+  "action": {
+   "type": "type",
+   "at": 17.4,
+   "ref": "r63",
+   "text": "/add object ",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 17.550866666666668,
+  "action": {
+   "type": "key",
+   "at": 17.6,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 17.817800000000002,
+  "action": {
+   "type": "key",
+   "at": 17.9,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 18.118100000000002,
+  "action": {
+   "type": "key",
+   "at": 18.2,
+   "key": "Shift+Home"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 18.418400000000002,
+  "action": {
+   "type": "key",
+   "at": 18.45,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 18.651966666666667,
+  "action": {
+   "type": "key",
+   "at": 18.7,
+   "key": "End"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 18.9189,
+  "action": {
+   "type": "goto",
+   "at": 18.95,
+   "url": "https://chatgpt.com/",
+   "fade": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 18.952266666666667,
+  "action": {
+   "type": "click",
+   "at": 18.95,
+   "ref": "r64"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 19.386033333333334,
+  "action": {
+   "type": "key",
+   "at": 19.4,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 19.619600000000002,
+  "action": {
+   "type": "type",
+   "at": 19.62,
+   "ref": "r64",
+   "text": "/add object a large indoor olive tree beside the sofa",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 20.02,
+  "action": {
+   "type": "key",
+   "at": 20.1,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 20.3203,
+  "action": {
+   "type": "type",
+   "at": 20.35,
+   "ref": "r64",
+   "text": "/add object a large indoor olive tree beside the sofa",
+   "paste": true,
+   "enter": false
+  },
+  "result": "no element for {\"ref\":\"r64\",\"text\":\"/add object a large indoor olive tree beside the sofa\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 20.3203,
+  "action": {
+   "type": "click",
+   "at": 20.35,
+   "ref": "r63"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 21.287933333333335,
+  "action": {
+   "type": "key",
+   "at": 21.3,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 21.5215,
+  "action": {
+   "type": "type",
+   "at": 21.55,
+   "ref": "r63",
+   "text": "/add object a large indoor olive tree beside the sofa",
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 21.9219,
+  "action": {
+   "type": "read",
+   "at": 21.92,
+   "ref": "r63",
+   "ms": 2500
+  },
+  "result": "ok"
+ }
+]

@@ -1,0 +1,12 @@
+{"note": "the assets.json shape G2 pre-production writes (preprod.build_assets): a sketch with its doodle items, the uploaded photo; results made off camera are added by the compiler as 'needed'",
+ "assets": [
+  {"id": "sketch", "kind": "sketch", "desc": "crude mouse doodle: squat bottle, picnic table, wonky sun, chili pepper with a face", "status": "ready",
+   "file": "/w/preprod/assets/sketch.png",
+   "source": {"type": "programmatic doodle (preprod.doodle_svg)", "doodle": [
+     {"shape": "bottle", "box": [400, 300, 230, 400], "color": "#111"},
+     {"shape": "table", "box": [170, 650, 680, 300], "color": "#111"},
+     {"shape": "sun", "box": [720, 70, 240, 240], "color": "#111"},
+     {"shape": "pepper", "box": [80, 640, 260, 200], "color": "#c22"}]}},
+  {"id": "hot_sauce_photo", "kind": "photo", "desc": "phone photo of a hot sauce bottle on a counter", "status": "ready",
+   "file": "/w/preprod/assets/hot_sauce_photo.png", "source": {"type": "generated"}}
+ ]}

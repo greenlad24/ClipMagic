@@ -1,0 +1,450 @@
+[
+ {
+  "t": 0,
+  "action": {
+   "type": "read",
+   "at": 0.6,
+   "ref": "r94",
+   "ms": 2500
+  },
+  "result": "ok"
+ },
+ {
+  "t": 0.6006,
+  "action": {
+   "type": "hover",
+   "at": 3.4,
+   "ref": "r92",
+   "ms": 2500
+  },
+  "result": "ok"
+ },
+ {
+  "t": 3.636966666666667,
+  "action": {
+   "type": "goto",
+   "at": 7.3,
+   "url": "https://chatgpt.com",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 7.307300000000001,
+  "action": {
+   "type": "key",
+   "at": 7.4,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 7.6076,
+  "action": {
+   "type": "type",
+   "at": 9.4,
+   "ref": "r63",
+   "text": "@Sketch",
+   "cps": 16,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.410400000000001,
+  "action": {
+   "type": "key",
+   "at": 10.5,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 10.710700000000001,
+  "action": {
+   "type": "type",
+   "at": 10.8,
+   "ref": "r63",
+   "text": "@Sketch",
+   "cps": 18,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 11.077733333333333,
+  "action": {
+   "type": "key",
+   "at": 11.1,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 11.311300000000001,
+  "action": {
+   "type": "key",
+   "at": 11.4,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 11.611600000000001,
+  "action": {
+   "type": "click",
+   "at": 11.7,
+   "ref": "r63"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.045366666666666,
+  "action": {
+   "type": "key",
+   "at": 12.1,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.3123,
+  "action": {
+   "type": "key",
+   "at": 12.31,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.512500000000001,
+  "action": {
+   "type": "key",
+   "at": 12.6,
+   "key": "Shift+End"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 12.812800000000001,
+  "action": {
+   "type": "type",
+   "at": 12.81,
+   "ref": "r63",
+   "text": "@Sketch",
+   "cps": 20,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 13.146466666666667,
+  "action": {
+   "type": "key",
+   "at": 13.2,
+   "key": "Control+Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 13.413400000000001,
+  "action": {
+   "type": "key",
+   "at": 13.5,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 13.713700000000001,
+  "action": {
+   "type": "key",
+   "at": 13.72,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 13.947266666666668,
+  "action": {
+   "type": "goto",
+   "at": 14.0,
+   "url": "https://chatgpt.com/",
+   "cut": true
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.014000000000001,
+  "action": {
+   "type": "click",
+   "at": 14.01,
+   "ref": "r65"
+  },
+  "result": "no element for {\"ref\":\"r65\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 14.014000000000001,
+  "action": {
+   "type": "click",
+   "at": 14.02,
+   "ref": "r64"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.447766666666666,
+  "action": {
+   "type": "key",
+   "at": 14.46,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.681333333333333,
+  "action": {
+   "type": "key",
+   "at": 14.7,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 14.9149,
+  "action": {
+   "type": "click",
+   "at": 14.92,
+   "ref": "r65"
+  },
+  "result": "no element for {\"ref\":\"r65\"} \u2014 observe again and use a ref from the list"
+ },
+ {
+  "t": 14.9149,
+  "action": {
+   "type": "click",
+   "at": 14.92,
+   "ref": "r64"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.348666666666666,
+  "action": {
+   "type": "key",
+   "at": 15.36,
+   "key": "Shift+Home"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.582233333333333,
+  "action": {
+   "type": "key",
+   "at": 15.6,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 15.8158,
+  "action": {
+   "type": "click",
+   "at": 15.85,
+   "x": 722,
+   "y": 324
+  },
+  "result": "ok"
+ },
+ {
+  "t": 16.249566666666666,
+  "action": {
+   "type": "type",
+   "at": 16.3,
+   "text": "@Sketch",
+   "cps": 18,
+   "paste": true,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 16.649966666666668,
+  "action": {
+   "type": "click",
+   "at": 16.7,
+   "ref": "r69"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 17.650966666666665,
+  "action": {
+   "type": "key",
+   "at": 17.65,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 17.851166666666668,
+  "action": {
+   "type": "key",
+   "at": 17.9,
+   "key": "Control+a"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 18.118100000000002,
+  "action": {
+   "type": "type",
+   "at": 18.12,
+   "ref": "r64",
+   "text": "@Sketch",
+   "cps": 18,
+   "paste": false,
+   "enter": false
+  },
+  "result": "ok"
+ },
+ {
+  "t": 19.052366666666668,
+  "action": {
+   "type": "key",
+   "at": 19.05,
+   "key": "Shift+Home"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 19.252566666666667,
+  "action": {
+   "type": "key",
+   "at": 19.3,
+   "key": "Backspace"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 19.5195,
+  "action": {
+   "type": "click",
+   "at": 19.6,
+   "ref": "r69"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 20.7207,
+  "action": {
+   "type": "click",
+   "at": 20.8,
+   "ref": "r80"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 22.022000000000002,
+  "action": {
+   "type": "click",
+   "at": 22.6,
+   "ref": "r87"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 23.156466666666667,
+  "action": {
+   "type": "click",
+   "at": 23.2,
+   "x": 860,
+   "y": 150,
+   "box": [
+    323,
+    43,
+    634,
+    634
+   ]
+  },
+  "result": "ok"
+ },
+ {
+  "t": 24.5245,
+  "action": {
+   "type": "click",
+   "at": 25.2,
+   "ref": "r85"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 25.925900000000002,
+  "action": {
+   "type": "click",
+   "at": 26.0,
+   "x": 470,
+   "y": 520,
+   "box": [
+    323,
+    43,
+    634,
+    634
+   ]
+  },
+  "result": "ok"
+ },
+ {
+  "t": 27.060366666666667,
+  "action": {
+   "type": "read",
+   "at": 31.7,
+   "x": 640,
+   "y": 360,
+   "box": [
+    323,
+    43,
+    634,
+    634
+   ],
+   "ms": 2500
+  },
+  "result": "ok"
+ },
+ {
+  "t": 31.7317,
+  "action": {
+   "type": "click",
+   "at": 36.1,
+   "ref": "r95"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 36.40303333333333,
+  "action": {
+   "type": "click",
+   "at": 36.4,
+   "ref": "r95"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 36.836800000000004,
+  "action": {
+   "type": "key",
+   "at": 37.4,
+   "key": "Escape"
+  },
+  "result": "ok"
+ },
+ {
+  "t": 37.60423333333333,
+  "action": {
+   "type": "click",
+   "at": 37.6,
+   "ref": "r98"
+  },
+  "result": "ok"
+ }
+]
