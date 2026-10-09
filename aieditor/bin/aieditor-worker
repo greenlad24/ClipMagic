@@ -352,10 +352,14 @@ def run_job(job, action):
 def run_preprod(job, req, info, fps):
     """PRE-PRODUCTION — stage 0 of the creative edit (workflow 2): aieditor/preprod.py run(). For the
     whole narration it resolves the sites and, on the first ready app with an adapter, runs the full
-    flow (readiness → shot list → assets → set dressing → dry run → gate) and writes
-    preprod/{readiness,shotlist,assets,set_dressing,dryrun,expect,gate}.json — the director then plans
-    only what the account can show, from produced assets (longedit.preprod_facts → planfit). If the
-    module is missing the stage is SKIPPED.
+    flow in this ORDER (recommendation §3.2 + step 3, content first):
+        readiness → assets (manifest from the narration, spaced generations, one vision check each,
+        regenerate <= 2) → plan_call (ONE Opus call, closed action list) → plan check (re-ask <= 2) →
+        overlay plan (ONE Sonnet call) → set dressing → dry run → gate
+    and writes preprod/{readiness,manifest,assets,plan,shotlist,set_dressing,dryrun,expect,gate}.json;
+    the edit records exactly preprod/plan.json (longedit reuses it: no second plan call). When the plan
+    still needs a primitive or an asset failed its check (gate.json "held"), the job stops HELD here —
+    nothing is recorded, nothing is filled with A-roll. If the module is missing the stage is SKIPPED.
 
     Contract the worker calls: preprod.run(job_dir, **kw) where kw is whichever of these the
     function's signature names (or all of them with **kwargs):
@@ -404,6 +408,16 @@ def run_preprod(job, req, info, fps):
     note = (str(note) if note else "done") + (f", ${float(usd):.2f}" if usd else "")
     job.log(f"stage preprod done {note}")
     job.stage("preprod", "done", note)
+    held = (jload(d / "preprod" / "gate.json") or {}).get("held") or []
+    for kind in ("needs_primitive", "needs_asset"):          # this run decides afresh
+        longedit.clear_held(d, kind)
+    if held:
+        # the plan needs an action no playbook has proven, or an asset failed its generation check: held
+        # before anything is recorded (decision 5 default — never an A-roll substitute)
+        reasons = []
+        for h in held:
+            reasons = longedit.add_held(d, h.get("reason", "held"), h.get("detail", ""))
+        raise Held(reasons)
 
 
 def run_cut_path(job, action, req, fmt, sponsored, info, fps, words, sents, by_id, audio, step, rebuild):
