@@ -446,7 +446,7 @@ def screen_pieces(w, allsegs, qa, words, expect=None):
     return sorted(pieces, key=lambda p: p["t0"]), lost
 
 
-def edit_verdict(d, k, w, plan, lost, qa=None, content=None):
+def edit_verdict(d, k, w, plan, lost, qa=None, content=None, draft="output"):
     """The compose tail (recommendation §4 checkpoints 3+4): structure gate + coverage gate + the rubric's
     code dimensions on the edit -> edit-NN/verdict.json. The worker holds the job when it says held.
     (Judged dimensions D1/D3/D4 count only from a calibrated judge — judges.py; none runs here yet, so
@@ -465,7 +465,7 @@ def edit_verdict(d, k, w, plan, lost, qa=None, content=None):
         pass
     v = gates.edit_verdict(struct, cov, rb, judged=None, salvage_lost=lost,
                            held_reasons=gates.held_doc(d)["reasons"], unapproved=rb["measured"]["unapproved"],
-                           private_frames=private)
+                           private_frames=private, draft=draft)
     if content:
         v["content_qa"] = gates.scores(content, lost_beats=sum(1 for f in lost if f.get("beat")))
     (w / "verdict.json").write_text(json.dumps(v, indent=1))
@@ -539,8 +539,15 @@ def privacy_qa(w, clips, cancelled, passed=None):
     return out
 
 
-def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=None, face_src=None):
-    """Camera per segment at `size`, the A-roll camera on `base`, then the composite."""
+def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=None, face_src=None,
+            chunked=False, workers=None, verdict=True, crf=None, preset="veryfast", draft="output"):
+    """Camera per segment at `size`, the A-roll camera on `base`, then the composite.
+
+    chunked (factory mode, recommendation step 8): the composite renders in chunks (compose_long.plan_chunks)
+    in parallel, `workers` at once, joined by a stream copy; edit-NN/<out_name>.chunks.json keeps each
+    chunk's hash and a later round re-renders only the chunks whose inputs changed. verdict=False (the 4K
+    final after a draft that shipped): no new verdict — but a legible private frame in the 4K camera output
+    still holds the edit, and then no final is written (returns None)."""
     d = Path(d)
     w = d / f"edit-{k:02d}"
     plan = json.load(open(w / "direct.json"))["plan"]
@@ -613,7 +620,12 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         with ThreadPoolExecutor(par) as ex:
             for n, _ in enumerate(ex.map(camera, jobs)):
                 progress(f"Screencast cameras: {n + 1}/{len(jobs)} done", 0.1 + 0.4 * (n + 1) / max(1, len(jobs)))
-    privacy_qa(w, [(jb[0], jb[2]) for jb in jobs], cancelled, passed)
+    pq = privacy_qa(w, [(jb[0], jb[2]) for jb in jobs], cancelled, passed)
+    if not verdict and not pq.get("ok", True):
+        # the draft shipped, but the full-size camera output shows a private frame: held, no final
+        progress("Private frame in the full-size camera output — held, no final", 1.0)
+        edit_verdict(d, k, w, plan, lost, qa, None, draft=f"{W}x{H}")
+        return None
     for i, seg, clip, into_next, tail in jobs:
         cam = json.load(open(w / f"{clip}.camera.json"))
         kept = compose_long.trim_blank({"t0": seg["t0"], "t1": seg["t1"], "clip": clip, "bubble": True,
@@ -674,10 +686,16 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
                                       cancelled=cancelled)
     music = pick_music(d / base)
     progress("Compositing (screencasts, bubble, overlays, music)…", 0.75)
-    out = compose_long.composite(w, cam_base, segs, events, music, out_name, size, fps, face,
-                                 bubble_src=plain.name, crf=17 if W == 1920 else 16, cancelled=cancelled,
-                                 gfx_tag="gfx" if W == 1920 else f"gfx-{W}",
-                                 end_fade_from=max((w_["end"] for w_ in _video(d, k)["words"]), default=None))
+    crf = crf or (17 if W == 1920 else 16)
+    gfx_tag = "gfx" if W == 1920 else f"gfx-{W}"
+    end_fade = max((w_["end"] for w_ in _video(d, k)["words"]), default=None)
+    if chunked:
+        out = _compose_chunked(d, k, w, cam_base, segs, events, music, out_name, size, fps, face, plan, plain.name,
+                               crf, preset, gfx_tag, end_fade, workers, cancelled, progress)
+    else:
+        out = compose_long.composite(w, cam_base, segs, events, music, out_name, size, fps, face,
+                                     bubble_src=plain.name, crf=crf, preset=preset, cancelled=cancelled,
+                                     gfx_tag=gfx_tag, end_fade_from=end_fade)
     final = d / f"{out_name}.mp4"
     Path(out).replace(final)
     for ext in (".plan.json", ".cuts.json"):            # keep the motion plan with the edit (QA reads it)
@@ -686,9 +704,133 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
     (w / cam_base).unlink(missing_ok=True)
     plain.unlink(missing_ok=True)
     # checkpoints 3+4: the edit against the references -> verdict.json (the worker holds a failing job)
-    progress("Checking the edit against the references…", 0.98)
-    edit_verdict(d, k, w, plan, lost, qa, content_qa(w, expect_p, cancelled))
+    if verdict:
+        progress("Checking the edit against the references…", 0.98)
+        edit_verdict(d, k, w, plan, lost, qa, content_qa(w, expect_p, cancelled), draft=draft)
     return final
+
+
+CHUNK_FORMAT = 1          # bump when compose_long's chunk graph changes: every chunk hash changes with it
+
+
+def _compose_chunked(d, k, w, cam_base, segs, events, music, out_name, size, fps, face, plan, bubble_src, crf, preset,
+                     gfx_tag, end_fade, workers, cancelled, progress):
+    """plan_chunks on this edit's windows (seams at the A-roll's real picture cuts first), a hash per chunk,
+    then compose_long.composite_chunked (only chunks whose hash changed are rendered)."""
+    import hashlib
+    from . import skill
+    W, H = size
+    dur = media.probe(w / cam_base)["duration"]
+    compose_long.count_frames(w, events, gfx_tag)
+    cuts, shots = [], []
+    try:
+        cuts = json.loads((w / f"{cam_base}.cuts.json").read_text()).get("cuts") or []
+        shots = json.loads((w / f"{cam_base}.plan.json").read_text()).get("shots") or []
+    except (OSError, ValueError, AttributeError):
+        pass
+    blocks = json.load(open(w / "blocks.json"))
+    chunks = compose_long.plan_chunks(blocks, segs, events, cuts, fps, dur, end_fade)
+    v = json.load(open(d / "edl.json"))["videos"][k - 1]
+    cut_id = hashlib.sha256(json.dumps(v.get("pieces"), sort_keys=True).encode()).hexdigest()
+    extra = {"format": CHUNK_FORMAT, "size": [W, H], "fps": round(fps, 6), "crf": crf, "preset": preset, "cut": cut_id,
+             "face": face, "end_fade": end_fade, "dur": round(dur, 4)}
+    hplan = {"segments": plan.get("segments") or [], "overlays": plan.get("overlays") or [],
+             "aroll_shots": shots, "aroll_cuts": [{"t0": c, "t1": c} for c in cuts]}
+    hashes = compose_long.chunk_hashes(w, chunks, segs, events, hplan, skill.ROOT / "rules.json", extra, fps)
+    progress(f"Compositing in {len(chunks)} chunk(s)…", 0.75)
+    out, man = compose_long.composite_chunked(w, cam_base, segs, events, music, out_name, size, fps, face, chunks,
+                                              cancelled, crf, preset, bubble_src, gfx_tag, end_fade, workers, hashes,
+                                              log=lambda m: ev_log.emit("log", m))
+    return out
+
+
+# ── factory mode (recommendation step 8): no preview, no 1080p compose; a 540p draft is judged and the 4K
+# final is rendered only when the draft ships ────────────────────────────────────────────────────────────
+def factory_mode(req):
+    """request.json "factory": true/false decides (bin/aieditor-factory trial --factory sets it); without it,
+    a creative-workflow job on a factory server is a factory job. Jake's own cut workflow keeps its 1080p
+    previews (he reviews them)."""
+    req = req or {}
+    if isinstance(req.get("factory"), bool):
+        return req["factory"]
+    if os.environ.get("AIEDITOR_FACTORY_MODE") in ("0", "1"):
+        return os.environ["AIEDITOR_FACTORY_MODE"] == "1"
+    return config.FACTORY_SERVER and req.get("workflow") == "creative"
+
+
+def chunk_workers_of(req):
+    """request.json "chunk_workers" (bin/aieditor-factory trial --workers N) or AIEDITOR_CHUNK_WORKERS; None = auto
+    (compose_long.chunk_workers: one 4K chunk per 8 cores — 4 on a c-32)."""
+    for v in ((req or {}).get("chunk_workers"), os.environ.get("AIEDITOR_CHUNK_WORKERS")):
+        try:
+            if v and int(v) > 0:
+                return int(v)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def wants_preview(req, fmt):
+    """The 1080p preview-NN render: never for a long-form factory job (the 540p draft replaces it)."""
+    return not (fmt == "long" and factory_mode(req))
+
+
+def verdict_of(d, k):
+    try:
+        return json.loads((Path(d) / f"edit-{k:02d}" / "verdict.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def factory_edit(d, k, v, fps, src_size, cancelled, progress, room_tone_start=0.0, workers=None, final=True):
+    """One video in factory mode: the cut at 540p (fast) → the whole edit composed in chunks at 540p
+    (draft-NN.mp4) → p4's verdict on it (rubric + gates + judges) → only if it ships, the cut at the source
+    size → the 4K edit composed in chunks (final-NN.mp4). A held edit gets no 4K render.
+    -> {"draft": path, "held": bool, "final": path | None}"""
+    from . import render
+    d = Path(d)
+    W, H = src_size
+    dw, dh = (int(x) for x in render.draft_size(W, H).split(":"))
+    cut = f"cut{dh}-{k:02d}"
+    progress("Draft: the cut at 540p…", 0.0)
+    try:
+        render.render(d, v, fps, cut, f"{dw}:{dh}", crf=20, preset="veryfast", cancelled=cancelled,
+                      room_tone_start=room_tone_start, direct=True)
+        draft = compose(d, k, f"{cut}.mp4", fps, (dw, dh), cancelled, lambda m, f: progress(f"Draft: {m}", 0.05 + 0.4 * f),
+                        f"draft-{k:02d}", chunked=True, workers=workers, crf=23, preset="veryfast", draft=f"{dw}x{dh}")
+    finally:
+        (d / f"{cut}.mp4").unlink(missing_ok=True)
+    vd = verdict_of(d, k) or {"held": True}
+    if vd.get("held") or not final:
+        if vd.get("held"):
+            ev_log.emit("log", f"edit {k}: the 540p draft is held — no 4K render", level="warn")
+        return {"draft": draft, "held": bool(vd.get("held")), "final": None}
+    return {"draft": draft, "held": False, "final": factory_final(d, k, v, fps, src_size, cancelled, progress,
+                                                                  room_tone_start, workers)}
+
+
+def factory_final(d, k, v, fps, src_size, cancelled, progress, room_tone_start=0.0, workers=None):
+    """The 4K final of a draft that shipped (chunked; unchanged chunks of an earlier round reused). None when
+    the edit is held (no verdict, a held verdict, or a private frame in the full-size camera output)."""
+    from . import render
+    d = Path(d)
+    vd = verdict_of(d, k)
+    if not vd or vd.get("held"):
+        return None
+    W, H = src_size
+    done = d / f"final-{k:02d}.mp4"
+    vp, ep = d / f"edit-{k:02d}" / "verdict.json", d / "edl.json"
+    if done.exists() and all(not p.exists() or done.stat().st_mtime >= p.stat().st_mtime for p in (vp, ep)):
+        return done                                  # already made for this verdict (the compose step's 4K)
+    cut = f"cutfull-{k:02d}"
+    progress(f"Final: the cut at {W}×{H}…", 0.5)
+    try:
+        render.render(d, v, fps, cut, f"{W}:{H}", crf=14, preset="medium", cancelled=cancelled,
+                      room_tone_start=room_tone_start, direct=True)
+        return compose(d, k, f"{cut}.mp4", fps, (W, H), cancelled, lambda m, f: progress(f"Final: {m}", 0.55 + 0.45 * f),
+                       f"final-{k:02d}", chunked=True, workers=workers, verdict=False)
+    finally:
+        (d / f"{cut}.mp4").unlink(missing_ok=True)
 
 
 def _video(d, k):
