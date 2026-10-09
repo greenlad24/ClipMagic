@@ -196,6 +196,9 @@ def render(job, events, video, fps_out, size=(1920, 1080), cancelled=lambda: Fal
     scale = size[0] / 1920
     out = []
     for m, ev in enumerate(events):
+        if motiontemplates.is_motion(ev.get("template")) and not motiontemplates.enabled():
+            _log(f"overlay {m + 1} ({ev.get('template')}) not rendered: motion templates are switched off")
+            continue
         if motiontemplates.is_motion(ev.get("template")):
             # a motion TEMPLATE (verb_swap … prompt_result): its own DOM renderer on the shared runtime, timed by the
             # spoken words (motiontemplates.beats), the prompt box in the app's UI kit (none → neutral box, logged)

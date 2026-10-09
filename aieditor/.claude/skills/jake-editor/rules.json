@@ -93,6 +93,8 @@
   "replays_required": 3
  },
  "motion_templates": {
+  "enabled": false,
+  "enabled_src": "OFF until Jake approves the preview pack (coordinator 2026-10-09: 'show me the final motion design templates before we add them into the auto editor')",
   "src": "Jake 2026-10-09 (memory motion-templates-ui-kits): four reference clips (/opt/aieditor-work/reference/motion-2026-10-09) as overlay options + 'the prompt boxes always look like the actual UI ... 1 to 1' + 'in the hook part'; REFERENCE-BASELINE §1a (graphics only in the first 40 s, plates <= 1.5 %); usage: templates/<id>.md",
   "hook_s": 40.0,
   "max_per_video": 2,

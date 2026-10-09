@@ -26,13 +26,41 @@ def video(text, step=0.4, dur=None):
                       for i, w in enumerate(ws)]}
 
 
+# ── THE SWITCH: off until Jake approves the previews — a plan containing motion templates is rejected ──
+check(MT.enabled() is False, "rules.json motion_templates.enabled is OFF by default")
+_off_v = video("Grok Bot can now search read and analyze X " + "filler " * 40, step=0.4)
+_o, _d = director.validate_overlays([{"template": "verb_swap", "start": 0, "end": 8, "fields": {
+    "prefix": "Grok Bot can now", "verbs": ["search", "read", "analyze"], "suffix": "X"}}], _off_v, [])
+check(not _o and "switched off" in _d[0]["dropped"], "off: the director rejects a motion overlay")
+_k, _dd = MT.check([{"template": "tagline_build", "t0": 1.0, "t1": 3.0, "fields": {"words": "Every agent. One inbox."}}],
+                   _off_v)
+check(not _k and "switched off" in _dd[0]["dropped"], "off: the motion check rejects everything")
+check("verb_swap" not in director.overlay_schema()["properties"]["overlays"]["items"]["properties"]["template"]["enum"],
+      "off: the overlay call is never offered a motion template")
+check("MOTION TEMPLATES" not in director.overlay_prompt(_off_v, [], apps=["chatgpt"]), "off: no motion text in the prompt")
+_U = planfit.units(_off_v)
+for _u in _U:
+    _u["label"] = "A"
+check(planfit.hook_prompt_result(_U, _off_v, planfit.Facts({}, {"assets": [{"id": "x", "kind": "app_generation",
+                                                                              "status": "ready"}]}), "https://chatgpt.com/")
+      == (None, []), "off: no MO05 plate")
+_val = director.validate({"segments": [], "aroll_why": [], "plates": [], "overlays": [
+    {"template": "verb_swap", "start": 0, "end": 8, "fields": {"prefix": "Grok Bot can now", "verbs": ["a", "b"]}}]},
+    _off_v, [{"url": "https://example.com"}])
+check(not any(e.get("template") == "verb_swap" for e in _val["overlays"]) and "motion_s" not in _val["structure"],
+      "off: validate() keeps no motion overlay and the structure gate is unchanged")
+
+# everything below tests the templates as they will behave once switched ON
+MT.enabled = lambda: True
+
 # ── rules.json + registry ──
 R = skill.rules()["motion_templates"]
 check(set(R["ids"]) == set(MT.IDS), f"rules.json ids {sorted(R['ids'])} != module {sorted(MT.IDS)}")
 check(R["hook_s"] == 40.0, "hook = first 40 s (REFERENCE-BASELINE §1a)")
 for t in MT.IDS:
     check(MT.spec(t)["technique"] == MT.TECHNIQUE[t], f"{t} technique id")
-check(set(director.MOTION_OVERLAYS) == set(MT.IDS) - {"prompt_result"},
+check(set(director.MOTION_OVERLAYS) == set(MT.IDS) - {"prompt_result"} and
+      set(director.overlay_templates()) >= set(director.MOTION_OVERLAYS),
       "every motion template but MO05 is an overlay option; MO05 is placed by code only")
 for t in director.MOTION_OVERLAYS:
     check(t in director.OVERLAY_TEMPLATES and t in director.overlay_schema()["properties"]["overlays"]["items"][

@@ -322,6 +322,8 @@ def motion_plate_events(d, plan, log=None):
     REAL result produced off camera (preprod assets.json). A plate whose result file is gone is NOT rendered (the
     A-roll shows) and the reason is logged — never an invented result."""
     from . import motiontemplates as MT
+    if not MT.enabled():
+        return []
     assets = {}
     p = Path(d) / "preprod" / "assets.json"
     if p.exists():

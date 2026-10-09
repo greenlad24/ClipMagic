@@ -42,6 +42,12 @@ def rules():
     return skill.rules().get("motion_templates") or {}
 
 
+def enabled():
+    """The ONE switch (rules.json motion_templates.enabled). Off: the overlay planner never offers or accepts a motion
+    template, the hook PROMPT → RESULT (MO05) is never placed or generated, the structure gate is as before."""
+    return bool(rules().get("enabled", False))
+
+
 def ids():
     return tuple((rules().get("ids") or {}).keys())
 
@@ -319,6 +325,9 @@ def check(evs, video, segments=(), plates=(), kits=None, facts=None, log=None):
     → (kept, dropped) — dropped rows carry "dropped": why."""
     R = rules()
     kept, dropped = [], []
+    if not enabled():
+        return [], [{**e, "dropped": "motion templates are switched off (rules.json motion_templates.enabled = false)"}
+                    for e in evs]
     hook = hook_s()
     cap = float(skill.rules().get("structure", {}).get("plates_max_frac", 0.015)) * float(video.get("duration") or 0)
     used = sum(max(0.0, (p.get("t1") or 0) - (p.get("t0") or 0)) for p in plates)

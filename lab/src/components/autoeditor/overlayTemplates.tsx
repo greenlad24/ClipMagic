@@ -43,6 +43,9 @@ export interface OverlayTemplateInfo {
 export const PROMPT_KIT_NOTE =
   "Prompt boxes use the real app's UI kit (ChatGPT, Claude…) — or a neutral box when the app has no kit.";
 
+/** Mirrors aieditor rules.json motion_templates.enabled: the motion templates stay hidden until Jake approves them. */
+export const MOTION_TEMPLATES_ENABLED = false;
+
 export const OVERLAY_TEMPLATES: OverlayTemplateInfo[] = [
   { id: 'lower_title', name: 'Lower title', description: 'White text, lower centre, 1–2 short lines — the intro and a section’s opening line.' },
   { id: 'link', name: 'Link', description: '“Link in the description” — only when the speaker points to a link.' },
@@ -450,16 +453,17 @@ export function OverlayPreviewStyles() {
 
 /** The template catalog: every overlay the planner may place, with its preview. */
 export function OverlayCatalog({ className }: { className?: string }) {
+  const shown = OVERLAY_TEMPLATES.filter((t) => MOTION_TEMPLATES_ENABLED || !t.motion);
   return (
     <details className={cn('group rounded-md border border-border', className)}>
       <OverlayPreviewStyles />
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs">
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground transition-transform group-open:rotate-90" />
-        <span className="text-foreground">Overlay templates ({OVERLAY_TEMPLATES.length})</span>
+        <span className="text-foreground">Overlay templates ({shown.length})</span>
         <span className="truncate text-muted-foreground">what Claude can put on screen</span>
       </summary>
       <ul className="space-y-2 px-3 pb-3">
-        {OVERLAY_TEMPLATES.map((t) => (
+        {shown.map((t) => (
           <li key={t.id} className="flex items-start gap-2.5">
             <OverlayPreview id={t.id} />
             <div className="min-w-0 space-y-0.5">

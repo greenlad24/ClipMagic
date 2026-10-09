@@ -789,6 +789,8 @@ def hook_prompt_result(U, video, facts, site_url=None, used_s=0.0):
     → (plate | None, [notes])"""
     from . import motiontemplates as MT, uikits
     notes = []
+    if not MT.enabled():
+        return None, notes
     moments = MT.hook_prompt_moments(sentences(video["words"]))
     if not moments:
         return None, notes

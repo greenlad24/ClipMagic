@@ -570,7 +570,8 @@ def asset_manifest(job):
     for s in job.sents:
         t = job.out_time(s["ids"][0]) if hasattr(job, "out_time") else s["t0"]
         t = s["t0"] if t is None else t
-        if t >= motiontemplates.hook_s() or not motiontemplates.is_prompt_result_line(s["text"]):
+        if not motiontemplates.enabled() or t >= motiontemplates.hook_s() or \
+                not motiontemplates.is_prompt_result_line(s["text"]):
             continue
         prompt = motiontemplates.derive_prompt(s["text"])
         if prompt and not any(a.get("for") == "MO05" for a in assets):

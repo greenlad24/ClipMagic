@@ -39,8 +39,8 @@ OVERLAYS = """OVERLAY TEMPLATES (on the A-roll only — never while a screencast
 - list: 2-4 short items the speaker enumerates (each 1-4 words), anchored on the first item. fields: items.
 - number: a figure the speaker SAYS. fields: label, value, prefix, suffix.
 - question: (a lower_title line, TX03) the viewer question of the outro ("What are you editing first?"), the
-  whole question. fields: line1.
-MOTION TEMPLATES (Jake 2026-10-09; full-frame hook graphics — HOOK ONLY, the whole clip inside the first 40 s, at most 2
+  whole question. fields: line1."""
+OVERLAYS_MOTION = """MOTION TEMPLATES (Jake 2026-10-09; full-frame hook graphics — HOOK ONLY, the whole clip inside the first 40 s, at most 2
 per video, >= 4 s apart; each counts as a 'first'-zone overlay AND as a plate; their usage instructions follow):
 - verb_swap (MO01): "<prefix> <verb> <suffix>" with the verb rolling through 2-4 verbs he SAYS ("it can search, read
   and analyze X"). fields: prefix, verbs, suffix; beats verb_0.. on each spoken verb.
@@ -199,6 +199,8 @@ def validate_overlays(overlays, video, segs):
                 why = "overlaps a screencast"
             elif t0 < last_end + 0.6:
                 why = "overlaps the previous overlay"
+            if not motiontemplates.enabled():
+                why = "motion templates are switched off (rules.json motion_templates.enabled = false)"
             if why:
                 dropped.append({**ev, "dropped": why})
                 continue
@@ -409,6 +411,13 @@ def sentences_block(video):
     return "\n".join(out)
 
 
+MO05_PLAN = """- PROMPT → RESULT (MO05, Jake 2026-10-09): a HOOK line (first 40 s) like "you just type one sentence in plain English
+  and it …" is shown by code as the motion prompt card + the app's REAL result (a produced app_generation asset, in
+  the app's own UI kit) — when such an asset is listed, plan NO screencast over that line. In the body a prompt
+  moment stays a screencast.
+"""
+
+
 def plan_prompt(video, apps, facts=None, sponsored=False, knowledge=None, rulebook=None):
     rules = skill.rules()
     st, sy = rules.get("structure", {}), rules.get("sync", {})
@@ -442,11 +451,7 @@ THE PLAN — JSON (word ids from the transcript):
   / goto, else null), asset_id (a produced asset this beat uploads/reveals/frames, else null), live, wait_end_word.
 - aroll: the presenter stretches that name a tool or a UI step, with the reason they are not shown.
 - plates: the hook plate (first 40 s), asset_ids from the produced assets, technique_id TX07 or TX09.
-- PROMPT → RESULT (MO05, Jake 2026-10-09): a HOOK line (first 40 s) like "you just type one sentence in plain English
-  and it …" is shown by code as the motion prompt card + the app's REAL result (a produced app_generation asset, in
-  the app's own UI kit) — when such an asset is listed, plan NO screencast over that line. In the body a prompt
-  moment stays a screencast.
-- needs_primitive: each sentence that needs an action no list holds (sentence, word_ids, why, proposed route).
+{MO05_PLAN if motiontemplates.enabled() else ""}- needs_primitive: each sentence that needs an action no list holds (sentence, word_ids, why, proposed route).
 - no overlays here (a separate call places them).
 {"SPONSORED video: no claims beyond what is said." if sponsored else ""}
 
@@ -734,7 +739,7 @@ def check_plan(ans, video, apps, facts=None, sites=(), handoff=False):
                 errs.append(_err("structure", f"structure {name} = {st[name]} is outside the reference band {band} "
                                               "(REFERENCE-BASELINE §1): plan more / fewer / shorter screencast spans"))
     for n in checked.get("motion_notes", []):
-        if n.get("code") == "covered" and n.get("eligible"):
+        if n.get("code") == "covered" and n.get("eligible") and motiontemplates.enabled():
             errs.append(_err("mo05", n["why"] + ": the app has a UI kit and a REAL result was produced — plan no "
                                      "screencast over this hook line (code shows the prompt → result, MO05)",
                              word_ids=[n["start"], n["end"]]))
@@ -843,15 +848,20 @@ def plan_and_check(video, sites, facts=None, sponsored=False, knowledge=None, pl
 
 OVERLAY_SYSTEM = """You place the text overlays of Jake Dawson's YouTube tutorial: on the A-roll (his face) only, on
 the words that say them, within the reference budget. Answer with the JSON overlay list only."""
-OVERLAY_TEMPLATES = ("lower_title", "link", "subscribe", "socials", "keyword", "list", "number", "question",
-                     "verb_swap", "tagline_build", "prompt_menu", "prompt_card_3d", "prompt_highlight")
-MOTION_OVERLAYS = tuple(t for t in OVERLAY_TEMPLATES if motiontemplates.is_motion(t))
+BASE_OVERLAYS = ("lower_title", "link", "subscribe", "socials", "keyword", "list", "number", "question")
+MOTION_OVERLAYS = ("verb_swap", "tagline_build", "prompt_menu", "prompt_card_3d", "prompt_highlight")
+OVERLAY_TEMPLATES = BASE_OVERLAYS + MOTION_OVERLAYS        # all known; offered only while motion templates are on
+
+
+def overlay_templates():
+    """The overlay ids the overlay call may use: the motion templates only when rules.json switches them on."""
+    return OVERLAY_TEMPLATES if motiontemplates.enabled() else BASE_OVERLAYS
 
 
 def overlay_schema():
     s = lambda: _nul("string")
     return _obj({"overlays": {"type": "array", "items": _obj({
-        "template": {"type": "string", "enum": list(OVERLAY_TEMPLATES)}, "start": {"type": "integer"},
+        "template": {"type": "string", "enum": list(overlay_templates())}, "start": {"type": "integer"},
         "end": {"type": "integer"}, "line1": s(), "line2": s(), "text": s(),
         "items": {"type": "array", "items": {"type": "string"}}, "label": s(), "value": s(), "prefix": s(),
         "suffix": s(), "verbs": {"type": "array", "items": {"type": "string"}}, "words": s(), "pick": _nul("integer"),
@@ -875,27 +885,36 @@ def motion_docs():
 def overlay_prompt(video, segments, sponsored=False, apps=()):
     ov = skill.rules().get("overlays", {})
     mt = skill.rules().get("motion_templates", {})
-    docs = motion_docs()
+    on = motiontemplates.enabled()
+    docs = motion_docs() if on else ""
     words = " ".join(f'{w["i"]}:{w["word"]}@{w["start"]:.1f}' for w in video["words"])
     screens = "; ".join(f"{s['t0']:.1f}-{s['t1']:.1f}" for s in segments) or "(none)"
     return f"""{OVERLAYS}
-
+{OVERLAYS_MOTION if on else ""}
 BUDGET (Jake's references, BASELINE §5): {ov.get('total')} overlays in the whole video; {ov.get('first_80s')} in the first
 80 s; mid-video ONLY link / like / question lines at <= {ov.get('mid_max_per_min')} per minute (no keyword / list cards
 mid-video); the outro (last 60 s) gets {ov.get('outro')}: the viewer question as a "question" line (TX03), the
 subscribe / notification-bell ask as "subscribe" (TX05), the follow-me as "socials", the link line as "link".
 Overlays sit on the A-roll only: NEVER while a screencast is on (screencasts at {screens}).
 Rules: one at a time, 1.5-4.5 s, >= 0.6 s apart; the text is what he says; start/end = word ids.
-Motion templates: only inside the first {mt.get('hook_s', 40)} s, at most {mt.get('max_per_video', 2)}, >= {mt.get('min_apart_s', 4)} s
-apart, never over a screencast; durations {", ".join(f"{k} {v['duration_s'][0]}-{v['duration_s'][1]} s" for k, v in (mt.get('ids') or {}).items() if k != 'prompt_result')};
-beats = [{{"name", "word"}}] (word ids) for the beats the instructions name. The job's apps: {", ".join(apps) or "(none)"}.
+{MOTION_RULES.format(**_motion_fmt(mt, apps)) if on else ""}
 {"SPONSORED video: no claims beyond what is said." if sponsored else ""}
-
-MOTION TEMPLATE USAGE INSTRUCTIONS (read them; code enforces the hard limits and drops what breaks them):
-{docs or "(none written yet)"}
+{("MOTION TEMPLATE USAGE INSTRUCTIONS (read them; code enforces the hard limits and drops what breaks them):" + chr(10) + (docs or "(none written yet)")) if on else ""}
 
 TRANSCRIPT (id:word@seconds) — "{video.get('title', '')}", {video['duration']:.1f} s:
 {words}"""
+
+
+MOTION_RULES = """Motion templates: only inside the first {hook} s, at most {maxn}, >= {apart} s
+apart, never over a screencast; durations {durs};
+beats = [{{"name", "word"}}] (word ids) for the beats the instructions name. The job's apps: {apps}."""
+
+
+def _motion_fmt(mt, apps):
+    return {"hook": mt.get("hook_s", 40), "maxn": mt.get("max_per_video", 2), "apart": mt.get("min_apart_s", 4),
+            "durs": ", ".join(f"{k} {v['duration_s'][0]}-{v['duration_s'][1]} s" for k, v in (mt.get("ids") or {}).items()
+                              if k != "prompt_result"),
+            "apps": ", ".join(apps) or "(none)"}
 
 
 def _fields(o):
