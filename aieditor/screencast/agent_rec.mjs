@@ -519,7 +519,7 @@ async function hold(s) { const n = Math.round(s * FPS); for (let i = 0; i < n; i
 let curAt = null, curMeta = {};
 function log(type, extra = {}) {
   const e = { t: t(), type, ...extra };
-  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
+  if (curAt != null && ["click", "dblclick", "read", "highlight", "hover", "move", "type", "drag", "draw"].includes(type)) { e.at = curAt; Object.assign(e, curMeta); }
   if (rec) rec.events.push(e);
   return e;
 }
@@ -780,7 +780,7 @@ async function act(a) {
   // beat metadata the camera reads (a scripted beat list): explicit zoom, the sentence start the
   // move may not begin before ("from"), "beat" = a word-timed beat that must not be dropped
   curMeta = {};
-  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames"]) if (a[k] != null) curMeta[k] = a[k];
+  for (const k of ["zoom", "from", "beat", "land", "deep", "solo", "punch", "frames", "ledger", "word_t", "live"]) if (a[k] != null) curMeta[k] = a[k];
   // a page scroll ENDS on its word (0.4 s per ~200 px chunk): the thing he names is on screen as
   // he names it — v10 pricing: a scroll that STARTED on "free" showed the Free card 1.6 s late
   const scrollLead = a.type === "scroll" && !a.zoom ? 0.4 * Math.max(1, Math.round(Math.abs(a.by || 0) / 200)) : 0;
@@ -972,7 +972,12 @@ async function act(a) {
           }
         }
       }
+      // a compiled beat (G3): the field is focused and cleared BEFORE the word; the paste itself lands on it.
+      // A field that is still not empty here aborts the take (RULEBOOK C3 — never append to a stale draft)
+      if (a.beat && a.clear !== false && (await fieldText())) return { ok: false, error: `field not empty before typing: "${(await fieldText()).slice(0, 60)}"` };
+      if (rec && a.beat && a.at != null) await holdUntil(Math.max(t(), a.at));
       const e = log("type", { box: toCap(fb || b), abox: toCap(b), text: a.text, paste: !!a.paste });
+      e.press = t();
       if (a.paste) {
         // Jake #8: an address / a name goes in WHOLE, at once (a paste), never letter by letter
         // set the focused field's value in one go (React-safe native setter + input event). Key
@@ -1055,29 +1060,38 @@ async function act(a) {
     case "wait_for": {
       // long work (an AI generation): wait in REAL time with the clock frozen — the viewer
       // sees the result arrive, not the wait. `show` seconds of the waiting state first.
-      if (a.show && rec) await hold(a.show);
+      // G3 live counter beat: the in-progress card stays on camera until its payoff word ("until", clip s) —
+      // the finished result never lands before it (gap #22); then a K2 time-skip dissolve (fade) to the result
+      if (a.until != null && rec) await holdUntil(Math.max(t(), a.until));
+      else if (a.show && rec) await hold(a.show);
       await realtime();
       const until = Date.now() + (a.timeout ?? 180) * 1000;
       let found = false;
       while (Date.now() < until) {
-        found = await page.evaluate((txt, gone) => {
-          const has = document.body.innerText.toLowerCase().includes(txt.toLowerCase());
+        found = await page.evaluate((txt, gone, sel, min) => {
+          // a finished generation by selector (G3 live counter beat): more matches than "min", none still loading
+          const has = sel ? document.querySelectorAll(sel).length > (min || 0) && !document.querySelector('[aria-busy="true"]')
+            : document.body.innerText.toLowerCase().includes(String(txt).toLowerCase());
           return gone ? !has : has;
-        }, a.text, !!a.gone).catch(() => false);
+        }, a.text, !!a.gone, a.selector || null, a.min ?? 0).catch(() => false);
         if (found) break;
         await sleep(1500);
       }
       await sleep((a.settle ?? 1.5) * 1000);
       if (rec) await pause();
-      log("wait", { text: a.text, found });
+      log("wait", { text: a.text, found, ...(a.k2 ? { fade: true, k2: { frames: Math.max(3, Math.min(8, a.k2.frames ?? 6)) }, until: a.until ?? null } : {}),
+                    ...(a.ledger != null ? { ledger: a.ledger } : {}) });
       if (!found) return { ok: false, t: t(), error: `"${a.text}" did not ${a.gone ? "go away" : "appear"} in ${a.timeout ?? 180} s` };
       break;
     }
     case "drag": {
       // drag from → to (SCREENSHOT px): a markup box over the label, a file onto the chat, an artboard.
       // On camera too (G3 #31): the press lands on its word, the drag runs at human pace (~0.6 s, eased)
-      const f = a.from.map((v) => v * SHOT_F), g = a.to.map((v) => v * SHOT_F);
-      const e = log("drag", { from: a.from, to: a.to, box: toCap({ x: Math.min(f[0], g[0]), y: Math.min(f[1], g[1]), width: Math.abs(g[0] - f[0]) || 2, height: Math.abs(g[1] - f[1]) || 2 }) });
+      // a compiled beat carries drag_from/drag_to ("from" is then its clause start for the camera)
+      const p0 = Array.isArray(a.drag_from) ? a.drag_from : a.from, p1 = Array.isArray(a.drag_to) ? a.drag_to : a.to;
+      if (!Array.isArray(p0) || !Array.isArray(p1)) return { ok: false, error: "drag needs from/to [x, y]" };
+      const f = p0.map((v) => v * SHOT_F), g = p1.map((v) => v * SHOT_F);
+      const e = log("drag", { from: p0, to: p1, box: toCap({ x: Math.min(f[0], g[0]), y: Math.min(f[1], g[1]), width: Math.abs(g[0] - f[0]) || 2, height: Math.abs(g[1] - f[1]) || 2 }) });
       await moveTo(...f);
       if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
       await page.mouse.down(); e.press = t();
@@ -1094,7 +1108,16 @@ async function act(a) {
       // into "box" (SCREENSHOT px, the canvas on screen); without a box they are screenshot px
       const strokes = Array.isArray(a.strokes) ? a.strokes.filter((st) => Array.isArray(st) && st.length >= 2) : [];
       if (!strokes.length) return { ok: false, error: "draw needs strokes [[[x,y],...],...]" };
-      const sp = a.space ?? 1024, bx = Array.isArray(a.box) && a.box.length === 4 ? a.box : null;
+      let bx = Array.isArray(a.box) && a.box.length === 4 ? a.box : null;
+      if (!bx && a.selector) {
+        // the drawing surface by selector (the Sketch canvas): its on-screen box, in SCREENSHOT px
+        const r = await page.evaluate((sel) => { const els = [...document.querySelectorAll(sel)].map((e) => e.getBoundingClientRect())
+          .filter((q) => q.width > 60 && q.height > 60).sort((p, q) => q.width * q.height - p.width * p.height); return els[0] ? [els[0].x, els[0].y, els[0].width, els[0].height] : null; }, a.selector).catch(() => null);
+        if (!r) return { ok: false, error: `no drawing surface ${a.selector}` };
+        const side = Math.min(r[2], r[3]);                        // a square drawing space centred in the surface
+        bx = [(r[0] + (r[2] - side) / 2) / SHOT_F, (r[1] + (r[3] - side) / 2) / SHOT_F, side / SHOT_F, side / SHOT_F];
+      }
+      const sp = a.space ?? 1024;
       const map = ([x, y]) => bx ? [(bx[0] + x / sp * bx[2]) * SHOT_F, (bx[1] + y / sp * bx[3]) * SHOT_F] : [x * SHOT_F, y * SHOT_F];
       const e = log("draw", { strokes: strokes.length, ...(bx ? { box: toCap({ x: bx[0] * SHOT_F, y: bx[1] * SHOT_F, width: bx[2] * SHOT_F, height: bx[3] * SHOT_F }) } : {}) });
       // human pace: ~900 css px per second of pen travel, a short lift between strokes
@@ -1121,7 +1144,7 @@ async function act(a) {
       // CAMERA (assets.json, its chat URL); the page is swapped inside a 3–8 f dissolve, nothing loads on camera
       if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
       lastNavT = t();
-      const e = log("nav", { url: a.url, fade: true, k2: { frames: Math.max(3, Math.min(8, a.frames ?? 6)), asset: a.asset || null } });
+      const e = log("nav", { url: a.url, fade: true, k2: { frames: Math.max(3, Math.min(8, a.frames ?? 6)), asset: a.asset || null }, ...curMeta });
       lastFit = null;
       await load(a.url, a.settle ?? 3);
       if (a.selector) { const els = await page.$$(a.selector).catch(() => []); const el = els[a.nth ?? els.length - 1];
@@ -1142,9 +1165,12 @@ async function act(a) {
         if (!a.accept || acc.includes(a.accept)) { inp = h; if (acc.includes("image") || acc.startsWith("|")) break; }
       }
       if (!inp) return { ok: false, error: `no file input on the page (${inputs.length} inputs)` };
+      // on camera (G3 #35 "Upload the photo"): the file lands in the composer ON its word
+      if (rec && a.at != null) await holdUntil(Math.max(t(), a.at));
+      const eu = log("upload", { files: files.map((f) => path.basename(f)) });
+      eu.press = t();
       await inp.uploadFile(...files);
-      log("upload", { files: files.map((f) => path.basename(f)) });
-      if (rec) await hold(a.s ?? 1); else await sleep((a.s ?? 2) * 1000);
+      if (rec) await hold(Math.min(MAX_STILL, a.s ?? 1)); else await sleep((a.s ?? 2) * 1000);
       break;
     }
     // no still longer than 3 s on camera (RULEBOOK P1/M5; G3: an agent "hold" of 9 s read a tooltip)
