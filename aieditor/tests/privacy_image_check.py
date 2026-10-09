@@ -47,6 +47,10 @@ for name in ("secrets_light", "secrets_dark", "name_only"):
                    "name_row_hit": any(h["box"][1] < 230 for h in hits),     # "Jake Dawson" sits at y 170-215
                    "masked": all("example" not in h["text"] and "4242 4242" not in h["text"] for h in hits)}
 
+hits = P.legible([FX / "secrets_dark.png"], frames_dir=WORK / "frames", label="fx")
+facts["frames_saved"] = sorted(p.name for p in (WORK / "frames").glob("*.jpg"))
+facts["legible_png_kinds"] = sorted({h["kind"] for h in hits})
+
 # 2 ── the blur pass on a recording of the fixture
 rd = WORK / "fx" / "rec"
 rd.mkdir(parents=True, exist_ok=True)

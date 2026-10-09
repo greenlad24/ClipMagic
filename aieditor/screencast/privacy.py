@@ -510,24 +510,25 @@ def frame_hits(img, with_panel=False):
 
 
 def sample(video, every):
-    """[(t_video, frame)] every `every` seconds, decoded in one sequential pass."""
+    """(t_video, frame) every `every` seconds, decoded in one sequential pass — a GENERATOR: a 100 s
+    1440p segment at 0.5 s is 200 frames = 2.2 GB if held at once (the container has 3 GB)."""
     cv2 = _cv2()
     cap = cv2.VideoCapture(str(video))
     fps = cap.get(cv2.CAP_PROP_FPS) or 29.97
     step = max(1, int(round(every * fps)))
-    out, f = [], 0
-    while True:
-        if f % step == 0:
-            ok, img = cap.read()
-            if not ok:
+    f = 0
+    try:
+        while True:
+            if f % step == 0:
+                ok, img = cap.read()
+                if not ok:
+                    break
+                yield round(f / fps, 3), img
+            elif not cap.grab():
                 break
-            out.append((round(f / fps, 3), img))
-        else:
-            if not cap.grab():
-                break
-        f += 1
-    cap.release()
-    return out, fps
+            f += 1
+    finally:
+        cap.release()
 
 
 def _same(a, b):
@@ -539,21 +540,32 @@ def _same(a, b):
     return float(cv2.absdiff(sa, sb).max()) < 6
 
 
-def scan_frames(shots, with_panel=False, workers=None):
-    """[(t, img)] -> [{t, hits}] — a frame identical to the one before reuses its result (a held screen
-    is read once)."""
+def scan_frames(shots, with_panel=False, workers=None, frames_dir=None, label="hit"):
+    """(t, img) iterable -> [{t, hits}]. Streams: at most 2 x workers frames are alive at once. A frame
+    identical to the one before reuses its result (a held screen is read once). frames_dir: every frame
+    with a hit is saved there with its boxes drawn (the text itself is never written out)."""
     workers = workers or max(1, (os.cpu_count() or 2))
-    uniq, idx, prev = [], [], None
-    for t, img in shots:
-        if prev is not None and _same(prev, img):
-            idx.append(len(uniq) - 1)
-        else:
-            uniq.append(img)
-            idx.append(len(uniq) - 1)
-            prev = img
+
+    def work(t, img):
+        hits = frame_hits(img, with_panel)
+        if frames_dir and hits:
+            save_hit_frame(img, t, hits, frames_dir, label)
+        return hits
+    order, futs, prev, last = [], [], None, None
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        res = list(ex.map(lambda im: frame_hits(im, with_panel), uniq))
-    return [{"t": t, "hits": [dict(h) for h in res[k]]} for (t, _), k in zip(shots, idx)]
+        for t, img in shots:
+            if prev is not None and _same(prev, img):
+                order.append((t, last))
+                continue
+            futs.append(ex.submit(work, t, img))
+            last = len(futs) - 1
+            order.append((t, last))
+            prev = img
+            alive = [f for f in futs if not f.done()]
+            if len(alive) > 2 * workers:
+                alive[0].result()
+        res = [f.result() for f in futs]
+    return [{"t": t, "hits": [dict(h) for h in res[k]]} for t, k in order]
 
 
 def legible(video_or_frames, every=OCR_EVERY, max_w=1920, frames_dir=None, label="legible"):
@@ -561,34 +573,30 @@ def legible(video_or_frames, every=OCR_EVERY, max_w=1920, frames_dir=None, label
     wide (what a viewer sees); a list of images (paths or arrays) is read as is. -> [{t, kind, text, box}]"""
     cv2 = _cv2()
     if isinstance(video_or_frames, (str, Path)) and Path(video_or_frames).suffix.lower() in (".mp4", ".mov", ".mkv", ".webm"):
-        shots, _ = sample(video_or_frames, every)
+        shots = sample(video_or_frames, every)
     else:
         items = video_or_frames if isinstance(video_or_frames, (list, tuple)) else [video_or_frames]
-        shots = [(float(i), cv2.imread(str(x)) if isinstance(x, (str, Path)) else x) for i, x in enumerate(items)]
-    small = []
-    for t, img in shots:
-        h, w = img.shape[:2]
-        if w > max_w:
-            img = cv2.resize(img, (max_w, int(h * max_w / w)), interpolation=cv2.INTER_AREA)
-        small.append((t, img))
-    res = scan_frames(small)
-    hits = [{"t": s["t"], **h} for s in res for h in s["hits"]]
-    if frames_dir and hits:
-        save_hit_frames(small, hits, frames_dir, label)
-    return hits
+        shots = ((float(i), cv2.imread(str(x)) if isinstance(x, (str, Path)) else x) for i, x in enumerate(items))
+
+    def small(it):
+        for t, img in it:
+            h, w = img.shape[:2]
+            if w > max_w:
+                img = cv2.resize(img, (max_w, int(h * max_w / w)), interpolation=cv2.INTER_AREA)
+            yield t, img
+    res = scan_frames(small(shots), frames_dir=frames_dir, label=label)
+    return [{"t": s["t"], **h} for s in res for h in s["hits"]]
 
 
-def save_hit_frames(shots, hits, frames_dir, label):
+def save_hit_frame(img, t, hits, frames_dir, label):
     cv2 = _cv2()
     d = Path(frames_dir)
     d.mkdir(parents=True, exist_ok=True)
-    by_t = dict(shots)
-    for t in sorted({h["t"] for h in hits}):
-        img = by_t[t].copy()
-        for h in (h for h in hits if h["t"] == t):
-            x, y, w, hh = (int(v) for v in h["box"])
-            cv2.rectangle(img, (x - 3, y - 3), (x + w + 3, y + hh + 3), (0, 0, 255), 3)
-        cv2.imwrite(str(d / f"{label}-{t:08.2f}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    img = img.copy()
+    for h in hits:
+        x, y, w, hh = (int(v) for v in h["box"])
+        cv2.rectangle(img, (x - 3, y - 3), (x + w + 3, y + hh + 3), (0, 0, 255), 3)
+    cv2.imwrite(str(d / f"{label}-{t:08.2f}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
 
 # ── the pass over one recording ─────────────────────────────────────────────────
@@ -637,16 +645,13 @@ def run(recdir, every=OCR_EVERY, frames_dir=None, write_video=True, label=None):
     dur = dur_v - offset
     dom = json.loads((recdir / "privacy.json").read_text()) if (recdir / "privacy.json").exists() else []
     t_start = time.time()
-    shots, _ = sample(raw, every)
-    shots = [(round(t - offset, 3), img) for t, img in shots]
-    ocr = scan_frames(shots, with_panel=True)
+    label = label or recdir.parent.name
+    ocr = scan_frames(((round(t - offset, 3), img) for t, img in sample(raw, every)), with_panel=True,
+                      frames_dir=frames_dir, label=f"{label}-raw")
     t_ocr = time.time() - t_start
     tracks = build_tracks(detections(dom, ocr), every)
     wins, held = windows(tracks, W, H, every=every, dur=dur)
-    label = label or recdir.parent.name
     ocr_hits = [{"t": s["t"], **{k: v for k, v in h.items() if k != "panel"}} for s in ocr for h in s["hits"]]
-    if frames_dir and ocr_hits:
-        save_hit_frames(shots, ocr_hits, frames_dir, f"{label}-raw")
     doc = {"every_s": every, "offset_s": round(offset, 4), "size": [W, H], "duration_s": round(dur, 3),
            "dom_samples": len(dom), "ocr_samples": len(ocr), "ocr_hits": ocr_hits,
            "tracks": len(tracks), "windows": wins, "held": held, "ocr_s": round(t_ocr, 2)}

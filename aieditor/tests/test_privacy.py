@@ -194,6 +194,8 @@ if docker_ok():
         check(not f[name]["name_row_hit"], f"{name}: 'Jake Dawson' is not flagged")
         check(f[name]["masked"], f"{name}: hit reports are masked")
     check(f["name_only"]["kinds"] == [], "a page with only the name has no private hit")
+    check(f["legible_png_kinds"] == four and f["frames_saved"] == ["fx-00000.00.jpg"],
+          f"legible() on frames: every hit listed, its frame saved: {f['frames_saved']}")
     fb = f["fixture_blur"]
     check(fb["ocr_kinds"] == four and fb["windows"] >= 4, f"the blur pass tracks all four: {fb}")
     check(fb["after"] == [] and fb["ok"] and not fb["held"], f"after the blur pass OCR finds 0 hits: {fb}")
