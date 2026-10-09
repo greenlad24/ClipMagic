@@ -20,6 +20,16 @@ Safety:
   * The token has no block_storage_action scope, so volumes are never attached to job
     droplets: they work on their own disk and results come back over the VPC.
   * Only the keys the editor reads (ANTHROPIC_API_KEY, GROQ_API_KEY) are shipped, mode 0600.
+    The Anthropic key a droplet gets is the SEPARATE, spend-limited, revocable droplet key
+    (AIEDITOR_DROPLET_ANTHROPIC_KEY in .env), never the org key once that exists — until Jake has
+    made it, require_droplet_key (default false) chooses between a warning + the org key and a
+    refusal. Key material never appears in a log (droplet_env).
+  * Claude API spend: the droplet gets the caps + what was already spent and writes its own ledger
+    (<job>/api-ledger.jsonl), merged into the main ledger when the job ends (apiledger.py).
+  * One job per logged-in account (accountlock.py): the Scout accounts a job uses are locked on
+    this box before its droplet is created and released when it ends.
+  * Pricing / visitor views: a tiny US droplet per job (usroute.py) when us_route.enabled; it is
+    tagged TAG_US, leased, counted under the server cap and destroyed with the job.
     For screencasts only the matching Scout profiles + a two-table copy of the Scout rows go,
     never the Lab database.
   * The droplet's firewall (ufw, baked into the snapshot) accepts SSH from the VPC only.
@@ -59,8 +69,10 @@ CFG = config.WORK / "factory.json"
 LEASES = config.WORK / "factory-leases"
 TAG_JOB = "clipmagic-factory-job"
 TAG_IMAGE = "clipmagic-factory-image"
+TAG_US = "clipmagic-factory-usproxy"       # usroute.py: the per-job US exit for the outside-view Chrome
 IMAGES = ("hyperframes-runner:0.8.30", "aieditor-aligner:0.1", "aieditor-screencast:0.2", "aieditor-motion:1")
 SHIP_KEYS = ("ANTHROPIC_API_KEY", "GROQ_API_KEY")
+DROPLET_KEY = "AIEDITOR_DROPLET_ANTHROPIC_KEY"   # the separate revocable key (Jake creates it in the Console)
 LAB_OWNED = ("queue.json", "cancel", "request.json", "plan.edit.json", "joins.edit.json")
 LIVE_FILES = ("status.json", "events.jsonl", "log.txt")
 HISTORY = config.WORK / "factory-history.jsonl"     # one line per server: job, minutes, $ (the Lab's spend view)
@@ -83,6 +95,16 @@ DEFAULTS = {
     "lease_stale_s": 600,
     "fallback_local": False,        # Jake 2026-10-09: always the factory server — no main-box fallback
     "daily_cap_usd": 20,            # rolling 24 h server spend; over it, jobs wait in the queue
+    # Claude API caps (apiledger.py). The daily figure is Jake's decision 1 — suggested $30, PENDING.
+    "api_job_cap_usd": {"creative": 8, "cut": 1},
+    "api_daily_cap_usd": 30,
+    "api_daily_cap_pending_jake": True,
+    # the droplet's own revocable API key (decision 6): false = warn and ship the org key until it exists
+    "require_droplet_key": False,
+    "require_droplet_key_pending_jake": True,
+    # per-job US exit for pricing / visitor views (usroute.py). Off this round: outside segments are
+    # held ("no US route") instead of going out through the Singapore box.
+    "us_route": {"enabled": False, "region": "nyc3", "size": "s-1vcpu-512mb-10gb", "port": 8899},
 }
 
 
@@ -206,13 +228,15 @@ def key_id():
     raise DOError(f"SSH key '{SSH_KEY_NAME}' is not in the DigitalOcean account")
 
 
-def create(name, size, image, tag, user_data=None):
+def create(name, size, image, tag, user_data=None, region=None, vpc=True, ssh_keys=True):
     s = settings()
-    if tag not in (TAG_JOB, TAG_IMAGE):
+    if tag not in (TAG_JOB, TAG_IMAGE, TAG_US):
         raise ValueError(tag)
-    body = {"name": name, "region": s["region"], "size": size, "image": image,
-            "ssh_keys": [key_id()], "vpc_uuid": s["vpc_uuid"], "tags": [tag],
+    body = {"name": name, "region": region or s["region"], "size": size, "image": image,
+            "ssh_keys": [key_id()] if ssh_keys else [], "tags": [tag],
             "monitoring": False, "ipv6": False, "backups": False}
+    if vpc:
+        body["vpc_uuid"] = s["vpc_uuid"]
     if user_data:
         body["user_data"] = user_data
     return api("POST", "/droplets", body)["droplet"]["id"]
@@ -313,7 +337,7 @@ def watchdog(log=print):
     s = settings()
     killed = []
     now = time.time()
-    for d in tagged(TAG_JOB) + tagged(TAG_IMAGE):
+    for d in tagged(TAG_JOB) + tagged(TAG_IMAGE) + tagged(TAG_US):
         did = d["id"]
         age = now - _utc(d["created_at"])
         lp = LEASES / f"{did}.json"
@@ -322,7 +346,7 @@ def watchdog(log=print):
             hb = json.loads(lp.read_text()).get("heartbeat")
         except (OSError, ValueError):
             pass
-        ceiling = s["max_hours"] * 3600 if TAG_JOB in d["tags"] else 3 * 3600
+        ceiling = s["max_hours"] * 3600 if (TAG_JOB in d["tags"] or TAG_US in d["tags"]) else 3 * 3600
         why = None
         if age > ceiling:
             why = f"older than {ceiling / 3600:.0f} h"
@@ -334,7 +358,7 @@ def watchdog(log=print):
             ok = destroy(did)
             log(f"watchdog: destroyed {d['name']} ({did}) — {why}" + ("" if ok else " — DELETE NOT CONFIRMED"))
             killed.append(did)
-    live = {str(d["id"]) for d in tagged(TAG_JOB) + tagged(TAG_IMAGE)}
+    live = {str(d["id"]) for d in tagged(TAG_JOB) + tagged(TAG_IMAGE) + tagged(TAG_US)}
     for lp in LEASES.glob("*.json") if LEASES.exists() else []:
         if lp.stem not in live:
             lp.unlink(missing_ok=True)
@@ -503,8 +527,8 @@ def running(job_id):
         return job_id in ACTIVE
 
 
-def _scout_bundle(req, stage_dir, job_dir=None):
-    """The Scout profiles + rows a screencast job needs, nothing else."""
+def scout_slugs(req, job_dir=None):
+    """The Scout (logged-in) accounts a job will use — what accountlock.py locks."""
     from . import agentrec
     sites = [s.get("url") for s in req.get("sites") or [] if s.get("url")]
     derived = Path(job_dir) / "sites.json" if job_dir else None
@@ -518,6 +542,12 @@ def _scout_bundle(req, stage_dir, job_dir=None):
         # private inboxes never do). A job that already derived them (sites.json) sends only those.
         from . import sites as sites_mod
         slugs = sorted(set(sites_mod.candidate_slugs()))
+    return slugs
+
+
+def _scout_bundle(req, stage_dir, job_dir=None, slugs=None):
+    """The Scout profiles + rows a screencast job needs, nothing else."""
+    slugs = scout_slugs(req, job_dir) if slugs is None else slugs
     if not slugs:
         return []
     db = stage_dir / "clipmagic.db"
@@ -535,6 +565,56 @@ def _scout_bundle(req, stage_dir, job_dir=None):
     return slugs
 
 
+def droplet_key_set():
+    return bool(config.env_key(DROPLET_KEY))
+
+
+def droplet_env(log, s=None):
+    """The .env text a job droplet gets (KEY=value lines, sent over ssh, mode 0600). The Anthropic
+    key is the separate revocable droplet key when it exists; without it require_droplet_key decides
+    between a warning + the org key and a refusal. Values are NEVER logged — only which key went."""
+    s = s or settings()
+    vals = {}
+    dk = config.env_key(DROPLET_KEY)
+    if dk:
+        vals["ANTHROPIC_API_KEY"] = dk
+        log("Claude API key for the server: the separate, revocable droplet key")
+    elif s.get("require_droplet_key"):
+        raise DOError(f"no droplet API key ({DROPLET_KEY} in .env) and require_droplet_key is on — "
+                      "the org key is never shipped to a server")
+    else:
+        org = config.env_key("ANTHROPIC_API_KEY")
+        if org:
+            vals["ANTHROPIC_API_KEY"] = org
+        log(f"WARNING: {DROPLET_KEY} is not set — the server gets the org-wide Claude key "
+            "(create a spend-limited droplet key in the Console and add it to .env)")
+    for k in SHIP_KEYS:
+        if k != "ANTHROPIC_API_KEY" and config.env_key(k):
+            vals[k] = config.env_key(k)
+    return "".join(f"{k}={v}\n" for k, v in vals.items())
+
+
+def api_env(jid, workflow):
+    """What a job droplet needs to keep the API caps without the main ledger (apiledger.py)."""
+    from . import apiledger
+    job_cap, day_cap = apiledger.caps(workflow)
+    return {"AIEDITOR_API_LEDGER": str(config.JOBS / jid / "api-ledger.jsonl"),
+            apiledger.ENV_JOB_CAP: f"{job_cap:.4f}", apiledger.ENV_DAILY_CAP: f"{day_cap:.4f}",
+            apiledger.ENV_PRIOR_DAY: f"{apiledger.daily_total():.6f}",
+            apiledger.ENV_PRIOR_JOB: f"{apiledger.job_total(jid):.6f}",
+            apiledger.ENV_DAY_START: f"{time.time():.0f}"}
+
+
+def merge_ledger(job_dir, log=print):
+    """The droplet's API ledger lines → the main ledger (idempotent: line ids)."""
+    from . import apiledger
+    src = Path(job_dir) / "api-ledger.jsonl"
+    if src.exists():
+        n = apiledger.merge(src)
+        if n:
+            log(f"{n} Claude API call(s) added to the spending ledger")
+
+
 def run_remote(job_dir, action, log, cancelled):
     """Run `action` for the job on a fresh droplet; returns the remote exit code.
     The job folder ends up exactly as if this box had run it. The droplet is always destroyed."""
@@ -543,8 +623,17 @@ def run_remote(job_dir, action, log, cancelled):
     jid = job_dir.name
     req = json.loads((job_dir / "request.json").read_text())
     did = None
+    ip = None
+    proxy = None
     t_start = time.time()
     ok_run = False
+    from . import accountlock, usroute
+    workflow = "creative" if req.get("workflow") == "creative" else "cut"
+    screencasts = action in ("run", "edit") and bool(req.get("sites") or workflow == "creative")
+    # one job per logged-in account: a second job for the same Scout account waits here
+    lock = accountlock.AccountLock(scout_slugs(req, job_dir) if screencasts else [], jid)
+    if not lock.acquire(wait=True, cancelled=cancelled, log=log):
+        raise DOError("cancelled while waiting for a logged-in account another job is using")
     with _slots:
         ACTIVE[jid] = None
     runner(job_dir, kind="factory", state="creating", action=action, size=s["size"], region=s["region"],
@@ -555,21 +644,25 @@ def run_remote(job_dir, action, log, cancelled):
             ACTIVE[jid] = did
         with Heartbeat(did, job=jid, action=action, size=s["size"]):
             log(f"factory server {did} ({s['size']}) creating in {s['region']}…")
-            ip, _ = wait_active(did)
+            ip, pub = wait_active(did)
+            # pricing / visitor views: the job's own US exit, reachable from this server only
+            usr = s.get("us_route") or {}
+            if usr.get("enabled") and screencasts and workflow == "creative":
+                proxy = usroute.create_us_proxy(jid, allow_ip=pub, log=log)
             wait_ssh(ip)
             log(f"factory server up at {ip} after {time.time() - t_start:.0f}s — sending the job")
             runner(job_dir, state="sending", droplet=did, up_after_s=round(time.time() - t_start))
             # code (always the current one: the snapshot only carries images + models)
             rsync(str(config.CODE) + "/", f"root@{ip}:{config.CODE}/", "--delete",
                   "--exclude", "__pycache__", "--exclude", "tests", "--exclude", "node_modules")
-            env = "".join(f"{k}={config.env_key(k)}\n" for k in SHIP_KEYS if config.env_key(k))
+            env = droplet_env(log, s)
             ssh(ip, f"umask 077; mkdir -p {config.ENV_FILE.parent}; cat > {config.ENV_FILE}", input=env.encode())
             # the job folder, source video included (VPC: free + fast)
             rsync(str(job_dir), f"root@{ip}:{config.JOBS}/", "--exclude", "cancel", "--exclude", "queue.json",
-                  "--exclude", "tmp-*")
+                  "--exclude", "tmp-*", "--exclude", "api-ledger.jsonl")
             if action in ("run", "edit") and (req.get("sites") or req.get("workflow") == "creative"):
                 with tempfile.TemporaryDirectory(prefix="factory-scout-") as td:
-                    slugs = _scout_bundle(req, Path(td), job_dir)
+                    slugs = _scout_bundle(req, Path(td), job_dir, slugs=lock.slugs)
                     if slugs:
                         ssh(ip, f"mkdir -p {LAB_DATA / 'db'} {LAB_DATA / 'scout/profiles'}")
                         rsync(str(Path(td) / "clipmagic.db"), f"root@{ip}:{LAB_DATA / 'db'}/")
@@ -579,13 +672,17 @@ def run_remote(job_dir, action, log, cancelled):
             rjob = config.JOBS / jid
             # ";" not "&&": only the worker may go to the background — a backgrounded "a && b &"
             # list keeps ssh's stdout open and the call blocked until the job ENDED (trial 1)
+            extra = {"AIEDITOR_FACTORY_SERVER": "1", **api_env(jid, workflow)}
+            if proxy:
+                extra["AIEDITOR_US_PROXY"] = proxy["url"]
             ssh(ip, "cd {code}; mem=$(awk '/MemTotal/{{print int($2/1048576*0.85)}}' /proc/meminfo); "
                     "export AIEDITOR_CPUSET=0-$(( $(nproc) - 1 )) AIEDITOR_MEMORY=${{mem}}g PYTHONUNBUFFERED=1 "
-                    "AIEDITOR_EGRESS_PROXY={egress}; "
+                    "AIEDITOR_EGRESS_PROXY={egress} {extra}; "
                     "setsid nohup python3 bin/aieditor-worker --once {jid} {action} "
                     "> {work}/remote.log 2>&1 < /dev/null & echo $! > {work}/remote.pid".format(
                         code=config.CODE, jid=shlex.quote(jid), action=shlex.quote(action), work=config.WORK,
-                        egress=shlex.quote(EGRESS)))
+                        egress=shlex.quote(EGRESS),
+                        extra=" ".join(f"{k}={shlex.quote(v)}" for k, v in extra.items())))
             log(f"job started on the factory server ({time.time() - t_start:.0f}s after the request)")
             runner(job_dir, state="running", running_since=time.time())
             sent_cancel = False
@@ -624,6 +721,18 @@ def run_remote(job_dir, action, log, cancelled):
             log(f"results back after {time.time() - t_start:.0f}s total")
             return tail
     finally:
+        if ip and not ok_run:
+            try:                     # a failed job's API calls still count against the caps
+                rsync(f"root@{ip}:{config.JOBS / jid}/api-ledger.jsonl", str(job_dir) + "/", timeout=120)
+            except (DOError, subprocess.TimeoutExpired, OSError):
+                pass
+        try:
+            merge_ledger(job_dir, log)
+        except OSError as e:
+            log(f"API ledger merge failed: {e}")
+        if proxy:
+            usroute.destroy_us_proxy(jid, proxy, log=log)
+        lock.release()
         ok = True
         if did:
             ok = destroy(did)
@@ -645,4 +754,5 @@ def run_remote(job_dir, action, log, cancelled):
 
 
 def _price(size):
-    return {"c-32": 1.0, "c-16": 0.5, "c2-32vcpu-64gb": 1.11905, "s-2vcpu-4gb": 0.03571}.get(size, 1.0)
+    return {"c-32": 1.0, "c-16": 0.5, "c2-32vcpu-64gb": 1.11905, "s-2vcpu-4gb": 0.03571,
+            "s-1vcpu-512mb-10gb": 0.00595, "s-1vcpu-1gb": 0.00893}.get(size, 1.0)
