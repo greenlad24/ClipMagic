@@ -1,0 +1,62 @@
+{
+  "app": "claude",
+  "name": "Claude (claude.ai) — new-chat composer, dark theme",
+  "theme": "dark",
+  "hosts": ["claude.ai"],
+  "source": "from reference — verify against live",
+  "source_note": "Built 2026-10-09 from Jake's motion5 reference (claude.ai dark new-chat page, screen-captured from a YouTube video; frames measured at the clip's final zoom, 1 css px = 1.805 screen px). No UX Scout login exists for claude.ai (agentrec.scout_for('https://claude.ai') = None), so nothing was captured live. Colours are as the reference VIDEO shows them (YouTube encode, slightly darker than the live app); geometry in css px. See NOTES.md.",
+  "fonts": {"Inter": "Inter.ttf", "Source Serif 4": "SourceSerif4.ttf"},
+  "font_substitutes": {"prompt + UI": "Claude renders the composer in the system sans (SF Pro on the reference Mac) → Inter", "greeting": "Anthropic's serif → Source Serif 4"},
+  "tokens": {
+    "--cl-bg": "#20201d",
+    "--cl-surface": "#292926",
+    "--cl-border": "#32322f",
+    "--cl-text": "#f2f2ef",
+    "--cl-muted": "#bbbbb7",
+    "--cl-chip-text": "#c1c0bb",
+    "--cl-icon": "#bfbeba",
+    "--cl-accent": "#d26c4d",
+    "--cl-spark": "#d77f60",
+    "--cl-greet": "#fafaf7",
+    "--cl-caret": "#898986"
+  },
+  "bg": "#20201d",
+  "model_label": "Opus 5.5 High",
+  "composer": {
+    "width": 727,
+    "height": 86,
+    "line_height": 24,
+    "font_size": 16,
+    "placeholder": "How can I help you today?",
+    "prompt_sel": ".cl-prompt",
+    "send_sel": ".cl-send",
+    "css": ".cl-composer{position:relative;box-sizing:border-box;width:727px;background:var(--cl-surface);border:1px solid var(--cl-border);border-radius:20px;box-shadow:0 4px 18px rgba(0,0,0,0.035);font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased}\n.cl-input{padding:12.75px 24px 0 18px}\n.cl-prompt{position:relative;font-size:16px;line-height:24px;font-weight:440;letter-spacing:-0.27px;color:var(--cl-text);white-space:pre-wrap;word-wrap:break-word;overflow-wrap:break-word;min-height:24px}\n.cl-placeholder{color:var(--cl-muted);opacity:0.75}\n.cl-row{position:relative;height:32px;margin:4.8px 18px 11px 18px}\n.cl-plus{position:absolute;left:0;top:0;width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:var(--cl-icon)}\n.cl-plus svg{width:17.7px;height:17.7px}\n.cl-model{position:absolute;right:131.1px;top:0;height:32px;display:flex;align-items:center;font-size:11.7px;color:var(--cl-muted);white-space:nowrap}\n.cl-chev{position:absolute;right:82.9px;top:14.4px;width:9px;height:4.6px;color:var(--cl-muted)}\n.cl-chev svg{display:block}\n.cl-send{position:absolute;right:0;top:0;width:32px;height:32px;border-radius:6.5px;background:var(--cl-accent);display:flex;align-items:center;justify-content:center;color:#fff}\n.cl-send svg{width:15px;height:15px}\n.cl-state{position:absolute;inset:0;pointer-events:none}",
+    "html": "<div class=\"cl-composer\"><div class=\"cl-input\"><div class=\"cl-prompt\">{{prompt}}</div>{{chips_html}}</div><div class=\"cl-row\"><div class=\"cl-plus\">{{file:assets/plus.svg}}</div><div class=\"cl-model\">{{model_label}}</div><div class=\"cl-chev\">{{file:assets/chevron.svg}}</div><div class=\"cl-send\">{{file:assets/arrow-up.svg}}</div></div><div class=\"cl-state\">{{state_html}}</div></div>",
+    "geometry_css_px": {
+      "outer_width": 727, "border": 1, "radius": 20,
+      "text_left_from_outer": 19, "text_right_padding": 25, "text_top_from_outer": 13.75,
+      "line_height": 24, "font_size": 16,
+      "row_gap_after_text": 4.8, "row_height": 32, "bottom_from_outer": 12,
+      "plus_icon": 17.7, "plus_centre_from_left": 34.9,
+      "model_label_right_from_outer": 151.2, "chevron_centre_from_outer_right": 106.4,
+      "send": {"size": 32, "radius": 6.5, "right_from_outer": 19.4}
+    }
+  },
+  "greeting": {
+    "default": "Evening, Jake",
+    "baseline_above_composer": 39.3,
+    "css": ".cl-greet{display:flex;align-items:baseline;justify-content:center;gap:13.3px;white-space:nowrap;font-family:'Source Serif 4',Georgia,serif;font-size:30.6px;font-weight:400;font-variation-settings:'opsz' 32;line-height:1;color:var(--cl-greet);letter-spacing:-0.1px}\n.cl-spark{display:inline-block;width:31px;height:32px;color:var(--cl-spark);align-self:center;transform:translateY(-4.1px)}",
+    "html": "<div class=\"cl-greet\"><span class=\"cl-spark\">{{file:assets/spark.svg}}</span><span class=\"cl-greet-text\">{{greeting}}</span></div>"
+  },
+  "suggestions": {
+    "gap_below_composer": 14.4,
+    "css": ".cl-sugs{display:flex;justify-content:center;gap:6.4px;transform:translateX(-3.6px);font-family:Inter,system-ui,sans-serif}\n.cl-sug{box-sizing:border-box;height:26px;padding:0 0 0 12px;border-radius:6.5px;background:var(--cl-surface);color:var(--cl-chip-text);font-size:11.6px;line-height:26px;white-space:nowrap}",
+    "html": "<div class=\"cl-sugs\">{{items_html}}</div>",
+    "item_html": "<div class=\"cl-sug\" style=\"width:{{w}}px\">{{label}}</div>",
+    "items": [{"label": "Create", "w": 81.4}, {"label": "Write", "w": 79.8}, {"label": "Career chat", "w": 115.2}, {"label": "Claude’s choice", "w": 140.2}]
+  },
+  "chip": null,
+  "working": null,
+  "result": null,
+  "privacy": "Display name shown: Jake (greeting 'Evening, Jake'). No e-mail, avatar, chat history, org name or account id is part of this kit. The reference's own greeting name is never used."
+}

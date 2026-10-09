@@ -1,0 +1,54 @@
+{
+  "_doc": "prompt_highlight look. Layout is in screen px at 1920x1080 for the START of the push-in (scale 1); kit geometry is in the kit's css px and is scaled so the composer is layout.composer_w wide. Sizes as px@1080 and fraction of frame height (fh).",
+  "fonts": {
+    "Inter": "Inter.ttf",
+    "Source Serif 4": "SourceSerif4.ttf"
+  },
+  "layout": {
+    "composer_w": 847.4,
+    "composer_w_fh": 0.7846,
+    "composer_cx": 960,
+    "composer_top": 443.2,
+    "composer_top_fh": 0.4104,
+    "fit_margin": 40,
+    "_end_view": "after the push (×1.5486 about pivot 931,617): composer 1313 px wide (x 319-1631), top 348, prompt line pitch 43.5 px (0.0403 fh), prompt font 28.9 px em (0.0268 fh)",
+    "end_centre_y": 512.5,
+    "end_centre_y_fh": 0.4745,
+    "_end_centre": "the composer box (at its full text) ends with its centre at y 512.5 (ref: 348-677 → 512.5); composer_top 443.2 is what that gives for the reference's 5-line prompt, so shorter prompts start a little lower"
+  },
+  "backdrop": "#20201d",
+  "highlight": {
+    "color": "#d9fd28",
+    "alpha": 1.0,
+    "blend": "normal (opaque box; the text under it is redrawn dark)",
+    "text_color": "#041000",
+    "pad_left_em": 0.27,
+    "pad_right_em": 0.35,
+    "top_em": 0.2,
+    "height_em": 1.4,
+    "radius_em": 0.175,
+    "_measured_end_view_px": "line box 43.5 px; highlight 509-550 (line 4) / 553-591 (line 5): top ≈ line top + 5.7 px, height ≈ 40.5 px; left pad 6-8 px before the first glyph, right pad ≈ 4.5 px; corner radius ≈ 5 px"
+  },
+  "caret": {
+    "color": "#898986",
+    "width_em": 0.07,
+    "height_em": 1.1,
+    "gap_em": 0.05,
+    "_measured": "≈2 px wide × 32 px tall at the end view (em 28.9 px), centred on the line box, ≈1.5 px right of the last glyph; visible only while typing"
+  },
+  "neutral": {
+    "_doc": "kit null → a neutral, unbranded dark composer (no logo, no greeting, no model name, no chips) — never another app's UI",
+    "bg": "#20201d",
+    "surface": "#292926",
+    "border": "#32322f",
+    "text": "#f2f2ef",
+    "muted": "#bbbbb7",
+    "send": "#5a5a56",
+    "width": 727,
+    "radius": 20,
+    "font": "Inter",
+    "font_size": 16,
+    "line_height": 24,
+    "placeholder": "Describe what you want…"
+  }
+}

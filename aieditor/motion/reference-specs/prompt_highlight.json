@@ -1,0 +1,353 @@
+{
+ "id": "prompt_highlight",
+ "technique": "MO06",
+ "reference": {
+  "file": "/opt/aieditor-work/reference/motion-2026-10-09/motion5.mov",
+  "size": [
+   1920,
+   1200
+  ],
+  "fps": 60,
+  "frames": 517,
+  "duration_s": 8.617,
+  "content_crop": {
+   "x": 0,
+   "y": 60,
+   "w": 1920,
+   "h": 1080,
+   "note": "YouTube player chrome, letterbox and pointer ignored; content mapped 1:1 to 1920x1080"
+  },
+  "source_refresh_fps": 24
+ },
+ "camera": {
+  "type": "scale about pivot",
+  "pivot_px": [
+   931,
+   617
+  ],
+  "scale": [
+   1.0,
+   1.5486
+  ],
+  "start_s": 1.217,
+  "dur_s": 0.742,
+  "ease": [
+   0.609,
+   0.091,
+   0.417,
+   0.887
+  ],
+  "ease_max_err": 0.033
+ },
+ "typing": {
+  "cps": 30.6,
+  "pretyped_chars_at_0": 260,
+  "total_chars": 426,
+  "typed_end_s": 5.42,
+  "layout": "full text laid out from the start"
+ },
+ "grow": {
+  "lead_s": 0.352,
+  "dur_s": 0.368,
+  "ease": [
+   0.489,
+   0.333,
+   0.63,
+   1.0
+  ],
+  "line_pitch_px_end": 43.5
+ },
+ "sweeps": [
+  {
+   "phrase": "Put her face in the portrait panel",
+   "start_s": 1.959,
+   "pieces": [
+    {
+     "x": [
+      466,
+      903
+     ],
+     "dur_s": 0.382
+    }
+   ]
+  },
+  {
+   "phrase": "crop the front and back outfit views from the neck down.",
+   "start_s": 3.703,
+   "pieces": [
+    {
+     "x": [
+      956,
+      1556
+     ],
+     "dur_s": 0.497
+    },
+    {
+     "x": [
+      347,
+      516
+     ],
+     "start_s": 4.211,
+     "dur_s": 0.151
+    }
+   ]
+  },
+  {
+   "phrase": "Plain grey background, soft even light, empty hands.",
+   "start_s": 5.449,
+   "pieces": [
+    {
+     "x": [
+      516,
+      1213
+     ],
+     "dur_s": 0.493
+    }
+   ]
+  }
+ ],
+ "sweep_rule": {
+  "s_per_em": 0.0256,
+  "min_s": 0.1,
+  "max_s": 0.495,
+  "line_gap_s": 0.011,
+  "ease": [
+   0.45,
+   0.126,
+   0.347,
+   1.0
+  ],
+  "after_typed_s": 0.03
+ },
+ "highlights_merge": false,
+ "between_word_highlighted": false,
+ "hold_after_last_s": 2.68,
+ "exit": "cut",
+ "typography": {
+  "prompt": {
+   "font": "Inter",
+   "css_px": 16,
+   "end_view_px": 28.9,
+   "fh_end": 0.0268,
+   "weight": 440,
+   "tracking_css_px": -0.27,
+   "line_height_css": 24
+  },
+  "greeting": {
+   "font": "Source Serif 4",
+   "css_px": 30.6,
+   "weight": 400
+  },
+  "model_label": {
+   "font": "Inter",
+   "css_px": 11.7
+  },
+  "chips": {
+   "font": "Inter",
+   "css_px": 11.6
+  }
+ },
+ "colors": {
+  "backdrop": "#20201d",
+  "composer": "#292926",
+  "border": "#32322f",
+  "text": "#f2f2ef",
+  "muted": "#bbbbb7",
+  "send": "#d26c4d",
+  "spark": "#d77f60",
+  "caret": "#898986",
+  "marker": "#d9fd28",
+  "marker_text": "#041000"
+ },
+ "highlight_box": {
+  "top_em": 0.2,
+  "height_em": 1.4,
+  "pad_left_em": 0.27,
+  "pad_right_em": 0.35,
+  "radius_em": 0.175,
+  "alpha": 1.0,
+  "blend": "normal; text under it recoloured"
+ },
+ "verification": {
+  "static_position_err_px": 1.5,
+  "push_timing_err_frames_max": 1.06,
+  "sweep_timing_err_frames_max": 1.79,
+  "grow_timing_err_frames_max": 7.5,
+  "highlight_edge_err_px_max": 3,
+  "wraps_identical": true,
+  "compare_sheet": "/opt/aieditor-work/reference/specs/prompt_highlight-compare.png",
+  "general": "/opt/aieditor-work/reference/specs/prompt_highlight-general.png"
+ },
+ "kf": {
+  "_doc": "prompt_highlight (MO06) — MEASURED motion from motion5.mov (Claude.ai composer screen-captured from YouTube; content area y 60-1139 of the 1920x1200 capture = 1920x1080, 1:1). Times in seconds. Reference sweep starts (= the hl beats of the replica): 1.959 / 3.703 / 5.449 s; clip 8.617 s. Design-free: travel in units of the prompt font em or of the frame.",
+  "push": {
+   "_doc": "camera push-in: a pure scale about a fixed pivot (frame fractions), from 1 to `scale`; it ENDS when the first highlight sweep starts (ref: start 1.217 s = frame 74.0, 0.742 s long, first sweep at 1.959 s). Fit by Nelder-Mead on the button/logo centroid distance (scale) — rms 0.0125, max 0.033 of the travel (the source refreshed at ~24 fps).",
+   "scale": 1.5486,
+   "pivot": [
+    0.4849,
+    0.5713
+   ],
+   "dur_s": 0.742,
+   "min_dur_s": 0.4,
+   "ease": [
+    0.609,
+    0.091,
+    0.417,
+    0.887
+   ],
+   "ease_max_err": 0.033,
+   "fallback_start_after_in_s": 1.217,
+   "min_start_after_in_s": 0.1,
+   "ease_rms": 0.0125
+  },
+  "type": {
+   "_doc": "typing: one character at a time at a constant rate (ref 30.6 chars/s across 166 chars, segments 29.7-33.3; the source capture refreshed at ~24 fps so it showed 1-2 new chars per update). The caret is visible while typing and disappears hide_after_s after the last character. If a phrase would not be typed by its beat at the natural rate, the text before it is typed faster (up to max_cps) so it is complete lag_s before the beat.",
+   "cps": 30.6,
+   "max_cps": 120,
+   "lag_s": 0.03,
+   "caret_hide_after_s": 0.13,
+   "ref_pretyped_chars": 260
+  },
+  "grow": {
+   "_doc": "the composer grows one line height when the text wraps; the growth STARTS lead_s before the first character of the new line appears and lasts dur_s (ref: frames 179.9-202, first char on the new line at frame 201). Greeting stays fixed (top-anchored); the composer grows downward and pushes the suggestion chips down. The text is laid out in full from the start (words never jump lines while typed).",
+   "lead_s": 0.352,
+   "dur_s": 0.368,
+   "ease": [
+    0.489,
+    0.333,
+    0.63,
+    1.0
+   ],
+   "ease_max_err": 0.068
+  },
+  "sweep": {
+   "_doc": "marker highlight: a rounded yellow box grows left→right over each LINE PIECE of the phrase (piece by piece when the phrase wraps), the text under it turns dark at the edge. Piece duration = clamp(width_em * s_per_em, min_s, max_s) (ref pieces: 15.1 em 0.382 s, 20.8 em 0.497 s, 24.1 em 0.493 s, 5.85 em 0.151 s). Next line piece starts line_gap_s after the previous piece ends. Sweep i starts at max(beat hl_i, phrase typed + after_typed_s, push end, previous sweep end). Highlights accumulate (stay on); they never merge — the word between two highlights ('and') stays unhighlighted to the end (checked frames 300-517).",
+   "s_per_em": 0.0256,
+   "min_s": 0.1,
+   "max_s": 0.495,
+   "ease": [
+    0.45,
+    0.126,
+    0.347,
+    1.0
+   ],
+   "ease_max_err": 0.077,
+   "line_gap_s": 0.011,
+   "after_typed_s": 0.03,
+   "fallback_first_after_in_s": 1.959,
+   "fallback_spacing_s": 1.745,
+   "fits": {
+    "sweep_0": {
+     "start_s": 1.959,
+     "dur_s": 0.382,
+     "ease": [
+      0.531,
+      0.284,
+      0.425,
+      1.0
+     ],
+     "max_err": 0.018
+    },
+    "sweep_1_line4": {
+     "start_s": 3.703,
+     "dur_s": 0.497,
+     "ease": [
+      0.458,
+      0.121,
+      0.301,
+      1.0
+     ],
+     "max_err": 0.018
+    },
+    "sweep_1_line5": {
+     "start_s": 4.211,
+     "dur_s": 0.151
+    },
+    "sweep_2": {
+     "start_s": 5.449,
+     "dur_s": 0.493,
+     "ease": [
+      0.466,
+      0.112,
+      0.312,
+      1.0
+     ],
+     "max_err": 0.018
+    }
+   },
+   "ease_rms": 0.021,
+   "_ease_note": "one ease for every piece (joint fit over sweeps 0/1/2: rms 0.021, max 0.077 — the max is sweep 0, which runs a little slower in the middle right after the push lands)"
+  },
+  "hold": {
+   "_doc": "static hold after the last sweep ends (ref 2.68 s, last sweep end 5.93 s → clip end 8.617 s)",
+   "after_last_s": 2.675,
+   "min_after_last_s": 0.8
+  },
+  "exit": {
+   "_doc": "the reference has no exit animation (hard cut); 'out' beat = cut",
+   "type": "cut"
+  },
+  "ref_frames": {
+   "zoom": "74.0-118 @60fps",
+   "sweep_0": "118.6-141.5",
+   "sweep_1": "223.2-253 (line 4) + 253.7-262.7 (line 5)",
+   "sweep_2": "327.9-357.5",
+   "grow": "179.9-202",
+   "caret_gone": 334
+  }
+ },
+ "style": {
+  "_doc": "prompt_highlight look. Layout is in screen px at 1920x1080 for the START of the push-in (scale 1); kit geometry is in the kit's css px and is scaled so the composer is layout.composer_w wide. Sizes as px@1080 and fraction of frame height (fh).",
+  "fonts": {
+   "Inter": "Inter.ttf",
+   "Source Serif 4": "SourceSerif4.ttf"
+  },
+  "layout": {
+   "composer_w": 847.4,
+   "composer_w_fh": 0.7846,
+   "composer_cx": 960,
+   "composer_top": 443.2,
+   "composer_top_fh": 0.4104,
+   "fit_margin": 40,
+   "_end_view": "after the push (×1.5486 about pivot 931,617): composer 1313 px wide (x 319-1631), top 348, prompt line pitch 43.5 px (0.0403 fh), prompt font 28.9 px em (0.0268 fh)",
+   "end_centre_y": 512.5,
+   "end_centre_y_fh": 0.4745,
+   "_end_centre": "the composer box (at its full text) ends with its centre at y 512.5 (ref: 348-677 → 512.5); composer_top 443.2 is what that gives for the reference's 5-line prompt, so shorter prompts start a little lower"
+  },
+  "backdrop": "#20201d",
+  "highlight": {
+   "color": "#d9fd28",
+   "alpha": 1.0,
+   "blend": "normal (opaque box; the text under it is redrawn dark)",
+   "text_color": "#041000",
+   "pad_left_em": 0.27,
+   "pad_right_em": 0.35,
+   "top_em": 0.2,
+   "height_em": 1.4,
+   "radius_em": 0.175,
+   "_measured_end_view_px": "line box 43.5 px; highlight 509-550 (line 4) / 553-591 (line 5): top ≈ line top + 5.7 px, height ≈ 40.5 px; left pad 6-8 px before the first glyph, right pad ≈ 4.5 px; corner radius ≈ 5 px"
+  },
+  "caret": {
+   "color": "#898986",
+   "width_em": 0.07,
+   "height_em": 1.1,
+   "gap_em": 0.05,
+   "_measured": "≈2 px wide × 32 px tall at the end view (em 28.9 px), centred on the line box, ≈1.5 px right of the last glyph; visible only while typing"
+  },
+  "neutral": {
+   "_doc": "kit null → a neutral, unbranded dark composer (no logo, no greeting, no model name, no chips) — never another app's UI",
+   "bg": "#20201d",
+   "surface": "#292926",
+   "border": "#32322f",
+   "text": "#f2f2ef",
+   "muted": "#bbbbb7",
+   "send": "#5a5a56",
+   "width": 727,
+   "radius": 20,
+   "font": "Inter",
+   "font_size": 16,
+   "line_height": 24,
+   "placeholder": "Describe what you want…"
+  }
+ }
+}

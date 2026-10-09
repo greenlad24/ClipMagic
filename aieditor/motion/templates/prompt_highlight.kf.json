@@ -1,0 +1,118 @@
+{
+  "_doc": "prompt_highlight (MO06) — MEASURED motion from motion5.mov (Claude.ai composer screen-captured from YouTube; content area y 60-1139 of the 1920x1200 capture = 1920x1080, 1:1). Times in seconds. Reference sweep starts (= the hl beats of the replica): 1.959 / 3.703 / 5.449 s; clip 8.617 s. Design-free: travel in units of the prompt font em or of the frame.",
+  "push": {
+    "_doc": "camera push-in: a pure scale about a fixed pivot (frame fractions), from 1 to `scale`; it ENDS when the first highlight sweep starts (ref: start 1.217 s = frame 74.0, 0.742 s long, first sweep at 1.959 s). Fit by Nelder-Mead on the button/logo centroid distance (scale) — rms 0.0125, max 0.033 of the travel (the source refreshed at ~24 fps).",
+    "scale": 1.5486,
+    "pivot": [
+      0.4849,
+      0.5713
+    ],
+    "dur_s": 0.742,
+    "min_dur_s": 0.4,
+    "ease": [
+      0.609,
+      0.091,
+      0.417,
+      0.887
+    ],
+    "ease_max_err": 0.033,
+    "fallback_start_after_in_s": 1.217,
+    "min_start_after_in_s": 0.1,
+    "ease_rms": 0.0125
+  },
+  "type": {
+    "_doc": "typing: one character at a time at a constant rate (ref 30.6 chars/s across 166 chars, segments 29.7-33.3; the source capture refreshed at ~24 fps so it showed 1-2 new chars per update). The caret is visible while typing and disappears hide_after_s after the last character. If a phrase would not be typed by its beat at the natural rate, the text before it is typed faster (up to max_cps) so it is complete lag_s before the beat.",
+    "cps": 30.6,
+    "max_cps": 120,
+    "lag_s": 0.03,
+    "caret_hide_after_s": 0.13,
+    "ref_pretyped_chars": 260
+  },
+  "grow": {
+    "_doc": "the composer grows one line height when the text wraps; the growth STARTS lead_s before the first character of the new line appears and lasts dur_s (ref: frames 179.9-202, first char on the new line at frame 201). Greeting stays fixed (top-anchored); the composer grows downward and pushes the suggestion chips down. The text is laid out in full from the start (words never jump lines while typed).",
+    "lead_s": 0.352,
+    "dur_s": 0.368,
+    "ease": [
+      0.489,
+      0.333,
+      0.63,
+      1.0
+    ],
+    "ease_max_err": 0.068
+  },
+  "sweep": {
+    "_doc": "marker highlight: a rounded yellow box grows left→right over each LINE PIECE of the phrase (piece by piece when the phrase wraps), the text under it turns dark at the edge. Piece duration = clamp(width_em * s_per_em, min_s, max_s) (ref pieces: 15.1 em 0.382 s, 20.8 em 0.497 s, 24.1 em 0.493 s, 5.85 em 0.151 s). Next line piece starts line_gap_s after the previous piece ends. Sweep i starts at max(beat hl_i, phrase typed + after_typed_s, push end, previous sweep end). Highlights accumulate (stay on); they never merge — the word between two highlights ('and') stays unhighlighted to the end (checked frames 300-517).",
+    "s_per_em": 0.0256,
+    "min_s": 0.1,
+    "max_s": 0.495,
+    "ease": [
+      0.45,
+      0.126,
+      0.347,
+      1.0
+    ],
+    "ease_max_err": 0.077,
+    "line_gap_s": 0.011,
+    "after_typed_s": 0.03,
+    "fallback_first_after_in_s": 1.959,
+    "fallback_spacing_s": 1.745,
+    "fits": {
+      "sweep_0": {
+        "start_s": 1.959,
+        "dur_s": 0.382,
+        "ease": [
+          0.531,
+          0.284,
+          0.425,
+          1.0
+        ],
+        "max_err": 0.018
+      },
+      "sweep_1_line4": {
+        "start_s": 3.703,
+        "dur_s": 0.497,
+        "ease": [
+          0.458,
+          0.121,
+          0.301,
+          1.0
+        ],
+        "max_err": 0.018
+      },
+      "sweep_1_line5": {
+        "start_s": 4.211,
+        "dur_s": 0.151
+      },
+      "sweep_2": {
+        "start_s": 5.449,
+        "dur_s": 0.493,
+        "ease": [
+          0.466,
+          0.112,
+          0.312,
+          1.0
+        ],
+        "max_err": 0.018
+      }
+    },
+    "ease_rms": 0.021,
+    "_ease_note": "one ease for every piece (joint fit over sweeps 0/1/2: rms 0.021, max 0.077 — the max is sweep 0, which runs a little slower in the middle right after the push lands)"
+  },
+  "hold": {
+    "_doc": "static hold after the last sweep ends (ref 2.68 s, last sweep end 5.93 s → clip end 8.617 s)",
+    "after_last_s": 2.675,
+    "min_after_last_s": 0.8
+  },
+  "exit": {
+    "_doc": "the reference has no exit animation (hard cut); 'out' beat = cut",
+    "type": "cut"
+  },
+  "ref_frames": {
+    "zoom": "74.0-118 @60fps",
+    "sweep_0": "118.6-141.5",
+    "sweep_1": "223.2-253 (line 4) + 253.7-262.7 (line 5)",
+    "sweep_2": "327.9-357.5",
+    "grow": "179.9-202",
+    "caret_gone": 334
+  }
+}
