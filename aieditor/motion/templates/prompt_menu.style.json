@@ -1,0 +1,140 @@
+{
+ "id": "prompt_menu",
+ "_note": "NEUTRAL look (kit null) = the reference's own generic composer. px at 1080p; every size is also listed as frac_h (\u00f71080) in the spec. Positions are offsets inside their parent box.",
+ "fonts": {
+  "Inter": "Inter.ttf"
+ },
+ "font_family": "Inter, sans-serif",
+ "backdrop": "#F5F5F2",
+ "layout": {
+  "center_dx": -1.5,
+  "center_dy": -0.75,
+  "max_group_h_frac": 0.9,
+  "_note": "the group (menu top \u2192 composer bottom) is centred on the frame; it scales down only if it would exceed 90 % of the frame height (6+ rows)"
+ },
+ "composer": {
+  "w": 1232,
+  "h": 385,
+  "radius": 44,
+  "bg": "#FFFFFF",
+  "shadow": "0 0 0 1px rgba(0,0,0,0.06), 0 10px 24px rgba(0,0,0,0.10), 0 30px 90px rgba(0,0,0,0.075)",
+  "chip": {
+   "x": 31.5,
+   "y": 34,
+   "h": 69,
+   "pad_l": 16,
+   "pad_r": 32,
+   "gap": 7,
+   "border": "2px solid #E6E6E6",
+   "radius": 34.5,
+   "font_px": 35,
+   "weight": 400,
+   "color": "#7E7E7E",
+   "tracking_em": 0.08,
+   "icon_px": 35,
+   "icon_color": "#8C8C8C"
+  },
+  "text": {
+   "x": 43.5,
+   "cap_top": 152.5,
+   "font_px": 43,
+   "weight": 500,
+   "tracking_em": -0.007,
+   "slash_color": "#4A4A4A",
+   "slash_color_after": "#3A3A3A",
+   "label_gap": 12,
+   "preview_color": "#A3A3A3",
+   "commit_color": "#111111",
+   "commit_weight": 500
+  },
+  "footer": {
+   "clip": {
+    "x": 56.5,
+    "y": 288.5,
+    "w": 38,
+    "h": 43
+   },
+   "globe": {
+    "x": 155.5,
+    "y": 287.5,
+    "w": 44,
+    "h": 45
+   },
+   "label_x": 220.5,
+   "label_cap_top": 294.5,
+   "font_px": 43,
+   "weight": 500,
+   "color": "#262626",
+   "icon_color": "#454545",
+   "icon_stroke": 3.6
+  },
+  "send": {
+   "cx_from_right": 75.5,
+   "cy_from_bottom": 75,
+   "d": 86,
+   "bg": "#3087D9",
+   "arrow_color": "#FFFFFF",
+   "arrow_h": 45,
+   "arrow_stroke": 5
+  }
+ },
+ "menu": {
+  "x": 31.5,
+  "overlap": 111.5,
+  "min_w": 933,
+  "radius": 28,
+  "bg": "#FFFFFF",
+  "shadow": "0 0 0 1px rgba(0,0,0,0.035), 0 6px 18px rgba(0,0,0,0.085), 0 16px 50px rgba(0,0,0,0.08)",
+  "header": {
+   "title_x": 33,
+   "title_cap_top": 45,
+   "font_px": 37,
+   "weight": 600,
+   "color": "#7A7A7A",
+   "lib": {
+    "x_from_right": 141,
+    "y": 41,
+    "w": 37,
+    "h": 32
+   },
+   "plus": {
+    "x_from_right": 67,
+    "y": 42,
+    "w": 29,
+    "h": 30
+   },
+   "icon_color": "#888888",
+   "icon_stroke": 3.6,
+   "plus_stroke": 4.2
+  },
+  "rows": {
+   "first_band_top": 123,
+   "pitch": 85,
+   "band_h": 78,
+   "band_x": 24,
+   "band_r_inset": 21,
+   "band_radius": 12,
+   "hover_bg": "#F4F4F4",
+   "icon_cx": 60,
+   "icon_px": 58,
+   "text_x": 113,
+   "font_px": 43,
+   "weight": 500,
+   "color": "#1A1A1A",
+   "tracking_em": -0.007,
+   "bottom_pad": 14,
+   "right_pad": 120,
+   "ink_top_in_band": 23,
+   "_icons": "flat inline SVG glyphs (24-unit viewBox) drawn at icon_px; no emoji font is shipped"
+  }
+ },
+ "cursor": {
+  "w": 64,
+  "h": 104,
+  "fill": "#000000",
+  "outline": "#FFFFFF",
+  "outline_px": 11,
+  "shadow": "drop-shadow(0 2px 3px rgba(0,0,0,0.28))",
+  "_note": "macOS arrow; tip = hotspot; black core 64\u00d7104 px at 1080p, white outline \u22485 px"
+ }
+}

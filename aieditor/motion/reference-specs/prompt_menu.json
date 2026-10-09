@@ -1,0 +1,263 @@
+{
+ "id": "prompt_menu",
+ "technique": "MO03",
+ "reference": "/opt/aieditor-work/reference/motion-2026-10-09/motion3.mp4",
+ "reference_format": {
+  "size": [
+   1920,
+   1080
+  ],
+  "fps": 60,
+  "frames": 309,
+  "duration_s": 5.15,
+  "note": "a 30 fps screen recording doubled to 60 fps: every motion sample is held 2 frames (on odd 0-based frames)"
+ },
+ "layers": [
+  "backdrop #F5F5F2 (full frame)",
+  "group (pans as one): composer card, menu card (above, overlapping the composer top by 111.5 px), menu highlight band, rows (emoji icon + label), header (title + library + plus icons)",
+  "composer content: '@ Add context' chip (hidden under the menu until the collapse), '/' + preview/committed label, footer (paperclip, globe, 'All sources', blue send button)",
+  "cursor (screen space, NOT in the panning group)"
+ ],
+ "geometry_px_1080": {
+  "composer": {
+   "x": 342.5,
+   "y": 568.5,
+   "w": 1232,
+   "h": 385,
+   "radius": 44,
+   "frac_h": {
+    "w": 1.1407,
+    "h": 0.3565,
+    "radius": 0.0407
+   }
+  },
+  "menu": {
+   "x": 374,
+   "y": 125,
+   "w": 933,
+   "h": 555,
+   "radius": 28,
+   "overlap_on_composer": 111.5,
+   "frac_h": {
+    "w": 0.8639,
+    "h": 0.5139
+   }
+  },
+  "rows": {
+   "first_band_top": 248,
+   "pitch_uniform": 85,
+   "band_h": 78,
+   "band_x_inset": [
+    24,
+    21
+   ],
+   "band_tops_measured": [
+    248,
+    329,
+    410,
+    499,
+    588
+   ],
+   "text_ink_tops_measured": [
+    270,
+    354,
+    437,
+    524,
+    612
+   ],
+   "icon_ink_w": 52,
+   "text_ink_left": 487
+  },
+  "send_button": {
+   "centre": [
+    1499,
+    878.5
+   ],
+   "d": 86,
+   "colour": "#3087D9"
+  },
+  "chip": {
+   "box": [
+    374,
+    410,
+    678,
+    479
+   ],
+   "radius": 34.5
+  },
+  "group_centre_y": 539.25,
+  "composer_centre_after_collapse_y": 569.5
+ },
+ "typography": {
+  "font": "Inter (closest free to SF Pro); row icons = flat inline SVG glyphs (no emoji font)",
+  "rows": {
+   "px": 43,
+   "frac_h": 0.0398,
+   "weight": 500,
+   "tracking_em": -0.007,
+   "colour": "#1A1A1A"
+  },
+  "header_title": {
+   "px": 37,
+   "frac_h": 0.0343,
+   "weight": 600,
+   "colour": "#7A7A7A"
+  },
+  "composer_text": {
+   "px": 43,
+   "frac_h": 0.0398,
+   "weight": 500,
+   "slash": "#4A4A4A",
+   "preview": "#A3A3A3",
+   "committed": "#111111"
+  },
+  "footer_label": {
+   "px": 43,
+   "frac_h": 0.0398,
+   "weight": 500,
+   "colour": "#262626"
+  },
+  "chip": {
+   "px": 35,
+   "frac_h": 0.0324,
+   "tracking_em": 0.08,
+   "colour": "#7E7E7E"
+  }
+ },
+ "colours": {
+  "backdrop": "#F5F5F2",
+  "cards": "#FFFFFF",
+  "hover_band": "#F4F4F4",
+  "send": "#3087D9",
+  "icons_header": "#888888",
+  "icons_footer": "#454545"
+ },
+ "shadows": {
+  "composer": "0 0 0 1px rgba(0,0,0,0.06), 0 10px 24px rgba(0,0,0,0.10), 0 30px 90px rgba(0,0,0,0.075)",
+  "menu": "0 0 0 1px rgba(0,0,0,0.035), 0 6px 18px rgba(0,0,0,0.085), 0 16px 50px rgba(0,0,0,0.08)"
+ },
+ "cursor": {
+  "sprite": "macOS arrow, black core 64x104 px @1080 (frac_h 0.096), white outline ~5 px, soft drop shadow; tip = hotspot",
+  "entry": "fades in 0.25 s (alpha 0\u21921, linear) while already moving right\u2192left: starts 0.45 s before the first hover at +328/+38 px from the row-0 rest point, curved path (dips 8 px then rises 46 px), ~880 px/s, arrives 0.183 s after the first hover",
+  "rest_points_px": [
+   [
+    1108,
+    280
+   ],
+   [
+    1145,
+    373
+   ],
+   [
+    1208,
+    439
+   ],
+   [
+    1208,
+    535
+   ],
+   [
+    1208,
+    631
+   ]
+  ],
+  "hops": {
+   "durations_s": [
+    0.199,
+    0.178,
+    0.195,
+    0.241
+   ],
+   "ease": "linear (fit max err 1.2 px)",
+   "speed_px_s": "~400-510"
+  },
+  "dwell_s": {
+   "row0": 0.467,
+   "row1": 0.467,
+   "row2": 0.5,
+   "row3": 0.633,
+   "row4_until_click": 0.339
+  },
+  "hover_rule": "row highlight + composer preview switch together 0.11 s after the cursor starts the hop into the row (no fade)",
+  "click": "no press scale/flash; the click is shown only by the commit + collapse",
+  "send_hop": "from 'out' (pick + 0.361 s), 0.67 s to the send button centre + (10, 11) px, ease-in then ~560 px/s, slight downward arc (y overshoots 17 px, settles)"
+ },
+ "collapse": {
+  "text_commit": "at pick: label grey \u2192 #111 (same frame)",
+  "composer_pan": "group pans up 191.5 px linear in 0.267 s (720 px/s) so the composer centre lands 29.5 px below frame centre (0.0766 \u00d7 composer h)",
+  "menu": "shrinks about its bottom centre 1 \u2192 0.88 linear over 0.16 s (moves with the pan), removed (no fade) at +0.145 s",
+  "camera": "no camera move/zoom other than the group pan"
+ },
+ "beats_reference": {
+  "in": 0.0,
+  "hover_0": 0.767,
+  "hover_1": 1.506,
+  "hover_2": 2.156,
+  "hover_3": 2.827,
+  "hover_4": 3.627,
+  "pick": 4.122,
+  "out": 4.483
+ },
+ "duration_s": 5.15,
+ "verification": {
+  "render": "scratchpad pm/r1 (reference content + reference beats, neutral look)",
+  "compare_sheet": "/opt/aieditor-work/reference/specs/prompt_menu-compare.png",
+  "error_table": [
+   {
+    "element": "cursor tip",
+    "max_px": 2.2,
+    "mean_px": 1.18,
+    "timing_frames": 0,
+    "note": "all 309 frames; appear 2 frames earlier at alpha<0.9 (threshold artefact, fade table matches)"
+   },
+   {
+    "element": "hover switches (5)",
+    "timing_frames": [
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "band_pos_err_px": [
+     0,
+     4,
+     8,
+     4,
+     0
+    ],
+    "note": "uniform 85 px pitch; the reference's bands are uneven (81/81/89/89)"
+   },
+   {
+    "element": "composer top (incl. pan)",
+    "max_px": 3,
+    "mean_px": 1.47,
+    "pan_start_frames": 0,
+    "pan_end_frames": 2
+   },
+   {
+    "element": "menu top / width (incl. shrink)",
+    "max_px": 2,
+    "menu_removed_frames": 0
+   },
+   {
+    "element": "text commit",
+    "timing_frames": 0
+   },
+   {
+    "element": "send hop start",
+    "timing_frames": 0
+   },
+   {
+    "element": "row text ink boxes",
+    "max_px": 3,
+    "note": "widths within 1 %"
+   },
+   {
+    "element": "row icon ink boxes",
+    "max_px": 6,
+    "note": "flat SVG glyphs vs the reference's Apple emoji"
+   }
+  ]
+ }
+}
