@@ -36,7 +36,8 @@ def _docker(args, mounts, cancelled, name="aieditor-sc", cpus=None, tz="Asia/Ban
     script = next((a for a in args if isinstance(a, str) and a.endswith((".mjs", ".py"))), "")
     labels = {"inventory.mjs": "page inventory (screenshot + elements)", "vrecord.mjs": "screencast recorder (virtual time)",
               "camera.py": "screencast camera (zoom/pan)", "facecam.py": "face finder",
-              "aroll_camera.py": "A-roll camera (zoom-out, push-ins, end fade)"}
+              "aroll_camera.py": "A-roll camera (zoom-out, push-ins, end fade)",
+              "privacy.py": "privacy blur / legibility check (C7)"}
     with ev_log.proc(labels.get(script.rsplit("/", 1)[-1], script.rsplit("/", 1)[-1] or name), cname):
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         import time
@@ -262,6 +263,68 @@ def frame_guard(w, cancelled):
         return {}
 
 
+PRIVACY_EVERY_S = 0.5     # privacy.py OCR sampling (RULEBOOK C7)
+
+
+def privacy_pass(w, idxs, cancelled, progress=None):
+    """RULEBOOK C7: screencast/privacy.py on every recording the edit uses — DOM boxes (rec/privacy.json)
+    + OCR -> tracked blur -> rec/raw.blur.mp4, BEFORE the camera, so every zoom/pan carries the blur.
+    Cached until raw.mp4 changes. Always runs (a factory edit never skips it). -> {"03": privacy.blur.json}"""
+    w = Path(w)
+    todo, res = [], {}
+    for i in idxs:
+        rd = w / f"seg-{i:02d}" / "rec"
+        raw, blur, doc = rd / "raw.mp4", rd / "raw.blur.mp4", rd / "privacy.blur.json"
+        if not raw.exists():
+            continue
+        if not (_fresh(blur, raw.stat().st_mtime) and _fresh(doc, raw.stat().st_mtime)):
+            todo.append(i)
+
+    def one(i):
+        _docker(["python3", "/a/screencast/privacy.py", "blur", f"/w/seg-{i:02d}/rec", "--every", str(PRIVACY_EVERY_S),
+                 "--out", f"/w/seg-{i:02d}/rec/privacy.run.json"], [(config.CODE, "/a"), (w, "/w")], cancelled,
+                "aieditor-privacy")
+    if todo:
+        if progress:
+            progress(f"Privacy blur (C7) on {len(todo)} recording(s)…", 0.05)
+        par = max(1, min(len(todo), config.cpu_count() // 4))
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(par) as ex:
+            list(ex.map(one, todo))
+    for i in idxs:
+        doc = w / f"seg-{i:02d}" / "rec" / "privacy.blur.json"
+        if doc.exists():
+            res[f"{i:02d}"] = json.loads(doc.read_text())
+            for h in res[f"{i:02d}"].get("held", []):
+                ev_log.emit("log", f"screencast {i + 1}: private {h['kind']} at {h['t']:.1f}s — {h['reason']} "
+                                   f"(remedy {h['remedy']})", level="warn")
+    return res
+
+
+def privacy_qa(w, clips, cancelled, passed=None):
+    """The 'no legible private frame' check on the CAMERA output (every PRIVACY_EVERY_S, at <= 1920 px):
+    any hit fails (p4 reads privacy-qa.json: take_verdict privacy_out, ship rule '0 legible private frames')."""
+    w = Path(w)
+    out = {"every_s": PRIVACY_EVERY_S, "segments": {}, "held": []}
+    for i, clip in clips:
+        res = w / f"{clip}.privacy.json"
+        if not _fresh(res, (w / clip).stat().st_mtime):
+            _docker(["python3", "/a/screencast/privacy.py", "legible", f"/w/{clip}", "--every", str(PRIVACY_EVERY_S),
+                     "--out", f"/w/{res.name}"], [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-privacy-qa")
+        hits = json.loads(res.read_text()).get("hits", [])
+        out["segments"][f"{i:02d}"] = hits
+        if hits:
+            out["held"].append({"seg": f"{i:02d}", "t": hits[0]["t"], "kind": hits[0]["kind"], "remedy": "widen_blur -> cut_beat",
+                                "reason": f"{len(hits)} legible private frame(s) in the camera output"})
+            ev_log.emit("log", f"screencast {i + 1}: {len(hits)} legible private frame(s) after the blur "
+                               f"(first {hits[0]['kind']} at {hits[0]['t']:.1f}s)", level="error")
+    for k, doc in (passed or {}).items():
+        out["held"] += [{"seg": k, **h} for h in doc.get("held", [])]
+    out["ok"] = not any(out["segments"].values())
+    (w / "privacy-qa.json").write_text(json.dumps(out, indent=1))
+    return out
+
+
 def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=None, face_src=None):
     """Camera per segment at `size`, the A-roll camera on `base`, then the composite."""
     d = Path(d)
@@ -308,11 +371,17 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         tail = xf_s if into_next else compose_long.aroll_tail_s()
         jobs.append((i, seg, clip, into_next, tail))
 
+    # PRIVACY (RULEBOOK C7): blur private boxes in the RECORDING first; the camera then reads raw.blur.mp4
+    passed = privacy_pass(w, [jb[0] for jb in jobs], cancelled, progress)
+
     def camera(job):
         i, seg, clip, _, tail = job
+        blurred = w / f"seg-{i:02d}" / "rec" / "raw.blur.mp4"
+        # camera.py reads <recdir>/raw.mp4: the blurred recording is mounted over it (read only)
+        over = [(blurred, f"/w/seg-{i:02d}/rec/raw.mp4:ro")] if blurred.exists() else []
         _docker(["python3", "/a/screencast/camera.py", f"/w/seg-{i:02d}/rec", f"/w/{clip}", "--size", f"{W}x{H}",
                  "--from", "0", "--to", f"{seg['t1'] - seg['t0'] + tail:.3f}", "--fps", f"{fps:.8f}"],
-                [(config.CODE, "/a"), (w, "/w")], cancelled, "aieditor-cam")
+                [(config.CODE, "/a"), (w, "/w")] + over, cancelled, "aieditor-cam")
     # the camera renders are independent: several at once on a factory server (1 on the box)
     par = max(1, min(len(jobs), config.cpu_count() // 4))
     progress(f"Screencasts: camera on {len(jobs)} clip(s), {par} at a time…", 0.1)
@@ -326,6 +395,7 @@ def compose(d, k, base, fps, size, cancelled, progress, out_name, bubble_src=Non
         with ThreadPoolExecutor(par) as ex:
             for n, _ in enumerate(ex.map(camera, jobs)):
                 progress(f"Screencast cameras: {n + 1}/{len(jobs)} done", 0.1 + 0.4 * (n + 1) / max(1, len(jobs)))
+    privacy_qa(w, [(jb[0], jb[2]) for jb in jobs], cancelled, passed)
     for i, seg, clip, into_next, tail in jobs:
         cam = json.load(open(w / f"{clip}.camera.json"))
         kept = compose_long.trim_blank({"t0": seg["t0"], "t1": seg["t1"], "clip": clip, "bubble": True,
