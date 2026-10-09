@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Playbook replay fixture</title>
+<!-- A static stand-in for ChatGPT's composer (tests/test_playbook.py): the same selectors the chatgpt
+     playbook uses — a rich-text composer, a send button, the '+' menu (Add photos & files / Create image /
+     Sketch) closed by Escape. No network, no scripts from outside. -->
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #212121; color: #ececec; font: 16px/1.4 -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 18vh auto 0; padding: 0 16px; }
+  h1 { font-weight: 500; text-align: center; }
+  #thread p { background: #303030; border-radius: 16px; padding: 10px 14px; }
+  .box { display: flex; gap: 8px; align-items: center; background: #303030; border-radius: 28px; padding: 10px 12px; position: relative; }
+  .box button { background: #ececec; color: #212121; border: 0; border-radius: 50%; width: 36px; height: 36px; font-size: 20px; cursor: pointer; }
+  [contenteditable] { flex: 1; min-height: 24px; outline: none; }
+  #menu { position: absolute; bottom: 60px; left: 0; background: #353535; border-radius: 12px; padding: 6px; display: none; }
+  #menu.open { display: block; }
+  #menu div { padding: 8px 14px; cursor: pointer; border-radius: 8px; }
+  #menu div:hover { background: #424242; }
+  canvas { display: block; margin: 16px auto; background: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <h1>What's on your mind today?</h1>
+  <div id="thread"></div>
+  <div class="box">
+    <button type="button" aria-label="Add files and more" id="plus">+</button>
+    <div id="menu" role="menu">
+      <div role="menuitem">Add photos &amp; files</div>
+      <div role="menuitem">Create image</div>
+      <div role="menuitem" id="sketch">Sketch</div>
+    </div>
+    <div contenteditable="true" id="prompt-textarea" aria-label="Ask ChatGPT"></div>
+    <button type="button" data-testid="send-button" aria-label="Send prompt" id="send">&#8593;</button>
+  </div>
+  <div id="canvas-slot"></div>
+</main>
+<script>
+  const menu = document.getElementById("menu"), box = document.getElementById("prompt-textarea");
+  document.getElementById("plus").addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("open"); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") menu.classList.remove("open"); });
+  document.getElementById("sketch").addEventListener("click", () => {
+    menu.classList.remove("open");
+    const c = document.createElement("canvas"); c.width = 320; c.height = 200;
+    document.getElementById("canvas-slot").replaceChildren(c);
+  });
+  document.getElementById("send").addEventListener("click", () => {
+    const t = box.innerText.trim(); if (!t) return;
+    const p = document.createElement("p"); p.textContent = "Sent: " + t;
+    document.getElementById("thread").appendChild(p); box.textContent = "";
+  });
+</script>
+</body>
+</html>
