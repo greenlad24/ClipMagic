@@ -17,6 +17,7 @@ import { claimUpload, getUpload, UPLOAD_ID_RE } from "./uploads.js";
 import { jobSourceOf } from "./library.js";
 import { assertJobDeletable, freedByJobs, readDeleted, walkAll } from "./storage.js";
 import { handoffPackages, parseHandoff, withHandoff } from "./handoff.js";
+import * as eta from "./eta.js";
 
 const ROOT = process.env.AIEDITOR_WORK || "/aieditor-work";
 const JOBS = path.join(ROOT, "jobs");
@@ -117,50 +118,128 @@ export function stagesFor(workflow: Workflow, format: string, source: SourceKind
 }
 
 /**
- * Typical seconds per stage for a job with `minutes` of source — the median, per minute of
- * source, of every finished (not reused) run of that stage in the other jobs on disk. It
- * drives the overall progress bar and the ETA of stages that report no fraction of their own.
- * Cached for a minute (it reads every job's status.json).
+ * Typical seconds per stage — the timing model in ./eta.ts (history per stage, keyed on the
+ * machine, the workflow kind and the stage's own unit), cached for a minute. It replaced the
+ * single "seconds per source minute" median, which mostly came from MAIN-BOX runs and showed a
+ * 32-core preview as "~36m 58s" when it took ~5 min.
  */
-let expectCache: { at: number; rates: Record<string, number> } | null = null;
-async function stageRates(): Promise<Record<string, number>> {
-  if (expectCache && Date.now() - expectCache.at < 60_000) return expectCache.rates;
-  const samples: Record<string, number[]> = {};
-  let names: string[] = [];
-  try { names = await fsp.readdir(JOBS); } catch { names = []; }
-  for (const id of names) {
-    if (!ID_RE.test(id)) continue;
-    const st = await readJson<any>(path.join(JOBS, id, "status.json"));
-    const src = await readJson<any>(path.join(JOBS, id, "source.json"));
-    const req = await readJson<any>(path.join(JOBS, id, "request.json"));
-    const mins = Number(src?.duration) / 60;
-    if (!st?.stages || !(mins > 0.1)) continue;
-    for (const [name, s] of Object.entries<any>(st.stages)) {
-      if (s?.state !== "done" || s.note === "reused" || !s.started_at || !s.finished_at) continue;
-      const secs = s.finished_at - s.started_at;
-      if (!(secs >= 0) || secs > 6 * 3600) continue;
-      const key = ["preview", "graphics", "compose", "final"].includes(name) ? `${name}:${req?.format}` : name;
-      (samples[key] ??= []).push(secs / mins);
-    }
-  }
-  const rates: Record<string, number> = {};
-  for (const [k, xs] of Object.entries(samples)) {
-    xs.sort((a, b) => a - b);
-    rates[k] = xs[Math.floor(xs.length / 2)];
-  }
-  expectCache = { at: Date.now(), rates };
-  return rates;
+async function factoryCfg(): Promise<eta.FactoryCfg & Record<string, any>> {
+  return (await readJson<any>(path.join(ROOT, "factory.json"))) ?? {};
 }
 
-async function expectedSeconds(stages: { id: string }[], format: string, sourceSeconds: number | null) {
-  const out: Record<string, number | null> = {};
-  const rates = await stageRates();
-  const mins = sourceSeconds ? sourceSeconds / 60 : null;
-  for (const s of stages) {
-    const r = rates[`${s.id}:${format}`] ?? rates[s.id];
-    out[s.id] = mins && r !== undefined ? Math.round(r * mins * 10) / 10 : null;
+async function estimateFor(
+  req: any, source: any, edl: any, status: any, runner: any, stageIds: string[], running: boolean,
+) {
+  const h = await eta.loadHistory(ROOT);
+  const machine = eta.machineFor(req, runner, await factoryCfg(), status?.action ?? "run", running);
+  const ctx = eta.ctxFor(req, source, edl, status, machine);
+  // "final" counts once it is asked for (as on the progress screen)
+  return eta.estimateJob(h, stageIds.filter((x) => x !== "final" || status?.action === "final"), ctx);
+}
+
+/**
+ * Why a queued job is not running yet — Jake: a wait is "waiting for a server", never a fake
+ * ETA. The worker leaves a factory job queued while every server slot is taken, the rolling
+ * $/24 h server cap or the Claude API cap is reached, or its logged-in account is in use; a
+ * main-box job waits for the one job the box runs at a time. Best effort, read-only.
+ */
+export async function queueWait(req: any, busyWith: { title: string | null } | null) {
+  const cfg = await factoryCfg();
+  const machine = eta.machineFor(req, null, cfg);
+  if (machine.key === "box") {
+    return { kind: "box" as const, reason: busyWith ? `the main box is busy with “${busyWith.title ?? "another job"}”` : "the worker picks it up in a few seconds" };
   }
-  return out;
+  const now = Date.now() / 1000;
+  let leases = 0;
+  try {
+    leases = (await fsp.readdir(path.join(ROOT, "factory-leases"))).filter((f) => /^\d+\.json$/.test(f)).length;
+  } catch { leases = 0; }
+  const maxPar = Number(cfg.max_parallel ?? 2);
+  if (leases >= maxPar) return { kind: "slots" as const, reason: `every server slot is busy (${leases} of ${maxPar})` };
+  const rows = async (file: string) => {
+    try {
+      return (await fsp.readFile(file, "utf8")).split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    } catch { return [] as any[]; }
+  };
+  const cap = Number(cfg.daily_cap_usd) || 0;
+  if (cap) {
+    const spent = (await rows(path.join(ROOT, "factory-history.jsonl")))
+      .filter((r: any) => Number(r.ended) > now - 86400).reduce((a: number, r: any) => a + (Number(r.usd) || 0), 0);
+    if (spent >= cap) return { kind: "cap" as const, reason: `the daily server budget is used up ($${spent.toFixed(2)} of $${cap} in 24 h) — it starts as the window frees up` };
+  }
+  const apiCap = Number(cfg.api_daily_cap_usd) || 0;
+  if (apiCap) {
+    const spent = (await rows(path.join(ROOT, "ledger", "api.jsonl")))
+      .filter((r: any) => Number(r.ts) > now - 86400).reduce((a: number, r: any) => a + (Number(r.usd) || 0), 0);
+    if (spent >= apiCap) return { kind: "api" as const, reason: `the daily AI budget is used up ($${spent.toFixed(2)} of $${apiCap} in 24 h)` };
+  }
+  try {
+    for (const f of await fsp.readdir(path.join(ROOT, "locks"))) {
+      const holder = await readJson<any>(path.join(ROOT, "locks", f));
+      if (holder?.job && ID_RE.test(String(holder.job))) {
+        const st = await readJson<any>(path.join(JOBS, String(holder.job), "status.json"));
+        if (st?.state === "running" && workflowOf(req) === "creative" && req?.handoff !== true) {
+          return { kind: "account" as const, reason: `the ${f.replace(/\.lock$/, "")} account is in use by another job` };
+        }
+      }
+    }
+  } catch { /* no locks */ }
+  return { kind: "server" as const, reason: `no ${machine.cpus}-core server is free right now` };
+}
+
+/**
+ * The New edit review screen's "Typically ~X on a 32-core server": the same model as a job's
+ * ETA, for a job that does not exist yet. A Full edit is its cut job + the creative edit it
+ * chains into. With no source length yet (a Descript link is measured when it downloads) the
+ * median recording length of earlier jobs is assumed — and said.
+ */
+export async function estimateNew(input: {
+  workflow?: unknown; chain?: unknown; handoff?: unknown; format?: unknown; source?: { kind?: unknown } | null;
+  sourceSeconds?: unknown; sites?: unknown; runOn?: unknown;
+}) {
+  const format = input.format === "short" ? "short" : "long";
+  const workflow: Workflow = input.workflow === "creative" ? "creative" : "cut";
+  const full = workflow === "cut" && input.chain === "creative";
+  const handoff = workflow === "creative" && input.handoff === true;
+  const srcKind = sourceKindOf({ source: { kind: input.source?.kind } });
+  const sites = Number(input.sites) > 0 ? [{ url: "x", note: "" }] : [];
+  const h = await eta.loadHistory(ROOT);
+  let secs = Number(input.sourceSeconds) > 0 ? Number(input.sourceSeconds) : null;
+  let assumedMinutes: number | null = null;
+  if (secs === null) {
+    const lens = [...new Map(h.samples.filter((x) => (x.srcMin ?? 0) > 0).map((x) => [x.job, x.srcMin!])).values()];
+    assumedMinutes = lens.length ? Math.round(eta.median(lens)) : 15;
+    secs = assumedMinutes * 60;
+  }
+  const cfg = await factoryCfg();
+  const runOn = input.runOn === "box" || input.runOn === "factory" ? input.runOn : "auto";
+  const parts: { req: any; stages: string[] }[] = [];
+  const base = { format, sites, run_on: runOn, source: { kind: srcKind } };
+  if (full) {
+    parts.push({ req: { ...base, workflow: "cut", chain: "creative" }, stages: stagesFor("cut", format, srcKind).map((x) => x.id) });
+    // the chained creative edit starts from the cut's edit (a Lab edit) — its download is a probe
+    parts.push({ req: { ...base, workflow: "creative", chained_from: "x", source: { kind: "job" } }, stages: stagesFor("creative", format, "job").map((x) => x.id) });
+  } else {
+    parts.push({ req: { ...base, workflow, handoff }, stages: withHandoff(stagesFor(workflow, format, srcKind), handoff).map((x) => x.id) });
+  }
+  const ests = parts.map((p) => {
+    const machine = eta.machineFor(p.req, null, cfg);
+    const ctx = eta.ctxFor(p.req, { duration: secs }, null, null, machine);
+    // "final" runs only when asked for: not part of "typically"
+    return eta.estimateJob(h, p.stages.filter((x) => x !== "final"), ctx);
+  });
+  const total = ests.some((e) => !e.total) ? null : eta.sumPreds(ests.map((e) => e.total));
+  const m = ests[0].machine;
+  return {
+    total,
+    /** with a step never run before (total null): the steps that do have history */
+    atLeast: total ? null : eta.sumPreds(ests.flatMap((e) => [...Object.values(e.stages), ...(e.overhead ? Object.values(e.overhead) : [])])),
+    machine: { key: m.key, label: m.label, cpus: m.cpus },
+    firstRun: ests.some((e) => e.firstRun),
+    runsOnMachine: Math.min(...ests.map((e) => e.runsOnMachine)),
+    unknown: [...new Set(ests.flatMap((e) => e.unknown))],
+    assumedMinutes,
+  };
 }
 
 /** One line of events.jsonl (see aieditor/events.py). */
@@ -744,6 +823,8 @@ export async function getJob(id: string) {
   const stageList = withHandoff(stagesFor(workflow, req.format, sourceKindOf(req)), req.handoff === true);
   // a HELD edit is not a finished edit: its files are kept for inspection, never listed as edits/finals
   const held = await heldOf(dir, status);
+  const runner = await readJson<any>(path.join(dir, "runner.json"));
+  const estimate = await estimateFor(req, source, edl, status, runner, stageList.map((s) => s.id), status.state === "running");
   const heldEdits = held ? [...edits, ...finals] : [];
   if (held) {
     edits = [];
@@ -754,8 +835,19 @@ export async function getJob(id: string) {
     busyWith,
     workflow,
     stageList,
-    /** typical seconds per stage for this source length (null = no history yet) */
-    expect: await expectedSeconds(stageList, req.format, Number(source?.duration) || null),
+    /** typical seconds per stage for this source length (null = no history yet) — eta.sec */
+    expect: Object.fromEntries(Object.entries(estimate.stages).map(([k, p]) => [k, p ? p.sec : null])),
+    /** the timing model's view (./eta.ts): per-stage estimate + range, factory overhead, machine */
+    eta: {
+      machine: { key: estimate.machine.key, label: estimate.machine.label, cpus: estimate.machine.cpus },
+      firstRun: estimate.firstRun,
+      runsOnMachine: estimate.runsOnMachine,
+      stages: estimate.stages,
+      overhead: estimate.overhead,
+      total: estimate.total,
+      /** set while the job waits in the queue: why (no ETA is invented for a wait) */
+      wait: queued && status.state !== "running" ? await queueWait(req, busyWith) : null,
+    },
     request: { ...req, workflow, run_on: req.run_on ?? "auto", script: req.script ? String(req.script).slice(0, 2000) : null },
     status: { ...status, state: queued && status.state !== "running" ? "queued" : (held ? "held" : status.state) },
     /** set when the job is HELD: why (one line per failure) + the edits' rubric scores */
@@ -782,7 +874,7 @@ export async function getJob(id: string) {
     /** "Graphics only — editor adds screencasts": the hand-off packages (handoff-NN.zip), null for other jobs */
     handoff: req.handoff === true ? await handoffPackages(dir) : null,
     /** where the current/last run executed (host writes it: aieditor/cloud.runner) — null = never routed */
-    runner: await readJson<any>(path.join(dir, "runner.json")),
+    runner,
     /** the cut → creative chain (aieditor/chain.py): what comes next / where this job started from */
     chain: await chainOf(dir, req),
   };

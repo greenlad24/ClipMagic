@@ -7538,6 +7538,8 @@ const autoEditorJobs = editorCall(async () => ({ jobs: await autoEditor.listJobs
 // creative edit sources: finished edits of workflow 1 (the upload source: aieditor/uploads.ts routes)
 const autoEditorLabEdits = editorCall(async () => ({ edits: await autoEditor.listLabEdits() }));
 const autoEditorJob = editorCall((i) => autoEditor.getJob(i.id));
+// the New edit review screen: typical time for a job that does not exist yet (aieditor/eta.ts)
+const autoEditorEstimate = editorCall((i) => autoEditor.estimateNew(i ?? {}));
 // the narration library (aieditor/library.ts): finished uploads, reusable by any number of jobs
 const autoEditorUploads = editorCall(async () => ({ uploads: await autoEditorLibrary.listLibrary() }));
 const autoEditorUploadRemove = editorCall((i) => autoEditorLibrary.removeFromLibrary(i.key, i.mode, autoEditor.deleteJob));
@@ -7984,6 +7986,7 @@ export const HANDLERS: Record<string, Handler> = {
   autoEditorJobs,
   autoEditorLabEdits,
   autoEditorJob,
+  autoEditorEstimate,
   autoEditorUploads,
   autoEditorUploadRemove,
   autoEditorStorage: autoEditorStorage_,
